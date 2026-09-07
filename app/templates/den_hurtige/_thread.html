@@ -104,13 +104,22 @@
              maxlength="{{ max_content_chars }}" placeholder="Svar…" enterkeyhint="send">
       <button type="submit" class="composer-send" title="Send" aria-label="Send">&uarr;</button>
       {% comment %}
-        Confirms the photo actually attached. The composer has had this since the paperclip
-        replaced a visible file input (#js-composer-file); the reply form never did, which did not
-        matter while a reply also needed text — you could see you had typed something. Sending a
-        photo ALONE, the filename is the only evidence there is anything to send at all.
-        data-reply-file rather than an id: the panel renders one of these per thread.
+        Feedback that the photo attached, and the only way to take it back off. A hidden file input
+        behind a paperclip shows nothing at all by itself, and a comment may be a photo ON ITS OWN -
+        so without this there is no evidence on screen that there is anything to send.
+
+        Empty and `hidden` in the markup: frontend/src/feed.ts fills in the thumbnail, the filename and
+        the size on `change`, and hides it again on clear or reset. It degrades to nothing without JS,
+        which is correct - the form still submits, and the server still validates the file.
+
+        Attributes rather than ids: opslagstavlen renders one of these per page, but the thread panel
+        renders one per thread, and the handler is shared with both.
       {% endcomment %}
-      <div class="reply-file" data-reply-file hidden></div>
+      <div class="file-note" data-file-note hidden>
+        <img data-file-note-thumb alt="" hidden>
+        <span data-file-note-name></span>
+        <button type="button" data-file-note-clear>Fjern</button>
+      </div>
       {% comment %}
         One checkbox instead of the old radio pair. Unchecked still means "only the author",
         which is the same default as before — see QuickComment.notify_everyone.

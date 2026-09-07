@@ -13,6 +13,7 @@ TWO RULES THIS MODULE MUST KEEP, both of which have their own test:
 import calendar as calendar_module
 import datetime
 
+from django.conf import settings
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
@@ -25,6 +26,7 @@ from django.views.decorators.http import require_GET, require_POST
 from core import push
 from core.clock import current_date, current_datetime
 from core.danish import MONTHS, WEEKDAYS_SHORT
+from core.uploads import attached_image
 from residents.models import Resident
 from residents.permissions import current_resident
 
@@ -320,16 +322,28 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     """
     event = _get_event(request, pk)
     form = EventCommentForm(request.POST)
+    # EVENT_IMAGE_MAX_MB, so a comment photo and the event's own hero image share one ceiling.
+    image = attached_image(request, settings.EVENT_IMAGE_MAX_MB)
+
     if not form.is_valid():
         # The message rather than re-rendering the page: the form lives at the bottom of a long
         # read-only page, and a re-render would throw away the RSVP panel's state to say
         # "write something".
-        messages.error(request, "Skriv en kommentar.")
+        messages.error(request, "Kommentaren kunne ikke gemmes.")
         return redirect(_comment_anchor(event.pk))
 
     comment = form.save(commit=False)
+    if not comment.body and image is None:
+        # Either nothing was submitted, or the only thing submitted was a picture that
+        # core.uploads.attached_image refused - in which case its warning is already queued and
+        # arrives beside this, so the reader learns both halves.
+        messages.error(request, "Skriv en kommentar, eller vedhæft et billede.")
+        return redirect(_comment_anchor(event.pk))
+
     comment.event = event
     comment.author = current_resident(request)
+    if image is not None:
+        comment.image = image
     comment.save()
     services.notify_new_comment(comment)
     return redirect(_comment_anchor(event.pk))

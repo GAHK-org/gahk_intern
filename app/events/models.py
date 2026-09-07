@@ -390,14 +390,31 @@ class EventComment(models.Model):
         archive it says belongs to opslagstavlen.
 
     Plain text, not Markdown, for the reasons NoticeComment's docstring gives — rendered
-    autoescaped with `white-space:pre-wrap` and `|urlize`.
+    autoescaped with `white-space:pre-wrap` and `|urlize` — plus one optional attached photo, which
+    is a FileField on the row rather than anything embedded in the text. "Se, sådan ser lokalet ud"
+    and a picture of the shopping list are most of what an event thread is for.
+
+    `body` is blank-able because the photo can be the whole comment; a row with NEITHER is what the
+    view refuses (see views.create_comment), because only the view knows whether the attached file
+    survived validation.
     """
 
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="comments")
     author = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="event_comments"
     )
-    body = models.TextField(max_length=MAX_COMMENT_CHARS, verbose_name="Kommentar")
+    # Blank when the photo IS the comment.
+    body = models.TextField(max_length=MAX_COMMENT_CHARS, blank=True, verbose_name="Kommentar")
+    # FileField rather than ImageField: ImageField needs Pillow, which production does not have.
+    # Under `begivenheder/` like Event.image, so the whole feature's media sits behind one prefix -
+    # and that prefix is not in core.media.PUBLIC_PREFIXES, so a comment photo needs a login.
+    image = models.FileField(
+        upload_to="begivenheder/kommentarer/%Y/%m/",
+        max_length=255,
+        blank=True,
+        verbose_name="Billede",
+        help_text="Valgfrit billede.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -463,6 +480,7 @@ class CalendarFeedToken(models.Model):
         return self.token
 
 
+@receiver(post_delete, sender=EventComment)
 @receiver(post_delete, sender=Event)
 def _delete_event_files(sender: type[models.Model], instance: models.Model, **kwargs: Any) -> None:  # noqa: ANN401
     """Remove an attached image from storage when its event goes.

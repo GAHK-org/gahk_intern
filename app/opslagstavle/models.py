@@ -225,19 +225,38 @@ class Notice(AuthoredByResident):
 
 
 class NoticeComment(AuthoredByResident):
-    """A reply to a notice. **Plain text, deliberately not Markdown.**
+    """A reply to a notice. **Plain text, deliberately not Markdown — with one attached photo.**
 
-    Keeping Markdown to the post body confines the embedded-image lifecycle (see NoticeImage) to one
-    model, keeps the compose toolbar single-purpose, and matches how people actually comment.
-    Rendered autoescaped with `white-space: pre-wrap` and `|urlize`, exactly like a Den Hurtige
-    reply. Reversible: allowing Markdown later is a template change and a test.
+    STILL NOT MARKDOWN, and the photo does not change that. The reason Markdown stays on the post
+    body is the embedded-image LIFECYCLE: a picture referenced from Markdown has no FK to hang on,
+    so NoticeImage exists to claim uploads at save time and an orphan sweep exists to collect the
+    ones nobody referenced. `image` here is an ordinary FileField on the row — one file, owned by
+    one comment, deleted with it by the post_delete receiver below. No claiming step, no orphan
+    window, nothing added to the compose toolbar. Body text is rendered autoescaped with
+    `white-space: pre-wrap` and `|urlize`, exactly like a Den Hurtige reply.
+
+    `body` IS BLANK-ABLE because the photo can be the whole comment — "her, se" is an answer, and
+    Den Hurtige's replies have always worked that way. What must not happen is a row with neither,
+    which the view enforces rather than the field: whether a photo counts depends on whether it
+    survived validation, and only the view knows that (see views.create_comment).
     """
 
     notice = models.ForeignKey(Notice, on_delete=models.CASCADE, related_name="comments")
     author = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notice_comments"
     )
-    body = models.TextField(max_length=MAX_COMMENT_CHARS, verbose_name="Kommentar")
+    # Blank when the photo IS the comment.
+    body = models.TextField(max_length=MAX_COMMENT_CHARS, blank=True, verbose_name="Kommentar")
+    # FileField, not ImageField, for the same reason QuickPost.image is one: ImageField needs
+    # Pillow, which is deliberately not a production dependency. core.uploads decides what counts
+    # as an image and the view applies it.
+    image = models.FileField(
+        upload_to="opslag/kommentarer/%Y/%m/",
+        max_length=255,
+        blank=True,
+        verbose_name="Billede",
+        help_text="Valgfrit billede.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -317,6 +336,7 @@ class NoticeImage(models.Model):
         return self.file.url if self.file else ""
 
 
+@receiver(post_delete, sender=NoticeComment)
 @receiver(post_delete, sender=NoticeImage)
 def _delete_notice_files(sender: type[models.Model], instance: models.Model, **kwargs: Any) -> None:  # noqa: ANN401
     """Remove the upload from storage when its row goes.

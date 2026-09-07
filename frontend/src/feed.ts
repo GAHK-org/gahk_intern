@@ -800,35 +800,101 @@ if (composer instanceof HTMLFormElement) {
   }
 }
 
-// ---- reply attachments ------------------------------------------------------------------------
-// The same confirmation for the thread panel's reply box, which never had one. It could get away
-// without while a reply also required text — you could see you had typed something — but a reply
-// may now be a PHOTO ON ITS OWN (see _thread.html and views.create_comment), and then the filename
-// is the only evidence on screen that there is anything to send.
+// ---- attachment notes -------------------------------------------------------------------------
+// What is on screen after you pick a photo, for every form in the project that takes one behind a
+// paperclip: Den Hurtige's reply box, and the comment forms on opslagstavlen and begivenheder.
 //
-// Delegated from `document` rather than bound to the input, because the panel does not exist when
-// this module runs and is replaced wholesale every time a different thread is opened. `change` does
-// not bubble on all legacy engines but does in every browser this PWA supports, and the reply form
-// carries data-morph-skip so the panel's own 5s poll cannot wipe the note back out.
+// A hidden <input type=file> behind a label has NO native feedback at all. That was survivable
+// while every one of these also required text — you could see you had typed something — but a
+// comment may now be a PHOTO ON ITS OWN, and then the note is the only evidence on screen that
+// there is anything to send. It shows three things, and each answers a question the paperclip
+// leaves open:
+//
+//   a THUMBNAIL      is it the right picture? A filename does not answer that, and picking the
+//                    wrong one out of a camera roll of "IMG_4821.jpg" is the common mistake.
+//                    Made with createObjectURL, which reads nothing and decodes in the browser -
+//                    no canvas, no library, no upload until the form is submitted.
+//   the FILENAME     which file, and the size, so an obviously-huge one is visible before the
+//                    server rejects it.
+//   a REMOVE button  there was previously no way to un-attach a photo short of reloading the page
+//                    and losing the typed text with it.
+//
+// OPTED INTO BY THE NOTE ELEMENT, not by a list of form classes. Any form containing
+// [data-file-note] gets this; a form without one is untouched. That is what let all three features
+// share it without this file having to know their class names, and it is why adding a fourth needs
+// no change here.
+//
+// Delegated from `document` rather than bound per input: the thread panel does not exist when this
+// module runs and is replaced wholesale every time a different thread is opened. `change` does not
+// bubble on some legacy engines but does in every browser this PWA supports, and the reply form
+// carries data-morph-skip so the panel's own 5s poll cannot wipe a note back out.
+const NOTE = "[data-file-note]";
+
+/** Drop the preview and let the browser reclaim the decoded image. */
+function clearNote(note: HTMLElement): void {
+  const thumb = note.querySelector<HTMLImageElement>("[data-file-note-thumb]");
+  if (thumb?.src) {
+    // Revoked, not merely reassigned: an object URL pins its Blob in memory until it is released,
+    // and a resident picking several photos in a row would otherwise leak every one of them.
+    URL.revokeObjectURL(thumb.src);
+    thumb.removeAttribute("src");
+    thumb.hidden = true;
+  }
+  const name = note.querySelector<HTMLElement>("[data-file-note-name]");
+  if (name) name.textContent = "";
+  note.hidden = true;
+}
+
+function fileSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
 document.addEventListener("change", (event) => {
   const input = event.target;
   if (!(input instanceof HTMLInputElement) || input.type !== "file") return;
-  const form = input.closest("form.reply-form");
-  const note = form?.querySelector<HTMLElement>("[data-reply-file]");
+  const note = input.closest("form")?.querySelector<HTMLElement>(NOTE);
   if (!note) return;
-  const name = input.files?.[0]?.name;
-  note.textContent = name ? `📎 ${name}` : "";
-  note.hidden = !name;
+
+  clearNote(note);
+  const file = input.files?.[0];
+  if (!file) return;
+
+  const name = note.querySelector<HTMLElement>("[data-file-note-name]");
+  if (name) name.textContent = `${file.name} · ${fileSize(file.size)}`;
+
+  // Only for something the browser will actually render. `accept="image/*"` steers the picker but
+  // does not bind it, and a broken-image icon is worse feedback than none - the filename still
+  // shows either way, and the server has the final say on what it will store (core.uploads).
+  const thumb = note.querySelector<HTMLImageElement>("[data-file-note-thumb]");
+  if (thumb && file.type.startsWith("image/")) {
+    thumb.src = URL.createObjectURL(file);
+    thumb.hidden = false;
+  }
+  note.hidden = false;
 });
 
-// The form resets itself on a successful post (hx-on::after-request in _thread.html), but a reset
-// clears only the FIELDS — this note is an ordinary element, so it would keep displaying the
-// filename of a photo that has already been sent, and the next reply would look pre-loaded.
+// Take it back off. Clearing `value` is what actually detaches the file - hiding the note alone
+// would leave the form still carrying the photo, which is the worst of both.
+document.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  if (!target.closest("[data-file-note-clear]")) return;
+  const form = target.closest("form");
+  const note = form?.querySelector<HTMLElement>(NOTE);
+  if (!form || !note) return;
+  for (const input of form.querySelectorAll<HTMLInputElement>('input[type="file"]')) {
+    input.value = "";
+  }
+  clearNote(note);
+});
+
+// The reply form resets itself on a successful post (hx-on::after-request in _thread.html), and a
+// reset clears only the FIELDS - the note is an ordinary element, so it would go on showing the
+// filename of a photo already sent and the next reply would look pre-loaded.
 document.addEventListener("reset", (event) => {
   const form = event.target;
   if (!(form instanceof HTMLFormElement)) return;
-  const note = form.querySelector<HTMLElement>("[data-reply-file]");
-  if (!note) return;
-  note.textContent = "";
-  note.hidden = true;
+  const note = form.querySelector<HTMLElement>(NOTE);
+  if (note) clearNote(note);
 });

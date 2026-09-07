@@ -45,19 +45,7 @@
 
   {% if push_configured %}
     {% comment %} Slim opt-in bar, driven by frontend/src/push.ts — mirrors opslagstavle/board.html. {% endcomment %}
-    <div class="push-bar" data-push data-topic="reparationer"
-         data-vapid-key="{{ vapid_public_key }}"
-         data-url="{% url 'reparationer:save_subscription' %}"
-         data-subscribed="{% if push_subscribed %}1{% else %}0{% endif %}"
-         data-on-label="Få besked om reparationer"
-         data-off-label="Slå fra på denne enhed"
-         data-off-label-short="Slå fra på enheden"
-         data-success-text="Du får nu besked om nye og overdragede reparationer."
-         data-off-text="Beskeder om reparationer er slået fra på denne enhed.">
-      {% csrf_token %}
-      <button type="button" data-push-button hidden></button>
-      <span class="muted" data-push-message hidden></span>
-    </div>
+    {% include "core/_push_bar.html" with topic="reparationer" url_name="reparationer:save_subscription" on_label="Få besked om reparationer" success_text="Du får nu besked om nye og overdragede reparationer." off_text="Beskeder om reparationer er slået fra på denne enhed." %}
   {% endif %}
 
   {% comment %}

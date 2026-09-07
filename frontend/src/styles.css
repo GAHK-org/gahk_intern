@@ -791,8 +791,30 @@
      by den_hurtige/_thread.html, so opslagstavlen's comment forms — which share .reply-form — are
      untouched. [hidden] needs saying because .reply-form's children are flex items, and display
      from the flex context beats the UA sheet's display:none. */
-  .reply-file { flex-basis:100%; font-size:12px; color:var(--muted); padding:4px 0 0 28px; }
-  .reply-file[hidden] { display:none; }
+  /* --- attachment note (frontend/src/feed.ts) ------------------------------------------------
+     What a form shows once a photo is picked, shared by Den Hurtige's reply box and the comment
+     forms on opslagstavlen and begivenheder. `hidden` is toggled from JS, and the explicit
+     [hidden] rule is needed because `display:flex` would otherwise beat the UA stylesheet. */
+  .file-note { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted);
+    margin-top:6px; }
+  .file-note[hidden] { display:none; }
+  /* The same 40px box .arkiv-thumb uses, so a preview is a familiar size on this site. Sized in
+     CSS rather than by attributes: the intrinsic dimensions are whatever the camera produced. */
+  .file-note img { width:40px; height:40px; flex:none; object-fit:cover; border-radius:6px;
+    border:1px solid var(--border); background:var(--surface-2); }
+  .file-note img[hidden] { display:none; }
+  /* Truncates rather than wrapping: a phone camera's filename is long and the note sits in a row
+     that must not grow a second line under a comment box. */
+  .file-note [data-file-note-name] { min-width:0; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; }
+  /* Quiet, like .btn-link-danger, and to the right of the name so it is never what the thumb is
+     mistaken for. Not styled red: removing an attachment you have not sent yet is not destructive. */
+  .file-note button { margin-left:auto; flex:none; background:none; border:0; padding:0;
+    font:inherit; font-size:12px; color:var(--muted); cursor:pointer; text-decoration:underline; }
+  .file-note button:hover { color:var(--ink); }
+  /* In the reply row the note takes a line of its own, indented past the paperclip so it lines up
+     under the text field rather than under the icon. */
+  .reply-form .file-note { flex-basis:100%; padding-left:28px; margin-top:4px; }
 
   /* Grid rather than a flex row so the duration can move to its own line on a narrow screen —
      inline, its "30 minutter" select was eating ~40% of the width and squeezing the message box

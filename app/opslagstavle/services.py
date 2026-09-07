@@ -72,6 +72,9 @@ def notify_new_comment(comment: "NoticeComment") -> None:
     push.send(
         recipients,
         head=f"{comment.author.full_name} svarede",
-        body=push.preview(comment.body),
+        # `or "📷 Billede"`: a photo-only comment has no text, and push.preview("") is "" —
+        # which on a lock screen reads as a notification that failed to load. Same fallback as
+        # den_hurtige.services uses for a photo-only reply.
+        body=push.preview(comment.body) or "📷 Billede",
         url=notice_url(comment.notice),
     )

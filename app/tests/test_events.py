@@ -19,6 +19,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
 from django.test import Client
 from django.test.utils import CaptureQueriesContext
@@ -41,6 +42,14 @@ from events.models import (
 from residents.models import Resident, Role
 
 EVENTS = "/intern/begivenheder/"
+
+
+def settings_media_root() -> object:
+    """MEDIA_ROOT as the `media_tmp` fixture left it — read late, never captured at import."""
+    from django.conf import settings as django_settings
+
+    return django_settings.MEDIA_ROOT
+
 
 pytestmark = pytest.mark.django_db
 
@@ -733,7 +742,6 @@ def test_purging_takes_the_answers_and_the_image_with_it(
 ) -> None:
     """A bulk queryset delete never calls Model.delete(), which is why the file cleanup is a
     post_delete signal. See core.files."""
-    from django.core.files.uploadedfile import SimpleUploadedFile
 
     event = make_event(beboer, starts_at=timezone.now() + datetime.timedelta(hours=1))
     services.set_answer(event.pk, other, Answer.JA)
@@ -903,14 +911,16 @@ def test_commenting_lands_back_on_the_thread(client: Client, beboer: Resident) -
 
 
 def test_a_blank_comment_is_refused(client: Client, beboer: Resident) -> None:
-    """Whitespace only. Django's own validation accepts it; the form's clean_body is what does not."""
+    """Whitespace only, and nothing attached. Django accepts a blank TextField and the form now
+    strips rather than rejects, so the refusal is the view's — see test_neither_text_nor_photo_is_refused
+    for the same rule stated from the photo side."""
     event = make_event(beboer)
     client.force_login(beboer)
 
     response = client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "   \n  "}, follow=True)
 
     assert not EventComment.objects.exists()
-    assert "Skriv en kommentar." in response.content.decode()
+    assert "Skriv en kommentar, eller vedhæft et billede." in response.content.decode()
 
 
 def test_the_thread_is_rendered_on_the_event_page(client: Client, beboer: Resident) -> None:
@@ -1162,6 +1172,185 @@ def test_rendering_a_thread_costs_no_query_per_comment(
     assert len(many.captured_queries) == len(few.captured_queries), (
         f"{len(few.captured_queries)} queries for 3 comments, {len(many.captured_queries)} for 12"
     )
+
+
+# --- photos on comments -------------------------------------------------------------------------
+#
+# One optional picture per comment, and a picture on its own is a whole comment. The awkward case is
+# a photo-only comment whose photo is refused: it has to fail, and it has to say both why the
+# picture did not count and why the comment did not land. See views.create_comment.
+
+
+def test_a_comment_can_carry_a_photo(client: Client, beboer: Resident, media_tmp: None) -> None:
+    event = make_event(beboer)
+    client.force_login(beboer)
+    photo = SimpleUploadedFile("lokale.jpg", bytes.fromhex("ffd8ff") + b"x" * 512, content_type="image/jpeg")
+
+    client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "Sådan ser lokalet ud", "image": photo})
+
+    comment = EventComment.objects.get()
+    assert comment.body == "Sådan ser lokalet ud"
+    assert comment.image, "the file must be attached, not merely accepted"
+    assert comment.image.name.startswith("begivenheder/kommentarer/")
+
+
+def test_a_photo_on_its_own_is_a_whole_comment(client: Client, beboer: Resident, media_tmp: None) -> None:
+    """ "Her, se" is an answer. The body is blank-able for exactly this."""
+    event = make_event(beboer)
+    client.force_login(beboer)
+    photo = SimpleUploadedFile(
+        "kvittering.jpg", bytes.fromhex("ffd8ff") + b"x" * 512, content_type="image/jpeg"
+    )
+
+    client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "", "image": photo})
+
+    comment = EventComment.objects.get()
+    assert comment.body == ""
+    assert comment.image
+
+
+def test_neither_text_nor_photo_is_refused(client: Client, beboer: Resident) -> None:
+    event = make_event(beboer)
+    client.force_login(beboer)
+
+    response = client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "  "}, follow=True)
+
+    assert not EventComment.objects.exists()
+    assert "Skriv en kommentar, eller vedhæft et billede." in response.content.decode()
+
+
+def test_a_refused_photo_does_not_throw_away_the_text_beside_it(
+    client: Client, beboer: Resident, media_tmp: None
+) -> None:
+    """An SVG is refused by core.uploads because it executes script when opened from our own
+    /media/. Losing a typed comment to that would be the worse outcome, so the comment saves and the
+    warning explains the missing picture."""
+    event = make_event(beboer)
+    client.force_login(beboer)
+    bad = SimpleUploadedFile(
+        "evil.svg", b"<svg xmlns='http://www.w3.org/2000/svg'/>", content_type="image/svg+xml"
+    )
+
+    response = client.post(
+        f"{EVENTS}{event.pk}/kommentar", {"body": "Kan man tage børn med?", "image": bad}, follow=True
+    )
+
+    comment = EventComment.objects.get()
+    assert comment.body == "Kan man tage børn med?"
+    assert not comment.image, "the SVG must not be stored"
+    assert "Billedet blev ikke gemt" in response.content.decode()
+
+
+def test_a_refused_photo_with_no_text_reports_both_halves(
+    client: Client, beboer: Resident, media_tmp: None
+) -> None:
+    """core.uploads.attached_image returns None for "nothing attached" and "attached but refused"
+    alike, so this lands in the empty branch — which is right, there is nothing to save. On its own
+    that would explain only half of it, so both messages have to arrive together."""
+    event = make_event(beboer)
+    client.force_login(beboer)
+    bad = SimpleUploadedFile("evil.svg", b"<svg/>", content_type="image/svg+xml")
+
+    response = client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "", "image": bad}, follow=True)
+    body = response.content.decode()
+
+    assert not EventComment.objects.exists()
+    assert "Billedet blev ikke gemt" in body
+    assert "Skriv en kommentar, eller vedhæft et billede." in body
+
+
+def test_an_oversized_photo_is_refused(
+    client: Client, beboer: Resident, media_tmp: None, settings: object
+) -> None:
+    settings.EVENT_IMAGE_MAX_MB = 1  # type: ignore[attr-defined]
+    event = make_event(beboer)
+    client.force_login(beboer)
+    huge = SimpleUploadedFile(
+        "stor.jpg", bytes.fromhex("ffd8ff") + b"x" * (2 * 1024 * 1024), content_type="image/jpeg"
+    )
+
+    response = client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "Se her", "image": huge}, follow=True)
+
+    assert not EventComment.objects.get().image
+    assert "for stort" in response.content.decode()
+
+
+def test_the_comment_photo_is_rendered_on_the_event_page(
+    client: Client, beboer: Resident, media_tmp: None
+) -> None:
+    event = make_event(beboer)
+    client.force_login(beboer)
+    photo = SimpleUploadedFile("lokale.jpg", bytes.fromhex("ffd8ff") + b"x" * 512, content_type="image/jpeg")
+    client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "", "image": photo})
+
+    body = client.get(f"{EVENTS}{event.pk}").content.decode()
+
+    assert EventComment.objects.get().image.url in body
+    assert 'enctype="multipart/form-data"' in body, "without it request.FILES is silently empty"
+
+
+def test_deleting_a_comment_deletes_its_photo(
+    beboer: Resident, media_tmp: None, django_capture_on_commit_callbacks: Callable
+) -> None:
+    """The post_delete receiver, which keeps "the comment is gone" from leaving a paid-for file that
+    nothing references.
+
+    WRAPPED IN django_capture_on_commit_callbacks BECAUSE THE DELETE IS DEFERRED, and that deferral
+    is the feature: core.files.delete_attached_files purges on `transaction.on_commit`, so a delete
+    that is rolled back cannot destroy the file. A test runs inside a transaction that never
+    commits, so without this the callback simply never fires and the assertion would be testing the
+    test harness. Same pattern as the Den Hurtige and CMS image-deletion tests.
+    """
+    from django.core.files.base import ContentFile
+
+    event = make_event(beboer)
+    comment = EventComment.objects.create(event=event, author=beboer, body="Se her")
+    comment.image.save("lokale.jpg", ContentFile(b"jpegbytes"), save=True)
+    path = Path(str(settings_media_root())) / comment.image.name
+    assert path.is_file()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        comment.delete()
+
+    assert not path.is_file()
+
+
+def test_a_photo_only_comment_notifies_with_a_body_rather_than_a_blank(
+    client: Client, beboer: Resident, other: Resident, pushes: list, media_tmp: None
+) -> None:
+    """push.preview("") is "", and a notification with an empty body reads on a lock screen as
+    though it failed to load."""
+    event = make_event(beboer)
+    subscribe(beboer, "https://push.example/a")
+    client.force_login(other)
+    photo = SimpleUploadedFile(
+        "kvittering.jpg", bytes.fromhex("ffd8ff") + b"x" * 512, content_type="image/jpeg"
+    )
+
+    client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "", "image": photo})
+
+    assert len(pushes) == 1
+    assert pushes[0][1]["body"].strip() not in ("", event.title + ": ")
+    assert "Billede" in pushes[0][1]["body"]
+
+
+def test_the_comment_form_carries_the_attachment_note_hooks(client: Client, beboer: Resident) -> None:
+    """The hooks frontend/src/feed.ts finds the note by. The BEHAVIOUR (thumbnail, filename, the
+    remove button) is JavaScript and this project has no JS test runner, so what is asserted here is
+    the contract between the template and that module: the note exists, it starts hidden, and it
+    carries the three data attributes the handler queries. Rename one of those without the other and
+    the paperclip silently stops giving any feedback at all - which is the state this replaced.
+    """
+    event = make_event(beboer)
+    client.force_login(beboer)
+
+    body = client.get(f"{EVENTS}{event.pk}").content.decode()
+
+    assert "data-file-note" in body
+    assert "data-file-note-thumb" in body
+    assert "data-file-note-name" in body
+    assert "data-file-note-clear" in body
+    assert '<div class="file-note" data-file-note hidden>' in body
 
 
 def test_a_private_event_is_absent_from_the_list_for_an_outsider(

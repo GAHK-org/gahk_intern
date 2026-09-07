@@ -182,13 +182,42 @@
           door to arbitrary markup.
         {% endcomment %}
         <div class="msg-text">{{ comment.body|urlize }}</div>
+        {% if comment.image %}
+          {% comment %}
+            A link to the full picture around a capped thumbnail, exactly as a Den Hurtige message
+            renders its photo — same `.msg-image` rule, so the two look alike and no CSS was added.
+            loading="lazy" because a long thread is the case this exists for.
+          {% endcomment %}
+          <a href="{{ comment.image.url }}" target="_blank" rel="noopener" class="msg-image">
+            <img src="{{ comment.image.url }}" alt="" loading="lazy">
+          </a>
+        {% endif %}
       </div>
     {% empty %}
       <p class="muted">Ingen kommentarer endnu.</p>
     {% endfor %}
 
-    <form method="post" action="{% url 'events:create_comment' event.pk %}" class="comment-form">
+    <form method="post" enctype="multipart/form-data"
+          action="{% url 'events:create_comment' event.pk %}" class="comment-form">
       {% csrf_token %}
+      {% comment %}
+        ENCTYPE IS LOAD-BEARING. Without multipart/form-data the browser posts the file's NAME and
+        nothing else, request.FILES is empty, and the comment saves with no picture and no error
+        anywhere — the single most confusing way this can break.
+
+        NOT `required` on either control: a comment may be a photo on its own, and text on its own
+        is the ordinary case. "Neither" is refused by the view, which is the only place that knows
+        whether an attached file survived validation (see views.create_comment).
+
+        The paperclip is Den Hurtige's `.reply-attach` — a hidden input behind a clickable label,
+        so it looks like the rest of the site instead of a browser file picker.
+      {% endcomment %}
+      <label class="reply-attach" for="id_comment_image_{{ event.pk }}" title="Vedhæft billede">
+        <span aria-hidden="true">📎</span>
+        <span class="sr-only">Vedhæft billede til kommentaren</span>
+        <input type="file" id="id_comment_image_{{ event.pk }}" name="image" accept="image/*">
+      </label>
+
       {% for field in comment_form %}
         <div class="mb-3">
           <label class="sr-only" for="{{ field.id_for_label }}">{{ field.label }}</label>
@@ -196,6 +225,23 @@
           {% if field.errors %}<p class="errorlist text-sm">{{ field.errors|striptags }}</p>{% endif %}
         </div>
       {% endfor %}
+      {% comment %}
+        Feedback that the photo attached, and the only way to take it back off. A hidden file input
+        behind a paperclip shows nothing at all by itself, and a comment may be a photo ON ITS OWN -
+        so without this there is no evidence on screen that there is anything to send.
+
+        Empty and `hidden` in the markup: frontend/src/feed.ts fills in the thumbnail, the filename and
+        the size on `change`, and hides it again on clear or reset. It degrades to nothing without JS,
+        which is correct - the form still submits, and the server still validates the file.
+
+        Attributes rather than ids: opslagstavlen renders one of these per page, but the thread panel
+        renders one per thread, and the handler is shared with both.
+      {% endcomment %}
+      <div class="file-note" data-file-note hidden>
+        <img data-file-note-thumb alt="" hidden>
+        <span data-file-note-name></span>
+        <button type="button" data-file-note-clear>Fjern</button>
+      </div>
       <button type="submit" class="btn">Kommentér</button>
     </form>
   </section>

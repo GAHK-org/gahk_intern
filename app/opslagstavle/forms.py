@@ -104,10 +104,14 @@ class NoticeCommentForm(forms.ModelForm):
         }
 
     def clean_body(self) -> str:
-        body = (self.cleaned_data.get("body") or "").strip()
-        if not body:
-            raise forms.ValidationError("Skriv en kommentar.")
-        return body
+        """Strips, and no longer REJECTS an empty body.
+
+        A comment may be a photo on its own, and this form never sees the photo: it is validated
+        outside, against core.uploads, so that a refused file can warn and be dropped rather than
+        failing the whole submission (the same split Den Hurtige uses). "Neither text nor picture"
+        is therefore a question only the view can answer, and it does.
+        """
+        return (self.cleaned_data.get("body") or "").strip()
 
 
 class ReactionForm(forms.Form):
