@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     "opslagstavle",
     "events",
     "reparationer",
+    "arkiv",
 ]
 
 MIDDLEWARE = [

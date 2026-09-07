@@ -1499,4 +1499,58 @@
      than the card snapping back a moment later with an explanation. */
   .kanban-col.is-drop-refused { border-color: var(--neg); background: var(--neg-bg); }
   .kanban-note { font-size: 13px; }
+
+  /* --- Arkiv -------------------------------------------------------------------------------
+     A file browser is a list, not a grid: names are the thing being scanned, they are long and of
+     wildly different lengths, and a grid would either truncate them or leave rivers of whitespace.
+     Reuses .card-flat/.chip/.icon rather than inventing an Arkiv look. */
+  .breadcrumb { display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-size:13px; }
+  .breadcrumb a { color:var(--brass); text-decoration:none; }
+  .breadcrumb a:hover { text-decoration:underline; }
+  .breadcrumb [aria-hidden] { color:var(--muted); }
+  .breadcrumb [aria-current] { color:var(--muted); }
+
+  .arkiv-list { list-style:none; margin:0; padding:0; border:1px solid var(--line); border-radius:10px;
+    overflow:hidden; background:var(--card); }
+  .arkiv-list li { display:flex; align-items:center; gap:10px; padding:10px 14px;
+    border-bottom:1px solid var(--line); }
+  .arkiv-list li:last-child { border-bottom:0; }
+  .arkiv-list li > a { display:flex; align-items:center; gap:10px; flex:1 1 auto; min-width:0;
+    color:inherit; text-decoration:none; }
+  .arkiv-list li > a:hover .arkiv-name { text-decoration:underline; }
+  /* There is no base `.ni` rule in this stylesheet - every use states its own size, stroke and
+     fill (see .nav-item .ni, .chip .ni). Omitting them renders the symbol at its intrinsic
+     size, which is how the folder icon first came out enormous. */
+  .arkiv-list .ni { width:18px; height:18px; flex:none; stroke:currentColor; fill:none;
+    color:var(--brass); }
+  /* The name truncates rather than wrapping: one row per file keeps a long folder scannable, and
+     the full name is still in the link's accessible name. */
+  .arkiv-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .arkiv-meta { flex:0 0 auto; font-size:12px; }
+
+  /* Same box as the .ni icon it replaces, so a folder of mixed images and documents does not
+     jag left and right down the list. object-fit keeps portraits from stretching. */
+  .arkiv-thumb { width:40px; height:40px; flex:none; object-fit:cover; border-radius:4px;
+    background:var(--surface-2); }
+
+  .arkiv-newfolder { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .arkiv-newfolder input { flex:1 1 220px; max-width:340px; }
+  /* A destructive action that is one row among many: styled as a quiet link rather than a button,
+     so a list of thirty files is not thirty red buttons. It is a soft delete, so the weight of the
+     control should match the weight of the consequence. */
+  .arkiv-remove { margin:0; flex:0 0 auto; }
+  .btn-link-danger { background:none; border:0; padding:0; font:inherit; font-size:12px;
+    color:var(--muted); cursor:pointer; text-decoration:underline; }
+  .btn-link-danger:hover { color:var(--neg); }
+
+  .arkiv-upload { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  /* The <input> is hidden and the <label> is the control, so the button matches every other
+     button on the site instead of rendering as a browser file picker. */
+  .arkiv-upload label { cursor:pointer; margin:0; }
+  .arkiv-upload [data-upload-status] { font-size:13px; }
+
+  @media (max-width: 560px) {
+    /* The metadata is the first thing to go: on a phone the name is the whole point. */
+    .arkiv-meta { display:none; }
+  }
 }

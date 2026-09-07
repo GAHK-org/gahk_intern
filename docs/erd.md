@@ -501,6 +501,31 @@ erDiagram
         datetime created_at
     }
 
+    arkiv_ArchiveFolder {
+        int id PK
+        int parent_id FK
+        string name
+        int workgroup_id FK
+        int effective_workgroup_id FK
+        int created_by_id FK
+        datetime created_at
+        datetime deleted_at
+    }
+
+    arkiv_ArchiveFile {
+        int id PK
+        int folder_id FK
+        string name
+        string sha256
+        string size
+        string content_type
+        int uploaded_by_id FK
+        datetime uploaded_at
+        datetime deleted_at
+        int deleted_by_id FK
+        bool has_thumbnail
+    }
+
     core_PushSubscription }o--|| residents_Resident : "user"
     residents_Resident }o--|o residents_Resident : "sponsor"
     residents_Residency }o--|| residents_Resident : "resident"
@@ -563,6 +588,13 @@ erDiagram
     reparationer_RepairTask }o--|| residents_Resident : "reported_by"
     reparationer_RepairComment }o--|| reparationer_RepairTask : "task"
     reparationer_RepairComment }o--|| residents_Resident : "author"
+    arkiv_ArchiveFolder }o--|o arkiv_ArchiveFolder : "parent"
+    arkiv_ArchiveFolder }o--|o core_Workgroup : "workgroup"
+    arkiv_ArchiveFolder }o--|o core_Workgroup : "effective_workgroup"
+    arkiv_ArchiveFolder }o--|o residents_Resident : "created_by"
+    arkiv_ArchiveFile }o--|| arkiv_ArchiveFolder : "folder"
+    arkiv_ArchiveFile }o--|o residents_Resident : "uploaded_by"
+    arkiv_ArchiveFile }o--|o residents_Resident : "deleted_by"
 ```
 
 ## admissions
@@ -632,6 +664,48 @@ erDiagram
     ak_AkEntry }o--|| residents_Resident : "resident"
     ak_AkEntry }o--|o residents_Resident : "created_by"
     ak_AkMonthlyCharge }o--|o residents_Resident : "updated_by"
+```
+
+## arkiv
+
+```mermaid
+erDiagram
+    arkiv_ArchiveFolder {
+        int id PK
+        int parent_id FK
+        string name
+        int workgroup_id FK
+        int effective_workgroup_id FK
+        int created_by_id FK
+        datetime created_at
+        datetime deleted_at
+    }
+
+    arkiv_ArchiveFile {
+        int id PK
+        int folder_id FK
+        string name
+        string sha256
+        string size
+        string content_type
+        int uploaded_by_id FK
+        datetime uploaded_at
+        datetime deleted_at
+        int deleted_by_id FK
+        bool has_thumbnail
+    }
+
+    core_Workgroup { }
+
+    residents_Resident { }
+
+    arkiv_ArchiveFolder }o--|o arkiv_ArchiveFolder : "parent"
+    arkiv_ArchiveFolder }o--|o core_Workgroup : "workgroup"
+    arkiv_ArchiveFolder }o--|o core_Workgroup : "effective_workgroup"
+    arkiv_ArchiveFolder }o--|o residents_Resident : "created_by"
+    arkiv_ArchiveFile }o--|| arkiv_ArchiveFolder : "folder"
+    arkiv_ArchiveFile }o--|o residents_Resident : "uploaded_by"
+    arkiv_ArchiveFile }o--|o residents_Resident : "deleted_by"
 ```
 
 ## cms

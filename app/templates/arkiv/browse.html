@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}{% if folder %}{{ folder.name }} - Arkiv{% else %}Arkiv{% endif %} - GAHK Intern{% endblock %}
+{% block content_width %}max-w-5xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Ressourcer</p>
+      <h1>Arkiv {% if limited_rollout %}<span class="chip chip-brass">Under test</span>{% endif %}</h1>
+    </div>
+  </div>
+
+  {% comment %}
+    Breadcrumb from ancestors(), which walks parents in Python. The root link is always present so
+    there is a way back out of a folder whose parent the resident cannot see - which cannot happen
+    today (visibility is inherited downwards) but would be a dead end if it ever did.
+  {% endcomment %}
+  <nav class="breadcrumb mb-4" aria-label="Sti">
+    <a href="{% url 'arkiv:root' %}">Arkiv</a>
+    {% for crumb in ancestors %}
+      <span aria-hidden="true">/</span>
+      <a href="{% url 'arkiv:folder' crumb.pk %}">{{ crumb.name }}</a>
+    {% endfor %}
+    {% if folder %}
+      <span aria-hidden="true">/</span>
+      <span aria-current="page">{{ folder.name }}</span>
+    {% endif %}
+  </nav>
+
+  {% if folder and folder.effective_workgroup %}
+    <p class="muted mb-4">
+      Kun synlig for {{ folder.effective_workgroup.name }} - gruppens medlemmer i denne måned.
+    </p>
+  {% endif %}
+
+  {% if can_write %}
+    {% comment %}
+      The bytes go straight to the bucket, not through Django - see arkiv/uploads.py and
+      frontend/src/arkiv.ts. The three URLs are handed over as data-* rather than built in JS so
+      that {% url %} stays the single source of truth for routing.
+    {% endcomment %}
+    <div class="arkiv-upload mb-4"
+         data-arkiv-upload
+         data-begin-url="{% url 'arkiv:upload_begin' folder.pk %}"
+         data-direct-url="{% url 'arkiv:upload_direct' folder.pk %}"
+         data-commit-url="{% url 'arkiv:upload_commit' folder.pk %}">
+      <label class="btn btn-secondary">
+        Læg filer op
+        <input type="file" multiple hidden>
+      </label>
+      <span class="muted" data-upload-status></span>
+    </div>
+
+    {% comment %}
+      A plain POST form, not fetch: there is no partial to swap, the result is a page worth having in
+      history, and it works with JavaScript off. Only the upload needs fetch, because those bytes
+      bypass Django entirely. Subfolders only - roots belong to Inspektionen (can_manage_roots).
+    {% endcomment %}
+    <form method="post" action="{% url 'arkiv:folder_create' folder.pk %}" class="arkiv-newfolder mb-4">
+      {% csrf_token %}
+      <label class="sr-only" for="ny-mappe">Navn på ny mappe</label>
+      <input id="ny-mappe" type="text" name="name" maxlength="120" placeholder="Navn på ny mappe…" required>
+      <button type="submit" class="btn btn-secondary">Opret mappe</button>
+    </form>
+  {% endif %}
+
+  {% if not subfolders and not files %}
+    <p class="muted">
+      {% if folder %}
+        Mappen er tom.
+      {% else %}
+        Der er ingen mapper endnu.
+        {% if can_manage_roots %}Opret dem i <a href="/django-admin/arkiv/archivefolder/">administrationen</a>.{% endif %}
+      {% endif %}
+    </p>
+  {% endif %}
+
+  {% if subfolders %}
+    <ul class="arkiv-list mb-4">
+      {% for sub in subfolders %}
+        <li>
+          <a href="{% url 'arkiv:folder' sub.pk %}">
+            <svg class="ni" aria-hidden="true"><use href="#i-folder"></use></svg>
+            <span class="arkiv-name">{{ sub.name }}</span>
+          </a>
+          {% if sub.workgroup %}<span class="chip">{{ sub.workgroup.name }}</span>{% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  {% if files %}
+    <ul class="arkiv-list">
+      {% for file in files %}
+        <li>
+          {% comment %}
+            Through the download view, never a presigned URL in the page: that URL is a bearer token
+            for the file and would outlive the reader's right to it. See arkiv/storage.py.
+          {% endcomment %}
+          <a href="{% url 'arkiv:download' file.pk %}">
+            {% if file.has_thumbnail %}
+              {% comment %}
+                loading="lazy" because a folder of two hundred party photographs is the case this
+                exists for. alt="" and aria-hidden: the link text beside it already names the file,
+                so announcing it twice is noise to a screen reader.
+              {% endcomment %}
+              <img class="arkiv-thumb" src="{% url 'arkiv:thumbnail' file.pk %}" alt="" aria-hidden="true"
+                   loading="lazy" width="40" height="40">
+            {% else %}
+              <svg class="ni" aria-hidden="true"><use href="#i-file"></use></svg>
+            {% endif %}
+            <span class="arkiv-name">{{ file.name }}</span>
+          </a>
+          <span class="muted arkiv-meta">
+            {{ file.size|filesizeformat }}
+            {% if file.uploaded_by %} · {{ file.uploaded_by.full_name }}{% endif %}
+          </span>
+          {% if can_write %}
+            {% comment %}
+              Soft delete: the row is marked and the bytes stay, so this is recoverable by an
+              administrator. That is what makes it reasonable for anyone who can write here to do
+              it - see arkiv/access.py::can_delete_file.
+            {% endcomment %}
+            <form method="post" action="{% url 'arkiv:file_delete' file.pk %}" class="arkiv-remove">
+              {% csrf_token %}
+              <button type="submit" class="btn-link-danger"
+                      aria-label="Fjern {{ file.name }}">Fjern</button>
+            </form>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+{% endblock %}

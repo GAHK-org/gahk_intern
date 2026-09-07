@@ -532,3 +532,53 @@ def test_the_guard_names_the_escape_hatch(settings: object) -> None:
 
     assert "ALLOW_LOCAL_MEDIA=1" in hint
     assert "S3_BUCKET" in hint
+
+
+# --- conditional GET (the dev-server regression) ----------------------------------------------------
+#
+# django.views.static.serve - which core.media.serve_media replaced - answered If-Modified-Since with
+# a 304 and set Last-Modified. The first version of serve_media did neither, and the symptom was not
+# an error: every image on a page re-downloaded in full on every load. On alumnelisten that is ~124
+# profile pictures of up to a megabyte each through a single-threaded dev server, which reads as
+# "the site got slow" rather than as a caching bug.
+
+
+@pytest.mark.django_db
+def test_a_served_file_carries_last_modified(media_tmp: Path) -> None:
+    from django.test import Client
+
+    store(media_tmp, "cms/logo.jpg")
+
+    response = Client().get("/media/cms/logo.jpg")
+
+    assert response.status_code == 200
+    assert response.headers.get("Last-Modified"), "without this the browser cannot revalidate"
+
+
+@pytest.mark.django_db
+def test_an_unchanged_file_revalidates_to_304(media_tmp: Path) -> None:
+    """The assertion that would have caught it: a 200 here is a full re-send."""
+    from django.test import Client
+    from django.utils.http import http_date
+
+    store(media_tmp, "cms/logo.jpg")
+    mtime = (media_tmp / "cms" / "logo.jpg").stat().st_mtime
+
+    response = Client().get("/media/cms/logo.jpg", HTTP_IF_MODIFIED_SINCE=http_date(mtime))
+
+    assert response.status_code == 304
+
+
+@pytest.mark.django_db
+def test_a_modified_file_is_sent_again(media_tmp: Path) -> None:
+    """No max-age, deliberately: an image replaced in place during development must not be stale."""
+    from django.test import Client
+    from django.utils.http import http_date
+
+    store(media_tmp, "cms/logo.jpg")
+    long_ago = http_date(0)
+
+    response = Client().get("/media/cms/logo.jpg", HTTP_IF_MODIFIED_SINCE=long_ago)
+
+    assert response.status_code == 200
+    assert b"".join(response.streaming_content) == b"pngbytes"

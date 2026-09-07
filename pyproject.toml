@@ -41,6 +41,12 @@ dev = [
     "mypy>=2.1.0",
     "django-stubs[compatible-mypy]>=6.0.9",
     "prek>=0.4.9",
+    # DEV ONLY, and deliberately so, exactly like the icalendar entry above. Live Arkiv uploads make
+    # their own preview in the browser (frontend/src/imageupload.ts), so production has no image
+    # library and needs none. This exists for `manage.py make_arkiv_thumbnails`, the one-off that
+    # gives the imported Dropbox backlog previews nobody is going to re-upload by hand. pip-audit
+    # runs against the production lockfile (--no-dev), so it costs prod nothing.
+    "pillow>=11.0",
 ]
 
 # This is an application, not a distributable package: uv manages the venv + deps but does not build/

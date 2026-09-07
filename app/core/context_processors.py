@@ -5,6 +5,7 @@ from collections.abc import Collection
 from django.conf import settings
 from django.http import HttpRequest
 
+from arkiv.access import roles_allowed as arkiv_allowed
 from den_hurtige.access import roles_allowed as den_hurtige_allowed
 from events.access import roles_allowed as events_allowed
 from opslagstavle.access import roles_allowed as opslagstavle_allowed
@@ -93,17 +94,25 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
         administration.append(("/admin/roles", "Roller", "users"))
     # Stamtræ and Statistik sit here rather than under Oversigt, which they used to. Oversigt is
     # what is happening NOW — the dashboard, your own profile, the three feeds, who lives here — and
-    # you open those to see whether anything has changed. These two are reference: nothing in them
+    # you open those to see whether anything has changed. These are reference: nothing in them
     # changes between visits, and you go to them to look something up. That is what Ressourcer is,
-    # which is why the wiki is already in it.
+    # and it is why the wiki and the arkiv belong in it too.
     #
-    # Internal pages FIRST, the two external links last. The section had held nothing but outbound
-    # links, and keeping those together at the bottom stops the sidebar mixing "leaves the site"
-    # with "does not" halfway down a list. Note _active_nav_url skips anything with a scheme, so
-    # only these two new entries can ever light up in here.
+    # Internal pages FIRST, the external links last. Keeping the outbound links together at the
+    # bottom stops the sidebar mixing "leaves the site" with "does not" halfway down a list. Note
+    # _active_nav_url skips anything with a scheme, so only the internal entries here can light up.
+    #
+    # The two UNCONDITIONAL entries lead and the gated one follows, so the top of the section does
+    # not move depending on who is reading it.
     ressourcer: list[NavItem] = [
         ("/intern/stamtree/", "Stamtræ", "tree"),
         ("/intern/statistik/", "Statistik", "chart"),
+    ]
+    # Conditional on the rollout gate, like Den Hurtige / Ankebogen / Begivenheder above: the
+    # sidebar must never advertise a page that answers 403.
+    if arkiv_allowed(roles):
+        ressourcer.append(("/intern/arkiv/", "Arkiv", "archive"))
+    ressourcer += [
         (settings.WIKI_URL, "Wiki", "book"),
         (settings.FEEDBACK_URL, "Fejl & ønsker", "bug"),
     ]
