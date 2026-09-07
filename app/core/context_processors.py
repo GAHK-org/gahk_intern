@@ -59,11 +59,8 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
         oversigt.append(("/intern/ankebogen/", "Ankebogen", "board"))
     if events_allowed(roles):
         oversigt.append(("/intern/begivenheder/", "Begivenheder", "calendar"))
-    oversigt += [
-        ("/intern/alumneliste/", "Alumneliste", "list"),
-        ("/intern/stamtree/", "Stamtræ", "tree"),
-        ("/intern/statistik/", "Statistik", "chart"),
-    ]
+    # Alumneliste stays here; Stamtræ and Statistik moved to Ressourcer (see below).
+    oversigt.append(("/intern/alumneliste/", "Alumneliste", "list"))
     vaerelser: list[NavItem] = [
         ("/intern/soegvaerelse/", "Søg værelse", "house"),
         ("/intern/vaerelsestjek/", "Værelsestjek", "inspect"),  # open to every resident
@@ -94,7 +91,19 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     if "administrator" in roles:
         administration.append(("/admin/", "Site-admin", "gear"))
         administration.append(("/admin/roles", "Roller", "users"))
+    # Stamtræ and Statistik sit here rather than under Oversigt, which they used to. Oversigt is
+    # what is happening NOW — the dashboard, your own profile, the three feeds, who lives here — and
+    # you open those to see whether anything has changed. These two are reference: nothing in them
+    # changes between visits, and you go to them to look something up. That is what Ressourcer is,
+    # which is why the wiki is already in it.
+    #
+    # Internal pages FIRST, the two external links last. The section had held nothing but outbound
+    # links, and keeping those together at the bottom stops the sidebar mixing "leaves the site"
+    # with "does not" halfway down a list. Note _active_nav_url skips anything with a scheme, so
+    # only these two new entries can ever light up in here.
     ressourcer: list[NavItem] = [
+        ("/intern/stamtree/", "Stamtræ", "tree"),
+        ("/intern/statistik/", "Statistik", "chart"),
         (settings.WIKI_URL, "Wiki", "book"),
         (settings.FEEDBACK_URL, "Fejl & ønsker", "bug"),
     ]
