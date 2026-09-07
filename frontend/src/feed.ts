@@ -521,19 +521,31 @@ if (document.body.classList.contains("chat-page")) {
 // vertical axis to the browser (so the feed still scrolls with its native momentum) and hands us
 // the horizontal one. A flick that the browser claims as a scroll arrives here as pointercancel.
 const SWIPE_SLOP = 12; // px of HORIZONTAL travel before the axis can be called
-const SWIPE_TRIGGER = 68; // px that commits the gesture
+// px of travel PAST the axis call that commits the gesture. Two of them, because the two gestures
+// are not equally reversible: opening a thread is a view change the back arrow undoes, deleting is
+// permanent. The destructive one is the longer haul; the one people reach for twenty times an
+// evening is the shorter.
+const SWIPE_TRIGGER = 48;
+const SWIPE_TRIGGER_DELETE = 62;
 const SWIPE_MAX = 96; // px the element will actually move, however far the thumb goes
-// px of travel before the icon under the message starts fading in. It is the far edge of the hint
-// band itself -- `left:6px` plus its 32px width -- because the icons paint BEHIND the bubble (see
-// the .msg-hint block in styles.css): until the message has cleared that much, fading one in only
-// lights up the sliver of it that is still sticking out past the bubble's corner.
-const SWIPE_HINT_FROM = 38;
+// A FLICK COMMITS WITHOUT EVER REACHING THE TRIGGER: px/ms of horizontal speed at release, and the
+// least travel that speed may commit from. Distance alone made every open a deliberate HAUL at
+// whatever pace the thumb happened to be moving, which is most of what "hard to control" was -- a
+// quick confident flick across a message did nothing whatever, because the finger left the screen
+// at 40px. Speed is read from the last few frames only (SWIPE_FLICK_STALE), so a drag that comes
+// to rest under the thumb and then lifts is a drag, not a flick.
+const SWIPE_FLICK_SPEED = 0.4;
+const SWIPE_FLICK_MIN = 24;
+const SWIPE_FLICK_STALE = 90; // ms since the last move past which the recorded speed means nothing
+// px the MESSAGE must travel before the icon under it starts fading in: the point at which the
+// icon is no longer half-covered by whatever is sliding off it. The hints paint BEHIND the bubble
+// (see the .msg-hint block in styles.css) and their band runs 6px..38px from the edge, so on an
+// incoming message it is the AVATAR (10px..44px) that has to clear x=38, and on your own it is the
+// bubble, whose edge sits at the 10px padding. Both come out at 28.
+const SWIPE_HINT_FROM = 28;
 // Vertical still wins a tie, and then some: this is a scrolling list first and a gesture surface
 // second. But losing the tie no longer ENDS the gesture -- see the axis block in pointermove.
 const SWIPE_X_BIAS = 1.3;
-// px of vertical travel that ends a gesture outright, on its own, when the finger has not gone
-// SWIPE_SLOP sideways in all that distance. That is a scroll however the browser has read it.
-const SWIPE_SCROLL_SLOP = 30;
 
 type SwipeAction = "thread" | "delete" | "close";
 
@@ -542,6 +554,16 @@ interface Drag {
   el: HTMLElement;
   startX: number;
   startY: number;
+  // Where the ELEMENT's travel is measured from, which is NOT where the finger landed: it is the
+  // finger's position at the moment the axis was called. Measured from startX instead, the message
+  // JUMPED the whole slop the instant it was granted -- 12px at best, and further still when the
+  // bias took a few frames to be satisfied, so a careful swipe began by leaping out from under the
+  // thumb. From here the bubble tracks the finger 1:1 and starts from where it was let go.
+  anchorX: number;
+  lastX: number;
+  lastT: number;
+  speed: number; // px/ms, signed, smoothed across moves -- see SWIPE_FLICK_SPEED
+  along: number; // px the element has travelled in the committed direction, as of the last move
   decided: boolean;
   action: SwipeAction | null;
   armed: boolean; // past the trigger, so the buzz fires once rather than every pointermove
@@ -561,6 +583,25 @@ function actionFor(el: HTMLElement, dx: number): SwipeAction | null {
   // Left is delete, and only where the delete control exists — which is the server's answer to
   // "may this resident delete this message", not one this file should try to reproduce.
   return el.querySelector(".msg-del") ? "delete" : null;
+}
+
+function dirOf(action: SwipeAction): number {
+  return action === "delete" ? -1 : 1;
+}
+
+function triggerFor(action: SwipeAction): number {
+  return action === "delete" ? SWIPE_TRIGGER_DELETE : SWIPE_TRIGGER;
+}
+
+// Distance OR speed, never both at once. Past the trigger it is committed however slowly the thumb
+// got there; short of it, a flick still counts -- a thread opened by mistake costs one tap on the
+// back arrow, and a delete still has to get past its confirm(), so neither is a decision this is
+// forbidden to make quickly.
+function shouldCommit(active: Drag, now: number): boolean {
+  if (!active.action) return false;
+  if (active.armed) return true;
+  if (now - active.lastT > SWIPE_FLICK_STALE) return false; // the finger had already come to rest
+  return active.along >= SWIPE_FLICK_MIN && active.speed * dirOf(active.action) >= SWIPE_FLICK_SPEED;
 }
 
 function hintFor(el: HTMLElement, action: SwipeAction): HTMLElement | null {
@@ -604,11 +645,35 @@ function fireSwipe(el: HTMLElement, action: SwipeAction): void {
   }
 }
 
+// A gesture ends in a compatibility click on whatever the finger left the screen over, and inside
+// a bubble that can be the photo -- so a swipe-to-open-thread would open the thread AND the picture
+// full size. Swallowed for one click, and only the BROWSER's: fireSwipe dispatches its own on the
+// "N svar" anchor, and a synthetic click is not trusted, so the gesture's own effect goes through.
+let swallowIn: HTMLElement | null = null;
+let swallowUntil = 0;
+
+document.addEventListener(
+  "click",
+  (event) => {
+    if (!swallowIn || !event.isTrusted || performance.now() > swallowUntil) return;
+    const target = event.target;
+    if (!(target instanceof Node) || !swallowIn.contains(target)) return;
+    swallowIn = null;
+    event.preventDefault();
+    event.stopPropagation();
+  },
+  true,
+);
+
 function endDrag(commit: boolean): void {
   const active = drag;
   drag = null;
   if (!active) return;
   const { el, action } = active;
+  if (active.decided) {
+    swallowIn = el;
+    swallowUntil = performance.now() + 350; // a compatibility click lands well inside this
+  }
   clearHints(el);
   settle(el, el.classList.contains("thread-panel") ? "thread-releasing" : "msg-releasing");
   // Act AFTER handing the element back its resting position, so the inline translate is already on
@@ -630,7 +695,14 @@ if (feed) {
     // Anything that already answers a touch keeps it. `.reaction` is named on top of the element
     // list because a pill IS a button, and losing that gesture would take the who-reacted panel
     // with it — the hold timer above starts on the same pointerdown.
-    if (target.closest("a, button, input, textarea, select, label, .reaction")) return;
+    //
+    // THE PHOTO IS THE EXCEPTION, and it is an <a> only so that a TAP can open it full size. It is
+    // also the largest thing a bubble ever contains — on a message that is just an image it is the
+    // whole bubble — so treating it like a control meant the swipe quietly did nothing on exactly
+    // the messages whose thread you most want to read. The tap survives: the drag only swallows
+    // the click that follows it once it has actually been decided (see endDrag).
+    const control = target.closest("a, button, input, textarea, select, label, .reaction");
+    if (control && !control.classList.contains("msg-image")) return;
     const el = target.closest<HTMLElement>("[data-msg-swipe], .thread-panel");
     if (!el) return;
     drag = {
@@ -638,6 +710,11 @@ if (feed) {
       el,
       startX: event.clientX,
       startY: event.clientY,
+      anchorX: event.clientX,
+      lastX: event.clientX,
+      lastT: event.timeStamp,
+      speed: 0,
+      along: 0,
       decided: false,
       action: null,
       armed: false,
@@ -649,42 +726,52 @@ if (feed) {
     const dx = event.clientX - drag.startX;
     const dy = event.clientY - drag.startY;
 
+    // Speed of the last few frames, for the flick test at release. Smoothed rather than taken
+    // from the final frame alone: the last pointermove before a lift is often a stub of one or two
+    // px over a millisecond, which on its own reads as either a standstill or a rocket.
+    const dt = event.timeStamp - drag.lastT;
+    if (dt > 0) {
+      drag.speed = drag.speed * 0.4 + ((event.clientX - drag.lastX) / dt) * 0.6;
+      drag.lastX = event.clientX;
+      drag.lastT = event.timeStamp;
+    }
+
     if (!drag.decided) {
-      // A finger that has gone a long way UP OR DOWN without going anywhere sideways is scrolling,
-      // and the browser is already handling it. This is the only thing that ends a gesture from in
-      // here; everything below is "not yet", not "no".
-      if (Math.abs(dy) >= SWIPE_SCROLL_SLOP && Math.abs(dx) < SWIPE_SLOP) {
-        drag = null;
-        return;
-      }
+      // NOTHING IN HERE ENDS A GESTURE ANY MORE. Every test below is "not yet", never "no", and
+      // the two that used to answer "no" are why this still felt broken after the last round:
+      // both of them threw the whole drag away on the strength of its first 12-30px, and once
+      // `drag` was null the message would not budge again however far the thumb travelled. Only
+      // lifting and starting over could recover it, which is exactly what "very hard to control"
+      // feels like from the outside.
+      //
+      //   * A vertical abort at 30px killed any swipe whose opening arc dipped before it turned.
+      //     It bought nothing: an undecided drag translates NOTHING, so a scroll costs a null
+      //     check per move and no pixels, and the bias below is measured against TOTAL travel
+      //     from touch-down, so a finger 200px down the list can never out-run it afterwards.
+      //   * `actionFor` returning null killed it too, and that one was asymmetric. The thumb
+      //     often pulls back a few px before it pushes off, and on SOMEONE ELSE'S message there
+      //     is no left-hand action to find, so that flinch was a death sentence -- while on your
+      //     own message the same flinch simply became the delete gesture. Right-swipe-to-open
+      //     therefore failed on precisely the messages it is most needed on.
+      //
+      // `touch-action:pan-y` is what makes all of this safe: the browser fires pointercancel the
+      // moment it claims the touch for the scroller, which is the authoritative answer to "was
+      // that a scroll?" and the only one this file needs to listen to.
       // Not enough sideways travel to call the axis on yet.
       if (Math.abs(dx) < SWIPE_SLOP) return;
-      // Vertical is still ahead, so KEEP WATCHING rather than giving up. THIS IS THE LINE, and
-      // what it replaced is why a right-swipe on someone else's message reportedly worked about
-      // one time in five while the same gesture on your own worked every time.
-      //
-      // The old version answered "is this a swipe?" once and for all on the first pointermove past
-      // the slop, and answered NO by throwing the whole gesture away -- so a start the bias did
-      // not like meant the message would not budge again however far the thumb travelled after
-      // that, because `decided` was never reached and `drag` was already null. Only lifting and
-      // starting again could recover it. A thumb swipe is an arc rather than a line, and how much
-      // vertical is in its first 12-15px depends on where on the screen it starts and which hand
-      // is holding the phone; own messages and other people's sit against opposite edges, so they
-      // do not get the same start. Whatever the exact geometry, sentencing a 70px gesture on its
-      // first 12px is the bug. Deferring lets the same swipe qualify a few frames later.
-      //
-      // Nothing is lost by waiting. The bias is checked against TOTAL travel, not the last frame,
-      // so a real scroll never out-runs it at any point in the gesture; the branch above catches a
-      // straight vertical flick; and `touch-action:pan-y` means the browser fires pointercancel
-      // the moment it claims the touch for the scroller.
+      // Vertical is still ahead, so keep watching. A thumb swipe is an ARC rather than a line, and
+      // how much vertical is in its first 12-15px depends on where on the screen it starts and
+      // which hand is holding the phone -- own messages and other people's sit against opposite
+      // edges, so they never get the same start. Sentencing a 70px gesture on its first 12px was
+      // the bug; deferring lets the same swipe qualify a few frames later. Waiting costs nothing,
+      // because the bias is measured against TOTAL travel and a real scroll only widens the gap.
       if (Math.abs(dx) <= Math.abs(dy) * SWIPE_X_BIAS) return;
       const action = actionFor(drag.el, dx);
-      if (!action) {
-        drag = null; // nothing lives in that direction, so the bubble must not budge
-        return;
-      }
+      if (!action) return; // nothing lives in that direction YET; the bubble stays put and waits
       drag.decided = true;
       drag.action = action;
+      // From HERE, not from where the finger landed. See `anchorX` on Drag.
+      drag.anchorX = event.clientX;
       // Keep receiving moves even if the finger leaves the element — a swipe that starts near the
       // bottom of a short bubble is otherwise lost the moment it drifts out of it.
       drag.el.setPointerCapture?.(event.pointerId);
@@ -698,12 +785,13 @@ if (feed) {
 
     // Only movement in the committed direction counts. Reversing mid-drag winds the bubble back to
     // rest rather than re-deciding, which would let one gesture turn into the other under the thumb.
-    const dir = action === "delete" ? -1 : 1;
-    const along = Math.max(0, dx * dir);
+    const dir = dirOf(action);
+    const trigger = triggerFor(action);
+    const along = Math.max(0, (event.clientX - drag.anchorX) * dir);
+    drag.along = along;
     // Past the trigger the bubble keeps moving, but at a quarter speed. That resistance is the
     // feedback: it says the gesture has caught without needing the element to stop dead.
-    const eased =
-      along <= SWIPE_TRIGGER ? along : SWIPE_TRIGGER + (along - SWIPE_TRIGGER) * 0.25;
+    const eased = along <= trigger ? along : trigger + (along - trigger) * 0.25;
     const offset = Math.min(eased, SWIPE_MAX) * dir;
     drag.el.style.translate = `${offset}px 0`;
 
@@ -728,13 +816,13 @@ if (feed) {
       // fades in: the hints paint BEHIND the bubble (see the .msg-hint block in styles.css).
       const progress = Math.min(
         1,
-        Math.max(0, (along - SWIPE_HINT_FROM) / (SWIPE_TRIGGER - SWIPE_HINT_FROM)),
+        Math.max(0, (along - SWIPE_HINT_FROM) / Math.max(1, trigger - SWIPE_HINT_FROM)),
       );
       hint.style.opacity = String(progress);
       hint.style.scale = String(0.7 + progress * 0.3);
     }
 
-    const past = along >= SWIPE_TRIGGER;
+    const past = along >= trigger;
     if (past && !drag.armed) {
       drag.armed = true;
       // Android only — iOS has no Vibration API and ignores it. Optional either way, so it is
@@ -747,7 +835,7 @@ if (feed) {
 
   document.addEventListener("pointerup", (event: PointerEvent) => {
     if (!drag || event.pointerId !== drag.pointerId) return;
-    endDrag(drag.armed);
+    endDrag(shouldCommit(drag, event.timeStamp));
   });
 
   // The browser took the gesture over as a scroll, or the system interrupted it.
@@ -759,6 +847,10 @@ if (feed) {
   // the resident has already done everything the gesture asks of them. Dropping a finished swipe
   // on the floor is indistinguishable, from the outside, from the gesture not working -- you drag
   // the message clear across, it springs back, and nothing happens.
+  //
+  // DISTANCE ONLY HERE, never shouldCommit's flick: the commonest thing that cancels a fast
+  // right-swipe is Android's own edge-back gesture, which IS a fast right-swipe. Honouring the
+  // flick would open the thread while the system was already navigating back out of it.
   document.addEventListener("pointercancel", (event: PointerEvent) => {
     if (!drag || event.pointerId !== drag.pointerId) return;
     endDrag(drag.armed);
