@@ -619,11 +619,54 @@
   .emoji-other input { width:100%; padding:5px 8px; text-align:center; }
 
   /* The way into a thread. Was a <details> summary that unfolded the replies in place; it is now a
-     link to den_hurtige:thread, which htmx turns into the side panel. Same weight and colour as the
-     old summary, minus the caret -- nothing folds open here any more. */
-  .msg-replies { min-width:0; font-size:12.5px; font-weight:600; color:var(--green-700);
+     link to den_hurtige:thread, which htmx turns into the side panel.
+
+     TWO STATES, AND THE POINT IS THE DISTANCE BETWEEN THEM. Both used to be this rule alone --
+     12.5px, 600, --green-700 -- so "Svar" and "3 svar" were the same object with different words
+     in it, tucked in a row beside the reaction pills. On a feed the difference did not register:
+     a message with a conversation hanging off it looked exactly like one with nothing.
+
+     So the empty state RECEDES and the full state becomes a pill. Half the new contrast comes
+     from the retreat, which is what keeps the feed quiet -- most messages have no replies, and
+     those now cost the eye almost nothing. --muted rather than --faint for it: this is an
+     interactive control, and --faint (#8A9188) lands at 2.97:1 on --paper, under the 4.5:1 a
+     12.5px link needs. --muted clears it at 5.08:1 and still reads as the quieter of the two.
+
+     No extra height either way. The action row is rendered on EVERY message (see .msg-actions
+     above), so the signal is free where a reply bar of its own would have cost ~22px a thread. */
+  .msg-replies { min-width:0; font-size:12.5px; font-weight:600; color:var(--muted);
     text-decoration:none; padding:2px 0; white-space:nowrap; }
   .msg-replies:hover { text-decoration:underline; }
+
+  /* There is a conversation here. Deliberately NOT the same shape as the pills it sits beside:
+     a reaction is white with a --border-strong outline and one you joined is --green-050, so a
+     --green-100 fill inside a full-strength --green border is a step past both, and the speech
+     bubble is a glyph nothing else in the row carries. --green-700 on --green-100 is 8:1.
+
+     Tinted rather than a solid --green fill, which was the other candidate. Saturation buys
+     little in a scan -- contrast against the neighbours is what the eye finds, and that is
+     already won -- while a solid block repeated down a busy channel is exactly the congestion
+     this is trying to avoid. If it needs to shout, this is the one declaration to change.
+
+     It survives on mid-run messages, where .msg:not(.msg-tail) hides the bare "Svar" and the
+     emoji picker: a burst of five messages shows the pill on whichever ones have threads and
+     nothing on the rest, which is the only reason that collapse is safe to do at all.
+
+     line-height:1 and 4px of vertical padding are copied off .reaction on purpose, not chosen:
+     it makes the pill exactly as tall as the reaction pills it shares the row with (13px/1 + 8 + 2
+     against 12.5px/1 + 8 + 2), so on any message carrying reactions the row does not grow by a
+     pixel. Inheriting the body's 1.5 would have made this the tallest thing in the row and pushed
+     every threaded message open. On a message with a thread and NO reactions the row still gains
+     about 7px over the plain text it replaces -- the only height this costs anywhere. */
+  .msg-replies.has-replies { display:inline-flex; align-items:center; gap:5px;
+    padding:4px 9px 4px 8px; border-radius:999px; font-weight:650; line-height:1;
+    background:var(--green-100); border:1px solid var(--green); color:var(--green-700); }
+  /* No underline on a pill -- the fill is the affordance. Lighten instead, the way .reaction does
+     the reverse, so hover reads as "liftable" rather than as text. */
+  .msg-replies.has-replies:hover { text-decoration:none; background:var(--green-050); }
+  /* Same reason as .msg-hint .ni: <use> clones the symbol into a shadow tree inheriting from THIS
+     svg, so without these it paints as a filled black blob. */
+  .msg-replies .ni { width:14px; height:14px; flex:none; stroke:currentColor; fill:none; }
 
   /* --- thread side panel (den_hurtige/_thread.html) -------------------------------------------
      Feed and panel side by side. #js-feed keeps every declaration it already had -- its

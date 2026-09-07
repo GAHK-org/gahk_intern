@@ -177,12 +177,27 @@
         The swipe-right gesture fires THIS element's click rather than issuing a request of its
         own, so the panel, the history entry and the back-gesture handling are all reached by one
         path. See the swipe block in frontend/src/feed.ts.
+
+        ONE ELEMENT, TWO JOBS, AND THEY ARE NOT EQUALLY IMPORTANT. Empty it is a bare affordance --
+        "you may reply to this" -- and with replies it is the only evidence on the feed that a
+        conversation exists at all. Those two used to render identically: same size, same green,
+        same weight, the text "Svar" or "3 svar" and nothing else, sitting in a row beside the
+        reaction pills. A thread was invisible unless you read the row.
+
+        `.has-replies` is what splits them (styles.css draws the pill), and it was already on the
+        element -- it existed only to keep this link visible on mid-run messages, where the rest of
+        the action row collapses. Styling it costs NO extra height, which is the whole reason the
+        signal goes here rather than into a Slack-style reply bar of its own: the row is rendered
+        on every message already.
+
+        The icon leads and the count follows, contiguously -- `{{ post.reply_count }} svar` must
+        stay one unbroken string, because that is what the feed tests look for.
       {% endcomment %}
       <a class="msg-replies{% if post.reply_count %} has-replies{% endif %}" href="{% url 'den_hurtige:thread' post.pk %}"
          hx-get="{% url 'den_hurtige:thread' post.pk %}"
          hx-target="#js-thread" hx-swap="innerHTML"
          aria-label="{% if post.reply_count %}Åbn tråd med {{ post.reply_count }} svar{% else %}Svar på beskeden{% endif %}">
-        {% if post.reply_count %}{{ post.reply_count }} svar{% else %}Svar{% endif %}
+        {% if post.reply_count %}<svg class="ni" aria-hidden="true"><use href="#i-chat"></use></svg>{{ post.reply_count }} svar{% else %}Svar{% endif %}
       </a>
     {% endif %}
 
