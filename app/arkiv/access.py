@@ -1,6 +1,8 @@
 """Who may reach Arkiv, and which folders they may see.
 
-    TO OPEN IT TO EVERY RESIDENT: set ACCESS_ROLES = None.
+The staged rollout is over: ACCESS_ROLES is None and every resident is in.
+
+    TO RE-GATE IT: set ACCESS_ROLES to a tuple of roles.
 
 The gate MECHANISM is core.rollout, as in den_hurtige, opslagstavle and events. What is here is this
 feature's own policy, and it has the same shape as begivenheder's: a folder can be invisible to a
@@ -44,14 +46,20 @@ from .models import ArchiveFile, ArchiveFolder
 # None = every logged-in resident. A tuple = only those roles (administrator implies every role, so
 # administrators and superusers are always in).
 #
-# Gated for a first pass to Inspektionen and Netvaerksgruppen, matching what opslagstavlen and
-# begivenheder did. The archive is the one feature where a premature opening is hard to walk back:
-# residents will start filing things, and the folder tree they build in the first month is the one
-# the kollegium lives with. Open it once the root structure is agreed, not before.
+# Open to the whole kollegium. It was gated for a first pass to Inspektionen and
+# Netvaerksgruppen, matching what Ankebogen and begivenheder did.
 #
-# TO OPEN IT TO EVERY RESIDENT: set ACCESS_ROLES = None. That one edit widens every view, the
+# THE CONDITION THIS MODULE SET FOR OPENING WAS THE ROOT STRUCTURE, not the code, and it is worth
+# leaving on the record now that the gate is off: this is the one feature where a premature opening
+# is hard to walk back, because residents start filing things immediately and the folder tree built
+# in the first month is the one the kollegium lives with. `manage.py seed_arkiv_roots` lays down the
+# agreed top level and is idempotent, so it can be re-run when an embedsgruppe is added — but it
+# does not move anything already filed in the wrong place. Run it before the house arrives, not
+# after.
+#
+# TO RE-GATE IT: set ACCESS_ROLES to a tuple of roles. That one edit narrows every view, the
 # sidebar entry and the "Under test" chip together.
-ACCESS_ROLES: tuple[str, ...] | None = (Role.ADMINISTRATOR, Role.INSPEKTION)
+ACCESS_ROLES: tuple[str, ...] | None = None
 
 # Read through a lambda, never passed by value: this global is what tests rebind and what the edit
 # above would flip, and a Gate holding the value would freeze at import. See core.rollout.

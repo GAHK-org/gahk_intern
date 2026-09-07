@@ -1737,8 +1737,12 @@ def events_open(monkeypatch: pytest.MonkeyPatch) -> None:
     """Lift begivenheder's own rollout gate.
 
     It is behind one too, and both the chip and the form field are gated on the reader being able to
-    open the feature. These tests are about the link, not about either gate — the two that ARE about
-    the gate are at the end of this section and deliberately do not use this.
+    open the feature. These tests are about the link, not about either gate.
+
+    Redundant against the shipped value now that begivenheder is open to everyone, and kept for the
+    same reason den_hurtige's equivalent is: it states what these tests need instead of inheriting
+    it, so re-gating that feature cannot silently change what this section is testing. The two
+    tests that ARE about the gate sit at the end of this section and set it themselves.
     """
     from events import access as events_access
 
@@ -1870,9 +1874,22 @@ def test_no_event_chip_while_begivenheder_is_behind_its_own_gate(
     assert f"/intern/begivenheder/{event.pk}" not in body
 
 
-def test_the_event_field_is_absent_while_begivenheder_is_gated(client: Client, beboer: Resident) -> None:
+def test_the_event_field_is_absent_while_begivenheder_is_gated(
+    client: Client, beboer: Resident, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Removed from the form, not disabled — so a POST naming an event is ignored rather than merely
-    unrendered. The events gate is on by default, hence no `events_open` here."""
+    unrendered.
+
+    THE GATE IS APPLIED HERE rather than taken for granted. This test used to say "the events gate
+    is on by default, hence no `events_open` here", and it passed only because begivenheder's
+    shipped ACCESS_ROLES happened to be a role tuple. It broke the day that feature opened to the
+    whole house — which is precisely the day the assertion still has to hold, because re-gating
+    begivenheder later must take this form field with it. A test that depends on a rollout value
+    is testing the value, not the behaviour.
+    """
+    from events import access as events_access
+
+    monkeypatch.setattr(events_access, "ACCESS_ROLES", (Role.ADMINISTRATOR,))
     event = _event(beboer)
     client.force_login(beboer)
 

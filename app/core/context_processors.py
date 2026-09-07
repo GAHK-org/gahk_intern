@@ -48,14 +48,17 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
         ("/intern/", "Dashboard", "dashboard"),
         (f"/intern/beboer/{user_pk}/profil", "Min profil", "users"),
     ]
-    # Den Hurtige is limited to the administrator group during its trial; the single switch is
-    # den_hurtige.access.ACCESS_ROLES. Asking it here keeps the sidebar from advertising a page that
-    # would answer 403, and means opening the rollout needs no change in this file.
+    # EVERY ONE OF THESE GATES IS NOW OPEN — all four features shipped their staged rollout and
+    # their ACCESS_ROLES are None, so every call below answers True for every logged-in resident.
+    #
+    # THE GUARDS STAY ANYWAY, and that is the point of asking rather than a leftover. Each feature's
+    # access module promises that re-gating it is one edit ("TO RE-GATE IT: set ACCESS_ROLES to a
+    # tuple of roles") which narrows the views AND the sidebar entry together. Inlining these
+    # because they happen to be True today would quietly break the second half of that promise: the
+    # sidebar would go on advertising a page that answers 403, and the next person to close a gate
+    # would have no reason to look in this file. The call is a dict lookup against a role set.
     if den_hurtige_allowed(roles):
         oversigt.append(("/intern/den-hurtige/", "Den Hurtige", "flash"))
-    # Gated the same way while Ankebogen is being tried out (opslagstavle.access.ACCESS_ROLES).
-    # Asking here keeps the sidebar from advertising a page that would answer 403, and means opening
-    # the rollout needs no change in this file.
     if opslagstavle_allowed(roles):
         oversigt.append(("/intern/ankebogen/", "Ankebogen", "board"))
     if events_allowed(roles):
@@ -108,8 +111,8 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
         ("/intern/stamtree/", "Stamtræ", "tree"),
         ("/intern/statistik/", "Statistik", "chart"),
     ]
-    # Conditional on the rollout gate, like Den Hurtige / Ankebogen / Begivenheder above: the
-    # sidebar must never advertise a page that answers 403.
+    # Conditional on the rollout gate, like Den Hurtige / Ankebogen / Begivenheder above — open
+    # today, and kept conditional for the reason given up there.
     if arkiv_allowed(roles):
         ressourcer.append(("/intern/arkiv/", "Arkiv", "archive"))
     ressourcer += [

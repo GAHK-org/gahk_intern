@@ -1,6 +1,8 @@
 """Who may reach begivenheder, who may see which ones, and who may do what to them.
 
-    TO OPEN IT TO EVERY RESIDENT: set ACCESS_ROLES = None.
+The staged rollout is over: ACCESS_ROLES is None and every resident is in.
+
+    TO RE-GATE IT: set ACCESS_ROLES to a tuple of roles.
 
 The gate MECHANISM is core.rollout — extracted when this became the third feature to want one, on
 the schedule opslagstavle/access.py set for it. What is here is this feature's own policy, and the
@@ -30,7 +32,7 @@ from django.db.models import Q, QuerySet
 from django.http import HttpRequest
 
 from core.rollout import Gate
-from residents.models import Resident, Role
+from residents.models import Resident
 from residents.permissions import View, current_resident
 
 from .models import Event, EventComment, EventInvite, EventQuerySet, Visibility
@@ -38,22 +40,21 @@ from .models import Event, EventComment, EventInvite, EventQuerySet, Visibility
 # None = every logged-in resident. A tuple = only those roles (administrator implies every role, so
 # administrators and superusers are always in).
 #
-# Gated to Inspektionen and Netværksgruppen for a first pass, matching opslagstavlen's trial group.
-# "Netværk" is spelled ADMINISTRATOR here: the network group is not an embedsgruppe with a
-# Workgroup row, so it has never had a role of its own — see residents.models.WORKGROUP_ROLE, where
-# `administrator` is deliberately absent for exactly that reason.
+# Open to the whole kollegium. It was gated to Inspektionen and Netværksgruppen for a first pass,
+# matching Ankebogen's trial group. ("Netværk" was spelled ADMINISTRATOR: the network group is not
+# an embedsgruppe with a Workgroup row, so it has never had a role of its own — see
+# residents.models.WORKGROUP_ROLE, where `administrator` is deliberately absent for that reason.)
 #
-# This module argued the other way when the feature shipped, and the argument is worth keeping
-# rather than deleting, because it is the thing the trial has to work around: the piece most likely
-# to be wrong here is the CALENDAR FEED, and a feed only becomes testable once several people have
-# real answers in it. Half a dozen testers can exercise creating, answering, the venteliste, the
-# deadline, invites and both .ics paths — but "does a month of real events look right in Google
-# Calendar six weeks from now" is a question this trial cannot ask. Plan to open it before trusting
-# that half.
+# WHAT THE TRIAL COULD NOT ANSWER IS NOW LIVE, and it is the thing to watch. Half a dozen testers
+# could exercise creating, answering, the venteliste, the deadline, invites and both .ics paths, but
+# "does a month of real events look right in Google Calendar six weeks from now" needs a whole house
+# with real answers in it — which is why this module said to open it before trusting that half.
+# Opening it is what makes the question askable; the calendar feed is where a problem will surface
+# first, and it will surface in somebody's phone rather than in a test.
 #
-# TO OPEN IT TO EVERY RESIDENT: set ACCESS_ROLES = None. That one edit widens every view, the
-# sidebar entry, the "Under test" chip on the list and the push audience together.
-ACCESS_ROLES: tuple[str, ...] | None = (Role.ADMINISTRATOR, Role.INSPEKTION)
+# TO RE-GATE IT: set ACCESS_ROLES to a tuple of roles. That one edit narrows every view, the sidebar
+# entry, the "Under test" chip on the list and the push audience together.
+ACCESS_ROLES: tuple[str, ...] | None = None
 
 # Read through a lambda, never passed by value: this global is what tests rebind and what the edit
 # above would flip, and a Gate holding the value would freeze at import. See core.rollout.
