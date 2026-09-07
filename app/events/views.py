@@ -29,8 +29,8 @@ from residents.models import Resident
 from residents.permissions import current_resident
 
 from . import access, icalendar, services
-from .forms import EventForm
-from .models import Answer, CalendarFeedToken, Event, Rsvp
+from .forms import EventCommentForm, EventForm
+from .models import Answer, CalendarFeedToken, Event, EventComment, Rsvp
 
 PAGE_SIZE = 20
 
@@ -237,9 +237,37 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
             # that will 403 them is worse than not mentioning it. Imported lazily so the two apps
             # stay acyclic at import time (opslagstavle.forms reaches the other way).
             "notices": _related_notices(request, event),
+            "comments": _comments(request, event),
+            "comment_form": EventCommentForm(),
         }
     )
     return render(request, "events/detail.html", context)
+
+
+def _comments(request: HttpRequest, event: Event) -> list:
+    """The thread, each row carrying its own `can_delete`.
+
+    Resolved here rather than in the template because a Django template cannot call
+    access.can_delete_comment with arguments — the same reason opslagstavlen and reparationer both
+    do this in the view.
+
+    `host` is read ONCE for the event and handed to every row. Without it each comment would ask
+    access.is_host for itself, which filters co_organisers, so a thread of twenty comments would
+    cost twenty queries to render a ✕ that is either on all of them or none.
+    """
+    resident = current_resident(request)
+    host = access.is_host(event, resident)
+    comments = list(event.comments.select_related("author"))
+    for comment in comments:
+        comment.can_delete = access.can_delete_comment(comment, resident, host=host)  # type: ignore[attr-defined]
+    return comments
+
+
+def _comment_anchor(event_pk: int) -> str:
+    """Back to the thread, not to the top of the page. The event page is long — image, facts,
+    description, the answer panel, the posts announcing it — so a bare redirect after commenting
+    lands the reader above the fold and hides the thing they just wrote."""
+    return f"{reverse('events:detail', args=[event_pk])}#kommentarer"
 
 
 def _related_notices(request: HttpRequest, event: Event) -> list:
@@ -248,6 +276,77 @@ def _related_notices(request: HttpRequest, event: Event) -> list:
     if not board_allowed(request):
         return []
     return list(event.notices.select_related("author").order_by("-created_at")[:5])
+
+
+def _visible_comment(request: HttpRequest, pk: int) -> EventComment:
+    """The only way this module reaches a comment by primary key.
+
+    Filtered through access.visible_to on the way in, exactly like _get_event, and for the same
+    reason one step removed: a COMMENT id is a side channel onto the event it hangs off. Without
+    this filter, POSTing to kommentar/<id>/slet tells a non-invitee whether that comment exists
+    (403) or not (404) — which answers "is there a private event with a thread on it" — and a
+    resident who guessed their own comment id on an event they were since uninvited from would
+    still be able to reach into it.
+
+    Not `Event.objects`, per rule 1 in the module docstring: the filter is a subquery on
+    access.visible_to, so the chokepoint is still the only thing that decides visibility.
+    """
+    return get_object_or_404(
+        EventComment.objects.select_related("event", "event__organiser", "author").filter(
+            event__in=access.visible_to(current_resident(request))
+        ),
+        pk=pk,
+    )
+
+
+@require_POST
+@access.access_required
+def create_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
+    """Anyone who can SEE the event may comment on it.
+
+    No narrower than that, and two candidate restrictions were considered and dropped:
+
+      * **Not "only people who answered ja".** "Kan man tage børn med?" and "hvad skal jeg tage
+        med?" are questions you ask BEFORE you commit, so a thread visible only to people who
+        already committed would be shut to exactly the readers who need it.
+      * **Not "not on a cancelled event".** access.can_edit freezes an aflyst event because an
+        edit bumps SEQUENCE and re-notifies every subscribed calendar; a comment does neither, and
+        "hvorfor?" / "vi finder en ny dato" is the most predictable thread on the feature. The
+        answer panel locks; the thread does not.
+
+    The audience is already correct without any check of its own: _get_event has applied
+    access.visible_to, so on a private event the only people who can reach this are its invitees
+    and hosts.
+    """
+    event = _get_event(request, pk)
+    form = EventCommentForm(request.POST)
+    if not form.is_valid():
+        # The message rather than re-rendering the page: the form lives at the bottom of a long
+        # read-only page, and a re-render would throw away the RSVP panel's state to say
+        # "write something".
+        messages.error(request, "Skriv en kommentar.")
+        return redirect(_comment_anchor(event.pk))
+
+    comment = form.save(commit=False)
+    comment.event = event
+    comment.author = current_resident(request)
+    comment.save()
+    services.notify_new_comment(comment)
+    return redirect(_comment_anchor(event.pk))
+
+
+@require_POST
+@access.access_required
+def delete_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
+    """403, not 404, for a comment you can see but may not remove — the split the access module
+    documents. The 404 case is handled a step earlier, by _visible_comment."""
+    comment = _visible_comment(request, pk)
+    if not access.can_delete_comment(comment, current_resident(request)):
+        raise PermissionDenied
+    event_pk = comment.event_id
+    comment.delete()
+    messages.success(request, "Kommentaren er slettet.")
+    return redirect(_comment_anchor(event_pk))
 
 
 @access.access_required

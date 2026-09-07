@@ -33,7 +33,7 @@ from core.rollout import Gate
 from residents.models import Resident, Role
 from residents.permissions import View, current_resident
 
-from .models import Event, EventInvite, EventQuerySet, Visibility
+from .models import Event, EventComment, EventInvite, EventQuerySet, Visibility
 
 # None = every logged-in resident. A tuple = only those roles (administrator implies every role, so
 # administrators and superusers are always in).
@@ -148,6 +148,31 @@ def can_delete(event: Event, resident: Resident) -> bool:
 def can_cancel(event: Event, resident: Resident) -> bool:
     """The other half of can_delete: hosts may aflys anything not already cancelled."""
     return not event.is_cancelled and is_host(event, resident)
+
+
+def can_delete_comment(comment: EventComment, resident: Resident, *, host: bool | None = None) -> bool:
+    """Its author, or a HOST of the event it is on.
+
+    NOT "a moderator", which is where the two sibling features land (opslagstavle.access and
+    reparationer.views both say "the author, or a manager"). It cannot be that here, and the reason
+    is the paragraph at the top of this module: Inspektionen deliberately cannot SEE a private
+    event, so "Inspektionen may delete its comments" would be a permission that either does
+    nothing or quietly reintroduces the read access the 404 exists to deny. The host is the right
+    analogue anyway — they run the event, they are who a comment thread on it is aimed at, and on
+    an open event they are as reachable as Inspektionen would be.
+
+    A superuser still has the Django admin, which is where a reported private event is handled
+    (see admin.py). That is the escape hatch, and it is deliberately the only one.
+
+    `host` is an optimisation for asking this about a WHOLE THREAD, and the rule stays here rather
+    than being re-expressed in the view. `is_host` costs a query — it filters co_organisers — and
+    its answer is identical for every comment on one event, so views._comments resolves it once and
+    passes it in; left None, this asks for itself. Authorship is checked first either way, so a
+    resident reading their own comments needs no query at all.
+    """
+    if comment.author_id == resident.pk:
+        return True
+    return is_host(comment.event, resident) if host is None else host
 
 
 def request_host(request: HttpRequest, event: Event) -> bool:

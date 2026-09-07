@@ -463,6 +463,14 @@ erDiagram
         datetime created_at
     }
 
+    events_EventComment {
+        int id PK
+        int event_id FK
+        int author_id FK
+        text body
+        datetime created_at
+    }
+
     events_CalendarFeedToken {
         int id PK
         int resident_id FK
@@ -549,6 +557,8 @@ erDiagram
     events_EventInvite }o--|o residents_Resident : "invited_by"
     events_Rsvp }o--|| events_Event : "event"
     events_Rsvp }o--|| residents_Resident : "resident"
+    events_EventComment }o--|| events_Event : "event"
+    events_EventComment }o--|| residents_Resident : "author"
     events_CalendarFeedToken ||--|| residents_Resident : "resident"
     reparationer_RepairTask }o--|| residents_Resident : "reported_by"
     reparationer_RepairComment }o--|| reparationer_RepairTask : "task"
@@ -836,6 +846,14 @@ erDiagram
         datetime created_at
     }
 
+    events_EventComment {
+        int id PK
+        int event_id FK
+        int author_id FK
+        text body
+        datetime created_at
+    }
+
     events_CalendarFeedToken {
         int id PK
         int resident_id FK
@@ -854,6 +872,8 @@ erDiagram
     events_EventInvite }o--|o residents_Resident : "invited_by"
     events_Rsvp }o--|| events_Event : "event"
     events_Rsvp }o--|| residents_Resident : "resident"
+    events_EventComment }o--|| events_Event : "event"
+    events_EventComment }o--|| residents_Resident : "author"
     events_CalendarFeedToken ||--|| residents_Resident : "resident"
 ```
 

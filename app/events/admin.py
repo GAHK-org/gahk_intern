@@ -10,7 +10,7 @@ identical "Begivenheder" sections — `cms.Event` is the public one. See events.
 
 from django.contrib import admin
 
-from .models import CalendarFeedToken, Event, EventInvite, Rsvp
+from .models import CalendarFeedToken, Event, EventComment, EventInvite, Rsvp
 
 
 class EventInviteInline(admin.TabularInline):
@@ -29,6 +29,13 @@ class RsvpInline(admin.TabularInline):
     # the only way an organiser's "she answered first, the phone was offline" can be repaired.
 
 
+class EventCommentInline(admin.TabularInline):
+    model = EventComment
+    extra = 0
+    autocomplete_fields = ("author",)
+    readonly_fields = ("created_at",)
+
+
 @admin.register(Event)
 class EventAdmin(admin.ModelAdmin):
     list_display = ("title", "starts_at", "organiser", "visibility", "capacity", "cancelled_at")
@@ -36,7 +43,7 @@ class EventAdmin(admin.ModelAdmin):
     search_fields = ("title", "location", "organiser__first_name", "organiser__last_name")
     autocomplete_fields = ("organiser", "co_organisers")
     readonly_fields = ("created_at", "edited_at", "sequence", "reminder_sent_at")
-    inlines = [EventInviteInline, RsvpInline]
+    inlines = [EventInviteInline, RsvpInline, EventCommentInline]
 
 
 @admin.register(Rsvp)

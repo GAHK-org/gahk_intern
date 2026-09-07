@@ -131,4 +131,72 @@
       {% endfor %}
     </section>
   {% endif %}
+
+  {% comment %}
+    The thread. Reuses Ankebogen's comment markup and CSS wholesale — .notice-comments, .reply,
+    .reply-head, .msg-text, .comment-form — because it IS the same widget, and a second set of
+    classes for the same rows is how the two reaction rows drifted apart (see the header of
+    den_hurtige/_message.html for how that went).
+
+    BELOW the answer panel and below the posts, deliberately. The panel is what the page is for:
+    an event asks you a question with a deadline on it, and pushing that below a thread would put
+    a conversation between the reader and the button they came to press. The thread is what you
+    read once you have answered, which is why commenting redirects to #kommentarer (see
+    views._comment_anchor) rather than back to the top.
+
+    Rendered for everyone who can open the page, including a cancelled event — see
+    views.create_comment for why aflyst does not close the thread.
+  {% endcomment %}
+  <section class="notice-comments" aria-labelledby="kommentarer">
+    <h2 id="kommentarer">
+      {% with n=comments|length %}
+        {% if n == 1 %}1 kommentar{% elif n %}{{ n }} kommentarer{% else %}Kommentarer{% endif %}
+      {% endwith %}
+    </h2>
+
+    {% for comment in comments %}
+      <div class="reply">
+        {% comment %}
+          The byline is its own flex ROW because .msg-del is a <form> positioned with
+          `margin-left:auto`, which means nothing outside a flex container — loose in the .reply it
+          took a blank line of its own between the name and the text. Same note as Ankebogen's.
+
+          NO embedsgruppe pill here, unlike the board's comments: this model keeps no snapshot of
+          it, because the snapshot exists to stop a rotating group from relabelling a multi-year
+          archive and an event is gone a week after it is held. See EventComment in models.py.
+        {% endcomment %}
+        <div class="reply-head">
+          <span class="reply-name">{{ comment.author.full_name }}</span>
+          <span class="msg-meta">{{ comment.created_at|date:"j. b Y, H:i" }}</span>
+          {% if comment.can_delete %}
+            <form method="post" action="{% url 'events:delete_comment' comment.pk %}" class="msg-del"
+                  onsubmit="return confirm('Slet «{{ comment.body|truncatechars:60|escapejs }}» permanent?')">
+              {% csrf_token %}
+              <button type="submit" title="Slet kommentar" aria-label="Slet kommentar">&times;</button>
+            </form>
+          {% endif %}
+        </div>
+        {% comment %}
+          Plain text, autoescaped, `white-space:pre-wrap` from .msg-text — comments are deliberately
+          not Markdown (see EventComment). |urlize makes a pasted link clickable without opening the
+          door to arbitrary markup.
+        {% endcomment %}
+        <div class="msg-text">{{ comment.body|urlize }}</div>
+      </div>
+    {% empty %}
+      <p class="muted">Ingen kommentarer endnu.</p>
+    {% endfor %}
+
+    <form method="post" action="{% url 'events:create_comment' event.pk %}" class="comment-form">
+      {% csrf_token %}
+      {% for field in comment_form %}
+        <div class="mb-3">
+          <label class="sr-only" for="{{ field.id_for_label }}">{{ field.label }}</label>
+          {{ field }}
+          {% if field.errors %}<p class="errorlist text-sm">{{ field.errors|striptags }}</p>{% endif %}
+        </div>
+      {% endfor %}
+      <button type="submit" class="btn">Kommentér</button>
+    </form>
+  </section>
 {% endblock %}

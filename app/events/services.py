@@ -37,7 +37,7 @@ from core.markdown import plain_text
 from residents.models import Residency, Resident, active_period
 
 from . import access
-from .models import Answer, Event, EventInvite, Rsvp, Visibility
+from .models import Answer, Event, EventComment, EventInvite, Rsvp, Visibility
 
 logger = logging.getLogger(__name__)
 
@@ -294,6 +294,53 @@ def notify_cancelled(event: Event) -> None:
         head=f"Aflyst: {event.title}",
         body=push.preview(f"{_when(event)} bliver ikke til noget."),
         url=_url(event),
+    )
+
+
+def notify_new_comment(comment: EventComment) -> None:
+    """A comment tells THE HOSTS, and nobody else.
+
+    The rule at the top of this block is that every notification here is about a commitment with a
+    clock on it, which is why answering notifies nobody. A comment is not that, so the loud reading
+    -- everyone who may see the event -- is out: it is the "sixty phones buzzing about somebody
+    else's dinner plans" case almost exactly, and it would make commenting antisocial enough that
+    nobody would.
+
+    The hosts are different. A comment on an event is nearly always addressed AT whoever is running
+    it ("hvad skal jeg tage med?", "kan jeg komme en halv time senere?"), and it is a question that
+    goes stale -- the event happens whether or not anybody read it. That is the same shape as
+    opslagstavle's reply notification, which tells the post's author and nobody else. Co-organisers
+    count, because they are hosts (access.is_host) and the point is that SOMEONE running the event
+    sees the question.
+
+    NOT ROUTED THROUGH `_audience`, and that is the one subtle thing here. `_audience` narrows a
+    private event to its invite list -- and an organiser is not on their own guest list, so a host
+    filtered through it disappears exactly when the event is private. The notification would have
+    gone to nobody on the events where a question most needs answering, and no test of the open
+    case would have shown it. The narrowing is also unnecessary: this audience is hosts, and a host
+    can always see their own event (access.visible_to), so there is nothing for it to protect.
+    What is still needed is `allowed_subscribers` (the rollout gate -- a device whose owner cannot
+    open the feature must not be pushed to) and `subscribers(TOPIC)` for consent, so both stay.
+
+    Returns early on an empty audience rather than handing push.send a queryset that matches
+    nothing: send() does not check, so it would spawn a fan-out thread to deliver to no devices.
+    """
+    hosts = {comment.event.organiser_id, *comment.event.co_organisers.values_list("pk", flat=True)}
+    hosts.discard(comment.author_id)
+    if not hosts:
+        return
+
+    audience = access.allowed_subscribers(push.subscribers(TOPIC, exclude_user_id=comment.author_id)).filter(
+        user_id__in=hosts
+    )
+    if not audience.exists():
+        return
+
+    push.send(
+        audience,
+        head=f"{comment.author.full_name} kommenterede",
+        body=push.preview(f"{comment.event.title}: {comment.body}"),
+        url=_url(comment.event),
     )
 
 
