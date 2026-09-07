@@ -1676,6 +1676,258 @@ def test_a_private_event_is_absent_from_the_calendar_for_an_outsider(
     assert "Hemmelig fest" not in body
 
 
+# --- fødselsdage ------------------------------------------------------------------------------------
+#
+# The module under test is residents/birthdays.py, not this app — a birthday is a fact about a
+# PERSON, and the month grid is only its first caller. The tests live here because the calendar is
+# where the behaviour is visible, and because the thing most worth pinning is the boundary: a
+# birthday is a note printed on a day and must never become an Event, with an organiser, an answer
+# form, a push, or a line in anybody's .ics.
+
+
+def _celebrant(make_resident: Callable[..., Resident], born: datetime.date, **extra: object) -> Resident:
+    """A resident on this month's list with a date of birth. Both halves are needed: `birthdays`
+    only considers the active residency list, which conftest.make_resident does not create."""
+    extra.setdefault("email", f"f{born:%m%d}{next(_room_seq)}@gahk.dk")
+    resident = make_resident(birthday=born, **extra)
+    _residency(resident)
+    return resident
+
+
+def test_a_birthday_is_a_note_on_the_day_not_an_event(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """The whole point of the feature, in one assertion pair: the name is on the calendar, and
+    nothing was written to Event. If this ever fails the other way round, birthdays have acquired
+    an organiser, an RSVP form, a push audience and a VEVENT in sixty subscribed calendars."""
+    _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
+    client.force_login(beboer)
+
+    response = client.get(f"{EVENTS}kalender?maaned=2026-09")
+
+    assert "Mette" in response.content.decode()
+    assert not Event.objects.exists()
+
+
+def test_the_birthday_lands_in_its_own_cell(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
+    client.force_login(beboer)
+
+    weeks = client.get(f"{EVENTS}kalender?maaned=2026-09").context["weeks"]
+
+    marked = {
+        cell["date"]: [b.resident.first_name for b in cell["birthdays"]]
+        for week in weeks
+        for cell in week
+        if cell["birthdays"]
+    }
+    assert marked == {datetime.date(2026, 9, 12): ["Mette"]}
+
+
+def test_an_alumne_is_not_on_the_calendar(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """The directory holds every resident the ETL has ever imported. Without the residency filter a
+    calendar belonging to sixty people would carry several hundred names a year."""
+    make_resident(email="gammel@gahk.dk", first_name="Fraflyttet", birthday=datetime.date(1994, 9, 12))
+    client.force_login(beboer)
+
+    response = client.get(f"{EVENTS}kalender?maaned=2026-09")
+
+    assert "Fraflyttet" not in response.content.decode()
+    assert all(not cell["birthdays"] for week in response.context["weeks"] for cell in week)
+
+
+def test_the_calendar_flags_exactly_the_people_on_the_active_alumneliste(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """The condition, asserted against the alumneliste's OWN query rather than against a
+    hand-written idea of it — so the two cannot drift apart without this failing.
+
+    Three people share the date, and only one of them lives here now:
+
+      * on the current month's list           -> flagged
+      * never on any list (a plain directory row, as the ETL leaves an alumne) -> not flagged
+      * on LAST year's list only              -> not flagged, and still on that period of the
+        alumneliste, which is the point: moving out is not a flag anybody has to remember to set,
+        it is simply not being on the month the calendar asks about.
+    """
+    from residents.models import Residency, active_period
+    from residents.views import _directory_rows
+
+    born = datetime.date(2001, 9, 12)
+    here = _celebrant(make_resident, born, first_name="Nuvaerende", last_name="Beboer")
+    make_resident(email="aldrig@gahk.dk", first_name="Aldrig", birthday=born)
+    gone = _celebrant(make_resident, born, first_name="Fraflyttet", last_name="Person")
+    year, month = active_period()
+    Residency.objects.filter(resident=gone).update(year=year - 1)
+
+    client.force_login(beboer)
+    response = client.get(f"{EVENTS}kalender?maaned=2026-09&dag=2026-09-12")
+
+    on_the_list = _directory_rows(year, month, "")
+    expected = {
+        row.resident_id
+        for row in on_the_list
+        if row.resident.birthday and (row.resident.birthday.month, row.resident.birthday.day) == (9, 12)
+    }
+    assert {b.resident.pk for b in response.context["chosen_birthdays"]} == expected == {here.pk}
+
+    body = response.content.decode()
+    assert "Aldrig" not in body
+    assert "Fraflyttet" not in body
+    # Not deleted — merely off this month's list, and still on the one they were on.
+    assert Residency.objects.filter(resident=gone, year=year - 1).exists()
+
+
+def test_a_resident_without_a_birthday_is_simply_absent(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """Most of the legacy import has one; some rows do not, and a null must not reach the grid."""
+    resident = make_resident(email="ukendt@gahk.dk", first_name="Ukendt")
+    _residency(resident)
+    client.force_login(beboer)
+
+    response = client.get(f"{EVENTS}kalender?maaned=2026-09")
+
+    assert response.status_code == 200
+    assert "Ukendt" not in response.content.decode()
+
+
+def test_a_birthday_in_a_padding_day_appears_there_too(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """Same rule the events already follow: August 2026's grid runs to 6 September, so the query
+    covers the GRID's span. A name that shows up only after you click through to the next month is
+    a name the calendar failed to tell you about."""
+    _celebrant(make_resident, datetime.date(2001, 9, 1), first_name="Padding", last_name="Person")
+    client.force_login(beboer)
+
+    body = client.get(f"{EVENTS}kalender?maaned=2026-08").content.decode()
+
+    assert "Padding" in body
+
+
+def test_the_day_panel_names_the_celebrant_and_the_age(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
+    client.force_login(beboer)
+
+    response = client.get(f"{EVENTS}kalender?maaned=2026-09&dag=2026-09-12")
+
+    assert [b.resident.first_name for b in response.context["chosen_birthdays"]] == ["Mette"]
+    body = response.content.decode()
+    assert "Mette Hansen" in body
+    assert "Fylder 25" in body
+
+
+def test_a_day_with_only_a_birthday_does_not_say_nothing_happens(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """A flag on the cell and "der sker ikke noget den dag" underneath it reads as a bug — which is
+    why the empty message tests BOTH lists rather than the events' own {% empty %} clause."""
+    _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
+    client.force_login(beboer)
+
+    body = client.get(f"{EVENTS}kalender?maaned=2026-09&dag=2026-09-12").content.decode()
+
+    assert "Der sker ikke noget den dag" not in body
+
+
+def test_a_day_with_neither_still_says_nothing_happens(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """The other half of the pair — the message has to survive the extra condition."""
+    _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
+    client.force_login(beboer)
+
+    body = client.get(f"{EVENTS}kalender?maaned=2026-09&dag=2026-09-13").content.decode()
+
+    assert "Der sker ikke noget den dag" in body
+
+
+def test_a_birthday_only_day_can_still_be_tapped_open(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """On a phone the flag is the entire marking, so a marked cell that does not open is a cell
+    that looks broken. The tap link used to be rendered only for days carrying events."""
+    _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
+    client.force_login(beboer)
+
+    body = client.get(f"{EVENTS}kalender?maaned=2026-09").content.decode()
+
+    assert "dag=2026-09-12" in body
+
+
+def test_a_birthday_never_reaches_a_subscribed_calendar(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """The .ics feed is the one place where "it is only a note" stops being a rendering detail: an
+    entry that lands there is copied into Google and Apple and outlives anything done here."""
+    _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
+
+    body = client.get(_feed_url(beboer)).content.decode()
+
+    assert "Mette" not in body
+    assert "BEGIN:VEVENT" not in body
+
+
+def test_an_unbelievable_birth_year_shows_no_age(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """The legacy import carried a few placeholder years. "Fylder 126" on the kollegium's calendar
+    is worse than saying nothing about the age at all — the name still shows."""
+    _celebrant(make_resident, datetime.date(1900, 9, 12), first_name="Gammel", last_name="Data")
+    client.force_login(beboer)
+
+    response = client.get(f"{EVENTS}kalender?maaned=2026-09&dag=2026-09-12")
+
+    assert response.context["chosen_birthdays"][0].turning is None
+    body = response.content.decode()
+    assert "Gammel Data" in body
+    assert "Fylder" not in body
+
+
+# The date arithmetic on its own. Two cases the calendar cannot exercise by rendering a month,
+# because both need a span the grid only produces at particular times of year.
+
+
+@pytest.mark.parametrize(
+    ("year", "expected"),
+    [(2024, datetime.date(2024, 2, 29)), (2026, datetime.date(2026, 3, 1))],
+)
+def test_the_29th_of_february_is_celebrated_on_the_1st_of_march_in_ordinary_years(
+    year: int, expected: datetime.date
+) -> None:
+    """Three years in four the date names no day at all, and `date(year, 2, 29)` raises rather than
+    saying so — so the alternative to deciding is dropping somebody off the calendar for three
+    years running and never noticing. Danish practice is 1 March."""
+    from residents.birthdays import celebrated_on
+
+    assert celebrated_on(datetime.date(2004, 2, 29), year) == expected
+
+
+def test_a_span_that_crosses_new_year_finds_birthdays_on_both_sides(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """December's grid pads into January, so a span is not confined to one month or even one year —
+    which is why the lookup asks per year IN THE SPAN rather than per date of birth."""
+    from residents.birthdays import in_span
+
+    _celebrant(make_resident, datetime.date(2001, 12, 30), first_name="Decem", last_name="Ber")
+    _celebrant(make_resident, datetime.date(2002, 1, 2), first_name="Janu", last_name="Ar")
+
+    found = in_span(datetime.date(2026, 12, 28), datetime.date(2027, 1, 3))
+
+    assert {day: [b.resident.first_name for b in bs] for day, bs in found.items()} == {
+        datetime.date(2026, 12, 30): ["Decem"],
+        datetime.date(2027, 1, 2): ["Janu"],
+    }
+
+
 # --- ics: one event ---------------------------------------------------------------------------------
 
 

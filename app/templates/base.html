@@ -50,6 +50,18 @@
         {# Speech bubble: what a swipe-right on a Den Hurtige message reveals (see .msg-hint). #}
         <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-8 8H9l-5 3 1.2-4.2A8 8 0 1 1 21 12z"/></symbol>
       </g>
+      {% comment %}
+        Dannebrog, flown for a birthday — which is the only thing it marks (see .cal-birthday).
+        OUTSIDE the group above, and it is the one symbol here that has to be: everything in that
+        group is a monochrome line drawing that takes its colour from whatever it sits in, and a
+        flag with no red in it is not a flag. Its own fills are presentation attributes on the
+        paths, which beat what the <use> shadow tree inherits from the referencing <svg>.
+        Proportions are the real ones: 37:28, with the cross 12 from the hoist and 4 wide.
+      {% endcomment %}
+      <symbol id="i-dannebrog" viewBox="0 0 37 28">
+        <path fill="#C60C30" d="M0 0h37v28H0z"/>
+        <path fill="#fff" d="M12 0h4v28h-4zM0 12h37v4H0z"/>
+      </symbol>
     </defs>
   </svg>
 
