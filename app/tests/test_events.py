@@ -870,7 +870,7 @@ def test_the_private_route_table_covers_every_pk_route() -> None:
 
 # --- comments -------------------------------------------------------------------------------------
 #
-# The thread on an event. Three things separate it from Ankebogen's comments and each has a test
+# The thread on an event. Three things separate it from opslagstavlen's comments and each has a test
 # here: it is open to anyone who can SEE the event (not only those who answered), it is removable by
 # its author or a HOST rather than by Inspektionen, and it goes when the event goes.
 
@@ -1073,7 +1073,7 @@ def test_an_invitee_may_comment_on_a_private_event(client: Client, beboer: Resid
 
 def test_comments_go_when_the_event_goes(beboer: Resident) -> None:
     """CASCADE is the retention. The module docstring commits to there being no record of what
-    happened, so a thread outliving its event would be the archive it says belongs to Ankebogen."""
+    happened, so a thread outliving its event would be the archive it says belongs to opslagstavlen."""
     event = make_event(beboer)
     EventComment.objects.create(event=event, author=beboer, body="Ses i morgen")
 
@@ -1970,7 +1970,7 @@ def _notice(author: Resident, event: Event) -> object:
 
 @pytest.fixture
 def board_open(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ankebogen is still gated to a trial group; these tests are about the link, not the gate."""
+    """Opslagstavlen is still gated to a trial group; these tests are about the link, not the gate."""
     from opslagstavle import access as board_access
 
     monkeypatch.setattr(board_access, "ACCESS_ROLES", None)
@@ -1984,11 +1984,9 @@ def test_the_event_page_lists_the_posts_about_it(client: Client, beboer: Residen
     response = client.get(f"{EVENTS}{event.pk}")
     body = response.content.decode()
 
-    # "i Ankebogen", not "på opslagstavlen": the board was renamed, and the preposition moved with
-    # it -- things sit ON a noticeboard but IN a book.
-    assert "Omtalt i Ankebogen" in body
+    assert "Omtalt på opslagstavlen" in body
     assert len(response.context["notices"]) == 1
-    assert f"/intern/ankebogen/{response.context['notices'][0].pk}" in body
+    assert f"/intern/opslagstavle/{response.context['notices'][0].pk}" in body
     # The excerpt, not just the byline: on an event with two or three posts about it, what the post
     # says is the only thing that lets a reader pick. And rendered, so no `**` reaches the page.
     assert "Vi spiser sammen." in body
@@ -1998,7 +1996,7 @@ def test_the_event_page_lists_the_posts_about_it(client: Client, beboer: Residen
 def test_no_board_link_for_somebody_who_cannot_open_the_board(
     client: Client, beboer: Resident, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Ankebogen is behind a role trial. Pointing a resident at a page that will 403 them is
+    """Opslagstavlen is behind a role trial. Pointing a resident at a page that will 403 them is
     worse than not mentioning it — so the section is gated on the READER, not on the event."""
     from opslagstavle import access as board_access
 

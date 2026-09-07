@@ -18,11 +18,7 @@ urlpatterns = [
     path("beboer/min-profil/rediger", views.edit_profile, name="edit_profile"),
     path("stamtree/", views.stamtree, name="stamtree"),
     path("den-hurtige/", include("den_hurtige.urls")),
-    # /intern/ankebogen/ — the board is named Ankebogen to residents. The PACKAGE stays
-    # `opslagstavle`: the app label, the URL namespace and the DB tables are internal names,
-    # and renaming them is a table migration that no reader would ever see. Only the path and
-    # the display strings moved.
-    path("ankebogen/", include("opslagstavle.urls")),
+    path("opslagstavle/", include("opslagstavle.urls")),
     path("begivenheder/", include("events.urls")),
     path("reparationer/", include("reparationer.urls")),
     path("arkiv/", include("arkiv.urls")),

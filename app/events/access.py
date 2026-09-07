@@ -41,7 +41,7 @@ from .models import Event, EventComment, EventInvite, EventQuerySet, Visibility
 # administrators and superusers are always in).
 #
 # Open to the whole kollegium. It was gated to Inspektionen and Netværksgruppen for a first pass,
-# matching Ankebogen's trial group. ("Netværk" was spelled ADMINISTRATOR: the network group is not
+# matching opslagstavlen's trial group. ("Netværk" was spelled ADMINISTRATOR: the network group is not
 # an embedsgruppe with a Workgroup row, so it has never had a role of its own — see
 # residents.models.WORKGROUP_ROLE, where `administrator` is deliberately absent for that reason.)
 #

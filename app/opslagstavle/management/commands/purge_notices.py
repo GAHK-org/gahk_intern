@@ -55,4 +55,4 @@ class Command(BaseCommand):
             return
 
         orphans.delete()
-        self.stdout.write(self.style.SUCCESS(f"Ankebogen: {n_orphans} ubrugte billeder ryddet."))
+        self.stdout.write(self.style.SUCCESS(f"Opslagstavlen: {n_orphans} ubrugte billeder ryddet."))

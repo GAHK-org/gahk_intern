@@ -1,6 +1,6 @@
 """Danish, mostly slash-less paths, matching den_hurtige/urls.py.
 
-Mounted at /intern/ankebogen/ from residents/urls.py — which has no `app_name`, so its names are
+Mounted at /intern/opslagstavle/ from residents/urls.py — which has no `app_name`, so its names are
 global while these are namespaced. Always `{% url 'opslagstavle:detail' notice.pk %}`.
 """
 

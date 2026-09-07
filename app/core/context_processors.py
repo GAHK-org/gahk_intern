@@ -60,7 +60,7 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     if den_hurtige_allowed(roles):
         oversigt.append(("/intern/den-hurtige/", "Den Hurtige", "flash"))
     if opslagstavle_allowed(roles):
-        oversigt.append(("/intern/ankebogen/", "Ankebogen", "board"))
+        oversigt.append(("/intern/opslagstavle/", "Opslagstavle", "board"))
     if events_allowed(roles):
         oversigt.append(("/intern/begivenheder/", "Begivenheder", "calendar"))
     # Alumneliste stays here; Stamtræ and Statistik moved to Ressourcer (see below).
@@ -111,7 +111,7 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
         ("/intern/stamtree/", "Stamtræ", "tree"),
         ("/intern/statistik/", "Statistik", "chart"),
     ]
-    # Conditional on the rollout gate, like Den Hurtige / Ankebogen / Begivenheder above — open
+    # Conditional on the rollout gate, like Den Hurtige / Opslagstavlen / Begivenheder above — open
     # today, and kept conditional for the reason given up there.
     if arkiv_allowed(roles):
         ressourcer.append(("/intern/arkiv/", "Arkiv", "archive"))

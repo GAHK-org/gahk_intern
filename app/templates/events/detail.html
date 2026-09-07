@@ -94,7 +94,7 @@
 
   {% if event.description %}
     {% comment %}
-      Rendered on read, like Ankebogen. `markdown` is core.markdown behind board_extras — the
+      Rendered on read, like opslagstavlen. `markdown` is core.markdown behind board_extras — the
       one place resident-written content is marked safe.
     {% endcomment %}
     <div class="prose-gahk event-description">{{ event.description|markdown }}</div>
@@ -104,12 +104,12 @@
 
   {% if notices %}
     {% comment %}
-      The posts that announced this. Only rendered for a reader who can actually open Ankebogen
+      The posts that announced this. Only rendered for a reader who can actually open opslagstavlen
       — it is still behind a role gate, and a link that 403s is worse than no link (see
       views._related_notices).
     {% endcomment %}
     <section class="event-notices">
-      <h2>Omtalt i Ankebogen</h2>
+      <h2>Omtalt på opslagstavlen</h2>
       {% for notice in notices %}
         {% comment %}
           An excerpt, not just a byline. "Frederik Formand · 24. maj" says a post exists; it does not
@@ -133,7 +133,7 @@
   {% endif %}
 
   {% comment %}
-    The thread. Reuses Ankebogen's comment markup and CSS wholesale — .notice-comments, .reply,
+    The thread. Reuses opslagstavlen's comment markup and CSS wholesale — .notice-comments, .reply,
     .reply-head, .msg-text, .comment-form — because it IS the same widget, and a second set of
     classes for the same rows is how the two reaction rows drifted apart (see the header of
     den_hurtige/_message.html for how that went).
@@ -159,7 +159,7 @@
         {% comment %}
           The byline is its own flex ROW because .msg-del is a <form> positioned with
           `margin-left:auto`, which means nothing outside a flex container — loose in the .reply it
-          took a blank line of its own between the name and the text. Same note as Ankebogen's.
+          took a blank line of its own between the name and the text. Same note as opslagstavlen's.
 
           NO embedsgruppe pill here, unlike the board's comments: this model keeps no snapshot of
           it, because the snapshot exists to stop a rotating group from relabelling a multi-year

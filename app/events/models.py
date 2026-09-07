@@ -366,7 +366,7 @@ class EventComment(models.Model):
     """A note on an event — "hvad skal jeg tage med?", "jeg kommer en halv time senere".
 
     WHY THIS EXISTS AT ALL, given that the module docstring above divides the three features by
-    handing comments to Ankebogen. The division still holds for the thing being discussed: an
+    handing comments to opslagstavlen. The division still holds for the thing being discussed: an
     ANNOUNCEMENT belongs on the board, where it is kept. What this is for is the practical traffic
     an event generates while it is still ahead of you, which was previously landing in Den Hurtige
     (where it expires in an hour, often before the event) or in a Messenger thread the house left
@@ -387,7 +387,7 @@ class EventComment(models.Model):
       * **No retention of its own.** CASCADE from the event, which is deleted a week after it is
         held. That is not an oversight to fix later: the module docstring commits to there being no
         record of what happened, and a comment thread outliving its event would be exactly the
-        archive it says belongs to Ankebogen.
+        archive it says belongs to opslagstavlen.
 
     Plain text, not Markdown, for the reasons NoticeComment's docstring gives — rendered
     autoescaped with `white-space:pre-wrap` and `|urlize`.

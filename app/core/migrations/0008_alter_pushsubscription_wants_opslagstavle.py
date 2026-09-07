@@ -1,5 +1,8 @@
 """Label only: the noticeboard is called Ankebogen to residents now.
 
+    SUPERSEDED BY 0009, which puts the label back to "Opslagstavlen". Left in place rather than
+    deleted because it was already applied; the reasoning is in 0009's docstring.
+
 The COLUMN keeps its name. `wants_opslagstavle` is the app package's name for the topic and it is
 wired to it in three places that have nothing to do with what a resident reads — core.models'
 TOPIC_FIELDS, core.forms' topic choices, and the `data-topic` attribute the push bar posts back —

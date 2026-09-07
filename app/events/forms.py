@@ -114,7 +114,7 @@ class EventForm(forms.ModelForm):
             "rsvp_deadline_at": "Svarfrist",
         }
         help_texts = {
-            "description": "Markdown virker — ligesom i Ankebogen.",
+            "description": "Markdown virker — ligesom på opslagstavlen.",
             "capacity": "Lad stå tomt hvis der ikke er nogen grænse. "
             "Når der er fuldt, kommer flere på venteliste.",
             # No entry for the three datetime fields: they are declared below, and a declared field

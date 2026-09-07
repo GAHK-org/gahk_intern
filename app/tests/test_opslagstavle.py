@@ -33,7 +33,7 @@ from opslagstavle.models import (
 )
 from residents.models import Residency, Resident, Role, active_period
 
-BOARD = "/intern/ankebogen/"
+BOARD = "/intern/opslagstavle/"
 pytestmark = pytest.mark.django_db
 
 
