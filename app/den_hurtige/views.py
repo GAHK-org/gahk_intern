@@ -28,7 +28,7 @@ from django.views.decorators.http import require_POST
 
 from core.push import handle_subscription_request
 from core.reactions import apply_toggle, reaction_rows
-from core.uploads import check_image_upload
+from core.uploads import attached_image
 from residents.permissions import current_resident, effective_roles
 
 from . import channels, services
@@ -348,25 +348,19 @@ def _render_thread(request: HttpRequest, pk: int, *, fragment: bool) -> HttpResp
 
 
 def _validated_image(request: HttpRequest) -> UploadedFile | None:
-    """The uploaded image, or None with a warning shown.
+    """The uploaded image, or None with a warning shown — this feature's ceiling applied.
 
     A backstop, not the main defence: imageupload.ts already downscales in the browser. This rejects
     a crafted or oversized upload, and warns rather than failing the whole submission — losing an
     urgent message because the photo was wrong is the worse outcome. Shared by messages and replies
     so the two can never drift apart on what they accept.
 
-    What counts as an acceptable image lives in core.uploads, so this cannot drift from the CMS and
-    værelsestjek again. It previously accepted anything whose content type began with `image/`,
-    which let an SVG through — a document that executes script when opened from our own /media/.
+    The body moved to core.uploads.attached_image when opslagstavlen and begivenheder turned out to
+    have copied it; what is left here is the name its two callers use and QUICK_POST_MAX_MB. Kept as
+    a wrapper rather than inlined at both call sites so the "messages and replies cannot drift"
+    guarantee above stays a single line of code rather than a convention.
     """
-    image = request.FILES.get("image")
-    if not image:
-        return None
-    error = check_image_upload(image, settings.QUICK_POST_MAX_MB)
-    if error is not None:
-        messages.warning(request, f"{error} Billedet blev ikke gemt.")
-        return None
-    return image
+    return attached_image(request, settings.QUICK_POST_MAX_MB)
 
 
 def _channel_of(post: QuickPost) -> str:

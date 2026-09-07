@@ -28,7 +28,7 @@ from core import push
 from core.emoji import EMOJI_SHORTLIST
 from core.markdown import image_sources, render_markdown
 from core.reactions import apply_toggle, reaction_rows
-from core.uploads import validate_image_upload
+from core.uploads import attached_image, validate_image_upload
 from residents.permissions import current_resident
 
 from . import services
@@ -254,14 +254,36 @@ def toggle_pin(request: HttpRequest, pk: int) -> HttpResponseRedirect:
 @require_POST
 @access_required
 def create_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
+    """A comment, optionally with one photo — and a photo on its own is a whole comment.
+
+    THE IMAGE IS VALIDATED OUTSIDE THE FORM, deliberately, and it is why the form no longer
+    rejects an empty body. A refused picture (an SVG, something over the limit) must not throw
+    away the text somebody typed beside it, so `core.uploads.attached_image` warns and the picture is
+    dropped — the same call den_hurtige.views makes, for the same reason.
+
+    That leaves one case the form cannot see: a photo-only comment whose photo was refused now has
+    nothing in it at all. It lands in the empty branch below, which is the right place, but the two
+    messages have to arrive TOGETHER or the picture appears to have silently not counted. Django's
+    message framework carries both through the redirect.
+    """
     notice = get_object_or_404(Notice, pk=pk)
     form = NoticeCommentForm(request.POST)
+    # NOTICE_IMAGE_MAX_MB, so a comment photo and a post photo share one ceiling.
+    image = attached_image(request, settings.NOTICE_IMAGE_MAX_MB)
+
     if not form.is_valid():
-        messages.error(request, "Skriv en kommentar.")
+        messages.error(request, "Kommentaren kunne ikke gemmes.")
         return redirect("opslagstavle:detail", pk=notice.pk)
+
     comment = form.save(commit=False)
+    if not comment.body and image is None:
+        messages.error(request, "Skriv en kommentar, eller vedhæft et billede.")
+        return redirect("opslagstavle:detail", pk=notice.pk)
+
     comment.notice = notice
     comment.author = current_resident(request)
+    if image is not None:
+        comment.image = image
     comment.save()
     services.notify_new_comment(comment)
     return redirect("opslagstavle:detail", pk=notice.pk)

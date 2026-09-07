@@ -1,4 +1,4 @@
-// Service worker for the intern PWA (Den Hurtige and Ankebogen).
+// Service worker for the intern PWA (Den Hurtige and opslagstavlen).
 //
 // Served from the ROOT path (/sw.js, see config/urls.py) so its scope covers /intern/. It lives
 // under templates/ because a TemplateView renders it, but the contents are deliberately plain
@@ -33,7 +33,7 @@ self.addEventListener('activate', function (event) {
 self.addEventListener('fetch', function (event) {});
 
 // Incoming push from core/push.py. Payload keys: head, body, icon, url.
-// `url` is what routes the tap: Den Hurtige sends its feed, Ankebogen sends the individual
+// `url` is what routes the tap: Den Hurtige sends its feed, opslagstavlen sends the individual
 // post. Nothing here is per-feature — one worker serves both, and must keep doing so (see the
 // scope note above).
 // `head` is the sender's name, not the feature name: iOS and Android already label the

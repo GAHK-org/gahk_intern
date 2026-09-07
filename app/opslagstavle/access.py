@@ -1,4 +1,4 @@
-"""Who may reach Ankebogen, and who may do what once they are there.
+"""Who may reach opslagstavlen, and who may do what once they are there.
 
 The staged rollout is over: ACCESS_ROLES is None and every resident is in.
 

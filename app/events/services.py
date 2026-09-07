@@ -339,7 +339,10 @@ def notify_new_comment(comment: EventComment) -> None:
     push.send(
         audience,
         head=f"{comment.author.full_name} kommenterede",
-        body=push.preview(f"{comment.event.title}: {comment.body}"),
+        # The title always carries the event, so a photo-only comment still has something to
+        # say; the glyph is what tells the reader there is a picture. push.preview("") is "",
+        # which on a lock screen reads as a notification that failed to load.
+        body=push.preview(f"{comment.event.title}: {comment.body or '📷 Billede'}"),
         url=_url(comment.event),
     )
 

@@ -47,7 +47,7 @@ from .models import ArchiveFile, ArchiveFolder
 # administrators and superusers are always in).
 #
 # Open to the whole kollegium. It was gated for a first pass to Inspektionen and
-# Netvaerksgruppen, matching what Ankebogen and begivenheder did.
+# Netvaerksgruppen, matching what opslagstavlen and begivenheder did.
 #
 # THE CONDITION THIS MODULE SET FOR OPENING WAS THE ROOT STRUCTURE, not the code, and it is worth
 # leaving on the record now that the gate is off: this is the one feature where a premature opening

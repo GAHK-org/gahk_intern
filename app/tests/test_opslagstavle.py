@@ -33,7 +33,7 @@ from opslagstavle.models import (
 )
 from residents.models import Residency, Resident, Role, active_period
 
-BOARD = "/intern/ankebogen/"
+BOARD = "/intern/opslagstavle/"
 pytestmark = pytest.mark.django_db
 
 
@@ -826,6 +826,191 @@ def test_the_backfill_reads_the_month_each_post_was_actually_written_in(
 
     assert Notice.objects.get(pk=old.pk).author_embedsgruppe == "Køkkengruppen"
     assert Notice.objects.get(pk=recent.pk).author_embedsgruppe == "Repperne"
+
+
+# --- photos on comments ---------------------------------------------------------------------------
+#
+# One optional picture per comment, and a picture on its own is a whole comment. Distinct from the
+# post body's images: those are referenced from Markdown and need NoticeImage plus an orphan sweep
+# (see the "images" section above), while this is a FileField on the comment row that goes with it.
+
+
+def test_a_comment_can_carry_a_photo(client: Client, beboer: Resident, media_tmp: Path) -> None:
+    notice = make_notice(beboer)
+    client.force_login(beboer)
+
+    client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "Sådan ser den ud", "image": png()})
+
+    comment = NoticeComment.objects.get()
+    assert comment.body == "Sådan ser den ud"
+    assert comment.image, "the file must be attached, not merely accepted"
+    assert comment.image.name.startswith("opslag/kommentarer/")
+
+
+def test_a_photo_on_its_own_is_a_whole_comment(client: Client, beboer: Resident, media_tmp: Path) -> None:
+    """ "Her, se" is an answer, which is why `body` is blank-able."""
+    notice = make_notice(beboer)
+    client.force_login(beboer)
+
+    client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "", "image": png()})
+
+    comment = NoticeComment.objects.get()
+    assert comment.body == ""
+    assert comment.image
+
+
+def test_neither_text_nor_photo_is_refused(client: Client, beboer: Resident) -> None:
+    notice = make_notice(beboer)
+    client.force_login(beboer)
+
+    response = client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "   "}, follow=True)
+
+    assert not NoticeComment.objects.exists()
+    assert "Skriv en kommentar, eller vedhæft et billede." in response.content.decode()
+
+
+def test_a_refused_photo_does_not_throw_away_the_text_beside_it(
+    client: Client, beboer: Resident, media_tmp: Path
+) -> None:
+    """An SVG is refused by core.uploads: served from our own /media/ it executes script as us.
+    Losing a typed comment to that would be the worse outcome, so the comment saves and a warning
+    explains the missing picture."""
+    notice = make_notice(beboer)
+    client.force_login(beboer)
+    bad = SimpleUploadedFile(
+        "evil.svg", b"<svg xmlns='http://www.w3.org/2000/svg'/>", content_type="image/svg+xml"
+    )
+
+    response = client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "God idé", "image": bad}, follow=True)
+
+    comment = NoticeComment.objects.get()
+    assert comment.body == "God idé"
+    assert not comment.image, "the SVG must not be stored"
+    assert "Billedet blev ikke gemt" in response.content.decode()
+
+
+def test_a_refused_photo_with_no_text_reports_both_halves(
+    client: Client, beboer: Resident, media_tmp: Path
+) -> None:
+    """core.uploads.attached_image returns None for "nothing attached" and "attached but refused"
+    alike, so this falls into the empty branch — the right landing place, since there is genuinely
+    nothing to save. Alone it would explain only half, so both messages arrive together."""
+    notice = make_notice(beboer)
+    client.force_login(beboer)
+    bad = SimpleUploadedFile("evil.svg", b"<svg/>", content_type="image/svg+xml")
+
+    response = client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "", "image": bad}, follow=True)
+    body = response.content.decode()
+
+    assert not NoticeComment.objects.exists()
+    assert "Billedet blev ikke gemt" in body
+    assert "Skriv en kommentar, eller vedhæft et billede." in body
+
+
+def test_an_oversized_comment_photo_is_refused(
+    client: Client, beboer: Resident, media_tmp: Path, settings: object
+) -> None:
+    """The board's own NOTICE_IMAGE_MAX_MB, so a comment photo and a post photo share one ceiling."""
+    settings.NOTICE_IMAGE_MAX_MB = 1  # type: ignore[attr-defined]
+    notice = make_notice(beboer)
+    client.force_login(beboer)
+    huge = SimpleUploadedFile(
+        "stor.png", b"\x89PNG\r\n\x1a\n" + b"x" * (2 * 1024 * 1024), content_type="image/png"
+    )
+
+    response = client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "Se her", "image": huge}, follow=True)
+
+    assert not NoticeComment.objects.get().image
+    assert "for stort" in response.content.decode()
+
+
+def test_the_comment_photo_is_rendered_on_the_detail_page(
+    client: Client, beboer: Resident, media_tmp: Path
+) -> None:
+    notice = make_notice(beboer)
+    client.force_login(beboer)
+    client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "", "image": png()})
+
+    body = client.get(f"{BOARD}{notice.pk}").content.decode()
+
+    assert NoticeComment.objects.get().image.url in body
+    assert 'enctype="multipart/form-data"' in body, "without it request.FILES is silently empty"
+
+
+def test_deleting_a_comment_deletes_its_photo(
+    beboer: Resident, media_tmp: Path, django_capture_on_commit_callbacks: Callable
+) -> None:
+    """WRAPPED BECAUSE THE PURGE IS DEFERRED, and the deferral is the feature:
+    core.files.delete_attached_files runs on `transaction.on_commit`, so a rolled-back delete cannot
+    destroy the file. A test never commits, so without this the callback never fires."""
+    from django.core.files.base import ContentFile
+
+    notice = make_notice(beboer)
+    comment = NoticeComment.objects.create(notice=notice, author=beboer, body="Se her")
+    comment.image.save("billede.png", ContentFile(b"pngbytes"), save=True)
+    path = media_tmp / comment.image.name
+    assert path.is_file()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        comment.delete()
+
+    assert not path.is_file()
+
+
+def test_deleting_the_post_takes_its_comments_photos_too(
+    beboer: Resident, media_tmp: Path, django_capture_on_commit_callbacks: Callable
+) -> None:
+    """CASCADE removes the comment rows, and a bulk queryset delete never calls Model.delete() —
+    the post_delete SIGNAL is what carries the files out, which is exactly why the receiver is
+    wired to the signal rather than overriding delete()."""
+    from django.core.files.base import ContentFile
+
+    notice = make_notice(beboer)
+    comment = NoticeComment.objects.create(notice=notice, author=beboer, body="Se her")
+    comment.image.save("billede.png", ContentFile(b"pngbytes"), save=True)
+    path = media_tmp / comment.image.name
+    assert path.is_file()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        notice.delete()
+
+    assert not NoticeComment.objects.exists()
+    assert not path.is_file()
+
+
+def test_a_photo_only_comment_notifies_with_a_body_rather_than_a_blank(
+    client: Client, beboer: Resident, other: Resident, pushes: list, media_tmp: Path
+) -> None:
+    """push.preview("") is "", and a notification with an empty body reads on a lock screen as
+    though it failed to load."""
+    notice = make_notice(beboer)
+    subscribe(beboer, "https://push.example/author")
+    client.force_login(other)
+
+    client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "", "image": png()})
+
+    assert len(pushes) == 1
+    assert "Billede" in pushes[0][1]["body"]
+
+
+def test_the_comment_form_carries_the_attachment_note_hooks(client: Client, beboer: Resident) -> None:
+    """The hooks frontend/src/feed.ts finds the note by. The BEHAVIOUR (thumbnail, filename, the
+    remove button) is JavaScript and this project has no JS test runner, so what is asserted here is
+    the contract between the template and that module: the note exists, it starts hidden, and it
+    carries the three data attributes the handler queries. Rename one of those without the other and
+    the paperclip silently stops giving any feedback at all - which is the state this replaced.
+    """
+    notice = make_notice(beboer)
+    client.force_login(beboer)
+
+    body = client.get(f"{BOARD}{notice.pk}").content.decode()
+
+    assert "data-file-note" in body
+    assert "data-file-note-thumb" in body
+    assert "data-file-note-name" in body
+    assert "data-file-note-clear" in body
+    # Hidden until something is picked, or every comment box would carry an empty grey strip.
+    assert '<div class="file-note" data-file-note hidden>' in body
 
 
 # --- images ---------------------------------------------------------------------------------------

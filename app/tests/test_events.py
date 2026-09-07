@@ -19,6 +19,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
 from django.test import Client
 from django.test.utils import CaptureQueriesContext
@@ -41,6 +42,14 @@ from events.models import (
 from residents.models import Resident, Role
 
 EVENTS = "/intern/begivenheder/"
+
+
+def settings_media_root() -> object:
+    """MEDIA_ROOT as the `media_tmp` fixture left it — read late, never captured at import."""
+    from django.conf import settings as django_settings
+
+    return django_settings.MEDIA_ROOT
+
 
 pytestmark = pytest.mark.django_db
 
@@ -733,7 +742,6 @@ def test_purging_takes_the_answers_and_the_image_with_it(
 ) -> None:
     """A bulk queryset delete never calls Model.delete(), which is why the file cleanup is a
     post_delete signal. See core.files."""
-    from django.core.files.uploadedfile import SimpleUploadedFile
 
     event = make_event(beboer, starts_at=timezone.now() + datetime.timedelta(hours=1))
     services.set_answer(event.pk, other, Answer.JA)
@@ -870,7 +878,7 @@ def test_the_private_route_table_covers_every_pk_route() -> None:
 
 # --- comments -------------------------------------------------------------------------------------
 #
-# The thread on an event. Three things separate it from Ankebogen's comments and each has a test
+# The thread on an event. Three things separate it from opslagstavlen's comments and each has a test
 # here: it is open to anyone who can SEE the event (not only those who answered), it is removable by
 # its author or a HOST rather than by Inspektionen, and it goes when the event goes.
 
@@ -903,14 +911,16 @@ def test_commenting_lands_back_on_the_thread(client: Client, beboer: Resident) -
 
 
 def test_a_blank_comment_is_refused(client: Client, beboer: Resident) -> None:
-    """Whitespace only. Django's own validation accepts it; the form's clean_body is what does not."""
+    """Whitespace only, and nothing attached. Django accepts a blank TextField and the form now
+    strips rather than rejects, so the refusal is the view's — see test_neither_text_nor_photo_is_refused
+    for the same rule stated from the photo side."""
     event = make_event(beboer)
     client.force_login(beboer)
 
     response = client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "   \n  "}, follow=True)
 
     assert not EventComment.objects.exists()
-    assert "Skriv en kommentar." in response.content.decode()
+    assert "Skriv en kommentar, eller vedhæft et billede." in response.content.decode()
 
 
 def test_the_thread_is_rendered_on_the_event_page(client: Client, beboer: Resident) -> None:
@@ -1073,7 +1083,7 @@ def test_an_invitee_may_comment_on_a_private_event(client: Client, beboer: Resid
 
 def test_comments_go_when_the_event_goes(beboer: Resident) -> None:
     """CASCADE is the retention. The module docstring commits to there being no record of what
-    happened, so a thread outliving its event would be the archive it says belongs to Ankebogen."""
+    happened, so a thread outliving its event would be the archive it says belongs to opslagstavlen."""
     event = make_event(beboer)
     EventComment.objects.create(event=event, author=beboer, body="Ses i morgen")
 
@@ -1162,6 +1172,185 @@ def test_rendering_a_thread_costs_no_query_per_comment(
     assert len(many.captured_queries) == len(few.captured_queries), (
         f"{len(few.captured_queries)} queries for 3 comments, {len(many.captured_queries)} for 12"
     )
+
+
+# --- photos on comments -------------------------------------------------------------------------
+#
+# One optional picture per comment, and a picture on its own is a whole comment. The awkward case is
+# a photo-only comment whose photo is refused: it has to fail, and it has to say both why the
+# picture did not count and why the comment did not land. See views.create_comment.
+
+
+def test_a_comment_can_carry_a_photo(client: Client, beboer: Resident, media_tmp: None) -> None:
+    event = make_event(beboer)
+    client.force_login(beboer)
+    photo = SimpleUploadedFile("lokale.jpg", bytes.fromhex("ffd8ff") + b"x" * 512, content_type="image/jpeg")
+
+    client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "Sådan ser lokalet ud", "image": photo})
+
+    comment = EventComment.objects.get()
+    assert comment.body == "Sådan ser lokalet ud"
+    assert comment.image, "the file must be attached, not merely accepted"
+    assert comment.image.name.startswith("begivenheder/kommentarer/")
+
+
+def test_a_photo_on_its_own_is_a_whole_comment(client: Client, beboer: Resident, media_tmp: None) -> None:
+    """ "Her, se" is an answer. The body is blank-able for exactly this."""
+    event = make_event(beboer)
+    client.force_login(beboer)
+    photo = SimpleUploadedFile(
+        "kvittering.jpg", bytes.fromhex("ffd8ff") + b"x" * 512, content_type="image/jpeg"
+    )
+
+    client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "", "image": photo})
+
+    comment = EventComment.objects.get()
+    assert comment.body == ""
+    assert comment.image
+
+
+def test_neither_text_nor_photo_is_refused(client: Client, beboer: Resident) -> None:
+    event = make_event(beboer)
+    client.force_login(beboer)
+
+    response = client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "  "}, follow=True)
+
+    assert not EventComment.objects.exists()
+    assert "Skriv en kommentar, eller vedhæft et billede." in response.content.decode()
+
+
+def test_a_refused_photo_does_not_throw_away_the_text_beside_it(
+    client: Client, beboer: Resident, media_tmp: None
+) -> None:
+    """An SVG is refused by core.uploads because it executes script when opened from our own
+    /media/. Losing a typed comment to that would be the worse outcome, so the comment saves and the
+    warning explains the missing picture."""
+    event = make_event(beboer)
+    client.force_login(beboer)
+    bad = SimpleUploadedFile(
+        "evil.svg", b"<svg xmlns='http://www.w3.org/2000/svg'/>", content_type="image/svg+xml"
+    )
+
+    response = client.post(
+        f"{EVENTS}{event.pk}/kommentar", {"body": "Kan man tage børn med?", "image": bad}, follow=True
+    )
+
+    comment = EventComment.objects.get()
+    assert comment.body == "Kan man tage børn med?"
+    assert not comment.image, "the SVG must not be stored"
+    assert "Billedet blev ikke gemt" in response.content.decode()
+
+
+def test_a_refused_photo_with_no_text_reports_both_halves(
+    client: Client, beboer: Resident, media_tmp: None
+) -> None:
+    """core.uploads.attached_image returns None for "nothing attached" and "attached but refused"
+    alike, so this lands in the empty branch — which is right, there is nothing to save. On its own
+    that would explain only half of it, so both messages have to arrive together."""
+    event = make_event(beboer)
+    client.force_login(beboer)
+    bad = SimpleUploadedFile("evil.svg", b"<svg/>", content_type="image/svg+xml")
+
+    response = client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "", "image": bad}, follow=True)
+    body = response.content.decode()
+
+    assert not EventComment.objects.exists()
+    assert "Billedet blev ikke gemt" in body
+    assert "Skriv en kommentar, eller vedhæft et billede." in body
+
+
+def test_an_oversized_photo_is_refused(
+    client: Client, beboer: Resident, media_tmp: None, settings: object
+) -> None:
+    settings.EVENT_IMAGE_MAX_MB = 1  # type: ignore[attr-defined]
+    event = make_event(beboer)
+    client.force_login(beboer)
+    huge = SimpleUploadedFile(
+        "stor.jpg", bytes.fromhex("ffd8ff") + b"x" * (2 * 1024 * 1024), content_type="image/jpeg"
+    )
+
+    response = client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "Se her", "image": huge}, follow=True)
+
+    assert not EventComment.objects.get().image
+    assert "for stort" in response.content.decode()
+
+
+def test_the_comment_photo_is_rendered_on_the_event_page(
+    client: Client, beboer: Resident, media_tmp: None
+) -> None:
+    event = make_event(beboer)
+    client.force_login(beboer)
+    photo = SimpleUploadedFile("lokale.jpg", bytes.fromhex("ffd8ff") + b"x" * 512, content_type="image/jpeg")
+    client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "", "image": photo})
+
+    body = client.get(f"{EVENTS}{event.pk}").content.decode()
+
+    assert EventComment.objects.get().image.url in body
+    assert 'enctype="multipart/form-data"' in body, "without it request.FILES is silently empty"
+
+
+def test_deleting_a_comment_deletes_its_photo(
+    beboer: Resident, media_tmp: None, django_capture_on_commit_callbacks: Callable
+) -> None:
+    """The post_delete receiver, which keeps "the comment is gone" from leaving a paid-for file that
+    nothing references.
+
+    WRAPPED IN django_capture_on_commit_callbacks BECAUSE THE DELETE IS DEFERRED, and that deferral
+    is the feature: core.files.delete_attached_files purges on `transaction.on_commit`, so a delete
+    that is rolled back cannot destroy the file. A test runs inside a transaction that never
+    commits, so without this the callback simply never fires and the assertion would be testing the
+    test harness. Same pattern as the Den Hurtige and CMS image-deletion tests.
+    """
+    from django.core.files.base import ContentFile
+
+    event = make_event(beboer)
+    comment = EventComment.objects.create(event=event, author=beboer, body="Se her")
+    comment.image.save("lokale.jpg", ContentFile(b"jpegbytes"), save=True)
+    path = Path(str(settings_media_root())) / comment.image.name
+    assert path.is_file()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        comment.delete()
+
+    assert not path.is_file()
+
+
+def test_a_photo_only_comment_notifies_with_a_body_rather_than_a_blank(
+    client: Client, beboer: Resident, other: Resident, pushes: list, media_tmp: None
+) -> None:
+    """push.preview("") is "", and a notification with an empty body reads on a lock screen as
+    though it failed to load."""
+    event = make_event(beboer)
+    subscribe(beboer, "https://push.example/a")
+    client.force_login(other)
+    photo = SimpleUploadedFile(
+        "kvittering.jpg", bytes.fromhex("ffd8ff") + b"x" * 512, content_type="image/jpeg"
+    )
+
+    client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "", "image": photo})
+
+    assert len(pushes) == 1
+    assert pushes[0][1]["body"].strip() not in ("", event.title + ": ")
+    assert "Billede" in pushes[0][1]["body"]
+
+
+def test_the_comment_form_carries_the_attachment_note_hooks(client: Client, beboer: Resident) -> None:
+    """The hooks frontend/src/feed.ts finds the note by. The BEHAVIOUR (thumbnail, filename, the
+    remove button) is JavaScript and this project has no JS test runner, so what is asserted here is
+    the contract between the template and that module: the note exists, it starts hidden, and it
+    carries the three data attributes the handler queries. Rename one of those without the other and
+    the paperclip silently stops giving any feedback at all - which is the state this replaced.
+    """
+    event = make_event(beboer)
+    client.force_login(beboer)
+
+    body = client.get(f"{EVENTS}{event.pk}").content.decode()
+
+    assert "data-file-note" in body
+    assert "data-file-note-thumb" in body
+    assert "data-file-note-name" in body
+    assert "data-file-note-clear" in body
+    assert '<div class="file-note" data-file-note hidden>' in body
 
 
 def test_a_private_event_is_absent_from_the_list_for_an_outsider(
@@ -1485,6 +1674,258 @@ def test_a_private_event_is_absent_from_the_calendar_for_an_outsider(
     body = client.get(f"{EVENTS}kalender?maaned={when:%Y-%m}").content.decode()
 
     assert "Hemmelig fest" not in body
+
+
+# --- fødselsdage ------------------------------------------------------------------------------------
+#
+# The module under test is residents/birthdays.py, not this app — a birthday is a fact about a
+# PERSON, and the month grid is only its first caller. The tests live here because the calendar is
+# where the behaviour is visible, and because the thing most worth pinning is the boundary: a
+# birthday is a note printed on a day and must never become an Event, with an organiser, an answer
+# form, a push, or a line in anybody's .ics.
+
+
+def _celebrant(make_resident: Callable[..., Resident], born: datetime.date, **extra: object) -> Resident:
+    """A resident on this month's list with a date of birth. Both halves are needed: `birthdays`
+    only considers the active residency list, which conftest.make_resident does not create."""
+    extra.setdefault("email", f"f{born:%m%d}{next(_room_seq)}@gahk.dk")
+    resident = make_resident(birthday=born, **extra)
+    _residency(resident)
+    return resident
+
+
+def test_a_birthday_is_a_note_on_the_day_not_an_event(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """The whole point of the feature, in one assertion pair: the name is on the calendar, and
+    nothing was written to Event. If this ever fails the other way round, birthdays have acquired
+    an organiser, an RSVP form, a push audience and a VEVENT in sixty subscribed calendars."""
+    _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
+    client.force_login(beboer)
+
+    response = client.get(f"{EVENTS}kalender?maaned=2026-09")
+
+    assert "Mette" in response.content.decode()
+    assert not Event.objects.exists()
+
+
+def test_the_birthday_lands_in_its_own_cell(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
+    client.force_login(beboer)
+
+    weeks = client.get(f"{EVENTS}kalender?maaned=2026-09").context["weeks"]
+
+    marked = {
+        cell["date"]: [b.resident.first_name for b in cell["birthdays"]]
+        for week in weeks
+        for cell in week
+        if cell["birthdays"]
+    }
+    assert marked == {datetime.date(2026, 9, 12): ["Mette"]}
+
+
+def test_an_alumne_is_not_on_the_calendar(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """The directory holds every resident the ETL has ever imported. Without the residency filter a
+    calendar belonging to sixty people would carry several hundred names a year."""
+    make_resident(email="gammel@gahk.dk", first_name="Fraflyttet", birthday=datetime.date(1994, 9, 12))
+    client.force_login(beboer)
+
+    response = client.get(f"{EVENTS}kalender?maaned=2026-09")
+
+    assert "Fraflyttet" not in response.content.decode()
+    assert all(not cell["birthdays"] for week in response.context["weeks"] for cell in week)
+
+
+def test_the_calendar_flags_exactly_the_people_on_the_active_alumneliste(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """The condition, asserted against the alumneliste's OWN query rather than against a
+    hand-written idea of it — so the two cannot drift apart without this failing.
+
+    Three people share the date, and only one of them lives here now:
+
+      * on the current month's list           -> flagged
+      * never on any list (a plain directory row, as the ETL leaves an alumne) -> not flagged
+      * on LAST year's list only              -> not flagged, and still on that period of the
+        alumneliste, which is the point: moving out is not a flag anybody has to remember to set,
+        it is simply not being on the month the calendar asks about.
+    """
+    from residents.models import Residency, active_period
+    from residents.views import _directory_rows
+
+    born = datetime.date(2001, 9, 12)
+    here = _celebrant(make_resident, born, first_name="Nuvaerende", last_name="Beboer")
+    make_resident(email="aldrig@gahk.dk", first_name="Aldrig", birthday=born)
+    gone = _celebrant(make_resident, born, first_name="Fraflyttet", last_name="Person")
+    year, month = active_period()
+    Residency.objects.filter(resident=gone).update(year=year - 1)
+
+    client.force_login(beboer)
+    response = client.get(f"{EVENTS}kalender?maaned=2026-09&dag=2026-09-12")
+
+    on_the_list = _directory_rows(year, month, "")
+    expected = {
+        row.resident_id
+        for row in on_the_list
+        if row.resident.birthday and (row.resident.birthday.month, row.resident.birthday.day) == (9, 12)
+    }
+    assert {b.resident.pk for b in response.context["chosen_birthdays"]} == expected == {here.pk}
+
+    body = response.content.decode()
+    assert "Aldrig" not in body
+    assert "Fraflyttet" not in body
+    # Not deleted — merely off this month's list, and still on the one they were on.
+    assert Residency.objects.filter(resident=gone, year=year - 1).exists()
+
+
+def test_a_resident_without_a_birthday_is_simply_absent(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """Most of the legacy import has one; some rows do not, and a null must not reach the grid."""
+    resident = make_resident(email="ukendt@gahk.dk", first_name="Ukendt")
+    _residency(resident)
+    client.force_login(beboer)
+
+    response = client.get(f"{EVENTS}kalender?maaned=2026-09")
+
+    assert response.status_code == 200
+    assert "Ukendt" not in response.content.decode()
+
+
+def test_a_birthday_in_a_padding_day_appears_there_too(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """Same rule the events already follow: August 2026's grid runs to 6 September, so the query
+    covers the GRID's span. A name that shows up only after you click through to the next month is
+    a name the calendar failed to tell you about."""
+    _celebrant(make_resident, datetime.date(2001, 9, 1), first_name="Padding", last_name="Person")
+    client.force_login(beboer)
+
+    body = client.get(f"{EVENTS}kalender?maaned=2026-08").content.decode()
+
+    assert "Padding" in body
+
+
+def test_the_day_panel_names_the_celebrant_and_the_age(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
+    client.force_login(beboer)
+
+    response = client.get(f"{EVENTS}kalender?maaned=2026-09&dag=2026-09-12")
+
+    assert [b.resident.first_name for b in response.context["chosen_birthdays"]] == ["Mette"]
+    body = response.content.decode()
+    assert "Mette Hansen" in body
+    assert "Fylder 25" in body
+
+
+def test_a_day_with_only_a_birthday_does_not_say_nothing_happens(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """A flag on the cell and "der sker ikke noget den dag" underneath it reads as a bug — which is
+    why the empty message tests BOTH lists rather than the events' own {% empty %} clause."""
+    _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
+    client.force_login(beboer)
+
+    body = client.get(f"{EVENTS}kalender?maaned=2026-09&dag=2026-09-12").content.decode()
+
+    assert "Der sker ikke noget den dag" not in body
+
+
+def test_a_day_with_neither_still_says_nothing_happens(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """The other half of the pair — the message has to survive the extra condition."""
+    _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
+    client.force_login(beboer)
+
+    body = client.get(f"{EVENTS}kalender?maaned=2026-09&dag=2026-09-13").content.decode()
+
+    assert "Der sker ikke noget den dag" in body
+
+
+def test_a_birthday_only_day_can_still_be_tapped_open(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """On a phone the flag is the entire marking, so a marked cell that does not open is a cell
+    that looks broken. The tap link used to be rendered only for days carrying events."""
+    _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
+    client.force_login(beboer)
+
+    body = client.get(f"{EVENTS}kalender?maaned=2026-09").content.decode()
+
+    assert "dag=2026-09-12" in body
+
+
+def test_a_birthday_never_reaches_a_subscribed_calendar(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """The .ics feed is the one place where "it is only a note" stops being a rendering detail: an
+    entry that lands there is copied into Google and Apple and outlives anything done here."""
+    _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
+
+    body = client.get(_feed_url(beboer)).content.decode()
+
+    assert "Mette" not in body
+    assert "BEGIN:VEVENT" not in body
+
+
+def test_an_unbelievable_birth_year_shows_no_age(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """The legacy import carried a few placeholder years. "Fylder 126" on the kollegium's calendar
+    is worse than saying nothing about the age at all — the name still shows."""
+    _celebrant(make_resident, datetime.date(1900, 9, 12), first_name="Gammel", last_name="Data")
+    client.force_login(beboer)
+
+    response = client.get(f"{EVENTS}kalender?maaned=2026-09&dag=2026-09-12")
+
+    assert response.context["chosen_birthdays"][0].turning is None
+    body = response.content.decode()
+    assert "Gammel Data" in body
+    assert "Fylder" not in body
+
+
+# The date arithmetic on its own. Two cases the calendar cannot exercise by rendering a month,
+# because both need a span the grid only produces at particular times of year.
+
+
+@pytest.mark.parametrize(
+    ("year", "expected"),
+    [(2024, datetime.date(2024, 2, 29)), (2026, datetime.date(2026, 3, 1))],
+)
+def test_the_29th_of_february_is_celebrated_on_the_1st_of_march_in_ordinary_years(
+    year: int, expected: datetime.date
+) -> None:
+    """Three years in four the date names no day at all, and `date(year, 2, 29)` raises rather than
+    saying so — so the alternative to deciding is dropping somebody off the calendar for three
+    years running and never noticing. Danish practice is 1 March."""
+    from residents.birthdays import celebrated_on
+
+    assert celebrated_on(datetime.date(2004, 2, 29), year) == expected
+
+
+def test_a_span_that_crosses_new_year_finds_birthdays_on_both_sides(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """December's grid pads into January, so a span is not confined to one month or even one year —
+    which is why the lookup asks per year IN THE SPAN rather than per date of birth."""
+    from residents.birthdays import in_span
+
+    _celebrant(make_resident, datetime.date(2001, 12, 30), first_name="Decem", last_name="Ber")
+    _celebrant(make_resident, datetime.date(2002, 1, 2), first_name="Janu", last_name="Ar")
+
+    found = in_span(datetime.date(2026, 12, 28), datetime.date(2027, 1, 3))
+
+    assert {day: [b.resident.first_name for b in bs] for day, bs in found.items()} == {
+        datetime.date(2026, 12, 30): ["Decem"],
+        datetime.date(2027, 1, 2): ["Janu"],
+    }
 
 
 # --- ics: one event ---------------------------------------------------------------------------------
@@ -1970,7 +2411,7 @@ def _notice(author: Resident, event: Event) -> object:
 
 @pytest.fixture
 def board_open(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ankebogen is still gated to a trial group; these tests are about the link, not the gate."""
+    """Opslagstavlen is still gated to a trial group; these tests are about the link, not the gate."""
     from opslagstavle import access as board_access
 
     monkeypatch.setattr(board_access, "ACCESS_ROLES", None)
@@ -1984,11 +2425,9 @@ def test_the_event_page_lists_the_posts_about_it(client: Client, beboer: Residen
     response = client.get(f"{EVENTS}{event.pk}")
     body = response.content.decode()
 
-    # "i Ankebogen", not "på opslagstavlen": the board was renamed, and the preposition moved with
-    # it -- things sit ON a noticeboard but IN a book.
-    assert "Omtalt i Ankebogen" in body
+    assert "Omtalt på opslagstavlen" in body
     assert len(response.context["notices"]) == 1
-    assert f"/intern/ankebogen/{response.context['notices'][0].pk}" in body
+    assert f"/intern/opslagstavle/{response.context['notices'][0].pk}" in body
     # The excerpt, not just the byline: on an event with two or three posts about it, what the post
     # says is the only thing that lets a reader pick. And rendered, so no `**` reaches the page.
     assert "Vi spiser sammen." in body
@@ -1998,7 +2437,7 @@ def test_the_event_page_lists_the_posts_about_it(client: Client, beboer: Residen
 def test_no_board_link_for_somebody_who_cannot_open_the_board(
     client: Client, beboer: Resident, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Ankebogen is behind a role trial. Pointing a resident at a page that will 403 them is
+    """Opslagstavlen is behind a role trial. Pointing a resident at a page that will 403 them is
     worse than not mentioning it — so the section is gated on the READER, not on the event."""
     from opslagstavle import access as board_access
 

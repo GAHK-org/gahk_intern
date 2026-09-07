@@ -114,7 +114,7 @@ class EventForm(forms.ModelForm):
             "rsvp_deadline_at": "Svarfrist",
         }
         help_texts = {
-            "description": "Markdown virker — ligesom i Ankebogen.",
+            "description": "Markdown virker — ligesom på opslagstavlen.",
             "capacity": "Lad stå tomt hvis der ikke er nogen grænse. "
             "Når der er fuldt, kommer flere på venteliste.",
             # No entry for the three datetime fields: they are declared below, and a declared field
@@ -244,8 +244,14 @@ class EventForm(forms.ModelForm):
 
 
 class EventCommentForm(forms.ModelForm):
-    """One comment. Mirrors reparationer.RepairCommentForm, including the strip-then-reject: a
-    textarea full of spaces is `is_valid()` to Django and an empty bubble to a reader."""
+    """One comment.
+
+    Strips the body but does not reject an empty one: a comment may be a photo on its own, and the
+    photo is validated outside this form (see views.create_comment) so a refused file can be
+    dropped with a warning instead of failing the submission. "Neither text nor picture" is the
+    view's call. A textarea full of spaces is still `is_valid()` to Django and an empty bubble to a
+    reader, which is what the strip is for.
+    """
 
     class Meta:
         model = EventComment
@@ -256,7 +262,4 @@ class EventCommentForm(forms.ModelForm):
         }
 
     def clean_body(self) -> str:
-        body = (self.cleaned_data.get("body") or "").strip()
-        if not body:
-            raise forms.ValidationError("Skriv en kommentar.")
-        return body
+        return (self.cleaned_data.get("body") or "").strip()

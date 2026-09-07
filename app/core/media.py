@@ -72,7 +72,9 @@ REDIRECT_CACHE_CONTROL = f"private, max-age={REDIRECT_MAX_AGE}"
 #                      command (sync_cms_media) and land in static/legacy/, not here.
 #   oel/               ølkælder, which lives under /intern/oelkaelder/
 #   opslag/            opslagstavlen        quick_posts/, quick_comments/  Den Hurtige
-#   begivenheder/      events
+#                      (opslag/kommentarer/ is a comment's attached photo — same prefix, so it
+#                      inherits the same "not public" answer without a second check)
+#   begivenheder/      events               (begivenheder/kommentarer/ likewise)
 #
 # Add a prefix here only after checking the same way. Adding one wrongly publishes it silently;
 # omitting one wrongly breaks the front page loudly, which is the safer way round.

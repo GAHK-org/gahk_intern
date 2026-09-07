@@ -85,19 +85,7 @@
           one push endpoint shared by every topic, so getSubscription() only says "subscribed to
           something". Whether it wants *this* feature is a column on the server.
         {% endcomment %}
-        <div class="push-bar" data-push data-topic="den_hurtige"
-             data-vapid-key="{{ vapid_public_key }}"
-             data-url="{% url 'den_hurtige:save_subscription' %}"
-             data-subscribed="{% if push_subscribed %}1{% else %}0{% endif %}"
-             data-on-label="Slå notifikationer til"
-             data-off-label="Slå fra på denne enhed"
-             data-off-label-short="Slå fra på enheden"
-             data-success-text="Du får nu besked når nogen slår op."
-             data-off-text="Notifikationer er slået fra på denne enhed.">
-          {% csrf_token %}
-          <button type="button" data-push-button hidden></button>
-          <span class="muted" data-push-message hidden></span>
-        </div>
+        {% include "core/_push_bar.html" with topic="den_hurtige" url_name="den_hurtige:save_subscription" success_text="Du får nu besked når nogen slår op." %}
         {% comment %}
           Per-channel mute. Separate from the subscribe button above, which is per *device* and
           governs push at all; this is per resident and governs one channel. A plain form POST, not

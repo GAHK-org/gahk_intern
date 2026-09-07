@@ -112,7 +112,7 @@ class PushSubscription(models.Model):
     # The subscribe view writes exactly ONE of these per request; writing both would clear the topic
     # the resident did not just ask about.
     wants_den_hurtige = models.BooleanField(default=False, verbose_name="Den Hurtige")
-    wants_opslagstavle = models.BooleanField(default=False, verbose_name="Ankebogen")
+    wants_opslagstavle = models.BooleanField(default=False, verbose_name="Opslagstavlen")
     # No data migration opting existing rows in, unlike 0005 above. That one was right because those
     # rows had subscribed when Den Hurtige was the only topic, so dropping them would have looked
     # like push breaking. Nobody has ever consented to event notifications, and consent granted by

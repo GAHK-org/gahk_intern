@@ -43,7 +43,7 @@ TUR = """Afgang fra porten kl. 9. Husk regntøj.
 
 Der er **plads i bilerne til 12**, så meld til i god tid."""
 
-GENERALFORSAMLING = """Dagsorden kommer i Ankebogen. Der er øl og chips."""
+GENERALFORSAMLING = """Dagsorden kommer på opslagstavlen. Der er øl og chips."""
 
 
 def _at(now: datetime, days: int, hour: int) -> datetime:

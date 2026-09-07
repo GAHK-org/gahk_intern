@@ -406,6 +406,7 @@ erDiagram
         int notice_id FK
         int author_id FK
         text body
+        string image
         datetime created_at
     }
 
@@ -468,6 +469,7 @@ erDiagram
         int event_id FK
         int author_id FK
         text body
+        string image
         datetime created_at
     }
 
@@ -925,6 +927,7 @@ erDiagram
         int event_id FK
         int author_id FK
         text body
+        string image
         datetime created_at
     }
 
@@ -1071,6 +1074,7 @@ erDiagram
         int notice_id FK
         int author_id FK
         text body
+        string image
         datetime created_at
     }
 
