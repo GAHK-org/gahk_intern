@@ -19,8 +19,9 @@ import pytest
 from django.test import Client
 
 from arkiv import access
-from arkiv.models import ArchiveFile, ArchiveFolder, object_key
+from arkiv.models import ArchiveFile, ArchiveFolder, object_key, thumbnail_key
 from arkiv.services import reassign_subtree, sha256_of, unreferenced_keys
+from arkiv.storage import get_store
 from core.models import Room, Workgroup
 from residents.models import Residency, Resident, Role, active_period
 
@@ -351,6 +352,17 @@ def test_a_file_listing_shows_only_visible_files(
 def test_a_soft_deleted_file_is_gone_from_the_listing_and_the_download(
     resident_in: Callable, media_tmp: Path
 ) -> None:
+    """ASSERTED ON THE LINK, NOT ON THE NAME, and the reason is the two-stage delete.
+
+    This used to say `file.name not in <the page>`, which was right when a removed file had no
+    surface at all. It is not right any more: the removed list names it on purpose, so that whoever
+    took it out can put it back or destroy it (see views.browse). The name being present is now the
+    feature rather than the leak.
+
+    What "gone from the listing" actually means is that nothing on the page reaches the bytes, so
+    that is what this checks — no download URL, and the download itself 404s. Both halves matter:
+    the URL could be absent because the template changed shape while the endpoint stayed open.
+    """
     folder = ArchiveFolder.objects.create(name="Billeder")
     file = make_file(folder)
     resident = resident_in("a@gahk.dk", None)
@@ -358,7 +370,9 @@ def test_a_soft_deleted_file_is_gone_from_the_listing_and_the_download(
 
     client = login(resident)
 
-    assert file.name not in client.get(f"/intern/arkiv/mappe/{folder.pk}/").content.decode()
+    body = client.get(f"/intern/arkiv/mappe/{folder.pk}/").content.decode()
+    assert f"/intern/arkiv/fil/{file.pk}/hent" not in body
+    assert f"/intern/arkiv/fil/{file.pk}/miniature" not in body
     assert client.get(f"/intern/arkiv/fil/{file.pk}/hent").status_code == 404
 
 
@@ -407,6 +421,239 @@ def test_a_soft_deleted_row_still_holds_its_object(media_tmp: Path) -> None:
     file.soft_delete()
 
     assert unreferenced_keys({file.sha256}) == set()
+
+
+# --- the two-stage delete -----------------------------------------------------------------------
+#
+# "Fjern" takes a file out of the listing and keeps the bytes; "Slet permanent", reachable only from
+# the removed list, destroys the row and - if no other row shares the hash - the object too. What
+# makes the second one safe to offer every writer is the ORDER, not the permission: see
+# arkiv/access.py::can_purge_file. These tests pin both halves of that.
+
+
+def test_a_removed_file_leaves_the_listing_but_keeps_its_bytes(
+    resident_in: Callable, media_tmp: Path
+) -> None:
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    file = make_file(folder, name="fest.jpg")
+    client = login(resident_in("a@gahk.dk", None))
+
+    client.post(f"{ROOT_URL}fil/{file.pk}/fjern")
+
+    file.refresh_from_db()
+    assert file.deleted_at is not None
+    assert unreferenced_keys({file.sha256}) == set(), "the bytes must survive stage one"
+    body = client.get(f"{ROOT_URL}mappe/{folder.pk}/").content.decode()
+    assert "Fjernede filer" in body, "a writer sees what they removed, so it can be undone"
+
+
+def test_the_removed_list_is_only_shown_to_someone_who_can_write(
+    resident_in: Callable, workgroups: tuple, media_tmp: Path
+) -> None:
+    """It carries the only irreversible control in Arkiv, so it must not render for a reader who
+    cannot act on it. can_write follows can_read, so the case is a folder you cannot read at all -
+    which 404s - versus one you can."""
+    regnskab, _fest = workgroups
+    folder = ArchiveFolder.objects.create(name="Regnskab", workgroup=regnskab, effective_workgroup=regnskab)
+    file = make_file(folder, name="budget.pdf")
+    file.soft_delete()
+
+    outsider = login(resident_in("ude@gahk.dk", None))
+    assert outsider.get(f"{ROOT_URL}mappe/{folder.pk}/").status_code == 404
+
+    member = login(resident_in("inde@gahk.dk", regnskab))
+    body = member.get(f"{ROOT_URL}mappe/{folder.pk}/").content.decode()
+    assert "Fjernede filer" in body
+    assert "Slet permanent" in body
+
+
+def test_a_removed_file_is_no_longer_downloadable(resident_in: Callable, media_tmp: Path) -> None:
+    """Otherwise "fjernet" would mean nothing: the row is out of the listing but the bytes are still
+    in the store, and a link that still served them would make stage one cosmetic."""
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    file = make_file(folder)
+    file.soft_delete()
+    client = login(resident_in("a@gahk.dk", None))
+
+    assert client.get(f"{ROOT_URL}fil/{file.pk}/hent").status_code == 404
+
+
+def test_restoring_puts_the_file_back(resident_in: Callable, media_tmp: Path) -> None:
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    file = make_file(folder, name="fest.jpg")
+    resident = resident_in("a@gahk.dk", None)
+    file.soft_delete(by=resident)
+    client = login(resident)
+
+    client.post(f"{ROOT_URL}fil/{file.pk}/gendan")
+
+    file.refresh_from_db()
+    assert file.deleted_at is None
+    assert file.deleted_by is None, "the column answers why it is missing, so it clears with it"
+    assert "fest.jpg" in client.get(f"{ROOT_URL}mappe/{folder.pk}/").content.decode()
+
+
+def test_restoring_over_a_reused_name_is_refused_not_silently_renamed(
+    resident_in: Callable, media_tmp: Path
+) -> None:
+    """uniq_file_name_per_folder covers live rows only, so removing a file and uploading another
+    with the same name is legal - and then the restore collides. Reported, because renaming either
+    party to make room is worse than saying what happened."""
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    first = make_file(folder, name="referat.pdf", body=b"gammel")
+    first.soft_delete()
+    make_file(folder, name="referat.pdf", body=b"ny")
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(f"{ROOT_URL}fil/{first.pk}/gendan", follow=True)
+
+    first.refresh_from_db()
+    assert first.deleted_at is not None, "still removed"
+    assert "findes allerede en fil" in response.content.decode()
+
+
+def test_purging_destroys_the_row_and_the_bytes(resident_in: Callable, media_tmp: Path) -> None:
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    file = make_file(folder, name="fest.jpg", body=b"unique")
+    digest = file.sha256
+    file.soft_delete()
+    client = login(resident_in("a@gahk.dk", None))
+
+    client.post(f"{ROOT_URL}fil/{file.pk}/slet-permanent")
+
+    assert not ArchiveFile.objects.filter(pk=file.pk).exists()
+    assert not get_store().exists(object_key(digest)), "the bytes go too - that is the point"
+
+
+def test_purging_one_copy_keeps_the_bytes_another_row_shares(resident_in: Callable, media_tmp: Path) -> None:
+    """THE INVARIANT CONTENT ADDRESSING FORCES. The same photograph filed in two folders is two rows
+    and one object, so purging one must not pull the bytes out from under the other."""
+    a = ArchiveFolder.objects.create(name="A")
+    b = ArchiveFolder.objects.create(name="B")
+    mine = make_file(a, name="fest.jpg", body=b"same")
+    theirs = make_file(b, name="kopi.jpg", body=b"same")
+    mine.soft_delete()
+    client = login(resident_in("a@gahk.dk", None))
+
+    client.post(f"{ROOT_URL}fil/{mine.pk}/slet-permanent")
+
+    assert not ArchiveFile.objects.filter(pk=mine.pk).exists()
+    assert ArchiveFile.objects.filter(pk=theirs.pk).exists()
+    assert get_store().exists(object_key(theirs.sha256)), "the other row still needs these bytes"
+
+
+def test_purging_keeps_bytes_that_somebody_elses_undo_still_needs(
+    resident_in: Callable, media_tmp: Path
+) -> None:
+    """A soft-deleted row counts as a reference, so purging my copy must not break their restore."""
+    a = ArchiveFolder.objects.create(name="A")
+    b = ArchiveFolder.objects.create(name="B")
+    mine = make_file(a, name="fest.jpg", body=b"same")
+    theirs = make_file(b, name="kopi.jpg", body=b"same")
+    mine.soft_delete()
+    theirs.soft_delete()
+    client = login(resident_in("a@gahk.dk", None))
+
+    client.post(f"{ROOT_URL}fil/{mine.pk}/slet-permanent")
+
+    assert get_store().exists(object_key(theirs.sha256))
+    theirs.refresh_from_db()
+    theirs.restore()
+    assert get_store().exists(object_key(theirs.sha256)), "restored row still has its bytes"
+
+
+def test_purging_takes_the_thumbnail_with_it(resident_in: Callable, media_tmp: Path) -> None:
+    """The preview is keyed off the same hash, so it is unreferenced exactly when the original is -
+    and an orphaned thumbnail would be a paid-for object nothing can ever reach."""
+    from io import BytesIO
+
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    file = make_file(folder, name="fest.jpg", body=b"withthumb")
+    get_store().save(thumbnail_key(file.sha256), BytesIO(b"jpegpreview"))
+    ArchiveFile.objects.filter(pk=file.pk).update(has_thumbnail=True)
+    digest = file.sha256
+    file.soft_delete()
+    client = login(resident_in("a@gahk.dk", None))
+
+    client.post(f"{ROOT_URL}fil/{file.pk}/slet-permanent")
+
+    assert not get_store().exists(thumbnail_key(digest))
+
+
+def test_purging_a_file_that_never_had_a_preview_does_not_fail(
+    resident_in: Callable, media_tmp: Path
+) -> None:
+    """The thumbnail is deleted unconditionally when the object goes, so a document with no preview
+    is a delete of a key that was never there. Both stores are documented as no-ops on that."""
+    folder = ArchiveFolder.objects.create(name="Dokumenter")
+    file = make_file(folder, name="referat.pdf", body=b"nopreview")
+    assert not file.has_thumbnail
+    file.soft_delete()
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(f"{ROOT_URL}fil/{file.pk}/slet-permanent")
+
+    assert response.status_code == 302
+    assert not ArchiveFile.objects.filter(pk=file.pk).exists()
+
+
+def test_a_live_file_cannot_be_purged(resident_in: Callable, media_tmp: Path) -> None:
+    """THE ORDER IS THE SAFETY. Stage two is reachable only for a row stage one has marked, so a
+    misplaced tap on a file somebody is reading cannot destroy it however the request is made."""
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    file = make_file(folder, name="fest.jpg")
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(f"{ROOT_URL}fil/{file.pk}/slet-permanent")
+
+    assert response.status_code == 404
+    assert ArchiveFile.objects.filter(pk=file.pk).exists()
+    assert get_store().exists(object_key(file.sha256))
+
+
+def test_an_outsider_cannot_purge_a_file_in_a_folder_they_cannot_see(
+    resident_in: Callable, workgroups: tuple, media_tmp: Path
+) -> None:
+    """404, never 403: whether a file exists in Regnskabsgruppen's folder is the thing being hidden,
+    and a purge endpoint that answered differently for a real id would leak it."""
+    regnskab, _fest = workgroups
+    folder = ArchiveFolder.objects.create(name="Regnskab", workgroup=regnskab, effective_workgroup=regnskab)
+    file = make_file(folder, name="budget.pdf")
+    file.soft_delete()
+
+    client = login(resident_in("ude@gahk.dk", None))
+    response = client.post(f"{ROOT_URL}fil/{file.pk}/slet-permanent")
+
+    assert response.status_code == 404
+    assert ArchiveFile.objects.filter(pk=file.pk).exists()
+
+
+def test_neither_stage_two_route_answers_a_get(resident_in: Callable, media_tmp: Path) -> None:
+    """Both change state, and one is irreversible. A GET would let a prefetching browser or a
+    crawler purge things by following a link."""
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    file = make_file(folder)
+    file.soft_delete()
+    client = login(resident_in("a@gahk.dk", None))
+
+    assert client.get(f"{ROOT_URL}fil/{file.pk}/gendan").status_code == 405
+    assert client.get(f"{ROOT_URL}fil/{file.pk}/slet-permanent").status_code == 405
+    assert ArchiveFile.objects.filter(pk=file.pk).exists()
+
+
+def test_the_purge_message_says_when_the_bytes_stayed(resident_in: Callable, media_tmp: Path) -> None:
+    """A listing with one fewer row in it cannot tell you that the same file is still filed
+    elsewhere, so the message does."""
+    a = ArchiveFolder.objects.create(name="A")
+    b = ArchiveFolder.objects.create(name="B")
+    mine = make_file(a, name="fest.jpg", body=b"same")
+    make_file(b, name="kopi.jpg", body=b"same")
+    mine.soft_delete()
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(f"{ROOT_URL}fil/{mine.pk}/slet-permanent", follow=True)
+
+    assert "en anden mappe" in response.content.decode()
 
 
 def test_hashing_reads_the_whole_stream() -> None:

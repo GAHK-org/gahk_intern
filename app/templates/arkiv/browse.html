@@ -117,9 +117,10 @@
           </span>
           {% if can_write %}
             {% comment %}
-              Soft delete: the row is marked and the bytes stay, so this is recoverable by an
-              administrator. That is what makes it reasonable for anyone who can write here to do
-              it - see arkiv/access.py::can_delete_file.
+              STAGE ONE, and no confirm() on it deliberately: it takes the file out of the listing
+              and leaves the bytes alone, so the worst case is an "undo" one click away in the
+              removed list below. Stage two is where the confirm lives, because that is the click
+              that cannot be taken back. See arkiv/access.py::can_delete_file.
             {% endcomment %}
             <form method="post" action="{% url 'arkiv:file_delete' file.pk %}" class="arkiv-remove">
               {% csrf_token %}
@@ -130,5 +131,62 @@
         </li>
       {% endfor %}
     </ul>
+  {% endif %}
+
+  {% comment %}
+    THE SECOND STAGE OF THE DELETE, and the reason the first one needs no warning.
+
+    Rendered only for a writer and only when there is something in it, so the ordinary case - a
+    folder nobody has tidied - shows nothing at all. The view returns an empty queryset rather than
+    a filtered one for readers, so this costs them no query either (see views.browse).
+
+    Two controls, and they are deliberately unlike each other. "Gendan" is the ordinary one and
+    reads as a plain action; "Slet permanent" is the only irreversible thing in Arkiv and carries a
+    confirm() naming the file, in the same shape as the delete confirms in Ankebogen and Den
+    Hurtige. What makes it safe to offer every writer is not the permission - it is that a file has
+    to be removed from the listing first, so this control never sits next to a row somebody is
+    reading. See arkiv/access.py::can_purge_file.
+
+    `deleted_by` is named here because it is the whole point of that column: "where did the
+    sommerfest photos go" has to have an answer while the file is still recoverable.
+  {% endcomment %}
+  {% if removed %}
+    <section class="arkiv-removed mt-4" aria-labelledby="fjernede">
+      <h2 id="fjernede" class="text-base font-semibold mb-1">Fjernede filer</h2>
+      <p class="muted mb-2">
+        Fjernede filer er ikke synlige i mappen, men de er ikke slettet endnu. Gendan dem, eller
+        slet dem permanent.
+      </p>
+      <ul class="arkiv-list">
+        {% for file in removed %}
+          <li>
+            {% comment %}
+              No download link and no preview: it is out of the listing, and a link that still
+              serves the bytes would make "fjernet" mean nothing. The name is plain text here.
+            {% endcomment %}
+            <span class="arkiv-static">
+              <svg class="ni" aria-hidden="true"><use href="#i-file"></use></svg>
+              <span class="arkiv-name">{{ file.name }}</span>
+            </span>
+            <span class="muted arkiv-meta">
+              {{ file.size|filesizeformat }}
+              · fjernet {{ file.deleted_at|date:"j. b Y, H:i" }}
+              {% if file.deleted_by %} af {{ file.deleted_by.full_name }}{% endif %}
+            </span>
+            <form method="post" action="{% url 'arkiv:file_restore' file.pk %}" class="arkiv-remove">
+              {% csrf_token %}
+              <button type="submit" class="btn-link"
+                      aria-label="Gendan {{ file.name }}">Gendan</button>
+            </form>
+            <form method="post" action="{% url 'arkiv:file_purge' file.pk %}" class="arkiv-remove"
+                  onsubmit="return confirm('Slet «{{ file.name|escapejs }}» permanent? Det kan ikke fortrydes.')">
+              {% csrf_token %}
+              <button type="submit" class="btn-link-danger"
+                      aria-label="Slet {{ file.name }} permanent">Slet permanent</button>
+            </form>
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
   {% endif %}
 {% endblock %}

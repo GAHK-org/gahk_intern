@@ -127,6 +127,23 @@ def visible_files(resident: Resident) -> QuerySet[ArchiveFile]:
     return ArchiveFile.objects.alive().filter(folder_id__in=visible_folders(resident).values("pk"))
 
 
+def removed_files(resident: Resident) -> QuerySet[ArchiveFile]:
+    """The soft-deleted rows of folders this resident can see - what the two-stage delete needs.
+
+    Deliberately NOT `visible_files(...).filter(deleted_at__isnull=False)`, which cannot work:
+    `visible_files` starts from `.alive()`, so that filter is always empty. Written as its own
+    queryset off the same `visible_folders` subquery instead, so both halves of the delete go
+    through the one chokepoint this module promises.
+
+    Folder visibility, not authorship: whoever can write to a folder tidies it, so they also see
+    what has been removed from it and can put it back. `can_read` already refuses a soft-deleted
+    FOLDER, so this never surfaces files out of a folder that is itself gone.
+    """
+    return ArchiveFile.objects.filter(
+        deleted_at__isnull=False, folder_id__in=visible_folders(resident).values("pk")
+    )
+
+
 def can_read(folder: ArchiveFolder, resident: Resident) -> bool:
     """Whether `resident` may see `folder` at all. Asked per object; `visible_folders` is what
     queries use."""
@@ -169,6 +186,27 @@ def can_delete_file(file: ArchiveFile, request: HttpRequest) -> bool:
 
     What makes that safe is that it is not a delete. The row is marked, the bytes stay, and
     `deleted_by` records who did it - so the failure mode is "ask them to put it back", not "it is
-    gone". A hard delete would need a different answer.
+    gone". `can_purge_file` below is the second stage, and the answer this docstring used to say a
+    hard delete would need.
+    """
+    return can_write(file.folder, request)
+
+
+def can_purge_file(file: ArchiveFile, request: HttpRequest) -> bool:
+    """Whether `request` may destroy `file` and its bytes for good.
+
+    THE SAME PEOPLE AS `can_delete_file`, which is a decision and not an oversight. The thing being
+    replaced is a shared Dropbox password where every resident could already delete anything
+    permanently, and an archive where the tidying-up needs Inspektionen is one where nobody tidies.
+    Residents are trusted with this.
+
+    What replaces the safety that soft delete provided is the ORDER, not the permission: a file has
+    to be removed from the listing first and purged second, from a separate list, with its own
+    control. So the accident this used to protect against - a misplaced tap on a row you were
+    reading - still cannot destroy anything, while somebody who means it needs no help.
+
+    Kept as its own function rather than calling `can_delete_file` at the call site, even though the
+    rule is identical today: these are two different questions about two different acts, and the
+    place to narrow one without the other is here.
     """
     return can_write(file.folder, request)

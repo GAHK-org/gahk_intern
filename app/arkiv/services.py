@@ -85,6 +85,42 @@ def unreferenced_keys(hashes: set[str]) -> set[str]:
     return {object_key(h) for h in hashes - still_used}
 
 
+def purge_file(file: ArchiveFile) -> bool:
+    """Destroy one file row, and its bytes if nothing else needs them. Returns whether the bytes went.
+
+    THE ROW GOES FIRST AND THE BYTES SECOND, which is the only safe order. `unreferenced_keys` is
+    documented to be asked "only after the rows are gone", because while this row exists it is
+    itself a reference and the answer would always be "still in use".
+
+    It also decides which way a half-failure lands. If the store call raises after the row is
+    committed, the archive is left with an object nobody references - invisible, costing a fraction
+    of a cent, and reclaimable later. Deleting the bytes first would leave the opposite: a row in a
+    listing whose download 404s, which reads as data loss and cannot be repaired at all.
+
+    CONTENT ADDRESSING IS WHY THIS IS NOT `file.delete()`. The same photograph filed into four
+    folders is four rows and one object, so a row going away says nothing about whether the bytes
+    should. The sweep is what answers that, and a soft-deleted row elsewhere still counts - purging
+    your copy must not pull the bytes out from under somebody else's undo.
+
+    The thumbnail follows the object rather than being asked about separately: it is keyed off the
+    same hash, so it is unreferenced exactly when the original is. Both stores' `delete` is a no-op
+    on a missing key, so a file that never had a preview needs no branch here.
+    """
+    from .models import object_key, thumbnail_key
+    from .storage import get_store
+
+    sha256 = file.sha256
+    file.delete()
+
+    if not unreferenced_keys({sha256}):
+        return False
+
+    store = get_store()
+    store.delete(object_key(sha256))
+    store.delete(thumbnail_key(sha256))
+    return True
+
+
 # Roots that belong to the whole house. Everyone who can reach Arkiv can read AND upload here -
 # access.can_write follows can_read deliberately, so there is no separate step to grant it.
 SHARED_ROOTS = ["Billeder", "Fælles dokumenter"]

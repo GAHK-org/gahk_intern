@@ -251,3 +251,23 @@ class ArchiveFile(models.Model):
         self.deleted_at = timezone.now()
         self.deleted_by = by  # type: ignore[assignment]
         self.save(update_fields=["deleted_at", "deleted_by"])
+
+    def restore(self) -> None:
+        """Put it back in the listing.
+
+        `deleted_by` is cleared with `deleted_at`, not kept as history. The column answers "who
+        removed this file, which is why you cannot see it" - a question that stops existing the
+        moment the file is back. Keeping the last remover on a live row would be a different
+        feature (an audit log) wearing this one's column.
+
+        CAN RAISE IntegrityError, and the caller has to expect it: `uniq_file_name_per_folder` is a
+        partial unique index over live rows only, so removing `regnskab.pdf`, uploading a new
+        `regnskab.pdf`, and then restoring the old one is a real collision. That is the honest
+        failure - the alternative would be silently renaming somebody's file.
+        """
+        self.deleted_at = None
+        # No `type: ignore` here, unlike soft_delete's assignment two methods up. That one needs it
+        # because it puts a `by: object` parameter into a Resident FK; `None` into a null=True field
+        # is something django-stubs types correctly, so an ignore would itself be the error.
+        self.deleted_by = None
+        self.save(update_fields=["deleted_at", "deleted_by"])

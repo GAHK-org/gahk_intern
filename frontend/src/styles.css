@@ -1536,12 +1536,26 @@
   .arkiv-newfolder { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .arkiv-newfolder input { flex:1 1 220px; max-width:340px; }
   /* A destructive action that is one row among many: styled as a quiet link rather than a button,
-     so a list of thirty files is not thirty red buttons. It is a soft delete, so the weight of the
-     control should match the weight of the consequence. */
+     so a list of thirty files is not thirty red buttons. "Fjern" is a soft delete, so the weight of
+     the control matches the weight of the consequence -- and "Slet permanent", in the removed list
+     below, deliberately looks the same. The thing that makes the second one safe is that you have
+     to remove a file before you can reach it, not a louder button (see arkiv/access.py). A red
+     block would only train people to click past it. */
   .arkiv-remove { margin:0; flex:0 0 auto; }
-  .btn-link-danger { background:none; border:0; padding:0; font:inherit; font-size:12px;
+  .btn-link, .btn-link-danger { background:none; border:0; padding:0; font:inherit; font-size:12px;
     color:var(--muted); cursor:pointer; text-decoration:underline; }
+  .btn-link:hover { color:var(--green-700); }
   .btn-link-danger:hover { color:var(--neg); }
+
+  /* A row in the removed list has no <a> around its icon and name -- the bytes are still there but
+     it is out of the listing, and a working download link would make "fjernet" mean nothing. So it
+     needs `li > a`'s layout without being a link. */
+  .arkiv-list li > .arkiv-static { display:flex; align-items:center; gap:10px; flex:1 1 auto;
+    min-width:0; color:var(--muted); }
+  /* Sunk, so the second stage of the delete does not read as more of the folder. The heading and
+     the sentence above it say what it is; this is what makes it look it at a glance. */
+  .arkiv-removed .arkiv-list { background:var(--surface-2); }
+  .arkiv-removed .arkiv-list .ni { color:var(--muted); }
 
   .arkiv-upload { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
   /* The <input> is hidden and the <label> is the control, so the button matches every other

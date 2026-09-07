@@ -21,4 +21,8 @@ urlpatterns = [
     path("mappe/<int:pk>/upload/faerdig", views.upload_commit, name="upload_commit"),
     path("mappe/<int:pk>/ny-mappe", views.folder_create, name="folder_create"),
     path("fil/<int:pk>/fjern", views.file_delete, name="file_delete"),
+    # Stage two of the delete. Both act on a row `fjern` has already marked, and both are reachable
+    # only from the removed list in the folder - see arkiv/access.py::can_purge_file.
+    path("fil/<int:pk>/gendan", views.file_restore, name="file_restore"),
+    path("fil/<int:pk>/slet-permanent", views.file_purge, name="file_purge"),
 ]

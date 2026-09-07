@@ -14,7 +14,7 @@ from typing import BinaryIO, cast
 
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.http import FileResponse, Http404, HttpRequest, HttpResponseRedirect, JsonResponse
 from django.http.response import HttpResponseBase
 from django.shortcuts import redirect, render
@@ -22,7 +22,7 @@ from django.views.decorators.http import require_POST
 
 from residents.permissions import current_resident
 
-from . import access, uploads
+from . import access, services, uploads
 from .models import ArchiveFile, ArchiveFolder, object_key, thumbnail_key
 from .storage import LocalArchiveStore, get_store
 
@@ -52,6 +52,22 @@ def browse(request: HttpRequest, pk: int | None = None) -> HttpResponseBase:
         else ArchiveFile.objects.none()
     )
 
+    # Stage two of the delete lives here rather than on a page of its own: what has been removed
+    # from THIS folder is only interesting while you are standing in it, and a house-wide list of
+    # deleted files would be a second surface with its own access rules to get wrong.
+    #
+    # Only for writers, and only inside a folder. Queried unconditionally would cost every reader a
+    # query to render nothing - `can_write` follows `can_read`, so this is most readers.
+    can_write = folder is not None and access.can_write(folder, request)
+    removed = (
+        access.removed_files(resident)
+        .filter(folder=folder)
+        .select_related("deleted_by")
+        .order_by("-deleted_at")
+        if can_write
+        else ArchiveFile.objects.none()
+    )
+
     return render(
         request,
         "arkiv/browse.html",
@@ -60,10 +76,11 @@ def browse(request: HttpRequest, pk: int | None = None) -> HttpResponseBase:
             "ancestors": folder.ancestors() if folder else [],
             "subfolders": subfolders,
             "files": files,
+            "removed": removed,
             "can_manage_roots": access.can_manage_roots(request),
             # Writing follows reading (access.can_write), so this is true for any folder the
             # resident can see - including the shared Billeder root, which is the point.
-            "can_write": folder is not None and access.can_write(folder, request),
+            "can_write": can_write,
             "limited_rollout": access.is_limited(),
         },
     )
@@ -300,7 +317,10 @@ def folder_create(request: HttpRequest, pk: int) -> HttpResponseBase:
         messages.error(request, "Der findes allerede en mappe med det navn her.")
     else:
         try:
-            ArchiveFolder.objects.create(parent=parent, name=name, created_by=current_resident(request))
+            # Wrapped for the same reason file_restore is: an IntegrityError caught outside a
+            # savepoint poisons the transaction, and the messages.error() below is a query.
+            with transaction.atomic():
+                ArchiveFolder.objects.create(parent=parent, name=name, created_by=current_resident(request))
         except IntegrityError:
             # Two people, same name, same second. The partial unique index is the real arbiter.
             messages.error(request, "Der findes allerede en mappe med det navn her.")
@@ -328,9 +348,84 @@ def file_delete(request: HttpRequest, pk: int) -> HttpResponseBase:
 
     folder_pk = file.folder_id
     file.soft_delete(by=resident)
-    messages.success(
-        request, f"\u201e{file.name}\u201d er fjernet. Bed en administrator hvis den skal tilbage."
-    )
+    messages.success(request, f"\u201e{file.name}\u201d er fjernet. Den kan gendannes herunder.")
+    return redirect("arkiv:folder", pk=folder_pk)
+
+
+def _removed_file_or_404(request: HttpRequest, pk: int) -> ArchiveFile:
+    """A soft-deleted file this resident may act on, or 404.
+
+    Both stage-two views reach a row that `visible_files` deliberately cannot see, so they go
+    through `access.removed_files` - the same `visible_folders` subquery, asked about the other side
+    of `deleted_at`. 404 and never 403 for one outside it, because whether a file exists in a folder
+    you cannot open is the thing Arkiv hides.
+    """
+    file = access.removed_files(current_resident(request)).filter(pk=pk).select_related("folder").first()
+    if file is None:
+        raise Http404("no such file")
+    return file
+
+
+@access.access_required
+@require_POST
+def file_restore(request: HttpRequest, pk: int) -> HttpResponseBase:
+    """Undo a removal. The other half of what makes stage two safe to hand to everybody."""
+    file = _removed_file_or_404(request, pk)
+    if not access.can_delete_file(file, request):
+        raise PermissionDenied
+
+    folder_pk = file.folder_id
+    try:
+        # A SAVEPOINT, not a bare try. Catching IntegrityError without one leaves the surrounding
+        # transaction broken, so the very next query -- writing the message below -- raises
+        # TransactionManagementError instead. That is invisible under this project's autocommit
+        # settings and immediate under a test's transaction, which is exactly the way round that
+        # gets a bug shipped: see test_restoring_over_a_reused_name_is_refused_not_silently_renamed.
+        with transaction.atomic():
+            file.restore()
+    except IntegrityError:
+        # `uniq_file_name_per_folder` covers live rows only, so a new file has taken the name since.
+        # Reported rather than worked around: renaming somebody's upload to make room, or renaming
+        # the restored file to "regnskab (1).pdf", are both worse than saying what happened.
+        messages.error(
+            request,
+            f"Der findes allerede en fil med navnet \u201e{file.name}\u201d her. "
+            "Omdøb eller fjern den først.",
+        )
+    else:
+        messages.success(request, f"\u201e{file.name}\u201d er gendannet.")
+    return redirect("arkiv:folder", pk=folder_pk)
+
+
+@access.access_required
+@require_POST
+def file_purge(request: HttpRequest, pk: int) -> HttpResponseBase:
+    """Stage two: destroy the row and, if nothing else references them, the bytes.
+
+    THIS IS THE ONE IRREVERSIBLE ACTION IN ARKIV. It is reachable only from the removed list, so a
+    file has to be taken out of the listing first - see access.can_purge_file on why the order is
+    what makes trusting every writer with this reasonable.
+
+    The message distinguishes the two outcomes on purpose. `purge_file` returns False when another
+    row still shares the hash, which happens whenever the same bytes were filed in two places, and
+    "the file is gone but the bytes are still in use elsewhere" is not something a reader would
+    otherwise guess from a listing that has one fewer row in it.
+    """
+    file = _removed_file_or_404(request, pk)
+    if not access.can_purge_file(file, request):
+        raise PermissionDenied
+
+    folder_pk = file.folder_id
+    name = file.name
+    bytes_gone = services.purge_file(file)
+    if bytes_gone:
+        messages.success(request, f"\u201e{name}\u201d er slettet permanent.")
+    else:
+        messages.success(
+            request,
+            f"\u201e{name}\u201d er slettet permanent. Filens indhold ligger stadig i Arkivet, "
+            "fordi den samme fil er gemt i en anden mappe.",
+        )
     return redirect("arkiv:folder", pk=folder_pk)
 
 
