@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Opslag af {{ notice.author.full_name }} - Opslagstavlen{% endblock %}
+{% block title %}Opslag af {{ notice.author.full_name }} - Ankebogen{% endblock %}
 {% block content_width %}max-w-3xl{% endblock %}
 
 {% block content %}
-  <p class="muted mb-3"><a href="{% url 'opslagstavle:board' %}">‹ Opslagstavlen</a></p>
+  <p class="muted mb-3"><a href="{% url 'opslagstavle:board' %}">‹ Ankebogen</a></p>
 
   {% comment %}
     Same partial as the list, with full=True: one definition of what a post looks like. This page

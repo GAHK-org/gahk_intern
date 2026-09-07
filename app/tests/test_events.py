@@ -19,7 +19,9 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from django.db import connection
 from django.test import Client
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from core import push
@@ -31,6 +33,7 @@ from events.models import (
     Answer,
     CalendarFeedToken,
     Event,
+    EventComment,
     EventInvite,
     Rsvp,
     Visibility,
@@ -150,7 +153,9 @@ GATED_GET_ROUTES = ("", "opret", "kalender", "kalender/abonnement", "1", "1/redi
         "1/slet",
         "1/aflys",
         "1/svar",
+        "1/kommentar",
         "1/ics",
+        "kommentar/1/slet",
     ],
 )
 def test_every_route_is_closed_to_non_administrators(
@@ -186,6 +191,8 @@ def test_the_route_table_covers_every_url_pattern() -> None:
         "delete",
         "cancel",
         "answer",
+        "create_comment",
+        "delete_comment",
         "event_ics",
     }
     named = {p.name for p in events_urls.urlpatterns if p.name}
@@ -814,6 +821,7 @@ PRIVATE_ROUTES = [
     ("post", "{pk}/slet"),
     ("post", "{pk}/aflys"),
     ("post", "{pk}/svar"),
+    ("post", "{pk}/kommentar"),
     ("get", "{pk}/ics"),
 ]
 
@@ -851,8 +859,309 @@ def test_the_private_route_table_covers_every_pk_route() -> None:
 
     pk_routes = {p.name for p in events_urls.urlpatterns if p.name and "<int:pk>" in str(p.pattern)}
     covered = {resolve(EVENTS + suffix.format(pk=1)).url_name for _method, suffix in PRIVATE_ROUTES}
+    # delete_comment takes a COMMENT's pk, not an event's, so the parametrised table above cannot
+    # reach it — the url needs a comment to exist before there is an id to ask about. Its leak test
+    # is test_an_outsider_cannot_delete_a_comment_on_a_private_event, named here so this meta-test
+    # keeps working as a checklist rather than being loosened to a subset comparison.
+    covered |= {"delete_comment"}
 
     assert pk_routes == covered, f"pk routes with no leak test: {pk_routes - covered}"
+
+
+# --- comments -------------------------------------------------------------------------------------
+#
+# The thread on an event. Three things separate it from Ankebogen's comments and each has a test
+# here: it is open to anyone who can SEE the event (not only those who answered), it is removable by
+# its author or a HOST rather than by Inspektionen, and it goes when the event goes.
+
+
+def test_any_resident_who_can_see_the_event_may_comment(
+    client: Client, beboer: Resident, other: Resident
+) -> None:
+    """Not gated on having answered: "kan man tage boern med?" is asked before you commit."""
+    event = make_event(beboer)
+    client.force_login(other)
+
+    response = client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "Skal man tage noget med?"})
+
+    assert response.status_code == 302
+    comment = EventComment.objects.get()
+    assert comment.body == "Skal man tage noget med?"
+    assert comment.author_id == other.pk
+    assert not event.rsvps.exists(), "commenting must not imply an answer"
+
+
+def test_commenting_lands_back_on_the_thread(client: Client, beboer: Resident) -> None:
+    """The page is long -- image, facts, description, answer panel, posts -- so a bare redirect to
+    the top hides the comment that was just written. See views._comment_anchor."""
+    event = make_event(beboer)
+    client.force_login(beboer)
+
+    response = client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "Jeg tager kage med"})
+
+    assert response["Location"] == f"{EVENTS}{event.pk}#kommentarer"
+
+
+def test_a_blank_comment_is_refused(client: Client, beboer: Resident) -> None:
+    """Whitespace only. Django's own validation accepts it; the form's clean_body is what does not."""
+    event = make_event(beboer)
+    client.force_login(beboer)
+
+    response = client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "   \n  "}, follow=True)
+
+    assert not EventComment.objects.exists()
+    assert "Skriv en kommentar." in response.content.decode()
+
+
+def test_the_thread_is_rendered_on_the_event_page(client: Client, beboer: Resident) -> None:
+    event = make_event(beboer)
+    EventComment.objects.create(event=event, author=beboer, body="Vi moedes i koekkenet")
+    client.force_login(beboer)
+
+    body = client.get(f"{EVENTS}{event.pk}").content.decode()
+
+    assert "Vi moedes i koekkenet" in body
+    assert "1 kommentar" in body
+
+
+def test_a_comment_is_plain_text_and_never_markup(client: Client, beboer: Resident) -> None:
+    """Deliberately not Markdown (see EventComment), so a pasted tag is shown, not run."""
+    event = make_event(beboer)
+    EventComment.objects.create(event=event, author=beboer, body="<b>hej</b> **ikke fed**")
+    client.force_login(beboer)
+
+    body = client.get(f"{EVENTS}{event.pk}").content.decode()
+
+    assert "&lt;b&gt;hej&lt;/b&gt;" in body
+    assert "<b>hej</b>" not in body
+    assert "**ikke fed**" in body
+
+
+def test_a_comment_on_a_cancelled_event_is_still_allowed(
+    client: Client, beboer: Resident, other: Resident
+) -> None:
+    """Aflyst freezes the ANSWER, not the conversation. "Hvorfor?" and "vi finder en ny dato" are
+    the most predictable thread on the feature, and a comment re-notifies no calendar the way an
+    edit would. See views.create_comment."""
+    event = make_event(beboer)
+    client.force_login(beboer)
+    client.post(f"{EVENTS}{event.pk}/aflys")
+    client.force_login(other)
+
+    client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "Hvorfor?"})
+
+    assert EventComment.objects.count() == 1
+
+
+def test_its_author_deletes_their_own_comment(client: Client, beboer: Resident, other: Resident) -> None:
+    event = make_event(beboer)
+    comment = EventComment.objects.create(event=event, author=other, body="Fortryder")
+    client.force_login(other)
+
+    response = client.post(f"{EVENTS}kommentar/{comment.pk}/slet")
+
+    assert response.status_code == 302
+    assert not EventComment.objects.exists()
+
+
+def test_a_host_deletes_somebody_elses_comment(client: Client, beboer: Resident, other: Resident) -> None:
+    """The host runs the event and the thread is aimed at them, so they moderate it."""
+    event = make_event(beboer)
+    comment = EventComment.objects.create(event=event, author=other, body="Spam spam spam")
+    client.force_login(beboer)
+
+    client.post(f"{EVENTS}kommentar/{comment.pk}/slet")
+
+    assert not EventComment.objects.exists()
+
+
+def test_a_co_organiser_may_also_delete_a_comment(
+    client: Client,
+    beboer: Resident,
+    other: Resident,
+    make_resident: Callable[..., Resident],
+) -> None:
+    """access.is_host, not just the organiser -- co-organisers run the event too."""
+    helper = make_resident(email="medarrangoer@gahk.dk")
+    event = make_event(beboer)
+    event.co_organisers.add(helper)
+    comment = EventComment.objects.create(event=event, author=other, body="Vaek med den")
+    client.force_login(helper)
+
+    client.post(f"{EVENTS}kommentar/{comment.pk}/slet")
+
+    assert not EventComment.objects.exists()
+
+
+def test_a_bystander_cannot_delete_somebody_elses_comment(
+    client: Client, beboer: Resident, other: Resident
+) -> None:
+    """403, not 404: the comment is on an event `other` can see, so its existence is no secret.
+    See access.py on the split between the two refusals."""
+    event = make_event(beboer)
+    comment = EventComment.objects.create(event=event, author=beboer, body="Min kommentar")
+    client.force_login(other)
+
+    response = client.post(f"{EVENTS}kommentar/{comment.pk}/slet")
+
+    assert response.status_code == 403
+    assert EventComment.objects.exists()
+
+
+def test_inspektionen_may_not_delete_a_comment(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """THE DELIBERATE DIVERGENCE from both sibling features, where a moderator may remove any
+    comment. It cannot be that here: access.visible_to gives Inspektionen no read access to a
+    private event, so "Inspektionen moderates comments" is a power that either does nothing or
+    quietly restores the visibility the 404 exists to deny. A reported thread is a superuser job in
+    the admin, exactly as a reported private event already is."""
+    inspektion = make_resident(email="inspektion@gahk.dk", roles=(Role.INSPEKTION,))
+    event = make_event(beboer)
+    comment = EventComment.objects.create(event=event, author=beboer, body="Min kommentar")
+    client.force_login(inspektion)
+
+    response = client.post(f"{EVENTS}kommentar/{comment.pk}/slet")
+
+    assert response.status_code == 403
+    assert EventComment.objects.exists()
+
+
+def test_the_delete_button_is_only_rendered_for_someone_who_may_use_it(
+    client: Client, beboer: Resident, other: Resident
+) -> None:
+    """The permission and the control have to agree, or the page offers a button that 403s."""
+    event = make_event(beboer)
+    EventComment.objects.create(event=event, author=beboer, body="Min kommentar")
+    client.force_login(other)
+
+    assert "Slet kommentar" not in client.get(f"{EVENTS}{event.pk}").content.decode()
+
+    client.force_login(beboer)
+    assert "Slet kommentar" in client.get(f"{EVENTS}{event.pk}").content.decode()
+
+
+def test_an_outsider_cannot_delete_a_comment_on_a_private_event(
+    client: Client, beboer: Resident, other: Resident
+) -> None:
+    """404, and it is the reason views._visible_comment exists. A comment id is a side channel onto
+    the event it hangs off: without the visible_to filter this would answer 403 ("exists, but not
+    yours"), which tells a non-invitee that a private event with a thread on it is there.
+
+    Named in test_the_private_route_table_covers_every_pk_route, which cannot reach this route by
+    parametrising over an event pk.
+    """
+    event = make_private(beboer, [])
+    comment = EventComment.objects.create(event=event, author=beboer, body="Hemmeligt")
+    client.force_login(other)
+
+    response = client.post(f"{EVENTS}kommentar/{comment.pk}/slet")
+
+    assert response.status_code == 404
+    assert EventComment.objects.exists()
+
+
+def test_an_invitee_may_comment_on_a_private_event(client: Client, beboer: Resident, other: Resident) -> None:
+    """The positive control for the 404 above: the filter must not shut out the invite list."""
+    event = make_private(beboer, [other])
+    client.force_login(other)
+
+    client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "Jeg kommer"})
+
+    assert EventComment.objects.count() == 1
+
+
+def test_comments_go_when_the_event_goes(beboer: Resident) -> None:
+    """CASCADE is the retention. The module docstring commits to there being no record of what
+    happened, so a thread outliving its event would be the archive it says belongs to Ankebogen."""
+    event = make_event(beboer)
+    EventComment.objects.create(event=event, author=beboer, body="Ses i morgen")
+
+    event.delete()
+
+    assert not EventComment.objects.exists()
+
+
+def test_a_comment_notifies_the_hosts_and_nobody_else(
+    client: Client,
+    beboer: Resident,
+    other: Resident,
+    make_resident: Callable[..., Resident],
+    pushes: list,
+) -> None:
+    """The rule in services.py is that a notification is about a commitment with a clock on it,
+    which is why answering notifies nobody. A comment is narrow for the same reason: it is a
+    question aimed at whoever runs the event, and going wide would be sixty phones buzzing about
+    somebody else's dinner plans."""
+    bystander = make_resident(email="tilskuer@gahk.dk")
+    helper = make_resident(email="medarrangoer@gahk.dk")
+    event = make_event(beboer)
+    event.co_organisers.add(helper)
+    for who in (beboer, other, bystander, helper):
+        subscribe(who, f"https://push.example/{who.pk}")
+    client.force_login(other)
+
+    client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "Skal man tage noget med?"})
+
+    assert len(pushes) == 1
+    assert pushes[0][0] == sorted([beboer.pk, helper.pk])
+    assert pushes[0][1]["head"] == f"{other.full_name} kommenterede"
+    assert pushes[0][1]["url"] == f"{EVENTS}{event.pk}"
+
+
+def test_a_host_commenting_on_their_own_event_notifies_nobody(
+    client: Client, beboer: Resident, pushes: list
+) -> None:
+    """The author is excluded even when they are the only host -- otherwise an organiser answering
+    a question would buzz their own phone."""
+    event = make_event(beboer)
+    subscribe(beboer, "https://push.example/a")
+    client.force_login(beboer)
+
+    client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "Tag selv drikkevarer med"})
+
+    assert pushes == []
+
+
+def test_a_comment_on_a_private_event_cannot_notify_past_the_invite_list(
+    client: Client, beboer: Resident, other: Resident, pushes: list
+) -> None:
+    """_audience narrows to the invite list first, so a private event's thread has the same
+    guarantee notify_new_event has."""
+    event = make_private(beboer, [other])
+    subscribe(beboer, "https://push.example/a")
+    subscribe(other, "https://push.example/b")
+    client.force_login(other)
+
+    client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "Jeg kommer"})
+
+    assert len(pushes) == 1
+    assert pushes[0][0] == [beboer.pk]
+
+
+def test_rendering_a_thread_costs_no_query_per_comment(
+    client: Client, beboer: Resident, other: Resident
+) -> None:
+    """`can_delete` is the same answer for every row, so it is resolved once for the event. Asked
+    per comment it calls access.is_host each time, which filters co_organisers -- twelve comments,
+    twelve queries, to draw a button that is on all of them or none."""
+    event = make_event(beboer)
+    client.force_login(beboer)
+    client.get(f"{EVENTS}{event.pk}")  # warm
+
+    for n in range(3):
+        EventComment.objects.create(event=event, author=other, body=f"Kommentar {n}")
+    with CaptureQueriesContext(connection) as few:
+        client.get(f"{EVENTS}{event.pk}")
+
+    for n in range(3, 12):
+        EventComment.objects.create(event=event, author=other, body=f"Kommentar {n}")
+    with CaptureQueriesContext(connection) as many:
+        client.get(f"{EVENTS}{event.pk}")
+
+    assert len(many.captured_queries) == len(few.captured_queries), (
+        f"{len(few.captured_queries)} queries for 3 comments, {len(many.captured_queries)} for 12"
+    )
 
 
 def test_a_private_event_is_absent_from_the_list_for_an_outsider(
@@ -1661,7 +1970,7 @@ def _notice(author: Resident, event: Event) -> object:
 
 @pytest.fixture
 def board_open(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Opslagstavlen is still gated to a trial group; these tests are about the link, not the gate."""
+    """Ankebogen is still gated to a trial group; these tests are about the link, not the gate."""
     from opslagstavle import access as board_access
 
     monkeypatch.setattr(board_access, "ACCESS_ROLES", None)
@@ -1675,9 +1984,11 @@ def test_the_event_page_lists_the_posts_about_it(client: Client, beboer: Residen
     response = client.get(f"{EVENTS}{event.pk}")
     body = response.content.decode()
 
-    assert "Omtalt på opslagstavlen" in body
+    # "i Ankebogen", not "på opslagstavlen": the board was renamed, and the preposition moved with
+    # it -- things sit ON a noticeboard but IN a book.
+    assert "Omtalt i Ankebogen" in body
     assert len(response.context["notices"]) == 1
-    assert f"/intern/opslagstavle/{response.context['notices'][0].pk}" in body
+    assert f"/intern/ankebogen/{response.context['notices'][0].pk}" in body
     # The excerpt, not just the byline: on an event with two or three posts about it, what the post
     # says is the only thing that lets a reader pick. And rendered, so no `**` reaches the page.
     assert "Vi spiser sammen." in body
@@ -1687,7 +1998,7 @@ def test_the_event_page_lists_the_posts_about_it(client: Client, beboer: Residen
 def test_no_board_link_for_somebody_who_cannot_open_the_board(
     client: Client, beboer: Resident, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Opslagstavlen is behind a role trial. Pointing a resident at a page that will 403 them is
+    """Ankebogen is behind a role trial. Pointing a resident at a page that will 403 them is
     worse than not mentioning it — so the section is gated on the READER, not on the event."""
     from opslagstavle import access as board_access
 

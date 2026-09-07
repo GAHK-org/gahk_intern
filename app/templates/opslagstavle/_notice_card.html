@@ -71,15 +71,39 @@
               <span class="chip chip-embedsgruppe">{{ notice.author_embedsgruppe }}</span>
             {% endif %}
           </span>
+          {% comment %}
+            TWO DATES ON ONE LINE IS ONE DATE TOO MANY IN THE FEED. Edited posts used to read
+            "24. august 2026, 10:01 · redigeret 7. september 2026, 10:11" -- 58 characters, which
+            wrapped to a second line on a phone and made an edited post visibly bulkier than an
+            untouched one. In a scanned list the reader wants "when was this posted" and, at most,
+            "has it changed since"; the minute of the edit is detail, and detail belongs on the
+            post's own page.
+
+            So the two views say different amounts, and `full` is the switch:
+              * feed   -- "24. aug 2026, 10:01 · redigeret". Month abbreviated, edit reduced to
+                          the bare fact. About half the width, and it stays on one line.
+              * detail -- both timestamps in full. There is room, and this is where someone who
+                          wants to know exactly when it changed has come to look.
+
+            `b` and not `M` for the month: Danish does not capitalise month names and Django's `M`
+            renders "Aug"/"Sept" -- `b` gives "aug"/"sept".
+
+            NO title= TOOLTIP on the short form, deliberately, however natural it looks here. In
+            the feed .notice-link's ::after is stretched over the whole card (see .is-clickable in
+            styles.css) and this line sits UNDER it, so the hover never reaches the <time> and the
+            tooltip cannot open -- and on the phone this is for, there is no hover to begin with.
+            The detail page carries the date as text instead, which is reachable by everyone.
+          {% endcomment %}
           <span class="notice-meta muted">
             {% if full %}
               <time datetime="{{ notice.created_at|date:'c' }}">{{ notice.created_at|date:"j. F Y, H:i" }}</time>
+              {% if notice.edited_at %}· redigeret <time datetime="{{ notice.edited_at|date:'c' }}">{{ notice.edited_at|date:"j. F Y, H:i" }}</time>{% endif %}
             {% else %}
               <a class="notice-link" href="{% url 'opslagstavle:detail' notice.pk %}">
-                <time datetime="{{ notice.created_at|date:'c' }}">{{ notice.created_at|date:"j. F Y, H:i" }}</time>
+                <time datetime="{{ notice.created_at|date:'c' }}">{{ notice.created_at|date:"j. b Y, H:i" }}</time>
               </a>
+              {% if notice.edited_at %}· <time datetime="{{ notice.edited_at|date:'c' }}">redigeret</time>{% endif %}
             {% endif %}
-            {% if notice.edited_at %}· redigeret {{ notice.edited_at|date:"j. F Y, H:i" }}{% endif %}
           </span>
         </div>
       </div>

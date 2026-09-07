@@ -32,6 +32,8 @@ from django.utils import timezone
 from admissions.models import Application
 from ak.models import AkEntry, AkMonthlyCharge
 from ak.services import apply_monthly_charge
+from arkiv.demo import seed as seed_arkiv
+from arkiv.models import ArchiveFile, ArchiveFolder
 
 # CmsEvent, never Event: the internal events app has one of the same name, and both are seeded
 # here. See events.models on the three-way collision.
@@ -127,6 +129,10 @@ WIPE_ORDER: list[type[models.Model]] = [
     DailyVisitCount,
     VisitTally,
     Resident,
+    # Before Workgroup: ArchiveFolder references it with PROTECT (a SET_NULL would silently turn a
+    # gated folder into a world-readable one), so the archive has to go first or --fresh cannot run.
+    ArchiveFile,
+    ArchiveFolder,
     Room,
     Workgroup,
     Cleaning,
@@ -182,6 +188,7 @@ class Command(BaseCommand):
             self._seed_stats()
             seed_opslagstavle(residents, self.now, self.rng)
             seed_events(residents, self.now, self.rng)
+            seed_arkiv(residents, self.now, self.rng)
 
         self._report(residents)
 

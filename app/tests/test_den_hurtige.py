@@ -1971,6 +1971,41 @@ def test_the_feed_shows_a_reply_count_and_no_reply_form(
     assert "Kom forbi" not in body
 
 
+def test_a_message_with_replies_is_marked_differently_from_one_without(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The two states of the "Svar" link must not render as the same object with different words.
+
+    They did. Both were `class="msg-replies"` and nothing else, so a thread on the feed was
+    distinguishable only by reading the row — which is not how anyone scans a chat. `.has-replies`
+    now carries a pill (styles.css) and the speech-bubble glyph, and the empty state carries
+    neither, so the difference survives in the markup where a test can see it.
+
+    Asserted on ONE feed containing both messages rather than on two requests: what matters is
+    that they differ from each other in the same view, which is the thing a reader compares.
+    """
+    author = make_resident(email="a@gahk.dk")
+    threaded = QuickPost.objects.create(author=author, content="Boremaskine?")
+    QuickComment.objects.create(post=threaded, author=author, content="Ja")
+    QuickPost.objects.create(author=author, content="Ingen svar her")
+    client.force_login(author)
+
+    body = client.get(FEED_URL).content.decode()
+
+    assert 'class="msg-replies has-replies"' in body
+    assert 'class="msg-replies"' in body  # the other message, unmarked
+
+    # The glyph rides in the marked state ONLY, and each anchor is sliced out to ask that of it.
+    # Counting "#i-chat" across a span of the page cannot answer it: every message also renders a
+    # .msg-hint that references the same sprite symbol for the swipe gesture.
+    anchors = dict(re.findall(r'<a class="msg-replies( has-replies)?"(.*?)</a>', body, re.DOTALL))
+    assert set(anchors) == {" has-replies", ""}, "expected one marked and one unmarked message"
+    assert "#i-chat" in anchors[" has-replies"]
+    assert "#i-chat" not in anchors[""]
+    # And the count still reads as one unbroken string, which is what the icon must not split.
+    assert "1 svar" in anchors[" has-replies"]
+
+
 def test_the_thread_panel_lives_outside_the_polled_region(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:

@@ -5,6 +5,7 @@ from collections.abc import Collection
 from django.conf import settings
 from django.http import HttpRequest
 
+from arkiv.access import roles_allowed as arkiv_allowed
 from den_hurtige.access import roles_allowed as den_hurtige_allowed
 from events.access import roles_allowed as events_allowed
 from opslagstavle.access import roles_allowed as opslagstavle_allowed
@@ -47,23 +48,23 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
         ("/intern/", "Dashboard", "dashboard"),
         (f"/intern/beboer/{user_pk}/profil", "Min profil", "users"),
     ]
-    # Den Hurtige is limited to the administrator group during its trial; the single switch is
-    # den_hurtige.access.ACCESS_ROLES. Asking it here keeps the sidebar from advertising a page that
-    # would answer 403, and means opening the rollout needs no change in this file.
+    # EVERY ONE OF THESE GATES IS NOW OPEN — all four features shipped their staged rollout and
+    # their ACCESS_ROLES are None, so every call below answers True for every logged-in resident.
+    #
+    # THE GUARDS STAY ANYWAY, and that is the point of asking rather than a leftover. Each feature's
+    # access module promises that re-gating it is one edit ("TO RE-GATE IT: set ACCESS_ROLES to a
+    # tuple of roles") which narrows the views AND the sidebar entry together. Inlining these
+    # because they happen to be True today would quietly break the second half of that promise: the
+    # sidebar would go on advertising a page that answers 403, and the next person to close a gate
+    # would have no reason to look in this file. The call is a dict lookup against a role set.
     if den_hurtige_allowed(roles):
         oversigt.append(("/intern/den-hurtige/", "Den Hurtige", "flash"))
-    # Gated the same way while opslagstavlen is being tried out (opslagstavle.access.ACCESS_ROLES).
-    # Asking here keeps the sidebar from advertising a page that would answer 403, and means opening
-    # the rollout needs no change in this file.
     if opslagstavle_allowed(roles):
-        oversigt.append(("/intern/opslagstavle/", "Opslagstavle", "board"))
+        oversigt.append(("/intern/ankebogen/", "Ankebogen", "board"))
     if events_allowed(roles):
         oversigt.append(("/intern/begivenheder/", "Begivenheder", "calendar"))
-    oversigt += [
-        ("/intern/alumneliste/", "Alumneliste", "list"),
-        ("/intern/stamtree/", "Stamtræ", "tree"),
-        ("/intern/statistik/", "Statistik", "chart"),
-    ]
+    # Alumneliste stays here; Stamtræ and Statistik moved to Ressourcer (see below).
+    oversigt.append(("/intern/alumneliste/", "Alumneliste", "list"))
     vaerelser: list[NavItem] = [
         ("/intern/soegvaerelse/", "Søg værelse", "house"),
         ("/intern/vaerelsestjek/", "Værelsestjek", "inspect"),  # open to every resident
@@ -94,7 +95,27 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     if "administrator" in roles:
         administration.append(("/admin/", "Site-admin", "gear"))
         administration.append(("/admin/roles", "Roller", "users"))
+    # Stamtræ and Statistik sit here rather than under Oversigt, which they used to. Oversigt is
+    # what is happening NOW — the dashboard, your own profile, the three feeds, who lives here — and
+    # you open those to see whether anything has changed. These are reference: nothing in them
+    # changes between visits, and you go to them to look something up. That is what Ressourcer is,
+    # and it is why the wiki and the arkiv belong in it too.
+    #
+    # Internal pages FIRST, the external links last. Keeping the outbound links together at the
+    # bottom stops the sidebar mixing "leaves the site" with "does not" halfway down a list. Note
+    # _active_nav_url skips anything with a scheme, so only the internal entries here can light up.
+    #
+    # The two UNCONDITIONAL entries lead and the gated one follows, so the top of the section does
+    # not move depending on who is reading it.
     ressourcer: list[NavItem] = [
+        ("/intern/stamtree/", "Stamtræ", "tree"),
+        ("/intern/statistik/", "Statistik", "chart"),
+    ]
+    # Conditional on the rollout gate, like Den Hurtige / Ankebogen / Begivenheder above — open
+    # today, and kept conditional for the reason given up there.
+    if arkiv_allowed(roles):
+        ressourcer.append(("/intern/arkiv/", "Arkiv", "archive"))
+    ressourcer += [
         (settings.WIKI_URL, "Wiki", "book"),
         (settings.FEEDBACK_URL, "Fejl & ønsker", "bug"),
     ]

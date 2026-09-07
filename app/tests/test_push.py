@@ -361,7 +361,7 @@ def test_subscribing_to_the_board_does_not_opt_into_den_hurtige(
     body["topic"] = "opslagstavle"
 
     response = client.post(
-        "/intern/opslagstavle/abonner", data=json.dumps(body), content_type="application/json"
+        "/intern/ankebogen/abonner", data=json.dumps(body), content_type="application/json"
     )
 
     assert response.status_code == 201

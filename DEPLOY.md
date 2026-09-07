@@ -223,6 +223,36 @@ only one of which is a FileField; `tests/test_audit_media.py` has one test per s
 FileField whose legacy rows hold the old site's absolute URL ("legacy imageurl"). Those images are
 broken on the live site today, independently of any of this, and are a separate fix.
 
+#### The bucket needs a CORS rule once Arkiv can upload
+
+Arkiv sends files **straight from the browser to Hetzner** (`arkiv/uploads.py`) — a 2 GB video
+cannot go through three synchronous gunicorn workers. That POST is cross-origin, from
+`https://gahk.dk` to `https://<bucket>.<loc>.your-objectstorage.com`, so the bucket has to say the
+origin is allowed or the browser refuses to send it.
+
+**Nothing in dev or CI can catch a missing rule**, because the local path never leaves the app: the
+symptom is uploads failing in production only, with a CORS error in the browser console and nothing
+at all in the Django log.
+
+```
+docker exec <web> python manage.py shell -c "
+from django.core.files.storage import storages
+s = storages['default']; c = s.connection.meta.client
+c.put_bucket_cors(Bucket=s.bucket_name, CORSConfiguration={'CORSRules': [
+  {'AllowedOrigins': ['https://gahk.dk', 'https://www.gahk.dk'],
+   'AllowedMethods': ['POST'],
+   'AllowedHeaders': ['*'],
+   'ExposeHeaders': ['ETag'],
+   'MaxAgeSeconds': 3600},
+]})
+print(c.get_bucket_cors(Bucket=s.bucket_name)['CORSRules'])"
+```
+
+`POST` only, and only those origins. **Reading needs no CORS** — a download is a top-level
+navigation to a redirect, not a `fetch`, so this became necessary the day upload landed and not
+before. Widening `AllowedMethods` to `GET`/`PUT` or `AllowedOrigins` to `*` would let any page on
+the internet script requests against the bucket with a stolen presigned URL; there is no reason to.
+
 #### `/media/` is no longer public
 
 It used to be, as the legacy `/public/` images were — so anyone who guessed
@@ -364,6 +394,8 @@ Encoding: connection charset is utf8mb3 — check per-table charsets, watch lati
 - [ ] **Media on the bucket (§4c):** bucket in `fsn1` with a dot-free name; `S3_BUCKET` left UNSET
       for the first deploy; stages 1-3 followed in order; the re-run of `migrate_media_to_s3`
       reporting `0 uploaded, N already present and identical` (the checksum proof).
+- [ ] **Before residents can upload to Arkiv:** the bucket CORS rule set (§4c) and one real upload
+      tried from a browser — a missing rule fails in production only, and silently in the Django log.
 - [ ] **Before emptying the `media` volume:** bucket versioning `Enabled` **and** the lifecycle rules
       in place (§4d), backups green, and one copy off Hetzner. Until then the volume is the rollback.
 - [ ] After the bucket is live, confirm images still render on a **public CMS page** while logged

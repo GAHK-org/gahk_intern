@@ -428,8 +428,19 @@
   /* --- What a swipe reveals ------------------------------------------------------------------
      Pinned to the edges of .msg and stretched its full height so `place-items:center` puts the
      glyph on the bubble's midline whatever the message's height. Opacity is driven inline by
-     feed.ts as the drag progresses; at rest it is 0 and the bubble covers them anyway.
-     pointer-events:none so neither can ever take a tap meant for the message. */
+     feed.ts as the drag progresses; at rest it is 0 and the message covers them anyway.
+     pointer-events:none so neither can ever take a tap meant for the message.
+
+     THEY PAINT BEHIND THE BUBBLE AND IN FRONT OF THE AVATAR, with no z-index anywhere near them
+     -- .msg deliberately holds no stacking context (see the .pop block above), so there is none
+     to set. That is just CSS's painting order: .msg-bubble is position:relative and comes after
+     these in the markup, so it wins; .msg-avatar is an ordinary in-flow flex item, so it loses.
+     Both halves matter, and being underneath is the POINT -- these are meant to be uncovered by
+     the message sliding aside, which is why feed.ts holds the parent's translate off them (see
+     the hint block in its pointermove) and does not start fading one in until the message has
+     travelled past the 6px + 32px this band occupies. Without that counter-translate they are
+     children of the transformed element and simply travel with it: an icon glued on top of the
+     avatar it was supposed to appear beside, and a trash can that never clears the bubble. */
   .msg-hint { position:absolute; top:0; bottom:0; width:32px; display:grid; place-items:center;
     opacity:0; pointer-events:none; font-size:17px; line-height:1; }
   .msg-hint-thread { left:6px; color:var(--green-700); }
@@ -608,11 +619,54 @@
   .emoji-other input { width:100%; padding:5px 8px; text-align:center; }
 
   /* The way into a thread. Was a <details> summary that unfolded the replies in place; it is now a
-     link to den_hurtige:thread, which htmx turns into the side panel. Same weight and colour as the
-     old summary, minus the caret -- nothing folds open here any more. */
-  .msg-replies { min-width:0; font-size:12.5px; font-weight:600; color:var(--green-700);
+     link to den_hurtige:thread, which htmx turns into the side panel.
+
+     TWO STATES, AND THE POINT IS THE DISTANCE BETWEEN THEM. Both used to be this rule alone --
+     12.5px, 600, --green-700 -- so "Svar" and "3 svar" were the same object with different words
+     in it, tucked in a row beside the reaction pills. On a feed the difference did not register:
+     a message with a conversation hanging off it looked exactly like one with nothing.
+
+     So the empty state RECEDES and the full state becomes a pill. Half the new contrast comes
+     from the retreat, which is what keeps the feed quiet -- most messages have no replies, and
+     those now cost the eye almost nothing. --muted rather than --faint for it: this is an
+     interactive control, and --faint (#8A9188) lands at 2.97:1 on --paper, under the 4.5:1 a
+     12.5px link needs. --muted clears it at 5.08:1 and still reads as the quieter of the two.
+
+     No extra height either way. The action row is rendered on EVERY message (see .msg-actions
+     above), so the signal is free where a reply bar of its own would have cost ~22px a thread. */
+  .msg-replies { min-width:0; font-size:12.5px; font-weight:600; color:var(--muted);
     text-decoration:none; padding:2px 0; white-space:nowrap; }
   .msg-replies:hover { text-decoration:underline; }
+
+  /* There is a conversation here. Deliberately NOT the same shape as the pills it sits beside:
+     a reaction is white with a --border-strong outline and one you joined is --green-050, so a
+     --green-100 fill inside a full-strength --green border is a step past both, and the speech
+     bubble is a glyph nothing else in the row carries. --green-700 on --green-100 is 8:1.
+
+     Tinted rather than a solid --green fill, which was the other candidate. Saturation buys
+     little in a scan -- contrast against the neighbours is what the eye finds, and that is
+     already won -- while a solid block repeated down a busy channel is exactly the congestion
+     this is trying to avoid. If it needs to shout, this is the one declaration to change.
+
+     It survives on mid-run messages, where .msg:not(.msg-tail) hides the bare "Svar" and the
+     emoji picker: a burst of five messages shows the pill on whichever ones have threads and
+     nothing on the rest, which is the only reason that collapse is safe to do at all.
+
+     line-height:1 and 4px of vertical padding are copied off .reaction on purpose, not chosen:
+     it makes the pill exactly as tall as the reaction pills it shares the row with (13px/1 + 8 + 2
+     against 12.5px/1 + 8 + 2), so on any message carrying reactions the row does not grow by a
+     pixel. Inheriting the body's 1.5 would have made this the tallest thing in the row and pushed
+     every threaded message open. On a message with a thread and NO reactions the row still gains
+     about 7px over the plain text it replaces -- the only height this costs anywhere. */
+  .msg-replies.has-replies { display:inline-flex; align-items:center; gap:5px;
+    padding:4px 9px 4px 8px; border-radius:999px; font-weight:650; line-height:1;
+    background:var(--green-100); border:1px solid var(--green); color:var(--green-700); }
+  /* No underline on a pill -- the fill is the affordance. Lighten instead, the way .reaction does
+     the reverse, so hover reads as "liftable" rather than as text. */
+  .msg-replies.has-replies:hover { text-decoration:none; background:var(--green-050); }
+  /* Same reason as .msg-hint .ni: <use> clones the symbol into a shadow tree inheriting from THIS
+     svg, so without these it paints as a filled black blob. */
+  .msg-replies .ni { width:14px; height:14px; flex:none; stroke:currentColor; fill:none; }
 
   /* --- thread side panel (den_hurtige/_thread.html) -------------------------------------------
      Feed and panel side by side. #js-feed keeps every declaration it already had -- its
@@ -1168,11 +1222,26 @@
   .board-filters { @apply flex flex-wrap gap-2 mb-4; }
   .board-filters .chip { @apply no-underline; }
   .board-filters .chip.is-active { background: var(--green); color: #fff; border-color: var(--green); }
-  /* Tight vertical rhythm: the feed is scanned, so the gap only has to say "separate card", and
-     more than that costs posts-per-screen. The card border does most of the separating work. */
-  .board-list { @apply flex flex-col gap-2; }
-  .board-pinned { @apply mb-2; }
-  .notice-card { @apply px-4 py-3; }
+  /* Vertical rhythm: the feed is scanned, so the gap only has to say "separate card" -- the card
+     border does most of the separating work -- but 8px was under the point where it said it, and
+     cards ran together into one column of text. 12px reads as separate posts.
+
+     PAID FOR OUT OF THE TYPE, NOT OUT OF POSTS-PER-SCREEN, which is the constraint this block has
+     always been written against. The header lost 2px of avatar, a point of name and a point of
+     meta, the body went from 16px to 15px, and an edited post's byline stopped wrapping to a
+     second line (see the meta block in _notice_card.html) -- so the card is no taller than it was
+     with 8px gaps and 12px padding, and a screenful holds what it held. The room went into the
+     margins instead of into the ink, which is what "congested" was actually about. */
+  .board-list { @apply flex flex-col gap-3; }
+  .board-pinned { @apply mb-3; }
+  .notice-card { @apply px-4; padding-block: 14px; }
+  /* 15px, not the inherited 16. A card in a scanned list is not a page of prose: at 16px with
+     leading-relaxed the excerpt was the loudest thing on the board and left the padding looking
+     thin by comparison. 15/1.62 holds three lines in about the height 16/1.625 held them and
+     gives the same block visibly more room inside the card.
+     Scoped to the card so .prose-gahk keeps its page size on CMS pages -- and .board-body is also
+     the compose preview (_preview.html), which SHOULD match the card it is previewing. */
+  .notice-card .board-body { font-size: 15px; line-height: 1.62; }
   /* .prose-gahk gives every block a top+bottom margin, which inside a card is dead space at the
      edges — ~24px per card, i.e. a post per screen on a phone. Trimmed only at the boundaries, and
      only inside a card, so CMS pages keep their spacing. */
@@ -1216,7 +1285,7 @@
   .notice-gallery-count { @apply text-sm; }
   .notice-head { @apply flex items-start justify-between gap-3; flex-wrap: nowrap; }
   .notice-headline { flex: 1; min-width: 0; }
-  .notice-tags { @apply flex flex-wrap items-center gap-2 mb-1; }
+  .notice-tags { @apply flex flex-wrap items-center gap-2; margin-bottom: 6px; }
   /* "Handler om <begivenhed>". A brass chip so it does not read as a second category. */
   /* The author's embedsgruppe, beside their name on a card and on a comment. Quiet on purpose --
      it is context, not a status, and EVERY byline carries one, so at .chip's default green a page
@@ -1272,24 +1341,29 @@
   .notice-menu .pop-backdrop { background: transparent; }
 
   .notice-author { @apply flex items-center gap-2.5; min-width: 0; }
-  .notice-avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--brass);
-    color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 13px; flex: none;
+  /* 34px rather than 36: the avatar is the tallest thing in the header, so it alone sets the row's
+     height, and two pixels off it come straight off every card in the feed. */
+  .notice-avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--brass);
+    color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 12.5px; flex: none;
     text-transform: uppercase; }
   .notice-byline { @apply flex flex-col; min-width: 0; }
-  .notice-name { @apply font-semibold leading-snug; color: var(--ink); }
+  .notice-name { @apply font-semibold leading-snug; font-size: 15px; color: var(--ink); }
   /* Name and embedsgruppe pill share the byline's first line; the timestamp keeps the second.
      Wrapping, not truncating: "Legat- og kunstgruppen" is wider than the gap beside a name on a
      phone, and a pill reading "Legat- og kuns..." names no group anyone recognises. min-width:0 so
      a long name still lets the row shrink inside the card. */
   .notice-nameline { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
-  .notice-meta { @apply text-sm; }
+  /* 13px: this is the quietest line in the card and was competing with the name at 14. Together
+     with the short form the feed now renders (see _notice_card.html) an edited post's byline fits
+     on one line at phone width, which is where the wrapping came from. */
+  .notice-meta { font-size: 13px; }
   /* The timestamp is the permalink. Undecorated so the header reads as a byline rather than a row
      of links -- the whole card is the real tap target (see .is-clickable). */
   .notice-meta a { @apply no-underline; color: inherit; }
   .notice-meta a:hover { color: var(--green-700); text-decoration: underline; }
   .notice-actions { @apply flex items-center gap-2 shrink-0; }
   .notice-actions form { @apply m-0; }
-  .notice-foot { @apply flex items-center justify-between gap-3 flex-wrap mt-2; }
+  .notice-foot { @apply flex items-center justify-between gap-3 flex-wrap; margin-top: 10px; }
   .notice-comments-link { @apply text-sm; }
   .notice-comments { @apply mt-6; }
   .notice-comments h2 { @apply text-base font-semibold mb-2; }
@@ -1425,4 +1499,72 @@
      than the card snapping back a moment later with an explanation. */
   .kanban-col.is-drop-refused { border-color: var(--neg); background: var(--neg-bg); }
   .kanban-note { font-size: 13px; }
+
+  /* --- Arkiv -------------------------------------------------------------------------------
+     A file browser is a list, not a grid: names are the thing being scanned, they are long and of
+     wildly different lengths, and a grid would either truncate them or leave rivers of whitespace.
+     Reuses .card-flat/.chip/.icon rather than inventing an Arkiv look. */
+  .breadcrumb { display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-size:13px; }
+  .breadcrumb a { color:var(--brass); text-decoration:none; }
+  .breadcrumb a:hover { text-decoration:underline; }
+  .breadcrumb [aria-hidden] { color:var(--muted); }
+  .breadcrumb [aria-current] { color:var(--muted); }
+
+  .arkiv-list { list-style:none; margin:0; padding:0; border:1px solid var(--line); border-radius:10px;
+    overflow:hidden; background:var(--card); }
+  .arkiv-list li { display:flex; align-items:center; gap:10px; padding:10px 14px;
+    border-bottom:1px solid var(--line); }
+  .arkiv-list li:last-child { border-bottom:0; }
+  .arkiv-list li > a { display:flex; align-items:center; gap:10px; flex:1 1 auto; min-width:0;
+    color:inherit; text-decoration:none; }
+  .arkiv-list li > a:hover .arkiv-name { text-decoration:underline; }
+  /* There is no base `.ni` rule in this stylesheet - every use states its own size, stroke and
+     fill (see .nav-item .ni, .chip .ni). Omitting them renders the symbol at its intrinsic
+     size, which is how the folder icon first came out enormous. */
+  .arkiv-list .ni { width:18px; height:18px; flex:none; stroke:currentColor; fill:none;
+    color:var(--brass); }
+  /* The name truncates rather than wrapping: one row per file keeps a long folder scannable, and
+     the full name is still in the link's accessible name. */
+  .arkiv-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .arkiv-meta { flex:0 0 auto; font-size:12px; }
+
+  /* Same box as the .ni icon it replaces, so a folder of mixed images and documents does not
+     jag left and right down the list. object-fit keeps portraits from stretching. */
+  .arkiv-thumb { width:40px; height:40px; flex:none; object-fit:cover; border-radius:4px;
+    background:var(--surface-2); }
+
+  .arkiv-newfolder { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .arkiv-newfolder input { flex:1 1 220px; max-width:340px; }
+  /* A destructive action that is one row among many: styled as a quiet link rather than a button,
+     so a list of thirty files is not thirty red buttons. "Fjern" is a soft delete, so the weight of
+     the control matches the weight of the consequence -- and "Slet permanent", in the removed list
+     below, deliberately looks the same. The thing that makes the second one safe is that you have
+     to remove a file before you can reach it, not a louder button (see arkiv/access.py). A red
+     block would only train people to click past it. */
+  .arkiv-remove { margin:0; flex:0 0 auto; }
+  .btn-link, .btn-link-danger { background:none; border:0; padding:0; font:inherit; font-size:12px;
+    color:var(--muted); cursor:pointer; text-decoration:underline; }
+  .btn-link:hover { color:var(--green-700); }
+  .btn-link-danger:hover { color:var(--neg); }
+
+  /* A row in the removed list has no <a> around its icon and name -- the bytes are still there but
+     it is out of the listing, and a working download link would make "fjernet" mean nothing. So it
+     needs `li > a`'s layout without being a link. */
+  .arkiv-list li > .arkiv-static { display:flex; align-items:center; gap:10px; flex:1 1 auto;
+    min-width:0; color:var(--muted); }
+  /* Sunk, so the second stage of the delete does not read as more of the folder. The heading and
+     the sentence above it say what it is; this is what makes it look it at a glance. */
+  .arkiv-removed .arkiv-list { background:var(--surface-2); }
+  .arkiv-removed .arkiv-list .ni { color:var(--muted); }
+
+  .arkiv-upload { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  /* The <input> is hidden and the <label> is the control, so the button matches every other
+     button on the site instead of rendering as a browser file picker. */
+  .arkiv-upload label { cursor:pointer; margin:0; }
+  .arkiv-upload [data-upload-status] { font-size:13px; }
+
+  @media (max-width: 560px) {
+    /* The metadata is the first thing to go: on a phone the name is the whole point. */
+    .arkiv-meta { display:none; }
+  }
 }

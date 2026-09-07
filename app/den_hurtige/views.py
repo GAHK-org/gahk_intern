@@ -21,6 +21,7 @@ from django.core.exceptions import PermissionDenied
 from django.core.files.uploadedfile import UploadedFile
 from django.db.models import Count, Prefetch, QuerySet
 from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect
+from django.http.response import HttpResponseBase
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
@@ -278,7 +279,7 @@ def feed_items(request: HttpRequest) -> HttpResponse:
     )
 
 
-def thread(request: HttpRequest, pk: int) -> HttpResponse:
+def thread(request: HttpRequest, pk: int) -> HttpResponseBase:
     """One message and its replies: the side panel, or a standalone page without htmx.
 
     TWO exits, on purpose, and they differ in how they FAIL as much as in what they render:

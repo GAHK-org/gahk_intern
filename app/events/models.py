@@ -88,6 +88,12 @@ def _new_feed_token() -> str:
     return secrets.token_urlsafe(32)
 
 
+# Same ceiling as opslagstavle.MAX_COMMENT_CHARS, and the same reasoning: long enough for a real
+# paragraph, short enough that a comment cannot become the post. Declared here rather than imported
+# so events does not depend on opslagstavle at import time (see EventComment).
+MAX_COMMENT_CHARS = 1_000
+
+
 class Visibility(models.TextChoices):
     AABENT = "aabent", "Åbent for alle beboere"
     KUN_INVITEREDE = "kun_inviterede", "Kun inviterede"
@@ -354,6 +360,53 @@ class Rsvp(models.Model):
 
     def __str__(self) -> str:
         return f"{self.resident}: {self.get_answer_display()}"
+
+
+class EventComment(models.Model):
+    """A note on an event — "hvad skal jeg tage med?", "jeg kommer en halv time senere".
+
+    WHY THIS EXISTS AT ALL, given that the module docstring above divides the three features by
+    handing comments to Ankebogen. The division still holds for the thing being discussed: an
+    ANNOUNCEMENT belongs on the board, where it is kept. What this is for is the practical traffic
+    an event generates while it is still ahead of you, which was previously landing in Den Hurtige
+    (where it expires in an hour, often before the event) or in a Messenger thread the house left
+    Facebook to get rid of. It attaches to the thing it is about and dies with it.
+
+    THREE THINGS THE SIBLING COMMENT MODELS DO THAT THIS ONE DELIBERATELY DOES NOT:
+
+      * **No embedsgruppe snapshot.** opslagstavle.NoticeComment inherits AuthoredByResident to
+        freeze the author's group at writing time, because a rotating group would relabel a
+        multi-year archive on every månedsliste. This lives a week past its event, and groups
+        rotate monthly, so the snapshot would be protecting an archive that does not exist —
+        the same call reparationer.RepairComment already made. Importing that abstract base would
+        also make events depend on opslagstavle at import time, which views.py goes out of its way
+        to avoid (see _related_notices).
+      * **No reactions.** A reaction is a cheap way to say "seen" on a board post. Here the answer
+        panel is the way to say anything that matters, and a second, weaker signal beside it just
+        raises "does a 👍 count as tilmeldt?".
+      * **No retention of its own.** CASCADE from the event, which is deleted a week after it is
+        held. That is not an oversight to fix later: the module docstring commits to there being no
+        record of what happened, and a comment thread outliving its event would be exactly the
+        archive it says belongs to Ankebogen.
+
+    Plain text, not Markdown, for the reasons NoticeComment's docstring gives — rendered
+    autoescaped with `white-space:pre-wrap` and `|urlize`.
+    """
+
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="comments")
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="event_comments"
+    )
+    body = models.TextField(max_length=MAX_COMMENT_CHARS, verbose_name="Kommentar")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        verbose_name = "Kommentar"
+        verbose_name_plural = "Kommentarer"
+
+    def __str__(self) -> str:
+        return f"Kommentar af {self.author} på #{self.event_id}"
 
 
 class CalendarFeedToken(models.Model):

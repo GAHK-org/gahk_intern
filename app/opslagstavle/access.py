@@ -1,16 +1,18 @@
-"""Who may reach opslagstavlen, and who may do what once they are there.
+"""Who may reach Ankebogen, and who may do what once they are there.
 
-    TO OPEN IT TO EVERY RESIDENT: set ACCESS_ROLES = None.
+The staged rollout is over: ACCESS_ROLES is None and every resident is in.
 
-That one edit widens every view, the sidebar entry and the notification audience together.
+    TO RE-GATE IT: set ACCESS_ROLES to a tuple of roles.
 
-This module used to argue *against* a staged-rollout gate, on the grounds that the feature replaces
-a Facebook group everyone is already in, so a board only Inspektionen can see has no content and
-cannot be meaningfully trialled. That reasoning still holds for trialling the board as a *social
-space* — and it is why the gate below is meant to come off quickly. It does not hold for the thing
-actually being tested first: whether posting, Markdown, image upload, reactions, comments and push
-work at all. Three people can answer that, and finding out with three is cheaper than with a
-hundred.
+That one edit narrows every view, the sidebar entry and the notification audience together.
+
+This module used to argue *against* having a staged-rollout gate at all, on the grounds that the
+feature replaces a Facebook group everyone is already in, so a board only Inspektionen can see has
+no content and cannot be meaningfully trialled. That reasoning was right about the board as a
+*social space*, which is why the gate was always meant to come off quickly — and why it now has.
+It was never the thing the trial tested, though: that was narrower and three people could answer
+it, being whether posting, Markdown, image upload, reactions, comments and push work at all.
+Finding that out with three was cheaper than finding it out with a hundred.
 
 The gate itself now lives in core.rollout — this module keeps only ACCESS_ROLES and the per-object
 policy below. It used to be a deliberate copy of den_hurtige/access.py's, on the grounds that both
@@ -30,7 +32,6 @@ from django.db.models import QuerySet
 from django.http import HttpRequest
 
 from core.rollout import Gate
-from residents.models import Role
 from residents.permissions import MODERATION_ROLES, View, request_has_role
 
 from .models import Notice, NoticeComment
@@ -38,9 +39,12 @@ from .models import Notice, NoticeComment
 # None = every logged-in resident. A tuple = only those roles (administrator implies every role, so
 # administrators and superusers are always in).
 #
-# Gated for a first pass at the mechanics — see the module docstring for why this is temporary and
-# why it is a copy of Den Hurtige's gate rather than a shared one.
-ACCESS_ROLES: tuple[str, ...] | None = (Role.ADMINISTRATOR, Role.INSPEKTION)
+# Open to the whole kollegium. Two things follow on their own rather than needing an edit, and
+# both are worth expecting instead of debugging: the "Under test" chip disappears (board.html reads
+# is_limited()), and the notification audience widens, because services._audience already runs every
+# fan-out through allowed_subscribers — so a new opslag now reaches every resident who has opted in
+# to the topic rather than only the trial group's devices.
+ACCESS_ROLES: tuple[str, ...] | None = None
 
 # Read through a lambda, never passed by value: this module global is what tests rebind and what a
 # future edit flips to None, and a Gate holding the value would freeze at import. See core.rollout.

@@ -19,7 +19,7 @@ from core.clock import current_datetime
 from core.uploads import check_image_upload
 from residents.models import Residency, Resident, active_period
 
-from .models import MIN_INVITEES, Event, Visibility
+from .models import MIN_INVITEES, Event, EventComment, Visibility
 
 
 def invitable_residents(exclude: Resident | None = None) -> object:
@@ -114,7 +114,7 @@ class EventForm(forms.ModelForm):
             "rsvp_deadline_at": "Svarfrist",
         }
         help_texts = {
-            "description": "Markdown virker — ligesom på opslagstavlen.",
+            "description": "Markdown virker — ligesom i Ankebogen.",
             "capacity": "Lad stå tomt hvis der ikke er nogen grænse. "
             "Når der er fuldt, kommer flere på venteliste.",
             # No entry for the three datetime fields: they are declared below, and a declared field
@@ -241,3 +241,22 @@ class EventForm(forms.ModelForm):
                 f"Der er allerede {taken} tilmeldte. Antallet kan ikke sættes under {taken}."
             )
         return capacity
+
+
+class EventCommentForm(forms.ModelForm):
+    """One comment. Mirrors reparationer.RepairCommentForm, including the strip-then-reject: a
+    textarea full of spaces is `is_valid()` to Django and an empty bubble to a reader."""
+
+    class Meta:
+        model = EventComment
+        fields = ["body"]
+        labels = {"body": "Kommentar"}
+        widgets = {
+            "body": forms.Textarea(attrs={"rows": 3, "placeholder": "Skriv en kommentar…"}),
+        }
+
+    def clean_body(self) -> str:
+        body = (self.cleaned_data.get("body") or "").strip()
+        if not body:
+            raise forms.ValidationError("Skriv en kommentar.")
+        return body

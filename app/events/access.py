@@ -1,6 +1,8 @@
 """Who may reach begivenheder, who may see which ones, and who may do what to them.
 
-    TO OPEN IT TO EVERY RESIDENT: set ACCESS_ROLES = None.
+The staged rollout is over: ACCESS_ROLES is None and every resident is in.
+
+    TO RE-GATE IT: set ACCESS_ROLES to a tuple of roles.
 
 The gate MECHANISM is core.rollout — extracted when this became the third feature to want one, on
 the schedule opslagstavle/access.py set for it. What is here is this feature's own policy, and the
@@ -30,30 +32,29 @@ from django.db.models import Q, QuerySet
 from django.http import HttpRequest
 
 from core.rollout import Gate
-from residents.models import Resident, Role
+from residents.models import Resident
 from residents.permissions import View, current_resident
 
-from .models import Event, EventInvite, EventQuerySet, Visibility
+from .models import Event, EventComment, EventInvite, EventQuerySet, Visibility
 
 # None = every logged-in resident. A tuple = only those roles (administrator implies every role, so
 # administrators and superusers are always in).
 #
-# Gated to Inspektionen and Netværksgruppen for a first pass, matching opslagstavlen's trial group.
-# "Netværk" is spelled ADMINISTRATOR here: the network group is not an embedsgruppe with a
-# Workgroup row, so it has never had a role of its own — see residents.models.WORKGROUP_ROLE, where
-# `administrator` is deliberately absent for exactly that reason.
+# Open to the whole kollegium. It was gated to Inspektionen and Netværksgruppen for a first pass,
+# matching Ankebogen's trial group. ("Netværk" was spelled ADMINISTRATOR: the network group is not
+# an embedsgruppe with a Workgroup row, so it has never had a role of its own — see
+# residents.models.WORKGROUP_ROLE, where `administrator` is deliberately absent for that reason.)
 #
-# This module argued the other way when the feature shipped, and the argument is worth keeping
-# rather than deleting, because it is the thing the trial has to work around: the piece most likely
-# to be wrong here is the CALENDAR FEED, and a feed only becomes testable once several people have
-# real answers in it. Half a dozen testers can exercise creating, answering, the venteliste, the
-# deadline, invites and both .ics paths — but "does a month of real events look right in Google
-# Calendar six weeks from now" is a question this trial cannot ask. Plan to open it before trusting
-# that half.
+# WHAT THE TRIAL COULD NOT ANSWER IS NOW LIVE, and it is the thing to watch. Half a dozen testers
+# could exercise creating, answering, the venteliste, the deadline, invites and both .ics paths, but
+# "does a month of real events look right in Google Calendar six weeks from now" needs a whole house
+# with real answers in it — which is why this module said to open it before trusting that half.
+# Opening it is what makes the question askable; the calendar feed is where a problem will surface
+# first, and it will surface in somebody's phone rather than in a test.
 #
-# TO OPEN IT TO EVERY RESIDENT: set ACCESS_ROLES = None. That one edit widens every view, the
-# sidebar entry, the "Under test" chip on the list and the push audience together.
-ACCESS_ROLES: tuple[str, ...] | None = (Role.ADMINISTRATOR, Role.INSPEKTION)
+# TO RE-GATE IT: set ACCESS_ROLES to a tuple of roles. That one edit narrows every view, the sidebar
+# entry, the "Under test" chip on the list and the push audience together.
+ACCESS_ROLES: tuple[str, ...] | None = None
 
 # Read through a lambda, never passed by value: this global is what tests rebind and what the edit
 # above would flip, and a Gate holding the value would freeze at import. See core.rollout.
@@ -148,6 +149,31 @@ def can_delete(event: Event, resident: Resident) -> bool:
 def can_cancel(event: Event, resident: Resident) -> bool:
     """The other half of can_delete: hosts may aflys anything not already cancelled."""
     return not event.is_cancelled and is_host(event, resident)
+
+
+def can_delete_comment(comment: EventComment, resident: Resident, *, host: bool | None = None) -> bool:
+    """Its author, or a HOST of the event it is on.
+
+    NOT "a moderator", which is where the two sibling features land (opslagstavle.access and
+    reparationer.views both say "the author, or a manager"). It cannot be that here, and the reason
+    is the paragraph at the top of this module: Inspektionen deliberately cannot SEE a private
+    event, so "Inspektionen may delete its comments" would be a permission that either does
+    nothing or quietly reintroduces the read access the 404 exists to deny. The host is the right
+    analogue anyway — they run the event, they are who a comment thread on it is aimed at, and on
+    an open event they are as reachable as Inspektionen would be.
+
+    A superuser still has the Django admin, which is where a reported private event is handled
+    (see admin.py). That is the escape hatch, and it is deliberately the only one.
+
+    `host` is an optimisation for asking this about a WHOLE THREAD, and the rule stays here rather
+    than being re-expressed in the view. `is_host` costs a query — it filters co_organisers — and
+    its answer is identical for every comment on one event, so views._comments resolves it once and
+    passes it in; left None, this asks for itself. Authorship is checked first either way, so a
+    resident reading their own comments needs no query at all.
+    """
+    if comment.author_id == resident.pk:
+        return True
+    return is_host(comment.event, resident) if host is None else host
 
 
 def request_host(request: HttpRequest, event: Event) -> bool:

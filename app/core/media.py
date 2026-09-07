@@ -26,8 +26,16 @@ import posixpath
 from django.contrib.auth.views import redirect_to_login
 from django.core.exceptions import SuspiciousOperation
 from django.core.files.storage import storages
-from django.http import FileResponse, Http404, HttpRequest, HttpResponseRedirect
+from django.http import (
+    FileResponse,
+    Http404,
+    HttpRequest,
+    HttpResponseNotModified,
+    HttpResponseRedirect,
+)
 from django.http.response import HttpResponseBase
+from django.utils.http import http_date
+from django.views.static import was_modified_since
 
 # How long the browser may reuse the redirect, and how long the signature it points at stays valid.
 #
@@ -122,10 +130,28 @@ def serve_media(request: HttpRequest, path: str) -> HttpResponseBase:
             # whether a path is outside the media root is not something a caller needs
             # confirmed.
             raise Http404("media path outside the storage root") from exc
-        response = HttpResponseRedirect(target)
-        response.headers["Cache-Control"] = REDIRECT_CACHE_CONTROL
-        response.headers["Vary"] = "Cookie"
-        return response
+        redirect = HttpResponseRedirect(target)
+        redirect.headers["Cache-Control"] = REDIRECT_CACHE_CONTROL
+        redirect.headers["Vary"] = "Cookie"
+        return redirect
+
+    # CONDITIONAL GET, and it is not an optimisation. django.views.static.serve - what this replaced -
+    # answered If-Modified-Since with a 304, and dropping that made every image on a page re-download
+    # in full on every load. On alumnelisten that is ~124 profile pictures of up to a megabyte each,
+    # through a single-threaded dev server, per reload. The S3 branch above never gets here: the
+    # bucket does its own revalidation behind the redirect.
+    try:
+        modified = storage.get_modified_time(path)
+    except SuspiciousOperation as exc:
+        raise Http404("media path outside the storage root") from exc
+    except (FileNotFoundError, IsADirectoryError, PermissionError, ValueError, NotImplementedError):
+        # A backend that cannot report an mtime just does not get to answer 304.
+        modified = None
+
+    if modified is not None:
+        stamp = modified.timestamp()
+        if not was_modified_since(request.META.get("HTTP_IF_MODIFIED_SINCE"), stamp):
+            return HttpResponseNotModified()
 
     try:
         handle = storage.open(path)
@@ -134,4 +160,10 @@ def serve_media(request: HttpRequest, path: str) -> HttpResponseBase:
     except (FileNotFoundError, IsADirectoryError, PermissionError, ValueError) as exc:
         # ValueError covers the empty path — GET /media/ — which reaches the storage as "".
         raise Http404("media file not found") from exc
-    return FileResponse(handle)
+
+    response: HttpResponseBase = FileResponse(handle)
+    if modified is not None:
+        # Last-Modified without a max-age, exactly as static.serve did: the browser revalidates and
+        # gets a 304, so an image replaced in place during development is never served stale.
+        response.headers["Last-Modified"] = http_date(modified.timestamp())
+    return response

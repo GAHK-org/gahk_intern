@@ -520,13 +520,20 @@ if (document.body.classList.contains("chat-page")) {
 // Axis handling is CSS's job, not this file's: `touch-action:pan-y` on both elements leaves the
 // vertical axis to the browser (so the feed still scrolls with its native momentum) and hands us
 // the horizontal one. A flick that the browser claims as a scroll arrives here as pointercancel.
-const SWIPE_SLOP = 12; // px of travel before the axis is called
+const SWIPE_SLOP = 12; // px of HORIZONTAL travel before the axis can be called
 const SWIPE_TRIGGER = 68; // px that commits the gesture
 const SWIPE_MAX = 96; // px the element will actually move, however far the thumb goes
-const SWIPE_HINT_FROM = 16; // px before the icon behind the bubble starts fading in
-// Vertical wins a tie, and then some: this is a scrolling list first and a gesture surface second.
-// Reading a long message must never be made harder by the shortcut for opening its thread.
+// px of travel before the icon under the message starts fading in. It is the far edge of the hint
+// band itself -- `left:6px` plus its 32px width -- because the icons paint BEHIND the bubble (see
+// the .msg-hint block in styles.css): until the message has cleared that much, fading one in only
+// lights up the sliver of it that is still sticking out past the bubble's corner.
+const SWIPE_HINT_FROM = 38;
+// Vertical still wins a tie, and then some: this is a scrolling list first and a gesture surface
+// second. But losing the tie no longer ENDS the gesture -- see the axis block in pointermove.
 const SWIPE_X_BIAS = 1.3;
+// px of vertical travel that ends a gesture outright, on its own, when the finger has not gone
+// SWIPE_SLOP sideways in all that distance. That is a scroll however the browser has read it.
+const SWIPE_SCROLL_SLOP = 30;
 
 type SwipeAction = "thread" | "delete" | "close";
 
@@ -565,6 +572,7 @@ function clearHints(el: HTMLElement): void {
   for (const hint of el.querySelectorAll<HTMLElement>(".msg-hint")) {
     hint.style.opacity = "";
     hint.style.scale = "";
+    hint.style.translate = "";
   }
 }
 
@@ -642,11 +650,34 @@ if (feed) {
     const dy = event.clientY - drag.startY;
 
     if (!drag.decided) {
-      if (Math.abs(dx) < SWIPE_SLOP && Math.abs(dy) < SWIPE_SLOP) return;
-      if (Math.abs(dx) <= Math.abs(dy) * SWIPE_X_BIAS) {
-        drag = null; // a scroll, and the browser is already handling it
+      // A finger that has gone a long way UP OR DOWN without going anywhere sideways is scrolling,
+      // and the browser is already handling it. This is the only thing that ends a gesture from in
+      // here; everything below is "not yet", not "no".
+      if (Math.abs(dy) >= SWIPE_SCROLL_SLOP && Math.abs(dx) < SWIPE_SLOP) {
+        drag = null;
         return;
       }
+      // Not enough sideways travel to call the axis on yet.
+      if (Math.abs(dx) < SWIPE_SLOP) return;
+      // Vertical is still ahead, so KEEP WATCHING rather than giving up. THIS IS THE LINE, and
+      // what it replaced is why a right-swipe on someone else's message reportedly worked about
+      // one time in five while the same gesture on your own worked every time.
+      //
+      // The old version answered "is this a swipe?" once and for all on the first pointermove past
+      // the slop, and answered NO by throwing the whole gesture away -- so a start the bias did
+      // not like meant the message would not budge again however far the thumb travelled after
+      // that, because `decided` was never reached and `drag` was already null. Only lifting and
+      // starting again could recover it. A thumb swipe is an arc rather than a line, and how much
+      // vertical is in its first 12-15px depends on where on the screen it starts and which hand
+      // is holding the phone; own messages and other people's sit against opposite edges, so they
+      // do not get the same start. Whatever the exact geometry, sentencing a 70px gesture on its
+      // first 12px is the bug. Deferring lets the same swipe qualify a few frames later.
+      //
+      // Nothing is lost by waiting. The bias is checked against TOTAL travel, not the last frame,
+      // so a real scroll never out-runs it at any point in the gesture; the branch above catches a
+      // straight vertical flick; and `touch-action:pan-y` means the browser fires pointercancel
+      // the moment it claims the touch for the scroller.
+      if (Math.abs(dx) <= Math.abs(dy) * SWIPE_X_BIAS) return;
       const action = actionFor(drag.el, dx);
       if (!action) {
         drag = null; // nothing lives in that direction, so the bubble must not budge
@@ -673,13 +704,28 @@ if (feed) {
     // feedback: it says the gesture has caught without needing the element to stop dead.
     const eased =
       along <= SWIPE_TRIGGER ? along : SWIPE_TRIGGER + (along - SWIPE_TRIGGER) * 0.25;
-    drag.el.style.translate = `${Math.min(eased, SWIPE_MAX) * dir}px 0`;
+    const offset = Math.min(eased, SWIPE_MAX) * dir;
+    drag.el.style.translate = `${offset}px 0`;
 
     const hint = hintFor(drag.el, action);
     if (hint) {
-      // Held at 0 until the bubble has cleared the icon's own width, so the two never overlap:
-      // the hints are painted OVER the bubble, not behind it (see _message.html for why there is
-      // no z-index to put them underneath).
+      // THE HINTS MUST BE HELD STILL WHILE THE MESSAGE SLIDES OFF THEM, and that is what this
+      // line does. They are children of the element being translated, so without it they ride
+      // along with the bubble and are never uncovered by it -- the drag moves the message and its
+      // icons together, as one piece, and a swipe reveals nothing at all. Cancelling the parent's
+      // transform on the way back down is what turns the gesture into what it looks like: the
+      // message sliding aside to show what is underneath.
+      //
+      // It only LOOKED right on your own messages, which is why this survived. Those are
+      // right-aligned, so the 20% gutter the bubble cannot reach leaves the thread icon standing
+      // in empty space at `left:6px` -- it faded in on cue without ever needing to be revealed.
+      // On someone else's message the same 6px is underneath the AVATAR (34px wide, at the 10px
+      // padding edge), so a green icon was being drawn on top of a brass circle and dragged along
+      // with it. And the trash can, at `right:6px`, is underneath the bubble on your own messages
+      // in exactly the same way -- it was the sliver past the bubble's corner that showed.
+      hint.style.translate = `${-offset}px 0`;
+      // Held at 0 until the message has cleared the icon's own band, so no half-covered icon ever
+      // fades in: the hints paint BEHIND the bubble (see the .msg-hint block in styles.css).
       const progress = Math.min(
         1,
         Math.max(0, (along - SWIPE_HINT_FROM) / (SWIPE_TRIGGER - SWIPE_HINT_FROM)),
@@ -704,10 +750,18 @@ if (feed) {
     endDrag(drag.armed);
   });
 
-  // The browser took the gesture over as a scroll, or the system interrupted it. Never commits.
+  // The browser took the gesture over as a scroll, or the system interrupted it.
+  //
+  // A cancel BEFORE the trigger is the scroll case and must not commit -- that is the contract
+  // `touch-action:pan-y` buys. Past it, commit: nothing the browser does to the vertical axis
+  // moves a finger 68px sideways first, so a cancel that arrives here is the platform taking the
+  // touch away mid-gesture (its own edge-swipe, a notification shade, the app losing focus) after
+  // the resident has already done everything the gesture asks of them. Dropping a finished swipe
+  // on the floor is indistinguishable, from the outside, from the gesture not working -- you drag
+  // the message clear across, it springs back, and nothing happens.
   document.addEventListener("pointercancel", (event: PointerEvent) => {
     if (!drag || event.pointerId !== drag.pointerId) return;
-    endDrag(false);
+    endDrag(drag.armed);
   });
 }
 
