@@ -1,3 +1,4 @@
+{% load text_extras %}
 {% comment %}
   ONE message: avatar, bubble (name + text + image), and its action row.
 
@@ -119,7 +120,13 @@
         of every message -- the full sentence survives in the title for anyone who hovers.
       {% endcomment %}
       <div class="msg-line-text">
-        <span class="msg-text">{{ post.content }}</span>
+        {% comment %}
+          |links escapes the message and then makes every URL in it clickable and short.
+          A pasted link is routinely 120 characters of tracking parameters, and a bubble is
+          about forty wide -- unshortened it wrapped to five lines and buried the message it
+          was sent with. The full URL stays in href and title; see core/links.py.
+        {% endcomment %}
+        <span class="msg-text">{{ post.content|links }}</span>
         <span class="msg-clock">
           <span class="msg-meta msg-time">{{ post.created_at|date:"H:i" }}</span>
           <span class="msg-meta msg-expiry" title="Udløber om {{ post.expires_label }}"

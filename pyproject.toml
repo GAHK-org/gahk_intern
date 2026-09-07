@@ -17,8 +17,12 @@ dependencies = [
     # older 0.2 wheels do not accept — and a fresh resolve on one would TypeError at import in
     # production only, where DEBUG is off and the traceback is least visible.
     "nh3>=0.3", # HTML sanitization of admin-edited CMS content and resident-authored markdown
-    "markdown-it-py>=4.0", # Markdown for resident-authored opslag; raw HTML off at the parser
-    "pywebpush>=2.4",        # Web Push (VAPID + payload encryption) for Den Hurtige + opslagstavlen
+    # The [linkify] extra is not optional polish: it pulls linkify-it-py, which is what finds a
+    # bare pasted URL in a body or a chat message. Without it `_MD.enable("linkify")` raises at
+    # import, and core/links.py has no URL scanner at all — see that module on why the rules are
+    # not hand-rolled.
+    "markdown-it-py[linkify]>=4.0", # Markdown for resident-authored opslag; raw HTML off at the parser
+    "pywebpush>=2.4", # Web Push (VAPID + payload encryption) for Den Hurtige + opslagstavlen
     # Object storage for MEDIA_ROOT (Hetzner Object Storage, S3-compatible). The [s3] extra pulls
     # boto3. >=1.14 is required, not cosmetic: it is the release that reads per-backend OPTIONS out
     # of STORAGES, which is the only configuration style this project uses — on 1.13 every OPTIONS
