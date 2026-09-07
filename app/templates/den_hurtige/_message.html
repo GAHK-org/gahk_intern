@@ -53,14 +53,20 @@
          {% if not bare %}data-msg-swipe{% endif %}>
   {% if not bare %}
     {% comment %}
-      What a swipe reveals. Both sit at the edges of .msg, underneath the bubble at rest and at
-      opacity:0, so they cost no layout and cannot be seen until the drag has moved the bubble off
-      them (feed.ts only fades them in once it has travelled past their width).
+      What a swipe reveals. Both sit at the edges of .msg, underneath the message at rest and at
+      opacity:0, so they cost no layout and cannot be seen until the drag has moved the message off
+      them (feed.ts only fades them in once it has travelled past their band).
+
+      They come FIRST in the markup, before .msg-line, and that ordering is what puts them behind
+      the bubble: .msg-bubble is position:relative, so between two positioned boxes at the same
+      level the later one paints on top. It is also why feed.ts has to cancel .msg's translate on
+      them during a drag — they are children of the element that moves, so left alone they move
+      with it and nothing is ever revealed. See the hint block in its pointermove.
 
       NOT z-indexed, and not put behind the bubble with a negative z-index. .msg is deliberately
       not a stacking context — the pickers in .msg-actions depend on that — so a `z-index:-1` child
-      would escape to whatever ancestor IS one and paint behind the feed itself. Opacity does the
-      hiding instead, which needs no stacking at all.
+      would escape to whatever ancestor IS one and paint behind the feed itself. Markup order and
+      opacity do the work instead, and neither needs any stacking at all.
     {% endcomment %}
     <span class="msg-hint msg-hint-thread" aria-hidden="true">
       <svg class="ni"><use href="#i-chat"></use></svg>

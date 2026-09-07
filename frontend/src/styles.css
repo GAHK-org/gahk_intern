@@ -428,8 +428,19 @@
   /* --- What a swipe reveals ------------------------------------------------------------------
      Pinned to the edges of .msg and stretched its full height so `place-items:center` puts the
      glyph on the bubble's midline whatever the message's height. Opacity is driven inline by
-     feed.ts as the drag progresses; at rest it is 0 and the bubble covers them anyway.
-     pointer-events:none so neither can ever take a tap meant for the message. */
+     feed.ts as the drag progresses; at rest it is 0 and the message covers them anyway.
+     pointer-events:none so neither can ever take a tap meant for the message.
+
+     THEY PAINT BEHIND THE BUBBLE AND IN FRONT OF THE AVATAR, with no z-index anywhere near them
+     -- .msg deliberately holds no stacking context (see the .pop block above), so there is none
+     to set. That is just CSS's painting order: .msg-bubble is position:relative and comes after
+     these in the markup, so it wins; .msg-avatar is an ordinary in-flow flex item, so it loses.
+     Both halves matter, and being underneath is the POINT -- these are meant to be uncovered by
+     the message sliding aside, which is why feed.ts holds the parent's translate off them (see
+     the hint block in its pointermove) and does not start fading one in until the message has
+     travelled past the 6px + 32px this band occupies. Without that counter-translate they are
+     children of the transformed element and simply travel with it: an icon glued on top of the
+     avatar it was supposed to appear beside, and a trash can that never clears the bubble. */
   .msg-hint { position:absolute; top:0; bottom:0; width:32px; display:grid; place-items:center;
     opacity:0; pointer-events:none; font-size:17px; line-height:1; }
   .msg-hint-thread { left:6px; color:var(--green-700); }
