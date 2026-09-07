@@ -1222,11 +1222,26 @@
   .board-filters { @apply flex flex-wrap gap-2 mb-4; }
   .board-filters .chip { @apply no-underline; }
   .board-filters .chip.is-active { background: var(--green); color: #fff; border-color: var(--green); }
-  /* Tight vertical rhythm: the feed is scanned, so the gap only has to say "separate card", and
-     more than that costs posts-per-screen. The card border does most of the separating work. */
-  .board-list { @apply flex flex-col gap-2; }
-  .board-pinned { @apply mb-2; }
-  .notice-card { @apply px-4 py-3; }
+  /* Vertical rhythm: the feed is scanned, so the gap only has to say "separate card" -- the card
+     border does most of the separating work -- but 8px was under the point where it said it, and
+     cards ran together into one column of text. 12px reads as separate posts.
+
+     PAID FOR OUT OF THE TYPE, NOT OUT OF POSTS-PER-SCREEN, which is the constraint this block has
+     always been written against. The header lost 2px of avatar, a point of name and a point of
+     meta, the body went from 16px to 15px, and an edited post's byline stopped wrapping to a
+     second line (see the meta block in _notice_card.html) -- so the card is no taller than it was
+     with 8px gaps and 12px padding, and a screenful holds what it held. The room went into the
+     margins instead of into the ink, which is what "congested" was actually about. */
+  .board-list { @apply flex flex-col gap-3; }
+  .board-pinned { @apply mb-3; }
+  .notice-card { @apply px-4; padding-block: 14px; }
+  /* 15px, not the inherited 16. A card in a scanned list is not a page of prose: at 16px with
+     leading-relaxed the excerpt was the loudest thing on the board and left the padding looking
+     thin by comparison. 15/1.62 holds three lines in about the height 16/1.625 held them and
+     gives the same block visibly more room inside the card.
+     Scoped to the card so .prose-gahk keeps its page size on CMS pages -- and .board-body is also
+     the compose preview (_preview.html), which SHOULD match the card it is previewing. */
+  .notice-card .board-body { font-size: 15px; line-height: 1.62; }
   /* .prose-gahk gives every block a top+bottom margin, which inside a card is dead space at the
      edges — ~24px per card, i.e. a post per screen on a phone. Trimmed only at the boundaries, and
      only inside a card, so CMS pages keep their spacing. */
@@ -1270,7 +1285,7 @@
   .notice-gallery-count { @apply text-sm; }
   .notice-head { @apply flex items-start justify-between gap-3; flex-wrap: nowrap; }
   .notice-headline { flex: 1; min-width: 0; }
-  .notice-tags { @apply flex flex-wrap items-center gap-2 mb-1; }
+  .notice-tags { @apply flex flex-wrap items-center gap-2; margin-bottom: 6px; }
   /* "Handler om <begivenhed>". A brass chip so it does not read as a second category. */
   /* The author's embedsgruppe, beside their name on a card and on a comment. Quiet on purpose --
      it is context, not a status, and EVERY byline carries one, so at .chip's default green a page
@@ -1326,24 +1341,29 @@
   .notice-menu .pop-backdrop { background: transparent; }
 
   .notice-author { @apply flex items-center gap-2.5; min-width: 0; }
-  .notice-avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--brass);
-    color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 13px; flex: none;
+  /* 34px rather than 36: the avatar is the tallest thing in the header, so it alone sets the row's
+     height, and two pixels off it come straight off every card in the feed. */
+  .notice-avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--brass);
+    color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 12.5px; flex: none;
     text-transform: uppercase; }
   .notice-byline { @apply flex flex-col; min-width: 0; }
-  .notice-name { @apply font-semibold leading-snug; color: var(--ink); }
+  .notice-name { @apply font-semibold leading-snug; font-size: 15px; color: var(--ink); }
   /* Name and embedsgruppe pill share the byline's first line; the timestamp keeps the second.
      Wrapping, not truncating: "Legat- og kunstgruppen" is wider than the gap beside a name on a
      phone, and a pill reading "Legat- og kuns..." names no group anyone recognises. min-width:0 so
      a long name still lets the row shrink inside the card. */
   .notice-nameline { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
-  .notice-meta { @apply text-sm; }
+  /* 13px: this is the quietest line in the card and was competing with the name at 14. Together
+     with the short form the feed now renders (see _notice_card.html) an edited post's byline fits
+     on one line at phone width, which is where the wrapping came from. */
+  .notice-meta { font-size: 13px; }
   /* The timestamp is the permalink. Undecorated so the header reads as a byline rather than a row
      of links -- the whole card is the real tap target (see .is-clickable). */
   .notice-meta a { @apply no-underline; color: inherit; }
   .notice-meta a:hover { color: var(--green-700); text-decoration: underline; }
   .notice-actions { @apply flex items-center gap-2 shrink-0; }
   .notice-actions form { @apply m-0; }
-  .notice-foot { @apply flex items-center justify-between gap-3 flex-wrap mt-2; }
+  .notice-foot { @apply flex items-center justify-between gap-3 flex-wrap; margin-top: 10px; }
   .notice-comments-link { @apply text-sm; }
   .notice-comments { @apply mt-6; }
   .notice-comments h2 { @apply text-base font-semibold mb-2; }

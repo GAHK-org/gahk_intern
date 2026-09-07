@@ -1661,7 +1661,7 @@ def _notice(author: Resident, event: Event) -> object:
 
 @pytest.fixture
 def board_open(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Opslagstavlen is still gated to a trial group; these tests are about the link, not the gate."""
+    """Ankebogen is still gated to a trial group; these tests are about the link, not the gate."""
     from opslagstavle import access as board_access
 
     monkeypatch.setattr(board_access, "ACCESS_ROLES", None)
@@ -1675,9 +1675,11 @@ def test_the_event_page_lists_the_posts_about_it(client: Client, beboer: Residen
     response = client.get(f"{EVENTS}{event.pk}")
     body = response.content.decode()
 
-    assert "Omtalt på opslagstavlen" in body
+    # "i Ankebogen", not "på opslagstavlen": the board was renamed, and the preposition moved with
+    # it -- things sit ON a noticeboard but IN a book.
+    assert "Omtalt i Ankebogen" in body
     assert len(response.context["notices"]) == 1
-    assert f"/intern/opslagstavle/{response.context['notices'][0].pk}" in body
+    assert f"/intern/ankebogen/{response.context['notices'][0].pk}" in body
     # The excerpt, not just the byline: on an event with two or three posts about it, what the post
     # says is the only thing that lets a reader pick. And rendered, so no `**` reaches the page.
     assert "Vi spiser sammen." in body
@@ -1687,7 +1689,7 @@ def test_the_event_page_lists_the_posts_about_it(client: Client, beboer: Residen
 def test_no_board_link_for_somebody_who_cannot_open_the_board(
     client: Client, beboer: Resident, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Opslagstavlen is behind a role trial. Pointing a resident at a page that will 403 them is
+    """Ankebogen is behind a role trial. Pointing a resident at a page that will 403 them is
     worse than not mentioning it — so the section is gated on the READER, not on the event."""
     from opslagstavle import access as board_access
 

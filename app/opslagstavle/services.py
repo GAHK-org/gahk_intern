@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 # The topic name this feature subscribes and notifies under (core.models.TOPIC_FIELDS).
 TOPIC = "opslagstavle"
 
-BOARD_URL = "/intern/opslagstavle/"
+BOARD_URL = "/intern/ankebogen/"
 
 
 def notice_url(notice: "Notice") -> str:

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Opslagstavlen - GAHK Intern{% endblock %}
+{% block title %}Ankebogen - GAHK Intern{% endblock %}
 {% block content_width %}max-w-3xl{% endblock %}
 
 {% comment %}
@@ -13,7 +13,7 @@
   <div class="page-head">
     <div>
       <p class="eyebrow">Kollegiet</p>
-      <h1>Opslagstavlen {% if limited_rollout %}<span class="chip chip-brass">Under test</span>{% endif %}</h1>
+      <h1>Ankebogen {% if limited_rollout %}<span class="chip chip-brass">Under test</span>{% endif %}</h1>
     </div>
     <div class="head-actions">
       <a class="btn" href="{% url 'opslagstavle:create' %}">Nyt opslag</a>
@@ -34,7 +34,7 @@
          data-on-label="Få besked om nye opslag"
          data-off-label="Slå fra på denne enhed"
          data-off-label-short="Slå fra på enheden"
-         data-success-text="Du får nu besked når nogen slår op på tavlen."
+         data-success-text="Du får nu besked når nogen skriver i Ankebogen."
          data-off-text="Beskeder om opslag er slået fra på denne enhed.">
       {% csrf_token %}
       <button type="button" data-push-button hidden></button>

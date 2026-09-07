@@ -29,7 +29,7 @@ from core.files import delete_attached_files
 # a package in the porten. At 1440 those expired at exactly the moment they became relevant.
 #
 # It is still short enough to keep the promise the whole feature rests on: nothing here is a record,
-# and anything worth keeping belongs on opslagstavlen or in ankebogen.
+# and anything worth keeping belongs in Ankebogen (the app package is still `opslagstavle`).
 #
 # Whatever this is set to MUST appear in DURATION_CHOICES -- it is what the composer's <select>
 # preselects, and checks.E009 refuses to start if a channel defaults to a value the picker cannot

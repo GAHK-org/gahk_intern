@@ -52,11 +52,11 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     # would answer 403, and means opening the rollout needs no change in this file.
     if den_hurtige_allowed(roles):
         oversigt.append(("/intern/den-hurtige/", "Den Hurtige", "flash"))
-    # Gated the same way while opslagstavlen is being tried out (opslagstavle.access.ACCESS_ROLES).
+    # Gated the same way while Ankebogen is being tried out (opslagstavle.access.ACCESS_ROLES).
     # Asking here keeps the sidebar from advertising a page that would answer 403, and means opening
     # the rollout needs no change in this file.
     if opslagstavle_allowed(roles):
-        oversigt.append(("/intern/opslagstavle/", "Opslagstavle", "board"))
+        oversigt.append(("/intern/ankebogen/", "Ankebogen", "board"))
     if events_allowed(roles):
         oversigt.append(("/intern/begivenheder/", "Begivenheder", "calendar"))
     oversigt += [
