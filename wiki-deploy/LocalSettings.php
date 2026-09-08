@@ -156,6 +156,16 @@ $wgFileExtensions[] = 'odt';
 $wgFileExtensions[] = 'ods';
 $wgFileExtensions[] = 'pdf';
 
+# Deliberately BELOW the Dockerfile's upload_max_filesize (72M), not equal to it. MediaWiki checks
+# the size only after PHP has accepted the file, so anything PHP rejects never reaches this check —
+# and PHP rejects silently, leaving "the file you uploaded seems to be empty" as the only clue. With
+# a margin, MediaWiki is always the one that answers, and it says what the limit actually is.
+#
+# Without this line MediaWiki's default is 100M, i.e. *above* PHP's ceiling, which is the wrong way
+# round: every upload between the two limits would fail with the unhelpful message instead of the
+# helpful one.
+$wgMaxUploadSize = 64 * 1024 * 1024;
+
 
 wfLoadExtension('ShowRealUsernames');
 wfLoadExtension('RealNames');
