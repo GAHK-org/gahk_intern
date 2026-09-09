@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% load board_extras %}
+{% load text_extras %}
 {% block title %}{{ event.title }} - Begivenheder - GAHK Intern{% endblock %}
 {% block content_width %}max-w-3xl{% endblock %}
 
@@ -178,10 +179,11 @@
         </div>
         {% comment %}
           Plain text, autoescaped, `white-space:pre-wrap` from .msg-text — comments are deliberately
-          not Markdown (see EventComment). |urlize makes a pasted link clickable without opening the
-          door to arbitrary markup.
+          not Markdown (see EventComment). |links makes a pasted link clickable and short without
+          opening the door to arbitrary markup, and uses the same URL scanner the description
+          above does — see opslagstavle/detail.html for why |urlize could not stay.
         {% endcomment %}
-        <div class="msg-text">{{ comment.body|urlize }}</div>
+        <div class="msg-text">{{ comment.body|links }}</div>
         {% if comment.image %}
           {% comment %}
             A link to the full picture around a capped thumbnail, exactly as a Den Hurtige message
