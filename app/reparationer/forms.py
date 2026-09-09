@@ -12,24 +12,38 @@ FLOORS = ["stuen", "1. sal", "2. sal", "3. sal", "4. sal"]
 # the building. Add to this as a missing area comes up; there is no user-facing "other" free-text
 # escape hatch, so anywhere not listed needs a code change here before it can be selected.
 COMMON_AREAS = [
-    "Hallen",
-    "Terrassen",
-    "Ølkælderen",
-    "Batik",
-    "Cykelkælderen",
+    "Gammel Cykelkælder",
+    "Vaskerummet",
+    "Køkken Kælder",
     "Varme Køkken",
     "Kolde Køkken",
+    "Køkken Kontor",
+    "Køkken Indgang",
     "Spisesalen",
+    "Festsalen",
+    "Batik",
+    "Ølkælderen",
+    "Toilet Kælder",
+    "Cykelkælderen",
+    "Musiklokalet",
+    "Skraldegården",
+    "Terrassen",
+    "Prison",
+    "Varme Trappe",
+    "Kolde Trappe",
+    "Hallen",
+    "Loungen",
+    "Værkstedet",
+    "Arkivet",
     "Læsesalen",
-    "Kontor Køkken",
-    "Toilet (i kælderen)",
+    "Svalegangen",
 ]
 
 
 def location_choices() -> list[tuple[str, str] | tuple[str, list[tuple[str, str]]]]:
     """Grouped <select> choices: a fixed "Fællesområder" group for named common areas first, then
-    every real room, floor by floor (each floor's own optgroup ending in that floor's gang and
-    toilet).
+    every real room, floor by floor (each floor's own optgroup ending in that floor's gang,
+    toilet, and køkken).
 
     Values are plain display strings, not room FKs: RepairTask.location stays a free CharField, so a
     location renamed or removed here later does not orphan any existing ticket's text.
@@ -41,6 +55,7 @@ def location_choices() -> list[tuple[str, str] | tuple[str, list[tuple[str, str]
         options = [(name, name) for name in room_names]
         options.append((f"Gang, {floor}", f"Gang, {floor}"))
         options.append((f"Toilet, {floor}", f"Toilet, {floor}"))
+        options.append((f"Køkken, {floor}", f"Køkken, {floor}"))
         groups.append((floor.capitalize(), options))
     return groups
 
