@@ -1442,30 +1442,6 @@ def _local(naive: datetime.datetime) -> datetime.datetime:
     return timezone.make_aware(naive)
 
 
-def _month_with_trailing_padding() -> tuple[datetime.date, datetime.date]:
-    """A month safely in the future whose grid runs past its own end, and the first padding day.
-
-    DERIVED, NOT HARDCODED, and the reason is a trap worth naming: `calendar()` calls
-    `purge_expired()` on every request, and an event is hard-deleted a week after it ends
-    (RETENTION_AFTER_END). These two tests originally pinned an event to 2026-09-01 and asked for
-    the August grid, which worked perfectly until the real date passed 2026-09-08 — at which point
-    the view deleted the event before rendering it, and the padding tests began failing for a reason
-    that has nothing to do with padding. A fixed date in a test that exercises a retention-swept view
-    is a time bomb with a known fuse length.
-
-    Two months out, so the event is never near the purge window. Months whose last day is a Sunday
-    have no trailing padding at all, so it walks forward until it finds one that does.
-    """
-    first = (timezone.localdate().replace(day=1) + datetime.timedelta(days=62)).replace(day=1)
-    for _ in range(12):
-        next_first = (first + datetime.timedelta(days=32)).replace(day=1)
-        last_day = next_first - datetime.timedelta(days=1)
-        if last_day.weekday() != 6:  # Sunday-ending months fill the last row exactly
-            return first, next_first
-        first = next_first
-    raise AssertionError("no month with trailing padding within a year — calendar maths is wrong")
-
-
 _room_seq = iter(range(1, 10_000))
 
 
@@ -1594,20 +1570,15 @@ def test_the_month_grid_shows_whole_weeks(client: Client, beboer: Resident) -> N
 def test_an_event_in_a_padding_day_actually_appears_there(client: Client, beboer: Resident) -> None:
     """The padding days are queried too, not just drawn.
 
-    A month that does not end on a Sunday has its last row run into the next one — so an event on
-    the 1st of the following month has a cell on this month's page. The first version of this view
-    filtered by the MONTH, so the cell rendered, empty, while the event sat one click away. A
-    calendar that draws a day and hides what is on it is worse than one that does not draw the day.
+    August 2026 ends on a Monday, so its grid's last row runs 31 August – 6 September. An event on
+    1 September has a cell on the August page, and the first version of this view filtered by the
+    MONTH — so the cell rendered, empty, while the event sat one click away. A calendar that draws a
+    day and hides what is on it is worse than one that does not draw the day.
     """
-    month, padding_day = _month_with_trailing_padding()
-    make_event(
-        beboer,
-        title="I paddingen",
-        starts_at=_local(datetime.datetime.combine(padding_day, datetime.time(19, 0))),
-    )
+    make_event(beboer, title="I paddingen", starts_at=_local(datetime.datetime(2026, 9, 1, 19, 0)))
     client.force_login(beboer)
 
-    body = client.get(f"{EVENTS}kalender?maaned={month:%Y-%m}").content.decode()
+    body = client.get(f"{EVENTS}kalender?maaned=2026-08").content.decode()
 
     assert "I paddingen" in body
 
@@ -1668,17 +1639,12 @@ def test_an_unusable_day_is_treated_as_absent(client: Client, beboer: Resident, 
 
 
 def test_a_day_in_the_padding_can_still_be_opened(client: Client, beboer: Resident) -> None:
-    """The grid draws the next month's 1st on this month's page, so tapping it there has to work —
-    the span the day is validated against is the GRID's, not the month's."""
-    month, padding_day = _month_with_trailing_padding()
-    make_event(
-        beboer,
-        title="I paddingen",
-        starts_at=_local(datetime.datetime.combine(padding_day, datetime.time(19, 0))),
-    )
+    """The grid draws 1 September on the August page, so tapping it there has to work — the span
+    the day is validated against is the GRID's, not the month's."""
+    make_event(beboer, title="I paddingen", starts_at=_local(datetime.datetime(2026, 9, 1, 19, 0)))
     client.force_login(beboer)
 
-    response = client.get(f"{EVENTS}kalender?maaned={month:%Y-%m}&dag={padding_day:%Y-%m-%d}")
+    response = client.get(f"{EVENTS}kalender?maaned=2026-08&dag=2026-09-01")
 
     assert [e.title for e in response.context["chosen_events"]] == ["I paddingen"]
 
