@@ -34,7 +34,46 @@ from arkiv.storage import get_store
 from core.models import Workgroup
 
 # Names that are an artefact of the exporting filesystem rather than anything a resident filed.
+# Artefacts of the filesystems the export passed through, rather than anything a resident filed.
+#
+# The GAHK Dropbox is twenty years of Macs and Windows machines writing to a shared drive, and it is
+# thick with their leavings: every `._Name.jpg` is a macOS AppleDouble resource fork for `Name.jpg`,
+# and every `.AppleDouble/` is a whole directory of them. Left in, they do not merely waste rows -
+# they show up in the browser as files called `._DSC_0310.JPG` sitting beside the photograph they
+# describe, and as folders called `.AppleDouble` inside every album, in a Billeder root the entire
+# kollegium can see. On an archive this old there are thousands.
 SKIP_NAMES = frozenset({".DS_Store", "Thumbs.db", "desktop.ini", ".dropbox", ".dropbox.attr"})
+
+# Directories skipped whole, along with everything beneath them.
+SKIP_DIRS = frozenset(
+    {
+        ".AppleDouble",
+        ".AppleDDouble",
+        ".TemporaryItems",
+        ".Spotlight-V100",
+        ".Trashes",
+        ".fseventsd",
+        "$RECYCLE.BIN",
+        "System Volume Information",
+        ".git",
+    }
+)
+
+# AppleDouble sidecars outside a .AppleDouble/ directory, which is how they land on non-HFS volumes.
+SKIP_PREFIXES = ("._",)
+
+
+def is_junk(path: object, source: object) -> bool:
+    """Whether `path` is filesystem debris rather than something somebody filed.
+
+    Checked against the path RELATIVE to the source, so a directory named .AppleDouble anywhere in
+    the tree takes its whole subtree with it - matching only the leaf would import the resource
+    forks and merely hide where they came from.
+    """
+    rel = path.relative_to(source)  # type: ignore[attr-defined]
+    if rel.name in SKIP_NAMES or rel.name.startswith(SKIP_PREFIXES):
+        return True
+    return any(part in SKIP_DIRS or part.startswith(SKIP_PREFIXES) for part in rel.parts[:-1])
 
 
 class Command(BaseCommand):
@@ -74,7 +113,7 @@ class Command(BaseCommand):
 
         # Sorted so two runs walk in the same order, which makes an interrupted import resume
         # somewhere predictable and makes the log diffable.
-        files = sorted(p for p in source.rglob("*") if p.is_file() and p.name not in SKIP_NAMES)
+        files = sorted(p for p in source.rglob("*") if p.is_file() and not is_junk(p, source))
         if not files:
             self.stdout.write("Nothing to import.")
             return
@@ -86,7 +125,11 @@ class Command(BaseCommand):
         # answered "no" for every object on a first run.
         self._folders: dict[tuple[int | None, str], ArchiveFolder] = {}
         stored_keys = store.list_keys(f"{ARCHIVE_PREFIX}/")
-        self.stdout.write(f"{len(files)} file(s) to consider; {len(stored_keys)} already in the store.")
+        skipped_junk = sum(1 for p in source.rglob("*") if p.is_file()) - len(files)
+        self.stdout.write(
+            f"{len(files)} file(s) to consider; {len(stored_keys)} already in the store; "
+            f"{skipped_junk} skipped as filesystem debris (AppleDouble, .DS_Store and the like)."
+        )
 
         root = self._folder(None, str(opts["root"]), workgroup, dry)
         stats = {"rows": 0, "uploaded": 0, "deduped": 0, "skipped": 0}

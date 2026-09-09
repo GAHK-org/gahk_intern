@@ -1477,3 +1477,37 @@ def test_the_backlog_command_skips_non_images_and_survives_a_bad_one(media_tmp: 
     assert good.has_thumbnail is True
     assert bad.has_thumbnail is False, "a corrupt file must not be marked as having a preview"
     assert doc.has_thumbnail is False, "a PDF is not an image"
+
+
+def test_import_skips_the_debris_a_twenty_year_dropbox_accumulates(tmp_path: Path, media_tmp: Path) -> None:
+    """Shaped after the real GAHK export: macOS resource forks, .AppleDouble directories, and the
+    usual OS droppings, mixed in with the photographs.
+
+    Left in, these do not just waste rows - `._DSC_0310.JPG` appears in the browser beside the
+    photograph it describes, and `.AppleDouble` appears as a folder inside every album, in a root
+    the whole kollegium can see.
+    """
+    from django.core.management import call_command
+
+    source = tmp_path / "gahk-export"
+    album = source / "2004" / "Terrasseåbning 2004"
+    (album / ".AppleDouble").mkdir(parents=True)
+    (album / "DSC_0003.JPG").write_bytes(b"a real photograph")
+    (album / "._DSC_0003.JPG").write_bytes(b"resource fork")
+    (album / ".AppleDouble" / "DSC_0003.JPG").write_bytes(b"another fork")
+    (album / ".AppleDouble" / ".Parent").write_bytes(b"fork metadata")
+    (source / "2016").mkdir()
+    (source / "2016" / "DSC_0310.JPG").write_bytes(b"another real photograph")
+    (source / "2016" / "._DSC_0310.JPG").write_bytes(b"fork")
+    (source / "2002" / ".DS_Store").parent.mkdir(parents=True, exist_ok=True)
+    (source / "2002" / ".DS_Store").write_bytes(b"junk")
+    (source / "2002" / "._.DS_Store").write_bytes(b"junk about junk")
+    (source / "2002" / "GAHK.jpg").write_bytes(b"a third real photograph")
+
+    call_command("import_arkiv", str(source), "--root", "Billeder", verbosity=0)
+
+    names = sorted(ArchiveFile.objects.values_list("name", flat=True))
+    assert names == ["DSC_0003.JPG", "DSC_0310.JPG", "GAHK.jpg"], names
+    folders = set(ArchiveFolder.objects.values_list("name", flat=True))
+    assert ".AppleDouble" not in folders, "a resource-fork directory became a folder"
+    assert folders == {"Billeder", "2004", "Terrasseåbning 2004", "2016", "2002"}, folders
