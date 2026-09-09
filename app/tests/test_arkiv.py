@@ -51,18 +51,30 @@ def workgroups() -> tuple[Workgroup, Workgroup]:
     return regnskab, fest
 
 
+# Above the rooms the migrations seed (1..61) and the literals used elsewhere in this file, and well
+# under the 32767 a PositiveSmallIntegerField holds.
+_room_seq = iter(range(1_000, 30_000))
+
+
 @pytest.fixture
 def resident_in(make_resident: Callable) -> Callable[..., Resident]:
     """A resident placed in a workgroup for the ACTIVE period - which is what access reads.
 
-    Residency needs a room, so one is made per resident; the room number is derived from the
-    resident's pk to keep the unique constraint happy without a counter.
+    Residency needs a room, so one is made per resident, numbered from a counter.
+
+    NOT from the resident's pk, which is what this did first. Both Room columns are
+    PositiveSmallIntegerField (max 32767) while the pk sequence is a bigserial that keeps climbing
+    across every run sharing a `--reuse-db` database - so the fixture worked for months and then
+    began raising "smallint out of range" on every test in this file at once, on one developer's
+    machine only, with CI green because CI builds the database fresh. `_room_seq` is the pattern the
+    rest of the suite already uses.
     """
 
     def _make(email: str, workgroup: Workgroup | None = None) -> Resident:
         resident = make_resident(email=email)
         year, month = active_period()
-        room = Room.objects.create(legacy_index=resident.pk, number=resident.pk, floor="1", side="mod gaden")
+        n = next(_room_seq)
+        room = Room.objects.create(legacy_index=n, number=n, floor="1", side="mod gaden")
         Residency.objects.create(resident=resident, room=room, workgroup=workgroup, year=year, month=month)
         return resident
 
