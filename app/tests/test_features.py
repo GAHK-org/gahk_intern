@@ -686,12 +686,17 @@ def test_frontpage_counter_hashes_and_dedups() -> None:
 
 @pytest.mark.django_db
 def test_events_news_page_and_forside_teaser() -> None:
-    from datetime import date, timedelta
+    from datetime import timedelta
 
     from cms.models import Event, NewsItem
 
-    Event.objects.create(title="Mathildefest", starts_on=date.today() + timedelta(days=14))
-    Event.objects.create(title="Gammel skovtur", starts_on=date.today() - timedelta(days=400))
+    # localdate(), not date.today(): the views split upcoming from past on `timezone.localdate()`,
+    # and a test that builds its data on the system clock instead is asking a different question
+    # than the code answers. They agree in Europe/Copenhagen, so this has never been a live bug —
+    # but it is the difference between a fixture that tracks the code's clock and one that drifts.
+    today = timezone.localdate()
+    Event.objects.create(title="Mathildefest", starts_on=today + timedelta(days=14))
+    Event.objects.create(title="Gammel skovtur", starts_on=today - timedelta(days=400))
     NewsItem.objects.create(title="Åbent hus", body="<p>Kom forbi</p>", published_at=timezone.now())
     c = Client()
 
