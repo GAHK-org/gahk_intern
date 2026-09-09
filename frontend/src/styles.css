@@ -420,6 +420,22 @@
      stacking context either way, but that costs nothing to preserve: the `.pop` pickers live in
      .msg-actions, outside this subtree entirely. */
   .msg-text { white-space:pre-wrap; overflow-wrap:anywhere; font-size:15px; line-height:1.45; }
+  /* Links in plain-text bodies -- Den Hurtige's messages and replies, and the two comment threads,
+     all of which render through |links (see core/links.py). Green and underlined, matching
+     .prose-gahk a so a link reads the same whether it is in a post or in the comment answering it.
+
+     TWO COLOURS, because .msg-text has two grounds. Your own bubble is solid --green with white
+     text, where --green-700 is 1.15:1 against its background: a link in your own message was, in
+     practice, invisible. The second rule is not a nicety, it is the difference between a link
+     being there and not.
+
+     overflow-wrap is inherited from .msg-text above and matters even with the text shortened: a
+     40-character link is still longer than a narrow bubble, and without it the bubble stretches
+     past the 80% cap instead of breaking. */
+  .msg-text a { color:var(--green-700); text-decoration:underline; text-underline-offset:2px; }
+  .msg-text a:hover { color:var(--green); }
+  .msg-own .msg-text a { color:#fff; text-decoration-color:rgb(255 255 255 / .6); }
+  .msg-own .msg-text a:hover { color:#fff; text-decoration-color:#fff; }
   .msg-line-text { display:flow-root; }
   .msg-bubble .msg-text { display:inline; }
   .msg-bubble .msg-clock { float:right; white-space:nowrap; margin:2px 0 0 8px; }
@@ -982,7 +998,10 @@
   .prose-gahk h3 { @apply text-lg font-semibold mt-4 mb-1; }
   .prose-gahk ul { @apply list-disc ml-6 my-3; }
   .prose-gahk ol { @apply list-decimal ml-6 my-3; }
-  .prose-gahk a { @apply text-emerald-700 underline; }
+  /* overflow-wrap, because a link is now the one thing in here that can be unbreakable: linkify
+     turns a bare pasted URL into an <a>, and its shortened TEXT is still 42 characters with no
+     space in it. Without this a long one pushes the card wider than the column on a phone. */
+  .prose-gahk a { @apply text-emerald-700 underline; overflow-wrap:anywhere; }
   .prose-gahk img { @apply max-w-full h-auto rounded my-3; }
   .prose-gahk blockquote { @apply border-l-4 border-emerald-700 pl-4 my-4 italic text-gray-700; }
   /* Added for rendered Markdown (opslagstavlen). Migrated CMS pages get them too, which is a bonus

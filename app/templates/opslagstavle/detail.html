@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Opslag af {{ notice.author.full_name }} - Opslagstavlen{% endblock %}
 {% block content_width %}max-w-3xl{% endblock %}
+{% load text_extras %}
 
 {% block content %}
   <p class="muted mb-3"><a href="{% url 'opslagstavle:board' %}">‹ Opslagstavlen</a></p>
@@ -43,10 +44,14 @@
         </div>
         {% comment %}
           Plain text, autoescaped, with white-space:pre-wrap from .msg-text — comments are
-          deliberately not Markdown (see NoticeComment). |urlize makes a pasted link clickable
-          without opening the door to arbitrary markup.
+          deliberately not Markdown (see NoticeComment). |links makes a pasted link clickable
+          and short without opening the door to arbitrary markup.
+
+          It replaced |urlize, and the reason is one line above this one: the POST uses the
+          Markdown scanner and the comment used Django's, so the same address could be live in
+          the post and dead in the reply quoting it. Both are core.links now.
         {% endcomment %}
-        <div class="msg-text">{{ comment.body|urlize }}</div>
+        <div class="msg-text">{{ comment.body|links }}</div>
         {% if comment.image %}
           {% comment %}
             A link to the full picture around a capped thumbnail, exactly as a Den Hurtige message
