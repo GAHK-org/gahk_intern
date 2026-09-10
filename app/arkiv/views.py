@@ -10,21 +10,31 @@ something exists.
 
 import json
 import mimetypes
+import zipfile
+from collections.abc import Iterator
 from typing import BinaryIO, cast
 
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, transaction
-from django.http import FileResponse, Http404, HttpRequest, HttpResponseRedirect, JsonResponse
+from django.http import (
+    FileResponse,
+    Http404,
+    HttpRequest,
+    HttpResponseRedirect,
+    JsonResponse,
+    StreamingHttpResponse,
+)
 from django.http.response import HttpResponseBase
 from django.shortcuts import redirect, render
+from django.template.defaultfilters import filesizeformat
 from django.views.decorators.http import require_POST
 
 from residents.permissions import current_resident
 
 from . import access, services, uploads
 from .models import ArchiveFile, ArchiveFolder, object_key, thumbnail_key
-from .storage import LocalArchiveStore, get_store
+from .storage import ArchiveStore, LocalArchiveStore, content_disposition, get_store
 
 
 @access.access_required
@@ -288,6 +298,13 @@ MAX_FOLDER_NAME = 120
 # document. Safe to cache this long only because the URL is content-addressed: new bytes, new key.
 THUMBNAIL_CACHE_CONTROL = "private, max-age=604800"
 
+# What one "Hent valgte" may carry. Both exist because of gunicorn, not because of storage - see
+# `download_selected`. The file count keeps the id list and the per-object round trips bounded; the
+# byte total keeps a single response inside the worker timeout. Anything larger is still available
+# one file at a time, which redirects to the bucket and costs a worker nothing.
+MAX_SELECTED_FILES = 200
+MAX_SELECTED_BYTES = 500 * 1024 * 1024
+
 
 @access.access_required
 @require_POST
@@ -460,3 +477,165 @@ def thumbnail(request: HttpRequest, pk: int) -> HttpResponseBase:
         return response
 
     raise Http404("no object store configured")
+
+
+# --- the viewer, and taking several files at once ---------------------------------------------------
+
+
+@access.access_required
+def preview(request: HttpRequest, pk: int) -> HttpResponseBase:
+    """The large image the viewer shows. Same access rules as the file itself.
+
+    A THIRD SIZE, between the 40px row icon and a forty-megabyte original. Paging through a folder
+    of originals is minutes of waiting and the one variable line on the Hetzner bill; paging through
+    320px thumbnails blown up to fill a laptop is porridge. See `models.preview_key`.
+
+    **Falls back to the original when there is no preview object**, which is not a detail: a photo
+    uploaded through the browser gets a thumbnail made client-side and no preview, and stays that
+    way until `make_arkiv_thumbnails` next sweeps. Without the fallback, every freshly uploaded
+    photograph would be the one that breaks when you click it - the worst possible case to 404,
+    because it is the one the uploader checks.
+
+    Cached as hard as the thumbnail, and safe for the same reason: the key is the hash of the
+    original, so different bytes are a different URL and a preview can never go stale.
+    """
+    resident = current_resident(request)
+    file = access.visible_files(resident).filter(pk=pk).first()
+    if file is None:
+        raise Http404("no such file")
+
+    key = file.preview_key if file.has_preview else file.key
+    content_type = "image/jpeg" if file.has_preview else file.content_type
+
+    store = get_store()
+    url = store.download_url(key, filename=file.name, content_type=content_type)
+    if url is not None:
+        redirect_to = HttpResponseRedirect(url)
+        redirect_to.headers["Cache-Control"] = THUMBNAIL_CACHE_CONTROL
+        redirect_to.headers["Vary"] = "Cookie"
+        return redirect_to
+
+    if isinstance(store, LocalArchiveStore):
+        path = store.path(key)
+        if not path.is_file():
+            raise Http404("the preview behind this row is missing")
+        response = FileResponse(path.open("rb"), content_type=content_type or "image/jpeg")
+        response.headers["Cache-Control"] = THUMBNAIL_CACHE_CONTROL
+        return response
+
+    raise Http404("no object store configured")
+
+
+@access.access_required
+@require_POST
+def download_selected(request: HttpRequest, pk: int) -> HttpResponseBase:
+    """Several files from one folder, as a zip built on the way out.
+
+    POST, not GET, and not because anything is modified: the selection is a list of ids that can
+    run to a couple of hundred, which does not belong in a URL, and a GET would let a link in a chat
+    thread start a multi-hundred-megabyte transfer for whoever clicked it.
+
+    **Streamed, never assembled.** The zip is written into a small buffer that is drained after
+    every chunk, so a folder of forty photographs costs a worker one chunk of memory rather than
+    the whole archive. `ZIP_STORED` because the contents are JPEGs and video: deflate would spend
+    real CPU to save a percent or two, on the machine that is also serving the site.
+
+    **The caps are about gunicorn, not about disk.** Three synchronous workers with a 60-second
+    timeout carry this, and the response streams at the RECIPIENT's speed - so a large zip to
+    somebody on a slow line holds a third of the site's capacity for as long as it takes, and gets
+    killed at the timeout anyway. `MAX_SELECTED_BYTES` is set to what survives that; raising it
+    means raising gunicorn's `--timeout` in the same breath, or the only thing that changes is that
+    the failure happens later. Everything above the cap is still one-at-a-time, which redirects to
+    the bucket and does not touch a worker at all.
+
+    Access is re-checked here rather than trusted from the page: the ids arrive from the client, so
+    they are filtered through `visible_files` scoped to a folder the resident can already read.
+    """
+    resident = current_resident(request)
+    folder = access.visible_folders(resident).filter(pk=pk).first()
+    if folder is None:
+        raise Http404("no such folder")
+
+    try:
+        ids = [int(raw) for raw in request.POST.getlist("ids")[:MAX_SELECTED_FILES]]
+    except ValueError:
+        raise Http404("bad selection") from None
+
+    # Scoped to THIS folder as well as to the resident: the folder is what the access check above
+    # established, so an id from somewhere else must not ride along on it.
+    files = list(access.visible_files(resident).filter(folder=folder, pk__in=ids).order_by("name"))
+    if not files:
+        messages.error(request, "Vælg mindst én fil.")
+        return redirect("arkiv:folder", pk=folder.pk)
+
+    total = sum(file.size for file in files)
+    if total > MAX_SELECTED_BYTES:
+        messages.error(
+            request,
+            f"Det valgte fylder {filesizeformat(total)}. Grænsen for samlet download er "
+            f"{filesizeformat(MAX_SELECTED_BYTES)} - vælg færre filer, eller hent de største "
+            f"enkeltvis.",
+        )
+        return redirect("arkiv:folder", pk=folder.pk)
+
+    response = StreamingHttpResponse(_zip_chunks(get_store(), files), content_type="application/zip")
+    response.headers["Content-Disposition"] = content_disposition(f"{folder.name}.zip")
+    return response
+
+
+def _zip_chunks(store: ArchiveStore, files: list[ArchiveFile]) -> Iterator[bytes]:
+    """Yield a zip of `files` without ever holding more than one chunk of it.
+
+    `_Sink` is the whole trick: zipfile writes into it, and after each write we take what landed
+    and hand it to the response. It offers `tell()` but no `seek()`, which is how zipfile is told
+    the output is not seekable - it then emits data descriptors after each entry instead of seeking
+    back to patch the local headers.
+
+    A file whose object has vanished is skipped rather than fatal. The alternative is a truncated
+    zip with no explanation, and a missing object is an operator problem (`audit_arkiv`), not
+    something the resident downloading holiday photographs can act on.
+    """
+    sink = _Sink()
+    with zipfile.ZipFile(sink, "w", zipfile.ZIP_STORED) as archive:
+        for file in files:
+            if not store.exists(file.key):
+                continue
+            with archive.open(file.name, "w") as entry:
+                for chunk in store.chunks(file.key):
+                    entry.write(chunk)
+                    if data := sink.take():
+                        yield data
+            if data := sink.take():
+                yield data
+    if data := sink.take():
+        yield data
+
+
+class _Sink:
+    """A write-only file object that hands back what was written since it was last asked."""
+
+    def __init__(self) -> None:
+        self._buf = bytearray()
+        self._pos = 0
+
+    def write(self, data: bytes) -> int:
+        self._buf += data
+        self._pos += len(data)
+        return len(data)
+
+    def tell(self) -> int:
+        return self._pos
+
+    def flush(self) -> None:
+        return None
+
+    def close(self) -> None:
+        # Never closes anything: there is nothing under this but a bytearray, and ZipFile only
+        # calls it on an object it opened itself. Present because that is what zipfile's writable
+        # protocol asks for.
+        return None
+
+    def take(self) -> bytes:
+        data = bytes(self._buf)
+        self._buf.clear()
+        return data

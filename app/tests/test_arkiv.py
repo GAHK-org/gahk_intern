@@ -1523,3 +1523,207 @@ def test_import_skips_the_debris_a_twenty_year_dropbox_accumulates(tmp_path: Pat
     folders = set(ArchiveFolder.objects.values_list("name", flat=True))
     assert ".AppleDouble" not in folders, "a resource-fork directory became a folder"
     assert folders == {"Billeder", "2004", "Terrasseåbning 2004", "2016", "2002"}, folders
+
+
+# --- the viewer's size, and taking several files at once --------------------------------------------
+
+
+def test_the_viewer_gets_the_large_preview_not_the_thumbnail(resident_in: Callable, media_tmp: Path) -> None:
+    """Three sizes exist for a reason; this is the one that proves the middle one is wired up."""
+    from io import BytesIO
+
+    from arkiv.models import preview_key
+    from arkiv.storage import get_store
+
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    file = make_file(folder, name="fest.jpg")
+    get_store().save(preview_key(file.sha256), BytesIO(b"bigpreviewbytes"))
+    ArchiveFile.objects.filter(pk=file.pk).update(has_preview=True, content_type="image/jpeg")
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.get(f"/intern/arkiv/fil/{file.pk}/stor")
+
+    assert response.status_code == 200
+    assert b"".join(response.streaming_content) == b"bigpreviewbytes"
+    assert "max-age=604800" in response.headers["Cache-Control"]
+
+
+def test_a_file_with_no_preview_yet_falls_back_to_the_original(
+    resident_in: Callable, media_tmp: Path
+) -> None:
+    """THE CASE THAT WOULD BREAK EVERY FRESH UPLOAD. The browser makes a thumbnail client-side and
+    cannot make a preview, so a photograph is `has_preview=False` from the moment it is uploaded
+    until the backlog command next runs. 404ing here would mean the one photo that does not open in
+    the viewer is always the one somebody just added - and went straight to the folder to check."""
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    file = make_file(folder, name="ny.jpg", body=b"theoriginalbytes")
+    ArchiveFile.objects.filter(pk=file.pk).update(has_preview=False, content_type="image/jpeg")
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.get(f"/intern/arkiv/fil/{file.pk}/stor")
+
+    assert response.status_code == 200
+    assert b"".join(response.streaming_content) == b"theoriginalbytes"
+
+
+def test_the_preview_obeys_the_same_access_rules_as_the_file(
+    resident_in: Callable, workgroups: tuple, media_tmp: Path
+) -> None:
+    """A second route to the bytes is a second place to leak them."""
+    regnskab, _ = workgroups
+    folder = ArchiveFolder.objects.create(name="Regnskab", workgroup=regnskab)
+    file = make_file(folder, name="budget.jpg")
+    ArchiveFile.objects.filter(pk=file.pk).update(has_preview=True, content_type="image/jpeg")
+    client = login(resident_in("outsider@gahk.dk", None))
+
+    assert client.get(f"/intern/arkiv/fil/{file.pk}/stor").status_code == 404
+
+
+def test_selected_files_come_back_as_one_zip(resident_in: Callable, media_tmp: Path) -> None:
+    """The whole point of the feature: pick several, get an archive with all of them in it."""
+    import zipfile
+    from io import BytesIO
+
+    folder = ArchiveFolder.objects.create(name="Sommerfest")
+    one = make_file(folder, name="en.jpg", body=b"first file bytes")
+    two = make_file(folder, name="to.jpg", body=b"second file bytes")
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [one.pk, two.pk]})
+
+    assert response.status_code == 200
+    assert response.headers["Content-Type"] == "application/zip"
+    assert "Sommerfest.zip" in response.headers["Content-Disposition"]
+    body = zipfile.ZipFile(BytesIO(b"".join(response.streaming_content)))
+    assert sorted(body.namelist()) == ["en.jpg", "to.jpg"]
+    assert body.read("en.jpg") == b"first file bytes"
+    assert body.read("to.jpg") == b"second file bytes"
+
+
+def test_the_zip_cannot_be_used_to_reach_a_file_you_cannot_see(
+    resident_in: Callable, workgroups: tuple, media_tmp: Path
+) -> None:
+    """THE ONE THAT MATTERS. The ids come from the client, so a resident who can read the shared
+    folder must not be able to post the id of a Regnskabsgruppen file and have it zipped in beside
+    their holiday photographs. Re-checked through visible_files, scoped to the folder."""
+    import zipfile
+    from io import BytesIO
+
+    regnskab, _ = workgroups
+    shared = ArchiveFolder.objects.create(name="Billeder")
+    secret = ArchiveFolder.objects.create(name="Regnskab", workgroup=regnskab)
+    mine = make_file(shared, name="ferie.jpg", body=b"mine")
+    theirs = make_file(secret, name="budget.pdf", body=b"secret")
+    client = login(resident_in("outsider@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{shared.pk}/hent-valgte", {"ids": [mine.pk, theirs.pk]})
+
+    body = zipfile.ZipFile(BytesIO(b"".join(response.streaming_content)))
+    assert body.namelist() == ["ferie.jpg"]
+
+
+def test_a_selection_over_the_size_cap_is_refused_with_a_message(
+    resident_in: Callable, media_tmp: Path
+) -> None:
+    """The cap is about gunicorn's worker timeout, not about disk - see views.download_selected.
+    Refused as a message on the folder, not a 500 twenty seconds into a dead download."""
+    from arkiv.views import MAX_SELECTED_BYTES
+
+    folder = ArchiveFolder.objects.create(name="Video")
+    big = make_file(folder, name="fest.mov", body=b"x")
+    ArchiveFile.objects.filter(pk=big.pk).update(size=MAX_SELECTED_BYTES + 1)
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [big.pk]}, follow=True)
+
+    assert response.status_code == 200
+    assert "Grænsen for samlet download" in response.content.decode()
+
+
+def test_an_empty_selection_says_so_rather_than_sending_an_empty_zip(
+    resident_in: Callable, media_tmp: Path
+) -> None:
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    make_file(folder, name="en.jpg")
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {}, follow=True)
+
+    assert "Vælg mindst én fil" in response.content.decode()
+
+
+def test_zipping_from_a_folder_you_cannot_see_is_a_404(
+    resident_in: Callable, workgroups: tuple, media_tmp: Path
+) -> None:
+    regnskab, _ = workgroups
+    folder = ArchiveFolder.objects.create(name="Regnskab", workgroup=regnskab)
+    file = make_file(folder)
+    client = login(resident_in("outsider@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [file.pk]})
+
+    assert response.status_code == 404
+
+
+def test_the_zip_route_refuses_a_get(resident_in: Callable, media_tmp: Path) -> None:
+    """A GET would be a link somebody could paste into a chat thread to start a half-gigabyte
+    download for whoever clicked it."""
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    client = login(resident_in("a@gahk.dk", None))
+
+    assert client.get(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte").status_code == 405
+
+
+def test_a_row_whose_object_vanished_is_skipped_not_fatal(resident_in: Callable, media_tmp: Path) -> None:
+    """A truncated zip with no explanation is worse than a zip missing one file. A missing object
+    is an operator problem, not something the resident downloading photographs can act on."""
+    import zipfile
+    from io import BytesIO
+
+    from arkiv.storage import get_store
+
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    good = make_file(folder, name="her.jpg", body=b"present")
+    gone = make_file(folder, name="væk.jpg", body=b"deleted from the bucket")
+    get_store().delete(gone.key)
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [good.pk, gone.pk]})
+
+    body = zipfile.ZipFile(BytesIO(b"".join(response.streaming_content)))
+    assert body.namelist() == ["her.jpg"]
+
+
+def test_the_thumbnailer_makes_both_sizes_in_one_pass(media_tmp: Path) -> None:
+    """One download per original, two objects written. Doing this in two passes would mean pulling
+    57,000 photographs out of the bucket twice - the reason both sizes live in one command."""
+    from io import BytesIO
+
+    from django.core.management import call_command
+
+    from arkiv.models import preview_key, thumbnail_key
+    from arkiv.storage import get_store
+
+    pytest.importorskip("PIL", reason="Pillow is a dev-only dependency")
+    from PIL import Image
+
+    raw = BytesIO()
+    Image.new("RGB", (2000, 1200), "green").save(raw, format="JPEG")
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    file = make_file(folder, name="stor.jpg", body=raw.getvalue())
+    ArchiveFile.objects.filter(pk=file.pk).update(content_type="image/jpeg")
+
+    call_command("make_arkiv_thumbnails")
+
+    store = get_store()
+    assert store.exists(thumbnail_key(file.sha256))
+    assert store.exists(preview_key(file.sha256))
+    file.refresh_from_db()
+    assert file.has_thumbnail and file.has_preview
+
+    # The sizes are actually different, which is the bug a shared Image object would have caused:
+    # thumbnail() mutates in place, so resizing once and reusing would make both 320px.
+    thumb = Image.open(BytesIO(b"".join(store.chunks(thumbnail_key(file.sha256)))))
+    preview = Image.open(BytesIO(b"".join(store.chunks(preview_key(file.sha256)))))
+    assert max(thumb.size) == 320
+    assert max(preview.size) == 1600
