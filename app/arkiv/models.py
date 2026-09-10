@@ -36,9 +36,25 @@ from django.db import models
 from django.db.models.base import ModelBase
 from django.utils import timezone
 
-# Where an archived object lives, and where its thumbnail will live once thumbnails land.
+# Where an archived object lives, and the two derived sizes beside it.
 ARCHIVE_PREFIX = "arkiv"
 THUMBNAIL_PREFIX = "arkiv-thumb"
+PREVIEW_PREFIX = "arkiv-preview"
+
+
+def preview_key(sha256: str) -> str:
+    """Where the large preview for an object lives.
+
+    THE SIZE THE VIEWER SHOWS, and the reason there are three sizes rather than two. The 320px
+    thumbnail is a 40px row icon and looks like porridge full-screen; the original is a phone
+    photograph of ten megabytes or a scan of forty, and paging through a folder of those means
+    minutes of waiting and an egress bill that is the one variable cost this bucket has. A ~1600px
+    JPEG is a few hundred kilobytes, fills any screen in the building, and is generated in the same
+    pass over the originals as the thumbnail.
+
+    Keyed by the ORIGINAL's hash, for the same reasons `thumbnail_key` is - see there.
+    """
+    return f"{PREVIEW_PREFIX}/{sha256[:2]}/{sha256}"
 
 
 def thumbnail_key(sha256: str) -> str:
@@ -210,6 +226,11 @@ class ArchiveFile(models.Model):
     # Whether `thumbnail_key(sha256)` has an object behind it. A column rather than a HEAD per row,
     # because the alternative is one network round trip per file to draw a listing.
     has_thumbnail = models.BooleanField(default=False)
+    # The same, for `preview_key(sha256)`. A separate column rather than one "has derivatives" flag
+    # because they are produced by different things: the browser makes a thumbnail on upload and
+    # cannot make a preview, so a live upload has one and not the other until the backlog command
+    # sweeps it up.
+    has_preview = models.BooleanField(default=False)
 
     objects = ArchiveQuerySet.as_manager()
 
@@ -236,6 +257,10 @@ class ArchiveFile(models.Model):
     @property
     def thumb_key(self) -> str:
         return thumbnail_key(self.sha256)
+
+    @property
+    def preview_key(self) -> str:
+        return preview_key(self.sha256)
 
     @property
     def is_image(self) -> bool:
