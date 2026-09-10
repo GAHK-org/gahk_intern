@@ -253,6 +253,30 @@ navigation to a redirect, not a `fetch`, so this became necessary the day upload
 before. Widening `AllowedMethods` to `GET`/`PUT` or `AllowedOrigins` to `*` would let any page on
 the internet script requests against the bucket with a stolen presigned URL; there is no reason to.
 
+#### Batch download is the one route that holds a worker
+
+Everything else in Arkiv hands the browser a redirect and lets Hetzner do the work. "Hent valgte"
+cannot: the zip does not exist until it is built, so the response streams through a gunicorn worker
+**for as long as the recipient takes to receive it** — not as long as we take to produce it. On
+`--workers 3 --timeout 60` that means one resident on a slow line can hold a third of the site's
+capacity, and their download dies at 60 seconds regardless of how far it got.
+
+`arkiv/views.py` caps a selection at `MAX_SELECTED_BYTES` (500 MB) and `MAX_SELECTED_FILES` (200)
+to keep that bounded, and refuses anything larger with a message rather than a dead transfer.
+**The cap and the timeout have to move together.** Raising the cap without raising `--timeout` only
+moves the failure later; raising `--timeout` alone lets a genuinely hung worker sit for longer.
+
+If residents start hitting the limit, the change is in the Dockerfile `CMD`:
+
+```
+CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "4", "--timeout", "300"]
+```
+
+and raise `MAX_SELECTED_BYTES` to match. Note the extra worker: a longer timeout with the same three
+workers makes the capacity problem worse, not better. The real fix, if this ever becomes a
+bottleneck rather than an annoyance, is to build the zip into the bucket and redirect to it — which
+needs a job runner this project deliberately does not have.
+
 #### `/media/` is no longer public
 
 It used to be, as the legacy `/public/` images were — so anyone who guessed

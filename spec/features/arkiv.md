@@ -118,6 +118,49 @@ upload.
 **The bucket needs a CORS rule** (DEPLOY.md §4c) and only production can notice its absence, since
 the dev path never leaves the app.
 
+## Three sizes, and the viewer
+
+An image is stored three times: the original under `arkiv/`, a 320px thumbnail under `arkiv-thumb/`,
+and a ~1600px preview under `arkiv-preview/`. All three are keyed by the **original's** hash, so two
+rows sharing bytes share all three objects and none of them can go stale — different bytes are a
+different key.
+
+The middle size exists because neither neighbour can do its job. The thumbnail is drawn at 40px in a
+row and is porridge full-screen; the original is a phone photograph of ten megabytes or a scan of
+forty, and paging through a folder of those is minutes of waiting on the one variable line of the
+Hetzner bill. Egress is the cost that scales with use here — storage is fixed and predictable — so
+the preview is a billing control as much as a UX one.
+
+**A missing preview falls back to the original.** The browser makes a thumbnail on upload and cannot
+make a preview, so every freshly uploaded photograph is `has_preview=False` until
+`make_arkiv_thumbnails` sweeps. Without the fallback the one image that fails to open would always
+be the one somebody just added and went to check.
+
+**The viewer is a progressive enhancement.** Each image row is an ordinary link to the download
+view; the script intercepts an unmodified left click and opens the overlay instead. Ctrl-, cmd-,
+shift- and middle-click are deliberately left alone — hijacking them is what makes a gallery
+infuriating — and with the bundle dead, clicking an image downloads it.
+
+## Downloading several at once
+
+Selected files come back as one zip, **built and streamed on the way out** rather than assembled:
+zipfile writes into a small buffer that is drained after every chunk, so forty photographs cost a
+worker one chunk of memory. `ZIP_STORED`, because the contents are JPEGs and video and deflate would
+spend real CPU on the machine serving the site to save a percent.
+
+**The caps (`MAX_SELECTED_FILES`, `MAX_SELECTED_BYTES`) are about gunicorn, not about storage.**
+Three synchronous workers with a 60-second timeout carry this, and a streaming response is held for
+as long as the *recipient* takes to receive it — so a large zip to somebody on a slow line occupies
+a third of the site's capacity until it finishes, and is killed at the timeout anyway. Raising the
+byte cap means raising `--timeout` in the same breath, or the only thing that changes is that the
+failure happens later. Anything over the cap is still available one file at a time, which redirects
+to the bucket and does not touch a worker at all.
+
+**POST, not GET**, though nothing is modified: a couple of hundred ids do not belong in a URL, and a
+GET would be a link somebody could paste into a chat thread to start a half-gigabyte download for
+whoever clicked it. The ids arrive from the client, so they are re-checked through `visible_files`
+scoped to the folder — the same rule the listing used, applied again rather than trusted.
+
 Arkiv does **not** use `STORAGES["default"]`. That is `MediaS3Storage`, pinned to `location="media"`,
 and the prefix is a security boundary (DEPLOY.md §4c/§4d) — a storage that could reach `arkiv/`
 could reach `backups/`. `arkiv/storage.py` talks to the bucket directly, with a local-filesystem
@@ -159,14 +202,15 @@ nothing.
 
 ## Not built yet
 
-Browse, download and **upload** are built. Still to come, in rough order:
+Browse, download, upload, subfolders, soft delete and restore, the three image sizes, the viewer and
+batch download are built. Still to come, in rough order:
 
-1. **Thumbnails.** Client-side via the existing `downscaleImage()` (`frontend/src/imageupload.ts`),
-   uploaded as a second object under `arkiv-thumb/`. Same no-Pillow, no-worker posture as the rest of
-   the app. For the imported backlog, a **one-off local script** where Pillow as a dev-only
-   dependency is fine — it must not become a prod dependency.
-2. **Folder and file management in the app** — create, rename, move, soft delete, restore. Today the
-   admin does it.
-3. **An audit command**, the sibling of `audit_media`: rows whose object is missing, and objects no
-   row references. Report-only, for the reasons that command's docstring gives.
+1. **Rename and move.** Both are DB-only by construction — the key is the hash, not the path — so
+   this is a form and an access check, not a data migration. The admin does it today.
+2. **An audit command**, the sibling of `audit_media`: rows whose object is missing, and objects no
+   row references. Report-only, for the reasons that command's docstring gives. `_zip_chunks`
+   skipping a vanished object rather than truncating the archive is a placeholder for it.
+3. **Search.** A folder tree of 57,000 photographs is navigable only if you know where you put
+   something. The DB index is what makes this possible at all, and is a large part of why the
+   archive is not rendered by listing the bucket.
 4. **Search.** A file archive without it is a filing cabinet in the dark, and 2 TB makes that acute.
