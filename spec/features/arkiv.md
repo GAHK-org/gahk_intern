@@ -233,6 +233,13 @@ two rows can share one object. `services.unreferenced_keys` is the only thing th
 can go, and soft-deleted rows still count as references — otherwise undo restores a row pointing at
 nothing.
 
+And even then the bytes do not go *immediately*: the bucket is versioned, so the delete leaves a
+noncurrent version that a lifecycle rule clears after 30 days (DEPLOY.md). So the archive has three
+stages of gone, not two — out of the listing (soft delete, undoable in the app), out of the archive
+(purged, recoverable only from the bucket), and actually destroyed a month later. "Slet permanent"
+names the second. If a resident ever needs the third on demand, that retention is the number to
+change.
+
 ## Not built yet
 
 Browse, download, upload, subfolders, soft delete and restore, the three image sizes, the viewer and

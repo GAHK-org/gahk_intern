@@ -260,34 +260,65 @@ in Arkiv. So the prefix fills up with archives that are, by construction, dispos
 be rebuilt from the rows, and `selection_key` names each after the selection it holds, so a rebuilt
 one lands under the same key.
 
-Nothing deletes them. Set a rule, or they accumulate forever:
+Nothing deletes them, so they need a rule — and **the bucket is versioned, which changes what a
+rule means.** On a versioned bucket `Expiration` does not delete anything: it writes a delete marker
+and the object becomes a *noncurrent version*, which lives until a `NoncurrentVersionExpiration`
+rule covering that prefix removes it. An expiry rule on its own therefore frees nothing and is worth
+exactly the storage it does not reclaim.
+
+Prefixes are matched literally, so `arkiv/` does not cover `arkiv-thumb/`; a bare `arkiv` prefix
+would cover all four and overlap, and providers differ on how overlapping rules resolve. One rule
+per prefix, spelled out. The current set:
+
+| ID | Prefix | What it does |
+| --- | --- | --- |
+| `abort-incomplete-uploads` | (all) | aborts stalled multipart uploads after 7 days |
+| `expire-built-zips` | `arkiv-zip/` | marks zips at 7 days, purges the version a day later |
+| `expire-built-zip-markers` | `arkiv-zip/` | clears the delete markers left behind |
+| `expire-noncurrent-arkiv` | `arkiv/` | purged originals actually go, 30 days later |
+| `expire-noncurrent-arkiv-thumb` | `arkiv-thumb/` | as above |
+| `expire-noncurrent-arkiv-preview` | `arkiv-preview/` | as above |
+| `expire-noncurrent-versions` | `media/` | pre-existing, unchanged |
+
+`Days` and `ExpiredObjectDeleteMarker` cannot share one `Expiration` block — S3 rejects it — which
+is why the marker cleanup is a second rule on the same prefix. Hetzner accepts it; if a future
+provider does not, drop that rule and live with the markers.
+
+To change the set, **read the existing rules and merge** — `put_bucket_lifecycle_configuration`
+replaces the entire configuration, so a naive call silently drops every rule it does not mention:
 
 ```
 docker exec <web> python manage.py shell -c "
+import json
 from django.core.files.storage import storages
 s = storages['default']; c = s.connection.meta.client
-c.put_bucket_lifecycle_configuration(Bucket=s.bucket_name, LifecycleConfiguration={'Rules': [
-  {'ID': 'expire-built-zips', 'Status': 'Enabled',
-   'Filter': {'Prefix': 'arkiv-zip/'},
-   'Expiration': {'Days': 7},
-   'AbortIncompleteMultipartUpload': {'DaysAfterInitiation': 1}},
-]})
-print(c.get_bucket_lifecycle_configuration(Bucket=s.bucket_name)['Rules'])"
+keep = [r for r in c.get_bucket_lifecycle_configuration(Bucket=s.bucket_name)['Rules']
+        if r.get('ID') not in ('the-ids-you-are-replacing',)]
+c.put_bucket_lifecycle_configuration(
+    Bucket=s.bucket_name, LifecycleConfiguration={'Rules': keep + [ ... ]})
+print(json.dumps(c.get_bucket_lifecycle_configuration(Bucket=s.bucket_name)['Rules'], indent=2))"
 ```
 
-**This replaces the whole lifecycle configuration**, so if `backups/` already has a rule, send both
-in one call — `get_bucket_lifecycle_configuration` first and add to what is there.
+**`NoncurrentDays: 30` on `arkiv/` is the retention behind "Slet permanent".** The button destroys
+the row and calls `delete_object`; versioning turns that into a delete marker, so the bytes are
+recoverable by version id for another month and are billed for that long. That is a deliberate net
+against an operator mistake, not an accident — but it does mean "permanent" means "within a month",
+and if the kollegium ever needs a real erase-on-request, this number is where it lives.
 
-Seven days is arbitrary and safe: the cost of being wrong is one rebuild. The
+Seven days for a built zip is arbitrary and safe: the cost of being wrong is one rebuild. The
 `AbortIncompleteMultipartUpload` half matters more than it looks — a worker killed mid-upload leaves
 a part-uploaded archive, and this is what stops those being billed indefinitely. (It cannot leave a
 *corrupt* object: a multipart upload only becomes visible when it completes, which is what makes the
 "already built?" check trustworthy.)
 
-**`audit_media` and `unreferenced_keys` do not see this prefix**, and must not learn to: the former
+**`audit_media` and `unreferenced_keys` do not see `arkiv-zip/`**, and must not learn to: the former
 is scoped to `media/`, and the latter asks only about `arkiv/` hashes. A sweep that decided a built
 zip was an orphan would be right, and deleting it would still be pointless churn against a rule that
 already does the job.
+
+**`backups/` has no expiry rule at all** — the original plan called for 30 days and it was never
+set, so database dumps accumulate indefinitely. Not fixed here; worth doing before it is a year of
+them.
 
 #### What the batch-download caps are for now
 

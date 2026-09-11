@@ -88,6 +88,13 @@ def unreferenced_keys(hashes: set[str]) -> set[str]:
 def purge_file(file: ArchiveFile) -> bool:
     """Destroy one file row, and its bytes if nothing else needs them. Returns whether the bytes went.
 
+    "WENT" MEANS DELETED, NOT YET GONE. The bucket is versioned, so `delete_object` writes a delete
+    marker and the object becomes a noncurrent version; a lifecycle rule on `arkiv/` purges those
+    after 30 days (DEPLOY.md). Until then the bytes are recoverable by version id by anyone holding
+    bucket credentials. That is a deliberate net against an operator emptying a folder by mistake,
+    but it does mean "Slet permanent" promises a month rather than an instant - worth knowing before
+    telling a resident their file is unrecoverable.
+
     THE ROW GOES FIRST AND THE BYTES SECOND, which is the only safe order. `unreferenced_keys` is
     documented to be asked "only after the rows are gone", because while this row exists it is
     itself a reference and the answer would always be "still in use".
