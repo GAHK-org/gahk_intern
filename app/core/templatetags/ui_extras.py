@@ -15,3 +15,10 @@ def sign_class(value: int | float | None) -> str:
         return "amount-neg" if int(value) < 0 else "amount-pos"
     except (TypeError, ValueError):
         return ""
+
+
+@register.filter
+def dict_get(mapping: dict[object, object] | None, key: object) -> object:
+    """Look up `key` in a dict from the template (`{{ mapping|dict_get:key }}`) — dotted-path lookup
+    can't take a variable key."""
+    return (mapping or {}).get(key)
