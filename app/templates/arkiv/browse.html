@@ -102,7 +102,14 @@
     <form method="post" action="{% url 'arkiv:download_selected' folder.pk %}"
           id="arkiv-batch" class="arkiv-batch" data-arkiv-batch>
       {% csrf_token %}
-      <button type="submit" class="btn-secondary">Hent valgte</button>
+      {% comment %}
+        Filled in by the script with a nonce before the form goes; the response echoes it back as a
+        cookie so the page can tell that the build finished. Empty without JavaScript, which the
+        server reads as "this page is not watching" - the download still works, the button simply
+        stays as it is.
+      {% endcomment %}
+      <input type="hidden" name="done_token" value="" data-batch-token>
+      <button type="submit" class="btn-secondary" data-batch-submit>Hent valgte</button>
       <span class="muted" data-batch-count aria-live="polite"></span>
     </form>
 

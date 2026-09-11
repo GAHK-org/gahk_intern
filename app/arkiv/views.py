@@ -339,6 +339,18 @@ MAX_SELECTED_BYTES = 500 * 1024 * 1024
 # above bounds what the largest one can occupy there.
 ZIP_SPOOL_BYTES = 32 * 1024 * 1024
 
+# How the page learns the build is over. A form POST that ends in a download does NOT navigate: the
+# browser keeps the page and hands the bytes to the downloads shelf, so there is no load event, no
+# unload, and nothing for the button to hook. The response is also a redirect to Hetzner, whose
+# reply is not ours to observe.
+#
+# So the client sends a nonce, this is the response that echoes it back as a readable cookie, and
+# the script polls for it - the long-standing answer to this exact problem. The value is the
+# client's own random string and grants nothing, which is why it need not be HttpOnly. Short-lived
+# because it is a signal, not state.
+ZIP_DONE_COOKIE = "arkiv_zip_done"
+ZIP_DONE_COOKIE_MAX_AGE = 300
+
 
 @access.access_required
 @require_POST
@@ -625,18 +637,40 @@ def download_selected(request: HttpRequest, pk: int) -> HttpResponseBase:
     if not store.exists(key):
         _build_zip(store, files, key)
 
+    # Only the success path needs this. The refusals above redirect to the folder, which reloads the
+    # page and gives the button back for free.
+    done = _zip_done_token(request)
+
     # The disposition lives on the URL, not on the object, so one cached zip can be handed to two
     # folders under two names.
     name = f"{folder.name}.zip"
     url = store.download_url(key, filename=name, content_type="application/zip")
     if url is not None:
-        return HttpResponseRedirect(url)
+        return _mark_zip_done(HttpResponseRedirect(url), done)
 
     # No bucket (dev, CI): serve the object we just built. Same two-branch shape as every other
     # download here, and for the same reason - a path that only works in production is a path no
     # test covers.
     response = StreamingHttpResponse(store.chunks(key), content_type="application/zip")
     response.headers["Content-Disposition"] = content_disposition(name)
+    return _mark_zip_done(response, done)
+
+
+def _zip_done_token(request: HttpRequest) -> str:
+    """The client's nonce, or "" if it did not send a usable one.
+
+    Validated rather than passed through, because it goes straight back out in a Set-Cookie header
+    where a value carrying a newline or a semicolon would be somebody else's directive. Alphanumeric
+    and short is everything the script needs and nothing a header can be steered with.
+    """
+    token = str(request.POST.get("done_token", ""))
+    return token if 0 < len(token) <= 64 and token.isalnum() else ""
+
+
+def _mark_zip_done(response: HttpResponseBase, token: str) -> HttpResponseBase:
+    """Tell the page its download has started, if it asked to be told."""
+    if token:
+        response.set_cookie(ZIP_DONE_COOKIE, token, max_age=ZIP_DONE_COOKIE_MAX_AGE, samesite="Lax")
     return response
 
 

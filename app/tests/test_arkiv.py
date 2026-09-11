@@ -1929,3 +1929,46 @@ def test_the_zip_is_redirected_to_when_there_is_a_bucket(
     # And it still built the object first - a redirect to a key with nothing behind it is a 404
     # wearing a different hat.
     assert views.get_store().exists(selection_key([(one.name, one.sha256)]))
+
+
+def test_the_response_echoes_the_pages_token_so_the_button_can_reset(
+    resident_in: Callable, media_tmp: Path
+) -> None:
+    """A form POST that ends in a download does not navigate, so the page has no way of its own to
+    tell the build finished. The nonce comes back as a cookie the script can poll for."""
+    from arkiv.views import ZIP_DONE_COOKIE
+
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    one = make_file(folder, name="en.jpg", body=b"bytes")
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(
+        f"/intern/arkiv/mappe/{folder.pk}/hent-valgte",
+        {"ids": [one.pk], "done_token": "abc123"},
+    )
+
+    assert response.cookies[ZIP_DONE_COOKIE].value == "abc123"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["with space", "a;b", "a\nb", "x" * 65, "a=b", ""],
+    ids=["space", "semicolon", "newline", "too long", "equals", "empty"],
+)
+def test_a_token_that_could_steer_a_header_is_dropped(
+    resident_in: Callable, media_tmp: Path, bad: str
+) -> None:
+    """It goes straight back out in Set-Cookie, so a value carrying a separator would be somebody
+    else's directive. Dropped rather than sanitised: the page loses its reset, nothing else."""
+    from arkiv.views import ZIP_DONE_COOKIE
+
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    one = make_file(folder, name="en.jpg", body=b"bytes")
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(
+        f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [one.pk], "done_token": bad}
+    )
+
+    assert ZIP_DONE_COOKIE not in response.cookies
+    assert response.status_code == 200  # and the download itself is unaffected

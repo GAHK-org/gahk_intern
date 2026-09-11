@@ -313,15 +313,67 @@ if (previewLinks.length > 0) {
   })
 }
 
-// The count beside "Hent valgte". The button works without it; this only says what will happen.
+/**
+ * The count beside "Hent valgte", and the pending state while the zip is built.
+ *
+ * Both are enhancements: the form posts and the download works with none of this running.
+ *
+ * The pending state exists because the server now BUILDS the archive into the bucket before
+ * redirecting to it, rather than streaming it out as it goes (see arkiv/views.py). That is what
+ * takes the recipient's connection off a gunicorn worker, and the price is a wait with nothing to
+ * look at - a second or two for an ordinary selection, closer to ten for a large one. Long enough
+ * to read as "the button did nothing" and be clicked again.
+ *
+ * Knowing when to STOP is the awkward half. A form POST that ends in a download does not navigate:
+ * the page stays, the bytes go to the downloads shelf, and no load event fires anywhere. The
+ * response is a redirect to Hetzner, whose reply is not ours to see either. So the form carries a
+ * nonce, the server echoes it back as a cookie, and this polls for it.
+ */
 const batch = document.querySelector<HTMLFormElement>('[data-arkiv-batch]')
 const batchCount = batch?.querySelector<HTMLElement>('[data-batch-count]') ?? null
 if (batch && batchCount) {
   const picks = Array.from(document.querySelectorAll<HTMLInputElement>('[data-batch-pick]'))
+  const submit = batch.querySelector<HTMLButtonElement>('[data-batch-submit]')
+  const token = batch.querySelector<HTMLInputElement>('[data-batch-token]')
+
   const update = (): void => {
     const n = picks.filter((p) => p.checked).length
     batchCount.textContent = n === 0 ? '' : `${n} valgt`
   }
   picks.forEach((pick) => pick.addEventListener('change', update))
   update()
+
+  if (submit && token) {
+    const label = submit.textContent ?? 'Hent valgte'
+    let waiting = 0
+
+    const finish = (): void => {
+      window.clearInterval(waiting)
+      document.cookie = 'arkiv_zip_done=; Max-Age=0; Path=/'
+      submit.disabled = false
+      submit.textContent = label
+      update()
+    }
+
+    batch.addEventListener('submit', () => {
+      // No selection: the server answers with a message on a page that reloads, so leaving the
+      // button alone is both correct and less work than predicting that refusal here.
+      if (!picks.some((p) => p.checked)) return
+
+      const nonce = Math.random().toString(36).slice(2) + Date.now().toString(36)
+      token.value = nonce
+      submit.disabled = true
+      submit.textContent = 'Pakker filer…'
+      batchCount.textContent = 'Det kan tage et øjeblik for mange filer.'
+
+      const started = Date.now()
+      waiting = window.setInterval(() => {
+        if (document.cookie.includes(`arkiv_zip_done=${nonce}`)) finish()
+        // A build that failed sets no cookie, and a button disabled for ever is a worse bug than
+        // the one this exists to fix. Past the point where the server would itself have given up,
+        // hand it back and let the resident try again.
+        else if (Date.now() - started > 120_000) finish()
+      }, 250)
+    })
+  }
 }
