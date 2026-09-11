@@ -160,18 +160,34 @@ infuriating — and with the bundle dead, clicking an image downloads it.
 
 ## Downloading several at once
 
-Selected files come back as one zip, **built and streamed on the way out** rather than assembled:
-zipfile writes into a small buffer that is drained after every chunk, so forty photographs cost a
-worker one chunk of memory. `ZIP_STORED`, because the contents are JPEGs and video and deflate would
+Selected files come back as one zip that is **built into the bucket and then redirected to**, like
+every other download here. `ZIP_STORED`, because the contents are JPEGs and video and deflate would
 spend real CPU on the machine serving the site to save a percent.
 
-**The caps (`MAX_SELECTED_FILES`, `MAX_SELECTED_BYTES`) are about gunicorn, not about storage.**
-Three synchronous workers with a 60-second timeout carry this, and a streaming response is held for
-as long as the *recipient* takes to receive it — so a large zip to somebody on a slow line occupies
-a third of the site's capacity until it finishes, and is killed at the timeout anyway. Raising the
-byte cap means raising `--timeout` in the same breath, or the only thing that changes is that the
-failure happens later. Anything over the cap is still available one file at a time, which redirects
-to the bucket and does not touch a worker at all.
+The first version streamed the zip straight to the browser, and that was a mistake worth recording.
+It made this the only route in Arkiv that holds a gunicorn worker — and held it not for as long as
+the zip took to *build* but for as long as the recipient took to *receive* it, because TCP
+backpressure means the server can only write as fast as the browser reads. One resident on hotel
+wifi occupied one of three synchronous workers for the whole download, and was killed at
+`--timeout 60` regardless, left holding a truncated archive.
+
+Building it as an object decouples that completely: the worker waits only for the build, which is
+server-to-Hetzner traffic inside `fsn1`, and then hands back a redirect. **This needed no job
+runner** — the build is still synchronous, all that changed is what the worker is waiting for. The
+Celery-shaped version, where the build happens out of band entirely, would only remove the wait
+itself, and is not worth a queue.
+
+**Reused, not rebuilt.** `selection_key` names the object after the selection — each member's
+display name and hash — so the morning after sommerfest one build serves everybody who asks for the
+same folder. It is also what makes reuse safe with no invalidation logic: adding, removing,
+renaming or replacing a file changes the member list and therefore the key, so a cached zip is
+always exactly the selection that was asked for. The key is derived from the *access-filtered* list,
+so a selection can only ever be named by files its asker may see.
+
+The objects are disposable and expire on a lifecycle rule (DEPLOY.md). **The caps
+(`MAX_SELECTED_FILES`, `MAX_SELECTED_BYTES`) now bound the build and the temporary file**, not a
+resident's connection — which is the difference between a limit set against something measurable and
+one set against hotel wifi.
 
 **POST, not GET**, though nothing is modified: a couple of hundred ids do not belong in a URL, and a
 GET would be a link somebody could paste into a chat thread to start a half-gigabyte download for

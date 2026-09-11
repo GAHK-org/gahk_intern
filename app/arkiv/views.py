@@ -11,7 +11,7 @@ something exists.
 import json
 import mimetypes
 import zipfile
-from collections.abc import Iterator
+from tempfile import SpooledTemporaryFile
 from typing import BinaryIO, cast
 
 from django.contrib import messages
@@ -33,7 +33,7 @@ from django.views.decorators.http import require_POST
 from residents.permissions import current_resident
 
 from . import access, services, uploads
-from .models import ArchiveFile, ArchiveFolder, object_key
+from .models import ArchiveFile, ArchiveFolder, object_key, selection_key
 from .storage import ArchiveStore, LocalArchiveStore, content_disposition, get_store
 
 
@@ -324,12 +324,20 @@ MAX_FOLDER_NAME = 120
 # document. Safe to cache this long only because the URL is content-addressed: new bytes, new key.
 THUMBNAIL_CACHE_CONTROL = "private, max-age=604800"
 
-# What one "Hent valgte" may carry. Both exist because of gunicorn, not because of storage - see
-# `download_selected`. The file count keeps the id list and the per-object round trips bounded; the
-# byte total keeps a single response inside the worker timeout. Anything larger is still available
-# one file at a time, which redirects to the bucket and costs a worker nothing.
+# What one "Hent valgte" may carry. Both bound the BUILD, which since the zip became an object is
+# the only part a worker waits for - reading the members out of the bucket and writing the archive
+# back, inside fsn1. The recipient's connection is no longer in the picture at all, which is what
+# these numbers used to be at the mercy of. The byte total also bounds the temporary file.
+#
+# Raising them is now a reasonable conversation, and a measurable one: the limit is our own internal
+# bandwidth against `--timeout 60`, not a resident's hotel wifi. It was not measurable before.
 MAX_SELECTED_FILES = 200
 MAX_SELECTED_BYTES = 500 * 1024 * 1024
+
+# Below this a zip is assembled in memory; above it SpooledTemporaryFile rolls over to disk. Sized
+# so an ordinary selection of a few dozen photographs never touches the filesystem, while the cap
+# above bounds what the largest one can occupy there.
+ZIP_SPOOL_BYTES = 32 * 1024 * 1024
 
 
 @access.access_required
@@ -555,27 +563,35 @@ def preview(request: HttpRequest, pk: int) -> HttpResponseBase:
 @access.access_required
 @require_POST
 def download_selected(request: HttpRequest, pk: int) -> HttpResponseBase:
-    """Several files from one folder, as a zip built on the way out.
+    """Several files from one folder, as a zip BUILT INTO THE BUCKET and then redirected to.
 
     POST, not GET, and not because anything is modified: the selection is a list of ids that can
     run to a couple of hundred, which does not belong in a URL, and a GET would let a link in a chat
     thread start a multi-hundred-megabyte transfer for whoever clicked it.
 
-    **Streamed, never assembled.** The zip is written into a small buffer that is drained after
-    every chunk, so a folder of forty photographs costs a worker one chunk of memory rather than
-    the whole archive. `ZIP_STORED` because the contents are JPEGs and video: deflate would spend
-    real CPU to save a percent or two, on the machine that is also serving the site.
+    **The zip is an object, not a stream, and that is the whole design.** The first version streamed
+    it straight to the browser, which quietly made this the only route in Arkiv that holds a gunicorn
+    worker - and held it not for as long as the zip took to BUILD, but for as long as the recipient
+    took to RECEIVE it. TCP backpressure: the server can only write as fast as the browser reads, so
+    one resident on hotel wifi occupied one of three synchronous workers until they were done, and
+    was killed at `--timeout 60` regardless, left holding a truncated archive.
 
-    **The caps are about gunicorn, not about disk.** Three synchronous workers with a 60-second
-    timeout carry this, and the response streams at the RECIPIENT's speed - so a large zip to
-    somebody on a slow line holds a third of the site's capacity for as long as it takes, and gets
-    killed at the timeout anyway. `MAX_SELECTED_BYTES` is set to what survives that; raising it
-    means raising gunicorn's `--timeout` in the same breath, or the only thing that changes is that
-    the failure happens later. Everything above the cap is still one-at-a-time, which redirects to
-    the bucket and does not touch a worker at all.
+    Building it into the bucket decouples all of that. The worker is busy only for the build, which
+    is server-to-Hetzner traffic inside fsn1 - fast, free, and a number we can measure - and then it
+    hands back a redirect, exactly like every other download here. Hetzner serves the bytes at
+    whatever speed the resident has, and no worker is involved at all.
+
+    **No job runner needed**, which is why this is worth doing now rather than "when we have Celery".
+    The build is synchronous; all that changed is what the worker is waiting for.
+
+    **Reused when it already exists.** `selection_key` names the object after the selection, so the
+    second person to ask for the same files gets a redirect and no build. A changed selection is a
+    changed key, so there is no stale cache and nothing to invalidate - see that docstring.
 
     Access is re-checked here rather than trusted from the page: the ids arrive from the client, so
-    they are filtered through `visible_files` scoped to a folder the resident can already read.
+    they are filtered through `visible_files` scoped to a folder the resident can already read. The
+    key is then derived from THAT filtered list, so a selection is only ever named by files the
+    asker may actually see.
     """
     resident = current_resident(request)
     folder = access.visible_folders(resident).filter(pk=pk).first()
@@ -604,64 +620,53 @@ def download_selected(request: HttpRequest, pk: int) -> HttpResponseBase:
         )
         return redirect("arkiv:folder", pk=folder.pk)
 
-    response = StreamingHttpResponse(_zip_chunks(get_store(), files), content_type="application/zip")
-    response.headers["Content-Disposition"] = content_disposition(f"{folder.name}.zip")
+    store = get_store()
+    key = selection_key((file.name, file.sha256) for file in files)
+    if not store.exists(key):
+        _build_zip(store, files, key)
+
+    # The disposition lives on the URL, not on the object, so one cached zip can be handed to two
+    # folders under two names.
+    name = f"{folder.name}.zip"
+    url = store.download_url(key, filename=name, content_type="application/zip")
+    if url is not None:
+        return HttpResponseRedirect(url)
+
+    # No bucket (dev, CI): serve the object we just built. Same two-branch shape as every other
+    # download here, and for the same reason - a path that only works in production is a path no
+    # test covers.
+    response = StreamingHttpResponse(store.chunks(key), content_type="application/zip")
+    response.headers["Content-Disposition"] = content_disposition(name)
     return response
 
 
-def _zip_chunks(store: ArchiveStore, files: list[ArchiveFile]) -> Iterator[bytes]:
-    """Yield a zip of `files` without ever holding more than one chunk of it.
+def _build_zip(store: ArchiveStore, files: list[ArchiveFile], key: str) -> None:
+    """Assemble the zip and put it in the store under `key`.
 
-    `_Sink` is the whole trick: zipfile writes into it, and after each write we take what landed
-    and hand it to the response. It offers `tell()` but no `seek()`, which is how zipfile is told
-    the output is not seekable - it then emits data descriptors after each entry instead of seeking
-    back to patch the local headers.
+    Written to a SpooledTemporaryFile rather than streamed, which is what let the hand-rolled
+    non-seekable sink this used to need go away entirely: zipfile can seek back and patch its own
+    local headers, so the result is an ordinary archive with no data descriptors. Small selections
+    never touch the disk at all.
+
+    `ZIP_STORED`, because the contents are JPEGs and video. Deflate would spend real CPU on the
+    machine that is also serving the site to save a percent or two.
 
     A file whose object has vanished is skipped rather than fatal. The alternative is a truncated
     zip with no explanation, and a missing object is an operator problem (`audit_arkiv`), not
     something the resident downloading holiday photographs can act on.
+
+    Half a build leaves NOTHING behind, which is what makes the `exists` check above trustworthy.
+    The upload happens once the archive is complete, and boto3 either finishes it or leaves an
+    incomplete multipart upload that the lifecycle rule aborts - there is no state in which this
+    key holds a partial archive that the next request would then happily redirect somebody to.
     """
-    sink = _Sink()
-    with zipfile.ZipFile(sink, "w", zipfile.ZIP_STORED) as archive:
-        for file in files:
-            if not store.exists(file.key):
-                continue
-            with archive.open(file.name, "w") as entry:
-                for chunk in store.chunks(file.key):
-                    entry.write(chunk)
-                    if data := sink.take():
-                        yield data
-            if data := sink.take():
-                yield data
-    if data := sink.take():
-        yield data
-
-
-class _Sink:
-    """A write-only file object that hands back what was written since it was last asked."""
-
-    def __init__(self) -> None:
-        self._buf = bytearray()
-        self._pos = 0
-
-    def write(self, data: bytes) -> int:
-        self._buf += data
-        self._pos += len(data)
-        return len(data)
-
-    def tell(self) -> int:
-        return self._pos
-
-    def flush(self) -> None:
-        return None
-
-    def close(self) -> None:
-        # Never closes anything: there is nothing under this but a bytearray, and ZipFile only
-        # calls it on an object it opened itself. Present because that is what zipfile's writable
-        # protocol asks for.
-        return None
-
-    def take(self) -> bytes:
-        data = bytes(self._buf)
-        self._buf.clear()
-        return data
+    with SpooledTemporaryFile(max_size=ZIP_SPOOL_BYTES) as tmp:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED) as archive:
+            for file in files:
+                if not store.exists(file.key):
+                    continue
+                with archive.open(file.name, "w") as entry:
+                    for chunk in store.chunks(file.key):
+                        entry.write(chunk)
+        tmp.seek(0)
+        store.save(key, cast("BinaryIO", tmp))

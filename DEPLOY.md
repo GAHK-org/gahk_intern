@@ -253,29 +253,59 @@ navigation to a redirect, not a `fetch`, so this became necessary the day upload
 before. Widening `AllowedMethods` to `GET`/`PUT` or `AllowedOrigins` to `*` would let any page on
 the internet script requests against the bucket with a stolen presigned URL; there is no reason to.
 
-#### Batch download is the one route that holds a worker
+#### `arkiv-zip/` needs a lifecycle rule
 
-Everything else in Arkiv hands the browser a redirect and lets Hetzner do the work. "Hent valgte"
-cannot: the zip does not exist until it is built, so the response streams through a gunicorn worker
-**for as long as the recipient takes to receive it** — not as long as we take to produce it. On
-`--workers 3 --timeout 60` that means one resident on a slow line can hold a third of the site's
-capacity, and their download dies at 60 seconds regardless of how far it got.
+"Hent valgte" builds the zip **into the bucket** and then redirects to it, like every other download
+in Arkiv. So the prefix fills up with archives that are, by construction, disposable: every one can
+be rebuilt from the rows, and `selection_key` names each after the selection it holds, so a rebuilt
+one lands under the same key.
 
-`arkiv/views.py` caps a selection at `MAX_SELECTED_BYTES` (500 MB) and `MAX_SELECTED_FILES` (200)
-to keep that bounded, and refuses anything larger with a message rather than a dead transfer.
-**The cap and the timeout have to move together.** Raising the cap without raising `--timeout` only
-moves the failure later; raising `--timeout` alone lets a genuinely hung worker sit for longer.
+Nothing deletes them. Set a rule, or they accumulate forever:
 
-If residents start hitting the limit, the change is in the Dockerfile `CMD`:
+```
+docker exec <web> python manage.py shell -c "
+from django.core.files.storage import storages
+s = storages['default']; c = s.connection.meta.client
+c.put_bucket_lifecycle_configuration(Bucket=s.bucket_name, LifecycleConfiguration={'Rules': [
+  {'ID': 'expire-built-zips', 'Status': 'Enabled',
+   'Filter': {'Prefix': 'arkiv-zip/'},
+   'Expiration': {'Days': 7},
+   'AbortIncompleteMultipartUpload': {'DaysAfterInitiation': 1}},
+]})
+print(c.get_bucket_lifecycle_configuration(Bucket=s.bucket_name)['Rules'])"
+```
+
+**This replaces the whole lifecycle configuration**, so if `backups/` already has a rule, send both
+in one call — `get_bucket_lifecycle_configuration` first and add to what is there.
+
+Seven days is arbitrary and safe: the cost of being wrong is one rebuild. The
+`AbortIncompleteMultipartUpload` half matters more than it looks — a worker killed mid-upload leaves
+a part-uploaded archive, and this is what stops those being billed indefinitely. (It cannot leave a
+*corrupt* object: a multipart upload only becomes visible when it completes, which is what makes the
+"already built?" check trustworthy.)
+
+**`audit_media` and `unreferenced_keys` do not see this prefix**, and must not learn to: the former
+is scoped to `media/`, and the latter asks only about `arkiv/` hashes. A sweep that decided a built
+zip was an orphan would be right, and deleting it would still be pointless churn against a rule that
+already does the job.
+
+#### What the batch-download caps are for now
+
+`arkiv/views.py` caps a selection at `MAX_SELECTED_BYTES` (500 MB) and `MAX_SELECTED_FILES` (200).
+Since the zip became an object these bound **the build** — reading the members out of the bucket and
+writing the archive back, all inside `fsn1` — plus the temporary file it is assembled in. The
+recipient's connection is no longer involved at all: they are redirected, and Hetzner serves them.
+
+That is a real change in what the numbers mean. They used to be at the mercy of a resident's hotel
+wifi, which is unmeasurable; they are now bounded by our own internal bandwidth against
+`--timeout 60`, which is. So raising them is a reasonable conversation — measure a large build
+first, and if `--timeout` needs to go up as well, add a worker in the same change:
 
 ```
 CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "4", "--timeout", "300"]
 ```
 
-and raise `MAX_SELECTED_BYTES` to match. Note the extra worker: a longer timeout with the same three
-workers makes the capacity problem worse, not better. The real fix, if this ever becomes a
-bottleneck rather than an annoyance, is to build the zip into the bucket and redirect to it — which
-needs a job runner this project deliberately does not have.
+A longer timeout with the same three workers makes the capacity problem worse, not better.
 
 #### `/media/` is no longer public
 

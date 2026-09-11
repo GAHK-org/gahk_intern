@@ -1813,3 +1813,119 @@ def test_the_thumbnailer_makes_both_sizes_in_one_pass(media_tmp: Path) -> None:
     preview = Image.open(BytesIO(b"".join(store.chunks(preview_key(file.sha256)))))
     assert max(thumb.size) == 320
     assert max(preview.size) == 1600
+
+
+def test_the_zip_is_left_in_the_store_as_an_object(resident_in: Callable, media_tmp: Path) -> None:
+    """THE POINT OF BUILDING IT RATHER THAN STREAMING IT. An object can be redirected to, which is
+    what takes the recipient's connection off a gunicorn worker - see views.download_selected."""
+    import zipfile
+    from io import BytesIO
+
+    from arkiv.models import selection_key
+    from arkiv.storage import get_store
+
+    folder = ArchiveFolder.objects.create(name="Sommerfest")
+    one = make_file(folder, name="en.jpg", body=b"first file bytes")
+    two = make_file(folder, name="to.jpg", body=b"second file bytes")
+    client = login(resident_in("a@gahk.dk", None))
+
+    client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [one.pk, two.pk]})
+
+    key = selection_key([(one.name, one.sha256), (two.name, two.sha256)])
+    store = get_store()
+    assert store.exists(key), "the zip was not left in the store"
+    body = zipfile.ZipFile(BytesIO(b"".join(store.chunks(key))))
+    assert sorted(body.namelist()) == ["en.jpg", "to.jpg"]
+    assert body.testzip() is None, "the stored archive is corrupt"
+
+
+def test_the_same_selection_is_not_rebuilt(resident_in: Callable, media_tmp: Path) -> None:
+    """The morning after sommerfest, the whole kollegium asks for the same folder. One build.
+
+    Proved by planting a sentinel at the key: if the response carries it back, nothing rebuilt.
+    """
+    from io import BytesIO
+
+    from arkiv.models import selection_key
+    from arkiv.storage import get_store
+
+    folder = ArchiveFolder.objects.create(name="Sommerfest")
+    one = make_file(folder, name="en.jpg", body=b"first file bytes")
+    client = login(resident_in("a@gahk.dk", None))
+
+    get_store().save(selection_key([(one.name, one.sha256)]), BytesIO(b"a previously built zip"))
+    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [one.pk]})
+
+    assert b"".join(response.streaming_content) == b"a previously built zip"
+
+
+def test_a_different_selection_is_a_different_zip(resident_in: Callable, media_tmp: Path) -> None:
+    """What makes reuse safe without any invalidation: the key IS the selection. Add a file, rename
+    one, replace one's bytes, and the key moves - so a cached zip can never be the wrong answer."""
+    from arkiv.models import selection_key
+
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    one = make_file(folder, name="en.jpg", body=b"first")
+    two = make_file(folder, name="to.jpg", body=b"second")
+
+    alone = selection_key([(one.name, one.sha256)])
+    both = selection_key([(one.name, one.sha256), (two.name, two.sha256)])
+    renamed = selection_key([("andet-navn.jpg", one.sha256)])
+    rebytes = selection_key([(one.name, two.sha256)])
+
+    assert len({alone, both, renamed, rebytes}) == 4
+
+    # And order does not matter: the same set asked for twice is one object, not two.
+    assert both == selection_key([(two.name, two.sha256), (one.name, one.sha256)])
+
+
+def test_a_selection_you_cannot_fully_see_names_a_different_zip(
+    resident_in: Callable, workgroups: tuple, media_tmp: Path
+) -> None:
+    """The key is derived from the FILTERED list, not from what was posted. Otherwise an outsider
+    could post {mine, theirs}, be filtered down to {mine}, and still be handed the object built for
+    somebody who could see both."""
+    import zipfile
+    from io import BytesIO
+
+    regnskab, _ = workgroups
+    shared = ArchiveFolder.objects.create(name="Billeder")
+    secret = ArchiveFolder.objects.create(name="Regnskab", workgroup=regnskab)
+    mine = make_file(shared, name="ferie.jpg", body=b"mine")
+    theirs = make_file(secret, name="budget.pdf", body=b"secret")
+    client = login(resident_in("outsider@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{shared.pk}/hent-valgte", {"ids": [mine.pk, theirs.pk]})
+
+    body = zipfile.ZipFile(BytesIO(b"".join(response.streaming_content)))
+    assert body.namelist() == ["ferie.jpg"]
+
+
+def test_the_zip_is_redirected_to_when_there_is_a_bucket(
+    resident_in: Callable, media_tmp: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE PRODUCTION BRANCH, which the local store cannot reach on its own.
+
+    The whole reason the zip became an object is that a redirect frees the worker immediately and
+    lets Hetzner serve the bytes. Tests run against the filesystem backend, where `download_url`
+    returns None and the view streams instead - so without this the one behaviour the change exists
+    for would be the one behaviour nothing checked.
+    """
+    from arkiv import views
+    from arkiv.models import selection_key
+    from arkiv.storage import LocalArchiveStore
+
+    folder = ArchiveFolder.objects.create(name="Sommerfest")
+    one = make_file(folder, name="en.jpg", body=b"first file bytes")
+    client = login(resident_in("a@gahk.dk", None))
+
+    signed = "https://bucket.fsn1.your-objectstorage.com/arkiv-zip/xx?sig=abc"
+    monkeypatch.setattr(LocalArchiveStore, "download_url", lambda self, key, **kw: signed, raising=False)
+
+    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [one.pk]})
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == signed
+    # And it still built the object first - a redirect to a key with nothing behind it is a 404
+    # wearing a different hat.
+    assert views.get_store().exists(selection_key([(one.name, one.sha256)]))

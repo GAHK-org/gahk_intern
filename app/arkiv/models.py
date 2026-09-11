@@ -29,6 +29,7 @@ There is no FileField anywhere in this app. The key is derived from `sha256`, so
 never enters the schema and nothing here needs migrating if it ever changes again.
 """
 
+import hashlib
 from collections.abc import Iterable
 
 from django.conf import settings
@@ -36,10 +37,34 @@ from django.db import models
 from django.db.models.base import ModelBase
 from django.utils import timezone
 
-# Where an archived object lives, and the two derived sizes beside it.
+# Where an archived object lives, the two derived sizes beside it, and the built zips.
 ARCHIVE_PREFIX = "arkiv"
 THUMBNAIL_PREFIX = "arkiv-thumb"
 PREVIEW_PREFIX = "arkiv-preview"
+# Derived like the others, but DISPOSABLE: every object here can be rebuilt from the rows, so a
+# lifecycle rule expires the prefix and nothing is lost. See DEPLOY.md.
+ZIP_PREFIX = "arkiv-zip"
+
+
+def selection_key(members: "Iterable[tuple[str, str]]") -> str:
+    """Where the zip of one selection lives, named by what is in it.
+
+    Content-addressed like everything else here, except the "content" is the SELECTION - each
+    member's display name and hash - rather than the bytes. That is what makes the object reusable:
+    the whole kollegium downloading the sommerfest folder the morning after builds one zip and
+    redirects a hundred people to it.
+
+    It is also what makes reuse SAFE. A file added, removed, renamed or replaced changes the member
+    list and therefore the key, so a cached zip is always exactly the selection that was asked for -
+    there is no stale-cache case to reason about, and no invalidation to get wrong. The name is in
+    the digest because it is inside the zip: the same bytes filed under two names are two different
+    archives.
+    """
+    digest = hashlib.sha256()
+    for name, sha in sorted(members):
+        digest.update(f"{name}\0{sha}\n".encode())
+    hexed = digest.hexdigest()
+    return f"{ZIP_PREFIX}/{hexed[:2]}/{hexed}"
 
 
 def preview_key(sha256: str) -> str:
