@@ -1,4 +1,4 @@
-import { thumbnailImage } from './imageupload'
+import { previewImage, thumbnailImage } from './imageupload'
 
 /**
  * Uploading into Arkiv.
@@ -86,16 +86,26 @@ async function uploadOne(root: HTMLElement, file: File, status: HTMLElement): Pr
     if (!sent.ok) throw new Error(await errorFrom(sent))
   }
 
-  // The preview, if the server offered a slot for one. Best effort on purpose: a browser that
-  // cannot decode the image, or a thumbnail POST that fails, must not cost the resident the upload
-  // they actually came to make. commit asks the store whether a preview arrived, so the flag stays
-  // honest either way.
-  if (plan.thumbnail) {
+  // The derived sizes the server asked for: a 320px thumbnail for the listing and a 1600px preview
+  // for the viewer. It offers only the ones actually missing, so the second copy of a photograph
+  // somebody uploaded last year sends neither.
+  //
+  // Best effort on purpose, and per size. A browser that cannot decode the image, or a POST that
+  // fails, must not cost the resident the upload they actually came to make - and failing to make
+  // the preview must not cost them the thumbnail either. commit asks the STORE which sizes
+  // arrived, so both flags stay honest whatever happens here.
+  for (const [kind, maker] of [
+    ['thumbnail', thumbnailImage],
+    ['preview', previewImage],
+  ] as const) {
+    const slot = plan.derived?.[kind]
+    if (!slot) continue
     try {
-      const thumb = await thumbnailImage(file)
-      if (thumb) await sendThumbnail(plan.thumbnail, direct, sha256, thumb)
+      const image = await maker(file)
+      if (image) await sendDerived(slot, direct, sha256, kind, image)
     } catch {
-      // ignored: the file is already stored, and a missing preview is a file icon, not a failure
+      // ignored: the file is already stored, and a missing size degrades rather than breaks - no
+      // thumbnail is a file icon, and no preview means the viewer serves the original instead.
     }
   }
 
@@ -103,22 +113,24 @@ async function uploadOne(root: HTMLElement, file: File, status: HTMLElement): Pr
   if (!done.ok) throw new Error(await errorFrom(done))
 }
 
-async function sendThumbnail(
+async function sendDerived(
   plan: { mode: string; url?: string; fields?: Record<string, string> },
   direct: string,
   sha256: string,
-  thumb: Blob,
+  kind: string,
+  image: Blob,
 ): Promise<void> {
   const form = new FormData()
   if (plan.mode === 's3') {
+    // The policy already names the key and the content type; the browser only supplies the bytes.
     for (const [k, v] of Object.entries(plan.fields ?? {})) form.append(k, v)
-    form.append('file', thumb)
+    form.append('file', image)
     await fetch(plan.url!, { method: 'POST', body: form })
     return
   }
   form.append('sha256', sha256)
-  form.append('thumbnail', '1')
-  form.append('file', thumb, 'thumb.jpg')
+  form.append('derived', kind)
+  form.append('file', image, `${kind}.jpg`)
   await fetch(direct, { method: 'POST', headers: { 'X-CSRFToken': csrf() }, body: form })
 }
 

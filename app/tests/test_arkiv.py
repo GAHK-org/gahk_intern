@@ -1356,7 +1356,8 @@ def test_upload_sets_the_flag_only_when_a_preview_actually_arrived(
     assert ArchiveFile.objects.get().has_thumbnail is False
 
 
-def test_begin_offers_a_thumbnail_slot_for_images_only(resident_in: Callable, media_tmp: Path) -> None:
+def test_begin_offers_both_derived_sizes_for_images_only(resident_in: Callable, media_tmp: Path) -> None:
+    """Both sizes are made in the browser, so both have to be offered a slot. A PDF gets neither."""
     import json
 
     folder = ArchiveFolder.objects.create(name="Billeder")
@@ -1371,17 +1372,77 @@ def test_begin_offers_a_thumbnail_slot_for_images_only(resident_in: Callable, me
             content_type="application/json",
         ).json()
 
-    assert plan_for("image/jpeg", "fest.jpg")["thumbnail"] is not None
-    assert plan_for("application/pdf", "referat.pdf")["thumbnail"] is None
+    image = plan_for("image/jpeg", "fest.jpg")["derived"]
+    assert image["thumbnail"] is not None
+    assert image["preview"] is not None
+
+    document = plan_for("application/pdf", "referat.pdf")["derived"]
+    assert document["thumbnail"] is None
+    assert document["preview"] is None
 
 
-def test_the_thumbnail_leg_of_a_direct_upload_lands_under_its_own_prefix(
-    resident_in: Callable, media_tmp: Path
-) -> None:
+def test_begin_does_not_ask_for_a_size_the_store_already_has(resident_in: Callable, media_tmp: Path) -> None:
+    """The second copy of a photograph uploads nothing at all - including its derived sizes. Both
+    are keyed by the original's hash, so somebody else's upload last year already made them."""
+    import json
+    from io import BytesIO
+
+    from arkiv.models import preview_key, thumbnail_key
+    from arkiv.storage import get_store
+
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    client = login(resident_in("a@gahk.dk", None))
+    sha = digest_of(b"fest")
+    get_store().save(thumbnail_key(sha), BytesIO(b"already here"))
+
+    plan = client.post(
+        f"/intern/arkiv/mappe/{folder.pk}/upload/start",
+        data=json.dumps({"sha256": sha, "name": "fest.jpg", "size": 10, "content_type": "image/jpeg"}),
+        content_type="application/json",
+    ).json()["derived"]
+
+    assert plan["thumbnail"] is None, "asked for a thumbnail the bucket already holds"
+    assert plan["preview"] is not None, "the preview is genuinely missing and must still be asked for"
+    assert not get_store().exists(preview_key(sha))
+
+
+def test_both_derived_legs_land_under_their_own_prefixes(resident_in: Callable, media_tmp: Path) -> None:
+    """Three objects from one upload, each under its own prefix, and two flags set from the STORE."""
     from django.core.files.uploadedfile import SimpleUploadedFile
 
-    from arkiv.models import thumbnail_key
+    from arkiv.models import preview_key, thumbnail_key
     from arkiv.storage import get_store
+
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    client = login(resident_in("a@gahk.dk", None))
+    body = b"jpegbytes"
+    sha = digest_of(body)
+
+    begin(client, folder, body)
+    send(client, folder, body)
+    for kind, blob in (("thumbnail", b"thumb"), ("preview", b"biggerpreview")):
+        client.post(
+            f"/intern/arkiv/mappe/{folder.pk}/upload/direkte",
+            {"sha256": sha, "derived": kind, "file": SimpleUploadedFile(f"{kind}.jpg", blob)},
+        )
+    commit(client, folder, body)
+
+    store = get_store()
+    assert store.exists(object_key(sha)), "the original moved"
+    assert store.exists(thumbnail_key(sha)), "the thumbnail did not land"
+    assert store.exists(preview_key(sha)), "the preview did not land"
+    file = ArchiveFile.objects.get()
+    assert file.has_thumbnail is True
+    assert file.has_preview is True
+
+
+def test_a_browser_that_makes_only_the_thumbnail_still_gets_a_usable_file(
+    resident_in: Callable, media_tmp: Path
+) -> None:
+    """Each size is asked about separately, because a browser can manage one and not the other.
+    The flag has to follow what actually arrived - the viewer then serves the original instead,
+    which is slower but not broken. Believing the client here would render a broken image."""
+    from django.core.files.uploadedfile import SimpleUploadedFile
 
     folder = ArchiveFolder.objects.create(name="Billeder")
     client = login(resident_in("a@gahk.dk", None))
@@ -1392,21 +1453,23 @@ def test_the_thumbnail_leg_of_a_direct_upload_lands_under_its_own_prefix(
     send(client, folder, body)
     client.post(
         f"/intern/arkiv/mappe/{folder.pk}/upload/direkte",
-        {"sha256": sha, "thumbnail": "1", "file": SimpleUploadedFile("t.jpg", b"thumb")},
+        {"sha256": sha, "derived": "thumbnail", "file": SimpleUploadedFile("t.jpg", b"thumb")},
     )
     commit(client, folder, body)
 
-    store = get_store()
-    assert store.exists(object_key(sha)), "the original moved"
-    assert store.exists(thumbnail_key(sha)), "the preview did not land"
-    assert ArchiveFile.objects.get().has_thumbnail is True
+    file = ArchiveFile.objects.get()
+    assert file.has_thumbnail is True
+    assert file.has_preview is False, "claimed a preview that was never uploaded"
+
+    # And the viewer still works, on the original.
+    response = client.get(f"/intern/arkiv/fil/{file.pk}/stor")
+    assert response.status_code == 200
+    assert b"".join(response.streaming_content) == body
 
 
-def test_an_oversized_thumbnail_is_refused(resident_in: Callable, media_tmp: Path) -> None:
-    """The preview slot must not become a way to smuggle a second full-size upload past the cap."""
+def test_an_unknown_derived_size_is_refused(resident_in: Callable, media_tmp: Path) -> None:
+    """The kind names a key prefix, so it is not something a client may invent."""
     from django.core.files.uploadedfile import SimpleUploadedFile
-
-    from arkiv.uploads import MAX_THUMBNAIL_BYTES
 
     folder = ArchiveFolder.objects.create(name="Billeder")
     client = login(resident_in("a@gahk.dk", None))
@@ -1415,8 +1478,31 @@ def test_an_oversized_thumbnail_is_refused(resident_in: Callable, media_tmp: Pat
         f"/intern/arkiv/mappe/{folder.pk}/upload/direkte",
         {
             "sha256": digest_of(b"x"),
-            "thumbnail": "1",
-            "file": SimpleUploadedFile("t.jpg", b"x" * (MAX_THUMBNAIL_BYTES + 1)),
+            "derived": "../../../etc",
+            "file": SimpleUploadedFile("t.jpg", b"x"),
+        },
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.parametrize("kind", ["thumbnail", "preview"])
+def test_an_oversized_derived_image_is_refused(resident_in: Callable, media_tmp: Path, kind: str) -> None:
+    """Neither slot may become a way to smuggle a second full-size upload past the cap. Both are
+    checked, because they have DIFFERENT limits and a shared test would only prove one of them."""
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    from arkiv.uploads import derived_limit
+
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(
+        f"/intern/arkiv/mappe/{folder.pk}/upload/direkte",
+        {
+            "sha256": digest_of(b"x"),
+            "derived": kind,
+            "file": SimpleUploadedFile("t.jpg", b"x" * (derived_limit(kind) + 1)),
         },
     )
 

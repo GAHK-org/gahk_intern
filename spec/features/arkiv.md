@@ -131,10 +131,27 @@ forty, and paging through a folder of those is minutes of waiting on the one var
 Hetzner bill. Egress is the cost that scales with use here — storage is fixed and predictable — so
 the preview is a billing control as much as a UX one.
 
-**A missing preview falls back to the original.** The browser makes a thumbnail on upload and cannot
-make a preview, so every freshly uploaded photograph is `has_preview=False` until
-`make_arkiv_thumbnails` sweeps. Without the fallback the one image that fails to open would always
-be the one somebody just added and went to check.
+**Both derived sizes are made in the browser, at upload.** `begin` offers a slot for each size the
+store has not already got; the browser renders them off the same canvas that downscales room
+photos, and `commit` asks the *store* which ones arrived before setting the flags. Two rows sharing
+bytes share all three objects, so the second copy of a photograph uploads nothing at all — not even
+a thumbnail.
+
+The alternative was Pillow in the production image and a scheduled sweep, and it was rejected
+twice over: it breaks the no-worker, no-Celery posture the whole project is built on, and it leaves
+a window in which the newest photograph is the one with no preview — while the person who just
+uploaded it is precisely the one about to open the folder and look. `make_arkiv_thumbnails` stays
+the one-off for the imported backlog and a hand-run net for whatever a browser could not decode.
+
+The cost is two implementations of the same two sizes, one in Pillow and one on a canvas. The
+constants name each other in both files. Drift is cosmetic — a folder showing previews at two
+sizes depending on how its files arrived — but it is invisible until somebody notices.
+
+**A missing size degrades rather than breaks**, which is what makes the best-effort upload legs
+safe. No thumbnail is a file icon; no preview means the viewer serves the original — slower and
+more egress, but not a broken image. That fallback is load-bearing for any file that predates this,
+for anything the browser could not decode, and for every one of the 57,752 imported photographs
+until the backlog command reaches it.
 
 **The viewer is a progressive enhancement.** Each image row is an ordinary link to the download
 view; the script intercepts an unmodified left click and opens the overlay instead. Ctrl-, cmd-,

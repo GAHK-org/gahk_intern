@@ -33,7 +33,7 @@ from django.views.decorators.http import require_POST
 from residents.permissions import current_resident
 
 from . import access, services, uploads
-from .models import ArchiveFile, ArchiveFolder, object_key, thumbnail_key
+from .models import ArchiveFile, ArchiveFolder, object_key
 from .storage import ArchiveStore, LocalArchiveStore, content_disposition, get_store
 
 
@@ -149,14 +149,26 @@ def _writable_folder(request: HttpRequest, pk: int) -> ArchiveFolder:
     return folder
 
 
-def _thumbnail_plan(sha256: str, content_type: str) -> dict[str, object] | None:
-    """How the browser should send a preview, or None if this file should not have one."""
+def _derived_plan(kind: str, sha256: str, content_type: str) -> dict[str, object] | None:
+    """How the browser should send one derived size, or None if it should not send this one.
+
+    None when the file is not an image, and also when the store already has that size - the bytes
+    of a photograph somebody else uploaded last year are already there, and so are its thumbnail
+    and preview, so there is nothing for this browser to make.
+    """
     if not content_type.startswith("image/"):
         return None
-    policy = uploads.presigned_thumbnail_post(sha256)
+    if uploads.stored_derived(kind, sha256):
+        return None
+    policy = uploads.presigned_derived_post(kind, sha256)
     if policy is None:
         return {"mode": "direct"}
     return {"mode": "s3", "url": policy["url"], "fields": policy["fields"]}
+
+
+def _derived_plans(sha256: str, content_type: str) -> dict[str, object | None]:
+    """Every derived size the browser should send for this file, by name."""
+    return {kind: _derived_plan(kind, sha256, content_type) for kind in uploads.DERIVED_SIZES}
 
 
 @access.access_required
@@ -190,20 +202,26 @@ def upload_begin(request: HttpRequest, pk: int) -> HttpResponseBase:
         # Somebody has already uploaded these exact bytes, here or in another folder. Nothing to
         # send: commit straight away. Content addressing paying for itself on the second copy of a
         # party photograph.
-        # The bytes are there, but a preview might not be - an earlier upload from a browser that
-        # could not decode the image, or an imported file. Offer the thumbnail slot regardless.
-        thumb = None if uploads.stored_thumbnail(sha256) else _thumbnail_plan(sha256, content_type)
-        return JsonResponse({"upload": None, "thumbnail": thumb, "already_stored": True})
+        # The bytes are there, but a derived size might not be - an earlier upload from a browser
+        # that could not decode the image, or a file that arrived through the importer. Offer
+        # whichever ones are genuinely missing; _derived_plan drops the rest.
+        return JsonResponse(
+            {
+                "upload": None,
+                "derived": _derived_plans(sha256, content_type),
+                "already_stored": True,
+            }
+        )
 
     policy = uploads.presigned_post(sha256, content_type)
-    thumb = _thumbnail_plan(sha256, content_type)
+    derived = _derived_plans(sha256, content_type)
     if policy is None:
         # No bucket (dev, CI): the browser posts the file to upload_direct instead.
-        return JsonResponse({"upload": {"mode": "direct"}, "thumbnail": thumb, "already_stored": False})
+        return JsonResponse({"upload": {"mode": "direct"}, "derived": derived, "already_stored": False})
     return JsonResponse(
         {
             "upload": {"mode": "s3", "url": policy["url"], "fields": policy["fields"]},
-            "thumbnail": thumb,
+            "derived": derived,
             "already_stored": False,
         }
     )
@@ -226,16 +244,21 @@ def upload_direct(request: HttpRequest, pk: int) -> HttpResponseBase:
 
     upload = request.FILES.get("file")
     sha256 = str(request.POST.get("sha256", "")).lower()
-    is_thumb = request.POST.get("thumbnail") == "1"
+    # Which of the three things this is: the file itself, or one of the derived sizes. Named rather
+    # than a boolean, because there are two derived sizes now and a third would be one more name.
+    kind = str(request.POST.get("derived", ""))
     if upload is None or not uploads.valid_hash(sha256):
         return JsonResponse({"error": "Ugyldig upload."}, status=400)
-    limit = uploads.MAX_THUMBNAIL_BYTES if is_thumb else uploads.MAX_UPLOAD_BYTES
+    if kind and kind not in uploads.DERIVED_SIZES:
+        return JsonResponse({"error": "Ukendt billedst\u00f8rrelse."}, status=400)
+
+    limit = uploads.derived_limit(kind) if kind else uploads.MAX_UPLOAD_BYTES
     if (upload.size or 0) > limit:
         return JsonResponse({"error": "Filen er for stor."}, status=400)
 
     # .file is the underlying stream; UploadedFile itself is not a BinaryIO.
-    key = thumbnail_key(sha256) if is_thumb else object_key(sha256)
-    store.save(key, cast("BinaryIO", upload.file))
+    key = uploads.derived_key(kind, sha256) if kind else object_key(sha256)
+    store.save(cast("str", key), cast("BinaryIO", upload.file))
     return JsonResponse({"ok": True})
 
 
@@ -275,8 +298,11 @@ def upload_commit(request: HttpRequest, pk: int) -> HttpResponseBase:
             content_type=stored_type or mimetypes.guess_type(name)[0] or "",
             uploaded_by=current_resident(request),
             # Asked of the store, not taken from the client: a flag set on the client's word would
-            # render a broken <img> for every file whose preview silently failed to upload.
-            has_thumbnail=uploads.stored_thumbnail(sha256),
+            # render a broken <img> for every file whose derived upload silently failed. Each size
+            # is asked about separately, because a browser can perfectly well manage one and not
+            # the other - and the viewer falls back to the original when the preview is missing.
+            has_thumbnail=uploads.stored_derived("thumbnail", sha256),
+            has_preview=uploads.stored_derived("preview", sha256),
         )
     except IntegrityError:
         # Two tabs, or a double-tap on a slow connection. The partial unique index caught it.
