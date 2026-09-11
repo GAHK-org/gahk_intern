@@ -1,4 +1,4 @@
-import { thumbnailImage } from './imageupload'
+import { previewImage, thumbnailImage } from './imageupload'
 
 /**
  * Uploading into Arkiv.
@@ -86,16 +86,26 @@ async function uploadOne(root: HTMLElement, file: File, status: HTMLElement): Pr
     if (!sent.ok) throw new Error(await errorFrom(sent))
   }
 
-  // The preview, if the server offered a slot for one. Best effort on purpose: a browser that
-  // cannot decode the image, or a thumbnail POST that fails, must not cost the resident the upload
-  // they actually came to make. commit asks the store whether a preview arrived, so the flag stays
-  // honest either way.
-  if (plan.thumbnail) {
+  // The derived sizes the server asked for: a 320px thumbnail for the listing and a 1600px preview
+  // for the viewer. It offers only the ones actually missing, so the second copy of a photograph
+  // somebody uploaded last year sends neither.
+  //
+  // Best effort on purpose, and per size. A browser that cannot decode the image, or a POST that
+  // fails, must not cost the resident the upload they actually came to make - and failing to make
+  // the preview must not cost them the thumbnail either. commit asks the STORE which sizes
+  // arrived, so both flags stay honest whatever happens here.
+  for (const [kind, maker] of [
+    ['thumbnail', thumbnailImage],
+    ['preview', previewImage],
+  ] as const) {
+    const slot = plan.derived?.[kind]
+    if (!slot) continue
     try {
-      const thumb = await thumbnailImage(file)
-      if (thumb) await sendThumbnail(plan.thumbnail, direct, sha256, thumb)
+      const image = await maker(file)
+      if (image) await sendDerived(slot, direct, sha256, kind, image)
     } catch {
-      // ignored: the file is already stored, and a missing preview is a file icon, not a failure
+      // ignored: the file is already stored, and a missing size degrades rather than breaks - no
+      // thumbnail is a file icon, and no preview means the viewer serves the original instead.
     }
   }
 
@@ -103,22 +113,24 @@ async function uploadOne(root: HTMLElement, file: File, status: HTMLElement): Pr
   if (!done.ok) throw new Error(await errorFrom(done))
 }
 
-async function sendThumbnail(
+async function sendDerived(
   plan: { mode: string; url?: string; fields?: Record<string, string> },
   direct: string,
   sha256: string,
-  thumb: Blob,
+  kind: string,
+  image: Blob,
 ): Promise<void> {
   const form = new FormData()
   if (plan.mode === 's3') {
+    // The policy already names the key and the content type; the browser only supplies the bytes.
     for (const [k, v] of Object.entries(plan.fields ?? {})) form.append(k, v)
-    form.append('file', thumb)
+    form.append('file', image)
     await fetch(plan.url!, { method: 'POST', body: form })
     return
   }
   form.append('sha256', sha256)
-  form.append('thumbnail', '1')
-  form.append('file', thumb, 'thumb.jpg')
+  form.append('derived', kind)
+  form.append('file', image, `${kind}.jpg`)
   await fetch(direct, { method: 'POST', headers: { 'X-CSRFToken': csrf() }, body: form })
 }
 
@@ -155,4 +167,213 @@ if (root && input && status) {
     // to trust.
     window.location.reload()
   })
+}
+
+/**
+ * The viewer, and the selection counter beside "Hent valgte".
+ *
+ * Both are progressive enhancements over markup that already works. Every image row is an ordinary
+ * link to the download view, and every checkbox already belongs to the batch form by `form=`; what
+ * follows intercepts a plain left click to show the picture instead, and keeps a count in view.
+ * With the bundle dead, clicking an image downloads it and the batch button still posts.
+ */
+
+interface Slide {
+  url: string
+  name: string
+}
+
+function slidesFrom(): Slide[] {
+  // DOM order is the listing's order, which is the server's ordering by name. No second sort here.
+  return Array.from(document.querySelectorAll<HTMLAnchorElement>('a[data-preview]')).map((a) => ({
+    url: a.dataset.preview!,
+    name: a.dataset.name ?? '',
+  }))
+}
+
+function buildViewer(): {
+  open: (index: number) => void
+  close: () => void
+} {
+  const slides = slidesFrom()
+  let at = 0
+
+  const overlay = document.createElement('div')
+  overlay.className = 'arkiv-viewer'
+  overlay.hidden = true
+  // A dialog to the accessibility tree, not just a dark div: focus moves here on open and the
+  // label is read out, so a screen-reader user is told what happened rather than left on a page
+  // whose links have silently stopped responding.
+  overlay.setAttribute('role', 'dialog')
+  overlay.setAttribute('aria-modal', 'true')
+  overlay.setAttribute('aria-label', 'Billedvisning')
+  overlay.tabIndex = -1
+  overlay.innerHTML = `
+    <button type="button" class="arkiv-viewer-close" aria-label="Luk">&times;</button>
+    <button type="button" class="arkiv-viewer-nav arkiv-viewer-prev" aria-label="Forrige">&lsaquo;</button>
+    <figure class="arkiv-viewer-stage">
+      <img alt="">
+      <figcaption></figcaption>
+    </figure>
+    <button type="button" class="arkiv-viewer-nav arkiv-viewer-next" aria-label="Næste">&rsaquo;</button>`
+  document.body.append(overlay)
+
+  const img = overlay.querySelector('img')!
+  const caption = overlay.querySelector('figcaption')!
+  let restoreFocusTo: HTMLElement | null = null
+
+  function show(index: number): void {
+    // Wraps, so the end of a folder rolls round rather than dead-ending on a button that does
+    // nothing. `% length` twice because JavaScript's remainder keeps the sign of the dividend.
+    at = ((index % slides.length) + slides.length) % slides.length
+    const slide = slides[at]
+    img.src = slide.url
+    img.alt = slide.name
+    caption.textContent = `${slide.name} · ${at + 1}/${slides.length}`
+
+    // Warm the neighbours so paging feels immediate. The preview is a few hundred kB and cached
+    // for a week, so this costs one request each and only the first time round.
+    for (const step of [1, -1]) {
+      const near = slides[((at + step) % slides.length + slides.length) % slides.length]
+      new Image().src = near.url
+    }
+  }
+
+  function open(index: number): void {
+    restoreFocusTo = document.activeElement as HTMLElement | null
+    overlay.hidden = false
+    document.body.classList.add('arkiv-viewer-open')
+    show(index)
+    overlay.focus()
+  }
+
+  function close(): void {
+    overlay.hidden = true
+    document.body.classList.remove('arkiv-viewer-open')
+    // Drop the bytes; a folder of two hundred photographs paged end to end would otherwise leave
+    // the last one decoded in memory for as long as the page lives.
+    img.removeAttribute('src')
+    restoreFocusTo?.focus()
+  }
+
+  overlay.querySelector('.arkiv-viewer-close')!.addEventListener('click', close)
+  overlay.querySelector('.arkiv-viewer-prev')!.addEventListener('click', () => show(at - 1))
+  overlay.querySelector('.arkiv-viewer-next')!.addEventListener('click', () => show(at + 1))
+  overlay.addEventListener('click', (event) => {
+    // Only the backdrop itself. A click that started on the image or a button is not "outside".
+    if (event.target === overlay) close()
+  })
+
+  document.addEventListener('keydown', (event) => {
+    if (overlay.hidden) return
+    if (event.key === 'Escape') close()
+    else if (event.key === 'ArrowRight') show(at + 1)
+    else if (event.key === 'ArrowLeft') show(at - 1)
+    else return
+    event.preventDefault()
+  })
+
+  // Swipe, because this is mostly read on a phone. Horizontal only, and only past a threshold, so
+  // it does not fight a vertical scroll or fire on a tap that wandered a pixel.
+  let startX = 0
+  let startY = 0
+  overlay.addEventListener(
+    'touchstart',
+    (event) => {
+      startX = event.changedTouches[0].clientX
+      startY = event.changedTouches[0].clientY
+    },
+    { passive: true },
+  )
+  overlay.addEventListener(
+    'touchend',
+    (event) => {
+      const dx = event.changedTouches[0].clientX - startX
+      const dy = event.changedTouches[0].clientY - startY
+      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) show(at + (dx < 0 ? 1 : -1))
+    },
+    { passive: true },
+  )
+
+  return { open, close }
+}
+
+const previewLinks = document.querySelectorAll<HTMLAnchorElement>('a[data-preview]')
+if (previewLinks.length > 0) {
+  const viewer = buildViewer()
+  previewLinks.forEach((link, index) => {
+    link.addEventListener('click', (event) => {
+      // Leave the modified clicks alone: ctrl/cmd/shift/middle-click all mean "I want the file",
+      // and hijacking them is the thing that makes a gallery infuriating.
+      if (event.defaultPrevented || event.button !== 0) return
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      event.preventDefault()
+      viewer.open(index)
+    })
+  })
+}
+
+/**
+ * The count beside "Hent valgte", and the pending state while the zip is built.
+ *
+ * Both are enhancements: the form posts and the download works with none of this running.
+ *
+ * The pending state exists because the server now BUILDS the archive into the bucket before
+ * redirecting to it, rather than streaming it out as it goes (see arkiv/views.py). That is what
+ * takes the recipient's connection off a gunicorn worker, and the price is a wait with nothing to
+ * look at - a second or two for an ordinary selection, closer to ten for a large one. Long enough
+ * to read as "the button did nothing" and be clicked again.
+ *
+ * Knowing when to STOP is the awkward half. A form POST that ends in a download does not navigate:
+ * the page stays, the bytes go to the downloads shelf, and no load event fires anywhere. The
+ * response is a redirect to Hetzner, whose reply is not ours to see either. So the form carries a
+ * nonce, the server echoes it back as a cookie, and this polls for it.
+ */
+const batch = document.querySelector<HTMLFormElement>('[data-arkiv-batch]')
+const batchCount = batch?.querySelector<HTMLElement>('[data-batch-count]') ?? null
+if (batch && batchCount) {
+  const picks = Array.from(document.querySelectorAll<HTMLInputElement>('[data-batch-pick]'))
+  const submit = batch.querySelector<HTMLButtonElement>('[data-batch-submit]')
+  const token = batch.querySelector<HTMLInputElement>('[data-batch-token]')
+
+  const update = (): void => {
+    const n = picks.filter((p) => p.checked).length
+    batchCount.textContent = n === 0 ? '' : `${n} valgt`
+  }
+  picks.forEach((pick) => pick.addEventListener('change', update))
+  update()
+
+  if (submit && token) {
+    const label = submit.textContent ?? 'Hent valgte'
+    let waiting = 0
+
+    const finish = (): void => {
+      window.clearInterval(waiting)
+      document.cookie = 'arkiv_zip_done=; Max-Age=0; Path=/'
+      submit.disabled = false
+      submit.textContent = label
+      update()
+    }
+
+    batch.addEventListener('submit', () => {
+      // No selection: the server answers with a message on a page that reloads, so leaving the
+      // button alone is both correct and less work than predicting that refusal here.
+      if (!picks.some((p) => p.checked)) return
+
+      const nonce = Math.random().toString(36).slice(2) + Date.now().toString(36)
+      token.value = nonce
+      submit.disabled = true
+      submit.textContent = 'Pakker filer…'
+      batchCount.textContent = 'Det kan tage et øjeblik for mange filer.'
+
+      const started = Date.now()
+      waiting = window.setInterval(() => {
+        if (document.cookie.includes(`arkiv_zip_done=${nonce}`)) finish()
+        // A build that failed sets no cookie, and a button disabled for ever is a worse bug than
+        // the one this exists to fix. Past the point where the server would itself have given up,
+        // hand it back and let the resident try again.
+        else if (Date.now() - started > 120_000) finish()
+      }, 250)
+    })
+  }
 }

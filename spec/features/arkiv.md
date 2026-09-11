@@ -118,6 +118,82 @@ upload.
 **The bucket needs a CORS rule** (DEPLOY.md §4c) and only production can notice its absence, since
 the dev path never leaves the app.
 
+## Three sizes, and the viewer
+
+An image is stored three times: the original under `arkiv/`, a 320px thumbnail under `arkiv-thumb/`,
+and a ~1600px preview under `arkiv-preview/`. All three are keyed by the **original's** hash, so two
+rows sharing bytes share all three objects and none of them can go stale — different bytes are a
+different key.
+
+The middle size exists because neither neighbour can do its job. The thumbnail is drawn at 40px in a
+row and is porridge full-screen; the original is a phone photograph of ten megabytes or a scan of
+forty, and paging through a folder of those is minutes of waiting on the one variable line of the
+Hetzner bill. Egress is the cost that scales with use here — storage is fixed and predictable — so
+the preview is a billing control as much as a UX one.
+
+**Both derived sizes are made in the browser, at upload.** `begin` offers a slot for each size the
+store has not already got; the browser renders them off the same canvas that downscales room
+photos, and `commit` asks the *store* which ones arrived before setting the flags. Two rows sharing
+bytes share all three objects, so the second copy of a photograph uploads nothing at all — not even
+a thumbnail.
+
+The alternative was Pillow in the production image and a scheduled sweep, and it was rejected
+twice over: it breaks the no-worker, no-Celery posture the whole project is built on, and it leaves
+a window in which the newest photograph is the one with no preview — while the person who just
+uploaded it is precisely the one about to open the folder and look. `make_arkiv_thumbnails` stays
+the one-off for the imported backlog and a hand-run net for whatever a browser could not decode.
+
+The cost is two implementations of the same two sizes, one in Pillow and one on a canvas. The
+constants name each other in both files. Drift is cosmetic — a folder showing previews at two
+sizes depending on how its files arrived — but it is invisible until somebody notices.
+
+**A missing size degrades rather than breaks**, which is what makes the best-effort upload legs
+safe. No thumbnail is a file icon; no preview means the viewer serves the original — slower and
+more egress, but not a broken image. That fallback is load-bearing for any file that predates this,
+for anything the browser could not decode, and for every one of the 57,752 imported photographs
+until the backlog command reaches it.
+
+**The viewer is a progressive enhancement.** Each image row is an ordinary link to the download
+view; the script intercepts an unmodified left click and opens the overlay instead. Ctrl-, cmd-,
+shift- and middle-click are deliberately left alone — hijacking them is what makes a gallery
+infuriating — and with the bundle dead, clicking an image downloads it.
+
+## Downloading several at once
+
+Selected files come back as one zip that is **built into the bucket and then redirected to**, like
+every other download here. `ZIP_STORED`, because the contents are JPEGs and video and deflate would
+spend real CPU on the machine serving the site to save a percent.
+
+The first version streamed the zip straight to the browser, and that was a mistake worth recording.
+It made this the only route in Arkiv that holds a gunicorn worker — and held it not for as long as
+the zip took to *build* but for as long as the recipient took to *receive* it, because TCP
+backpressure means the server can only write as fast as the browser reads. One resident on hotel
+wifi occupied one of three synchronous workers for the whole download, and was killed at
+`--timeout 60` regardless, left holding a truncated archive.
+
+Building it as an object decouples that completely: the worker waits only for the build, which is
+server-to-Hetzner traffic inside `fsn1`, and then hands back a redirect. **This needed no job
+runner** — the build is still synchronous, all that changed is what the worker is waiting for. The
+Celery-shaped version, where the build happens out of band entirely, would only remove the wait
+itself, and is not worth a queue.
+
+**Reused, not rebuilt.** `selection_key` names the object after the selection — each member's
+display name and hash — so the morning after sommerfest one build serves everybody who asks for the
+same folder. It is also what makes reuse safe with no invalidation logic: adding, removing,
+renaming or replacing a file changes the member list and therefore the key, so a cached zip is
+always exactly the selection that was asked for. The key is derived from the *access-filtered* list,
+so a selection can only ever be named by files its asker may see.
+
+The objects are disposable and expire on a lifecycle rule (DEPLOY.md). **The caps
+(`MAX_SELECTED_FILES`, `MAX_SELECTED_BYTES`) now bound the build and the temporary file**, not a
+resident's connection — which is the difference between a limit set against something measurable and
+one set against hotel wifi.
+
+**POST, not GET**, though nothing is modified: a couple of hundred ids do not belong in a URL, and a
+GET would be a link somebody could paste into a chat thread to start a half-gigabyte download for
+whoever clicked it. The ids arrive from the client, so they are re-checked through `visible_files`
+scoped to the folder — the same rule the listing used, applied again rather than trusted.
+
 Arkiv does **not** use `STORAGES["default"]`. That is `MediaS3Storage`, pinned to `location="media"`,
 and the prefix is a security boundary (DEPLOY.md §4c/§4d) — a storage that could reach `arkiv/`
 could reach `backups/`. `arkiv/storage.py` talks to the bucket directly, with a local-filesystem
@@ -159,14 +235,15 @@ nothing.
 
 ## Not built yet
 
-Browse, download and **upload** are built. Still to come, in rough order:
+Browse, download, upload, subfolders, soft delete and restore, the three image sizes, the viewer and
+batch download are built. Still to come, in rough order:
 
-1. **Thumbnails.** Client-side via the existing `downscaleImage()` (`frontend/src/imageupload.ts`),
-   uploaded as a second object under `arkiv-thumb/`. Same no-Pillow, no-worker posture as the rest of
-   the app. For the imported backlog, a **one-off local script** where Pillow as a dev-only
-   dependency is fine — it must not become a prod dependency.
-2. **Folder and file management in the app** — create, rename, move, soft delete, restore. Today the
-   admin does it.
-3. **An audit command**, the sibling of `audit_media`: rows whose object is missing, and objects no
-   row references. Report-only, for the reasons that command's docstring gives.
+1. **Rename and move.** Both are DB-only by construction — the key is the hash, not the path — so
+   this is a form and an access check, not a data migration. The admin does it today.
+2. **An audit command**, the sibling of `audit_media`: rows whose object is missing, and objects no
+   row references. Report-only, for the reasons that command's docstring gives. `_zip_chunks`
+   skipping a vanished object rather than truncating the archive is a placeholder for it.
+3. **Search.** A folder tree of 57,000 photographs is navigable only if you know where you put
+   something. The DB index is what makes this possible at all, and is a large part of why the
+   archive is not rendered by listing the bucket.
 4. **Search.** A file archive without it is a filing cabinet in the dark, and 2 TB makes that acute.

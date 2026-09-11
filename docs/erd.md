@@ -526,6 +526,7 @@ erDiagram
         datetime deleted_at
         int deleted_by_id FK
         bool has_thumbnail
+        bool has_preview
     }
 
     core_PushSubscription }o--|| residents_Resident : "user"
@@ -695,6 +696,7 @@ erDiagram
         datetime deleted_at
         int deleted_by_id FK
         bool has_thumbnail
+        bool has_preview
     }
 
     core_Workgroup { }

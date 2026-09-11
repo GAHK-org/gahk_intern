@@ -90,14 +90,49 @@
   {% endif %}
 
   {% if files %}
+    {% comment %}
+      OUTSIDE the list, and the checkboxes below join it by id rather than by nesting. Each row
+      already carries its own "Fjern" form, and a form inside a form is not a thing HTML has - so
+      wrapping the <ul> would either break the delete buttons or mean giving up one of the two.
+      The `form=` attribute is how the standard says to do this.
+
+      No JavaScript required: with the script dead the checkboxes still tick and the button still
+      posts, and an empty selection comes back as a message rather than a broken page.
+    {% endcomment %}
+    <form method="post" action="{% url 'arkiv:download_selected' folder.pk %}"
+          id="arkiv-batch" class="arkiv-batch" data-arkiv-batch>
+      {% csrf_token %}
+      {% comment %}
+        Filled in by the script with a nonce before the form goes; the response echoes it back as a
+        cookie so the page can tell that the build finished. Empty without JavaScript, which the
+        server reads as "this page is not watching" - the download still works, the button simply
+        stays as it is.
+      {% endcomment %}
+      <input type="hidden" name="done_token" value="" data-batch-token>
+      <button type="submit" class="btn-secondary" data-batch-submit>Hent valgte</button>
+      <span class="muted" data-batch-count aria-live="polite"></span>
+    </form>
+
     <ul class="arkiv-list">
       {% for file in files %}
         <li>
+          <input type="checkbox" name="ids" value="{{ file.pk }}" form="arkiv-batch"
+                 class="arkiv-pick" data-batch-pick
+                 aria-label="Vælg {{ file.name }}">
           {% comment %}
             Through the download view, never a presigned URL in the page: that URL is a bearer token
             for the file and would outlive the reader's right to it. See arkiv/storage.py.
           {% endcomment %}
-          <a href="{% url 'arkiv:download' file.pk %}">
+          <a href="{% url 'arkiv:download' file.pk %}"
+             {% if file.has_thumbnail %}
+               {% comment %}
+                 What turns this row into a viewer. The href stays the download, so without
+                 JavaScript - or on a middle-click - the link does the ordinary thing; the script
+                 intercepts a plain left click and opens the big image instead. Every anchor
+                 carrying data-preview is one slide, in the order they appear here.
+               {% endcomment %}
+               data-preview="{% url 'arkiv:preview' file.pk %}" data-name="{{ file.name }}"
+             {% endif %}>
             {% if file.has_thumbnail %}
               {% comment %}
                 loading="lazy" because a folder of two hundred party photographs is the case this
