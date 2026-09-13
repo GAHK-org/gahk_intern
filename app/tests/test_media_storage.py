@@ -377,9 +377,10 @@ def test_a_storage_failure_is_logged_and_does_not_break_the_delete(
 # --- the authentication gate ----------------------------------------------------------------------
 #
 # /media/ used to be public by URL, deliberately, as the legacy /public/ images were. It is not any
-# more: everything except the cms/ prefix now needs a session. cms/ is the exception because the
-# CMS toolbar's uploads are embedded in Page/NewsItem/Event bodies that the logged-out front page
-# renders — see PUBLIC_PREFIXES for how that list was derived.
+# more: most prefixes need a session. The exceptions are in PUBLIC_PREFIXES, which records how each
+# one was derived — cms/ because the CMS toolbar's uploads are embedded in Page/NewsItem/Event
+# bodies that the logged-out front page renders, and the two ølkælder product-photo prefixes because
+# the till renders them with no session at all.
 
 GATED = [
     "profile_pictures/IMG_1234.jpg",
@@ -388,8 +389,15 @@ GATED = [
     "quick_posts/2026/09/kaffe.jpg",
     "quick_comments/2026/09/svar.jpg",
     "begivenheder/2026/09/plakat.jpg",
-    "oel/tuborg.png",
+    # The legacy sibling of the till's photos, and the reason the public entry is the long
+    # "public/image/intern/oel/" and not a bare "public/": værelsestjek lives here too.
     "public/image/intern/roomimages/112/skab/image.jpg",
+]
+
+# What the till asks for, with no session, on every load of /intern/oelkaelder/.
+TILL = [
+    "oel/tuborg.png",
+    "public/image/intern/oel/billedemangler.jpg",
 ]
 
 
@@ -440,6 +448,37 @@ def test_a_logged_in_resident_can_read_internal_media(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("name", TILL)
+def test_the_tills_product_photos_stay_readable_without_a_session(media_tmp: Path, name: str) -> None:
+    """THE REGRESSION THIS PAIR EXISTS FOR. oelkaelder.views.shop is gated on the till's LAN IP and
+    takes no login, so the iPad behind the bar is an anonymous client. When oel/ was gated, every
+    product tile on the till went blank for days — and every logged-in browser kept rendering the
+    same page perfectly, so nothing anyone tested could see it."""
+    from django.test import Client
+
+    store(media_tmp, name)
+
+    response = Client().get(f"/media/{name}")
+
+    assert response.status_code == 200, "the till has no session and cannot get one"
+    assert b"".join(response.streaming_content) == b"pngbytes"
+
+
+@pytest.mark.django_db
+def test_publishing_the_tills_photos_did_not_publish_vaerelsestjek(media_tmp: Path) -> None:
+    """The two legacy trees are siblings under public/image/intern/. Widening the till's entry to a
+    bare "public/" — or to "public/image/intern/" — would hand out room-inspection photographs."""
+    from django.test import Client
+
+    store(media_tmp, "public/image/intern/roomimages/112/skab/image.jpg")
+
+    response = Client().get("/media/public/image/intern/roomimages/112/skab/image.jpg")
+
+    assert response.status_code == 302
+    assert response.headers["Location"].startswith(settings_login_url())
+
+
+@pytest.mark.django_db
 def test_cms_images_stay_readable_without_a_session(media_tmp: Path) -> None:
     """The public site embeds these in Page/NewsItem/Event bodies. Gating them blanks the front
     page, which is why PUBLIC_PREFIXES exists at all."""
@@ -459,6 +498,10 @@ def test_cms_images_stay_readable_without_a_session(media_tmp: Path) -> None:
         "/media/cms/../profile_pictures/IMG_1234.jpg",
         "/media/cms/./../profile_pictures/IMG_1234.jpg",
         "/media/cms/../../media/profile_pictures/IMG_1234.jpg",
+        # Every public prefix is a fresh doorway, so the till's two are parametrised alongside cms/
+        # rather than trusted to inherit its normalisation.
+        "/media/oel/../profile_pictures/IMG_1234.jpg",
+        "/media/public/image/intern/oel/../../../../profile_pictures/IMG_1234.jpg",
     ],
 )
 def test_the_public_prefix_cannot_be_used_to_reach_a_gated_one(media_tmp: Path, attempt: str) -> None:
