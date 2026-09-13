@@ -181,6 +181,8 @@ if (root && input && status) {
 interface Slide {
   url: string
   name: string
+  /** The ORIGINAL, at full resolution - what the anchor pointed at before the viewer took the click. */
+  download: string
 }
 
 function slidesFrom(): Slide[] {
@@ -188,6 +190,7 @@ function slidesFrom(): Slide[] {
   return Array.from(document.querySelectorAll<HTMLAnchorElement>('a[data-preview]')).map((a) => ({
     url: a.dataset.preview!,
     name: a.dataset.name ?? '',
+    download: a.getAttribute('href') ?? '',
   }))
 }
 
@@ -214,22 +217,88 @@ function buildViewer(): {
     <figure class="arkiv-viewer-stage">
       <img alt="">
       <figcaption></figcaption>
+      <p class="arkiv-viewer-actions">
+        <a class="arkiv-viewer-save" download>Hent original</a>
+        <span class="arkiv-viewer-hint" hidden>Hold fingeren på billedet for at gemme det i Fotos</span>
+      </p>
     </figure>
     <button type="button" class="arkiv-viewer-nav arkiv-viewer-next" aria-label="Næste">&rsaquo;</button>`
   document.body.append(overlay)
 
   const img = overlay.querySelector('img')!
   const caption = overlay.querySelector('figcaption')!
+  const save = overlay.querySelector<HTMLAnchorElement>('.arkiv-viewer-save')!
   let restoreFocusTo: HTMLElement | null = null
+
+  const hint = overlay.querySelector<HTMLElement>('.arkiv-viewer-hint')!
+  // Touch only. A long press is the gesture this serves and a desktop has none - it has the "Hent
+  // original" link instead, which costs nothing until clicked.
+  const touch = matchMedia('(hover: none)').matches
+
+  /**
+   * TWO WAYS TO KEEP A PICTURE, because only one of them exists per device.
+   *
+   * On a phone, a long press on the image is the answer: iOS offers "Føj til Fotos", Android
+   * "Download image", straight into the photo library with no permission prompt and no second copy
+   * of the bytes - the browser already has them. That path needs no code, only for nothing to
+   * suppress it; styles.css keeps -webkit-touch-callout on this image for exactly that reason while
+   * switching it off on the grid, where a long press means select instead.
+   *
+   * But a long press saves WHAT IS ON SCREEN, and what is on screen is the ~1600px preview. So to
+   * let a phone save the real photograph, the viewer quietly replaces its own image with the
+   * original once that has finished loading. The gesture is untouched; the thing it is pointed at
+   * changes underneath it.
+   *
+   * Preview first, original second, deliberately. Showing the original immediately would mean
+   * staring at a blank frame while forty megabytes arrive over dorm wifi - the preview is on screen
+   * in a moment and the swap, when it lands, is the same picture at higher resolution and invisible.
+   *
+   * The cost is honest and worth stating: a photograph that is looked at is now fetched twice, and
+   * egress is the one line of the Hetzner bill that scales with use. Hence touch-only. A desktop
+   * browsing the archive is unaffected, and a phone pays it only for pictures somebody actually
+   * opened - never for the grid, which is thumbnails throughout.
+   *
+   * This deliberately does NOT go through navigator.share with a fetched file, which would also
+   * work: that reads the bytes cross-origin, and the bucket's CORS rule allows POST only. An
+   * <img src> is not subject to it, so this needs no change to the bucket at all.
+   */
+  let generation = 0
+  function upgradeToOriginal(slide: Slide, forGeneration: number): void {
+    if (!touch || !slide.download) return
+    hint.textContent = 'Henter fuld opløsning…'
+    const full = new Image()
+    full.onload = () => {
+      // Paging is faster than a forty-megabyte download, so by the time this lands the reader may
+      // be two pictures further on. The generation check is what stops the wrong photograph
+      // appearing in the frame.
+      if (forGeneration !== generation) return
+      img.src = slide.download
+      hint.textContent = 'Hold fingeren på billedet for at gemme det i Fotos'
+    }
+    full.onerror = () => {
+      // The preview stays on screen and remains saveable. Worse quality, still a picture.
+      if (forGeneration === generation) hint.textContent = 'Hold fingeren nede for at gemme (preview)'
+    }
+    full.src = slide.download
+  }
+
+  if (touch) hint.hidden = false
 
   function show(index: number): void {
     // Wraps, so the end of a folder rolls round rather than dead-ending on a button that does
     // nothing. `% length` twice because JavaScript's remainder keeps the sign of the dividend.
     at = ((index % slides.length) + slides.length) % slides.length
     const slide = slides[at]
+    generation += 1
     img.src = slide.url
     img.alt = slide.name
     caption.textContent = `${slide.name} · ${at + 1}/${slides.length}`
+    upgradeToOriginal(slide, generation)
+    save.href = slide.download
+    // The attribute names the file, so the browser does not save it under the bare hash the
+    // presigned URL ends in. The server sets Content-Disposition too; this one covers the local
+    // store in dev, where there is no presigned URL to put it on.
+    save.setAttribute('download', slide.name)
 
     // Warm the neighbours so paging feels immediate. The preview is a few hundred kB and cached
     // for a week, so this costs one request each and only the first time round.
@@ -248,6 +317,7 @@ function buildViewer(): {
   }
 
   function close(): void {
+    generation += 1  // any upgrade still in flight is now for a picture nobody is looking at
     overlay.hidden = true
     document.body.classList.remove('arkiv-viewer-open')
     // Drop the bytes; a folder of two hundred photographs paged end to end would otherwise leave
@@ -298,6 +368,235 @@ function buildViewer(): {
   return { open, close }
 }
 
+/**
+ * Selecting files: long-press on a phone, drag across a run, shift-click a range.
+ *
+ * ONE IMPLEMENTATION FOR BOTH LAYOUTS. A photo folder is a grid and a document folder is a list
+ * (see views.is_gallery), but both render `[data-selectable]` rows holding a `[data-batch-pick]`
+ * checkbox, and nothing below knows which it is looking at. The rows are in DOM order, which is the
+ * server's ordering, so "the range between these two" is just a slice.
+ *
+ * All of it is an enhancement over checkboxes that already work. With the bundle dead every box is
+ * visible and tickable and the form still posts; what this adds is not having to hit two hundred of
+ * them one at a time.
+ *
+ * SELECTION MODE exists because a tap on a tile has two plausible meanings. Out of mode a tap opens
+ * the picture, which is what you want ninety-nine folders out of a hundred. A long press - or the
+ * "Vælg" button, or ticking any box - turns tapping into selecting, the way a phone's photo app
+ * does, and Escape or clearing the selection turns it back.
+ */
+const scope = document.querySelector<HTMLElement>('[data-selection-scope]')
+const rows = scope ? Array.from(scope.querySelectorAll<HTMLElement>('[data-selectable]')) : []
+const boxes = rows.map((row) => row.querySelector<HTMLInputElement>('[data-batch-pick]'))
+
+let selecting = false
+let anchor = -1
+/** The drag in progress: where it started, what was selected before it, and which way it paints. */
+let drag: { from: number; base: Set<number>; additive: boolean } | null = null
+let pressTimer = 0
+let pressAt: { x: number; y: number; index: number } | null = null
+/** Set when a drag ends, so the click browsers fire afterwards does not undo its own gesture. */
+let swallowClick = false
+
+const selectionCount = (): number => boxes.filter((b) => b?.checked).length
+
+function setMode(on: boolean): void {
+  selecting = on
+  scope?.classList.toggle('arkiv-selecting', on)
+  document.querySelector('[data-select-mode]')?.setAttribute('aria-pressed', String(on))
+}
+
+function indexAt(x: number, y: number): number {
+  // elementFromPoint rather than the event target: during a drag the pointer is captured by the
+  // element it started on, so the target never changes and every other row would be unreachable.
+  const el = document.elementFromPoint(x, y)
+  const row = el?.closest<HTMLElement>('[data-selectable]')
+  return row ? rows.indexOf(row) : -1
+}
+
+function applyDrag(to: number): void {
+  if (!drag || to < 0) return
+  const [lo, hi] = drag.from < to ? [drag.from, to] : [to, drag.from]
+  rows.forEach((_, i) => {
+    const box = boxes[i]
+    if (!box) return
+    // Outside the run the baseline wins, so a drag never disturbs a selection made before it, and
+    // dragging back over your own path undoes it rather than leaving a trail.
+    box.checked = i >= lo && i <= hi ? drag!.additive : drag!.base.has(i)
+  })
+  announce()
+}
+
+function beginDrag(index: number): void {
+  if (index < 0) return
+  setMode(true)
+  const base = new Set<number>()
+  boxes.forEach((b, i) => {
+    if (b?.checked) base.add(i)
+  })
+  // Painted the opposite of where it began: starting on an unselected tile selects the run,
+  // starting on a selected one clears it. The same rule a spreadsheet uses.
+  drag = { from: index, base, additive: !boxes[index]?.checked }
+  scope?.classList.add('arkiv-dragging')
+  applyDrag(index)
+}
+
+function endDrag(): void {
+  if (drag) {
+    anchor = drag.from
+    swallowClick = true
+    drag = null
+    scope?.classList.remove('arkiv-dragging')
+  }
+  window.clearTimeout(pressTimer)
+  pressAt = null
+}
+
+function announce(): void {
+  const event = new CustomEvent('arkiv:selection')
+  document.dispatchEvent(event)
+}
+
+if (scope && rows.length > 0) {
+  scope.addEventListener('pointerdown', (event) => {
+    const index = indexAt(event.clientX, event.clientY)
+    if (index < 0) return
+    pressAt = { x: event.clientX, y: event.clientY, index }
+
+    if (event.pointerType === 'touch') {
+      // Long press. Cancelled below if the finger moves first, which is what a scroll looks like.
+      pressTimer = window.setTimeout(() => beginDrag(index), 450)
+      return
+    }
+    // A mouse needs no long press: it has a button, so press-and-move is already a distinct
+    // gesture from a click. The drag waits for real movement, which is what keeps an ordinary
+    // click opening the picture - and it starts anywhere on a tile, not only on the checkbox,
+    // because "drag across the ones I want" is the whole request and reaching for a 22px box
+    // first would defeat it.
+    //
+    // Nothing else claims that gesture: images are draggable by default in HTML, which would
+    // otherwise start a native file drag half way through, so the markup turns that off.
+  })
+
+  scope.addEventListener('pointermove', (event) => {
+    if (drag) {
+      applyDrag(indexAt(event.clientX, event.clientY))
+      return
+    }
+    if (!pressAt) return
+    const far = Math.hypot(event.clientX - pressAt.x, event.clientY - pressAt.y) > 8
+    if (!far) return
+    if (event.pointerType === 'touch') {
+      // Moved before the press was long enough: the reader is scrolling, not selecting.
+      window.clearTimeout(pressTimer)
+      pressAt = null
+    } else {
+      beginDrag(pressAt.index)
+    }
+  })
+
+  // Non-passive, and only while dragging: once a long press has committed to selecting, the same
+  // finger must not also scroll the folder away underneath it. touch-action alone cannot do this -
+  // the gesture is already in flight by the time the class lands, and the browser does not
+  // re-read it.
+  scope.addEventListener(
+    'touchmove',
+    (event) => {
+      if (drag) event.preventDefault()
+    },
+    { passive: false },
+  )
+
+  for (const type of ['pointerup', 'pointercancel', 'pointerleave'] as const) {
+    scope.addEventListener(type, endDrag)
+  }
+
+  boxes.forEach((box, index) => {
+    box?.addEventListener('click', (event) => {
+      if (event.shiftKey && anchor >= 0) {
+        // A range, the way every file manager does it. Extends rather than replaces: shift-clicking
+        // a second run somewhere else keeps the first.
+        const [lo, hi] = anchor < index ? [anchor, index] : [index, anchor]
+        for (let i = lo; i <= hi; i++) {
+          const b = boxes[i]
+          if (b) b.checked = true
+        }
+      }
+      anchor = index
+      setMode(true)
+      announce()
+    })
+  })
+
+  function clearSelection(): void {
+    boxes.forEach((b) => {
+      if (b) b.checked = false
+    })
+    setMode(false)
+    announce()
+  }
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !selecting || drag) return
+    clearSelection()
+  })
+
+  // THE CLICK A DRAG LEAVES BEHIND, killed once, in capture, before any other handler sees it.
+  //
+  // This used to be checked inside the anchor's own click handler, which meant the flag was only
+  // cleared when the stray click happened to land on a picture. Land it anywhere else - the page
+  // background, the toolbar - and it stayed set for the life of the page, silently disabling the
+  // dismissal below from the first drag onwards. Capture phase is the fix: every click passes
+  // through here first, so the flag is always consumed exactly once by the gesture that set it.
+  document.addEventListener(
+    'click',
+    (event) => {
+      if (!swallowClick) return
+      swallowClick = false
+      event.stopPropagation()
+      event.preventDefault()
+    },
+    true,
+  )
+
+  // Tapping the empty part of the page means "never mind" - the same as Escape, which a phone does
+  // not have. Without it, leaving selection mode on a touch device meant finding the "Vælg" button
+  // again, and until you did, every tap on a picture selected it instead of opening it.
+  //
+  // Clears as well as exits, deliberately: a mode that ends with a selection still standing is a
+  // state where the count says "12 valgt" and tapping a photo opens it, which is two rules at once.
+  // The cost is that a stray tap on a gap loses the selection - acceptable because the gesture is
+  // deliberate, the count is in view the whole time, and in a grid the tiles cover most of the area
+  // anyway.
+  document.addEventListener('click', (event) => {
+    if (!selecting || drag) return
+    const target = event.target as HTMLElement
+    // Anything that is part of the mechanism, or is interactive in its own right, is not "blank".
+    // The viewer counts too: it sits over the page, and a click inside it is aimed at the picture.
+    if (
+      target.closest(
+        '[data-selectable], [data-arkiv-batch], .arkiv-viewer, a, button, input, label, select, textarea',
+      )
+    ) {
+      return
+    }
+    clearSelection()
+  })
+
+  const modeButton = document.querySelector<HTMLButtonElement>('[data-select-mode]')
+  if (modeButton) {
+    modeButton.hidden = false
+    modeButton.addEventListener('click', () => {
+      if (selecting) {
+        clearSelection()
+        return
+      }
+      setMode(true)
+      announce()
+    })
+  }
+}
+
 const previewLinks = document.querySelectorAll<HTMLAnchorElement>('a[data-preview]')
 if (previewLinks.length > 0) {
   const viewer = buildViewer()
@@ -307,6 +606,21 @@ if (previewLinks.length > 0) {
       // and hijacking them is the thing that makes a gallery infuriating.
       if (event.defaultPrevented || event.button !== 0) return
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+
+      // In selection mode a tap means "this one too", not "show me this one" - the phone photo app
+      // rule. Out of it, the picture opens, which is what almost every visit wants.
+      if (selecting) {
+        event.preventDefault()
+        const row = (event.currentTarget as HTMLElement).closest<HTMLElement>('[data-selectable]')
+        const box = row?.querySelector<HTMLInputElement>('[data-batch-pick]')
+        if (box) {
+          box.checked = !box.checked
+          anchor = rows.indexOf(row!)
+          announce()
+        }
+        return
+      }
+
       event.preventDefault()
       viewer.open(index)
     })
@@ -341,6 +655,8 @@ if (batch && batchCount) {
     batchCount.textContent = n === 0 ? '' : `${n} valgt`
   }
   picks.forEach((pick) => pick.addEventListener('change', update))
+  // Drag and shift-click set .checked directly, which fires no change event - hence the custom one.
+  document.addEventListener('arkiv:selection', update)
   update()
 
   if (submit && token) {
