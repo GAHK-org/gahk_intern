@@ -1726,6 +1726,11 @@
     .imgviewer-nav { display:none; }
   }
 
+  /* The folder's own actions: take a copy, or remove it. Baseline-aligned so the quiet danger
+     link sits with the button rather than under it. */
+  .arkiv-folder-actions { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+  .arkiv-folder-actions form { margin:0; }
+
   .arkiv-newfolder { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .arkiv-newfolder input { flex:1 1 220px; max-width:340px; }
   /* A destructive action that is one row among many: styled as a quiet link rather than a button,

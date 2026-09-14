@@ -28,6 +28,7 @@ from django.http import (
 from django.http.response import HttpResponseBase
 from django.shortcuts import redirect, render
 from django.template.defaultfilters import filesizeformat
+from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from residents.permissions import current_resident
@@ -95,6 +96,9 @@ def browse(request: HttpRequest, pk: int | None = None) -> HttpResponseBase:
             # Writing follows reading (access.can_write), so this is true for any folder the
             # resident can see - including the shared Billeder root, which is the point.
             "can_write": can_write,
+            # Removing the folder is NOT the same permission: a root belongs to whoever arranges
+            # the top level. See access.can_delete_folder.
+            "can_delete_folder": folder is not None and access.can_delete_folder(folder, request),
             "limited_rollout": access.is_limited(),
         },
     )
@@ -661,28 +665,9 @@ def download_selected(request: HttpRequest, pk: int) -> HttpResponseBase:
         )
         return redirect("arkiv:folder", pk=folder.pk)
 
-    store = get_store()
-    key = selection_key((file.name, file.sha256) for file in files)
-    if not store.exists(key):
-        _build_zip(store, files, key)
-
-    # Only the success path needs this. The refusals above redirect to the folder, which reloads the
-    # page and gives the button back for free.
-    done = _zip_done_token(request)
-
-    # The disposition lives on the URL, not on the object, so one cached zip can be handed to two
-    # folders under two names.
-    name = f"{folder.name}.zip"
-    url = store.download_url(key, filename=name, content_type="application/zip")
-    if url is not None:
-        return _mark_zip_done(HttpResponseRedirect(url), done)
-
-    # No bucket (dev, CI): serve the object we just built. Same two-branch shape as every other
-    # download here, and for the same reason - a path that only works in production is a path no
-    # test covers.
-    response = StreamingHttpResponse(store.chunks(key), content_type="application/zip")
-    response.headers["Content-Disposition"] = content_disposition(name)
-    return _mark_zip_done(response, done)
+    # Flat: a selection is made inside one folder, so there is no tree to preserve.
+    entries = [(file.name, file) for file in files]
+    return _zip_response(request, folder, entries, f"{folder.name}.zip")
 
 
 def _zip_done_token(request: HttpRequest) -> str:
@@ -703,7 +688,137 @@ def _mark_zip_done(response: HttpResponseBase, token: str) -> HttpResponseBase:
     return response
 
 
-def _build_zip(store: ArchiveStore, files: list[ArchiveFile], key: str) -> None:
+def _zip_response(
+    request: HttpRequest,
+    folder: ArchiveFolder,
+    entries: list[tuple[str, ArchiveFile]],
+    filename: str,
+) -> HttpResponseBase:
+    """Build the zip if it is not already in the bucket, then hand back a redirect to it.
+
+    Shared by the selection download and the whole-folder one, because past the point of deciding
+    WHICH files there are they are the same request: check the cap, name the object after its
+    contents, build it once, redirect. See `download_selected` for why it is an object and not a
+    stream.
+    """
+    total = sum(file.size for _, file in entries)
+    if total > MAX_SELECTED_BYTES:
+        messages.error(
+            request,
+            f"Det valgte fylder {filesizeformat(total)}. Grænsen for samlet download er "
+            f"{filesizeformat(MAX_SELECTED_BYTES)} - vælg færre filer, eller hent de største "
+            f"enkeltvis.",
+        )
+        return redirect("arkiv:folder", pk=folder.pk)
+
+    store = get_store()
+    # Keyed by the PATHS, not the bare names, so the same photographs zipped from two different
+    # folder shapes are two different archives rather than one wrong one.
+    key = selection_key((path, file.sha256) for path, file in entries)
+    if not store.exists(key):
+        _build_zip(store, entries, key)
+
+    # Only the success path needs this. The refusals redirect to the folder, which reloads the page
+    # and gives the button back for free.
+    done = _zip_done_token(request)
+    url = store.download_url(key, filename=filename, content_type="application/zip")
+    if url is not None:
+        return _mark_zip_done(HttpResponseRedirect(url), done)
+
+    # No bucket (dev, CI): serve the object we just built. Same two-branch shape as every other
+    # download here, and for the same reason - a path that only works in production is a path no
+    # test covers.
+    response = StreamingHttpResponse(store.chunks(key), content_type="application/zip")
+    response.headers["Content-Disposition"] = content_disposition(filename)
+    return _mark_zip_done(response, done)
+
+
+@access.access_required
+@require_POST
+def download_folder(request: HttpRequest, pk: int) -> HttpResponseBase:
+    """The whole folder, subfolders and all, as one zip.
+
+    RECURSIVE, because a "download this folder" that quietly skipped the subfolders would be wrong
+    in a way nobody notices until they are looking for a photograph at home. The tree is preserved
+    inside the archive - see services.tree_files.
+
+    Walked through the visible querysets, so a gated subfolder inside a readable one contributes
+    nothing and is not hinted at either: the zip a non-member gets is simply smaller, with no entry
+    and no empty directory to say something was skipped.
+
+    POST for the same reason as `download_selected`: a GET would be a link somebody could paste
+    into a chat thread to start a multi-hundred-megabyte build for whoever clicked it.
+    """
+    resident = current_resident(request)
+    folder = access.visible_folders(resident).filter(pk=pk).first()
+    if folder is None:
+        raise Http404("no such folder")
+
+    entries = services.tree_files(folder, access.visible_folders(resident), access.visible_files(resident))
+    if not entries:
+        messages.error(request, "Mappen er tom.")
+        return redirect("arkiv:folder", pk=folder.pk)
+    return _zip_response(request, folder, entries, f"{folder.name}.zip")
+
+
+@access.access_required
+@require_POST
+def folder_delete(request: HttpRequest, pk: int) -> HttpResponseBase:
+    """Remove an EMPTY folder.
+
+    Empty only, and that is the whole design rather than a limitation waiting to be lifted. A
+    recursive delete would put two hundred photographs behind one tap, and the undo for it - which
+    rows came back, and which had been deleted separately beforehand - is where that feature's bugs
+    would live. What people actually need most of the time is to unmake a folder they just made by
+    mistake, and that is this.
+
+    "EMPTY" IS ASKED OF THE WHOLE TREE, NOT THE VISIBLE ONE, and getting that backwards is how this
+    was written the first time. Emptiness is a property of the folder, not of who is looking: count
+    through `visible_folders` and a gated subfolder counts as zero, so the one resident who must not
+    delete this folder is exactly the one allowed to. A test asserts it.
+
+    The message is then the careful part, because a count is itself information. What the reader can
+    see is reported exactly; anything they cannot see collapses into a bare "Mappen er ikke tom." -
+    enough to explain the refusal, not enough to learn that Regnskabsgruppen keeps a folder here.
+
+    Soft, like everything else here: the row keeps `deleted_at`, the unique constraint is scoped to
+    live rows, so the same name can be used again immediately. No `deleted_by` column, because an
+    empty folder loses nothing when it goes and "who removed it" answers a question nobody has.
+    """
+    resident = current_resident(request)
+    folder = access.visible_folders(resident).filter(pk=pk).first()
+    if folder is None:
+        raise Http404("no such folder")
+    if not access.can_delete_folder(folder, request):
+        raise PermissionDenied
+
+    # The real contents, unfiltered. What blocks the delete.
+    files = ArchiveFile.objects.alive().filter(folder=folder).count()
+    subfolders = ArchiveFolder.objects.alive().filter(parent=folder).count()
+    if files or subfolders:
+        # What this reader is allowed to know about. Equal to the real counts for anyone who can
+        # see everything in here, which is the ordinary case.
+        seen_files = access.visible_files(resident).filter(folder=folder).count()
+        seen_subfolders = access.visible_folders(resident).filter(parent=folder).count()
+        if (seen_files, seen_subfolders) != (files, subfolders):
+            messages.error(request, "Mappen er ikke tom. Tøm den først.")
+        else:
+            parts = []
+            if files:
+                parts.append(f"{files} fil{'' if files == 1 else 'er'}")
+            if subfolders:
+                parts.append(f"{subfolders} undermappe{'' if subfolders == 1 else 'r'}")
+            messages.error(request, f"Mappen indeholder {' og '.join(parts)}. Tøm den først.")
+        return redirect("arkiv:folder", pk=folder.pk)
+
+    parent = folder.parent_id
+    folder.deleted_at = timezone.now()
+    folder.save(update_fields=["deleted_at"])
+    messages.success(request, f"Mappen \u201e{folder.name}\u201d er fjernet.")
+    return redirect("arkiv:folder", pk=parent) if parent else redirect("arkiv:root")
+
+
+def _build_zip(store: ArchiveStore, files: list[tuple[str, ArchiveFile]], key: str) -> None:
     """Assemble the zip and put it in the store under `key`.
 
     Written to a SpooledTemporaryFile rather than streamed, which is what let the hand-rolled
@@ -725,10 +840,12 @@ def _build_zip(store: ArchiveStore, files: list[ArchiveFile], key: str) -> None:
     """
     with SpooledTemporaryFile(max_size=ZIP_SPOOL_BYTES) as tmp:
         with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED) as archive:
-            for file in files:
+            for path, file in files:
                 if not store.exists(file.key):
                     continue
-                with archive.open(file.name, "w") as entry:
+                # `path` rather than `file.name`: a folder download carries its subfolders, and the
+                # shape they were filed in is most of what makes the zip usable.
+                with archive.open(path, "w") as entry:
                     for chunk in store.chunks(file.key):
                         entry.write(chunk)
         tmp.seek(0)

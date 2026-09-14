@@ -192,6 +192,24 @@ def can_delete_file(file: ArchiveFile, request: HttpRequest) -> bool:
     return can_write(file.folder, request)
 
 
+def can_delete_folder(folder: ArchiveFolder, request: HttpRequest) -> bool:
+    """Whether `request` may remove `folder` itself.
+
+    WRITING TO A FOLDER AND REMOVING IT ARE NOT THE SAME PERMISSION, which is why this is not
+    `can_write`. A root is the kollegium's filing system - one per embedsgruppe plus the shared
+    areas - and deleting one takes a whole embedsgruppe's shelf out of the archive, so roots stay
+    with the people who arrange them. Everything below a root belongs to whoever can already see
+    it, on the same reasoning `can_manage_roots` gives for creating them.
+
+    Says nothing about whether the folder is EMPTY. That is not a permission question - no role
+    makes it safe to bury two hundred photographs behind one tap - so it is enforced in the view
+    for everybody alike. See views.folder_delete.
+    """
+    if folder.parent_id is None:
+        return can_manage_roots(request)
+    return can_write(folder, request)
+
+
 def can_purge_file(file: ArchiveFile, request: HttpRequest) -> bool:
     """Whether `request` may destroy `file` and its bytes for good.
 

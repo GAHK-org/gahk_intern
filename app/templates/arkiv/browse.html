@@ -50,6 +50,40 @@
       </label>
       <span class="muted" data-upload-status></span>
     </div>
+  {% endif %}
+
+  {% comment %}
+    Folder-level actions. Outside the can_write block above because DOWNLOADING is not writing -
+    anyone who can see the folder may take a copy of it - while removing it has its own rule
+    (access.can_delete_folder: a root is Inspektionen's, anything below it belongs to whoever can
+    write there).
+
+    Two separate forms rather than one with two submit buttons: they post to different URLs, and a
+    stray Enter in a form whose first button deletes a folder is not a risk worth the markup saving.
+  {% endcomment %}
+  {% if folder %}
+    <div class="arkiv-folder-actions mb-4">
+      <form method="post" action="{% url 'arkiv:download_folder' folder.pk %}">
+        {% csrf_token %}
+        <input type="hidden" name="done_token" value="" data-batch-token>
+        <button type="submit" class="btn btn-secondary" data-batch-submit>Hent hele mappen</button>
+      </form>
+      {% if can_delete_folder %}
+        {% comment %}
+          The only confirm() in Arkiv, and it earns it. Removing a file is one click from undo in
+          the list below; a folder has no such list, because empty folders have nothing to restore.
+          The dialog is the undo.
+        {% endcomment %}
+        <form method="post" action="{% url 'arkiv:folder_delete' folder.pk %}"
+              onsubmit="return confirm('Fjern mappen &bdquo;{{ folder.name|escapejs }}&ldquo;?')">
+          {% csrf_token %}
+          <button type="submit" class="btn-link-danger">Fjern mappen</button>
+        </form>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  {% if can_write %}
 
     {% comment %}
       A plain POST form, not fetch: there is no partial to swap, the result is a page worth having in
