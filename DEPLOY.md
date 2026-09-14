@@ -264,40 +264,42 @@ Nothing deletes them, so they need a rule — and **the bucket is versioned, whi
 rule means.** On a versioned bucket `Expiration` does not delete anything: it writes a delete marker
 and the object becomes a *noncurrent version*, which lives until a `NoncurrentVersionExpiration`
 rule covering that prefix removes it. An expiry rule on its own therefore frees nothing and is worth
-exactly the storage it does not reclaim.
+exactly the storage it does not reclaim. That was the state `media/` had been in since the bucket
+was created.
 
-Prefixes are matched literally, so `arkiv/` does not cover `arkiv-thumb/`; a bare `arkiv` prefix
-would cover all four and overlap, and providers differ on how overlapping rules resolve. One rule
-per prefix, spelled out. The current set:
+The whole rule set is declared in `core/management/commands/sync_bucket_lifecycle.py` and applied by
+running it. **Do not hand-edit the configuration in a console.**
+
+```
+docker exec <web> python manage.py sync_bucket_lifecycle --dry-run   # prints what would change
+docker exec <web> python manage.py sync_bucket_lifecycle
+```
+
+Idempotent, and it **merges**: any rule whose ID the command does not declare is carried through
+untouched, because `put_bucket_lifecycle_configuration` replaces the *entire* configuration and the
+naive call silently drops every rule it does not mention. That trap is why this is a command rather
+than a snippet somebody pastes into a shell.
 
 | ID | Prefix | What it does |
 | --- | --- | --- |
 | `abort-incomplete-uploads` | (all) | aborts stalled multipart uploads after 7 days |
-| `expire-built-zips` | `arkiv-zip/` | marks zips at 7 days, purges the version a day later |
-| `expire-built-zip-markers` | `arkiv-zip/` | clears the delete markers left behind |
 | `expire-noncurrent-arkiv` | `arkiv/` | purged originals actually go, 30 days later |
-| `expire-noncurrent-arkiv-thumb` | `arkiv-thumb/` | as above |
-| `expire-noncurrent-arkiv-preview` | `arkiv-preview/` | as above |
-| `expire-noncurrent-versions` | `media/` | pre-existing, unchanged |
+| `expire-noncurrent-arkiv-thumb` | `arkiv-thumb/` | derived, so 1 day |
+| `expire-noncurrent-arkiv-preview` | `arkiv-preview/` | derived, so 1 day |
+| `expire-built-zips` | `arkiv-zip/` | marks built zips at 7 days, purges the version a day later |
+| `expire-built-zip-markers` | `arkiv-zip/` | clears the delete markers that leaves |
+| `expire-noncurrent-versions` | `media/` | 30 days |
+| `expire-noncurrent-backups` | `data/` | makes Coolify's own deletions free the bytes, after 7 days |
+| `expire-backup-markers` | `data/` | clears those delete markers |
 
-`Days` and `ExpiredObjectDeleteMarker` cannot share one `Expiration` block — S3 rejects it — which
-is why the marker cleanup is a second rule on the same prefix. Hetzner accepts it; if a future
-provider does not, drop that rule and live with the markers.
+Prefixes are matched literally, so `arkiv/` does not cover `arkiv-thumb/`; a bare `arkiv` prefix
+would cover all four and overlap, and providers differ on how overlapping rules resolve. One rule
+per prefix, spelled out. `Days` and `ExpiredObjectDeleteMarker` cannot share one `Expiration` block
+— S3 rejects it — which is why the marker cleanups are separate rules on the same prefix.
 
-To change the set, **read the existing rules and merge** — `put_bucket_lifecycle_configuration`
-replaces the entire configuration, so a naive call silently drops every rule it does not mention:
-
-```
-docker exec <web> python manage.py shell -c "
-import json
-from django.core.files.storage import storages
-s = storages['default']; c = s.connection.meta.client
-keep = [r for r in c.get_bucket_lifecycle_configuration(Bucket=s.bucket_name)['Rules']
-        if r.get('ID') not in ('the-ids-you-are-replacing',)]
-c.put_bucket_lifecycle_configuration(
-    Bucket=s.bucket_name, LifecycleConfiguration={'Rules': keep + [ ... ]})
-print(json.dumps(c.get_bucket_lifecycle_configuration(Bucket=s.bucket_name)['Rules'], indent=2))"
-```
+**Nothing expires a backup on a clock**, deliberately. Coolify decides which dumps to keep, per
+resource, in its own UI; a rule here would be a second authority deleting backups on a different
+schedule, and if the two disagreed the bucket would win silently.
 
 **`NoncurrentDays: 30` on `arkiv/` is the retention behind "Slet permanent".** The button destroys
 the row and calls `delete_object`; versioning turns that into a delete marker, so the bytes are
