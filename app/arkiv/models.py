@@ -31,6 +31,7 @@ never enters the schema and nothing here needs migrating if it ever changes agai
 
 import hashlib
 from collections.abc import Iterable
+from datetime import datetime
 
 from django.conf import settings
 from django.db import models
@@ -151,6 +152,8 @@ class ArchiveFolder(models.Model):
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    locked_at = models.DateTimeField(null=True, blank=True)
+    unlocked_until = models.DateTimeField(null=True, blank=True)
     deleted_at = models.DateTimeField(null=True, blank=True)
 
     objects = ArchiveQuerySet.as_manager()
@@ -220,6 +223,29 @@ class ArchiveFolder(models.Model):
             node = node.parent
         chain.reverse()
         return chain
+
+    def is_locked(self) -> bool:
+        """Whether this folder or one of its ancestors currently forbids mutation."""
+        now = timezone.now()
+        node: ArchiveFolder | None = self
+        while node is not None:
+            if node.locked_at is not None and (node.unlocked_until is None or node.unlocked_until <= now):
+                return True
+            node = node.parent
+        return False
+
+    def temporarily_unlocked_until(self) -> datetime | None:
+        """The effective temporary-unlock expiry, or None when this folder is not unlocked."""
+        now = timezone.now()
+        expiries: list[datetime] = []
+        node: ArchiveFolder | None = self
+        while node is not None:
+            if node.locked_at is not None:
+                if node.unlocked_until is None or node.unlocked_until <= now:
+                    return None
+                expiries.append(node.unlocked_until)
+            node = node.parent
+        return min(expiries, default=None)
 
 
 class ArchiveFile(models.Model):
