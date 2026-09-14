@@ -170,148 +170,253 @@ if (root && input && status) {
 }
 
 /**
- * The viewer, and the selection counter beside "Hent valgte".
+ * Selecting files: long-press on a phone, drag across a run, shift-click a range.
  *
- * Both are progressive enhancements over markup that already works. Every image row is an ordinary
- * link to the download view, and every checkbox already belongs to the batch form by `form=`; what
- * follows intercepts a plain left click to show the picture instead, and keeps a count in view.
- * With the bundle dead, clicking an image downloads it and the batch button still posts.
+ * ONE IMPLEMENTATION FOR BOTH LAYOUTS. A photo folder is a grid and a document folder is a list
+ * (see views.is_gallery), but both render `[data-selectable]` rows holding a `[data-batch-pick]`
+ * checkbox, and nothing below knows which it is looking at. The rows are in DOM order, which is the
+ * server's ordering, so "the range between these two" is just a slice.
+ *
+ * All of it is an enhancement over checkboxes that already work. With the bundle dead every box is
+ * visible and tickable and the form still posts; what this adds is not having to hit two hundred of
+ * them one at a time.
+ *
+ * SELECTION MODE exists because a tap on a tile has two plausible meanings. Out of mode a tap opens
+ * the picture, which is what you want ninety-nine folders out of a hundred. A long press - or the
+ * "Vælg" button, or ticking any box - turns tapping into selecting, the way a phone's photo app
+ * does, and Escape or clearing the selection turns it back.
  */
+const scope = document.querySelector<HTMLElement>('[data-selection-scope]')
+const rows = scope ? Array.from(scope.querySelectorAll<HTMLElement>('[data-selectable]')) : []
+const boxes = rows.map((row) => row.querySelector<HTMLInputElement>('[data-batch-pick]'))
 
-interface Slide {
-  url: string
-  name: string
+let selecting = false
+let anchor = -1
+/** The drag in progress: where it started, what was selected before it, and which way it paints. */
+let drag: { from: number; base: Set<number>; additive: boolean } | null = null
+let pressTimer = 0
+let pressAt: { x: number; y: number; index: number } | null = null
+/** Set when a drag ends, so the click browsers fire afterwards does not undo its own gesture. */
+let swallowClick = false
+
+const selectionCount = (): number => boxes.filter((b) => b?.checked).length
+
+function setMode(on: boolean): void {
+  selecting = on
+  scope?.classList.toggle('arkiv-selecting', on)
+  document.querySelector('[data-select-mode]')?.setAttribute('aria-pressed', String(on))
 }
 
-function slidesFrom(): Slide[] {
-  // DOM order is the listing's order, which is the server's ordering by name. No second sort here.
-  return Array.from(document.querySelectorAll<HTMLAnchorElement>('a[data-preview]')).map((a) => ({
-    url: a.dataset.preview!,
-    name: a.dataset.name ?? '',
-  }))
+function indexAt(x: number, y: number): number {
+  // elementFromPoint rather than the event target: during a drag the pointer is captured by the
+  // element it started on, so the target never changes and every other row would be unreachable.
+  const el = document.elementFromPoint(x, y)
+  const row = el?.closest<HTMLElement>('[data-selectable]')
+  return row ? rows.indexOf(row) : -1
 }
 
-function buildViewer(): {
-  open: (index: number) => void
-  close: () => void
-} {
-  const slides = slidesFrom()
-  let at = 0
+function applyDrag(to: number): void {
+  if (!drag || to < 0) return
+  const [lo, hi] = drag.from < to ? [drag.from, to] : [to, drag.from]
+  rows.forEach((_, i) => {
+    const box = boxes[i]
+    if (!box) return
+    // Outside the run the baseline wins, so a drag never disturbs a selection made before it, and
+    // dragging back over your own path undoes it rather than leaving a trail.
+    box.checked = i >= lo && i <= hi ? drag!.additive : drag!.base.has(i)
+  })
+  announce()
+}
 
-  const overlay = document.createElement('div')
-  overlay.className = 'arkiv-viewer'
-  overlay.hidden = true
-  // A dialog to the accessibility tree, not just a dark div: focus moves here on open and the
-  // label is read out, so a screen-reader user is told what happened rather than left on a page
-  // whose links have silently stopped responding.
-  overlay.setAttribute('role', 'dialog')
-  overlay.setAttribute('aria-modal', 'true')
-  overlay.setAttribute('aria-label', 'Billedvisning')
-  overlay.tabIndex = -1
-  overlay.innerHTML = `
-    <button type="button" class="arkiv-viewer-close" aria-label="Luk">&times;</button>
-    <button type="button" class="arkiv-viewer-nav arkiv-viewer-prev" aria-label="Forrige">&lsaquo;</button>
-    <figure class="arkiv-viewer-stage">
-      <img alt="">
-      <figcaption></figcaption>
-    </figure>
-    <button type="button" class="arkiv-viewer-nav arkiv-viewer-next" aria-label="Næste">&rsaquo;</button>`
-  document.body.append(overlay)
+function beginDrag(index: number): void {
+  if (index < 0) return
+  setMode(true)
+  const base = new Set<number>()
+  boxes.forEach((b, i) => {
+    if (b?.checked) base.add(i)
+  })
+  // Painted the opposite of where it began: starting on an unselected tile selects the run,
+  // starting on a selected one clears it. The same rule a spreadsheet uses.
+  drag = { from: index, base, additive: !boxes[index]?.checked }
+  scope?.classList.add('arkiv-dragging')
+  applyDrag(index)
+}
 
-  const img = overlay.querySelector('img')!
-  const caption = overlay.querySelector('figcaption')!
-  let restoreFocusTo: HTMLElement | null = null
+function endDrag(): void {
+  if (drag) {
+    anchor = drag.from
+    swallowClick = true
+    drag = null
+    scope?.classList.remove('arkiv-dragging')
+  }
+  window.clearTimeout(pressTimer)
+  pressAt = null
+}
 
-  function show(index: number): void {
-    // Wraps, so the end of a folder rolls round rather than dead-ending on a button that does
-    // nothing. `% length` twice because JavaScript's remainder keeps the sign of the dividend.
-    at = ((index % slides.length) + slides.length) % slides.length
-    const slide = slides[at]
-    img.src = slide.url
-    img.alt = slide.name
-    caption.textContent = `${slide.name} · ${at + 1}/${slides.length}`
+function announce(): void {
+  const event = new CustomEvent('arkiv:selection')
+  document.dispatchEvent(event)
+}
 
-    // Warm the neighbours so paging feels immediate. The preview is a few hundred kB and cached
-    // for a week, so this costs one request each and only the first time round.
-    for (const step of [1, -1]) {
-      const near = slides[((at + step) % slides.length + slides.length) % slides.length]
-      new Image().src = near.url
+if (scope && rows.length > 0) {
+  scope.addEventListener('pointerdown', (event) => {
+    const index = indexAt(event.clientX, event.clientY)
+    if (index < 0) return
+    pressAt = { x: event.clientX, y: event.clientY, index }
+
+    if (event.pointerType === 'touch') {
+      // Long press. Cancelled below if the finger moves first, which is what a scroll looks like.
+      pressTimer = window.setTimeout(() => beginDrag(index), 450)
+      return
     }
-  }
-
-  function open(index: number): void {
-    restoreFocusTo = document.activeElement as HTMLElement | null
-    overlay.hidden = false
-    document.body.classList.add('arkiv-viewer-open')
-    show(index)
-    overlay.focus()
-  }
-
-  function close(): void {
-    overlay.hidden = true
-    document.body.classList.remove('arkiv-viewer-open')
-    // Drop the bytes; a folder of two hundred photographs paged end to end would otherwise leave
-    // the last one decoded in memory for as long as the page lives.
-    img.removeAttribute('src')
-    restoreFocusTo?.focus()
-  }
-
-  overlay.querySelector('.arkiv-viewer-close')!.addEventListener('click', close)
-  overlay.querySelector('.arkiv-viewer-prev')!.addEventListener('click', () => show(at - 1))
-  overlay.querySelector('.arkiv-viewer-next')!.addEventListener('click', () => show(at + 1))
-  overlay.addEventListener('click', (event) => {
-    // Only the backdrop itself. A click that started on the image or a button is not "outside".
-    if (event.target === overlay) close()
+    // A mouse needs no long press: it has a button, so press-and-move is already a distinct
+    // gesture from a click. The drag waits for real movement, which is what keeps an ordinary
+    // click opening the picture - and it starts anywhere on a tile, not only on the checkbox,
+    // because "drag across the ones I want" is the whole request and reaching for a 22px box
+    // first would defeat it.
+    //
+    // Nothing else claims that gesture: images are draggable by default in HTML, which would
+    // otherwise start a native file drag half way through, so the markup turns that off.
   })
 
-  document.addEventListener('keydown', (event) => {
-    if (overlay.hidden) return
-    if (event.key === 'Escape') close()
-    else if (event.key === 'ArrowRight') show(at + 1)
-    else if (event.key === 'ArrowLeft') show(at - 1)
-    else return
-    event.preventDefault()
+  scope.addEventListener('pointermove', (event) => {
+    if (drag) {
+      applyDrag(indexAt(event.clientX, event.clientY))
+      return
+    }
+    if (!pressAt) return
+    const far = Math.hypot(event.clientX - pressAt.x, event.clientY - pressAt.y) > 8
+    if (!far) return
+    if (event.pointerType === 'touch') {
+      // Moved before the press was long enough: the reader is scrolling, not selecting.
+      window.clearTimeout(pressTimer)
+      pressAt = null
+    } else {
+      beginDrag(pressAt.index)
+    }
   })
 
-  // Swipe, because this is mostly read on a phone. Horizontal only, and only past a threshold, so
-  // it does not fight a vertical scroll or fire on a tap that wandered a pixel.
-  let startX = 0
-  let startY = 0
-  overlay.addEventListener(
-    'touchstart',
+  // Non-passive, and only while dragging: once a long press has committed to selecting, the same
+  // finger must not also scroll the folder away underneath it. touch-action alone cannot do this -
+  // the gesture is already in flight by the time the class lands, and the browser does not
+  // re-read it.
+  scope.addEventListener(
+    'touchmove',
     (event) => {
-      startX = event.changedTouches[0].clientX
-      startY = event.changedTouches[0].clientY
+      if (drag) event.preventDefault()
     },
-    { passive: true },
-  )
-  overlay.addEventListener(
-    'touchend',
-    (event) => {
-      const dx = event.changedTouches[0].clientX - startX
-      const dy = event.changedTouches[0].clientY - startY
-      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) show(at + (dx < 0 ? 1 : -1))
-    },
-    { passive: true },
+    { passive: false },
   )
 
-  return { open, close }
-}
+  for (const type of ['pointerup', 'pointercancel', 'pointerleave'] as const) {
+    scope.addEventListener(type, endDrag)
+  }
 
-const previewLinks = document.querySelectorAll<HTMLAnchorElement>('a[data-preview]')
-if (previewLinks.length > 0) {
-  const viewer = buildViewer()
-  previewLinks.forEach((link, index) => {
-    link.addEventListener('click', (event) => {
-      // Leave the modified clicks alone: ctrl/cmd/shift/middle-click all mean "I want the file",
-      // and hijacking them is the thing that makes a gallery infuriating.
-      if (event.defaultPrevented || event.button !== 0) return
-      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-      event.preventDefault()
-      viewer.open(index)
+  boxes.forEach((box, index) => {
+    box?.addEventListener('click', (event) => {
+      if (event.shiftKey && anchor >= 0) {
+        // A range, the way every file manager does it. Extends rather than replaces: shift-clicking
+        // a second run somewhere else keeps the first.
+        const [lo, hi] = anchor < index ? [anchor, index] : [index, anchor]
+        for (let i = lo; i <= hi; i++) {
+          const b = boxes[i]
+          if (b) b.checked = true
+        }
+      }
+      anchor = index
+      setMode(true)
+      announce()
     })
   })
+
+  function clearSelection(): void {
+    boxes.forEach((b) => {
+      if (b) b.checked = false
+    })
+    setMode(false)
+    announce()
+  }
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !selecting || drag) return
+    clearSelection()
+  })
+
+  // CAPTURE PHASE, and it owns two things that both have to happen before anything else sees the
+  // click - in particular before imageviewer.ts, whose delegated listener would otherwise open the
+  // picture when the tap was meant to select it.
+  //
+  // First, the click a drag leaves behind. This used to be checked inside the anchor's own handler,
+  // which meant the flag was only cleared when that stray click happened to land on a picture. Land
+  // it anywhere else - the page background, the toolbar - and it stayed set for the life of the
+  // page, silently disabling the blank-area dismissal from the first drag onwards.
+  //
+  // Second, a tap while selecting means "this one too", not "show me this one" - the phone photo
+  // app rule. Out of selection mode the click falls through untouched and the viewer opens it,
+  // which is what almost every visit wants.
+  document.addEventListener(
+    'click',
+    (event) => {
+      if (swallowClick) {
+        swallowClick = false
+        event.stopPropagation()
+        event.preventDefault()
+        return
+      }
+      if (!selecting) return
+      const row = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-selectable]')
+      if (!row) return
+      const box = row.querySelector<HTMLInputElement>('[data-batch-pick]')
+      // The checkbox itself already toggles, and has its own listener for shift-ranges. Claiming
+      // that click here as well would toggle it twice and leave it exactly as it started.
+      if (!box || (event.target as HTMLElement).closest('[data-batch-pick]')) return
+      event.stopPropagation()
+      event.preventDefault()
+      box.checked = !box.checked
+      anchor = rows.indexOf(row)
+      announce()
+    },
+    true,
+  )
+
+  // Tapping the empty part of the page means "never mind" - the same as Escape, which a phone does
+  // not have. Without it, leaving selection mode on a touch device meant finding the "Vælg" button
+  // again, and until you did, every tap on a picture selected it instead of opening it.
+  //
+  // Clears as well as exits, deliberately: a mode that ends with a selection still standing is a
+  // state where the count says "12 valgt" and tapping a photo opens it, which is two rules at once.
+  // The cost is that a stray tap on a gap loses the selection - acceptable because the gesture is
+  // deliberate, the count is in view the whole time, and in a grid the tiles cover most of the area
+  // anyway.
+  document.addEventListener('click', (event) => {
+    if (!selecting || drag) return
+    const target = event.target as HTMLElement
+    // Anything that is part of the mechanism, or is interactive in its own right, is not "blank".
+    // The viewer counts too: it sits over the page, and a click inside it is aimed at the picture.
+    if (
+      target.closest(
+        '[data-selectable], [data-arkiv-batch], .arkiv-viewer, a, button, input, label, select, textarea',
+      )
+    ) {
+      return
+    }
+    clearSelection()
+  })
+
+  const modeButton = document.querySelector<HTMLButtonElement>('[data-select-mode]')
+  if (modeButton) {
+    modeButton.hidden = false
+    modeButton.addEventListener('click', () => {
+      if (selecting) {
+        clearSelection()
+        return
+      }
+      setMode(true)
+      announce()
+    })
+  }
 }
+
 
 /**
  * The count beside "Hent valgte", and the pending state while the zip is built.
@@ -341,6 +446,8 @@ if (batch && batchCount) {
     batchCount.textContent = n === 0 ? '' : `${n} valgt`
   }
   picks.forEach((pick) => pick.addEventListener('change', update))
+  // Drag and shift-click set .checked directly, which fires no change event - hence the custom one.
+  document.addEventListener('arkiv:selection', update)
   update()
 
   if (submit && token) {

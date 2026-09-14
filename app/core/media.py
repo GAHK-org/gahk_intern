@@ -56,7 +56,7 @@ REDIRECT_MAX_AGE = 900
 REDIRECT_CACHE_CONTROL = f"private, max-age={REDIRECT_MAX_AGE}"
 
 
-# The only upload prefix the logged-out public site needs.
+# The upload prefixes a client with no session may read.
 #
 # Derived from the templates rather than assumed, and re-derivable the same way: cms.CmsImage is the
 # toolbar the CMS editors use, and its /media/cms/… URLs go into Page.body, NewsItem.body and
@@ -64,21 +64,38 @@ REDIRECT_CACHE_CONTROL = f"private, max-age={REDIRECT_MAX_AGE}"
 # visitors. `body_media` (cms.templatetags.cms_extras) rewrites only the LEGACY /public/… paths to
 # /static/legacy/, so it never redirects these away from /media/.
 #
-# Everything else is reached from /intern/ only, and was checked one prefix at a time:
+# THE ØLKÆLDER TILL IS THE SECOND ENTRY, AND IT IS THE CASE THIS LIST GOT WRONG ONCE.
+# "Everything else is reached from /intern/ only" was the original reasoning, and it is true of the
+# URL and false of the CLIENT: oelkaelder.views.shop is gated on the till's LAN IP and takes no
+# login at all (settings.OELKAELDER_KIOSK_IPS), so the iPad behind the bar is an ANONYMOUS client
+# rendering /intern/oelkaelder/. Gating oel/ blanked every product tile on the till while every
+# logged-in browser looked fine — the failure is invisible to whoever is testing. Product photos are
+# pictures of beer and crisps, they were public by URL on the legacy site, and anyone who can see
+# them is already standing at the till, so publishing them costs nothing.
+#
+# Everything else needs a session, and was checked one prefix at a time:
 #   profile_pictures/  base.html avatar, residents' profile pages, alumneliste
 #   roomimages/        værelsestjek
 #   public/            relocate_media copies ONLY Product.image and RoomConditionScore.image legacy
-#                      paths here — ølkælder and værelsestjek. Legacy CMS images are a different
-#                      command (sync_cms_media) and land in static/legacy/, not here.
-#   oel/               ølkælder, which lives under /intern/oelkaelder/
+#                      paths here, and they land in DIFFERENT subtrees — image/intern/oel/ for the
+#                      ølkælder (public, below) and image/intern/roomimages/ for værelsestjek (NOT).
+#                      That split is why the public entry is the long path and not a bare "public/".
+#                      Legacy CMS images are a different command (sync_cms_media) and land in
+#                      static/legacy/, not here.
 #   opslag/            opslagstavlen        quick_posts/, quick_comments/  Den Hurtige
 #                      (opslag/kommentarer/ is a comment's attached photo — same prefix, so it
 #                      inherits the same "not public" answer without a second check)
 #   begivenheder/      events               (begivenheder/kommentarer/ likewise)
 #
-# Add a prefix here only after checking the same way. Adding one wrongly publishes it silently;
-# omitting one wrongly breaks the front page loudly, which is the safer way round.
-PUBLIC_PREFIXES = ("cms/",)
+# Add a prefix here only after checking the same way, AND after asking which clients render it
+# without a session — the till is not the only thing that could be one. Adding a prefix wrongly
+# publishes it silently; omitting one wrongly breaks a page loudly, which is the safer way round.
+PUBLIC_PREFIXES = (
+    "cms/",
+    # The till, which has no session. Product photos only — see above.
+    "oel/",  # Product.image uploads
+    "public/image/intern/oel/",  # the same photos, legacy paths relocate_media kept
+)
 
 
 def _clean(path: str) -> str | None:

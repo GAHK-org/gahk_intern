@@ -134,7 +134,15 @@
         </span>
       </div>
       {% if post.image %}
-        <a href="{{ post.image.url }}" target="_blank" rel="noopener" class="msg-image">
+        {% comment %}
+          data-viewer hands the tap to the shared picture viewer (frontend/src/imageviewer.ts),
+          which shows the photograph as a BARE <img>. That is the point: a long press on an image
+          wrapped in a link gets the link's menu - "Download Linked File", which lands in Files -
+          while a long press on a bare one gets "Føj til Fotos". The anchor stays so the picture
+          still opens without JavaScript, where it is bare as well.
+        {% endcomment %}
+        <a href="{{ post.image.url }}" target="_blank" rel="noopener" class="msg-image"
+           data-viewer data-name="{{ post.image.name|basename }}">
           <img src="{{ post.image.url }}" alt="" loading="lazy">
         </a>
       {% endif %}

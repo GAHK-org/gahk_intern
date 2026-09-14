@@ -78,6 +78,9 @@ def browse(request: HttpRequest, pk: int | None = None) -> HttpResponseBase:
         else ArchiveFile.objects.none()
     )
 
+    # Evaluated once, here: the template iterates it and `is_gallery` counts it, and a queryset
+    # asked both questions would run the query twice.
+    rows = list(files)
     return render(
         request,
         "arkiv/browse.html",
@@ -85,7 +88,8 @@ def browse(request: HttpRequest, pk: int | None = None) -> HttpResponseBase:
             "folder": folder,
             "ancestors": folder.ancestors() if folder else [],
             "subfolders": subfolders,
-            "files": files,
+            "files": rows,
+            "gallery": is_gallery(rows),
             "removed": removed,
             "can_manage_roots": access.can_manage_roots(request),
             # Writing follows reading (access.can_write), so this is true for any folder the
@@ -94,6 +98,31 @@ def browse(request: HttpRequest, pk: int | None = None) -> HttpResponseBase:
             "limited_rollout": access.is_limited(),
         },
     )
+
+
+# A folder is drawn as a grid of pictures once it is mostly pictures. Below this it stays a list:
+# a couple of snapshots among fifteen documents are not a gallery, and turning the referater into
+# tiles to accommodate them would be the wrong trade.
+GALLERY_SHARE = 0.6
+
+
+def is_gallery(files: list[ArchiveFile]) -> bool:
+    """Whether this folder should be drawn as a grid of pictures rather than a list of rows.
+
+    DECIDED HERE RATHER THAN IN THE TEMPLATE, and on the SERVER rather than in the browser, because
+    it decides the markup and the markup is what a reader without JavaScript gets. The alternative -
+    render rows and rearrange them on load - is a layout shift on every folder in the archive.
+
+    Asks about thumbnails rather than content type. A row is only worth a tile if there is something
+    to put in the tile; an image the backlog command has not reached yet, or one Pillow could not
+    decode, would otherwise contribute a grid of identical grey file icons - which is strictly worse
+    than the list it replaced. That also means a folder quietly becomes a gallery as the backlog
+    catches up with it, which is the behaviour we want and worth knowing when one looks different
+    today than it did yesterday.
+    """
+    if not files:
+        return False
+    return sum(1 for f in files if f.has_thumbnail) / len(files) >= GALLERY_SHARE
 
 
 @access.access_required

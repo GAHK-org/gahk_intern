@@ -1972,3 +1972,71 @@ def test_a_token_that_could_steer_a_header_is_dropped(
 
     assert ZIP_DONE_COOKIE not in response.cookies
     assert response.status_code == 200  # and the download itself is unaffected
+
+
+# --- the gallery layout, and selecting several at once ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("with_thumbs", "without", "expected"),
+    [
+        (10, 0, True),  # a folder of photographs
+        (6, 4, True),  # exactly at the threshold
+        (5, 5, False),  # half and half is not a gallery
+        (2, 15, False),  # a couple of snapshots among the referater
+        (0, 3, False),  # documents
+    ],
+    ids=["all images", "at threshold", "half", "mostly documents", "documents"],
+)
+def test_a_folder_becomes_a_grid_once_it_is_mostly_pictures(
+    resident_in: Callable, media_tmp: Path, with_thumbs: int, without: int, expected: bool
+) -> None:
+    """Decided on the server because it decides the MARKUP, and the markup is what a reader without
+    JavaScript gets. Rendering rows and rearranging them on load would be a layout shift on every
+    folder in the archive."""
+    from arkiv.views import is_gallery
+
+    folder = ArchiveFolder.objects.create(name="Blandet")
+    files = []
+    for i in range(with_thumbs):
+        files.append(make_file(folder, name=f"foto{i}.jpg", body=f"image-{i}".encode()))
+    ArchiveFile.objects.filter(pk__in=[f.pk for f in files]).update(has_thumbnail=True)
+    for i in range(without):
+        files.append(make_file(folder, name=f"referat{i}.pdf", body=f"doc-{i}".encode()))
+
+    assert is_gallery(list(ArchiveFile.objects.alive().filter(folder=folder))) is expected
+
+
+def test_an_empty_folder_is_not_a_gallery(media_tmp: Path) -> None:
+    """Guards the division. Without it a folder with nothing in it raises ZeroDivisionError, which
+    is a 500 on the one page a resident is most likely to reach by making a folder and looking."""
+    from arkiv.views import is_gallery
+
+    assert is_gallery([]) is False
+
+
+def test_a_photo_folder_renders_tiles_and_a_document_folder_renders_rows(
+    resident_in: Callable, media_tmp: Path
+) -> None:
+    """Both layouts have to carry the same selection hooks, because one controller drives both."""
+    photos = ArchiveFolder.objects.create(name="Billeder")
+    for i in range(3):
+        f = make_file(photos, name=f"foto{i}.jpg", body=f"image-{i}".encode())
+        ArchiveFile.objects.filter(pk=f.pk).update(has_thumbnail=True)
+    docs = ArchiveFolder.objects.create(name="Dokumenter")
+    make_file(docs, name="referat.pdf")
+    client = login(resident_in("a@gahk.dk", None))
+
+    gallery = client.get(f"/intern/arkiv/mappe/{photos.pk}/").content.decode()
+    assert 'class="arkiv-grid"' in gallery
+    assert "arkiv-tile-img" in gallery
+
+    listing = client.get(f"/intern/arkiv/mappe/{docs.pk}/").content.decode()
+    assert 'class="arkiv-list"' in listing
+    assert "arkiv-tile-img" not in listing
+
+    # The hooks the selection controller needs, in BOTH layouts.
+    for body in (gallery, listing):
+        assert "data-selection-scope" in body
+        assert "data-selectable" in body
+        assert "data-batch-pick" in body
