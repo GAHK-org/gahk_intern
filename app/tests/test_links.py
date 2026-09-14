@@ -288,3 +288,32 @@ def test_a_pasted_link_is_clickable_and_short_on_every_surface(
         assert url not in body.replace(f'href="{url}"', "").replace(f'title="{url}"', ""), (
             f"the raw URL is still printed as text — {what}"
         )
+
+
+# --- basename -------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        ("quick_posts/2026/09/fest.jpg", "fest.jpg"),
+        ("opslag/kommentarer/2026/09/se her.png", "se her.png"),
+        ("fest.jpg", "fest.jpg"),  # already bare
+        ("", ""),
+        ("mappe/", ""),  # trailing slash: no name to find, and no crash either
+        ("2026/09/Skærmbillede 2026-09-01.png", "Skærmbillede 2026-09-01.png"),
+        (r"weird\name.jpg", r"weird\name.jpg"),  # a backslash is a legal character, not a separator
+    ],
+    ids=["upload_to path", "nested with space", "bare", "empty", "trailing slash", "danish", "backslash"],
+)
+def test_basename_takes_the_last_segment_of_a_storage_key(stored: str, expected: str) -> None:
+    """What a saved photograph is called.
+
+    A FileField's `name` carries the whole `upload_to` path, so without this the viewer captions a
+    picture "2026/09/fest.jpg" and the browser saves it under that name. The backslash case is the
+    reason this splits on "/" by hand rather than using PurePath: a storage key is "/"-separated on
+    every platform, and PureWindowsPath would treat a legal filename character as a separator.
+    """
+    from core.templatetags.text_extras import basename
+
+    assert basename(stored) == expected

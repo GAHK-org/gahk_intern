@@ -144,7 +144,8 @@
           {% endcomment %}
           <a href="{% url 'arkiv:download' file.pk %}"
              {% if file.has_thumbnail %}
-               data-preview="{% url 'arkiv:preview' file.pk %}" data-name="{{ file.name }}"
+               data-viewer data-preview="{% url 'arkiv:preview' file.pk %}"
+               data-name="{{ file.name }}"
              {% endif %}>
             {% if file.has_thumbnail %}
               {% comment %}

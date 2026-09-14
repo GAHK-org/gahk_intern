@@ -316,9 +316,9 @@ is scoped to `media/`, and the latter asks only about `arkiv/` hashes. A sweep t
 zip was an orphan would be right, and deleting it would still be pointless churn against a rule that
 already does the job.
 
-**`backups/` has no expiry rule at all** — the original plan called for 30 days and it was never
-set, so database dumps accumulate indefinitely. Not fixed here; worth doing before it is a year of
-them.
+**Backups live under `data/coolify/`, not `backups/`** (§4d), and the rule they need is only the
+noncurrent half: Coolify decides which dumps to keep, and versioning is what stops its deletions
+actually freeing anything.
 
 #### What the batch-download caps are for now
 
@@ -370,9 +370,25 @@ in lockstep with the managed Postgres major forever — a mismatched `pg_dump` r
 | **MariaDB** (MediaWiki) | `20 2 * * *` | 30 days | Its own app and its own DB — easy to forget |
 | **Coolify instance** | `40 2 * * *` | 14 days | Its DB holds the app definitions and every env var in §2 |
 
-Destination is the same bucket as media, under `backups/`. That is safe because Django's storage is
-pinned to `location="media"` (§4c), so `/media/../backups/…` raises rather than resolving, and
+Destination is the same bucket as media, under **`data/coolify/backups/…`** — Coolify's own layout,
+which it picks and we do not get to choose. The original plan said `backups/`; that prefix was never
+created and never will be, so do not go looking for it. As of this writing the tree is:
+
+```
+data/coolify/backups/databases/root-team-0/gahk-<id>/pg-dump-gahk-<ts>.dmp
+data/coolify/backups/databases/root-team-0/gahk-wiki-<id>/mariadb-dump-<ts>.dmp
+data/coolify/backups/coolify/coolify-db-hostdockerinternal/pg-dump-coolify-<ts>.dmp
+```
+
+Safe in the same bucket for the same reason whatever the prefix is called: Django's storage is
+pinned to `location="media"` (§4c), so `/media/../data/…` raises rather than resolving, and
 `audit_media` is prefix-scoped to `media/` and never reports a backup as an orphan.
+
+**Coolify owns the retention, and the bucket must not second-guess it.** The per-resource setting in
+the Coolify UI decides which dumps to keep; a bucket `Expiration` rule on this prefix would be a
+second authority deleting backups on its own schedule, and if the two ever disagree the bucket wins
+silently. What the bucket SHOULD clean up is what versioning leaves behind when Coolify prunes - see
+below.
 
 Offsets matter: §4b already runs tasks at 03:20, 03:40, 03:50 and 04:00, so backups sit in the
 02:00-02:40 window and never overlap a purge on this small box. Coolify evaluates cron on the **host

@@ -170,205 +170,6 @@ if (root && input && status) {
 }
 
 /**
- * The viewer, and the selection counter beside "Hent valgte".
- *
- * Both are progressive enhancements over markup that already works. Every image row is an ordinary
- * link to the download view, and every checkbox already belongs to the batch form by `form=`; what
- * follows intercepts a plain left click to show the picture instead, and keeps a count in view.
- * With the bundle dead, clicking an image downloads it and the batch button still posts.
- */
-
-interface Slide {
-  url: string
-  name: string
-  /** The ORIGINAL, at full resolution - what the anchor pointed at before the viewer took the click. */
-  download: string
-}
-
-function slidesFrom(): Slide[] {
-  // DOM order is the listing's order, which is the server's ordering by name. No second sort here.
-  return Array.from(document.querySelectorAll<HTMLAnchorElement>('a[data-preview]')).map((a) => ({
-    url: a.dataset.preview!,
-    name: a.dataset.name ?? '',
-    download: a.getAttribute('href') ?? '',
-  }))
-}
-
-function buildViewer(): {
-  open: (index: number) => void
-  close: () => void
-} {
-  const slides = slidesFrom()
-  let at = 0
-
-  const overlay = document.createElement('div')
-  overlay.className = 'arkiv-viewer'
-  overlay.hidden = true
-  // A dialog to the accessibility tree, not just a dark div: focus moves here on open and the
-  // label is read out, so a screen-reader user is told what happened rather than left on a page
-  // whose links have silently stopped responding.
-  overlay.setAttribute('role', 'dialog')
-  overlay.setAttribute('aria-modal', 'true')
-  overlay.setAttribute('aria-label', 'Billedvisning')
-  overlay.tabIndex = -1
-  overlay.innerHTML = `
-    <button type="button" class="arkiv-viewer-close" aria-label="Luk">&times;</button>
-    <button type="button" class="arkiv-viewer-nav arkiv-viewer-prev" aria-label="Forrige">&lsaquo;</button>
-    <figure class="arkiv-viewer-stage">
-      <img alt="">
-      <figcaption></figcaption>
-      <p class="arkiv-viewer-actions">
-        <a class="arkiv-viewer-save" download>Hent original</a>
-        <span class="arkiv-viewer-hint" hidden>Hold fingeren på billedet for at gemme det i Fotos</span>
-      </p>
-    </figure>
-    <button type="button" class="arkiv-viewer-nav arkiv-viewer-next" aria-label="Næste">&rsaquo;</button>`
-  document.body.append(overlay)
-
-  const img = overlay.querySelector('img')!
-  const caption = overlay.querySelector('figcaption')!
-  const save = overlay.querySelector<HTMLAnchorElement>('.arkiv-viewer-save')!
-  let restoreFocusTo: HTMLElement | null = null
-
-  const hint = overlay.querySelector<HTMLElement>('.arkiv-viewer-hint')!
-  // Touch only. A long press is the gesture this serves and a desktop has none - it has the "Hent
-  // original" link instead, which costs nothing until clicked.
-  const touch = matchMedia('(hover: none)').matches
-
-  /**
-   * TWO WAYS TO KEEP A PICTURE, because only one of them exists per device.
-   *
-   * On a phone, a long press on the image is the answer: iOS offers "Føj til Fotos", Android
-   * "Download image", straight into the photo library with no permission prompt and no second copy
-   * of the bytes - the browser already has them. That path needs no code, only for nothing to
-   * suppress it; styles.css keeps -webkit-touch-callout on this image for exactly that reason while
-   * switching it off on the grid, where a long press means select instead.
-   *
-   * But a long press saves WHAT IS ON SCREEN, and what is on screen is the ~1600px preview. So to
-   * let a phone save the real photograph, the viewer quietly replaces its own image with the
-   * original once that has finished loading. The gesture is untouched; the thing it is pointed at
-   * changes underneath it.
-   *
-   * Preview first, original second, deliberately. Showing the original immediately would mean
-   * staring at a blank frame while forty megabytes arrive over dorm wifi - the preview is on screen
-   * in a moment and the swap, when it lands, is the same picture at higher resolution and invisible.
-   *
-   * The cost is honest and worth stating: a photograph that is looked at is now fetched twice, and
-   * egress is the one line of the Hetzner bill that scales with use. Hence touch-only. A desktop
-   * browsing the archive is unaffected, and a phone pays it only for pictures somebody actually
-   * opened - never for the grid, which is thumbnails throughout.
-   *
-   * This deliberately does NOT go through navigator.share with a fetched file, which would also
-   * work: that reads the bytes cross-origin, and the bucket's CORS rule allows POST only. An
-   * <img src> is not subject to it, so this needs no change to the bucket at all.
-   */
-  let generation = 0
-  function upgradeToOriginal(slide: Slide, forGeneration: number): void {
-    if (!touch || !slide.download) return
-    hint.textContent = 'Henter fuld opløsning…'
-    const full = new Image()
-    full.onload = () => {
-      // Paging is faster than a forty-megabyte download, so by the time this lands the reader may
-      // be two pictures further on. The generation check is what stops the wrong photograph
-      // appearing in the frame.
-      if (forGeneration !== generation) return
-      img.src = slide.download
-      hint.textContent = 'Hold fingeren på billedet for at gemme det i Fotos'
-    }
-    full.onerror = () => {
-      // The preview stays on screen and remains saveable. Worse quality, still a picture.
-      if (forGeneration === generation) hint.textContent = 'Hold fingeren nede for at gemme (preview)'
-    }
-    full.src = slide.download
-  }
-
-  if (touch) hint.hidden = false
-
-  function show(index: number): void {
-    // Wraps, so the end of a folder rolls round rather than dead-ending on a button that does
-    // nothing. `% length` twice because JavaScript's remainder keeps the sign of the dividend.
-    at = ((index % slides.length) + slides.length) % slides.length
-    const slide = slides[at]
-    generation += 1
-    img.src = slide.url
-    img.alt = slide.name
-    caption.textContent = `${slide.name} · ${at + 1}/${slides.length}`
-    upgradeToOriginal(slide, generation)
-    save.href = slide.download
-    // The attribute names the file, so the browser does not save it under the bare hash the
-    // presigned URL ends in. The server sets Content-Disposition too; this one covers the local
-    // store in dev, where there is no presigned URL to put it on.
-    save.setAttribute('download', slide.name)
-
-    // Warm the neighbours so paging feels immediate. The preview is a few hundred kB and cached
-    // for a week, so this costs one request each and only the first time round.
-    for (const step of [1, -1]) {
-      const near = slides[((at + step) % slides.length + slides.length) % slides.length]
-      new Image().src = near.url
-    }
-  }
-
-  function open(index: number): void {
-    restoreFocusTo = document.activeElement as HTMLElement | null
-    overlay.hidden = false
-    document.body.classList.add('arkiv-viewer-open')
-    show(index)
-    overlay.focus()
-  }
-
-  function close(): void {
-    generation += 1  // any upgrade still in flight is now for a picture nobody is looking at
-    overlay.hidden = true
-    document.body.classList.remove('arkiv-viewer-open')
-    // Drop the bytes; a folder of two hundred photographs paged end to end would otherwise leave
-    // the last one decoded in memory for as long as the page lives.
-    img.removeAttribute('src')
-    restoreFocusTo?.focus()
-  }
-
-  overlay.querySelector('.arkiv-viewer-close')!.addEventListener('click', close)
-  overlay.querySelector('.arkiv-viewer-prev')!.addEventListener('click', () => show(at - 1))
-  overlay.querySelector('.arkiv-viewer-next')!.addEventListener('click', () => show(at + 1))
-  overlay.addEventListener('click', (event) => {
-    // Only the backdrop itself. A click that started on the image or a button is not "outside".
-    if (event.target === overlay) close()
-  })
-
-  document.addEventListener('keydown', (event) => {
-    if (overlay.hidden) return
-    if (event.key === 'Escape') close()
-    else if (event.key === 'ArrowRight') show(at + 1)
-    else if (event.key === 'ArrowLeft') show(at - 1)
-    else return
-    event.preventDefault()
-  })
-
-  // Swipe, because this is mostly read on a phone. Horizontal only, and only past a threshold, so
-  // it does not fight a vertical scroll or fire on a tap that wandered a pixel.
-  let startX = 0
-  let startY = 0
-  overlay.addEventListener(
-    'touchstart',
-    (event) => {
-      startX = event.changedTouches[0].clientX
-      startY = event.changedTouches[0].clientY
-    },
-    { passive: true },
-  )
-  overlay.addEventListener(
-    'touchend',
-    (event) => {
-      const dx = event.changedTouches[0].clientX - startX
-      const dy = event.changedTouches[0].clientY - startY
-      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) show(at + (dx < 0 ? 1 : -1))
-    },
-    { passive: true },
-  )
-
-  return { open, close }
-}
-
-/**
  * Selecting files: long-press on a phone, drag across a run, shift-click a range.
  *
  * ONE IMPLEMENTATION FOR BOTH LAYOUTS. A photo folder is a grid and a document folder is a list
@@ -541,20 +342,39 @@ if (scope && rows.length > 0) {
     clearSelection()
   })
 
-  // THE CLICK A DRAG LEAVES BEHIND, killed once, in capture, before any other handler sees it.
+  // CAPTURE PHASE, and it owns two things that both have to happen before anything else sees the
+  // click - in particular before imageviewer.ts, whose delegated listener would otherwise open the
+  // picture when the tap was meant to select it.
   //
-  // This used to be checked inside the anchor's own click handler, which meant the flag was only
-  // cleared when the stray click happened to land on a picture. Land it anywhere else - the page
-  // background, the toolbar - and it stayed set for the life of the page, silently disabling the
-  // dismissal below from the first drag onwards. Capture phase is the fix: every click passes
-  // through here first, so the flag is always consumed exactly once by the gesture that set it.
+  // First, the click a drag leaves behind. This used to be checked inside the anchor's own handler,
+  // which meant the flag was only cleared when that stray click happened to land on a picture. Land
+  // it anywhere else - the page background, the toolbar - and it stayed set for the life of the
+  // page, silently disabling the blank-area dismissal from the first drag onwards.
+  //
+  // Second, a tap while selecting means "this one too", not "show me this one" - the phone photo
+  // app rule. Out of selection mode the click falls through untouched and the viewer opens it,
+  // which is what almost every visit wants.
   document.addEventListener(
     'click',
     (event) => {
-      if (!swallowClick) return
-      swallowClick = false
+      if (swallowClick) {
+        swallowClick = false
+        event.stopPropagation()
+        event.preventDefault()
+        return
+      }
+      if (!selecting) return
+      const row = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-selectable]')
+      if (!row) return
+      const box = row.querySelector<HTMLInputElement>('[data-batch-pick]')
+      // The checkbox itself already toggles, and has its own listener for shift-ranges. Claiming
+      // that click here as well would toggle it twice and leave it exactly as it started.
+      if (!box || (event.target as HTMLElement).closest('[data-batch-pick]')) return
       event.stopPropagation()
       event.preventDefault()
+      box.checked = !box.checked
+      anchor = rows.indexOf(row)
+      announce()
     },
     true,
   )
@@ -597,35 +417,6 @@ if (scope && rows.length > 0) {
   }
 }
 
-const previewLinks = document.querySelectorAll<HTMLAnchorElement>('a[data-preview]')
-if (previewLinks.length > 0) {
-  const viewer = buildViewer()
-  previewLinks.forEach((link, index) => {
-    link.addEventListener('click', (event) => {
-      // Leave the modified clicks alone: ctrl/cmd/shift/middle-click all mean "I want the file",
-      // and hijacking them is the thing that makes a gallery infuriating.
-      if (event.defaultPrevented || event.button !== 0) return
-      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-
-      // In selection mode a tap means "this one too", not "show me this one" - the phone photo app
-      // rule. Out of it, the picture opens, which is what almost every visit wants.
-      if (selecting) {
-        event.preventDefault()
-        const row = (event.currentTarget as HTMLElement).closest<HTMLElement>('[data-selectable]')
-        const box = row?.querySelector<HTMLInputElement>('[data-batch-pick]')
-        if (box) {
-          box.checked = !box.checked
-          anchor = rows.indexOf(row!)
-          announce()
-        }
-        return
-      }
-
-      event.preventDefault()
-      viewer.open(index)
-    })
-  })
-}
 
 /**
  * The count beside "Hent valgte", and the pending state while the zip is built.

@@ -1620,7 +1620,7 @@
   .arkiv-tile-img { display:block; width:100%; aspect-ratio:1; object-fit:cover;
     background:var(--surface-2); }
   /* IN THE GRID, a long press means SELECT, so the native "save image" callout has to go. In the
-     viewer it means SAVE, and there the callout is the whole feature - see .arkiv-viewer-stage img.
+     viewer it means SAVE, and there the callout is the whole feature - see .imgviewer-stage img.
      The split is deliberate: the same gesture on a thumbnail and on the full picture are different
      requests. */
   .arkiv-grid li > a img { -webkit-touch-callout:none; }
@@ -1683,15 +1683,16 @@
      control in the row that is hit by thumb rather than by cursor. */
   .arkiv-pick { flex:none; width:18px; height:18px; margin:0; accent-color:var(--green-700); }
 
-  /* Above everything, including the sticky header -- a viewer that something overlaps is a bug
+  /* THE SHARED PICTURE VIEWER: Arkiv, opslagstavlen and Den Hurtige all open into this one.
+     Above everything, including the sticky header -- a viewer that something overlaps is a bug
      report. Fixed rather than absolute so it does not move if the page behind it scrolls. */
-  .arkiv-viewer { position:fixed; inset:0; z-index:100; display:flex; align-items:center;
+  .imgviewer { position:fixed; inset:0; z-index:100; display:flex; align-items:center;
     justify-content:center; gap:8px; padding:16px; background:rgb(0 0 0 / 0.88); }
   /* Stops the page behind scrolling under the overlay on a phone, which otherwise happens the
      moment a swipe is read as vertical. */
-  body.arkiv-viewer-open { overflow:hidden; }
+  body.imgviewer-open { overflow:hidden; }
 
-  .arkiv-viewer-stage { display:flex; flex-direction:column; align-items:center; gap:10px;
+  .imgviewer-stage { display:flex; flex-direction:column; align-items:center; gap:10px;
     margin:0; min-width:0; }
   /* The image is bounded by the VIEWPORT, not by its own size: a 1600px preview on a phone must
      shrink, and one on a large screen must not stretch past the caption's room. */
@@ -1701,28 +1702,28 @@
      of the bytes, because the browser already has them. Any rule setting it to none anywhere above
      this would silently remove the feature, which is why it is stated here rather than left to
      inherit. The grid deliberately does the opposite. */
-  .arkiv-viewer-stage img { max-width:100%; max-height:calc(100vh - 96px); object-fit:contain;
+  .imgviewer-stage img { max-width:100%; max-height:calc(100vh - 96px); object-fit:contain;
     border-radius:6px; background:rgb(255 255 255 / 0.04);
     -webkit-touch-callout:default; -webkit-user-select:auto; user-select:auto; }
-  .arkiv-viewer-stage figcaption { color:rgb(255 255 255 / 0.85); font-size:13px; text-align:center;
+  .imgviewer-stage figcaption { color:rgb(255 255 255 / 0.85); font-size:13px; text-align:center;
     max-width:min(90vw, 700px); overflow-wrap:anywhere; }
 
-  .arkiv-viewer-actions { display:flex; align-items:center; gap:12px; margin:0; flex-wrap:wrap;
+  .imgviewer-actions { display:flex; align-items:center; gap:12px; margin:0; flex-wrap:wrap;
     justify-content:center; }
-  .arkiv-viewer-save { color:#fff; font-size:13px; }
-  .arkiv-viewer-hint { color:rgb(255 255 255 / 0.6); font-size:12px; }
+  .imgviewer-save { color:#fff; font-size:13px; }
+  .imgviewer-hint { color:rgb(255 255 255 / 0.6); font-size:12px; }
 
-  .arkiv-viewer-nav, .arkiv-viewer-close { flex:none; background:rgb(255 255 255 / 0.12); border:0;
+  .imgviewer-nav, .imgviewer-close { flex:none; background:rgb(255 255 255 / 0.12); border:0;
     color:#fff; cursor:pointer; border-radius:999px; line-height:1; }
-  .arkiv-viewer-nav { width:44px; height:44px; font-size:28px; }
-  .arkiv-viewer-close { position:absolute; top:12px; right:12px; width:40px; height:40px;
+  .imgviewer-nav { width:44px; height:44px; font-size:28px; }
+  .imgviewer-close { position:absolute; top:12px; right:12px; width:40px; height:40px;
     font-size:24px; }
-  .arkiv-viewer-nav:hover, .arkiv-viewer-close:hover { background:rgb(255 255 255 / 0.24); }
+  .imgviewer-nav:hover, .imgviewer-close:hover { background:rgb(255 255 255 / 0.24); }
 
   /* On a phone the arrows are swipe's job and they crowd a small screen; the close button stays,
      because a gesture nobody was told about is not a way out. */
   @media (max-width:600px) {
-    .arkiv-viewer-nav { display:none; }
+    .imgviewer-nav { display:none; }
   }
 
   .arkiv-newfolder { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
