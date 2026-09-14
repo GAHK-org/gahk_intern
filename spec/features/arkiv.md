@@ -194,6 +194,43 @@ GET would be a link somebody could paste into a chat thread to start a half-giga
 whoever clicked it. The ids arrive from the client, so they are re-checked through `visible_files`
 scoped to the folder — the same rule the listing used, applied again rather than trusted.
 
+## Taking a folder, and unmaking one
+
+**Downloading a folder is recursive**, and the tree is kept inside the zip. A "download this folder"
+that quietly skipped the subfolders would be wrong in a way nobody notices until they are looking
+for a photograph at home, and a zip of four hundred loose files from twelve different evenings is
+worse than the folder it came from. The paths also keep entry names unique, since `(folder, name)`
+is unique per folder but a name repeats freely across them.
+
+It is the same machinery as a selection download — same cap, same build-into-the-bucket, same
+`selection_key` reuse — with one difference: the key is derived from the **paths**, not the bare
+names, so the same photographs zipped from two different folder shapes are two different archives
+rather than one wrong one.
+
+A subfolder the reader cannot see contributes nothing, and is not hinted at either: the zip is
+simply smaller, with no entry and no empty directory to announce that something was skipped.
+
+**Deleting a folder is for EMPTY folders only**, and that is the design rather than a limitation
+waiting to be lifted. A recursive delete would put two hundred photographs behind one tap, and its
+undo — which rows came back, and which had been deleted separately beforehand — is where that
+feature's bugs would live. What people need most of the time is to unmake a folder they just made
+by mistake. Roots are exempt: they are the kollegium's filing system and belong to whoever arranges
+the top level (`access.can_delete_folder`, which is deliberately not `can_write`).
+
+**"Empty" is asked of the whole tree, not the visible one.** Emptiness is a property of the folder,
+not of who is looking — count through `visible_folders` and a gated subfolder counts as zero, so the
+one resident who must not delete this folder is exactly the one allowed to. The *message* is then
+the careful part, because a count is information: what the reader can see is reported exactly, and
+anything they cannot collapses into a bare "Mappen er ikke tom".
+
+The delete is soft and needs no new column — `ArchiveFolder` has carried `deleted_at` since the
+first migration, and the unique constraint is scoped to live rows, so the same name is free again
+immediately. No `deleted_by`: an empty folder loses nothing when it goes, and "who removed it"
+answers a question nobody has.
+
+It is also the only `confirm()` in Arkiv. Removing a file is one click from undo in the list below
+it; an empty folder has no such list, because there is nothing to restore. The dialog is the undo.
+
 Arkiv does **not** use `STORAGES["default"]`. That is `MediaS3Storage`, pinned to `location="media"`,
 and the prefix is a security boundary (DEPLOY.md §4c/§4d) — a storage that could reach `arkiv/`
 could reach `backups/`. `arkiv/storage.py` talks to the bucket directly, with a local-filesystem
@@ -247,6 +284,9 @@ batch download are built. Still to come, in rough order:
 
 1. **Rename and move.** Both are DB-only by construction — the key is the hash, not the path — so
    this is a form and an access check, not a data migration. The admin does it today.
+1. **Deleting a folder that is not empty.** Deliberately absent, see above. If it is ever wanted,
+   the work is not the delete but the undo: descendants need to remember which action removed them,
+   or restoring a folder resurrects files somebody had deleted on purpose beforehand.
 2. **An audit command**, the sibling of `audit_media`: rows whose object is missing, and objects no
    row references. Report-only, for the reasons that command's docstring gives. `_zip_chunks`
    skipping a vanished object rather than truncating the archive is a placeholder for it.

@@ -13,10 +13,12 @@ Two properties are asserted repeatedly and on purpose:
 """
 
 from collections.abc import Callable
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 from django.test import Client
+from django.utils import timezone
 
 from arkiv import access
 from arkiv.models import ArchiveFile, ArchiveFolder, object_key, thumbnail_key
@@ -441,6 +443,99 @@ def test_a_soft_deleted_row_still_holds_its_object(media_tmp: Path) -> None:
 # the removed list, destroys the row and - if no other row shares the hash - the object too. What
 # makes the second one safe to offer every writer is the ORDER, not the permission: see
 # arkiv/access.py::can_purge_file. These tests pin both halves of that.
+
+
+def test_a_locked_folder_blocks_mutations_in_its_descendants(resident_in: Callable, media_tmp: Path) -> None:
+    root = ArchiveFolder.objects.create(name="Arkiv", locked_at=timezone.now())
+    child = ArchiveFolder.objects.create(name="2026", parent=root)
+    file = make_file(child)
+    client = login(resident_in("a@gahk.dk", None))
+
+    assert client.post(f"{ROOT_URL}mappe/{child.pk}/ny-mappe", {"name": "Fest"}).status_code == 403
+    assert client.post(f"{ROOT_URL}fil/{file.pk}/fjern").status_code == 403
+    assert ArchiveFolder.objects.alive().filter(parent=child, name="Fest").count() == 0
+    file.refresh_from_db()
+    assert file.deleted_at is None
+
+
+def test_an_administrator_can_lock_and_temporarily_unlock_a_folder(make_resident: Callable) -> None:
+    folder = ArchiveFolder.objects.create(name="Arkiv")
+    administrator = make_resident(email="admin@gahk.dk", roles=[Role.ADMINISTRATOR])
+    client = login(administrator)
+
+    assert "Lås mappe" in client.get(f"{ROOT_URL}mappe/{folder.pk}/").content.decode()
+    assert client.post(f"{ROOT_URL}mappe/{folder.pk}/laas").status_code == 302
+
+    folder.refresh_from_db()
+    assert folder.locked_at is not None
+    locked_page = client.get(f"{ROOT_URL}mappe/{folder.pk}/").content.decode()
+    assert "Mappen er låst" in locked_page
+    assert "Lås op i en time" in locked_page
+
+    assert client.post(f"{ROOT_URL}mappe/{folder.pk}/laas-op").status_code == 302
+    folder.refresh_from_db()
+    assert folder.unlocked_until is not None
+    assert folder.unlocked_until > timezone.now() + timedelta(minutes=59)
+
+    unlocked_page = client.get(f"{ROOT_URL}mappe/{folder.pk}/").content.decode()
+    assert "Lås igen" in unlocked_page
+    assert "Midlertidig oplåsning udløber" in unlocked_page
+    assert "#i-lock" in unlocked_page
+    assert "#i-clock" in unlocked_page
+
+    assert client.post(f"{ROOT_URL}mappe/{folder.pk}/laas-igen").status_code == 302
+    folder.refresh_from_db()
+    assert folder.unlocked_until is None
+
+
+def test_a_non_administrator_cannot_lock_a_folder(resident_in: Callable) -> None:
+    folder = ArchiveFolder.objects.create(name="Arkiv")
+    client = login(resident_in("a@gahk.dk", None))
+
+    assert client.post(f"{ROOT_URL}mappe/{folder.pk}/laas").status_code == 403
+    folder.refresh_from_db()
+    assert folder.locked_at is None
+
+
+def test_a_temporary_unlock_expires_after_one_hour(resident_in: Callable, media_tmp: Path) -> None:
+    folder = ArchiveFolder.objects.create(
+        name="Arkiv", locked_at=timezone.now(), unlocked_until=timezone.now() + timedelta(hours=1)
+    )
+    file = make_file(folder)
+    client = login(resident_in("a@gahk.dk", None))
+
+    assert client.post(f"{ROOT_URL}fil/{file.pk}/fjern").status_code == 302
+
+    file.restore()
+    ArchiveFolder.objects.filter(pk=folder.pk).update(unlocked_until=timezone.now() - timedelta(seconds=1))
+    assert client.post(f"{ROOT_URL}fil/{file.pk}/fjern").status_code == 403
+
+
+def test_objects_older_than_thirty_days_cannot_be_deleted(resident_in: Callable, media_tmp: Path) -> None:
+    folder = ArchiveFolder.objects.create(name="Arkiv")
+    file = make_file(folder)
+    cutoff = timezone.now() - timedelta(days=30, seconds=1)
+    ArchiveFolder.objects.filter(pk=folder.pk).update(created_at=cutoff)
+    ArchiveFile.objects.filter(pk=file.pk).update(uploaded_at=cutoff)
+    client = login(resident_in("a@gahk.dk", None))
+
+    assert client.post(f"{ROOT_URL}mappe/{folder.pk}/fjern").status_code == 403
+    assert client.post(f"{ROOT_URL}fil/{file.pk}/fjern").status_code == 403
+    assert ArchiveFolder.objects.filter(pk=folder.pk).exists()
+    file.refresh_from_db()
+    assert file.deleted_at is None
+
+
+def test_a_folder_with_soft_deleted_history_cannot_be_deleted(resident_in: Callable, media_tmp: Path) -> None:
+    root = ArchiveFolder.objects.create(name="Arkiv")
+    folder = ArchiveFolder.objects.create(name="2026", parent=root)
+    file = make_file(folder)
+    file.soft_delete()
+    client = login(resident_in("a@gahk.dk", None))
+
+    assert client.post(f"{ROOT_URL}mappe/{folder.pk}/fjern").status_code == 302
+    folder.refresh_from_db()
+    assert folder.deleted_at is None
 
 
 def test_a_removed_file_leaves_the_listing_but_keeps_its_bytes(
@@ -2040,3 +2135,183 @@ def test_a_photo_folder_renders_tiles_and_a_document_folder_renders_rows(
         assert "data-selection-scope" in body
         assert "data-selectable" in body
         assert "data-batch-pick" in body
+
+
+# --- downloading and removing a whole folder --------------------------------------------------------
+
+
+def test_a_folder_downloads_with_its_subfolders_and_their_paths(
+    resident_in: Callable, media_tmp: Path
+) -> None:
+    """RECURSIVE, and the tree is kept. A zip of four hundred loose photographs from twelve
+    different evenings is worse than the folder it came from."""
+    import zipfile
+    from io import BytesIO
+
+    top = ArchiveFolder.objects.create(name="Sommerfest")
+    inner = ArchiveFolder.objects.create(parent=top, name="Loerdag")
+    deeper = ArchiveFolder.objects.create(parent=inner, name="Natten")
+    make_file(top, name="plakat.jpg", body=b"top")
+    make_file(inner, name="fest.jpg", body=b"inner")
+    make_file(deeper, name="oprydning.jpg", body=b"deep")
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{top.pk}/hent-alt")
+
+    body = zipfile.ZipFile(BytesIO(b"".join(response.streaming_content)))
+    assert sorted(body.namelist()) == [
+        "Loerdag/Natten/oprydning.jpg",
+        "Loerdag/fest.jpg",
+        "plakat.jpg",
+    ]
+    assert body.read("Loerdag/Natten/oprydning.jpg") == b"deep"
+    assert body.testzip() is None
+
+
+def test_a_folder_download_leaves_out_a_subfolder_you_cannot_see(
+    resident_in: Callable, workgroups: tuple, media_tmp: Path
+) -> None:
+    """The zip a non-member gets is simply smaller. No entry, and no empty directory either - an
+    empty folder in the archive would say "something was skipped here", which is the leak."""
+    import zipfile
+    from io import BytesIO
+
+    regnskab, _ = workgroups
+    top = ArchiveFolder.objects.create(name="Faelles")
+    secret = ArchiveFolder.objects.create(parent=top, name="Regnskab", workgroup=regnskab)
+    make_file(top, name="alle.jpg", body=b"shared")
+    make_file(secret, name="budget.pdf", body=b"secret")
+    client = login(resident_in("outsider@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{top.pk}/hent-alt")
+
+    body = zipfile.ZipFile(BytesIO(b"".join(response.streaming_content)))
+    assert body.namelist() == ["alle.jpg"]
+    assert not any("Regnskab" in n for n in body.namelist())
+
+
+def test_downloading_a_folder_you_cannot_see_is_a_404(
+    resident_in: Callable, workgroups: tuple, media_tmp: Path
+) -> None:
+    regnskab, _ = workgroups
+    folder = ArchiveFolder.objects.create(name="Regnskab", workgroup=regnskab)
+    make_file(folder)
+    client = login(resident_in("outsider@gahk.dk", None))
+
+    assert client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-alt").status_code == 404
+
+
+def test_an_empty_folder_is_not_downloadable(resident_in: Callable, media_tmp: Path) -> None:
+    """An empty zip is a puzzle, not a download."""
+    folder = ArchiveFolder.objects.create(name="Tom")
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-alt", follow=True)
+
+    assert "Mappen er tom" in response.content.decode()
+
+
+def test_the_same_folder_zipped_twice_is_one_object(resident_in: Callable, media_tmp: Path) -> None:
+    """Folder downloads reuse `selection_key` like any other selection, so the second person to ask
+    for the same folder gets a redirect and no build."""
+    from io import BytesIO
+
+    from arkiv.models import selection_key
+    from arkiv.storage import get_store
+
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    inner = ArchiveFolder.objects.create(parent=folder, name="2026")
+    one = make_file(inner, name="en.jpg", body=b"first")
+    client = login(resident_in("a@gahk.dk", None))
+
+    key = selection_key([(f"2026/{one.name}", one.sha256)])
+    get_store().save(key, BytesIO(b"a previously built zip"))
+    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-alt")
+
+    assert b"".join(response.streaming_content) == b"a previously built zip"
+
+
+def test_an_empty_folder_can_be_removed(resident_in: Callable, media_tmp: Path) -> None:
+    parent = ArchiveFolder.objects.create(name="Billeder")
+    folder = ArchiveFolder.objects.create(parent=parent, name="Tastefejl")
+    client = login(resident_in("a@gahk.dk", None))
+
+    client.post(f"/intern/arkiv/mappe/{folder.pk}/fjern")
+
+    folder.refresh_from_db()
+    assert folder.deleted_at is not None
+    assert not ArchiveFolder.objects.alive().filter(pk=folder.pk).exists()
+
+
+def test_the_name_is_free_again_immediately(resident_in: Callable, media_tmp: Path) -> None:
+    """The unique constraint is scoped to live rows, so removing a folder and making another with
+    the same name is not a collision. Worth a test because it is what somebody does straight after
+    unmaking a typo."""
+    parent = ArchiveFolder.objects.create(name="Billeder")
+    folder = ArchiveFolder.objects.create(parent=parent, name="Sommerfest")
+    client = login(resident_in("a@gahk.dk", None))
+
+    client.post(f"/intern/arkiv/mappe/{folder.pk}/fjern")
+    again = ArchiveFolder.objects.create(parent=parent, name="Sommerfest")
+
+    assert again.pk != folder.pk
+
+
+@pytest.mark.parametrize("with_file", [True, False], ids=["holds a file", "holds a subfolder"])
+def test_a_folder_with_anything_in_it_is_refused(
+    resident_in: Callable, media_tmp: Path, with_file: bool
+) -> None:
+    """Empty only. A recursive delete would put two hundred photographs behind one tap."""
+    parent = ArchiveFolder.objects.create(name="Billeder")
+    folder = ArchiveFolder.objects.create(parent=parent, name="Sommerfest")
+    if with_file:
+        make_file(folder, name="fest.jpg")
+    else:
+        ArchiveFolder.objects.create(parent=folder, name="Loerdag")
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/fjern", follow=True)
+
+    assert "øm den først" in response.content.decode()
+    folder.refresh_from_db()
+    assert folder.deleted_at is None
+
+
+def test_a_subfolder_you_cannot_see_still_blocks_the_delete(
+    resident_in: Callable, workgroups: tuple, media_tmp: Path
+) -> None:
+    """THE ONE THAT COULD HAVE LEAKED. "Empty" is asked of the visible tree, so a gated subfolder
+    must still block - and the message must not name it. Letting a non-member delete the parent of
+    a folder they cannot see would be worse than the leak."""
+    regnskab, _ = workgroups
+    parent = ArchiveFolder.objects.create(name="Faelles")
+    folder = ArchiveFolder.objects.create(parent=parent, name="Blandet")
+    ArchiveFolder.objects.create(parent=folder, name="Regnskab", workgroup=regnskab)
+    client = login(resident_in("outsider@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/fjern", follow=True)
+
+    body = response.content.decode()
+    assert "Mappen er ikke tom" in body
+    assert "Regnskab" not in body, "named a folder the reader may not see"
+    assert "1 undermappe" not in body, "leaked the COUNT of folders the reader may not see"
+    folder.refresh_from_db()
+    assert folder.deleted_at is None
+
+
+def test_a_root_needs_inspektionen(resident_in: Callable, media_tmp: Path) -> None:
+    """Roots are the kollegium's filing system, not one resident's to unmake."""
+    root = ArchiveFolder.objects.create(name="Billeder")
+    client = login(resident_in("a@gahk.dk", None))
+
+    assert client.post(f"/intern/arkiv/mappe/{root.pk}/fjern").status_code == 403
+    root.refresh_from_db()
+    assert root.deleted_at is None
+
+
+def test_removing_a_folder_requires_post(resident_in: Callable, media_tmp: Path) -> None:
+    parent = ArchiveFolder.objects.create(name="Billeder")
+    folder = ArchiveFolder.objects.create(parent=parent, name="Tom")
+    client = login(resident_in("a@gahk.dk", None))
+
+    assert client.get(f"/intern/arkiv/mappe/{folder.pk}/fjern").status_code == 405

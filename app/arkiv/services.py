@@ -164,3 +164,37 @@ def ensure_root_folders() -> tuple[list[str], list[str]]:
     for workgroup in Workgroup.objects.order_by("name"):
         ensure(workgroup.name, workgroup)
     return created, existing
+
+
+def tree_files(
+    folder: ArchiveFolder, visible_folders: object, visible_files: object
+) -> list[tuple[str, "ArchiveFile"]]:
+    """Every visible file at or under `folder`, paired with its path relative to it.
+
+    FOR ZIPPING A FOLDER, which is the only caller. The path is what makes the archive usable -
+    a zip of four hundred loose photographs from twelve different evenings is worse than the folder
+    it came from - and it is also what keeps entry names unique, since `(folder, name)` is unique
+    per folder but a name can repeat across them.
+
+    Walked breadth-first through the VISIBLE querysets the caller passes in, not through
+    `folder.children`: the reverse accessor knows nothing about embedsgrupper, and a gated subfolder
+    inside a folder somebody can read is exactly the case that has to not appear. Passing them in
+    rather than importing access here keeps this module free of the request.
+
+    Iterative rather than recursive. The imported Dropbox tree is shallow, but it is somebody
+    else's twenty-year-old directory layout and a cycle or a freak depth should be a slow query,
+    not a RecursionError in a request.
+    """
+    out: list[tuple[str, ArchiveFile]] = []
+    queue: list[tuple[str, ArchiveFolder]] = [("", folder)]
+    seen = {folder.pk}
+    while queue:
+        prefix, current = queue.pop(0)
+        for file in visible_files.filter(folder=current).order_by("name"):  # type: ignore[attr-defined]
+            out.append((f"{prefix}{file.name}", file))
+        for child in visible_folders.filter(parent=current).order_by("name"):  # type: ignore[attr-defined]
+            if child.pk in seen:
+                continue
+            seen.add(child.pk)
+            queue.append((f"{prefix}{child.name}/", child))
+    return out

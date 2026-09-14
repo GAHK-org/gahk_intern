@@ -19,6 +19,13 @@ urlpatterns = [
     # POST: the selection is a couple of hundred ids, and a GET would be a link somebody could put
     # in a chat thread to start a half-gigabyte download for whoever clicked it.
     path("mappe/<int:pk>/hent-valgte", views.download_selected, name="download_selected"),
+    # The whole folder, subfolders and all. POST for the same reason as hent-valgte.
+    path("mappe/<int:pk>/hent-alt", views.download_folder, name="download_folder"),
+    # Empty folders only - see views.folder_delete for why that is the design and not a stub.
+    path("mappe/<int:pk>/fjern", views.folder_delete, name="folder_delete"),
+    path("mappe/<int:pk>/laas", views.folder_lock, name="folder_lock"),
+    path("mappe/<int:pk>/laas-op", views.folder_unlock, name="folder_unlock"),
+    path("mappe/<int:pk>/laas-igen", views.folder_relock, name="folder_relock"),
     # Upload is three routes rather than one because the bytes do not come here in production - see
     # arkiv/uploads.py. `direkte` is the dev/CI path and refuses to run when a bucket is configured.
     path("mappe/<int:pk>/upload/start", views.upload_begin, name="upload_begin"),

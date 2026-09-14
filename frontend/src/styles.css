@@ -1593,6 +1593,9 @@
      size, which is how the folder icon first came out enormous. */
   .arkiv-list .ni { width:18px; height:18px; flex:none; stroke:currentColor; fill:none;
     color:var(--brass); }
+   .arkiv-lock-status { width:14px; height:14px; flex:none; stroke:currentColor; fill:none;
+      color:var(--muted); }
+   .arkiv-list .arkiv-lock-status { color:var(--muted); }
   /* The name truncates rather than wrapping: one row per file keeps a long folder scannable, and
      the full name is still in the link's accessible name. */
   .arkiv-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -1725,6 +1728,11 @@
   @media (max-width:600px) {
     .imgviewer-nav { display:none; }
   }
+
+  /* The folder's own actions: take a copy, or remove it. Baseline-aligned so the quiet danger
+     link sits with the button rather than under it. */
+  .arkiv-folder-actions { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+  .arkiv-folder-actions form { margin:0; }
 
   .arkiv-newfolder { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .arkiv-newfolder input { flex:1 1 220px; max-width:340px; }

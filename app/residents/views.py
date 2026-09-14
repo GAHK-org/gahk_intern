@@ -206,6 +206,33 @@ def _clash_rooms(year: int, month: int) -> list[int]:
     return sorted(n for n, c in counts.items() if c > 1)
 
 
+BADGE_OLDEST = ("🧓", "Ældste beboer")
+BADGE_YOUNGEST = ("👶", "Yngste beboer")
+BADGE_LONGEST = ("👑", "Boet her længst")
+
+
+def _period_badges(year: int, month: int) -> dict[int, list[tuple[str, str]]]:
+    """Leaderboard ornaments for a period's alumneliste: the oldest and youngest resident (by
+    birthday) and whoever has lived at the dorm the longest (by move_in_date). Keyed by resident id;
+    a resident can hold more than one badge."""
+    residents = Resident.objects.filter(residencies__year=year, residencies__month=month)
+    badges: dict[int, list[tuple[str, str]]] = {}
+
+    def _add(resident_id: int | None, badge: tuple[str, str]) -> None:
+        if resident_id is not None:
+            badges.setdefault(resident_id, []).append(badge)
+
+    by_birthday = list(residents.exclude(birthday=None).order_by("birthday").values_list("id", flat=True))
+    if by_birthday:
+        _add(by_birthday[0], BADGE_OLDEST)
+        _add(by_birthday[-1], BADGE_YOUNGEST)
+    longest = (
+        residents.exclude(move_in_date=None).order_by("move_in_date").values_list("id", flat=True).first()
+    )
+    _add(longest, BADGE_LONGEST)
+    return badges
+
+
 @login_required
 def directory(request: HttpRequest) -> HttpResponse:
     """Full directory page (login-required). Legacy `json()` was campus-IP gated; with real auth the
@@ -219,6 +246,7 @@ def directory(request: HttpRequest) -> HttpResponse:
         "alumneliste/directory.html",
         {
             "rows": _directory_rows(year, month, q, sort, direction),
+            "badges": _period_badges(year, month),
             "periods": _period_options((year, month)),
             "period_value": f"{year}-{month}",
             "period_label": f"{DA_MONTHS[month].capitalize()} {year}",
@@ -243,6 +271,7 @@ def directory_rows(request: HttpRequest) -> HttpResponse:
         "alumneliste/_directory_table.html",
         {
             "rows": _directory_rows(year, month, q, sort, direction),
+            "badges": _period_badges(year, month),
             "period_value": f"{year}-{month}",
             "q": q,
             "sort": sort,
@@ -653,10 +682,12 @@ def profile(request: HttpRequest, pk: int) -> HttpResponse:
         .first()
     )
     recent_notices = resident.notices.select_related("author").order_by("-created_at")[:10]
+    # Only shown when the resident is on the currently active alumneliste (same leaderboard as there).
+    badges = _period_badges(year, month).get(resident.pk, []) if residency else []
     return render(
         request,
         "residents/profile.html",
-        {"subject": resident, "residency": residency, "recent_notices": recent_notices},
+        {"subject": resident, "residency": residency, "recent_notices": recent_notices, "badges": badges},
     )
 
 
