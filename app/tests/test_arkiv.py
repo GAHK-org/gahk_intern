@@ -13,10 +13,12 @@ Two properties are asserted repeatedly and on purpose:
 """
 
 from collections.abc import Callable
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 from django.test import Client
+from django.utils import timezone
 
 from arkiv import access
 from arkiv.models import ArchiveFile, ArchiveFolder, object_key, thumbnail_key
@@ -441,6 +443,103 @@ def test_a_soft_deleted_row_still_holds_its_object(media_tmp: Path) -> None:
 # the removed list, destroys the row and - if no other row shares the hash - the object too. What
 # makes the second one safe to offer every writer is the ORDER, not the permission: see
 # arkiv/access.py::can_purge_file. These tests pin both halves of that.
+
+
+def test_a_locked_folder_blocks_mutations_in_its_descendants(
+    resident_in: Callable, media_tmp: Path
+) -> None:
+    root = ArchiveFolder.objects.create(name="Arkiv", locked_at=timezone.now())
+    child = ArchiveFolder.objects.create(name="2026", parent=root)
+    file = make_file(child)
+    client = login(resident_in("a@gahk.dk", None))
+
+    assert client.post(f"{ROOT_URL}mappe/{child.pk}/ny-mappe", {"name": "Fest"}).status_code == 403
+    assert client.post(f"{ROOT_URL}fil/{file.pk}/fjern").status_code == 403
+    assert ArchiveFolder.objects.alive().filter(parent=child, name="Fest").count() == 0
+    file.refresh_from_db()
+    assert file.deleted_at is None
+
+
+def test_an_administrator_can_lock_and_temporarily_unlock_a_folder(make_resident: Callable) -> None:
+    folder = ArchiveFolder.objects.create(name="Arkiv")
+    administrator = make_resident(email="admin@gahk.dk", roles=[Role.ADMINISTRATOR])
+    client = login(administrator)
+
+    assert "Lås mappe" in client.get(f"{ROOT_URL}mappe/{folder.pk}/").content.decode()
+    assert client.post(f"{ROOT_URL}mappe/{folder.pk}/laas").status_code == 302
+
+    folder.refresh_from_db()
+    assert folder.locked_at is not None
+    locked_page = client.get(f"{ROOT_URL}mappe/{folder.pk}/").content.decode()
+    assert "Mappen er låst" in locked_page
+    assert "Lås op i en time" in locked_page
+
+    assert client.post(f"{ROOT_URL}mappe/{folder.pk}/laas-op").status_code == 302
+    folder.refresh_from_db()
+    assert folder.unlocked_until is not None
+    assert folder.unlocked_until > timezone.now() + timedelta(minutes=59)
+
+    unlocked_page = client.get(f"{ROOT_URL}mappe/{folder.pk}/").content.decode()
+    assert "Lås igen" in unlocked_page
+    assert "Midlertidig oplåsning udløber" in unlocked_page
+    assert "#i-lock" in unlocked_page
+    assert "#i-clock" in unlocked_page
+
+    assert client.post(f"{ROOT_URL}mappe/{folder.pk}/laas-igen").status_code == 302
+    folder.refresh_from_db()
+    assert folder.unlocked_until is None
+
+
+def test_a_non_administrator_cannot_lock_a_folder(resident_in: Callable) -> None:
+    folder = ArchiveFolder.objects.create(name="Arkiv")
+    client = login(resident_in("a@gahk.dk", None))
+
+    assert client.post(f"{ROOT_URL}mappe/{folder.pk}/laas").status_code == 403
+    folder.refresh_from_db()
+    assert folder.locked_at is None
+
+
+def test_a_temporary_unlock_expires_after_one_hour(resident_in: Callable, media_tmp: Path) -> None:
+    folder = ArchiveFolder.objects.create(
+        name="Arkiv", locked_at=timezone.now(), unlocked_until=timezone.now() + timedelta(hours=1)
+    )
+    file = make_file(folder)
+    client = login(resident_in("a@gahk.dk", None))
+
+    assert client.post(f"{ROOT_URL}fil/{file.pk}/fjern").status_code == 302
+
+    file.restore()
+    ArchiveFolder.objects.filter(pk=folder.pk).update(unlocked_until=timezone.now() - timedelta(seconds=1))
+    assert client.post(f"{ROOT_URL}fil/{file.pk}/fjern").status_code == 403
+
+
+def test_objects_older_than_thirty_days_cannot_be_deleted(resident_in: Callable, media_tmp: Path) -> None:
+    folder = ArchiveFolder.objects.create(name="Arkiv")
+    file = make_file(folder)
+    cutoff = timezone.now() - timedelta(days=30, seconds=1)
+    ArchiveFolder.objects.filter(pk=folder.pk).update(created_at=cutoff)
+    ArchiveFile.objects.filter(pk=file.pk).update(uploaded_at=cutoff)
+    client = login(resident_in("a@gahk.dk", None))
+
+    assert client.post(f"{ROOT_URL}mappe/{folder.pk}/fjern").status_code == 403
+    assert client.post(f"{ROOT_URL}fil/{file.pk}/fjern").status_code == 403
+    assert ArchiveFolder.objects.filter(pk=folder.pk).exists()
+    file.refresh_from_db()
+    assert file.deleted_at is None
+
+
+def test_a_folder_with_soft_deleted_history_cannot_be_deleted(
+    resident_in: Callable, media_tmp: Path
+) -> None:
+    root = ArchiveFolder.objects.create(name="Arkiv")
+    folder = ArchiveFolder.objects.create(name="2026", parent=root)
+    file = make_file(folder)
+    file.soft_delete()
+    client = login(resident_in("a@gahk.dk", None))
+
+    assert client.post(f"{ROOT_URL}mappe/{folder.pk}/fjern").status_code == 302
+    folder.refresh_from_db()
+    assert folder.deleted_at is None
 
 
 def test_a_removed_file_leaves_the_listing_but_keeps_its_bytes(
