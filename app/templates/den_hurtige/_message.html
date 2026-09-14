@@ -221,4 +221,24 @@
     {% endif %}
 
   </div>
+  {% if post.latest_replies %}
+    <div class="msg-reply-preview" data-thread-preview aria-label="Åbn tråd med {{ post.reply_count }} svar">
+      {% for comment in post.latest_replies %}
+        <div class="msg-reply-preview-item{% if comment.author_id == user.id %} msg-reply-preview-own{% endif %}">
+          <div class="msg-reply-preview-avatar" aria-hidden="true">
+            {% if comment.author.profile_picture %}
+              <img src="{{ comment.author.profile_picture.url }}" alt="">
+            {% else %}
+              {{ comment.author.first_name|slice:":1" }}{{ comment.author.last_name|slice:":1" }}
+            {% endif %}
+          </div>
+          <div class="msg-reply-preview-bubble">
+            <span class="msg-reply-preview-name">{{ comment.author.full_name }}</span>
+            {% if comment.content %}<span class="msg-reply-preview-text">{{ comment.content|links }}</span>{% endif %}
+            {% if comment.image %}<span class="msg-reply-preview-image">Billede</span>{% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
 </article>

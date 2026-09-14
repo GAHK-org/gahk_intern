@@ -213,6 +213,11 @@ document.addEventListener("click", (event) => {
     event.preventDefault();
     closeThread();
   } else {
+    const preview = target.closest<HTMLElement>("[data-thread-preview]");
+    if (preview && !target.closest("a")) {
+      preview.closest<HTMLElement>(".msg")?.querySelector<HTMLElement>(".msg-replies")?.click();
+      return;
+    }
     // Remember the opener BEFORE htmx swaps, while the click target still exists.
     const opener = target.closest<HTMLElement>(".msg-replies");
     if (opener) threadOpener = opener;

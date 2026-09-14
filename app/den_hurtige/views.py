@@ -61,6 +61,11 @@ GROUPING_WINDOW = timedelta(minutes=5)
 # what test_the_feed_costs_no_extra_query_per_reaction forbids. Joining keeps it at one query
 # whether there are reactions or none. The author is needed because the reader panel names people.
 REACTIONS = Prefetch("reactions", queryset=QuickReaction.objects.select_related("author"))
+LATEST_REPLIES = Prefetch(
+    "comments",
+    queryset=QuickComment.objects.select_related("author").order_by("-created_at")[:3],
+    to_attr="latest_replies",
+)
 
 
 def _active_posts(channel: Channel) -> QuerySet[QuickPost]:
@@ -77,7 +82,7 @@ def _active_posts(channel: Channel) -> QuerySet[QuickPost]:
         QuickPost.objects.filter(channel=channel.slug)
         .active()
         .select_related("author")
-        .prefetch_related(REACTIONS)
+        .prefetch_related(REACTIONS, LATEST_REPLIES)
         .annotate(reply_count=Count("comments"))
         # Chat order: oldest first, newest at the bottom by the composer. QuickPost.Meta.ordering
         # stays newest-first for the admin and everything else that lists posts as records.

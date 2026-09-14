@@ -684,6 +684,34 @@
      svg, so without these it paints as a filled black blob. */
   .msg-replies .ni { width:14px; height:14px; flex:none; stroke:currentColor; fill:none; }
 
+   /* The feed only receives the latest three replies (views.LATEST_REPLIES). It remains a compact
+       glimpse of the conversation even when one reply contains a long message: the lower edge fades
+       and blurs beneath the 30vh cap instead of pushing later chat messages out of view. */
+   .msg-reply-preview { position:relative; display:flex; flex-direction:column-reverse; gap:4px;
+      max-height:30vh; overflow:hidden; margin:5px 0 0 44px; padding:3px 0 2px 10px;
+      border-left:2px solid var(--border); cursor:pointer; }
+   .msg-own .msg-reply-preview { margin-left:auto; margin-right:0; width:min(80%, 34rem); }
+   .msg-reply-preview::after { content:""; position:absolute; top:0; right:0; left:0; height:2.75rem;
+      z-index:2; pointer-events:none; background:linear-gradient(to bottom, var(--paper), transparent);
+      backdrop-filter:blur(2px); }
+   .msg-reply-preview-item { position:relative; z-index:1; display:flex; align-items:flex-end; gap:6px;
+      flex:none; min-width:0; font-size:13px; line-height:1.35; }
+   .msg-reply-preview-own { flex-direction:row-reverse; }
+   .msg-reply-preview-avatar { flex:none; width:24px; height:24px; border-radius:50%; overflow:hidden;
+      background:var(--brass); color:#fff; display:grid; place-items:center; font-size:9px; font-weight:700; }
+   .msg-reply-preview-avatar img { width:100%; height:100%; object-fit:cover; }
+   .msg-reply-preview-bubble { min-width:0; max-width:80%; padding:4px 8px 5px; border-radius:11px;
+      background:var(--surface); filter:drop-shadow(0 1px 1.5px rgba(24, 40, 30, .14)); }
+   .msg-reply-preview-own .msg-reply-preview-bubble { background:var(--green); color:#fff; }
+   .msg-reply-preview-name { display:block; font-size:11px; font-weight:650; color:var(--green-700); }
+   .msg-reply-preview-own .msg-reply-preview-name { color:rgba(255, 255, 255, .82); }
+   .msg-reply-preview-text { color:var(--muted); white-space:pre-wrap; overflow-wrap:anywhere; }
+   .msg-reply-preview-own .msg-reply-preview-text { color:#fff; }
+   .msg-reply-preview-text a { color:var(--green-700); text-decoration:underline; text-underline-offset:2px; }
+   .msg-reply-preview-own .msg-reply-preview-text a { color:#fff; text-decoration-color:rgb(255 255 255 / .6); }
+   .msg-reply-preview-image { font-size:12px; font-weight:600; color:var(--faint); }
+   .msg-reply-preview-own .msg-reply-preview-image { color:rgba(255, 255, 255, .82); }
+
   /* --- thread side panel (den_hurtige/_thread.html) -------------------------------------------
      Feed and panel side by side. #js-feed keeps every declaration it already had -- its
      `flex:1; min-height:0; overflow-y:auto` now means "take the remaining WIDTH and scroll", and
@@ -703,9 +731,11 @@
      thread are `.pop`s, and a `.pop` breaks the moment ANY ancestor creates a stacking context
      (see the .pop block above, and the opslagstavlen card that broke it exactly that way). An
      in-flow flex item creates none, so the pickers still escape to the viewport from in here. */
-  .thread-panel { flex:0 0 clamp(300px, 38%, 420px); display:flex; flex-direction:column;
-    min-height:0; min-width:0; border-left:1px solid var(--border); background:var(--paper);
-    margin-right:-30px; padding:0 30px 0 20px; }
+   .chat-cols:has(.thread-panel) #js-feed { display:none; }
+   .chat:has(.thread-panel) > .chat-head,
+   .chat:has(.thread-panel) > .composer { display:none; }
+   .thread-panel { flex:1 1 100%; display:flex; flex-direction:column; min-height:0; min-width:0;
+      background:var(--paper); margin:0 -30px; padding:0 30px; --thread-from:100%; }
   /* Focused programmatically when the panel opens, so a screen reader lands inside it rather than
      back at the top of the document. That is not a keyboard focus, and drawing a ring around the
      whole panel for it just looks like a rendering fault — :focus-visible still rings it when
@@ -720,9 +750,8 @@
   .thread-back, .thread-x { background:none; border:0; color:var(--muted); line-height:1;
     cursor:pointer; padding:2px 6px; font-size:19px; flex:none; }
   .thread-back:hover, .thread-x:hover { color:var(--ink); }
-  /* One close control per breakpoint: an × on a docked desktop panel, a back arrow on a
-     full-screen phone view. Both are rendered; the wrong one is hidden. */
-  .thread-back { display:none; }
+  .thread-back { display:block; }
+  .thread-x { display:none; }
   .thread-body { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:8px 0; }
   /* The message the thread hangs off. Rendered by the same partial as the feed's messages, with
      `bare` set, so it never drifts from them -- but it is NOT a chat bubble. It is the subject of
@@ -776,17 +805,28 @@
   .thread-panel { touch-action:pan-y; }
   .thread-releasing { transition:translate .2s cubic-bezier(.22, .61, .36, 1); }
   @media (prefers-reduced-motion:reduce) { .thread-releasing { transition:none; } }
-  /* Widen the shell so two columns fit; .chat-shell is the components-layer replacement for the
-     max-w-3xl utility feed.html used to set (a utility would out-specify this rule). */
+  /* The full thread replaces the chat view rather than opening beside it, so the shell stays at
+     the same reading width while the slide-in animation changes context. */
   .chat-page .chat-shell { max-width:48rem; }
-  body.chat-page:has(.thread-panel) .chat-shell { max-width:70rem; }
 
   /* The standalone thread page (den_hurtige/thread.html), which is NOT the chat shell. */
   .thread-crumb { font-size:13px; margin:0 0 10px; }
   .thread-page { padding:16px 18px; }
-  .reply { margin:7px 0 0 2px; padding-left:10px; border-left:2px solid var(--border); }
-  .reply-name { font-weight:650; font-size:13px; }
-  .reply .msg-text { font-size:14px; }
+   .thread-replies .reply { display:flex; align-items:flex-end; gap:8px; margin-top:8px; }
+   .thread-replies .reply-own { flex-direction:row-reverse; }
+   .reply-avatar { flex:none; width:28px; height:28px; border-radius:50%; overflow:hidden;
+      background:var(--brass); color:#fff; display:grid; place-items:center; font-size:10px; font-weight:700; }
+   .reply-avatar img { width:100%; height:100%; object-fit:cover; }
+   .reply-bubble { min-width:0; max-width:80%; padding:5px 9px 6px; border-radius:13px;
+      background:var(--surface); filter:drop-shadow(0 1px 1.5px rgba(24, 40, 30, .14)); }
+   .reply-own .reply-bubble { background:var(--green); color:#fff; }
+   .reply-name { font-weight:650; font-size:12px; color:var(--green-700); }
+   .reply-own .reply-name { color:rgba(255, 255, 255, .82); }
+   .reply .msg-meta { margin-left:6px; }
+   .reply-own .msg-meta { color:rgba(255, 255, 255, .78); }
+   .reply .msg-text { font-size:14px; line-height:1.35; }
+   .reply-own .msg-text { color:#fff; }
+   .reply-own .msg-text a { color:#fff; text-decoration-color:rgb(255 255 255 / .6); }
   /* Same row shape as .msg-head, and for the same reason: .msg-del is a <form> pushed right with
      `margin-left:auto`, which needs a flex parent. Opslagstavlen's comments have a delete control
      and Den Hurtige's replies do not, which is why only the former wraps its byline in one. */
@@ -905,19 +945,7 @@
     .emoji-choice { font-size:25px; padding:8px 4px; }
     .msg-replies { font-size:12px; }
 
-    /* Full-screen thread on a phone -- by HIDING the feed, not by covering it.
-       An overlay would need position:fixed and a z-index, i.e. a stacking context, and no ancestor
-       of a `.pop` may create one (see the .pop block) or the emoji picker and the reader panels
-       opened from inside a thread get trapped in it. Swapping display keeps the panel an ordinary
-       in-flow box, and has the second payoff of taking the feed genuinely out of the accessibility
-       tree -- so the panel needs no aria-modal, no inert and no focus trap. */
-    .chat-cols:has(.thread-panel) #js-feed { display:none; }
-    /* The channel header and the channel composer both go too: otherwise a phone shows two headers
-       stacked and two message inputs at the bottom, and it is not obvious which one you are
-       writing into. The panel carries its own header and its own reply box. */
-    .chat:has(.thread-panel) > .chat-head,
-    .chat:has(.thread-panel) > .composer { display:none; }
-    .thread-panel { flex:1 1 100%; border-left:0; padding:0 18px;
+    .thread-panel { padding:0 18px;
       margin:0 -18px; --thread-from:100%; }
     /* Back arrow instead of the ×: this is a whole screen, so it reads as "back to the messages". */
     .thread-back { display:block; }

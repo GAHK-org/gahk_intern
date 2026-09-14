@@ -1904,29 +1904,28 @@ def test_the_add_reaction_button_spells_itself_out_on_an_untouched_message(
 # --- thread panel --------------------------------------------------------------------------------
 
 
-def test_the_feed_no_longer_loads_replies(client: Client, make_resident: Callable[..., Resident]) -> None:
-    """The feed prefetched comments__author for every post on every poll — loading every reply of
-    every message, five seconds apart, in order to render the number "3".
-
-    This is the guard that stops it creeping back: it asserts the poll touches the comment table
-    ZERO times, and that no reply text reaches the feed at all."""
+def test_the_feed_shows_only_the_latest_three_replies_per_message(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The feed previews replies without fetching an unbounded conversation per message."""
     author = make_resident(email="a@gahk.dk")
-    for n in range(3):
-        post = QuickPost.objects.create(author=author, content=f"Besked {n}")
-        QuickComment.objects.create(post=post, author=author, content=f"Hemmeligt svar {n}")
+    post = QuickPost.objects.create(author=author, content="Besked")
+    for n in range(5):
+        QuickComment.objects.create(post=post, author=author, content=f"Svar {n}")
     client.force_login(author)
     client.get(FEED_URL + "opslag")  # warm
 
     with CaptureQueriesContext(connection) as captured:
         body = client.get(FEED_URL + "opslag").content.decode()
 
-    # FROM, not a bare table-name match: the reply-count annotate LEFT JOINs the comment table into
-    # the posts query, which is the whole point. What must not exist is a query that SELECTS the
-    # replies themselves.
+    # One sliced prefetch query serves the whole feed; a per-post lookup would grow with the number
+    # of messages. The count annotation is folded into the posts query and is not included here.
     loaded = [q for q in captured.captured_queries if 'FROM "den_hurtige_quickcomment"' in q["sql"]]
-    assert loaded == [], "the feed is loading replies again"
-    assert "Hemmeligt svar 0" not in body
-    assert "1 svar" in body  # the count, not the replies
+    assert len(loaded) == 1
+    assert "Svar 0" not in body
+    assert "Svar 1" not in body
+    for n in range(2, 5):
+        assert f"Svar {n}" in body
 
 
 def test_the_reply_count_costs_no_extra_query_per_message(
@@ -1952,11 +1951,10 @@ def test_the_reply_count_costs_no_extra_query_per_message(
     assert len(counted) == 1, counted
 
 
-def test_the_feed_shows_a_reply_count_and_no_reply_form(
+def test_the_feed_shows_a_reply_preview_and_no_reply_form(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
-    """Replies live in the panel now. The feed carries a link and nothing else — the reply form
-    used to be rendered inline on every single message, open or not."""
+    """The feed previews a conversation, but composition remains in the thread panel."""
     author = make_resident(email="a@gahk.dk")
     post = QuickPost.objects.create(author=author, content="Boremaskine?")
     for text in ("Ja", "Kom forbi"):
@@ -1968,7 +1966,10 @@ def test_the_feed_shows_a_reply_count_and_no_reply_form(
     assert "2 svar" in body
     assert f'href="{FEED_URL}{post.pk}/traad"' in body
     assert "reply-form" not in body
-    assert "Kom forbi" not in body
+    assert "Kom forbi" in body
+    assert "data-thread-preview" in body
+    assert 'class="msg-reply-preview-item msg-reply-preview-own"' in body
+    assert 'class="msg-reply-preview-avatar"' in body
 
 
 def test_a_message_with_replies_is_marked_differently_from_one_without(
@@ -2006,7 +2007,7 @@ def test_a_message_with_replies_is_marked_differently_from_one_without(
     assert "1 svar" in anchors[" has-replies"]
 
 
-def test_the_thread_panel_lives_outside_the_polled_region(
+def test_the_sliding_thread_view_lives_outside_the_polled_region(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
     """#js-thread is a sibling of #js-feed, never inside it.
