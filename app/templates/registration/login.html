@@ -4,7 +4,7 @@
   <h1>Log ind</h1>
   <div class="card" style="max-width:420px">
     {% if form.errors %}<p class="errorlist">Forkert e-mail eller kodeord.</p>{% endif %}
-    <form method="post" action="">
+    <form method="post" action="{% url 'login' %}">
       {% csrf_token %}
       <label for="id_username">E-mail</label>
       {{ form.username }}
@@ -15,4 +15,35 @@
     </form>
     <p class="muted" style="margin-top:.8rem"><a href="{% url 'password_reset' %}">Glemt kodeord?</a></p>
   </div>
+  {% if demo_login_enabled %}
+    <section class="card" style="max-width:420px; margin-top:1.25rem" aria-labelledby="demo-login-heading">
+      <h2 id="demo-login-heading" style="font-size:1.1rem">Log ind som demo-bruger</h2>
+      <div class="grid gap-2" style="margin-top:1rem">
+        <form method="post" action="{% url 'login' %}">
+          {% csrf_token %}<input type="hidden" name="username" value="admin@gahk.dk"><input type="hidden" name="password" value="demo1234"><input type="hidden" name="next" value="{{ next }}">
+          <button type="submit" class="w-full flex items-center justify-between text-left"><span>Admin Istrator</span><span class="text-xs uppercase">Administrator</span></button>
+        </form>
+        <form method="post" action="{% url 'login' %}">
+          {% csrf_token %}<input type="hidden" name="username" value="formand@gahk.dk"><input type="hidden" name="password" value="demo1234"><input type="hidden" name="next" value="{{ next }}">
+          <button type="submit" class="w-full flex items-center justify-between text-left"><span>Frederik Formand</span><span class="text-xs uppercase">Formand</span></button>
+        </form>
+        <form method="post" action="{% url 'login' %}">
+          {% csrf_token %}<input type="hidden" name="username" value="ak@gahk.dk"><input type="hidden" name="password" value="demo1234"><input type="hidden" name="next" value="{{ next }}">
+          <button type="submit" class="w-full flex items-center justify-between text-left"><span>Astrid Krydsen</span><span class="text-xs uppercase">AK</span></button>
+        </form>
+        <form method="post" action="{% url 'login' %}">
+          {% csrf_token %}<input type="hidden" name="username" value="oel@gahk.dk"><input type="hidden" name="password" value="demo1234"><input type="hidden" name="next" value="{{ next }}">
+          <button type="submit" class="w-full flex items-center justify-between text-left"><span>Ole Ølmand</span><span class="text-xs uppercase">Ølkælder</span></button>
+        </form>
+        <form method="post" action="{% url 'login' %}">
+          {% csrf_token %}<input type="hidden" name="username" value="regnskab@gahk.dk"><input type="hidden" name="password" value="demo1234"><input type="hidden" name="next" value="{{ next }}">
+          <button type="submit" class="w-full flex items-center justify-between text-left"><span>Regina Regnskab</span><span class="text-xs uppercase">Regnskab</span></button>
+        </form>
+        <form method="post" action="{% url 'login' %}">
+          {% csrf_token %}<input type="hidden" name="username" value="beboer@gahk.dk"><input type="hidden" name="password" value="demo1234"><input type="hidden" name="next" value="{{ next }}">
+          <button type="submit" class="w-full flex items-center justify-between text-left"><span>Bente Beboer</span><span class="text-xs uppercase">Beboer</span></button>
+        </form>
+      </div>
+    </section>
+  {% endif %}
 {% endblock %}

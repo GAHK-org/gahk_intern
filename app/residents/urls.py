@@ -1,6 +1,7 @@
 """Internal members area + auth, under /intern/. F-013/F-014."""
 
 from django.contrib.auth import views as auth_views
+from django.conf import settings
 from django.urls import include, path
 
 from . import views, views_regnskab
@@ -32,6 +33,7 @@ urlpatterns = [
         auth_views.LoginView.as_view(
             template_name="registration/login.html",
             authentication_form=EmailAuthenticationForm,
+            extra_context={"demo_login_enabled": settings.DEBUG},
         ),
         name="login",
     ),
