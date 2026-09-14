@@ -118,6 +118,7 @@ class PushSubscription(models.Model):
     # like push breaking. Nobody has ever consented to event notifications, and consent granted by
     # migration is not consent.
     wants_begivenheder = models.BooleanField(default=False, verbose_name="Begivenheder")
+    wants_reparationer = models.BooleanField(default=False, verbose_name="Reparationer")
 
     class Meta:
         verbose_name = "Push-abonnement"
@@ -139,4 +140,5 @@ TOPIC_FIELDS = {
     "den_hurtige": "wants_den_hurtige",
     "opslagstavle": "wants_opslagstavle",
     "begivenheder": "wants_begivenheder",
+    "reparationer": "wants_reparationer",
 }

@@ -1,3 +1,4 @@
+{% load text_extras %}
 {% comment %}
   Just the replies. Swapped on its own by create_comment (see views._comment_response), which is
   why the reply FORM is not in here: the form carries data-morph-skip so the panel's poll cannot
@@ -20,9 +21,15 @@
     <div class="reply">
       <span class="reply-name">{{ comment.author.full_name }}</span>
       <span class="msg-meta">{{ comment.created_at|date:"H:i" }}</span>
-      <div class="msg-text">{{ comment.content }}</div>
+      {% comment %}
+        Guarded because a reply may be a photo with no caption: an empty <div> still occupies its
+        line-height, which left a blank line between the byline and the picture.
+      {% endcomment %}
+      {% if comment.content %}<div class="msg-text">{{ comment.content|links }}</div>{% endif %}
       {% if comment.image %}
-        <a href="{{ comment.image.url }}" target="_blank" rel="noopener" class="msg-image">
+        {# data-viewer: a bare <img> is what a long press can save. See _message.html. #}
+        <a href="{{ comment.image.url }}" target="_blank" rel="noopener" class="msg-image"
+           data-viewer data-name="{{ comment.image.name|basename }}">
           <img src="{{ comment.image.url }}" alt="" loading="lazy">
         </a>
       {% endif %}

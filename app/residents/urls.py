@@ -20,6 +20,8 @@ urlpatterns = [
     path("den-hurtige/", include("den_hurtige.urls")),
     path("opslagstavle/", include("opslagstavle.urls")),
     path("begivenheder/", include("events.urls")),
+    path("reparationer/", include("reparationer.urls")),
+    path("arkiv/", include("arkiv.urls")),
     path("ak/", include("ak.urls")),
     path("oelkaelder/", include("oelkaelder.urls")),
     path("statistik/", include("stats.urls")),

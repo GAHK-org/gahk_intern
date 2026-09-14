@@ -93,10 +93,33 @@
         <span class="sr-only">Vedhæft billede til svar</span>
         <input type="file" id="id_reply_image_{{ post.pk }}" name="image" accept="image/*">
       </label>
+      {% comment %}
+        NOT `required`. A reply may be a photo on its own — "her, se" is a whole answer — and the
+        attribute made the browser refuse to submit before the server ever saw the attachment.
+        Emptiness is checked server-side instead, where the upload is in hand and the two can be
+        weighed together (views.create_comment); the no-JS path therefore keeps working too.
+      {% endcomment %}
       <label class="sr-only" for="id_comment_{{ post.pk }}">Svar</label>
-      <input type="text" id="id_comment_{{ post.pk }}" name="content" required
+      <input type="text" id="id_comment_{{ post.pk }}" name="content"
              maxlength="{{ max_content_chars }}" placeholder="Svar…" enterkeyhint="send">
       <button type="submit" class="composer-send" title="Send" aria-label="Send">&uarr;</button>
+      {% comment %}
+        Feedback that the photo attached, and the only way to take it back off. A hidden file input
+        behind a paperclip shows nothing at all by itself, and a comment may be a photo ON ITS OWN -
+        so without this there is no evidence on screen that there is anything to send.
+
+        Empty and `hidden` in the markup: frontend/src/feed.ts fills in the thumbnail, the filename and
+        the size on `change`, and hides it again on clear or reset. It degrades to nothing without JS,
+        which is correct - the form still submits, and the server still validates the file.
+
+        Attributes rather than ids: opslagstavlen renders one of these per page, but the thread panel
+        renders one per thread, and the handler is shared with both.
+      {% endcomment %}
+      <div class="file-note" data-file-note hidden>
+        <img data-file-note-thumb alt="" hidden>
+        <span data-file-note-name></span>
+        <button type="button" data-file-note-clear>Fjern</button>
+      </div>
       {% comment %}
         One checkbox instead of the old radio pair. Unchecked still means "only the author",
         which is the same default as before — see QuickComment.notify_everyone.

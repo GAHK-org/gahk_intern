@@ -8,39 +8,51 @@ and whose posts are hard-deleted after 30 minutes to 24 hours.
 Two things follow from posts living for years rather than minutes, and both are deliberate
 divergences from the sibling feature:
 
-  * **Retention is a policy, not the point.** Posts are purged after ~2 years by
-    `manage.py purge_notices` on a nightly schedule — but *pinned* posts are exempt, because a pin
-    is Inspektionen saying "the kollegium keeps this". There is no lazy purge on page load (Den
-    Hurtige has one): its tolerance is minutes, so a missed cron is visibly wrong within the hour;
-    here the tolerance is months, and a DELETE on every page load would run for years finding
-    nothing.
+  * **Nothing expires.** The board keeps its archive: no retention window, no purge of posts, and
+    only the author or a moderator removes one. `manage.py purge_notices` still runs nightly, but
+    only to sweep uploads no post ever referenced. There is no lazy purge on page load (Den Hurtige
+    has one): its tolerance is minutes, so a missed cron is visibly wrong within the hour; here a
+    missed night affects nothing a reader can see. See spec/features/opslagstavle.md for why the
+    two-year window was removed.
   * **The body is Markdown, rendered on read.** Only the source is stored — see core.markdown for
     why that is worth a few milliseconds a page.
 """
 
+from collections.abc import Iterable
 from datetime import timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
 from django.db import models
 from django.db.models import F
+from django.db.models.base import ModelBase
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
 
 from core.files import delete_attached_files
+from residents.models import Resident, embedsgruppe_of
 
-# ~2 years (shortened from five after user testing: a board people actually read does not need a
-# half-decade of history, and a shorter window is the point of leaving Facebook). Leap days are noise
-# at this horizon, so plain 365-day years rather than dateutil.
-RETENTION_DAYS = 365 * 2
+# NO RETENTION. Opslag are kept indefinitely; nothing deletes a post but its author or a moderator.
+#
+# There used to be a RETENTION_DAYS window here — five years, shortened to two after user testing on
+# the grounds that "a board people actually read does not need a half-decade of history". That was a
+# judgement about what a *reader* wants near the top of a board, and pagination and the category
+# filter already answer it: an opslag from 2029 costs a reader nothing if they never page back to it.
+# What the window did cost was the archive — værelsesrunden results, the practical notices, who
+# announced what — which is the half of leaving Facebook that a two-year window quietly threw away.
+#
+# The board is now unbounded, so the things that used to be bounded by it are worth stating: the
+# category index below carries the list query, and Notice rows carry no files (NoticeImage does), so
+# growth is rows of text at a kollegium's posting rate. See spec/features/opslagstavle.md.
 
 # An uploaded image nobody referenced within this window is an abandoned draft (the composer was
 # opened, pictures were added, the tab was closed). Long enough that removing an image and
 # immediately re-adding it cannot lose the file.
 ORPHAN_IMAGE_GRACE = timedelta(days=1)
 
-# A pinned post is both permanently above everything else *and* exempt from the purge, so an
-# unbounded pin list would quietly turn "pin" into "keep forever" and fill the top of the board.
+# A pinned post sits permanently above everything else, so an unbounded pin list would fill the top
+# of the board and make pinning meaningless. (It used to also mean "exempt from the purge"; with no
+# retention left, pinning is now only about prominence.)
 MAX_PINNED = 5
 
 MAX_BODY_CHARS = 8_000
@@ -75,15 +87,61 @@ class NoticeQuerySet(models.QuerySet["Notice"]):
         pinning pointless once the board is a few pages deep."""
         return self.filter(pinned_at__isnull=True).order_by("-created_at")
 
-    def expired(self, now: Any = None) -> "NoticeQuerySet":  # noqa: ANN401 — a datetime
-        """Past the retention window and not pinned. Reads as the policy sentence it enforces."""
-        from django.utils import timezone
 
-        cutoff = (now or timezone.now()) - timedelta(days=RETENTION_DAYS)
-        return self.filter(created_at__lt=cutoff, pinned_at__isnull=True)
+class AuthoredByResident(models.Model):
+    """A post or a comment, with its author's embedsgruppe frozen at the moment it was written.
+
+    The pill beside a byline (see templates/opslagstavle/_notice_card.html) is a snapshot, not a
+    lookup. Embedsgrupper rotate monthly (F-010), so resolving it on read would relabel the whole
+    board every time indstilling saves a månedsliste — a post from last spring would be attributed
+    to whatever group its author happens to be in this month, and the archive would spend most of
+    its life wrong. Written once, it stays true.
+
+    A NAME, not a FK to core.Workgroup, for the same reason: a snapshot has to survive the group
+    being renamed or deleted, and a FK would follow the rename and take the post's history with it.
+
+    Stamped in `save()` rather than by each caller. There are four ways a post gets created (the
+    compose view, the comment view, opslagstavle.demo and the admin) and a snapshot that is
+    sometimes missing is worse than no snapshot at all — the pill would silently vanish from
+    whichever path someone forgot. It costs one query per *creation*, which is rare; reading the
+    board costs none, which is not.
+    """
+
+    author_embedsgruppe = models.CharField(
+        max_length=100,  # core.Workgroup.name
+        blank=True,
+        verbose_name="Embedsgruppe",
+        help_text="Forfatterens embedsgruppe da opslaget blev skrevet. Sættes automatisk.",
+    )
+
+    class Meta:
+        abstract = True
+
+    if TYPE_CHECKING:  # declared as a real FK by each concrete model, with its own related_name
+        author: Resident
+
+    def save(
+        self,
+        *,
+        force_insert: bool | tuple[ModelBase, ...] = False,
+        force_update: bool = False,
+        using: str | None = None,
+        update_fields: Iterable[str] | None = None,
+    ) -> None:
+        # Only on the way in, and only if nothing set it: an edit must not re-stamp a post with its
+        # author's group today (the same reasoning as `edited_at` not being auto_now), and a fixture
+        # that wants a post attributed to a particular month can set the field itself.
+        if self._state.adding and not self.author_embedsgruppe:
+            self.author_embedsgruppe = embedsgruppe_of(self.author)
+        super().save(
+            force_insert=force_insert,
+            force_update=force_update,
+            using=using,
+            update_fields=update_fields,
+        )
 
 
-class Notice(models.Model):
+class Notice(AuthoredByResident):
     author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notices")
     category = models.CharField(
         max_length=20, choices=Category.choices, default=Category.NYT, verbose_name="Kategori"
@@ -99,10 +157,11 @@ class Notice(models.Model):
     # a false edit marker is worse than none.
     edited_at = models.DateTimeField(null=True, blank=True)
 
-    # Pinning as a nullable timestamp rather than a boolean. One column answers three questions:
-    # is it pinned, how do pins order among themselves (newest pin first), and is it exempt from
-    # retention (`pinned_at__isnull=True` is literally the purge filter). A boolean would need both
-    # extra columns anyway to answer the other two.
+    # Pinning as a nullable timestamp rather than a boolean. One column answers two questions: is it
+    # pinned, and how do pins order among themselves (newest pin first) — which a boolean cannot
+    # express, so it would need a second column anyway. It used to answer a third (exemption from
+    # the purge, where `pinned_at__isnull=True` was literally the filter); retention is gone and the
+    # column is unchanged.
     pinned_at = models.DateTimeField(null=True, blank=True)
     pinned_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -146,10 +205,10 @@ class Notice(models.Model):
         verbose_name = "Opslag"
         verbose_name_plural = "Opslag"
         # The list is always "optional category filter + newest first"; this composite serves the
-        # filtered and the unfiltered query. Deliberately NO index on pinned_at and none on
-        # created_at alone: two years at this kollegium's volume is a few hundred rows, where Postgres
-        # seq-scans faster than it reads an index, and an unused index is a write cost plus a lie
-        # about which queries matter.
+        # filtered and the unfiltered query, and it is what carries the board now that nothing bounds
+        # its length. Deliberately NO index on pinned_at: the pinned set is capped at MAX_PINNED, so
+        # Postgres seq-scans it faster than it reads an index, and an unused index is a write cost
+        # plus a lie about which queries matter.
         indexes = [models.Index(fields=["category", "-created_at"], name="notice_cat_recent_idx")]
         # NO CheckConstraint tying pinned_by to pinned_at, tempting as it looks: pinned_by is
         # SET_NULL, so deleting the resident who pinned a post would violate it and make the delete
@@ -165,20 +224,39 @@ class Notice(models.Model):
         return self.pinned_at is not None
 
 
-class NoticeComment(models.Model):
-    """A reply to a notice. **Plain text, deliberately not Markdown.**
+class NoticeComment(AuthoredByResident):
+    """A reply to a notice. **Plain text, deliberately not Markdown — with one attached photo.**
 
-    Keeping Markdown to the post body confines the embedded-image lifecycle (see NoticeImage) to one
-    model, keeps the compose toolbar single-purpose, and matches how people actually comment.
-    Rendered autoescaped with `white-space: pre-wrap` and `|urlize`, exactly like a Den Hurtige
-    reply. Reversible: allowing Markdown later is a template change and a test.
+    STILL NOT MARKDOWN, and the photo does not change that. The reason Markdown stays on the post
+    body is the embedded-image LIFECYCLE: a picture referenced from Markdown has no FK to hang on,
+    so NoticeImage exists to claim uploads at save time and an orphan sweep exists to collect the
+    ones nobody referenced. `image` here is an ordinary FileField on the row — one file, owned by
+    one comment, deleted with it by the post_delete receiver below. No claiming step, no orphan
+    window, nothing added to the compose toolbar. Body text is rendered autoescaped with
+    `white-space: pre-wrap` and `|urlize`, exactly like a Den Hurtige reply.
+
+    `body` IS BLANK-ABLE because the photo can be the whole comment — "her, se" is an answer, and
+    Den Hurtige's replies have always worked that way. What must not happen is a row with neither,
+    which the view enforces rather than the field: whether a photo counts depends on whether it
+    survived validation, and only the view knows that (see views.create_comment).
     """
 
     notice = models.ForeignKey(Notice, on_delete=models.CASCADE, related_name="comments")
     author = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notice_comments"
     )
-    body = models.TextField(max_length=MAX_COMMENT_CHARS, verbose_name="Kommentar")
+    # Blank when the photo IS the comment.
+    body = models.TextField(max_length=MAX_COMMENT_CHARS, blank=True, verbose_name="Kommentar")
+    # FileField, not ImageField, for the same reason QuickPost.image is one: ImageField needs
+    # Pillow, which is deliberately not a production dependency. core.uploads decides what counts
+    # as an image and the view applies it.
+    image = models.FileField(
+        upload_to="opslag/kommentarer/%Y/%m/",
+        max_length=255,
+        blank=True,
+        verbose_name="Billede",
+        help_text="Valgfrit billede.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -258,12 +336,13 @@ class NoticeImage(models.Model):
         return self.file.url if self.file else ""
 
 
+@receiver(post_delete, sender=NoticeComment)
 @receiver(post_delete, sender=NoticeImage)
 def _delete_notice_files(sender: type[models.Model], instance: models.Model, **kwargs: Any) -> None:  # noqa: ANN401
     """Remove the upload from storage when its row goes.
 
     Registered as a signal rather than an override of delete() for two reasons that both matter
-    here: the retention command issues a *bulk* queryset delete, which never calls Model.delete(),
-    and these rows are usually removed by cascade from Notice rather than directly. See core.files.
+    here: a bulk queryset delete never calls Model.delete(), and these rows are usually removed by
+    cascade from Notice rather than directly. See core.files.
     """
     delete_attached_files(instance)

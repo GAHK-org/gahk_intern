@@ -572,12 +572,17 @@ def test_media_files_are_served_in_prod() -> None:
     from django.conf import settings
     from django.test import override_settings
 
-    Path(settings.MEDIA_ROOT).mkdir(parents=True, exist_ok=True)
-    f = Path(settings.MEDIA_ROOT) / "__test_serve.txt"
+    # Under the cms/ prefix on purpose. This test is about ROUTING — WhiteNoise serves only static,
+    # and DEBUG-only serving would 404 these in prod — so it uses the one prefix that is still
+    # readable without a session (core.media.PUBLIC_PREFIXES), keeping the anonymous client, which
+    # is the stronger statement about the route. The gate itself is covered in
+    # tests/test_media_storage.py, including that every other prefix now requires a login.
+    f = Path(settings.MEDIA_ROOT) / "cms" / "__test_serve.txt"
+    f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text("hello-media")
     try:
         with override_settings(DEBUG=False):  # prod-like: must still serve /media/
-            r = Client().get("/media/__test_serve.txt")
+            r = Client().get("/media/cms/__test_serve.txt")
         assert r.status_code == 200
         assert b"".join(r.streaming_content) == b"hello-media"
     finally:
@@ -681,12 +686,17 @@ def test_frontpage_counter_hashes_and_dedups() -> None:
 
 @pytest.mark.django_db
 def test_events_news_page_and_forside_teaser() -> None:
-    from datetime import date, timedelta
+    from datetime import timedelta
 
     from cms.models import Event, NewsItem
 
-    Event.objects.create(title="Mathildefest", starts_on=date.today() + timedelta(days=14))
-    Event.objects.create(title="Gammel skovtur", starts_on=date.today() - timedelta(days=400))
+    # localdate(), not date.today(): the views split upcoming from past on `timezone.localdate()`,
+    # and a test that builds its data on the system clock instead is asking a different question
+    # than the code answers. They agree in Europe/Copenhagen, so this has never been a live bug —
+    # but it is the difference between a fixture that tracks the code's clock and one that drifts.
+    today = timezone.localdate()
+    Event.objects.create(title="Mathildefest", starts_on=today + timedelta(days=14))
+    Event.objects.create(title="Gammel skovtur", starts_on=today - timedelta(days=400))
     NewsItem.objects.create(title="Åbent hus", body="<p>Kom forbi</p>", published_at=timezone.now())
     c = Client()
 

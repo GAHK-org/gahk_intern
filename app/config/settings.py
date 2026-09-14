@@ -46,6 +46,8 @@ INSTALLED_APPS = [
     "den_hurtige",
     "opslagstavle",
     "events",
+    "reparationer",
+    "arkiv",
 ]
 
 MIDDLEWARE = [
@@ -118,9 +120,60 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 STATICFILES_DIRS = [BASE_DIR / "static"]  # holds the Vite-built bundle (static/dist/)
 
+# Media (user uploads) go to Hetzner Object Storage when S3_BUCKET is set, and to MEDIA_ROOT on the
+# local disk when it is not — which is dev, CI, and prod before the migration. The env variable IS
+# the switch: there is no separate flag to forget, and an unset bucket cannot half-enable anything.
+#
+# MEDIA_URL stays "/media/" either way. That is not an oversight and it is not optional: it is a
+# prefix of content stored in the database, and core.checks (core.E007-E009) refuses to start the
+# process if it or the backend's URLs ever stop matching. core/storage.py has the full argument.
+S3_BUCKET = os.environ.get("S3_BUCKET", "")
+# Acknowledges local-disk media in a DEBUG-off environment. There is exactly one honest reason to
+# set it — a prod-shaped box with no bucket of its own (staging), or rehearsing the rollback while
+# MEDIA_ROOT still has files. core.E010 refuses to start without it, because since the prod media
+# volume was emptied an unset S3_BUCKET serves nothing and writes uploads to a disk nobody backs up.
+ALLOW_LOCAL_MEDIA = os.environ.get("ALLOW_LOCAL_MEDIA", "") == "1"
+# fsn1 (Falkenstein) / nbg1 (Nuremberg) / hel1 (Helsinki). Keep this in the same location as the VM:
+# traffic inside eu-central does not count against the account's egress allowance.
+S3_LOCATION = os.environ.get("S3_LOCATION", "fsn1")
+
+_MEDIA_S3_OPTIONS = {
+    "bucket_name": S3_BUCKET,
+    "access_key": os.environ.get("S3_ACCESS_KEY", ""),
+    "secret_key": os.environ.get("S3_SECRET_KEY", ""),
+    "endpoint_url": f"https://{S3_LOCATION}.your-objectstorage.com",
+    "region_name": S3_LOCATION,
+    # Virtual-host style is what Hetzner documents: https://<bucket>.<loc>.your-objectstorage.com.
+    # The bucket name must therefore be DNS-safe — lowercase, and NO DOTS, or TLS SNI against their
+    # wildcard certificate fails for every request.
+    "addressing_style": "virtual",
+    "signature_version": "s3v4",
+    # None, not "private". Hetzner implements bucket policies and not S3 ACLs, and rejects the
+    # x-amz-acl header outright.
+    "default_acl": None,
+    # The bucket is private; core.media.serve_media issues a presigned GET per request.
+    "querystring_auth": True,
+    # Kept in step with core.media.PRESIGN_TTL, which is what actually signs the URLs we serve.
+    "querystring_expire": 3600,
+    # FALSE, and django-storages defaults it to True — which skips Django's name-suffixing entirely.
+    # Resident.profile_picture uploads to a flat "profile_pictures/" with no date and no uniquifier,
+    # so with overwriting on, the second resident to upload an IMG_1234.jpg silently replaces the
+    # first one's photo and the first one's row then points at somebody else's face.
+    "file_overwrite": False,
+    # Shares the bucket with the database backups under "backups/", so the prefix is a security
+    # boundary, not tidiness — see core.storage.MEDIA_PREFIX. MediaS3Storage defaults it; named here
+    # so the grep for "backups" finds this comment.
+    "location": "media",
+    "object_parameters": {"CacheControl": "private, max-age=604800"},
+}
+
 # WhiteNoise hashed/compressed static in prod; plain storage in dev so {% static %} needs no manifest.
 STORAGES = {
-    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "default": (
+        {"BACKEND": "core.storage.MediaS3Storage", "OPTIONS": _MEDIA_S3_OPTIONS}
+        if S3_BUCKET
+        else {"BACKEND": "django.core.files.storage.FileSystemStorage"}
+    ),
     "staticfiles": {
         "BACKEND": (
             "django.contrib.staticfiles.storage.StaticFilesStorage"

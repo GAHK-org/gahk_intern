@@ -27,19 +27,7 @@
       endpoint shared by every topic, so getSubscription() only says "subscribed to something".
       Whether it wants *this* feature is a column on the server.
     {% endcomment %}
-    <div class="push-bar" data-push data-topic="opslagstavle"
-         data-vapid-key="{{ vapid_public_key }}"
-         data-url="{% url 'opslagstavle:save_subscription' %}"
-         data-subscribed="{% if push_subscribed %}1{% else %}0{% endif %}"
-         data-on-label="Få besked om nye opslag"
-         data-off-label="Slå fra på denne enhed"
-         data-off-label-short="Slå fra på enheden"
-         data-success-text="Du får nu besked når nogen slår op på tavlen."
-         data-off-text="Beskeder om opslag er slået fra på denne enhed.">
-      {% csrf_token %}
-      <button type="button" data-push-button hidden></button>
-      <span class="muted" data-push-message hidden></span>
-    </div>
+    {% include "core/_push_bar.html" with topic="opslagstavle" url_name="opslagstavle:save_subscription" on_label="Få besked om nye opslag" success_text="Du får nu besked når nogen slår op på tavlen." off_text="Beskeder om opslag er slået fra på denne enhed." %}
   {% endif %}
 
   {% comment %}

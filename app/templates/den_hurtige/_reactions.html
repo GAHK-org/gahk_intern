@@ -17,11 +17,11 @@
   one per emoji, opened by holding the pill (touch), hovering it (mouse), right-clicking it, or
   Shift+Enter (keyboard). See the `who` block in frontend/src/feed.ts for the gestures.
 
-  Note this file has DIVERGED from app/templates/opslagstavle/_reactions.html, which still has the
-  👥 pill and no gestures. That is deliberate, not an oversight waiting to be tidied: the
-  noticeboard is read on a desktop, at full width, and is not competing for room the way a
-  one-handed chat row is. The shared `.reaction*` CSS in frontend/src/styles.css still serves both,
-  so `.reaction-who` must stay in the stylesheet even though nothing here uses it any more.
+  opslagstavle/_reactions.html is now the same widget again. It kept the 👥 pill and no gestures for
+  a while, on the argument that the noticeboard has room to spare — but that argument was about
+  layout, and what it cost was one control answering a different question per page. Change the
+  interaction here and change it there; the shared `.reaction*` CSS in frontend/src/styles.css
+  serves both.
 {% endcomment %}
 <div class="reactions{% if not reactions %} is-empty{% endif %}" id="reactions-{{ post.pk }}">
   {% for r in reactions %}

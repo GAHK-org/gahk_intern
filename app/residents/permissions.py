@@ -18,12 +18,19 @@ from django.contrib.auth.base_user import AbstractBaseUser
 from django.contrib.auth.models import AnonymousUser
 from django.contrib.auth.views import redirect_to_login
 from django.core.exceptions import PermissionDenied
-from django.http import HttpRequest, HttpResponse
+from django.http import HttpRequest
+from django.http.response import HttpResponseBase
 
 from .models import Resident, Role, active_period
 
 # A Django view: called with a request (plus captured URL kwargs) and returns a response.
-View = Callable[..., HttpResponse]
+#
+# HttpResponseBase rather than HttpResponse, because FileResponse and StreamingHttpResponse are NOT
+# HttpResponse subclasses - they descend from HttpResponseBase directly. Without this, any view that
+# hands back a file (arkiv's download, and anything like core.media.serve_media that ever wants
+# gating) cannot be decorated with role_required or a rollout Gate, which is the one place the
+# decorator is most worth having. Widening a return type is safe for every existing caller.
+View = Callable[..., HttpResponseBase]
 # What request.user is statically typed as: django-stubs can't know it is always a Resident here.
 AnyUser = AbstractBaseUser | AnonymousUser
 
@@ -137,7 +144,7 @@ def role_required(*roles: str) -> Callable[[View], View]:
 
     def decorator(view: View) -> View:
         @wraps(view)
-        def wrapped(request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
+        def wrapped(request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
             if not request.user.is_authenticated:
                 return redirect_to_login(request.get_full_path())
             if effective_roles(request).isdisjoint(roles):
@@ -154,7 +161,7 @@ def require_can_preview(view: View) -> View:
     out of ending the preview."""
 
     @wraps(view)
-    def wrapped(request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
+    def wrapped(request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
         if not request.user.is_authenticated:
             return redirect_to_login(request.get_full_path())
         if not can_preview(request.user):

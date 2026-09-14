@@ -101,7 +101,7 @@ def notify_new_comment(comment: "QuickComment") -> None:
     """
     channel = comment.post.channel
     head = f"{comment.author.full_name} svarede"
-    body = push.preview(comment.content)
+    body = push.preview(comment.content) or "📷 Billede"
     # Straight to the thread, not just the channel. Tapping "Anders svarede" used to land at the
     # bottom of the feed, leaving you to find the message the notification was about -- which, in a
     # channel where everything expires, may already have scrolled past. ?traad= opens the panel on

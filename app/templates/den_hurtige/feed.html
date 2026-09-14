@@ -17,9 +17,23 @@
   This meta alone is not enough: iOS has ignored `user-scalable=no` since iOS 10 (deliberately, for
   accessibility). It covers Android and desktop; `.no-zoom` and the gesture handlers in
   frontend/src/feed.ts cover iOS.
+
+  interactive-widget=resizes-content is about the SOFT KEYBOARD, and it is the one part of this
+  meta that behaves differently on the two platforms. Chrome on Android defaults to
+  `resizes-visual`: the keyboard shrinks the visual viewport but leaves the LAYOUT viewport alone,
+  so 100dvh still measures the whole screen, the shell stays full height, and the composer — the
+  last flex child, pinned to the bottom of that shell — sits behind the keyboard. Normally the
+  browser rescues this by scrolling the focused field into view, but this page took that escape
+  route away on purpose: html and body are both overflow:hidden (see .chat-page in styles.css, and
+  the note on why the frame must not come loose), so there is nothing left to scroll.
+
+  `resizes-content` makes the keyboard shrink the layout viewport instead. 100dvh then resolves to
+  the space ABOVE the keyboard, the shell shrinks to match, the feed gives up the height, and the
+  composer rides up with it — which is what it already does on iOS, and why this was an Android-only
+  complaint. Safari ignores the property, so nothing there changes.
 {% endcomment %}
 {% block viewport %}
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
 {% endblock %}
 {% block body_class %}no-zoom chat-page{% endblock %}
 
@@ -71,19 +85,7 @@
           one push endpoint shared by every topic, so getSubscription() only says "subscribed to
           something". Whether it wants *this* feature is a column on the server.
         {% endcomment %}
-        <div class="push-bar" data-push data-topic="den_hurtige"
-             data-vapid-key="{{ vapid_public_key }}"
-             data-url="{% url 'den_hurtige:save_subscription' %}"
-             data-subscribed="{% if push_subscribed %}1{% else %}0{% endif %}"
-             data-on-label="Slå notifikationer til"
-             data-off-label="Slå fra på denne enhed"
-             data-off-label-short="Slå fra på enheden"
-             data-success-text="Du får nu besked når nogen slår op."
-             data-off-text="Notifikationer er slået fra på denne enhed.">
-          {% csrf_token %}
-          <button type="button" data-push-button hidden></button>
-          <span class="muted" data-push-message hidden></span>
-        </div>
+        {% include "core/_push_bar.html" with topic="den_hurtige" url_name="den_hurtige:save_subscription" success_text="Du får nu besked når nogen slår op." %}
         {% comment %}
           Per-channel mute. Separate from the subscribe button above, which is per *device* and
           governs push at all; this is per resident and governs one channel. A plain form POST, not

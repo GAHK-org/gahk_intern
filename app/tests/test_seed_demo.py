@@ -42,18 +42,25 @@ def test_seed_demo_populates_and_is_idempotent() -> None:
 def test_seed_demo_fills_the_board_including_the_two_awkward_cases() -> None:
     """The board needs demo content, but two specific rows are what make it useful locally: a pinned
     post (so the pinned-first layout and the 📌 marker are visible without anyone pinning something)
-    and one past the retention window (so `purge_notices --dry-run` reports a real number instead of
-    zero until the retention window has actually elapsed)."""
-    from opslagstavle.models import RETENTION_DAYS, Notice
+    and one several years old (the board keeps its archive, so the demo should show a genuinely old
+    opslag still sitting there and paginating)."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from opslagstavle.models import Notice
 
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
 
     assert Notice.objects.count() >= 6
     assert Notice.objects.pinned().count() == 1
     assert Notice.objects.pinned().first().pinned_by is not None, "a pin with no attributor"
-    assert Notice.objects.expired().exists(), "nothing for purge_notices --dry-run to report"
+    # An old post is kept on purpose: the board has no retention, so the demo should show that a
+    # years-old opslag is still there rather than that something is about to remove it.
+    old = timezone.now() - timedelta(days=365 * 2)
+    assert Notice.objects.filter(created_at__lt=old).exists(), "no archive post in the demo board"
     # Every category represented, so the filter chips are all reachable in the demo.
     assert len({n.category for n in Notice.objects.all()}) >= 5
-    # The pinned one must NOT be the one the purge would take.
-    assert not Notice.objects.expired().filter(pinned_at__isnull=False).exists()
-    assert RETENTION_DAYS == 2 * 365  # shortened from five after user testing
+    assert not hasattr(Notice.objects, "expired"), (
+        "retention was removed from opslagstavlen; a reinstated expired() needs the spec updated too"
+    )

@@ -1,89 +1,224 @@
+{% load text_extras %}
 {% comment %}
-  ONE message: avatar, header, text, image, and (unless `bare`) its reaction row.
+  ONE message: avatar, bubble (name + text + image), and its action row.
 
   Extracted from _posts.html so the thread panel can render the parent message it is a thread OF
   without a second copy of this markup. Two copies would have drifted the first time either the
   header or the expiry label changed — which is exactly what happened to the reaction row in
-  opslagstavlen, and why that one still has a 👥 pill this one no longer has.
+  opslagstavlen: it kept a 👥 pill and no hold/hover gestures for a while after this one moved on.
+  That has since been closed (opslagstavle/_reactions.html is the same widget again — see the
+  header of den_hurtige/_reactions.html), which is the point: the copy drifted, and it took a
+  deliberate pass to bring it back. The remaining difference is cosmetic — the noticeboard
+  labels its add button "Reagér" where a chat bubble has no room to.
 
   Callers set:
-    post     the QuickPost, carrying .reaction_rows (see views.posts_for / views.thread)
+    post     the QuickPost, carrying .reaction_rows (see views.posts_for / views.thread) and, from
+             the same function, .grouped / .group_end — where this message sits in a run by one
+             sender. Neither is a field on the model.
     bare     truthy for the message a thread hangs off: skips grouping (a parent is never a
-             continuation of anything), the delete button, and the "N svar" link — you are already
-             in the thread, and deleting from here would orphan the panel you are standing in.
+             continuation of anything), the delete button, the swipe gestures and the "N svar"
+             link — you are already in the thread, and deleting from here would orphan the panel
+             you are standing in.
 
-  The REACTION row survives `bare` on purpose. Reacting to the message from inside its own thread is
-  the obvious thing to want, and on a phone the feed behind the panel is display:none, so this is
-  the only place to do it. That the pickers work in there is precisely why .thread-panel must not
-  be position:fixed or z-indexed — see the .pop rules in frontend/src/styles.css.
+  WHY A BUBBLE AND NOT A ROW. This used to be a flat grid: avatar, then a header line carrying the
+  name, the time and the expiry, then the text. It read as a forum, and it broke down precisely on
+  the case a chat has most of — the same person writing twice. A continuation dropped the name but
+  KEPT the header, so every follow-up carried a stray "14:32 · ⏱ 45 min" line above it with no name
+  attached; and two of your own messages in a row drew two separate green rounded boxes 1px apart,
+  which read as one torn box rather than two messages. Bubbles fix both by construction: the meta
+  moves down INTO the bubble, trailing the last line of text where it costs no height at all, and a
+  run of bubbles squares off its own inner corners into one shape.
+
+  Modelled on Messenger rather than Slack, deliberately: Den Hurtige replaces the house's Messenger
+  group (see the module docstring in views.py), so that is the layout residents already read
+  fluently. It is what puts the name on the FIRST bubble of a run and the avatar and tail on the
+  LAST — the name introduces the run, the avatar sits beside where it ends. Own messages get no
+  avatar at all: right-alignment already says who wrote it, and the 34px column it would cost is
+  width a phone has none to spare.
+
+  Two structural rules are load-bearing rather than cosmetic:
+
+    * .msg-line exists ONLY to put the avatar on the same flex line as the bubble, so
+      `align-items:flex-end` lands it beside the bubble's bottom edge. Aligning against .msg as a
+      whole would measure to the bottom of the action row instead and leave the avatar sitting next
+      to the reaction pills, a row too low.
+    * .msg-actions is OUTSIDE .msg-bubble. The reaction pills are a wide wrapping strip, and inside
+      a coloured bubble they made every bubble as wide as its widest row of pills — the text no
+      longer set the width. It also keeps the row's `.pop` pickers out of the bubble's subtree,
+      which matters for the shape of the swipe transform (see .msg in styles.css).
 {% endcomment %}
-<article class="msg{% if post.grouped and not bare %} msg-grouped{% endif %}{% if post.author_id == user.id %} msg-own{% endif %}{% if bare %} msg-parent{% endif %}"
-         id="{% if bare %}thread-parent-{{ post.pk }}{% else %}msg-{{ post.pk }}{% endif %}">
-  <div class="msg-avatar" aria-hidden="true">
-    {% if bare or not post.grouped %}
-      {% if post.author.profile_picture %}
-        <img src="{{ post.author.profile_picture.url }}" alt="" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:50%;display:block">
-      {% else %}
-        {{ post.author.first_name|slice:":1" }}{{ post.author.last_name|slice:":1" }}
-      {% endif %}
-    {% endif %}
-  </div>
-  <div class="msg-body">
-    <div class="msg-head">
-      {% if bare or not post.grouped %}<span class="msg-name">{{ post.author.full_name }}</span>{% endif %}
-      {% comment %}
-        Two spans, not one. The expiry used to be glued to the timestamp in a single span, which
-        meant it could not be shrunk, truncated or hidden independently of the clock time — and
-        the pair is exactly what overflows a narrow header. Split, each can carry its own
-        flex:none and the expiry can drop out on the narrowest screens without taking the time
-        with it. The separator is a ::before on .msg-expiry so it disappears along with it.
+{% comment %}
+  data-msg-swipe marks this as a swipe target for frontend/src/feed.ts: right opens the thread,
+  left (own messages) submits the delete form. An attribute rather than a class because the class
+  list is already doing layout work, and because `bare` must not carry it — the thread parent sits
+  inside the panel a swipe would open, so swiping it right would re-open the thread being read.
+{% endcomment %}
+<article class="msg{% if post.grouped and not bare %} msg-grouped{% endif %}{% if post.group_end or bare %} msg-tail{% endif %}{% if post.author_id == user.id %} msg-own{% endif %}{% if bare %} msg-parent{% endif %}"
+         id="{% if bare %}thread-parent-{{ post.pk }}{% else %}msg-{{ post.pk }}{% endif %}"
+         {% if not bare %}data-msg-swipe{% endif %}>
+  {% if not bare %}
+    {% comment %}
+      What a swipe reveals. Both sit at the edges of .msg, underneath the message at rest and at
+      opacity:0, so they cost no layout and cannot be seen until the drag has moved the message off
+      them (feed.ts only fades them in once it has travelled past their band).
 
-        The glyph replaces the words "udløber om": at 11.5px the sentence was most of the header
-        on every message, and ⏱ already means exactly this on the composer's duration options
-        two elements away. The full sentence survives in the title for anyone who hovers.
-      {% endcomment %}
-      <span class="msg-meta msg-time">{{ post.created_at|date:"H:i" }}</span>
-      <span class="msg-meta msg-expiry" title="Udløber om {{ post.expires_label }}"
-            aria-label="Udløber om {{ post.expires_label }}"><span aria-hidden="true">⏱</span> {{ post.expires_label }}</span>
-      {% if not bare and post.author_id == user.id or not bare and can_moderate %}
-        <form method="post" action="{% url 'den_hurtige:delete_post' post.pk %}" class="msg-del"
-              onsubmit="return confirm('Slet «{{ post.content|truncatechars:60|escapejs }}» permanent?')">
-          {% csrf_token %}
-          <button type="submit" title="Slet besked" aria-label="Slet besked">&times;</button>
-        </form>
+      They come FIRST in the markup, before .msg-line, and that ordering is what puts them behind
+      the bubble: .msg-bubble is position:relative, so between two positioned boxes at the same
+      level the later one paints on top. It is also why feed.ts has to cancel .msg's translate on
+      them during a drag — they are children of the element that moves, so left alone they move
+      with it and nothing is ever revealed. See the hint block in its pointermove.
+
+      NOT z-indexed, and not put behind the bubble with a negative z-index. .msg is deliberately
+      not a stacking context — the pickers in .msg-actions depend on that — so a `z-index:-1` child
+      would escape to whatever ancestor IS one and paint behind the feed itself. Markup order and
+      opacity do the work instead, and neither needs any stacking at all.
+    {% endcomment %}
+    <span class="msg-hint msg-hint-thread" aria-hidden="true">
+      <svg class="ni"><use href="#i-chat"></use></svg>
+    </span>
+    {% if post.author_id == user.id or can_moderate %}
+      <span class="msg-hint msg-hint-del" aria-hidden="true">🗑</span>
+    {% endif %}
+  {% endif %}
+
+  <div class="msg-line">
+    {% comment %}
+      Always rendered, filled only at the end of a run: the empty box keeps every bubble in a run
+      on the same edge without drawing a second circle beside each one. Hidden outright for own
+      messages (see .msg-own .msg-avatar in styles.css), which reclaims its width.
+    {% endcomment %}
+    <div class="msg-avatar" aria-hidden="true">
+      {% if bare or post.group_end %}
+        {% if post.author.profile_picture %}
+          <img src="{{ post.author.profile_picture.url }}" alt="" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:50%;display:block">
+        {% else %}
+          {{ post.author.first_name|slice:":1" }}{{ post.author.last_name|slice:":1" }}
+        {% endif %}
       {% endif %}
     </div>
 
-    <div class="msg-text">{{ post.content }}</div>
-    {% if post.image %}
-      <a href="{{ post.image.url }}" target="_blank" rel="noopener" class="msg-image">
-        <img src="{{ post.image.url }}" alt="" loading="lazy">
-      </a>
-    {% endif %}
+    <div class="msg-bubble">
+      {% if bare or not post.grouped %}<span class="msg-name">{{ post.author.full_name }}</span>{% endif %}
+      {% comment %}
+        Text and clock on ONE line, the way WhatsApp and Messenger both do it: the time trails the
+        last line of the message inside the bubble, and takes a line of its own only when the text
+        leaves it no room.
 
-    {% comment %}
-      Reactions and the reply link share one row. Both are always rendered — the picker and a
-      "Svar" link exist even with nothing on the message — so as two stacked rows they cost about
-      54px of every message before a word of content. Side by side that halves.
-    {% endcomment %}
-    <div class="msg-actions">
-      {% include "den_hurtige/_reactions.html" with reactions=post.reaction_rows %}
+        It began as a header line ABOVE the text, which is what made a continuation look broken --
+        a "14:32 / 45 min" with no name over it. Moving it into the action row below fixed that, and
+        that is where it went first; but that row is collapsed on mid-run messages (see styles.css)
+        to stop it wedging itself between the bubbles of a run, and that took each message's own
+        clock with it. In a feed where every message deletes itself on its own schedule -- two
+        messages a minute apart can carry "2 timer" and "2 doegn" -- that is not decoration. In the
+        bubble, nothing can collapse it.
 
-      {% if not bare %}
+        Two spans, not one. The expiry used to be glued to the timestamp in a single span, which
+        meant it could not be shrunk, truncated or hidden independently of the clock time. Split,
+        each carries its own rules and the expiry can drop out on the narrowest screens without
+        taking the time with it; the separator is a ::before on .msg-expiry, so it disappears along
+        with it. The glyph replaces the words "udloeber om", which at 11.5px was most of the width
+        of every message -- the full sentence survives in the title for anyone who hovers.
+      {% endcomment %}
+      <div class="msg-line-text">
         {% comment %}
-          An <a href>, not a button: it is a real URL (den_hurtige:thread), so it works with no JS
-          at all — the browser navigates to the standalone thread page — and htmx upgrades it into
-          the side panel when JS is there. That is what keeps the no-JS path the old <details> had.
-
-          hx-target is #js-thread, which lives OUTSIDE #js-feed on purpose. See feed.html.
+          |links escapes the message and then makes every URL in it clickable and short.
+          A pasted link is routinely 120 characters of tracking parameters, and a bubble is
+          about forty wide -- unshortened it wrapped to five lines and buried the message it
+          was sent with. The full URL stays in href and title; see core/links.py.
         {% endcomment %}
-        <a class="msg-replies" href="{% url 'den_hurtige:thread' post.pk %}"
-           hx-get="{% url 'den_hurtige:thread' post.pk %}"
-           hx-target="#js-thread" hx-swap="innerHTML"
-           aria-label="{% if post.reply_count %}Åbn tråd med {{ post.reply_count }} svar{% else %}Svar på beskeden{% endif %}">
-          {% if post.reply_count %}{{ post.reply_count }} svar{% else %}Svar{% endif %}
+        <span class="msg-text">{{ post.content|links }}</span>
+        <span class="msg-clock">
+          <span class="msg-meta msg-time">{{ post.created_at|date:"H:i" }}</span>
+          <span class="msg-meta msg-expiry" title="Udløber om {{ post.expires_label }}"
+                aria-label="Udløber om {{ post.expires_label }}"><span aria-hidden="true">⏱</span> {{ post.expires_label }}</span>
+        </span>
+      </div>
+      {% if post.image %}
+        {% comment %}
+          data-viewer hands the tap to the shared picture viewer (frontend/src/imageviewer.ts),
+          which shows the photograph as a BARE <img>. That is the point: a long press on an image
+          wrapped in a link gets the link's menu - "Download Linked File", which lands in Files -
+          while a long press on a bare one gets "Føj til Fotos". The anchor stays so the picture
+          still opens without JavaScript, where it is bare as well.
+        {% endcomment %}
+        <a href="{{ post.image.url }}" target="_blank" rel="noopener" class="msg-image"
+           data-viewer data-name="{{ post.image.name|basename }}">
+          <img src="{{ post.image.url }}" alt="" loading="lazy">
         </a>
       {% endif %}
     </div>
+
+    {% comment %}
+      Beside the bubble, in the gutter the 80% cap leaves -- on the right of an incoming message,
+      on the left of your own (.msg-line is row-reverse there, so DOM order puts it there for
+      free). It lives here rather than in the action row below for two reasons: a button at
+      opacity:0 still occupies its line, which held every row in a run open and stopped them
+      collapsing; and it was briefly absolute-positioned against .msg instead, which parked it at
+      the far edge of the feed -- measured ~290px from the bubble it deletes on a desktop column.
+      A flex item next to the bubble tracks the bubble's width for nothing.
+
+      Kept for pointers, and used as the target the swipe-left gesture submits -- the confirm() is
+      the only thing between a stray drag and a permanently deleted message, so the gesture goes
+      through this form rather than POSTing on its own. On touch the button is hidden outright
+      (styles.css): swiping is the gesture there, and a permanent ✕ on every message in the feed
+      was easy to catch with a thumb while scrolling.
+    {% endcomment %}
+    {% if not bare and post.author_id == user.id or not bare and can_moderate %}
+      <form method="post" action="{% url 'den_hurtige:delete_post' post.pk %}" class="msg-del"
+            onsubmit="return confirm('Slet «{{ post.content|truncatechars:60|escapejs }}» permanent?')">
+        {% csrf_token %}
+        <button type="submit" title="Slet besked" aria-label="Slet besked">&times;</button>
+      </form>
+    {% endif %}
+  </div>
+
+  {% comment %}
+    Reactions, the reply link and the message's own clock share one row. All of them are always
+    rendered — the picker and a "Svar" link exist even with nothing on the message — so as separate
+    stacked rows they cost about 54px of every message before a word of content.
+
+    The time and expiry moved here from the old header line. They stay on EVERY message rather than
+    only on the run's last one: a run can span five minutes, and in a feed where messages delete
+    themselves the per-message countdown is most of the point of the page. Here it is free — the
+    row exists anyway — where above the text it was a line of its own.
+  {% endcomment %}
+  <div class="msg-actions">
+    {% include "den_hurtige/_reactions.html" with reactions=post.reaction_rows %}
+
+    {% if not bare %}
+      {% comment %}
+        An <a href>, not a button: it is a real URL (den_hurtige:thread), so it works with no JS at
+        all — the browser navigates to the standalone thread page — and htmx upgrades it into the
+        side panel when JS is there. That is what keeps the no-JS path the old <details> had.
+
+        hx-target is #js-thread, which lives OUTSIDE #js-feed on purpose. See feed.html.
+
+        The swipe-right gesture fires THIS element's click rather than issuing a request of its
+        own, so the panel, the history entry and the back-gesture handling are all reached by one
+        path. See the swipe block in frontend/src/feed.ts.
+
+        ONE ELEMENT, TWO JOBS, AND THEY ARE NOT EQUALLY IMPORTANT. Empty it is a bare affordance --
+        "you may reply to this" -- and with replies it is the only evidence on the feed that a
+        conversation exists at all. Those two used to render identically: same size, same green,
+        same weight, the text "Svar" or "3 svar" and nothing else, sitting in a row beside the
+        reaction pills. A thread was invisible unless you read the row.
+
+        `.has-replies` is what splits them (styles.css draws the pill), and it was already on the
+        element -- it existed only to keep this link visible on mid-run messages, where the rest of
+        the action row collapses. Styling it costs NO extra height, which is the whole reason the
+        signal goes here rather than into a Slack-style reply bar of its own: the row is rendered
+        on every message already.
+
+        The icon leads and the count follows, contiguously -- `{{ post.reply_count }} svar` must
+        stay one unbroken string, because that is what the feed tests look for.
+      {% endcomment %}
+      <a class="msg-replies{% if post.reply_count %} has-replies{% endif %}" href="{% url 'den_hurtige:thread' post.pk %}"
+         hx-get="{% url 'den_hurtige:thread' post.pk %}"
+         hx-target="#js-thread" hx-swap="innerHTML"
+         aria-label="{% if post.reply_count %}Åbn tråd med {{ post.reply_count }} svar{% else %}Svar på beskeden{% endif %}">
+        {% if post.reply_count %}<svg class="ni" aria-hidden="true"><use href="#i-chat"></use></svg>{{ post.reply_count }} svar{% else %}Svar{% endif %}
+      </a>
+    {% endif %}
+
   </div>
 </article>

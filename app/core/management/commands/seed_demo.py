@@ -32,6 +32,8 @@ from django.utils import timezone
 from admissions.models import Application
 from ak.models import AkEntry, AkMonthlyCharge
 from ak.services import apply_monthly_charge
+from arkiv.demo import seed as seed_arkiv
+from arkiv.models import ArchiveFile, ArchiveFolder
 
 # CmsEvent, never Event: the internal events app has one of the same name, and both are seeded
 # here. See events.models on the three-way collision.
@@ -127,6 +129,10 @@ WIPE_ORDER: list[type[models.Model]] = [
     DailyVisitCount,
     VisitTally,
     Resident,
+    # Before Workgroup: ArchiveFolder references it with PROTECT (a SET_NULL would silently turn a
+    # gated folder into a world-readable one), so the archive has to go first or --fresh cannot run.
+    ArchiveFile,
+    ArchiveFolder,
     Room,
     Workgroup,
     Cleaning,
@@ -182,6 +188,7 @@ class Command(BaseCommand):
             self._seed_stats()
             seed_opslagstavle(residents, self.now, self.rng)
             seed_events(residents, self.now, self.rng)
+            seed_arkiv(residents, self.now, self.rng)
 
         self._report(residents)
 
@@ -458,6 +465,21 @@ class Command(BaseCommand):
             header="Ansøgning",
             body="<p>Sådan søger du en plads på kollegiet.</p>",
             menu_category=2,
+        )
+        # A sub-page, so the section sidebar (cms.views._section_nav) and the CMS overview's
+        # reachability badge are both exercised in dev — with only top-level slugs, neither ever
+        # renders, and the bug that made a renamed page vanish was invisible locally.
+        Page.objects.create(
+            slug="faciliteter",
+            header="Faciliteter",
+            body="<p>Kollegiets faciliteter.</p>",
+            menu_category=1,
+        )
+        Page.objects.create(
+            slug="faciliteter/kokken",
+            header="Køkkenet",
+            body="<p>Fælleskøkkenet på hver gang.</p>",
+            menu_category=1,
         )
         for _ in range(6):
             NewsItem.objects.create(

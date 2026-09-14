@@ -185,7 +185,8 @@ class QuickComment(models.Model):
     author = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="quick_comments"
     )
-    content = models.TextField()
+    # Blank when the reply IS the photo.
+    content = models.TextField(blank=True)
 
     # Same FileField-not-ImageField call as QuickPost.image: ImageField needs Pillow, which is not a
     # dependency. The view validates content type and size.

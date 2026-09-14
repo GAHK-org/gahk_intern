@@ -1,0 +1,43 @@
+{% comment %}
+  The per-feature push opt-in bar, shared by Den Hurtige, opslagstavlen, begivenheder and
+  reparationer. Driven entirely by frontend/src/push.ts, which finds it by `data-push`.
+
+  Extracted at the FOURTH caller, past the schedule core/rollout.py's docstring sets out — and
+  reparationer/board.html had already labelled itself "mirrors opslagstavle/board.html", which is
+  the comment people write just before copies stop agreeing. The four had in fact stayed identical
+  in the eleven lines that matter; what differed was only what a reader is told, which is exactly
+  the part that should be an argument rather than a copy.
+
+  Caller supplies:
+    topic         the key in core.models.TOPIC_FIELDS. NOT a display name — it is what the POST
+                  body carries and what core.forms validates against, so a typo here is a 400.
+    url_name      the feature's save_subscription route, as a NAME ("events:save_subscription").
+                  A name rather than a resolved URL because `{% url %}` cannot be nested inside an
+                  `{% include with %}` argument, and `{% url %}` happily takes a variable.
+    success_text  what the resident is told once subscribed. Per-feature on purpose: "nogen slår
+                  op" and "nye og overdragede reparationer" are not the same promise.
+    on_label      optional; the generic "Slå notifikationer til" unless the feature has something
+                  more specific to offer ("Få besked om nye opslag").
+    off_text      optional; the generic "Notifikationer er slået fra på denne enhed."
+
+  `data-subscribed` is rendered server-side because the browser cannot answer it: a device has ONE
+  push endpoint shared by every topic, so getSubscription() only says "subscribed to something".
+  Whether it wants THIS feature is a column on the server (core.models.PushSubscription).
+
+  The two labels that are NOT arguments — data-off-label and data-off-label-short — were identical
+  in all four copies. Kept fixed rather than parameterised with a default: "Slå fra på denne enhed"
+  is about the device, not about the feature, so there is nothing per-feature to say.
+{% endcomment %}
+<div class="push-bar" data-push data-topic="{{ topic }}"
+     data-vapid-key="{{ vapid_public_key }}"
+     data-url="{% url url_name %}"
+     data-subscribed="{% if push_subscribed %}1{% else %}0{% endif %}"
+     data-on-label="{{ on_label|default:'Slå notifikationer til' }}"
+     data-off-label="Slå fra på denne enhed"
+     data-off-label-short="Slå fra på enheden"
+     data-success-text="{{ success_text }}"
+     data-off-text="{{ off_text|default:'Notifikationer er slået fra på denne enhed.' }}">
+  {% csrf_token %}
+  <button type="button" data-push-button hidden></button>
+  <span class="muted" data-push-message hidden></span>
+</div>
