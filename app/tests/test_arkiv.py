@@ -445,9 +445,7 @@ def test_a_soft_deleted_row_still_holds_its_object(media_tmp: Path) -> None:
 # arkiv/access.py::can_purge_file. These tests pin both halves of that.
 
 
-def test_a_locked_folder_blocks_mutations_in_its_descendants(
-    resident_in: Callable, media_tmp: Path
-) -> None:
+def test_a_locked_folder_blocks_mutations_in_its_descendants(resident_in: Callable, media_tmp: Path) -> None:
     root = ArchiveFolder.objects.create(name="Arkiv", locked_at=timezone.now())
     child = ArchiveFolder.objects.create(name="2026", parent=root)
     file = make_file(child)
@@ -528,9 +526,7 @@ def test_objects_older_than_thirty_days_cannot_be_deleted(resident_in: Callable,
     assert file.deleted_at is None
 
 
-def test_a_folder_with_soft_deleted_history_cannot_be_deleted(
-    resident_in: Callable, media_tmp: Path
-) -> None:
+def test_a_folder_with_soft_deleted_history_cannot_be_deleted(resident_in: Callable, media_tmp: Path) -> None:
     root = ArchiveFolder.objects.create(name="Arkiv")
     folder = ArchiveFolder.objects.create(name="2026", parent=root)
     file = make_file(folder)
