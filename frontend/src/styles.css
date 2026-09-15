@@ -1689,8 +1689,15 @@
   /* THE SHARED PICTURE VIEWER: Arkiv, opslagstavlen and Den Hurtige all open into this one.
      Above everything, including the sticky header -- a viewer that something overlaps is a bug
      report. Fixed rather than absolute so it does not move if the page behind it scrolls. */
+  /* touch-action:none because the pinch and the double-tap in here are ours (see
+     frontend/src/imageviewer.ts): left to the browser, a pinch magnifies a viewport-fixed overlay
+     and springs back on release, and a double-tap runs its smart zoom on the page underneath. It
+     does NOT touch the long press - that is -webkit-touch-callout below, and the script never
+     prevents a resting finger. overflow:hidden keeps a picture zoomed to 4x inside the viewport
+     instead of stretching the document under it. */
   .imgviewer { position:fixed; inset:0; z-index:100; display:flex; align-items:center;
-    justify-content:center; gap:8px; padding:16px; background:rgb(0 0 0 / 0.88); }
+    justify-content:center; gap:8px; padding:16px; background:rgb(0 0 0 / 0.88);
+    touch-action:none; overflow:hidden; }
   /* Stops the page behind scrolling under the overlay on a phone, which otherwise happens the
      moment a swipe is read as vertical. */
   body.imgviewer-open { overflow:hidden; }
@@ -1711,6 +1718,15 @@
   .imgviewer-stage figcaption { color:rgb(255 255 255 / 0.85); font-size:13px; text-align:center;
     max-width:min(90vw, 700px); overflow-wrap:anywhere; }
 
+  /* Zoom. The cursor is the only thing telling a desktop reader the picture can be magnified at
+     all, so it changes before the click rather than after it. */
+  .imgviewer-stage img { cursor:zoom-in; }
+  .imgviewer-zoomed .imgviewer-stage img { cursor:grab; }
+  .imgviewer-zoomed .imgviewer-stage img:active { cursor:grabbing; }
+  /* Paging is meaningless at 4x, and the magnified picture covers the arrows and swallows the
+     clicks anyway. The close button keeps its place above it - see the z-index below. */
+  .imgviewer-zoomed .imgviewer-nav { visibility:hidden; }
+
   .imgviewer-actions { display:flex; align-items:center; gap:12px; margin:0; flex-wrap:wrap;
     justify-content:center; }
   .imgviewer-save { color:#fff; font-size:13px; }
@@ -1719,8 +1735,11 @@
   .imgviewer-nav, .imgviewer-close { flex:none; background:rgb(255 255 255 / 0.12); border:0;
     color:#fff; cursor:pointer; border-radius:999px; line-height:1; }
   .imgviewer-nav { width:44px; height:44px; font-size:28px; }
+  /* z-index because a zoomed image is transformed, and a transformed element paints above a
+     plain one however early it sits in the markup. Without it the one way out of the viewer ends
+     up underneath the photograph. */
   .imgviewer-close { position:absolute; top:12px; right:12px; width:40px; height:40px;
-    font-size:24px; }
+    font-size:24px; z-index:1; }
   .imgviewer-nav:hover, .imgviewer-close:hover { background:rgb(255 255 255 / 0.24); }
 
   /* On a phone the arrows are swipe's job and they crowd a small screen; the close button stays,
