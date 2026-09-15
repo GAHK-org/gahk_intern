@@ -65,3 +65,4 @@ acme.json
 # they remain in history either way, so removing them is the same job as the 2026-08-04 dump.
 app/media/
 /.vscode
+.DS_Store
