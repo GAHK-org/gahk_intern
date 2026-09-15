@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import datetime, timedelta
 from io import BytesIO
 
 import pytest
@@ -10,7 +10,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from photo_album.models import Album, Media, MediaStatus
-from photo_album.services import delete, purge_expired, upload_media
+from photo_album.services import delete, extract_captured_at, purge_expired, upload_media
 from residents.models import Resident, Role
 
 
@@ -251,10 +251,65 @@ def test_image_metadata_and_upload_attribution_are_available_to_the_viewer(
         "Oprindelig dato": "2026:09:15 20:30:00",
         "Kamera": "Demo Camera Model 1",
     }
+    assert media.captured_at == timezone.make_aware(datetime(2026, 9, 15, 20, 30))
     client.force_login(resident)
     content = client.get(reverse("photo_album:detail", args=[album.pk])).content.decode()
     assert 'data-uploaded-by="Mette Metadata"' in content
+    assert 'data-captured-at="15. september 2026, 20:30"' in content
     assert "Oprindelig dato" in content
+
+
+def test_capture_time_reads_nested_exif_ifd(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Exif:
+        def get(self, key: int) -> None:
+            return None
+
+        def get_ifd(self, key: int) -> dict[int, str]:
+            assert key == 34665
+            return {36867: "2026:08:06 23:43:39"}
+
+    class ImageFile:
+        def getexif(self) -> Exif:
+            return Exif()
+
+    monkeypatch.setattr("photo_album.services.Image.open", lambda _: ImageFile())
+    uploaded_file = SimpleUploadedFile("nested.jpg", b"image", content_type="image/jpeg")
+
+    assert extract_captured_at(uploaded_file) == timezone.make_aware(datetime(2026, 8, 6, 23, 43, 39))
+
+
+@pytest.mark.django_db
+def test_album_media_orders_capture_time_then_upload_time(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    resident = make_resident()
+    album = Album.objects.create(folder="2026", name="Fest")
+    captured = Media.objects.create(
+        album=album,
+        title="captured",
+        original="a",
+        high_definition="b",
+        thumbnail="c",
+        requested_by=resident,
+        captured_at=timezone.make_aware(datetime(2026, 9, 15, 12, 0)),
+        status=MediaStatus.APPROVED,
+    )
+    uploaded = Media.objects.create(
+        album=album,
+        title="uploaded",
+        original="a",
+        high_definition="b",
+        thumbnail="c",
+        requested_by=resident,
+        status=MediaStatus.APPROVED,
+    )
+    Media.objects.filter(pk=captured.pk).update(added_at=timezone.make_aware(datetime(2026, 9, 1)))
+    Media.objects.filter(pk=uploaded.pk).update(added_at=timezone.make_aware(datetime(2026, 9, 14)))
+    client.force_login(resident)
+
+    content = client.get(reverse("photo_album:detail", args=[album.pk])).content.decode()
+
+    assert content.index('data-title="captured"') < content.index('data-title="uploaded"')
 
 
 @pytest.mark.django_db

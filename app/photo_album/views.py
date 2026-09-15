@@ -1,6 +1,9 @@
+import json
+
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
-from django.db.models import Case, Count, IntegerField, Q, Value, When
+from django.db.models import Case, Count, DateTimeField, IntegerField, Q, Value, When
+from django.db.models.functions import Coalesce
 from django.http import FileResponse, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
@@ -36,9 +39,15 @@ def index(request: HttpRequest) -> HttpResponse:
 @login_required
 def detail(request: HttpRequest, pk: int) -> HttpResponse:
     album = get_object_or_404(Album, pk=pk)
-    media_items = list(access.visible_media(request, album).select_related("requested_by"))
+    media_items = list(
+        access.visible_media(request, album)
+        .select_related("requested_by")
+        .annotate(displayed_at=Coalesce("captured_at", "added_at", output_field=DateTimeField()))
+        .order_by("-displayed_at", "-pk")
+    )
     for item in media_items:
         item.can_delete = access.can_delete(item, request)  # type: ignore[attr-defined]
+        item.metadata_json = json.dumps(item.metadata)  # type: ignore[attr-defined]
     return render(
         request,
         "photo_album/detail.html",

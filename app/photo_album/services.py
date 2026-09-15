@@ -35,6 +35,7 @@ def upload_media(
         approved_at=timezone.now() if status == MediaStatus.APPROVED else None,
         content_type=getattr(uploaded_file, "content_type", ""),
         metadata=extract_metadata(uploaded_file),
+        captured_at=extract_captured_at(uploaded_file),
     )
     media.original.save(filename, uploaded_file, save=False)
     variants = image_variants(uploaded_file, filename) or video_variants(uploaded_file, filename)
@@ -142,7 +143,10 @@ def extract_metadata(uploaded_file: File) -> dict[str, str]:
     try:
         uploaded_file.seek(0)
         exif = Image.open(uploaded_file).getexif()
-        values = {ExifTags.TAGS.get(key, str(key)): value for key, value in exif.items()}
+        values = {
+            ExifTags.TAGS.get(key, str(key)): value
+            for key, value in {**dict(exif.items()), **_exif_ifd(exif)}.items()
+        }
         metadata: dict[str, str] = {}
         if values.get("DateTimeOriginal"):
             metadata["Oprindelig dato"] = str(values["DateTimeOriginal"])
@@ -157,6 +161,37 @@ def extract_metadata(uploaded_file: File) -> dict[str, str]:
         return {}
     finally:
         uploaded_file.seek(0)
+
+
+def extract_captured_at(uploaded_file: File) -> datetime | None:
+    """Return the original image capture time when EXIF supplies one."""
+    try:
+        uploaded_file.seek(0)
+        exif = Image.open(uploaded_file).getexif()
+        exif_values = _exif_ifd(exif)
+        value = (
+            exif_values.get(36867)
+            or exif_values.get(36868)
+            or exif.get(36867)
+            or exif.get(36868)
+            or exif.get(306)
+        )
+        if not value:
+            return None
+        return datetime.strptime(str(value), "%Y:%m:%d %H:%M:%S").replace(
+            tzinfo=timezone.get_current_timezone()
+        )
+    except (ImportError, OSError, TypeError, ValueError):
+        return None
+    finally:
+        uploaded_file.seek(0)
+
+
+def _exif_ifd(exif: Image.Exif) -> dict[int, object]:
+    try:
+        return dict(exif.get_ifd(ExifTags.IFD.Exif))
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return {}
 
 
 def _gps_location(exif: Image.Exif) -> str | None:

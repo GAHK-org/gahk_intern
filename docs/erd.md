@@ -549,6 +549,7 @@ erDiagram
         json metadata
         int requested_by_id FK
         datetime added_at
+        datetime captured_at
         string status
         int approved_by_id FK
         datetime approved_at
@@ -1167,6 +1168,7 @@ erDiagram
         json metadata
         int requested_by_id FK
         datetime added_at
+        datetime captured_at
         string status
         int approved_by_id FK
         datetime approved_at

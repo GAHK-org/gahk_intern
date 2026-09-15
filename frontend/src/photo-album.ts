@@ -51,6 +51,7 @@ if (gallery && dialog) {
     deleteForm.action = entry.dataset.deleteUrl ?? ""
     const values = {
       ...(entry.dataset.album ? { Album: entry.dataset.album } : {}),
+      ...(entry.dataset.capturedAt ? { "Optaget": entry.dataset.capturedAt } : {}),
       "Uploadet af": entry.dataset.uploadedBy ?? "",
       Uploadet: entry.dataset.uploadedAt ?? "",
       ...metadataFor(entry),

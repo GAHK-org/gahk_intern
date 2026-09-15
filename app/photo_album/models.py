@@ -89,6 +89,7 @@ class Media(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="media_requests"
     )
     added_at = models.DateTimeField(auto_now_add=True)
+    captured_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(max_length=10, choices=MediaStatus.choices, default=MediaStatus.PENDING)
     approved_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
