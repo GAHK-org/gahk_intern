@@ -9,6 +9,7 @@ from arkiv.access import roles_allowed as arkiv_allowed
 from den_hurtige.access import roles_allowed as den_hurtige_allowed
 from events.access import roles_allowed as events_allowed
 from opslagstavle.access import roles_allowed as opslagstavle_allowed
+from photo_album.access import roles_allowed as photo_album_allowed
 from residents.permissions import CMS_EDITOR_ROLES, can_preview, effective_roles
 
 # Public site nav, matching the legacy gahk.dk menu (labels + order)
@@ -115,6 +116,8 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     # today, and kept conditional for the reason given up there.
     if arkiv_allowed(roles):
         ressourcer.append(("/intern/arkiv/", "Arkiv", "archive"))
+    if photo_album_allowed(roles):
+        ressourcer.append(("/intern/fotoalbum/", "Fotoalbum", "archive"))
     ressourcer += [
         (settings.WIKI_URL, "Wiki", "book"),
         (settings.FEEDBACK_URL, "Fejl & ønsker", "bug"),

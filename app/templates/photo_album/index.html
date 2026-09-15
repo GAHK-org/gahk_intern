@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Fotoalbum</h1>
+{% if can_create %}<p><a href="{% url 'photo_album:create_album' %}">Opret album</a></p>{% endif %}
+<ul>{% for album in albums %}<li><a href="{% url 'photo_album:detail' album.pk %}">{{ album.folder }}: {{ album.name }}</a></li>{% empty %}<li>Ingen albummer endnu.</li>{% endfor %}</ul>
+{% endblock %}

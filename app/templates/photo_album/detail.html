@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ album.name }}</h1>
+{% if not album.is_locked %}<form method="post" action="{% url 'photo_album:upload' album.pk %}" enctype="multipart/form-data">{% csrf_token %}<input type="file" name="file" required><input name="title" placeholder="Titel"><button>Upload</button></form>{% else %}<p>Albummet er låst.</p>{% endif %}
+<div id="album-media">
+{% for item in media %}
+<button type="button" class="media-thumbnail" data-index="{{ forloop.counter0 }}" data-high-definition="{{ item.high_definition.url }}" data-original="{{ item.original.url }}" data-title="{{ item.title }}" data-metadata="{{ item.metadata }}">
+	<img src="{{ item.thumbnail.url }}" alt="{{ item.title }}">
+	{% if item.status == 'pending' %}<strong>Afventer godkendelse</strong>{% endif %}
+</button>
+{% empty %}<p>Ingen medier.</p>{% endfor %}
+</div>
+<dialog id="media-viewer">
+	<button type="button" id="previous-media" aria-label="Forrige">&larr;</button>
+	<img id="viewer-image" alt="">
+	<aside><h2 id="viewer-title"></h2><dl id="viewer-metadata"></dl><a id="download-original" download>Download original</a></aside>
+	<button type="button" id="next-media" aria-label="Næste">&rarr;</button>
+	<button type="button" id="close-viewer">Luk</button>
+</dialog>
+<script>
+(() => {
+	const entries = [...document.querySelectorAll('.media-thumbnail')];
+	const dialog = document.querySelector('#media-viewer');
+	let current = 0;
+	const render = (index) => {
+		current = (index + entries.length) % entries.length;
+		const entry = entries[current];
+		document.querySelector('#viewer-image').src = entry.dataset.highDefinition;
+		document.querySelector('#viewer-image').alt = entry.dataset.title;
+		document.querySelector('#viewer-title').textContent = entry.dataset.title;
+		document.querySelector('#download-original').href = entry.dataset.original;
+		const metadata = JSON.parse(entry.dataset.metadata || '{}');
+		document.querySelector('#viewer-metadata').replaceChildren(...Object.entries(metadata).flatMap(([key, value]) => {
+			const term = document.createElement('dt'); term.textContent = key;
+			const detail = document.createElement('dd'); detail.textContent = value;
+			return [term, detail];
+		}));
+	};
+	entries.forEach((entry, index) => entry.addEventListener('click', () => { render(index); dialog.showModal(); }));
+	document.querySelector('#previous-media').addEventListener('click', () => render(current - 1));
+	document.querySelector('#next-media').addEventListener('click', () => render(current + 1));
+	document.querySelector('#close-viewer').addEventListener('click', () => dialog.close());
+	document.addEventListener('keydown', (event) => {
+		if (!dialog.open) return;
+		if (event.key === 'ArrowLeft') render(current - 1);
+		if (event.key === 'ArrowRight') render(current + 1);
+	});
+})();
+</script>
+{% endblock %}
