@@ -48,11 +48,11 @@ def visible_media(request: HttpRequest, album: Album) -> QuerySet[Media]:
 
 
 def can_delete(media: Media, request: HttpRequest) -> bool:
-    return (
-        can_manage_media(request)
-        and not media.album.is_locked()
-        and media.added_at >= timezone.now() - timedelta(days=30)
-    )
+    if media.deleted_at is not None or media.album.is_locked():
+        return False
+    if media.status == MediaStatus.PENDING and media.requested_by_id == current_resident(request).pk:
+        return True
+    return can_manage_media(request) and media.added_at >= timezone.now() - timedelta(days=30)
 
 
 def can_permanently_delete(media: Media, request: HttpRequest) -> bool:

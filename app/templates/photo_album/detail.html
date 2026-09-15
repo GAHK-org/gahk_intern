@@ -3,16 +3,20 @@
 {% block content %}
 <section class="album-detail">
 	<header class="album-heading">
-		<div><a class="album-back" href="{% url 'photo_album:index' %}">Fotoalbum</a><h1>{{ album.name }}</h1><p class="album-subtitle"><svg aria-hidden="true"><use href="#i-folder"></use></svg>{{ album.folder }}</p></div>
+		<div><a class="album-back" href="{% url 'photo_album:index' %}">Fotoalbum</a><h1>{{ album.name }}</h1><p class="album-subtitle"><svg aria-hidden="true"><use href="#i-folder"></use></svg><a href="{% url 'photo_album:index' %}?folder={{ album.folder|urlencode }}">{{ album.folder }}</a></p></div>
 		{% if album.is_locked %}<span class="album-locked">Albummet er låst</span>{% elif can_manage %}<div class="album-actions"><a class="btn-link" href="{% url 'photo_album:bin' %}">Papirkurv</a>{% if not media %}<form method="post" action="{% url 'photo_album:delete_album' album.pk %}">{% csrf_token %}<button class="btn-link-danger" type="submit">Slet album</button></form>{% endif %}</div>{% endif %}
 	</header>
 	{% if not album.is_locked %}
 		<form class="album-upload" method="post" action="{% url 'photo_album:upload' album.pk %}" enctype="multipart/form-data">
 			{% csrf_token %}
-			<label class="album-file-picker"><input type="file" name="uploads" accept="image/*,video/*" multiple required><span>Vælg fotoer eller videoer</span><small>Du kan vælge flere filer på én gang</small></label>
+			<label class="album-file-picker"><input type="file" name="uploads" accept="image/*,video/*" multiple required data-album-upload-input><span>Vælg fotoer eller videoer</span><small>Du kan vælge flere filer på én gang</small></label>
 			<input name="title" placeholder="Titel til alle valgte filer (valgfrit)">
 			<button class="btn" type="submit">Upload</button>
 		</form>
+		<section class="album-upload-selection" data-album-upload-selection hidden aria-live="polite">
+			<p data-album-upload-count></p>
+			<ul data-album-upload-files></ul>
+		</section>
 	{% endif %}
 	<div class="album-media-grid" data-album-gallery>
 	{% for item in media %}
@@ -30,7 +34,7 @@
 	<button type="button" class="album-viewer-close" data-gallery-close aria-label="Luk">&times;</button>
 	<button type="button" class="album-viewer-arrow album-viewer-previous" data-gallery-previous aria-label="Forrige">&larr;</button>
 	<div class="album-viewer-stage"><img data-gallery-image alt=""><video data-gallery-video controls hidden></video></div>
-	<aside><p class="album-eyebrow">Medie</p><h2 data-gallery-title></h2><dl data-gallery-metadata></dl><a class="btn btn-secondary" data-gallery-download download>Download original</a><form method="post" data-gallery-delete-form hidden onsubmit="return confirm('Er du sikker på, at du vil flytte mediet til papirkurven?');">{% csrf_token %}<button class="btn-link-danger" type="submit">Fjern</button></form></aside>
+	<aside><p class="album-eyebrow">Medie</p><h2 data-gallery-title></h2><dl data-gallery-metadata></dl><a class="btn btn-secondary" data-gallery-download download>Download original</a><form method="post" data-gallery-delete-form hidden onsubmit="return confirm('Er du sikker på, at du vil slette mediet?');">{% csrf_token %}<button class="btn-link-danger" type="submit">Fjern</button></form></aside>
 	<button type="button" class="album-viewer-arrow album-viewer-next" data-gallery-next aria-label="Næste">&rarr;</button>
 </dialog>
 {% endblock %}

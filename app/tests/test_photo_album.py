@@ -56,6 +56,53 @@ def test_normal_upload_is_pending_and_only_visible_to_requester(
 
 
 @pytest.mark.django_db
+def test_requester_can_immediately_delete_their_own_pending_media(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    requester = make_resident()
+    album = Album.objects.create(folder="2026", name="Fest")
+    media = Media.objects.create(
+        album=album,
+        title="pending",
+        original="original.jpg",
+        high_definition="high-definition.jpg",
+        thumbnail="thumbnail.jpg",
+        requested_by=requester,
+        status=MediaStatus.PENDING,
+    )
+    client.force_login(requester)
+
+    response = client.post(reverse("photo_album:delete", args=[media.pk]))
+
+    assert response.status_code == 302
+    assert not Media.objects.filter(pk=media.pk).exists()
+
+
+@pytest.mark.django_db
+def test_other_resident_cannot_delete_pending_media(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    requester = make_resident()
+    other = make_resident(email="other@gahk.dk")
+    album = Album.objects.create(folder="2026", name="Fest")
+    media = Media.objects.create(
+        album=album,
+        title="pending",
+        original="original.jpg",
+        high_definition="high-definition.jpg",
+        thumbnail="thumbnail.jpg",
+        requested_by=requester,
+        status=MediaStatus.PENDING,
+    )
+    client.force_login(other)
+
+    response = client.post(reverse("photo_album:delete", args=[media.pk]))
+
+    assert response.status_code == 403
+    assert Media.objects.filter(pk=media.pk).exists()
+
+
+@pytest.mark.django_db
 def test_upload_accepts_multiple_media_files(client: Client, make_resident: Callable[..., Resident]) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     album = Album.objects.create(folder="2026", name="Fest")
@@ -66,6 +113,39 @@ def test_upload_accepts_multiple_media_files(client: Client, make_resident: Call
     )
     assert response.status_code == 302
     assert Media.objects.filter(album=album).count() == 2
+
+
+@pytest.mark.django_db
+def test_album_upload_page_has_a_selected_files_summary(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    album = Album.objects.create(folder="2026", name="Fest")
+    client.force_login(administrator)
+
+    content = client.get(reverse("photo_album:detail", args=[album.pk])).content.decode()
+
+    assert "data-album-upload-input" in content
+    assert "data-album-upload-selection" in content
+    assert "data-album-upload-count" in content
+    assert "data-album-upload-files" in content
+
+
+@pytest.mark.django_db
+def test_folder_index_filters_albums_and_sorts_andet_first(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    resident = make_resident()
+    andet = Album.objects.create(folder="Andet", name="Andet album")
+    year = Album.objects.create(folder="2026", name="Årsalbum")
+    client.force_login(resident)
+
+    index = client.get(reverse("photo_album:index"))
+    folder = client.get(reverse("photo_album:index"), {"folder": "Andet"})
+
+    assert index.content.decode().index(andet.name) < index.content.decode().index(year.name)
+    assert andet.name in folder.content.decode()
+    assert year.name not in folder.content.decode()
 
 
 @pytest.mark.django_db

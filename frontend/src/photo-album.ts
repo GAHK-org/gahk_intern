@@ -1,5 +1,22 @@
 const gallery = document.querySelector<HTMLElement>("[data-album-gallery]")
 const dialog = document.querySelector<HTMLDialogElement>("[data-album-viewer]")
+const uploadInput = document.querySelector<HTMLInputElement>("[data-album-upload-input]")
+const uploadSelection = document.querySelector<HTMLElement>("[data-album-upload-selection]")
+const uploadCount = document.querySelector<HTMLElement>("[data-album-upload-count]")
+const uploadFiles = document.querySelector<HTMLUListElement>("[data-album-upload-files]")
+
+if (uploadInput && uploadSelection && uploadCount && uploadFiles) {
+  uploadInput.addEventListener("change", () => {
+    const files = Array.from(uploadInput.files ?? [])
+    uploadSelection.hidden = files.length === 0
+    uploadCount.textContent = `${files.length} ${files.length === 1 ? "fil valgt" : "filer valgt"}`
+    uploadFiles.replaceChildren(...files.map((file) => {
+      const item = document.createElement("li")
+      item.textContent = file.name
+      return item
+    }))
+  })
+}
 
 if (gallery && dialog) {
   const entries = Array.from(gallery.querySelectorAll<HTMLButtonElement>(".album-media-tile"))
@@ -49,6 +66,9 @@ if (gallery && dialog) {
 
   entries.forEach((entry, index) => entry.addEventListener("click", () => { dialog.showModal(); show(index) }))
   dialog.querySelector("[data-gallery-close]")?.addEventListener("click", () => dialog.close())
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) dialog.close()
+  })
   dialog.querySelector("[data-gallery-previous]")?.addEventListener("click", () => show(current - 1))
   dialog.querySelector("[data-gallery-next]")?.addEventListener("click", () => show(current + 1))
   document.addEventListener("keydown", (event) => {

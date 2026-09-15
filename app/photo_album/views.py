@@ -1,6 +1,6 @@
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
-from django.db.models import Count, Q
+from django.db.models import Case, Count, IntegerField, Q, Value, When
 from django.http import FileResponse, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
@@ -14,13 +14,22 @@ from .models import Album, Media
 
 @login_required
 def index(request: HttpRequest) -> HttpResponse:
+    folder = request.GET.get("folder", "")
     albums = Album.objects.annotate(
-        media_count=Count("media", filter=Q(media__deleted_at__isnull=True, media__status="approved"))
+        media_count=Count("media", filter=Q(media__deleted_at__isnull=True, media__status="approved")),
+        folder_position=Case(
+            When(folder="Andet", then=Value(0)),
+            default=Value(1),
+            output_field=IntegerField(),
+        ),
     )
+    if folder:
+        albums = albums.filter(folder=folder)
+    albums = albums.order_by("folder_position", "-folder", "name")
     return render(
         request,
         "photo_album/index.html",
-        {"albums": albums, "can_create": access.can_create_album(request)},
+        {"albums": albums, "can_create": access.can_create_album(request), "folder": folder},
     )
 
 
@@ -141,11 +150,15 @@ def reject(request: HttpRequest, pk: int) -> HttpResponse:
 @login_required
 @require_POST
 def delete(request: HttpRequest, pk: int) -> HttpResponse:
-    media = _managed_media(request, pk)
+    media = get_object_or_404(Media, pk=pk)
     if not access.can_delete(media, request):
         raise PermissionDenied
     album_id = media.album_id
-    services.delete(media, current_resident(request))
+    requester = current_resident(request)
+    if media.status == "pending" and media.requested_by_id == requester.pk:
+        services.permanently_delete(media)
+    else:
+        services.delete(media, requester)
     return redirect("photo_album:detail", album_id)
 
 

@@ -1677,6 +1677,8 @@
    .album-file-picker input { position:absolute; inline-size:1px; block-size:1px; opacity:0; }
    .album-file-picker span { color:var(--brass); font-weight:650; }.album-file-picker small { color:var(--muted); }
    .album-upload > input { flex:1 1 180px; min-width:0; }
+   .album-upload-selection { margin:-14px 0 22px; padding:10px 12px; border:1px solid var(--line); border-radius:6px; background:var(--surface-2); }
+   .album-upload-selection p { margin:0 0 5px; font-size:13px; font-weight:650; }.album-upload-selection ul { max-height:132px; margin:0; padding-left:20px; overflow:auto; color:var(--muted); font-size:13px; }
    .album-media-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(138px, 1fr)); gap:8px; }
    .album-media-item { min-width:0; }.album-media-tile { position:relative; width:100%; min-width:0; padding:0; overflow:hidden; border:0; border-radius:7px; background:var(--surface-2); color:var(--ink); text-align:left; cursor:pointer; }
    .album-media-tile img, .album-media-tile video { display:block; width:100%; aspect-ratio:1; object-fit:cover; background:var(--surface-2); }
