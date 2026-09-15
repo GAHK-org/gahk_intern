@@ -35,6 +35,7 @@ class Album(models.Model):
     name = models.CharField(max_length=140, verbose_name="Albumnavn")
     created_at = models.DateTimeField(auto_now_add=True)
     manually_locked_at = models.DateTimeField(null=True, blank=True)
+    unlocked_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["-folder", "name"]
@@ -71,19 +72,30 @@ class Album(models.Model):
             raise ValidationError({"folder": "Mappen skal være et årstal eller Andet."})
 
     def is_locked(self, now: datetime | None = None) -> bool:
+        return self.locked_at(now) is not None
+
+    def locked_at(self, now: datetime | None = None) -> datetime | None:
         if self.manually_locked_at is not None:
-            return True
+            return self.manually_locked_at
         latest = (
             self.media.filter(status=MediaStatus.APPROVED, deleted_at__isnull=True)
             .order_by("-added_at")
             .first()
         )
-        return latest is not None and latest.added_at <= (now or timezone.now()) - timedelta(days=90)
+        if latest is None:
+            return None
+        activity_at = (
+            max(latest.added_at, self.unlocked_at) if self.unlocked_at is not None else latest.added_at
+        )
+        locked_at = activity_at + timedelta(days=90)
+        if locked_at > (now or timezone.now()):
+            return None
+        return locked_at
 
-    def can_be_manually_unlocked(self, now: datetime | None = None) -> bool:
-        if self.manually_locked_at is None:
+    def can_be_unlocked(self, now: datetime | None = None) -> bool:
+        locked_at = self.locked_at(now)
+        if locked_at is None:
             return False
-        locked_at = self.manually_locked_at
         month = locked_at.month + 6
         year = locked_at.year + (month - 1) // 12
         month = (month - 1) % 12 + 1

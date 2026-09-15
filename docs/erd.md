@@ -537,6 +537,7 @@ erDiagram
         string name
         datetime created_at
         datetime manually_locked_at
+        datetime unlocked_at
     }
 
     photo_album_Media {
@@ -1157,6 +1158,7 @@ erDiagram
         string name
         datetime created_at
         datetime manually_locked_at
+        datetime unlocked_at
     }
 
     photo_album_Media {

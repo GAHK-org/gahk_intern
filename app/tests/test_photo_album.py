@@ -354,14 +354,14 @@ def test_old_album_and_old_media_cannot_be_changed(
 
 
 @pytest.mark.django_db
-def test_manual_album_lock_can_only_be_removed_within_six_calendar_months() -> None:
+def test_album_lock_can_only_be_removed_within_six_calendar_months() -> None:
     album = Album.objects.create(folder="2026", name="Fest")
     locked_at = timezone.make_aware(datetime(2026, 2, 28, 12, 0))
     album.manually_locked_at = locked_at
 
     assert album.is_locked()
-    assert album.can_be_manually_unlocked(timezone.make_aware(datetime(2026, 8, 27, 12, 0)))
-    assert not album.can_be_manually_unlocked(timezone.make_aware(datetime(2026, 8, 28, 12, 0)))
+    assert album.can_be_unlocked(timezone.make_aware(datetime(2026, 8, 27, 12, 0)))
+    assert not album.can_be_unlocked(timezone.make_aware(datetime(2026, 8, 28, 12, 0)))
 
 
 @pytest.mark.django_db
@@ -383,7 +383,7 @@ def test_photo_manager_can_manually_lock_and_unlock_album(
 
 
 @pytest.mark.django_db
-def test_manual_album_lock_cannot_be_unlocked_after_six_months(
+def test_expired_album_lock_explains_why_it_cannot_be_unlocked(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
@@ -392,11 +392,39 @@ def test_manual_album_lock_cannot_be_unlocked_after_six_months(
     )
     client.force_login(administrator)
 
+    response = client.post(reverse("photo_album:unlock_album", args=[album.pk]), follow=True)
+
+    album.refresh_from_db()
+    assert response.status_code == 200
+    assert "Albummet har været låst i mere end 6 måneder og kan ikke låses op." in response.content.decode()
+    assert album.manually_locked_at is not None
+
+
+@pytest.mark.django_db
+def test_recent_automatic_album_lock_can_be_unlocked(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    album = Album.objects.create(folder="2026", name="Fest")
+    media = Media.objects.create(
+        album=album,
+        title="old",
+        original="a",
+        high_definition="b",
+        thumbnail="c",
+        requested_by=administrator,
+        status=MediaStatus.APPROVED,
+    )
+    Media.objects.filter(pk=media.pk).update(added_at=timezone.now() - timedelta(days=91))
+    client.force_login(administrator)
+
     response = client.post(reverse("photo_album:unlock_album", args=[album.pk]))
 
     album.refresh_from_db()
-    assert response.status_code == 403
-    assert album.manually_locked_at is not None
+    assert response.status_code == 302
+    assert album.unlocked_at is not None
+    assert not album.is_locked()
+    assert album.is_locked(album.unlocked_at + timedelta(days=90))
 
 
 @pytest.mark.django_db

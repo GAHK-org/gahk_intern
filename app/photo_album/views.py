@@ -1,5 +1,6 @@
 import json
 
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db.models import Case, Count, DateTimeField, IntegerField, Q, Value, When
@@ -90,7 +91,8 @@ def lock_album(request: HttpRequest, pk: int) -> HttpResponse:
     if not access.can_lock_album(request, album):
         raise PermissionDenied
     album.manually_locked_at = timezone.now()
-    album.save(update_fields=["manually_locked_at"])
+    album.unlocked_at = None
+    album.save(update_fields=["manually_locked_at", "unlocked_at"])
     return redirect("photo_album:detail", album.pk)
 
 
@@ -98,10 +100,14 @@ def lock_album(request: HttpRequest, pk: int) -> HttpResponse:
 @require_POST
 def unlock_album(request: HttpRequest, pk: int) -> HttpResponse:
     album = get_object_or_404(Album, pk=pk)
-    if not access.can_unlock_album(request, album):
+    if not access.can_manage_media(request):
         raise PermissionDenied
+    if not access.can_unlock_album(request, album):
+        messages.error(request, "Albummet har været låst i mere end 6 måneder og kan ikke låses op.")
+        return redirect("photo_album:detail", album.pk)
     album.manually_locked_at = None
-    album.save(update_fields=["manually_locked_at"])
+    album.unlocked_at = timezone.now()
+    album.save(update_fields=["manually_locked_at", "unlocked_at"])
     return redirect("photo_album:detail", album.pk)
 
 

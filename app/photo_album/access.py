@@ -42,7 +42,7 @@ def can_lock_album(request: HttpRequest, album: Album) -> bool:
 
 
 def can_unlock_album(request: HttpRequest, album: Album) -> bool:
-    return can_manage_media(request) and album.can_be_manually_unlocked()
+    return can_manage_media(request) and album.can_be_unlocked()
 
 
 def visible_media(request: HttpRequest, album: Album) -> QuerySet[Media]:

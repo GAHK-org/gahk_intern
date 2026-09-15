@@ -31,7 +31,8 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 - An album automatically locks when its newest approved, non-deleted media was added at least 90 days ago.
 - A locked album accepts no new uploads and its media cannot be deleted.
 - Fotogruppen members and administrators can manually lock an otherwise unlocked album.
-- A manual lock can be removed only by Fotogruppen members or administrators, and only before six calendar months have elapsed since that manual lock was applied. Automatic locks cannot be manually removed.
+- Any lock can be removed only by Fotogruppen members or administrators, and only before six calendar months have elapsed since that lock took effect. Unlocking resets the automatic-lock timer; the album locks again after 90 days unless newer approved media is added first.
+- When a Fotogruppen member or administrator attempts to unlock an album after that six-month window, the album page explains that it has been locked for more than six months and cannot be unlocked.
 
 ## Deletion and bin
 
