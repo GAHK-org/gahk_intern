@@ -1,47 +1,51 @@
-# Feature: Media album
-Photo and video album functionality.
+# Feature: Photo album
 
-Hereafter "media" will refer to either a photo or a video.
+The photo album stores and presents photos and videos. Hereafter, "media" means either a photo or a video.
 
-Each photo and video should exist should exist in original upload, compressed high definition and thumbnail.
-Store metadata such as original date, location, camera type, uploaded by user etc...
-Retrieve metadata from photos/videos on upload if possible.
+## Albums and storage
 
-Use the S3 bucket for binary blobs (original, compressed and thumbnail).
+- Every media item belongs to exactly one album.
+- An album belongs to a folder. Valid folder names are a four-digit year (`yyyy`) or `Andet`; `Andet` is shown first in the album index.
+- Album names must be unique within their folder. Albums cannot be renamed and can only be deleted when empty.
+- Each media item has three independently stored variants: the unmodified original upload, a compressed high-definition version, and a thumbnail. Image viewer and thumbnail variants are JPEG; video viewer variants are MP4 with a JPEG thumbnail.
+- Binary files use Django's configured media storage. Production uses the S3 media bucket; media keys are grouped by album and variant as `photo-album/<album-id>/<variant>/<filename>`.
 
-All photos/videos must belong to exactly one album.
+## Metadata and ordering
 
-Albums will be locked if no media has been added for 3 months.
-Locked albums cannot have new media uploaded nor media deleted.
+- The original upload is inspected for available metadata. Supported image metadata includes camera make/model and GPS coordinates, displayed as `Kamera` and `Sted`.
+- `captured_at` is derived from EXIF `DateTimeOriginal`, falling back to `DateTimeDigitized`. It is `NULL` when neither is available or readable. Both standard and nested EXIF IFD layouts, including HEIC/HEIF uploads, are supported.
+- The viewer displays the capture date as `Optaget`, GPS coordinates when available, the uploader, and upload time. The original date is also retained in metadata when available.
+- Album grids are newest first by `captured_at`; media without a capture date use their upload time as the ordering fallback.
 
-Each album must belong to a folder/group.
-Folder/group names are either the year yyyy, or other "Andet".
-Albums within the same folder/group cannot have the same name.
+## Access and upload workflow
 
+- Members of Fotogruppen and administrators can create albums, manage media, approve/reject submissions, manage the bin, and manually lock albums.
+- Any signed-in resident can upload one or more photos or videos to an unlocked album. The upload form lists the chosen filenames before submission and may apply one optional title to all selected uploads.
+- Uploads made by Fotogruppen members or administrators are approved immediately. Other uploads are pending until approved.
+- Pending media is visible only to Fotogruppen members, administrators, and the requesting resident, and its thumbnail is marked `Afventer godkendelse`.
+- Rejected media moves to the bin. Pending media that remains unapproved for 30 days is permanently deleted.
+- A requesting resident may withdraw their own pending upload; other deletion and moderation actions require Fotogruppen or administrator access.
 
-## Creating albums and uploading/editing photos
-Only users that are member of fotogruppen or admins can create albums and upload media.
+## Album locking
 
-Other users may upload to albums, but the uploads must be approved by a member of fotogruppen or admin before it's a part of the album.
-If an upload is rejected, it will be moved to the bin.
-If the upload is not approved within 30 days, it will be deleted permanently.
-Pending media will be shown only to members of fotogruppen, admins and the user that requested upload.
-Pending media will be displayed with text "Afventer godkendelse" over the thumbnail.
+- An album automatically locks when its newest approved, non-deleted media was added at least 90 days ago.
+- A locked album accepts no new uploads and its media cannot be deleted.
+- Fotogruppen members and administrators can manually lock an otherwise unlocked album.
+- A manual lock can be removed only by Fotogruppen members or administrators, and only before six calendar months have elapsed since that manual lock was applied. Automatic locks cannot be manually removed.
 
+## Deletion and bin
 
-## Deleting
-Photos/videos that are uploaded more than 30 days ago, cannot be deleted.
+- Fotogruppen members and administrators can delete media uploaded within the last 30 days, provided its album is not locked.
+- Deletion moves media to the bin. Managers can restore binned media to its original album until automatic cleanup removes it after 30 days in the bin.
+- A binned item may be permanently deleted manually only while it is less than one hour old; otherwise the scheduled 30-day cleanup removes it. All three stored variants are removed with the database record.
 
-Only users that are member of fotogruppen or admins can delete.
+## Viewing experience
 
-If a photo/video is deleted, it's moved to a bin such that it's not instantly deleted. Media in the bin can be restored at any time. Media can only deleted after being in the bin for more than 30 days.
+- The album index displays albums as folders. Album pages display media as a thumbnail grid.
+- On desktop, selecting media opens a modal with the high-definition variant, metadata in a right sidebar, an original-download action, and deletion where permitted. Previous/next arrows and keyboard arrow keys navigate without looping past either end.
+- On mobile, selecting media opens a full-screen viewer that shows only the media, its name, and capture date (or upload date when no capture date exists). A kebab menu contains metadata, original download, and deletion where permitted.
+- Mobile users swipe left/right to browse without looping and pinch to zoom images or videos between $1\times$ and $4\times$. Swiping is disabled while zoomed.
 
-If the media is uploaded less than 1 hour ago, it can be deleted instantly.
+## Development seed data
 
-An album can only be deleted if it's empty. Albums can't be renamed.
-
-## UX
-When an media is clicked, open a modal showing the high definition version.
-Navigate to previous/next with arrows on each side of the media or arrow keys.
-Display metadata to the right when an media is clicked.
-A user should be able to download the original upload.
+The photo-album seed generator creates albums in year and `Andet` folders, thumbnail-ready media, and lifecycle examples for recent/old uploads, binned media, and an automatically locked album.
