@@ -818,7 +818,11 @@ def test_the_backfill_reads_the_month_each_post_was_actually_written_in(
     # Backdate one post into `then`, and clear both snapshots so the backfill has work to do —
     # exactly the state the migration finds on a board that predates the field.
     Notice.objects.filter(pk=old.pk).update(
-        created_at=timezone.now().replace(year=then[0]), author_embedsgruppe=""
+        # day=1, not today's day: replacing only the year raises on 29 February, since `then[0]`
+        # is the year before and three years in four has no such date. Periods are whole calendar
+        # months, so any day in the month resolves to the same one.
+        created_at=timezone.now().replace(year=then[0], day=1),
+        author_embedsgruppe="",
     )
     Notice.objects.filter(pk=recent.pk).update(author_embedsgruppe="")
 

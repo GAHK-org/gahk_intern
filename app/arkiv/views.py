@@ -10,21 +10,32 @@ something exists.
 
 import json
 import mimetypes
+import zipfile
+from tempfile import SpooledTemporaryFile
 from typing import BinaryIO, cast
 
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, transaction
-from django.http import FileResponse, Http404, HttpRequest, HttpResponseRedirect, JsonResponse
+from django.http import (
+    FileResponse,
+    Http404,
+    HttpRequest,
+    HttpResponseRedirect,
+    JsonResponse,
+    StreamingHttpResponse,
+)
 from django.http.response import HttpResponseBase
 from django.shortcuts import redirect, render
+from django.template.defaultfilters import filesizeformat
+from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from residents.permissions import current_resident
 
 from . import access, services, uploads
-from .models import ArchiveFile, ArchiveFolder, object_key, thumbnail_key
-from .storage import LocalArchiveStore, get_store
+from .models import ArchiveFile, ArchiveFolder, object_key, selection_key
+from .storage import ArchiveStore, LocalArchiveStore, content_disposition, get_store
 
 
 @access.access_required
@@ -68,6 +79,9 @@ def browse(request: HttpRequest, pk: int | None = None) -> HttpResponseBase:
         else ArchiveFile.objects.none()
     )
 
+    # Evaluated once, here: the template iterates it and `is_gallery` counts it, and a queryset
+    # asked both questions would run the query twice.
+    rows = list(files)
     return render(
         request,
         "arkiv/browse.html",
@@ -75,15 +89,46 @@ def browse(request: HttpRequest, pk: int | None = None) -> HttpResponseBase:
             "folder": folder,
             "ancestors": folder.ancestors() if folder else [],
             "subfolders": subfolders,
-            "files": files,
+            "files": rows,
+            "gallery": is_gallery(rows),
             "removed": removed,
             "can_manage_roots": access.can_manage_roots(request),
             # Writing follows reading (access.can_write), so this is true for any folder the
             # resident can see - including the shared Billeder root, which is the point.
             "can_write": can_write,
+            # Removing the folder is NOT the same permission: a root belongs to whoever arranges
+            # the top level. See access.can_delete_folder.
+            "can_delete_folder": folder is not None and access.can_delete_folder(folder, request),
+            "can_manage_locks": folder is not None and access.can_manage_locks(request),
+            "now": timezone.now(),
             "limited_rollout": access.is_limited(),
         },
     )
+
+
+# A folder is drawn as a grid of pictures once it is mostly pictures. Below this it stays a list:
+# a couple of snapshots among fifteen documents are not a gallery, and turning the referater into
+# tiles to accommodate them would be the wrong trade.
+GALLERY_SHARE = 0.6
+
+
+def is_gallery(files: list[ArchiveFile]) -> bool:
+    """Whether this folder should be drawn as a grid of pictures rather than a list of rows.
+
+    DECIDED HERE RATHER THAN IN THE TEMPLATE, and on the SERVER rather than in the browser, because
+    it decides the markup and the markup is what a reader without JavaScript gets. The alternative -
+    render rows and rearrange them on load - is a layout shift on every folder in the archive.
+
+    Asks about thumbnails rather than content type. A row is only worth a tile if there is something
+    to put in the tile; an image the backlog command has not reached yet, or one Pillow could not
+    decode, would otherwise contribute a grid of identical grey file icons - which is strictly worse
+    than the list it replaced. That also means a folder quietly becomes a gallery as the backlog
+    catches up with it, which is the behaviour we want and worth knowing when one looks different
+    today than it did yesterday.
+    """
+    if not files:
+        return False
+    return sum(1 for f in files if f.has_thumbnail) / len(files) >= GALLERY_SHARE
 
 
 @access.access_required
@@ -139,14 +184,26 @@ def _writable_folder(request: HttpRequest, pk: int) -> ArchiveFolder:
     return folder
 
 
-def _thumbnail_plan(sha256: str, content_type: str) -> dict[str, object] | None:
-    """How the browser should send a preview, or None if this file should not have one."""
+def _derived_plan(kind: str, sha256: str, content_type: str) -> dict[str, object] | None:
+    """How the browser should send one derived size, or None if it should not send this one.
+
+    None when the file is not an image, and also when the store already has that size - the bytes
+    of a photograph somebody else uploaded last year are already there, and so are its thumbnail
+    and preview, so there is nothing for this browser to make.
+    """
     if not content_type.startswith("image/"):
         return None
-    policy = uploads.presigned_thumbnail_post(sha256)
+    if uploads.stored_derived(kind, sha256):
+        return None
+    policy = uploads.presigned_derived_post(kind, sha256)
     if policy is None:
         return {"mode": "direct"}
     return {"mode": "s3", "url": policy["url"], "fields": policy["fields"]}
+
+
+def _derived_plans(sha256: str, content_type: str) -> dict[str, object | None]:
+    """Every derived size the browser should send for this file, by name."""
+    return {kind: _derived_plan(kind, sha256, content_type) for kind in uploads.DERIVED_SIZES}
 
 
 @access.access_required
@@ -180,20 +237,26 @@ def upload_begin(request: HttpRequest, pk: int) -> HttpResponseBase:
         # Somebody has already uploaded these exact bytes, here or in another folder. Nothing to
         # send: commit straight away. Content addressing paying for itself on the second copy of a
         # party photograph.
-        # The bytes are there, but a preview might not be - an earlier upload from a browser that
-        # could not decode the image, or an imported file. Offer the thumbnail slot regardless.
-        thumb = None if uploads.stored_thumbnail(sha256) else _thumbnail_plan(sha256, content_type)
-        return JsonResponse({"upload": None, "thumbnail": thumb, "already_stored": True})
+        # The bytes are there, but a derived size might not be - an earlier upload from a browser
+        # that could not decode the image, or a file that arrived through the importer. Offer
+        # whichever ones are genuinely missing; _derived_plan drops the rest.
+        return JsonResponse(
+            {
+                "upload": None,
+                "derived": _derived_plans(sha256, content_type),
+                "already_stored": True,
+            }
+        )
 
     policy = uploads.presigned_post(sha256, content_type)
-    thumb = _thumbnail_plan(sha256, content_type)
+    derived = _derived_plans(sha256, content_type)
     if policy is None:
         # No bucket (dev, CI): the browser posts the file to upload_direct instead.
-        return JsonResponse({"upload": {"mode": "direct"}, "thumbnail": thumb, "already_stored": False})
+        return JsonResponse({"upload": {"mode": "direct"}, "derived": derived, "already_stored": False})
     return JsonResponse(
         {
             "upload": {"mode": "s3", "url": policy["url"], "fields": policy["fields"]},
-            "thumbnail": thumb,
+            "derived": derived,
             "already_stored": False,
         }
     )
@@ -216,16 +279,21 @@ def upload_direct(request: HttpRequest, pk: int) -> HttpResponseBase:
 
     upload = request.FILES.get("file")
     sha256 = str(request.POST.get("sha256", "")).lower()
-    is_thumb = request.POST.get("thumbnail") == "1"
+    # Which of the three things this is: the file itself, or one of the derived sizes. Named rather
+    # than a boolean, because there are two derived sizes now and a third would be one more name.
+    kind = str(request.POST.get("derived", ""))
     if upload is None or not uploads.valid_hash(sha256):
         return JsonResponse({"error": "Ugyldig upload."}, status=400)
-    limit = uploads.MAX_THUMBNAIL_BYTES if is_thumb else uploads.MAX_UPLOAD_BYTES
+    if kind and kind not in uploads.DERIVED_SIZES:
+        return JsonResponse({"error": "Ukendt billedst\u00f8rrelse."}, status=400)
+
+    limit = uploads.derived_limit(kind) if kind else uploads.MAX_UPLOAD_BYTES
     if (upload.size or 0) > limit:
         return JsonResponse({"error": "Filen er for stor."}, status=400)
 
     # .file is the underlying stream; UploadedFile itself is not a BinaryIO.
-    key = thumbnail_key(sha256) if is_thumb else object_key(sha256)
-    store.save(key, cast("BinaryIO", upload.file))
+    key = uploads.derived_key(kind, sha256) if kind else object_key(sha256)
+    store.save(cast("str", key), cast("BinaryIO", upload.file))
     return JsonResponse({"ok": True})
 
 
@@ -265,8 +333,11 @@ def upload_commit(request: HttpRequest, pk: int) -> HttpResponseBase:
             content_type=stored_type or mimetypes.guess_type(name)[0] or "",
             uploaded_by=current_resident(request),
             # Asked of the store, not taken from the client: a flag set on the client's word would
-            # render a broken <img> for every file whose preview silently failed to upload.
-            has_thumbnail=uploads.stored_thumbnail(sha256),
+            # render a broken <img> for every file whose derived upload silently failed. Each size
+            # is asked about separately, because a browser can perfectly well manage one and not
+            # the other - and the viewer falls back to the original when the preview is missing.
+            has_thumbnail=uploads.stored_derived("thumbnail", sha256),
+            has_preview=uploads.stored_derived("preview", sha256),
         )
     except IntegrityError:
         # Two tabs, or a double-tap on a slow connection. The partial unique index caught it.
@@ -287,6 +358,33 @@ MAX_FOLDER_NAME = 120
 # A week, and `private` because a preview of a Regnskabsgruppen document is as confidential as the
 # document. Safe to cache this long only because the URL is content-addressed: new bytes, new key.
 THUMBNAIL_CACHE_CONTROL = "private, max-age=604800"
+
+# What one "Hent valgte" may carry. Both bound the BUILD, which since the zip became an object is
+# the only part a worker waits for - reading the members out of the bucket and writing the archive
+# back, inside fsn1. The recipient's connection is no longer in the picture at all, which is what
+# these numbers used to be at the mercy of. The byte total also bounds the temporary file.
+#
+# Raising them is now a reasonable conversation, and a measurable one: the limit is our own internal
+# bandwidth against `--timeout 60`, not a resident's hotel wifi. It was not measurable before.
+MAX_SELECTED_FILES = 200
+MAX_SELECTED_BYTES = 500 * 1024 * 1024
+
+# Below this a zip is assembled in memory; above it SpooledTemporaryFile rolls over to disk. Sized
+# so an ordinary selection of a few dozen photographs never touches the filesystem, while the cap
+# above bounds what the largest one can occupy there.
+ZIP_SPOOL_BYTES = 32 * 1024 * 1024
+
+# How the page learns the build is over. A form POST that ends in a download does NOT navigate: the
+# browser keeps the page and hands the bytes to the downloads shelf, so there is no load event, no
+# unload, and nothing for the button to hook. The response is also a redirect to Hetzner, whose
+# reply is not ours to observe.
+#
+# So the client sends a nonce, this is the response that echoes it back as a readable cookie, and
+# the script polls for it - the long-standing answer to this exact problem. The value is the
+# client's own random string and grants nothing, which is why it need not be HttpOnly. Short-lived
+# because it is a signal, not state.
+ZIP_DONE_COOKIE = "arkiv_zip_done"
+ZIP_DONE_COOKIE_MAX_AGE = 300
 
 
 @access.access_required
@@ -460,3 +558,354 @@ def thumbnail(request: HttpRequest, pk: int) -> HttpResponseBase:
         return response
 
     raise Http404("no object store configured")
+
+
+# --- the viewer, and taking several files at once ---------------------------------------------------
+
+
+@access.access_required
+def preview(request: HttpRequest, pk: int) -> HttpResponseBase:
+    """The large image the viewer shows. Same access rules as the file itself.
+
+    A THIRD SIZE, between the 40px row icon and a forty-megabyte original. Paging through a folder
+    of originals is minutes of waiting and the one variable line on the Hetzner bill; paging through
+    320px thumbnails blown up to fill a laptop is porridge. See `models.preview_key`.
+
+    **Falls back to the original when there is no preview object**, which is not a detail: a photo
+    uploaded through the browser gets a thumbnail made client-side and no preview, and stays that
+    way until `make_arkiv_thumbnails` next sweeps. Without the fallback, every freshly uploaded
+    photograph would be the one that breaks when you click it - the worst possible case to 404,
+    because it is the one the uploader checks.
+
+    Cached as hard as the thumbnail, and safe for the same reason: the key is the hash of the
+    original, so different bytes are a different URL and a preview can never go stale.
+    """
+    resident = current_resident(request)
+    file = access.visible_files(resident).filter(pk=pk).first()
+    if file is None:
+        raise Http404("no such file")
+
+    key = file.preview_key if file.has_preview else file.key
+    content_type = "image/jpeg" if file.has_preview else file.content_type
+
+    store = get_store()
+    url = store.download_url(key, filename=file.name, content_type=content_type)
+    if url is not None:
+        redirect_to = HttpResponseRedirect(url)
+        redirect_to.headers["Cache-Control"] = THUMBNAIL_CACHE_CONTROL
+        redirect_to.headers["Vary"] = "Cookie"
+        return redirect_to
+
+    if isinstance(store, LocalArchiveStore):
+        path = store.path(key)
+        if not path.is_file():
+            raise Http404("the preview behind this row is missing")
+        response = FileResponse(path.open("rb"), content_type=content_type or "image/jpeg")
+        response.headers["Cache-Control"] = THUMBNAIL_CACHE_CONTROL
+        return response
+
+    raise Http404("no object store configured")
+
+
+@access.access_required
+@require_POST
+def download_selected(request: HttpRequest, pk: int) -> HttpResponseBase:
+    """Several files from one folder, as a zip BUILT INTO THE BUCKET and then redirected to.
+
+    POST, not GET, and not because anything is modified: the selection is a list of ids that can
+    run to a couple of hundred, which does not belong in a URL, and a GET would let a link in a chat
+    thread start a multi-hundred-megabyte transfer for whoever clicked it.
+
+    **The zip is an object, not a stream, and that is the whole design.** The first version streamed
+    it straight to the browser, which quietly made this the only route in Arkiv that holds a gunicorn
+    worker - and held it not for as long as the zip took to BUILD, but for as long as the recipient
+    took to RECEIVE it. TCP backpressure: the server can only write as fast as the browser reads, so
+    one resident on hotel wifi occupied one of three synchronous workers until they were done, and
+    was killed at `--timeout 60` regardless, left holding a truncated archive.
+
+    Building it into the bucket decouples all of that. The worker is busy only for the build, which
+    is server-to-Hetzner traffic inside fsn1 - fast, free, and a number we can measure - and then it
+    hands back a redirect, exactly like every other download here. Hetzner serves the bytes at
+    whatever speed the resident has, and no worker is involved at all.
+
+    **No job runner needed**, which is why this is worth doing now rather than "when we have Celery".
+    The build is synchronous; all that changed is what the worker is waiting for.
+
+    **Reused when it already exists.** `selection_key` names the object after the selection, so the
+    second person to ask for the same files gets a redirect and no build. A changed selection is a
+    changed key, so there is no stale cache and nothing to invalidate - see that docstring.
+
+    Access is re-checked here rather than trusted from the page: the ids arrive from the client, so
+    they are filtered through `visible_files` scoped to a folder the resident can already read. The
+    key is then derived from THAT filtered list, so a selection is only ever named by files the
+    asker may actually see.
+    """
+    resident = current_resident(request)
+    folder = access.visible_folders(resident).filter(pk=pk).first()
+    if folder is None:
+        raise Http404("no such folder")
+
+    try:
+        ids = [int(raw) for raw in request.POST.getlist("ids")[:MAX_SELECTED_FILES]]
+    except ValueError:
+        raise Http404("bad selection") from None
+
+    # Scoped to THIS folder as well as to the resident: the folder is what the access check above
+    # established, so an id from somewhere else must not ride along on it.
+    files = list(access.visible_files(resident).filter(folder=folder, pk__in=ids).order_by("name"))
+    if not files:
+        messages.error(request, "Vælg mindst én fil.")
+        return redirect("arkiv:folder", pk=folder.pk)
+
+    total = sum(file.size for file in files)
+    if total > MAX_SELECTED_BYTES:
+        messages.error(
+            request,
+            f"Det valgte fylder {filesizeformat(total)}. Grænsen for samlet download er "
+            f"{filesizeformat(MAX_SELECTED_BYTES)} - vælg færre filer, eller hent de største "
+            f"enkeltvis.",
+        )
+        return redirect("arkiv:folder", pk=folder.pk)
+
+    # Flat: a selection is made inside one folder, so there is no tree to preserve.
+    entries = [(file.name, file) for file in files]
+    return _zip_response(request, folder, entries, f"{folder.name}.zip")
+
+
+def _zip_done_token(request: HttpRequest) -> str:
+    """The client's nonce, or "" if it did not send a usable one.
+
+    Validated rather than passed through, because it goes straight back out in a Set-Cookie header
+    where a value carrying a newline or a semicolon would be somebody else's directive. Alphanumeric
+    and short is everything the script needs and nothing a header can be steered with.
+    """
+    token = str(request.POST.get("done_token", ""))
+    return token if 0 < len(token) <= 64 and token.isalnum() else ""
+
+
+def _mark_zip_done(response: HttpResponseBase, token: str) -> HttpResponseBase:
+    """Tell the page its download has started, if it asked to be told."""
+    if token:
+        response.set_cookie(ZIP_DONE_COOKIE, token, max_age=ZIP_DONE_COOKIE_MAX_AGE, samesite="Lax")
+    return response
+
+
+def _zip_response(
+    request: HttpRequest,
+    folder: ArchiveFolder,
+    entries: list[tuple[str, ArchiveFile]],
+    filename: str,
+) -> HttpResponseBase:
+    """Build the zip if it is not already in the bucket, then hand back a redirect to it.
+
+    Shared by the selection download and the whole-folder one, because past the point of deciding
+    WHICH files there are they are the same request: check the cap, name the object after its
+    contents, build it once, redirect. See `download_selected` for why it is an object and not a
+    stream.
+    """
+    total = sum(file.size for _, file in entries)
+    if total > MAX_SELECTED_BYTES:
+        messages.error(
+            request,
+            f"Det valgte fylder {filesizeformat(total)}. Grænsen for samlet download er "
+            f"{filesizeformat(MAX_SELECTED_BYTES)} - vælg færre filer, eller hent de største "
+            f"enkeltvis.",
+        )
+        return redirect("arkiv:folder", pk=folder.pk)
+
+    store = get_store()
+    # Keyed by the PATHS, not the bare names, so the same photographs zipped from two different
+    # folder shapes are two different archives rather than one wrong one.
+    key = selection_key((path, file.sha256) for path, file in entries)
+    if not store.exists(key):
+        _build_zip(store, entries, key)
+
+    # Only the success path needs this. The refusals redirect to the folder, which reloads the page
+    # and gives the button back for free.
+    done = _zip_done_token(request)
+    url = store.download_url(key, filename=filename, content_type="application/zip")
+    if url is not None:
+        return _mark_zip_done(HttpResponseRedirect(url), done)
+
+    # No bucket (dev, CI): serve the object we just built. Same two-branch shape as every other
+    # download here, and for the same reason - a path that only works in production is a path no
+    # test covers.
+    response = StreamingHttpResponse(store.chunks(key), content_type="application/zip")
+    response.headers["Content-Disposition"] = content_disposition(filename)
+    return _mark_zip_done(response, done)
+
+
+@access.access_required
+@require_POST
+def download_folder(request: HttpRequest, pk: int) -> HttpResponseBase:
+    """The whole folder, subfolders and all, as one zip.
+
+    RECURSIVE, because a "download this folder" that quietly skipped the subfolders would be wrong
+    in a way nobody notices until they are looking for a photograph at home. The tree is preserved
+    inside the archive - see services.tree_files.
+
+    Walked through the visible querysets, so a gated subfolder inside a readable one contributes
+    nothing and is not hinted at either: the zip a non-member gets is simply smaller, with no entry
+    and no empty directory to say something was skipped.
+
+    POST for the same reason as `download_selected`: a GET would be a link somebody could paste
+    into a chat thread to start a multi-hundred-megabyte build for whoever clicked it.
+    """
+    resident = current_resident(request)
+    folder = access.visible_folders(resident).filter(pk=pk).first()
+    if folder is None:
+        raise Http404("no such folder")
+
+    entries = services.tree_files(folder, access.visible_folders(resident), access.visible_files(resident))
+    if not entries:
+        messages.error(request, "Mappen er tom.")
+        return redirect("arkiv:folder", pk=folder.pk)
+    return _zip_response(request, folder, entries, f"{folder.name}.zip")
+
+
+@access.access_required
+@require_POST
+def folder_delete(request: HttpRequest, pk: int) -> HttpResponseBase:
+    """Remove an EMPTY folder.
+
+    Empty only, and that is the whole design rather than a limitation waiting to be lifted. A
+    recursive delete would put two hundred photographs behind one tap, and the undo for it - which
+    rows came back, and which had been deleted separately beforehand - is where that feature's bugs
+    would live. What people actually need most of the time is to unmake a folder they just made by
+    mistake, and that is this.
+
+    "EMPTY" IS ASKED OF THE WHOLE TREE, NOT THE VISIBLE ONE, and getting that backwards is how this
+    was written the first time. Emptiness is a property of the folder, not of who is looking: count
+    through `visible_folders` and a gated subfolder counts as zero, so the one resident who must not
+    delete this folder is exactly the one allowed to. A test asserts it.
+
+    The message is then the careful part, because a count is itself information. What the reader can
+    see is reported exactly; anything they cannot see collapses into a bare "Mappen er ikke tom." -
+    enough to explain the refusal, not enough to learn that Regnskabsgruppen keeps a folder here.
+
+    Soft, like everything else here: the row keeps `deleted_at`, the unique constraint is scoped to
+    live rows, so the same name can be used again immediately. No `deleted_by` column, because an
+    empty folder loses nothing when it goes and "who removed it" answers a question nobody has.
+    """
+    resident = current_resident(request)
+    folder = access.visible_folders(resident).filter(pk=pk).first()
+    if folder is None:
+        raise Http404("no such folder")
+    if not access.can_delete_folder(folder, request):
+        raise PermissionDenied
+
+    # The real contents, including retained soft-deleted history. A folder that still owns a row is
+    # not empty: deleting its parent would make that history unreachable.
+    files = ArchiveFile.objects.filter(folder=folder).count()
+    subfolders = ArchiveFolder.objects.filter(parent=folder).count()
+    if files or subfolders:
+        # What this reader is allowed to know about. Equal to the real counts for anyone who can
+        # see everything in here, which is the ordinary case.
+        seen_files = access.visible_files(resident).filter(folder=folder).count()
+        seen_subfolders = access.visible_folders(resident).filter(parent=folder).count()
+        if (seen_files, seen_subfolders) != (files, subfolders):
+            messages.error(request, "Mappen er ikke tom. Tøm den først.")
+        else:
+            parts = []
+            if files:
+                parts.append(f"{files} fil{'' if files == 1 else 'er'}")
+            if subfolders:
+                parts.append(f"{subfolders} undermappe{'' if subfolders == 1 else 'r'}")
+            messages.error(request, f"Mappen indeholder {' og '.join(parts)}. Tøm den først.")
+        return redirect("arkiv:folder", pk=folder.pk)
+
+    parent = folder.parent_id
+    folder.deleted_at = timezone.now()
+    folder.save(update_fields=["deleted_at"])
+    messages.success(request, f"Mappen \u201e{folder.name}\u201d er fjernet.")
+    return redirect("arkiv:folder", pk=parent) if parent else redirect("arkiv:root")
+
+
+@access.access_required
+@require_POST
+def folder_lock(request: HttpRequest, pk: int) -> HttpResponseBase:
+    """Lock one folder and, through inheritance, every folder beneath it."""
+    resident = current_resident(request)
+    folder = access.visible_folders(resident).filter(pk=pk).first()
+    if folder is None:
+        raise Http404("no such folder")
+    if not access.can_manage_locks(request):
+        raise PermissionDenied
+
+    folder.locked_at = timezone.now()
+    folder.unlocked_until = None
+    folder.save(update_fields=["locked_at", "unlocked_until"])
+    messages.success(request, f"Mappen \u201e{folder.name}\u201d er låst.")
+    return redirect("arkiv:folder", pk=folder.pk)
+
+
+@access.access_required
+@require_POST
+def folder_unlock(request: HttpRequest, pk: int) -> HttpResponseBase:
+    """Temporarily unlock one directly locked folder for the configured hour."""
+    resident = current_resident(request)
+    folder = access.visible_folders(resident).filter(pk=pk).first()
+    if folder is None:
+        raise Http404("no such folder")
+    if not access.can_manage_locks(request):
+        raise PermissionDenied
+    if folder.locked_at is None:
+        raise Http404("folder is not directly locked")
+
+    folder.unlocked_until = timezone.now() + access.TEMPORARY_UNLOCK
+    folder.save(update_fields=["unlocked_until"])
+    messages.success(request, f"Mappen \u201e{folder.name}\u201d er låst op i en time.")
+    return redirect("arkiv:folder", pk=folder.pk)
+
+
+@access.access_required
+@require_POST
+def folder_relock(request: HttpRequest, pk: int) -> HttpResponseBase:
+    """Revoke a folder's temporary unlock before it expires."""
+    resident = current_resident(request)
+    folder = access.visible_folders(resident).filter(pk=pk).first()
+    if folder is None:
+        raise Http404("no such folder")
+    if not access.can_manage_locks(request):
+        raise PermissionDenied
+    if folder.locked_at is None or folder.unlocked_until is None or folder.unlocked_until <= timezone.now():
+        raise Http404("folder is not temporarily unlocked")
+
+    folder.unlocked_until = None
+    folder.save(update_fields=["unlocked_until"])
+    messages.success(request, f"Mappen \u201e{folder.name}\u201d er låst igen.")
+    return redirect("arkiv:folder", pk=folder.pk)
+
+
+def _build_zip(store: ArchiveStore, files: list[tuple[str, ArchiveFile]], key: str) -> None:
+    """Assemble the zip and put it in the store under `key`.
+
+    Written to a SpooledTemporaryFile rather than streamed, which is what let the hand-rolled
+    non-seekable sink this used to need go away entirely: zipfile can seek back and patch its own
+    local headers, so the result is an ordinary archive with no data descriptors. Small selections
+    never touch the disk at all.
+
+    `ZIP_STORED`, because the contents are JPEGs and video. Deflate would spend real CPU on the
+    machine that is also serving the site to save a percent or two.
+
+    A file whose object has vanished is skipped rather than fatal. The alternative is a truncated
+    zip with no explanation, and a missing object is an operator problem (`audit_arkiv`), not
+    something the resident downloading holiday photographs can act on.
+
+    Half a build leaves NOTHING behind, which is what makes the `exists` check above trustworthy.
+    The upload happens once the archive is complete, and boto3 either finishes it or leaves an
+    incomplete multipart upload that the lifecycle rule aborts - there is no state in which this
+    key holds a partial archive that the next request would then happily redirect somebody to.
+    """
+    with SpooledTemporaryFile(max_size=ZIP_SPOOL_BYTES) as tmp:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED) as archive:
+            for path, file in files:
+                if not store.exists(file.key):
+                    continue
+                # `path` rather than `file.name`: a folder download carries its subfolders, and the
+                # shape they were filed in is most of what makes the zip usable.
+                with archive.open(path, "w") as entry:
+                    for chunk in store.chunks(file.key):
+                        entry.write(chunk)
+        tmp.seek(0)
+        store.save(key, cast("BinaryIO", tmp))

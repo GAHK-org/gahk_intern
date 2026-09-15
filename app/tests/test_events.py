@@ -1442,6 +1442,17 @@ def _local(naive: datetime.datetime) -> datetime.datetime:
     return timezone.make_aware(naive)
 
 
+def _future_month_first() -> datetime.date:
+    """The 1st of a month two ahead of today.
+
+    Far enough that nothing placed in it is near `RETENTION_AFTER_END`, which is what makes a date
+    in a calendar test safe: `calendar()` purges on every request, so an event fixed to a literal
+    date stops existing a week after that date passes, and the test then fails for a reason
+    unrelated to what it is testing.
+    """
+    return (timezone.localdate().replace(day=1) + datetime.timedelta(days=62)).replace(day=1)
+
+
 def _month_with_trailing_padding() -> tuple[datetime.date, datetime.date]:
     """A month safely in the future whose grid runs past its own end, and the first padding day.
 
@@ -1456,7 +1467,7 @@ def _month_with_trailing_padding() -> tuple[datetime.date, datetime.date]:
     Two months out, so the event is never near the purge window. Months whose last day is a Sunday
     have no trailing padding at all, so it walks forward until it finds one that does.
     """
-    first = (timezone.localdate().replace(day=1) + datetime.timedelta(days=62)).replace(day=1)
+    first = _future_month_first()
     for _ in range(12):
         next_first = (first + datetime.timedelta(days=32)).replace(day=1)
         last_day = next_first - datetime.timedelta(days=1)
@@ -1624,13 +1635,27 @@ def test_a_junk_month_falls_back_to_this_one(client: Client, beboer: Resident) -
 
 
 def test_tapping_a_day_lists_that_days_events(client: Client, beboer: Resident) -> None:
-    make_event(beboer, title="Den dag", starts_at=_local(datetime.datetime(2026, 9, 12, 19, 0)))
-    make_event(beboer, title="En anden dag", starts_at=_local(datetime.datetime(2026, 9, 13, 19, 0)))
+    """The panel shows the tapped day and only the tapped day.
+
+    Dates derived from today rather than written out: see `_future_month_first`. This test
+    originally pinned both events to September 2026 and began failing a week later, when
+    `calendar()`'s purge deleted them before the view could render them.
+    """
+    day = _future_month_first() + datetime.timedelta(days=11)  # the 12th; the 13th stays in-month
+    neighbour = day + datetime.timedelta(days=1)
+    make_event(
+        beboer, title="Den dag", starts_at=_local(datetime.datetime.combine(day, datetime.time(19, 0)))
+    )
+    make_event(
+        beboer,
+        title="En anden dag",
+        starts_at=_local(datetime.datetime.combine(neighbour, datetime.time(19, 0))),
+    )
     client.force_login(beboer)
 
-    response = client.get(f"{EVENTS}kalender?maaned=2026-09&dag=2026-09-12")
+    response = client.get(f"{EVENTS}kalender?maaned={day:%Y-%m}&dag={day:%Y-%m-%d}")
 
-    assert response.context["chosen_day"] == datetime.date(2026, 9, 12)
+    assert response.context["chosen_day"] == day
     assert [e.title for e in response.context["chosen_events"]] == ["Den dag"]
 
 
@@ -1688,12 +1713,20 @@ def test_a_private_event_is_absent_from_the_day_panel_for_an_outsider(
 ) -> None:
     """The panel reads the same `by_day` the grid does, so it inherits visible_to — but a leak here
     would be a leak with the title spelled out in full, which the grid's dots are not."""
-    when = _local(datetime.datetime(2026, 9, 12, 19, 0))
-    make_private(beboer, [], title="Hemmelig fest", starts_at=when)
+    day = _future_month_first() + datetime.timedelta(days=11)
+    make_private(
+        beboer,
+        [],
+        title="Hemmelig fest",
+        starts_at=_local(datetime.datetime.combine(day, datetime.time(19, 0))),
+    )
     client.force_login(other)
 
-    response = client.get(f"{EVENTS}kalender?maaned=2026-09&dag=2026-09-12")
+    response = client.get(f"{EVENTS}kalender?maaned={day:%Y-%m}&dag={day:%Y-%m-%d}")
 
+    # Derived, not written out — and here the fixed date was the more dangerous kind of rot. This
+    # test asserts an ABSENCE, so once the purge started deleting the event before the view ran, it
+    # went on passing while no longer able to detect the leak it exists to catch.
     assert response.context["chosen_events"] == []
     assert "Hemmelig fest" not in response.content.decode()
 

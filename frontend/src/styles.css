@@ -1593,6 +1593,9 @@
      size, which is how the folder icon first came out enormous. */
   .arkiv-list .ni { width:18px; height:18px; flex:none; stroke:currentColor; fill:none;
     color:var(--brass); }
+   .arkiv-lock-status { width:14px; height:14px; flex:none; stroke:currentColor; fill:none;
+      color:var(--muted); }
+   .arkiv-list .arkiv-lock-status { color:var(--muted); }
   /* The name truncates rather than wrapping: one row per file keeps a long folder scannable, and
      the full name is still in the link's accessible name. */
   .arkiv-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -1602,6 +1605,134 @@
      jag left and right down the list. object-fit keeps portraits from stretching. */
   .arkiv-thumb { width:40px; height:40px; flex:none; object-fit:cover; border-radius:4px;
     background:var(--surface-2); }
+
+  /* The gallery: a folder that is mostly pictures (views.is_gallery). */
+
+  .arkiv-grid { list-style:none; margin:0; padding:0; display:grid; gap:8px;
+    grid-template-columns:repeat(auto-fill, minmax(104px, 1fr)); }
+  /* minmax rather than a fixed count, so a phone gets three across and a desktop gets ten without
+     a breakpoint for each. 104px is about the smallest a face is still recognisable at. */
+  .arkiv-grid li { position:relative; }
+  /* -webkit-user-drag covers the anchor: a link is draggable in its own right, so without this a
+     drag beginning on a tile becomes the browser dragging a URL. draggable="false" on the image
+     handles the other half - see browse.html. */
+  .arkiv-grid li > a { display:block; border-radius:8px; overflow:hidden; text-decoration:none;
+    color:inherit; -webkit-user-drag:none; }
+  /* Square tiles whatever the photograph's shape: a ragged grid of mixed portraits and landscapes
+     is much harder to scan than a uniform one, and the viewer shows the real aspect ratio. */
+  .arkiv-tile-img { display:block; width:100%; aspect-ratio:1; object-fit:cover;
+    background:var(--surface-2); }
+  /* IN THE GRID, a long press means SELECT, so the native "save image" callout has to go. In the
+     viewer it means SAVE, and there the callout is the whole feature - see .imgviewer-stage img.
+     The split is deliberate: the same gesture on a thumbnail and on the full picture are different
+     requests. */
+  .arkiv-grid li > a img { -webkit-touch-callout:none; }
+  .arkiv-grid .arkiv-name { display:block; padding:4px 6px 6px; font-size:12px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* The grid earns its density by dropping the columns: size and uploader are still on the row in
+     list folders, and in the viewer. A tile that carries them is a row with extra steps. */
+  .arkiv-grid .arkiv-meta { display:none; }
+  /* Top right, opposite the checkbox, and only once the tile is under the cursor or holds focus.
+     It used to sit over the middle of the picture at all times, in link-coloured text on whatever
+     the photograph happened to be - unreadable on half of them and in the way on the rest. The pill
+     is what makes it legible over an arbitrary image; hiding it is what keeps a folder of two
+     hundred photographs from being a folder of two hundred delete buttons. */
+  .arkiv-grid .arkiv-remove { position:absolute; top:6px; right:6px; opacity:0; transition:opacity .12s; }
+  .arkiv-grid li:hover .arkiv-remove,
+  .arkiv-grid li:focus-within .arkiv-remove { opacity:1; }
+  .arkiv-grid .arkiv-remove .btn-link-danger { background:rgb(0 0 0 / 0.55); color:#fff;
+    border-radius:999px; padding:3px 8px; text-decoration:none; }
+  .arkiv-grid .arkiv-remove .btn-link-danger:hover { background:var(--neg); color:#fff; }
+  /* Touch has no hover, so the control would be unreachable. In selection mode it stays out of the
+     way, because that is when a stray tap on it would be most expensive. */
+  @media (hover:none) {
+    .arkiv-grid .arkiv-remove { opacity:1; }
+    .arkiv-selecting .arkiv-remove { opacity:0; pointer-events:none; }
+  }
+  .arkiv-grid .ni { width:40px; height:40px; margin:24px auto; display:block; color:var(--muted); }
+
+  /* The checkbox sits on the picture rather than beside it. Hidden until there is a reason to show
+     it - a selection in progress, a hover, or keyboard focus - so an ordinary browse is pictures
+     rather than pictures plus a hundred empty boxes. */
+  .arkiv-grid .arkiv-pick { position:absolute; top:6px; left:6px; z-index:1; margin:0;
+    width:22px; height:22px; opacity:0; transition:opacity .12s; }
+  .arkiv-grid li:hover .arkiv-pick,
+  .arkiv-grid .arkiv-pick:focus-visible,
+  .arkiv-grid .arkiv-pick:checked,
+  .arkiv-selecting .arkiv-pick { opacity:1; }
+  /* Touch has no hover, so without this the boxes would only ever appear once something was
+     already selected - which is the one moment you no longer need to be told they exist. */
+  @media (hover:none) {
+    .arkiv-grid .arkiv-pick { opacity:0; }
+    .arkiv-selecting .arkiv-pick { opacity:1; }
+  }
+
+  /* Selected, in either layout. A ring rather than a tint: a tint changes the photograph, and
+     picking the right ten pictures out of two hundred is exactly when you need them unaltered. */
+  .arkiv-grid li:has(.arkiv-pick:checked) > a { outline:3px solid var(--green-700);
+    outline-offset:-3px; }
+  .arkiv-grid li:has(.arkiv-pick:checked) .arkiv-tile-img { filter:brightness(.92); }
+  .arkiv-list li:has(.arkiv-pick:checked) { background:var(--surface-2); }
+
+  /* While a drag is in progress. Scrolling is suppressed on the container rather than the page, so
+     the gesture cannot be read as a scroll half way through and leave a partial selection. */
+  .arkiv-dragging { touch-action:none; -webkit-user-select:none; user-select:none; }
+  .arkiv-dragging a { pointer-events:none; }
+
+  /* Selection, and the viewer it sits beside. */
+
+  .arkiv-batch { display:flex; align-items:center; gap:10px; margin:0 0 10px; }
+  /* Wide enough to be a phone target without making every row taller: the checkbox is the only
+     control in the row that is hit by thumb rather than by cursor. */
+  .arkiv-pick { flex:none; width:18px; height:18px; margin:0; accent-color:var(--green-700); }
+
+  /* THE SHARED PICTURE VIEWER: Arkiv, opslagstavlen and Den Hurtige all open into this one.
+     Above everything, including the sticky header -- a viewer that something overlaps is a bug
+     report. Fixed rather than absolute so it does not move if the page behind it scrolls. */
+  .imgviewer { position:fixed; inset:0; z-index:100; display:flex; align-items:center;
+    justify-content:center; gap:8px; padding:16px; background:rgb(0 0 0 / 0.88); }
+  /* Stops the page behind scrolling under the overlay on a phone, which otherwise happens the
+     moment a swipe is read as vertical. */
+  body.imgviewer-open { overflow:hidden; }
+
+  .imgviewer-stage { display:flex; flex-direction:column; align-items:center; gap:10px;
+    margin:0; min-width:0; }
+  /* The image is bounded by the VIEWPORT, not by its own size: a 1600px preview on a phone must
+     shrink, and one on a large screen must not stretch past the caption's room. */
+  /* -webkit-touch-callout:default is load-bearing, not a reset. A long press on this image is how
+     a phone saves a picture to its photo library - iOS offers "Føj til Fotos", Android "Download
+     image" - and it is the only path that needs no permission, no share sheet and no second copy
+     of the bytes, because the browser already has them. Any rule setting it to none anywhere above
+     this would silently remove the feature, which is why it is stated here rather than left to
+     inherit. The grid deliberately does the opposite. */
+  .imgviewer-stage img { max-width:100%; max-height:calc(100vh - 96px); object-fit:contain;
+    border-radius:6px; background:rgb(255 255 255 / 0.04);
+    -webkit-touch-callout:default; -webkit-user-select:auto; user-select:auto; }
+  .imgviewer-stage figcaption { color:rgb(255 255 255 / 0.85); font-size:13px; text-align:center;
+    max-width:min(90vw, 700px); overflow-wrap:anywhere; }
+
+  .imgviewer-actions { display:flex; align-items:center; gap:12px; margin:0; flex-wrap:wrap;
+    justify-content:center; }
+  .imgviewer-save { color:#fff; font-size:13px; }
+  .imgviewer-hint { color:rgb(255 255 255 / 0.6); font-size:12px; }
+
+  .imgviewer-nav, .imgviewer-close { flex:none; background:rgb(255 255 255 / 0.12); border:0;
+    color:#fff; cursor:pointer; border-radius:999px; line-height:1; }
+  .imgviewer-nav { width:44px; height:44px; font-size:28px; }
+  .imgviewer-close { position:absolute; top:12px; right:12px; width:40px; height:40px;
+    font-size:24px; }
+  .imgviewer-nav:hover, .imgviewer-close:hover { background:rgb(255 255 255 / 0.24); }
+
+  /* On a phone the arrows are swipe's job and they crowd a small screen; the close button stays,
+     because a gesture nobody was told about is not a way out. */
+  @media (max-width:600px) {
+    .imgviewer-nav { display:none; }
+  }
+
+  /* The folder's own actions: take a copy, or remove it. Baseline-aligned so the quiet danger
+     link sits with the button rather than under it. */
+  .arkiv-folder-actions { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+  .arkiv-folder-actions form { margin:0; }
 
   .arkiv-newfolder { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .arkiv-newfolder input { flex:1 1 220px; max-width:340px; }

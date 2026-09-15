@@ -46,7 +46,7 @@ from typing import Any
 
 from django.conf import settings
 
-from .models import ARCHIVE_PREFIX, object_key, thumbnail_key
+from .models import ARCHIVE_PREFIX, object_key, preview_key, thumbnail_key
 from .storage import S3ArchiveStore, get_store
 
 # What a resident may put in the archive in one go. Generous on purpose - the point of this feature
@@ -62,23 +62,52 @@ UPLOAD_TTL = 3600
 # thumbnail slot cannot be used to smuggle a full-size second upload past the cap above.
 MAX_THUMBNAIL_BYTES = 512 * 1024
 
+# The viewer size. A 1600px JPEG is usually a few hundred KB; four megabytes is room for a
+# detailed photograph at that size and still nothing like a way round MAX_UPLOAD_BYTES.
+MAX_PREVIEW_BYTES = 4 * 1024 * 1024
 
-def presigned_thumbnail_post(sha256: str) -> dict[str, Any] | None:
-    """A policy for the preview of `sha256`, or None when there is no bucket.
+# The two sizes the BROWSER produces alongside the original, by name: where each one lives and what
+# it may weigh. Keyed by the string the client sends, so adding a third size is a line here, a line
+# in imageupload.ts, and nothing else.
+#
+# Both are made client-side for the same reason the project has no Celery: the alternative is
+# Pillow in the production image and a scheduled sweep, which would also leave a window where a
+# just-uploaded photograph has no preview - and the person who just uploaded is precisely the one
+# about to open the folder and look. `make_arkiv_thumbnails` stays the one-off for the imported
+# backlog and the hand-run net for anything a browser could not decode.
+DERIVED_SIZES: dict[str, tuple[Any, int]] = {
+    "thumbnail": (thumbnail_key, MAX_THUMBNAIL_BYTES),
+    "preview": (preview_key, MAX_PREVIEW_BYTES),
+}
 
-    Capped far lower than the original: a grid preview that is not small has no reason to exist, and
-    the cap is what stops the thumbnail slot being used to smuggle a second full-size upload past
-    the size limit.
+
+def derived_limit(kind: str) -> int:
+    """What a derived image of this kind may weigh. Unknown kinds get the smallest cap."""
+    return DERIVED_SIZES.get(kind, (None, MAX_THUMBNAIL_BYTES))[1]
+
+
+def derived_key(kind: str, sha256: str) -> str | None:
+    """Where a derived image of this kind lives, or None if the kind is not one we make."""
+    spec = DERIVED_SIZES.get(kind)
+    return None if spec is None else str(spec[0](sha256))
+
+
+def presigned_derived_post(kind: str, sha256: str) -> dict[str, Any] | None:
+    """A policy for one derived size of `sha256`, or None when there is no bucket.
+
+    Capped far lower than the original, per size: a derived image that is not small has no reason to
+    exist, and the cap is what stops these slots being used to smuggle a second full-size upload
+    past the limit on the real one.
     """
     store = get_store()
-    if not isinstance(store, S3ArchiveStore):
+    key = derived_key(kind, sha256)
+    if key is None or not isinstance(store, S3ArchiveStore):
         return None
-    key = thumbnail_key(sha256)
     return store.presigned_post(
         key,
         fields={"key": key, "Content-Type": "image/jpeg"},
         conditions=[
-            ["content-length-range", 1, MAX_THUMBNAIL_BYTES],
+            ["content-length-range", 1, derived_limit(kind)],
             {"key": key},
             {"Content-Type": "image/jpeg"},
         ],
@@ -127,10 +156,16 @@ def stored_object(sha256: str) -> tuple[int, str] | None:
     return None
 
 
-def stored_thumbnail(sha256: str) -> bool:
-    """Whether the store actually holds a preview for `sha256`. Checked before the flag is set."""
+def stored_derived(kind: str, sha256: str) -> bool:
+    """Whether the store actually holds this derived size. Checked before the flag is set.
+
+    Asked of the store rather than taken from the client, because a flag set on the client's word
+    renders a broken image for every file whose derived upload quietly failed.
+    """
+    key = derived_key(kind, sha256)
+    if key is None:
+        return False
     store = get_store()
-    key = thumbnail_key(sha256)
     head = getattr(store, "head", None)
     if head is not None:
         return head(key) is not None

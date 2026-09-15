@@ -13,10 +13,12 @@ Two properties are asserted repeatedly and on purpose:
 """
 
 from collections.abc import Callable
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 from django.test import Client
+from django.utils import timezone
 
 from arkiv import access
 from arkiv.models import ArchiveFile, ArchiveFolder, object_key, thumbnail_key
@@ -51,18 +53,30 @@ def workgroups() -> tuple[Workgroup, Workgroup]:
     return regnskab, fest
 
 
+# Above the rooms the migrations seed (1..61) and the literals used elsewhere in this file, and well
+# under the 32767 a PositiveSmallIntegerField holds.
+_room_seq = iter(range(1_000, 30_000))
+
+
 @pytest.fixture
 def resident_in(make_resident: Callable) -> Callable[..., Resident]:
     """A resident placed in a workgroup for the ACTIVE period - which is what access reads.
 
-    Residency needs a room, so one is made per resident; the room number is derived from the
-    resident's pk to keep the unique constraint happy without a counter.
+    Residency needs a room, so one is made per resident, numbered from a counter.
+
+    NOT from the resident's pk, which is what this did first. Both Room columns are
+    PositiveSmallIntegerField (max 32767) while the pk sequence is a bigserial that keeps climbing
+    across every run sharing a `--reuse-db` database - so the fixture worked for months and then
+    began raising "smallint out of range" on every test in this file at once, on one developer's
+    machine only, with CI green because CI builds the database fresh. `_room_seq` is the pattern the
+    rest of the suite already uses.
     """
 
     def _make(email: str, workgroup: Workgroup | None = None) -> Resident:
         resident = make_resident(email=email)
         year, month = active_period()
-        room = Room.objects.create(legacy_index=resident.pk, number=resident.pk, floor="1", side="mod gaden")
+        n = next(_room_seq)
+        room = Room.objects.create(legacy_index=n, number=n, floor="1", side="mod gaden")
         Residency.objects.create(resident=resident, room=room, workgroup=workgroup, year=year, month=month)
         return resident
 
@@ -429,6 +443,99 @@ def test_a_soft_deleted_row_still_holds_its_object(media_tmp: Path) -> None:
 # the removed list, destroys the row and - if no other row shares the hash - the object too. What
 # makes the second one safe to offer every writer is the ORDER, not the permission: see
 # arkiv/access.py::can_purge_file. These tests pin both halves of that.
+
+
+def test_a_locked_folder_blocks_mutations_in_its_descendants(resident_in: Callable, media_tmp: Path) -> None:
+    root = ArchiveFolder.objects.create(name="Arkiv", locked_at=timezone.now())
+    child = ArchiveFolder.objects.create(name="2026", parent=root)
+    file = make_file(child)
+    client = login(resident_in("a@gahk.dk", None))
+
+    assert client.post(f"{ROOT_URL}mappe/{child.pk}/ny-mappe", {"name": "Fest"}).status_code == 403
+    assert client.post(f"{ROOT_URL}fil/{file.pk}/fjern").status_code == 403
+    assert ArchiveFolder.objects.alive().filter(parent=child, name="Fest").count() == 0
+    file.refresh_from_db()
+    assert file.deleted_at is None
+
+
+def test_an_administrator_can_lock_and_temporarily_unlock_a_folder(make_resident: Callable) -> None:
+    folder = ArchiveFolder.objects.create(name="Arkiv")
+    administrator = make_resident(email="admin@gahk.dk", roles=[Role.ADMINISTRATOR])
+    client = login(administrator)
+
+    assert "Lås mappe" in client.get(f"{ROOT_URL}mappe/{folder.pk}/").content.decode()
+    assert client.post(f"{ROOT_URL}mappe/{folder.pk}/laas").status_code == 302
+
+    folder.refresh_from_db()
+    assert folder.locked_at is not None
+    locked_page = client.get(f"{ROOT_URL}mappe/{folder.pk}/").content.decode()
+    assert "Mappen er låst" in locked_page
+    assert "Lås op i en time" in locked_page
+
+    assert client.post(f"{ROOT_URL}mappe/{folder.pk}/laas-op").status_code == 302
+    folder.refresh_from_db()
+    assert folder.unlocked_until is not None
+    assert folder.unlocked_until > timezone.now() + timedelta(minutes=59)
+
+    unlocked_page = client.get(f"{ROOT_URL}mappe/{folder.pk}/").content.decode()
+    assert "Lås igen" in unlocked_page
+    assert "Midlertidig oplåsning udløber" in unlocked_page
+    assert "#i-lock" in unlocked_page
+    assert "#i-clock" in unlocked_page
+
+    assert client.post(f"{ROOT_URL}mappe/{folder.pk}/laas-igen").status_code == 302
+    folder.refresh_from_db()
+    assert folder.unlocked_until is None
+
+
+def test_a_non_administrator_cannot_lock_a_folder(resident_in: Callable) -> None:
+    folder = ArchiveFolder.objects.create(name="Arkiv")
+    client = login(resident_in("a@gahk.dk", None))
+
+    assert client.post(f"{ROOT_URL}mappe/{folder.pk}/laas").status_code == 403
+    folder.refresh_from_db()
+    assert folder.locked_at is None
+
+
+def test_a_temporary_unlock_expires_after_one_hour(resident_in: Callable, media_tmp: Path) -> None:
+    folder = ArchiveFolder.objects.create(
+        name="Arkiv", locked_at=timezone.now(), unlocked_until=timezone.now() + timedelta(hours=1)
+    )
+    file = make_file(folder)
+    client = login(resident_in("a@gahk.dk", None))
+
+    assert client.post(f"{ROOT_URL}fil/{file.pk}/fjern").status_code == 302
+
+    file.restore()
+    ArchiveFolder.objects.filter(pk=folder.pk).update(unlocked_until=timezone.now() - timedelta(seconds=1))
+    assert client.post(f"{ROOT_URL}fil/{file.pk}/fjern").status_code == 403
+
+
+def test_objects_older_than_thirty_days_cannot_be_deleted(resident_in: Callable, media_tmp: Path) -> None:
+    folder = ArchiveFolder.objects.create(name="Arkiv")
+    file = make_file(folder)
+    cutoff = timezone.now() - timedelta(days=30, seconds=1)
+    ArchiveFolder.objects.filter(pk=folder.pk).update(created_at=cutoff)
+    ArchiveFile.objects.filter(pk=file.pk).update(uploaded_at=cutoff)
+    client = login(resident_in("a@gahk.dk", None))
+
+    assert client.post(f"{ROOT_URL}mappe/{folder.pk}/fjern").status_code == 403
+    assert client.post(f"{ROOT_URL}fil/{file.pk}/fjern").status_code == 403
+    assert ArchiveFolder.objects.filter(pk=folder.pk).exists()
+    file.refresh_from_db()
+    assert file.deleted_at is None
+
+
+def test_a_folder_with_soft_deleted_history_cannot_be_deleted(resident_in: Callable, media_tmp: Path) -> None:
+    root = ArchiveFolder.objects.create(name="Arkiv")
+    folder = ArchiveFolder.objects.create(name="2026", parent=root)
+    file = make_file(folder)
+    file.soft_delete()
+    client = login(resident_in("a@gahk.dk", None))
+
+    assert client.post(f"{ROOT_URL}mappe/{folder.pk}/fjern").status_code == 302
+    folder.refresh_from_db()
+    assert folder.deleted_at is None
 
 
 def test_a_removed_file_leaves_the_listing_but_keeps_its_bytes(
@@ -1344,7 +1451,8 @@ def test_upload_sets_the_flag_only_when_a_preview_actually_arrived(
     assert ArchiveFile.objects.get().has_thumbnail is False
 
 
-def test_begin_offers_a_thumbnail_slot_for_images_only(resident_in: Callable, media_tmp: Path) -> None:
+def test_begin_offers_both_derived_sizes_for_images_only(resident_in: Callable, media_tmp: Path) -> None:
+    """Both sizes are made in the browser, so both have to be offered a slot. A PDF gets neither."""
     import json
 
     folder = ArchiveFolder.objects.create(name="Billeder")
@@ -1359,17 +1467,77 @@ def test_begin_offers_a_thumbnail_slot_for_images_only(resident_in: Callable, me
             content_type="application/json",
         ).json()
 
-    assert plan_for("image/jpeg", "fest.jpg")["thumbnail"] is not None
-    assert plan_for("application/pdf", "referat.pdf")["thumbnail"] is None
+    image = plan_for("image/jpeg", "fest.jpg")["derived"]
+    assert image["thumbnail"] is not None
+    assert image["preview"] is not None
+
+    document = plan_for("application/pdf", "referat.pdf")["derived"]
+    assert document["thumbnail"] is None
+    assert document["preview"] is None
 
 
-def test_the_thumbnail_leg_of_a_direct_upload_lands_under_its_own_prefix(
-    resident_in: Callable, media_tmp: Path
-) -> None:
+def test_begin_does_not_ask_for_a_size_the_store_already_has(resident_in: Callable, media_tmp: Path) -> None:
+    """The second copy of a photograph uploads nothing at all - including its derived sizes. Both
+    are keyed by the original's hash, so somebody else's upload last year already made them."""
+    import json
+    from io import BytesIO
+
+    from arkiv.models import preview_key, thumbnail_key
+    from arkiv.storage import get_store
+
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    client = login(resident_in("a@gahk.dk", None))
+    sha = digest_of(b"fest")
+    get_store().save(thumbnail_key(sha), BytesIO(b"already here"))
+
+    plan = client.post(
+        f"/intern/arkiv/mappe/{folder.pk}/upload/start",
+        data=json.dumps({"sha256": sha, "name": "fest.jpg", "size": 10, "content_type": "image/jpeg"}),
+        content_type="application/json",
+    ).json()["derived"]
+
+    assert plan["thumbnail"] is None, "asked for a thumbnail the bucket already holds"
+    assert plan["preview"] is not None, "the preview is genuinely missing and must still be asked for"
+    assert not get_store().exists(preview_key(sha))
+
+
+def test_both_derived_legs_land_under_their_own_prefixes(resident_in: Callable, media_tmp: Path) -> None:
+    """Three objects from one upload, each under its own prefix, and two flags set from the STORE."""
     from django.core.files.uploadedfile import SimpleUploadedFile
 
-    from arkiv.models import thumbnail_key
+    from arkiv.models import preview_key, thumbnail_key
     from arkiv.storage import get_store
+
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    client = login(resident_in("a@gahk.dk", None))
+    body = b"jpegbytes"
+    sha = digest_of(body)
+
+    begin(client, folder, body)
+    send(client, folder, body)
+    for kind, blob in (("thumbnail", b"thumb"), ("preview", b"biggerpreview")):
+        client.post(
+            f"/intern/arkiv/mappe/{folder.pk}/upload/direkte",
+            {"sha256": sha, "derived": kind, "file": SimpleUploadedFile(f"{kind}.jpg", blob)},
+        )
+    commit(client, folder, body)
+
+    store = get_store()
+    assert store.exists(object_key(sha)), "the original moved"
+    assert store.exists(thumbnail_key(sha)), "the thumbnail did not land"
+    assert store.exists(preview_key(sha)), "the preview did not land"
+    file = ArchiveFile.objects.get()
+    assert file.has_thumbnail is True
+    assert file.has_preview is True
+
+
+def test_a_browser_that_makes_only_the_thumbnail_still_gets_a_usable_file(
+    resident_in: Callable, media_tmp: Path
+) -> None:
+    """Each size is asked about separately, because a browser can manage one and not the other.
+    The flag has to follow what actually arrived - the viewer then serves the original instead,
+    which is slower but not broken. Believing the client here would render a broken image."""
+    from django.core.files.uploadedfile import SimpleUploadedFile
 
     folder = ArchiveFolder.objects.create(name="Billeder")
     client = login(resident_in("a@gahk.dk", None))
@@ -1380,21 +1548,23 @@ def test_the_thumbnail_leg_of_a_direct_upload_lands_under_its_own_prefix(
     send(client, folder, body)
     client.post(
         f"/intern/arkiv/mappe/{folder.pk}/upload/direkte",
-        {"sha256": sha, "thumbnail": "1", "file": SimpleUploadedFile("t.jpg", b"thumb")},
+        {"sha256": sha, "derived": "thumbnail", "file": SimpleUploadedFile("t.jpg", b"thumb")},
     )
     commit(client, folder, body)
 
-    store = get_store()
-    assert store.exists(object_key(sha)), "the original moved"
-    assert store.exists(thumbnail_key(sha)), "the preview did not land"
-    assert ArchiveFile.objects.get().has_thumbnail is True
+    file = ArchiveFile.objects.get()
+    assert file.has_thumbnail is True
+    assert file.has_preview is False, "claimed a preview that was never uploaded"
+
+    # And the viewer still works, on the original.
+    response = client.get(f"/intern/arkiv/fil/{file.pk}/stor")
+    assert response.status_code == 200
+    assert b"".join(response.streaming_content) == body
 
 
-def test_an_oversized_thumbnail_is_refused(resident_in: Callable, media_tmp: Path) -> None:
-    """The preview slot must not become a way to smuggle a second full-size upload past the cap."""
+def test_an_unknown_derived_size_is_refused(resident_in: Callable, media_tmp: Path) -> None:
+    """The kind names a key prefix, so it is not something a client may invent."""
     from django.core.files.uploadedfile import SimpleUploadedFile
-
-    from arkiv.uploads import MAX_THUMBNAIL_BYTES
 
     folder = ArchiveFolder.objects.create(name="Billeder")
     client = login(resident_in("a@gahk.dk", None))
@@ -1403,8 +1573,31 @@ def test_an_oversized_thumbnail_is_refused(resident_in: Callable, media_tmp: Pat
         f"/intern/arkiv/mappe/{folder.pk}/upload/direkte",
         {
             "sha256": digest_of(b"x"),
-            "thumbnail": "1",
-            "file": SimpleUploadedFile("t.jpg", b"x" * (MAX_THUMBNAIL_BYTES + 1)),
+            "derived": "../../../etc",
+            "file": SimpleUploadedFile("t.jpg", b"x"),
+        },
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.parametrize("kind", ["thumbnail", "preview"])
+def test_an_oversized_derived_image_is_refused(resident_in: Callable, media_tmp: Path, kind: str) -> None:
+    """Neither slot may become a way to smuggle a second full-size upload past the cap. Both are
+    checked, because they have DIFFERENT limits and a shared test would only prove one of them."""
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    from arkiv.uploads import derived_limit
+
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(
+        f"/intern/arkiv/mappe/{folder.pk}/upload/direkte",
+        {
+            "sha256": digest_of(b"x"),
+            "derived": kind,
+            "file": SimpleUploadedFile("t.jpg", b"x" * (derived_limit(kind) + 1)),
         },
     )
 
@@ -1511,3 +1704,614 @@ def test_import_skips_the_debris_a_twenty_year_dropbox_accumulates(tmp_path: Pat
     folders = set(ArchiveFolder.objects.values_list("name", flat=True))
     assert ".AppleDouble" not in folders, "a resource-fork directory became a folder"
     assert folders == {"Billeder", "2004", "Terrasseåbning 2004", "2016", "2002"}, folders
+
+
+# --- the viewer's size, and taking several files at once --------------------------------------------
+
+
+def test_the_viewer_gets_the_large_preview_not_the_thumbnail(resident_in: Callable, media_tmp: Path) -> None:
+    """Three sizes exist for a reason; this is the one that proves the middle one is wired up."""
+    from io import BytesIO
+
+    from arkiv.models import preview_key
+    from arkiv.storage import get_store
+
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    file = make_file(folder, name="fest.jpg")
+    get_store().save(preview_key(file.sha256), BytesIO(b"bigpreviewbytes"))
+    ArchiveFile.objects.filter(pk=file.pk).update(has_preview=True, content_type="image/jpeg")
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.get(f"/intern/arkiv/fil/{file.pk}/stor")
+
+    assert response.status_code == 200
+    assert b"".join(response.streaming_content) == b"bigpreviewbytes"
+    assert "max-age=604800" in response.headers["Cache-Control"]
+
+
+def test_a_file_with_no_preview_yet_falls_back_to_the_original(
+    resident_in: Callable, media_tmp: Path
+) -> None:
+    """THE CASE THAT WOULD BREAK EVERY FRESH UPLOAD. The browser makes a thumbnail client-side and
+    cannot make a preview, so a photograph is `has_preview=False` from the moment it is uploaded
+    until the backlog command next runs. 404ing here would mean the one photo that does not open in
+    the viewer is always the one somebody just added - and went straight to the folder to check."""
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    file = make_file(folder, name="ny.jpg", body=b"theoriginalbytes")
+    ArchiveFile.objects.filter(pk=file.pk).update(has_preview=False, content_type="image/jpeg")
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.get(f"/intern/arkiv/fil/{file.pk}/stor")
+
+    assert response.status_code == 200
+    assert b"".join(response.streaming_content) == b"theoriginalbytes"
+
+
+def test_the_preview_obeys_the_same_access_rules_as_the_file(
+    resident_in: Callable, workgroups: tuple, media_tmp: Path
+) -> None:
+    """A second route to the bytes is a second place to leak them."""
+    regnskab, _ = workgroups
+    folder = ArchiveFolder.objects.create(name="Regnskab", workgroup=regnskab)
+    file = make_file(folder, name="budget.jpg")
+    ArchiveFile.objects.filter(pk=file.pk).update(has_preview=True, content_type="image/jpeg")
+    client = login(resident_in("outsider@gahk.dk", None))
+
+    assert client.get(f"/intern/arkiv/fil/{file.pk}/stor").status_code == 404
+
+
+def test_selected_files_come_back_as_one_zip(resident_in: Callable, media_tmp: Path) -> None:
+    """The whole point of the feature: pick several, get an archive with all of them in it."""
+    import zipfile
+    from io import BytesIO
+
+    folder = ArchiveFolder.objects.create(name="Sommerfest")
+    one = make_file(folder, name="en.jpg", body=b"first file bytes")
+    two = make_file(folder, name="to.jpg", body=b"second file bytes")
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [one.pk, two.pk]})
+
+    assert response.status_code == 200
+    assert response.headers["Content-Type"] == "application/zip"
+    assert "Sommerfest.zip" in response.headers["Content-Disposition"]
+    body = zipfile.ZipFile(BytesIO(b"".join(response.streaming_content)))
+    assert sorted(body.namelist()) == ["en.jpg", "to.jpg"]
+    assert body.read("en.jpg") == b"first file bytes"
+    assert body.read("to.jpg") == b"second file bytes"
+
+
+def test_the_zip_cannot_be_used_to_reach_a_file_you_cannot_see(
+    resident_in: Callable, workgroups: tuple, media_tmp: Path
+) -> None:
+    """THE ONE THAT MATTERS. The ids come from the client, so a resident who can read the shared
+    folder must not be able to post the id of a Regnskabsgruppen file and have it zipped in beside
+    their holiday photographs. Re-checked through visible_files, scoped to the folder."""
+    import zipfile
+    from io import BytesIO
+
+    regnskab, _ = workgroups
+    shared = ArchiveFolder.objects.create(name="Billeder")
+    secret = ArchiveFolder.objects.create(name="Regnskab", workgroup=regnskab)
+    mine = make_file(shared, name="ferie.jpg", body=b"mine")
+    theirs = make_file(secret, name="budget.pdf", body=b"secret")
+    client = login(resident_in("outsider@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{shared.pk}/hent-valgte", {"ids": [mine.pk, theirs.pk]})
+
+    body = zipfile.ZipFile(BytesIO(b"".join(response.streaming_content)))
+    assert body.namelist() == ["ferie.jpg"]
+
+
+def test_a_selection_over_the_size_cap_is_refused_with_a_message(
+    resident_in: Callable, media_tmp: Path
+) -> None:
+    """The cap is about gunicorn's worker timeout, not about disk - see views.download_selected.
+    Refused as a message on the folder, not a 500 twenty seconds into a dead download."""
+    from arkiv.views import MAX_SELECTED_BYTES
+
+    folder = ArchiveFolder.objects.create(name="Video")
+    big = make_file(folder, name="fest.mov", body=b"x")
+    ArchiveFile.objects.filter(pk=big.pk).update(size=MAX_SELECTED_BYTES + 1)
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [big.pk]}, follow=True)
+
+    assert response.status_code == 200
+    assert "Grænsen for samlet download" in response.content.decode()
+
+
+def test_an_empty_selection_says_so_rather_than_sending_an_empty_zip(
+    resident_in: Callable, media_tmp: Path
+) -> None:
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    make_file(folder, name="en.jpg")
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {}, follow=True)
+
+    assert "Vælg mindst én fil" in response.content.decode()
+
+
+def test_zipping_from_a_folder_you_cannot_see_is_a_404(
+    resident_in: Callable, workgroups: tuple, media_tmp: Path
+) -> None:
+    regnskab, _ = workgroups
+    folder = ArchiveFolder.objects.create(name="Regnskab", workgroup=regnskab)
+    file = make_file(folder)
+    client = login(resident_in("outsider@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [file.pk]})
+
+    assert response.status_code == 404
+
+
+def test_the_zip_route_refuses_a_get(resident_in: Callable, media_tmp: Path) -> None:
+    """A GET would be a link somebody could paste into a chat thread to start a half-gigabyte
+    download for whoever clicked it."""
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    client = login(resident_in("a@gahk.dk", None))
+
+    assert client.get(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte").status_code == 405
+
+
+def test_a_row_whose_object_vanished_is_skipped_not_fatal(resident_in: Callable, media_tmp: Path) -> None:
+    """A truncated zip with no explanation is worse than a zip missing one file. A missing object
+    is an operator problem, not something the resident downloading photographs can act on."""
+    import zipfile
+    from io import BytesIO
+
+    from arkiv.storage import get_store
+
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    good = make_file(folder, name="her.jpg", body=b"present")
+    gone = make_file(folder, name="væk.jpg", body=b"deleted from the bucket")
+    get_store().delete(gone.key)
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [good.pk, gone.pk]})
+
+    body = zipfile.ZipFile(BytesIO(b"".join(response.streaming_content)))
+    assert body.namelist() == ["her.jpg"]
+
+
+def test_the_thumbnailer_makes_both_sizes_in_one_pass(media_tmp: Path) -> None:
+    """One download per original, two objects written. Doing this in two passes would mean pulling
+    57,000 photographs out of the bucket twice - the reason both sizes live in one command."""
+    from io import BytesIO
+
+    from django.core.management import call_command
+
+    from arkiv.models import preview_key, thumbnail_key
+    from arkiv.storage import get_store
+
+    pytest.importorskip("PIL", reason="Pillow is a dev-only dependency")
+    from PIL import Image
+
+    raw = BytesIO()
+    Image.new("RGB", (2000, 1200), "green").save(raw, format="JPEG")
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    file = make_file(folder, name="stor.jpg", body=raw.getvalue())
+    ArchiveFile.objects.filter(pk=file.pk).update(content_type="image/jpeg")
+
+    call_command("make_arkiv_thumbnails")
+
+    store = get_store()
+    assert store.exists(thumbnail_key(file.sha256))
+    assert store.exists(preview_key(file.sha256))
+    file.refresh_from_db()
+    assert file.has_thumbnail and file.has_preview
+
+    # The sizes are actually different, which is the bug a shared Image object would have caused:
+    # thumbnail() mutates in place, so resizing once and reusing would make both 320px.
+    thumb = Image.open(BytesIO(b"".join(store.chunks(thumbnail_key(file.sha256)))))
+    preview = Image.open(BytesIO(b"".join(store.chunks(preview_key(file.sha256)))))
+    assert max(thumb.size) == 320
+    assert max(preview.size) == 1600
+
+
+def test_the_zip_is_left_in_the_store_as_an_object(resident_in: Callable, media_tmp: Path) -> None:
+    """THE POINT OF BUILDING IT RATHER THAN STREAMING IT. An object can be redirected to, which is
+    what takes the recipient's connection off a gunicorn worker - see views.download_selected."""
+    import zipfile
+    from io import BytesIO
+
+    from arkiv.models import selection_key
+    from arkiv.storage import get_store
+
+    folder = ArchiveFolder.objects.create(name="Sommerfest")
+    one = make_file(folder, name="en.jpg", body=b"first file bytes")
+    two = make_file(folder, name="to.jpg", body=b"second file bytes")
+    client = login(resident_in("a@gahk.dk", None))
+
+    client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [one.pk, two.pk]})
+
+    key = selection_key([(one.name, one.sha256), (two.name, two.sha256)])
+    store = get_store()
+    assert store.exists(key), "the zip was not left in the store"
+    body = zipfile.ZipFile(BytesIO(b"".join(store.chunks(key))))
+    assert sorted(body.namelist()) == ["en.jpg", "to.jpg"]
+    assert body.testzip() is None, "the stored archive is corrupt"
+
+
+def test_the_same_selection_is_not_rebuilt(resident_in: Callable, media_tmp: Path) -> None:
+    """The morning after sommerfest, the whole kollegium asks for the same folder. One build.
+
+    Proved by planting a sentinel at the key: if the response carries it back, nothing rebuilt.
+    """
+    from io import BytesIO
+
+    from arkiv.models import selection_key
+    from arkiv.storage import get_store
+
+    folder = ArchiveFolder.objects.create(name="Sommerfest")
+    one = make_file(folder, name="en.jpg", body=b"first file bytes")
+    client = login(resident_in("a@gahk.dk", None))
+
+    get_store().save(selection_key([(one.name, one.sha256)]), BytesIO(b"a previously built zip"))
+    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [one.pk]})
+
+    assert b"".join(response.streaming_content) == b"a previously built zip"
+
+
+def test_a_different_selection_is_a_different_zip(resident_in: Callable, media_tmp: Path) -> None:
+    """What makes reuse safe without any invalidation: the key IS the selection. Add a file, rename
+    one, replace one's bytes, and the key moves - so a cached zip can never be the wrong answer."""
+    from arkiv.models import selection_key
+
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    one = make_file(folder, name="en.jpg", body=b"first")
+    two = make_file(folder, name="to.jpg", body=b"second")
+
+    alone = selection_key([(one.name, one.sha256)])
+    both = selection_key([(one.name, one.sha256), (two.name, two.sha256)])
+    renamed = selection_key([("andet-navn.jpg", one.sha256)])
+    rebytes = selection_key([(one.name, two.sha256)])
+
+    assert len({alone, both, renamed, rebytes}) == 4
+
+    # And order does not matter: the same set asked for twice is one object, not two.
+    assert both == selection_key([(two.name, two.sha256), (one.name, one.sha256)])
+
+
+def test_a_selection_you_cannot_fully_see_names_a_different_zip(
+    resident_in: Callable, workgroups: tuple, media_tmp: Path
+) -> None:
+    """The key is derived from the FILTERED list, not from what was posted. Otherwise an outsider
+    could post {mine, theirs}, be filtered down to {mine}, and still be handed the object built for
+    somebody who could see both."""
+    import zipfile
+    from io import BytesIO
+
+    regnskab, _ = workgroups
+    shared = ArchiveFolder.objects.create(name="Billeder")
+    secret = ArchiveFolder.objects.create(name="Regnskab", workgroup=regnskab)
+    mine = make_file(shared, name="ferie.jpg", body=b"mine")
+    theirs = make_file(secret, name="budget.pdf", body=b"secret")
+    client = login(resident_in("outsider@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{shared.pk}/hent-valgte", {"ids": [mine.pk, theirs.pk]})
+
+    body = zipfile.ZipFile(BytesIO(b"".join(response.streaming_content)))
+    assert body.namelist() == ["ferie.jpg"]
+
+
+def test_the_zip_is_redirected_to_when_there_is_a_bucket(
+    resident_in: Callable, media_tmp: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE PRODUCTION BRANCH, which the local store cannot reach on its own.
+
+    The whole reason the zip became an object is that a redirect frees the worker immediately and
+    lets Hetzner serve the bytes. Tests run against the filesystem backend, where `download_url`
+    returns None and the view streams instead - so without this the one behaviour the change exists
+    for would be the one behaviour nothing checked.
+    """
+    from arkiv import views
+    from arkiv.models import selection_key
+    from arkiv.storage import LocalArchiveStore
+
+    folder = ArchiveFolder.objects.create(name="Sommerfest")
+    one = make_file(folder, name="en.jpg", body=b"first file bytes")
+    client = login(resident_in("a@gahk.dk", None))
+
+    signed = "https://bucket.fsn1.your-objectstorage.com/arkiv-zip/xx?sig=abc"
+    monkeypatch.setattr(LocalArchiveStore, "download_url", lambda self, key, **kw: signed, raising=False)
+
+    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [one.pk]})
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == signed
+    # And it still built the object first - a redirect to a key with nothing behind it is a 404
+    # wearing a different hat.
+    assert views.get_store().exists(selection_key([(one.name, one.sha256)]))
+
+
+def test_the_response_echoes_the_pages_token_so_the_button_can_reset(
+    resident_in: Callable, media_tmp: Path
+) -> None:
+    """A form POST that ends in a download does not navigate, so the page has no way of its own to
+    tell the build finished. The nonce comes back as a cookie the script can poll for."""
+    from arkiv.views import ZIP_DONE_COOKIE
+
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    one = make_file(folder, name="en.jpg", body=b"bytes")
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(
+        f"/intern/arkiv/mappe/{folder.pk}/hent-valgte",
+        {"ids": [one.pk], "done_token": "abc123"},
+    )
+
+    assert response.cookies[ZIP_DONE_COOKIE].value == "abc123"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["with space", "a;b", "a\nb", "x" * 65, "a=b", ""],
+    ids=["space", "semicolon", "newline", "too long", "equals", "empty"],
+)
+def test_a_token_that_could_steer_a_header_is_dropped(
+    resident_in: Callable, media_tmp: Path, bad: str
+) -> None:
+    """It goes straight back out in Set-Cookie, so a value carrying a separator would be somebody
+    else's directive. Dropped rather than sanitised: the page loses its reset, nothing else."""
+    from arkiv.views import ZIP_DONE_COOKIE
+
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    one = make_file(folder, name="en.jpg", body=b"bytes")
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(
+        f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [one.pk], "done_token": bad}
+    )
+
+    assert ZIP_DONE_COOKIE not in response.cookies
+    assert response.status_code == 200  # and the download itself is unaffected
+
+
+# --- the gallery layout, and selecting several at once ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("with_thumbs", "without", "expected"),
+    [
+        (10, 0, True),  # a folder of photographs
+        (6, 4, True),  # exactly at the threshold
+        (5, 5, False),  # half and half is not a gallery
+        (2, 15, False),  # a couple of snapshots among the referater
+        (0, 3, False),  # documents
+    ],
+    ids=["all images", "at threshold", "half", "mostly documents", "documents"],
+)
+def test_a_folder_becomes_a_grid_once_it_is_mostly_pictures(
+    resident_in: Callable, media_tmp: Path, with_thumbs: int, without: int, expected: bool
+) -> None:
+    """Decided on the server because it decides the MARKUP, and the markup is what a reader without
+    JavaScript gets. Rendering rows and rearranging them on load would be a layout shift on every
+    folder in the archive."""
+    from arkiv.views import is_gallery
+
+    folder = ArchiveFolder.objects.create(name="Blandet")
+    files = []
+    for i in range(with_thumbs):
+        files.append(make_file(folder, name=f"foto{i}.jpg", body=f"image-{i}".encode()))
+    ArchiveFile.objects.filter(pk__in=[f.pk for f in files]).update(has_thumbnail=True)
+    for i in range(without):
+        files.append(make_file(folder, name=f"referat{i}.pdf", body=f"doc-{i}".encode()))
+
+    assert is_gallery(list(ArchiveFile.objects.alive().filter(folder=folder))) is expected
+
+
+def test_an_empty_folder_is_not_a_gallery(media_tmp: Path) -> None:
+    """Guards the division. Without it a folder with nothing in it raises ZeroDivisionError, which
+    is a 500 on the one page a resident is most likely to reach by making a folder and looking."""
+    from arkiv.views import is_gallery
+
+    assert is_gallery([]) is False
+
+
+def test_a_photo_folder_renders_tiles_and_a_document_folder_renders_rows(
+    resident_in: Callable, media_tmp: Path
+) -> None:
+    """Both layouts have to carry the same selection hooks, because one controller drives both."""
+    photos = ArchiveFolder.objects.create(name="Billeder")
+    for i in range(3):
+        f = make_file(photos, name=f"foto{i}.jpg", body=f"image-{i}".encode())
+        ArchiveFile.objects.filter(pk=f.pk).update(has_thumbnail=True)
+    docs = ArchiveFolder.objects.create(name="Dokumenter")
+    make_file(docs, name="referat.pdf")
+    client = login(resident_in("a@gahk.dk", None))
+
+    gallery = client.get(f"/intern/arkiv/mappe/{photos.pk}/").content.decode()
+    assert 'class="arkiv-grid"' in gallery
+    assert "arkiv-tile-img" in gallery
+
+    listing = client.get(f"/intern/arkiv/mappe/{docs.pk}/").content.decode()
+    assert 'class="arkiv-list"' in listing
+    assert "arkiv-tile-img" not in listing
+
+    # The hooks the selection controller needs, in BOTH layouts.
+    for body in (gallery, listing):
+        assert "data-selection-scope" in body
+        assert "data-selectable" in body
+        assert "data-batch-pick" in body
+
+
+# --- downloading and removing a whole folder --------------------------------------------------------
+
+
+def test_a_folder_downloads_with_its_subfolders_and_their_paths(
+    resident_in: Callable, media_tmp: Path
+) -> None:
+    """RECURSIVE, and the tree is kept. A zip of four hundred loose photographs from twelve
+    different evenings is worse than the folder it came from."""
+    import zipfile
+    from io import BytesIO
+
+    top = ArchiveFolder.objects.create(name="Sommerfest")
+    inner = ArchiveFolder.objects.create(parent=top, name="Loerdag")
+    deeper = ArchiveFolder.objects.create(parent=inner, name="Natten")
+    make_file(top, name="plakat.jpg", body=b"top")
+    make_file(inner, name="fest.jpg", body=b"inner")
+    make_file(deeper, name="oprydning.jpg", body=b"deep")
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{top.pk}/hent-alt")
+
+    body = zipfile.ZipFile(BytesIO(b"".join(response.streaming_content)))
+    assert sorted(body.namelist()) == [
+        "Loerdag/Natten/oprydning.jpg",
+        "Loerdag/fest.jpg",
+        "plakat.jpg",
+    ]
+    assert body.read("Loerdag/Natten/oprydning.jpg") == b"deep"
+    assert body.testzip() is None
+
+
+def test_a_folder_download_leaves_out_a_subfolder_you_cannot_see(
+    resident_in: Callable, workgroups: tuple, media_tmp: Path
+) -> None:
+    """The zip a non-member gets is simply smaller. No entry, and no empty directory either - an
+    empty folder in the archive would say "something was skipped here", which is the leak."""
+    import zipfile
+    from io import BytesIO
+
+    regnskab, _ = workgroups
+    top = ArchiveFolder.objects.create(name="Faelles")
+    secret = ArchiveFolder.objects.create(parent=top, name="Regnskab", workgroup=regnskab)
+    make_file(top, name="alle.jpg", body=b"shared")
+    make_file(secret, name="budget.pdf", body=b"secret")
+    client = login(resident_in("outsider@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{top.pk}/hent-alt")
+
+    body = zipfile.ZipFile(BytesIO(b"".join(response.streaming_content)))
+    assert body.namelist() == ["alle.jpg"]
+    assert not any("Regnskab" in n for n in body.namelist())
+
+
+def test_downloading_a_folder_you_cannot_see_is_a_404(
+    resident_in: Callable, workgroups: tuple, media_tmp: Path
+) -> None:
+    regnskab, _ = workgroups
+    folder = ArchiveFolder.objects.create(name="Regnskab", workgroup=regnskab)
+    make_file(folder)
+    client = login(resident_in("outsider@gahk.dk", None))
+
+    assert client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-alt").status_code == 404
+
+
+def test_an_empty_folder_is_not_downloadable(resident_in: Callable, media_tmp: Path) -> None:
+    """An empty zip is a puzzle, not a download."""
+    folder = ArchiveFolder.objects.create(name="Tom")
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-alt", follow=True)
+
+    assert "Mappen er tom" in response.content.decode()
+
+
+def test_the_same_folder_zipped_twice_is_one_object(resident_in: Callable, media_tmp: Path) -> None:
+    """Folder downloads reuse `selection_key` like any other selection, so the second person to ask
+    for the same folder gets a redirect and no build."""
+    from io import BytesIO
+
+    from arkiv.models import selection_key
+    from arkiv.storage import get_store
+
+    folder = ArchiveFolder.objects.create(name="Billeder")
+    inner = ArchiveFolder.objects.create(parent=folder, name="2026")
+    one = make_file(inner, name="en.jpg", body=b"first")
+    client = login(resident_in("a@gahk.dk", None))
+
+    key = selection_key([(f"2026/{one.name}", one.sha256)])
+    get_store().save(key, BytesIO(b"a previously built zip"))
+    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-alt")
+
+    assert b"".join(response.streaming_content) == b"a previously built zip"
+
+
+def test_an_empty_folder_can_be_removed(resident_in: Callable, media_tmp: Path) -> None:
+    parent = ArchiveFolder.objects.create(name="Billeder")
+    folder = ArchiveFolder.objects.create(parent=parent, name="Tastefejl")
+    client = login(resident_in("a@gahk.dk", None))
+
+    client.post(f"/intern/arkiv/mappe/{folder.pk}/fjern")
+
+    folder.refresh_from_db()
+    assert folder.deleted_at is not None
+    assert not ArchiveFolder.objects.alive().filter(pk=folder.pk).exists()
+
+
+def test_the_name_is_free_again_immediately(resident_in: Callable, media_tmp: Path) -> None:
+    """The unique constraint is scoped to live rows, so removing a folder and making another with
+    the same name is not a collision. Worth a test because it is what somebody does straight after
+    unmaking a typo."""
+    parent = ArchiveFolder.objects.create(name="Billeder")
+    folder = ArchiveFolder.objects.create(parent=parent, name="Sommerfest")
+    client = login(resident_in("a@gahk.dk", None))
+
+    client.post(f"/intern/arkiv/mappe/{folder.pk}/fjern")
+    again = ArchiveFolder.objects.create(parent=parent, name="Sommerfest")
+
+    assert again.pk != folder.pk
+
+
+@pytest.mark.parametrize("with_file", [True, False], ids=["holds a file", "holds a subfolder"])
+def test_a_folder_with_anything_in_it_is_refused(
+    resident_in: Callable, media_tmp: Path, with_file: bool
+) -> None:
+    """Empty only. A recursive delete would put two hundred photographs behind one tap."""
+    parent = ArchiveFolder.objects.create(name="Billeder")
+    folder = ArchiveFolder.objects.create(parent=parent, name="Sommerfest")
+    if with_file:
+        make_file(folder, name="fest.jpg")
+    else:
+        ArchiveFolder.objects.create(parent=folder, name="Loerdag")
+    client = login(resident_in("a@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/fjern", follow=True)
+
+    assert "øm den først" in response.content.decode()
+    folder.refresh_from_db()
+    assert folder.deleted_at is None
+
+
+def test_a_subfolder_you_cannot_see_still_blocks_the_delete(
+    resident_in: Callable, workgroups: tuple, media_tmp: Path
+) -> None:
+    """THE ONE THAT COULD HAVE LEAKED. "Empty" is asked of the visible tree, so a gated subfolder
+    must still block - and the message must not name it. Letting a non-member delete the parent of
+    a folder they cannot see would be worse than the leak."""
+    regnskab, _ = workgroups
+    parent = ArchiveFolder.objects.create(name="Faelles")
+    folder = ArchiveFolder.objects.create(parent=parent, name="Blandet")
+    ArchiveFolder.objects.create(parent=folder, name="Regnskab", workgroup=regnskab)
+    client = login(resident_in("outsider@gahk.dk", None))
+
+    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/fjern", follow=True)
+
+    body = response.content.decode()
+    assert "Mappen er ikke tom" in body
+    assert "Regnskab" not in body, "named a folder the reader may not see"
+    assert "1 undermappe" not in body, "leaked the COUNT of folders the reader may not see"
+    folder.refresh_from_db()
+    assert folder.deleted_at is None
+
+
+def test_a_root_needs_inspektionen(resident_in: Callable, media_tmp: Path) -> None:
+    """Roots are the kollegium's filing system, not one resident's to unmake."""
+    root = ArchiveFolder.objects.create(name="Billeder")
+    client = login(resident_in("a@gahk.dk", None))
+
+    assert client.post(f"/intern/arkiv/mappe/{root.pk}/fjern").status_code == 403
+    root.refresh_from_db()
+    assert root.deleted_at is None
+
+
+def test_removing_a_folder_requires_post(resident_in: Callable, media_tmp: Path) -> None:
+    parent = ArchiveFolder.objects.create(name="Billeder")
+    folder = ArchiveFolder.objects.create(parent=parent, name="Tom")
+    client = login(resident_in("a@gahk.dk", None))
+
+    assert client.get(f"/intern/arkiv/mappe/{folder.pk}/fjern").status_code == 405

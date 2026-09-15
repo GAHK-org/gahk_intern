@@ -27,7 +27,9 @@
       {% endcomment %}
       {% if comment.content %}<div class="msg-text">{{ comment.content|links }}</div>{% endif %}
       {% if comment.image %}
-        <a href="{{ comment.image.url }}" target="_blank" rel="noopener" class="msg-image">
+        {# data-viewer: a bare <img> is what a long press can save. See _message.html. #}
+        <a href="{{ comment.image.url }}" target="_blank" rel="noopener" class="msg-image"
+           data-viewer data-name="{{ comment.image.name|basename }}">
           <img src="{{ comment.image.url }}" alt="" loading="lazy">
         </a>
       {% endif %}

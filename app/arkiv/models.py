@@ -29,16 +29,58 @@ There is no FileField anywhere in this app. The key is derived from `sha256`, so
 never enters the schema and nothing here needs migrating if it ever changes again.
 """
 
+import hashlib
 from collections.abc import Iterable
+from datetime import datetime
 
 from django.conf import settings
 from django.db import models
 from django.db.models.base import ModelBase
 from django.utils import timezone
 
-# Where an archived object lives, and where its thumbnail will live once thumbnails land.
+# Where an archived object lives, the two derived sizes beside it, and the built zips.
 ARCHIVE_PREFIX = "arkiv"
 THUMBNAIL_PREFIX = "arkiv-thumb"
+PREVIEW_PREFIX = "arkiv-preview"
+# Derived like the others, but DISPOSABLE: every object here can be rebuilt from the rows, so a
+# lifecycle rule expires the prefix and nothing is lost. See DEPLOY.md.
+ZIP_PREFIX = "arkiv-zip"
+
+
+def selection_key(members: "Iterable[tuple[str, str]]") -> str:
+    """Where the zip of one selection lives, named by what is in it.
+
+    Content-addressed like everything else here, except the "content" is the SELECTION - each
+    member's display name and hash - rather than the bytes. That is what makes the object reusable:
+    the whole kollegium downloading the sommerfest folder the morning after builds one zip and
+    redirects a hundred people to it.
+
+    It is also what makes reuse SAFE. A file added, removed, renamed or replaced changes the member
+    list and therefore the key, so a cached zip is always exactly the selection that was asked for -
+    there is no stale-cache case to reason about, and no invalidation to get wrong. The name is in
+    the digest because it is inside the zip: the same bytes filed under two names are two different
+    archives.
+    """
+    digest = hashlib.sha256()
+    for name, sha in sorted(members):
+        digest.update(f"{name}\0{sha}\n".encode())
+    hexed = digest.hexdigest()
+    return f"{ZIP_PREFIX}/{hexed[:2]}/{hexed}"
+
+
+def preview_key(sha256: str) -> str:
+    """Where the large preview for an object lives.
+
+    THE SIZE THE VIEWER SHOWS, and the reason there are three sizes rather than two. The 320px
+    thumbnail is a 40px row icon and looks like porridge full-screen; the original is a phone
+    photograph of ten megabytes or a scan of forty, and paging through a folder of those means
+    minutes of waiting and an egress bill that is the one variable cost this bucket has. A ~1600px
+    JPEG is a few hundred kilobytes, fills any screen in the building, and is generated in the same
+    pass over the originals as the thumbnail.
+
+    Keyed by the ORIGINAL's hash, for the same reasons `thumbnail_key` is - see there.
+    """
+    return f"{PREVIEW_PREFIX}/{sha256[:2]}/{sha256}"
 
 
 def thumbnail_key(sha256: str) -> str:
@@ -110,6 +152,8 @@ class ArchiveFolder(models.Model):
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    locked_at = models.DateTimeField(null=True, blank=True)
+    unlocked_until = models.DateTimeField(null=True, blank=True)
     deleted_at = models.DateTimeField(null=True, blank=True)
 
     objects = ArchiveQuerySet.as_manager()
@@ -180,6 +224,29 @@ class ArchiveFolder(models.Model):
         chain.reverse()
         return chain
 
+    def is_locked(self) -> bool:
+        """Whether this folder or one of its ancestors currently forbids mutation."""
+        now = timezone.now()
+        node: ArchiveFolder | None = self
+        while node is not None:
+            if node.locked_at is not None and (node.unlocked_until is None or node.unlocked_until <= now):
+                return True
+            node = node.parent
+        return False
+
+    def temporarily_unlocked_until(self) -> datetime | None:
+        """The effective temporary-unlock expiry, or None when this folder is not unlocked."""
+        now = timezone.now()
+        expiries: list[datetime] = []
+        node: ArchiveFolder | None = self
+        while node is not None:
+            if node.locked_at is not None:
+                if node.unlocked_until is None or node.unlocked_until <= now:
+                    return None
+                expiries.append(node.unlocked_until)
+            node = node.parent
+        return min(expiries, default=None)
+
 
 class ArchiveFile(models.Model):
     """One archived file. `sha256` is the identity; `name` is what the resident sees.
@@ -210,6 +277,11 @@ class ArchiveFile(models.Model):
     # Whether `thumbnail_key(sha256)` has an object behind it. A column rather than a HEAD per row,
     # because the alternative is one network round trip per file to draw a listing.
     has_thumbnail = models.BooleanField(default=False)
+    # The same, for `preview_key(sha256)`. A separate column rather than one "has derivatives" flag
+    # because they are produced by different things: the browser makes a thumbnail on upload and
+    # cannot make a preview, so a live upload has one and not the other until the backlog command
+    # sweeps it up.
+    has_preview = models.BooleanField(default=False)
 
     objects = ArchiveQuerySet.as_manager()
 
@@ -236,6 +308,10 @@ class ArchiveFile(models.Model):
     @property
     def thumb_key(self) -> str:
         return thumbnail_key(self.sha256)
+
+    @property
+    def preview_key(self) -> str:
+        return preview_key(self.sha256)
 
     @property
     def is_image(self) -> bool:

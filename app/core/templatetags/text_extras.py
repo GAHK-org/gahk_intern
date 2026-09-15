@@ -29,3 +29,19 @@ def links_filter(value: str | None) -> SafeString:
     passing its search-engine standing to whatever anybody pasted.
     """
     return linkify(value)
+
+
+@register.filter
+def basename(value: str) -> str:
+    """The last segment of an upload path: "quick_posts/2026/09/foto.jpg" -> "foto.jpg".
+
+    For `download` attributes and viewer captions. A FileField's `name` carries the whole
+    `upload_to` path, so putting it straight into a caption shows the storage layout, and putting it
+    into a download attribute saves the file under a name with the date in it. Neither is what the
+    resident who took the photograph is looking for.
+
+    Deliberately splits on "/" alone rather than using os.path or PurePath: this is a storage key,
+    not a filesystem path, and it is "/"-separated on every platform - PureWindowsPath would also
+    split it on a backslash that is a legal character in the name.
+    """
+    return str(value).rsplit("/", 1)[-1]

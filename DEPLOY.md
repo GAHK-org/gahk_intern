@@ -253,6 +253,93 @@ navigation to a redirect, not a `fetch`, so this became necessary the day upload
 before. Widening `AllowedMethods` to `GET`/`PUT` or `AllowedOrigins` to `*` would let any page on
 the internet script requests against the bucket with a stolen presigned URL; there is no reason to.
 
+#### `arkiv-zip/` needs a lifecycle rule
+
+"Hent valgte" builds the zip **into the bucket** and then redirects to it, like every other download
+in Arkiv. So the prefix fills up with archives that are, by construction, disposable: every one can
+be rebuilt from the rows, and `selection_key` names each after the selection it holds, so a rebuilt
+one lands under the same key.
+
+Nothing deletes them, so they need a rule — and **the bucket is versioned, which changes what a
+rule means.** On a versioned bucket `Expiration` does not delete anything: it writes a delete marker
+and the object becomes a *noncurrent version*, which lives until a `NoncurrentVersionExpiration`
+rule covering that prefix removes it. An expiry rule on its own therefore frees nothing and is worth
+exactly the storage it does not reclaim. That was the state `media/` had been in since the bucket
+was created.
+
+The whole rule set is declared in `core/management/commands/sync_bucket_lifecycle.py` and applied by
+running it. **Do not hand-edit the configuration in a console.**
+
+```
+docker exec <web> python manage.py sync_bucket_lifecycle --dry-run   # prints what would change
+docker exec <web> python manage.py sync_bucket_lifecycle
+```
+
+Idempotent, and it **merges**: any rule whose ID the command does not declare is carried through
+untouched, because `put_bucket_lifecycle_configuration` replaces the *entire* configuration and the
+naive call silently drops every rule it does not mention. That trap is why this is a command rather
+than a snippet somebody pastes into a shell.
+
+| ID | Prefix | What it does |
+| --- | --- | --- |
+| `abort-incomplete-uploads` | (all) | aborts stalled multipart uploads after 7 days |
+| `expire-noncurrent-arkiv` | `arkiv/` | purged originals actually go, 30 days later |
+| `expire-noncurrent-arkiv-thumb` | `arkiv-thumb/` | derived, so 1 day |
+| `expire-noncurrent-arkiv-preview` | `arkiv-preview/` | derived, so 1 day |
+| `expire-built-zips` | `arkiv-zip/` | marks built zips at 7 days, purges the version a day later |
+| `expire-built-zip-markers` | `arkiv-zip/` | clears the delete markers that leaves |
+| `expire-noncurrent-versions` | `media/` | 30 days |
+| `expire-noncurrent-backups` | `data/` | makes Coolify's own deletions free the bytes, after 7 days |
+| `expire-backup-markers` | `data/` | clears those delete markers |
+
+Prefixes are matched literally, so `arkiv/` does not cover `arkiv-thumb/`; a bare `arkiv` prefix
+would cover all four and overlap, and providers differ on how overlapping rules resolve. One rule
+per prefix, spelled out. `Days` and `ExpiredObjectDeleteMarker` cannot share one `Expiration` block
+— S3 rejects it — which is why the marker cleanups are separate rules on the same prefix.
+
+**Nothing expires a backup on a clock**, deliberately. Coolify decides which dumps to keep, per
+resource, in its own UI; a rule here would be a second authority deleting backups on a different
+schedule, and if the two disagreed the bucket would win silently.
+
+**`NoncurrentDays: 30` on `arkiv/` is the retention behind "Slet permanent".** The button destroys
+the row and calls `delete_object`; versioning turns that into a delete marker, so the bytes are
+recoverable by version id for another month and are billed for that long. That is a deliberate net
+against an operator mistake, not an accident — but it does mean "permanent" means "within a month",
+and if the kollegium ever needs a real erase-on-request, this number is where it lives.
+
+Seven days for a built zip is arbitrary and safe: the cost of being wrong is one rebuild. The
+`AbortIncompleteMultipartUpload` half matters more than it looks — a worker killed mid-upload leaves
+a part-uploaded archive, and this is what stops those being billed indefinitely. (It cannot leave a
+*corrupt* object: a multipart upload only becomes visible when it completes, which is what makes the
+"already built?" check trustworthy.)
+
+**`audit_media` and `unreferenced_keys` do not see `arkiv-zip/`**, and must not learn to: the former
+is scoped to `media/`, and the latter asks only about `arkiv/` hashes. A sweep that decided a built
+zip was an orphan would be right, and deleting it would still be pointless churn against a rule that
+already does the job.
+
+**Backups live under `data/coolify/`, not `backups/`** (§4d), and the rule they need is only the
+noncurrent half: Coolify decides which dumps to keep, and versioning is what stops its deletions
+actually freeing anything.
+
+#### What the batch-download caps are for now
+
+`arkiv/views.py` caps a selection at `MAX_SELECTED_BYTES` (500 MB) and `MAX_SELECTED_FILES` (200).
+Since the zip became an object these bound **the build** — reading the members out of the bucket and
+writing the archive back, all inside `fsn1` — plus the temporary file it is assembled in. The
+recipient's connection is no longer involved at all: they are redirected, and Hetzner serves them.
+
+That is a real change in what the numbers mean. They used to be at the mercy of a resident's hotel
+wifi, which is unmeasurable; they are now bounded by our own internal bandwidth against
+`--timeout 60`, which is. So raising them is a reasonable conversation — measure a large build
+first, and if `--timeout` needs to go up as well, add a worker in the same change:
+
+```
+CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "4", "--timeout", "300"]
+```
+
+A longer timeout with the same three workers makes the capacity problem worse, not better.
+
 #### `/media/` is no longer public
 
 It used to be, as the legacy `/public/` images were — so anyone who guessed
@@ -285,9 +372,25 @@ in lockstep with the managed Postgres major forever — a mismatched `pg_dump` r
 | **MariaDB** (MediaWiki) | `20 2 * * *` | 30 days | Its own app and its own DB — easy to forget |
 | **Coolify instance** | `40 2 * * *` | 14 days | Its DB holds the app definitions and every env var in §2 |
 
-Destination is the same bucket as media, under `backups/`. That is safe because Django's storage is
-pinned to `location="media"` (§4c), so `/media/../backups/…` raises rather than resolving, and
+Destination is the same bucket as media, under **`data/coolify/backups/…`** — Coolify's own layout,
+which it picks and we do not get to choose. The original plan said `backups/`; that prefix was never
+created and never will be, so do not go looking for it. As of this writing the tree is:
+
+```
+data/coolify/backups/databases/root-team-0/gahk-<id>/pg-dump-gahk-<ts>.dmp
+data/coolify/backups/databases/root-team-0/gahk-wiki-<id>/mariadb-dump-<ts>.dmp
+data/coolify/backups/coolify/coolify-db-hostdockerinternal/pg-dump-coolify-<ts>.dmp
+```
+
+Safe in the same bucket for the same reason whatever the prefix is called: Django's storage is
+pinned to `location="media"` (§4c), so `/media/../data/…` raises rather than resolving, and
 `audit_media` is prefix-scoped to `media/` and never reports a backup as an orphan.
+
+**Coolify owns the retention, and the bucket must not second-guess it.** The per-resource setting in
+the Coolify UI decides which dumps to keep; a bucket `Expiration` rule on this prefix would be a
+second authority deleting backups on its own schedule, and if the two ever disagree the bucket wins
+silently. What the bucket SHOULD clean up is what versioning leaves behind when Coolify prunes - see
+below.
 
 Offsets matter: §4b already runs tasks at 03:20, 03:40, 03:50 and 04:00, so backups sit in the
 02:00-02:40 window and never overlap a purge on this small box. Coolify evaluates cron on the **host

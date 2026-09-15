@@ -19,6 +19,7 @@ URL it redirects to is short-lived and never rendered into HTML.
 """
 
 import shutil
+from collections.abc import Iterator
 from pathlib import Path
 from typing import BinaryIO, Protocol
 
@@ -33,7 +34,7 @@ DOWNLOAD_TTL = 300
 
 
 class ArchiveStore(Protocol):
-    """The four things Arkiv needs from a bucket."""
+    """The handful of things Arkiv needs from a bucket."""
 
     def exists(self, key: str) -> bool: ...
 
@@ -51,6 +52,20 @@ class ArchiveStore(Protocol):
 
     def download_url(self, key: str, *, filename: str, content_type: str) -> str | None:
         """A short-lived URL to redirect to, or None when the bytes must be streamed instead."""
+        ...
+
+    def chunks(self, key: str, size: int = 512 * 1024) -> Iterator[bytes]:
+        """The object's bytes, in pieces. Raises if the key is not there.
+
+        On the Protocol rather than reached for through a backend attribute, because two callers
+        now need to READ an object rather than redirect to it - the zip builder, which has to put
+        the bytes inside an archive, and the thumbnailer, which has to decode them. Both used to go
+        through `store._bucket` with a type: ignore, which worked and quietly meant neither one
+        could run against the local backend that dev and CI use.
+
+        Yields rather than returns: a zip of forty photographs must not be assembled in the memory
+        of a worker that has two siblings and a 60-second budget.
+        """
         ...
 
 
@@ -90,6 +105,17 @@ class S3ArchiveStore:
         except ClientError:
             return None
         return int(meta["ContentLength"]), str(meta.get("ContentType", ""))
+
+    def chunks(self, key: str, size: int = 512 * 1024) -> Iterator[bytes]:
+        body = self._client.get_object(Bucket=self._bucket_name, Key=key)["Body"]
+        try:
+            while chunk := body.read(size):
+                yield chunk
+        finally:
+            # The connection goes back to the pool only if the stream is closed. Skipping this
+            # exhausts botocore's pool after a few dozen aborted downloads, and the symptom is the
+            # whole site hanging on its next bucket call rather than anything pointing at Arkiv.
+            body.close()
 
     def list_keys(self, prefix: str) -> set[str]:
         """Every key under `prefix`, paginated by boto3's collection manager.
@@ -132,8 +158,7 @@ class S3ArchiveStore:
         params = {
             "Bucket": self._bucket_name,
             "Key": key,
-            "ResponseContentDisposition": f'attachment; filename="{_ascii_fallback(filename)}"; '
-            f"filename*=UTF-8''{_rfc5987(filename)}",
+            "ResponseContentDisposition": content_disposition(filename),
         }
         if content_type:
             params["ResponseContentType"] = content_type
@@ -180,6 +205,11 @@ class LocalArchiveStore:
             return set()
         return {p.relative_to(self._root).as_posix() for p in base.rglob("*") if p.is_file()}
 
+    def chunks(self, key: str, size: int = 512 * 1024) -> Iterator[bytes]:
+        with self._path(key).open("rb") as fh:
+            while chunk := fh.read(size):
+                yield chunk
+
     def download_url(self, key: str, *, filename: str, content_type: str) -> None:
         return None
 
@@ -198,6 +228,20 @@ def get_store() -> ArchiveStore:
     if isinstance(storage, MediaS3Storage):
         return S3ArchiveStore(storage)
     return LocalArchiveStore(Path(settings.MEDIA_ROOT))
+
+
+def content_disposition(filename: str) -> str:
+    """`attachment` with the resident's filename, spelled both ways.
+
+    Both spellings, because neither alone is enough: the quoted `filename=` is all an old client
+    understands and cannot carry a non-ASCII byte, and `filename*=` is the RFC 5987 form that can.
+    Danish names have spaces and aeoeaa in them, so this is the normal case here, not the edge one.
+
+    Public because two callers build it - the presigned GET, where the object key is a bare hash
+    and the browser would otherwise save `9f86d081...` with no extension, and the zip response,
+    which has no presigned URL to put it on.
+    """
+    return f"attachment; filename=\"{_ascii_fallback(filename)}\"; filename*=UTF-8''{_rfc5987(filename)}"
 
 
 def _ascii_fallback(filename: str) -> str:

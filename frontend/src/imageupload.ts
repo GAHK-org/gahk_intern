@@ -7,6 +7,14 @@ const QUALITY = 0.82; // JPEG quality
 // a lower quality is invisible at that size while roughly halving the bytes again.
 const THUMB_DIM = 320;
 const THUMB_QUALITY = 0.7;
+// Arkiv's viewer size. Deliberately the same 1600/0.82 as MAX_DIM/QUALITY above - a photograph
+// large enough to fill any screen in the building and small enough that paging through a folder of
+// them is not somebody's mobile data. Mirrors PREVIEW_DIM/PREVIEW_QUALITY in
+// arkiv/management/commands/make_arkiv_thumbnails.py, which makes the same size server-side for
+// the imported backlog: if one changes, change both, or a folder shows previews at two sizes
+// depending on how its files happened to arrive.
+const PREVIEW_DIM = 1600;
+const PREVIEW_QUALITY = 0.82;
 
 /** Downscale one image to MAX_DIM/QUALITY, returning the original if there is nothing to gain.
  *
@@ -54,6 +62,22 @@ export async function downscaleImage(file: File): Promise<File> {
 export async function thumbnailImage(file: File): Promise<Blob | null> {
   if (!file.type.startsWith("image/")) return null;
   return redraw(file, THUMB_DIM, THUMB_QUALITY);
+}
+
+/** The viewer-sized version, or null when the file is not a decodable image.
+ *
+ * Made here rather than on the server for the same reason the thumbnail is: the alternative is
+ * Pillow in the production image and a scheduled sweep to catch up with uploads, and this project
+ * has deliberately no worker and no Celery. It also means the preview exists the moment the photo
+ * does - a sweep would leave a window in which the newest photograph is the one that has no
+ * preview, and the person who just uploaded it is the one about to go and look at it.
+ *
+ * Unlike downscaleImage this never falls back to the original: a preview that is the original is
+ * not a preview. The caller treats null as "no preview", which the server then confirms by asking
+ * the store rather than believing the browser. */
+export async function previewImage(file: File): Promise<Blob | null> {
+  if (!file.type.startsWith("image/")) return null;
+  return redraw(file, PREVIEW_DIM, PREVIEW_QUALITY);
 }
 
 // ONE delegated listener on the document, in the CAPTURE phase. Both halves of that matter.

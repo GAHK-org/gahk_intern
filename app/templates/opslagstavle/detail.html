@@ -58,7 +58,9 @@
             renders its photo — same `.msg-image` rule, so the two look alike and no CSS was added.
             loading="lazy" because a long thread is the case this exists for.
           {% endcomment %}
-          <a href="{{ comment.image.url }}" target="_blank" rel="noopener" class="msg-image">
+          {# data-viewer: a bare <img> is what a long press can save. See den_hurtige/_message.html. #}
+          <a href="{{ comment.image.url }}" target="_blank" rel="noopener" class="msg-image"
+             data-viewer data-name="{{ comment.image.name|basename }}">
             <img src="{{ comment.image.url }}" alt="" loading="lazy">
           </a>
         {% endif %}
