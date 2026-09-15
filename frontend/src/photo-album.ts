@@ -37,6 +37,24 @@ if (gallery && dialog) {
   const next = dialog.querySelector<HTMLButtonElement>("[data-gallery-next]")!
   let current = 0
   let touchStart: { x: number; y: number } | undefined
+  let zoomScale = 1
+  let pinchStartDistance = 0
+  let pinchStartScale = 1
+
+  const touchDistance = (touches: TouchList): number =>
+    Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY)
+
+  const resetZoom = (): void => {
+    zoomScale = 1
+    image.style.transform = ""
+    video.style.transform = ""
+  }
+
+  const applyZoom = (): void => {
+    const transform = zoomScale === 1 ? "" : `scale(${zoomScale})`
+    image.style.transform = transform
+    video.style.transform = transform
+  }
 
   const metadataFor = (entry: HTMLButtonElement): Record<string, string> => {
     try {
@@ -49,6 +67,7 @@ if (gallery && dialog) {
   const show = (index: number): void => {
     if (index < 0 || index >= entries.length) return
     current = index
+    resetZoom()
     const entry = entries[current]
     const isVideo = entry.dataset.kind === "video"
     image.hidden = isVideo
@@ -98,11 +117,24 @@ if (gallery && dialog) {
   previous.addEventListener("click", () => show(current - 1))
   next.addEventListener("click", () => show(current + 1))
   stage.addEventListener("touchstart", (event) => {
+    if (!window.matchMedia("(max-width: 720px)").matches) return
+    if (event.touches.length === 2) {
+      pinchStartDistance = touchDistance(event.touches)
+      pinchStartScale = zoomScale
+      touchStart = undefined
+      return
+    }
     const touch = event.touches[0]
-    if (window.matchMedia("(max-width: 720px)").matches && touch) {
+    if (zoomScale === 1 && touch) {
       touchStart = { x: touch.clientX, y: touch.clientY }
     }
   }, { passive: true })
+  stage.addEventListener("touchmove", (event) => {
+    if (event.touches.length !== 2 || pinchStartDistance === 0) return
+    event.preventDefault()
+    zoomScale = Math.min(4, Math.max(1, pinchStartScale * (touchDistance(event.touches) / pinchStartDistance)))
+    applyZoom()
+  }, { passive: false })
   stage.addEventListener("touchend", (event) => {
     const touch = event.changedTouches[0]
     if (!touchStart || !touch || !window.matchMedia("(max-width: 720px)").matches) return
@@ -111,6 +143,9 @@ if (gallery && dialog) {
     touchStart = undefined
     if (Math.abs(horizontalDistance) < 48 || Math.abs(horizontalDistance) <= Math.abs(verticalDistance)) return
     show(horizontalDistance < 0 ? current + 1 : current - 1)
+  }, { passive: true })
+  stage.addEventListener("touchend", () => {
+    if (pinchStartDistance > 0) pinchStartDistance = 0
   }, { passive: true })
   document.addEventListener("keydown", (event) => {
     if (!dialog.open) return
