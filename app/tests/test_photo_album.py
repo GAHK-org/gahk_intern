@@ -169,6 +169,29 @@ def test_image_upload_generates_compressed_derivatives(make_resident: Callable[.
 
 
 @pytest.mark.django_db
+def test_heic_upload_generates_jpeg_derivatives(make_resident: Callable[..., Resident]) -> None:
+    from PIL import Image
+    from pillow_heif import from_pillow
+
+    resident = make_resident()
+    album = Album.objects.create(folder="2026", name="Fest")
+    source = BytesIO()
+    from_pillow(Image.new("RGB", (2400, 1200), "red")).save(source)
+    media = upload_media(
+        album=album,
+        uploaded_file=SimpleUploadedFile("wide.heic", source.getvalue(), content_type="image/heic"),
+        resident=resident,
+        approved=True,
+    )
+
+    assert media.original.name.endswith(".heic")
+    assert media.high_definition.name.endswith(".jpg")
+    assert media.thumbnail.name.endswith(".jpg")
+    with Image.open(media.high_definition) as high_definition:
+        assert max(high_definition.size) == 1600
+
+
+@pytest.mark.django_db
 def test_original_download_returns_original_bytes_and_album_specific_keys(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:

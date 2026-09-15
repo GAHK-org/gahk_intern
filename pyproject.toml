@@ -30,6 +30,7 @@ dependencies = [
     "django-storages[s3]>=1.14",
     "pillow>=11.0", # image metadata plus photo-album HD/thumbnail derivatives
     "imageio-ffmpeg>=0.6", # bundled FFmpeg binary for photo-album video derivatives
+    "pillow-heif>=1.1",
 ]
 
 [dependency-groups]

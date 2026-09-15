@@ -9,7 +9,7 @@
 	{% if not album.is_locked %}
 		<form class="album-upload" method="post" action="{% url 'photo_album:upload' album.pk %}" enctype="multipart/form-data">
 			{% csrf_token %}
-			<label class="album-file-picker"><input type="file" name="uploads" accept="image/*,video/*" multiple required data-album-upload-input><span>Vælg fotoer eller videoer</span><small>Du kan vælge flere filer på én gang</small></label>
+			<label class="album-file-picker"><input type="file" name="uploads" accept="image/*,.heic,.heif,video/*" multiple required data-album-upload-input><span>Vælg fotoer eller videoer</span><small>Du kan vælge flere filer på én gang</small></label>
 			<input name="title" placeholder="Titel til alle valgte filer (valgfrit)">
 			<button class="btn" type="submit">Upload</button>
 		</form>

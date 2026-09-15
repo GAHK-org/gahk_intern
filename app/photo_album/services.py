@@ -9,10 +9,13 @@ from tempfile import TemporaryDirectory
 from django.core.files.base import ContentFile, File
 from django.utils import timezone
 from PIL import ExifTags, Image, ImageOps
+from pillow_heif import register_heif_opener
 
 from residents.models import Resident
 
 from .models import Album, Media, MediaStatus
+
+register_heif_opener()
 
 
 def upload_media(
