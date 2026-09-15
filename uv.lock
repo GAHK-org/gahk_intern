@@ -639,6 +639,71 @@ wheels = [
 ]
 
 [[package]]
+name = "gahk-intern"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "dj-database-url" },
+    { name = "django" },
+    { name = "django-storages", extra = ["s3"] },
+    { name = "gunicorn" },
+    { name = "markdown-it-py", extra = ["linkify"] },
+    { name = "nh3" },
+    { name = "openpyxl" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pymysql" },
+    { name = "python-dotenv" },
+    { name = "pywebpush" },
+    { name = "whitenoise" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "bandit" },
+    { name = "django-stubs", extra = ["compatible-mypy"] },
+    { name = "faker" },
+    { name = "icalendar" },
+    { name = "mypy" },
+    { name = "pillow" },
+    { name = "pip-audit" },
+    { name = "prek" },
+    { name = "pytest" },
+    { name = "pytest-django" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dj-database-url", specifier = ">=2.1" },
+    { name = "django", specifier = ">=5.2,<5.3" },
+    { name = "django-storages", extras = ["s3"], specifier = ">=1.14" },
+    { name = "gunicorn", specifier = ">=22.0" },
+    { name = "markdown-it-py", extras = ["linkify"], specifier = ">=4.0" },
+    { name = "nh3", specifier = ">=0.3" },
+    { name = "openpyxl", specifier = ">=3.1" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.1" },
+    { name = "pymysql", specifier = ">=1.1" },
+    { name = "python-dotenv", specifier = ">=1.0" },
+    { name = "pywebpush", specifier = ">=2.4" },
+    { name = "whitenoise", specifier = ">=6.6" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "bandit", specifier = ">=1.7" },
+    { name = "django-stubs", extras = ["compatible-mypy"], specifier = ">=6.0.9" },
+    { name = "faker", specifier = ">=30.0" },
+    { name = "icalendar", specifier = ">=6.0" },
+    { name = "mypy", specifier = ">=2.1.0" },
+    { name = "pillow", specifier = ">=11.0" },
+    { name = "pip-audit", specifier = ">=2.7" },
+    { name = "prek", specifier = ">=0.4.9" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-django", specifier = ">=4.8" },
+    { name = "ruff", specifier = ">=0.6" },
+]
+
+[[package]]
 name = "gunicorn"
 version = "26.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -995,71 +1060,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e9/55/9de666ad975d6ccd77d799ea0add55ee2347aa81286ce21b2a97c070746b/nh3-0.3.6-cp38-abi3-win32.whl", hash = "sha256:5276ef17bdba9ad8040575c74072008b13aae429436e9d0429e718bb5f90f4da", size = 609081, upload-time = "2026-06-22T00:46:57.665Z" },
     { url = "https://files.pythonhosted.org/packages/82/fa/2b5d684e3edf1e81bfd02d298c78c3e3da77ca1d8a2be3183a79544a7548/nh3-0.3.6-cp38-abi3-win_amd64.whl", hash = "sha256:f338ac7d594c067679f1e99b4f5ec3906842979560f9d8f15d6bdfa39a353b10", size = 624461, upload-time = "2026-06-22T00:46:59.163Z" },
     { url = "https://files.pythonhosted.org/packages/7b/e5/7cafee2f0413ca4cb0ef3bd111e94d408a48810008b283ad8aee00dd1809/nh3-0.3.6-cp38-abi3-win_arm64.whl", hash = "sha256:69f365963f63a1e9bff53bdbb3c542c7c2efed3e163c9d5d83a772a2ac468c21", size = 603060, upload-time = "2026-06-22T00:47:00.596Z" },
-]
-
-[[package]]
-name = "ny-ny-intern"
-version = "0.1.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "dj-database-url" },
-    { name = "django" },
-    { name = "django-storages", extra = ["s3"] },
-    { name = "gunicorn" },
-    { name = "markdown-it-py", extra = ["linkify"] },
-    { name = "nh3" },
-    { name = "openpyxl" },
-    { name = "psycopg", extra = ["binary"] },
-    { name = "pymysql" },
-    { name = "python-dotenv" },
-    { name = "pywebpush" },
-    { name = "whitenoise" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "bandit" },
-    { name = "django-stubs", extra = ["compatible-mypy"] },
-    { name = "faker" },
-    { name = "icalendar" },
-    { name = "mypy" },
-    { name = "pillow" },
-    { name = "pip-audit" },
-    { name = "prek" },
-    { name = "pytest" },
-    { name = "pytest-django" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dj-database-url", specifier = ">=2.1" },
-    { name = "django", specifier = ">=5.2,<5.3" },
-    { name = "django-storages", extras = ["s3"], specifier = ">=1.14" },
-    { name = "gunicorn", specifier = ">=22.0" },
-    { name = "markdown-it-py", extras = ["linkify"], specifier = ">=4.0" },
-    { name = "nh3", specifier = ">=0.3" },
-    { name = "openpyxl", specifier = ">=3.1" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.1" },
-    { name = "pymysql", specifier = ">=1.1" },
-    { name = "python-dotenv", specifier = ">=1.0" },
-    { name = "pywebpush", specifier = ">=2.4" },
-    { name = "whitenoise", specifier = ">=6.6" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "bandit", specifier = ">=1.7" },
-    { name = "django-stubs", extras = ["compatible-mypy"], specifier = ">=6.0.9" },
-    { name = "faker", specifier = ">=30.0" },
-    { name = "icalendar", specifier = ">=6.0" },
-    { name = "mypy", specifier = ">=2.1.0" },
-    { name = "pillow", specifier = ">=11.0" },
-    { name = "pip-audit", specifier = ">=2.7" },
-    { name = "prek", specifier = ">=0.4.9" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-django", specifier = ">=4.8" },
-    { name = "ruff", specifier = ">=0.6" },
 ]
 
 [[package]]
