@@ -1,7 +1,7 @@
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db.models import Count, Q
-from django.http import HttpRequest, HttpResponse
+from django.http import FileResponse, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
@@ -103,6 +103,23 @@ def _managed_media(request: HttpRequest, pk: int) -> Media:
     if not access.can_manage_media(request):
         raise PermissionDenied
     return get_object_or_404(Media, pk=pk)
+
+
+@login_required
+def download_original(request: HttpRequest, pk: int) -> FileResponse:
+    media = get_object_or_404(Media.objects.select_related("album"), pk=pk)
+    if (
+        not access.can_manage_media(request)
+        and not access.visible_media(request, media.album).filter(pk=pk).exists()
+    ):
+        raise PermissionDenied
+    original_name = media.original.name or "original"
+    return FileResponse(
+        media.original.open("rb"),
+        as_attachment=True,
+        filename=original_name.rsplit("/", maxsplit=1)[-1],
+        content_type=media.content_type or None,
+    )
 
 
 @login_required

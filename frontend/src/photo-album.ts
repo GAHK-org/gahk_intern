@@ -11,6 +11,14 @@ if (gallery && dialog) {
   const deleteForm = dialog.querySelector<HTMLFormElement>("[data-gallery-delete-form]")!
   let current = 0
 
+  const metadataFor = (entry: HTMLButtonElement): Record<string, string> => {
+    try {
+      return JSON.parse(entry.dataset.metadata ?? "{}") as Record<string, string>
+    } catch {
+      return {}
+    }
+  }
+
   const show = (index: number): void => {
     current = (index + entries.length) % entries.length
     const entry = entries[current]
@@ -28,7 +36,7 @@ if (gallery && dialog) {
       ...(entry.dataset.album ? { Album: entry.dataset.album } : {}),
       "Uploadet af": entry.dataset.uploadedBy ?? "",
       Uploadet: entry.dataset.uploadedAt ?? "",
-      ...(JSON.parse(entry.dataset.metadata ?? "{}") as Record<string, string>),
+      ...metadataFor(entry),
     }
     metadata.replaceChildren(...Object.entries(values).flatMap(([key, value]) => {
       const term = document.createElement("dt")
@@ -39,7 +47,7 @@ if (gallery && dialog) {
     }))
   }
 
-  entries.forEach((entry, index) => entry.addEventListener("click", () => { show(index); dialog.showModal() }))
+  entries.forEach((entry, index) => entry.addEventListener("click", () => { dialog.showModal(); show(index) }))
   dialog.querySelector("[data-gallery-close]")?.addEventListener("click", () => dialog.close())
   dialog.querySelector("[data-gallery-previous]")?.addEventListener("click", () => show(current - 1))
   dialog.querySelector("[data-gallery-next]")?.addEventListener("click", () => show(current + 1))

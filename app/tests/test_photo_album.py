@@ -92,10 +92,14 @@ def test_image_upload_generates_compressed_derivatives(make_resident: Callable[.
 def test_original_download_returns_original_bytes_and_album_specific_keys(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
+    from PIL import Image
+
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     first_album = Album.objects.create(folder="2026", name="Første")
     second_album = Album.objects.create(folder="2026", name="Andet")
-    source = b"original-upload-bytes"
+    source_file = BytesIO()
+    Image.new("RGB", (2400, 1200), "blue").save(source_file, format="JPEG", quality=100)
+    source = source_file.getvalue()
     first_media = upload_media(
         album=first_album,
         uploaded_file=SimpleUploadedFile("same-name.jpg", source, content_type="image/jpeg"),
@@ -113,6 +117,7 @@ def test_original_download_returns_original_bytes_and_album_specific_keys(
     response = client.get(reverse("photo_album:download_original", args=[first_media.pk]))
 
     assert b"".join(response.streaming_content) == source
+    assert first_media.high_definition.read() != source
     assert response.headers["Content-Disposition"].startswith("attachment;")
     assert first_media.original.name.startswith(f"photo-album/{first_album.pk}/original/")
     assert second_media.original.name.startswith(f"photo-album/{second_album.pk}/original/")

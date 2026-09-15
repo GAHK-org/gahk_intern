@@ -17,7 +17,7 @@
 	<div class="album-media-grid" data-album-gallery>
 	{% for item in media %}
 		<article class="album-media-item">
-		<button type="button" class="album-media-tile" data-kind="{% if item.content_type|slice:':6' == 'video/' %}video{% else %}image{% endif %}" data-full="{{ item.high_definition.url }}" data-original="{{ item.original.url }}" data-title="{{ item.title }}" data-uploaded-by="{{ item.requested_by.full_name }}" data-uploaded-at="{{ item.added_at|date:'j. F Y, H:i' }}" data-metadata="{{ item.metadata|escapejs }}"{% if item.can_delete %} data-delete-url="{% url 'photo_album:delete' item.pk %}"{% endif %}>
+		<button type="button" class="album-media-tile" data-kind="{% if item.content_type|slice:':6' == 'video/' %}video{% else %}image{% endif %}" data-full="{{ item.high_definition.url }}" data-download-url="{% url 'photo_album:download_original' item.pk %}" data-title="{{ item.title }}" data-uploaded-by="{{ item.requested_by.full_name }}" data-uploaded-at="{{ item.added_at|date:'j. F Y, H:i' }}" data-metadata="{{ item.metadata|escapejs }}"{% if item.can_delete %} data-delete-url="{% url 'photo_album:delete' item.pk %}"{% endif %}>
 			{% if item.content_type|slice:':6' == 'video/' %}<img src="{{ item.thumbnail.url }}" alt="{{ item.title }}" loading="lazy"><span class="album-video-mark">Video</span>{% else %}<img src="{{ item.thumbnail.url }}" alt="{{ item.title }}" loading="lazy">{% endif %}
 			{% if item.status == 'pending' %}<strong>Afventer godkendelse</strong>{% endif %}
 		</button>

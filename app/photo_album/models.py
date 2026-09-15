@@ -2,12 +2,25 @@
 
 from collections.abc import Iterable
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models.base import ModelBase
 from django.utils import timezone
+
+
+def album_original_path(instance: "Media", filename: str) -> str:
+    return f"photo-album/{instance.album_id}/original/{Path(filename).name}"
+
+
+def album_high_definition_path(instance: "Media", filename: str) -> str:
+    return f"photo-album/{instance.album_id}/high-definition/{Path(filename).name}"
+
+
+def album_thumbnail_path(instance: "Media", filename: str) -> str:
+    return f"photo-album/{instance.album_id}/thumbnail/{Path(filename).name}"
 
 
 class MediaStatus(models.TextChoices):
@@ -67,9 +80,9 @@ class Album(models.Model):
 class Media(models.Model):
     album = models.ForeignKey(Album, on_delete=models.CASCADE, related_name="media")
     title = models.CharField(max_length=255)
-    original = models.FileField(upload_to="photo-album/original/%Y/%m/")
-    high_definition = models.FileField(upload_to="photo-album/high-definition/%Y/%m/")
-    thumbnail = models.FileField(upload_to="photo-album/thumbnail/%Y/%m/")
+    original = models.FileField(upload_to=album_original_path)
+    high_definition = models.FileField(upload_to=album_high_definition_path)
+    thumbnail = models.FileField(upload_to=album_thumbnail_path)
     content_type = models.CharField(max_length=100, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
     requested_by = models.ForeignKey(

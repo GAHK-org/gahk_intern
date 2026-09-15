@@ -11,6 +11,7 @@ urlpatterns = [
     path("<int:pk>", views.detail, name="detail"),
     path("<int:pk>/slet", views.delete_album, name="delete_album"),
     path("<int:pk>/upload", views.upload, name="upload"),
+    path("media/<int:pk>/original", views.download_original, name="download_original"),
     path("media/<int:pk>/godkend", views.approve, name="approve"),
     path("media/<int:pk>/afvis", views.reject, name="reject"),
     path("media/<int:pk>/slet", views.delete, name="delete"),
