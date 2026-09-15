@@ -536,6 +536,7 @@ erDiagram
         string folder
         string name
         datetime created_at
+        datetime manually_locked_at
     }
 
     photo_album_Media {
@@ -1155,6 +1156,7 @@ erDiagram
         string folder
         string name
         datetime created_at
+        datetime manually_locked_at
     }
 
     photo_album_Media {

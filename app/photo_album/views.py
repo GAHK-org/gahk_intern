@@ -6,6 +6,7 @@ from django.db.models import Case, Count, DateTimeField, IntegerField, Q, Value,
 from django.db.models.functions import Coalesce
 from django.http import FileResponse, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from residents.permissions import current_resident
@@ -55,6 +56,8 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
             "album": album,
             "media": media_items,
             "can_manage": access.can_manage_media(request),
+            "can_lock": access.can_lock_album(request, album),
+            "can_unlock": access.can_unlock_album(request, album),
         },
     )
 
@@ -78,6 +81,28 @@ def delete_album(request: HttpRequest, pk: int) -> HttpResponse:
     album = get_object_or_404(Album, pk=pk)
     album.delete()
     return redirect("photo_album:index")
+
+
+@login_required
+@require_POST
+def lock_album(request: HttpRequest, pk: int) -> HttpResponse:
+    album = get_object_or_404(Album, pk=pk)
+    if not access.can_lock_album(request, album):
+        raise PermissionDenied
+    album.manually_locked_at = timezone.now()
+    album.save(update_fields=["manually_locked_at"])
+    return redirect("photo_album:detail", album.pk)
+
+
+@login_required
+@require_POST
+def unlock_album(request: HttpRequest, pk: int) -> HttpResponse:
+    album = get_object_or_404(Album, pk=pk)
+    if not access.can_unlock_album(request, album):
+        raise PermissionDenied
+    album.manually_locked_at = None
+    album.save(update_fields=["manually_locked_at"])
+    return redirect("photo_album:detail", album.pk)
 
 
 @login_required

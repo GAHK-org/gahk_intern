@@ -1,5 +1,6 @@
 """Photo and video albums, with blobs held by Django's configured media storage."""
 
+import calendar
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -33,6 +34,7 @@ class Album(models.Model):
     folder = models.CharField(max_length=10, verbose_name="Mappe")
     name = models.CharField(max_length=140, verbose_name="Albumnavn")
     created_at = models.DateTimeField(auto_now_add=True)
+    manually_locked_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["-folder", "name"]
@@ -69,12 +71,26 @@ class Album(models.Model):
             raise ValidationError({"folder": "Mappen skal være et årstal eller Andet."})
 
     def is_locked(self, now: datetime | None = None) -> bool:
+        if self.manually_locked_at is not None:
+            return True
         latest = (
             self.media.filter(status=MediaStatus.APPROVED, deleted_at__isnull=True)
             .order_by("-added_at")
             .first()
         )
         return latest is not None and latest.added_at <= (now or timezone.now()) - timedelta(days=90)
+
+    def can_be_manually_unlocked(self, now: datetime | None = None) -> bool:
+        if self.manually_locked_at is None:
+            return False
+        locked_at = self.manually_locked_at
+        month = locked_at.month + 6
+        year = locked_at.year + (month - 1) // 12
+        month = (month - 1) % 12 + 1
+        deadline = locked_at.replace(
+            day=min(locked_at.day, calendar.monthrange(year, month)[1]), year=year, month=month
+        )
+        return (now or timezone.now()) < deadline
 
 
 class Media(models.Model):

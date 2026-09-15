@@ -37,6 +37,14 @@ def can_manage_media(request: HttpRequest) -> bool:
     return is_photo_group_member(request)
 
 
+def can_lock_album(request: HttpRequest, album: Album) -> bool:
+    return can_manage_media(request) and not album.is_locked()
+
+
+def can_unlock_album(request: HttpRequest, album: Album) -> bool:
+    return can_manage_media(request) and album.can_be_manually_unlocked()
+
+
 def visible_media(request: HttpRequest, album: Album) -> QuerySet[Media]:
     resident = current_resident(request)
     visible = album.media.filter(deleted_at__isnull=True)

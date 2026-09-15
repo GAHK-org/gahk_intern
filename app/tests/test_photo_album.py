@@ -354,6 +354,52 @@ def test_old_album_and_old_media_cannot_be_changed(
 
 
 @pytest.mark.django_db
+def test_manual_album_lock_can_only_be_removed_within_six_calendar_months() -> None:
+    album = Album.objects.create(folder="2026", name="Fest")
+    locked_at = timezone.make_aware(datetime(2026, 2, 28, 12, 0))
+    album.manually_locked_at = locked_at
+
+    assert album.is_locked()
+    assert album.can_be_manually_unlocked(timezone.make_aware(datetime(2026, 8, 27, 12, 0)))
+    assert not album.can_be_manually_unlocked(timezone.make_aware(datetime(2026, 8, 28, 12, 0)))
+
+
+@pytest.mark.django_db
+def test_photo_manager_can_manually_lock_and_unlock_album(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    album = Album.objects.create(folder="2026", name="Fest")
+    client.force_login(administrator)
+
+    lock_response = client.post(reverse("photo_album:lock_album", args=[album.pk]))
+
+    album.refresh_from_db()
+    assert lock_response.status_code == 302
+    assert album.manually_locked_at is not None
+    assert client.post(reverse("photo_album:unlock_album", args=[album.pk])).status_code == 302
+    album.refresh_from_db()
+    assert album.manually_locked_at is None
+
+
+@pytest.mark.django_db
+def test_manual_album_lock_cannot_be_unlocked_after_six_months(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    album = Album.objects.create(
+        folder="2026", name="Fest", manually_locked_at=timezone.now() - timedelta(days=190)
+    )
+    client.force_login(administrator)
+
+    response = client.post(reverse("photo_album:unlock_album", args=[album.pk]))
+
+    album.refresh_from_db()
+    assert response.status_code == 403
+    assert album.manually_locked_at is not None
+
+
+@pytest.mark.django_db
 def test_delete_uses_bin_then_purges_after_30_days(make_resident: Callable[..., Resident]) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2026", name="Fest")

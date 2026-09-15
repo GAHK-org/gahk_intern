@@ -4,7 +4,7 @@
 <section class="album-detail">
 	<header class="album-heading">
 		<div><a class="album-back" href="{% url 'photo_album:index' %}">Fotoalbum</a><h1>{{ album.name }}</h1><p class="album-subtitle"><svg aria-hidden="true"><use href="#i-folder"></use></svg><a href="{% url 'photo_album:index' %}?folder={{ album.folder|urlencode }}">{{ album.folder }}</a></p></div>
-		{% if album.is_locked %}<span class="album-locked">Albummet er låst</span>{% elif can_manage %}<div class="album-actions"><a class="btn-link" href="{% url 'photo_album:bin' %}">Papirkurv</a>{% if not media %}<form method="post" action="{% url 'photo_album:delete_album' album.pk %}">{% csrf_token %}<button class="btn-link-danger" type="submit">Slet album</button></form>{% endif %}</div>{% endif %}
+		{% if album.is_locked %}<div class="album-actions"><span class="album-locked">Albummet er låst</span>{% if can_unlock %}<form method="post" action="{% url 'photo_album:unlock_album' album.pk %}">{% csrf_token %}<button class="btn-link" type="submit">Lås op</button></form>{% endif %}</div>{% elif can_manage %}<div class="album-actions"><a class="btn-link" href="{% url 'photo_album:bin' %}">Papirkurv</a><form method="post" action="{% url 'photo_album:lock_album' album.pk %}">{% csrf_token %}<button class="btn-link" type="submit">Lås album</button></form>{% if not media %}<form method="post" action="{% url 'photo_album:delete_album' album.pk %}">{% csrf_token %}<button class="btn-link-danger" type="submit">Slet album</button></form>{% endif %}</div>{% endif %}
 	</header>
 	{% if not album.is_locked %}
 		<form class="album-upload" method="post" action="{% url 'photo_album:upload' album.pk %}" enctype="multipart/form-data">
