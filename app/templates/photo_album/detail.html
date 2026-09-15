@@ -32,9 +32,11 @@
 </section>
 <dialog class="album-viewer" data-album-viewer aria-label="Medievisning">
 	<button type="button" class="album-viewer-close" data-gallery-close aria-label="Luk">&times;</button>
+	<button type="button" class="album-viewer-menu-button" data-gallery-menu-button aria-label="Flere muligheder" aria-expanded="false">&#8942;</button>
 	<button type="button" class="album-viewer-arrow album-viewer-previous" data-gallery-previous aria-label="Forrige">&larr;</button>
 	<div class="album-viewer-stage"><img data-gallery-image alt=""><video data-gallery-video controls hidden></video></div>
-	<aside><p class="album-eyebrow">Medie</p><h2 data-gallery-title></h2><dl data-gallery-metadata></dl><a class="btn btn-secondary" data-gallery-download download>Download original</a><form method="post" data-gallery-delete-form hidden onsubmit="return confirm('Er du sikker på, at du vil slette mediet?');">{% csrf_token %}<button class="btn-link-danger" type="submit">Fjern</button></form></aside>
+	<aside><p class="album-eyebrow">Medie</p><h2 data-gallery-title></h2><p class="album-viewer-mobile-date" data-gallery-mobile-date></p><dl data-gallery-metadata></dl><a class="btn btn-secondary" data-gallery-download download>Download original</a><form method="post" data-gallery-delete-form hidden onsubmit="return confirm('Er du sikker på, at du vil slette mediet?');">{% csrf_token %}<button class="btn-link-danger" type="submit">Fjern</button></form></aside>
+	<section class="album-viewer-menu" data-gallery-menu hidden aria-label="Flere muligheder"><dl data-gallery-menu-metadata></dl><a class="btn btn-secondary" data-gallery-menu-download download>Download original</a><form method="post" data-gallery-menu-delete-form hidden onsubmit="return confirm('Er du sikker på, at du vil slette mediet?');">{% csrf_token %}<button class="btn-link-danger" type="submit">Fjern</button></form></section>
 	<button type="button" class="album-viewer-arrow album-viewer-next" data-gallery-next aria-label="Næste">&rarr;</button>
 </dialog>
 {% endblock %}
