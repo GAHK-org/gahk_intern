@@ -21,10 +21,11 @@ if (gallery && dialog) {
     image.alt = entry.dataset.title ?? ""
     video.src = isVideo ? (entry.dataset.full ?? "") : ""
     title.textContent = entry.dataset.title ?? ""
-    download.href = entry.dataset.original ?? ""
+    download.href = entry.dataset.downloadUrl ?? ""
     deleteForm.hidden = !entry.dataset.deleteUrl
     deleteForm.action = entry.dataset.deleteUrl ?? ""
     const values = {
+      ...(entry.dataset.album ? { Album: entry.dataset.album } : {}),
       "Uploadet af": entry.dataset.uploadedBy ?? "",
       Uploadet: entry.dataset.uploadedAt ?? "",
       ...(JSON.parse(entry.dataset.metadata ?? "{}") as Record<string, string>),

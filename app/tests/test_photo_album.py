@@ -89,6 +89,36 @@ def test_image_upload_generates_compressed_derivatives(make_resident: Callable[.
 
 
 @pytest.mark.django_db
+def test_original_download_returns_original_bytes_and_album_specific_keys(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    first_album = Album.objects.create(folder="2026", name="Første")
+    second_album = Album.objects.create(folder="2026", name="Andet")
+    source = b"original-upload-bytes"
+    first_media = upload_media(
+        album=first_album,
+        uploaded_file=SimpleUploadedFile("same-name.jpg", source, content_type="image/jpeg"),
+        resident=administrator,
+        approved=True,
+    )
+    second_media = upload_media(
+        album=second_album,
+        uploaded_file=SimpleUploadedFile("same-name.jpg", source, content_type="image/jpeg"),
+        resident=administrator,
+        approved=True,
+    )
+    client.force_login(administrator)
+
+    response = client.get(reverse("photo_album:download_original", args=[first_media.pk]))
+
+    assert b"".join(response.streaming_content) == source
+    assert response.headers["Content-Disposition"].startswith("attachment;")
+    assert first_media.original.name.startswith(f"photo-album/{first_album.pk}/original/")
+    assert second_media.original.name.startswith(f"photo-album/{second_album.pk}/original/")
+
+
+@pytest.mark.django_db
 def test_image_metadata_and_upload_attribution_are_available_to_the_viewer(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
@@ -246,6 +276,33 @@ def test_bin_displays_media_in_the_gallery_viewer(
     assert "data-album-gallery" in response.content.decode()
     assert 'data-full="/media/high-definition.jpg"' in response.content.decode()
     assert 'src="/media/thumbnail.jpg"' in response.content.decode()
+    assert 'data-album="Fest"' in response.content.decode()
+    assert "Fra album: Fest" in response.content.decode()
+
+
+@pytest.mark.django_db
+def test_restore_returns_media_to_its_original_album(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    album = Album.objects.create(folder="2026", name="Original album")
+    media = Media.objects.create(
+        album=album,
+        title="photo",
+        original="original.jpg",
+        high_definition="high-definition.jpg",
+        thumbnail="thumbnail.jpg",
+        requested_by=administrator,
+    )
+    delete(media, administrator)
+    client.force_login(administrator)
+
+    response = client.post(reverse("photo_album:restore", args=[media.pk]))
+
+    media.refresh_from_db()
+    assert response.url == reverse("photo_album:detail", args=[album.pk])
+    assert media.album_id == album.pk
+    assert media.deleted_at is None
 
 
 @pytest.mark.django_db

@@ -6,10 +6,11 @@
   <div class="album-media-grid" data-album-gallery>
   {% for item in media %}
     <article class="album-media-item">
-      <button type="button" class="album-media-tile" data-kind="{% if item.content_type|slice:':6' == 'video/' %}video{% else %}image{% endif %}" data-full="{{ item.high_definition.url }}" data-original="{{ item.original.url }}" data-title="{{ item.title }}" data-uploaded-by="{{ item.requested_by.full_name }}" data-uploaded-at="{{ item.added_at|date:'j. F Y, H:i' }}" data-metadata="{{ item.metadata|escapejs }}">
+      <button type="button" class="album-media-tile" data-kind="{% if item.content_type|slice:':6' == 'video/' %}video{% else %}image{% endif %}" data-full="{{ item.high_definition.url }}" data-download-url="{% url 'photo_album:download_original' item.pk %}" data-title="{{ item.title }}" data-album="{{ item.album.name }}" data-uploaded-by="{{ item.requested_by.full_name }}" data-uploaded-at="{{ item.added_at|date:'j. F Y, H:i' }}" data-metadata="{{ item.metadata|escapejs }}">
         <img src="{{ item.thumbnail.url }}" alt="{{ item.title }}" loading="lazy">
         {% if item.content_type|slice:':6' == 'video/' %}<span class="album-video-mark">Video</span>{% endif %}
       </button>
+      <p class="album-media-origin">Fra album: {{ item.album.name }}</p>
       <div class="album-media-controls"><form method="post" action="{% url 'photo_album:restore' item.pk %}">{% csrf_token %}<button class="btn-link" type="submit">Gendan</button></form>{% if item.can_permanently_delete %}<form method="post" action="{% url 'photo_album:permanently_delete' item.pk %}" onsubmit="return confirm('Er du sikker på, at du vil slette mediet permanent?');">{% csrf_token %}<button class="btn-link-danger" type="submit">Slet permanent</button></form>{% endif %}</div>
     </article>
   {% empty %}<p class="album-empty">Der er ingen medier i papirkurven.</p>{% endfor %}
