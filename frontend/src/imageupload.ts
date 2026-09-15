@@ -98,6 +98,7 @@ document.addEventListener(
   async (event: SubmitEvent) => {
     const form = event.target;
     if (!(form instanceof HTMLFormElement)) return;
+    if (!form.hasAttribute("data-downscale-images")) return;
     if (form.dataset.imgReady === "1") {
       // Second pass, after the downscale. Clear the flag rather than leaving it set: a form that
       // survives its own submit — the thread panel's, which htmx posts and then resets — would

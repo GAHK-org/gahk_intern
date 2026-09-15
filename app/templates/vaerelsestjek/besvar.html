@@ -21,7 +21,7 @@
     {% endif %}
   {% endif %}
 
-  <form method="post" action="{% url 'vaerelsestjek:besvar' room.number %}" enctype="multipart/form-data">
+  <form method="post" action="{% url 'vaerelsestjek:besvar' room.number %}" enctype="multipart/form-data" data-downscale-images>
     {% csrf_token %}
     <table class="w-full border-collapse">
       <thead><tr class="border-b border-gray-200"><th class="p-2">Kriterie</th><th class="p-2">Score</th><th class="p-2">Kommentar</th><th class="p-2">Billede</th></tr></thead>

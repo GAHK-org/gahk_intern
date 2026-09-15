@@ -12,6 +12,7 @@ import "./events"; // begivenheder guest-list picker (no-op elsewhere)
 import "./reparationer"; // reparationer kanban drag-and-drop (no-op elsewhere)
 import "./imageviewer"; // full-screen picture viewer: Arkiv, opslagstavlen, Den Hurtige
 import "./arkiv"; // Arkiv direct-to-bucket upload + selection (no-op elsewhere)
+import "./photo-album"; // photo album gallery viewer (no-op outside album pages)
 
 // Alpine for small client-only interactions; HTMX (imported above) auto-wires hx-* attributes.
 // NB: the ølkælder till (kiosk) is deliberately NOT an Alpine island — it runs on an iOS 10.3 iPad

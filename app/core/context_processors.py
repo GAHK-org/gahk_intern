@@ -9,6 +9,7 @@ from arkiv.access import roles_allowed as arkiv_allowed
 from den_hurtige.access import roles_allowed as den_hurtige_allowed
 from events.access import roles_allowed as events_allowed
 from opslagstavle.access import roles_allowed as opslagstavle_allowed
+from photo_album.access import roles_allowed as photo_album_allowed
 from residents.permissions import CMS_EDITOR_ROLES, can_preview, effective_roles
 
 # Public site nav, matching the legacy gahk.dk menu (labels + order)
@@ -65,6 +66,8 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
         oversigt.append(("/intern/begivenheder/", "Begivenheder", "calendar"))
     # Alumneliste stays here; Stamtræ and Statistik moved to Ressourcer (see below).
     oversigt.append(("/intern/alumneliste/", "Alumneliste", "list"))
+    if photo_album_allowed(roles):
+        oversigt.append(("/intern/fotoalbum/", "Fotoalbum", "archive"))
     vaerelser: list[NavItem] = [
         ("/intern/soegvaerelse/", "Søg værelse", "house"),
         ("/intern/vaerelsestjek/", "Værelsestjek", "inspect"),  # open to every resident
