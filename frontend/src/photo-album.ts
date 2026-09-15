@@ -33,6 +33,8 @@ if (gallery && dialog) {
   const menuButton = dialog.querySelector<HTMLButtonElement>("[data-gallery-menu-button]")!
   const menu = dialog.querySelector<HTMLElement>("[data-gallery-menu]")!
   const stage = dialog.querySelector<HTMLElement>(".album-viewer-stage")!
+  const previous = dialog.querySelector<HTMLButtonElement>("[data-gallery-previous]")!
+  const next = dialog.querySelector<HTMLButtonElement>("[data-gallery-next]")!
   let current = 0
   let touchStart: { x: number; y: number } | undefined
 
@@ -45,7 +47,8 @@ if (gallery && dialog) {
   }
 
   const show = (index: number): void => {
-    current = (index + entries.length) % entries.length
+    if (index < 0 || index >= entries.length) return
+    current = index
     const entry = entries[current]
     const isVideo = entry.dataset.kind === "video"
     image.hidden = isVideo
@@ -63,6 +66,8 @@ if (gallery && dialog) {
     menuDeleteForm.action = entry.dataset.deleteUrl ?? ""
     menu.hidden = true
     menuButton.setAttribute("aria-expanded", "false")
+    previous.disabled = current === 0
+    next.disabled = current === entries.length - 1
     const values = {
       ...(entry.dataset.album ? { Album: entry.dataset.album } : {}),
       ...(entry.dataset.capturedAt ? { "Optaget": entry.dataset.capturedAt } : {}),
@@ -90,8 +95,8 @@ if (gallery && dialog) {
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog) dialog.close()
   })
-  dialog.querySelector("[data-gallery-previous]")?.addEventListener("click", () => show(current - 1))
-  dialog.querySelector("[data-gallery-next]")?.addEventListener("click", () => show(current + 1))
+  previous.addEventListener("click", () => show(current - 1))
+  next.addEventListener("click", () => show(current + 1))
   stage.addEventListener("touchstart", (event) => {
     const touch = event.touches[0]
     if (window.matchMedia("(max-width: 720px)").matches && touch) {
