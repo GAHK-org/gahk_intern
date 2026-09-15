@@ -14,8 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: app } }
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
         with: { enable-cache: true }
       - run: uv run ruff check .
       - run: uv run ruff format --check .
@@ -26,8 +26,8 @@ jobs:
     # Runs from the repo root (not app/): the [tool.mypy] config lives in pyproject.toml and the
     # django-stubs plugin only imports config.settings (which has safe defaults) — no DB needed.
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
         with: { enable-cache: true }
       - run: uv run mypy app
 
@@ -39,8 +39,8 @@ jobs:
     # looks perfect against pytest's --reuse-db cache, so nothing else would notice a mismatch.
     # No DB needed — makemigrations only compares the models to the migration graph.
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
         with: { enable-cache: true }
       - run: uv run python manage.py makemigrations --check --dry-run
         env:
@@ -64,16 +64,16 @@ jobs:
       DJANGO_SECRET_KEY: ci-secret
       VISIT_COUNTER_HMAC_KEY: ci
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
         with: { enable-cache: true }
       - run: uv run python -m pytest -q
 
   security:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
       # Audit the locked prod dependencies (exported from uv.lock, no requirements file committed).
       - run: uv export --frozen --no-dev --no-emit-project --format requirements-txt -o /tmp/req.txt
       - run: uvx pip-audit -r /tmp/req.txt
@@ -81,5 +81,5 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: docker build -t gahk:ci .       # verifies the multi-stage image builds (no push)

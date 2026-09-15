@@ -17,7 +17,7 @@ jobs:
   label:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/labeler@v5
+      - uses: actions/labeler@v7
         with:
           sync-labels: true # remove a label again if the PR no longer touches matching files
 
@@ -26,7 +26,7 @@ jobs:
     # Skip if someone is already assigned (don't override a manual assignment).
     if: github.event.pull_request.assignees[0] == null
     steps:
-      - uses: actions/github-script@v7
+      - uses: actions/github-script@v9
         with:
           script: |
             await github.rest.issues.addAssignees({
