@@ -99,6 +99,8 @@ def browse(request: HttpRequest, pk: int | None = None) -> HttpResponseBase:
             # Removing the folder is NOT the same permission: a root belongs to whoever arranges
             # the top level. See access.can_delete_folder.
             "can_delete_folder": folder is not None and access.can_delete_folder(folder, request),
+            "can_manage_locks": folder is not None and access.can_manage_locks(request),
+            "now": timezone.now(),
             "limited_rollout": access.is_limited(),
         },
     )
@@ -792,9 +794,10 @@ def folder_delete(request: HttpRequest, pk: int) -> HttpResponseBase:
     if not access.can_delete_folder(folder, request):
         raise PermissionDenied
 
-    # The real contents, unfiltered. What blocks the delete.
-    files = ArchiveFile.objects.alive().filter(folder=folder).count()
-    subfolders = ArchiveFolder.objects.alive().filter(parent=folder).count()
+    # The real contents, including retained soft-deleted history. A folder that still owns a row is
+    # not empty: deleting its parent would make that history unreachable.
+    files = ArchiveFile.objects.filter(folder=folder).count()
+    subfolders = ArchiveFolder.objects.filter(parent=folder).count()
     if files or subfolders:
         # What this reader is allowed to know about. Equal to the real counts for anyone who can
         # see everything in here, which is the ordinary case.
@@ -816,6 +819,62 @@ def folder_delete(request: HttpRequest, pk: int) -> HttpResponseBase:
     folder.save(update_fields=["deleted_at"])
     messages.success(request, f"Mappen \u201e{folder.name}\u201d er fjernet.")
     return redirect("arkiv:folder", pk=parent) if parent else redirect("arkiv:root")
+
+
+@access.access_required
+@require_POST
+def folder_lock(request: HttpRequest, pk: int) -> HttpResponseBase:
+    """Lock one folder and, through inheritance, every folder beneath it."""
+    resident = current_resident(request)
+    folder = access.visible_folders(resident).filter(pk=pk).first()
+    if folder is None:
+        raise Http404("no such folder")
+    if not access.can_manage_locks(request):
+        raise PermissionDenied
+
+    folder.locked_at = timezone.now()
+    folder.unlocked_until = None
+    folder.save(update_fields=["locked_at", "unlocked_until"])
+    messages.success(request, f"Mappen \u201e{folder.name}\u201d er låst.")
+    return redirect("arkiv:folder", pk=folder.pk)
+
+
+@access.access_required
+@require_POST
+def folder_unlock(request: HttpRequest, pk: int) -> HttpResponseBase:
+    """Temporarily unlock one directly locked folder for the configured hour."""
+    resident = current_resident(request)
+    folder = access.visible_folders(resident).filter(pk=pk).first()
+    if folder is None:
+        raise Http404("no such folder")
+    if not access.can_manage_locks(request):
+        raise PermissionDenied
+    if folder.locked_at is None:
+        raise Http404("folder is not directly locked")
+
+    folder.unlocked_until = timezone.now() + access.TEMPORARY_UNLOCK
+    folder.save(update_fields=["unlocked_until"])
+    messages.success(request, f"Mappen \u201e{folder.name}\u201d er låst op i en time.")
+    return redirect("arkiv:folder", pk=folder.pk)
+
+
+@access.access_required
+@require_POST
+def folder_relock(request: HttpRequest, pk: int) -> HttpResponseBase:
+    """Revoke a folder's temporary unlock before it expires."""
+    resident = current_resident(request)
+    folder = access.visible_folders(resident).filter(pk=pk).first()
+    if folder is None:
+        raise Http404("no such folder")
+    if not access.can_manage_locks(request):
+        raise PermissionDenied
+    if folder.locked_at is None or folder.unlocked_until is None or folder.unlocked_until <= timezone.now():
+        raise Http404("folder is not temporarily unlocked")
+
+    folder.unlocked_until = None
+    folder.save(update_fields=["unlocked_until"])
+    messages.success(request, f"Mappen \u201e{folder.name}\u201d er låst igen.")
+    return redirect("arkiv:folder", pk=folder.pk)
 
 
 def _build_zip(store: ArchiveStore, files: list[tuple[str, ArchiveFile]], key: str) -> None:

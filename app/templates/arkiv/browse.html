@@ -33,6 +33,18 @@
     </p>
   {% endif %}
 
+  {% if folder %}
+    {% if folder.temporarily_unlocked_until %}
+      <p class="muted mb-4">
+        <svg class="ni arkiv-lock-status" width="14" height="14" viewBox="0 0 24 24" aria-label="Mappen er midlertidigt låst op" title="Midlertidig oplåsning udløber {{ folder.temporarily_unlocked_until|date:'j. F Y H:i' }}"><use href="#i-lock"></use></svg>
+        <svg class="ni arkiv-lock-status" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" title="Midlertidig oplåsning udløber {{ folder.temporarily_unlocked_until|date:'j. F Y H:i' }}"><use href="#i-clock"></use></svg>
+        Midlertidigt låst op til {{ folder.temporarily_unlocked_until|date:'j. F Y H:i' }}.
+      </p>
+    {% elif folder.is_locked %}
+      <p class="muted mb-4"><svg class="ni arkiv-lock-status" width="14" height="14" viewBox="0 0 24 24" aria-label="Mappen er låst" title="Mappen er låst"><use href="#i-lock"></use></svg></p>
+    {% endif %}
+  {% endif %}
+
   {% if can_write %}
     {% comment %}
       The bytes go straight to the bucket, not through Django - see arkiv/uploads.py and
@@ -68,6 +80,24 @@
         <input type="hidden" name="done_token" value="" data-batch-token>
         <button type="submit" class="btn btn-secondary" data-batch-submit>Hent hele mappen</button>
       </form>
+      {% if can_manage_locks %}
+        {% if folder.locked_at and folder.unlocked_until and folder.unlocked_until > now %}
+          <form method="post" action="{% url 'arkiv:folder_relock' folder.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-secondary">Lås igen</button>
+          </form>
+        {% elif folder.locked_at %}
+          <form method="post" action="{% url 'arkiv:folder_unlock' folder.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-secondary">Lås op i en time</button>
+          </form>
+        {% else %}
+          <form method="post" action="{% url 'arkiv:folder_lock' folder.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-secondary">Lås mappe</button>
+          </form>
+        {% endif %}
+      {% endif %}
       {% if can_delete_folder %}
         {% comment %}
           The only confirm() in Arkiv, and it earns it. Removing a file is one click from undo in
@@ -116,6 +146,12 @@
           <a href="{% url 'arkiv:folder' sub.pk %}">
             <svg class="ni" aria-hidden="true"><use href="#i-folder"></use></svg>
             <span class="arkiv-name">{{ sub.name }}</span>
+            {% if sub.temporarily_unlocked_until %}
+              <svg class="ni arkiv-lock-status" width="14" height="14" viewBox="0 0 24 24" aria-label="Mappen er midlertidigt låst op" title="Midlertidig oplåsning udløber {{ sub.temporarily_unlocked_until|date:'j. F Y H:i' }}"><use href="#i-lock"></use></svg>
+              <svg class="ni arkiv-lock-status" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" title="Midlertidig oplåsning udløber {{ sub.temporarily_unlocked_until|date:'j. F Y H:i' }}"><use href="#i-clock"></use></svg>
+            {% elif sub.is_locked %}
+              <svg class="ni arkiv-lock-status" width="14" height="14" viewBox="0 0 24 24" aria-label="Mappen er låst" title="Mappen er låst"><use href="#i-lock"></use></svg>
+            {% endif %}
           </a>
           {% if sub.workgroup %}<span class="chip">{{ sub.workgroup.name }}</span>{% endif %}
         </li>

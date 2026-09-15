@@ -33,15 +33,20 @@ table.
 """
 
 from collections.abc import Collection
+from datetime import timedelta
 
 from django.db.models import Q, QuerySet
 from django.http import HttpRequest
+from django.utils import timezone
 
 from core.rollout import Gate
 from residents.models import Residency, Resident, Role, active_period
 from residents.permissions import View, current_resident, request_has_role
 
 from .models import ArchiveFile, ArchiveFolder
+
+DELETE_RETENTION = timedelta(days=30)
+TEMPORARY_UNLOCK = timedelta(hours=1)
 
 # None = every logged-in resident. A tuple = only those roles (administrator implies every role, so
 # administrators and superusers are always in).
@@ -165,6 +170,11 @@ def can_manage_roots(request: HttpRequest) -> bool:
     return request_has_role(request, Role.ADMINISTRATOR, Role.INSPEKTION)
 
 
+def can_manage_locks(request: HttpRequest) -> bool:
+    """Whether this request may lock or temporarily unlock archive folders."""
+    return request_has_role(request, Role.ADMINISTRATOR)
+
+
 def can_write(folder: ArchiveFolder, request: HttpRequest) -> bool:
     """Whether `request` may add a subfolder or a file to `folder`.
 
@@ -173,7 +183,7 @@ def can_write(folder: ArchiveFolder, request: HttpRequest) -> bool:
     write is attributed and soft-deleted rather than lost.
     """
     resident = current_resident(request)
-    return resident is not None and can_read(folder, resident)
+    return resident is not None and can_read(folder, resident) and not folder.is_locked()
 
 
 def can_delete_file(file: ArchiveFile, request: HttpRequest) -> bool:
@@ -189,7 +199,7 @@ def can_delete_file(file: ArchiveFile, request: HttpRequest) -> bool:
     gone". `can_purge_file` below is the second stage, and the answer this docstring used to say a
     hard delete would need.
     """
-    return can_write(file.folder, request)
+    return can_write(file.folder, request) and file.uploaded_at > timezone.now() - DELETE_RETENTION
 
 
 def can_delete_folder(folder: ArchiveFolder, request: HttpRequest) -> bool:
@@ -205,6 +215,8 @@ def can_delete_folder(folder: ArchiveFolder, request: HttpRequest) -> bool:
     makes it safe to bury two hundred photographs behind one tap - so it is enforced in the view
     for everybody alike. See views.folder_delete.
     """
+    if folder.created_at <= timezone.now() - DELETE_RETENTION or folder.is_locked():
+        return False
     if folder.parent_id is None:
         return can_manage_roots(request)
     return can_write(folder, request)
@@ -227,4 +239,4 @@ def can_purge_file(file: ArchiveFile, request: HttpRequest) -> bool:
     rule is identical today: these are two different questions about two different acts, and the
     place to narrow one without the other is here.
     """
-    return can_write(file.folder, request)
+    return can_delete_file(file, request)

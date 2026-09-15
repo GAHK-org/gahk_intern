@@ -1593,6 +1593,9 @@
      size, which is how the folder icon first came out enormous. */
   .arkiv-list .ni { width:18px; height:18px; flex:none; stroke:currentColor; fill:none;
     color:var(--brass); }
+   .arkiv-lock-status { width:14px; height:14px; flex:none; stroke:currentColor; fill:none;
+      color:var(--muted); }
+   .arkiv-list .arkiv-lock-status { color:var(--muted); }
   /* The name truncates rather than wrapping: one row per file keeps a long folder scannable, and
      the full name is still in the link's accessible name. */
   .arkiv-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
