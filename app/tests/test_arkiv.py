@@ -904,15 +904,16 @@ def test_seeding_gives_every_embedsgruppe_a_gated_root() -> None:
         assert folder.effective_workgroup_id == workgroup.pk, f"{workgroup.name} is not gated"
 
 
-def test_seeding_gives_the_house_a_shared_photo_root() -> None:
-    """Billeder has no embedsgruppe, so every resident reads it - and, because can_write follows
-    can_read, every resident uploads to it too. It is also the answer to current-only membership:
-    somewhere no rotation can take away."""
+def test_seeding_keeps_photos_in_a_nested_shared_folder() -> None:
+    """Images remain in the demo archive without creating a predefined Billeder root."""
     from django.core.management import call_command
 
     call_command("seed_arkiv_roots", verbosity=0)
 
-    billeder = ArchiveFolder.objects.get(parent=None, name="Billeder")
+    assert not ArchiveFolder.objects.filter(parent=None, name="Billeder").exists()
+    billeder = ArchiveFolder.objects.create(
+        parent=ArchiveFolder.objects.get(parent=None, name="Fælles dokumenter"), name="Billeder"
+    )
     assert billeder.effective_workgroup_id is None
 
 
@@ -926,28 +927,28 @@ def test_seeding_twice_changes_nothing(make_resident: Callable) -> None:
     assert ArchiveFolder.objects.count() == before
 
 
-def test_seeding_does_not_resurrect_a_deleted_root() -> None:
+def test_seeding_does_not_resurrect_a_deleted_shared_root() -> None:
     """A root Inspektionen deliberately removed must stay removed, not come back on the next run."""
     from django.core.management import call_command
     from django.utils import timezone
 
     call_command("seed_arkiv_roots", verbosity=0)
-    ArchiveFolder.objects.filter(parent=None, name="Billeder").update(deleted_at=timezone.now())
+    ArchiveFolder.objects.filter(parent=None, name="Fælles dokumenter").update(deleted_at=timezone.now())
 
     call_command("seed_arkiv_roots", verbosity=0)
 
-    assert ArchiveFolder.objects.alive().filter(parent=None, name="Billeder").count() == 1
+    assert ArchiveFolder.objects.alive().filter(parent=None, name="Fælles dokumenter").count() == 1
 
 
-def test_every_resident_can_upload_to_the_shared_photo_root(resident_in: Callable) -> None:
-    """The whole point of Billeder: see it, and add to it, with no embedsgruppe involved."""
+def test_every_resident_can_upload_to_the_shared_root(resident_in: Callable) -> None:
+    """Everyone can use the shared Fælles dokumenter root without an embedsgruppe."""
     from django.core.management import call_command
 
     call_command("seed_arkiv_roots", verbosity=0)
-    billeder = ArchiveFolder.objects.get(parent=None, name="Billeder")
+    shared_root = ArchiveFolder.objects.get(parent=None, name="Fælles dokumenter")
     resident = resident_in("a@gahk.dk", None)
 
-    body = login(resident).get(f"/intern/arkiv/mappe/{billeder.pk}/").content.decode()
+    body = login(resident).get(f"/intern/arkiv/mappe/{shared_root.pk}/").content.decode()
 
     assert "data-arkiv-upload" in body, "no upload control on the shared root"
 

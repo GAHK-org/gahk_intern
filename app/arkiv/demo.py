@@ -3,7 +3,7 @@
 Called by `manage.py seed_demo`, like opslagstavle.demo and events.demo. Three things beyond the
 roots, each chosen to make one behaviour visible without anyone having to read the access rules:
 
-  * a **nested** folder under Billeder, so the breadcrumb and the subfolder listing do something;
+    * nested image folders, so the breadcrumb and the subfolder listing do something;
   * a folder under a gated root, so it is obvious that visibility is inherited downwards;
   * a few small files with real bytes in the store, so downloading works rather than 404ing;
   * and for the images, REAL JPEGs with both derived sizes, so the grid and the viewer work.
@@ -33,11 +33,8 @@ DEMO_COLOURS = ["#2f6f4e", "#6f4e2f", "#2f4e6f", "#6f2f4e"]
 
 # (folder name, parent root, files) - the parent is looked up by name so this survives reordering.
 DEMO_TREE: list[tuple[str, str, list[str]]] = [
-    (
-        "Sommerfest 2026",
-        "Billeder",
-        ["gruppebillede.jpg", "teltet.jpg", "morgenmad.jpg", "oprydning.jpg"],
-    ),
+    ("Billeder", "Fælles dokumenter", []),
+    ("Sommerfest 2026", "Billeder", ["gruppebillede.jpg", "teltet.jpg", "morgenmad.jpg", "oprydning.jpg"]),
     ("Husorden", "Fælles dokumenter", ["husorden.pdf"]),
     ("Regnskab 2026", "Regnskabsgruppen", ["kvartalsrapport.pdf"]),
 ]
@@ -50,7 +47,7 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
     store = get_store()
     made = 0
     for folder_name, parent_name, filenames in DEMO_TREE:
-        parent = ArchiveFolder.objects.alive().filter(parent=None, name=parent_name).first()
+        parent = ArchiveFolder.objects.alive().filter(name=parent_name).first()
         if parent is None:
             # The embedsgruppe does not exist in this database - fine, skip that branch.
             continue
