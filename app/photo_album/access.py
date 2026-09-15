@@ -53,3 +53,11 @@ def can_delete(media: Media, request: HttpRequest) -> bool:
         and not media.album.is_locked()
         and media.added_at >= timezone.now() - timedelta(days=30)
     )
+
+
+def can_permanently_delete(media: Media, request: HttpRequest) -> bool:
+    return (
+        can_manage_media(request)
+        and media.deleted_at is not None
+        and media.added_at >= timezone.now() - timedelta(hours=1)
+    )

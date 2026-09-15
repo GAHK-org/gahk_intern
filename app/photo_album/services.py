@@ -1,10 +1,14 @@
 """State transitions for albums. Views and scheduled cleanup use these rules together."""
 
+import subprocess
 from datetime import datetime, timedelta
+from io import BytesIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
-from django.core.files.base import File
+from django.core.files.base import ContentFile, File
 from django.utils import timezone
+from PIL import ExifTags, Image, ImageOps
 
 from residents.models import Resident
 
@@ -30,30 +34,143 @@ def upload_media(
         metadata=extract_metadata(uploaded_file),
     )
     media.original.save(filename, uploaded_file, save=False)
-    for field in (media.high_definition, media.thumbnail):
-        uploaded_file.seek(0)
-        field.save(filename, File(uploaded_file), save=False)
+    variants = image_variants(uploaded_file, filename) or video_variants(uploaded_file, filename)
+    if variants is None:
+        # Preserve an unsupported source rather than rejecting the resident's original upload.
+        for field in (media.high_definition, media.thumbnail):
+            uploaded_file.seek(0)
+            field.save(filename, File(uploaded_file), save=False)
+    else:
+        high_definition, thumbnail = variants
+        media.high_definition.save(high_definition.name or "high-definition.jpg", high_definition, save=False)
+        media.thumbnail.save(thumbnail.name or "thumbnail.jpg", thumbnail, save=False)
     media.save()
     return media
+
+
+def image_variants(uploaded_file: File, filename: str) -> tuple[ContentFile, ContentFile] | None:
+    """Build the viewer and grid JPEGs for one image, or defer unsupported media unchanged."""
+    try:
+        uploaded_file.seek(0)
+        image = ImageOps.exif_transpose(Image.open(uploaded_file)).convert("RGB")
+        return _jpeg_variant(image, filename, 1600), _jpeg_variant(image, filename, 320)
+    except (ImportError, OSError, ValueError):
+        return None
+    finally:
+        uploaded_file.seek(0)
+
+
+def _jpeg_variant(image: Image.Image, filename: str, maximum_dimension: int) -> ContentFile:
+    variant = image.copy()
+    variant.thumbnail((maximum_dimension, maximum_dimension))
+    output = BytesIO()
+    variant.save(output, format="JPEG", quality=82, optimize=True)
+    return ContentFile(output.getvalue(), name=f"{Path(filename).stem}.jpg")
+
+
+def video_variants(uploaded_file: File, filename: str) -> tuple[ContentFile, ContentFile] | None:
+    """Transcode a video to a viewer-sized MP4 and extract a grid-sized JPEG frame."""
+    try:
+        import imageio_ffmpeg
+    except ImportError:
+        return None
+
+    try:
+        with TemporaryDirectory(prefix="photo-album-") as directory:
+            source = Path(directory) / f"source{Path(filename).suffix or '.upload'}"
+            high_definition = Path(directory) / "high-definition.mp4"
+            thumbnail = Path(directory) / "thumbnail.jpg"
+            uploaded_file.seek(0)
+            with source.open("wb") as target:
+                for chunk in uploaded_file.chunks():
+                    target.write(chunk)
+            ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+            _run_ffmpeg(
+                ffmpeg,
+                "-i",
+                str(source),
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a?",
+                "-vf",
+                "scale=1600:1600:force_original_aspect_ratio=decrease",
+                "-c:v",
+                "libx264",
+                "-crf",
+                "23",
+                "-c:a",
+                "aac",
+                "-movflags",
+                "+faststart",
+                str(high_definition),
+            )
+            _run_ffmpeg(
+                ffmpeg,
+                "-i",
+                str(source),
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=320:320:force_original_aspect_ratio=decrease",
+                str(thumbnail),
+            )
+            return (
+                ContentFile(high_definition.read_bytes(), name=f"{Path(filename).stem}.mp4"),
+                ContentFile(thumbnail.read_bytes(), name=f"{Path(filename).stem}.jpg"),
+            )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    finally:
+        uploaded_file.seek(0)
+
+
+def _run_ffmpeg(executable: str, *arguments: str) -> None:
+    subprocess.run(  # noqa: S603 -- executable comes from imageio-ffmpeg's installed package.
+        [executable, "-y", *arguments],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def extract_metadata(uploaded_file: File) -> dict[str, str]:
     """Read EXIF when Pillow is available; unsupported files remain valid uploads."""
     try:
-        from PIL import ExifTags, Image
-
         uploaded_file.seek(0)
         exif = Image.open(uploaded_file).getexif()
         values = {ExifTags.TAGS.get(key, str(key)): value for key, value in exif.items()}
-        return {
-            key: str(values[key])
-            for key in ("DateTimeOriginal", "Model", "Make")
-            if values.get(key) is not None
-        }
+        metadata: dict[str, str] = {}
+        if values.get("DateTimeOriginal"):
+            metadata["Oprindelig dato"] = str(values["DateTimeOriginal"])
+        camera = " ".join(str(values[key]) for key in ("Make", "Model") if values.get(key)).strip()
+        if camera:
+            metadata["Kamera"] = camera
+        location = _gps_location(exif)
+        if location:
+            metadata["Sted"] = location
+        return metadata
     except (ImportError, OSError, ValueError):
         return {}
     finally:
         uploaded_file.seek(0)
+
+
+def _gps_location(exif: Image.Exif) -> str | None:
+    """Format GPS EXIF coordinates as a useful location when an image provides them."""
+    try:
+        gps = exif.get_ifd(ExifTags.IFD.GPSInfo)
+        latitude = _decimal_coordinate(gps[2], gps[1])
+        longitude = _decimal_coordinate(gps[4], gps[3])
+        return f"{latitude:.6f}, {longitude:.6f}"
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+
+
+def _decimal_coordinate(parts: tuple[float, float, float], hemisphere: str) -> float:
+    degrees, minutes, seconds = parts
+    coordinate = degrees + minutes / 60 + seconds / 3600
+    return -coordinate if hemisphere in {"S", "W"} else coordinate
 
 
 def approve(media: Media, resident: Resident) -> None:
@@ -71,16 +188,18 @@ def reject(media: Media, resident: Resident) -> None:
 
 
 def delete(media: Media, resident: Resident, now: datetime | None = None) -> bool:
-    """Delete recent mistakes outright; otherwise move the media to the recoverable bin."""
+    """Move media to the recoverable bin."""
     moment = now or timezone.now()
-    if media.added_at >= moment - timedelta(hours=1):
-        _delete_files(media)
-        media.delete()
-        return True
     media.deleted_at = moment
     media.deleted_by = resident
     media.save(update_fields=["deleted_at", "deleted_by"])
     return False
+
+
+def permanently_delete(media: Media) -> None:
+    """Remove all stored media variants and their database record."""
+    _delete_files(media)
+    media.delete()
 
 
 def purge_expired(now: datetime | None = None) -> int:

@@ -1,50 +1,36 @@
 {% extends "base.html" %}
+{% block title %}{{ album.name }} | Fotoalbum{% endblock %}
 {% block content %}
-<h1>{{ album.name }}</h1>
-{% if not album.is_locked %}<form method="post" action="{% url 'photo_album:upload' album.pk %}" enctype="multipart/form-data">{% csrf_token %}<input type="file" name="file" required><input name="title" placeholder="Titel"><button>Upload</button></form>{% else %}<p>Albummet er låst.</p>{% endif %}
-<div id="album-media">
-{% for item in media %}
-<button type="button" class="media-thumbnail" data-index="{{ forloop.counter0 }}" data-high-definition="{{ item.high_definition.url }}" data-original="{{ item.original.url }}" data-title="{{ item.title }}" data-metadata="{{ item.metadata }}">
-	<img src="{{ item.thumbnail.url }}" alt="{{ item.title }}">
-	{% if item.status == 'pending' %}<strong>Afventer godkendelse</strong>{% endif %}
-</button>
-{% empty %}<p>Ingen medier.</p>{% endfor %}
-</div>
-<dialog id="media-viewer">
-	<button type="button" id="previous-media" aria-label="Forrige">&larr;</button>
-	<img id="viewer-image" alt="">
-	<aside><h2 id="viewer-title"></h2><dl id="viewer-metadata"></dl><a id="download-original" download>Download original</a></aside>
-	<button type="button" id="next-media" aria-label="Næste">&rarr;</button>
-	<button type="button" id="close-viewer">Luk</button>
+<section class="album-detail">
+	<header class="album-heading">
+		<div><a class="album-back" href="{% url 'photo_album:index' %}">Fotoalbum</a><h1>{{ album.name }}</h1><p class="album-subtitle"><svg aria-hidden="true"><use href="#i-folder"></use></svg>{{ album.folder }}</p></div>
+		{% if album.is_locked %}<span class="album-locked">Albummet er låst</span>{% elif can_manage %}<div class="album-actions"><a class="btn-link" href="{% url 'photo_album:bin' %}">Papirkurv</a>{% if not media %}<form method="post" action="{% url 'photo_album:delete_album' album.pk %}">{% csrf_token %}<button class="btn-link-danger" type="submit">Slet album</button></form>{% endif %}</div>{% endif %}
+	</header>
+	{% if not album.is_locked %}
+		<form class="album-upload" method="post" action="{% url 'photo_album:upload' album.pk %}" enctype="multipart/form-data">
+			{% csrf_token %}
+			<label class="album-file-picker"><input type="file" name="uploads" accept="image/*,video/*" multiple required><span>Vælg fotoer eller videoer</span><small>Du kan vælge flere filer på én gang</small></label>
+			<input name="title" placeholder="Titel til alle valgte filer (valgfrit)">
+			<button class="btn" type="submit">Upload</button>
+		</form>
+	{% endif %}
+	<div class="album-media-grid" data-album-gallery>
+	{% for item in media %}
+		<article class="album-media-item">
+		<button type="button" class="album-media-tile" data-kind="{% if item.content_type|slice:':6' == 'video/' %}video{% else %}image{% endif %}" data-full="{{ item.high_definition.url }}" data-original="{{ item.original.url }}" data-title="{{ item.title }}" data-uploaded-by="{{ item.requested_by.full_name }}" data-uploaded-at="{{ item.added_at|date:'j. F Y, H:i' }}" data-metadata="{{ item.metadata|escapejs }}"{% if item.can_delete %} data-delete-url="{% url 'photo_album:delete' item.pk %}"{% endif %}>
+			{% if item.content_type|slice:':6' == 'video/' %}<img src="{{ item.thumbnail.url }}" alt="{{ item.title }}" loading="lazy"><span class="album-video-mark">Video</span>{% else %}<img src="{{ item.thumbnail.url }}" alt="{{ item.title }}" loading="lazy">{% endif %}
+			{% if item.status == 'pending' %}<strong>Afventer godkendelse</strong>{% endif %}
+		</button>
+		{% if can_manage and item.status == 'pending' %}<div class="album-media-controls"><form method="post" action="{% url 'photo_album:approve' item.pk %}">{% csrf_token %}<button type="submit">Godkend</button></form><form method="post" action="{% url 'photo_album:reject' item.pk %}">{% csrf_token %}<button class="btn-link-danger" type="submit">Afvis</button></form></div>{% endif %}
+		</article>
+	{% empty %}<p class="album-empty">Dette album venter på sine første minder.</p>{% endfor %}
+	</div>
+</section>
+<dialog class="album-viewer" data-album-viewer aria-label="Medievisning">
+	<button type="button" class="album-viewer-close" data-gallery-close aria-label="Luk">&times;</button>
+	<button type="button" class="album-viewer-arrow album-viewer-previous" data-gallery-previous aria-label="Forrige">&larr;</button>
+	<div class="album-viewer-stage"><img data-gallery-image alt=""><video data-gallery-video controls hidden></video></div>
+	<aside><p class="album-eyebrow">Medie</p><h2 data-gallery-title></h2><dl data-gallery-metadata></dl><a class="btn btn-secondary" data-gallery-download download>Download original</a><form method="post" data-gallery-delete-form hidden onsubmit="return confirm('Er du sikker på, at du vil flytte mediet til papirkurven?');">{% csrf_token %}<button class="btn-link-danger" type="submit">Fjern</button></form></aside>
+	<button type="button" class="album-viewer-arrow album-viewer-next" data-gallery-next aria-label="Næste">&rarr;</button>
 </dialog>
-<script>
-(() => {
-	const entries = [...document.querySelectorAll('.media-thumbnail')];
-	const dialog = document.querySelector('#media-viewer');
-	let current = 0;
-	const render = (index) => {
-		current = (index + entries.length) % entries.length;
-		const entry = entries[current];
-		document.querySelector('#viewer-image').src = entry.dataset.highDefinition;
-		document.querySelector('#viewer-image').alt = entry.dataset.title;
-		document.querySelector('#viewer-title').textContent = entry.dataset.title;
-		document.querySelector('#download-original').href = entry.dataset.original;
-		const metadata = JSON.parse(entry.dataset.metadata || '{}');
-		document.querySelector('#viewer-metadata').replaceChildren(...Object.entries(metadata).flatMap(([key, value]) => {
-			const term = document.createElement('dt'); term.textContent = key;
-			const detail = document.createElement('dd'); detail.textContent = value;
-			return [term, detail];
-		}));
-	};
-	entries.forEach((entry, index) => entry.addEventListener('click', () => { render(index); dialog.showModal(); }));
-	document.querySelector('#previous-media').addEventListener('click', () => render(current - 1));
-	document.querySelector('#next-media').addEventListener('click', () => render(current + 1));
-	document.querySelector('#close-viewer').addEventListener('click', () => dialog.close());
-	document.addEventListener('keydown', (event) => {
-		if (!dialog.open) return;
-		if (event.key === 'ArrowLeft') render(current - 1);
-		if (event.key === 'ArrowRight') render(current + 1);
-	});
-})();
-</script>
 {% endblock %}

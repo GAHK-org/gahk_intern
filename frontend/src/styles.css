@@ -1651,6 +1651,48 @@
   }
   .arkiv-grid .ni { width:40px; height:40px; margin:24px auto; display:block; color:var(--muted); }
 
+   /* --- Photo album ------------------------------------------------------------------------- */
+   .album-heading { display:flex; align-items:end; justify-content:space-between; gap:16px; margin-bottom:28px; }
+   .album-heading h1 { margin:0; font-family:Georgia, serif; font-size:32px; color:var(--ink); }
+   .album-eyebrow { margin:0 0 5px; color:var(--brass); font-size:12px; font-weight:700; letter-spacing:0; text-transform:uppercase; }
+   .album-folders { display:grid; gap:28px; }
+   .album-folder { border-top:1px solid var(--line); padding-top:16px; }
+   .album-folder h2 { display:flex; align-items:center; gap:8px; margin:0 0 12px; font-size:16px; }
+   .album-folder h2 svg, .album-subtitle svg { width:19px; height:19px; color:var(--brass); fill:none; stroke:currentColor; }
+   .album-folder-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:10px; }
+   .album-card { display:grid; grid-template-columns:30px 1fr; gap:2px 10px; min-height:82px; padding:14px;
+      border:1px solid var(--line); border-radius:8px; color:inherit; text-decoration:none; background:var(--card); }
+   .album-card:hover { border-color:var(--brass); background:var(--surface-2); }
+   .album-card svg { grid-row:span 2; width:28px; height:28px; fill:none; stroke:var(--brass); }
+   .album-card-name { align-self:end; font-weight:650; }
+   .album-card-count { align-self:start; color:var(--muted); font-size:12px; }
+   .album-empty { margin:24px 0; color:var(--muted); }
+   .album-back { color:var(--brass); font-size:13px; text-decoration:none; }
+   .album-back:hover { text-decoration:underline; }
+   .album-subtitle { display:flex; align-items:center; gap:6px; margin:6px 0 0; color:var(--muted); }
+   .album-locked { padding:6px 10px; border-radius:5px; color:var(--neg); background:var(--neg-bg); font-size:13px; }
+   .album-actions, .album-actions form, .album-media-controls, .album-media-controls form { display:flex; align-items:center; gap:8px; margin:0; }
+   .album-upload { display:flex; align-items:stretch; gap:10px; padding:12px; margin:0 0 22px; border:1px dashed var(--line); border-radius:8px; background:var(--surface-2); }
+   .album-file-picker { flex:1 1 260px; min-width:0; display:grid; cursor:pointer; }
+   .album-file-picker input { position:absolute; inline-size:1px; block-size:1px; opacity:0; }
+   .album-file-picker span { color:var(--brass); font-weight:650; }.album-file-picker small { color:var(--muted); }
+   .album-upload > input { flex:1 1 180px; min-width:0; }
+   .album-media-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(138px, 1fr)); gap:8px; }
+   .album-media-item { min-width:0; }.album-media-tile { position:relative; width:100%; min-width:0; padding:0; overflow:hidden; border:0; border-radius:7px; background:var(--surface-2); color:var(--ink); text-align:left; cursor:pointer; }
+   .album-media-tile img, .album-media-tile video { display:block; width:100%; aspect-ratio:1; object-fit:cover; background:var(--surface-2); }
+   .album-media-tile strong, .album-video-mark { position:absolute; top:6px; left:6px; padding:3px 6px; border-radius:4px; background:rgb(0 0 0 / .68); color:#fff; font-size:11px; }
+   .album-video-mark { left:auto; right:6px; }
+   .album-media-tile:hover img, .album-media-tile:hover video, .album-media-tile:focus-visible img, .album-media-tile:focus-visible video { filter:brightness(.84); }
+   .album-media-controls { min-height:22px; padding:3px 4px; justify-content:center; }.album-media-controls button { border:0; background:none; padding:0; color:var(--brass); cursor:pointer; font:inherit; font-size:12px; }.album-media-controls .btn-link-danger { color:var(--neg); }
+   .album-viewer { display:none; width:min(1120px, calc(100vw - 32px)); height:min(760px, calc(100vh - 32px)); max-width:none; max-height:none; margin:auto; padding:0; border:0; border-radius:8px; color:var(--ink); background:var(--card); }
+   .album-viewer::backdrop { background:rgb(5 12 9 / .88); }
+   .album-viewer[open] { display:grid; grid-template-columns:minmax(0, 1fr) 260px; grid-template-rows:minmax(0, 1fr); overflow:visible; }
+   .album-viewer-stage { min-width:0; min-height:0; display:grid; place-items:center; overflow:hidden; padding:24px; box-sizing:border-box; background:#111; }
+   .album-viewer-stage img, .album-viewer-stage video { display:block; width:100%; height:100%; min-width:0; min-height:0; max-width:100%; max-height:100%; object-fit:contain; }
+   .album-viewer aside { padding:28px 20px; overflow:auto; color:#f6f3ea; background:#26332d; }.album-viewer h2 { margin:0 0 18px; color:#fffdf7; font-family:Georgia, serif; font-size:22px; }.album-viewer dl { margin:0 0 24px; }.album-viewer dt { margin-top:10px; color:#d2ddd4; font-size:12px; }.album-viewer dd { margin:2px 0 0; color:#fffdf7; }
+   .album-viewer-close, .album-viewer-arrow { position:absolute; display:grid; place-items:center; width:38px; height:38px; border:0; border-radius:50%; background:rgb(0 0 0 / .64); color:#fff; font-size:24px; cursor:pointer; }.album-viewer-close { top:-12px; right:-12px; }.album-viewer-arrow { top:calc(50% - 19px); }.album-viewer-previous { left:-48px; }.album-viewer-next { right:-48px; }
+   @media (max-width:720px) { .album-heading { align-items:start; flex-direction:column; }.album-upload { flex-wrap:wrap; }.album-upload > input { min-height:38px; }.album-media-grid { grid-template-columns:repeat(auto-fill, minmax(110px, 1fr)); }.album-viewer { width:calc(100vw - 20px); height:auto; max-height:calc(100vh - 20px); }.album-viewer[open] { grid-template-columns:1fr; overflow:auto; }.album-viewer-stage { height:55vh; min-height:0; padding:28px 20px 20px; }.album-viewer-stage img { max-height:none; }.album-viewer aside { padding:16px; }.album-viewer-arrow { top:calc(27.5vh - 19px); }.album-viewer-previous { left:8px; }.album-viewer-next { right:8px; }.album-viewer-close { top:6px; right:6px; } }
+
   /* The checkbox sits on the picture rather than beside it. Hidden until there is a reason to show
      it - a selection in progress, a hover, or keyboard focus - so an ordinary browse is pictures
      rather than pictures plus a hundred empty boxes. */
