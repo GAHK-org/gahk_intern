@@ -1,6 +1,6 @@
 """State transitions for albums. Views and scheduled cleanup use these rules together."""
 
-import subprocess
+import subprocess  # nosec B404
 from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -130,7 +130,7 @@ def video_variants(uploaded_file: File, filename: str) -> tuple[ContentFile, Con
 
 
 def _run_ffmpeg(executable: str, *arguments: str) -> None:
-    subprocess.run(  # noqa: S603 -- executable comes from imageio-ffmpeg's installed package.
+    subprocess.run(  # noqa: S603  # nosec B603
         [executable, "-y", *arguments],
         check=True,
         stdout=subprocess.DEVNULL,
