@@ -98,6 +98,12 @@ document.addEventListener(
   async (event: SubmitEvent) => {
     const form = event.target;
     if (!(form instanceof HTMLFormElement)) return;
+    // OPT-OUT, not opt-in. Every image upload in the building wants downscaling — the one
+    // exception is the photo album, which keeps the original at full resolution on purpose and
+    // derives its own sizes server-side. Gating this on an opt-in attribute instead silently
+    // un-downscaled every other form (opslagstavlen, Den Hurtige, profiles, events, ølkælder,
+    // Arkiv), where the 5 MB server cap then drops a normal phone photo with only a warning.
+    if (form.hasAttribute("data-no-downscale-images")) return;
     if (form.dataset.imgReady === "1") {
       // Second pass, after the downscale. Clear the flag rather than leaving it set: a form that
       // survives its own submit — the thread panel's, which htmx posts and then resets — would
