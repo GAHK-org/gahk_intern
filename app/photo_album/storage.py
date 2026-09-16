@@ -6,37 +6,46 @@ path — because for THAT storage, the URL is a database value: cms.Page.backgro
 and opslag Markdown all embed `/media/...` directly, so it can never point straight at the bucket
 (core/storage.py has the full argument).
 
-None of that applies to a photo-album item. Nothing here is written into another row's body or
-CharField — a media item's URL is read fresh out of the database (via the FileField) on every
-request, never copied into stored HTML or Markdown. So `.url()` below returns a presigned bucket URL
-directly, with no Django hop at all: no `/media/` redirect, and — the reason it matters for this
-app in particular — no request of gunicorn's ever streams a photo, still less a hundreds-of-MB video,
-through this process on its way from S3 to a browser.
+None of that applies to a photo-album item — nothing here is written into another row's body or
+CharField. But `.url()` still does NOT return a presigned bucket URL directly: that URL is a bearer
+token, good for an hour with no further check, and photo_album.access has a real rule a bare token
+can't enforce (`visible_media`: a PENDING upload is visible only to its uploader and Fotogruppen). A
+copied or logged link would leak it to anyone for as long as the signature lives.
 
-Falls back to local disk only because the test suite does: tests/conftest.py's autouse fixture
-overrides `STORAGES["default"]` to plain FileSystemStorage for the whole suite so pytest never
-touches a real bucket, and this follows that same signal (see `_build_storage` below) rather than
-keeping its own copy of the guard. There is no supported way to run this app for real — dev, CI
-outside pytest, staging, production — without S3_BUCKET configured; nothing serves these files off
-local disk over HTTP any more.
+So `.url()` returns a site-relative `/fotoalbum-media/<name>` path instead, resolved by
+`photo_album.views.serve_media` — same shape as `core.media.serve_media`, but re-checking
+`photo_album.access`'s own per-item rule on every request instead of just "is logged in", and
+redirecting to a freshly presigned URL from `signed_url()` below rather than streaming. Falls back
+to local disk only because the test suite does: tests/conftest.py's autouse fixture overrides
+`STORAGES["default"]` to plain FileSystemStorage for the whole suite so pytest never touches a real
+bucket, and this follows that same signal (see `_build_storage` below) rather than keeping its own
+copy of the guard. There is no supported way to run this app for real — dev, CI outside pytest,
+staging, production — without S3_BUCKET configured.
 """
 
 from typing import Any, cast
+from urllib.parse import urljoin
 
 from django.conf import settings
 from django.core.files.storage import FileSystemStorage, Storage, storages
 from django.dispatch import receiver
 from django.test.signals import setting_changed
+from django.utils.encoding import filepath_to_uri
 from django.utils.functional import LazyObject, empty
 from storages.utils import clean_name
 
 from core.storage import MediaS3Storage, PublicEndpointS3Storage
 
+# The URL prefix photo_album.views.serve_media is mounted at (config/urls.py) and the local-disk
+# fallback's base_url both use this, so the two backends produce identical URL shapes — the same
+# invariant core.storage.MediaS3Storage keeps for "media", just for a route the test suite also hits.
+MEDIA_URL_PREFIX = "fotoalbum-media"
+
 
 class PhotoAlbumS3Storage(PublicEndpointS3Storage):
-    """S3 for the bytes; `.url()` is always a presigned bucket URL, never a site-relative path.
+    """S3 for the bytes; `.url()` is a site-relative path, `signed_url()` the real bucket URL.
 
-    See the module docstring for why that is safe here and is not for `core.storage.MediaS3Storage`.
+    See the module docstring for why `.url()` does not return the presigned URL directly here.
     """
 
     def url(
@@ -46,6 +55,20 @@ class PhotoAlbumS3Storage(PublicEndpointS3Storage):
         expire: int | None = None,
         http_method: str | None = None,
     ) -> str:
+        """`/fotoalbum-media/<name>`, reproducing FileSystemStorage.url() — see MediaS3Storage.url()
+        for why this has to quote with filepath_to_uri rather than an f-string."""
+        url = filepath_to_uri(name)
+        if url is not None:
+            url = url.lstrip("/")
+        return urljoin(f"/{MEDIA_URL_PREFIX}/", url)
+
+    def signed_url(
+        self, name: str, expire: int | None = None, parameters: dict[str, Any] | None = None
+    ) -> str:
+        """The real, presigned bucket URL. Only `photo_album.views.serve_media` and
+        `download_original` may call this — anywhere else is a bearer token leaking into stored
+        content or a log line, exactly what `.url()` above exists to avoid.
+        """
         normalized = self._normalize_name(clean_name(name))
         params = dict(parameters) if parameters else {}
         params["Bucket"] = self.bucket_name
@@ -53,7 +76,7 @@ class PhotoAlbumS3Storage(PublicEndpointS3Storage):
         if expire is None:
             expire = self.querystring_expire
         return self.public_connection.meta.client.generate_presigned_url(
-            "get_object", Params=params, ExpiresIn=expire, HttpMethod=http_method
+            "get_object", Params=params, ExpiresIn=expire
         )
 
 
@@ -69,7 +92,7 @@ def _build_storage() -> FileSystemStorage | PhotoAlbumS3Storage:
     """
     if isinstance(storages["default"], MediaS3Storage):
         return PhotoAlbumS3Storage(**settings.PHOTO_ALBUM_S3_OPTIONS)
-    return FileSystemStorage(location=str(settings.MEDIA_ROOT), base_url="/")
+    return FileSystemStorage(location=str(settings.MEDIA_ROOT), base_url=f"/{MEDIA_URL_PREFIX}/")
 
 
 class _ConfiguredPhotoAlbumStorage(LazyObject):

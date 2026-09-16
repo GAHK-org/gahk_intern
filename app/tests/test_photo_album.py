@@ -248,6 +248,73 @@ def test_original_download_returns_original_bytes_and_album_specific_keys(
 
 
 @pytest.mark.django_db
+def test_serve_media_redirects_anonymous_requests_to_login(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    album = Album.objects.create(folder="2026", name="Fest")
+    media = upload_media(
+        album=album,
+        uploaded_file=SimpleUploadedFile("x.jpg", b"bytes", content_type="image/jpeg"),
+        resident=make_resident(),
+        approved=True,
+    )
+
+    response = client.get(media.thumbnail.url)
+
+    assert response.status_code == 302
+    assert response.headers["Location"].startswith("/intern/admin/login")
+
+
+@pytest.mark.django_db
+def test_serve_media_streams_a_visible_item(client: Client, make_resident: Callable[..., Resident]) -> None:
+    requester = make_resident()
+    album = Album.objects.create(folder="2026", name="Fest")
+    media = upload_media(
+        album=album,
+        uploaded_file=SimpleUploadedFile("x.jpg", b"bytes", content_type="image/jpeg"),
+        resident=requester,
+        approved=True,
+    )
+    client.force_login(requester)
+
+    response = client.get(media.thumbnail.url)
+
+    assert response.status_code == 200
+    assert b"".join(response.streaming_content)
+
+
+@pytest.mark.django_db
+def test_serve_media_refuses_a_pending_upload_to_a_stranger(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The rule a bare presigned URL can't enforce: only the uploader (or Fotogruppen) may see a
+    PENDING item — see photo_album.access.visible_media. serve_media re-checks it per request."""
+    requester = make_resident()
+    stranger = make_resident(email="stranger@gahk.dk")
+    album = Album.objects.create(folder="2026", name="Fest")
+    media = upload_media(
+        album=album,
+        uploaded_file=SimpleUploadedFile("x.jpg", b"bytes", content_type="image/jpeg"),
+        resident=requester,
+        approved=False,
+    )
+    client.force_login(stranger)
+
+    assert client.get(media.thumbnail.url).status_code == 403
+
+
+@pytest.mark.django_db
+def test_serve_media_404s_a_key_with_no_matching_row(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    client.force_login(make_resident())
+
+    response = client.get("/fotoalbum-media/photo-album/999999/thumbnail/nope.jpg")
+
+    assert response.status_code == 404
+
+
+@pytest.mark.django_db
 def test_image_metadata_and_upload_attribution_are_available_to_the_viewer(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
@@ -537,12 +604,12 @@ def test_bin_displays_media_in_the_gallery_viewer(
     assert response.status_code == 200
     content = response.content.decode()
     assert "data-album-gallery" in content
-    assert 'src="/thumbnail.jpg"' in content
+    assert 'src="/fotoalbum-media/thumbnail.jpg"' in content
     assert "Fra album: Fest" in content
     # The viewer-sized file is not in the grid any more; it arrives when the item is opened.
-    assert "/high-definition.jpg" not in content
+    assert "/fotoalbum-media/high-definition.jpg" not in content
     detail = client.get(reverse("photo_album:media_detail", args=[media.pk])).json()
-    assert detail["full"] == "/high-definition.jpg"
+    assert detail["full"] == "/fotoalbum-media/high-definition.jpg"
     assert detail["album"] == "Fest"
 
 

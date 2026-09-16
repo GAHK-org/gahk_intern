@@ -9,6 +9,7 @@ from django.views.generic import RedirectView, TemplateView
 from cms import views as cms_views
 from core.media import serve_media
 from events import views as events_views
+from photo_album.views import serve_media as serve_photo_album_media
 
 urlpatterns = [
     path("django-admin/", admin.site.urls),
@@ -40,6 +41,12 @@ urlpatterns = [
     # embeds) is anonymous and everything else needs a session. Note ølkælder is NOT public-site
     # content despite the name — it lives under /intern/oelkaelder/.
     re_path(r"^media/(?P<path>.*)$", serve_media, name="media"),
+    # photo_album's own media route (photo_album.storage.PhotoAlbumS3Storage.url() points here) —
+    # a presigned bucket URL is a bearer token good for an hour with no further check, and
+    # photo_album.access has a rule one can't enforce (a pending upload is visible only to its
+    # uploader and Fotogruppen), so this re-checks that rule on every request instead of handing the
+    # signed URL out once at render time. See photo_album.views.serve_media.
+    re_path(r"^fotoalbum-media/(?P<path>.*)$", serve_photo_album_media, name="photo_album_media"),
     # PWA service worker for Den Hurtige. Must be served from the ROOT path: a service worker's
     # default scope is its own directory, so only a root-scoped worker covers /intern/. Served via
     # TemplateView because static/ would put it under /static/ and cap its scope there.
