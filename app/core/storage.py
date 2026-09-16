@@ -115,8 +115,10 @@ class PublicEndpointS3Storage(S3Storage):
 class MediaS3Storage(PublicEndpointS3Storage):
     """S3 for the bytes, `/media/<name>` for the URL. See the module docstring.
 
-    Set as STORAGES["default"] only when S3_BUCKET is configured; dev and CI run on plain
-    FileSystemStorage, and the two must produce byte-identical URLs for that to be safe.
+    Unconditionally STORAGES["default"] (config/settings.py) — there is no local-disk fallback.
+    The one place FileSystemStorage still runs is the test suite, which overrides STORAGES["default"]
+    itself (tests/conftest.py) rather than this class ever choosing it; the two must still produce
+    byte-identical URLs for that override to be safe.
     """
 
     def get_default_settings(self) -> dict[str, Any]:

@@ -47,7 +47,6 @@ RESERVED_TOP_SEGMENTS = frozenset(
         "begivenheder",
         "kalender",
         "media",
-        "photo-album",
         "static",
         "sw.js",
         "favicon.ico",

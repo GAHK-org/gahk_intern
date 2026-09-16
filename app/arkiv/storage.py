@@ -171,12 +171,14 @@ class S3ArchiveStore:
 
 
 class LocalArchiveStore:
-    """Dev and CI, where there are no credentials and no bucket.
+    """The test suite, where there are no credentials and no bucket.
 
-    Objects live under MEDIA_ROOT/arkiv/... so `task dev` can exercise the whole feature offline.
-    `download_url` returns None, which tells the view to stream the file instead of redirecting -
-    the same two-branch shape as core.media.serve_media, and for the same reason: a code path that
-    only works in production is a code path no test covers.
+    Objects live under MEDIA_ROOT/arkiv/... Chosen the same way core.storage's default media
+    backend is (see get_store below): tests/conftest.py overrides STORAGES["default"] to plain
+    FileSystemStorage for the whole suite, and this follows that signal rather than keeping its own
+    copy of the guard. `download_url` returns None, which tells the view to stream the file instead
+    of redirecting - the same two-branch shape as core.media.serve_media, and for the same reason: a
+    code path that only works in production is a code path no test covers.
     """
 
     def __init__(self, root: Path) -> None:

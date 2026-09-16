@@ -2,13 +2,11 @@ from datetime import datetime
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.contrib.auth.views import redirect_to_login
-from django.core.exceptions import PermissionDenied, SuspiciousOperation, ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db.models import Case, Count, DateTimeField, IntegerField, Q, Value, When
 from django.db.models.functions import Coalesce
 from django.http import (
     FileResponse,
-    Http404,
     HttpRequest,
     HttpResponse,
     HttpResponseRedirect,
@@ -27,7 +25,7 @@ from residents.permissions import current_resident
 from . import access, services
 from .forms import AlbumForm, MediaUploadForm
 from .models import Album, Media
-from .storage import PhotoAlbumS3Storage, photo_album_storage
+from .storage import PhotoAlbumS3Storage
 
 
 @login_required
@@ -232,8 +230,8 @@ def download_original(request: HttpRequest, pk: int) -> HttpResponseBase:
     A video is up to PHOTO_ALBUM_VIDEO_MAX_MB (1 GB): reading that through gunicorn on its way from
     S3 to the browser ties up one of a handful of sync workers for as long as the slowest client's
     connection takes, for no reason — the bytes never need to pass through this process at all. The
-    local-disk fallback (dev/CI, no bucket configured) keeps streaming, since there is no bucket to
-    redirect to.
+    streaming branch below only runs under the test suite, which forces plain FileSystemStorage
+    (tests/conftest.py) precisely so it never has to talk to a real bucket.
     """
     media = _viewable_media(request, pk)
     original_name = media.original.name or "original"
@@ -250,26 +248,6 @@ def download_original(request: HttpRequest, pk: int) -> HttpResponseBase:
         filename=filename,
         content_type=media.content_type or None,
     )
-
-
-def serve_local_media(request: HttpRequest, path: str) -> HttpResponseBase:
-    """/photo-album/<path> — the dev/CI fallback for when there is no bucket.
-
-    Production never reaches this: photo_album_storage.url() there returns a presigned bucket URL
-    straight from S3 (see storage.py), so grid thumbnails, the viewer and download_original above
-    all point at the bucket directly and this route is never linked to. It exists so the feature
-    works the same way under `task dev:local`/CI, which run on local disk with no bucket at all.
-
-    Login-gated like every private /media/ prefix (core.media.PUBLIC_PREFIXES) — these are
-    residents' own photographs, not anything the public site renders.
-    """
-    if not request.user.is_authenticated:
-        return redirect_to_login(request.get_full_path())
-    try:
-        handle = photo_album_storage.open(path)
-    except (FileNotFoundError, IsADirectoryError, PermissionError, ValueError, SuspiciousOperation) as exc:
-        raise Http404("media file not found") from exc
-    return FileResponse(handle)
 
 
 @login_required

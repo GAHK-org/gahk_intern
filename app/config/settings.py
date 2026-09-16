@@ -121,19 +121,19 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 STATICFILES_DIRS = [BASE_DIR / "static"]  # holds the Vite-built bundle (static/dist/)
 
-# Media (user uploads) go to Hetzner Object Storage when S3_BUCKET is set, and to MEDIA_ROOT on the
-# local disk when it is not — which is dev, CI, and prod before the migration. The env variable IS
-# the switch: there is no separate flag to forget, and an unset bucket cannot half-enable anything.
+# Media (user uploads) always go to object storage: Hetzner in production, MinIO for local dev
+# (docker-compose.yml's `minio` service) — there is no local-disk fallback. STORAGES["default"]
+# below is unconditionally core.storage.MediaS3Storage, so a missing or wrong S3_BUCKET is a loud
+# S3 error on the first upload, not a silent switch to writing files onto a disk nobody backs up.
 #
-# MEDIA_URL stays "/media/" either way. That is not an oversight and it is not optional: it is a
-# prefix of content stored in the database, and core.checks (core.E007-E009) refuses to start the
-# process if it or the backend's URLs ever stop matching. core/storage.py has the full argument.
+# The one place local disk survives is the test suite: tests/conftest.py's autouse fixture
+# overrides STORAGES["default"] to plain FileSystemStorage for every test, so pytest never touches
+# a real bucket. That override is test-only — nothing here grants the same thing anywhere else.
+#
+# MEDIA_URL stays "/media/" regardless: it is a prefix of content stored in the database, and
+# core.checks (core.E007-E009) refuses to start the process if it or the backend's URLs ever stop
+# matching. core/storage.py has the full argument.
 S3_BUCKET = os.environ.get("S3_BUCKET", "")
-# Acknowledges local-disk media in a DEBUG-off environment. There is exactly one honest reason to
-# set it — a prod-shaped box with no bucket of its own (staging), or rehearsing the rollback while
-# MEDIA_ROOT still has files. core.E010 refuses to start without it, because since the prod media
-# volume was emptied an unset S3_BUCKET serves nothing and writes uploads to a disk nobody backs up.
-ALLOW_LOCAL_MEDIA = os.environ.get("ALLOW_LOCAL_MEDIA", "") == "1"
 # fsn1 (Falkenstein) / nbg1 (Nuremberg) / hel1 (Helsinki). Keep this in the same location as the VM:
 # traffic inside eu-central does not count against the account's egress allowance.
 S3_LOCATION = os.environ.get("S3_LOCATION", "fsn1")
@@ -195,11 +195,7 @@ PHOTO_ALBUM_S3_OPTIONS = {**_MEDIA_S3_OPTIONS, "location": ""}
 
 # WhiteNoise hashed/compressed static in prod; plain storage in dev so {% static %} needs no manifest.
 STORAGES = {
-    "default": (
-        {"BACKEND": "core.storage.MediaS3Storage", "OPTIONS": _MEDIA_S3_OPTIONS}
-        if S3_BUCKET
-        else {"BACKEND": "django.core.files.storage.FileSystemStorage"}
-    ),
+    "default": {"BACKEND": "core.storage.MediaS3Storage", "OPTIONS": _MEDIA_S3_OPTIONS},
     "staticfiles": {
         "BACKEND": (
             "django.contrib.staticfiles.storage.StaticFilesStorage"

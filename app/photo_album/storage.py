@@ -13,11 +13,12 @@ directly, with no Django hop at all: no `/media/` redirect, and — the reason i
 app in particular — no request of gunicorn's ever streams a photo, still less a hundreds-of-MB video,
 through this process on its way from S3 to a browser.
 
-Falls back to local disk when there is no bucket (dev/CI, mirroring `STORAGES["default"]`'s own
-fallback and switched by the exact same signal: whether `storages["default"]` is
-`core.storage.MediaS3Storage`). Same physical files as before — still under
-`MEDIA_ROOT/photo-album/…` — served at `/photo-album/…` by `photo_album.views.serve_local_media`
-instead of through `/media/`.
+Falls back to local disk only because the test suite does: tests/conftest.py's autouse fixture
+overrides `STORAGES["default"]` to plain FileSystemStorage for the whole suite so pytest never
+touches a real bucket, and this follows that same signal (see `_build_storage` below) rather than
+keeping its own copy of the guard. There is no supported way to run this app for real — dev, CI
+outside pytest, staging, production — without S3_BUCKET configured; nothing serves these files off
+local disk over HTTP any more.
 """
 
 from typing import Any, cast
@@ -62,7 +63,9 @@ def _build_storage() -> FileSystemStorage | PhotoAlbumS3Storage:
     Piggy-backing on that decision (rather than reading settings.S3_BUCKET directly) is what makes
     tests safe for free: tests/conftest.py forces STORAGES["default"] to FileSystemStorage for the
     whole suite so a developer's real bucket in app/.env is never touched, and this follows it there
-    without needing its own copy of that guard.
+    without needing its own copy of that guard. Outside the test suite STORAGES["default"] is always
+    core.storage.MediaS3Storage (config/settings.py has no local-disk fallback of its own any more),
+    so this only ever resolves to FileSystemStorage under pytest.
     """
     if isinstance(storages["default"], MediaS3Storage):
         return PhotoAlbumS3Storage(**settings.PHOTO_ALBUM_S3_OPTIONS)

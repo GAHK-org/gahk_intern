@@ -4,7 +4,7 @@ Two unrelated subjects share this module, and what they have in common is the on
 matters: get either wrong and Django starts, pages render, and nothing is logged.
 
   E001-E006  the VAPID key pair (Web Push)
-  E007-E010  the media URL/prefix/backend invariants (see the second block, and core/storage.py)
+  E007-E009  the media URL/prefix invariants (see the second block, and core/storage.py)
 
 VAPID lives in core because the keys are shared by every feature that pushes (Den Hurtige and
 opslagstavlen), not owned by whichever one shipped first. The check IDs moved with it:
@@ -136,7 +136,7 @@ def check_vapid_public_key(app_configs: Sequence[AppConfig] | None, **kwargs: ob
     return []
 
 
-# --- Media URL, prefix and backend invariants (core.E007-E010) -------------------------------------------------------
+# --- Media URL and prefix invariants (core.E007-E009) -------------------------------------------------------
 #
 # Not about push at all, but it belongs beside the VAPID checks for the same reason those are here:
 # it is a configuration mistake with no server-side symptom. See core.storage's module docstring for
@@ -239,40 +239,5 @@ def check_media_storage_prefix(
             hint='Set "location": "media" in STORAGES["default"]["OPTIONS"], or omit the key and '
             "let core.storage.MediaS3Storage default it.",
             id="core.E009",
-        )
-    ]
-
-
-def check_media_backend_in_production(
-    app_configs: Sequence[AppConfig] | None, **kwargs: object
-) -> list[CheckMessage]:
-    """Production must not fall back to local-disk media by accident.
-
-    S3_BUCKET is deliberately the only switch between the bucket and MEDIA_ROOT, which made the
-    migration safe: unset it and the app was exactly as it had always been. That property died the
-    day the `media` volume was emptied. Now an unset S3_BUCKET means the app serves nothing, and
-    quietly writes new uploads onto a disk nobody backs up and the next container rebuild discards —
-    with no error, because falling back is precisely what the setting is designed to do.
-
-    A missing environment variable is not an exotic failure. It is a mistyped key in Coolify, a
-    resource recreated from a stale template, a restore that predates the migration. Each of those
-    is a normal Tuesday, and each currently produces a site with no pictures and no log line.
-
-    Escape hatch rather than an absolute rule: DEBUG covers dev and CI, and ALLOW_LOCAL_MEDIA=1
-    covers the legitimate prod-shaped exception — a staging box with no bucket of its own, or
-    rehearsing the rollback while the volume still has files in it. Requiring the operator to say so
-    out loud is the whole point; the failure this prevents is silence.
-    """
-    if settings.DEBUG or settings.S3_BUCKET or settings.ALLOW_LOCAL_MEDIA:
-        return []
-    return [
-        Error(
-            "DEBUG is off but S3_BUCKET is unset, so uploads would be read from and written to "
-            "MEDIA_ROOT on local disk.",
-            hint=(
-                "Set S3_BUCKET (with S3_ACCESS_KEY/S3_SECRET_KEY) — see DEPLOY.md 4c. If local-disk "
-                "media really is intended here, set ALLOW_LOCAL_MEDIA=1 to say so explicitly."
-            ),
-            id="core.E010",
         )
     ]
