@@ -45,6 +45,9 @@ dev = [
     # parses it back with an independent implementation. pip-audit runs against the production
     # lockfile (--no-dev), so a parser used purely as a test oracle costs nothing in that job.
     "icalendar>=6.0", # independent parser, used only to check our own .ics output
+    # Attach a real IDE debugger to `task debug`. DAP, so it is VS Code's Python debugger and also
+    # anything else speaking that protocol; PyCharm uses its own pydevd and does not need this.
+    "debugpy>=1.8",
     "mypy>=2.1.0",
     "django-stubs[compatible-mypy]>=6.0.9",
     "prek>=0.4.9",
