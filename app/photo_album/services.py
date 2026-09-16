@@ -273,7 +273,27 @@ def reject(media: Media, resident: Resident) -> None:
     media.save(update_fields=["status", "deleted_at", "deleted_by"])
 
 
-def delete(media: Media, resident: Resident, now: datetime | None = None) -> bool:
+def restore(media: Media) -> None:
+    """Bring media back out of the bin, into a state something can still act on.
+
+    Resetting `status` is the load-bearing part. The only way a PENDING item reaches the bin is
+    "Afvis", which sets REJECTED — and clearing `deleted_at` alone left it REJECTED and un-binned,
+    a combination nothing in the app can see or reach: invisible to residents and to its own
+    uploader, no Godkend/Afvis controls (those are drawn for PENDING), gone from the bin, and
+    matched by neither arm of `purge_expired`. The row and all three files were stranded for good.
+
+    A restored item goes back to PENDING rather than APPROVED so it still passes through review.
+    Note that its 30-day pending clock runs from `added_at` as it always has, so restoring
+    something long-abandoned puts it back in front of a manager with little time left on it.
+    """
+    media.deleted_at = None
+    media.deleted_by = None
+    if media.status == MediaStatus.REJECTED:
+        media.status = MediaStatus.PENDING
+    media.save(update_fields=["deleted_at", "deleted_by", "status"])
+
+
+def delete(media: Media, resident: Resident, now: datetime | None = None) -> None:
     """Move media to the recoverable bin."""
     moment = now or timezone.now()
     media.deleted_at = moment
