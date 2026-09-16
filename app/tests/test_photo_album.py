@@ -537,12 +537,12 @@ def test_bin_displays_media_in_the_gallery_viewer(
     assert response.status_code == 200
     content = response.content.decode()
     assert "data-album-gallery" in content
-    assert 'src="/media/thumbnail.jpg"' in content
+    assert 'src="/thumbnail.jpg"' in content
     assert "Fra album: Fest" in content
     # The viewer-sized file is not in the grid any more; it arrives when the item is opened.
-    assert "/media/high-definition.jpg" not in content
+    assert "/high-definition.jpg" not in content
     detail = client.get(reverse("photo_album:media_detail", args=[media.pk])).json()
-    assert detail["full"] == "/media/high-definition.jpg"
+    assert detail["full"] == "/high-definition.jpg"
     assert detail["album"] == "Fest"
 
 
@@ -624,7 +624,7 @@ def test_album_upload_form_opts_out_of_client_side_downscaling(
 def test_upload_refuses_an_svg_even_with_an_image_content_type(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
-    """An SVG stored unchanged becomes all three variants, and /media/ serves it on our own origin."""
+    """An SVG stored unchanged becomes all three variants, served straight off our own storage."""
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     album = Album.objects.create(folder="2026", name="Fest")
     client.force_login(administrator)

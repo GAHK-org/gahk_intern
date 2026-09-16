@@ -548,6 +548,8 @@ erDiagram
         string high_definition
         string thumbnail
         string content_type
+        string derivative_state
+        int derivative_attempts
         json metadata
         int requested_by_id FK
         datetime added_at
@@ -1169,6 +1171,8 @@ erDiagram
         string high_definition
         string thumbnail
         string content_type
+        string derivative_state
+        int derivative_attempts
         json metadata
         int requested_by_id FK
         datetime added_at

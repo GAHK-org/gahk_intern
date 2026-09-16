@@ -80,6 +80,11 @@ class S3ArchiveStore:
     def __init__(self, storage: MediaS3Storage) -> None:
         self._bucket = storage.bucket
         self._client = storage.connection.meta.client
+        # A separate client for anything a BROWSER talks to directly (presigned GETs, POST upload
+        # policies): signed against S3_PUBLIC_ENDPOINT_URL rather than S3_ENDPOINT_URL, since under
+        # `task dev` those differ (see core.storage.PublicEndpointS3Storage). Everywhere else the
+        # two settings are equal, so this is `self._client` again.
+        self._public_client = storage.public_connection.meta.client
         self._bucket_name = storage.bucket_name
 
     def exists(self, key: str) -> bool:
@@ -140,7 +145,7 @@ class S3ArchiveStore:
         `content-length-range`, so the size limit is enforced by Hetzner before the bytes are
         accepted rather than by us after they are already stored and billed.
         """
-        return self._client.generate_presigned_post(
+        return self._public_client.generate_presigned_post(
             Bucket=self._bucket_name,
             Key=key,
             Fields=dict(fields),
@@ -162,7 +167,7 @@ class S3ArchiveStore:
         }
         if content_type:
             params["ResponseContentType"] = content_type
-        return self._client.generate_presigned_url("get_object", Params=params, ExpiresIn=DOWNLOAD_TTL)
+        return self._public_client.generate_presigned_url("get_object", Params=params, ExpiresIn=DOWNLOAD_TTL)
 
 
 class LocalArchiveStore:

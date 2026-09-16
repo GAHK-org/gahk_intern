@@ -12,17 +12,27 @@ between. A file already present with the same size and content hash is skipped.
 Run it with --dry-run first. It never deletes anything — neither locally nor remotely — so the worst
 case is wasted upload, but the count is worth eyeballing against `find app/media -type f | wc -l`
 before committing to it.
+
+photo_album is a SECOND bucket key space (photo_album.storage.PhotoAlbumS3Storage): its objects live
+under MEDIA_ROOT/photo-album/… exactly like everything else, but their key in the bucket is
+"photo-album/…", not "media/photo-album/…" — so they cannot go through `storage._save()` below,
+which would add the "media/" prefix this command's own STORAGES['default'] carries. They are
+uploaded with the raw, unprefixed key instead, straight to the same bucket and credentials.
 """
 
 import argparse
 import hashlib
 from pathlib import Path
+from typing import Any
 
 from django.conf import settings
 from django.core.files.storage import storages
 from django.core.management.base import BaseCommand, CommandError
 
 from core.storage import MediaS3Storage
+
+# photo_album's own bucket key space — see the module docstring.
+PHOTO_ALBUM_PREFIX = "photo-album/"
 
 
 def _md5(path: Path) -> str:
@@ -59,13 +69,20 @@ class Command(BaseCommand):
             # as_posix(): a Windows dev box would otherwise produce backslash names, which are a
             # legal S3 key and would land beside — not on — the real object.
             name = path.relative_to(root).as_posix()
+            photo_album = name.startswith(PHOTO_ALBUM_PREFIX)
+            key = name if photo_album else storage._normalize_name(name)
 
-            if self._already_there(storage, name, path):
+            if self._already_there(storage.bucket, key, path):
                 skipped += 1
                 continue
 
             if dry:
                 self.stdout.write(f"[dry-run] would upload {name} ({path.stat().st_size} B)")
+            elif photo_album:
+                # Its own bucket key space — no "media/" prefix, so this uploads straight to the
+                # bucket with the raw key rather than through storage._save(), which would add one.
+                with path.open("rb") as fh:
+                    storage.bucket.upload_fileobj(fh, key)
             else:
                 with path.open("rb") as fh:
                     # _save, not save(): save() would route through get_available_name and, with
@@ -83,8 +100,8 @@ class Command(BaseCommand):
         if not dry and uploaded:
             self.stdout.write("Run `manage.py audit_media` to confirm nothing is missing.")
 
-    def _already_there(self, storage: MediaS3Storage, name: str, path: Path) -> bool:
-        """Same name, same size, same bytes.
+    def _already_there(self, bucket: Any, key: str, path: Path) -> bool:  # noqa: ANN401 — a boto3 Bucket
+        """Same key, same size, same bytes.
 
         Size alone would skip a file that was replaced in place; the ETag is S3's MD5 for a
         single-part upload, and every upload here is single-part because every feature caps its
@@ -93,7 +110,7 @@ class Command(BaseCommand):
         size.
         """
         try:
-            obj = storage.bucket.Object(storage._normalize_name(name))
+            obj = bucket.Object(key)
             remote_size = obj.content_length
             etag = obj.e_tag.strip('"')
         except Exception:  # botocore raises ClientError(404) for a key that is simply not there yet

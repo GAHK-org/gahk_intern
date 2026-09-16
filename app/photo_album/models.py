@@ -1,4 +1,6 @@
-"""Photo and video albums, with blobs held by Django's configured media storage."""
+"""Photo and video albums, with blobs held by photo_album's own storage (see storage.py) rather
+than the shared default media one — its bucket path is "photo-album/…", not "media/photo-album/…".
+"""
 
 import calendar
 from collections.abc import Iterable
@@ -10,6 +12,8 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models.base import ModelBase
 from django.utils import timezone
+
+from .storage import get_photo_album_storage
 
 
 def album_original_path(instance: "Media", filename: str) -> str:
@@ -123,9 +127,9 @@ class Album(models.Model):
 class Media(models.Model):
     album = models.ForeignKey(Album, on_delete=models.CASCADE, related_name="media")
     title = models.CharField(max_length=255)
-    original = models.FileField(upload_to=album_original_path)
-    high_definition = models.FileField(upload_to=album_high_definition_path)
-    thumbnail = models.FileField(upload_to=album_thumbnail_path)
+    original = models.FileField(upload_to=album_original_path, storage=get_photo_album_storage)
+    high_definition = models.FileField(upload_to=album_high_definition_path, storage=get_photo_album_storage)
+    thumbnail = models.FileField(upload_to=album_thumbnail_path, storage=get_photo_album_storage)
     content_type = models.CharField(max_length=100, blank=True)
     derivative_state = models.CharField(
         max_length=10, choices=DerivativeState.choices, default=DerivativeState.READY

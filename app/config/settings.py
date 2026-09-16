@@ -145,6 +145,17 @@ S3_LOCATION = os.environ.get("S3_LOCATION", "fsn1")
 S3_ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL", f"https://{S3_LOCATION}.your-objectstorage.com")
 S3_ADDRESSING_STYLE = os.environ.get("S3_ADDRESSING_STYLE", "virtual")
 
+# The endpoint a BROWSER can actually reach, for presigned URLs only — everything else (uploads,
+# HEAD, delete, ...) keeps using S3_ENDPOINT_URL above, which this process itself resolves fine.
+# The two differ only under `task dev` (the dockerized `web` service): Django reaches MinIO over the
+# compose network at http://minio:9000, but the browser that follows the presigned URL is on the
+# HOST, which can only reach MinIO's published port at http://localhost:9000. Signing the URL with
+# the wrong host is not cosmetic — SigV4 signs the Host header, so the bucket 403s a request whose
+# Host does not match the one it was signed for, and rewriting the URL string afterwards cannot fix
+# that either. `task dev:local` and production both leave this unset, since S3_ENDPOINT_URL there is
+# already reachable from wherever the browser runs.
+S3_PUBLIC_ENDPOINT_URL = os.environ.get("S3_PUBLIC_ENDPOINT_URL", "") or S3_ENDPOINT_URL
+
 _MEDIA_S3_OPTIONS = {
     "bucket_name": S3_BUCKET,
     "access_key": os.environ.get("S3_ACCESS_KEY", ""),
@@ -175,6 +186,12 @@ _MEDIA_S3_OPTIONS = {
     "location": "media",
     "object_parameters": {"CacheControl": "private, max-age=604800"},
 }
+
+# Photo-album originals/derivatives (photo_album.storage.PhotoAlbumS3Storage): same bucket and
+# credentials, but its OWN top-level key — "photo-album/…", never "media/photo-album/…". Unlike the
+# options above, nothing here is served through Django: .url() returns a presigned bucket URL
+# straight from S3, so "location" stays empty rather than "media" — see photo_album/storage.py.
+PHOTO_ALBUM_S3_OPTIONS = {**_MEDIA_S3_OPTIONS, "location": ""}
 
 # WhiteNoise hashed/compressed static in prod; plain storage in dev so {% static %} needs no manifest.
 STORAGES = {

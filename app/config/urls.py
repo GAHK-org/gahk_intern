@@ -9,6 +9,7 @@ from django.views.generic import RedirectView, TemplateView
 from cms import views as cms_views
 from core.media import serve_media
 from events import views as events_views
+from photo_album.views import serve_local_media
 
 urlpatterns = [
     path("django-admin/", admin.site.urls),
@@ -40,6 +41,17 @@ urlpatterns = [
     # embeds) is anonymous and everything else needs a session. Note ølkælder is NOT public-site
     # content despite the name — it lives under /intern/oelkaelder/.
     re_path(r"^media/(?P<path>.*)$", serve_media, name="media"),
+    # photo_album's dev/CI fallback for when there is no bucket — see photo_album.storage and
+    # photo_album.views.serve_local_media. In production photo_album_storage.url() returns a
+    # presigned bucket URL directly, so this route is never linked to; it only exists so the
+    # feature works the same way against local disk.
+    #
+    # `path` captures "photo-album/…" WHOLE, unlike the /media/ route above: the storage name
+    # FileField.upload_to produces already carries that prefix (see photo_album/models.py), and the
+    # local storage's base_url is "/" — not "/photo-album/" — precisely so the name and the URL stay
+    # identical. Consuming "photo-album/" as a literal route prefix would strip it from `path` and
+    # every lookup on local disk would 404 against a name that is missing its first segment.
+    re_path(r"^(?P<path>photo-album/.*)$", serve_local_media, name="photo_album_media"),
     # PWA service worker for Den Hurtige. Must be served from the ROOT path: a service worker's
     # default scope is its own directory, so only a root-scoped worker covers /intern/. Served via
     # TemplateView because static/ would put it under /static/ and cap its scope there.
