@@ -56,8 +56,11 @@ services:
     image: quay.io/minio/minio:latest
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
-      MINIO_ROOT_USER: gahk
-      MINIO_ROOT_PASSWORD: gahk-minio-secret
+      # MinIO's own defaults, left as-is rather than a project-specific pair: this is local dev,
+      # not production credentials, so there is nothing to gain from rotating it away from what
+      # every MinIO doc/example already assumes.
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
     ports:
       - "9000:9000"   # S3 API — matches S3_ENDPOINT_URL in app/.env.example
       - "9001:9001"   # web console (http://localhost:9001)
@@ -76,8 +79,8 @@ services:
       minio: {condition: service_healthy}
     entrypoint: >
       sh -c "
-      mc alias set local http://minio:9000 gahk gahk-minio-secret &&
-      mc mb --ignore-existing local/gahk-media
+      mc alias set local http://minio:9000 minioadmin minioadmin &&
+      mc mb --ignore-existing local/gahk-s3
       "
 
   # Optional: the Django app itself, hot-reloading (opt-in — see the `services:` comment above).
@@ -95,10 +98,14 @@ services:
       # Override the host-oriented values from app/.env with the ones reachable on the compose
       # network — everything else (SECRET_KEY, SMTP, VAPID, ...) still comes from the env file.
       DATABASE_URL: postgres://gahk:gahk@postgres:5432/gahk
-      S3_BUCKET: gahk-media
-      S3_ACCESS_KEY: gahk
-      S3_SECRET_KEY: gahk-minio-secret
+      S3_BUCKET: gahk-s3
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
       S3_ENDPOINT_URL: http://minio:9000
+      # The browser following a presigned URL runs on the HOST, not on the compose network, so it
+      # cannot resolve "minio" at all — only MinIO's published port. Signing with the wrong host
+      # 403s the request (SigV4 signs the Host header); see core.storage.PublicEndpointS3Storage.
+      S3_PUBLIC_ENDPOINT_URL: http://localhost:9000
       S3_ADDRESSING_STYLE: path
       # See app/.env.example: required alongside a non-AWS S3 endpoint (Hetzner AND MinIO both need
       # this — botocore's default checksum framing is mis-stored/rejected by both).

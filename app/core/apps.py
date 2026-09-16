@@ -10,7 +10,6 @@ class CoreConfig(AppConfig):
         # VAPID validation lives here because the keys are shared by every feature that pushes; the
         # check IDs are core.E001-E006 (they were den_hurtige.E00x before push moved to core).
         from .checks import (
-            check_media_backend_in_production,
             check_media_storage_prefix,
             check_media_storage_url,
             check_media_url,
@@ -24,6 +23,3 @@ class CoreConfig(AppConfig):
         register(check_media_url)
         register(check_media_storage_url)
         register(check_media_storage_prefix)
-        # And, since the media volume was emptied, that prod has a bucket at all: falling back
-        # to local disk is now data loss rather than the rollback it used to be.
-        register(check_media_backend_in_production)

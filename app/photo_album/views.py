@@ -1,22 +1,35 @@
+import posixpath
 from datetime import datetime
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.core.exceptions import PermissionDenied, ValidationError
+from django.contrib.auth.views import redirect_to_login
+from django.core.exceptions import PermissionDenied, SuspiciousOperation, ValidationError
 from django.db.models import Case, Count, DateTimeField, IntegerField, Q, Value, When
 from django.db.models.functions import Coalesce
-from django.http import FileResponse, HttpRequest, HttpResponse, JsonResponse
+from django.http import (
+    FileResponse,
+    Http404,
+    HttpRequest,
+    HttpResponse,
+    HttpResponseRedirect,
+    JsonResponse,
+)
+from django.http.response import HttpResponseBase
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.formats import date_format
 from django.views.decorators.http import require_POST
 
+from arkiv.storage import content_disposition
+from core.media import REDIRECT_CACHE_CONTROL
 from residents.permissions import current_resident
 
 from . import access, services
 from .forms import AlbumForm, MediaUploadForm
 from .models import Album, Media
+from .storage import PhotoAlbumS3Storage
 
 
 @login_required
@@ -161,6 +174,13 @@ def upload(request: HttpRequest, pk: int) -> HttpResponse:
     return redirect("photo_album:detail", album.pk)
 
 
+def _is_visible(request: HttpRequest, media: Media) -> bool:
+    """Whether this request may look at `media` — the one rule both the viewer and serve_media use."""
+    if access.can_manage_media(request):
+        return True
+    return access.visible_media(request, media.album).filter(pk=media.pk).exists()
+
+
 def _viewable_media(request: HttpRequest, pk: int) -> Media:
     """One media item this request is allowed to look at, or 404/403.
 
@@ -168,9 +188,7 @@ def _viewable_media(request: HttpRequest, pk: int) -> Media:
     offers to download must agree about who may see what.
     """
     media = get_object_or_404(Media.objects.select_related("album", "requested_by"), pk=pk)
-    if access.can_manage_media(request):
-        return media
-    if not access.visible_media(request, media.album).filter(pk=pk).exists():
+    if not _is_visible(request, media):
         raise PermissionDenied
     return media
 
@@ -214,14 +232,97 @@ def _managed_media(request: HttpRequest, pk: int) -> Media:
     return get_object_or_404(Media, pk=pk)
 
 
+def _clean_key(path: str) -> str | None:
+    """The storage key a request is really asking for, or None if it is not asking honestly.
+
+    Same guard as core.media._clean, and for the same reason: normalising before anything else
+    means `photo-album/../etc/passwd` collapses to the ordinary (unmatched) key `etc/passwd` rather
+    than tripping the storage's own safe_join check further down — which a URL dispatcher can't rely
+    on alone, since it never runs against the untouched path.
+    """
+    if "\\" in path:
+        return None
+    name = posixpath.normpath("/" + path).lstrip("/")
+    if not name or name == "." or name.startswith("../"):
+        return None
+    return name
+
+
+def _media_for_key(key: str) -> Media | None:
+    """The row a storage key belongs to, checking all three variants — the key alone can't say which."""
+    return (
+        Media.objects.select_related("album", "requested_by")
+        .filter(Q(original=key) | Q(high_definition=key) | Q(thumbnail=key))
+        .first()
+    )
+
+
+def serve_media(request: HttpRequest, path: str) -> HttpResponseBase:
+    """/fotoalbum-media/<path> — the only way a browser ever reaches a photo-album object.
+
+    This is what `photo_album.storage.PhotoAlbumS3Storage.url()` points at instead of a bare
+    presigned URL: a presigned URL is a bearer token, good for an hour with no further check, and
+    `photo_album.access.visible_media` has a rule a bearer token can't enforce — a PENDING upload is
+    visible only to its uploader and Fotogruppen. So every request re-derives the `Media` row from
+    the key and re-checks that rule, exactly like `_viewable_media` does for the pk-keyed views,
+    before redirecting to a freshly presigned URL. Same shape as core.media.serve_media, checking
+    this app's own rule instead of just "is logged in".
+    """
+    if not request.user.is_authenticated:
+        return redirect_to_login(request.get_full_path())
+    key = _clean_key(path)
+    if key is None:
+        raise Http404("not a photo-album media path")
+    media = _media_for_key(key)
+    if media is None:
+        raise Http404("no such photo-album media")
+    if not _is_visible(request, media):
+        raise PermissionDenied
+
+    storage = media.original.storage
+    signer = getattr(storage, "signed_url", None)
+    if signer is not None:
+        try:
+            target = signer(key)
+        except SuspiciousOperation as exc:
+            raise Http404("media path outside the storage root") from exc
+        response = HttpResponseRedirect(target)
+        response.headers["Cache-Control"] = REDIRECT_CACHE_CONTROL
+        response.headers["Vary"] = "Cookie"
+        return response
+
+    # Local disk, the test suite's own storage (see photo_album.storage) — stream, same as
+    # core.media.serve_media's non-S3 branch.
+    try:
+        handle = storage.open(key)
+    except (FileNotFoundError, IsADirectoryError, PermissionError, ValueError, SuspiciousOperation) as exc:
+        raise Http404("photo-album media not found") from exc
+    return FileResponse(handle)
+
+
 @login_required
-def download_original(request: HttpRequest, pk: int) -> FileResponse:
+def download_original(request: HttpRequest, pk: int) -> HttpResponseBase:
+    """Redirect straight to the bucket when the original is on S3, rather than streaming it here.
+
+    A video is up to PHOTO_ALBUM_VIDEO_MAX_MB (1 GB): reading that through gunicorn on its way from
+    S3 to the browser ties up one of a handful of sync workers for as long as the slowest client's
+    connection takes, for no reason — the bytes never need to pass through this process at all. The
+    streaming branch below only runs under the test suite, which forces plain FileSystemStorage
+    (tests/conftest.py) precisely so it never has to talk to a real bucket.
+    """
     media = _viewable_media(request, pk)
     original_name = media.original.name or "original"
+    filename = original_name.rsplit("/", maxsplit=1)[-1]
+    storage = media.original.storage
+    if isinstance(storage, PhotoAlbumS3Storage):
+        params = {"ResponseContentDisposition": content_disposition(filename)}
+        if media.content_type:
+            params["ResponseContentType"] = media.content_type
+        return HttpResponseRedirect(storage.signed_url(original_name, parameters=params))
     return FileResponse(
         media.original.open("rb"),
         as_attachment=True,
-        filename=original_name.rsplit("/", maxsplit=1)[-1],
+        filename=filename,
         content_type=media.content_type or None,
     )
 

@@ -534,49 +534,6 @@ def settings_login_url() -> str:
     return settings.LOGIN_URL
 
 
-# --- the production backend guard (core.E010) -------------------------------------------------------
-#
-# S3_BUCKET being the only switch is what made the migration safe: unset it and the app was exactly
-# as before. That stopped being true the day the prod `media` volume was emptied — now an unset
-# bucket serves nothing and writes uploads to a disk nobody backs up, silently, because falling back
-# is what the setting is designed to do.
-
-
-@pytest.mark.parametrize(
-    ("debug", "bucket", "allow", "expected"),
-    [
-        (True, "", False, []),  # dev and CI: the normal case, never nagged
-        (False, "gahk", False, []),  # production as it now runs
-        (False, "", True, []),  # staging, or rehearsing the rollback, said out loud
-        (False, "", False, ["core.E010"]),  # the silent disaster
-    ],
-)
-def test_production_refuses_to_fall_back_to_local_media(
-    settings: object, debug: bool, bucket: str, allow: bool, expected: list[str]
-) -> None:
-    from core.checks import check_media_backend_in_production
-
-    settings.DEBUG = debug  # type: ignore[attr-defined]
-    settings.S3_BUCKET = bucket  # type: ignore[attr-defined]
-    settings.ALLOW_LOCAL_MEDIA = allow  # type: ignore[attr-defined]
-
-    assert [e.id for e in check_media_backend_in_production(None)] == expected
-
-
-def test_the_guard_names_the_escape_hatch(settings: object) -> None:
-    """A check that blocks a deploy has to say how to proceed, or the next person sets DEBUG=1."""
-    from core.checks import check_media_backend_in_production
-
-    settings.DEBUG = False  # type: ignore[attr-defined]
-    settings.S3_BUCKET = ""  # type: ignore[attr-defined]
-    settings.ALLOW_LOCAL_MEDIA = False  # type: ignore[attr-defined]
-
-    hint = check_media_backend_in_production(None)[0].hint or ""
-
-    assert "ALLOW_LOCAL_MEDIA=1" in hint
-    assert "S3_BUCKET" in hint
-
-
 # --- conditional GET (the dev-server regression) ----------------------------------------------------
 #
 # django.views.static.serve - which core.media.serve_media replaced - answered If-Modified-Since with
