@@ -1,13 +1,15 @@
-import json
+from datetime import datetime
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db.models import Case, Count, DateTimeField, IntegerField, Q, Value, When
 from django.db.models.functions import Coalesce
-from django.http import FileResponse, HttpRequest, HttpResponse
+from django.http import FileResponse, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
+from django.utils.formats import date_format
 from django.views.decorators.http import require_POST
 
 from residents.permissions import current_resident
@@ -48,10 +50,6 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
         .order_by("-displayed_at", "-pk")
     )
     album_locked = album.is_locked()
-    for item in media_items:
-        item.album = album  # the listing's items all share it; saves a refetch inside can_delete
-        item.can_delete = access.can_delete(item, request, album_locked=album_locked)  # type: ignore[attr-defined]
-        item.metadata_json = json.dumps(item.metadata)  # type: ignore[attr-defined]
     return render(
         request,
         "photo_album/detail.html",
@@ -132,7 +130,6 @@ def bin(request: HttpRequest) -> HttpResponse:
     )
     for item in media_items:
         item.can_permanently_delete = access.can_permanently_delete(item, request)  # type: ignore[attr-defined]
-        item.metadata_json = json.dumps(item.metadata)  # type: ignore[attr-defined]
     return render(
         request,
         "photo_album/bin.html",
@@ -164,6 +161,53 @@ def upload(request: HttpRequest, pk: int) -> HttpResponse:
     return redirect("photo_album:detail", album.pk)
 
 
+def _viewable_media(request: HttpRequest, pk: int) -> Media:
+    """One media item this request is allowed to look at, or 404/403.
+
+    Same rule as `download_original`, which is the point: the viewer's details and the original it
+    offers to download must agree about who may see what.
+    """
+    media = get_object_or_404(Media.objects.select_related("album", "requested_by"), pk=pk)
+    if access.can_manage_media(request):
+        return media
+    if not access.visible_media(request, media.album).filter(pk=pk).exists():
+        raise PermissionDenied
+    return media
+
+
+@login_required
+def media_detail(request: HttpRequest, pk: int) -> JsonResponse:
+    """Everything the viewer shows for one item, fetched when it is opened.
+
+    NOT rendered into the grid. A tile used to carry the HD url, the download url, the uploader,
+    both timestamps, the delete url and the whole EXIF blob as data- attributes, so opening an
+    album shipped all of that for every photograph in it — hundreds of times over for a party
+    album, to show one of them. The grid keeps only what it draws with: the thumbnail, the title,
+    and the two badges.
+    """
+    media = _viewable_media(request, pk)
+    can_delete = access.can_delete(media, request)
+    return JsonResponse(
+        {
+            "kind": "video" if media.content_type.startswith("video/") else "image",
+            "title": media.title,
+            "full": media.high_definition.url if media.has_derivatives else "",
+            "album": media.album.name,
+            "downloadUrl": reverse("photo_album:download_original", args=[media.pk]),
+            "deleteUrl": reverse("photo_album:delete", args=[media.pk]) if can_delete else "",
+            "uploadedBy": media.requested_by.full_name,
+            "uploadedAt": _formatted(media.added_at),
+            "capturedAt": _formatted(media.captured_at),
+            "metadata": media.metadata,
+        }
+    )
+
+
+def _formatted(value: datetime | None) -> str:
+    """The same wording the templates used to render, so the viewer reads identically."""
+    return date_format(timezone.localtime(value), "j. F Y, H:i") if value else ""
+
+
 def _managed_media(request: HttpRequest, pk: int) -> Media:
     if not access.can_manage_media(request):
         raise PermissionDenied
@@ -172,12 +216,7 @@ def _managed_media(request: HttpRequest, pk: int) -> Media:
 
 @login_required
 def download_original(request: HttpRequest, pk: int) -> FileResponse:
-    media = get_object_or_404(Media.objects.select_related("album"), pk=pk)
-    if (
-        not access.can_manage_media(request)
-        and not access.visible_media(request, media.album).filter(pk=pk).exists()
-    ):
-        raise PermissionDenied
+    media = _viewable_media(request, pk)
     original_name = media.original.name or "original"
     return FileResponse(
         media.original.open("rb"),

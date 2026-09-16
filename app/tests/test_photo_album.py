@@ -273,10 +273,14 @@ def test_image_metadata_and_upload_attribution_are_available_to_the_viewer(
     }
     assert media.captured_at == timezone.make_aware(datetime(2026, 9, 15, 20, 30))
     client.force_login(resident)
-    content = client.get(reverse("photo_album:detail", args=[album.pk])).content.decode()
-    assert 'data-uploaded-by="Mette Metadata"' in content
-    assert 'data-captured-at="15. september 2026, 20:30"' in content
-    assert "Oprindelig dato" in content
+    detail = client.get(reverse("photo_album:media_detail", args=[media.pk])).json()
+    assert detail["uploadedBy"] == "Mette Metadata"
+    assert detail["capturedAt"] == "15. september 2026, 20:30"
+    assert detail["metadata"]["Oprindelig dato"] == "2026:09:15 20:30:00"
+    # And none of it is in the grid, which is the point of fetching it.
+    grid = client.get(reverse("photo_album:detail", args=[album.pk])).content.decode()
+    assert "Mette Metadata" not in grid
+    assert "Oprindelig dato" not in grid
 
 
 def test_capture_time_reads_nested_exif_ifd(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -329,7 +333,7 @@ def test_album_media_orders_capture_time_then_upload_time(
 
     content = client.get(reverse("photo_album:detail", args=[album.pk])).content.decode()
 
-    assert content.index('data-title="captured"') < content.index('data-title="uploaded"')
+    assert content.index('alt="captured"') < content.index('alt="uploaded"')
 
 
 @pytest.mark.django_db
@@ -530,11 +534,15 @@ def test_bin_displays_media_in_the_gallery_viewer(
     response = client.get(reverse("photo_album:bin"))
 
     assert response.status_code == 200
-    assert "data-album-gallery" in response.content.decode()
-    assert 'data-full="/media/high-definition.jpg"' in response.content.decode()
-    assert 'src="/media/thumbnail.jpg"' in response.content.decode()
-    assert 'data-album="Fest"' in response.content.decode()
-    assert "Fra album: Fest" in response.content.decode()
+    content = response.content.decode()
+    assert "data-album-gallery" in content
+    assert 'src="/media/thumbnail.jpg"' in content
+    assert "Fra album: Fest" in content
+    # The viewer-sized file is not in the grid any more; it arrives when the item is opened.
+    assert "/media/high-definition.jpg" not in content
+    detail = client.get(reverse("photo_album:media_detail", args=[media.pk])).json()
+    assert detail["full"] == "/media/high-definition.jpg"
+    assert detail["album"] == "Fest"
 
 
 @pytest.mark.django_db
@@ -822,12 +830,11 @@ def test_the_bin_renders_metadata_the_viewer_can_parse(
     delete(media, administrator)
     client.force_login(administrator)
 
-    content = client.get(reverse("photo_album:bin")).content.decode()
+    detail = client.get(reverse("photo_album:media_detail", args=[media.pk])).json()
 
-    # Django autoescapes the attribute, so the quotes arrive as &quot; — which the browser turns
-    # back into valid JSON for dataset.metadata. The dict repr the bin used to emit never could be.
-    assert "{&quot;Kamera&quot;: &quot;Apple iPhone 15&quot;}" in content
-    assert "{'Kamera'" not in content
+    # Real JSON, not the Python dict repr the bin template used to emit, which JSON.parse could
+    # never read. Serialised by JsonResponse now, so it cannot drift back.
+    assert detail["metadata"] == {"Kamera": "Apple iPhone 15"}
 
 
 @pytest.mark.django_db
@@ -966,3 +973,60 @@ def test_fotogruppen_workgroup_exists_so_indstilling_can_assign_it(db: None) -> 
 
     assert Workgroup.objects.filter(name="Fotogruppen").exists()
     assert WORKGROUP_ROLE["Fotogruppen"] == Role.FOTO
+
+
+@pytest.mark.django_db
+def test_media_detail_refuses_pending_media_belonging_to_someone_else(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The lazy endpoint is a new surface, and it has to keep the rule the grid already kept.
+
+    Pending media is visible to Fotogruppen, administrators and its own uploader. Fetching details
+    by id must not become the way around that.
+    """
+    uploader = make_resident(email="uploader@gahk.dk")
+    nosy = make_resident(email="nysgerrig@gahk.dk")
+    album = Album.objects.create(folder="2026", name="Fest")
+    media = Media.objects.create(
+        album=album,
+        title="pending",
+        original="a",
+        high_definition="b",
+        thumbnail="c",
+        requested_by=uploader,
+    )
+    url = reverse("photo_album:media_detail", args=[media.pk])
+
+    client.force_login(nosy)
+    assert client.get(url).status_code == 403
+
+    client.force_login(uploader)
+    assert client.get(url).status_code == 200
+
+    client.force_login(make_resident(email="foto@gahk.dk", roles=(Role.FOTO,)))
+    assert client.get(url).status_code == 200
+
+
+@pytest.mark.django_db
+def test_media_detail_offers_a_delete_url_only_to_someone_who_may_delete(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    photographer = make_resident(email="foto@gahk.dk", roles=(Role.FOTO,))
+    album = Album.objects.create(folder="2026", name="Fest")
+    media = Media.objects.create(
+        album=album,
+        title="photo",
+        original="a",
+        high_definition="b",
+        thumbnail="c",
+        requested_by=photographer,
+        status=MediaStatus.APPROVED,
+    )
+    url = reverse("photo_album:media_detail", args=[media.pk])
+
+    client.force_login(photographer)
+    assert client.get(url).json()["deleteUrl"] == reverse("photo_album:delete", args=[media.pk])
+
+    # An ordinary resident sees the approved photo but is offered no way to remove it.
+    client.force_login(make_resident(email="beboer@gahk.dk"))
+    assert client.get(url).json()["deleteUrl"] == ""

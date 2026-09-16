@@ -13,6 +13,9 @@ urlpatterns = [
     path("<int:pk>/laas", views.lock_album, name="lock_album"),
     path("<int:pk>/laas-op", views.unlock_album, name="unlock_album"),
     path("<int:pk>/upload", views.upload, name="upload"),
+    # Everything the viewer needs about one item, fetched when it is opened rather than rendered
+    # into every tile of the grid. See views.media_detail.
+    path("media/<int:pk>/detaljer", views.media_detail, name="media_detail"),
     path("media/<int:pk>/original", views.download_original, name="download_original"),
     path("media/<int:pk>/godkend", views.approve, name="approve"),
     path("media/<int:pk>/afvis", views.reject, name="reject"),

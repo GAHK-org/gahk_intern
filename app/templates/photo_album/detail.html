@@ -21,7 +21,11 @@
 	<div class="album-media-grid" data-album-gallery>
 	{% for item in media %}
 		<article class="album-media-item">
-		{% if item.has_derivatives %}<button type="button" class="album-media-tile" data-kind="{% if item.content_type|slice:':6' == 'video/' %}video{% else %}image{% endif %}" data-full="{{ item.high_definition.url }}" data-download-url="{% url 'photo_album:download_original' item.pk %}" data-title="{{ item.title }}" data-uploaded-by="{{ item.requested_by.full_name }}" data-uploaded-at="{{ item.added_at|date:'j. F Y, H:i' }}"{% if item.captured_at %} data-captured-at="{{ item.captured_at|date:'j. F Y, H:i' }}"{% endif %} data-metadata='{{ item.metadata_json }}'{% if item.can_delete %} data-delete-url="{% url 'photo_album:delete' item.pk %}"{% endif %}>
+		{% comment %}The tile carries an id and nothing else. Everything the viewer needs — the HD
+		url, the uploader, the timestamps, the EXIF blob, whether this reader may delete it — is
+		fetched from photo_album:media_detail when the item is actually opened. Rendering it into
+		every tile meant a 300-photo album shipped all of it 300 times to show one.{% endcomment %}
+		{% if item.has_derivatives %}<button type="button" class="album-media-tile" data-detail-url="{% url 'photo_album:media_detail' item.pk %}">
 			{% if item.content_type|slice:':6' == 'video/' %}<img src="{{ item.thumbnail.url }}" alt="{{ item.title }}" loading="lazy"><span class="album-video-mark">Video</span>{% else %}<img src="{{ item.thumbnail.url }}" alt="{{ item.title }}" loading="lazy">{% endif %}
 			{% if item.status == 'pending' %}<strong>Afventer godkendelse</strong>{% endif %}
 		</button>{% else %}<div class="album-media-tile album-media-placeholder" data-kind="{{ item.derivative_state }}">
