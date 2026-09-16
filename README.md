@@ -1,4 +1,4 @@
-# ny_ny_intern
+# gahk_intern
 [![CI](https://github.com/GAHK-org/gahk_intern/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/GAHK-org/gahk_intern/actions/workflows/ci.yml)
 
 
