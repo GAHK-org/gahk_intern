@@ -133,7 +133,12 @@ STATICFILES_DIRS = [BASE_DIR / "static"]  # holds the Vite-built bundle (static/
 # MEDIA_URL stays "/media/" regardless: it is a prefix of content stored in the database, and
 # core.checks (core.E007-E009) refuses to start the process if it or the backend's URLs ever stop
 # matching. core/storage.py has the full argument.
-S3_BUCKET = os.environ.get("S3_BUCKET", "")
+#
+# Defaults describe the MinIO container docker-compose.yml runs for local dev (bucket, credentials,
+# endpoint, path-style addressing), not Hetzner — so S3 works out of the box on a fresh checkout with
+# no app/.env at all. Gated on DEBUG rather than unconditional: DEPLOY.md requires DJANGO_DEBUG=0 in
+# production, so these defaults can never be what a real deploy silently runs on.
+S3_BUCKET = os.environ.get("S3_BUCKET", "gahk-s3" if DEBUG else "")
 # fsn1 (Falkenstein) / nbg1 (Nuremberg) / hel1 (Helsinki). Keep this in the same location as the VM:
 # traffic inside eu-central does not count against the account's egress allowance.
 S3_LOCATION = os.environ.get("S3_LOCATION", "fsn1")
@@ -142,8 +147,10 @@ S3_LOCATION = os.environ.get("S3_LOCATION", "fsn1")
 # docker-compose.yml runs for local dev. Path-style addressing is required there: MinIO has no
 # wildcard TLS certificate for virtual-hosted-style requests, and unlike Hetzner it is reached over
 # plain HTTP on the docker network.
-S3_ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL", f"https://{S3_LOCATION}.your-objectstorage.com")
-S3_ADDRESSING_STYLE = os.environ.get("S3_ADDRESSING_STYLE", "virtual")
+S3_ENDPOINT_URL = os.environ.get(
+    "S3_ENDPOINT_URL", "http://localhost:9000" if DEBUG else f"https://{S3_LOCATION}.your-objectstorage.com"
+)
+S3_ADDRESSING_STYLE = os.environ.get("S3_ADDRESSING_STYLE", "path" if DEBUG else "virtual")
 
 # The endpoint a BROWSER can actually reach, for presigned URLs only — everything else (uploads,
 # HEAD, delete, ...) keeps using S3_ENDPOINT_URL above, which this process itself resolves fine.
@@ -156,10 +163,18 @@ S3_ADDRESSING_STYLE = os.environ.get("S3_ADDRESSING_STYLE", "virtual")
 # already reachable from wherever the browser runs.
 S3_PUBLIC_ENDPOINT_URL = os.environ.get("S3_PUBLIC_ENDPOINT_URL", "") or S3_ENDPOINT_URL
 
+# botocore >= 1.36 defaults to sending x-amz-checksum-crc32 with aws-chunked framing on every PUT,
+# which S3-compatible providers — Hetzner AND MinIO — mis-store or reject. botocore reads these
+# straight out of the environment itself, never through Django, so setdefault() here is what makes
+# uploads work without an app/.env at all; .setdefault leaves an explicit .env/real env var alone.
+os.environ.setdefault("AWS_REQUEST_CHECKSUM_CALCULATION", "when_required")
+os.environ.setdefault("AWS_RESPONSE_CHECKSUM_VALIDATION", "when_required")
+
 _MEDIA_S3_OPTIONS = {
     "bucket_name": S3_BUCKET,
-    "access_key": os.environ.get("S3_ACCESS_KEY", ""),
-    "secret_key": os.environ.get("S3_SECRET_KEY", ""),
+    # minioadmin/minioadmin (MinIO's own defaults) when nothing is configured — see S3_BUCKET above.
+    "access_key": os.environ.get("S3_ACCESS_KEY", "minioadmin" if DEBUG else ""),
+    "secret_key": os.environ.get("S3_SECRET_KEY", "minioadmin" if DEBUG else ""),
     "endpoint_url": S3_ENDPOINT_URL,
     "region_name": S3_LOCATION,
     # Virtual-host style is what Hetzner documents: https://<bucket>.<loc>.your-objectstorage.com.
