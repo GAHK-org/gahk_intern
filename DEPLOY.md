@@ -168,7 +168,7 @@ switch** — there is no second flag and no half-enabled state.
 `<img src="/media/…">` into page bodies, and opslag bodies embed the same in Markdown. Repointing it
 at the bucket host makes those images vanish (the sanitiser drops a src it does not recognise) and
 makes the next edit of an existing opslag release its images for `purge_notices` to delete a day
-later — silently, both. `core/storage.py` carries the argument; `core.checks` (**core.E007-E010**)
+later — silently, both. `core/storage.py` carries the argument; `core.checks` (**core.E007-E009**)
 refuses to start the process if it is broken. `core.media.serve_media` answers `/media/<path>` with a
 302 to a short-lived presigned URL instead.
 
@@ -183,7 +183,7 @@ nothing serves them. Deploy first, migrate second, flip third:
 **Stage 1 — deploy, still on disk.** The app behaves exactly as before, so this stage validates the
 two things that *did* change behaviour, with zero storage risk:
 ```
-docker exec <web> python manage.py check                      # core.E007-E010 silent
+docker exec <web> python manage.py check                      # core.E007-E009 silent
 docker exec <web> sh -c 'find /app/media -type f | wc -l'     # baseline count
 docker exec <web> python manage.py audit_media --limit 5      # baseline, and note "Present"
 ```
@@ -214,8 +214,10 @@ docker exec <web> python manage.py shell -c "from django.core.files.storage impo
 → `MediaS3Storage`. Run `migrate_media_to_s3` once more to sweep up anything uploaded during the
 window, then check images in a browser, logged out and logged in, and upload one new image.
 
-**Rollback** is unsetting `S3_BUCKET` — **but only while the `media` volume still has the files.**
-Once it is emptied (below) that path is gone, which is what `core.E010` exists to enforce.
+**Rollback** was unsetting `S3_BUCKET`, while this was still the switch between the bucket and the
+`media` volume. It no longer is: `STORAGES["default"]` is unconditionally `core.storage.MediaS3Storage`
+now, so an unset `S3_BUCKET` is a loud S3 error, not a fallback to disk. Once the volume is emptied
+(below) that is doubly true — there is nothing on disk to fall back to either way.
 
 #### Emptying the volume
 

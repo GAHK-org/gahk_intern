@@ -9,9 +9,9 @@ Two branches, and both are load-bearing rather than a dev convenience:
   * object storage -> 302 to a short-lived presigned GET. The bytes come straight from Hetzner, so
     gunicorn never streams a file and a slow client cannot pin one of three sync workers.
   * anything else  -> stream it, which is what django.views.static.serve did before this existed.
-    Dev and CI run with no S3 credentials at all, and prod ran this way until the migration; a
-    single code path that only works when a bucket is configured would make the whole suite
-    untestable and the rollback untested.
+    The test suite runs this way (tests/conftest.py forces plain FileSystemStorage so pytest never
+    touches a real bucket); a single code path that only works when a bucket is configured would
+    make the whole suite untestable.
 
 IT IS ALSO THE AUTHENTICATION BOUNDARY for uploads, which it did not used to be: /media/ was public
 by URL, exactly as the legacy /public/ images were, so anyone who guessed
