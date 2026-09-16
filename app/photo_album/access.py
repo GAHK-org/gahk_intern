@@ -84,6 +84,16 @@ def can_delete(media: Media, request: HttpRequest, *, album_locked: bool | None 
 
 
 def can_permanently_delete(media: Media, request: HttpRequest) -> bool:
+    """The hour runs from the UPLOAD, not from the binning. Deliberate — do not "fix" it.
+
+    spec/features/Photo-album.md reads "a binned item may be permanently deleted manually only while
+    it is less than one hour old", where "it" is the item: manual purge exists to undo a mistake
+    somebody just made, not to give managers a way to erase the album's history on demand.
+
+    The consequence is intended: anything binned more than an hour after it was uploaded leaves only
+    via the 30-day sweep, so for most real deletions this button never appears at all. That is the
+    point — the bin is meant to be recoverable, and the 30 days are the recovery window.
+    """
     return (
         can_manage_media(request)
         and media.deleted_at is not None

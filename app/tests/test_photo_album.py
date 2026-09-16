@@ -499,9 +499,9 @@ def test_old_media_cannot_be_permanently_deleted_from_bin(
         thumbnail="c",
         requested_by=administrator,
     )
-    delete(media, administrator)
-    Media.objects.filter(pk=media.pk).update(deleted_at=timezone.now() - timedelta(hours=1, seconds=1))
+    Media.objects.filter(pk=media.pk).update(added_at=timezone.now() - timedelta(hours=1, seconds=1))
     media.refresh_from_db()
+    delete(media, administrator)
     client.force_login(administrator)
 
     response = client.post(reverse("photo_album:permanently_delete", args=[media.pk]))
@@ -773,10 +773,15 @@ def test_restoring_a_rejected_item_makes_it_reviewable_again(
 
 
 @pytest.mark.django_db
-def test_binned_media_can_be_purged_within_an_hour_of_being_binned(
+def test_old_media_stays_in_the_bin_even_when_it_was_only_just_binned(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
-    """The hour runs from the binning; keyed to added_at the button was unreachable in practice."""
+    """The hour runs from the UPLOAD, so binning something old does not reopen the purge window.
+
+    Deliberate, and the case most likely to be mistaken for a bug: manual purge is for undoing a
+    mistake just made, not a way to erase the album's history on demand. Anything older leaves only
+    via the 30-day sweep, which is the bin's recovery window. See access.can_permanently_delete.
+    """
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     album = Album.objects.create(folder="2026", name="Fest")
     media = Media.objects.create(
@@ -787,16 +792,15 @@ def test_binned_media_can_be_purged_within_an_hour_of_being_binned(
         thumbnail="c",
         requested_by=administrator,
     )
-    # Uploaded long ago, binned just now — the normal case, which used to be refused.
     Media.objects.filter(pk=media.pk).update(added_at=timezone.now() - timedelta(days=20))
     media.refresh_from_db()
-    delete(media, administrator)
+    delete(media, administrator)  # binned just now
     client.force_login(administrator)
 
     response = client.post(reverse("photo_album:permanently_delete", args=[media.pk]))
 
-    assert response.status_code == 302
-    assert not Media.objects.exists()
+    assert response.status_code == 403
+    assert Media.objects.filter(pk=media.pk).exists()
 
 
 @pytest.mark.django_db
