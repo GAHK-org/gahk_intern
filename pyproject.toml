@@ -1,5 +1,5 @@
 [project]
-name = "ny-ny-intern"
+name = "gahk-intern"
 version = "0.1.0"
 description = "GAHK.dk rewrite - Django site for G. A. Hagemanns Kollegium"
 readme = "README.md"
