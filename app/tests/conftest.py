@@ -20,6 +20,10 @@ def _isolate_from_dotenv(settings: object) -> None:
         and looks for a `cf-turnstile-response` token that no test posts, so every application form
         is silently rejected. That surfaces as `assert 0 == 1` on an Application count: it reads like
         a broken view, and three tests failed this way for some time while CI stayed green.
+      * S3_PUBLIC_ENDPOINT_URL — a developer's `task dev` value (MinIO's published port) would
+        otherwise reach every test that builds its own MediaS3Storage/PhotoAlbumS3Storage with a
+        different (fake) endpoint_url, making core.storage.PublicEndpointS3Storage presign against a
+        host that has nothing to do with the test's own fixture bucket.
 
     Autouse and unconditional, because in both cases the symptom points somewhere other than the
     cause, and no individual test should have to remember. Anything else added to .env that changes
@@ -30,6 +34,7 @@ def _isolate_from_dotenv(settings: object) -> None:
         "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     }
     settings.TURNSTILE_SECRET_KEY = ""  # type: ignore[attr-defined]
+    settings.S3_PUBLIC_ENDPOINT_URL = ""  # type: ignore[attr-defined]
 
 
 @pytest.fixture
