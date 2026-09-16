@@ -684,6 +684,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "bandit" },
+    { name = "debugpy" },
     { name = "django-stubs", extra = ["compatible-mypy"] },
     { name = "faker" },
     { name = "icalendar" },
@@ -717,6 +718,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "bandit", specifier = ">=1.7" },
+    { name = "debugpy", specifier = ">=1.8" },
     { name = "django-stubs", extras = ["compatible-mypy"], specifier = ">=6.0.9" },
     { name = "faker", specifier = ">=30.0" },
     { name = "icalendar", specifier = ">=6.0" },
