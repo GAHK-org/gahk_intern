@@ -199,7 +199,7 @@ tasks:
   minio:console:
     desc: Print the MinIO console URL/login (bucket browser)
     cmds:
-      - 'echo "http://localhost:9001  (user: gahk / password: gahk-minio-secret)"'
+      - 'echo "http://localhost:9001  (user: minioadmin / password: minioadmin)"'
     silent: true
 
   dev:
