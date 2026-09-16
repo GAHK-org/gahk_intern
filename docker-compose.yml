@@ -53,7 +53,7 @@ services:
     entrypoint: ["sleep", "infinity"]   # kept idle; run pgloader manually inside it
 
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:latest
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: gahk
@@ -71,7 +71,7 @@ services:
   # Creates the dev bucket the first time minio's volume is empty, then exits. `mc mb --ignore-existing`
   # makes re-runs (e.g. every `docker compose up`) a no-op rather than an error.
   minio-init:
-    image: minio/mc:latest
+    image: quay.io/minio/mc:latest
     depends_on:
       minio: {condition: service_healthy}
     entrypoint: >
