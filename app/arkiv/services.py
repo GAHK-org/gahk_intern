@@ -130,7 +130,7 @@ def purge_file(file: ArchiveFile) -> bool:
 
 # Roots that belong to the whole house. Everyone who can reach Arkiv can read AND upload here -
 # access.can_write follows can_read deliberately, so there is no separate step to grant it.
-SHARED_ROOTS = ["Billeder", "Fælles dokumenter"]
+SHARED_ROOTS = ["Fælles dokumenter"]
 
 
 def ensure_root_folders() -> tuple[list[str], list[str]]:

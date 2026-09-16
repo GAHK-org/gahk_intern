@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}{{ album.name }} | Fotoalbum{% endblock %}
+{% block content %}
+<section class="album-detail">
+	<header class="album-heading">
+		<div><a class="album-back" href="{% url 'photo_album:index' %}">Fotoalbum</a><h1>{{ album.name }}</h1><p class="album-subtitle"><svg aria-hidden="true"><use href="#i-folder"></use></svg><a href="{% url 'photo_album:index' %}?folder={{ album.folder|urlencode }}">{{ album.folder }}</a></p></div>
+		{% if album_locked %}<div class="album-actions"><span class="album-locked">Albummet er låst</span>{% if can_unlock %}<form method="post" action="{% url 'photo_album:unlock_album' album.pk %}">{% csrf_token %}<button class="btn-link" type="submit">Lås op</button></form>{% elif can_manage %}<span class="album-lock-note">Albummet har været låst i mere end 6 måneder og kan ikke låses op.</span>{% endif %}</div>{% elif can_manage %}<div class="album-actions"><a class="btn-link" href="{% url 'photo_album:bin' %}">Papirkurv</a><form method="post" action="{% url 'photo_album:lock_album' album.pk %}">{% csrf_token %}<button class="btn-link" type="submit">Lås album</button></form>{% if not media %}<form method="post" action="{% url 'photo_album:delete_album' album.pk %}">{% csrf_token %}<button class="btn-link-danger" type="submit">Slet album</button></form>{% endif %}</div>{% endif %}
+	</header>
+	{% if not album_locked %}
+		<form class="album-upload" method="post" action="{% url 'photo_album:upload' album.pk %}" enctype="multipart/form-data" data-no-downscale-images>
+			{% csrf_token %}
+			<label class="album-file-picker"><input type="file" name="uploads" accept="image/*,.heic,.heif,video/*" multiple required data-album-upload-input><span>Vælg fotoer eller videoer</span><small>Du kan vælge flere filer på én gang</small></label>
+			<input name="title" placeholder="Titel til alle valgte filer (valgfrit)">
+			<button class="btn" type="submit">Upload</button>
+		</form>
+		<section class="album-upload-selection" data-album-upload-selection hidden aria-live="polite">
+			<p data-album-upload-count></p>
+			<ul data-album-upload-files></ul>
+		</section>
+	{% endif %}
+	<div class="album-media-grid" data-album-gallery>
+	{% for item in media %}
+		<article class="album-media-item">
+		{% comment %}The tile carries an id and nothing else. Everything the viewer needs — the HD
+		url, the uploader, the timestamps, the EXIF blob, whether this reader may delete it — is
+		fetched from photo_album:media_detail when the item is actually opened. Rendering it into
+		every tile meant a 300-photo album shipped all of it 300 times to show one.{% endcomment %}
+		{% if item.has_derivatives %}<button type="button" class="album-media-tile" data-detail-url="{% url 'photo_album:media_detail' item.pk %}">
+			{% if item.content_type|slice:':6' == 'video/' %}<img src="{{ item.thumbnail.url }}" alt="{{ item.title }}" loading="lazy"><span class="album-video-mark">Video</span>{% else %}<img src="{{ item.thumbnail.url }}" alt="{{ item.title }}" loading="lazy">{% endif %}
+			{% if item.status == 'pending' %}<strong>Afventer godkendelse</strong>{% endif %}
+		</button>{% else %}<div class="album-media-tile album-media-placeholder" data-kind="{{ item.derivative_state }}">
+			<span class="album-media-placeholder-title">{{ item.title }}</span>
+			{% if item.derivative_state == 'failed' %}<strong>Videoen kunne ikke behandles</strong><a class="btn-link" href="{% url 'photo_album:download_original' item.pk %}">Download original</a>{% else %}<strong>Videoen behandles &hellip;</strong><small>Den vises her, når den er klar.</small>{% endif %}
+		</div>{% endif %}
+		{% if can_manage and item.status == 'pending' %}<div class="album-media-controls"><form method="post" action="{% url 'photo_album:approve' item.pk %}">{% csrf_token %}<button type="submit">Godkend</button></form><form method="post" action="{% url 'photo_album:reject' item.pk %}">{% csrf_token %}<button class="btn-link-danger" type="submit">Afvis</button></form></div>{% endif %}
+		</article>
+	{% empty %}<p class="album-empty">Dette album venter på sine første minder.</p>{% endfor %}
+	</div>
+</section>
+<dialog class="album-viewer" data-album-viewer aria-label="Medievisning">
+	<button type="button" class="album-viewer-close" data-gallery-close aria-label="Luk">&times;</button>
+	<button type="button" class="album-viewer-menu-button" data-gallery-menu-button aria-label="Flere muligheder" aria-expanded="false">&#8942;</button>
+	<button type="button" class="album-viewer-arrow album-viewer-previous" data-gallery-previous aria-label="Forrige">&larr;</button>
+	<div class="album-viewer-stage"><img data-gallery-image alt=""><video data-gallery-video controls hidden></video></div>
+	<aside><p class="album-eyebrow">Medie</p><h2 data-gallery-title></h2><p class="album-viewer-mobile-date" data-gallery-mobile-date></p><dl data-gallery-metadata></dl><a class="btn btn-secondary" data-gallery-download download>Download original</a><form method="post" data-gallery-delete-form hidden onsubmit="return confirm('Er du sikker på, at du vil slette mediet?');">{% csrf_token %}<button class="btn-link-danger" type="submit">Fjern</button></form></aside>
+	<section class="album-viewer-menu" data-gallery-menu hidden aria-label="Flere muligheder"><dl data-gallery-menu-metadata></dl><a class="btn btn-secondary" data-gallery-menu-download download>Download original</a><form method="post" data-gallery-menu-delete-form hidden onsubmit="return confirm('Er du sikker på, at du vil slette mediet?');">{% csrf_token %}<button class="btn-link-danger" type="submit">Fjern</button></form></section>
+	<button type="button" class="album-viewer-arrow album-viewer-next" data-gallery-next aria-label="Næste">&rarr;</button>
+</dialog>
+{% endblock %}

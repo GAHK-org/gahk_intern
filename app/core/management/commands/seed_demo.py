@@ -52,6 +52,8 @@ from oelkaelder.models import (
 )
 from opslagstavle.demo import seed as seed_opslagstavle
 from opslagstavle.models import Notice, NoticeComment, NoticeReaction
+from photo_album.demo import seed as seed_photo_album
+from photo_album.models import Album, Media
 from residents.models import WORKGROUP_ROLE, Residency, Resident, Role, RoleAssignment
 from rooms.models import (
     KvotientApplication,
@@ -128,6 +130,8 @@ WIPE_ORDER: list[type[models.Model]] = [
     PylonEvent,
     DailyVisitCount,
     VisitTally,
+    Media,
+    Album,
     Resident,
     # Before Workgroup: ArchiveFolder references it with PROTECT (a SET_NULL would silently turn a
     # gated folder into a world-readable one), so the archive has to go first or --fresh cannot run.
@@ -189,6 +193,7 @@ class Command(BaseCommand):
             seed_opslagstavle(residents, self.now, self.rng)
             seed_events(residents, self.now, self.rng)
             seed_arkiv(residents, self.now, self.rng)
+            seed_photo_album(residents, self.now, self.rng)
 
         self._report(residents)
 

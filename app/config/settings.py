@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     "events",
     "reparationer",
     "arkiv",
+    "photo_album",
 ]
 
 MIDDLEWARE = [
@@ -137,16 +138,24 @@ ALLOW_LOCAL_MEDIA = os.environ.get("ALLOW_LOCAL_MEDIA", "") == "1"
 # traffic inside eu-central does not count against the account's egress allowance.
 S3_LOCATION = os.environ.get("S3_LOCATION", "fsn1")
 
+# Overridable for S3-compatible endpoints that are not Hetzner — namely the MinIO container
+# docker-compose.yml runs for local dev. Path-style addressing is required there: MinIO has no
+# wildcard TLS certificate for virtual-hosted-style requests, and unlike Hetzner it is reached over
+# plain HTTP on the docker network.
+S3_ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL", f"https://{S3_LOCATION}.your-objectstorage.com")
+S3_ADDRESSING_STYLE = os.environ.get("S3_ADDRESSING_STYLE", "virtual")
+
 _MEDIA_S3_OPTIONS = {
     "bucket_name": S3_BUCKET,
     "access_key": os.environ.get("S3_ACCESS_KEY", ""),
     "secret_key": os.environ.get("S3_SECRET_KEY", ""),
-    "endpoint_url": f"https://{S3_LOCATION}.your-objectstorage.com",
+    "endpoint_url": S3_ENDPOINT_URL,
     "region_name": S3_LOCATION,
     # Virtual-host style is what Hetzner documents: https://<bucket>.<loc>.your-objectstorage.com.
     # The bucket name must therefore be DNS-safe — lowercase, and NO DOTS, or TLS SNI against their
-    # wildcard certificate fails for every request.
-    "addressing_style": "virtual",
+    # wildcard certificate fails for every request. MinIO (local dev) overrides this to "path" via
+    # S3_ADDRESSING_STYLE, since it has no such certificate.
+    "addressing_style": S3_ADDRESSING_STYLE,
     "signature_version": "s3v4",
     # None, not "private". Hetzner implements bucket policies and not S3 ACLs, and rejects the
     # x-amz-acl header outright.
@@ -290,3 +299,11 @@ NOTICE_IMAGE_MAX_MB = int(os.environ.get("NOTICE_IMAGE_MAX_MB", "5"))
 # feature caps its own uploads, so an ops change for one cannot silently change what residents may
 # post to another.
 EVENT_IMAGE_MAX_MB = int(os.environ.get("EVENT_IMAGE_MAX_MB", "5"))
+
+# Photo album uploads. Two ceilings rather than one: the album deliberately keeps the ORIGINAL at
+# full resolution (unlike every other feature here, which downscales in the browser first), so a
+# modern phone photo legitimately arrives at 10-15 MB, and a clip from the same phone is an order of
+# magnitude larger again. Its own settings for the same reason the *_MAX_MB above are separate —
+# each feature caps its own uploads, so an ops change for one cannot silently change another.
+PHOTO_ALBUM_IMAGE_MAX_MB = int(os.environ.get("PHOTO_ALBUM_IMAGE_MAX_MB", "50"))
+PHOTO_ALBUM_VIDEO_MAX_MB = int(os.environ.get("PHOTO_ALBUM_VIDEO_MAX_MB", "1000"))

@@ -7,16 +7,33 @@ stays a separate **PHP + MariaDB** app on the same box. No SPA/API — one monol
 > Items marked **[you]** need your accounts/credentials (GitHub, Hetzner, Punktum dk) — I can't do them from here.
 
 ## 1. Local
-Prereqs: [`uv`](https://docs.astral.sh/uv/) (Python deps) + [`go-task`](https://taskfile.dev) + Node.
+Prereqs: [`uv`](https://docs.astral.sh/uv/) (Python deps) + [`go-task`](https://taskfile.dev) + Node + Docker.
 ```
 task install      # uv sync → ./.venv from pyproject.toml + uv.lock
-task db:up        # Postgres + MariaDB (dev)
-task dev          # build assets + migrate + runserver → http://127.0.0.1:8800
+task dev          # the whole app in Docker (Postgres+MinIO+hot-reload Django) → http://127.0.0.1:8800
 task test         # pytest
 task lint         # ruff check + format --check
 task build        # prod asset build + collectstatic
 docker build -t gahk .   # full production image
 ```
+Copy `app/.env.example` to `app/.env` first — its defaults point `DATABASE_URL` at the Postgres
+container and `S3_*` at the MinIO container (`task services:up`), both started automatically by
+`task dev`/`task dev:local`/`task seed`. Comment out `S3_BUCKET`/unset `DATABASE_URL` to fall back
+to local-disk media / SQLite instead — no Docker needed either way.
+
+`task db:up` additionally starts MariaDB, needed only for the legacy ETL (`task etl`).
+
+**Running Django directly on the host** instead of in a container:
+```
+task dev:local     # same Postgres+MinIO containers, but Django runs on the host (task debug for pdb)
+```
+`./app` is bind-mounted into the `dev` container, so `dev` and `dev:local` are interchangeable at
+any time against the same Postgres/MinIO containers — pick whichever is convenient.
+```
+task dev:logs      # follow the dockerized app's output
+task dev:down      # stop the app container (Postgres/MinIO keep running — `task services:down`)
+```
+
 
 ## 2. Secrets / environment (prod → `app/.env.prod`, never committed)
 All are read from the environment (F-013); rotate everything at cutover (scope §5 — legacy secrets are compromised).
@@ -99,6 +116,8 @@ or an overlapping run is harmless.
 | `python manage.py purge_notices` | `40 3 * * *` | Sweeps compose-toolbar images uploaded to a post nobody ever saved. **It no longer deletes opslag** — the board keeps its archive (spec/features/opslagstavle.md). The name is kept so this row and the Coolify task stay valid; if it is ever renamed, both move in the same change. Offset from `purge_applications` (03:20) so two deletes never overlap on the same small box. |
 | `python manage.py archive_finished_repairs` | `50 3 * * *` | Archives (never deletes) a Reparationer ticket that has sat in Færdig for over 30 days, so the board does not fill up with old closed repairs — still searchable via the Arkiv page. Offset from `purge_notices` (03:40) so the two never overlap. |
 | `python manage.py purge_events` | `0 4 * * *` | Enforces Begivenheder's retention: an event goes a week after it ends, a cancelled one thirty days after it was cancelled (two clocks, see `events/models.py`). Offset to 04:00 so it does not overlap `purge_applications` (03:20), `purge_notices` (03:40) or `archive_finished_repairs` (03:50) on the same small box. |
+| `python manage.py purge_photo_album` | `10 4 * * *` | Enforces the photo album's retention: pending media nobody approved within 30 days, and anything held in the bin for 30 days, go with all three stored variants. Offset from `purge_events` (04:00) so two deletes never overlap on the same small box. |
+| `python manage.py process_photo_album_media` | `*/10 * * * *` | Builds the viewer/grid derivatives for uploaded **videos**. The upload itself only stores the original — an H.264 encode takes far longer than gunicorn's 60 s timeout, so doing it in the request killed the worker and lost the upload (see `photo_album.models.DerivativeState`). Every ten minutes because a resident who just posted a clip is waiting to see it; `--limit` keeps one run bounded, and a clip that fails three times is marked failed rather than retried forever. |
 | `python manage.py remind_rsvp_deadlines` | `0 17 * * *` | Nudges the people who have not answered when a svarfrist falls inside the next 24 hours. **Once per event** — the claim is a compare-and-swap on `reminder_sent_at`, taken *before* the send, so a crash between the two loses one reminder rather than pushing the whole house twice. Runs at 17:00 rather than overnight because it is a notification people are meant to act on. |
 
 **Run `purge_applications --dry-run` by hand first.** It deletes permanently and there is no undo;
