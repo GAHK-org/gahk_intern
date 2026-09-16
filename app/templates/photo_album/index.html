@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Fotoalbum | GAHK Intern{% endblock %}
+{% block content %}
+<section class="album-index">
+	<header class="album-heading">
+		<div><p class="album-eyebrow">GAHKs fælles minder</p><h1>Fotoalbum</h1></div>
+		{% if can_create %}<a class="btn" href="{% url 'photo_album:create_album' %}">Opret album</a>{% endif %}
+	</header>
+	{% regroup albums by folder as folders %}
+	<div class="album-folders">
+		{% for folder in folders %}
+			<section class="album-folder" aria-labelledby="folder-{{ forloop.counter }}">
+				<h2 id="folder-{{ forloop.counter }}"><svg aria-hidden="true"><use href="#i-folder"></use></svg>{{ folder.grouper }}</h2>
+				<div class="album-folder-grid">
+					{% for album in folder.list %}
+						<a class="album-card" href="{% url 'photo_album:detail' album.pk %}">
+							<svg aria-hidden="true"><use href="#i-photo"></use></svg>
+							<span class="album-card-name">{{ album.name }}</span>
+							<span class="album-card-count">{{ album.media_count }} medier</span>
+						</a>
+					{% endfor %}
+				</div>
+			</section>
+		{% empty %}
+			<p class="album-empty">Ingen albummer endnu.</p>
+		{% endfor %}
+	</div>
+</section>
+{% endblock %}
