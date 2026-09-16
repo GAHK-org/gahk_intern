@@ -1,7 +1,15 @@
-# ETL / dev databases (02-schema-etl.md §8).
-#   - mariadb : staging copy of the legacy dump (gahk_dk.sql auto-loaded on first init)
-#   - postgres: target for the clean Django schema + pgloader 1:1 staging schema
-#   - pgloader: one-shot MySQL->Postgres bulk lift (run via `docker compose run --rm pgloader ...`)
+# Local dev + ETL services (02-schema-etl.md §8).
+#   - postgres  : the app's own database. `task db:up` starts this (+ mariadb); point DATABASE_URL
+#                 at it (see app/.env.example) instead of the SQLite fallback.
+#   - minio     : S3-compatible object storage standing in for Hetzner Object Storage in dev — the
+#                 MEDIA_S3_* settings point at it instead of MEDIA_ROOT on local disk (core/storage.py).
+#   - minio-init: one-shot job that creates the dev bucket; runs once and exits, harmless to re-run.
+#   - mariadb   : staging copy of the legacy dump (gahk_dk.sql auto-loaded on first init), ETL only.
+#   - pgloader  : one-shot MySQL->Postgres bulk lift (run via `docker compose run --rm pgloader ...`)
+#   - web       : optional — the Django app itself, hot-reloading. Opt in with the "docker" profile:
+#                 `task dev` / `docker compose --profile docker up -d web`. Running `task dev:local`
+#                 instead (directly on the host, against the same postgres/minio) remains fully
+#                 supported; this service is an alternative, not a replacement.
 services:
   postgres:
     image: postgres:16
@@ -44,6 +52,68 @@ services:
       mariadb: {condition: service_healthy}
     entrypoint: ["sleep", "infinity"]   # kept idle; run pgloader manually inside it
 
+  minio:
+    image: quay.io/minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: gahk
+      MINIO_ROOT_PASSWORD: gahk-minio-secret
+    ports:
+      - "9000:9000"   # S3 API — matches S3_ENDPOINT_URL in app/.env.example
+      - "9001:9001"   # web console (http://localhost:9001)
+    volumes: ["miniodata:/data"]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Creates the dev bucket the first time minio's volume is empty, then exits. `mc mb --ignore-existing`
+  # makes re-runs (e.g. every `docker compose up`) a no-op rather than an error.
+  minio-init:
+    image: quay.io/minio/mc:latest
+    depends_on:
+      minio: {condition: service_healthy}
+    entrypoint: >
+      sh -c "
+      mc alias set local http://minio:9000 gahk gahk-minio-secret &&
+      mc mb --ignore-existing local/gahk-media
+      "
+
+  # Optional: the Django app itself, hot-reloading (opt-in — see the `services:` comment above).
+  # ./app is bind-mounted over the image's copy, so edits on the host are picked up by Django's
+  # autoreloader without a rebuild; only changing pyproject.toml/uv.lock needs one.
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    profiles: ["docker"]
+    env_file:
+      - path: "app/.env"
+        required: false   # falls back to config/settings.py's dev defaults if it doesn't exist yet
+    environment:
+      # Override the host-oriented values from app/.env with the ones reachable on the compose
+      # network — everything else (SECRET_KEY, SMTP, VAPID, ...) still comes from the env file.
+      DATABASE_URL: postgres://gahk:gahk@postgres:5432/gahk
+      S3_BUCKET: gahk-media
+      S3_ACCESS_KEY: gahk
+      S3_SECRET_KEY: gahk-minio-secret
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_ADDRESSING_STYLE: path
+      # See app/.env.example: required alongside a non-AWS S3 endpoint (Hetzner AND MinIO both need
+      # this — botocore's default checksum framing is mis-stored/rejected by both).
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+    volumes:
+      - "./app:/src/app"
+    ports:
+      - "8800:8000"
+    depends_on:
+      postgres: {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
+    command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+
 volumes:
   pgdata:
   mariadbdata:
+  miniodata:
