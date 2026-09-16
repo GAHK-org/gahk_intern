@@ -7,13 +7,15 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from django.core.files.base import ContentFile, File
+from django.db.models import QuerySet
 from django.utils import timezone
 from PIL import ExifTags, Image, ImageOps
 from pillow_heif import register_heif_opener
 
 from residents.models import Resident
 
-from .models import Album, Media, MediaStatus
+from .models import Album, DerivativeState, Media, MediaStatus
+from .uploads import is_video
 
 register_heif_opener()
 
@@ -38,9 +40,18 @@ def upload_media(
         captured_at=extract_captured_at(uploaded_file),
     )
     media.original.save(filename, uploaded_file, save=False)
-    variants = image_variants(uploaded_file, filename) or video_variants(uploaded_file, filename)
+    if is_video(uploaded_file):
+        # Deferred on purpose — see DerivativeState. Transcoding here would run an H.264 encode
+        # inside the request, past gunicorn's 60 s timeout, and the resident would get a 502 with
+        # the upload lost. The original is stored now; the derivatives follow out of band.
+        media.derivative_state = DerivativeState.PENDING
+        media.save()
+        return media
+    variants = image_variants(uploaded_file, filename)
     if variants is None:
         # Preserve an unsupported source rather than rejecting the resident's original upload.
+        # `uploads.check_media_upload` has already refused anything we are not willing to serve, so
+        # this is a decode failure on a permitted type, not an arbitrary file.
         for field in (media.high_definition, media.thumbnail):
             uploaded_file.seek(0)
             field.save(filename, File(uploaded_file), save=False)
@@ -50,6 +61,43 @@ def upload_media(
         media.thumbnail.save(thumbnail.name or "thumbnail.jpg", thumbnail, save=False)
     media.save()
     return media
+
+
+# A video whose transcode keeps failing must not be retried forever: the encode is the most
+# expensive thing this app does, and a corrupt upload would otherwise burn the whole nightly run on
+# every pass. Three attempts, then FAILED and a line in the command's output for someone to look at.
+MAX_DERIVATIVE_ATTEMPTS = 3
+
+
+def build_derivatives(media: Media) -> bool:
+    """Build the pending derivatives for one stored video. Returns whether they are now available.
+
+    Safe to call on the same row twice — it re-reads the original from storage and overwrites — so
+    an overlapping run of the management command is harmless, as DEPLOY.md §4b requires.
+    """
+    media.derivative_attempts += 1
+    filename = Path(media.original.name or "upload").name
+    with media.original.open("rb") as original:
+        variants = video_variants(File(original), filename)
+    if variants is None:
+        media.derivative_state = (
+            DerivativeState.FAILED
+            if media.derivative_attempts >= MAX_DERIVATIVE_ATTEMPTS
+            else DerivativeState.PENDING
+        )
+        media.save(update_fields=["derivative_state", "derivative_attempts"])
+        return False
+    high_definition, thumbnail = variants
+    media.high_definition.save(high_definition.name or "high-definition.mp4", high_definition, save=False)
+    media.thumbnail.save(thumbnail.name or "thumbnail.jpg", thumbnail, save=False)
+    media.derivative_state = DerivativeState.READY
+    media.save(update_fields=["high_definition", "thumbnail", "derivative_state", "derivative_attempts"])
+    return True
+
+
+def pending_derivatives() -> "QuerySet[Media]":
+    """Stored media still waiting for its derivatives, oldest first."""
+    return Media.objects.filter(derivative_state=DerivativeState.PENDING).order_by("added_at", "pk")
 
 
 def image_variants(uploaded_file: File, filename: str) -> tuple[ContentFile, ContentFile] | None:

@@ -30,6 +30,21 @@ class MediaStatus(models.TextChoices):
     REJECTED = "rejected", "Afvist"
 
 
+class DerivativeState(models.TextChoices):
+    """Whether `high_definition` and `thumbnail` have been built yet.
+
+    Images are derived inline — Pillow on a phone photo is milliseconds and the resident who just
+    uploaded it is the one about to look at it. Video cannot be: an H.264 encode of a phone clip
+    runs well past gunicorn's 60 s timeout, which killed the worker mid-transcode and lost the
+    upload. So a video is stored as its original with state PENDING, and
+    `manage.py process_photo_album_media` (DEPLOY.md §4b) builds the derivatives out of band.
+    """
+
+    READY = "ready", "Klar"
+    PENDING = "pending", "Behandles"
+    FAILED = "failed", "Mislykkedes"
+
+
 class Album(models.Model):
     folder = models.CharField(max_length=10, verbose_name="Mappe")
     name = models.CharField(max_length=140, verbose_name="Albumnavn")
@@ -112,6 +127,10 @@ class Media(models.Model):
     high_definition = models.FileField(upload_to=album_high_definition_path)
     thumbnail = models.FileField(upload_to=album_thumbnail_path)
     content_type = models.CharField(max_length=100, blank=True)
+    derivative_state = models.CharField(
+        max_length=10, choices=DerivativeState.choices, default=DerivativeState.READY
+    )
+    derivative_attempts = models.PositiveSmallIntegerField(default=0)
     metadata = models.JSONField(default=dict, blank=True)
     requested_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="media_requests"
@@ -145,3 +164,8 @@ class Media(models.Model):
     @property
     def is_in_bin(self) -> bool:
         return self.deleted_at is not None
+
+    @property
+    def has_derivatives(self) -> bool:
+        """Whether the grid and the viewer have something to show for this item yet."""
+        return self.derivative_state == DerivativeState.READY and bool(self.thumbnail)

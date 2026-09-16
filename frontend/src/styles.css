@@ -1685,6 +1685,13 @@
    .album-media-tile strong, .album-video-mark { position:absolute; top:6px; left:6px; padding:3px 6px; border-radius:4px; background:rgb(0 0 0 / .68); color:#fff; font-size:11px; }
    .album-video-mark { left:auto; right:6px; }
    .album-media-tile:hover img, .album-media-tile:hover video, .album-media-tile:focus-visible img, .album-media-tile:focus-visible video { filter:brightness(.84); }
+   /* A video whose derivatives are still being built out of band (photo_album DerivativeState):
+      same footprint as a real tile so the grid does not reflow when the thumbnail appears. */
+   .album-media-placeholder { display:flex; aspect-ratio:1; flex-direction:column; align-items:center; justify-content:center; gap:4px; padding:10px; border:1px dashed var(--line); background:var(--surface-2); color:var(--muted); text-align:center; cursor:default; }
+   .album-media-placeholder strong { position:static; background:none; color:var(--ink); font-size:12px; }
+   .album-media-placeholder[data-kind="failed"] strong { color:var(--neg); }
+   .album-media-placeholder-title { overflow:hidden; max-width:100%; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+   .album-media-placeholder small { font-size:11px; }
    .album-media-origin { margin:5px 4px 0; overflow:hidden; color:var(--muted); text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
    .album-media-controls { min-height:22px; padding:3px 4px; justify-content:center; }.album-media-controls button { border:0; background:none; padding:0; color:var(--brass); cursor:pointer; font:inherit; font-size:12px; }.album-media-controls .btn-link-danger { color:var(--neg); }
    .album-viewer { display:none; width:min(1120px, calc(100vw - 32px)); height:min(760px, calc(100vh - 32px)); max-width:none; max-height:none; margin:auto; padding:0; border:0; border-radius:8px; color:var(--ink); background:var(--card); }
