@@ -137,16 +137,24 @@ ALLOW_LOCAL_MEDIA = os.environ.get("ALLOW_LOCAL_MEDIA", "") == "1"
 # traffic inside eu-central does not count against the account's egress allowance.
 S3_LOCATION = os.environ.get("S3_LOCATION", "fsn1")
 
+# Overridable for S3-compatible endpoints that are not Hetzner — namely the MinIO container
+# docker-compose.yml runs for local dev. Path-style addressing is required there: MinIO has no
+# wildcard TLS certificate for virtual-hosted-style requests, and unlike Hetzner it is reached over
+# plain HTTP on the docker network.
+S3_ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL", f"https://{S3_LOCATION}.your-objectstorage.com")
+S3_ADDRESSING_STYLE = os.environ.get("S3_ADDRESSING_STYLE", "virtual")
+
 _MEDIA_S3_OPTIONS = {
     "bucket_name": S3_BUCKET,
     "access_key": os.environ.get("S3_ACCESS_KEY", ""),
     "secret_key": os.environ.get("S3_SECRET_KEY", ""),
-    "endpoint_url": f"https://{S3_LOCATION}.your-objectstorage.com",
+    "endpoint_url": S3_ENDPOINT_URL,
     "region_name": S3_LOCATION,
     # Virtual-host style is what Hetzner documents: https://<bucket>.<loc>.your-objectstorage.com.
     # The bucket name must therefore be DNS-safe — lowercase, and NO DOTS, or TLS SNI against their
-    # wildcard certificate fails for every request.
-    "addressing_style": "virtual",
+    # wildcard certificate fails for every request. MinIO (local dev) overrides this to "path" via
+    # S3_ADDRESSING_STYLE, since it has no such certificate.
+    "addressing_style": S3_ADDRESSING_STYLE,
     "signature_version": "s3v4",
     # None, not "private". Hetzner implements bucket policies and not S3 ACLs, and rejects the
     # x-amz-acl header outright.

@@ -7,16 +7,33 @@ stays a separate **PHP + MariaDB** app on the same box. No SPA/API — one monol
 > Items marked **[you]** need your accounts/credentials (GitHub, Hetzner, Punktum dk) — I can't do them from here.
 
 ## 1. Local
-Prereqs: [`uv`](https://docs.astral.sh/uv/) (Python deps) + [`go-task`](https://taskfile.dev) + Node.
+Prereqs: [`uv`](https://docs.astral.sh/uv/) (Python deps) + [`go-task`](https://taskfile.dev) + Node + Docker.
 ```
 task install      # uv sync → ./.venv from pyproject.toml + uv.lock
-task db:up        # Postgres + MariaDB (dev)
-task dev          # build assets + migrate + runserver → http://127.0.0.1:8800
+task dev          # the whole app in Docker (Postgres+MinIO+hot-reload Django) → http://127.0.0.1:8800
 task test         # pytest
 task lint         # ruff check + format --check
 task build        # prod asset build + collectstatic
 docker build -t gahk .   # full production image
 ```
+Copy `app/.env.example` to `app/.env` first — its defaults point `DATABASE_URL` at the Postgres
+container and `S3_*` at the MinIO container (`task services:up`), both started automatically by
+`task dev`/`task dev:local`/`task seed`. Comment out `S3_BUCKET`/unset `DATABASE_URL` to fall back
+to local-disk media / SQLite instead — no Docker needed either way.
+
+`task db:up` additionally starts MariaDB, needed only for the legacy ETL (`task etl`).
+
+**Running Django directly on the host** instead of in a container:
+```
+task dev:local     # same Postgres+MinIO containers, but Django runs on the host (task debug for pdb)
+```
+`./app` is bind-mounted into the `dev` container, so `dev` and `dev:local` are interchangeable at
+any time against the same Postgres/MinIO containers — pick whichever is convenient.
+```
+task dev:logs      # follow the dockerized app's output
+task dev:down      # stop the app container (Postgres/MinIO keep running — `task services:down`)
+```
+
 
 ## 2. Secrets / environment (prod → `app/.env.prod`, never committed)
 All are read from the environment (F-013); rotate everything at cutover (scope §5 — legacy secrets are compromised).
