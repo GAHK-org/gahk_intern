@@ -1,16 +1,31 @@
+import subprocess
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from io import BytesIO
+from pathlib import Path
 
+import imageio_ffmpeg
 import pytest
 from django.core.exceptions import ValidationError
+from django.core.files.base import File
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.management import call_command
 from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
+from PIL import Image
 
-from photo_album.models import Album, Media, MediaStatus
-from photo_album.services import delete, extract_captured_at, purge_expired, upload_media
+from photo_album.models import Album, DerivativeState, Media, MediaStatus
+from photo_album.services import (
+    MAX_DERIVATIVE_ATTEMPTS,
+    build_derivatives,
+    delete,
+    extract_captured_at,
+    pending_derivatives,
+    purge_expired,
+    reject,
+    upload_media,
+)
 from residents.models import Resident, Role
 
 
@@ -109,7 +124,12 @@ def test_upload_accepts_multiple_media_files(client: Client, make_resident: Call
     client.force_login(administrator)
     response = client.post(
         reverse("photo_album:upload", args=[album.pk]),
-        {"uploads": [SimpleUploadedFile("one.jpg", b"one"), SimpleUploadedFile("two.jpg", b"two")]},
+        {
+            "uploads": [
+                SimpleUploadedFile("one.jpg", b"one", content_type="image/jpeg"),
+                SimpleUploadedFile("two.jpg", b"two", content_type="image/jpeg"),
+            ]
+        },
     )
     assert response.status_code == 302
     assert Media.objects.filter(album=album).count() == 2
@@ -434,7 +454,7 @@ def test_delete_uses_bin_then_purges_after_30_days(make_resident: Callable[..., 
     media = Media.objects.create(
         album=album, title="photo", original="a", high_definition="b", thumbnail="c", requested_by=resident
     )
-    assert delete(media, resident) is False
+    delete(media, resident)
     media.refresh_from_db()
     assert media.deleted_at is not None
     Media.objects.filter(pk=media.pk).update(deleted_at=timezone.now() - timedelta(days=31))
@@ -479,9 +499,9 @@ def test_old_media_cannot_be_permanently_deleted_from_bin(
         thumbnail="c",
         requested_by=administrator,
     )
-    Media.objects.filter(pk=media.pk).update(added_at=timezone.now() - timedelta(hours=1, seconds=1))
-    media.refresh_from_db()
     delete(media, administrator)
+    Media.objects.filter(pk=media.pk).update(deleted_at=timezone.now() - timedelta(hours=1, seconds=1))
+    media.refresh_from_db()
     client.force_login(administrator)
 
     response = client.post(reverse("photo_album:permanently_delete", args=[media.pk]))
@@ -556,3 +576,339 @@ def test_album_cannot_be_renamed_or_deleted_while_it_has_media(
         album.save()
     with pytest.raises(ValidationError, match="tomt"):
         album.delete()
+
+
+# --- Regression tests for the PR review findings -------------------------------------------------
+#
+# Each of these fails against the code as it was. Several of the bugs below survived the original
+# suite precisely because the existing tests asserted the buggy behaviour, so they are spelled out
+# here in terms of what a resident or a manager actually sees.
+
+
+def _image(name: str = "photo.jpg") -> SimpleUploadedFile:
+    return SimpleUploadedFile(name, b"bytes", content_type="image/jpeg")
+
+
+def _video(name: str = "clip.mp4") -> SimpleUploadedFile:
+    return SimpleUploadedFile(name, b"bytes", content_type="video/mp4")
+
+
+@pytest.mark.django_db
+def test_album_upload_form_opts_out_of_client_side_downscaling(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The album keeps originals at full resolution, so it opts OUT of the shared downscaler.
+
+    The marker has to be the opt-out one: making the downscaler opt-in silently disabled it for
+    every other upload form in the building.
+    """
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    album = Album.objects.create(folder="2026", name="Fest")
+    client.force_login(administrator)
+
+    content = client.get(reverse("photo_album:detail", args=[album.pk])).content.decode()
+
+    assert "data-no-downscale-images" in content
+
+
+@pytest.mark.django_db
+def test_upload_refuses_an_svg_even_with_an_image_content_type(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """An SVG stored unchanged becomes all three variants, and /media/ serves it on our own origin."""
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    album = Album.objects.create(folder="2026", name="Fest")
+    client.force_login(administrator)
+
+    response = client.post(
+        reverse("photo_album:upload", args=[album.pk]),
+        {
+            "uploads": [
+                SimpleUploadedFile("payload.svg", b"<svg onload='alert(1)'/>", content_type="image/png")
+            ]
+        },
+        follow=True,
+    )
+
+    assert not Media.objects.exists()
+    assert "Filtypen er ikke understøttet" in response.content.decode()
+
+
+@pytest.mark.django_db
+def test_upload_refuses_a_file_over_the_size_cap(
+    client: Client, make_resident: Callable[..., Resident], settings: pytest.FixtureRequest
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    album = Album.objects.create(folder="2026", name="Fest")
+    settings.PHOTO_ALBUM_IMAGE_MAX_MB = 1  # type: ignore[attr-defined]
+    client.force_login(administrator)
+
+    response = client.post(
+        reverse("photo_album:upload", args=[album.pk]),
+        {"uploads": [SimpleUploadedFile("big.jpg", b"x" * (2 * 1024 * 1024), content_type="image/jpeg")]},
+        follow=True,
+    )
+
+    assert not Media.objects.exists()
+    assert "for stort" in response.content.decode()
+
+
+@pytest.mark.django_db
+def test_upload_with_no_files_reports_the_problem_instead_of_looking_successful(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    album = Album.objects.create(folder="2026", name="Fest")
+    client.force_login(administrator)
+
+    response = client.post(reverse("photo_album:upload", args=[album.pk]), {"title": "Fest"}, follow=True)
+
+    assert not Media.objects.exists()
+    assert "Dette felt er påkrævet" in response.content.decode()
+
+
+@pytest.mark.django_db
+def test_video_upload_stores_the_original_and_defers_its_derivatives(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """Transcoding in the request outran gunicorn's 60 s timeout and lost the upload."""
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    album = Album.objects.create(folder="2026", name="Fest")
+    client.force_login(administrator)
+
+    response = client.post(
+        reverse("photo_album:upload", args=[album.pk]), {"uploads": [_video()]}, follow=True
+    )
+
+    media = Media.objects.get()
+    assert media.derivative_state == DerivativeState.PENDING
+    assert media.original
+    assert not media.thumbnail
+    assert not media.has_derivatives
+    # The grid must not try to render a thumbnail that does not exist yet.
+    assert "behandles" in response.content.decode().lower()
+
+
+@pytest.mark.django_db
+def test_an_image_upload_still_gets_its_derivatives_immediately(
+    make_resident: Callable[..., Resident],
+) -> None:
+    resident = make_resident()
+    album = Album.objects.create(folder="2026", name="Fest")
+
+    media = upload_media(album=album, uploaded_file=_image(), resident=resident)
+
+    assert media.derivative_state == DerivativeState.READY
+    assert media.thumbnail
+
+
+@pytest.mark.django_db
+def test_a_video_whose_transcode_keeps_failing_is_given_up_on(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """Otherwise one corrupt upload burns every scheduled run forever."""
+    resident = make_resident()
+    album = Album.objects.create(folder="2026", name="Fest")
+    media = upload_media(album=album, uploaded_file=_video(), resident=resident)
+
+    for _ in range(MAX_DERIVATIVE_ATTEMPTS):
+        assert build_derivatives(media) is False  # the bytes are not a real video
+
+    assert media.derivative_state == DerivativeState.FAILED
+    assert media not in list(pending_derivatives())
+
+
+@pytest.mark.django_db
+def test_deleting_an_album_whose_media_are_all_binned_explains_itself(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The Slet album button reappears once the last item is binned; it used to 500."""
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    album = Album.objects.create(folder="2026", name="Fest")
+    media = Media.objects.create(
+        album=album,
+        title="photo",
+        original="a",
+        high_definition="b",
+        thumbnail="c",
+        requested_by=administrator,
+    )
+    delete(media, administrator)
+    client.force_login(administrator)
+
+    response = client.post(reverse("photo_album:delete_album", args=[album.pk]), follow=True)
+
+    assert response.status_code == 200
+    assert Album.objects.filter(pk=album.pk).exists()
+    assert "papirkurven" in response.content.decode()
+
+
+@pytest.mark.django_db
+def test_restoring_a_rejected_item_makes_it_reviewable_again(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """Restore used to clear deleted_at but leave status=rejected.
+
+    That combination is reachable by nothing in the app: invisible to residents and to the uploader,
+    no approve/reject controls, gone from the bin, and matched by neither arm of purge_expired — so
+    the row and all three files were stranded permanently.
+    """
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    uploader = make_resident(email="beboer@gahk.dk")
+    album = Album.objects.create(folder="2026", name="Fest")
+    media = Media.objects.create(
+        album=album, title="photo", original="a", high_definition="b", thumbnail="c", requested_by=uploader
+    )
+    reject(media, administrator)
+    client.force_login(administrator)
+
+    client.post(reverse("photo_album:restore", args=[media.pk]))
+
+    media.refresh_from_db()
+    assert media.deleted_at is None
+    assert media.status == MediaStatus.PENDING
+    # Reachable again: its uploader can see it, and the 30-day sweep can still reach it.
+    client.force_login(uploader)
+    assert media.title in client.get(reverse("photo_album:detail", args=[album.pk])).content.decode()
+
+
+@pytest.mark.django_db
+def test_binned_media_can_be_purged_within_an_hour_of_being_binned(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The hour runs from the binning; keyed to added_at the button was unreachable in practice."""
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    album = Album.objects.create(folder="2026", name="Fest")
+    media = Media.objects.create(
+        album=album,
+        title="photo",
+        original="a",
+        high_definition="b",
+        thumbnail="c",
+        requested_by=administrator,
+    )
+    # Uploaded long ago, binned just now — the normal case, which used to be refused.
+    Media.objects.filter(pk=media.pk).update(added_at=timezone.now() - timedelta(days=20))
+    media.refresh_from_db()
+    delete(media, administrator)
+    client.force_login(administrator)
+
+    response = client.post(reverse("photo_album:permanently_delete", args=[media.pk]))
+
+    assert response.status_code == 302
+    assert not Media.objects.exists()
+
+
+@pytest.mark.django_db
+def test_the_bin_renders_metadata_the_viewer_can_parse(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """It used to emit the Python dict repr, so JSON.parse threw and metadata never appeared."""
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    album = Album.objects.create(folder="2026", name="Fest")
+    media = Media.objects.create(
+        album=album,
+        title="photo",
+        original="a",
+        high_definition="b",
+        thumbnail="c",
+        requested_by=administrator,
+        metadata={"Kamera": "Apple iPhone 15"},
+    )
+    delete(media, administrator)
+    client.force_login(administrator)
+
+    content = client.get(reverse("photo_album:bin")).content.decode()
+
+    # Django autoescapes the attribute, so the quotes arrive as &quot; — which the browser turns
+    # back into valid JSON for dataset.metadata. The dict repr the bin used to emit never could be.
+    assert "{&quot;Kamera&quot;: &quot;Apple iPhone 15&quot;}" in content
+    assert "{'Kamera'" not in content
+
+
+@pytest.mark.django_db
+def test_album_detail_query_count_does_not_grow_with_the_number_of_photos(
+    client: Client, make_resident: Callable[..., Resident], django_assert_num_queries: Callable[..., object]
+) -> None:
+    """can_delete asked is_locked() and Fotogruppen-membership once PER ITEM: ~1000 queries at 300."""
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    album = Album.objects.create(folder="2026", name="Fest")
+    for index in range(30):
+        Media.objects.create(
+            album=album,
+            title=f"photo-{index}",
+            original="a",
+            high_definition="b",
+            thumbnail="c",
+            requested_by=administrator,
+            status=MediaStatus.APPROVED,
+        )
+    client.force_login(administrator)
+    url = reverse("photo_album:detail", args=[album.pk])
+    client.get(url)  # warm any per-process caches so the count below is the steady state
+
+    with django_assert_num_queries(9):  # type: ignore[operator]
+        client.get(url)
+
+
+@pytest.mark.django_db
+def test_captured_at_is_null_when_only_the_file_modification_time_is_present() -> None:
+    """EXIF 306 is DateTime — last modified. A re-saved photo was given a confident, wrong date."""
+    image = Image.new("RGB", (8, 8))
+    exif = image.getexif()
+    exif[306] = "2020:01:02 03:04:05"
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG", exif=exif)
+    buffer.seek(0)
+
+    assert extract_captured_at(File(buffer, name="photo.jpg")) is None
+
+
+@pytest.mark.django_db
+def test_a_real_video_gets_its_derivatives_from_the_scheduled_command(
+    make_resident: Callable[..., Resident], tmp_path: Path
+) -> None:
+    """The whole deferred path, on real bytes: upload stores the original, the command transcodes.
+
+    Runs actual FFmpeg — the binary ships inside the imageio-ffmpeg wheel, which is a production
+    dependency, so it is present anywhere the app is installed. Worth the ~2 s: the failure this
+    covers (a worker killed mid-encode, upload lost) is invisible to every test that stubs it out.
+    """
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    source = tmp_path / "clip.mp4"
+    subprocess.run(
+        [
+            ffmpeg,
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=1:size=320x240:rate=10",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            str(source),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    resident = make_resident()
+    album = Album.objects.create(folder="2026", name="Fest")
+    upload = SimpleUploadedFile("clip.mp4", source.read_bytes(), content_type="video/mp4")
+
+    media = upload_media(album=album, uploaded_file=upload, resident=resident)
+    assert media.derivative_state == DerivativeState.PENDING
+    assert list(pending_derivatives()) == [media]
+
+    call_command("process_photo_album_media")
+
+    media.refresh_from_db()
+    assert media.derivative_state == DerivativeState.READY
+    assert media.has_derivatives
+    assert media.high_definition.name.endswith(".mp4")
+    assert media.thumbnail.name.endswith(".jpg")
+    assert media.high_definition.size > 0
+    assert media.thumbnail.size > 0
+    assert not list(pending_derivatives())
