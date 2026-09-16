@@ -217,13 +217,11 @@ def extract_captured_at(uploaded_file: File) -> datetime | None:
         uploaded_file.seek(0)
         exif = Image.open(uploaded_file).getexif()
         exif_values = _exif_ifd(exif)
-        value = (
-            exif_values.get(36867)
-            or exif_values.get(36868)
-            or exif.get(36867)
-            or exif.get(36868)
-            or exif.get(306)
-        )
+        # DateTimeOriginal (36867) then DateTimeDigitized (36868), and nothing else. Tag 306 is
+        # DateTime — the file's last-modified stamp, which a re-save in any editor rewrites to
+        # today. Falling back to it gave a re-edited photo a confident, wrong "Optaget" date that
+        # also drove the grid's sort order; spec/features/Photo-album.md asks for NULL instead.
+        value = exif_values.get(36867) or exif_values.get(36868) or exif.get(36867) or exif.get(36868)
         if not value:
             return None
         return datetime.strptime(str(value), "%Y:%m:%d %H:%M:%S").replace(
@@ -299,7 +297,6 @@ def delete(media: Media, resident: Resident, now: datetime | None = None) -> Non
     media.deleted_at = moment
     media.deleted_by = resident
     media.save(update_fields=["deleted_at", "deleted_by"])
-    return False
 
 
 def permanently_delete(media: Media) -> None:
