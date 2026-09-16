@@ -1,0 +1,1 @@
+"""Photo album database migrations."""

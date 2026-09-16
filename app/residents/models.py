@@ -27,6 +27,7 @@ class Role(models.TextChoices):
     PR = "pr", "PR"  # frontpage/CMS content editors (F-006)
     REPPER = "repper", "Reppergruppen"  # repair-crew: manages the Reparationer board
     VICEVAERT = "vicevaert", "Viceværterne"  # triages Reparationer before handing it to Repper
+    FOTO = "foto", "Fotogruppen"  # curates the photo album: approves, bins, locks (photo_album.access)
     ADMINISTRATOR = "administrator", "Administrator"
     # NOTE: legacy `editpage` is intentionally omitted — there is no runtime CMS editing (F-006/F-007).
 
@@ -44,6 +45,7 @@ WORKGROUP_ROLE = {
     "PR-gruppen": Role.PR,  # grants CMS/frontpage editing
     "Repperne": Role.REPPER,  # manages the Reparationer board (reparationer.views.MANAGE_ROLES)
     "Vicevært": Role.VICEVAERT,  # triages Reparationer before handing it to Repperne
+    "Fotogruppen": Role.FOTO,  # curates the photo album (photo_album.access)
 }
 WORKGROUP_ROLE_VALUES = frozenset(WORKGROUP_ROLE.values())
 
