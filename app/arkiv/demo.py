@@ -46,12 +46,21 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
 
     store = get_store()
     made = 0
+    # DEMO_TREE is ordered parents-first, so a folder this run has just made is the right parent for
+    # the rows after it. Looked up here rather than by name alone: "Billeder" is now a NESTED folder,
+    # and a plain name lookup would happily resolve it to the old ROOT Billeder on any database
+    # seeded before it moved - filing Sommerfest 2026 under the folder this change exists to retire.
+    seeded: dict[str, ArchiveFolder] = {}
     for folder_name, parent_name, filenames in DEMO_TREE:
-        parent = ArchiveFolder.objects.alive().filter(name=parent_name).first()
+        parent = (
+            seeded.get(parent_name)
+            or ArchiveFolder.objects.alive().filter(parent=None, name=parent_name).first()
+        )
         if parent is None:
             # The embedsgruppe does not exist in this database - fine, skip that branch.
             continue
         folder, _ = ArchiveFolder.objects.get_or_create(parent=parent, name=folder_name)
+        seeded[folder_name] = folder
         for filename in filenames:
             if ArchiveFile.objects.alive().filter(folder=folder, name=filename).exists():
                 continue
