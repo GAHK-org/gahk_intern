@@ -62,20 +62,46 @@ def visible_media(request: HttpRequest, album: Album) -> QuerySet[Media]:
     )
 
 
-def can_delete(media: Media, request: HttpRequest, *, album_locked: bool | None = None) -> bool:
-    """`album_locked` lets a listing pass the answer it already has.
+def can_delete(media: Media, request: HttpRequest) -> bool:
+    """Either way a live item can leave the album: its uploader withdraws it, or a curator bins it.
 
-    Album.is_locked() runs a query of its own (the latest approved item decides), so asking it once
-    per media item made an album page cost one query per photo on top of everything else. Every item
-    in a listing shares one album, so the caller computes it once. None means "work it out".
+    Two different actions behind one button, which is why views.delete branches afterwards — see
+    can_withdraw for which is which.
     """
-    if media.deleted_at is not None:
-        return False
-    if album_locked if album_locked is not None else media.album.is_locked():
-        return False
-    if media.status == MediaStatus.PENDING and media.requested_by_id == current_resident(request).pk:
-        return True
-    return can_manage_media(request) and media.added_at >= timezone.now() - timedelta(days=30)
+    return can_withdraw(media, request) or can_curate_delete(media, request)
+
+
+def _is_deletable(media: Media) -> bool:
+    """Neither route applies to an item that is already gone or whose album has closed.
+
+    The lock is a property of the ALBUM, not of the reader, and no role gets past it: once an album
+    locks, its media cannot be deleted by anyone (spec/features/Photo-album.md). That is why it sits
+    here rather than in either of the role checks below.
+    """
+    return media.deleted_at is None and not media.album.is_locked()
+
+
+def can_withdraw(media: Media, request: HttpRequest) -> bool:
+    """Take back your OWN upload before anyone has reviewed it.
+
+    Not a curator's power and not role-gated at all: any resident may retract what they submitted,
+    while it is still pending. It is a hard delete rather than a trip to the bin, because nothing
+    has been accepted into the album yet — views.delete reads this to choose between the two.
+    """
+    return (
+        _is_deletable(media)
+        and media.status == MediaStatus.PENDING
+        and media.requested_by_id == current_resident(request).pk
+    )
+
+
+def can_curate_delete(media: Media, request: HttpRequest) -> bool:
+    """Fotogruppen removing somebody else's media, within 30 days of it being uploaded."""
+    return (
+        _is_deletable(media)
+        and can_manage_media(request)
+        and media.added_at >= timezone.now() - timedelta(days=30)
+    )
 
 
 def can_permanently_delete(media: Media, request: HttpRequest) -> bool:

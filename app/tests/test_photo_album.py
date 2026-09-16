@@ -15,6 +15,7 @@ from django.urls import reverse
 from django.utils import timezone
 from PIL import Image
 
+from photo_album import access
 from photo_album.models import Album, DerivativeState, Media, MediaStatus
 from photo_album.services import (
     MAX_DERIVATIVE_ATTEMPTS,
@@ -1030,3 +1031,71 @@ def test_media_detail_offers_a_delete_url_only_to_someone_who_may_delete(
     # An ordinary resident sees the approved photo but is offered no way to remove it.
     client.force_login(make_resident(email="beboer@gahk.dk"))
     assert client.get(url).json()["deleteUrl"] == ""
+
+
+@pytest.mark.django_db
+def test_withdrawing_your_own_pending_upload_is_a_hard_delete_not_a_trip_to_the_bin(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The two routes out of an album are different actions, and views.delete picks by can_withdraw."""
+    uploader = make_resident(email="beboer@gahk.dk")
+    album = Album.objects.create(folder="2026", name="Fest")
+    mine = Media.objects.create(
+        album=album, title="mine", original="a", high_definition="b", thumbnail="c", requested_by=uploader
+    )
+    client.force_login(uploader)
+
+    client.post(reverse("photo_album:delete", args=[mine.pk]))
+
+    # Nothing was ever accepted into the album, so there is nothing to recover.
+    assert not Media.objects.filter(pk=mine.pk).exists()
+
+
+@pytest.mark.django_db
+def test_a_curator_binning_someone_elses_media_keeps_it_recoverable(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    photographer = make_resident(email="foto@gahk.dk", roles=(Role.FOTO,))
+    uploader = make_resident(email="beboer@gahk.dk")
+    album = Album.objects.create(folder="2026", name="Fest")
+    theirs = Media.objects.create(
+        album=album,
+        title="theirs",
+        original="a",
+        high_definition="b",
+        thumbnail="c",
+        requested_by=uploader,
+        status=MediaStatus.APPROVED,
+    )
+    client.force_login(photographer)
+
+    client.post(reverse("photo_album:delete", args=[theirs.pk]))
+
+    theirs.refresh_from_db()
+    assert theirs.deleted_at is not None  # in the bin, restorable for 30 days
+
+
+@pytest.mark.django_db
+def test_a_locked_album_stops_deletion_for_everyone_including_administrators(
+    make_resident: Callable[..., Resident], rf: object
+) -> None:
+    """The lock is a property of the album, not of the reader — no role gets past it."""
+    from django.test import RequestFactory
+
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    album = Album.objects.create(folder="2026", name="Fest", manually_locked_at=timezone.now())
+    media = Media.objects.create(
+        album=album,
+        title="photo",
+        original="a",
+        high_definition="b",
+        thumbnail="c",
+        requested_by=administrator,
+        status=MediaStatus.APPROVED,
+    )
+    request = RequestFactory().get("/")
+    request.user = administrator
+
+    assert access.can_delete(media, request) is False
+    assert access.can_curate_delete(media, request) is False
+    assert access.can_withdraw(media, request) is False

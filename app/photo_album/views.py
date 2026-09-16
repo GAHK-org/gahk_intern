@@ -250,7 +250,10 @@ def delete(request: HttpRequest, pk: int) -> HttpResponse:
         raise PermissionDenied
     album_id = media.album_id
     requester = current_resident(request)
-    if media.status == "pending" and media.requested_by_id == requester.pk:
+    # Asked of access rather than re-derived here. This branch used to restate can_delete's own
+    # "your own pending upload" rule, in a second copy that spelled the status as a bare string —
+    # so the two could disagree about what a withdrawal is, and only one of them gated the action.
+    if access.can_withdraw(media, request):
         services.permanently_delete(media)
     else:
         services.delete(media, requester)
