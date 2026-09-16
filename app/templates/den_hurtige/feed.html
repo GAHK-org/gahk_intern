@@ -129,12 +129,87 @@
         has expired out of the list in the meantime. Without it focus() is a no-op and focus falls
         to <body>, leaving a keyboard user with nothing to arrow away from.
       {% endcomment %}
-      <div id="js-feed" tabindex="-1"
-           hx-get="{% url 'den_hurtige:feed_items' %}?kanal={{ channel.slug }}"
-           hx-trigger="every 5s"
-           hx-ext="morph"
-           hx-swap="morph:innerHTML">
-        {% include "den_hurtige/_posts.html" %}
+      {% comment %}
+        THE SCROLLER, and it is no longer the polled region — that split is what lets the archive
+        live in here at all.
+
+        #js-feed used to carry the hx-get itself and morph its whole contents every five seconds.
+        Archived messages prepended into it would have been wiped by the next poll, because the
+        poll's response is the LIVE list and idiomorph removes what the server did not send. So the
+        poll moved down onto #js-live, which holds exactly what the server re-sends; everything
+        above it — the sentinel, the loaded history, the divider — sits outside the swap and is
+        simply never touched.
+
+        NO hx-target anywhere in this subtree, deliberately. hx-target is INHERITED in htmx, so a
+        target declared here would be picked up by the archive sentinel inside (which swaps itself)
+        and by the reaction buttons on every message. Each element defaulting to itself is what all
+        three want. The same trap is documented on #js-thread below, where it bit once already.
+      {% endcomment %}
+      <div id="js-feed" tabindex="-1">
+        {% if has_archive %}
+          {% comment %}
+            THE FIRST CHUNK IS NOT FETCHED UNTIL THE READER ASKS FOR IT, and the trigger is a custom
+            event rather than `intersect` for exactly that reason.
+
+            Intersect was wrong here, and wrong in the way that matters most on the commonest page
+            there is: a channel holding one short message does not fill the screen, so a sentinel
+            watching for visibility is visible immediately and fires on load — and keeps firing,
+            chunk after chunk, until the column is longer than the viewport. Somebody opening Den
+            Hurtige to read the one thing that was said today was met with a screenful of last
+            month instead, with today's message pushed to the bottom of it.
+
+            So this waits for `gahk-open-archive`, an event nothing in htmx can raise on its own. It
+            is dispatched by frontend/src/feed.ts only when somebody already at the very top of the
+            feed keeps dragging upwards — the gesture the divider below names, and an unmistakable
+            statement of intent. Until then the archive costs one EXISTS query and nothing else.
+
+            The sentinels INSIDE each chunk do use `intersect` (see _archive_chunk.html): opening
+            the archive is a decision, but continuing through it once you are in there is just
+            scrolling, and stopping to ask again at every chunk boundary would be worse than
+            useless.
+
+            It replaces ITSELF (outerHTML) with the chunk it fetches, so there is no bookkeeping and
+            nothing to reset.
+          {% endcomment %}
+          <div class="archive-more is-idle" id="js-archive-top"
+               hx-get="{% url 'den_hurtige:archive' %}?kanal={{ channel.slug }}"
+               hx-trigger="gahk-open-archive"
+               hx-swap="outerHTML">
+            <span class="muted">Henter arkivet…</span>
+            <noscript>
+              <a href="{% url 'den_hurtige:archive' %}?kanal={{ channel.slug }}">Se arkivet</a>
+            </noscript>
+          </div>
+        {% endif %}
+
+        {% comment %}
+          The boundary, and the small message that says what is above it. OUTSIDE #js-live so the
+          5s morph never touches it, and outside the archive region so no prepended chunk can land
+          below it.
+
+          It does two jobs. Before anything is loaded it is the INSTRUCTION — the archive is not
+          fetched until somebody performs the gesture it names, so without this sentence there is
+          nothing on the page to say the history exists at all. Once chunks have landed above it,
+          it is the line where the archive stops and the live conversation starts, which is why it
+          stays rather than being swapped away.
+
+          Rendered only when something has actually archived: telling somebody to drag up into an
+          empty archive is a worse first impression than saying nothing (views.feed's
+          `has_archive`).
+        {% endcomment %}
+        {% if has_archive %}
+          <div class="feed-divider">
+            <span><span aria-hidden="true">↑</span> Træk op for at se arkivet</span>
+          </div>
+        {% endif %}
+
+        <div id="js-live"
+             hx-get="{% url 'den_hurtige:feed_items' %}?kanal={{ channel.slug }}"
+             hx-trigger="every 5s"
+             hx-ext="morph"
+             hx-swap="morph:innerHTML">
+          {% include "den_hurtige/_posts.html" %}
+        </div>
       </div>
 
       {% comment %}

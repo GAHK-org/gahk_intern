@@ -18,10 +18,18 @@
     <a href="{{ channel.url }}">&larr; Tilbage til {{ channel.name }}</a>
   </p>
 
-  <div class="thread-page card-flat">
-    {% include "den_hurtige/_message.html" with post=post bare=1 %}
+  <div class="thread-page card-flat{% if archived %} thread-archived{% endif %}">
+    {% include "den_hurtige/_message.html" with post=post bare=1 archived=archived %}
     {% include "den_hurtige/_replies.html" with post=post %}
 
+    {% comment %}
+      No reply form once the message is archived — the same rule the panel enforces
+      (_thread.html), applied to the no-JS path it would otherwise leave open. views.create_comment
+      refuses the post regardless; omitting the form is what stops somebody typing into it first.
+    {% endcomment %}
+    {% if archived %}
+      <p class="thread-empty muted">Beskeden er arkiveret. Der kan ikke længere svares på den.</p>
+    {% else %}
     <form class="reply-form" method="post" enctype="multipart/form-data"
           action="{% url 'den_hurtige:create_comment' post.pk %}">
       {% csrf_token %}
@@ -55,5 +63,6 @@
         <input type="checkbox" name="notify" value="alle"> Underret alle
       </label>
     </form>
+    {% endif %}
   </div>
 {% endblock %}

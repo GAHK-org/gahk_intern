@@ -781,6 +781,119 @@
   .chat-page .chat-shell { max-width:48rem; }
   body.chat-page:has(.thread-panel) .chat-shell { max-width:70rem; }
 
+  /* --- the archive, which is this same feed scrolled up (den_hurtige/_archive_chunk.html) -----
+     It was a docked side panel first. That was wrong for a reason that is obvious once the two are
+     next to each other: an archive of a chat that does not look like the chat makes you re-learn
+     how to read your own history. So there is no panel here at all -- archived messages are drawn
+     by the same partial, in the same column, in the same order, directly above the live ones. All
+     that separates them is a divider and one tone.
+
+     THE TONE IS ON THE BUBBLE, NOT ON THE TEXT. Greying the words would make the record harder to
+     read, which is the one thing it exists for. What changes is the surface the words sit on: an
+     incoming bubble cools from --surface (white) to --sunken, and your own drops from --green to a
+     desaturated slate. Both keep their text contrast -- the archive is as legible as the feed, it
+     just is not the same material. */
+  /* #E6E3DA, and it goes DARKER than the ground rather than lighter. The first attempt used
+     --sunken, which is the ground the feed already sits on -- so an archived incoming bubble had a
+     contrast ratio of 1.0 against the surface behind it and no visible edge at all, which is the
+     exact failure documented on #js-feed further up, reproduced by hand. Going lighter was not
+     available either: --surface is #FFFFFF, so the live bubble is already at the top of the range.
+     Down is the only direction left, and it is the right one anyway -- a recessed bubble reads as
+     older, which is what the archive is. --ink on it stays well above AA. */
+  /* :not(.msg-parent) ON EVERY ONE OF THESE, and it is load-bearing rather than tidy.
+     .msg-parent is the message a thread hangs off, and the block above deliberately UNDOES the
+     bubble on it -- no background, no shadow, no padding -- because it is the panel's heading, not
+     a chat bubble. Those rules win by coming later in the file at equal specificity, which is
+     exactly what the note on .msg-own's overrides says. Adding a plain `.msg-archived .msg-bubble`
+     after them broke that: an archived thread drew a grey slab across its own heading, and on your
+     own message the slate one won on specificity alone and put --ink text on a dark box.
+     Excluding the parent is what keeps the two independent, whichever order they end up in. */
+  .msg-archived:not(.msg-parent) .msg-bubble { background:#E6E3DA;
+    filter:drop-shadow(0 1px 1px rgba(24, 40, 30, .08)); }
+  /* Desaturated rather than lightened: a paler green reads as a *disabled* green, and these are
+     not disabled controls, they are finished messages. #5F6B63 against white sits at 5.1:1 for the
+     reversed text, which keeps it above AA at the 14px the bubbles are set at. */
+  .msg-archived.msg-own:not(.msg-parent) .msg-bubble { background:#5F6B63; }
+  /* An archived message with no reactions and no replies has nothing to put in its action row, and
+     an empty flex box still spends its margin. In the live feed the row always holds something --
+     the reaction picker and the "Svar" affordance are always drawn -- so this case only exists
+     here, where both of those are deliberately absent. */
+  .msg-archived .msg-actions:not(:has(.reaction, .msg-replies)) { display:none; }
+
+  /* THE LIVE FEED ALWAYS FILLS THE SCREEN, so scrolling back down puts the archive entirely out
+     of sight. Without this a channel holding one short message left the reader unable to get away
+     from its own history: the column was archive + divider + one bubble, so the bottom of the
+     scroll still had last month occupying most of the viewport, and there was nowhere to scroll to
+     that showed only what was live.
+
+     min-height rather than height: with a conversation long enough to fill the box this does
+     nothing at all, and with a short one it pads the live region out to a screen. The messages stay
+     top-aligned inside it, which is what puts a lone message at the TOP of the feed rather than
+     floating above the composer.
+
+     100% resolves against #js-feed's content box, which is its height less the 6/14px padding, so
+     at the very bottom a few pixels above the divider can technically still be in view -- they are
+     the divider's own bottom margin, i.e. blank. */
+  #js-live { min-height:100%; }
+
+  /* The boundary between the archive and the live feed, and the only thing that advertises the
+     archive exists. A centred rule with the hint sitting in a gap in it -- the shape every chat
+     uses for a date separator, which is what it is a sibling of. */
+  .feed-divider { display:flex; align-items:center; gap:10px; margin:14px 4px 10px;
+    font-size:11px; color:var(--muted); }
+  .feed-divider::before, .feed-divider::after { content:""; flex:1; height:1px;
+    background:var(--border); }
+  .feed-divider > span { flex:none; }
+
+  /* The sentinel htmx replaces with the chunk above it, and the marker at the far end. The sentinel
+     needs real height or its IntersectionObserver would fire the instant it is inserted, before the
+     reader has scrolled anywhere near it -- and it is what the reader looks at while a chunk is in
+     flight, so it may not collapse to nothing either. */
+  .archive-more { padding:16px 0 10px; text-align:center; font-size:12px; }
+  .archive-start { text-align:center; font-size:11.5px; padding:16px 0 10px; margin:0; }
+
+  /* Sticky date headings, drawn as a FLOATING CHIP rather than a full-width bar.
+
+     Sticky is worth having: scrolling back through months, "what am I looking at" is asked
+     continuously and answered by whichever heading has just gone off the top. But a stuck heading
+     paints over the message scrolling beneath it, and as a full-width band in the feed's own ground
+     colour that did not read as a label floating above the conversation -- it read as a rectangular
+     hole punched through the middle of a bubble, which is what it literally looked like on a long
+     message. A chip the width of its own text, a shade lighter than the ground and outlined, reads
+     as what it is. It is also the shape every other chat uses for the same job.
+
+     z-index:1 is safe against the `.pop` pickers, which are position:fixed at z-index 60/61 -- and
+     an archived message renders none anyway. */
+  /* The box a day's sticky heading is confined to -- see _archive_chunk.html for why it has to
+     exist. No styling of its own on purpose: the messages inside are the same partial the live
+     feed renders, and anything set here would apply to them and not to their live counterparts. */
+  .archive-dayblock { display:block; }
+  .archive-day { position:sticky; top:4px; z-index:1; width:fit-content;
+    margin:18px auto 4px; padding:3px 12px; border-radius:999px;
+    background:var(--paper); border:1px solid var(--border);
+    /* The shadow is what makes a STUCK chip legible. Parked at the top of the scrollport it sits
+       over whatever is passing beneath it, and on a long message that is the middle of a line --
+       flat, that reads as a word having been redacted rather than as a label in front of it. A
+       soft drop makes it obviously float. box-shadow creates no stacking context, so the `.pop`
+       rule this file repeats everywhere is not in play. */
+    box-shadow:0 1px 4px rgba(24, 40, 30, .14);
+    font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase;
+    color:var(--muted); }
+
+  /* An archived reaction row keeps its counts and its reader panels -- who reacted is a fact about
+     the archive, and exactly what somebody reading it back wants -- but the pills stop looking
+     pressable, because they have stopped being controls. */
+  .reactions.is-archived .reaction.is-static { cursor:default; background:var(--surface);
+    border-color:var(--border); }
+  .reactions.is-archived .reaction.is-static.is-mine { border-color:var(--brass); }
+  .thread-archived .reply-form { display:none; }
+
+  /* The standalone page (den_hurtige/archive.html): the no-JS half, paged with plain links. */
+  .archive-note { font-size:12px; line-height:1.5; color:var(--muted); margin:0 0 12px; }
+  .archive-page { padding:12px 18px; background:var(--sunken); }
+  .archive-pager { display:flex; justify-content:space-between; gap:12px; margin:14px 2px;
+    font-size:13px; }
+
   /* The standalone thread page (den_hurtige/thread.html), which is NOT the chat shell. */
   .thread-crumb { font-size:13px; margin:0 0 10px; }
   .thread-page { padding:16px 18px; }

@@ -11,7 +11,16 @@ class QuickCommentInline(admin.TabularInline):
 
 @admin.register(QuickPost)
 class QuickPostAdmin(admin.ModelAdmin):
-    list_display = ("author", "channel", "created_at", "expires_at", "is_expired")
+    """The one place a Den Hurtige message can still be destroyed.
+
+    Residents cannot delete an archived message and moderators cannot either (den_hurtige.views),
+    which is the feature working as specified. This admin deliberately keeps the delete action: an
+    archive that nothing on earth can remove a row from is not a retention policy, it is a liability
+    the day somebody posts something unlawful. `is_archived` is in the list so whoever is about to
+    use it can see which side of the line the message is on.
+    """
+
+    list_display = ("author", "channel", "created_at", "expires_at", "is_archived")
     # `channel` is a free CharField (the registry lives in code, not this table), so the filter
     # lists the slugs actually in use rather than the ones currently defined — which is the more
     # useful question in the admin anyway: it shows leftovers from a retired channel.
