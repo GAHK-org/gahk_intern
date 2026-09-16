@@ -2,7 +2,7 @@ import json
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db.models import Case, Count, DateTimeField, IntegerField, Q, Value, When
 from django.db.models.functions import Coalesce
 from django.http import FileResponse, HttpRequest, HttpResponse
@@ -47,14 +47,17 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
         .annotate(displayed_at=Coalesce("captured_at", "added_at", output_field=DateTimeField()))
         .order_by("-displayed_at", "-pk")
     )
+    album_locked = album.is_locked()
     for item in media_items:
-        item.can_delete = access.can_delete(item, request)  # type: ignore[attr-defined]
+        item.album = album  # the listing's items all share it; saves a refetch inside can_delete
+        item.can_delete = access.can_delete(item, request, album_locked=album_locked)  # type: ignore[attr-defined]
         item.metadata_json = json.dumps(item.metadata)  # type: ignore[attr-defined]
     return render(
         request,
         "photo_album/detail.html",
         {
             "album": album,
+            "album_locked": album_locked,
             "media": media_items,
             "can_manage": access.can_manage_media(request),
             "can_lock": access.can_lock_album(request, album),
@@ -80,7 +83,14 @@ def delete_album(request: HttpRequest, pk: int) -> HttpResponse:
     if not access.can_create_album(request):
         raise PermissionDenied
     album = get_object_or_404(Album, pk=pk)
-    album.delete()
+    try:
+        album.delete()
+    except ValidationError:
+        # The button is drawn when no VISIBLE media remain, but Album.delete() refuses while any
+        # row survives — binned items included. Say so instead of 500ing; the manager's way out is
+        # to empty the bin (or wait for the 30-day sweep) and come back.
+        messages.error(request, "Albummet kan ikke slettes, så længe det har medier i papirkurven.")
+        return redirect("photo_album:detail", album.pk)
     return redirect("photo_album:index")
 
 
@@ -122,6 +132,7 @@ def bin(request: HttpRequest) -> HttpResponse:
     )
     for item in media_items:
         item.can_permanently_delete = access.can_permanently_delete(item, request)  # type: ignore[attr-defined]
+        item.metadata_json = json.dumps(item.metadata)  # type: ignore[attr-defined]
     return render(
         request,
         "photo_album/bin.html",
@@ -136,15 +147,20 @@ def upload(request: HttpRequest, pk: int) -> HttpResponse:
     if not access.can_upload(request, album):
         raise PermissionDenied
     form = MediaUploadForm(request.POST, request.FILES)
-    if form.is_valid():
-        for uploaded_file in form.cleaned_data["uploads"]:
-            services.upload_media(
-                album=album,
-                uploaded_file=uploaded_file,
-                resident=current_resident(request),
-                title=form.cleaned_data["title"],
-                approved=access.can_manage_media(request),
-            )
+    if not form.is_valid():
+        # Without this the redirect below looked exactly like a successful upload and the photos
+        # simply were not there.
+        for error in form.errors.get("uploads", ["Filerne kunne ikke uploades."]):
+            messages.error(request, str(error))
+        return redirect("photo_album:detail", album.pk)
+    for uploaded_file in form.cleaned_data["uploads"]:
+        services.upload_media(
+            album=album,
+            uploaded_file=uploaded_file,
+            resident=current_resident(request),
+            title=form.cleaned_data["title"],
+            approved=access.can_manage_media(request),
+        )
     return redirect("photo_album:detail", album.pk)
 
 
@@ -206,9 +222,7 @@ def delete(request: HttpRequest, pk: int) -> HttpResponse:
 @require_POST
 def restore(request: HttpRequest, pk: int) -> HttpResponse:
     media = _managed_media(request, pk)
-    media.deleted_at = None
-    media.deleted_by = None
-    media.save(update_fields=["deleted_at", "deleted_by"])
+    services.restore(media)
     return redirect("photo_album:detail", media.album_id)
 
 
