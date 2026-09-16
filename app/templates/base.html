@@ -3,7 +3,7 @@
 <html lang="da">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
+  {% include "_csp_upgrade.html" %}
   {% block viewport %}<meta name="viewport" content="width=device-width, initial-scale=1">{% endblock %}
   <meta name="theme-color" content="#1F5A3A">
   <title>{% block title %}G. A. Hagemanns Kollegium{% endblock %}</title>
