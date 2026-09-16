@@ -14,7 +14,7 @@
 				<div class="album-folder-grid">
 					{% for album in folder.list %}
 						<a class="album-card" href="{% url 'photo_album:detail' album.pk %}">
-							<svg aria-hidden="true"><use href="#i-folder"></use></svg>
+							<svg aria-hidden="true"><use href="#i-photo"></use></svg>
 							<span class="album-card-name">{{ album.name }}</span>
 							<span class="album-card-count">{{ album.media_count }} medier</span>
 						</a>

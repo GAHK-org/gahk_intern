@@ -67,7 +67,7 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     # Alumneliste stays here; Stamtræ and Statistik moved to Ressourcer (see below).
     oversigt.append(("/intern/alumneliste/", "Alumneliste", "list"))
     if photo_album_allowed(roles):
-        oversigt.append(("/intern/fotoalbum/", "Fotoalbum", "archive"))
+        oversigt.append(("/intern/fotoalbum/", "Fotoalbum", "photo"))
     vaerelser: list[NavItem] = [
         ("/intern/soegvaerelse/", "Søg værelse", "house"),
         ("/intern/vaerelsestjek/", "Værelsestjek", "inspect"),  # open to every resident
