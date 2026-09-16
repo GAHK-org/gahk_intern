@@ -5,32 +5,27 @@ from django.db.models import QuerySet
 from django.http import HttpRequest
 from django.utils import timezone
 
-from residents.models import Residency, Role, active_period
+from residents.models import Role
 from residents.permissions import current_resident, request_has_role
 
 from .models import Album, Media, MediaStatus
 
-# Attribute the Fotogruppen answer is memoised under, on the request. Same pattern, and the same
-# reason, as _REAL_ROLES_MEMO in residents/permissions.py: an album page asks this once per media
-# item (via can_delete), and without the memo a 300-photo album ran 300 identical Residency
-# existence queries. The membership cannot change inside one request.
-_PHOTO_GROUP_MEMO = "_gahk_photo_group_member"
-
 
 def is_photo_group_member(request: HttpRequest) -> bool:
-    cached = getattr(request, _PHOTO_GROUP_MEMO, None)
-    if cached is not None:
-        return cached
-    if request_has_role(request, Role.ADMINISTRATOR):
-        member = True
-    else:
-        resident = current_resident(request)
-        year, month = active_period()
-        member = Residency.objects.filter(
-            resident=resident, year=year, month=month, workgroup__name__iexact="Fotogruppen"
-        ).exists()
-    setattr(request, _PHOTO_GROUP_MEMO, member)
-    return member
+    """Fotogruppen, as an ordinary role — like repper or vicevaert, not a workgroup name lookup.
+
+    `Role.FOTO` is granted by WORKGROUP_ROLE the same way every other embedsgruppe role is, so
+    indstilling assigning somebody to Fotogruppen for the month is what makes this true, and the
+    monthly sync in residents.views._sync_month_roles handles it with no special case here.
+
+    `administrator` needs no mention: real_roles() returns every role for an admin or superuser.
+
+    This replaces a Residency query against a workgroup literally named "Fotogruppen" — a row that
+    existed in no database, so the check could only ever pass for administrators. It also means the
+    answer now comes from the role set already memoised on the request, rather than a database
+    query per media item.
+    """
+    return request_has_role(request, Role.FOTO)
 
 
 def roles_allowed(_roles: Collection[str]) -> bool:

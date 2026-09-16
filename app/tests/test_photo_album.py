@@ -916,3 +916,53 @@ def test_a_real_video_gets_its_derivatives_from_the_scheduled_command(
     assert media.high_definition.size > 0
     assert media.thumbnail.size > 0
     assert not list(pending_derivatives())
+
+
+@pytest.mark.django_db
+def test_fotogruppen_role_grants_management_without_being_an_administrator(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """Role.FOTO is an ordinary embedsgruppe role, granted like repper or vicevaert.
+
+    Before this, access asked for a Residency in a workgroup named "Fotogruppen" — a row no
+    database had — so every test here used an administrator and the Fotogruppen path was never
+    actually exercised.
+    """
+    photographer = make_resident(email="foto@gahk.dk", roles=(Role.FOTO,))
+    uploader = make_resident(email="beboer@gahk.dk")
+    album = Album.objects.create(folder="2026", name="Fest")
+    media = Media.objects.create(
+        album=album,
+        title="photo",
+        original="a",
+        high_definition="b",
+        thumbnail="c",
+        requested_by=uploader,
+    )
+    client.force_login(photographer)
+
+    # Can create albums, approve submissions, and reach the bin — none of which a plain resident can.
+    assert client.post(reverse("photo_album:approve", args=[media.pk])).status_code == 302
+    assert client.get(reverse("photo_album:bin")).status_code == 200
+    assert (
+        client.post(
+            reverse("photo_album:create_album"), {"folder": "2026", "name": "Julefrokost"}
+        ).status_code
+        == 302
+    )
+
+    media.refresh_from_db()
+    assert media.status == MediaStatus.APPROVED
+
+    client.force_login(uploader)
+    assert client.get(reverse("photo_album:bin")).status_code == 403
+
+
+@pytest.mark.django_db
+def test_fotogruppen_workgroup_exists_so_indstilling_can_assign_it(db: None) -> None:
+    """The role is only reachable if the embedsgruppe it is derived from is in the database."""
+    from core.models import Workgroup
+    from residents.models import WORKGROUP_ROLE
+
+    assert Workgroup.objects.filter(name="Fotogruppen").exists()
+    assert WORKGROUP_ROLE["Fotogruppen"] == Role.FOTO
