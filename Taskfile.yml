@@ -3,7 +3,8 @@ version: '3'
 # Dev task runner for the GAHK Django rewrite.
 #   task dev       -> the whole app in Docker, hot-reloading (Postgres+MinIO+Django) -> http://127.0.0.1:8800
 #   task dev:local -> the same thing, but Django runs directly on the host instead of in a container
-#   task debug     -> dev:local's server in debug mode (no reload/threading so breakpoints are stable)
+#   task debug     -> dev:local's server under debugpy, waiting for your IDE to attach (port 5678)
+#   task debug:pdb -> the same server, but breakpoint() drops into pdb in this terminal instead
 # Postgres + MinIO are used either way (see app/.env.example). `task db:up` additionally starts
 # MariaDB, needed only for the legacy ETL. `dev:local`/`debug` use the project virtualenv at ./.venv
 # and the Django project in ./app; `dev` builds and runs Dockerfile.dev instead — see docker-compose.yml.
@@ -18,6 +19,11 @@ vars:
   # see docker-compose.yml). 8000/8001/8080 are often taken by VS Code; override with:
   #   task dev:local DEV_ADDR=127.0.0.1:9000
   DEV_ADDR: '127.0.0.1:8800'
+  # Where debugpy listens for the IDE. Override the same way as DEV_ADDR if 5678 is taken.
+  DEBUG_ADDR: '127.0.0.1:5678'
+  # `task debug` blocks until the IDE attaches, so a breakpoint in startup code or in the first
+  # request cannot be missed. To start serving immediately and attach whenever: task debug DEBUG_WAIT=
+  DEBUG_WAIT: '--wait-for-client'
 
 env:
   DJANGO_DEBUG: '1'
@@ -46,7 +52,32 @@ tasks:
       - '{{.PY}} manage.py runserver {{.DEV_ADDR}}'
 
   debug:
-    desc: Like dev:local, but in debug mode on the host (no reload/threading; breakpoint()/pdb stable)
+    desc: 'Like dev:local, but under debugpy, waiting for the IDE to attach ("Attach to task debug")'
+    dir: '{{.APP}}'
+    env:
+      # So a breakpoint() left in the code stops in the IDE rather than dropping this terminal into
+      # pdb, which fights the attached debugger for stdin. task debug:pdb is the other way round.
+      PYTHONBREAKPOINT: debugpy.breakpoint
+    cmds:
+      - task: services:up
+      # debugpy prints NOTHING while it waits, so without this line the task looks like it hung.
+      # It has not: the server does not start until the IDE connects. Said out loud because the
+      # silence is the single most confusing thing about this task.
+      - cmd: |
+          printf '\n  debugpy is listening on %s\n' '{{.DEBUG_ADDR}}'
+          printf '  The server starts when your IDE attaches, and not before - so a quiet\n'
+          printf '  terminal here is the task working, not the task hung.\n\n'
+          printf '  VS Code: Run and Debug -> "Attach to task debug" (F5).\n'
+          printf '  Start serving straight away instead:  task debug DEBUG_WAIT=\n\n'
+        silent: true
+      # --noreload is REQUIRED, not a preference: the reloader runs the server in a child process,
+      # so the debugger would attach to the parent and never see a breakpoint. --nothreading keeps
+      # the whole server stopped while you are paused, instead of other requests running on past
+      # you; drop it if you are debugging something that needs concurrent requests.
+      - '{{.PY}} -m debugpy --listen {{.DEBUG_ADDR}} {{.DEBUG_WAIT}} manage.py runserver --nothreading --noreload {{.DEV_ADDR}}'
+
+  debug:pdb:
+    desc: Like debug, but breakpoint() drops into pdb in this terminal instead of the IDE
     dir: '{{.APP}}'
     env:
       PYTHONBREAKPOINT: pdb.set_trace
