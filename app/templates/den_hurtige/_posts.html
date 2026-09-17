@@ -28,8 +28,9 @@
     <p><strong>Ingen beskeder lige nu.</strong></p>
     <p class="muted">
       Skriv noget der er relevant den næste times tid — fælles kaffe, en pakke i porten, hjælp til
-      at bære. Beskeder slettes automatisk når de udløber, så skal noget gemmes, hører det hjemme i
-      ankebogen eller på <a href="{% url 'opslagstavle:board' %}">opslagstavlen</a>.
+      at bære. Beskeder forsvinder fra feedet når tiden er gået, men de bliver ikke slettet: de
+      ligger i arkivet, som du trækker ned til fra toppen. Skal noget stå fast, hører det stadig
+      hjemme i ankebogen eller på <a href="{% url 'opslagstavle:board' %}">opslagstavlen</a>.
     </p>
   </div>
 {% endfor %}

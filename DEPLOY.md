@@ -18,8 +18,8 @@ docker build -t gahk .   # full production image
 ```
 Copy `app/.env.example` to `app/.env` first — its defaults point `DATABASE_URL` at the Postgres
 container and `S3_*` at the MinIO container (`task services:up`), both started automatically by
-`task dev`/`task dev:local`/`task seed`. Comment out `S3_BUCKET`/unset `DATABASE_URL` to fall back
-to local-disk media / SQLite instead — no Docker needed either way.
+`task dev`/`task dev:local`/`task seed`. SQLite is available only with an explicit `DATABASE_URL`,
+such as the one set by `task test:sqlite`; media always uses the configured object storage backend.
 
 `task db:up` additionally starts MariaDB, needed only for the legacy ETL (`task etl`).
 
@@ -112,13 +112,19 @@ or an overlapping run is harmless.
 | --- | --- | --- |
 | `python manage.py purge_applications` | `20 3 * * *` | **The one that is genuinely missing.** F-001 says applications are kept one year; nothing has ever enforced it, so applicant PII accumulates indefinitely — the exact GDPR gap 99-index.md flags in the legacy system. |
 | `python manage.py ak_monthly_assessment` | `10 4 1 * *` | Books the month's AK deduction on the 1st instead of whenever someone happens to open an internal page. |
-| `python manage.py purge_quick_posts` | `*/30 * * * *` | Drains expired Den Hurtige posts (and their images) even in a quiet week when nobody loads the feed. |
 | `python manage.py purge_notices` | `40 3 * * *` | Sweeps compose-toolbar images uploaded to a post nobody ever saved. **It no longer deletes opslag** — the board keeps its archive (spec/features/opslagstavle.md). The name is kept so this row and the Coolify task stay valid; if it is ever renamed, both move in the same change. Offset from `purge_applications` (03:20) so two deletes never overlap on the same small box. |
 | `python manage.py archive_finished_repairs` | `50 3 * * *` | Archives (never deletes) a Reparationer ticket that has sat in Færdig for over 30 days, so the board does not fill up with old closed repairs — still searchable via the Arkiv page. Offset from `purge_notices` (03:40) so the two never overlap. |
 | `python manage.py purge_events` | `0 4 * * *` | Enforces Begivenheder's retention: an event goes a week after it ends, a cancelled one thirty days after it was cancelled (two clocks, see `events/models.py`). Offset to 04:00 so it does not overlap `purge_applications` (03:20), `purge_notices` (03:40) or `archive_finished_repairs` (03:50) on the same small box. |
 | `python manage.py purge_photo_album` | `10 4 * * *` | Enforces the photo album's retention: pending media nobody approved within 30 days, and anything held in the bin for 30 days, go with all three stored variants. Offset from `purge_events` (04:00) so two deletes never overlap on the same small box. |
 | `python manage.py process_photo_album_media` | `*/10 * * * *` | Builds the viewer/grid derivatives for uploaded **videos**. The upload itself only stores the original — an H.264 encode takes far longer than gunicorn's 60 s timeout, so doing it in the request killed the worker and lost the upload (see `photo_album.models.DerivativeState`). Every ten minutes because a resident who just posted a clip is waiting to see it; `--limit` keeps one run bounded, and a clip that fails three times is marked failed rather than retried forever. |
 | `python manage.py remind_rsvp_deadlines` | `0 17 * * *` | Nudges the people who have not answered when a svarfrist falls inside the next 24 hours. **Once per event** — the claim is a compare-and-swap on `reminder_sent_at`, taken *before* the send, so a crash between the two loses one reminder rather than pushing the whole house twice. Runs at 17:00 rather than overnight because it is a notification people are meant to act on. |
+
+**`purge_quick_posts` is gone, and its Coolify task has to be deleted by hand.** Den Hurtige stopped
+deleting messages: they leave the feed when `expires_at` passes and are *archived* by that same
+comparison — no row is written and there is nothing to sweep (`den_hurtige/models.py`). The command
+no longer exists, so the scheduled task starts failing on the next deploy until somebody removes it,
+which is the intended way to find it. Nothing replaces it, and the consequence is deliberate: **the
+Den Hurtige tables and their images now grow without bound**, because the archive is a record.
 
 **Run `purge_applications --dry-run` by hand first.** It deletes permanently and there is no undo;
 confirm the count is what you expect before putting it on a schedule.
