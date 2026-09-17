@@ -1,4 +1,5 @@
 from celery import shared_task
+from django.core.management import call_command
 
 from .models import DerivativeState, Media
 from .services import build_derivatives, pending_derivatives
@@ -20,3 +21,9 @@ def process_pending_media(limit: int = 10) -> int:
     for media in pending_derivatives()[:limit]:
         build_media_derivatives.delay(media.pk)
     return min(pending_derivatives().count(), limit)
+
+
+@shared_task
+def purge_expired_media() -> None:
+    """Permanently remove photo-album media past its retention period."""
+    call_command("purge_photo_album")

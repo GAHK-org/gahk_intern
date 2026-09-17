@@ -138,9 +138,37 @@ CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 900
 CELERY_BEAT_SCHEDULE = {
+    "purge-expired-applications": {
+        "task": "admissions.tasks.purge_expired_applications",
+        "schedule": crontab(minute=20, hour=3),
+    },
+    "purge-orphaned-notice-images": {
+        "task": "opslagstavle.tasks.purge_orphaned_images",
+        "schedule": crontab(minute=40, hour=3),
+    },
+    "archive-finished-repairs": {
+        "task": "reparationer.tasks.archive_finished_repairs",
+        "schedule": crontab(minute=50, hour=3),
+    },
+    "purge-expired-events": {
+        "task": "events.tasks.purge_expired_events",
+        "schedule": crontab(minute=0, hour=4),
+    },
+    "purge-expired-photo-album-media": {
+        "task": "photo_album.tasks.purge_expired_media",
+        "schedule": crontab(minute=10, hour=4),
+    },
+    "apply-ak-monthly-assessment": {
+        "task": "ak.tasks.apply_monthly_assessment",
+        "schedule": crontab(minute=10, hour=4, day_of_month=1),
+    },
     "process-photo-album-media": {
         "task": "photo_album.tasks.process_pending_media",
         "schedule": 600.0,
+    },
+    "remind-rsvp-deadlines": {
+        "task": "events.tasks.remind_rsvp_deadlines",
+        "schedule": crontab(minute=0, hour=17),
     },
     "email-oelkaelder-monthly-statements": {
         "task": "oelkaelder.tasks.send_monthly_statements",
