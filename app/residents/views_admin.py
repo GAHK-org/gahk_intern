@@ -3,13 +3,16 @@ mass-mailer are structurally gone; this provides the legitimate admin screens, c
 monthly embedsgruppe roles."""
 
 import datetime
+import json
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
+from django.db import DatabaseError, connection
 from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect
 from django.shortcuts import redirect, render
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
+from django_celery_beat.models import PeriodicTask
 
 from .models import Resident, Role, RoleAssignment, active_period
 from .permissions import PREVIEW_SESSION_KEY, require_can_preview, role_required
@@ -18,6 +21,84 @@ from .permissions import PREVIEW_SESSION_KEY, require_can_preview, role_required
 @role_required("administrator")
 def home(request: HttpRequest) -> HttpResponse:
     return render(request, "siteadmin/home.html")
+
+
+def _queued_jobs() -> list[dict[str, object]]:
+    """Return task metadata from Celery's SQLAlchemy PostgreSQL transport."""
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT m.id, q.name, m.visible, m.timestamp, m.payload
+                FROM kombu_message AS m
+                JOIN kombu_queue AS q ON q.id = m.queue_id
+                ORDER BY m.id DESC
+                LIMIT 100
+                """
+            )
+            rows = cursor.fetchall()
+    except DatabaseError:
+        return []
+
+    jobs = []
+    for message_id, queue, visible, timestamp, payload in rows:
+        try:
+            headers = json.loads(payload).get("headers", {})
+        except (TypeError, json.JSONDecodeError):
+            headers = {}
+        jobs.append(
+            {
+                "id": message_id,
+                "task": headers.get("task", "Ukendt opgave"),
+                "queue": queue,
+                "visible": visible,
+                "timestamp": timestamp,
+                "eta": headers.get("eta"),
+            }
+        )
+    return jobs
+
+
+def _past_jobs() -> list[dict[str, object]]:
+    """Return completed Celery task metadata without exposing arguments or results."""
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT task_id, status, date_done, name, worker, retries, queue
+                FROM celery_taskmeta
+                ORDER BY date_done DESC
+                LIMIT 100
+                """
+            )
+            rows = cursor.fetchall()
+    except DatabaseError:
+        return []
+
+    return [
+        {
+            "id": task_id,
+            "status": status,
+            "finished_at": date_done,
+            "task": name or "Ukendt opgave",
+            "worker": worker,
+            "retries": retries,
+            "queue": queue,
+        }
+        for task_id, status, date_done, name, worker, retries, queue in rows
+    ]
+
+
+@role_required("administrator")
+def worker_jobs(request: HttpRequest) -> HttpResponse:
+    schedules = PeriodicTask.objects.filter(enabled=True).select_related(
+        "interval", "crontab", "solar", "clocked"
+    )
+    return render(
+        request,
+        "siteadmin/worker_jobs.html",
+        {"queued_jobs": _queued_jobs(), "past_jobs": _past_jobs(), "schedules": schedules},
+    )
 
 
 @role_required("administrator")
