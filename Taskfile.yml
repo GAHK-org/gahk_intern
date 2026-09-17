@@ -206,6 +206,7 @@ tasks:
     desc: Run the whole app in Docker with hot-reload and Celery worker + Beat -> http://127.0.0.1:8800
     # Foreground, attached to the web and background-process output (not postgres/minio's). Ctrl-C
     # stops them, same as dev:local's runserver. `dev:logs`/`dev:down` manage a detached start.
+    deps: [frontend:build]
     cmds: ['docker compose --profile docker up --build --attach web --attach worker --attach beat web worker beat']
 
   dev:down:

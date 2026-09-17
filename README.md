@@ -13,7 +13,8 @@ task dev         # hele appen i Docker (Postgres+MinIO+Django, hot-reload) → h
 `task dev` kører Django i en container (`task dev:down` for at stoppe, `task dev:logs` for logs).
 Foretrækker du at køre Django direkte på systemet i stedet: `task dev:local` — samme
 Postgres+MinIO-containere, bare uden web-containeren. Begge starter automatisk Postgres + MinIO i
-Docker (`task services:up`) og peger appen på dem via `app/.env` (kopiér `app/.env.example`). MinIO
+Docker og peger som standard appen på dem; brug `app/.env` (kopiér `app/.env.example`) for at
+tilpasse databasen eller andre indstillinger. MinIO
 erstatter lokalt Hetzner Object Storage til uploads; `task minio:console` viser login til dets
 webgrænseflade. `task db:up` starter derudover MariaDB, som kun bruges til ETL fra det gamle site.
 
