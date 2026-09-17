@@ -18,8 +18,8 @@ docker build -t gahk .   # full production image
 ```
 Copy `app/.env.example` to `app/.env` first — its defaults point `DATABASE_URL` at the Postgres
 container and `S3_*` at the MinIO container (`task services:up`), both started automatically by
-`task dev`/`task dev:local`/`task seed`. Comment out `S3_BUCKET`/unset `DATABASE_URL` to fall back
-to local-disk media / SQLite instead — no Docker needed either way.
+`task dev`/`task dev:local`/`task seed`. SQLite is available only with an explicit `DATABASE_URL`,
+such as the one set by `task test:sqlite`; media always uses the configured object storage backend.
 
 `task db:up` additionally starts MariaDB, needed only for the legacy ETL (`task etl`).
 
