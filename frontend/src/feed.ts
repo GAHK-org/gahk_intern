@@ -30,6 +30,11 @@
 import { Idiomorph } from "idiomorph/htmx";
 
 const FEED_ID = "js-feed";
+// The polled region, which is NO LONGER the scroller. #js-feed is the box that scrolls and holds
+// the archive, the divider and the live list; #js-live is the part the 5s poll re-sends and morphs.
+// Splitting them is what lets archived messages be prepended into the same column at all — inside
+// the polled region, idiomorph would delete them on the next tick as nodes the server did not send.
+const LIVE_ID = "js-live";
 const THREAD_ID = "js-thread";
 // Treat "within this many px of the bottom" as following the conversation.
 const STICK_THRESHOLD = 120;
@@ -40,8 +45,9 @@ interface BeforeSwapDetail {
 }
 
 const feed = document.getElementById(FEED_ID);
-// The list scrolls itself, so these are the same element — kept as two names because they mean
-// different things: one is the region being swapped, the other the thing whose scrollTop we keep.
+// The element whose scrollTop is ours to keep. Once the same node as the swap target; now
+// deliberately not, which is the point of LIVE_ID above — the thing that scrolls outlives the
+// thing that is replaced.
 const scroller = feed;
 
 function atBottom(el: HTMLElement): boolean {
@@ -84,13 +90,13 @@ if (feed && scroller) {
 
   document.body.addEventListener("htmx:beforeSwap", (event: Event) => {
     const detail = (event as CustomEvent<BeforeSwapDetail>).detail;
-    if (detail?.target?.id !== FEED_ID) return; // a reaction swap, or some other region
+    if (detail?.target?.id !== LIVE_ID) return; // a reaction swap, an archive chunk, or elsewhere
     wasAtBottom = atBottom(scroller);
   });
 
   document.body.addEventListener("htmx:afterSwap", (event: Event) => {
     const target = (event as CustomEvent<{ target?: HTMLElement }>).detail?.target;
-    if (target?.id !== FEED_ID) return;
+    if (target?.id !== LIVE_ID) return;
 
     // Nothing to re-arm for image uploads any more: imageupload.ts listens on the document in the
     // capture phase, so it already covers forms that did not exist when it was registered.
@@ -98,6 +104,171 @@ if (feed && scroller) {
     // Follow the conversation only if they were already at the bottom. No scrollTop to restore
     // otherwise: morphing leaves the surrounding nodes alone, so the position does not move.
     if (wasAtBottom) toBottom(scroller);
+  });
+
+  // ---- keeping the reader still while history arrives ABOVE them ------------------------------
+  //
+  // The archive is fetched by a sentinel at the top of the scroller replacing itself with a chunk
+  // of older messages (den_hurtige/_archive_chunk.html). Every pixel of that chunk is inserted
+  // ABOVE the viewport, so without correction the content under the reader's thumb slides down by
+  // the full height of what just loaded — on a phone, several screens at once, every time.
+  //
+  // WE DO THIS BY HAND BECAUSE SAFARI WILL NOT. CSS scroll anchoring (`overflow-anchor`) exists for
+  // exactly this and is unimplemented in WebKit, so on the platform Den Hurtige is mostly read on
+  // it would do nothing at all. Measuring scrollHeight either side of the swap works everywhere and
+  // needs no feature detection.
+  //
+  // Measured on the SCROLLER, not on the arriving chunk: the new nodes are not the only thing that
+  // changes height. The sentinel being consumed removes its own, so differencing the whole box is
+  // the only figure that is right in one reading.
+  //
+  // LATE IMAGE REFLOW IS NOT COMPENSATED, and that is a measured decision rather than an oversight.
+  // .msg-image sets `height:auto` with no reserved box — the upload pipeline stores no dimensions,
+  // so there is nothing to reserve one from — which in principle means a photograph decoding above
+  // the reader pushes them down after this correction has run. Driven with the images throttled to
+  // 1.2s and Chromium's own scroll anchoring disabled (Safari implements none, so that is the
+  // closer simulation of the phone this is read on), the drift across four chunks measured 0px:
+  // `loading="lazy"` keeps the pictures well above the viewport from being fetched at all. If that
+  // ever stops holding, re-anchoring on each image's load event is the fix, not a min-height.
+  // ALL OF IT HANGS OFF beforeSwap, WHICH IS THE ONLY EVENT THAT IDENTIFIES THE SENTINEL.
+  //
+  // The obvious shape -- measure on htmx:beforeSwap, correct on htmx:afterSwap -- does not work
+  // here, and fails in a way that looks like it works. The sentinel swaps itself with outerHTML, so
+  // htmx cannot fire afterSwap on the target (it has been replaced); it fires one afterSwap per
+  // INSERTED node instead, with detail.elt set to that new node. A chunk therefore raises thirty of
+  // them, none carrying the sentinel. It happened to limp along because every chunk but the last
+  // contains the NEXT sentinel, so exactly one of those thirty matched by accident -- and the final
+  // chunk, which ends in the "her begynder" marker instead, dropped the reader 1800px in one jump.
+  //
+  // So the correction is scheduled from beforeSwap instead. htmx performs the swap synchronously
+  // once beforeSwap returns (no swap delay is configured), so the next animation frame sees the new
+  // DOM, and reading scrollHeight there forces the layout that makes the number real.
+  //
+  // Each swap closes over its own `before`, which also removes a race the shared flag had: the 5s
+  // poll can land in the middle of an archive fetch, and a flag cleared by the poll would have
+  // swallowed the correction for the chunk that was actually arriving.
+  document.body.addEventListener("htmx:beforeSwap", (event: Event) => {
+    const elt = (event as CustomEvent<{ elt?: HTMLElement }>).detail?.elt;
+    if (!elt?.classList.contains("archive-more")) return;
+    // The FIRST chunk is not a correction case, it is a reveal -- see revealArchive below.
+    const reveal = elt.id === ARCHIVE_TOP_ID;
+    const before = scroller.scrollHeight;
+    requestAnimationFrame(() => {
+      if (reveal) revealArchive();
+      else {
+        const grew = scroller.scrollHeight - before;
+        if (grew > 0) scroller.scrollTop += grew;
+      }
+    });
+  });
+
+  // ---- opening the archive, which only the reader may do --------------------------------------
+  //
+  // The sentinel at the top of the feed waits for `gahk-open-archive` and nothing else; htmx cannot
+  // raise it, so the archive is never fetched until this file decides somebody has asked for it.
+  //
+  // WHY NOT JUST WATCH FOR IT SCROLLING INTO VIEW. That is what it did, and it was wrong on the
+  // commonest page there is: a channel holding one short message does not fill the screen, so a
+  // visibility-triggered sentinel fires on load and keeps firing until the column is longer than
+  // the viewport. Opening Den Hurtige to read today's one message showed a screenful of last month
+  // with today's message at the bottom of it. Visibility is not intent when the content is short.
+  //
+  // What counts as intent is an OVERSCROLL: the reader is already at the very top, there is nothing
+  // left to scroll, and they keep dragging upwards anyway. That is unambiguous, it is the gesture
+  // the divider names, and it cannot happen by accident while reading.
+  const ARCHIVE_TOP_ID = "js-archive-top";
+  // px of drag past the top (touch) and of accumulated wheel/trackpad travel (pointer). The wheel
+  // figure is the higher of the two because a trackpad emits a burst of small deltas from one flick
+  // and momentum keeps them coming after the finger has lifted, where a touch drag is a single
+  // deliberate movement the whole way.
+  const OPEN_BY_DRAG = 56;
+  const OPEN_BY_WHEEL = 140;
+
+  function sentinel(): HTMLElement | null {
+    const el = document.getElementById(ARCHIVE_TOP_ID);
+    // `is-idle` is dropped the moment we ask for the chunk, so a second gesture arriving while the
+    // first request is still in flight cannot fire a duplicate.
+    return el?.classList.contains("is-idle") ? el : null;
+  }
+
+  function openArchive(): void {
+    const el = sentinel();
+    if (!el) return;
+    el.classList.remove("is-idle");
+    // NO COLON IN THE NAME. htmx tokenises a trigger spec on its own punctuation -- `:` is what
+    // separates a modifier from its argument, as in `intersect root:#js-feed` -- so `gahk:open`
+    // parses as the event `gahk` with a modifier, the attribute never matches, and the archive
+    // simply never opens with nothing logged anywhere. A hyphen is inert to that parser.
+    const htmx = (window as unknown as { htmx?: { trigger: (e: Element, n: string) => void } }).htmx;
+    htmx?.trigger(el, "gahk-open-archive");
+  }
+
+  // Where the reader is put once the first chunk lands, and it is deliberately NOT "exactly where
+  // they were". Holding them still is right for every later chunk -- they are reading, and history
+  // arriving above them must not move the words -- but on the first one it would mean the gesture
+  // produced no visible change at all: same messages, same position, only a longer scrollbar. So
+  // the view moves to sit the divider on the bottom edge, which fills the screen with the newest
+  // archived messages and leaves the live conversation one line below, exactly where it was.
+  function revealArchive(): void {
+    // Re-looked-up rather than closing over `feed`/`scroller`: a function declared inside this
+    // block does not keep their narrowing, because TypeScript cannot know when it will be called.
+    const box = document.getElementById(FEED_ID);
+    const divider = box?.querySelector(".feed-divider");
+    if (!box || !divider) return;
+    box.scrollTop += divider.getBoundingClientRect().bottom - box.getBoundingClientRect().bottom;
+  }
+
+  // Touch: a drag downwards (revealing what is above) while there is nothing left to scroll.
+  let dragFrom: number | null = null;
+  scroller.addEventListener(
+    "touchstart",
+    (event: TouchEvent) => {
+      dragFrom = event.touches.length === 1 && scroller.scrollTop <= 0 ? event.touches[0].clientY : null;
+    },
+    { passive: true },
+  );
+  scroller.addEventListener(
+    "touchmove",
+    (event: TouchEvent) => {
+      if (dragFrom === null || !sentinel()) return;
+      // Still pinned at the top is part of the test, not just a starting condition: a drag that
+      // began at the top and has since scrolled the list is an ordinary scroll, not an overscroll.
+      if (scroller.scrollTop > 0) {
+        dragFrom = null;
+        return;
+      }
+      if (event.touches[0].clientY - dragFrom > OPEN_BY_DRAG) {
+        dragFrom = null;
+        openArchive();
+      }
+    },
+    { passive: true },
+  );
+  scroller.addEventListener("touchend", () => (dragFrom = null), { passive: true });
+
+  // Wheel and trackpad, which is the whole story on a desktop: there is no drag there, and without
+  // this the archive would be unreachable with a mouse.
+  let wheeledUp = 0;
+  scroller.addEventListener(
+    "wheel",
+    (event: WheelEvent) => {
+      if (!sentinel() || scroller.scrollTop > 0 || event.deltaY >= 0) {
+        wheeledUp = 0;
+        return;
+      }
+      wheeledUp -= event.deltaY;
+      if (wheeledUp > OPEN_BY_WHEEL) {
+        wheeledUp = 0;
+        openArchive();
+      }
+    },
+    { passive: true },
+  );
+
+  // Keyboard, so the gesture is not the only way in. Home and PageUp at the top of a feed mean
+  // "further back" as plainly as the drag does, and they are what a screen-reader user has.
+  scroller.addEventListener("keydown", (event: KeyboardEvent) => {
+    if ((event.key === "Home" || event.key === "PageUp") && scroller.scrollTop <= 0) openArchive();
   });
 }
 

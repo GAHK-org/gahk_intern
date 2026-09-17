@@ -20,6 +20,11 @@ app_name = "den_hurtige"
 urlpatterns = [
     path("", views.feed, name="feed"),
     path("opslag", views.feed_items, name="feed_items"),  # htmx poll target (partial, not a page)
+    # The archive. A FIXED segment with the channel in the query string, matching feed_items rather
+    # than the feed's own `<slug:channel>/` — the panel is fetched for whatever channel is on screen,
+    # and a second path shape for the same choice is one more thing to keep in step. `?inden=`/`?id=`
+    # carry the paging cursor; `?mere=1` asks for the next chunk rather than the whole panel.
+    path("arkiv", views.archive, name="archive"),
     path("opret", views.create_post, name="create_post"),
     path("lyd/<slug:channel>", views.toggle_mute, name="toggle_mute"),
     path("<int:pk>/kommentar", views.create_comment, name="create_comment"),

@@ -115,7 +115,7 @@ BY_SLUG: dict[str, Channel] = {c.slug: c for c in CHANNELS}
 # URL segments under /intern/den-hurtige/ that are views, not channels. `<slug:channel>/` is
 # matched last, so these already win — but a channel named after one would be unreachable with no
 # error anywhere, so checks.py rejects the collision instead (E008).
-RESERVED_SLUGS = frozenset({"opslag", "opret", "abonner", "lyd"})
+RESERVED_SLUGS = frozenset({"opslag", "opret", "abonner", "lyd", "arkiv"})
 
 VALID_DURATIONS = {minutes for minutes, _label in DURATION_CHOICES}
 
