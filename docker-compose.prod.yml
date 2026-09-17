@@ -15,5 +15,15 @@ services:
     expose:
       - "8000"                 # reached by Coolify/Traefik over the internal network (not host-published)
 
+  worker:
+    build: .
+    restart: unless-stopped
+    command: ["celery", "-A", "config", "worker", "--loglevel=INFO"]
+
+  beat:
+    build: .
+    restart: unless-stopped
+    command: ["celery", "-A", "config", "beat", "--loglevel=INFO"]
+
 volumes:
   media:

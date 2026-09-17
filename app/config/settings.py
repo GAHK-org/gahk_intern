@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 
 import dj_database_url
+from celery.schedules import crontab
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -116,6 +117,36 @@ LANGUAGE_CODE = "da"
 TIME_ZONE = "Europe/Copenhagen"
 USE_I18N = True
 USE_TZ = True
+
+# Celery persists queued messages and task results in PostgreSQL. Keeping this separate allows a
+# dedicated queue database later, while local and production defaults share the Django database.
+CELERY_DATABASE_URL = os.environ.get(
+    "CELERY_DATABASE_URL", os.environ.get("DATABASE_URL", f"sqlite:///{BASE_DIR / 'db.sqlite3'}")
+)
+# Django accepts `postgres://`; SQLAlchemy requires the explicit PostgreSQL dialect and driver.
+if CELERY_DATABASE_URL.startswith("postgres://"):
+    CELERY_DATABASE_URL = CELERY_DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
+elif CELERY_DATABASE_URL.startswith("postgresql://"):
+    CELERY_DATABASE_URL = CELERY_DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
+CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", f"sqla+{CELERY_DATABASE_URL}")
+CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", f"db+{CELERY_DATABASE_URL}")
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 900
+CELERY_BEAT_SCHEDULE = {
+    "process-photo-album-media": {
+        "task": "photo_album.tasks.process_pending_media",
+        "schedule": 600.0,
+    },
+    "email-oelkaelder-monthly-statements": {
+        "task": "oelkaelder.tasks.send_monthly_statements",
+        "schedule": crontab(minute=10, hour=6, day_of_month=1),
+    },
+    "send-admin-dummy-notification": {
+        "task": "core.tasks.send_admin_dummy_notification",
+        "schedule": crontab(minute=0, hour="8,16"),
+    },
+}
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
