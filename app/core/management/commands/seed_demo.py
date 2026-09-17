@@ -23,8 +23,10 @@ import argparse
 import random
 import unicodedata
 from datetime import timedelta
+from io import BytesIO
 
 from django.conf import settings
+from django.core.files.base import ContentFile
 from django.core.management.base import BaseCommand, CommandError
 from django.db import models, transaction
 from django.utils import timezone
@@ -40,6 +42,8 @@ from arkiv.models import ArchiveFile, ArchiveFolder
 from cms.models import Event as CmsEvent
 from cms.models import NewsItem, Page, PylonEvent
 from core.models import Cleaning, Room, Workgroup
+from den_hurtige.demo import seed as seed_den_hurtige
+from den_hurtige.models import QuickComment, QuickPost, QuickReaction
 from events.demo import seed as seed_events
 from events.models import CalendarFeedToken, Event, EventInvite, Rsvp
 from oelkaelder.models import (
@@ -130,6 +134,9 @@ WIPE_ORDER: list[type[models.Model]] = [
     PylonEvent,
     DailyVisitCount,
     VisitTally,
+    QuickReaction,
+    QuickComment,
+    QuickPost,
     Media,
     Album,
     Resident,
@@ -183,6 +190,7 @@ class Command(BaseCommand):
             residents = self._seed_residents(opts["residents"])
             self._seed_residencies(residents, rooms, workgroups, cleanings)
             self._seed_roles(residents)
+            self._seed_profile_pictures(residents)
             self._seed_ak(residents)
             self._seed_oelkaelder(residents)
             self._seed_admissions(residents)
@@ -194,6 +202,7 @@ class Command(BaseCommand):
             seed_events(residents, self.now, self.rng)
             seed_arkiv(residents, self.now, self.rng)
             seed_photo_album(residents, self.now, self.rng)
+            seed_den_hurtige(residents, self.now, self.rng)
 
         self._report(residents)
 
@@ -300,6 +309,12 @@ class Command(BaseCommand):
         workgroups: list[Workgroup],
         cleanings: list[Cleaning],
     ) -> None:
+        fixed_groups = {
+            "ak@gahk.dk": "AK-gruppen",
+            "oel@gahk.dk": "Ølkælderen",
+            "regnskab@gahk.dk": "Regnskabsgruppen",
+        }
+        workgroups_by_name = {workgroup.name: workgroup for workgroup in workgroups}
         for y, m in self._iter_recent_months(3):
             # Give each resident a distinct room this month (rooms outnumber residents).
             chosen_rooms = self.rng.sample(rooms, k=min(len(residents), len(rooms)))
@@ -310,7 +325,9 @@ class Command(BaseCommand):
                     month=m,
                     defaults={
                         "room": room,
-                        "workgroup": self.rng.choice(workgroups),
+                        "workgroup": workgroups_by_name.get(
+                            fixed_groups.get(resident.email, ""), self.rng.choice(workgroups)
+                        ),
                         "cleaning": self.rng.choice(cleanings),
                     },
                 )
@@ -351,6 +368,27 @@ class Command(BaseCommand):
                 assigned.add(r.pk)
 
         Resident.objects.filter(pk__in=assigned).update(is_staff=True)
+
+    def _seed_profile_pictures(self, residents: list[Resident]) -> None:
+        for index, resident in enumerate(residents[:8]):
+            if resident.profile_picture:
+                continue
+            resident.profile_picture.save(
+                f"{_ascii_slug(resident.full_name)}.jpg",
+                ContentFile(self._profile_image(resident.full_name, index)),
+                save=True,
+            )
+
+    def _profile_image(self, name: str, index: int) -> bytes:
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError:
+            return name.encode()
+        image = Image.new("RGB", (480, 480), ["#315b8d", "#1f6c64", "#8a4e70", "#517544"][index % 4])
+        ImageDraw.Draw(image).text((36, 36), name, fill="white")
+        output = BytesIO()
+        image.save(output, format="JPEG", quality=82)
+        return output.getvalue()
 
     # ------------------------------------------------------------------ AK
     def _seed_ak(self, residents: list[Resident]) -> None:

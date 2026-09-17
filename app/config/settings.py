@@ -1,7 +1,6 @@
 """Django settings for the GAHK rewrite (config project).
 
-Schema/decisions: see ../02-schema-etl.md. Target DB is PostgreSQL (via DATABASE_URL);
-falls back to SQLite for local dev/validation when DATABASE_URL is unset.
+Schema/decisions: see ../02-schema-etl.md. Target DB is PostgreSQL (via DATABASE_URL).
 """
 
 import os
@@ -9,6 +8,7 @@ from pathlib import Path
 
 import dj_database_url
 from celery.schedules import crontab
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -84,12 +84,14 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-DATABASES = {
-    "default": dj_database_url.config(
-        default=os.environ.get("DATABASE_URL", f"sqlite:///{BASE_DIR / 'db.sqlite3'}"),
-        conn_max_age=600,
-    )
-}
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    if DEBUG:
+        DATABASE_URL = "postgres://gahk:gahk@localhost:5432/gahk"
+    else:
+        raise ImproperlyConfigured("DATABASE_URL must be configured outside development.")
+
+DATABASES = {"default": dj_database_url.config(default=DATABASE_URL, conn_max_age=600)}
 
 # --- Auth (01-infrastructure.md A4/A5; 02-schema-etl.md §1.6) ---
 AUTH_USER_MODEL = "residents.Resident"
