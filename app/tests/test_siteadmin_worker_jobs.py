@@ -44,6 +44,10 @@ def test_worker_jobs_shows_job_data_and_active_schedules(
                 "finished_at": None,
                 "worker": "celery@test",
                 "retries": 0,
+                "queue": "celery",
+                "submitted_at": None,
+                "arguments": "(42,)",
+                "keyword_arguments": "{}",
             }
         ],
     )
@@ -54,4 +58,5 @@ def test_worker_jobs_shows_job_data_and_active_schedules(
     assert response.status_code == 200
     assert "photo_album.tasks.build_media_derivatives" in response.content.decode()
     assert "core.tasks.send_admin_dummy_notification" in response.content.decode()
+    assert "(42,)" in response.content.decode()
     assert "Process media" in response.content.decode()

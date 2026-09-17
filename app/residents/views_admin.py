@@ -32,6 +32,7 @@ def _queued_jobs() -> list[dict[str, object]]:
                 SELECT m.id, q.name, m.visible, m.timestamp, m.payload
                 FROM kombu_message AS m
                 JOIN kombu_queue AS q ON q.id = m.queue_id
+                WHERE m.visible = TRUE
                 ORDER BY m.id DESC
                 LIMIT 100
                 """
@@ -60,14 +61,32 @@ def _queued_jobs() -> list[dict[str, object]]:
 
 
 def _past_jobs() -> list[dict[str, object]]:
-    """Return completed Celery task metadata without exposing arguments or results."""
+    """Return completed task metadata paired with its acknowledged broker message."""
     try:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT task_id, status, date_done, name, worker, retries, queue
-                FROM celery_taskmeta
-                ORDER BY date_done DESC
+                SELECT
+                    result.task_id,
+                    result.status,
+                    result.date_done,
+                    result.name,
+                    result.worker,
+                    result.retries,
+                    result.queue,
+                    message.queue,
+                    message.timestamp,
+                    message.payload
+                FROM celery_taskmeta AS result
+                LEFT JOIN LATERAL (
+                    SELECT q.name AS queue, m.timestamp, m.payload
+                    FROM kombu_message AS m
+                    JOIN kombu_queue AS q ON q.id = m.queue_id
+                    WHERE convert_from(m.payload::bytea, 'UTF8')::jsonb->'headers'->>'id' = result.task_id
+                    ORDER BY m.id DESC
+                    LIMIT 1
+                ) AS message ON TRUE
+                ORDER BY result.date_done DESC
                 LIMIT 100
                 """
             )
@@ -75,18 +94,27 @@ def _past_jobs() -> list[dict[str, object]]:
     except DatabaseError:
         return []
 
-    return [
-        {
-            "id": task_id,
-            "status": status,
-            "finished_at": date_done,
-            "task": name or "Ukendt opgave",
-            "worker": worker,
-            "retries": retries,
-            "queue": queue,
-        }
-        for task_id, status, date_done, name, worker, retries, queue in rows
-    ]
+    jobs = []
+    for task_id, status, date_done, name, worker, retries, queue, message_queue, timestamp, payload in rows:
+        try:
+            headers = json.loads(payload).get("headers", {}) if payload is not None else {}
+        except (TypeError, json.JSONDecodeError):
+            headers = {}
+        jobs.append(
+            {
+                "id": task_id,
+                "status": status,
+                "finished_at": date_done,
+                "task": name or headers.get("task", "Ukendt opgave"),
+                "worker": worker,
+                "retries": retries,
+                "queue": queue or message_queue,
+                "submitted_at": timestamp,
+                "arguments": headers.get("argsrepr", ""),
+                "keyword_arguments": headers.get("kwargsrepr", ""),
+            }
+        )
+    return jobs
 
 
 @role_required("administrator")
