@@ -49,12 +49,14 @@ pure local HMAC — generate_presigned_url makes no network call — so this is 
 what it replaces.
 """
 
+import threading
 from typing import Any
 from urllib.parse import urljoin
 
 from django.conf import settings
 from django.utils.encoding import filepath_to_uri
 from storages.backends.s3 import S3Storage
+from storages.utils import clean_name
 
 # The key prefix every media object lives under, and the reason it is not optional.
 #
@@ -70,11 +72,53 @@ from storages.backends.s3 import S3Storage
 MEDIA_PREFIX = "media"
 
 
-class MediaS3Storage(S3Storage):
+class PublicEndpointS3Storage(S3Storage):
+    """Adds `public_connection`: a second boto3 resource for anything a BROWSER follows directly.
+
+    A presigned URL is signed against a specific Host, and SigV4 signs that header — so the request
+    that follows the URL must hit the exact same host it was signed for, or the bucket 403s it.
+    Locally that pulls apart from the endpoint THIS PROCESS must use: `task dev`'s dockerized `web`
+    service reaches MinIO over the compose network at http://minio:9000, which is not a host the
+    browser on the developer's machine can resolve at all. settings.S3_PUBLIC_ENDPOINT_URL is the
+    host the browser CAN reach (http://localhost:9000, MinIO's published port) and is used only for
+    presigning; every other operation — upload, HEAD, list, delete — keeps using `self.connection` /
+    S3_ENDPOINT_URL, which this process itself resolves fine.
+
+    In every other environment (`task dev:local`, CI, production) the two settings are equal, so
+    `public_connection` is just `self.connection` again and the second boto3 resource is never built.
+    """
+
+    def __init__(self, **options: Any) -> None:  # noqa: ANN401 — passed straight to S3Storage.__init__
+        super().__init__(**options)
+        self._public_connections = threading.local()
+
+    @property
+    def public_connection(self) -> Any:  # noqa: ANN401 — a boto3 S3 ServiceResource
+        public_endpoint = settings.S3_PUBLIC_ENDPOINT_URL or self.endpoint_url
+        if public_endpoint == self.endpoint_url:
+            return self.connection
+        connection = getattr(self._public_connections, "connection", None)
+        if connection is None:
+            session = self._create_session()
+            connection = session.resource(
+                "s3",
+                region_name=self.region_name,
+                use_ssl=self.use_ssl,
+                endpoint_url=public_endpoint,
+                config=self.client_config,
+                verify=self.verify,
+            )
+            self._public_connections.connection = connection
+        return connection
+
+
+class MediaS3Storage(PublicEndpointS3Storage):
     """S3 for the bytes, `/media/<name>` for the URL. See the module docstring.
 
-    Set as STORAGES["default"] only when S3_BUCKET is configured; dev and CI run on plain
-    FileSystemStorage, and the two must produce byte-identical URLs for that to be safe.
+    Unconditionally STORAGES["default"] (config/settings.py) — there is no local-disk fallback.
+    The one place FileSystemStorage still runs is the test suite, which overrides STORAGES["default"]
+    itself (tests/conftest.py) rather than this class ever choosing it; the two must still produce
+    byte-identical URLs for that override to be safe.
     """
 
     def get_default_settings(self) -> dict[str, Any]:
@@ -113,11 +157,23 @@ class MediaS3Storage(S3Storage):
         return urljoin(settings.MEDIA_URL, url)
 
     def signed_url(self, name: str, expire: int | None = None) -> str:
-        """A short-lived presigned GET, straight from django-storages.
+        """A short-lived presigned GET, against the endpoint a browser can actually follow it to.
+
+        NOT `super().url(name, expire=expire)` any more: that presigns against `self.connection`,
+        which under `task dev` is signed for http://minio:9000 — unreachable from the browser this
+        redirect is sent to. `public_connection` (see PublicEndpointS3Storage) is signed for
+        S3_PUBLIC_ENDPOINT_URL instead, and is identical to `self.connection` everywhere else.
 
         The only caller is core.media.serve_media. Named rather than reached through url() so that
         every place a presigned URL could leak into stored content is a grep away — a signature
         written into a Notice body or into Page.background_image expires within the hour and is then
         wrong forever.
         """
-        return super().url(name, expire=expire)
+        if expire is None:
+            expire = self.querystring_expire
+        normalized = self._normalize_name(clean_name(name))
+        return self.public_connection.meta.client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": self.bucket_name, "Key": normalized},
+            ExpiresIn=expire,
+        )
