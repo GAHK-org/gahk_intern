@@ -330,6 +330,22 @@ NOTICE_IMAGE_MAX_MB = int(os.environ.get("NOTICE_IMAGE_MAX_MB", "5"))
 # post to another.
 EVENT_IMAGE_MAX_MB = int(os.environ.get("EVENT_IMAGE_MAX_MB", "5"))
 
+# The ceiling for an ANIMATED image, which cuts across the per-feature caps above rather than
+# joining them, because what it answers is a question about the FORMAT.
+#
+# Every cap above is written for a file that has already been through the browser downscaler, where
+# a phone photograph becomes a few hundred KB. An animation never goes through it: the canvas step
+# cannot compress an animation, only flatten it to its first frame, so frontend/src/imageupload.ts
+# passes one through at whatever size the resident picked (see `isAnimatedUpload` there). Measured
+# against 5 MB — a ceiling that assumes the downscaler ran — an ordinary reaction GIF from Giphy or
+# Tenor is refused, which is precisely the thing Den Hurtige, opslagstavlen and begivenheder wanted
+# to allow.
+#
+# One knob for every feature, unlike the caps above, and deliberately: the reason for the higher
+# number is the format, so splitting it per feature would be four settings that must all hold the
+# same value to avoid a GIF being postable in one place and not the next.
+ANIMATED_IMAGE_MAX_MB = int(os.environ.get("ANIMATED_IMAGE_MAX_MB", "5"))
+
 # Photo album uploads. Two ceilings rather than one: the album deliberately keeps the ORIGINAL at
 # full resolution (unlike every other feature here, which downscales in the browser first), so a
 # modern phone photo legitimately arrives at 10-15 MB, and a clip from the same phone is an order of
