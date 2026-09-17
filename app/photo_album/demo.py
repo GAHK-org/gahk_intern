@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from io import BytesIO
 
 from django.core.files.base import ContentFile
+from django.utils.text import slugify
 
 from residents.models import Resident
 
@@ -54,7 +55,8 @@ def seed(residents: list[Resident], _now: datetime, _rng: random.Random) -> int:
     for album_index, (folder, album_name, count) in enumerate(ALBUMS):
         album, _ = Album.objects.get_or_create(folder=folder, name=album_name)
         for image_index in range(count):
-            title = f"{album_name}: {CAPTIONS[image_index % len(CAPTIONS)]} {image_index + 1}.jpg"
+            filename = f"{slugify(album_name)}-{slugify(CAPTIONS[image_index % len(CAPTIONS)])}-{image_index + 1}.jpg"
+            title = filename
             if album.media.filter(title=title).exists():
                 continue
             media = upload_media(
@@ -65,7 +67,7 @@ def seed(residents: list[Resident], _now: datetime, _rng: random.Random) -> int:
                         COLOURS[(album_index + image_index) % len(COLOURS)],
                         DIMENSIONS[(album_index + image_index) % len(DIMENSIONS)],
                     ),
-                    name=f"{album_name}-{image_index + 1}.jpg",
+                    name=filename,
                 ),
                 resident=residents[(album_index + image_index) % len(residents)],
                 title=title,
@@ -76,7 +78,8 @@ def seed(residents: list[Resident], _now: datetime, _rng: random.Random) -> int:
             made += 1
     for media_index, (folder, album_name, caption, upload_age, bin_age) in enumerate(LIFECYCLE_MEDIA):
         album, _ = Album.objects.get_or_create(folder=folder, name=album_name)
-        title = f"{caption}.jpg"
+        filename = f"{slugify(caption)}.jpg"
+        title = filename
         if album.media.filter(title=title).exists():
             continue
         media = upload_media(
@@ -87,7 +90,7 @@ def seed(residents: list[Resident], _now: datetime, _rng: random.Random) -> int:
                     COLOURS[media_index % len(COLOURS)],
                     DIMENSIONS[media_index % len(DIMENSIONS)],
                 ),
-                name=f"demo-{media_index + 1}.jpg",
+                name=filename,
             ),
             resident=residents[media_index % len(residents)],
             title=title,
