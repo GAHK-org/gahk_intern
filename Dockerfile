@@ -20,7 +20,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 COPY app/ /app/
 COPY --from=frontend /build/app/static/dist /app/static/dist
 # Hash/compress static at build time (WhiteNoise ManifestStaticFilesStorage). No DB needed for this.
-RUN DJANGO_DEBUG=0 DJANGO_SECRET_KEY=build python manage.py collectstatic --noinput
+RUN DJANGO_DEBUG=0 DJANGO_SECRET_KEY=build DATABASE_URL=sqlite:///:memory: python manage.py collectstatic --noinput
 EXPOSE 8000
 # migrate is run as a release/deploy step (see DEPLOY.md), not here.
 CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--timeout", "60"]
