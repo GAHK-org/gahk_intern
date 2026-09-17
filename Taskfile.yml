@@ -206,6 +206,7 @@ tasks:
     desc: Run the whole app in Docker with hot-reload (Postgres+MinIO+Django) -> http://127.0.0.1:8800
     # Foreground, attached to Django's own output (not postgres/minio's) — Ctrl-C stops it, same as
     # dev:local's runserver. `dev:logs`/`dev:down` are for a `dev` started elsewhere (e.g. in CI).
+    deps: [frontend:build]
     cmds: ['docker compose --profile docker up --build --attach web web']
 
   dev:down:
