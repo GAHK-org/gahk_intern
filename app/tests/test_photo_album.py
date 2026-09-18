@@ -50,6 +50,28 @@ def test_only_photo_group_or_administrator_can_create_album(
     assert Album.objects.get().name == "Fest"
 
 
+@pytest.mark.django_db
+def test_album_create_and_zip_import_offer_existing_or_new_folders(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    Album.objects.create(folder="2025", name="Eksisterende")
+    client.force_login(administrator)
+
+    create_content = client.get(reverse("photo_album:create_album")).content.decode()
+    import_content = client.get(reverse("photo_album:import_zip")).content.decode()
+
+    assert '<select id="folder-choice"' in create_content
+    assert '<select id="folder-choice"' in import_content
+    assert '<option value="2025">2025</option>' in create_content
+    assert '<option value="2025">2025</option>' in import_content
+    assert '<option value="__new__">Ny mappe...</option>' in create_content
+    assert '<option value="__new__">Ny mappe...</option>' in import_content
+    assert 'name="folder" type="text"' in create_content
+    assert 'name="folder" type="text"' in import_content
+    assert 'name="name"' in create_content
+
+
 def _zip_upload(*members: tuple[str, bytes]) -> SimpleUploadedFile:
     payload = BytesIO()
     with zipfile.ZipFile(payload, "w") as archive:

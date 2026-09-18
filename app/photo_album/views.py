@@ -33,6 +33,11 @@ from .models import Album, AlbumDownload, AlbumDownloadState, AlbumImport, Album
 from .storage import PhotoAlbumS3Storage, get_photo_album_storage
 
 
+def album_folder_options() -> list[str]:
+    folders = Album.objects.order_by("folder").values_list("folder", flat=True).distinct()
+    return ["Andet", *(folder for folder in folders if folder != "Andet")]
+
+
 @login_required
 def index(request: HttpRequest) -> HttpResponse:
     folder = request.GET.get("folder", "")
@@ -132,7 +137,15 @@ def create_album(request: HttpRequest) -> HttpResponse:
     if request.method == "POST" and form.is_valid():
         album = form.save()
         return redirect("photo_album:detail", album.pk)
-    return render(request, "photo_album/form.html", {"form": form, "title": "Opret album"})
+    return render(
+        request,
+        "photo_album/form.html",
+        {
+            "form": form,
+            "title": "Opret album",
+            "folder_options": album_folder_options(),
+        },
+    )
 
 
 @login_required
@@ -176,7 +189,13 @@ def import_zip(request: HttpRequest) -> HttpResponse:
     return render(
         request,
         "photo_album/import_zip.html",
-        {"zip_form": form, "job": job, "albums": albums, "skipped": skipped},
+        {
+            "zip_form": form,
+            "job": job,
+            "albums": albums,
+            "skipped": skipped,
+            "folder_options": album_folder_options(),
+        },
     )
 
 

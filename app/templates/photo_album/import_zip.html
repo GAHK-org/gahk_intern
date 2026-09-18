@@ -5,7 +5,8 @@
 	<a class="album-back" href="{% url 'photo_album:index' %}">Fotoalbum</a>
 	<h1>Importer album</h1>
 	<form method="post" action="{% url 'photo_album:import_zip' %}" enctype="multipart/form-data" class="card album-import-form" data-album-zip-import>{% csrf_token %}
-		<label for="id_folder">Mappe</label><input id="id_folder" name="folder" type="text" maxlength="10" required value="{{ zip_form.folder.value|default:'' }}">
+		<p data-album-folder-selector data-current-value="{{ zip_form.folder.value|default:'Andet' }}"><label for="folder-choice">Vælg mappe</label><select id="folder-choice" data-album-folder-choice>{% for folder in folder_options %}<option value="{{ folder }}">{{ folder }}</option>{% endfor %}<option value="__new__">Ny mappe...</option></select><label for="id_folder">Eller skriv en ny mappe</label><input id="id_folder" name="folder" type="text" maxlength="10" required value="{{ zip_form.folder.value|default:'Andet' }}" data-album-folder-input></p>
+		{% for error in zip_form.folder.errors %}<p>{{ error }}</p>{% endfor %}
 		<label for="id_archive">ZIP-fil</label><input id="id_archive" name="archive" type="file" accept=".zip" required>
 		<button class="btn" type="submit" data-album-zip-import-submit>Importer ZIP</button>
 		<section class="album-import-progress" data-album-import-progress hidden aria-live="polite"><progress value="0" max="100" data-album-import-progress-bar></progress><p data-album-import-progress-label></p></section>

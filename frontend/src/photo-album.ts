@@ -13,6 +13,28 @@ const uploadSubmit = document.querySelector<HTMLButtonElement>("[data-album-uplo
 const zipImportForm = document.querySelector<HTMLFormElement>("[data-album-zip-import]")
 const zipImportJob = document.querySelector<HTMLElement>("[data-album-import-job]")
 
+document.querySelectorAll<HTMLElement>("[data-album-folder-selector]").forEach((selector) => {
+  const choice = selector.querySelector<HTMLSelectElement>("[data-album-folder-choice]")!
+  const input = selector.querySelector<HTMLInputElement>("[data-album-folder-input]")!
+  const currentValue = selector.dataset.currentValue ?? "Andet"
+  choice.value = Array.from(choice.options).some((option) => option.value === currentValue)
+    ? currentValue
+    : "__new__"
+
+  const syncFolderInput = (): void => {
+    const isNewFolder = choice.value === "__new__"
+    if (isNewFolder) {
+      input.value = ""
+      input.focus()
+    } else {
+      input.value = choice.value
+    }
+  }
+
+  choice.addEventListener("change", syncFolderInput)
+  syncFolderInput()
+})
+
 const pollZipImport = (root: HTMLElement, statusUrl: string, resultUrl: string): void => {
   const label = root.querySelector<HTMLElement>("[data-album-import-progress-label]")!
   window.setTimeout(() => {
