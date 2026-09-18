@@ -6,6 +6,37 @@ import pytest
 from residents.models import Resident, RoleAssignment, active_period
 
 
+@pytest.fixture(autouse=True)
+def _isolate_from_dotenv(settings: object) -> None:
+    """Neutralise the developer's app/.env for the whole suite.
+
+    config/settings.py calls `load_dotenv(BASE_DIR / ".env")`, so anything a developer puts there to
+    exercise a real integration also reaches `task test`. That has already caused two different
+    kinds of confusion, and neither announced itself as an environment problem:
+
+      * S3_BUCKET — several tests upload files and several assert that deleting a row deletes the
+        file, so the suite would write to and then delete objects in the PRODUCTION bucket.
+      * TURNSTILE_SECRET_KEY — with a secret set, admissions._verify_turnstile stops short-circuiting
+        and looks for a `cf-turnstile-response` token that no test posts, so every application form
+        is silently rejected. That surfaces as `assert 0 == 1` on an Application count: it reads like
+        a broken view, and three tests failed this way for some time while CI stayed green.
+      * S3_PUBLIC_ENDPOINT_URL — a developer's `task dev` value (MinIO's published port) would
+        otherwise reach every test that builds its own MediaS3Storage/PhotoAlbumS3Storage with a
+        different (fake) endpoint_url, making core.storage.PublicEndpointS3Storage presign against a
+        host that has nothing to do with the test's own fixture bucket.
+
+    Autouse and unconditional, because in both cases the symptom points somewhere other than the
+    cause, and no individual test should have to remember. Anything else added to .env that changes
+    behaviour rather than merely configuring an address belongs here too.
+    """
+    settings.STORAGES = {  # type: ignore[attr-defined]
+        **settings.STORAGES,  # type: ignore[attr-defined]
+        "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    }
+    settings.TURNSTILE_SECRET_KEY = ""  # type: ignore[attr-defined]
+    settings.S3_PUBLIC_ENDPOINT_URL = ""  # type: ignore[attr-defined]
+
+
 @pytest.fixture
 def make_resident(db: None) -> Callable[[str, str, bool, tuple], Resident]:
     def _make(

@@ -1,0 +1,15 @@
+{% extends "admin/change_list.html" %}
+{% comment %}
+Two sentences, on the one screen where the accident happened. Everything else lives on the CMS index
+page (admin/cms/app_index.html) so this list stays readable.
+{% endcomment %}
+
+{% block content %}
+  <p class="help" style="margin:0 0 12px;padding:10px 12px;border-left:4px solid #efb810;background:#fffbe6">
+    Skifter du en sides <strong>adresse</strong>, flytter siden — den gamle adresse sender
+    automatisk videre, så ingen links går i stykker.
+    Står der <strong>“Ikke i nogen menu”</strong> ud for en side, kan den kun nås via et direkte
+    link; læg den under en sektion, der vises i menuen.
+  </p>
+  {{ block.super }}
+{% endblock %}

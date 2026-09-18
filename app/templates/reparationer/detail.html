@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}{{ task.title }} - Reparationer{% endblock %}
+{% block content_width %}max-w-2xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Værktøjer · Reparationer</p>
+      <h1>{{ task.title }}</h1>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-secondary" href="{% url 'reparationer:board' %}">‹ Til tavlen</a>
+    </div>
+  </div>
+
+  <div class="card-flat card-pad mb-4">
+    <p class="chip chip-quiet">{{ task.get_status_display }}</p>
+    <p class="chip chip-quiet">Ansvarlig: {{ task.get_responsible_display }}</p>
+    {% if task.archived_at %}<p class="chip chip-quiet">Arkiveret {{ task.archived_at|date:"j. M Y" }}</p>{% endif %}
+    {% if task.location %}<p class="muted">{{ task.location }}</p>{% endif %}
+    {% if task.description %}<p>{{ task.description|linebreaksbr }}</p>{% endif %}
+    <p class="muted text-sm">
+      Meldt af {{ task.reported_by.first_name }} {{ task.reported_by.last_name }}
+      · {{ task.created_at|date:"j. M Y, H:i" }}
+    </p>
+
+    {% if can_move %}
+      <div class="kanban-move mt-3">
+        {% for s_value, s_label in statuses %}
+          {% if s_value != task.status %}
+            {% if can_manage or s_value not in manager_only_statuses %}
+              <form method="post" action="{% url 'reparationer:set_status' task.pk %}">
+                {% csrf_token %}
+                <input type="hidden" name="status" value="{{ s_value }}">
+                <input type="hidden" name="next" value="detail">
+                <button type="submit">→ {{ s_label }}</button>
+              </form>
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+        {% comment %}
+          One button, pointing at whichever crew is NOT holding the ticket — the handoff goes both
+          ways (views.set_responsible), and the ticket only ever has two owners, so a picker would
+          be a dropdown with one real choice in it.
+        {% endcomment %}
+        {% if can_handoff %}
+          <form method="post" action="{% url 'reparationer:set_responsible' task.pk %}">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="detail">
+            <input type="hidden" name="responsible" value="{{ other_responsible }}">
+            <button type="submit">
+              {% if task.responsible == 'vicevaert' %}Overdrag til Repper{% else %}Send tilbage til Viceværterne{% endif %}
+            </button>
+          </form>
+        {% endif %}
+        {% if can_archive %}
+          <form method="post" action="{% url 'reparationer:archive_now' task.pk %}">
+            {% csrf_token %}
+            <button type="submit">Arkivér nu</button>
+          </form>
+        {% endif %}
+        {% if can_unarchive %}
+          <form method="post" action="{% url 'reparationer:unarchive' task.pk %}">
+            {% csrf_token %}
+            <button type="submit">Genåbn</button>
+          </form>
+        {% endif %}
+        {% if can_manage %}
+          <form method="post" action="{% url 'reparationer:delete' task.pk %}"
+                onsubmit="return confirm('Slet «{{ task.title|escapejs }}» permanent?');">
+            {% csrf_token %}
+            <button type="submit" class="kanban-danger">Slet</button>
+          </form>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+
+  <h2>Noter</h2>
+  <div class="board-list mb-4">
+    {% for comment in comments %}
+      <div class="card-flat card-pad">
+        <p>{{ comment.body|linebreaksbr }}</p>
+        <p class="muted text-sm">
+          {{ comment.author.first_name }} {{ comment.author.last_name }} · {{ comment.created_at|date:"j. M Y, H:i" }}
+          {% if comment.can_delete %}
+            · <form method="post" action="{% url 'reparationer:delete_comment' comment.pk %}" class="inline"
+                    onsubmit="return confirm('Slet noten?');">
+                {% csrf_token %}
+                <button type="submit" class="kanban-danger">Slet</button>
+              </form>
+          {% endif %}
+        </p>
+      </div>
+    {% empty %}
+      <p class="muted">Ingen noter endnu.</p>
+    {% endfor %}
+  </div>
+
+  <form method="post" action="{% url 'reparationer:create_comment' task.pk %}" class="card-flat card-pad">
+    {% csrf_token %}
+    <label for="{{ comment_form.body.id_for_label }}" class="font-semibold block mb-1">{{ comment_form.body.label }}</label>
+    {{ comment_form.body }}
+    {% if comment_form.body.errors %}<p class="errorlist text-sm">{{ comment_form.body.errors|striptags }}</p>{% endif %}
+    <button type="submit" class="btn mt-2">Tilføj note</button>
+  </form>
+{% endblock %}

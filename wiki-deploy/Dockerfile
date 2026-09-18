@@ -55,5 +55,38 @@ RUN printf '%s\n' \
     && a2enconf gahk-wiki-alias \
     && a2enmod rewrite
 
+# PHP's upload limits, which the official image leaves at the stock 2M/8M. That is below a single
+# phone photograph, and the way it fails is the problem: PHP over upload_max_filesize discards the
+# FILE and MediaWiki reports "the file you uploaded seems to be empty", while over post_max_size it
+# discards the whole POST body including the CSRF token and MediaWiki reports a session failure.
+# Neither message mentions a size, nothing is logged, and the wiki is otherwise perfectly healthy —
+# so it presents as "uploads are broken" with no thread to pull.
+#
+# THE ORDER OF THE THREE MATTERS, and it is why MediaWiki's own $wgMaxUploadSize (LocalSettings.php)
+# is set BELOW upload_max_filesize rather than equal to it: MediaWiki checks the size after PHP has
+# already accepted the file, so it can only produce a clear error for uploads PHP let through. Leave
+# a margin and MediaWiki always speaks first. post_max_size must exceed upload_max_filesize because
+# the description and tokens travel with the file, and memory_limit must exceed post_max_size or
+# thumbnailing a large JPEG dies *after* a successful upload — which looks like a different bug.
+RUN set -eux; \
+    printf '%s\n' \
+      'upload_max_filesize = 72M' \
+      'post_max_size = 80M' \
+      'memory_limit = 256M' \
+      > /usr/local/etc/php/conf.d/gahk-uploads.ini; \
+    php -i | grep -qx 'upload_max_filesize => 72M => 72M' \
+      || { echo 'FATAL: PHP did not pick up gahk-uploads.ini'; exit 1; }
+
 # User uploads (396 rows in wikiimage). Must be a mounted volume or they vanish on every redeploy.
 VOLUME /var/www/html/images
+
+# Ownership of the uploads volume, asserted at every start. See entrypoint.sh for why it cannot be a
+# RUN chown here: a populated named volume shadows whatever the image put at that path, so the only
+# moment this can be fixed is after the mount exists.
+#
+# CMD is repeated deliberately. Setting ENTRYPOINT in a derived image resets the CMD inherited from
+# the base, so omitting it would leave the container with nothing to run.
+COPY entrypoint.sh /usr/local/bin/gahk-entrypoint.sh
+RUN chmod +x /usr/local/bin/gahk-entrypoint.sh
+ENTRYPOINT ["gahk-entrypoint.sh"]
+CMD ["apache2-foreground"]

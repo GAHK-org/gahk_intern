@@ -12,10 +12,15 @@
 {% endcomment %}
 {% for post in posts %}
   {% comment %}
-    `grouped` is set in the view: consecutive messages from the same person within a few minutes
-    collapse into one visual group, so the avatar and name appear once and the spacing tightens.
-    Without it a short back-and-forth reads as a stack of separate cards — what made the old feed
-    feel like a forum.
+    `grouped` and `group_end` are both set in the view (views.posts_for): consecutive messages from
+    the same person within a few minutes collapse into one visual group, so the name appears once
+    at the top of the run, the avatar and the bubble's tail once at the bottom, and the spacing
+    between them all but closes. Without it a short back-and-forth reads as a stack of separate
+    cards — what made the old feed feel like a forum.
+
+    Two flags rather than one because a template cannot look AHEAD: `grouped` is "something of mine
+    is above me", which is all the name and the top corners need, but the avatar and the tail sit
+    at the end of a run and need "nothing of mine is below me". See _message.html.
   {% endcomment %}
   {% include "den_hurtige/_message.html" with post=post %}
 {% empty %}
@@ -23,8 +28,9 @@
     <p><strong>Ingen beskeder lige nu.</strong></p>
     <p class="muted">
       Skriv noget der er relevant den næste times tid — fælles kaffe, en pakke i porten, hjælp til
-      at bære. Beskeder slettes automatisk når de udløber, så skal noget gemmes, hører det hjemme i
-      ankebogen eller på <a href="/intern/opslagstavle/">opslagstavlen</a>.
+      at bære. Beskeder forsvinder fra feedet når tiden er gået, men de bliver ikke slettet: de
+      ligger i arkivet, som du trækker ned til fra toppen. Skal noget stå fast, hører det stadig
+      hjemme i ankebogen eller på <a href="{% url 'opslagstavle:board' %}">opslagstavlen</a>.
     </p>
   </div>
 {% endfor %}

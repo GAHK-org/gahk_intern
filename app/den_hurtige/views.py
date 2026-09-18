@@ -1,17 +1,26 @@
 """Den Hurtige — the intern feed of short-lived urgent messages that replaces the Messenger group.
 
 Anyone who can reach it may post, comment and subscribe to push — but access itself is gated by
-den_hurtige.access, and individual channels may narrow that further (den_hurtige.channels). Posts
-self-destruct:
-`feed` purges expired ones on the way in, so the thread cannot accumulate the off-topic history
-admins struggled with on Messenger. Notification fan-out lives in services.py and runs off the
-request thread.
+den_hurtige.access, and individual channels may narrow that further (den_hurtige.channels).
+Notification fan-out lives in services.py and runs off the request thread.
 
-Every view here is scoped to one channel, with one deliberate exception: the purge. See
-`_active_posts`.
+MESSAGES LEAVE THE FEED ON A TIMER AND ARE THEN ARCHIVED, NEVER DELETED (see models.py for the
+reversal and why). This module is where that is enforced, because "archived" is a read of the clock
+and not a column anyone could constrain:
+
+  * READS resolve against every post the caller may see. `archive` lists them; `thread` renders an
+    archived conversation read-only, which is what keeps a months-old reply notification's deep link
+    working instead of landing on "this is gone".
+  * WRITES resolve against `active()` alone — `_post_or_404` defaults to it, so replying to or
+    reacting to an archived post cannot succeed by forgetting a check. It has to be opted out of,
+    once, in the two places that need to tell the caller WHY rather than answer 404.
+  * DELETION is refused outright on an archived post, for author and moderator alike. The admin is
+    the one exception and the reason it is one is in admin.py.
+
+Every view here is scoped to one channel.
 """
 
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from typing import NamedTuple
 
 from django.conf import settings
@@ -21,13 +30,17 @@ from django.core.exceptions import PermissionDenied
 from django.core.files.uploadedfile import UploadedFile
 from django.db.models import Count, Prefetch, QuerySet
 from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect
+from django.http.response import HttpResponseBase
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
+from django.utils.formats import date_format
 from django.views.decorators.http import require_POST
 
+from core.clock import current_date, current_datetime
 from core.push import handle_subscription_request
 from core.reactions import apply_toggle, reaction_rows
-from core.uploads import check_image_upload
+from core.uploads import attached_image
 from residents.permissions import current_resident, effective_roles
 
 from . import channels, services
@@ -63,15 +76,15 @@ REACTIONS = Prefetch("reactions", queryset=QuickReaction.objects.select_related(
 
 
 def _active_posts(channel: Channel) -> QuerySet[QuickPost]:
-    """One channel's live posts, with expired ones purged on the way past. Traffic does the cleanup;
-    the purge_quick_posts cron job (DEPLOY.md §4b) covers the weeks with none.
+    """One channel's live posts.
 
-    The purge is deliberately NOT scoped to `channel`. Filtering it would mean a channel nobody has
-    opened this week keeps its expired posts — and their images — until the half-hourly cron gets to
-    them, which quietly turns "the post is gone in an hour" into "the post is gone in an hour, in
-    the busy channel". Sweep everything, then read one channel.
+    IT NO LONGER PURGES ANYTHING, and the absence is the feature. This function used to open with
+    `QuickPost.objects.purge_expired()` — a cross-channel hard delete on every feed load and every
+    5s poll, so that a channel nobody had opened could not hoard expired posts. Archiving deleted
+    the problem rather than the code: a post leaves this queryset the instant the clock passes
+    `expires_at`, with nothing written and nothing swept, and it is in the archive by the same
+    comparison. There is correspondingly no cron job any more (DEPLOY.md §4b).
     """
-    QuickPost.objects.purge_expired()
     return (
         QuickPost.objects.filter(channel=channel.slug)
         .active()
@@ -94,25 +107,49 @@ def reactions_for(post: QuickPost, user_id: int) -> list[dict[str, object]]:
     return reaction_rows(post.reactions.all(), user_id)
 
 
-def posts_for(request: HttpRequest, channel: Channel) -> list[QuickPost]:
-    """One channel's active messages, each carrying `reaction_rows` for the template.
+def mark_runs(posts: list[QuickPost], user_id: int) -> list[QuickPost]:
+    """Attach `reaction_rows`, `grouped` and `group_end` to a list of messages IN READING ORDER.
 
     Attached here rather than resolved in the template because a Django template cannot call a
     function with arguments, and the "did *I* react?" flag depends on the current user.
+
+    Shared by the feed and the archive so the two draw identical bubbles. That sharing has one
+    precondition, and it is the reason this takes a list rather than a queryset: `posts` must be in
+    the order it will be RENDERED, oldest first. The archive fetches descending and turns the chunk
+    round before calling this (see `_archive_chunk`) — called on the descending list it would group
+    every run backwards. It is called once per DAY rather than once per chunk, because a date
+    heading interrupts a run visually and a burst straddling midnight must not be drawn as one
+    group with the heading wedged into the middle of it.
     """
-    user_id = current_resident(request).pk
-    posts = list(_active_posts(channel))
     previous: QuickPost | None = None
     for post in posts:
         post.reaction_rows = reactions_for(post, user_id)  # type: ignore[attr-defined]
-        # Same author, close in time → render as a continuation (no repeated avatar/name).
+        # Same author, close in time → render as a continuation (no repeated name).
         post.grouped = bool(  # type: ignore[attr-defined]
             previous
             and previous.author_id == post.author_id
             and post.created_at - previous.created_at < GROUPING_WINDOW
         )
+        # `grouped` alone cannot draw a bubble. It says "something of mine is above me", which is
+        # enough to decide the NAME and the top corners, and nothing else: the avatar sits at the
+        # bottom of a run and the tail hangs off its last bubble, so both need "nothing of mine is
+        # below me" — a fact about the NEXT message, which a Django template cannot look ahead to.
+        #
+        # Set on the previous post from inside the same pass rather than in a second loop: the
+        # answer for post N-1 is exactly `not posts[N].grouped`, which has just been computed.
+        if previous is not None:
+            previous.group_end = not post.grouped  # type: ignore[attr-defined]
         previous = post
+    # The last message of the list ends its run by definition — there is no next message to break
+    # it. Without this the newest message on the feed is the one with no avatar and no tail.
+    if previous is not None:
+        previous.group_end = True  # type: ignore[attr-defined]
     return posts
+
+
+def posts_for(request: HttpRequest, channel: Channel) -> list[QuickPost]:
+    """One channel's active messages, ready to render."""
+    return mark_runs(list(_active_posts(channel)), current_resident(request).pk)
 
 
 def _channel_or_404(request: HttpRequest, slug: str | None) -> Channel:
@@ -127,7 +164,7 @@ def _channel_or_404(request: HttpRequest, slug: str | None) -> Channel:
     return channel
 
 
-def _post_or_404(request: HttpRequest, pk: int, *, active_only: bool = True) -> QuickPost:
+def _post_or_404(request: HttpRequest, pk: int, *, archived_ok: bool = False) -> QuickPost:
     """One post this resident is actually allowed to see, or 404.
 
     The channel check is the point. Every per-post endpoint here resolves a post by primary key
@@ -137,15 +174,18 @@ def _post_or_404(request: HttpRequest, pk: int, *, active_only: bool = True) -> 
 
     It mattered less while the per-post endpoints were all writes: you could react to or comment on
     a post you could not find. den_hurtige:thread makes it a READ, which is the version that leaks.
-    Routed through one helper so the four cannot drift apart on the answer.
+    Routed through one helper so they cannot drift apart on the answer.
 
     404 rather than 403 for the same reason as _channel_or_404: a 403 confirms the post exists.
 
-    `active_only=False` is for delete_post alone, which has always accepted a post that has expired
-    but not yet been swept (purge_expired runs on feed loads, so there is a window). Refusing there
-    would answer 404 to a moderator pressing a delete button that is still on their screen.
+    ARCHIVED POSTS ARE EXCLUDED BY DEFAULT, and that default is the read-only rule. Every write
+    endpoint calls this bare, so "you cannot reply to or react to an archived message" holds because
+    the post is not found rather than because each endpoint remembered to check — the failure mode
+    of a forgotten check is a 404, not a write to the archive. `archived_ok=True` is for the two
+    callers that must tell the reader WHY (delete_post) or must read it at all (the thread panel);
+    both of them ask `is_archived` immediately afterwards.
     """
-    manager = QuickPost.objects.active() if active_only else QuickPost.objects.all()
+    manager = QuickPost.objects.all() if archived_ok else QuickPost.objects.active()
     post = get_object_or_404(manager, pk=pk)
     channel = channels.lookup(post.channel)
     if channel is None or not channels.allowed(channel, effective_roles(request)):
@@ -231,6 +271,12 @@ def feed(request: HttpRequest, channel: str | None = None) -> HttpResponse:
             # which does the channel check and answers a "gone" notice for anything else. Rejecting
             # a stale pk here would mean 404ing a whole channel over a message that just expired.
             "open_thread_pk": _requested_thread_pk(request),
+            # Whether anything has ever archived in this channel. It decides whether the feed draws
+            # the "rul op" divider and the sentinel above it at all: on a channel whose first
+            # message is still live, an invitation to scroll up into an empty archive is a worse
+            # first impression than no invitation. One EXISTS on (channel, expires_at), which is
+            # indexed.
+            "has_archive": QuickPost.objects.filter(channel=resolved.slug).archived().exists(),
             **_channel_context(request, resolved),
         },
     )
@@ -265,7 +311,187 @@ def feed_items(request: HttpRequest) -> HttpResponse:
     )
 
 
-def thread(request: HttpRequest, pk: int) -> HttpResponse:
+# --- the archive --------------------------------------------------------------------------------
+#
+# Messages that have left the feed, which is now every message the channel has ever held.
+#
+# IT IS THE FEED, SCROLLED UP. Not a panel, not a separate page with its own layout: the archived
+# messages render with the SAME partial, in the same column, in the same order, directly above the
+# live ones, and the only thing that marks the boundary is a divider and a slightly cooler bubble
+# (.msg-archived in styles.css). It was a side panel first, and that was wrong for the obvious
+# reason once you see the two side by side — an archive of a chat that does not look like the chat
+# makes you re-learn how to read your own history.
+#
+# So the chunks below are built to be PREPENDED. They come back oldest-first, the older chunk goes
+# above the newer one, and the browser's scroll position has to be corrected for the height that
+# arrives above the viewport — which frontend/src/feed.ts does, because Safari has no scroll
+# anchoring to do it for us.
+
+# Messages per chunk. Sized for the scroll rather than for the query: one chunk is fetched before
+# the reader reaches the top of what they have, so the number only has to be "more than a screen".
+ARCHIVE_PAGE = 30
+
+
+class ArchiveDay(NamedTuple):
+    """One day's archived messages, oldest first, under one date heading.
+
+    Built here rather than with {% ifchanged %} in the template, for a reason that only shows up on
+    the second chunk: `ifchanged` resets with each render, so the first message of every fetched
+    chunk would emit a date heading whether or not the chunk below it had just emitted the same one.
+    Grouping server-side also lets the day carry its own label, which needs "i dag"/"i går" and the
+    Danish month names, and lets each day's runs be marked against its own neighbours.
+    """
+
+    date: date
+    label: str
+    posts: list[QuickPost]
+
+
+def _archive_label(day: date, today: date) -> str:
+    """A date heading a resident reads without decoding: "i dag", "i går", "12. marts", "12. marts
+    2024". The year appears only when it is not this one, which is the only time it carries any
+    information and is otherwise most of the width of the heading."""
+    if day == today:
+        return "i dag"
+    if day == today - timedelta(days=1):
+        return "i går"
+    return date_format(day, "j. F" if day.year == today.year else "j. F Y")
+
+
+def _archive_before(request: HttpRequest) -> datetime | None:
+    """The paging cursor: fetch messages written strictly before this instant, or None to start at
+    the newest archived message. Junk is None, never an error — a mangled cursor re-starts the
+    archive at its newest end, which is a reader's worst case rather than a 400 in the middle of a
+    scroll.
+
+    A CURSOR, NOT A PAGE NUMBER, and the archive is exactly the shape that makes the difference
+    visible: messages enter it continuously at the newest end, so `?side=2` slides by however many
+    archived between one fetch and the next and shows a message twice. An instant does not move.
+    """
+    raw = request.GET.get("inden")
+    if not raw:
+        return None
+    return parse_datetime(raw)
+
+
+def _archive_chunk(
+    channel: Channel, before: datetime | None, user_id: int
+) -> tuple[list[ArchiveDay], datetime | None]:
+    """One chunk of the channel's archive, oldest first, plus the cursor for the chunk before it.
+
+    OLDEST FIRST, because this is prepended above the live messages and has to read downwards into
+    them like the rest of the conversation. The QUERY still walks backwards — it has to, since the
+    interesting end of an archive is the recent one — so it descends, takes a chunk, and turns it
+    round. The cursor points at the oldest message kept, which is where the next fetch resumes.
+
+    A DAY IS NEVER SPLIT ACROSS TWO CHUNKS. The chunk is trimmed back to the last whole day, so a
+    date heading appears once with everything that belongs under it. The exception is a day holding
+    more messages than a whole chunk, where trimming would leave nothing and the scroll would stall
+    forever: that one does split and gets its heading twice, which is the better of the two failures
+    and rare enough to be worth the asymmetry.
+
+    Replies are COUNTED, not fetched — the same bargain the live feed struck. A chunk briefly
+    prefetched `comments__author` so it could render every thread inline; the threads went back to
+    the side panel (see _message.html), so all a chunk needs is the number on the "N svar" link, and
+    the panel fetches the conversation itself when somebody actually opens one. On a channel with a
+    long history that is the difference between one query per chunk and one per chunk plus every
+    reply anybody ever wrote in it.
+    """
+    rows = QuickPost.objects.filter(channel=channel.slug).archived()
+    if before is not None:
+        rows = rows.filter(created_at__lt=before)
+    # One more than a chunk, purely to answer "is there an older chunk?" without a second COUNT.
+    page = list(
+        rows.select_related("author")
+        .prefetch_related(REACTIONS)
+        .annotate(reply_count=Count("comments"))
+        .order_by("-created_at", "-pk")[: ARCHIVE_PAGE + 1]
+    )
+    more = len(page) > ARCHIVE_PAGE
+    page = page[:ARCHIVE_PAGE]
+    if more:
+        oldest = timezone.localdate(page[-1].created_at)
+        whole_days = [post for post in page if timezone.localdate(post.created_at) != oldest]
+        if whole_days:
+            page = whole_days
+    if not page:
+        return [], None
+
+    # Taken BEFORE the reverse, while page[-1] is still the oldest message. Exclusive, so the
+    # message it names is not fetched twice; two posts sharing a timestamp to the microsecond would
+    # lose one, which auto_now_add makes unreachable in practice.
+    older_than = page[-1].created_at if more else None
+    page.reverse()
+
+    today = current_date()
+    days: list[ArchiveDay] = []
+    for post in page:
+        day = timezone.localdate(post.created_at)
+        if not days or days[-1].date != day:
+            days.append(ArchiveDay(day, _archive_label(day, today), []))
+        days[-1].posts.append(post)
+    # Per day, not across the chunk: a date heading interrupts a run visually, so a burst that
+    # straddles midnight must not be drawn as one group with the heading wedged into the middle
+    # of it. Same call the live feed makes, on each day's own list.
+    for entry in days:
+        mark_runs(entry.posts, user_id)
+    return days, older_than
+
+
+def _archive_context(request: HttpRequest, channel: Channel) -> dict[str, object]:
+    """Everything both exits of `archive` render from."""
+    before = _archive_before(request)
+    days, older_than = _archive_chunk(channel, before, current_resident(request).pk)
+    return {
+        "channel": channel,
+        "days": days,
+        "older_than": older_than.isoformat() if older_than else "",
+        # Whether this is the newest end of the archive. The standalone page uses it to decide
+        # whether "nyeste" is a link or the place you already are.
+        "at_newest": before is None,
+        "quick_emoji": QUICK_EMOJI,
+        # Not a flag the templates could work out for themselves: _message.html and _reactions.html
+        # are the SAME partials the live feed uses, and what makes a message read-only is which
+        # list it was fetched into, not anything on the row.
+        "archived": True,
+    }
+
+
+def archive(request: HttpRequest) -> HttpResponseBase:
+    """One chunk of the archive: prepended into the feed by htmx, or a standalone page.
+
+    TWO EXITS, and they differ in how they FAIL as much as in what they render:
+
+      * htmx gets the bare chunk — the sentinel at the top of the feed replaces itself with it as
+        the reader scrolls up — and, when the gate says no, a 204. Same reason as feed_items:
+        @access_required redirects an expired session to the login page, htmx follows the redirect,
+        and the login form lands in the middle of the conversation. A 204 makes htmx do nothing,
+        and hands an unauthorised caller no data either way.
+      * anything else is a real page, gated normally, paged with plain links. That is the no-JS
+        path — there is no scrolling-to-load without JavaScript — and a URL somebody can bookmark.
+
+    The channel arrives as `?kanal=`, as it does for the poll: the archive is fetched for whatever
+    channel is on screen, and a second URL shape for the same choice is one more thing to keep in
+    step. An unknown or forbidden channel takes the 204 exit on the htmx path and 404s on the page.
+    """
+    if request.headers.get("HX-Request"):
+        if not request_allowed(request):
+            return HttpResponse(status=204)
+        channel = channels.lookup(request.GET.get("kanal"))
+        if channel is None or not channels.allowed(channel, effective_roles(request)):
+            return HttpResponse(status=204)
+        return render(request, "den_hurtige/_archive_chunk.html", _archive_context(request, channel))
+    return _archive_page(request)
+
+
+@access_required
+def _archive_page(request: HttpRequest) -> HttpResponse:
+    """The page half of `archive`, split out only so the decorator applies to it alone."""
+    channel = _channel_or_404(request, request.GET.get("kanal"))
+    return render(request, "den_hurtige/archive.html", _archive_context(request, channel))
+
+
+def thread(request: HttpRequest, pk: int) -> HttpResponseBase:
     """One message and its replies: the side panel, or a standalone page without htmx.
 
     TWO exits, on purpose, and they differ in how they FAIL as much as in what they render:
@@ -294,17 +520,27 @@ def _thread_page(request: HttpRequest, pk: int) -> HttpResponse:
 def _render_thread(request: HttpRequest, pk: int, *, fragment: bool) -> HttpResponse:
     """Shared body of both halves.
 
-    An EXPIRED (or forbidden) post splits them again. The fragment renders a short "this is gone"
-    notice with NO hx-trigger on it, so the panel's own poll stops rather than asking for a deleted
-    message every five seconds at a reader who is still looking at it. The page raises 404, because
-    a deep link to a message that no longer exists genuinely leads nowhere.
+    ARCHIVED THREADS RENDER, READ-ONLY. This used to resolve against `active()`, so a thread whose
+    message had expired answered "gone" — which was true then and is a lie now. It is also the case
+    that matters most for the deep link: services.notify_new_comment sends a `?traad=<pk>` URL, and
+    a push notification is routinely opened the next morning, by which time the message may well
+    have archived. The panel now shows the conversation with no reply form and no reaction controls
+    (`archived` below), so the link keeps working for as long as the archive does.
+
+    ONLY A MISSING OR FORBIDDEN POST still splits the two halves. The fragment renders a short
+    notice with NO hx-trigger on it, so the panel's poll stops rather than asking for a message that
+    is not there every five seconds; the page raises 404, because a deep link to a message that was
+    genuinely deleted leads nowhere.
+
+    An archived panel does not poll either, and that is the same reasoning one step on: nothing
+    about it can change — no reply can arrive, no reaction can move — so a timer on it is a request
+    every five seconds for a byte-identical answer, forever, on a page somebody has left open.
 
     Replies are prefetched HERE rather than in _active_posts: one post's worth instead of every
     post's, on a request that only happens when somebody opens a thread.
     """
     post = (
-        QuickPost.objects.active()
-        .filter(pk=pk)
+        QuickPost.objects.filter(pk=pk)
         .select_related("author")
         .prefetch_related("comments__author", REACTIONS)
         .first()
@@ -328,31 +564,26 @@ def _render_thread(request: HttpRequest, pk: int, *, fragment: bool) -> HttpResp
         "max_content_chars": MAX_CONTENT_CHARS,
         "quick_emoji": QUICK_EMOJI,
         "can_moderate": can_moderate(request),
+        "archived": post.is_archived,
     }
     template = "den_hurtige/_thread.html" if fragment else "den_hurtige/thread.html"
     return render(request, template, context)
 
 
 def _validated_image(request: HttpRequest) -> UploadedFile | None:
-    """The uploaded image, or None with a warning shown.
+    """The uploaded image, or None with a warning shown — this feature's ceiling applied.
 
     A backstop, not the main defence: imageupload.ts already downscales in the browser. This rejects
     a crafted or oversized upload, and warns rather than failing the whole submission — losing an
     urgent message because the photo was wrong is the worse outcome. Shared by messages and replies
     so the two can never drift apart on what they accept.
 
-    What counts as an acceptable image lives in core.uploads, so this cannot drift from the CMS and
-    værelsestjek again. It previously accepted anything whose content type began with `image/`,
-    which let an SVG through — a document that executes script when opened from our own /media/.
+    The body moved to core.uploads.attached_image when opslagstavlen and begivenheder turned out to
+    have copied it; what is left here is the name its two callers use and QUICK_POST_MAX_MB. Kept as
+    a wrapper rather than inlined at both call sites so the "messages and replies cannot drift"
+    guarantee above stays a single line of code rather than a convention.
     """
-    image = request.FILES.get("image")
-    if not image:
-        return None
-    error = check_image_upload(image, settings.QUICK_POST_MAX_MB)
-    if error is not None:
-        messages.warning(request, f"{error} Billedet blev ikke gemt.")
-        return None
-    return image
+    return attached_image(request, settings.QUICK_POST_MAX_MB)
 
 
 def _channel_of(post: QuickPost) -> str:
@@ -401,7 +632,7 @@ def create_post(request: HttpRequest) -> HttpResponseRedirect:
         channel=channel.slug,
         content=content,
         image=_validated_image(request) or "",
-        expires_at=timezone.now() + timedelta(minutes=minutes),
+        expires_at=current_datetime() + timedelta(minutes=minutes),
     )
     services.notify_new_post(post)
     # No success message on purpose: the message appearing at the bottom of the feed *is* the
@@ -441,23 +672,41 @@ def _comment_response(request: HttpRequest, post: QuickPost, back: str) -> HttpR
 @access_required
 def create_comment(request: HttpRequest, pk: int) -> HttpResponse:
     author = current_resident(request)
-    post = _post_or_404(request, pk)
+    post = _post_or_404(request, pk, archived_ok=True)
     # Replies, deletions and reactions take the channel from the post, never from the request: the
     # post already knows where it lives, so there is no hidden field to disagree with.
     back = _channel_of(post)
-    content = (request.POST.get("content") or "").strip()
-    if not content:
-        messages.error(request, "Skriv en kommentar.")
+    # Archived while the reply was being typed — the panel renders no form once a thread is
+    # archived, so this is the race and not a crafted request. Answered with the reply LIST, as
+    # every other outcome here is, so the explanation lands in the panel the person is looking at
+    # rather than in a session message nothing will surface until the next full page load.
+    if post.is_archived:
+        messages.error(request, "Beskeden er arkiveret, og der kan ikke længere svares på den.")
         return _comment_response(request, post, back)
+    content = (request.POST.get("content") or "").strip()
     if len(content) > MAX_CONTENT_CHARS:
         messages.error(request, f"Kommentaren må højst fylde {MAX_CONTENT_CHARS} tegn.")
+        return _comment_response(request, post, back)
+
+    # The image is resolved BEFORE the emptiness check, and that ordering is the feature: a reply
+    # may be a photo on its own, so "is there anything here?" cannot be answered from the text
+    # alone. It used to reject blank content outright and only then look for a file, which made a
+    # photo-only reply impossible however it was sent.
+    #
+    # _validated_image returns None both when nothing was attached and when what was attached was
+    # rejected, having queued its own warning. Collapsing those two is right here: either way there
+    # is no image to save, so a reply with no text and no usable image is empty and says so — and
+    # the warning explaining WHY the photo did not count is already on its way to the same panel.
+    image = _validated_image(request)
+    if not content and image is None:
+        messages.error(request, "Skriv et svar, eller vedhæft et billede.")
         return _comment_response(request, post, back)
 
     comment = QuickComment.objects.create(
         post=post,
         author=author,
         content=content,
-        image=_validated_image(request) or "",
+        image=image or "",
         notify_everyone=request.POST.get("notify") == "alle",
     )
     services.notify_new_comment(comment)
@@ -475,8 +724,15 @@ def toggle_reaction(request: HttpRequest, pk: int) -> HttpResponse:
     Renders only the partial so a tap never re-renders the feed, which would collapse open threads
     and fight the 20-second poll.
     """
-    post = _post_or_404(request, pk)
+    post = _post_or_404(request, pk, archived_ok=True)
     resident = current_resident(request)
+    # Archived: re-render the row exactly as it stands and write nothing. The archive draws no
+    # picker and no pressable pills, so reaching here at all means the page went stale under
+    # somebody's thumb -- the message archived between the poll that drew it and the tap. Swapping
+    # the read-only row in answers that truthfully: the counts they were looking at, now inert. A
+    # 404 would leave the live-looking row sitting there and the tap appearing to have been lost.
+    if post.is_archived:
+        return _reaction_row(request, post, resident.pk, archived=True)
     form = ReactionForm(request.POST)
     if form.is_valid():
         # Set / move / clear lives in core.reactions so Den Hurtige and opslagstavlen cannot drift
@@ -484,17 +740,27 @@ def toggle_reaction(request: HttpRequest, pk: int) -> HttpResponse:
         apply_toggle(QuickReaction.objects, author=resident, emoji=form.cleaned_data["emoji"], post=post)
     # An invalid emoji falls through to a plain re-render: the row is still correct, and a one-tap
     # control has nowhere useful to put a validation error.
-    # NOT prefetched, and NOT reactions_for(): a prefetch is evaluated when the item is fetched,
-    # which here is *before* apply_toggle writes. Reading .reactions.all() would then hit a cache
-    # built a moment too early and re-render the row exactly as it was before the tap. Ask the
-    # database again, joining the author in one query for the reader panel.
+    return _reaction_row(request, post, resident.pk)
+
+
+def _reaction_row(
+    request: HttpRequest, post: QuickPost, user_id: int, *, archived: bool = False
+) -> HttpResponse:
+    """Just one message's reaction row, re-read from the database.
+
+    NOT prefetched, and NOT reactions_for(): a prefetch is evaluated when the item is fetched, which
+    in toggle_reaction is *before* apply_toggle writes. Reading .reactions.all() would then hit a
+    cache built a moment too early and re-render the row exactly as it was before the tap. Ask the
+    database again, joining the author in one query for the reader panel.
+    """
     return render(
         request,
         "den_hurtige/_reactions.html",
         {
             "post": post,
-            "reactions": reaction_rows(post.reactions.select_related("author"), resident.pk),
+            "reactions": reaction_rows(post.reactions.select_related("author"), user_id),
             "quick_emoji": QUICK_EMOJI,
+            "archived": archived,
         },
     )
 
@@ -503,8 +769,22 @@ def toggle_reaction(request: HttpRequest, pk: int) -> HttpResponse:
 @access_required
 def delete_post(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     """Authors clean up after themselves; administrators and Inspektionen moderate. Everyone else
-    gets a 403."""
-    post = _post_or_404(request, pk, active_only=False)
+    gets a 403 — and nobody at all may delete a message once it has archived.
+
+    THE ARCHIVED CHECK COMES BEFORE THE PERMISSION CHECK, deliberately. The two answers are "you may
+    not do this" and "this cannot be done", and the second is the true one here: a moderator is not
+    being denied a privilege, the button no longer exists for anybody. Ordering it the other way
+    would 403 a moderator and hand an author the friendly message, for identical requests.
+
+    It is fetched with `archived_ok=True` and refused in the body rather than 404ing, because this
+    is the one gesture people will race the clock on: the delete button (or the swipe) is on screen,
+    the message archives underneath it, and the tap arrives a second late. A 404 on a control they
+    are looking at reads as a bug; the message says what actually happened.
+    """
+    post = _post_or_404(request, pk, archived_ok=True)
+    if post.is_archived:
+        messages.error(request, "Beskeden er arkiveret, og arkiverede beskeder kan ikke slettes.")
+        return redirect(_channel_of(post))
     if post.author_id != current_resident(request).pk and not can_moderate(request):
         raise PermissionDenied
     back = _channel_of(post)

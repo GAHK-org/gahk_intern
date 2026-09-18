@@ -13,6 +13,7 @@ TWO RULES THIS MODULE MUST KEEP, both of which have their own test:
 import calendar as calendar_module
 import datetime
 
+from django.conf import settings
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
@@ -25,12 +26,14 @@ from django.views.decorators.http import require_GET, require_POST
 from core import push
 from core.clock import current_date, current_datetime
 from core.danish import MONTHS, WEEKDAYS_SHORT
+from core.uploads import attached_image
+from residents import birthdays as birthdays_mod
 from residents.models import Resident
 from residents.permissions import current_resident
 
 from . import access, icalendar, services
-from .forms import EventForm
-from .models import Answer, CalendarFeedToken, Event, Rsvp
+from .forms import EventCommentForm, EventForm
+from .models import Answer, CalendarFeedToken, Event, EventComment, Rsvp
 
 PAGE_SIZE = 20
 
@@ -112,13 +115,20 @@ def _month_grid(
     first: datetime.date,
     by_day: dict[datetime.date, list[Event]],
     chosen: datetime.date | None = None,
+    birthdays: dict[datetime.date, list[birthdays_mod.Birthday]] | None = None,
 ) -> list[list[dict[str, object]]]:
     """The month as whole Monday-to-Sunday weeks, padded into the neighbouring months.
 
     Padding rather than blanks, because a grid that starts mid-row reads as broken, and because an
     event on the 1st of next month is worth seeing from the 30th of this one. The padding days are
     marked so the template can grey them.
+
+    Birthdays ride in the same cell as the events and stay a separate key, never merged into
+    `events`. They are notes rather than begivenheder — see residents.birthdays — and everything
+    the template does with an event (a link to a detail page, a state colour, an "Aflyst" chip)
+    would be a lie about one.
     """
+    marked = birthdays or {}
     weeks: list[list[dict[str, object]]] = []
     for week in _weeks_of(first):
         weeks.append(
@@ -127,6 +137,7 @@ def _month_grid(
                     "date": day,
                     "outside": day.month != first.month,
                     "events": by_day.get(day, []),
+                    "birthdays": marked.get(day, []),
                     "chosen": day == chosen,
                 }
                 for day in week
@@ -237,9 +248,37 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
             # that will 403 them is worse than not mentioning it. Imported lazily so the two apps
             # stay acyclic at import time (opslagstavle.forms reaches the other way).
             "notices": _related_notices(request, event),
+            "comments": _comments(request, event),
+            "comment_form": EventCommentForm(),
         }
     )
     return render(request, "events/detail.html", context)
+
+
+def _comments(request: HttpRequest, event: Event) -> list:
+    """The thread, each row carrying its own `can_delete`.
+
+    Resolved here rather than in the template because a Django template cannot call
+    access.can_delete_comment with arguments — the same reason opslagstavlen and reparationer both
+    do this in the view.
+
+    `host` is read ONCE for the event and handed to every row. Without it each comment would ask
+    access.is_host for itself, which filters co_organisers, so a thread of twenty comments would
+    cost twenty queries to render a ✕ that is either on all of them or none.
+    """
+    resident = current_resident(request)
+    host = access.is_host(event, resident)
+    comments = list(event.comments.select_related("author"))
+    for comment in comments:
+        comment.can_delete = access.can_delete_comment(comment, resident, host=host)  # type: ignore[attr-defined]
+    return comments
+
+
+def _comment_anchor(event_pk: int) -> str:
+    """Back to the thread, not to the top of the page. The event page is long — image, facts,
+    description, the answer panel, the posts announcing it — so a bare redirect after commenting
+    lands the reader above the fold and hides the thing they just wrote."""
+    return f"{reverse('events:detail', args=[event_pk])}#kommentarer"
 
 
 def _related_notices(request: HttpRequest, event: Event) -> list:
@@ -248,6 +287,89 @@ def _related_notices(request: HttpRequest, event: Event) -> list:
     if not board_allowed(request):
         return []
     return list(event.notices.select_related("author").order_by("-created_at")[:5])
+
+
+def _visible_comment(request: HttpRequest, pk: int) -> EventComment:
+    """The only way this module reaches a comment by primary key.
+
+    Filtered through access.visible_to on the way in, exactly like _get_event, and for the same
+    reason one step removed: a COMMENT id is a side channel onto the event it hangs off. Without
+    this filter, POSTing to kommentar/<id>/slet tells a non-invitee whether that comment exists
+    (403) or not (404) — which answers "is there a private event with a thread on it" — and a
+    resident who guessed their own comment id on an event they were since uninvited from would
+    still be able to reach into it.
+
+    Not `Event.objects`, per rule 1 in the module docstring: the filter is a subquery on
+    access.visible_to, so the chokepoint is still the only thing that decides visibility.
+    """
+    return get_object_or_404(
+        EventComment.objects.select_related("event", "event__organiser", "author").filter(
+            event__in=access.visible_to(current_resident(request))
+        ),
+        pk=pk,
+    )
+
+
+@require_POST
+@access.access_required
+def create_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
+    """Anyone who can SEE the event may comment on it.
+
+    No narrower than that, and two candidate restrictions were considered and dropped:
+
+      * **Not "only people who answered ja".** "Kan man tage børn med?" and "hvad skal jeg tage
+        med?" are questions you ask BEFORE you commit, so a thread visible only to people who
+        already committed would be shut to exactly the readers who need it.
+      * **Not "not on a cancelled event".** access.can_edit freezes an aflyst event because an
+        edit bumps SEQUENCE and re-notifies every subscribed calendar; a comment does neither, and
+        "hvorfor?" / "vi finder en ny dato" is the most predictable thread on the feature. The
+        answer panel locks; the thread does not.
+
+    The audience is already correct without any check of its own: _get_event has applied
+    access.visible_to, so on a private event the only people who can reach this are its invitees
+    and hosts.
+    """
+    event = _get_event(request, pk)
+    form = EventCommentForm(request.POST)
+    # EVENT_IMAGE_MAX_MB, so a comment photo and the event's own hero image share one ceiling.
+    image = attached_image(request, settings.EVENT_IMAGE_MAX_MB)
+
+    if not form.is_valid():
+        # The message rather than re-rendering the page: the form lives at the bottom of a long
+        # read-only page, and a re-render would throw away the RSVP panel's state to say
+        # "write something".
+        messages.error(request, "Kommentaren kunne ikke gemmes.")
+        return redirect(_comment_anchor(event.pk))
+
+    comment = form.save(commit=False)
+    if not comment.body and image is None:
+        # Either nothing was submitted, or the only thing submitted was a picture that
+        # core.uploads.attached_image refused - in which case its warning is already queued and
+        # arrives beside this, so the reader learns both halves.
+        messages.error(request, "Skriv en kommentar, eller vedhæft et billede.")
+        return redirect(_comment_anchor(event.pk))
+
+    comment.event = event
+    comment.author = current_resident(request)
+    if image is not None:
+        comment.image = image
+    comment.save()
+    services.notify_new_comment(comment)
+    return redirect(_comment_anchor(event.pk))
+
+
+@require_POST
+@access.access_required
+def delete_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
+    """403, not 404, for a comment you can see but may not remove — the split the access module
+    documents. The 404 case is handled a step earlier, by _visible_comment."""
+    comment = _visible_comment(request, pk)
+    if not access.can_delete_comment(comment, current_resident(request)):
+        raise PermissionDenied
+    event_pk = comment.event_id
+    comment.delete()
+    messages.success(request, "Kommentaren er slettet.")
+    return redirect(_comment_anchor(event_pk))
 
 
 @access.access_required
@@ -418,13 +540,19 @@ def calendar(request: HttpRequest) -> HttpResponse:
         event.my_state = _my_state(event, resident)  # type: ignore[attr-defined]
         by_day.setdefault(timezone.localtime(event.starts_at).date(), []).append(event)
 
+    # Notes on the days, not rows in `events` — see residents.birthdays for why a birthday is not
+    # an Event. Queried over the GRID's span for the same reason the events are: the cell for
+    # 1 September is drawn on the August page, and a name that appears only when you click through
+    # to the next month is a name the calendar failed to tell you about.
+    birthdays = birthdays_mod.in_span(grid_first, grid_last)
+
     chosen = _requested_day(request, (grid_first, grid_last))
 
     return render(
         request,
         "events/calendar.html",
         {
-            "weeks": _month_grid(first, by_day, chosen),
+            "weeks": _month_grid(first, by_day, chosen, birthdays),
             "month_label": f"{MONTHS[month].capitalize()} {year}",
             "this_month": _month_param(first),
             "prev": _month_param(first - datetime.timedelta(days=1)),
@@ -435,6 +563,7 @@ def calendar(request: HttpRequest) -> HttpResponse:
             # Empty is a real answer here and the template says so in Danish: "ingen begivenheder
             # den 12." is what a tap on a quiet day should produce, not a panel that fails to appear.
             "chosen_events": by_day.get(chosen, []) if chosen else [],
+            "chosen_birthdays": birthdays.get(chosen, []) if chosen else [],
         },
     )
 

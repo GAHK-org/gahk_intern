@@ -13,8 +13,8 @@ some readers is a noticeboard nobody can reason about any more.
 So the three features divide like this, and each docstring says so on purpose:
 
   * **Den Hurtige** — minutes to hours. "Kaffe om ti minutter." Hard-deleted on expiry.
-  * **Opslagstavlen** — weeks to years. An announcement *about* something, with comments and
-    reactions. ~2-year retention.
+  * **Opslagstavlen** — weeks to forever. An announcement *about* something, with comments and
+    reactions. No retention: the board is the kollegium's archive.
   * **Begivenheder** — this. A thing with a time, that you answer yes or no to. Gone a week after
     it is held (see EventQuerySet.expired).
 
@@ -86,6 +86,12 @@ def _new_feed_token() -> str:
     is right to flag the other one (B311).
     """
     return secrets.token_urlsafe(32)
+
+
+# Same ceiling as opslagstavle.MAX_COMMENT_CHARS, and the same reasoning: long enough for a real
+# paragraph, short enough that a comment cannot become the post. Declared here rather than imported
+# so events does not depend on opslagstavle at import time (see EventComment).
+MAX_COMMENT_CHARS = 1_000
 
 
 class Visibility(models.TextChoices):
@@ -356,6 +362,70 @@ class Rsvp(models.Model):
         return f"{self.resident}: {self.get_answer_display()}"
 
 
+class EventComment(models.Model):
+    """A note on an event — "hvad skal jeg tage med?", "jeg kommer en halv time senere".
+
+    WHY THIS EXISTS AT ALL, given that the module docstring above divides the three features by
+    handing comments to opslagstavlen. The division still holds for the thing being discussed: an
+    ANNOUNCEMENT belongs on the board, where it is kept. What this is for is the practical traffic
+    an event generates while it is still ahead of you, which was previously landing in Den Hurtige
+    (where it expires in an hour, often before the event) or in a Messenger thread the house left
+    Facebook to get rid of. It attaches to the thing it is about and dies with it.
+
+    THREE THINGS THE SIBLING COMMENT MODELS DO THAT THIS ONE DELIBERATELY DOES NOT:
+
+      * **No embedsgruppe snapshot.** opslagstavle.NoticeComment inherits AuthoredByResident to
+        freeze the author's group at writing time, because a rotating group would relabel a
+        multi-year archive on every månedsliste. This lives a week past its event, and groups
+        rotate monthly, so the snapshot would be protecting an archive that does not exist —
+        the same call reparationer.RepairComment already made. Importing that abstract base would
+        also make events depend on opslagstavle at import time, which views.py goes out of its way
+        to avoid (see _related_notices).
+      * **No reactions.** A reaction is a cheap way to say "seen" on a board post. Here the answer
+        panel is the way to say anything that matters, and a second, weaker signal beside it just
+        raises "does a 👍 count as tilmeldt?".
+      * **No retention of its own.** CASCADE from the event, which is deleted a week after it is
+        held. That is not an oversight to fix later: the module docstring commits to there being no
+        record of what happened, and a comment thread outliving its event would be exactly the
+        archive it says belongs to opslagstavlen.
+
+    Plain text, not Markdown, for the reasons NoticeComment's docstring gives — rendered
+    autoescaped with `white-space:pre-wrap` and `|urlize` — plus one optional attached photo, which
+    is a FileField on the row rather than anything embedded in the text. "Se, sådan ser lokalet ud"
+    and a picture of the shopping list are most of what an event thread is for.
+
+    `body` is blank-able because the photo can be the whole comment; a row with NEITHER is what the
+    view refuses (see views.create_comment), because only the view knows whether the attached file
+    survived validation.
+    """
+
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="comments")
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="event_comments"
+    )
+    # Blank when the photo IS the comment.
+    body = models.TextField(max_length=MAX_COMMENT_CHARS, blank=True, verbose_name="Kommentar")
+    # FileField rather than ImageField: ImageField needs Pillow, which production does not have.
+    # Under `begivenheder/` like Event.image, so the whole feature's media sits behind one prefix -
+    # and that prefix is not in core.media.PUBLIC_PREFIXES, so a comment photo needs a login.
+    image = models.FileField(
+        upload_to="begivenheder/kommentarer/%Y/%m/",
+        max_length=255,
+        blank=True,
+        verbose_name="Billede",
+        help_text="Valgfrit billede.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        verbose_name = "Kommentar"
+        verbose_name_plural = "Kommentarer"
+
+    def __str__(self) -> str:
+        return f"Kommentar af {self.author} på #{self.event_id}"
+
+
 class CalendarFeedToken(models.Model):
     """One resident's secret for their subscribable .ics feed.
 
@@ -410,6 +480,7 @@ class CalendarFeedToken(models.Model):
         return self.token
 
 
+@receiver(post_delete, sender=EventComment)
 @receiver(post_delete, sender=Event)
 def _delete_event_files(sender: type[models.Model], instance: models.Model, **kwargs: Any) -> None:  # noqa: ANN401
     """Remove an attached image from storage when its event goes.

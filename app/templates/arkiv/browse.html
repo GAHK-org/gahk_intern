@@ -1,0 +1,323 @@
+{% extends "base.html" %}
+{% block title %}{% if folder %}{{ folder.name }} - Arkiv{% else %}Arkiv{% endif %} - GAHK Intern{% endblock %}
+{% block content_width %}max-w-5xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Ressourcer</p>
+      <h1>Arkiv {% if limited_rollout %}<span class="chip chip-brass">Under test</span>{% endif %}</h1>
+    </div>
+  </div>
+
+  {% comment %}
+    Breadcrumb from ancestors(), which walks parents in Python. The root link is always present so
+    there is a way back out of a folder whose parent the resident cannot see - which cannot happen
+    today (visibility is inherited downwards) but would be a dead end if it ever did.
+  {% endcomment %}
+  <nav class="breadcrumb mb-4" aria-label="Sti">
+    <a href="{% url 'arkiv:root' %}">Arkiv</a>
+    {% for crumb in ancestors %}
+      <span aria-hidden="true">/</span>
+      <a href="{% url 'arkiv:folder' crumb.pk %}">{{ crumb.name }}</a>
+    {% endfor %}
+    {% if folder %}
+      <span aria-hidden="true">/</span>
+      <span aria-current="page">{{ folder.name }}</span>
+    {% endif %}
+  </nav>
+
+  {% if folder and folder.effective_workgroup %}
+    <p class="muted mb-4">
+      Kun synlig for {{ folder.effective_workgroup.name }} - gruppens medlemmer i denne måned.
+    </p>
+  {% endif %}
+
+  {% if folder %}
+    {% if folder.temporarily_unlocked_until %}
+      <p class="muted mb-4">
+        <svg class="ni arkiv-lock-status" width="14" height="14" viewBox="0 0 24 24" aria-label="Mappen er midlertidigt låst op" title="Midlertidig oplåsning udløber {{ folder.temporarily_unlocked_until|date:'j. F Y H:i' }}"><use href="#i-lock"></use></svg>
+        <svg class="ni arkiv-lock-status" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" title="Midlertidig oplåsning udløber {{ folder.temporarily_unlocked_until|date:'j. F Y H:i' }}"><use href="#i-clock"></use></svg>
+        Midlertidigt låst op til {{ folder.temporarily_unlocked_until|date:'j. F Y H:i' }}.
+      </p>
+    {% elif folder.is_locked %}
+      <p class="muted mb-4"><svg class="ni arkiv-lock-status" width="14" height="14" viewBox="0 0 24 24" aria-label="Mappen er låst" title="Mappen er låst"><use href="#i-lock"></use></svg></p>
+    {% endif %}
+  {% endif %}
+
+  {% if can_write %}
+    {% comment %}
+      The bytes go straight to the bucket, not through Django - see arkiv/uploads.py and
+      frontend/src/arkiv.ts. The three URLs are handed over as data-* rather than built in JS so
+      that {% url %} stays the single source of truth for routing.
+    {% endcomment %}
+    <div class="arkiv-upload mb-4"
+         data-arkiv-upload
+         data-begin-url="{% url 'arkiv:upload_begin' folder.pk %}"
+         data-direct-url="{% url 'arkiv:upload_direct' folder.pk %}"
+         data-commit-url="{% url 'arkiv:upload_commit' folder.pk %}">
+      <label class="btn btn-secondary">
+        Læg filer op
+        <input type="file" multiple hidden>
+      </label>
+      <span class="muted" data-upload-status></span>
+    </div>
+  {% endif %}
+
+  {% comment %}
+    Folder-level actions. Outside the can_write block above because DOWNLOADING is not writing -
+    anyone who can see the folder may take a copy of it - while removing it has its own rule
+    (access.can_delete_folder: a root is Inspektionen's, anything below it belongs to whoever can
+    write there).
+
+    Two separate forms rather than one with two submit buttons: they post to different URLs, and a
+    stray Enter in a form whose first button deletes a folder is not a risk worth the markup saving.
+  {% endcomment %}
+  {% if folder %}
+    <div class="arkiv-folder-actions mb-4">
+      <form method="post" action="{% url 'arkiv:download_folder' folder.pk %}">
+        {% csrf_token %}
+        <input type="hidden" name="done_token" value="" data-batch-token>
+        <button type="submit" class="btn btn-secondary" data-batch-submit>Hent hele mappen</button>
+      </form>
+      {% if can_manage_locks %}
+        {% if folder.locked_at and folder.unlocked_until and folder.unlocked_until > now %}
+          <form method="post" action="{% url 'arkiv:folder_relock' folder.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-secondary">Lås igen</button>
+          </form>
+        {% elif folder.locked_at %}
+          <form method="post" action="{% url 'arkiv:folder_unlock' folder.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-secondary">Lås op i en time</button>
+          </form>
+        {% else %}
+          <form method="post" action="{% url 'arkiv:folder_lock' folder.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-secondary">Lås mappe</button>
+          </form>
+        {% endif %}
+      {% endif %}
+      {% if can_delete_folder %}
+        {% comment %}
+          The only confirm() in Arkiv, and it earns it. Removing a file is one click from undo in
+          the list below; a folder has no such list, because empty folders have nothing to restore.
+          The dialog is the undo.
+        {% endcomment %}
+        <form method="post" action="{% url 'arkiv:folder_delete' folder.pk %}"
+              onsubmit="return confirm('Fjern mappen &bdquo;{{ folder.name|escapejs }}&ldquo;?')">
+          {% csrf_token %}
+          <button type="submit" class="btn-link-danger">Fjern mappen</button>
+        </form>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  {% if can_write %}
+
+    {% comment %}
+      A plain POST form, not fetch: there is no partial to swap, the result is a page worth having in
+      history, and it works with JavaScript off. Only the upload needs fetch, because those bytes
+      bypass Django entirely. Subfolders only - roots belong to Inspektionen (can_manage_roots).
+    {% endcomment %}
+    <form method="post" action="{% url 'arkiv:folder_create' folder.pk %}" class="arkiv-newfolder mb-4">
+      {% csrf_token %}
+      <label class="sr-only" for="ny-mappe">Navn på ny mappe</label>
+      <input id="ny-mappe" type="text" name="name" maxlength="120" placeholder="Navn på ny mappe…" required>
+      <button type="submit" class="btn btn-secondary">Opret mappe</button>
+    </form>
+  {% endif %}
+
+  {% if not subfolders and not files %}
+    <p class="muted">
+      {% if folder %}
+        Mappen er tom.
+      {% else %}
+        Der er ingen mapper endnu.
+        {% if can_manage_roots %}Opret dem i <a href="/django-admin/arkiv/archivefolder/">administrationen</a>.{% endif %}
+      {% endif %}
+    </p>
+  {% endif %}
+
+  {% if subfolders %}
+    <ul class="arkiv-list mb-4">
+      {% for sub in subfolders %}
+        <li>
+          <a href="{% url 'arkiv:folder' sub.pk %}">
+            <svg class="ni" aria-hidden="true"><use href="#i-folder"></use></svg>
+            <span class="arkiv-name">{{ sub.name }}</span>
+            {% if sub.temporarily_unlocked_until %}
+              <svg class="ni arkiv-lock-status" width="14" height="14" viewBox="0 0 24 24" aria-label="Mappen er midlertidigt låst op" title="Midlertidig oplåsning udløber {{ sub.temporarily_unlocked_until|date:'j. F Y H:i' }}"><use href="#i-lock"></use></svg>
+              <svg class="ni arkiv-lock-status" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" title="Midlertidig oplåsning udløber {{ sub.temporarily_unlocked_until|date:'j. F Y H:i' }}"><use href="#i-clock"></use></svg>
+            {% elif sub.is_locked %}
+              <svg class="ni arkiv-lock-status" width="14" height="14" viewBox="0 0 24 24" aria-label="Mappen er låst" title="Mappen er låst"><use href="#i-lock"></use></svg>
+            {% endif %}
+          </a>
+          {% if sub.workgroup %}<span class="chip">{{ sub.workgroup.name }}</span>{% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  {% if files %}
+    {% comment %}
+      OUTSIDE the list, and the checkboxes below join it by id rather than by nesting. Each row
+      already carries its own "Fjern" form, and a form inside a form is not a thing HTML has - so
+      wrapping the <ul> would either break the delete buttons or mean giving up one of the two.
+      The `form=` attribute is how the standard says to do this.
+
+      No JavaScript required: with the script dead the checkboxes still tick and the button still
+      posts, and an empty selection comes back as a message rather than a broken page.
+    {% endcomment %}
+    <form method="post" action="{% url 'arkiv:download_selected' folder.pk %}"
+          id="arkiv-batch" class="arkiv-batch" data-arkiv-batch>
+      {% csrf_token %}
+      {% comment %}
+        Filled in by the script with a nonce before the form goes; the response echoes it back as a
+        cookie so the page can tell that the build finished. Empty without JavaScript, which the
+        server reads as "this page is not watching" - the download still works, the button simply
+        stays as it is.
+      {% endcomment %}
+      <input type="hidden" name="done_token" value="" data-batch-token>
+      <button type="submit" class="btn btn-secondary" data-batch-submit>Hent valgte</button>
+      {% comment %}
+        Hidden until the script is alive, because without it there is no selection mode to enter -
+        the checkboxes are simply always visible and always work. `hidden` rather than a CSS class
+        so it is invisible to assistive technology too.
+      {% endcomment %}
+      <button type="button" class="btn-link" data-select-mode hidden>Vælg</button>
+      <span class="muted" data-batch-count aria-live="polite"></span>
+    </form>
+
+    {% comment %}
+      TWO LAYOUTS, ONE SELECTION MODEL. A folder that is mostly pictures is drawn as a grid (see
+      views.is_gallery); everything else stays a list of rows, because a folder of referater reads
+      worse as tiles than as lines with a size and an uploader on them.
+
+      What matters for the script is that both shapes carry `data-selectable` on the <li> with a
+      `[data-batch-pick]` checkbox inside it. Selection - long-press, drag across a run, shift-click
+      a range - is written once against that pair and does not know which layout it is in.
+    {% endcomment %}
+    <ul class="{% if gallery %}arkiv-grid{% else %}arkiv-list{% endif %}" data-selection-scope>
+      {% for file in files %}
+        <li data-selectable>
+          <input type="checkbox" name="ids" value="{{ file.pk }}" form="arkiv-batch"
+                 class="arkiv-pick" data-batch-pick
+                 aria-label="Vælg {{ file.name }}">
+          {% comment %}
+            Through the download view, never a presigned URL in the page: that URL is a bearer token
+            for the file and would outlive the reader's right to it. See arkiv/storage.py.
+
+            The href stays the download, so without JavaScript - or on a middle-click - the link
+            does the ordinary thing; the script intercepts a plain left click and opens the viewer
+            instead. Every anchor carrying data-preview is one slide, in the order they appear here.
+          {% endcomment %}
+          <a href="{% url 'arkiv:download' file.pk %}"
+             {% if file.has_thumbnail %}
+               data-viewer data-preview="{% url 'arkiv:preview' file.pk %}"
+               data-name="{{ file.name }}"
+             {% endif %}>
+            {% if file.has_thumbnail %}
+              {% comment %}
+                loading="lazy" because a folder of two hundred party photographs is the case this
+                exists for. alt="" and aria-hidden: the link text beside it already names the file,
+                so announcing it twice is noise to a screen reader.
+
+                The grid asks for the same 320px thumbnail the list does. It is drawn larger here,
+                but a tile is still well under 320px on any screen in the building, and asking for
+                the 1600px preview instead would mean a folder of two hundred photographs pulling
+                tens of megabytes to draw a page.
+              {% endcomment %}
+              {% comment %}
+                draggable="false" because an <img> is draggable by default, and a drag across the
+                grid to select a run would otherwise turn into the browser dragging the photograph
+                somewhere after a few pixels. The gesture belongs to selection here.
+              {% endcomment %}
+              <img class="{% if gallery %}arkiv-tile-img{% else %}arkiv-thumb{% endif %}"
+                   src="{% url 'arkiv:thumbnail' file.pk %}" alt="" aria-hidden="true"
+                   draggable="false"
+                   loading="lazy"{% if not gallery %} width="40" height="40"{% endif %}>
+            {% else %}
+              <svg class="ni" aria-hidden="true"><use href="#i-file"></use></svg>
+            {% endif %}
+            <span class="arkiv-name">{{ file.name }}</span>
+          </a>
+          <span class="muted arkiv-meta">
+            {{ file.size|filesizeformat }}
+            {% if file.uploaded_by %} · {{ file.uploaded_by.full_name }}{% endif %}
+          </span>
+          {% if can_write %}
+            {% comment %}
+              STAGE ONE, and no confirm() on it deliberately: it takes the file out of the listing
+              and leaves the bytes alone, so the worst case is an "undo" one click away in the
+              removed list below. Stage two is where the confirm lives, because that is the click
+              that cannot be taken back. See arkiv/access.py::can_delete_file.
+            {% endcomment %}
+            <form method="post" action="{% url 'arkiv:file_delete' file.pk %}" class="arkiv-remove">
+              {% csrf_token %}
+              <button type="submit" class="btn-link-danger"
+                      aria-label="Fjern {{ file.name }}">Fjern</button>
+            </form>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  {% comment %}
+    THE SECOND STAGE OF THE DELETE, and the reason the first one needs no warning.
+
+    Rendered only for a writer and only when there is something in it, so the ordinary case - a
+    folder nobody has tidied - shows nothing at all. The view returns an empty queryset rather than
+    a filtered one for readers, so this costs them no query either (see views.browse).
+
+    Two controls, and they are deliberately unlike each other. "Gendan" is the ordinary one and
+    reads as a plain action; "Slet permanent" is the only irreversible thing in Arkiv and carries a
+    confirm() naming the file, in the same shape as the delete confirms in opslagstavlen and Den
+    Hurtige. What makes it safe to offer every writer is not the permission - it is that a file has
+    to be removed from the listing first, so this control never sits next to a row somebody is
+    reading. See arkiv/access.py::can_purge_file.
+
+    `deleted_by` is named here because it is the whole point of that column: "where did the
+    sommerfest photos go" has to have an answer while the file is still recoverable.
+  {% endcomment %}
+  {% if removed %}
+    <section class="arkiv-removed mt-4" aria-labelledby="fjernede">
+      <h2 id="fjernede" class="text-base font-semibold mb-1">Fjernede filer</h2>
+      <p class="muted mb-2">
+        Fjernede filer er ikke synlige i mappen, men de er ikke slettet endnu. Gendan dem, eller
+        slet dem permanent.
+      </p>
+      <ul class="arkiv-list">
+        {% for file in removed %}
+          <li>
+            {% comment %}
+              No download link and no preview: it is out of the listing, and a link that still
+              serves the bytes would make "fjernet" mean nothing. The name is plain text here.
+            {% endcomment %}
+            <span class="arkiv-static">
+              <svg class="ni" aria-hidden="true"><use href="#i-file"></use></svg>
+              <span class="arkiv-name">{{ file.name }}</span>
+            </span>
+            <span class="muted arkiv-meta">
+              {{ file.size|filesizeformat }}
+              · fjernet {{ file.deleted_at|date:"j. b Y, H:i" }}
+              {% if file.deleted_by %} af {{ file.deleted_by.full_name }}{% endif %}
+            </span>
+            <form method="post" action="{% url 'arkiv:file_restore' file.pk %}" class="arkiv-remove">
+              {% csrf_token %}
+              <button type="submit" class="btn-link"
+                      aria-label="Gendan {{ file.name }}">Gendan</button>
+            </form>
+            <form method="post" action="{% url 'arkiv:file_purge' file.pk %}" class="arkiv-remove"
+                  onsubmit="return confirm('Slet «{{ file.name|escapejs }}» permanent? Det kan ikke fortrydes.')">
+              {% csrf_token %}
+              <button type="submit" class="btn-link-danger"
+                      aria-label="Slet {{ file.name }} permanent">Slet permanent</button>
+            </form>
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+{% endblock %}

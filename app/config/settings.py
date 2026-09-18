@@ -1,13 +1,13 @@
 """Django settings for the GAHK rewrite (config project).
 
-Schema/decisions: see ../02-schema-etl.md. Target DB is PostgreSQL (via DATABASE_URL);
-falls back to SQLite for local dev/validation when DATABASE_URL is unset.
+Schema/decisions: see ../02-schema-etl.md. Target DB is PostgreSQL (via DATABASE_URL).
 """
 
 import os
 from pathlib import Path
 
 import dj_database_url
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -46,6 +46,9 @@ INSTALLED_APPS = [
     "den_hurtige",
     "opslagstavle",
     "events",
+    "reparationer",
+    "arkiv",
+    "photo_album",
 ]
 
 MIDDLEWARE = [
@@ -80,12 +83,14 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-DATABASES = {
-    "default": dj_database_url.config(
-        default=os.environ.get("DATABASE_URL", f"sqlite:///{BASE_DIR / 'db.sqlite3'}"),
-        conn_max_age=600,
-    )
-}
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    if DEBUG:
+        DATABASE_URL = "postgres://gahk:gahk@localhost:5432/gahk"
+    else:
+        raise ImproperlyConfigured("DATABASE_URL must be configured outside development.")
+
+DATABASES = {"default": dj_database_url.config(default=DATABASE_URL, conn_max_age=600)}
 
 # --- Auth (01-infrastructure.md A4/A5; 02-schema-etl.md §1.6) ---
 AUTH_USER_MODEL = "residents.Resident"
@@ -118,9 +123,96 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 STATICFILES_DIRS = [BASE_DIR / "static"]  # holds the Vite-built bundle (static/dist/)
 
+# Media (user uploads) always go to object storage: Hetzner in production, MinIO for local dev
+# (docker-compose.yml's `minio` service) — there is no local-disk fallback. STORAGES["default"]
+# below is unconditionally core.storage.MediaS3Storage, so a missing or wrong S3_BUCKET is a loud
+# S3 error on the first upload, not a silent switch to writing files onto a disk nobody backs up.
+#
+# The one place local disk survives is the test suite: tests/conftest.py's autouse fixture
+# overrides STORAGES["default"] to plain FileSystemStorage for every test, so pytest never touches
+# a real bucket. That override is test-only — nothing here grants the same thing anywhere else.
+#
+# MEDIA_URL stays "/media/" regardless: it is a prefix of content stored in the database, and
+# core.checks (core.E007-E009) refuses to start the process if it or the backend's URLs ever stop
+# matching. core/storage.py has the full argument.
+#
+# Defaults describe the MinIO container docker-compose.yml runs for local dev (bucket, credentials,
+# endpoint, path-style addressing), not Hetzner — so S3 works out of the box on a fresh checkout with
+# no app/.env at all. Gated on DEBUG rather than unconditional: DEPLOY.md requires DJANGO_DEBUG=0 in
+# production, so these defaults can never be what a real deploy silently runs on.
+S3_BUCKET = os.environ.get("S3_BUCKET", "gahk-s3" if DEBUG else "")
+# fsn1 (Falkenstein) / nbg1 (Nuremberg) / hel1 (Helsinki). Keep this in the same location as the VM:
+# traffic inside eu-central does not count against the account's egress allowance.
+S3_LOCATION = os.environ.get("S3_LOCATION", "fsn1")
+
+# Overridable for S3-compatible endpoints that are not Hetzner — namely the MinIO container
+# docker-compose.yml runs for local dev. Path-style addressing is required there: MinIO has no
+# wildcard TLS certificate for virtual-hosted-style requests, and unlike Hetzner it is reached over
+# plain HTTP on the docker network.
+S3_ENDPOINT_URL = os.environ.get(
+    "S3_ENDPOINT_URL", "http://localhost:9000" if DEBUG else f"https://{S3_LOCATION}.your-objectstorage.com"
+)
+S3_ADDRESSING_STYLE = os.environ.get("S3_ADDRESSING_STYLE", "path" if DEBUG else "virtual")
+
+# The endpoint a BROWSER can actually reach, for presigned URLs only — everything else (uploads,
+# HEAD, delete, ...) keeps using S3_ENDPOINT_URL above, which this process itself resolves fine.
+# The two differ only under `task dev` (the dockerized `web` service): Django reaches MinIO over the
+# compose network at http://minio:9000, but the browser that follows the presigned URL is on the
+# HOST, which can only reach MinIO's published port at http://localhost:9000. Signing the URL with
+# the wrong host is not cosmetic — SigV4 signs the Host header, so the bucket 403s a request whose
+# Host does not match the one it was signed for, and rewriting the URL string afterwards cannot fix
+# that either. `task dev:local` and production both leave this unset, since S3_ENDPOINT_URL there is
+# already reachable from wherever the browser runs.
+S3_PUBLIC_ENDPOINT_URL = os.environ.get("S3_PUBLIC_ENDPOINT_URL", "") or S3_ENDPOINT_URL
+
+# botocore >= 1.36 defaults to sending x-amz-checksum-crc32 with aws-chunked framing on every PUT,
+# which S3-compatible providers — Hetzner AND MinIO — mis-store or reject. botocore reads these
+# straight out of the environment itself, never through Django, so setdefault() here is what makes
+# uploads work without an app/.env at all; .setdefault leaves an explicit .env/real env var alone.
+os.environ.setdefault("AWS_REQUEST_CHECKSUM_CALCULATION", "when_required")
+os.environ.setdefault("AWS_RESPONSE_CHECKSUM_VALIDATION", "when_required")
+
+_MEDIA_S3_OPTIONS = {
+    "bucket_name": S3_BUCKET,
+    # minioadmin/minioadmin (MinIO's own defaults) when nothing is configured — see S3_BUCKET above.
+    "access_key": os.environ.get("S3_ACCESS_KEY", "minioadmin" if DEBUG else ""),
+    "secret_key": os.environ.get("S3_SECRET_KEY", "minioadmin" if DEBUG else ""),
+    "endpoint_url": S3_ENDPOINT_URL,
+    "region_name": S3_LOCATION,
+    # Virtual-host style is what Hetzner documents: https://<bucket>.<loc>.your-objectstorage.com.
+    # The bucket name must therefore be DNS-safe — lowercase, and NO DOTS, or TLS SNI against their
+    # wildcard certificate fails for every request. MinIO (local dev) overrides this to "path" via
+    # S3_ADDRESSING_STYLE, since it has no such certificate.
+    "addressing_style": S3_ADDRESSING_STYLE,
+    "signature_version": "s3v4",
+    # None, not "private". Hetzner implements bucket policies and not S3 ACLs, and rejects the
+    # x-amz-acl header outright.
+    "default_acl": None,
+    # The bucket is private; core.media.serve_media issues a presigned GET per request.
+    "querystring_auth": True,
+    # Kept in step with core.media.PRESIGN_TTL, which is what actually signs the URLs we serve.
+    "querystring_expire": 3600,
+    # FALSE, and django-storages defaults it to True — which skips Django's name-suffixing entirely.
+    # Resident.profile_picture uploads to a flat "profile_pictures/" with no date and no uniquifier,
+    # so with overwriting on, the second resident to upload an IMG_1234.jpg silently replaces the
+    # first one's photo and the first one's row then points at somebody else's face.
+    "file_overwrite": False,
+    # Shares the bucket with the database backups under "backups/", so the prefix is a security
+    # boundary, not tidiness — see core.storage.MEDIA_PREFIX. MediaS3Storage defaults it; named here
+    # so the grep for "backups" finds this comment.
+    "location": "media",
+    "object_parameters": {"CacheControl": "private, max-age=604800"},
+}
+
+# Photo-album originals/derivatives (photo_album.storage.PhotoAlbumS3Storage): same bucket and
+# credentials, but its OWN top-level key — "photo-album/…", never "media/photo-album/…". Unlike the
+# options above, nothing here is served through Django: .url() returns a presigned bucket URL
+# straight from S3, so "location" stays empty rather than "media" — see photo_album/storage.py.
+PHOTO_ALBUM_S3_OPTIONS = {**_MEDIA_S3_OPTIONS, "location": ""}
+
 # WhiteNoise hashed/compressed static in prod; plain storage in dev so {% static %} needs no manifest.
 STORAGES = {
-    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "default": {"BACKEND": "core.storage.MediaS3Storage", "OPTIONS": _MEDIA_S3_OPTIONS},
     "staticfiles": {
         "BACKEND": (
             "django.contrib.staticfiles.storage.StaticFilesStorage"
@@ -237,3 +329,11 @@ NOTICE_IMAGE_MAX_MB = int(os.environ.get("NOTICE_IMAGE_MAX_MB", "5"))
 # feature caps its own uploads, so an ops change for one cannot silently change what residents may
 # post to another.
 EVENT_IMAGE_MAX_MB = int(os.environ.get("EVENT_IMAGE_MAX_MB", "5"))
+
+# Photo album uploads. Two ceilings rather than one: the album deliberately keeps the ORIGINAL at
+# full resolution (unlike every other feature here, which downscales in the browser first), so a
+# modern phone photo legitimately arrives at 10-15 MB, and a clip from the same phone is an order of
+# magnitude larger again. Its own settings for the same reason the *_MAX_MB above are separate —
+# each feature caps its own uploads, so an ops change for one cannot silently change another.
+PHOTO_ALBUM_IMAGE_MAX_MB = int(os.environ.get("PHOTO_ALBUM_IMAGE_MAX_MB", "50"))
+PHOTO_ALBUM_VIDEO_MAX_MB = int(os.environ.get("PHOTO_ALBUM_VIDEO_MAX_MB", "1000"))

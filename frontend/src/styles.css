@@ -157,8 +157,19 @@
      100dvh rather than 100%, matching .app: on iOS the dynamic viewport unit tracks the address bar
      retracting, where a percentage of the layout viewport would leave a gap at the bottom. */
   html:has(body.chat-page) { height:100dvh; overflow:hidden; overscroll-behavior:none; }
-  .chat-page { height:100dvh; overflow:hidden; overscroll-behavior:none; }
-  .chat-page .app { height:100dvh; min-height:0; }
+  /* body is the flex column, and .app TAKES THE REMAINDER rather than claiming a viewport of its
+     own. It used to be `height:100dvh` on both, which is only correct while .app is the sole thing
+     in the body -- and it is not. base.html renders the preview banner and the dev-clock banner as
+     SIBLINGS above it, so with either one showing, .app started at the banner's height and ran that
+     far past the bottom of the screen. body is overflow:hidden, so the overhang was not scrollable,
+     merely gone: the composer lost its lower edge, by exactly the height of the banner (measured:
+     a 57px banner clipped 57px off the composer).
+     Flex fixes it for any banner, of any height, without either box needing to know about the
+     other. min-height:0 for the usual reason -- a flex item will not shrink below its content
+     otherwise, and .app is a grid full of it. */
+  .chat-page { height:100dvh; overflow:hidden; overscroll-behavior:none;
+    display:flex; flex-direction:column; }
+  .chat-page .app { flex:1; min-height:0; height:auto; }
   .chat-page .main { display:flex; flex-direction:column; min-height:0; overflow:hidden; }
   /* No vertical padding: the header and composer bring their own and bleed to the gutters, so
      inherited padding would leave both floating away from the edges they are meant to sit on. */
@@ -265,43 +276,259 @@
      in this element's layer and the composer painted over them. It has been a no-op since iOS 13
      (momentum scrolling is the default for overflow:auto) and is gone from the spec, so it bought
      nothing. See the .pop block below. */
+  /* --sunken, not --paper, and it bleeds to the gutters the way the header and composer do. A white
+     bubble on the --paper ground is 1.09:1 -- no visible edge whatever, so an incoming message was
+     legible only where its text happened to be. Dropping the CONVERSATION a tone is the move every
+     chat client makes, because the bubble cannot go the other way: --surface is already #FFFFFF,
+     so there is no lighter it can get. Now the header and composer read as the chrome they are and
+     the feed reads as the surface the messages sit on. */
+  /* The negative margin plus matching padding is the same bleed .chat-head uses: the BOX runs to
+     the gutters so the tone reaches the edge of the screen, while the messages inside keep the
+     same inset they had. Without the bleed the sunken ground stops short and reads as a floating
+     card rather than the surface the conversation sits on. */
   #js-feed { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain;
-    padding:6px 0 14px; }
+    background:var(--sunken); margin:0 -30px; padding:6px 30px 14px; }
   .feed-empty { text-align:center; color:var(--muted); padding:40px 20px; }
 
-  .msg { display:grid; grid-template-columns:34px 1fr; gap:10px; padding:6px 10px; border-radius:var(--radius);
-    margin-top:6px; }
-  /* Continuation of the same sender: no repeated avatar/name, tighter spacing. */
-  .msg-grouped { margin-top:1px; }
-  .msg-own { background:var(--green-050); }
-  .msg-avatar { width:34px; height:34px; border-radius:50%; background:var(--brass); color:#fff;
-    display:grid; place-items:center; font-weight:700; font-size:12.5px; }
-  /* The empty slot on a grouped message keeps the text aligned without drawing a second circle. */
-  .msg-grouped .msg-avatar { background:none; }
-  .msg-body { min-width:0; }
-  .msg-head { display:flex; align-items:baseline; gap:8px; flex-wrap:nowrap; }
-  /* min-width:0 because a flex item defaults to min-width:auto and refuses to shrink below its
-     own content — without it the name pushes the row wide instead of ellipsising. */
-  .msg-name { font-weight:650; font-size:14px; min-width:0;
+  /* --- Message bubbles -----------------------------------------------------------------------
+     Messenger's shape rather than a forum's: one bubble per message, a run by one sender bound
+     into a single shape by squaring the corners where its bubbles meet, the name on the run's
+     first bubble and the avatar and tail on its last. den_hurtige/_message.html carries the
+     reasoning and the markup contract; what follows is only how it is drawn.
+
+     This replaced a flat grid whose header line (name · time · expiry) sat above every message.
+     Two things about that were wrong on a phone, and both were worst on the commonest case in a
+     chat -- the same person writing twice. A continuation dropped the NAME but kept the header, so
+     it carried a stray "14:32 · ⏱ 45 min" line attached to nobody; and .msg-own painted a
+     background on the whole grid, so two of your own messages 1px apart drew two rounded boxes
+     that read as one torn box. The meta is now in the action row (which every message already
+     had, so it costs no height) and a run closes up into one shape.
+
+     touch-action:pan-y hands the browser the vertical axis and keeps the horizontal one for the
+     swipe handler in feed.ts. Without it #js-feed's scroller claims both and a horizontal drag
+     either scrolled the list or did nothing at all. With it a vertical flick still scrolls
+     natively -- and fires pointercancel, which is how the handler learns to let go. It overrides
+     the page-wide `touch-action:manipulation` from .no-zoom for this element only, so double-tap
+     zoom stays suppressed everywhere it was.
+
+     position:relative is for the swipe hints, and is as far as this element may go: .msg is an
+     ancestor of the `.pop` pickers in its own action row, and a `.pop` breaks the moment any
+     ancestor creates a stacking context (see the .pop block above). position:relative alone
+     creates none. The swipe DOES put a translate here, which does -- for the length of one drag,
+     never at rest, and never while a picker is open. feed.ts enforces both halves of that. */
+  .msg { position:relative; margin-top:10px; padding:0 10px; touch-action:pan-y; }
+  /* Continuation of the same sender: the run reads as one block, so the gap all but closes. */
+  .msg-grouped { margin-top:2px; }
+
+  /* Avatar and bubble on one line. align-items:flex-end is the whole reason this element exists:
+     it drops the avatar to the bubble's BOTTOM edge, beside where the run ends. Aligning against
+     .msg instead would measure to the bottom of the action row and leave the avatar sitting next
+     to the reaction pills, a row too low. */
+  .msg-line { display:flex; align-items:flex-end; gap:10px; }
+  .msg-own .msg-line { flex-direction:row-reverse; }
+  .msg-avatar { flex:none; width:34px; height:34px; border-radius:50%; background:var(--brass);
+    color:#fff; display:grid; place-items:center; font-weight:700; font-size:12.5px; }
+  /* Mid-run the box only holds the column open -- an empty brass circle would read as a second
+     person. Keyed on .msg-tail (the run's LAST message) because that is where the avatar goes. */
+  .msg:not(.msg-tail) .msg-avatar { background:none; }
+  /* Own messages need no avatar at all: which side of the screen it is on already says who wrote
+     it, and this is 42px of width back on a phone. */
+  .msg-own .msg-avatar { display:none; }
+
+  /* Sizes to its text, capped so a long message cannot span the full column: past roughly 80% the
+     eye loses the left edge on the return sweep and the shape stops reading as a bubble.
+     min-width:0 lets it shrink below its content so .msg-text's overflow-wrap can break a long URL
+     instead of forcing the line wide.
+     position:relative anchors the tail; like .msg it must not go further than that. */
+  .msg-bubble { position:relative; min-width:0; max-width:80%; padding:6px 11px 7px;
+    border-radius:16px; background:var(--surface);
+    filter:drop-shadow(0 1px 1.5px rgba(24, 40, 30, .14)); }
+  /* Own messages in the house green, at full strength, with the text reversed out of it. It is the
+     same --green as the channel pill and the primary buttons, so the feed reads as part of intern
+     rather than a grey chat that happens to live there -- and at 8.1:1 against white it is the
+     highest-contrast thing on the page, which is what makes a conversation scannable: you find
+     your own messages by colour, never by reading them. */
+  .msg-own .msg-bubble { background:var(--green); color:#fff; }
+  /* The clock rides INSIDE the bubble (see .msg-clock below), so on green it cannot stay --faint,
+     which is a warm grey chosen against paper and all but vanishes here. White at .78 lands at
+     5.4:1 on --green -- above AA for the 11.5px it is set at. */
+  .msg-own .msg-meta { color:rgba(255, 255, 255, .78); }
+
+  /* NO BORDER, and the shadow is a FILTER rather than box-shadow. Both follow from the tail being
+     a pseudo-element (below): a border cannot be mitred around a separate box, and box-shadow
+     traces the border-box, so either one drew a seam across every tail. drop-shadow traces the
+     rendered ALPHA of the element and its pseudo-elements together, so it wraps the bubble and its
+     tail as one silhouette.
+
+     The shadow is load-bearing, not decoration. An earlier revision left the bubbles borderless on
+     the argument that #FFFFFF was "already distinct" against the --paper ground; it is not. Those
+     two are 1.09:1 apart, which is no visible edge at all -- a bubble was legible only where its
+     text was, and a run of empty space read as nothing. This is what gives it an edge.
+
+     filter makes a stacking context, which almost everything in this file is forbidden from doing.
+     It is safe HERE and nowhere near here: .msg-actions holds the `.pop` pickers and is a sibling
+     of .msg-bubble, not a child, so nothing that must escape to the viewport is inside this
+     element. Do not move the action row back into the bubble. */
+
+  /* Corners where a run meets itself are squared off, which is what makes consecutive bubbles read
+     as one shape instead of a stack of cards. `msg-grouped` means something of mine is directly
+     above; `msg-tail` means nothing of mine is below (views.posts_for computes both -- a template
+     cannot look ahead to the next message). The bottom inner corner is always small: either the
+     run continues through it, or the tail hangs off it. */
+  .msg:not(.msg-own) .msg-bubble { border-bottom-left-radius:4px; }
+  .msg-own .msg-bubble { border-bottom-right-radius:4px; }
+  .msg-grouped:not(.msg-own) .msg-bubble { border-top-left-radius:4px; }
+  .msg-own.msg-grouped .msg-bubble { border-top-right-radius:4px; }
+
+  /* The tail, on the last bubble of a run only. `background:inherit` rather than a named colour so
+     one rule serves both bubble colours and neither can drift from the shape hanging off it.
+     A clip-path triangle rather than the border-width trick: that needs a fixed colour per side
+     and would have to be restated for own messages.
+
+     IT HAS TO FIT INSIDE .msg-line's GAP. The tail reaches 7px out of the bubble, and being a
+     positioned pseudo-element it paints ABOVE the in-flow avatar next to it — so with the gap at
+     8px (and 6px on a phone) it laid a sliver of bubble colour across the avatar's edge, on
+     precisely the message that has a visible avatar, since tail and avatar are both on the run's
+     last bubble. The gap is now 10px/9px against a 7px reach. Change one and check the other. */
+  .msg-tail .msg-bubble::after { content:""; position:absolute; bottom:0; width:8px; height:11px;
+    background:inherit; }
+  .msg-tail:not(.msg-own) .msg-bubble::after { left:-7px; clip-path:polygon(100% 0, 100% 100%, 0 100%); }
+  .msg-tail.msg-own .msg-bubble::after { right:-7px; clip-path:polygon(0 0, 100% 100%, 0 100%); }
+
+  /* Inside the bubble the name is a label above the text, so it is a block rather than a flex item
+     -- there is no header row left for it to sit in. Hidden on own messages: Messenger does not
+     tell you your own name either, and it is a whole line back. */
+  .msg-name { display:block; font-weight:650; font-size:12.5px; color:var(--green-700);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .msg-own .msg-name { display:none; }
+  /* Text and clock share the bubble's last line, WhatsApp-style. .msg-text is inline HERE ONLY: it
+     stays a block everywhere else, because _replies.html and opslagstavlen's comments use the same
+     class and both want it on a line of its own. `nowrap` on the clock stops
+     "15:59 · ⏱ 2 timer" breaking across two lines.
+
+     FLOATED, not merely inline. Inline was the first attempt and it is subtly wrong: when the text
+     leaves no room on the last line, an inline clock wraps and then sits LEFT-aligned under the
+     text -- measured at 143px from the bubble's right edge on a 390px phone, which reads as a
+     stray fragment rather than the message's timestamp. A right float lands flush against the
+     bubble's padding whether it shares the last line or takes one of its own (measured: 11px,
+     i.e. the padding, in every case, with no overlap onto the text's glyphs).
+
+     display:flow-root on the wrapper is what makes that safe: a float needs a block formatting
+     context or the bubble's height ignores it and the clock hangs out of the bottom. flow-root
+     rather than `overflow:hidden` because it establishes the BFC without clipping anything -- and
+     rather than a clearfix because there is nothing else in here to clear. Note it creates no
+     stacking context either way, but that costs nothing to preserve: the `.pop` pickers live in
+     .msg-actions, outside this subtree entirely. */
+  .msg-text { white-space:pre-wrap; overflow-wrap:anywhere; font-size:15px; line-height:1.45; }
+  /* Links in plain-text bodies -- Den Hurtige's messages and replies, and the two comment threads,
+     all of which render through |links (see core/links.py). Green and underlined, matching
+     .prose-gahk a so a link reads the same whether it is in a post or in the comment answering it.
+
+     TWO COLOURS, because .msg-text has two grounds. Your own bubble is solid --green with white
+     text, where --green-700 is 1.15:1 against its background: a link in your own message was, in
+     practice, invisible. The second rule is not a nicety, it is the difference between a link
+     being there and not.
+
+     overflow-wrap is inherited from .msg-text above and matters even with the text shortened: a
+     40-character link is still longer than a narrow bubble, and without it the bubble stretches
+     past the 80% cap instead of breaking. */
+  .msg-text a { color:var(--green-700); text-decoration:underline; text-underline-offset:2px; }
+  .msg-text a:hover { color:var(--green); }
+  .msg-own .msg-text a { color:#fff; text-decoration-color:rgb(255 255 255 / .6); }
+  .msg-own .msg-text a:hover { color:#fff; text-decoration-color:#fff; }
+  .msg-line-text { display:flow-root; }
+  .msg-bubble .msg-text { display:inline; }
+  .msg-bubble .msg-clock { float:right; white-space:nowrap; margin:2px 0 0 8px; }
+  .msg-image img { max-width:min(100%, 320px); height:auto; border-radius:10px; margin-top:6px; display:block; }
+
+  /* --- What a swipe reveals ------------------------------------------------------------------
+     Pinned to the edges of .msg and stretched its full height so `place-items:center` puts the
+     glyph on the bubble's midline whatever the message's height. Opacity is driven inline by
+     feed.ts as the drag progresses; at rest it is 0 and the message covers them anyway.
+     pointer-events:none so neither can ever take a tap meant for the message.
+
+     THEY PAINT BEHIND THE BUBBLE AND IN FRONT OF THE AVATAR, with no z-index anywhere near them
+     -- .msg deliberately holds no stacking context (see the .pop block above), so there is none
+     to set. That is just CSS's painting order: .msg-bubble is position:relative and comes after
+     these in the markup, so it wins; .msg-avatar is an ordinary in-flow flex item, so it loses.
+     Both halves matter, and being underneath is the POINT -- these are meant to be uncovered by
+     the message sliding aside, which is why feed.ts holds the parent's translate off them (see
+     the hint block in its pointermove) and does not start fading one in until the message has
+     travelled past the 6px + 32px this band occupies. Without that counter-translate they are
+     children of the transformed element and simply travel with it: an icon glued on top of the
+     avatar it was supposed to appear beside, and a trash can that never clears the bubble. */
+  .msg-hint { position:absolute; top:0; bottom:0; width:32px; display:grid; place-items:center;
+    opacity:0; pointer-events:none; font-size:17px; line-height:1; }
+  .msg-hint-thread { left:6px; color:var(--green-700); }
+  .msg-hint-del { right:6px; color:var(--neg); }
+  /* Same reason as .channel-picker .ni: <use> clones the symbol into a shadow tree that inherits
+     from THIS svg, so without these the icon renders as a filled black blob. */
+  .msg-hint .ni { width:21px; height:21px; stroke:currentColor; fill:none; }
+  /* Spring back after a drag that did not cross the threshold. The class is added for the length of
+     the animation and removed with the inline translate, so nothing is left holding a stacking
+     context on .msg -- the same discipline as the .thread-panel animation further down. */
+  .msg-releasing { transition:translate .18s cubic-bezier(.22, .61, .36, 1); }
+  @media (prefers-reduced-motion:reduce) { .msg-releasing { transition:none; } }
+
+  /* Reactions, the "N svar" link and the message's clock share one line. Indented past the avatar
+     so the row lines up with the bubble rather than with the circle beside it. */
+  .msg-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:4px;
+    padding-left:44px; }
+  /* Own messages have no avatar, so there is nothing to clear -- and the row belongs under the
+     right-hand edge the bubble sits on. */
+  .msg-own .msg-actions { padding-left:0; justify-content:flex-end; }
   .msg-meta { color:var(--faint); font-size:11.5px; }
-  .msg-time, .msg-expiry { flex:none; }
   /* Separator lives on the expiry, so hiding the expiry takes its dot with it. */
   .msg-expiry::before { content:"· "; }
-  .msg-text { white-space:pre-wrap; overflow-wrap:anywhere; font-size:15px; line-height:1.45; margin-top:1px; }
-  .msg-image img { max-width:min(100%, 320px); height:auto; border-radius:10px; margin-top:8px; display:block; }
-  /* Delete stays out of the way until the row is touched/hovered; always visible on coarse pointers. */
-  .msg-del { margin-left:auto; flex:none; }
+
+  /* MID-RUN MESSAGES CARRY ONLY THE REACTIONS THEY ALREADY HAVE. The picker, the "N svar" link and
+     the clock all move to the run's last message.
+
+     This is not tidying, it is the other half of the grouping. The action row is rendered per
+     message and costs about 22px, so a run of three drew bubble, row, bubble, row, bubble -- the
+     rows sat BETWEEN the bubbles and pulled apart the exact group the squared corners had just
+     joined up. Collapsing them is what makes a burst from one person read as one block.
+
+     Nothing becomes unreachable, which is the condition for doing this at all:
+       * The "N svar" anchor is HIDDEN, not removed, so a right-swipe on a mid-run message still
+         clicks it (see fireSwipe in feed.ts) and opens that message's own thread.
+       * The thread panel renders its message with a full reaction row (`bare` keeps it -- see
+         _message.html), so reacting to one message of a burst lives there.
+       * Only .emoji-picker is hidden, NEVER .who-picker. The who-reacted panels belong to the
+         pills that are still visible, and hiding a <details> stops its panel from opening at all --
+         holding a pill would silently do nothing.
+       * The delete control is not in this row any more (see below), so hiding the row does not
+         take it with it. */
+  .msg:not(.msg-tail) .msg-actions { margin-top:0; }
+  /* `.has-replies` is on the anchor whenever the message actually has replies. A bare "Svar" is
+     only an affordance and the swipe covers it, but "3 svar" is the single piece of evidence that
+     a conversation exists at all -- hiding that would bury threads on mid-run messages. */
+  .msg:not(.msg-tail) .msg-replies:not(.has-replies),
+  .msg:not(.msg-tail) .emoji-picker { display:none; }
+  /* Only when there is actually something in it -- `.is-empty` is the server's flag for "no
+     reactions", so this puts the gap back for pills without reintroducing it for the empty row. */
+  .msg:not(.msg-tail) .reactions:not(.is-empty) { margin-top:3px; }
+
+  /* Delete sits in .msg-line beside the bubble, not in the action row below it (see _message.html
+     for where it lives in the markup and why). Out of the row, a mid-run message's row can collapse
+     to nothing -- a button at opacity:0 still occupies its line, which held every row in a run
+     open -- and a destructive control stops being a tab-stop in the middle of a strip of reaction
+     pills. As a flex item it tracks the bubble's width for free, which absolute positioning against
+     .msg could not: that parked it at the far edge of the feed, ~290px from the bubble it deletes.
+     align-self:flex-end lines it up with the bubble's bottom edge, like the avatar opposite it.
+     It stays out of the way until the message is hovered. On touch it goes entirely, replaced by
+     the swipe -- but ONLY once feed.ts has confirmed it is listening (body.swipe-ready), so a phone
+     with the bundle blocked, cached broken or served by a stale service worker keeps a way to
+     delete a message at all. */
+  .msg-del { flex:none; align-self:flex-end; margin-bottom:3px; }
   .msg-del button { background:none; border:0; color:var(--faint); font-size:17px; line-height:1;
     padding:0 4px; cursor:pointer; opacity:0; }
   .msg:hover .msg-del button, .msg-del button:focus-visible { opacity:1; }
   .msg-del button:hover { color:var(--neg); }
-  @media (hover:none) { .msg-del button { opacity:.55; } }
-
-  /* Reactions and the "N svar" link share one line. Nothing here expands any more -- the thread
-     opens in the side panel rather than unfolding into the message -- so this row is now just a
-     wrapping strip of pills. (It carried a duplicated copy of itself for a while; both are gone.) */
-  .msg-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:5px; }
+  @media (hover:none) {
+    .msg-del button { opacity:.55; }
+    body.swipe-ready .msg-del { display:none; }
+  }
   .reactions { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
   /* The three selection properties are what make HOLDING a pill work on a phone. Without them iOS
      treats a touch-and-hold as the start of a text selection and opens its copy/define callout,
@@ -375,7 +602,6 @@
      exists, so a busy message pays nothing for it. See _reactions.html. */
   .reaction-add .add-label { display:none; }
   .reactions.is-empty .reaction-add .add-label { display:inline; }
-  .reaction-who { border-style:dashed; color:var(--muted); }
 
   .emoji-grid { display:grid; grid-template-columns:repeat(6, 1fr); gap:2px; }
   .emoji-choice { font-size:22px; line-height:1; padding:7px 6px; border:0; border-radius:8px;
@@ -384,19 +610,16 @@
   .emoji-other { margin-top:8px; }
   .emoji-other input { width:100%; }
 
-  /* Who reacted: one row per person, ordered by emoji exactly as the pills are
-     (core.reactions.reaction_rows). A grid rather than a flex row so the names line up in a column
-     no matter how wide the emoji renders -- a flag or a ZWJ family is much wider than 👍, and ragged
-     names are hard to scan in a list you scroll. */
+  /* Who reacted with ONE emoji: a row per person, in the order they reacted
+     (core.reactions.reaction_rows). A list you scan rather than a comma-joined paragraph, which is
+     what fifteen names wrapped into. */
   .who-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; }
-  /* Flex with a fixed-width .who-emoji rather than a grid column, so ONE rule serves both callers:
-     opslagstavlen still prefixes every row with its emoji and needs the names to line up in a
-     column, while Den Hurtige's panels are per emoji (it is in the title instead) and would
-     otherwise indent every name past an empty 26px gutter. Absent emoji, absent gutter. */
+  /* Just the name: every panel is per emoji now, and the emoji is in the title. This used to carry
+     a fixed-width .who-emoji gutter for opslagstavlen's single all-emoji panel, which no longer
+     exists. */
   .who-row { display:flex; align-items:baseline; gap:8px;
     padding:5px 2px; font-size:14px; line-height:1.35; }
   .who-row + .who-row { border-top:1px solid var(--border); }
-  .who-emoji { font-size:17px; line-height:1.2; flex:none; width:26px; }
   .who-names { color:var(--ink); overflow-wrap:anywhere; }
 
   /* Hover companion to the who panels, for mice only (frontend/src/feed.ts decides). A plain
@@ -412,11 +635,54 @@
   .emoji-other input { width:100%; padding:5px 8px; text-align:center; }
 
   /* The way into a thread. Was a <details> summary that unfolded the replies in place; it is now a
-     link to den_hurtige:thread, which htmx turns into the side panel. Same weight and colour as the
-     old summary, minus the caret -- nothing folds open here any more. */
-  .msg-replies { min-width:0; font-size:12.5px; font-weight:600; color:var(--green-700);
+     link to den_hurtige:thread, which htmx turns into the side panel.
+
+     TWO STATES, AND THE POINT IS THE DISTANCE BETWEEN THEM. Both used to be this rule alone --
+     12.5px, 600, --green-700 -- so "Svar" and "3 svar" were the same object with different words
+     in it, tucked in a row beside the reaction pills. On a feed the difference did not register:
+     a message with a conversation hanging off it looked exactly like one with nothing.
+
+     So the empty state RECEDES and the full state becomes a pill. Half the new contrast comes
+     from the retreat, which is what keeps the feed quiet -- most messages have no replies, and
+     those now cost the eye almost nothing. --muted rather than --faint for it: this is an
+     interactive control, and --faint (#8A9188) lands at 2.97:1 on --paper, under the 4.5:1 a
+     12.5px link needs. --muted clears it at 5.08:1 and still reads as the quieter of the two.
+
+     No extra height either way. The action row is rendered on EVERY message (see .msg-actions
+     above), so the signal is free where a reply bar of its own would have cost ~22px a thread. */
+  .msg-replies { min-width:0; font-size:12.5px; font-weight:600; color:var(--muted);
     text-decoration:none; padding:2px 0; white-space:nowrap; }
   .msg-replies:hover { text-decoration:underline; }
+
+  /* There is a conversation here. Deliberately NOT the same shape as the pills it sits beside:
+     a reaction is white with a --border-strong outline and one you joined is --green-050, so a
+     --green-100 fill inside a full-strength --green border is a step past both, and the speech
+     bubble is a glyph nothing else in the row carries. --green-700 on --green-100 is 8:1.
+
+     Tinted rather than a solid --green fill, which was the other candidate. Saturation buys
+     little in a scan -- contrast against the neighbours is what the eye finds, and that is
+     already won -- while a solid block repeated down a busy channel is exactly the congestion
+     this is trying to avoid. If it needs to shout, this is the one declaration to change.
+
+     It survives on mid-run messages, where .msg:not(.msg-tail) hides the bare "Svar" and the
+     emoji picker: a burst of five messages shows the pill on whichever ones have threads and
+     nothing on the rest, which is the only reason that collapse is safe to do at all.
+
+     line-height:1 and 4px of vertical padding are copied off .reaction on purpose, not chosen:
+     it makes the pill exactly as tall as the reaction pills it shares the row with (13px/1 + 8 + 2
+     against 12.5px/1 + 8 + 2), so on any message carrying reactions the row does not grow by a
+     pixel. Inheriting the body's 1.5 would have made this the tallest thing in the row and pushed
+     every threaded message open. On a message with a thread and NO reactions the row still gains
+     about 7px over the plain text it replaces -- the only height this costs anywhere. */
+  .msg-replies.has-replies { display:inline-flex; align-items:center; gap:5px;
+    padding:4px 9px 4px 8px; border-radius:999px; font-weight:650; line-height:1;
+    background:var(--green-100); border:1px solid var(--green); color:var(--green-700); }
+  /* No underline on a pill -- the fill is the affordance. Lighten instead, the way .reaction does
+     the reverse, so hover reads as "liftable" rather than as text. */
+  .msg-replies.has-replies:hover { text-decoration:none; background:var(--green-050); }
+  /* Same reason as .msg-hint .ni: <use> clones the symbol into a shadow tree inheriting from THIS
+     svg, so without these it paints as a filled black blob. */
+  .msg-replies .ni { width:14px; height:14px; flex:none; stroke:currentColor; fill:none; }
 
   /* --- thread side panel (den_hurtige/_thread.html) -------------------------------------------
      Feed and panel side by side. #js-feed keeps every declaration it already had -- its
@@ -459,9 +725,27 @@
   .thread-back { display:none; }
   .thread-body { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:8px 0; }
   /* The message the thread hangs off. Rendered by the same partial as the feed's messages, with
-     `bare` set, so it never drifts from them. */
+     `bare` set, so it never drifts from them -- but it is NOT a chat bubble. It is the subject of
+     the panel, the one thing every reply below it refers to, so it reads as a heading: full width,
+     flat, left-aligned, and left-aligned even when it is your own message. A right-floating green
+     bubble at the top of a panel titled "Tråd" pointed at nothing.
+     Undoing the bubble takes all of these: the partial cannot know it is being rendered here. */
   .msg-parent { padding:0 0 8px; margin:0; border-radius:0;
     border-bottom:1px solid var(--border); background:none; }
+  /* flex-direction back to `row` because .msg-own reverses it, and `bare` does not suppress
+     .msg-own -- the parent of your own thread still carries the class. */
+  .msg-parent .msg-line { align-items:flex-start; flex-direction:row; }
+  .msg-parent .msg-avatar { display:grid; background:var(--brass); }
+  /* `color` and `filter` are undone alongside the background, and they have to be: `bare` does not
+     suppress .msg-own, so the parent of a thread on YOUR OWN message still carries it. Drop only
+     the green and the text stays white on the panel's paper -- an invisible heading. Both of these
+     rules come after .msg-own's in the file, which is what lets them win at equal specificity. */
+  .msg-parent .msg-bubble { max-width:none; padding:0; border-radius:0; background:none;
+    color:var(--ink); filter:none; }
+  .msg-parent .msg-meta { color:var(--faint); }
+  .msg-parent .msg-bubble::after { display:none; }
+  .msg-parent .msg-name { display:block; font-size:13.5px; }
+  .msg-parent .msg-actions { padding-left:44px; justify-content:flex-start; }
   .thread-replies { display:flex; flex-direction:column; }
   /* Pinned under the scroller rather than trailing the last reply. The base .reply-form rules
      below are shared with opslagstavlen's inline comment forms, which still want the indent, so
@@ -484,10 +768,131 @@
   @keyframes thread-in { from { translate: var(--thread-from, 24px) 0; opacity:0; } }
   .thread-panel { animation:thread-in .16s ease-out; }
   @media (prefers-reduced-motion: reduce) { .thread-panel { animation:none; } }
+  /* Swipe right to go back, the gesture the full-screen phone view otherwise lacks -- the ← button
+     was the only way out, and it is in the top-left corner of a screen held one-handed. Same
+     bargain as .msg: pan-y leaves the reply list scrolling natively and gives feed.ts the
+     horizontal axis, and the translate it sets lives only for the length of the drag. A resting
+     transform here would be the exact bug the block above warns about. */
+  .thread-panel { touch-action:pan-y; }
+  .thread-releasing { transition:translate .2s cubic-bezier(.22, .61, .36, 1); }
+  @media (prefers-reduced-motion:reduce) { .thread-releasing { transition:none; } }
   /* Widen the shell so two columns fit; .chat-shell is the components-layer replacement for the
      max-w-3xl utility feed.html used to set (a utility would out-specify this rule). */
   .chat-page .chat-shell { max-width:48rem; }
   body.chat-page:has(.thread-panel) .chat-shell { max-width:70rem; }
+
+  /* --- the archive, which is this same feed scrolled up (den_hurtige/_archive_chunk.html) -----
+     It was a docked side panel first. That was wrong for a reason that is obvious once the two are
+     next to each other: an archive of a chat that does not look like the chat makes you re-learn
+     how to read your own history. So there is no panel here at all -- archived messages are drawn
+     by the same partial, in the same column, in the same order, directly above the live ones. All
+     that separates them is a divider and one tone.
+
+     THE TONE IS ON THE BUBBLE, NOT ON THE TEXT. Greying the words would make the record harder to
+     read, which is the one thing it exists for. What changes is the surface the words sit on: an
+     incoming bubble cools from --surface (white) to --sunken, and your own drops from --green to a
+     desaturated slate. Both keep their text contrast -- the archive is as legible as the feed, it
+     just is not the same material. */
+  /* #E6E3DA, and it goes DARKER than the ground rather than lighter. The first attempt used
+     --sunken, which is the ground the feed already sits on -- so an archived incoming bubble had a
+     contrast ratio of 1.0 against the surface behind it and no visible edge at all, which is the
+     exact failure documented on #js-feed further up, reproduced by hand. Going lighter was not
+     available either: --surface is #FFFFFF, so the live bubble is already at the top of the range.
+     Down is the only direction left, and it is the right one anyway -- a recessed bubble reads as
+     older, which is what the archive is. --ink on it stays well above AA. */
+  /* :not(.msg-parent) ON EVERY ONE OF THESE, and it is load-bearing rather than tidy.
+     .msg-parent is the message a thread hangs off, and the block above deliberately UNDOES the
+     bubble on it -- no background, no shadow, no padding -- because it is the panel's heading, not
+     a chat bubble. Those rules win by coming later in the file at equal specificity, which is
+     exactly what the note on .msg-own's overrides says. Adding a plain `.msg-archived .msg-bubble`
+     after them broke that: an archived thread drew a grey slab across its own heading, and on your
+     own message the slate one won on specificity alone and put --ink text on a dark box.
+     Excluding the parent is what keeps the two independent, whichever order they end up in. */
+  .msg-archived:not(.msg-parent) .msg-bubble { background:#E6E3DA;
+    filter:drop-shadow(0 1px 1px rgba(24, 40, 30, .08)); }
+  /* Desaturated rather than lightened: a paler green reads as a *disabled* green, and these are
+     not disabled controls, they are finished messages. #5F6B63 against white sits at 5.1:1 for the
+     reversed text, which keeps it above AA at the 14px the bubbles are set at. */
+  .msg-archived.msg-own:not(.msg-parent) .msg-bubble { background:#5F6B63; }
+  /* An archived message with no reactions and no replies has nothing to put in its action row, and
+     an empty flex box still spends its margin. In the live feed the row always holds something --
+     the reaction picker and the "Svar" affordance are always drawn -- so this case only exists
+     here, where both of those are deliberately absent. */
+  .msg-archived .msg-actions:not(:has(.reaction, .msg-replies)) { display:none; }
+
+  /* THE LIVE FEED ALWAYS FILLS THE SCREEN, so scrolling back down puts the archive entirely out
+     of sight. Without this a channel holding one short message left the reader unable to get away
+     from its own history: the column was archive + divider + one bubble, so the bottom of the
+     scroll still had last month occupying most of the viewport, and there was nowhere to scroll to
+     that showed only what was live.
+
+     min-height rather than height: with a conversation long enough to fill the box this does
+     nothing at all, and with a short one it pads the live region out to a screen. The messages stay
+     top-aligned inside it, which is what puts a lone message at the TOP of the feed rather than
+     floating above the composer.
+
+     100% resolves against #js-feed's content box, which is its height less the 6/14px padding, so
+     at the very bottom a few pixels above the divider can technically still be in view -- they are
+     the divider's own bottom margin, i.e. blank. */
+  #js-live { min-height:100%; }
+
+  /* The boundary between the archive and the live feed, and the only thing that advertises the
+     archive exists. A centred rule with the hint sitting in a gap in it -- the shape every chat
+     uses for a date separator, which is what it is a sibling of. */
+  .feed-divider { display:flex; align-items:center; gap:10px; margin:14px 4px 10px;
+    font-size:11px; color:var(--muted); }
+  .feed-divider::before, .feed-divider::after { content:""; flex:1; height:1px;
+    background:var(--border); }
+  .feed-divider > span { flex:none; }
+
+  /* The sentinel htmx replaces with the chunk above it, and the marker at the far end. The sentinel
+     needs real height or its IntersectionObserver would fire the instant it is inserted, before the
+     reader has scrolled anywhere near it -- and it is what the reader looks at while a chunk is in
+     flight, so it may not collapse to nothing either. */
+  .archive-more { padding:16px 0 10px; text-align:center; font-size:12px; }
+  .archive-start { text-align:center; font-size:11.5px; padding:16px 0 10px; margin:0; }
+
+  /* Sticky date headings, drawn as a FLOATING CHIP rather than a full-width bar.
+
+     Sticky is worth having: scrolling back through months, "what am I looking at" is asked
+     continuously and answered by whichever heading has just gone off the top. But a stuck heading
+     paints over the message scrolling beneath it, and as a full-width band in the feed's own ground
+     colour that did not read as a label floating above the conversation -- it read as a rectangular
+     hole punched through the middle of a bubble, which is what it literally looked like on a long
+     message. A chip the width of its own text, a shade lighter than the ground and outlined, reads
+     as what it is. It is also the shape every other chat uses for the same job.
+
+     z-index:1 is safe against the `.pop` pickers, which are position:fixed at z-index 60/61 -- and
+     an archived message renders none anyway. */
+  /* The box a day's sticky heading is confined to -- see _archive_chunk.html for why it has to
+     exist. No styling of its own on purpose: the messages inside are the same partial the live
+     feed renders, and anything set here would apply to them and not to their live counterparts. */
+  .archive-dayblock { display:block; }
+  .archive-day { position:sticky; top:4px; z-index:1; width:fit-content;
+    margin:18px auto 4px; padding:3px 12px; border-radius:999px;
+    background:var(--paper); border:1px solid var(--border);
+    /* The shadow is what makes a STUCK chip legible. Parked at the top of the scrollport it sits
+       over whatever is passing beneath it, and on a long message that is the middle of a line --
+       flat, that reads as a word having been redacted rather than as a label in front of it. A
+       soft drop makes it obviously float. box-shadow creates no stacking context, so the `.pop`
+       rule this file repeats everywhere is not in play. */
+    box-shadow:0 1px 4px rgba(24, 40, 30, .14);
+    font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase;
+    color:var(--muted); }
+
+  /* An archived reaction row keeps its counts and its reader panels -- who reacted is a fact about
+     the archive, and exactly what somebody reading it back wants -- but the pills stop looking
+     pressable, because they have stopped being controls. */
+  .reactions.is-archived .reaction.is-static { cursor:default; background:var(--surface);
+    border-color:var(--border); }
+  .reactions.is-archived .reaction.is-static.is-mine { border-color:var(--brass); }
+  .thread-archived .reply-form { display:none; }
+
+  /* The standalone page (den_hurtige/archive.html): the no-JS half, paged with plain links. */
+  .archive-note { font-size:12px; line-height:1.5; color:var(--muted); margin:0 0 12px; }
+  .archive-page { padding:12px 18px; background:var(--sunken); }
+  .archive-pager { display:flex; justify-content:space-between; gap:12px; margin:14px 2px;
+    font-size:13px; }
 
   /* The standalone thread page (den_hurtige/thread.html), which is NOT the chat shell. */
   .thread-crumb { font-size:13px; margin:0 0 10px; }
@@ -510,6 +915,35 @@
   .reply-notify { display:inline-flex; align-items:center; gap:5px; margin:0; font-weight:500;
     font-size:12.5px; color:var(--muted); }
   .reply-notify input { width:auto; }
+  /* The attached filename, on its own row under the reply box (flex-basis:100% in a wrapping flex
+     row). Matches .composer-file, which does the same job for the channel composer. Only rendered
+     by den_hurtige/_thread.html, so opslagstavlen's comment forms — which share .reply-form — are
+     untouched. [hidden] needs saying because .reply-form's children are flex items, and display
+     from the flex context beats the UA sheet's display:none. */
+  /* --- attachment note (frontend/src/feed.ts) ------------------------------------------------
+     What a form shows once a photo is picked, shared by Den Hurtige's reply box and the comment
+     forms on opslagstavlen and begivenheder. `hidden` is toggled from JS, and the explicit
+     [hidden] rule is needed because `display:flex` would otherwise beat the UA stylesheet. */
+  .file-note { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted);
+    margin-top:6px; }
+  .file-note[hidden] { display:none; }
+  /* The same 40px box .arkiv-thumb uses, so a preview is a familiar size on this site. Sized in
+     CSS rather than by attributes: the intrinsic dimensions are whatever the camera produced. */
+  .file-note img { width:40px; height:40px; flex:none; object-fit:cover; border-radius:6px;
+    border:1px solid var(--border); background:var(--surface-2); }
+  .file-note img[hidden] { display:none; }
+  /* Truncates rather than wrapping: a phone camera's filename is long and the note sits in a row
+     that must not grow a second line under a comment box. */
+  .file-note [data-file-note-name] { min-width:0; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; }
+  /* Quiet, like .btn-link-danger, and to the right of the name so it is never what the thumb is
+     mistaken for. Not styled red: removing an attachment you have not sent yet is not destructive. */
+  .file-note button { margin-left:auto; flex:none; background:none; border:0; padding:0;
+    font:inherit; font-size:12px; color:var(--muted); cursor:pointer; text-decoration:underline; }
+  .file-note button:hover { color:var(--ink); }
+  /* In the reply row the note takes a line of its own, indented past the paperclip so it lines up
+     under the text field rather than under the icon. */
+  .reply-form .file-note { flex-basis:100%; padding-left:28px; margin-top:4px; }
 
   /* Grid rather than a flex row so the duration can move to its own line on a narrow screen —
      inline, its "30 minutter" select was eating ~40% of the width and squeezing the message box
@@ -518,8 +952,13 @@
     display:grid; grid-template-columns:auto 1fr auto auto; align-items:end; gap:8px;
     grid-template-areas:"attach main duration send";
     background:var(--paper); border-top:1px solid var(--border); margin:0 -30px; padding:10px 30px;
-    /* Clears the iPhone home indicator in the installed PWA (needs viewport-fit=cover). */
-    padding-bottom:calc(10px + env(safe-area-inset-bottom)); }
+    /* Clears the iPhone home indicator in the installed PWA (needs viewport-fit=cover), and the
+       Android navigation bar via --chat-system-bar where the inset is reported as 0 (frontend/src/
+       feed.ts sets it; the phone breakpoint below raises the default floor to 10px). Declared here
+       as well as there because the bar is a property of the DEVICE, not of the window width -- an
+       Android tablet PWA in landscape is over the 960px breakpoint and still has one. */
+    padding-bottom:calc(10px + max(env(safe-area-inset-bottom, 0px),
+                                   var(--chat-system-bar, 0px))); }
   .composer-attach { grid-area:attach; }
   .composer-main { grid-area:main; }
   .composer-duration { grid-area:duration; }
@@ -549,13 +988,21 @@
     .channel-picker > summary, .channel-single { font-size:16px; }
     .channel-menu { min-width:210px; }
     .push-bar button, .chat-mute button { padding:3px 10px; font-size:12px; }
-    /* Tighter message boxes: smaller avatar, less padding, tighter leading. */
-    .msg { grid-template-columns:26px 1fr; gap:8px; padding:4px 8px; margin-top:4px; }
+    /* Tighter bubbles: smaller avatar, less padding, tighter leading. The bubble cap goes UP, not
+       down -- 80% of a 360px column is 288px, and the narrower the screen the more a low cap costs
+       in wrapped lines for no gain in readability. */
+    .msg { padding:0 8px; margin-top:8px; }
+    .msg-grouped { margin-top:2px; }
+    .msg-line { gap:9px; }
     .msg-avatar { width:26px; height:26px; font-size:11px; }
-    .msg-name { font-size:13.5px; }
+    .msg-bubble { max-width:86%; padding:5px 10px 6px; }
+    .msg-name { font-size:12px; }
     .msg-text { font-size:14.5px; line-height:1.35; }
-    .msg-actions { gap:8px; margin-top:4px; }
-    .reaction, .reaction-add, .reaction-who { padding:3px 8px; font-size:12.5px; }
+    /* Tracks the avatar and gap above, so the row stays flush with the bubble. */
+    .msg-actions { gap:8px; margin-top:3px; padding-left:35px; }
+    .msg-own .msg-actions { padding-left:0; }
+    .msg-parent .msg-actions { padding-left:35px; }
+    .reaction, .reaction-add { padding:3px 8px; font-size:12.5px; }
     /* Bottom sheet on a phone: easier to reach one-handed than a centred box, and anchoring to the
        bottom keeps it out of the way of the emoji keyboard the free-text field opens. */
     /* Freeze the page while a sheet is open. The sheet is position:fixed against the LAYOUT
@@ -588,9 +1035,14 @@
     /* Back arrow instead of the ×: this is a whole screen, so it reads as "back to the messages". */
     .thread-back { display:block; }
     .thread-x { display:none; }
-    /* Same floor as the composer -- the reply box is now the bottom-most control on the screen. */
-    .thread-panel .reply-form { padding-bottom:calc(10px + max(env(safe-area-inset-bottom, 0px), 10px)); }
-    #js-feed { padding:2px 0 8px; }
+    /* Same floor as the composer -- inside a full-screen thread the reply box is the bottom-most
+       control on the screen, so it sits over the same system bar. */
+    .thread-panel .reply-form { padding-bottom:calc(10px + max(env(safe-area-inset-bottom, 0px),
+                                                               var(--chat-system-bar, 10px))); }
+    /* Gutters are 18px at this breakpoint, not 30 (see .chat-head above), so the bleed and the
+       padding that puts it back both have to track that or the sunken ground stops short of the
+       screen edge on a phone -- the one place it matters most. */
+    #js-feed { margin:0 -18px; padding:2px 18px 8px; }
     /* Duration keeps its own row so the message box gets the full width — but ABOVE the input,
        not below it. Underneath, it was the bottom-most element of a shell that is height-locked at
        100dvh with overflow:hidden, which put it directly behind the Android system navigation bar
@@ -614,8 +1066,16 @@
                           "attach main send"; }
     .composer-duration { justify-self:start; }
     /* Belt and braces on top of the reorder: a floor under the inset, so nothing lands flush
-       against a bar even where env() reports nothing. */
-    .composer { padding-bottom:calc(10px + max(env(safe-area-inset-bottom, 0px), 10px)); }
+       against a bar even where env() reports nothing.
+
+       --chat-system-bar is normally ABSENT, and then this is the 10px floor it has always been.
+       frontend/src/feed.ts sets it to a navigation bar's height on exactly one configuration --
+       an installed Android PWA that paints a system bar over the page while reporting its inset as
+       0 -- which is the case residents reported the composer clipped on. Where env() answers
+       honestly (every iPhone, and Android when it behaves) it is larger than the floor, max() picks
+       it, and nothing here changes. */
+    .composer { padding-bottom:calc(10px + max(env(safe-area-inset-bottom, 0px),
+                                               var(--chat-system-bar, 10px))); }
   }
 
   /* --- banners (preview / dev clock) --- */
@@ -651,7 +1111,10 @@
   .prose-gahk h3 { @apply text-lg font-semibold mt-4 mb-1; }
   .prose-gahk ul { @apply list-disc ml-6 my-3; }
   .prose-gahk ol { @apply list-decimal ml-6 my-3; }
-  .prose-gahk a { @apply text-emerald-700 underline; }
+  /* overflow-wrap, because a link is now the one thing in here that can be unbreakable: linkify
+     turns a bare pasted URL into an <a>, and its shortened TEXT is still 42 characters with no
+     space in it. Without this a long one pushes the card wider than the column on a phone. */
+  .prose-gahk a { @apply text-emerald-700 underline; overflow-wrap:anywhere; }
   .prose-gahk img { @apply max-w-full h-auto rounded my-3; }
   .prose-gahk blockquote { @apply border-l-4 border-emerald-700 pl-4 my-4 italic text-gray-700; }
   /* Added for rendered Markdown (opslagstavlen). Migrated CMS pages get them too, which is a bonus
@@ -837,6 +1300,24 @@
   .cal-open { background: var(--surface); color: var(--ink); border: 1px solid var(--border-strong); }
   .cal-event.is-cancelled { text-decoration: line-through; opacity: .7; }
 
+  /* Fødselsdage. NO fill or stroke rule anywhere near .cal-flag, and that is deliberate: every
+     other icon on the site is a monochrome <use> that inherits `stroke: currentColor; fill: none`
+     from its wrapper, and either of those would erase the flag — the symbol carries its own red
+     and white as presentation attributes (see the sprite in base.html), which win over what the
+     shadow tree inherits only as long as nothing sets the properties on this element.
+     The hairline ring is what keeps a white cross legible on a white cell. */
+  .cal-flag { width: 15px; height: 11.4px; flex: none; border-radius: 1.5px;
+    box-shadow: 0 0 0 .5px rgb(0 0 0 / .18); }
+
+  /* The desktop note: a flag and a first name, quiet enough not to be mistaken for an event chip.
+     No background and no border — the chips above it have both, and that contrast IS the signal
+     that this is a fact about the day rather than something you can answer or open. */
+  .cal-birthday { display: flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600;
+    color: var(--muted); line-height: 1.3; min-width: 0; }
+  .cal-birthday-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The phone marking, hidden here — see the media query at the end of this block. */
+  .cal-flag-mark { display: none; }
+
   /* The dots and the whole-cell tap link: the phone rendering, hidden at desktop widths. Both live
      in every cell (see calendar.html) and the media query below decides which half is on screen. */
   .cal-dots { display: none; flex-wrap: wrap; gap: 3px; }
@@ -868,6 +1349,10 @@
     font-variant-numeric: tabular-nums; }
   .cal-day-title { font-size: 14.5px; font-weight: 600; flex: 1; min-width: 0; }
   .cal-day-title.is-cancelled { text-decoration: line-through; opacity: .7; }
+  /* A birthday has no clock, so the flag stands in the time column and the row lines up with the
+     events under it rather than starting its text somewhere of its own. */
+  .cal-day-birthday .cal-day-time { display: inline-flex; align-items: center; }
+  .cal-day-birthday .cal-flag { width: 20px; height: 15.1px; }
   .cal-day-empty { margin: 0; padding: 14px; font-size: 14px; }
 
   /* PHONE. The month stops being a wall of text and becomes what a phone calendar actually is: a
@@ -886,6 +1371,13 @@
     .cal-event { display: none; }
     .cal-dots { display: flex; justify-content: center; max-width: 100%; }
     .cal-daytap { display: block; }
+    /* Forty pixels of column will not hold a name, so the flag becomes the whole marking — which is
+       also what a Danish paper calendar does with the day. One per cell, whatever the panel below
+       goes on to list. It sits in the flow beside the dots rather than pinned to a corner: the
+       cell is a centred column, so a day with both gets a flag and its dots stacked and centred,
+       and a day with only a birthday does not leave a hole where the dots would have been. */
+    .cal-birthday { display: none; }
+    .cal-flag-mark { display: block; width: 14px; height: 10.6px; }
   }
 
   .feed-box { display: flex; flex-direction: column; gap: 14px; }
@@ -913,11 +1405,26 @@
   .board-filters { @apply flex flex-wrap gap-2 mb-4; }
   .board-filters .chip { @apply no-underline; }
   .board-filters .chip.is-active { background: var(--green); color: #fff; border-color: var(--green); }
-  /* Tight vertical rhythm: the feed is scanned, so the gap only has to say "separate card", and
-     more than that costs posts-per-screen. The card border does most of the separating work. */
-  .board-list { @apply flex flex-col gap-2; }
-  .board-pinned { @apply mb-2; }
-  .notice-card { @apply px-4 py-3; }
+  /* Vertical rhythm: the feed is scanned, so the gap only has to say "separate card" -- the card
+     border does most of the separating work -- but 8px was under the point where it said it, and
+     cards ran together into one column of text. 12px reads as separate posts.
+
+     PAID FOR OUT OF THE TYPE, NOT OUT OF POSTS-PER-SCREEN, which is the constraint this block has
+     always been written against. The header lost 2px of avatar, a point of name and a point of
+     meta, the body went from 16px to 15px, and an edited post's byline stopped wrapping to a
+     second line (see the meta block in _notice_card.html) -- so the card is no taller than it was
+     with 8px gaps and 12px padding, and a screenful holds what it held. The room went into the
+     margins instead of into the ink, which is what "congested" was actually about. */
+  .board-list { @apply flex flex-col gap-3; }
+  .board-pinned { @apply mb-3; }
+  .notice-card { @apply px-4; padding-block: 14px; }
+  /* 15px, not the inherited 16. A card in a scanned list is not a page of prose: at 16px with
+     leading-relaxed the excerpt was the loudest thing on the board and left the padding looking
+     thin by comparison. 15/1.62 holds three lines in about the height 16/1.625 held them and
+     gives the same block visibly more room inside the card.
+     Scoped to the card so .prose-gahk keeps its page size on CMS pages -- and .board-body is also
+     the compose preview (_preview.html), which SHOULD match the card it is previewing. */
+  .notice-card .board-body { font-size: 15px; line-height: 1.62; }
   /* .prose-gahk gives every block a top+bottom margin, which inside a card is dead space at the
      edges — ~24px per card, i.e. a post per screen on a phone. Trimmed only at the boundaries, and
      only inside a card, so CMS pages keep their spacing. */
@@ -961,8 +1468,19 @@
   .notice-gallery-count { @apply text-sm; }
   .notice-head { @apply flex items-start justify-between gap-3; flex-wrap: nowrap; }
   .notice-headline { flex: 1; min-width: 0; }
-  .notice-tags { @apply flex flex-wrap items-center gap-2 mb-1; }
+  .notice-tags { @apply flex flex-wrap items-center gap-2; margin-bottom: 6px; }
   /* "Handler om <begivenhed>". A brass chip so it does not read as a second category. */
+  /* The author's embedsgruppe, beside their name on a card and on a comment. Quiet on purpose --
+     it is context, not a status, and EVERY byline carries one, so at .chip's default green a page
+     of posts read as a wall of badges with nothing standing out.
+
+     display:inline-block rather than .chip's inline-flex: a flex container has no text of its own,
+     so text-overflow has nothing to clip. The ellipsis only ever fires where the row cannot wrap
+     (.reply-head is nowrap, because .msg-del is pushed right with margin-left:auto); on a card the
+     pill drops to the next line instead. min-width:0 is what lets it shrink at all. */
+  .chip-embedsgruppe { display: inline-block; background: var(--surface-2); color: var(--muted);
+    border-color: var(--border-strong); font-size: 11px; padding: 1px 8px; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; }
   .chip-event { background: var(--warn-bg); color: var(--brass-ink); border-color: #e7d8b0;
     display: inline-flex; align-items: center; gap: 5px; text-decoration: none; max-width: 100%;
     overflow: hidden; text-overflow: ellipsis; }
@@ -1006,19 +1524,29 @@
   .notice-menu .pop-backdrop { background: transparent; }
 
   .notice-author { @apply flex items-center gap-2.5; min-width: 0; }
-  .notice-avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--brass);
-    color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 13px; flex: none;
+  /* 34px rather than 36: the avatar is the tallest thing in the header, so it alone sets the row's
+     height, and two pixels off it come straight off every card in the feed. */
+  .notice-avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--brass);
+    color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 12.5px; flex: none;
     text-transform: uppercase; }
   .notice-byline { @apply flex flex-col; min-width: 0; }
-  .notice-name { @apply font-semibold leading-snug; color: var(--ink); }
-  .notice-meta { @apply text-sm; }
+  .notice-name { @apply font-semibold leading-snug; font-size: 15px; color: var(--ink); }
+  /* Name and embedsgruppe pill share the byline's first line; the timestamp keeps the second.
+     Wrapping, not truncating: "Legat- og kunstgruppen" is wider than the gap beside a name on a
+     phone, and a pill reading "Legat- og kuns..." names no group anyone recognises. min-width:0 so
+     a long name still lets the row shrink inside the card. */
+  .notice-nameline { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
+  /* 13px: this is the quietest line in the card and was competing with the name at 14. Together
+     with the short form the feed now renders (see _notice_card.html) an edited post's byline fits
+     on one line at phone width, which is where the wrapping came from. */
+  .notice-meta { font-size: 13px; }
   /* The timestamp is the permalink. Undecorated so the header reads as a byline rather than a row
      of links -- the whole card is the real tap target (see .is-clickable). */
   .notice-meta a { @apply no-underline; color: inherit; }
   .notice-meta a:hover { color: var(--green-700); text-decoration: underline; }
   .notice-actions { @apply flex items-center gap-2 shrink-0; }
   .notice-actions form { @apply m-0; }
-  .notice-foot { @apply flex items-center justify-between gap-3 flex-wrap mt-2; }
+  .notice-foot { @apply flex items-center justify-between gap-3 flex-wrap; margin-top: 10px; }
   .notice-comments-link { @apply text-sm; }
   .notice-comments { @apply mt-6; }
   .notice-comments h2 { @apply text-base font-semibold mb-2; }
@@ -1081,4 +1609,347 @@
   .lineage li > ul > li:first-child::after { top: 50%; }
   .lineage li > ul > li:last-child::after { bottom: 50%; }
   .lineage li > ul > li:only-child::after { display: none; }
+
+  /* ---- Reparationer (repair-tracking kanban) ----------------------------------------------------
+     .board-search: input grows, the two buttons stay their natural width — flex-wrap so it still
+     works stacked on a narrow phone rather than squeezing the input to nothing.
+
+     Cards are dragged between columns by frontend/src/reparationer.ts (pointer events, so a finger
+     works too), never by a drag-and-drop library — the whole gesture is "put this card in that
+     column", and a dependency would be more code than the thing it does. The "move to…" buttons on
+     a ticket's detail page stay the way through for keyboards, screen readers and a board with no
+     JavaScript, so nothing here is the only route to a status change.
+
+     Flex + overflow-x rather than a grid: `min-width` on each column gives it a floor it cannot
+     shrink below, so on a phone the row overflows and becomes a native horizontal swipe (one column
+     at a time, with the next one peeking in as the affordance) instead of Tailwind's default of
+     squeezing five columns unreadably narrow or wrapping them into a five-screen-tall stack. On a
+     desktop-width board the same columns simply grow (`flex:1`) to fill the row and there is
+     nothing to scroll — one rule, no media query. */
+  .board-search { @apply flex flex-wrap gap-2; }
+  .board-search input { flex: 1 1 200px; }
+  .kanban { @apply flex gap-4; overflow-x: auto; padding-bottom: 4px; scroll-snap-type: x proximity; }
+  .kanban-col { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 12px; display: flex; flex-direction: column; gap: 10px; max-height: 75vh;
+    flex: 1 0 240px; min-width: 240px; scroll-snap-align: start; }
+  .kanban-col-head { @apply flex items-center justify-between; font-weight: 700; font-size: 14px; padding: 0 2px; }
+  /* Cards scroll independently of the column header/count and of the other columns: without
+     min-height:0 a flex child defaults to min-height:auto, which ignores overflow entirely and lets
+     the column grow to fit every card instead — the bug this rule exists to prevent. */
+  .kanban-col-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+  .kanban-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-sm); padding: 12px; position: relative; }
+  .kanban-card h3 { font-size: 14px; font-weight: 700; margin: 0 0 4px; }
+  /* The whole tile opens the ticket, not just the four words of its title. The title's own link is
+     stretched over the card rather than the card being given a click handler: it stays one real
+     <a> — keyboard-focusable, middle-clickable, shown in the status bar on hover — and it works
+     with no JavaScript at all. The note-count link underneath points at the same page, so nothing
+     is lost by covering it. */
+  .kanban-card h3 a::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
+  .kanban-card:hover { border-color: var(--green-100); }
+  .kanban-card p { margin: 0 0 4px; font-size: 13px; }
+  .kanban-empty { font-size: 13px; padding: 0 2px; }
+  .kanban-move { @apply flex flex-wrap gap-1 mt-2; }
+  .kanban-move form { display: inline; }
+  .kanban-move button { @apply text-xs; background: var(--surface-2); border: 1px solid var(--border-strong);
+    border-radius: 6px; padding: 3px 7px; cursor: pointer; }
+  .kanban-move button:hover { background: var(--green-050); border-color: var(--green); color: var(--green-700); }
+  .kanban-danger { color: var(--neg); border-color: #e7c7c3 !important; }
+  .kanban-danger:hover { background: var(--neg-bg) !important; border-color: var(--neg) !important; color: var(--neg) !important; }
+
+  /* ---- Dragging a card (frontend/src/reparationer.ts) -----------------------------------------
+     Only a board that CAN be dragged says so: [data-can-move="1"] is the server's answer to "may
+     this person move tickets" (views.MOVE_ROLES), so nobody else gets a grab cursor promising a
+     gesture that would be refused. */
+  .kanban[data-can-move="1"] .kanban-card { cursor: grab; touch-action: pan-y; -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none; }
+  /* Belt to reparationer.ts's braces on dragstart: the card is one big link (see below), and a
+     browser drags a link natively unless told not to. */
+  .kanban-card a { -webkit-user-drag: none; }
+  /* The real card, left behind in its old column while the ghost is carried: dimmed rather than
+     removed, so the columns hold their layout and a refused drop is simply nothing happening. */
+  .kanban-card.is-dragging { opacity: .4; }
+  /* The clone under the pointer. pointer-events:none so elementFromPoint sees the column beneath
+     it and not the thing being dragged. */
+  .kanban-ghost { position: fixed; z-index: 60; pointer-events: none; margin: 0; cursor: grabbing;
+    box-shadow: var(--shadow); transform: rotate(1.5deg); opacity: .95; }
+  body.kanban-dragging { cursor: grabbing; }
+  /* See reparationer.ts: while a card is being carried, the board scrolls itself a few pixels at a
+     time when the card is held near an edge, and snap points would undo each of those nudges. */
+  .kanban.is-dragging-board { scroll-snap-type: none; }
+  .kanban-col.is-drop-target { border-color: var(--green); background: var(--green-050); }
+  /* A Vicevært over "AK projekt" or "Færdig": the column says no before the finger lifts, rather
+     than the card snapping back a moment later with an explanation. */
+  .kanban-col.is-drop-refused { border-color: var(--neg); background: var(--neg-bg); }
+  .kanban-note { font-size: 13px; }
+
+  /* --- Arkiv -------------------------------------------------------------------------------
+     A file browser is a list, not a grid: names are the thing being scanned, they are long and of
+     wildly different lengths, and a grid would either truncate them or leave rivers of whitespace.
+     Reuses .card-flat/.chip/.icon rather than inventing an Arkiv look. */
+  .breadcrumb { display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-size:13px; }
+  .breadcrumb a { color:var(--brass); text-decoration:none; }
+  .breadcrumb a:hover { text-decoration:underline; }
+  .breadcrumb [aria-hidden] { color:var(--muted); }
+  .breadcrumb [aria-current] { color:var(--muted); }
+
+  .arkiv-list { list-style:none; margin:0; padding:0; border:1px solid var(--line); border-radius:10px;
+    overflow:hidden; background:var(--card); }
+  .arkiv-list li { display:flex; align-items:center; gap:10px; padding:10px 14px;
+    border-bottom:1px solid var(--line); }
+  .arkiv-list li:last-child { border-bottom:0; }
+  .arkiv-list li > a { display:flex; align-items:center; gap:10px; flex:1 1 auto; min-width:0;
+    color:inherit; text-decoration:none; }
+  .arkiv-list li > a:hover .arkiv-name { text-decoration:underline; }
+  /* There is no base `.ni` rule in this stylesheet - every use states its own size, stroke and
+     fill (see .nav-item .ni, .chip .ni). Omitting them renders the symbol at its intrinsic
+     size, which is how the folder icon first came out enormous. */
+  .arkiv-list .ni { width:18px; height:18px; flex:none; stroke:currentColor; fill:none;
+    color:var(--brass); }
+   .arkiv-lock-status { width:14px; height:14px; flex:none; stroke:currentColor; fill:none;
+      color:var(--muted); }
+   .arkiv-list .arkiv-lock-status { color:var(--muted); }
+  /* The name truncates rather than wrapping: one row per file keeps a long folder scannable, and
+     the full name is still in the link's accessible name. */
+  .arkiv-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .arkiv-meta { flex:0 0 auto; font-size:12px; }
+
+  /* Same box as the .ni icon it replaces, so a folder of mixed images and documents does not
+     jag left and right down the list. object-fit keeps portraits from stretching. */
+  .arkiv-thumb { width:40px; height:40px; flex:none; object-fit:cover; border-radius:4px;
+    background:var(--surface-2); }
+
+  /* The gallery: a folder that is mostly pictures (views.is_gallery). */
+
+  .arkiv-grid { list-style:none; margin:0; padding:0; display:grid; gap:8px;
+    grid-template-columns:repeat(auto-fill, minmax(104px, 1fr)); }
+  /* minmax rather than a fixed count, so a phone gets three across and a desktop gets ten without
+     a breakpoint for each. 104px is about the smallest a face is still recognisable at. */
+  .arkiv-grid li { position:relative; }
+  /* -webkit-user-drag covers the anchor: a link is draggable in its own right, so without this a
+     drag beginning on a tile becomes the browser dragging a URL. draggable="false" on the image
+     handles the other half - see browse.html. */
+  .arkiv-grid li > a { display:block; border-radius:8px; overflow:hidden; text-decoration:none;
+    color:inherit; -webkit-user-drag:none; }
+  /* Square tiles whatever the photograph's shape: a ragged grid of mixed portraits and landscapes
+     is much harder to scan than a uniform one, and the viewer shows the real aspect ratio. */
+  .arkiv-tile-img { display:block; width:100%; aspect-ratio:1; object-fit:cover;
+    background:var(--surface-2); }
+  /* IN THE GRID, a long press means SELECT, so the native "save image" callout has to go. In the
+     viewer it means SAVE, and there the callout is the whole feature - see .imgviewer-stage img.
+     The split is deliberate: the same gesture on a thumbnail and on the full picture are different
+     requests. */
+  .arkiv-grid li > a img { -webkit-touch-callout:none; }
+  .arkiv-grid .arkiv-name { display:block; padding:4px 6px 6px; font-size:12px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* The grid earns its density by dropping the columns: size and uploader are still on the row in
+     list folders, and in the viewer. A tile that carries them is a row with extra steps. */
+  .arkiv-grid .arkiv-meta { display:none; }
+  /* Top right, opposite the checkbox, and only once the tile is under the cursor or holds focus.
+     It used to sit over the middle of the picture at all times, in link-coloured text on whatever
+     the photograph happened to be - unreadable on half of them and in the way on the rest. The pill
+     is what makes it legible over an arbitrary image; hiding it is what keeps a folder of two
+     hundred photographs from being a folder of two hundred delete buttons. */
+  .arkiv-grid .arkiv-remove { position:absolute; top:6px; right:6px; opacity:0; transition:opacity .12s; }
+  .arkiv-grid li:hover .arkiv-remove,
+  .arkiv-grid li:focus-within .arkiv-remove { opacity:1; }
+  .arkiv-grid .arkiv-remove .btn-link-danger { background:rgb(0 0 0 / 0.55); color:#fff;
+    border-radius:999px; padding:3px 8px; text-decoration:none; }
+  .arkiv-grid .arkiv-remove .btn-link-danger:hover { background:var(--neg); color:#fff; }
+  /* Touch has no hover, so the control would be unreachable. In selection mode it stays out of the
+     way, because that is when a stray tap on it would be most expensive. */
+  @media (hover:none) {
+    .arkiv-grid .arkiv-remove { opacity:1; }
+    .arkiv-selecting .arkiv-remove { opacity:0; pointer-events:none; }
+  }
+  .arkiv-grid .ni { width:40px; height:40px; margin:24px auto; display:block; color:var(--muted); }
+
+   /* --- Photo album ------------------------------------------------------------------------- */
+   .album-heading { display:flex; align-items:end; justify-content:space-between; gap:16px; margin-bottom:28px; }
+   .album-heading h1 { margin:0; font-family:Georgia, serif; font-size:32px; color:var(--ink); }
+   .album-eyebrow { margin:0 0 5px; color:var(--brass); font-size:12px; font-weight:700; letter-spacing:0; text-transform:uppercase; }
+   .album-folders { display:grid; gap:28px; }
+   .album-folder { border-top:1px solid var(--line); padding-top:16px; }
+   .album-folder h2 { display:flex; align-items:center; gap:8px; margin:0 0 12px; font-size:16px; }
+   .album-folder h2 svg, .album-subtitle svg { width:19px; height:19px; color:var(--brass); fill:none; stroke:currentColor; }
+   .album-folder-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:10px; }
+   .album-card { display:grid; grid-template-columns:30px 1fr; gap:2px 10px; min-height:82px; padding:14px;
+      border:1px solid var(--line); border-radius:8px; color:inherit; text-decoration:none; background:var(--card); }
+   .album-card:hover { border-color:var(--brass); background:var(--surface-2); }
+   .album-card svg { grid-row:span 2; width:28px; height:28px; fill:none; stroke:var(--brass); }
+   .album-card-name { align-self:end; font-weight:650; }
+   .album-card-count { align-self:start; color:var(--muted); font-size:12px; }
+   .album-empty { margin:24px 0; color:var(--muted); }
+   .album-back { color:var(--brass); font-size:13px; text-decoration:none; }
+   .album-back:hover { text-decoration:underline; }
+   .album-subtitle { display:flex; align-items:center; gap:6px; margin:6px 0 0; color:var(--muted); }
+   .album-locked { padding:6px 10px; border-radius:5px; color:var(--neg); background:var(--neg-bg); font-size:13px; }
+   .album-actions, .album-actions form, .album-media-controls, .album-media-controls form { display:flex; align-items:center; gap:8px; margin:0; }
+   .album-upload { display:flex; align-items:stretch; gap:10px; padding:12px; margin:0 0 22px; border:1px dashed var(--line); border-radius:8px; background:var(--surface-2); }
+   .album-file-picker { flex:1 1 260px; min-width:0; display:grid; cursor:pointer; }
+   .album-file-picker input { position:absolute; inline-size:1px; block-size:1px; opacity:0; }
+   .album-file-picker span { color:var(--brass); font-weight:650; }.album-file-picker small { color:var(--muted); }
+   .album-upload > input { flex:1 1 180px; min-width:0; }
+   .album-upload-selection { margin:-14px 0 22px; padding:10px 12px; border:1px solid var(--line); border-radius:6px; background:var(--surface-2); }
+   .album-upload-selection p { margin:0 0 5px; font-size:13px; font-weight:650; }.album-upload-selection ul { max-height:132px; margin:0; padding-left:20px; overflow:auto; color:var(--muted); font-size:13px; }
+   .album-media-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(138px, 1fr)); gap:8px; }
+   .album-media-item { min-width:0; }.album-media-tile { position:relative; width:100%; min-width:0; padding:0; overflow:hidden; border:0; border-radius:7px; background:var(--surface-2); color:var(--ink); text-align:left; cursor:pointer; }
+   .album-media-tile img, .album-media-tile video { display:block; width:100%; aspect-ratio:1; object-fit:cover; background:var(--surface-2); }
+   .album-media-tile strong, .album-video-mark { position:absolute; top:6px; left:6px; padding:3px 6px; border-radius:4px; background:rgb(0 0 0 / .68); color:#fff; font-size:11px; }
+   .album-video-mark { left:auto; right:6px; }
+   .album-media-tile:hover img, .album-media-tile:hover video, .album-media-tile:focus-visible img, .album-media-tile:focus-visible video { filter:brightness(.84); }
+   /* A video whose derivatives are still being built out of band (photo_album DerivativeState):
+      same footprint as a real tile so the grid does not reflow when the thumbnail appears. */
+   .album-media-placeholder { display:flex; aspect-ratio:1; flex-direction:column; align-items:center; justify-content:center; gap:4px; padding:10px; border:1px dashed var(--line); background:var(--surface-2); color:var(--muted); text-align:center; cursor:default; }
+   .album-media-placeholder strong { position:static; background:none; color:var(--ink); font-size:12px; }
+   .album-media-placeholder[data-kind="failed"] strong { color:var(--neg); }
+   .album-media-placeholder-title { overflow:hidden; max-width:100%; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+   .album-media-placeholder small { font-size:11px; }
+   .album-media-origin { margin:5px 4px 0; overflow:hidden; color:var(--muted); text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+   .album-media-controls { min-height:22px; padding:3px 4px; justify-content:center; }.album-media-controls button { border:0; background:none; padding:0; color:var(--brass); cursor:pointer; font:inherit; font-size:12px; }.album-media-controls .btn-link-danger { color:var(--neg); }
+   .album-viewer { display:none; width:min(1120px, calc(100vw - 32px)); height:min(760px, calc(100vh - 32px)); max-width:none; max-height:none; margin:auto; padding:0; border:0; border-radius:8px; color:var(--ink); background:var(--card); }
+   .album-viewer::backdrop { background:rgb(5 12 9 / .88); }
+   .album-viewer[open] { display:grid; grid-template-columns:minmax(0, 1fr) 260px; grid-template-rows:minmax(0, 1fr); overflow:visible; }
+   .album-viewer-stage { min-width:0; min-height:0; display:grid; place-items:center; overflow:hidden; padding:24px; box-sizing:border-box; background:#111; }
+   .album-viewer-stage img, .album-viewer-stage video { display:block; width:100%; height:100%; min-width:0; min-height:0; max-width:100%; max-height:100%; object-fit:contain; transform-origin:center; }
+   .album-viewer aside { padding:28px 20px; overflow:auto; color:#f6f3ea; background:#26332d; }.album-viewer h2 { margin:0 0 18px; color:#fffdf7; font-family:Georgia, serif; font-size:22px; }.album-viewer dl { margin:0 0 24px; }.album-viewer dt { margin-top:10px; color:#d2ddd4; font-size:12px; }.album-viewer dd { margin:2px 0 0; color:#fffdf7; }
+   .album-viewer-mobile-date, .album-viewer-menu, .album-viewer-menu-button { display:none; }.album-viewer-close, .album-viewer-arrow { position:absolute; display:grid; place-items:center; width:38px; height:38px; border:0; border-radius:50%; background:rgb(0 0 0 / .64); color:#fff; font-size:24px; cursor:pointer; }.album-viewer-close { top:-12px; right:-12px; }.album-viewer-arrow { top:calc(50% - 19px); }.album-viewer-previous { left:-48px; }.album-viewer-next { right:-48px; }
+   @media (max-width:720px) { .album-heading { align-items:start; flex-direction:column; }.album-upload { flex-wrap:wrap; }.album-upload > input { min-height:38px; }.album-media-grid { grid-template-columns:repeat(auto-fill, minmax(110px, 1fr)); }.album-viewer { width:100vw; height:100dvh; max-height:none; margin:0; border-radius:0; background:#111; }.album-viewer[open] { grid-template-columns:1fr; grid-template-rows:minmax(0, 1fr) auto; overflow:hidden; }.album-viewer-stage { height:auto; padding:58px 16px 16px; touch-action:pan-y; }.album-viewer-stage img { max-height:none; }.album-viewer aside { padding:12px 62px 14px 16px; overflow:visible; background:#111; }.album-viewer aside .album-eyebrow, .album-viewer aside dl, .album-viewer aside > .btn, .album-viewer aside form, .album-viewer-arrow { display:none; }.album-viewer h2 { margin:0; font-size:17px; }.album-viewer-mobile-date { display:block; margin:3px 0 0; color:#d2ddd4; font-size:13px; }.album-viewer-close { top:10px; right:10px; z-index:2; }.album-viewer-menu-button { position:absolute; z-index:2; top:10px; right:56px; display:grid; place-items:center; width:38px; height:38px; padding:0; border:0; border-radius:50%; background:rgb(0 0 0 / .64); color:#fff; font-size:25px; line-height:1; cursor:pointer; }.album-viewer-menu { position:absolute; z-index:3; top:56px; right:10px; display:block; width:min(300px, calc(100vw - 20px)); max-height:calc(100dvh - 130px); padding:16px; overflow:auto; box-sizing:border-box; border-radius:6px; color:#fffdf7; background:#26332d; box-shadow:0 12px 32px rgb(0 0 0 / .42); }.album-viewer-menu[hidden] { display:none; }.album-viewer-menu dl { margin:0 0 18px; }.album-viewer-menu dt { margin-top:10px; color:#d2ddd4; font-size:12px; }.album-viewer-menu dd { margin:2px 0 0; }.album-viewer-menu form { margin-top:12px; } }
+
+  /* The checkbox sits on the picture rather than beside it. Hidden until there is a reason to show
+     it - a selection in progress, a hover, or keyboard focus - so an ordinary browse is pictures
+     rather than pictures plus a hundred empty boxes. */
+  .arkiv-grid .arkiv-pick { position:absolute; top:6px; left:6px; z-index:1; margin:0;
+    width:22px; height:22px; opacity:0; transition:opacity .12s; }
+  .arkiv-grid li:hover .arkiv-pick,
+  .arkiv-grid .arkiv-pick:focus-visible,
+  .arkiv-grid .arkiv-pick:checked,
+  .arkiv-selecting .arkiv-pick { opacity:1; }
+  /* Touch has no hover, so without this the boxes would only ever appear once something was
+     already selected - which is the one moment you no longer need to be told they exist. */
+  @media (hover:none) {
+    .arkiv-grid .arkiv-pick { opacity:0; }
+    .arkiv-selecting .arkiv-pick { opacity:1; }
+  }
+
+  /* Selected, in either layout. A ring rather than a tint: a tint changes the photograph, and
+     picking the right ten pictures out of two hundred is exactly when you need them unaltered. */
+  .arkiv-grid li:has(.arkiv-pick:checked) > a { outline:3px solid var(--green-700);
+    outline-offset:-3px; }
+  .arkiv-grid li:has(.arkiv-pick:checked) .arkiv-tile-img { filter:brightness(.92); }
+  .arkiv-list li:has(.arkiv-pick:checked) { background:var(--surface-2); }
+
+  /* While a drag is in progress. Scrolling is suppressed on the container rather than the page, so
+     the gesture cannot be read as a scroll half way through and leave a partial selection. */
+  .arkiv-dragging { touch-action:none; -webkit-user-select:none; user-select:none; }
+  .arkiv-dragging a { pointer-events:none; }
+
+  /* Selection, and the viewer it sits beside. */
+
+  .arkiv-batch { display:flex; align-items:center; gap:10px; margin:0 0 10px; }
+  /* Wide enough to be a phone target without making every row taller: the checkbox is the only
+     control in the row that is hit by thumb rather than by cursor. */
+  .arkiv-pick { flex:none; width:18px; height:18px; margin:0; accent-color:var(--green-700); }
+
+  /* THE SHARED PICTURE VIEWER: Arkiv, opslagstavlen and Den Hurtige all open into this one.
+     Above everything, including the sticky header -- a viewer that something overlaps is a bug
+     report. Fixed rather than absolute so it does not move if the page behind it scrolls. */
+  /* touch-action:none because the pinch and the double-tap in here are ours (see
+     frontend/src/imageviewer.ts): left to the browser, a pinch magnifies a viewport-fixed overlay
+     and springs back on release, and a double-tap runs its smart zoom on the page underneath. It
+     does NOT touch the long press - that is -webkit-touch-callout below, and the script never
+     prevents a resting finger. overflow:hidden keeps a picture zoomed to 4x inside the viewport
+     instead of stretching the document under it. */
+  .imgviewer { position:fixed; inset:0; z-index:100; display:flex; align-items:center;
+    justify-content:center; gap:8px; padding:16px; background:rgb(0 0 0 / 0.88);
+    touch-action:none; overflow:hidden; }
+  /* Stops the page behind scrolling under the overlay on a phone, which otherwise happens the
+     moment a swipe is read as vertical. */
+  body.imgviewer-open { overflow:hidden; }
+
+  .imgviewer-stage { display:flex; flex-direction:column; align-items:center; gap:10px;
+    margin:0; min-width:0; }
+  /* The image is bounded by the VIEWPORT, not by its own size: a 1600px preview on a phone must
+     shrink, and one on a large screen must not stretch past the caption's room. */
+  /* -webkit-touch-callout:default is load-bearing, not a reset. A long press on this image is how
+     a phone saves a picture to its photo library - iOS offers "Føj til Fotos", Android "Download
+     image" - and it is the only path that needs no permission, no share sheet and no second copy
+     of the bytes, because the browser already has them. Any rule setting it to none anywhere above
+     this would silently remove the feature, which is why it is stated here rather than left to
+     inherit. The grid deliberately does the opposite. */
+  .imgviewer-stage img { max-width:100%; max-height:calc(100vh - 96px); object-fit:contain;
+    border-radius:6px; background:rgb(255 255 255 / 0.04);
+    -webkit-touch-callout:default; -webkit-user-select:auto; user-select:auto; }
+  .imgviewer-stage figcaption { color:rgb(255 255 255 / 0.85); font-size:13px; text-align:center;
+    max-width:min(90vw, 700px); overflow-wrap:anywhere; }
+
+  /* Zoom. The cursor is the only thing telling a desktop reader the picture can be magnified at
+     all, so it changes before the click rather than after it. */
+  .imgviewer-stage img { cursor:zoom-in; }
+  .imgviewer-zoomed .imgviewer-stage img { cursor:grab; }
+  .imgviewer-zoomed .imgviewer-stage img:active { cursor:grabbing; }
+  /* Paging is meaningless at 4x, and the magnified picture covers the arrows and swallows the
+     clicks anyway. The close button keeps its place above it - see the z-index below. */
+  .imgviewer-zoomed .imgviewer-nav { visibility:hidden; }
+
+  .imgviewer-actions { display:flex; align-items:center; gap:12px; margin:0; flex-wrap:wrap;
+    justify-content:center; }
+  .imgviewer-save { color:#fff; font-size:13px; }
+  .imgviewer-hint { color:rgb(255 255 255 / 0.6); font-size:12px; }
+
+  .imgviewer-nav, .imgviewer-close { flex:none; background:rgb(255 255 255 / 0.12); border:0;
+    color:#fff; cursor:pointer; border-radius:999px; line-height:1; }
+  .imgviewer-nav { width:44px; height:44px; font-size:28px; }
+  /* z-index because a zoomed image is transformed, and a transformed element paints above a
+     plain one however early it sits in the markup. Without it the one way out of the viewer ends
+     up underneath the photograph. */
+  .imgviewer-close { position:absolute; top:12px; right:12px; width:40px; height:40px;
+    font-size:24px; z-index:1; }
+  .imgviewer-nav:hover, .imgviewer-close:hover { background:rgb(255 255 255 / 0.24); }
+
+  /* On a phone the arrows are swipe's job and they crowd a small screen; the close button stays,
+     because a gesture nobody was told about is not a way out. */
+  @media (max-width:600px) {
+    .imgviewer-nav { display:none; }
+  }
+
+  /* The folder's own actions: take a copy, or remove it. Baseline-aligned so the quiet danger
+     link sits with the button rather than under it. */
+  .arkiv-folder-actions { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+  .arkiv-folder-actions form { margin:0; }
+
+  .arkiv-newfolder { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .arkiv-newfolder input { flex:1 1 220px; max-width:340px; }
+  /* A destructive action that is one row among many: styled as a quiet link rather than a button,
+     so a list of thirty files is not thirty red buttons. "Fjern" is a soft delete, so the weight of
+     the control matches the weight of the consequence -- and "Slet permanent", in the removed list
+     below, deliberately looks the same. The thing that makes the second one safe is that you have
+     to remove a file before you can reach it, not a louder button (see arkiv/access.py). A red
+     block would only train people to click past it. */
+  .arkiv-remove { margin:0; flex:0 0 auto; }
+  .btn-link, .btn-link-danger { background:none; border:0; padding:0; font:inherit; font-size:12px;
+    color:var(--muted); cursor:pointer; text-decoration:underline; }
+  .btn-link:hover { color:var(--green-700); }
+  .btn-link-danger:hover { color:var(--neg); }
+
+  /* A row in the removed list has no <a> around its icon and name -- the bytes are still there but
+     it is out of the listing, and a working download link would make "fjernet" mean nothing. So it
+     needs `li > a`'s layout without being a link. */
+  .arkiv-list li > .arkiv-static { display:flex; align-items:center; gap:10px; flex:1 1 auto;
+    min-width:0; color:var(--muted); }
+  /* Sunk, so the second stage of the delete does not read as more of the folder. The heading and
+     the sentence above it say what it is; this is what makes it look it at a glance. */
+  .arkiv-removed .arkiv-list { background:var(--surface-2); }
+  .arkiv-removed .arkiv-list .ni { color:var(--muted); }
+
+  .arkiv-upload { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  /* The <input> is hidden and the <label> is the control, so the button matches every other
+     button on the site instead of rendering as a browser file picker. */
+  .arkiv-upload label { cursor:pointer; margin:0; }
+  .arkiv-upload [data-upload-status] { font-size:13px; }
+
+  @media (max-width: 560px) {
+    /* The metadata is the first thing to go: on a phone the name is the whole point. */
+    .arkiv-meta { display:none; }
+  }
 }

@@ -224,6 +224,70 @@ def test_a_remote_image_is_not_claimed() -> None:
     assert extract_image_names("![x](https://evil.example/x.gif)") == set()
 
 
+# --- the storage-backend round trip ---------------------------------------------------------------
+#
+# THIS IS THE TEST THAT PROTECTS THE S3 MIGRATION. Everything above feeds extract_image_names a
+# hand-written /media/ URL, which stays true no matter what the storage backend does. The pair below
+# closes that gap by generating the URL from the backend itself, the way the compose toolbar does
+# (opslagstavle.views.upload_image returns `image.file.url`, and opslagstavle.ts writes it into the
+# textarea verbatim).
+#
+# If MediaS3Storage.url() ever starts returning the bucket host — the django-storages default, and
+# the obvious "fix" for someone wiring up S3 — these fail. Without them the symptom in production is
+# silent: existing opslag images stop rendering, and the next edit of one releases its images for
+# purge_notices to delete. Opslagstavlen is still behind its rollout gate, so the blast radius today
+# is a trial's worth of posts; it grows to the whole board the day that gate opens. See
+# core/storage.py.
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "opslag/2026/08/a.jpg",
+        # Both of these percent-encode in the URL, so they only round-trip because
+        # extract_image_names unquotes. get_valid_filename replaces the space but keeps æøå, and
+        # "Skærmbillede …" is the DEFAULT DANISH SCREENSHOT NAME — the single most likely thing a
+        # resident uploads to opslagstavlen.
+        "opslag/2026/08/Skærmbillede_2026-09-04.png",
+        "opslag/2026/08/blåbærgrød.png",
+    ],
+)
+def test_storage_urls_round_trip_through_extract_image_names(name: str) -> None:
+    """`extract_image_names(storage.url(name))` must return `name`, for every backend.
+
+    The lookup it feeds is `NoticeImage.objects.filter(file__in=names)` — an exact match on the
+    FileField name. A URL this cannot be reversed out of does not raise; it just claims nothing.
+    """
+    from django.core.files.storage import FileSystemStorage
+
+    from core.storage import MediaS3Storage
+
+    filesystem = FileSystemStorage()
+    s3 = MediaS3Storage(bucket_name="test-bucket", access_key="k", secret_key="s")
+
+    # The two backends must agree, or a migration changes what gets written into post bodies.
+    assert s3.url(name) == filesystem.url(name)
+    assert extract_image_names(f"![alt]({s3.url(name)})") == {name}
+
+
+def test_the_s3_backend_still_exposes_the_presigned_url_separately() -> None:
+    """url() is the stored-content URL; signed_url() is the one core.media.serve_media redirects to.
+
+    Asserted so that the override cannot be "simplified" into dropping the presigner altogether,
+    which would leave nothing able to actually serve the bytes.
+    """
+    from core.storage import MediaS3Storage
+
+    # signature_version matches what config/settings.py passes in OPTIONS; without it botocore
+    # falls back to the v2 signer, which Hetzner does not accept.
+    s3 = MediaS3Storage(bucket_name="test-bucket", access_key="k", secret_key="s", signature_version="s3v4")
+    signed = s3.signed_url("opslag/2026/08/a.jpg")
+
+    assert signed.startswith("https://")
+    assert "X-Amz-Signature" in signed
+    assert not signed.startswith("/media/")
+
+
 def test_no_images_is_an_empty_set() -> None:
     assert extract_image_names("bare tekst") == set()
     assert extract_image_names("") == set()

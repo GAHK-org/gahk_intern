@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Arkiv - Reparationer{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Værktøjer · Reparationer</p>
+      <h1>Arkiv</h1>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-secondary" href="{% url 'reparationer:board' %}">‹ Til tavlen</a>
+    </div>
+  </div>
+
+  <p class="muted mb-4">
+    Reparationer der har ligget færdige i over en måned, ryddes herned automatisk — de er ikke
+    slettet, bare gemt af vejen. Søg for at finde en gammel sag igen.
+  </p>
+
+  <form method="get" class="board-search mb-4" role="search">
+    <input type="search" name="q" value="{{ query }}" placeholder="Søg i arkivet…" aria-label="Søg i arkivet">
+    <button type="submit" class="btn btn-secondary">Søg</button>
+    {% if query %}<a href="{% url 'reparationer:archive_list' %}" class="btn btn-secondary">Ryd</a>{% endif %}
+  </form>
+
+  <div class="board-list">
+    {% for task in tasks %}
+      <div class="card-flat card-pad">
+        <h3><a href="{% url 'reparationer:detail' task.pk %}">{{ task.title }}</a></h3>
+        {% if task.location %}<p class="muted">{{ task.location }}</p>{% endif %}
+        <p class="muted text-sm">
+          Meldt af {{ task.reported_by.first_name }} {{ task.reported_by.last_name }}
+          · arkiveret {{ task.archived_at|date:"j. M Y" }}
+        </p>
+      </div>
+    {% empty %}
+      <p class="muted">
+        {% if query %}Ingen arkiverede reparationer matcher "{{ query }}".{% else %}Arkivet er tomt.{% endif %}
+      </p>
+    {% endfor %}
+  </div>
+{% endblock %}

@@ -25,6 +25,9 @@ class Role(models.TextChoices):
     OELKAELDER = "oelkaelder", "Ølkælderen"
     REGNSKAB = "regnskab", "Regnskab"
     PR = "pr", "PR"  # frontpage/CMS content editors (F-006)
+    REPPER = "repper", "Reppergruppen"  # repair-crew: manages the Reparationer board
+    VICEVAERT = "vicevaert", "Viceværterne"  # triages Reparationer before handing it to Repper
+    FOTO = "foto", "Fotogruppen"  # curates the photo album: approves, bins, locks (photo_album.access)
     ADMINISTRATOR = "administrator", "Administrator"
     # NOTE: legacy `editpage` is intentionally omitted — there is no runtime CMS editing (F-006/F-007).
 
@@ -40,6 +43,9 @@ WORKGROUP_ROLE = {
     "Ølkælderen": Role.OELKAELDER,
     "Regnskabsgruppen": Role.REGNSKAB,  # legacy intern_alumne_workgroup name (id 23)
     "PR-gruppen": Role.PR,  # grants CMS/frontpage editing
+    "Repperne": Role.REPPER,  # manages the Reparationer board (reparationer.views.MANAGE_ROLES)
+    "Vicevært": Role.VICEVAERT,  # triages Reparationer before handing it to Repperne
+    "Fotogruppen": Role.FOTO,  # curates the photo album (photo_album.access)
 }
 WORKGROUP_ROLE_VALUES = frozenset(WORKGROUP_ROLE.values())
 
@@ -190,6 +196,26 @@ def active_period() -> tuple[int, int]:
     if latest:
         return latest["year"], latest["month"]
     return today.year, today.month
+
+
+def embedsgruppe_of(resident: "Resident", period: tuple[int, int] | None = None) -> str:
+    """The Workgroup name `resident` holds in `period` (the active month by default), or "".
+
+    Read at the moment something is written, never when it is displayed: opslagstavle.models stamps
+    it onto a post and onto a comment as they are created. Embedsgrupper rotate monthly (F-010), so
+    resolving a byline against today's list would relabel every post on the board each time the
+    månedsliste is saved, and a two-year archive would spend most of its life wrong.
+
+    "" for someone with no residency that month, or one with no group — an alumnus whose posts stay
+    on the board is the ordinary case, and the template renders no pill rather than an empty one.
+    """
+    year, month = period or active_period()
+    name = (
+        Residency.objects.filter(resident=resident, year=year, month=month)
+        .values_list("workgroup__name", flat=True)
+        .first()
+    )
+    return name or ""
 
 
 def next_period(period: tuple[int, int] | None = None) -> tuple[int, int]:

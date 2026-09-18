@@ -32,7 +32,8 @@ from functools import wraps
 from django.contrib.auth.views import redirect_to_login
 from django.core.exceptions import PermissionDenied
 from django.db.models import Q, QuerySet
-from django.http import HttpRequest, HttpResponse
+from django.http import HttpRequest
+from django.http.response import HttpResponseBase
 
 from residents.models import RoleAssignment, active_period
 from residents.permissions import View, effective_roles
@@ -71,7 +72,7 @@ class Gate:
         answers 200 to someone the page 403s hands the feature out through the back door."""
 
         @wraps(view)
-        def wrapped(request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
+        def wrapped(request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
             if not request.user.is_authenticated:
                 return redirect_to_login(request.get_full_path())
             if not self.roles_allowed(effective_roles(request)):

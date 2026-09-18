@@ -31,6 +31,7 @@
       <span><span class="cal-key cal-key-going"></span>Du kommer</span>
       <span><span class="cal-key cal-key-waiting"></span>Venteliste</span>
       <span><span class="cal-key cal-key-open"></span>Ikke svaret</span>
+      <span><svg class="cal-flag" aria-hidden="true"><use href="#i-dannebrog"></use></svg>Fødselsdag</span>
       <a href="{% url 'events:feed_settings' %}">Abonnér i din kalender</a>
     </div>
   </div>
@@ -55,6 +56,23 @@
         {% for cell in week %}
           <div class="cal-cell{% if cell.outside %} is-outside{% endif %}{% if cell.date == today %} is-today{% endif %}{% if cell.chosen %} is-chosen{% endif %}" role="cell">
             <span class="cal-daynum">{{ cell.date|date:"j" }}</span>
+            {% comment %}
+              Fødselsdage. A NOTE, not a chip and not a link: nobody organises a birthday and
+              nobody answers ja to it, so in a cell full of things that are true of it must not
+              look like one of them. (The panel below DOES link each name, to the person's profile
+              — the one page a birthday has. A cell has no room to say where it would take you.)
+              See residents/birthdays.py for why this is not an Event.
+
+              The flag is the whole marking on a phone (.cal-flag-mark below), where a name does
+              not fit in a 40px column — which is also the honest rendering, because a Dannebrog on
+              the day IS how a birthday is marked on a Danish calendar.
+            {% endcomment %}
+            {% for birthday in cell.birthdays %}
+              <span class="cal-birthday" title="{{ birthday.label }}">
+                <svg class="cal-flag" aria-hidden="true"><use href="#i-dannebrog"></use></svg>
+                <span class="cal-birthday-name">{{ birthday.resident.first_name }}</span>
+              </span>
+            {% endfor %}
             {% for event in cell.events %}
               <a class="cal-event cal-{{ event.my_state|default:'open' }}{% if event.cancelled_at %} is-cancelled{% endif %}"
                  href="{% url 'events:detail' event.pk %}"
@@ -62,6 +80,13 @@
                 {{ event.starts_at|date:"H.i" }} {{ event.title }}
               </a>
             {% endfor %}
+            {% if cell.birthdays %}
+              {% comment %}
+                One flag however many birthdays the day holds. A second would be read as a second
+                country rather than a second person, and the panel below names them all anyway.
+              {% endcomment %}
+              <svg class="cal-flag cal-flag-mark" aria-hidden="true"><use href="#i-dannebrog"></use></svg>
+            {% endif %}
             {% if cell.events %}
               {% comment %}
                 Capped at four dots: a fifth would shrink them all rather than tell anyone anything,
@@ -73,8 +98,15 @@
                   <span class="cal-dot cal-{{ event.my_state|default:'open' }}{% if event.cancelled_at %} is-cancelled{% endif %}"></span>
                 {% endfor %}
               </span>
+            {% endif %}
+            {% comment %}
+              The whole-cell tap link, and it covers a day with ONLY a birthday on it too — a marked
+              cell that does not open is a cell that looks broken, and on a phone the flag is all
+              there is to go on. Outside the events branch above for exactly that reason.
+            {% endcomment %}
+            {% if cell.events or cell.birthdays %}
               <a class="cal-daytap" href="?maaned={{ this_month }}&amp;dag={{ cell.date|date:'Y-m-d' }}#dag"
-                 aria-label="{{ cell.date|date:'j. F' }} — {{ cell.events|length }} begivenhed{{ cell.events|length|pluralize:"er" }}"></a>
+                 aria-label="{{ cell.date|date:'j. F' }}{% if cell.events %} — {{ cell.events|length }} begivenhed{{ cell.events|length|pluralize:"er" }}{% endif %}{% if cell.birthdays %} — {{ cell.birthdays|length }} fødselsdag{{ cell.birthdays|length|pluralize:"e" }}{% endif %}"></a>
             {% endif %}
           </div>
         {% endfor %}
@@ -88,11 +120,24 @@
       panel that is always there would be redundant beside the desktop chips, and "ingen
       begivenheder i dag" is not what someone opening a month wants to read first.
     {% endcomment %}
-    <section class="cal-day" id="dag" aria-label="Begivenheder {{ chosen_day|date:'j. F' }}">
+    <section class="cal-day" id="dag" aria-label="{{ chosen_day|date:'j. F' }}">
       <div class="cal-day-head">
         <h2>{{ chosen_day|date:"l j. F" }}</h2>
         <a class="cal-day-close" href="?maaned={{ this_month }}">Luk</a>
       </div>
+      {% comment %}
+        Birthdays first: they belong to the whole day rather than to an hour of it, so they sit
+        above the timed rows the way an all-day entry does in any calendar. Each one links to the
+        person, which is the only page a birthday HAS — and is why the row can be an anchor at all
+        without pretending to be a begivenhed.
+      {% endcomment %}
+      {% for birthday in chosen_birthdays %}
+        <a class="cal-day-row cal-day-birthday" href="{% url 'resident_profile' birthday.resident.pk %}">
+          <span class="cal-day-time"><svg class="cal-flag" aria-hidden="true"><use href="#i-dannebrog"></use></svg></span>
+          <span class="cal-day-title">{{ birthday.resident.full_name }}</span>
+          {% if birthday.turning %}<span class="chip chip-brass">Fylder {{ birthday.turning }}</span>{% endif %}
+        </a>
+      {% endfor %}
       {% for event in chosen_events %}
         <a class="cal-day-row" href="{% url 'events:detail' event.pk %}">
           <span class="cal-day-time">{{ event.starts_at|date:"H.i" }}</span>
@@ -110,9 +155,15 @@
             <span class="chip chip-neg">Du kan ikke</span>
           {% endif %}
         </a>
-      {% empty %}
-        <p class="muted cal-day-empty">Der sker ikke noget den dag.</p>
       {% endfor %}
+      {% comment %}
+        "Der sker ikke noget" has to mean NOTHING AT ALL, birthdays included — a day showing a flag
+        and the words "der sker ikke noget den dag" under it reads as a bug. Hence an explicit
+        emptiness test over both lists rather than the {% empty %} clause of one of them.
+      {% endcomment %}
+      {% if not chosen_events and not chosen_birthdays %}
+        <p class="muted cal-day-empty">Der sker ikke noget den dag.</p>
+      {% endif %}
     </section>
   {% endif %}
 {% endblock %}
