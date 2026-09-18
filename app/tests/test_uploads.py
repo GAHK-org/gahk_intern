@@ -71,6 +71,53 @@ def test_the_size_cap_is_the_callers_to_choose() -> None:
     assert check_image_upload(big, max_mb=1) is not None
 
 
+# --- the animation ceiling ------------------------------------------------------------------------
+#
+# A GIF is the one permitted format that reaches us at the size the resident picked. Every other
+# image is redrawn through a canvas on its way out of the browser, and a canvas cannot keep more
+# than one frame — so frontend/src/imageupload.ts passes animations through untouched, and the cap
+# they are held to has to be written for un-shrunk files. These pin that it is, and that it is the
+# only thing the animation ceiling moves.
+
+GIF_HEADER = b"GIF89a"
+
+
+def gif(megabytes: float = 0) -> SimpleUploadedFile:
+    return upload("reaktion.gif", "image/gif", GIF_HEADER + b"x" * int(megabytes * 1024 * 1024))
+
+
+def test_a_gif_is_measured_against_the_animation_ceiling(settings: object) -> None:
+    """The bug this fixes: a 6 MB reaction GIF refused by a cap written for photographs that the
+    browser has already shrunk to a few hundred KB — which a GIF never is."""
+    settings.ANIMATED_IMAGE_MAX_MB = 15  # type: ignore[attr-defined]
+
+    assert check_image_upload(gif(6), max_mb=5) is None
+
+
+def test_the_animation_ceiling_replaces_the_callers_rather_than_raising_it(settings: object) -> None:
+    """Not max() of the two. A *_MAX_MB says how big a PHOTOGRAPH may be, so a feature with a
+    generous photo cap must not thereby acquire an even more generous GIF cap — the two knobs are
+    meant to be readable on their own."""
+    settings.ANIMATED_IMAGE_MAX_MB = 0  # type: ignore[attr-defined] — any GIF counts as too big
+
+    assert check_image_upload(gif(), max_mb=50) is not None
+
+
+def test_a_still_image_is_untouched_by_the_animation_ceiling(settings: object) -> None:
+    """Per-format, so raising what an animation may weigh must not quietly raise what a JPEG may."""
+    settings.ANIMATED_IMAGE_MAX_MB = 100  # type: ignore[attr-defined]
+    big = upload("stor.jpg", "image/jpeg", b"\xff\xd8\xff" + b"x" * (2 * 1024 * 1024))
+
+    assert check_image_upload(big, max_mb=1) is not None
+
+
+def test_the_refusal_names_the_ceiling_that_actually_applied(settings: object) -> None:
+    """A resident told "over 5 MB" while the real limit is another number cannot act on it."""
+    settings.ANIMATED_IMAGE_MAX_MB = 0  # type: ignore[attr-defined]
+
+    assert "0 MB" in (check_image_upload(gif(), max_mb=5) or "")
+
+
 def test_the_messages_are_danish() -> None:
     """User-facing text is Danish; these strings are shown verbatim by every caller."""
     assert "billede" in (check_image_upload(upload("x.pdf", "application/pdf"), max_mb=5) or "")
