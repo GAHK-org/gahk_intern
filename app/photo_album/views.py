@@ -5,6 +5,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import redirect_to_login
 from django.core.exceptions import PermissionDenied, SuspiciousOperation, ValidationError
+from django.db import transaction
 from django.db.models import Case, Count, DateTimeField, IntegerField, Q, Value, When
 from django.db.models.functions import Coalesce
 from django.http import (
@@ -28,8 +29,8 @@ from residents.permissions import current_resident
 
 from . import access, services
 from .forms import AlbumForm, MediaUploadForm
-from .models import Album, Media
-from .storage import PhotoAlbumS3Storage
+from .models import Album, AlbumDownload, AlbumDownloadState, Media
+from .storage import PhotoAlbumS3Storage, get_photo_album_storage
 
 
 @login_required
@@ -73,8 +74,54 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
             "can_manage": access.can_manage_media(request),
             "can_lock": access.can_lock_album(request, album),
             "can_unlock": access.can_unlock_album(request, album),
+            "download_job": AlbumDownload.objects.filter(
+                album=album, requested_by=current_resident(request)
+            ).first(),
         },
     )
+
+
+@login_required
+@require_POST
+def download_album(request: HttpRequest, pk: int) -> HttpResponseBase:
+    """Queue a private ZIP build of the originals currently visible to this resident."""
+    album = get_object_or_404(Album, pk=pk)
+    resident = current_resident(request)
+    media_ids = list(access.visible_media(request, album).values_list("pk", flat=True))
+    if not media_ids:
+        messages.error(request, "Albummet har ingen medier, du kan hente.")
+        return redirect("photo_album:detail", pk=album.pk)
+    download = AlbumDownload.objects.create(album=album, requested_by=resident, media_ids=media_ids)
+    from .tasks import build_album_download
+
+    def enqueue() -> None:
+        result = build_album_download.delay(download.pk)
+        AlbumDownload.objects.filter(pk=download.pk).update(task_id=result.id)
+
+    transaction.on_commit(enqueue)
+    messages.success(request, "Download bliver klargjort.")
+    return redirect("photo_album:detail", pk=album.pk)
+
+
+@login_required
+def download_album_archive(request: HttpRequest, token: str) -> HttpResponseBase:
+    """Authorize the requesting resident and redirect their ready ZIP to object storage."""
+    download = get_object_or_404(AlbumDownload, token=token, requested_by=current_resident(request))
+    if download.state != AlbumDownloadState.READY or not download.archive_key:
+        raise Http404("download is not ready")
+    filename = f"{download.album.name}.zip"
+    storage = get_photo_album_storage()
+    if isinstance(storage, PhotoAlbumS3Storage):
+        return HttpResponseRedirect(
+            storage.signed_url(
+                download.archive_key,
+                parameters={
+                    "ResponseContentDisposition": content_disposition(filename),
+                    "ResponseContentType": "application/zip",
+                },
+            )
+        )
+    return FileResponse(storage.open(download.archive_key, "rb"), as_attachment=True, filename=filename)
 
 
 @login_required

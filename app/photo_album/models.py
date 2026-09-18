@@ -6,6 +6,7 @@ import calendar
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 from pathlib import Path
+from uuid import uuid4
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -14,6 +15,8 @@ from django.db.models.base import ModelBase
 from django.utils import timezone
 
 from .storage import get_photo_album_storage
+
+ALBUM_DOWNLOAD_RETENTION = timedelta(days=7)
 
 
 def album_original_path(instance: "Media", filename: str) -> str:
@@ -46,6 +49,13 @@ class DerivativeState(models.TextChoices):
 
     READY = "ready", "Klar"
     PENDING = "pending", "Behandles"
+    FAILED = "failed", "Mislykkedes"
+
+
+class AlbumDownloadState(models.TextChoices):
+    QUEUED = "queued", "I kø"
+    BUILDING = "building", "Bygges"
+    READY = "ready", "Klar"
     FAILED = "failed", "Mislykkedes"
 
 
@@ -173,3 +183,31 @@ class Media(models.Model):
     def has_derivatives(self) -> bool:
         """Whether the grid and the viewer have something to show for this item yet."""
         return self.derivative_state == DerivativeState.READY and bool(self.thumbnail)
+
+
+class AlbumDownload(models.Model):
+    """One resident's asynchronous, private ZIP request for an album."""
+
+    album = models.ForeignKey(Album, on_delete=models.CASCADE, related_name="downloads")
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="album_downloads"
+    )
+    media_ids = models.JSONField(default=list)
+    token = models.UUIDField(default=uuid4, unique=True, editable=False)
+    task_id = models.CharField(max_length=36, blank=True)
+    state = models.CharField(
+        max_length=10, choices=AlbumDownloadState.choices, default=AlbumDownloadState.QUEUED
+    )
+    archive_key = models.CharField(max_length=255, blank=True)
+    error = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
+
+    @property
+    def expires_at(self) -> datetime | None:
+        if self.completed_at is None:
+            return None
+        return self.completed_at + ALBUM_DOWNLOAD_RETENTION

@@ -100,24 +100,26 @@ Fresh repo (do **not** import the legacy history — it contains plaintext secre
 4. `web` runs `migrate` on start then gunicorn; Coolify/Traefik terminates TLS and proxies to :8000.
 5. `Scaleway` is the fallback if you prefer a first-party managed Postgres.
 
-### 4b. Scheduled tasks (Coolify → the `web` resource → **Scheduled Tasks**)
+### 4b. Scheduled tasks (Celery Beat → worker)
 
-Coolify runs each of these *inside the already-running `web` container* on a cron expression, and
-keeps the output in its own log view. That is why there is no cron sidecar, no host crontab (which
-would fight Coolify's control of the compose lifecycle) and no Celery beat (a broker plus a worker
-for four jobs a month). Container name: `web`. Every command below is **idempotent** — a double run
-or an overlapping run is harmless.
+Celery Beat stores schedules in PostgreSQL and publishes work to the Celery worker. The schedules
+are declared in `config/settings.py`, using the `Europe/Copenhagen` timezone. The worker-job admin
+page at `/admin/worker-jobs` shows active schedules and recent execution history. Every task is
+idempotent, so a retry or an overlapping run is harmless.
 
-| Command | Cron | Why |
+| Celery task | Schedule | Why |
 | --- | --- | --- |
-| `python manage.py purge_applications` | `20 3 * * *` | **The one that is genuinely missing.** F-001 says applications are kept one year; nothing has ever enforced it, so applicant PII accumulates indefinitely — the exact GDPR gap 99-index.md flags in the legacy system. |
-| `python manage.py ak_monthly_assessment` | `10 4 1 * *` | Books the month's AK deduction on the 1st instead of whenever someone happens to open an internal page. |
-| `python manage.py purge_notices` | `40 3 * * *` | Sweeps compose-toolbar images uploaded to a post nobody ever saved. **It no longer deletes opslag** — the board keeps its archive (spec/features/opslagstavle.md). The name is kept so this row and the Coolify task stay valid; if it is ever renamed, both move in the same change. Offset from `purge_applications` (03:20) so two deletes never overlap on the same small box. |
-| `python manage.py archive_finished_repairs` | `50 3 * * *` | Archives (never deletes) a Reparationer ticket that has sat in Færdig for over 30 days, so the board does not fill up with old closed repairs — still searchable via the Arkiv page. Offset from `purge_notices` (03:40) so the two never overlap. |
-| `python manage.py purge_events` | `0 4 * * *` | Enforces Begivenheder's retention: an event goes a week after it ends, a cancelled one thirty days after it was cancelled (two clocks, see `events/models.py`). Offset to 04:00 so it does not overlap `purge_applications` (03:20), `purge_notices` (03:40) or `archive_finished_repairs` (03:50) on the same small box. |
-| `python manage.py purge_photo_album` | `10 4 * * *` | Enforces the photo album's retention: pending media nobody approved within 30 days, and anything held in the bin for 30 days, go with all three stored variants. Offset from `purge_events` (04:00) so two deletes never overlap on the same small box. |
-| `python manage.py process_photo_album_media` | `*/10 * * * *` | Builds the viewer/grid derivatives for uploaded **videos**. The upload itself only stores the original — an H.264 encode takes far longer than gunicorn's 60 s timeout, so doing it in the request killed the worker and lost the upload (see `photo_album.models.DerivativeState`). Every ten minutes because a resident who just posted a clip is waiting to see it; `--limit` keeps one run bounded, and a clip that fails three times is marked failed rather than retried forever. |
-| `python manage.py remind_rsvp_deadlines` | `0 17 * * *` | Nudges the people who have not answered when a svarfrist falls inside the next 24 hours. **Once per event** — the claim is a compare-and-swap on `reminder_sent_at`, taken *before* the send, so a crash between the two loses one reminder rather than pushing the whole house twice. Runs at 17:00 rather than overnight because it is a notification people are meant to act on. |
+| `admissions.tasks.purge_expired_applications` | Daily 03:20 | Enforces the one-year application retention policy. |
+| `opslagstavle.tasks.purge_orphaned_images` | Daily 03:40 | Removes unused compose-toolbar image uploads. |
+| `reparationer.tasks.archive_finished_repairs` | Daily 03:50 | Archives completed repairs after 30 days. |
+| `events.tasks.purge_expired_events` | Daily 04:00 | Enforces event retention. |
+| `photo_album.tasks.purge_expired_media` | Daily 04:10 | Removes expired pending and binned photo-album media. |
+| `ak.tasks.apply_monthly_assessment` | Day 1, 04:10 | Books the monthly AK deduction. |
+| `photo_album.tasks.process_pending_media` | Every 10 minutes | Builds photo-album derivatives. |
+| `events.tasks.remind_rsvp_deadlines` | Daily 17:00 | Sends due RSVP reminders. |
+
+Delete the matching Coolify Scheduled Tasks after deploying this change. Leaving them enabled runs
+each maintenance command twice through two independent schedulers.
 
 **`purge_quick_posts` is gone, and its Coolify task has to be deleted by hand.** Den Hurtige stopped
 deleting messages: they leave the feed when `expires_at` passes and are *archived* by that same

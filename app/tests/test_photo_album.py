@@ -1,4 +1,5 @@
 import subprocess
+import zipfile
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -7,7 +8,7 @@ from pathlib import Path
 import imageio_ffmpeg
 import pytest
 from django.core.exceptions import ValidationError
-from django.core.files.base import File
+from django.core.files.base import ContentFile, File
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.test import Client
@@ -183,6 +184,7 @@ def test_image_upload_generates_compressed_derivatives(make_resident: Callable[.
         resident=resident,
         approved=True,
     )
+    assert build_derivatives(media)
     with Image.open(media.high_definition) as high_definition:
         assert max(high_definition.size) == 1600
     with Image.open(media.thumbnail) as thumbnail:
@@ -204,6 +206,7 @@ def test_heic_upload_generates_jpeg_derivatives(make_resident: Callable[..., Res
         resident=resident,
         approved=True,
     )
+    assert build_derivatives(media)
 
     assert media.original.name.endswith(".heic")
     assert media.high_definition.name.endswith(".jpg")
@@ -236,6 +239,8 @@ def test_original_download_returns_original_bytes_and_album_specific_keys(
         resident=administrator,
         approved=True,
     )
+    assert build_derivatives(first_media)
+    assert build_derivatives(second_media)
     client.force_login(administrator)
 
     response = client.get(reverse("photo_album:download_original", args=[first_media.pk]))
@@ -245,6 +250,150 @@ def test_original_download_returns_original_bytes_and_album_specific_keys(
     assert response.headers["Content-Disposition"].startswith("attachment;")
     assert first_media.original.name.startswith(f"photo-album/{first_album.pk}/original/")
     assert second_media.original.name.startswith(f"photo-album/{second_album.pk}/original/")
+
+
+@pytest.mark.django_db
+def test_album_download_is_built_by_the_worker_and_then_downloaded(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    from photo_album.models import AlbumDownload, AlbumDownloadState
+    from photo_album.tasks import build_album_download
+
+    resident = make_resident()
+    album = Album.objects.create(folder="2026", name="Sommerfest")
+    upload_media(
+        album=album,
+        uploaded_file=SimpleUploadedFile("first.jpg", b"first", content_type="image/jpeg"),
+        resident=resident,
+        approved=True,
+    )
+    upload_media(
+        album=album,
+        uploaded_file=SimpleUploadedFile("second.mp4", b"second", content_type="video/mp4"),
+        resident=resident,
+        approved=True,
+    )
+    client.force_login(resident)
+
+    response = client.post(reverse("photo_album:download_album", args=[album.pk]))
+
+    assert response.status_code == 302
+    download = AlbumDownload.objects.get(album=album, requested_by=resident)
+    assert download.state == AlbumDownloadState.QUEUED
+    assert build_album_download.run(download.pk)
+    download.refresh_from_db()
+    assert download.state == AlbumDownloadState.READY
+
+    response = client.get(reverse("photo_album:download_album_archive", args=[download.token]))
+
+    assert response.headers["Content-Type"] == "application/zip"
+    assert 'filename="Sommerfest.zip"' in response.headers["Content-Disposition"]
+    with zipfile.ZipFile(BytesIO(b"".join(response.streaming_content))) as archive:
+        assert archive.namelist() == ["first.jpg", "second.mp4"]
+        assert archive.read("first.jpg") == b"first"
+        assert archive.read("second.mp4") == b"second"
+
+
+@pytest.mark.django_db
+def test_album_download_excludes_another_residents_pending_upload(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    from photo_album.models import AlbumDownload
+    from photo_album.tasks import build_album_download
+
+    resident = make_resident()
+    other_resident = make_resident(email="other@example.com")
+    album = Album.objects.create(folder="2026", name="Sommerfest")
+    upload_media(
+        album=album,
+        uploaded_file=SimpleUploadedFile("visible.jpg", b"visible", content_type="image/jpeg"),
+        resident=resident,
+        approved=True,
+    )
+    upload_media(
+        album=album,
+        uploaded_file=SimpleUploadedFile("pending.jpg", b"pending", content_type="image/jpeg"),
+        resident=other_resident,
+        approved=False,
+    )
+    client.force_login(resident)
+
+    response = client.post(reverse("photo_album:download_album", args=[album.pk]))
+    download = AlbumDownload.objects.get(album=album, requested_by=resident)
+    build_album_download.run(download.pk)
+    response = client.get(reverse("photo_album:download_album_archive", args=[download.token]))
+
+    with zipfile.ZipFile(BytesIO(b"".join(response.streaming_content))) as archive:
+        assert archive.namelist() == ["visible.jpg"]
+
+
+@pytest.mark.django_db
+def test_album_download_archive_is_private_to_its_requester(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    from photo_album.models import AlbumDownload
+
+    requester = make_resident()
+    other_resident = make_resident(email="other@example.com")
+    album = Album.objects.create(folder="2026", name="Sommerfest")
+    download = AlbumDownload.objects.create(
+        album=album,
+        requested_by=requester,
+        state="ready",
+        archive_key="photo-album-zips/secret.zip",
+    )
+    client.force_login(other_resident)
+
+    assert client.get(reverse("photo_album:download_album_archive", args=[download.token])).status_code == 404
+
+
+@pytest.mark.django_db
+def test_expired_album_downloads_remove_their_archives(make_resident: Callable[..., Resident]) -> None:
+    from photo_album.models import AlbumDownload
+    from photo_album.storage import get_photo_album_storage
+    from photo_album.tasks import purge_expired_downloads
+
+    album = Album.objects.create(folder="2026", name="Sommerfest")
+    key = "photo-album-zips/expired.zip"
+    get_photo_album_storage().save(key, ContentFile(b"zip bytes"))
+    download = AlbumDownload.objects.create(
+        album=album,
+        requested_by=make_resident(),
+        state="ready",
+        archive_key=key,
+        completed_at=timezone.now() - timedelta(days=8),
+    )
+
+    assert purge_expired_downloads.run() == 1
+    assert not AlbumDownload.objects.filter(pk=download.pk).exists()
+    assert not get_photo_album_storage().exists(key)
+
+
+@pytest.mark.django_db
+def test_ready_album_download_shows_its_expiry(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    from photo_album.models import ALBUM_DOWNLOAD_RETENTION, AlbumDownload
+
+    resident = make_resident()
+    album = Album.objects.create(folder="2026", name="Sommerfest")
+    completed_at = timezone.now()
+    AlbumDownload.objects.create(
+        album=album,
+        requested_by=resident,
+        state="ready",
+        archive_key="photo-album-zips/ready.zip",
+        completed_at=completed_at,
+    )
+    client.force_login(resident)
+
+    response = client.get(reverse("photo_album:detail", args=[album.pk]))
+
+    assert "Downloadet udløber" in response.content.decode()
+    assert (
+        timezone.localtime(completed_at + ALBUM_DOWNLOAD_RETENTION).strftime("%H:%M")
+        in response.content.decode()
+    )
 
 
 @pytest.mark.django_db
@@ -258,6 +407,7 @@ def test_serve_media_redirects_anonymous_requests_to_login(
         resident=make_resident(),
         approved=True,
     )
+    assert build_derivatives(media)
 
     response = client.get(media.thumbnail.url)
 
@@ -275,6 +425,7 @@ def test_serve_media_streams_a_visible_item(client: Client, make_resident: Calla
         resident=requester,
         approved=True,
     )
+    assert build_derivatives(media)
     client.force_login(requester)
 
     response = client.get(media.thumbnail.url)
@@ -298,6 +449,7 @@ def test_serve_media_refuses_a_pending_upload_to_a_stranger(
         resident=requester,
         approved=False,
     )
+    assert build_derivatives(media)
     client.force_login(stranger)
 
     assert client.get(media.thumbnail.url).status_code == 403
@@ -766,7 +918,7 @@ def test_video_upload_stores_the_original_and_defers_its_derivatives(
 
 
 @pytest.mark.django_db
-def test_an_image_upload_still_gets_its_derivatives_immediately(
+def test_an_image_upload_defers_its_derivatives(
     make_resident: Callable[..., Resident],
 ) -> None:
     resident = make_resident()
@@ -774,8 +926,8 @@ def test_an_image_upload_still_gets_its_derivatives_immediately(
 
     media = upload_media(album=album, uploaded_file=_image(), resident=resident)
 
-    assert media.derivative_state == DerivativeState.READY
-    assert media.thumbnail
+    assert media.derivative_state == DerivativeState.PENDING
+    assert not media.thumbnail
 
 
 @pytest.mark.django_db
@@ -926,7 +1078,7 @@ def test_album_detail_query_count_does_not_grow_with_the_number_of_photos(
     url = reverse("photo_album:detail", args=[album.pk])
     client.get(url)  # warm any per-process caches so the count below is the steady state
 
-    with django_assert_num_queries(9):  # type: ignore[operator]
+    with django_assert_num_queries(10):  # type: ignore[operator]
         client.get(url)
 
 
