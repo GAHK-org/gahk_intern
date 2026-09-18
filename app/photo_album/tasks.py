@@ -6,19 +6,58 @@ from pathlib import Path
 from celery import shared_task
 from django.core.files.base import ContentFile
 from django.core.management import call_command
+from django.db.models import Q, QuerySet
 from django.utils import timezone
 from zipstream import ZIP_STORED, ZipStream
 
-from .models import ALBUM_DOWNLOAD_RETENTION, AlbumDownload, AlbumDownloadState, DerivativeState, Media
+from .models import (
+    ALBUM_DOWNLOAD_RETENTION,
+    ALBUM_DOWNLOAD_STALE_AFTER,
+    DERIVATIVE_CLAIM_TTL,
+    AlbumDownload,
+    AlbumDownloadState,
+    DerivativeState,
+    Media,
+)
 from .services import build_derivatives, pending_derivatives
 from .storage import PhotoAlbumS3Storage, get_photo_album_storage
 
+# The two jobs here that legitimately outrun the global CELERY_TASK_TIME_LIMIT of fifteen minutes:
+# an H.264 encode of a phone clip, and a whole-album ZIP streamed into object storage. Under the
+# global limit both were SIGKILLed mid-work — a transcode left the media PENDING with its attempt
+# counter bumped, so three passes marked a perfectly good file FAILED, and a ZIP left its download
+# row wedged in BUILDING (see ALBUM_DOWNLOAD_STALE_AFTER).
+#
+# The SOFT limit is the one that does the work. It raises SoftTimeLimitExceeded *inside* the task,
+# which both tasks already handle — `build_album_download` catches it in its `except Exception` and
+# records FAILED with a message, rather than vanishing. The hard limit is only the backstop for a
+# task wedged somewhere uninterruptible, five minutes later.
+MEDIA_TASK_TIME_LIMIT = 60 * 60
+MEDIA_TASK_SOFT_TIME_LIMIT = MEDIA_TASK_TIME_LIMIT - 300
 
-@shared_task
+
+def _unclaimed(queryset: "QuerySet[Media]") -> "QuerySet[Media]":
+    """Rows no worker currently holds — never claimed, or claimed by one that never came back."""
+    return queryset.filter(
+        Q(derivative_started_at__isnull=True)
+        | Q(derivative_started_at__lt=timezone.now() - DERIVATIVE_CLAIM_TTL)
+    )
+
+
+@shared_task(time_limit=MEDIA_TASK_TIME_LIMIT, soft_time_limit=MEDIA_TASK_SOFT_TIME_LIMIT)
 def build_media_derivatives(media_id: int) -> bool:
-    """Build derivatives for one committed upload, if it still needs them."""
+    """Build derivatives for one committed upload, if it still needs them and nobody else has it."""
+    # CLAIM FIRST, AS ONE STATEMENT. `UPDATE ... WHERE` takes the row lock, so of two workers handed
+    # the same id exactly one sees a rowcount of 1 and the other backs off — which a read-then-write
+    # could not promise. Whoever loses returns False rather than starting a second ffmpeg encode of
+    # the same file and a second increment of `derivative_attempts`.
+    claimed = _unclaimed(Media.objects.filter(pk=media_id, derivative_state=DerivativeState.PENDING)).update(
+        derivative_started_at=timezone.now()
+    )
+    if not claimed:
+        return False
     try:
-        media = Media.objects.get(pk=media_id, derivative_state=DerivativeState.PENDING)
+        media = Media.objects.get(pk=media_id)
     except Media.DoesNotExist:
         return False
     return build_derivatives(media)
@@ -26,10 +65,20 @@ def build_media_derivatives(media_id: int) -> bool:
 
 @shared_task
 def process_pending_media(limit: int = 10) -> int:
-    """Backstop for messages lost while the broker is unavailable."""
-    for media in pending_derivatives()[:limit]:
+    """Backstop for messages lost while the broker is unavailable.
+
+    Skips rows a worker already holds. The claim in `build_media_derivatives` is what actually makes
+    that safe — this only avoids queueing work that would be thrown away on arrival.
+    """
+    dispatched = 0
+    # Counted as we go, rather than re-running the query afterwards: the old
+    # `min(pending_derivatives().count(), limit)` re-read the table AFTER dispatching and so
+    # reported whatever was still pending at that instant — racing the worker it had just started,
+    # and surfacing that racy number as the task result on the siteadmin jobs page.
+    for media in _unclaimed(pending_derivatives())[:limit]:
         build_media_derivatives.delay(media.pk)
-    return min(pending_derivatives().count(), limit)
+        dispatched += 1
+    return dispatched
 
 
 @shared_task
@@ -84,7 +133,7 @@ def _archive(download: AlbumDownload) -> ZipStream:
     return archive
 
 
-@shared_task
+@shared_task(time_limit=MEDIA_TASK_TIME_LIMIT, soft_time_limit=MEDIA_TASK_SOFT_TIME_LIMIT)
 def build_album_download(download_id: int) -> bool:
     """Build an album ZIP into object storage, without occupying a web worker."""
     try:
@@ -114,6 +163,30 @@ def build_album_download(download_id: int) -> bool:
     download.completed_at = timezone.now()
     download.save(update_fields=["state", "archive_key", "completed_at"])
     return True
+
+
+@shared_task
+def fail_stalled_downloads() -> int:
+    """Close out ZIP builds no worker is coming back to, so the page stops waiting on them.
+
+    A worker killed outright — hard time limit, OOM, a redeploy mid-build — runs no exception
+    handler, so the row it was working on keeps `state = BUILDING` and `completed_at = NULL`. Two
+    things then never happen: `purge_expired_downloads` filters on `completed_at`, so the row is
+    never collected; and photo_album/detail.html keeps drawing the "Download klargøres …" branch,
+    whose five-second reload then runs for as long as the resident leaves that page open.
+
+    Setting `completed_at` here is what hands the row back to `purge_expired_downloads`, so this
+    ends the reload loop AND lets the row be collected on the ordinary seven-day schedule.
+    """
+    cutoff = timezone.now() - ALBUM_DOWNLOAD_STALE_AFTER
+    return AlbumDownload.objects.filter(
+        state__in=(AlbumDownloadState.QUEUED, AlbumDownloadState.BUILDING),
+        created_at__lt=cutoff,
+    ).update(
+        state=AlbumDownloadState.FAILED,
+        error="Download blev afbrudt undervejs.",
+        completed_at=timezone.now(),
+    )
 
 
 @shared_task

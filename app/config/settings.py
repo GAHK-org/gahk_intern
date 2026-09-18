@@ -134,6 +134,13 @@ CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", f"db+{CELERY_DAT
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
+# Without this, Celery stores only status/result/traceback and leaves `name`, `worker`, `queue` and
+# `retries` NULL in celery_taskmeta — which are four of the columns the siteadmin worker-jobs page
+# selects and displays, so "Worker", "Kø" and "Forsøg" were permanently blank there.
+CELERY_RESULT_EXTENDED = True
+# The default ceiling for a scheduled job: generous for a sweep, and short enough that a wedged one
+# does not hold a worker slot all night. The two photo-album jobs legitimately run longer and set
+# their own limits at the task — see photo_album/tasks.py::MEDIA_TASK_TIME_LIMIT.
 CELERY_TASK_TIME_LIMIT = 900
 CELERY_BEAT_SCHEDULE = {
     "purge-expired-applications": {
@@ -152,17 +159,36 @@ CELERY_BEAT_SCHEDULE = {
         "task": "events.tasks.purge_expired_events",
         "schedule": crontab(minute=0, hour=4),
     },
-    "purge-expired-photo-album-media": {
-        "task": "photo_album.tasks.purge_expired_media",
-        "schedule": crontab(minute=10, hour=4),
-    },
     "purge-expired-photo-album-downloads": {
         "task": "photo_album.tasks.purge_expired_downloads",
         "schedule": crontab(minute=20, hour=4),
     },
+    # 04:30, not 04:10: at 04:10 it ran on top of `apply-ak-monthly-assessment` on the 1st of every
+    # month. Every job here is staggered so two never run together on the one small box, and this
+    # was the one pair that wasn't. (The collision is older than Celery — the cron table in
+    # DEPLOY.md §4b had `purge_photo_album` and `ak_monthly_assessment` both at 04:10 — so it was
+    # carried over rather than introduced, but it is fixed here rather than carried further.)
+    "purge-expired-photo-album-media": {
+        "task": "photo_album.tasks.purge_expired_media",
+        "schedule": crontab(minute=30, hour=4),
+    },
     "apply-ak-monthly-assessment": {
         "task": "ak.tasks.apply_monthly_assessment",
         "schedule": crontab(minute=10, hour=4, day_of_month=1),
+    },
+    # Hourly, and deliberately not daily: what it clears is a download the resident is still
+    # watching a spinner for, so the gap between "the worker died" and "the page says so" is the
+    # thing being minimised.
+    "fail-stalled-photo-album-downloads": {
+        "task": "photo_album.tasks.fail_stalled_downloads",
+        "schedule": crontab(minute=5),
+    },
+    # 04:50, after every other sweep: the rows it deletes are the messages those sweeps were
+    # delivered on, so running it last keeps one night's work visible in the table while that work
+    # is still happening.
+    "purge-delivered-broker-messages": {
+        "task": "core.tasks.purge_delivered_broker_messages",
+        "schedule": crontab(minute=50, hour=4),
     },
     "process-photo-album-media": {
         "task": "photo_album.tasks.process_pending_media",

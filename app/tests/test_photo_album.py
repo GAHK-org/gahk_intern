@@ -1318,3 +1318,158 @@ def test_a_locked_album_stops_deletion_for_everyone_including_administrators(
     assert access.can_delete(media, request) is False
     assert access.can_curate_delete(media, request) is False
     assert access.can_withdraw(media, request) is False
+
+
+# --- what the Celery review turned up ------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_a_video_stored_without_a_content_type_is_still_treated_as_a_video(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """Several browsers send NO content type for .mov, and `check_media_upload` accepts that when
+    the extension vouches for the file — so the row is stored with content_type "".
+
+    `build_derivatives` asked `is_video(media)`, and a Media has no `.name`, so the test collapsed
+    to the content type and said "image". `image_variants` then returned None, the unsupported-source
+    branch copied the raw video bytes into BOTH derivative fields, and the item was marked READY —
+    putting a .mov inside the grid's <img>.
+    """
+    resident = make_resident()
+    album = Album.objects.create(folder="2026", name="Fest")
+    upload = SimpleUploadedFile("clip.mov", b"bytes", content_type="")
+
+    media = upload_media(album=album, uploaded_file=upload, resident=resident)
+
+    assert media.content_type == ""
+    assert media.derivative_state == DerivativeState.PENDING
+    # False because these bytes are not a real video — the point is that it took the VIDEO path and
+    # failed honestly, rather than the image path and "succeeding" with the original copied over.
+    assert build_derivatives(media) is False
+    assert not media.thumbnail
+    assert not media.high_definition
+    assert media.derivative_state != DerivativeState.READY
+
+
+@pytest.mark.django_db
+def test_a_claimed_media_row_is_not_rebuilt_by_a_duplicate_dispatch(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """`process_pending_media` re-dispatches every PENDING row every ten minutes, and a transcode
+    outlasts that — so without a claim the duplicates each ran their own encode and each bumped
+    `derivative_attempts`, marking a clip FAILED that had only genuinely failed once."""
+    from photo_album.tasks import build_media_derivatives
+
+    resident = make_resident()
+    album = Album.objects.create(folder="2026", name="Fest")
+    media = upload_media(album=album, uploaded_file=_video(), resident=resident)
+
+    build_media_derivatives.run(media.pk)
+    media.refresh_from_db()
+    assert media.derivative_attempts == 1
+    assert media.derivative_started_at is not None
+
+    assert build_media_derivatives.run(media.pk) is False
+
+    media.refresh_from_db()
+    assert media.derivative_attempts == 1
+
+
+@pytest.mark.django_db
+def test_an_expired_claim_lets_another_worker_pick_the_row_up(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """The claim is a timestamp precisely so a worker that DIES holding one strands nothing."""
+    from photo_album.models import DERIVATIVE_CLAIM_TTL
+    from photo_album.tasks import build_media_derivatives
+
+    resident = make_resident()
+    album = Album.objects.create(folder="2026", name="Fest")
+    media = upload_media(album=album, uploaded_file=_video(), resident=resident)
+    Media.objects.filter(pk=media.pk).update(
+        derivative_started_at=timezone.now() - DERIVATIVE_CLAIM_TTL - timedelta(minutes=1)
+    )
+
+    build_media_derivatives.run(media.pk)
+
+    media.refresh_from_db()
+    assert media.derivative_attempts == 1
+
+
+@pytest.mark.django_db
+def test_process_pending_media_skips_held_rows_and_reports_what_it_dispatched(
+    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The old return value re-queried AFTER dispatching, so it reported whatever was still pending
+    at that instant — racing the worker it had just started."""
+    from photo_album import tasks
+
+    resident = make_resident()
+    album = Album.objects.create(folder="2026", name="Fest")
+    held = upload_media(album=album, uploaded_file=_video("held.mp4"), resident=resident)
+    free = upload_media(album=album, uploaded_file=_video("free.mp4"), resident=resident)
+    Media.objects.filter(pk=held.pk).update(derivative_started_at=timezone.now())
+
+    dispatched: list[int] = []
+    monkeypatch.setattr(tasks.build_media_derivatives, "delay", dispatched.append)
+
+    assert tasks.process_pending_media.run() == 1
+    assert dispatched == [free.pk]
+
+
+@pytest.mark.django_db
+def test_a_download_whose_worker_never_returned_is_closed_out(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """A worker killed outright runs no handler, so the row kept BUILDING and completed_at NULL —
+    which `purge_expired_downloads` filters on, and which detail.html answers with a five-second
+    reload. The page reloaded itself forever and the row was never collected."""
+    from photo_album.models import ALBUM_DOWNLOAD_STALE_AFTER, AlbumDownload, AlbumDownloadState
+    from photo_album.tasks import fail_stalled_downloads
+
+    resident = make_resident()
+    album = Album.objects.create(folder="2026", name="Fest")
+    stalled = AlbumDownload.objects.create(
+        album=album, requested_by=resident, media_ids=[], state=AlbumDownloadState.BUILDING
+    )
+    fresh = AlbumDownload.objects.create(
+        album=album, requested_by=resident, media_ids=[], state=AlbumDownloadState.BUILDING
+    )
+    AlbumDownload.objects.filter(pk=stalled.pk).update(
+        created_at=timezone.now() - ALBUM_DOWNLOAD_STALE_AFTER - timedelta(minutes=1)
+    )
+
+    assert fail_stalled_downloads.run() == 1
+
+    stalled.refresh_from_db()
+    fresh.refresh_from_db()
+    assert stalled.state == AlbumDownloadState.FAILED
+    # Set so `purge_expired_downloads`, which filters on it, can eventually collect the row.
+    assert stalled.completed_at is not None
+    assert fresh.state == AlbumDownloadState.BUILDING
+
+
+@pytest.mark.django_db
+def test_a_second_download_click_does_not_queue_a_second_archive(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The button stays on the page while the build runs, and a whole-album ZIP is slow enough to
+    invite a second click — which used to queue a second complete archive and leave a second object
+    in the bucket, while the page only ever shows the newest row anyway."""
+    from photo_album.models import AlbumDownload
+
+    resident = make_resident()
+    album = Album.objects.create(folder="2026", name="Fest")
+    upload_media(
+        album=album,
+        uploaded_file=SimpleUploadedFile("first.jpg", b"first", content_type="image/jpeg"),
+        resident=resident,
+        approved=True,
+    )
+    client.force_login(resident)
+    url = reverse("photo_album:download_album", args=[album.pk])
+
+    client.post(url)
+    client.post(url)
+
+    assert AlbumDownload.objects.filter(album=album, requested_by=resident).count() == 1
