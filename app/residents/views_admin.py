@@ -5,7 +5,7 @@ monthly embedsgruppe roles."""
 import datetime
 import io
 import json
-import pickle
+import pickle  # nosec B403: _ResultUnpickler rejects every global/class lookup.
 from typing import Never
 
 from django.conf import settings

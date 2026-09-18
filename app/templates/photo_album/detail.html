@@ -32,7 +32,7 @@
 			{% if item.status == 'pending' %}<strong>Afventer godkendelse</strong>{% endif %}
 		</button>{% else %}<div class="album-media-tile album-media-placeholder" data-kind="{{ item.derivative_state }}">
 			<span class="album-media-placeholder-title">{{ item.title }}</span>
-			{% if item.derivative_state == 'failed' %}<strong>Videoen kunne ikke behandles</strong><a class="btn-link" href="{% url 'photo_album:download_original' item.pk %}">Download original</a>{% else %}<strong>Videoen behandles &hellip;</strong><small>Den vises her, når den er klar.</small>{% endif %}
+			{% if item.derivative_state == 'failed' %}<strong>Videoen kunne ikke behandles</strong><a class="btn-link" href="{% url 'photo_album:download_original' item.pk %}">Download original</a>{% else %}{% if item.status == 'pending' %}<strong>Afventer godkendelse</strong>{% else %}<strong>Mediet behandles &hellip;</strong>{% endif %}<small>Det vises her, når det er klar.</small>{% endif %}
 		</div>{% endif %}
 		{% if can_manage and item.status == 'pending' %}<div class="album-media-controls"><form method="post" action="{% url 'photo_album:approve' item.pk %}">{% csrf_token %}<button type="submit">Godkend</button></form><form method="post" action="{% url 'photo_album:reject' item.pk %}">{% csrf_token %}<button class="btn-link-danger" type="submit">Afvis</button></form></div>{% endif %}
 		</article>

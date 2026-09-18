@@ -184,6 +184,7 @@ def test_image_upload_generates_compressed_derivatives(make_resident: Callable[.
         resident=resident,
         approved=True,
     )
+    assert build_derivatives(media)
     with Image.open(media.high_definition) as high_definition:
         assert max(high_definition.size) == 1600
     with Image.open(media.thumbnail) as thumbnail:
@@ -205,6 +206,7 @@ def test_heic_upload_generates_jpeg_derivatives(make_resident: Callable[..., Res
         resident=resident,
         approved=True,
     )
+    assert build_derivatives(media)
 
     assert media.original.name.endswith(".heic")
     assert media.high_definition.name.endswith(".jpg")
@@ -237,6 +239,8 @@ def test_original_download_returns_original_bytes_and_album_specific_keys(
         resident=administrator,
         approved=True,
     )
+    assert build_derivatives(first_media)
+    assert build_derivatives(second_media)
     client.force_login(administrator)
 
     response = client.get(reverse("photo_album:download_original", args=[first_media.pk]))
@@ -403,6 +407,7 @@ def test_serve_media_redirects_anonymous_requests_to_login(
         resident=make_resident(),
         approved=True,
     )
+    assert build_derivatives(media)
 
     response = client.get(media.thumbnail.url)
 
@@ -420,6 +425,7 @@ def test_serve_media_streams_a_visible_item(client: Client, make_resident: Calla
         resident=requester,
         approved=True,
     )
+    assert build_derivatives(media)
     client.force_login(requester)
 
     response = client.get(media.thumbnail.url)
@@ -443,6 +449,7 @@ def test_serve_media_refuses_a_pending_upload_to_a_stranger(
         resident=requester,
         approved=False,
     )
+    assert build_derivatives(media)
     client.force_login(stranger)
 
     assert client.get(media.thumbnail.url).status_code == 403
@@ -911,7 +918,7 @@ def test_video_upload_stores_the_original_and_defers_its_derivatives(
 
 
 @pytest.mark.django_db
-def test_an_image_upload_still_gets_its_derivatives_immediately(
+def test_an_image_upload_defers_its_derivatives(
     make_resident: Callable[..., Resident],
 ) -> None:
     resident = make_resident()
@@ -919,8 +926,8 @@ def test_an_image_upload_still_gets_its_derivatives_immediately(
 
     media = upload_media(album=album, uploaded_file=_image(), resident=resident)
 
-    assert media.derivative_state == DerivativeState.READY
-    assert media.thumbnail
+    assert media.derivative_state == DerivativeState.PENDING
+    assert not media.thumbnail
 
 
 @pytest.mark.django_db
