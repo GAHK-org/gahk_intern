@@ -18,7 +18,7 @@ services:
   worker:
     build: .
     restart: unless-stopped
-    command: ["celery", "-A", "config", "worker", "--loglevel=INFO"]
+    command: ["celery", "-A", "config", "worker", "--loglevel=INFO", "--concurrency=2"]
 
   beat:
     build: .
