@@ -1,6 +1,9 @@
 // Downscale/recompress image uploads in the browser before the form submits, so room-inspection
 // photos (F-005) stay small — big phone photos become ~a few hundred KB instead of multiple MB.
 // No-op on pages without an image file input. Server keeps a hard size cap as a backstop.
+//
+// ANIMATIONS ARE THE EXCEPTION AND GO UP UNTOUCHED — see isAnimatedUpload. Everything below works
+// by redrawing the image through a canvas, and a canvas has no way to keep more than one frame.
 const MAX_DIM = 1600; // longest edge, px
 const QUALITY = 0.82; // JPEG quality
 // Arkiv grid previews. 320px covers a 2x display at the ~160px the listing renders them at, and
@@ -43,8 +46,56 @@ async function redraw(file: File, maxDim: number, quality: number): Promise<Blob
   return new Promise<Blob | null>((res) => canvas.toBlob(res, "image/jpeg", quality));
 }
 
+/** Whether redrawing this file through a canvas would throw an animation away.
+ *
+ * `createImageBitmap` decodes the FIRST FRAME AND NOTHING ELSE, so the canvas step does not
+ * compress an animation — it discards every frame but one and renames the result .jpg. A reaction
+ * GIF posted to Den Hurtige arrived as a still, and no canvas API can preserve the rest, so the
+ * only fix is not to redraw these at all. They go up at full size; the server's cap for them is
+ * settings.ANIMATED_IMAGE_MAX_MB rather than the per-feature one (core/uploads.py::_size_ceiling).
+ *
+ * GIF IS DECIDED ON THE CONTENT TYPE ALONE, without reading the file. A still GIF is
+ * palette-limited and already small, so the handful of KB given up by never touching one is not
+ * worth walking GIF block structure to tell the two apart — and getting that walk wrong would
+ * flatten animations again, silently. WebP and PNG are sniffed instead: both are ordinary
+ * still-photo formats here and worth downscaling, so only their animated variants are passed
+ * through.
+ *
+ * The marker sits in the header of both, so the first few KB is enough to find one. */
+async function isAnimatedUpload(file: File): Promise<boolean> {
+  if (file.type === "image/gif") return true;
+  if (file.type !== "image/webp" && file.type !== "image/png") return false;
+  const head = new DataView(await file.slice(0, 4096).arrayBuffer());
+  const tagAt = (at: number, tag: string): boolean =>
+    at + tag.length <= head.byteLength &&
+    [...tag].every((c, k) => head.getUint8(at + k) === c.charCodeAt(0));
+
+  if (file.type === "image/webp") {
+    // RIFF....WEBP, then a VP8X chunk whose flags byte has bit 1 set for "has animation". A WebP
+    // without VP8X cannot be animated at all — that chunk is what carries the flag.
+    return (
+      tagAt(0, "RIFF") &&
+      tagAt(8, "WEBP") &&
+      tagAt(12, "VP8X") &&
+      head.byteLength > 20 &&
+      (head.getUint8(20) & 0x02) !== 0
+    );
+  }
+  // APNG: an acTL chunk, which the spec requires BEFORE the first IDAT — so reaching IDAT is a
+  // complete answer of "no" and there is no need to read past it. Chunks are
+  // length(4) + type(4) + data + crc(4), hence the 12.
+  for (let i = 8; i + 8 <= head.byteLength; i += 12 + head.getUint32(i)) {
+    if (tagAt(i + 4, "acTL")) return true;
+    if (tagAt(i + 4, "IDAT")) return false;
+  }
+  return false;
+}
+
 export async function downscaleImage(file: File): Promise<File> {
   if (!file.type.startsWith("image/")) return file;
+  // Before the decode, not after: there is nothing to gain from bitmapping a file we will return
+  // untouched, and on a large GIF that decode is the expensive part.
+  if (await isAnimatedUpload(file)) return file;
   const bmp = await createImageBitmap(file).catch(() => null);
   if (!bmp) return file;
   const scale = Math.min(1, MAX_DIM / Math.max(bmp.width, bmp.height));
