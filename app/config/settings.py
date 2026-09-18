@@ -123,9 +123,7 @@ USE_TZ = True
 
 # Celery persists queued messages and task results in PostgreSQL. Keeping this separate allows a
 # dedicated queue database later, while local and production defaults share the Django database.
-CELERY_DATABASE_URL = os.environ.get(
-    "CELERY_DATABASE_URL", os.environ.get("DATABASE_URL", f"sqlite:///{BASE_DIR / 'db.sqlite3'}")
-)
+CELERY_DATABASE_URL = os.environ.get("CELERY_DATABASE_URL", DATABASE_URL)
 # Django accepts `postgres://`; SQLAlchemy requires the explicit PostgreSQL dialect and driver.
 if CELERY_DATABASE_URL.startswith("postgres://"):
     CELERY_DATABASE_URL = CELERY_DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
