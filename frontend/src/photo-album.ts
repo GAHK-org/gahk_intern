@@ -10,7 +10,83 @@ const uploadProgress = document.querySelector<HTMLElement>("[data-album-upload-p
 const uploadProgressBar = document.querySelector<HTMLProgressElement>("[data-album-upload-progress-bar]")
 const uploadProgressLabel = document.querySelector<HTMLElement>("[data-album-upload-progress-label]")
 const uploadSubmit = document.querySelector<HTMLButtonElement>("[data-album-upload-submit]")
+const zipImportForm = document.querySelector<HTMLFormElement>("[data-album-zip-import]")
+const zipImportJob = document.querySelector<HTMLElement>("[data-album-import-job]")
 
+const pollZipImport = (root: HTMLElement, statusUrl: string, resultUrl: string): void => {
+  const label = root.querySelector<HTMLElement>("[data-album-import-progress-label]")!
+  window.setTimeout(() => {
+    void fetch(statusUrl, { headers: { Accept: "application/json" }, credentials: "same-origin" })
+      .then((response) => response.json() as Promise<{ state: string; error: string }>)
+      .then((job) => {
+        if (job.state === "ready") {
+          window.location.assign(resultUrl)
+          return
+        }
+        if (job.state === "failed") {
+          label.textContent = `Importen mislykkedes: ${job.error || "ukendt fejl"}`
+          return
+        }
+        label.textContent = job.state === "building"
+          ? "ZIP-filen er uploadet. Serveren importerer nu filerne …"
+          : "ZIP-filen er uploadet. Serveren venter på at starte importen …"
+        pollZipImport(root, statusUrl, resultUrl)
+      })
+      .catch(() => {
+        label.textContent = "Kunne ikke hente importens status. Prøver igen …"
+        pollZipImport(root, statusUrl, resultUrl)
+      })
+  }, 1500)
+}
+
+if (zipImportJob) pollZipImport(zipImportJob, zipImportJob.dataset.statusUrl!, zipImportJob.dataset.resultUrl!)
+
+if (zipImportForm) {
+  const archive = zipImportForm.querySelector<HTMLInputElement>("[name=archive]")!
+  const submit = zipImportForm.querySelector<HTMLButtonElement>("[data-album-zip-import-submit]")!
+  const progress = zipImportForm.querySelector<HTMLElement>("[data-album-import-progress]")!
+  const progressBar = progress.querySelector<HTMLProgressElement>("[data-album-import-progress-bar]")!
+  const label = progress.querySelector<HTMLElement>("[data-album-import-progress-label]")!
+  const setFormDisabled = (disabled: boolean): void => {
+    zipImportForm.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input, button").forEach((control) => {
+      control.disabled = disabled
+    })
+  }
+  zipImportForm.addEventListener("submit", (event) => {
+    if (!archive.files?.length) return
+    event.preventDefault()
+    const data = new FormData(zipImportForm)
+    const request = new XMLHttpRequest()
+    setFormDisabled(true)
+    zipImportForm.classList.add("is-submitted")
+    submit.textContent = "Upload i gang …"
+    progress.hidden = false
+    label.textContent = "Uploader ZIP-fil: 0%"
+    request.open("POST", zipImportForm.action)
+    request.setRequestHeader("Accept", "application/json")
+    request.upload.addEventListener("progress", (progressEvent) => {
+      if (!progressEvent.lengthComputable) return
+      const percent = Math.round((progressEvent.loaded / progressEvent.total) * 100)
+      progressBar.value = percent
+      label.textContent = `Uploader ZIP-fil: ${percent}%`
+    })
+    request.addEventListener("load", () => {
+      if (request.status !== 202) {
+        label.textContent = "ZIP-filen kunne ikke uploades. Genindlæs siden for at prøve igen."
+        return
+      }
+      const response = JSON.parse(request.responseText) as { statusUrl: string; resultUrl: string }
+      progressBar.removeAttribute("value")
+      submit.textContent = "Importerer …"
+      label.textContent = "ZIP-filen er uploadet. Serveren importerer nu filerne …"
+      pollZipImport(progress, response.statusUrl, response.resultUrl)
+    })
+    request.addEventListener("error", () => {
+      label.textContent = "ZIP-filen kunne ikke uploades. Genindlæs siden for at prøve igen."
+    })
+    request.send(data)
+  })
+}
 if (uploadInput && uploadSelection && uploadCount && uploadFiles) {
   uploadInput.addEventListener("change", () => {
     const files = Array.from(uploadInput.files ?? [])

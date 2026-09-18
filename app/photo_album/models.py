@@ -31,6 +31,10 @@ def album_thumbnail_path(instance: "Media", filename: str) -> str:
     return f"photo-album/{instance.album_id}/thumbnail/{Path(filename).name}"
 
 
+def album_import_path(instance: "AlbumImport", filename: str) -> str:
+    return f"photo-album-imports/{instance.token}/{Path(filename).name}"
+
+
 class MediaStatus(models.TextChoices):
     PENDING = "pending", "Afventer godkendelse"
     APPROVED = "approved", "Godkendt"
@@ -55,6 +59,13 @@ class DerivativeState(models.TextChoices):
 class AlbumDownloadState(models.TextChoices):
     QUEUED = "queued", "I kø"
     BUILDING = "building", "Bygges"
+    READY = "ready", "Klar"
+    FAILED = "failed", "Mislykkedes"
+
+
+class AlbumImportState(models.TextChoices):
+    QUEUED = "queued", "I kø"
+    BUILDING = "building", "Importerer"
     READY = "ready", "Klar"
     FAILED = "failed", "Mislykkedes"
 
@@ -211,3 +222,25 @@ class AlbumDownload(models.Model):
         if self.completed_at is None:
             return None
         return self.completed_at + ALBUM_DOWNLOAD_RETENTION
+
+
+class AlbumImport(models.Model):
+    """A ZIP received by the web server and imported by a background worker."""
+
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="album_imports"
+    )
+    folder = models.CharField(max_length=10)
+    archive_name = models.CharField(max_length=255)
+    archive = models.FileField(upload_to=album_import_path, storage=get_photo_album_storage)
+    token = models.UUIDField(default=uuid4, unique=True, editable=False)
+    task_id = models.CharField(max_length=36, blank=True)
+    state = models.CharField(max_length=10, choices=AlbumImportState.choices, default=AlbumImportState.QUEUED)
+    album_ids = models.JSONField(default=list)
+    skipped = models.JSONField(default=list)
+    error = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]

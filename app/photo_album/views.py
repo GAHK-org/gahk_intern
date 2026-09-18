@@ -28,8 +28,8 @@ from core.media import REDIRECT_CACHE_CONTROL
 from residents.permissions import current_resident
 
 from . import access, services
-from .forms import AlbumForm, MediaUploadForm
-from .models import Album, AlbumDownload, AlbumDownloadState, Media
+from .forms import AlbumForm, MediaUploadForm, ZipAlbumImportForm
+from .models import Album, AlbumDownload, AlbumDownloadState, AlbumImport, AlbumImportState, Media
 from .storage import PhotoAlbumS3Storage, get_photo_album_storage
 
 
@@ -133,6 +133,57 @@ def create_album(request: HttpRequest) -> HttpResponse:
         album = form.save()
         return redirect("photo_album:detail", album.pk)
     return render(request, "photo_album/form.html", {"form": form, "title": "Opret album"})
+
+
+@login_required
+def import_zip(request: HttpRequest) -> HttpResponse:
+    if not access.can_create_album(request):
+        raise PermissionDenied
+    form = ZipAlbumImportForm(request.POST or None, request.FILES or None)
+    if request.method == "POST" and form.is_valid():
+        archive = form.cleaned_data["archive"]
+        album_import = AlbumImport.objects.create(
+            requested_by=current_resident(request),
+            folder=form.cleaned_data["folder"],
+            archive_name=archive.name,
+            archive=archive,
+        )
+        from .tasks import process_album_import
+
+        def enqueue() -> None:
+            result = process_album_import.delay(album_import.pk)
+            AlbumImport.objects.filter(pk=album_import.pk).update(task_id=result.id)
+
+        transaction.on_commit(enqueue)
+        result_url = f"{reverse('photo_album:import_zip')}?job={album_import.token}"
+        if "application/json" in request.headers.get("Accept", ""):
+            return JsonResponse(
+                {
+                    "statusUrl": reverse("photo_album:import_zip_status", args=[album_import.token]),
+                    "resultUrl": result_url,
+                },
+                status=202,
+            )
+        return redirect(result_url)
+    job = None
+    albums: list[Album] = []
+    skipped: list[str] = []
+    if token := request.GET.get("job"):
+        job = get_object_or_404(AlbumImport, token=token, requested_by=current_resident(request))
+        if job.state == AlbumImportState.READY:
+            albums = list(Album.objects.filter(pk__in=job.album_ids).order_by("name"))
+            skipped = job.skipped
+    return render(
+        request,
+        "photo_album/import_zip.html",
+        {"zip_form": form, "job": job, "albums": albums, "skipped": skipped},
+    )
+
+
+@login_required
+def import_zip_status(request: HttpRequest, token: str) -> JsonResponse:
+    album_import = get_object_or_404(AlbumImport, token=token, requested_by=current_resident(request))
+    return JsonResponse({"state": album_import.state, "error": album_import.error})
 
 
 @login_required

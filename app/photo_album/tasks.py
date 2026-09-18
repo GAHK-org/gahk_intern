@@ -4,13 +4,21 @@ from collections.abc import Buffer, Iterator
 from pathlib import Path
 
 from celery import shared_task
-from django.core.files.base import ContentFile
+from django.core.files.base import ContentFile, File
 from django.core.management import call_command
 from django.utils import timezone
 from zipstream import ZIP_STORED, ZipStream
 
-from .models import ALBUM_DOWNLOAD_RETENTION, AlbumDownload, AlbumDownloadState, DerivativeState, Media
-from .services import build_derivatives, pending_derivatives
+from .models import (
+    ALBUM_DOWNLOAD_RETENTION,
+    AlbumDownload,
+    AlbumDownloadState,
+    AlbumImport,
+    AlbumImportState,
+    DerivativeState,
+    Media,
+)
+from .services import build_derivatives, import_zip_album, pending_derivatives
 from .storage import PhotoAlbumS3Storage, get_photo_album_storage
 
 
@@ -114,6 +122,39 @@ def build_album_download(download_id: int) -> bool:
     download.completed_at = timezone.now()
     download.save(update_fields=["state", "archive_key", "completed_at"])
     return True
+
+
+@shared_task
+def process_album_import(import_id: int) -> bool:
+    """Unpack a stored ZIP outside the web request that received it."""
+    try:
+        album_import = AlbumImport.objects.get(pk=import_id, state=AlbumImportState.QUEUED)
+    except AlbumImport.DoesNotExist:
+        return False
+    album_import.state = AlbumImportState.BUILDING
+    album_import.save(update_fields=["state"])
+    try:
+        with album_import.archive.open("rb") as archive:
+            albums, skipped = import_zip_album(
+                archive=File(archive, name=album_import.archive_name),
+                folder=album_import.folder,
+                resident=album_import.requested_by,
+            )
+        album_import.state = AlbumImportState.READY
+        album_import.album_ids = [album.pk for album in albums]
+        album_import.skipped = skipped
+        album_import.completed_at = timezone.now()
+        album_import.save(update_fields=["state", "album_ids", "skipped", "completed_at"])
+        return True
+    except Exception as exc:
+        album_import.state = AlbumImportState.FAILED
+        album_import.error = str(exc)[:255]
+        album_import.completed_at = timezone.now()
+        album_import.save(update_fields=["state", "error", "completed_at"])
+        raise
+    finally:
+        if album_import.archive:
+            album_import.archive.delete(save=False)
 
 
 @shared_task
