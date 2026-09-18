@@ -1,6 +1,6 @@
 # Deployment runbook
 
-Target stack (scope §4): **Django 5.2 + gunicorn** behind **nginx/Traefik**, **PostgreSQL**, **WhiteNoise**
+Target stack (scope §4): **Django 5.2 + Daphne/ASGI** behind **nginx/Traefik**, **PostgreSQL**, **WhiteNoise**
 for static, on **Hetzner** with **Coolify** (git-push deploys + Let's Encrypt TLS) or **Kamal**. MediaWiki
 stays a separate **PHP + MariaDB** app on the same box. No SPA/API — one monolith.
 
@@ -97,7 +97,7 @@ Fresh repo (do **not** import the legacy history — it contains plaintext secre
 3. Run **Postgres** (managed, or the `postgres` service in `docker-compose.prod.yml`) and **MariaDB** (for
    MediaWiki). Mount the **`media` volume** for uploads — still required, and still the rollback,
    even after the object-storage migration in §4c.
-4. `web` runs `migrate` on start then gunicorn; Coolify/Traefik terminates TLS and proxies to :8000.
+4. `web` runs `migrate` on start then Daphne; Coolify/Traefik terminates TLS and proxies HTTP and WebSocket traffic to :8000.
 5. `Scaleway` is the fallback if you prefer a first-party managed Postgres.
 
 ### 4b. Scheduled tasks (Celery Beat → worker)
