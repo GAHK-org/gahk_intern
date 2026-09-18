@@ -148,6 +148,44 @@ def test_zip_import_creates_recursive_albums_and_reports_skipped_files(
 
 
 @pytest.mark.django_db
+def test_zip_import_treats_a_matching_root_directory_as_the_archive_root(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    client.force_login(administrator)
+    archive = _zip_upload(("foo/photo.jpg", b"photo"), ("foo/bar/nested.png", b"nested"))
+
+    response = client.post(
+        reverse("photo_album:import_zip"),
+        {"folder": "2026", "archive": archive},
+    )
+
+    assert response.status_code == 302
+    album_import = AlbumImport.objects.get()
+    assert process_album_import(album_import.pk)
+    assert list(Album.objects.order_by("name").values_list("name", flat=True)) == ["foo", "foo/bar"]
+
+
+@pytest.mark.django_db
+def test_zip_import_collapses_repeated_matching_root_directories(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    client.force_login(administrator)
+    archive = _zip_upload(("foo/foo/photo.jpg", b"photo"), ("foo/foo/bar/nested.png", b"nested"))
+
+    response = client.post(
+        reverse("photo_album:import_zip"),
+        {"folder": "2026", "archive": archive},
+    )
+
+    assert response.status_code == 302
+    album_import = AlbumImport.objects.get()
+    assert process_album_import(album_import.pk)
+    assert list(Album.objects.order_by("name").values_list("name", flat=True)) == ["foo", "foo/bar"]
+
+
+@pytest.mark.django_db
 def test_zip_import_returns_status_and_result_urls_for_the_progress_uploader(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:

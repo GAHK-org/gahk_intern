@@ -52,6 +52,17 @@ def import_zip_album(*, archive: File, folder: str, resident: Resident) -> tuple
     archive.seek(0)
     try:
         with zipfile.ZipFile(archive) as zip_archive:
+            file_paths = [
+                PurePosixPath(member.filename)
+                for member in zip_archive.infolist()
+                if not member.is_dir() and not _is_macos_archive_metadata(PurePosixPath(member.filename))
+            ]
+            root_parts = 0
+            while file_paths and all(
+                len(path.parts) > root_parts + 1 and path.parts[root_parts] == root_name
+                for path in file_paths
+            ):
+                root_parts += 1
             for member in zip_archive.infolist():
                 member_path = PurePosixPath(member.filename)
                 if member.is_dir():
@@ -62,6 +73,8 @@ def import_zip_album(*, archive: File, folder: str, resident: Resident) -> tuple
                 if member_path.is_absolute() or ".." in member_path.parts or not member_path.name:
                     skipped.append(f"{member.filename}: ugyldig sti i ZIP-filen")
                     continue
+                if root_parts:
+                    member_path = PurePosixPath(*member_path.parts[root_parts:])
                 if member.file_size > maximum_member_bytes:
                     skipped.append(f"{member.filename}: filen er for stor")
                     continue
