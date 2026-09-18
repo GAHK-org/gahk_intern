@@ -23,6 +23,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.formats import date_format
+from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
 from arkiv.storage import content_disposition
@@ -167,11 +168,10 @@ def create_album(request: HttpRequest) -> HttpResponse:
 
 
 def import_zip(request: HttpRequest) -> HttpResponse:
-    system_resident = _token_import_resident(request)
-    resident = system_resident or current_resident(request)
+    resident = current_resident(request)
     if resident is None:
         return redirect_to_login(request.get_full_path())
-    if system_resident is None and not access.can_create_album(request):
+    if not access.can_create_album(request):
         raise PermissionDenied
     form = ZipAlbumImportForm(request.POST or None, request.FILES or None)
     if request.method == "POST" and form.is_valid():
@@ -217,6 +217,39 @@ def import_zip(request: HttpRequest) -> HttpResponse:
             "skipped": skipped,
             "folder_options": album_folder_options(),
         },
+    )
+
+
+@csrf_exempt
+@require_POST
+def system_import_zip(request: HttpRequest) -> JsonResponse:
+    resident = _token_import_resident(request)
+    if resident is None:
+        raise PermissionDenied
+    form = ZipAlbumImportForm(request.POST, request.FILES)
+    if not form.is_valid():
+        return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
+
+    archive = form.cleaned_data["archive"]
+    album_import = AlbumImport.objects.create(
+        requested_by=resident,
+        folder=form.cleaned_data["folder"],
+        archive_name=archive.name,
+        archive=archive,
+    )
+    from .tasks import process_album_import
+
+    def enqueue() -> None:
+        result = process_album_import.delay(album_import.pk)
+        AlbumImport.objects.filter(pk=album_import.pk).update(task_id=result.id)
+
+    transaction.on_commit(enqueue)
+    return JsonResponse(
+        {
+            "statusUrl": reverse("photo_album:import_zip_status", args=[album_import.token]),
+            "resultUrl": f"{reverse('photo_album:import_zip')}?job={album_import.token}",
+        },
+        status=202,
     )
 
 

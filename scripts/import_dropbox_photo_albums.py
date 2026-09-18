@@ -6,7 +6,7 @@
 #     "requests>=2.32",
 # ]
 # ///
-"""Import /GAHK billeder from Dropbox, building and deleting one annual ZIP at a time."""
+"""Import /GAHK billeder from Dropbox, building and deleting one album ZIP at a time."""
 
 import argparse
 import os
@@ -35,13 +35,15 @@ def required_environment(name: str) -> str:
 
 
 def iter_entries(
-    client: dropbox.Dropbox, path: str
+    client: dropbox.Dropbox, path: str, *, recursive: bool = False
 ) -> Iterator[dropbox.files.Metadata]:
+    print(f"Listing {path} ...", flush=True)
     listing = client.files_list_folder(
-        path, recursive=True, include_non_downloadable_files=False
+        path, recursive=recursive, include_non_downloadable_files=False
     )
     yield from listing.entries
     while listing.has_more:
+        print(f"  Fetching another page from {path} ...", flush=True)
         listing = client.files_list_folder_continue(listing.cursor)
         yield from listing.entries
 
@@ -64,47 +66,65 @@ def year_folders(
             raise SystemExit(
                 f"Year folders not found in Dropbox: {', '.join(sorted(missing))}"
             )
-        return [year for year in years if year in selected_years]
+        years = [year for year in years if year in selected_years]
+    print(
+        f"Found {len(years)} year folder(s): {', '.join(years) or 'none'}", flush=True
+    )
     return years
 
 
-def build_zip(client: dropbox.Dropbox, source: str, target: Path) -> int:
-    files = [
-        entry
-        for entry in iter_entries(client, source)
-        if isinstance(entry, dropbox.files.FileMetadata)
-    ]
-    with zipfile.ZipFile(
-        target, "w", compression=zipfile.ZIP_STORED, allowZip64=True
-    ) as archive:
-        for index, entry in enumerate(files, start=1):
-            relative_name = entry.path_display.removeprefix(f"{source}/")
-            print(f"  Downloading {index}/{len(files)}: {relative_name}", flush=True)
-            _, response = client.files_download(entry.path_display)
-            with response, archive.open(relative_name, "w") as destination:
-                shutil.copyfileobj(response.raw, destination, length=CHUNK_SIZE)
-    return len(files)
+def album_folders(client: dropbox.Dropbox, year_path: str) -> list[str]:
+    albums = sorted(
+        entry.name
+        for entry in iter_entries(client, year_path)
+        if isinstance(entry, dropbox.files.FolderMetadata)
+    )
+    print(
+        f"Found {len(albums)} album folder(s) in {year_path}: {', '.join(albums) or 'none'}",
+        flush=True,
+    )
+    return albums
+
+
+def download_zip(client: dropbox.Dropbox, source: str, target: Path) -> int:
+    print(f"Requesting a Dropbox ZIP for {source} ...", flush=True)
+    _, response = client.files_download_zip(source)
+    with response, target.open("wb") as destination:
+        shutil.copyfileobj(response.raw, destination, length=CHUNK_SIZE)
+    with zipfile.ZipFile(target) as archive:
+        count = sum(not member.is_dir() for member in archive.infolist())
+    print(f"  Downloaded {target} with {count} file(s).", flush=True)
+    return count
 
 
 def submit_and_wait(
     zip_path: Path, year: str, endpoint: str, token: str, poll_interval: float
 ) -> None:
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    system_endpoint = endpoint.rstrip("/")
+    if not system_endpoint.endswith("/system"):
+        system_endpoint = f"{system_endpoint}/system"
+    print(f"  Sending {zip_path.name} to {system_endpoint} ...", flush=True)
     with zip_path.open("rb") as archive:
         response = requests.post(
-            endpoint,
+            system_endpoint,
             headers=headers,
             data={"folder": year},
             files={"archive": (zip_path.name, archive, "application/zip")},
             timeout=(30, None),
         )
     response.raise_for_status()
-    status_url = urljoin(endpoint, response.json()["statusUrl"])
-    print("  ZIP uploaded; waiting for server import.", flush=True)
+    status_url = urljoin(system_endpoint, response.json()["statusUrl"])
+    print(f"  ZIP uploaded; polling {status_url}.", flush=True)
+    last_state: str | None = None
     while True:
+        print("  Requesting import status ...", flush=True)
         response = requests.get(status_url, headers=headers, timeout=30)
         response.raise_for_status()
         job = response.json()
+        if job["state"] != last_state:
+            print(f"  Server import state: {job['state']}", flush=True)
+            last_state = job["state"]
         if job["state"] == "ready":
             return
         if job["state"] == "failed":
@@ -112,49 +132,90 @@ def submit_and_wait(
         time.sleep(poll_interval)
 
 
+def year_range(value: str) -> set[str]:
+    start, separator, end = value.partition("-")
+    if not separator or not YEAR.fullmatch(start) or not YEAR.fullmatch(end):
+        raise argparse.ArgumentTypeError("must use YYYY-YYYY, for example 2001-2004")
+    if start > end:
+        raise argparse.ArgumentTypeError("must end with the same or a later year")
+    return {str(year) for year in range(int(start), int(end) + 1)}
+
+
+def should_upload(year: str, album: str) -> bool:
+    while True:
+        answer = input(f"Upload {year}/{album}? [y]es/[s]kip: ").strip().lower()
+        if answer in {"y", "yes"}:
+            return True
+        if answer in {"s", "skip"}:
+            return False
+        print("Enter y to upload or s to skip.", flush=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--endpoint", default=os.environ.get("PHOTO_ALBUM_IMPORT_URL"))
     parser.add_argument("--dropbox-root", default="/GAHK billeder")
-    parser.add_argument(
+    year_selection = parser.add_mutually_exclusive_group()
+    year_selection.add_argument(
         "--year",
         action="append",
         default=[],
         help="Import only this YYYY folder; repeatable",
     )
+    year_selection.add_argument(
+        "--year-range",
+        type=year_range,
+        help="Import YYYY folders in this inclusive range, for example 2001-2004",
+    )
     parser.add_argument(
         "--work-dir", type=Path, default=Path(".dropbox-photo-album-import")
     )
     parser.add_argument("--poll-interval", type=float, default=5.0)
+    parser.add_argument(
+        "--confirm",
+        action="store_true",
+        help="Ask whether to upload or skip each album",
+    )
     args = parser.parse_args()
 
     if not args.endpoint:
         raise SystemExit("Set PHOTO_ALBUM_IMPORT_URL or pass --endpoint.")
-    selected_years = set(args.year)
+    selected_years = args.year_range or set(args.year)
     if invalid_years := [year for year in selected_years if not YEAR.fullmatch(year)]:
         raise SystemExit(f"Invalid year: {', '.join(sorted(invalid_years))}")
 
     client = dropbox.Dropbox(required_environment("DROPBOX_ACCESS_TOKEN"))
     token = required_environment("PHOTO_ALBUM_IMPORT_TOKEN")
     args.work_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Connecting to {args.dropbox_root} ...", flush=True)
     for year in year_folders(client, args.dropbox_root, selected_years):
-        zip_path = args.work_dir / f"{year}.zip"
-        if zip_path.exists():
-            raise SystemExit(
-                f"Refusing to overwrite {zip_path}; finish or remove it before retrying."
-            )
-        print(f"Importing {year}", flush=True)
-        try:
-            count = build_zip(client, f"{args.dropbox_root}/{year}", zip_path)
-            submit_and_wait(zip_path, year, args.endpoint, token, args.poll_interval)
-        except Exception:
-            print(
-                f"  Failed; keeping {zip_path} for inspection or retry.",
-                file=sys.stderr,
-            )
-            raise
-        zip_path.unlink()
-        print(f"  Imported {count} file(s); removed {zip_path}.", flush=True)
+        year_path = f"{args.dropbox_root}/{year}"
+        for album in album_folders(client, year_path):
+            if args.confirm and not should_upload(year, album):
+                print(f"Skipped {year}/{album}.", flush=True)
+                continue
+
+            zip_path = args.work_dir / year / f"{album}.zip"
+            if zip_path.exists():
+                raise SystemExit(
+                    f"Refusing to overwrite {zip_path}; finish or remove it before retrying."
+                )
+            album_path = f"{year_path}/{album}"
+            print(f"Importing folder {album_path}", flush=True)
+            zip_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                count = download_zip(client, album_path, zip_path)
+                submit_and_wait(
+                    zip_path, year, args.endpoint, token, args.poll_interval
+                )
+            except Exception:
+                print(
+                    f"  Failed; keeping {zip_path} for inspection or retry.",
+                    file=sys.stderr,
+                )
+                raise
+            zip_path.unlink()
+            print(f"  Imported {count} file(s); removed {zip_path}.", flush=True)
 
 
 if __name__ == "__main__":

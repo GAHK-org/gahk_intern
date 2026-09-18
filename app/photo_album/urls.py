@@ -9,6 +9,7 @@ urlpatterns = [
     path("bin", views.bin, name="bin"),
     path("opret", views.create_album, name="create_album"),
     path("importer-zip", views.import_zip, name="import_zip"),
+    path("importer-zip/system", views.system_import_zip, name="system_import_zip"),
     path("importer-zip/<uuid:token>/status", views.import_zip_status, name="import_zip_status"),
     path("<int:pk>", views.detail, name="detail"),
     path("<int:pk>/download", views.download_album, name="download_album"),

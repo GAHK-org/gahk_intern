@@ -97,9 +97,10 @@ def test_only_photo_group_or_administrator_can_import_zip_albums(
 
 @pytest.mark.django_db
 @override_settings(PHOTO_ALBUM_IMPORT_TOKEN="migration-token")
-def test_token_import_uses_system_resident(client: Client) -> None:
-    response = client.post(
-        reverse("photo_album:import_zip"),
+def test_token_import_uses_system_resident() -> None:
+    csrf_client = Client(enforce_csrf_checks=True)
+    response = csrf_client.post(
+        reverse("photo_album:system_import_zip"),
         {"folder": "2026", "archive": _zip_upload(("one.jpg", b"one"))},
         HTTP_AUTHORIZATION="Bearer migration-token",
         HTTP_ACCEPT="application/json",
@@ -144,6 +145,26 @@ def test_zip_import_creates_recursive_albums_and_reports_skipped_files(
     completed = client.get(f"{reverse('photo_album:import_zip')}?job={album_import.token}")
     assert "bar/notes.txt" in completed.content.decode()
     assert "Filtypen er ikke understøttet" in completed.content.decode()
+
+
+@pytest.mark.django_db
+def test_zip_import_strips_a_single_root_directory(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    client.force_login(administrator)
+    archive = _zip_upload(("downloaded/photo.jpg", b"photo"))
+    archive.name = "Skovtur.zip"
+
+    response = client.post(
+        reverse("photo_album:import_zip"),
+        {"folder": "2001", "archive": archive},
+    )
+
+    assert response.status_code == 302
+    album_import = AlbumImport.objects.get()
+    assert process_album_import(album_import.pk)
+    assert list(Album.objects.values_list("name", flat=True)) == ["Skovtur"]
 
 
 @pytest.mark.django_db
