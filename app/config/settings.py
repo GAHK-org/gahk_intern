@@ -158,6 +158,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "photo_album.tasks.purge_expired_media",
         "schedule": crontab(minute=10, hour=4),
     },
+    "purge-expired-photo-album-downloads": {
+        "task": "photo_album.tasks.purge_expired_downloads",
+        "schedule": crontab(minute=20, hour=4),
+    },
     "apply-ak-monthly-assessment": {
         "task": "ak.tasks.apply_monthly_assessment",
         "schedule": crontab(minute=10, hour=4, day_of_month=1),
