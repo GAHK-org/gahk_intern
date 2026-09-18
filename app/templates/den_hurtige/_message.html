@@ -19,6 +19,18 @@
              continuation of anything), the delete button, the swipe gestures and the "N svar"
              link — you are already in the thread, and deleting from here would orphan the panel
              you are standing in.
+    archived truthy in the archive and in the thread panel of an archived message. Removes every
+             control that would WRITE: the delete form and the swipe gestures that fire it, and it
+             turns the reaction row read-only (see _reactions.html). It also drops the countdown,
+             which has nothing left to count. The "N svar" link stays — reading a thread is not a
+             write, and the panel it opens refuses one.
+
+             A FLAG FROM THE CALLER, NOT `post.is_archived`. The two agree today and the property
+             exists — but reading it here would make every message on the LIVE feed ask the clock
+             again mid-render, and a message that crossed its expiry between the queryset and the
+             template would draw itself read-only inside a feed that still lists it. The list a
+             message was fetched into is what decides how it renders, and that is a fact the view
+             already knows.
 
   WHY A BUBBLE AND NOT A ROW. This used to be a flat grid: avatar, then a header line carrying the
   name, the time and the expiry, then the text. It read as a forum, and it broke down precisely on
@@ -53,10 +65,15 @@
   list is already doing layout work, and because `bare` must not carry it — the thread parent sits
   inside the panel a swipe would open, so swiping it right would re-open the thread being read.
 {% endcomment %}
-<article class="msg{% if post.grouped and not bare %} msg-grouped{% endif %}{% if post.group_end or bare %} msg-tail{% endif %}{% if post.author_id == user.id %} msg-own{% endif %}{% if bare %} msg-parent{% endif %}"
+<article class="msg{% if post.grouped and not bare %} msg-grouped{% endif %}{% if post.group_end or bare %} msg-tail{% endif %}{% if post.author_id == user.id %} msg-own{% endif %}{% if bare %} msg-parent{% endif %}{% if archived %} msg-archived{% endif %}"
          id="{% if bare %}thread-parent-{{ post.pk }}{% else %}msg-{{ post.pk }}{% endif %}"
-         {% if not bare %}data-msg-swipe{% endif %}>
-  {% if not bare %}
+         {% if not bare and not archived %}data-msg-swipe{% endif %}>
+  {% comment %}
+    No swipe target and no hints in the archive: both gestures fire a control that is not rendered
+    there (the thread link, the delete form), so arming them would be a drag that reveals an icon
+    and then does nothing — worse than no gesture at all, because it reads as a broken one.
+  {% endcomment %}
+  {% if not bare and not archived %}
     {% comment %}
       What a swipe reveals. Both sit at the edges of .msg, underneath the message at rest and at
       opacity:0, so they cost no layout and cannot be seen until the drag has moved the message off
@@ -129,8 +146,16 @@
         <span class="msg-text">{{ post.content|links }}</span>
         <span class="msg-clock">
           <span class="msg-meta msg-time">{{ post.created_at|date:"H:i" }}</span>
-          <span class="msg-meta msg-expiry" title="Udløber om {{ post.expires_label }}"
-                aria-label="Udløber om {{ post.expires_label }}"><span aria-hidden="true">⏱</span> {{ post.expires_label }}</span>
+          {% comment %}
+            The countdown is to leaving the FEED, not to being deleted — which is why it reads
+            "arkiveres om" rather than the old "udløber om". In the archive it is dropped outright:
+            it would count down to a moment that has already passed, and the date is on the day
+            heading above (_archive_chunk.html) where it is said once instead of on every bubble.
+          {% endcomment %}
+          {% if not archived %}
+            <span class="msg-meta msg-expiry" title="Arkiveres om {{ post.expires_label }}"
+                  aria-label="Arkiveres om {{ post.expires_label }}"><span aria-hidden="true">⏱</span> {{ post.expires_label }}</span>
+          {% endif %}
         </span>
       </div>
       {% if post.image %}
@@ -163,7 +188,7 @@
       (styles.css): swiping is the gesture there, and a permanent ✕ on every message in the feed
       was easy to catch with a thumb while scrolling.
     {% endcomment %}
-    {% if not bare and post.author_id == user.id or not bare and can_moderate %}
+    {% if not bare and not archived and post.author_id == user.id or not bare and not archived and can_moderate %}
       <form method="post" action="{% url 'den_hurtige:delete_post' post.pk %}" class="msg-del"
             onsubmit="return confirm('Slet «{{ post.content|truncatechars:60|escapejs }}» permanent?')">
         {% csrf_token %}
@@ -185,7 +210,25 @@
   <div class="msg-actions">
     {% include "den_hurtige/_reactions.html" with reactions=post.reaction_rows %}
 
-    {% if not bare %}
+    {% comment %}
+      RENDERED IN THE ARCHIVE TOO. A thread was briefly inlined there behind a <details> instead,
+      on the argument that an archive whose answers are elsewhere is a record of half a
+      conversation. That was solving the wrong half: the answers are not elsewhere, they are in the
+      same panel they have always been in, and a reader who knows how to open a thread in the live
+      feed should not have to learn a second control to open the same thread one screen higher.
+
+      The panel renders an archived thread read-only — no reply form, no reaction controls, and no
+      5s poll, since nothing about it can change (views._render_thread, _thread.html).
+    {% endcomment %}
+    {% comment %}
+      IN THE ARCHIVE THE LINK APPEARS ONLY WHEN THERE ARE REPLIES. Empty, this element is an
+      affordance and nothing else -- it reads "Svar", and its whole job is to tell you that you may
+      answer. In the archive you may not, so on a message nobody ever replied to it offered a
+      control that does not exist and named an action that is refused. With replies it is doing its
+      OTHER job, which survives archiving intact: it is the only evidence on the feed that a
+      conversation happened at all, and opening it is a read.
+    {% endcomment %}
+    {% if not bare and post.reply_count or not bare and not archived %}
       {% comment %}
         An <a href>, not a button: it is a real URL (den_hurtige:thread), so it works with no JS at
         all — the browser navigates to the standalone thread page — and htmx upgrades it into the

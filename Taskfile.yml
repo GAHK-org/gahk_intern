@@ -1,10 +1,13 @@
 version: '3'
 
 # Dev task runner for the GAHK Django rewrite.
-#   task dev    -> migrate + run the server at http://127.0.0.1:8000
-#   task debug  -> run the server in debug mode (no reload/threading so breakpoints are stable)
-# Uses the project virtualenv at ./.venv and the Django project in ./app. Local dev uses SQLite
-# unless DATABASE_URL is set (see app/.env.example); the Docker DBs (task db:up) are for ETL/Postgres.
+#   task dev       -> the whole app in Docker, hot-reloading (Postgres+MinIO+Django) -> http://127.0.0.1:8800
+#   task dev:local -> the same thing, but Django runs directly on the host instead of in a container
+#   task debug     -> dev:local's server under debugpy, waiting for your IDE to attach (port 5678)
+#   task debug:pdb -> the same server, but breakpoint() drops into pdb in this terminal instead
+# Postgres + MinIO are used either way (see app/.env.example). `task db:up` additionally starts
+# MariaDB, needed only for the legacy ETL. `dev:local`/`debug` use the project virtualenv at ./.venv
+# and the Django project in ./app; `dev` builds and runs Dockerfile.dev instead — see docker-compose.yml.
 
 # Dependencies are managed by uv (pyproject.toml + uv.lock). `uv run` auto-syncs the ./.venv and runs
 # in it; every Python task sets `dir: app`, and uv discovers the project by walking up to the repo root.
@@ -12,9 +15,15 @@ version: '3'
 vars:
   PY: 'uv run python'
   APP: '{{.ROOT_DIR}}/app'
-  # Dev server address. 8000/8001/8080 are often taken by VS Code; override with:
-  #   task dev DEV_ADDR=127.0.0.1:9000
+  # Dev server address for `dev:local`/`debug` (`dev`, the Docker one, always binds 127.0.0.1:8800 —
+  # see docker-compose.yml). 8000/8001/8080 are often taken by VS Code; override with:
+  #   task dev:local DEV_ADDR=127.0.0.1:9000
   DEV_ADDR: '127.0.0.1:8800'
+  # Where debugpy listens for the IDE. Override the same way as DEV_ADDR if 5678 is taken.
+  DEBUG_ADDR: '127.0.0.1:5678'
+  # `task debug` blocks until the IDE attaches, so a breakpoint in startup code or in the first
+  # request cannot be missed. To start serving immediately and attach whenever: task debug DEBUG_WAIT=
+  DEBUG_WAIT: '--wait-for-client'
 
 env:
   DJANGO_DEBUG: '1'
@@ -33,20 +42,47 @@ tasks:
     desc: Create/sync the virtualenv from pyproject.toml + uv.lock (runtime + dev deps)
     cmds: ['uv sync']
 
-  dev:
-    desc: Build assets, migrate, then run the dev server (http://127.0.0.1:8800)
+  dev:local:
+    desc: Start Postgres+MinIO, build assets, migrate, then run Django directly on the host (http://127.0.0.1:8800)
     dir: '{{.APP}}'
     cmds:
+      - task: services:up
       - task: frontend:build
       - '{{.PY}} manage.py migrate'
       - '{{.PY}} manage.py runserver {{.DEV_ADDR}}'
 
   debug:
-    desc: Run the dev server in debug mode (no reload/threading; breakpoint()/pdb stable)
+    desc: 'Like dev:local, but under debugpy, waiting for the IDE to attach ("Attach to task debug")'
+    dir: '{{.APP}}'
+    env:
+      # So a breakpoint() left in the code stops in the IDE rather than dropping this terminal into
+      # pdb, which fights the attached debugger for stdin. task debug:pdb is the other way round.
+      PYTHONBREAKPOINT: debugpy.breakpoint
+    cmds:
+      - task: services:up
+      # debugpy prints NOTHING while it waits, so without this line the task looks like it hung.
+      # It has not: the server does not start until the IDE connects. Said out loud because the
+      # silence is the single most confusing thing about this task.
+      - cmd: |
+          printf '\n  debugpy is listening on %s\n' '{{.DEBUG_ADDR}}'
+          printf '  The server starts when your IDE attaches, and not before - so a quiet\n'
+          printf '  terminal here is the task working, not the task hung.\n\n'
+          printf '  VS Code: Run and Debug -> "Attach to task debug" (F5).\n'
+          printf '  Start serving straight away instead:  task debug DEBUG_WAIT=\n\n'
+        silent: true
+      # --noreload is REQUIRED, not a preference: the reloader runs the server in a child process,
+      # so the debugger would attach to the parent and never see a breakpoint. --nothreading keeps
+      # the whole server stopped while you are paused, instead of other requests running on past
+      # you; drop it if you are debugging something that needs concurrent requests.
+      - '{{.PY}} -m debugpy --listen {{.DEBUG_ADDR}} {{.DEBUG_WAIT}} manage.py runserver --nothreading --noreload {{.DEV_ADDR}}'
+
+  debug:pdb:
+    desc: Like debug, but breakpoint() drops into pdb in this terminal instead of the IDE
     dir: '{{.APP}}'
     env:
       PYTHONBREAKPOINT: pdb.set_trace
     cmds:
+      - task: services:up
       - '{{.PY}} manage.py runserver --nothreading --noreload {{.DEV_ADDR}}'
 
   migrate:
@@ -78,6 +114,7 @@ tasks:
     desc: Fill the DB with realistic fake data for dev/demo (wipes existing demo data; prints logins)
     dir: '{{.APP}}'
     cmds:
+      - task: services:up
       - '{{.PY}} manage.py migrate'
       - '{{.PY}} manage.py seed_demo --fresh {{.CLI_ARGS}}'
 
@@ -128,7 +165,7 @@ tasks:
     cmds: ['{{.PY}} manage.py etl_verify']
 
   db:up:
-    desc: Start the Postgres + MariaDB containers
+    desc: Start the Postgres + MariaDB containers (ETL; use `services:up` for everyday dev)
     cmds: ['docker compose up -d postgres mariadb']
 
   db:down:
@@ -142,6 +179,43 @@ tasks:
   db:mysql:
     desc: mysql shell on the legacy MariaDB staging DB
     cmds: ['docker compose exec mariadb mariadb -ugahk -pgahk gahk_dk']
+
+  services:up:
+    desc: Start Postgres + MinIO (the app's everyday local dependencies; `db:up` also adds MariaDB for ETL)
+    cmds: ['docker compose up -d postgres minio minio-init']
+
+  services:down:
+    desc: Stop Postgres + MinIO
+    cmds: ['docker compose stop postgres minio minio-init']
+
+  minio:up:
+    desc: Start MinIO alone (S3-compatible object storage standing in for Hetzner locally)
+    cmds: ['docker compose up -d minio minio-init']
+
+  minio:down:
+    desc: Stop MinIO
+    cmds: ['docker compose stop minio minio-init']
+
+  minio:console:
+    desc: Print the MinIO console URL/login (bucket browser)
+    cmds:
+      - 'echo "http://localhost:9001  (user: minioadmin / password: minioadmin)"'
+    silent: true
+
+  dev:
+    desc: Run the whole app in Docker with hot-reload (Postgres+MinIO+Django) -> http://127.0.0.1:8800
+    # Foreground, attached to Django's own output (not postgres/minio's) — Ctrl-C stops it, same as
+    # dev:local's runserver. `dev:logs`/`dev:down` are for a `dev` started elsewhere (e.g. in CI).
+    deps: [frontend:build]
+    cmds: ['docker compose --profile docker up --build --attach web web']
+
+  dev:down:
+    desc: Stop the dockerized app (Postgres/MinIO keep running; `services:down` stops those too)
+    cmds: ['docker compose --profile docker stop web']
+
+  dev:logs:
+    desc: Follow logs from the dockerized app
+    cmds: ['docker compose logs -f web']
 
   etl:
     desc: 'Run the full legacy->clean data migration (needs task db:up + dump loaded)'
@@ -169,7 +243,7 @@ tasks:
     cmds: ['npm install --no-audit --no-fund --silent', 'npm run build']
 
   frontend:watch:
-    desc: Rebuild the bundle on change (run alongside `task dev` during frontend work)
+    desc: Rebuild the bundle on change (run alongside `task dev`/`dev:local` during frontend work)
     dir: '{{.ROOT_DIR}}/frontend'
     cmds: ['npm run watch']
 

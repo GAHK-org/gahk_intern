@@ -19,8 +19,13 @@
 {% endcomment %}
 {% if not post %}
   {% comment %}
-    Expired while somebody had it open. NOTE the absence of hx-get/hx-trigger: the panel must stop
-    polling, or it asks for a gone message every five seconds forever.
+    Genuinely gone -- deleted while somebody had it open, or never theirs to see. NOT the expiry
+    case any more: a message that runs out of time is archived, and views._render_thread renders it
+    read-only rather than answering nothing (which is why the copy below no longer says "slettet"
+    about an expiry it would now be wrong about).
+
+    NOTE the absence of hx-get/hx-trigger: the panel must stop polling, or it asks for a gone
+    message every five seconds forever.
   {% endcomment %}
   <section class="thread-panel" role="complementary" aria-label="Tråd" tabindex="-1">
     <div class="thread-head">
@@ -33,12 +38,21 @@
       </button>
     </div>
     <div class="thread-body">
-      <p class="thread-empty muted">Beskeden er udløbet og slettet.</p>
+      <p class="thread-empty muted">Beskeden findes ikke længere.</p>
     </div>
   </section>
 {% else %}
-  <section class="thread-panel" id="js-thread-{{ post.pk }}" data-thread-pk="{{ post.pk }}"
+  {% comment %}
+    AN ARCHIVED THREAD DOES NOT POLL. The hx-* attributes below are omitted outright rather than
+    left in place, because nothing about an archived message can change -- no reply can arrive, no
+    reaction can move, it cannot be deleted -- so the timer would be a request every five seconds
+    for a byte-identical answer, for as long as the panel stayed open. Same reasoning as the "gone"
+    branch above, one state along.
+  {% endcomment %}
+  <section class="thread-panel{% if archived %} thread-archived{% endif %}"
+           id="js-thread-{{ post.pk }}" data-thread-pk="{{ post.pk }}"
            role="complementary" aria-labelledby="thread-title-{{ post.pk }}" tabindex="-1"
+           {% if not archived %}
            hx-get="{% url 'den_hurtige:thread' post.pk %}"
            hx-trigger="every 5s"
            hx-ext="morph"
@@ -48,7 +62,8 @@
              replaced its own container until this was pinned down.
            {% endcomment %}
            hx-target="this"
-           hx-swap="morph:outerHTML">
+           hx-swap="morph:outerHTML"
+           {% endif %}>
     <div class="thread-head">
       {% comment %}
         Two close controls, one on each side, and only one is visible per breakpoint (see
@@ -62,7 +77,7 @@
       <div style="min-width:0;flex:1">
         <div class="thread-title" id="thread-title-{{ post.pk }}">Tråd</div>
         <div class="thread-sub">
-          {% if channel %}{{ channel.name }} · {% endif %}{{ post.comments.all|length }} svar
+          {% if channel %}{{ channel.name }} · {% endif %}{{ post.comments.all|length }} svar{% if archived %} · arkiveret{% endif %}
         </div>
       </div>
       <button type="button" class="thread-x" data-thread-close aria-label="Luk tråd">
@@ -71,10 +86,17 @@
     </div>
 
     <div class="thread-body">
-      {% include "den_hurtige/_message.html" with post=post bare=1 %}
+      {% include "den_hurtige/_message.html" with post=post bare=1 archived=archived %}
       {% include "den_hurtige/_replies.html" with post=post %}
     </div>
 
+    {% comment %}
+      NO REPLY FORM ON AN ARCHIVED THREAD. Omitted rather than disabled: views.create_comment
+      refuses the post anyway, so a form here could only ever collect something it would then throw
+      away with an error — and "there is nowhere to type" says the rule better than an error does.
+      The note at the top of the archive panel is where the rule is explained in words.
+    {% endcomment %}
+    {% if not archived %}
     {% comment %}
       data-morph-skip: the panel's own poll must not touch this subtree. Idiomorph's
       ignoreActiveValue only spares the field being TYPED INTO, so a reply typed and then unfocused
@@ -128,5 +150,6 @@
         <input type="checkbox" name="notify" value="alle"> Underret alle
       </label>
     </form>
+    {% endif %}
   </section>
 {% endif %}

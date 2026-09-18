@@ -511,6 +511,8 @@ erDiagram
         int effective_workgroup_id FK
         int created_by_id FK
         datetime created_at
+        datetime locked_at
+        datetime unlocked_until
         datetime deleted_at
     }
 
@@ -527,6 +529,36 @@ erDiagram
         int deleted_by_id FK
         bool has_thumbnail
         bool has_preview
+    }
+
+    photo_album_Album {
+        int id PK
+        string folder
+        string name
+        datetime created_at
+        datetime manually_locked_at
+        datetime unlocked_at
+    }
+
+    photo_album_Media {
+        int id PK
+        int album_id FK
+        string title
+        string original
+        string high_definition
+        string thumbnail
+        string content_type
+        string derivative_state
+        int derivative_attempts
+        json metadata
+        int requested_by_id FK
+        datetime added_at
+        datetime captured_at
+        string status
+        int approved_by_id FK
+        datetime approved_at
+        datetime deleted_at
+        int deleted_by_id FK
     }
 
     core_PushSubscription }o--|| residents_Resident : "user"
@@ -598,6 +630,10 @@ erDiagram
     arkiv_ArchiveFile }o--|| arkiv_ArchiveFolder : "folder"
     arkiv_ArchiveFile }o--|o residents_Resident : "uploaded_by"
     arkiv_ArchiveFile }o--|o residents_Resident : "deleted_by"
+    photo_album_Media }o--|| photo_album_Album : "album"
+    photo_album_Media }o--|| residents_Resident : "requested_by"
+    photo_album_Media }o--|o residents_Resident : "approved_by"
+    photo_album_Media }o--|o residents_Resident : "deleted_by"
 ```
 
 ## admissions
@@ -681,6 +717,8 @@ erDiagram
         int effective_workgroup_id FK
         int created_by_id FK
         datetime created_at
+        datetime locked_at
+        datetime unlocked_until
         datetime deleted_at
     }
 
@@ -1110,6 +1148,48 @@ erDiagram
     opslagstavle_NoticeReaction }o--|| residents_Resident : "author"
     opslagstavle_NoticeImage }o--|o opslagstavle_Notice : "notice"
     opslagstavle_NoticeImage }o--|o residents_Resident : "uploaded_by"
+```
+
+## photo_album
+
+```mermaid
+erDiagram
+    photo_album_Album {
+        int id PK
+        string folder
+        string name
+        datetime created_at
+        datetime manually_locked_at
+        datetime unlocked_at
+    }
+
+    photo_album_Media {
+        int id PK
+        int album_id FK
+        string title
+        string original
+        string high_definition
+        string thumbnail
+        string content_type
+        string derivative_state
+        int derivative_attempts
+        json metadata
+        int requested_by_id FK
+        datetime added_at
+        datetime captured_at
+        string status
+        int approved_by_id FK
+        datetime approved_at
+        datetime deleted_at
+        int deleted_by_id FK
+    }
+
+    residents_Resident { }
+
+    photo_album_Media }o--|| photo_album_Album : "album"
+    photo_album_Media }o--|| residents_Resident : "requested_by"
+    photo_album_Media }o--|o residents_Resident : "approved_by"
+    photo_album_Media }o--|o residents_Resident : "deleted_by"
 ```
 
 ## reparationer
