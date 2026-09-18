@@ -11,7 +11,7 @@ from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile, File
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
-from django.test import Client
+from django.test import Client, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from PIL import Image
@@ -93,6 +93,23 @@ def test_only_photo_group_or_administrator_can_import_zip_albums(
     )
 
     assert response.status_code == 403
+
+
+@pytest.mark.django_db
+@override_settings(PHOTO_ALBUM_IMPORT_TOKEN="migration-token")
+def test_token_import_uses_system_resident(client: Client) -> None:
+    response = client.post(
+        reverse("photo_album:import_zip"),
+        {"folder": "2026", "archive": _zip_upload(("one.jpg", b"one"))},
+        HTTP_AUTHORIZATION="Bearer migration-token",
+        HTTP_ACCEPT="application/json",
+    )
+
+    assert response.status_code == 202
+    album_import = AlbumImport.objects.get()
+    assert album_import.requested_by.full_name == "System"
+    assert process_album_import(album_import.pk)
+    assert Media.objects.get().requested_by.full_name == "System"
 
 
 @pytest.mark.django_db

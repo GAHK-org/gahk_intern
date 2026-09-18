@@ -139,6 +139,11 @@ CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_ACKS_LATE = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 CELERY_TASK_TIME_LIMIT = 900
+
+# A local migration client uses this bearer token to submit album ZIP imports as the non-login
+# System resident. Leave blank to disable token-authenticated imports.
+PHOTO_ALBUM_IMPORT_TOKEN = os.environ.get("PHOTO_ALBUM_IMPORT_TOKEN", "")
+PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL = os.environ.get("PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL", "system@gahk.dk")
 CELERY_BEAT_SCHEDULE = {
     "purge-expired-applications": {
         "task": "admissions.tasks.purge_expired_applications",

@@ -1,6 +1,8 @@
 import posixpath
 from datetime import datetime
+from secrets import compare_digest
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import redirect_to_login
@@ -25,6 +27,7 @@ from django.views.decorators.http import require_POST
 
 from arkiv.storage import content_disposition
 from core.media import REDIRECT_CACHE_CONTROL
+from residents.models import Resident
 from residents.permissions import current_resident
 
 from . import access, services
@@ -36,6 +39,21 @@ from .storage import PhotoAlbumS3Storage, get_photo_album_storage
 def album_folder_options() -> list[str]:
     folders = Album.objects.order_by("folder").values_list("folder", flat=True).distinct()
     return ["Andet", *(folder for folder in folders if folder != "Andet")]
+
+
+def _token_import_resident(request: HttpRequest) -> Resident | None:
+    token = settings.PHOTO_ALBUM_IMPORT_TOKEN
+    authorization = request.headers.get("Authorization", "")
+    if not token or not compare_digest(authorization, f"Bearer {token}"):
+        return None
+    resident, created = Resident.objects.get_or_create(
+        email=settings.PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL,
+        defaults={"first_name": "System", "last_name": "", "is_active": True},
+    )
+    if created:
+        resident.set_unusable_password()
+        resident.save(update_fields=["password"])
+    return resident
 
 
 @login_required
@@ -148,15 +166,18 @@ def create_album(request: HttpRequest) -> HttpResponse:
     )
 
 
-@login_required
 def import_zip(request: HttpRequest) -> HttpResponse:
-    if not access.can_create_album(request):
+    system_resident = _token_import_resident(request)
+    resident = system_resident or current_resident(request)
+    if resident is None:
+        return redirect_to_login(request.get_full_path())
+    if system_resident is None and not access.can_create_album(request):
         raise PermissionDenied
     form = ZipAlbumImportForm(request.POST or None, request.FILES or None)
     if request.method == "POST" and form.is_valid():
         archive = form.cleaned_data["archive"]
         album_import = AlbumImport.objects.create(
-            requested_by=current_resident(request),
+            requested_by=resident,
             folder=form.cleaned_data["folder"],
             archive_name=archive.name,
             archive=archive,
@@ -199,9 +220,11 @@ def import_zip(request: HttpRequest) -> HttpResponse:
     )
 
 
-@login_required
 def import_zip_status(request: HttpRequest, token: str) -> JsonResponse:
-    album_import = get_object_or_404(AlbumImport, token=token, requested_by=current_resident(request))
+    resident = _token_import_resident(request) or current_resident(request)
+    if resident is None:
+        return JsonResponse({"detail": "Authentication required."}, status=401)
+    album_import = get_object_or_404(AlbumImport, token=token, requested_by=resident)
     return JsonResponse({"state": album_import.state, "error": album_import.error})
 
 
