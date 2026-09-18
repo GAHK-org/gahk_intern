@@ -4,6 +4,12 @@ const uploadInput = document.querySelector<HTMLInputElement>("[data-album-upload
 const uploadSelection = document.querySelector<HTMLElement>("[data-album-upload-selection]")
 const uploadCount = document.querySelector<HTMLElement>("[data-album-upload-count]")
 const uploadFiles = document.querySelector<HTMLUListElement>("[data-album-upload-files]")
+const uploadDialog = document.querySelector<HTMLDialogElement>("[data-album-upload-dialog]")
+const uploadForm = document.querySelector<HTMLFormElement>("[data-album-upload-form]")
+const uploadProgress = document.querySelector<HTMLElement>("[data-album-upload-progress]")
+const uploadProgressBar = document.querySelector<HTMLProgressElement>("[data-album-upload-progress-bar]")
+const uploadProgressLabel = document.querySelector<HTMLElement>("[data-album-upload-progress-label]")
+const uploadSubmit = document.querySelector<HTMLButtonElement>("[data-album-upload-submit]")
 
 if (uploadInput && uploadSelection && uploadCount && uploadFiles) {
   uploadInput.addEventListener("change", () => {
@@ -15,6 +21,75 @@ if (uploadInput && uploadSelection && uploadCount && uploadFiles) {
       item.textContent = file.name
       return item
     }))
+  })
+}
+
+if (uploadDialog && uploadForm && uploadInput && uploadProgress && uploadProgressBar && uploadProgressLabel && uploadSubmit) {
+  const openUpload = document.querySelector<HTMLButtonElement>("[data-album-upload-open]")
+  const closeUpload = (): void => uploadDialog.close()
+
+  openUpload?.addEventListener("click", () => uploadDialog.showModal())
+  uploadDialog.querySelectorAll<HTMLElement>("[data-album-upload-close]").forEach((button) => button.addEventListener("click", closeUpload))
+  uploadDialog.addEventListener("click", (event) => {
+    if (event.target === uploadDialog) closeUpload()
+  })
+
+  uploadForm.addEventListener("submit", (event) => {
+    const files = Array.from(uploadInput.files ?? [])
+    if (!files.length) return
+    event.preventDefault()
+
+    const totalBytes = files.reduce((sum, file) => sum + file.size, 0)
+    let completedBytes = 0
+    let fileIndex = 0
+    const formData = new FormData(uploadForm)
+    const title = formData.get("title")?.toString() ?? ""
+    const csrfToken = formData.get("csrfmiddlewaretoken")?.toString() ?? ""
+    uploadSubmit.disabled = true
+    uploadProgress.hidden = false
+
+    const setProgress = (loadedBytes: number): void => {
+      const percent = totalBytes ? Math.round(((completedBytes + loadedBytes) / totalBytes) * 100) : 100
+      uploadProgressBar.value = percent
+      uploadProgressLabel.textContent = `Uploader fil ${fileIndex + 1} af ${files.length}: ${percent}%`
+    }
+
+    const uploadNext = (): void => {
+      const file = files[fileIndex]
+      if (!file) {
+        window.location.reload()
+        return
+      }
+      const data = new FormData()
+      data.append("uploads", file)
+      data.append("title", title)
+      data.append("csrfmiddlewaretoken", csrfToken)
+      const request = new XMLHttpRequest()
+      request.open("POST", uploadForm.action)
+      request.setRequestHeader("Accept", "application/json")
+      request.upload.addEventListener("progress", (progressEvent) => {
+        if (progressEvent.lengthComputable) setProgress(progressEvent.loaded)
+      })
+      request.addEventListener("load", () => {
+        if (request.status >= 200 && request.status < 300) {
+          completedBytes += file.size
+          fileIndex += 1
+          setProgress(0)
+          uploadNext()
+          return
+        }
+        uploadSubmit.disabled = false
+        uploadProgressLabel.textContent = `Kunne ikke uploade ${file.name}. Prøv igen.`
+      })
+      request.addEventListener("error", () => {
+        uploadSubmit.disabled = false
+        uploadProgressLabel.textContent = `Kunne ikke uploade ${file.name}. Kontrollér din forbindelse og prøv igen.`
+      })
+      request.send(data)
+    }
+
+    setProgress(0)
+    uploadNext()
   })
 }
 

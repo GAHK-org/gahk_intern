@@ -204,7 +204,10 @@ def upload(request: HttpRequest, pk: int) -> HttpResponse:
     if not access.can_upload(request, album):
         raise PermissionDenied
     form = MediaUploadForm(request.POST, request.FILES)
+    wants_json = "application/json" in request.headers.get("Accept", "")
     if not form.is_valid():
+        if wants_json:
+            return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
         # Without this the redirect below looked exactly like a successful upload and the photos
         # simply were not there.
         for error in form.errors.get("uploads", ["Filerne kunne ikke uploades."]):
@@ -218,6 +221,8 @@ def upload(request: HttpRequest, pk: int) -> HttpResponse:
             title=form.cleaned_data["title"],
             approved=access.can_manage_media(request),
         )
+    if wants_json:
+        return JsonResponse({"uploaded": len(form.cleaned_data["uploads"])}, status=201)
     return redirect("photo_album:detail", album.pk)
 
 

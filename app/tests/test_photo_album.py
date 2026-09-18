@@ -151,6 +151,26 @@ def test_album_upload_page_has_a_selected_files_summary(
     assert "data-album-upload-selection" in content
     assert "data-album-upload-count" in content
     assert "data-album-upload-files" in content
+    assert "data-album-upload-dialog" in content
+    assert "data-album-upload-progress" in content
+
+
+@pytest.mark.django_db
+def test_upload_returns_json_for_the_queued_browser_uploader(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    album = Album.objects.create(folder="2026", name="Fest")
+    client.force_login(administrator)
+
+    response = client.post(
+        reverse("photo_album:upload", args=[album.pk]),
+        {"uploads": [_image()]},
+        HTTP_ACCEPT="application/json",
+    )
+
+    assert response.status_code == 201
+    assert response.json() == {"uploaded": 1}
 
 
 @pytest.mark.django_db
