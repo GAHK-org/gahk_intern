@@ -35,7 +35,7 @@ from den_hurtige.models import (
     QuickPost,
     QuickReaction,
 )
-from den_hurtige.views import posts_for, reactions_for
+from den_hurtige.views import ARCHIVE_PAGE, posts_for, reactions_for
 from residents.models import Resident, Role
 
 FEED_URL = "/intern/den-hurtige/"
@@ -242,7 +242,11 @@ def test_feed_requires_login(client: Client) -> None:
     assert "/intern/admin/login" in response["Location"]
 
 
-def test_feed_purges_expired_posts(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_the_feed_archives_expired_posts_instead_of_deleting_them(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The inversion, in one test. Loading the feed used to hard-delete every expired post on the
+    way in; it now leaves them alone and simply stops listing them."""
     user = make_resident(email="a@gahk.dk")
     stale = QuickPost.objects.create(
         author=user, content="Kaffe for en time siden", expires_at=timezone.now() - timedelta(minutes=1)
@@ -252,22 +256,42 @@ def test_feed_purges_expired_posts(client: Client, make_resident: Callable[..., 
     client.force_login(user)
     body = client.get(FEED_URL).content.decode()
 
-    assert not QuickPost.objects.filter(pk=stale.pk).exists()  # hard-deleted, not just hidden
+    assert QuickPost.objects.filter(pk=stale.pk).exists(), "off the feed, not deleted"
     assert QuickPost.objects.filter(pk=fresh.pk).exists()
     assert "Kaffe i køkkenet nu" in body
     assert "Kaffe for en time siden" not in body
 
 
-def test_purge_expired_reports_post_count_not_cascaded_rows(
+def test_a_post_and_its_replies_survive_expiry_whole(
     make_resident: Callable[..., Resident],
 ) -> None:
+    """The cascade that used to take the replies with the post fires only on a real delete now."""
     user = make_resident(email="a@gahk.dk")
     post = QuickPost.objects.create(
-        author=user, content="udløbet", expires_at=timezone.now() - timedelta(minutes=1)
+        author=user, content="arkiveret", expires_at=timezone.now() - timedelta(minutes=1)
     )
     QuickComment.objects.create(post=post, author=user, content="en kommentar")
 
-    assert QuickPost.objects.purge_expired() == 1  # not 2 (the comment cascades with it)
+    assert QuickPost.objects.archived().count() == 1
+    assert QuickPost.objects.active().count() == 0
+    assert QuickComment.objects.filter(post=post).count() == 1
+
+
+def test_active_and_archived_partition_the_table(make_resident: Callable[..., Resident]) -> None:
+    """No message may be in both or in neither — the archive is the only copy, so a post that fell
+    out of active() without falling into archived() would not be hidden, it would be lost."""
+    user = make_resident(email="a@gahk.dk")
+    for offset in (-120, -1, 1, 120):
+        QuickPost.objects.create(
+            author=user, content=f"m{offset}", expires_at=timezone.now() + timedelta(minutes=offset)
+        )
+
+    active = set(QuickPost.objects.active().values_list("pk", flat=True))
+    archived = set(QuickPost.objects.archived().values_list("pk", flat=True))
+
+    assert active & archived == set()
+    assert active | archived == set(QuickPost.objects.values_list("pk", flat=True))
+    assert len(active) == len(archived) == 2
 
 
 @pytest.mark.parametrize(
@@ -291,8 +315,8 @@ def test_purge_expired_reports_post_count_not_cascaded_rows(
         (59, "59 min"),
         (45, "45 min"),
         (1, "1 min"),
-        (0, "udløbet"),
-        (-30, "udløbet"),
+        (0, "arkiveret"),
+        (-30, "arkiveret"),
     ],
 )
 def test_the_expiry_label_reads_as_a_duration_not_a_pile_of_minutes(minutes: int, expected: str) -> None:
@@ -318,7 +342,10 @@ def test_the_feed_shows_the_short_expiry_label(
 ) -> None:
     """And shows it as a glyph plus a duration, with the sentence kept in the title. The words
     "udløber om" were most of the header at 11.5px, and the pair of them with a long name is what
-    wrapped the delete cross onto its own row."""
+    wrapped the delete cross onto its own row.
+
+    The sentence reads "arkiveres om" rather than "udløber om" since messages stopped being
+    deleted: it is the only place on the feed that says what the countdown is counting down TO."""
     author = make_resident(email="a@gahk.dk")
     QuickPost.objects.create(author=author, content="Kaffe")
     client.force_login(author)
@@ -327,7 +354,7 @@ def test_the_feed_shows_the_short_expiry_label(
 
     assert "2 døgn" in body  # the model default, DEFAULT_DURATION_MINUTES
     assert "min</span>" not in body  # no bare minute count in the header any more
-    assert 'title="Udløber om 2 døgn"' in body  # the full sentence survives for anyone who hovers
+    assert 'title="Arkiveres om 2 døgn"' in body  # the full sentence survives for anyone who hovers
     assert 'class="msg-meta msg-time"' in body  # time and expiry are separate spans now,
     assert 'class="msg-meta msg-expiry"' in body  # so each can be sized independently
 
@@ -383,10 +410,13 @@ def test_an_attached_image_is_erased_with_its_post(
     remove: str,
     django_capture_on_commit_callbacks: Callable,
 ) -> None:
-    """The feature promises posts disappear. Django has not deleted FileField files on row delete
-    since 1.3, so without the post_delete receiver the text would expire on schedule while the photo
-    stayed on disk forever. Both removal paths are covered: purge_expired() issues a *bulk* delete
-    that never calls Model.delete(), so it is the one most likely to leak."""
+    """Django has not deleted FileField files on row delete since 1.3, so without the post_delete
+    receiver a deleted message would leave its photograph on disk forever.
+
+    The `expire` arm asserts the OPPOSITE of what it used to: expiry now archives, so the image must
+    still be there afterwards. It is kept rather than dropped because that is the regression worth
+    guarding — an image swept by a leftover purge would take the archive's copy of the conversation
+    with it, and nothing would say so."""
     settings.MEDIA_ROOT = tmp_path  # type: ignore[attr-defined]
     user = make_resident(email="a@gahk.dk")
     post = QuickPost.objects.create(
@@ -402,11 +432,13 @@ def test_an_attached_image_is_erased_with_its_post(
     with django_capture_on_commit_callbacks(execute=True):
         if remove == "expire":
             QuickPost.objects.filter(pk=post.pk).update(expires_at=timezone.now() - timedelta(minutes=1))
-            QuickPost.objects.purge_expired()
         else:
             post.delete()
 
-    assert not stored.exists(), "the image outlived its post"
+    if remove == "expire":
+        assert stored.is_file(), "expiry archives the message, so its image must stay"
+    else:
+        assert not stored.exists(), "the image outlived its post"
 
 
 @pytest.mark.parametrize(
@@ -546,7 +578,9 @@ def test_feed_items_picks_up_a_post_made_after_the_page_loaded(
     assert "Fest i kælderen" in client.get(FEED_URL + "opslag").content.decode()
 
 
-def test_feed_items_expires_posts_live(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_feed_items_drops_archived_posts_but_keeps_them(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
     user = make_resident(email="a@gahk.dk")
     QuickPost.objects.create(author=user, content="udløbet", expires_at=timezone.now() - timedelta(minutes=1))
     client.force_login(user)
@@ -554,7 +588,7 @@ def test_feed_items_expires_posts_live(client: Client, make_resident: Callable[.
     body = client.get(FEED_URL + "opslag").content.decode()
 
     assert "udløbet" not in body
-    assert not QuickPost.objects.exists()  # the poll purges too, so the feed drains itself
+    assert QuickPost.objects.count() == 1  # the poll no longer deletes anything
 
 
 def test_feed_items_returns_204_for_an_expired_session(client: Client) -> None:
@@ -759,13 +793,13 @@ def test_reacting_notifies_nobody(
 
 
 def test_reactions_die_with_their_post(client: Client, make_resident: Callable[..., Resident]) -> None:
+    """On a real delete. Archiving keeps them — see the archive tests."""
     user = make_resident(email="a@gahk.dk")
     post = QuickPost.objects.create(author=user, content="Kaffe")
     client.force_login(user)
     react(client, post, THUMB)
 
-    QuickPost.objects.filter(pk=post.pk).update(expires_at=timezone.now() - timedelta(minutes=1))
-    QuickPost.objects.purge_expired()
+    post.delete()
 
     assert not QuickReaction.objects.exists()
 
@@ -1433,12 +1467,16 @@ def test_the_poll_without_a_channel_serves_the_default_one(
     assert "Kaffe i koekkenet" in response.content.decode()
 
 
-def test_expired_posts_are_purged_across_every_channel_not_just_the_one_being_read(
+def test_reading_one_channel_deletes_nothing_in_another(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
-    """The sharp edge of the whole feature. Scoping the purge to the channel being viewed would
-    leave a quiet channel's expired posts — and their images — sitting there until the half-hourly
-    cron, quietly turning "gone in an hour" into "gone in an hour, in the busy channel"."""
+    """This test used to assert the opposite, and the inversion is the point.
+
+    Loading the feed ran a CROSS-CHANNEL hard delete, deliberately: scoping it to the channel being
+    viewed would have left a quiet channel hoarding expired posts until the cron reached them. That
+    whole apparatus is gone — a post leaves its feed by the clock alone, in every channel at once,
+    with nothing written. What is left to guard is that the traffic-driven sweep really is gone: a
+    resident reading one channel must not destroy anything in another."""
     author = make_resident(email="a@gahk.dk")
     stale = QuickPost.objects.create(
         author=author,
@@ -1450,7 +1488,7 @@ def test_expired_posts_are_purged_across_every_channel_not_just_the_one_being_re
 
     client.get(FEED_URL)  # reading the DEFAULT channel
 
-    assert not QuickPost.objects.filter(pk=stale.pk).exists()
+    assert QuickPost.objects.filter(pk=stale.pk).exists()
 
 
 def test_the_channel_picker_counts_live_posts_per_channel(
@@ -2187,12 +2225,15 @@ def test_a_photo_only_reply_notifies_with_a_body_rather_than_a_blank(
     assert helper.full_name in payload["head"]
 
 
-def test_an_expired_post_gives_a_notice_to_the_panel_and_404_to_the_page(
+def test_an_archived_thread_still_opens_but_read_only_and_without_polling(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
-    """Expiring while somebody has the thread open is the interesting case: the fragment must stop
-    polling, or it asks for a deleted message every five seconds forever. The page 404s, because a
-    deep link to a message that no longer exists leads nowhere."""
+    """This used to answer "gone" on both halves, which was true then and is a lie now.
+
+    It is also the case that matters most for the deep link: a reply notification sends a
+    ?traad=<pk> URL and is routinely opened the next morning, by which time the message has
+    archived. The conversation renders; the reply form does not; and the panel drops its 5s poll,
+    because nothing about an archived message can ever change."""
     author = make_resident(email="a@gahk.dk")
     post = QuickPost.objects.create(
         author=author, content="Kaffe", expires_at=timezone.now() - timedelta(minutes=1)
@@ -2202,10 +2243,32 @@ def test_an_expired_post_gives_a_notice_to_the_panel_and_404_to_the_page(
     fragment = client.get(f"{FEED_URL}{post.pk}/traad", HTTP_HX_REQUEST="true")
     assert fragment.status_code == 200
     body = fragment.content.decode()
-    assert "udløbet" in body
-    assert "hx-trigger" not in body, "the dead panel would keep polling for a deleted message"
+    assert "Kaffe" in body
+    assert "hx-trigger" not in body, "an archived panel polls for an answer that cannot change"
+    assert "reply-form" not in body, "an archived thread offers nowhere to reply"
 
-    assert client.get(f"{FEED_URL}{post.pk}/traad").status_code == 404
+    page = client.get(f"{FEED_URL}{post.pk}/traad")
+    assert page.status_code == 200
+    assert "Kaffe" in page.content.decode()
+
+
+def test_a_deleted_post_still_gives_a_notice_to_the_panel_and_404_to_the_page(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The "gone" branch survives archiving — it just stopped being reachable by expiry. A message
+    an administrator removed still has to answer something, and the fragment must not poll for it."""
+    author = make_resident(email="a@gahk.dk")
+    post = QuickPost.objects.create(author=author, content="Kaffe")
+    pk = post.pk
+    client.force_login(author)
+    post.delete()
+
+    fragment = client.get(f"{FEED_URL}{pk}/traad", HTTP_HX_REQUEST="true")
+    assert fragment.status_code == 200
+    assert "findes ikke længere" in fragment.content.decode()
+    assert "hx-trigger" not in fragment.content.decode()
+
+    assert client.get(f"{FEED_URL}{pk}/traad").status_code == 404
 
 
 def test_a_thread_in_a_restricted_channel_is_404(
@@ -2341,3 +2404,489 @@ def test_the_poll_still_returns_the_whole_list(
 
     for n in range(3):
         assert f"Besked {n}" in body
+
+
+# --- the archive ---------------------------------------------------------------------------------
+#
+# Messages leave the feed on a timer and are ARCHIVED, never deleted (den_hurtige/models.py). These
+# tests cover the two halves of that promise: everything is still there, and none of it can be
+# written to any more.
+
+ARCHIVE_URL = FEED_URL + "arkiv"
+
+
+def archived_post(author: Resident, content: str, *, days_ago: float = 1.0, **kwargs: object) -> QuickPost:
+    """A post whose timer ran out `days_ago` days ago, written a minute before that.
+
+    `created_at` is auto_now_add, so it has to be forced with an UPDATE afterwards — which is
+    exactly why it is worth a helper: every archive test needs a message with a real position in
+    history, and a queryset `.update()` is the only way to put one there.
+    """
+    written = timezone.now() - timedelta(days=days_ago)
+    post = QuickPost.objects.create(
+        author=author, content=content, expires_at=written + timedelta(minutes=1), **kwargs
+    )
+    QuickPost.objects.filter(pk=post.pk).update(created_at=written)
+    post.refresh_from_db()
+    return post
+
+
+def test_the_archive_lists_what_has_left_the_feed_and_nothing_that_has_not(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    author = make_resident(email="a@gahk.dk")
+    archived_post(author, "Kaffe i gaar")
+    QuickPost.objects.create(author=author, content="Kaffe lige nu")
+    client.force_login(author)
+
+    body = client.get(ARCHIVE_URL, HTTP_HX_REQUEST="true").content.decode()
+
+    assert "Kaffe i gaar" in body
+    assert "Kaffe lige nu" not in body, "the archive is the other half of the feed, not a superset"
+
+
+def test_the_archive_reads_forwards_into_the_live_feed(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """A chunk is PREPENDED above the live messages, so it has to read downwards into them like the
+    rest of the conversation: oldest at the top, newest against the divider. The query still walks
+    backwards — the interesting end of an archive is the recent one — so this pins the turn-around,
+    which is the part that would silently invert."""
+    author = make_resident(email="a@gahk.dk")
+    archived_post(author, "gammel-foerst", days_ago=3.0)
+    archived_post(author, "gammel-sidst", days_ago=2.9)
+    archived_post(author, "ny-foerst", days_ago=1.0)
+    archived_post(author, "ny-sidst", days_ago=0.9)
+    client.force_login(author)
+
+    body = client.get(ARCHIVE_URL, HTTP_HX_REQUEST="true").content.decode()
+    order = [body.index(t) for t in ("gammel-foerst", "gammel-sidst", "ny-foerst", "ny-sidst")]
+
+    assert order == sorted(order), "the chunk must read oldest-first, straight into the live feed"
+
+
+def test_the_archive_is_scoped_to_the_channel_it_was_opened_from(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    author = make_resident(email="a@gahk.dk")
+    archived_post(author, "Herinde")
+    archived_post(author, "Ovre i den anden", channel=OTHER)
+    client.force_login(author)
+
+    body = client.get(ARCHIVE_URL, HTTP_HX_REQUEST="true").content.decode()
+
+    assert "Herinde" in body
+    assert "Ovre i den anden" not in body
+
+
+def test_the_archive_of_a_restricted_channel_is_refused(
+    client: Client, make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The archive is a READ over every message a channel has ever held, so it is the widest leak
+    in the feature if it forgets the per-channel roles. Same answer as every other surface: the
+    page 404s rather than 403ing, because a 403 confirms the channel exists."""
+    secret = Channel("internt", "Internt", "flash", "", 60, roles=(Role.INSPEKTION,))
+    monkeypatch.setattr(channels, "CHANNELS", (*channels.CHANNELS, secret))
+    monkeypatch.setattr(channels, "BY_SLUG", {c.slug: c for c in channels.CHANNELS})
+    author = make_resident(email="a@gahk.dk")
+    archived_post(author, "Hemmeligt", channel="internt")
+    client.force_login(author)
+
+    assert client.get(ARCHIVE_URL + "?kanal=internt").status_code == 404
+    fragment = client.get(ARCHIVE_URL + "?kanal=internt", HTTP_HX_REQUEST="true")
+    assert fragment.status_code == 204, "an error body swapped into the panel is worse than nothing"
+    assert b"Hemmeligt" not in fragment.content
+
+
+def test_the_archive_returns_204_for_an_expired_session(client: Client) -> None:
+    """Same gate as the poll and the thread panel: htmx follows redirects, so @access_required here
+    would swap the login page into the archive panel."""
+    response = client.get(ARCHIVE_URL, HTTP_HX_REQUEST="true")
+
+    assert response.status_code == 204
+    assert response.content == b""
+
+
+def test_an_archived_message_cannot_be_replied_to(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    author = make_resident(email="a@gahk.dk")
+    post = archived_post(author, "Kaffe")
+    client.force_login(author)
+
+    client.post(f"{FEED_URL}{post.pk}/kommentar", {"content": "for sent"})
+
+    assert not QuickComment.objects.exists()
+
+
+def test_an_archived_message_cannot_be_reacted_to(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    author = make_resident(email="a@gahk.dk")
+    post = archived_post(author, "Kaffe")
+    client.force_login(author)
+
+    response = react(client, post, THUMB)
+
+    assert not QuickReaction.objects.exists()
+    # Answered with the row as it stands rather than a 404: the archive draws no pressable pills, so
+    # reaching here means the page went stale under somebody's thumb, and a 404 would leave the
+    # live-looking row on screen with the tap appearing to have been lost.
+    assert response.status_code == 200
+
+
+def test_an_archived_message_cannot_be_deleted_by_its_author(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    author = make_resident(email="a@gahk.dk")
+    post = archived_post(author, "Kaffe")
+    client.force_login(author)
+
+    client.post(f"{FEED_URL}{post.pk}/slet")
+
+    assert QuickPost.objects.filter(pk=post.pk).exists()
+
+
+def test_an_archived_message_cannot_be_deleted_by_a_moderator_either(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The check is ordered BEFORE the permission check on purpose: the two answers are "you may
+    not" and "this cannot be done", and the second is the true one. Ordered the other way, a
+    moderator would get a 403 and an author a friendly message, for identical requests."""
+    author = make_resident(email="a@gahk.dk")
+    post = archived_post(author, "Kaffe")
+    moderator = make_resident(email="mod@gahk.dk", roles=[Role.INSPEKTION])
+    client.force_login(moderator)
+
+    response = client.post(f"{FEED_URL}{post.pk}/slet")
+
+    assert response.status_code == 302, "refused with a message, not a 403"
+    assert QuickPost.objects.filter(pk=post.pk).exists()
+
+
+def test_a_live_message_can_still_be_deleted(client: Client, make_resident: Callable[..., Resident]) -> None:
+    """The counterweight to the four tests above. "Archived messages cannot be deleted" must not
+    quietly become "nothing can be deleted" — an author who has just posted to the wrong channel
+    still needs to take it back."""
+    author = make_resident(email="a@gahk.dk")
+    post = QuickPost.objects.create(author=author, content="Ups")
+    client.force_login(author)
+
+    client.post(f"{FEED_URL}{post.pk}/slet")
+
+    assert not QuickPost.objects.filter(pk=post.pk).exists()
+
+
+def test_the_archive_renders_no_control_that_would_write(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The server refuses all three regardless; this is about not offering them. A reaction picker
+    or a delete cross that answers "no" is a worse answer than one that is not there."""
+    author = make_resident(email="a@gahk.dk")
+    archived_post(author, "Kaffe")
+    client.force_login(author)
+
+    body = client.get(ARCHIVE_URL, HTTP_HX_REQUEST="true").content.decode()
+
+    assert "emoji-picker" not in body, "nothing to react with"
+    assert "msg-del" not in body, "nothing to delete with"
+    assert "data-msg-swipe" not in body, "no gesture that fires a control which is not there"
+    assert "msg-expiry" not in body, "a countdown to a moment that has passed"
+
+
+def test_an_archived_message_links_to_its_thread_like_any_other(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The replies are in the side panel, not inlined under the message.
+
+    They were briefly inlined behind a <details>, which meant a reader had to learn a second control
+    to open the same conversation one screen higher up. What makes an archived thread safe is that
+    the PANEL refuses writes (no reply form, no reactions, no poll), not that the link is missing."""
+    author = make_resident(email="a@gahk.dk")
+    post = archived_post(author, "Hvem har min boremaskine")
+    QuickComment.objects.create(post=post, author=author, content="Den staar i kaelderen")
+    client.force_login(author)
+
+    body = client.get(ARCHIVE_URL, HTTP_HX_REQUEST="true").content.decode()
+
+    assert "1 svar" in body
+    assert f"/intern/den-hurtige/{post.pk}/traad" in body
+    assert "Den staar i kaelderen" not in body, "the chunk counts replies, it does not carry them"
+
+    panel = client.get(f"{FEED_URL}{post.pk}/traad", HTTP_HX_REQUEST="true").content.decode()
+    assert "Den staar i kaelderen" in panel
+    assert "reply-form" not in panel, "read the thread, do not answer it"
+
+
+def test_the_archive_pages_with_a_cursor_and_keeps_a_day_whole(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """Two rules in one scroll, because they only interact at the chunk boundary.
+
+    The cursor is an instant rather than an offset: new messages arrive at the TOP of this list, so
+    `?side=2` would slide by however many archived in between and show one twice. And a day is never
+    split, so its heading appears once with everything under it — which means the first chunk stops
+    short of ARCHIVE_PAGE rather than cutting a day in half.
+    """
+    author = make_resident(email="a@gahk.dk")
+    # Four days of twelve. Two days fit inside a chunk of ARCHIVE_PAGE (30) and the third does not,
+    # so the first chunk has to stop at 24 rather than cut the third day in half — which is the
+    # behaviour under test, and is invisible if every day happens to fill a chunk on its own.
+    for day in (1, 2, 3, 4):
+        for n in range(12):
+            archived_post(author, f"d{day}-n{n}", days_ago=day + n / 100)
+    client.force_login(author)
+
+    first = client.get(ARCHIVE_URL, HTTP_HX_REQUEST="true").content.decode()
+    cursor = re.search(r"inden=([^&\"]+)", first)
+    assert cursor, "a chunk that left messages behind must carry a cursor to them"
+
+    assert "d1-n0" in first and "d2-n11" in first
+    assert "d3-n0" not in first, "the chunk stopped short rather than splitting the third day"
+
+    second = client.get(
+        f"{ARCHIVE_URL}?mere=1&inden={cursor.group(1)}", HTTP_HX_REQUEST="true"
+    ).content.decode()
+    assert "d3-n0" in second and "d4-n11" in second
+    assert "d1-n0" not in second, "the cursor must not hand back what the first chunk already had"
+    assert "d2-n11" not in second, "nor the message the cursor was taken from"
+
+
+def test_a_junk_cursor_reopens_the_archive_at_the_top(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """A mangled cursor is a reader's worst case, not a 400 in the middle of an infinite scroll."""
+    author = make_resident(email="a@gahk.dk")
+    archived_post(author, "Kaffe")
+    client.force_login(author)
+
+    response = client.get(ARCHIVE_URL + "?inden=ikke-en-dato", HTTP_HX_REQUEST="true")
+
+    assert response.status_code == 200
+    assert "Kaffe" in response.content.decode()
+
+
+def test_the_feed_says_the_archive_is_up_there_but_does_not_fetch_it(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The divider is the instruction; the sentinel waits for a gesture and nothing else.
+
+    `intersect` used to sit on that sentinel, and on the commonest page there is — a channel holding
+    one short message, which does not fill the screen — it was visible on load, fired immediately,
+    and buried today's message under a screenful of last month. Nothing htmx can raise on its own
+    may open the archive."""
+    author = make_resident(email="a@gahk.dk")
+    archived_post(author, "noget gammelt")
+    QuickPost.objects.create(author=author, content="dagens eneste besked")
+    client.force_login(author)
+
+    body = client.get(FEED_URL).content.decode()
+
+    assert "feed-divider" in body
+    assert "Træk op" in body
+    assert 'hx-trigger="gahk-open-archive"' in body
+    assert "intersect" not in body, "the first chunk must not be fetched without being asked for"
+    assert "noget gammelt" not in body, "and it must not arrive with the page either"
+    assert "dagens eneste besked" in body
+
+
+def test_an_empty_archive_is_not_advertised(client: Client, make_resident: Callable[..., Resident]) -> None:
+    """The counterweight. On a channel whose first message is still live, telling somebody to drag
+    up into an empty archive is a worse first impression than saying nothing."""
+    author = make_resident(email="a@gahk.dk")
+    QuickPost.objects.create(author=author, content="kun live")
+    client.force_login(author)
+
+    body = client.get(FEED_URL).content.decode()
+
+    assert "feed-divider" not in body
+    assert "gahk-open-archive" not in body
+
+
+def test_the_archive_page_works_without_htmx(client: Client, make_resident: Callable[..., Resident]) -> None:
+    """The no-JS half of the same link, and a URL somebody can bookmark."""
+    author = make_resident(email="a@gahk.dk")
+    archived_post(author, "Kaffe i gaar")
+    client.force_login(author)
+
+    response = client.get(ARCHIVE_URL)
+
+    assert response.status_code == 200
+    assert "Kaffe i gaar" in response.content.decode()
+
+
+def test_the_scroll_ends_with_a_marker_rather_than_running_out(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The last chunk carries no sentinel — otherwise something would be left on the page still
+    asking for more — so it says where the archive stops instead."""
+    author = make_resident(email="a@gahk.dk")
+    archived_post(author, "den allerfoerste")
+    client.force_login(author)
+
+    body = client.get(ARCHIVE_URL, HTTP_HX_REQUEST="true").content.decode()
+
+    assert "Her begynder" in body
+    assert "intersect" not in body, "a sentinel with nothing behind it observes forever"
+
+
+def test_chunks_after_the_first_keep_loading_as_you_scroll(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """Opening the archive is a decision; continuing through it is just scrolling. So the sentinel
+    INSIDE a chunk goes back to watching for visibility — stopping to ask again at every chunk
+    boundary would be worse than useless."""
+    author = make_resident(email="a@gahk.dk")
+    for n in range(ARCHIVE_PAGE + 5):
+        archived_post(author, f"besked {n}", days_ago=1 + n / 100)
+    client.force_login(author)
+
+    body = client.get(ARCHIVE_URL, HTTP_HX_REQUEST="true").content.decode()
+
+    assert 'hx-trigger="intersect once root:#js-feed"' in body
+    assert "gahk-open-archive" not in body, "that gate is for the first chunk alone"
+
+
+def test_the_standalone_page_pages_with_plain_links(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The no-JS half. There is no scrolling-to-load without JavaScript, so the page walks the same
+    cursor with an "ældre" link — and suppresses the scroll sentinel, or a browser WITH JavaScript
+    would have two ways of asking for the same chunk, one of them invisible."""
+    author = make_resident(email="a@gahk.dk")
+    for n in range(ARCHIVE_PAGE + 5):
+        archived_post(author, f"besked {n}", days_ago=1 + n / 100)
+    client.force_login(author)
+
+    body = client.get(ARCHIVE_URL).content.decode()
+
+    assert "archive-pager" in body
+    assert "inden=" in body, "the pager must carry the cursor to the older chunk"
+    assert "intersect once" not in body, "the paged page must not also scroll-load"
+
+
+def test_the_dev_clock_moves_messages_into_the_archive(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """Fast-forward a month and yesterday's chat is history — no waiting, no editing timestamps."""
+    from django.test import override_settings
+
+    from core.models import DevClock
+
+    author = make_resident(email="a@gahk.dk")
+    QuickPost.objects.create(author=author, content="SEED Kaffe i koekkenet nu")
+    client.force_login(author)
+
+    assert "SEED Kaffe i koekkenet nu" in client.get(FEED_URL).content.decode()
+
+    DevClock.objects.update_or_create(
+        pk=1, defaults={"simulated_date": timezone.localdate() + timedelta(days=30)}
+    )
+    with override_settings(DEBUG=True):
+        feed = client.get(FEED_URL).content.decode()
+        archive = client.get(ARCHIVE_URL, HTTP_HX_REQUEST="true").content.decode()
+
+    assert "SEED Kaffe i koekkenet nu" not in feed, "a month on, it is not live any more"
+    assert "SEED Kaffe i koekkenet nu" in archive
+
+
+def test_a_message_written_under_the_dev_clock_gets_its_full_life(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The other half, and the one that is wrong if only the queryset is fixed: an expiry measured
+    from the real clock while the feed filters on the simulated one is born archived."""
+    from django.test import override_settings
+
+    from core.models import DevClock
+
+    author = make_resident(email="a@gahk.dk")
+    client.force_login(author)
+    DevClock.objects.update_or_create(
+        pk=1, defaults={"simulated_date": timezone.localdate() + timedelta(days=30)}
+    )
+
+    with override_settings(DEBUG=True):
+        client.post(FEED_URL + "opret", {"content": "SEED Skrevet i fremtiden", "duration": "2880"})
+        body = client.get(FEED_URL).content.decode()
+
+    assert "SEED Skrevet i fremtiden" in body, "written under the dev clock, live under the dev clock"
+    assert "2 døgn" in body, "and counting down from it, not from the real clock a month behind"
+
+
+def test_the_real_clock_is_untouched_when_debug_is_off(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The gate that makes the whole mechanism safe to ship: a DevClock row left in a production
+    database must not shift anything. Held here as well as in test_soegvaerelse, because this is
+    now the feature with the most to lose from a clock that can be moved."""
+    from django.test import override_settings
+
+    from core.models import DevClock
+
+    author = make_resident(email="a@gahk.dk")
+    QuickPost.objects.create(author=author, content="SEED Stadig live")
+    client.force_login(author)
+    DevClock.objects.update_or_create(
+        pk=1, defaults={"simulated_date": timezone.localdate() + timedelta(days=30)}
+    )
+
+    with override_settings(DEBUG=False):
+        body = client.get(FEED_URL).content.decode()
+
+    assert "SEED Stadig live" in body
+
+
+def test_reading_the_clock_costs_one_query_however_many_messages(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The reason core.clock memoises. The expiry label alone renders three times per bubble, so an
+    un-cached DevClock lookup was a SELECT per read — and the feature that needs the clock most was
+    the one that could not afford to ask."""
+    from django.test import override_settings
+
+    from core.models import DevClock
+
+    author = make_resident(email="a@gahk.dk")
+    for n in range(10):
+        QuickPost.objects.create(author=author, content=f"SEED besked {n}")
+    client.force_login(author)
+    DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": None})
+
+    with override_settings(DEBUG=True), CaptureQueriesContext(connection) as captured:
+        client.get(FEED_URL)
+
+    clock_queries = [q for q in captured.captured_queries if "devclock" in q["sql"].lower()]
+    assert len(clock_queries) <= 1, f"the clock was read {len(clock_queries)} times in one request"
+
+
+def test_the_archive_offers_no_reply_affordance_on_a_message_nobody_answered(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """Empty, the "N svar" element is an affordance and nothing else — it reads "Svar" and its whole
+    job is to say you may answer. In the archive you may not, so on a message nobody ever replied to
+    it named an action that is refused. With replies it is doing its other job, which survives
+    archiving intact: it is the only evidence a conversation happened, and opening one is a read."""
+    author = make_resident(email="a@gahk.dk")
+    lonely = archived_post(author, "ingen svarede")
+    answered = archived_post(author, "her blev der svaret", days_ago=1.1)
+    QuickComment.objects.create(post=answered, author=author, content="et svar")
+    client.force_login(author)
+
+    body = client.get(ARCHIVE_URL, HTTP_HX_REQUEST="true").content.decode()
+
+    # The aria-label is the unique marker for the EMPTY affordance; the visible "Svar" is wrapped
+    # in template whitespace, and "svar" on its own also matches the "1 svar" case.
+    assert "Svar på beskeden" not in body, "there is nothing to answer with in the archive"
+    assert "1 svar" in body
+    assert f"/intern/den-hurtige/{answered.pk}/traad" in body
+    assert f"/intern/den-hurtige/{lonely.pk}/traad" not in body
+
+
+def test_the_live_feed_still_offers_it(client: Client, make_resident: Callable[..., Resident]) -> None:
+    """The counterweight: "Svar" disappearing from the ARCHIVE must not quietly remove it from the
+    feed, where an unanswered message is exactly the one that wants inviting."""
+    author = make_resident(email="a@gahk.dk")
+    QuickPost.objects.create(author=author, content="ingen svarede endnu")
+    client.force_login(author)
+
+    assert "Svar på beskeden" in client.get(FEED_URL).content.decode()
