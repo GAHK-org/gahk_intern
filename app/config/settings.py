@@ -133,7 +133,11 @@ CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", f"sqla+{CELERY_DATABASE_
 CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", f"db+{CELERY_DATABASE_URL}")
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 CELERY_TIMEZONE = TIME_ZONE
+# Keep work on the broker until it completes. If a worker process is killed, Celery rejects the
+# unacknowledged delivery so it can be picked up when a worker is available again.
 CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
 # Without this, Celery stores only status/result/traceback and leaves `name`, `worker`, `queue` and
 # `retries` NULL in celery_taskmeta — which are four of the columns the siteadmin worker-jobs page
 # selects and displays, so "Worker", "Kø" and "Forsøg" were permanently blank there.
@@ -141,7 +145,17 @@ CELERY_RESULT_EXTENDED = True
 # The default ceiling for a scheduled job: generous for a sweep, and short enough that a wedged one
 # does not hold a worker slot all night. The two photo-album jobs legitimately run longer and set
 # their own limits at the task — see photo_album/tasks.py::MEDIA_TASK_TIME_LIMIT.
+#
+# Redelivery from the two settings above does NOT make the reapers redundant: `build_album_download`
+# and `process_album_import` both refuse to run unless their row is still QUEUED, and by the time a
+# worker is lost it is BUILDING — so the redelivered message returns False and the row stays wedged.
+# What rescues those is fail_stalled_downloads; what rescues a media row is its claim expiring.
 CELERY_TASK_TIME_LIMIT = 900
+
+# A local migration client uses this bearer token to submit album ZIP imports as the non-login
+# System resident. Leave blank to disable token-authenticated imports.
+PHOTO_ALBUM_IMPORT_TOKEN = os.environ.get("PHOTO_ALBUM_IMPORT_TOKEN", "")
+PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL = os.environ.get("PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL", "system@gahk.dk")
 CELERY_BEAT_SCHEDULE = {
     "purge-expired-applications": {
         "task": "admissions.tasks.purge_expired_applications",

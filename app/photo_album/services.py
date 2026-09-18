@@ -1,11 +1,15 @@
 """State transitions for albums. Views and scheduled cleanup use these rules together."""
 
+import logging
 import subprocess  # nosec B404
+import zipfile
 from datetime import datetime, timedelta
 from io import BytesIO
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
 
+from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile, File
 from django.db import transaction
 from django.db.models import QuerySet
@@ -16,9 +20,102 @@ from pillow_heif import register_heif_opener
 from residents.models import Resident
 
 from .models import Album, DerivativeState, Media, MediaStatus
-from .uploads import is_video
+from .uploads import check_media_upload, is_video
 
 register_heif_opener()
+logger = logging.getLogger(__name__)
+
+
+def _is_macos_archive_metadata(path: PurePosixPath) -> bool:
+    """Whether a Finder-created ZIP member is metadata rather than user media."""
+    return (
+        "__MACOSX" in path.parts
+        or ".AppleDouble" in path.parts
+        or path.name.startswith("._")
+        or path.name == ".DS_Store"
+    )
+
+
+def import_zip_album(*, archive: File, folder: str, resident: Resident) -> tuple[list[Album], list[str]]:
+    """Import supported archive members into albums named after their archive paths.
+
+    Members are deliberately processed independently: one corrupt file or a storage failure is
+    reported, while the rest of a family archive remains useful. Archive paths are never extracted.
+    """
+    imported_albums: dict[str, Album] = {}
+    skipped: list[str] = []
+    root_name = Path(archive.name or "album.zip").stem
+    maximum_member_bytes = (
+        max(settings.PHOTO_ALBUM_IMAGE_MAX_MB, settings.PHOTO_ALBUM_VIDEO_MAX_MB) * 1024 * 1024
+    )
+
+    archive.seek(0)
+    try:
+        with zipfile.ZipFile(archive) as zip_archive:
+            file_paths = [
+                PurePosixPath(member.filename)
+                for member in zip_archive.infolist()
+                if not member.is_dir() and not _is_macos_archive_metadata(PurePosixPath(member.filename))
+            ]
+            root_parts = 0
+            while file_paths and all(
+                len(path.parts) > root_parts + 1 and path.parts[root_parts] == root_name
+                for path in file_paths
+            ):
+                root_parts += 1
+            for member in zip_archive.infolist():
+                member_path = PurePosixPath(member.filename)
+                if member.is_dir():
+                    continue
+                if _is_macos_archive_metadata(member_path):
+                    skipped.append(f"{member.filename}: macOS-metadata")
+                    continue
+                if member_path.is_absolute() or ".." in member_path.parts or not member_path.name:
+                    skipped.append(f"{member.filename}: ugyldig sti i ZIP-filen")
+                    continue
+                if root_parts:
+                    member_path = PurePosixPath(*member_path.parts[root_parts:])
+                if member.file_size > maximum_member_bytes:
+                    skipped.append(f"{member.filename}: filen er for stor")
+                    continue
+                try:
+                    with zip_archive.open(member) as source:
+                        content = source.read(maximum_member_bytes + 1)
+                except (OSError, RuntimeError, zipfile.BadZipFile) as exc:
+                    skipped.append(f"{member.filename}: kunne ikke læses ({exc})")
+                    continue
+                if len(content) > maximum_member_bytes:
+                    skipped.append(f"{member.filename}: filen er for stor")
+                    continue
+
+                uploaded_file = ContentFile(content, name=member_path.name)
+                error = check_media_upload(uploaded_file)
+                if error:
+                    skipped.append(f"{member.filename}: {error}")
+                    continue
+                album_name = (
+                    root_name
+                    if member_path.parent == PurePosixPath(".")
+                    else f"{root_name}/{member_path.parent}"
+                )
+                album = imported_albums.get(album_name)
+                if album is None:
+                    try:
+                        album = Album(folder=folder, name=album_name)
+                        album.full_clean()
+                        album.save()
+                    except (ValidationError, ValueError) as exc:
+                        skipped.append(f"{member.filename}: albummet kunne ikke oprettes ({exc})")
+                        continue
+                    imported_albums[album_name] = album
+                try:
+                    upload_media(album=album, uploaded_file=uploaded_file, resident=resident, approved=True)
+                except Exception as exc:  # A broken member must not abandon the rest of the archive.
+                    logger.warning("Could not import photo album member %s: %s", member.filename, exc)
+                    skipped.append(f"{member.filename}: kunne ikke tilføjes ({exc})")
+    except zipfile.BadZipFile as exc:
+        raise ValidationError("ZIP-filen kunne ikke læses.") from exc
+    return list(imported_albums.values()), skipped
 
 
 def upload_media(

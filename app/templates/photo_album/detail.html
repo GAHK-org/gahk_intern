@@ -9,16 +9,18 @@
 	</header>
 	{% if download_job %}<section class="card mb-4">{% if download_job.state == 'ready' %}<a class="btn" href="{% url 'photo_album:download_album_archive' download_job.token %}">Hent {{ album.name }}.zip</a><p class="muted mt-2">Downloadet udløber {{ download_job.expires_at|date:"j. F Y kl. H:i" }}.</p>{% elif download_job.state == 'failed' %}<p>Download kunne ikke klargøres.</p>{% else %}<p>Download klargøres … Det kan hentes i syv dage, når det er klar.</p><script>window.setTimeout(function () { window.location.reload(); }, 5000);</script>{% endif %}</section>{% endif %}
 	{% if not album_locked %}
-		<form class="album-upload" method="post" action="{% url 'photo_album:upload' album.pk %}" enctype="multipart/form-data" data-no-downscale-images>
-			{% csrf_token %}
-			<label class="album-file-picker"><input type="file" name="uploads" accept="image/*,.heic,.heif,video/*" multiple required data-album-upload-input><span>Vælg fotoer eller videoer</span><small>Du kan vælge flere filer på én gang</small></label>
-			<input name="title" placeholder="Titel til alle valgte filer (valgfrit)">
-			<button class="btn" type="submit">Upload</button>
-		</form>
-		<section class="album-upload-selection" data-album-upload-selection hidden aria-live="polite">
-			<p data-album-upload-count></p>
-			<ul data-album-upload-files></ul>
-		</section>
+		<button class="album-upload-trigger" type="button" data-album-upload-open aria-label="Upload fotoer eller videoer" title="Upload fotoer eller videoer">+</button>
+		<dialog class="album-upload-dialog" data-album-upload-dialog aria-labelledby="album-upload-title">
+			<form class="album-upload" method="post" action="{% url 'photo_album:upload' album.pk %}" enctype="multipart/form-data" data-no-downscale-images data-album-upload-form>
+				{% csrf_token %}
+				<header><h2 id="album-upload-title">Upload til {{ album.name }}</h2><button type="button" class="album-upload-close" data-album-upload-close aria-label="Luk">&times;</button></header>
+				<label class="album-file-picker"><input type="file" name="uploads" accept="image/*,.heic,.heif,video/*" multiple required data-album-upload-input><span>Vælg fotoer eller videoer</span><small>Du kan vælge flere filer på én gang</small></label>
+				<input name="title" placeholder="Titel til alle valgte filer (valgfrit)">
+				<section class="album-upload-selection" data-album-upload-selection hidden aria-live="polite"><p data-album-upload-count></p><ul data-album-upload-files></ul></section>
+				<div class="album-upload-progress" data-album-upload-progress hidden aria-live="polite"><progress value="0" max="100" data-album-upload-progress-bar></progress><p data-album-upload-progress-label></p></div>
+				<div class="album-upload-buttons"><button class="btn" type="submit" data-album-upload-submit>Upload</button><button class="btn-link" type="button" data-album-upload-close>Annuller</button></div>
+			</form>
+		</dialog>
 	{% endif %}
 	<div class="album-media-grid" data-album-gallery>
 	{% for item in media %}

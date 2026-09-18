@@ -11,13 +11,13 @@ from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile, File
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
-from django.test import Client
+from django.test import Client, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from PIL import Image
 
 from photo_album import access
-from photo_album.models import Album, DerivativeState, Media, MediaStatus
+from photo_album.models import Album, AlbumImport, DerivativeState, Media, MediaStatus
 from photo_album.services import (
     MAX_DERIVATIVE_ATTEMPTS,
     build_derivatives,
@@ -28,6 +28,7 @@ from photo_album.services import (
     reject,
     upload_media,
 )
+from photo_album.tasks import process_album_import
 from residents.models import Resident, Role
 
 
@@ -47,6 +48,189 @@ def test_only_photo_group_or_administrator_can_create_album(
     response = client.post(reverse("photo_album:create_album"), {"folder": "2026", "name": "Fest"})
     assert response.status_code == 302
     assert Album.objects.get().name == "Fest"
+
+
+@pytest.mark.django_db
+def test_album_create_and_zip_import_offer_existing_or_new_folders(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    Album.objects.create(folder="2025", name="Eksisterende")
+    client.force_login(administrator)
+
+    create_content = client.get(reverse("photo_album:create_album")).content.decode()
+    import_content = client.get(reverse("photo_album:import_zip")).content.decode()
+
+    assert '<select id="folder-choice"' in create_content
+    assert '<select id="folder-choice"' in import_content
+    assert '<option value="2025">2025</option>' in create_content
+    assert '<option value="2025">2025</option>' in import_content
+    assert '<option value="__new__">Ny mappe...</option>' in create_content
+    assert '<option value="__new__">Ny mappe...</option>' in import_content
+    assert 'name="folder" type="text"' in create_content
+    assert 'name="folder" type="text"' in import_content
+    assert 'name="name"' in create_content
+
+
+def _zip_upload(*members: tuple[str, bytes]) -> SimpleUploadedFile:
+    payload = BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        for name, content in members:
+            archive.writestr(name, content)
+    return SimpleUploadedFile("foo.zip", payload.getvalue(), content_type="application/zip")
+
+
+@pytest.mark.django_db
+def test_only_photo_group_or_administrator_can_import_zip_albums(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    resident = make_resident()
+    client.force_login(resident)
+
+    response = client.post(
+        reverse("photo_album:import_zip"),
+        {"folder": "2026", "archive": _zip_upload(("one.jpg", b"one"))},
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.django_db
+@override_settings(PHOTO_ALBUM_IMPORT_TOKEN="migration-token")
+def test_token_import_uses_system_resident() -> None:
+    csrf_client = Client(enforce_csrf_checks=True)
+    response = csrf_client.post(
+        reverse("photo_album:system_import_zip"),
+        {"folder": "2026", "archive": _zip_upload(("one.jpg", b"one"))},
+        HTTP_AUTHORIZATION="Bearer migration-token",
+        HTTP_ACCEPT="application/json",
+    )
+
+    assert response.status_code == 202
+    album_import = AlbumImport.objects.get()
+    assert album_import.requested_by.full_name == "System"
+    assert process_album_import(album_import.pk)
+    assert Media.objects.get().requested_by.full_name == "System"
+
+
+@pytest.mark.django_db
+def test_zip_import_creates_recursive_albums_and_reports_skipped_files(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    client.force_login(administrator)
+
+    response = client.post(
+        reverse("photo_album:import_zip"),
+        {
+            "folder": "2026",
+            "archive": _zip_upload(
+                ("root.jpg", b"root"),
+                ("bar/nested.png", b"nested"),
+                ("bar/baz/deep.webp", b"deep"),
+                ("bar/notes.txt", b"not media"),
+            ),
+        },
+    )
+
+    assert response.status_code == 302
+    album_import = AlbumImport.objects.get()
+    assert process_album_import(album_import.pk)
+    assert list(Album.objects.order_by("name").values_list("name", flat=True)) == [
+        "foo",
+        "foo/bar",
+        "foo/bar/baz",
+    ]
+    assert Media.objects.count() == 3
+    completed = client.get(f"{reverse('photo_album:import_zip')}?job={album_import.token}")
+    assert "bar/notes.txt" in completed.content.decode()
+    assert "Filtypen er ikke understøttet" in completed.content.decode()
+
+
+@pytest.mark.django_db
+def test_zip_import_treats_a_matching_root_directory_as_the_archive_root(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    client.force_login(administrator)
+    archive = _zip_upload(("foo/photo.jpg", b"photo"), ("foo/bar/nested.png", b"nested"))
+
+    response = client.post(
+        reverse("photo_album:import_zip"),
+        {"folder": "2026", "archive": archive},
+    )
+
+    assert response.status_code == 302
+    album_import = AlbumImport.objects.get()
+    assert process_album_import(album_import.pk)
+    assert list(Album.objects.order_by("name").values_list("name", flat=True)) == ["foo", "foo/bar"]
+
+
+@pytest.mark.django_db
+def test_zip_import_collapses_repeated_matching_root_directories(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    client.force_login(administrator)
+    archive = _zip_upload(("foo/foo/photo.jpg", b"photo"), ("foo/foo/bar/nested.png", b"nested"))
+
+    response = client.post(
+        reverse("photo_album:import_zip"),
+        {"folder": "2026", "archive": archive},
+    )
+
+    assert response.status_code == 302
+    album_import = AlbumImport.objects.get()
+    assert process_album_import(album_import.pk)
+    assert list(Album.objects.order_by("name").values_list("name", flat=True)) == ["foo", "foo/bar"]
+
+
+@pytest.mark.django_db
+def test_zip_import_returns_status_and_result_urls_for_the_progress_uploader(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    client.force_login(administrator)
+
+    response = client.post(
+        reverse("photo_album:import_zip"),
+        {"folder": "2026", "archive": _zip_upload(("one.jpg", b"one"))},
+        HTTP_ACCEPT="application/json",
+    )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["statusUrl"].endswith("/status")
+    assert payload["resultUrl"].startswith(f"{reverse('photo_album:import_zip')}?job=")
+
+
+@pytest.mark.django_db
+def test_zip_import_ignores_macos_metadata_files(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    client.force_login(administrator)
+
+    response = client.post(
+        reverse("photo_album:import_zip"),
+        {
+            "folder": "2026",
+            "archive": _zip_upload(
+                ("Mathildefest/photo.jpg", b"photo"),
+                ("__MACOSX/Mathildefest/._photo.jpg", b"resource fork"),
+                ("Mathildefest/.AppleDouble/photo.jpg", b"resource fork"),
+                ("Mathildefest/._another.jpg", b"resource fork"),
+            ),
+        },
+    )
+
+    assert response.status_code == 302
+    album_import = AlbumImport.objects.get()
+    assert process_album_import(album_import.pk)
+    assert list(Album.objects.values_list("name", flat=True)) == ["foo/Mathildefest"]
+    assert Media.objects.count() == 1
+    completed = client.get(f"{reverse('photo_album:import_zip')}?job={album_import.token}")
+    assert "macOS-metadata" in completed.content.decode()
 
 
 @pytest.mark.django_db
@@ -151,6 +335,26 @@ def test_album_upload_page_has_a_selected_files_summary(
     assert "data-album-upload-selection" in content
     assert "data-album-upload-count" in content
     assert "data-album-upload-files" in content
+    assert "data-album-upload-dialog" in content
+    assert "data-album-upload-progress" in content
+
+
+@pytest.mark.django_db
+def test_upload_returns_json_for_the_queued_browser_uploader(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    album = Album.objects.create(folder="2026", name="Fest")
+    client.force_login(administrator)
+
+    response = client.post(
+        reverse("photo_album:upload", args=[album.pk]),
+        {"uploads": [_image()]},
+        HTTP_ACCEPT="application/json",
+    )
+
+    assert response.status_code == 201
+    assert response.json() == {"uploaded": 1}
 
 
 @pytest.mark.django_db

@@ -1,6 +1,8 @@
 import posixpath
 from datetime import datetime
+from secrets import compare_digest
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import redirect_to_login
@@ -21,16 +23,38 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.formats import date_format
+from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
 from arkiv.storage import content_disposition
 from core.media import REDIRECT_CACHE_CONTROL
+from residents.models import Resident
 from residents.permissions import current_resident
 
 from . import access, services
-from .forms import AlbumForm, MediaUploadForm
-from .models import Album, AlbumDownload, AlbumDownloadState, Media
+from .forms import AlbumForm, MediaUploadForm, ZipAlbumImportForm
+from .models import Album, AlbumDownload, AlbumDownloadState, AlbumImport, AlbumImportState, Media
 from .storage import PhotoAlbumS3Storage, get_photo_album_storage
+
+
+def album_folder_options() -> list[str]:
+    folders = Album.objects.order_by("folder").values_list("folder", flat=True).distinct()
+    return ["Andet", *(folder for folder in folders if folder != "Andet")]
+
+
+def _token_import_resident(request: HttpRequest) -> Resident | None:
+    token = settings.PHOTO_ALBUM_IMPORT_TOKEN
+    authorization = request.headers.get("Authorization", "")
+    if not token or not compare_digest(authorization, f"Bearer {token}"):
+        return None
+    resident, created = Resident.objects.get_or_create(
+        email=settings.PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL,
+        defaults={"first_name": "System", "last_name": "", "is_active": True},
+    )
+    if created:
+        resident.set_unusable_password()
+        resident.save(update_fields=["password"])
+    return resident
 
 
 @login_required
@@ -144,7 +168,109 @@ def create_album(request: HttpRequest) -> HttpResponse:
     if request.method == "POST" and form.is_valid():
         album = form.save()
         return redirect("photo_album:detail", album.pk)
-    return render(request, "photo_album/form.html", {"form": form, "title": "Opret album"})
+    return render(
+        request,
+        "photo_album/form.html",
+        {
+            "form": form,
+            "title": "Opret album",
+            "folder_options": album_folder_options(),
+        },
+    )
+
+
+def import_zip(request: HttpRequest) -> HttpResponse:
+    resident = current_resident(request)
+    if resident is None:
+        return redirect_to_login(request.get_full_path())
+    if not access.can_create_album(request):
+        raise PermissionDenied
+    form = ZipAlbumImportForm(request.POST or None, request.FILES or None)
+    if request.method == "POST" and form.is_valid():
+        archive = form.cleaned_data["archive"]
+        album_import = AlbumImport.objects.create(
+            requested_by=resident,
+            folder=form.cleaned_data["folder"],
+            archive_name=archive.name,
+            archive=archive,
+        )
+        from .tasks import process_album_import
+
+        def enqueue() -> None:
+            result = process_album_import.delay(album_import.pk)
+            AlbumImport.objects.filter(pk=album_import.pk).update(task_id=result.id)
+
+        transaction.on_commit(enqueue)
+        result_url = f"{reverse('photo_album:import_zip')}?job={album_import.token}"
+        if "application/json" in request.headers.get("Accept", ""):
+            return JsonResponse(
+                {
+                    "statusUrl": reverse("photo_album:import_zip_status", args=[album_import.token]),
+                    "resultUrl": result_url,
+                },
+                status=202,
+            )
+        return redirect(result_url)
+    job = None
+    albums: list[Album] = []
+    skipped: list[str] = []
+    if token := request.GET.get("job"):
+        job = get_object_or_404(AlbumImport, token=token, requested_by=current_resident(request))
+        if job.state == AlbumImportState.READY:
+            albums = list(Album.objects.filter(pk__in=job.album_ids).order_by("name"))
+            skipped = job.skipped
+    return render(
+        request,
+        "photo_album/import_zip.html",
+        {
+            "zip_form": form,
+            "job": job,
+            "albums": albums,
+            "skipped": skipped,
+            "folder_options": album_folder_options(),
+        },
+    )
+
+
+@csrf_exempt
+@require_POST
+def system_import_zip(request: HttpRequest) -> JsonResponse:
+    resident = _token_import_resident(request)
+    if resident is None:
+        raise PermissionDenied
+    form = ZipAlbumImportForm(request.POST, request.FILES)
+    if not form.is_valid():
+        return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
+
+    archive = form.cleaned_data["archive"]
+    album_import = AlbumImport.objects.create(
+        requested_by=resident,
+        folder=form.cleaned_data["folder"],
+        archive_name=archive.name,
+        archive=archive,
+    )
+    from .tasks import process_album_import
+
+    def enqueue() -> None:
+        result = process_album_import.delay(album_import.pk)
+        AlbumImport.objects.filter(pk=album_import.pk).update(task_id=result.id)
+
+    transaction.on_commit(enqueue)
+    return JsonResponse(
+        {
+            "statusUrl": reverse("photo_album:import_zip_status", args=[album_import.token]),
+            "resultUrl": f"{reverse('photo_album:import_zip')}?job={album_import.token}",
+        },
+        status=202,
+    )
+
+
+def import_zip_status(request: HttpRequest, token: str) -> JsonResponse:
+    resident = _token_import_resident(request) or current_resident(request)
+    if resident is None:
+        return JsonResponse({"detail": "Authentication required."}, status=401)
+    album_import = get_object_or_404(AlbumImport, token=token, requested_by=resident)
+    return JsonResponse({"state": album_import.state, "error": album_import.error})
 
 
 @login_required
@@ -216,7 +342,10 @@ def upload(request: HttpRequest, pk: int) -> HttpResponse:
     if not access.can_upload(request, album):
         raise PermissionDenied
     form = MediaUploadForm(request.POST, request.FILES)
+    wants_json = "application/json" in request.headers.get("Accept", "")
     if not form.is_valid():
+        if wants_json:
+            return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
         # Without this the redirect below looked exactly like a successful upload and the photos
         # simply were not there.
         for error in form.errors.get("uploads", ["Filerne kunne ikke uploades."]):
@@ -230,6 +359,8 @@ def upload(request: HttpRequest, pk: int) -> HttpResponse:
             title=form.cleaned_data["title"],
             approved=access.can_manage_media(request),
         )
+    if wants_json:
+        return JsonResponse({"uploaded": len(form.cleaned_data["uploads"])}, status=201)
     return redirect("photo_album:detail", album.pk)
 
 

@@ -31,7 +31,7 @@ services:
       - web
     command: >-
       sh -c "until python manage.py migrate --check; do echo 'waiting for migrations'; sleep 3; done;
-             celery -A config worker --loglevel=INFO"
+             celery -A config worker --loglevel=INFO --concurrency=2"
 
   beat:
     build: .

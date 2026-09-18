@@ -2,12 +2,18 @@ import pickle
 from collections.abc import Callable
 
 import pytest
+from django.conf import settings
 from django.test import Client
 from django.urls import reverse
 from django_celery_beat.models import IntervalSchedule, PeriodicTask
 
 from residents.models import Resident, Role
 from residents.views_admin import _display_task_result
+
+
+def test_celery_requeues_work_when_a_worker_is_lost() -> None:
+    assert settings.CELERY_TASK_ACKS_LATE is True
+    assert settings.CELERY_TASK_REJECT_ON_WORKER_LOST is True
 
 
 def test_legacy_pickled_task_result_is_displayed_safely() -> None:

@@ -5,7 +5,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("photo_album", "0004_albumdownload"),
+        ("photo_album", "0005_albumimport"),
     ]
 
     operations = [
