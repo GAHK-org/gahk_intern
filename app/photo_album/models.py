@@ -16,6 +16,8 @@ from django.utils import timezone
 
 from .storage import get_photo_album_storage
 
+ALBUM_DOWNLOAD_RETENTION = timedelta(days=7)
+
 
 def album_original_path(instance: "Media", filename: str) -> str:
     return f"photo-album/{instance.album_id}/original/{Path(filename).name}"
@@ -203,3 +205,9 @@ class AlbumDownload(models.Model):
 
     class Meta:
         ordering = ["-created_at", "-pk"]
+
+    @property
+    def expires_at(self) -> datetime | None:
+        if self.completed_at is None:
+            return None
+        return self.completed_at + ALBUM_DOWNLOAD_RETENTION

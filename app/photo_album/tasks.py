@@ -1,7 +1,6 @@
 import io
 import posixpath
 from collections.abc import Buffer, Iterator
-from datetime import timedelta
 from pathlib import Path
 
 from celery import shared_task
@@ -10,7 +9,7 @@ from django.core.management import call_command
 from django.utils import timezone
 from zipstream import ZIP_STORED, ZipStream
 
-from .models import AlbumDownload, AlbumDownloadState, DerivativeState, Media
+from .models import ALBUM_DOWNLOAD_RETENTION, AlbumDownload, AlbumDownloadState, DerivativeState, Media
 from .services import build_derivatives, pending_derivatives
 from .storage import PhotoAlbumS3Storage, get_photo_album_storage
 
@@ -120,7 +119,7 @@ def build_album_download(download_id: int) -> bool:
 @shared_task
 def purge_expired_downloads() -> int:
     """Remove completed album ZIP jobs and their private archives after seven days."""
-    cutoff = timezone.now() - timedelta(days=7)
+    cutoff = timezone.now() - ALBUM_DOWNLOAD_RETENTION
     downloads = AlbumDownload.objects.filter(completed_at__lt=cutoff)
     storage = get_photo_album_storage()
     count = 0

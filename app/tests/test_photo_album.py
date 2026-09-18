@@ -366,6 +366,33 @@ def test_expired_album_downloads_remove_their_archives(make_resident: Callable[.
 
 
 @pytest.mark.django_db
+def test_ready_album_download_shows_its_expiry(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    from photo_album.models import ALBUM_DOWNLOAD_RETENTION, AlbumDownload
+
+    resident = make_resident()
+    album = Album.objects.create(folder="2026", name="Sommerfest")
+    completed_at = timezone.now()
+    AlbumDownload.objects.create(
+        album=album,
+        requested_by=resident,
+        state="ready",
+        archive_key="photo-album-zips/ready.zip",
+        completed_at=completed_at,
+    )
+    client.force_login(resident)
+
+    response = client.get(reverse("photo_album:detail", args=[album.pk]))
+
+    assert "Downloadet udløber" in response.content.decode()
+    assert (
+        timezone.localtime(completed_at + ALBUM_DOWNLOAD_RETENTION).strftime("%H:%M")
+        in response.content.decode()
+    )
+
+
+@pytest.mark.django_db
 def test_serve_media_redirects_anonymous_requests_to_login(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
