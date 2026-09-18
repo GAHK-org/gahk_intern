@@ -148,26 +148,6 @@ def test_zip_import_creates_recursive_albums_and_reports_skipped_files(
 
 
 @pytest.mark.django_db
-def test_zip_import_strips_a_single_root_directory(
-    client: Client, make_resident: Callable[..., Resident]
-) -> None:
-    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
-    client.force_login(administrator)
-    archive = _zip_upload(("downloaded/photo.jpg", b"photo"))
-    archive.name = "Skovtur.zip"
-
-    response = client.post(
-        reverse("photo_album:import_zip"),
-        {"folder": "2001", "archive": archive},
-    )
-
-    assert response.status_code == 302
-    album_import = AlbumImport.objects.get()
-    assert process_album_import(album_import.pk)
-    assert list(Album.objects.values_list("name", flat=True)) == ["Skovtur"]
-
-
-@pytest.mark.django_db
 def test_zip_import_returns_status_and_result_urls_for_the_progress_uploader(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:

@@ -91,10 +91,36 @@ def download_zip(client: dropbox.Dropbox, source: str, target: Path) -> int:
     _, response = client.files_download_zip(source)
     with response, target.open("wb") as destination:
         shutil.copyfileobj(response.raw, destination, length=CHUNK_SIZE)
-    with zipfile.ZipFile(target) as archive:
-        count = sum(not member.is_dir() for member in archive.infolist())
+    count = flatten_archive_root(target)
     print(f"  Downloaded {target} with {count} file(s).", flush=True)
     return count
+
+
+def flatten_archive_root(target: Path) -> int:
+    with zipfile.ZipFile(target) as archive:
+        members = archive.infolist()
+        files = [member for member in members if not member.is_dir()]
+        root_directories = {
+            Path(member.filename).parts[0]
+            for member in files
+            if len(Path(member.filename).parts) > 1
+        }
+        if len(root_directories) != 1 or len(root_directories) != len(files):
+            return len(files)
+
+        root = root_directories.pop()
+        normalized = target.with_suffix(".normalized.zip")
+        print(f"  Removing Dropbox archive wrapper {root}/ ...", flush=True)
+        with zipfile.ZipFile(normalized, "w", compression=zipfile.ZIP_STORED) as output:
+            for member in files:
+                relative_path = Path(*Path(member.filename).parts[1:]).as_posix()
+                with (
+                    archive.open(member) as source,
+                    output.open(relative_path, "w") as destination,
+                ):
+                    shutil.copyfileobj(source, destination, length=CHUNK_SIZE)
+    normalized.replace(target)
+    return len(files)
 
 
 def submit_and_wait(
