@@ -8,7 +8,7 @@ from django.core.files.base import ContentFile
 
 from residents.models import Resident
 
-from .models import QuickComment, QuickPost, QuickReaction
+from .models import DEFAULT_CHANNEL_SLUG, QuickComment, QuickPost, QuickReaction
 
 POSTS = [
     # channel, message age, expiry relative to now, replies, post image, reply image, reactions
@@ -233,6 +233,28 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
             )
         for resident in rng.sample(residents, k=min(reaction_count, len(residents))):
             QuickReaction.objects.create(post=post, author=resident, emoji=rng.choice(EMOJI))
+        made += 1
+
+    # One tombstone, with replies -- awkward to reach by hand, since deleting a message you have
+    # just posted takes the silent path until DELETE_GRACE has passed. Via soft_delete() rather than
+    # by writing `deleted_at`, so a break in the real path shows up here.
+    if made:
+        doomed = QuickPost.objects.create(
+            author=residents[0],
+            channel=DEFAULT_CHANNEL_SLUG,
+            content="Beskeden her er slettet igen af den der skrev den.",
+            expires_at=now + timedelta(hours=6),
+        )
+        QuickPost.objects.filter(pk=doomed.pk).update(created_at=now - timedelta(hours=1))
+        for reply_index, resident in enumerate(residents[1:3]):
+            reply = QuickComment.objects.create(
+                post=doomed, author=resident, content=COMMENTS[reply_index % len(COMMENTS)]
+            )
+            QuickComment.objects.filter(pk=reply.pk).update(
+                created_at=now - timedelta(hours=1) + timedelta(minutes=reply_index + 1)
+            )
+        doomed.refresh_from_db()
+        doomed.soft_delete()
         made += 1
     return made
 

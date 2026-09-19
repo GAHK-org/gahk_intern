@@ -4,6 +4,7 @@ data that lights up the app's real queries (active period, roles, derived ølkæ
 import pytest
 from django.core.management import call_command
 
+from den_hurtige.models import QuickPost
 from oelkaelder.models import Shopper
 from residents.models import Resident, active_period
 from residents.permissions import real_roles
@@ -72,3 +73,17 @@ def test_seed_demo_fills_the_board_including_the_two_awkward_cases() -> None:
     assert not hasattr(Notice.objects, "expired"), (
         "retention was removed from opslagstavlen; a reinstated expired() needs the spec updated too"
     )
+
+
+@pytest.mark.django_db
+def test_seed_demo_leaves_one_tombstone_with_its_replies_intact() -> None:
+    """Awkward to reach by hand — deleting a freshly posted message takes the silent path — so the
+    seeder makes one, with replies."""
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+
+    tombstones = QuickPost.objects.filter(deleted_at__isnull=False)
+
+    assert tombstones.count() == 1
+    tombstone = tombstones.get()
+    assert tombstone.content == "", "a tombstone holds no content"
+    assert tombstone.comments.exists(), "the replies outlive the message"
