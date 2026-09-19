@@ -69,6 +69,28 @@ def editor(request: HttpRequest, document_id: str) -> HttpResponse:
 
 
 @login_required
+def editor_fullscreen(request: HttpRequest, document_id: str) -> HttpResponse:
+    document = _document_for_view(request, document_id)
+    editable = access.can_edit(document, request)
+    try:
+        config = services.editor_config(
+            document=document, resident=current_resident(request), can_edit=editable, request=request
+        )
+    except RuntimeError as exc:
+        messages.error(request, str(exc))
+        return redirect("documents:index")
+    return render(
+        request,
+        "documents/editor_fullscreen.html",
+        {
+            "document": document,
+            "editor_config": config,
+            "onlyoffice_public_url": settings.ONLYOFFICE_PUBLIC_URL,
+        },
+    )
+
+
+@login_required
 def editor_config(request: HttpRequest, document_id: str) -> JsonResponse:
     document = _document_for_view(request, document_id)
     return JsonResponse(

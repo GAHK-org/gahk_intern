@@ -7,6 +7,7 @@ app_name = "documents"
 urlpatterns = [
     path("", views.index, name="index"),
     path("<uuid:document_id>/", views.editor, name="editor"),
+    path("<uuid:document_id>/fullscreen/", views.editor_fullscreen, name="editor_fullscreen"),
     path("<uuid:document_id>/editor-config/", views.editor_config, name="editor_config"),
     path("<uuid:document_id>/callback/", views.callback, name="callback"),
     path("<uuid:document_id>/download/", views.download, name="download"),
