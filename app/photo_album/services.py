@@ -7,6 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from django.core.files.base import ContentFile, File
+from django.db import transaction
 from django.db.models import QuerySet
 from django.utils import timezone
 from PIL import ExifTags, Image, ImageOps
@@ -23,7 +24,7 @@ register_heif_opener()
 def upload_media(
     *, album: Album, uploaded_file: File, resident: Resident, title: str = "", approved: bool = False
 ) -> Media:
-    """Store three independently-addressable variants and extract safe, available image metadata."""
+    """Store an original and queue its derivatives after the database transaction commits."""
     if album.is_locked():
         raise ValueError("Albummet er låst.")
     filename = uploaded_file.name or "upload"
@@ -40,26 +41,11 @@ def upload_media(
         captured_at=extract_captured_at(uploaded_file),
     )
     media.original.save(filename, uploaded_file, save=False)
-    if is_video(uploaded_file):
-        # Deferred on purpose — see DerivativeState. Transcoding here would run an H.264 encode
-        # inside the request, past gunicorn's 60 s timeout, and the resident would get a 502 with
-        # the upload lost. The original is stored now; the derivatives follow out of band.
-        media.derivative_state = DerivativeState.PENDING
-        media.save()
-        return media
-    variants = image_variants(uploaded_file, filename)
-    if variants is None:
-        # Preserve an unsupported source rather than rejecting the resident's original upload.
-        # `uploads.check_media_upload` has already refused anything we are not willing to serve, so
-        # this is a decode failure on a permitted type, not an arbitrary file.
-        for field in (media.high_definition, media.thumbnail):
-            uploaded_file.seek(0)
-            field.save(filename, File(uploaded_file), save=False)
-    else:
-        high_definition, thumbnail = variants
-        media.high_definition.save(high_definition.name or "high-definition.jpg", high_definition, save=False)
-        media.thumbnail.save(thumbnail.name or "thumbnail.jpg", thumbnail, save=False)
+    media.derivative_state = DerivativeState.PENDING
     media.save()
+    from .tasks import build_media_derivatives
+
+    transaction.on_commit(lambda: build_media_derivatives.delay(media.pk))
     return media
 
 
@@ -70,7 +56,7 @@ MAX_DERIVATIVE_ATTEMPTS = 3
 
 
 def build_derivatives(media: Media) -> bool:
-    """Build the pending derivatives for one stored video. Returns whether they are now available.
+    """Build stored image or video derivatives. Returns whether they are now available.
 
     Safe to call on the same row twice — it re-reads the original from storage and overwrites — so
     an overlapping run of the management command is harmless, as DEPLOY.md §4b requires.
@@ -78,8 +64,18 @@ def build_derivatives(media: Media) -> bool:
     media.derivative_attempts += 1
     filename = Path(media.original.name or "upload").name
     with media.original.open("rb") as original:
-        variants = video_variants(File(original), filename)
+        source = File(original, name=filename)
+        variants = video_variants(source, filename) if is_video(media) else image_variants(source, filename)
     if variants is None:
+        if not is_video(media):
+            for field in (media.high_definition, media.thumbnail):
+                with media.original.open("rb") as original:
+                    field.save(filename, File(original, name=filename), save=False)
+            media.derivative_state = DerivativeState.READY
+            media.save(
+                update_fields=["high_definition", "thumbnail", "derivative_state", "derivative_attempts"]
+            )
+            return True
         media.derivative_state = (
             DerivativeState.FAILED
             if media.derivative_attempts >= MAX_DERIVATIVE_ATTEMPTS

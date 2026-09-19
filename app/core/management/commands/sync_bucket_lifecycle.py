@@ -85,6 +85,22 @@ RULES: list[dict[str, Any]] = [
         "Filter": {"Prefix": "arkiv-zip/"},
         "Expiration": {"ExpiredObjectDeleteMarker": True},
     },
+    # Photoalbum ZIP downloads are likewise disposable: the job record deletes them after seven
+    # days, and this guards against a worker outage leaving an object behind indefinitely.
+    {
+        "ID": "expire-photo-album-zips",
+        "Status": "Enabled",
+        "Filter": {"Prefix": "photo-album-zips/"},
+        "Expiration": {"Days": ZIP_KEEP_DAYS},
+        "NoncurrentVersionExpiration": {"NoncurrentDays": DERIVED_UNDO_DAYS},
+        "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 1},
+    },
+    {
+        "ID": "expire-photo-album-zip-markers",
+        "Status": "Enabled",
+        "Filter": {"Prefix": "photo-album-zips/"},
+        "Expiration": {"ExpiredObjectDeleteMarker": True},
+    },
     # --- Phase 1 media ---------------------------------------------------------------------------
     {
         "ID": "expire-noncurrent-versions",

@@ -562,6 +562,20 @@ erDiagram
         int deleted_by_id FK
     }
 
+    photo_album_AlbumDownload {
+        int id PK
+        int album_id FK
+        int requested_by_id FK
+        json media_ids
+        string token
+        string task_id
+        string state
+        string archive_key
+        string error
+        datetime created_at
+        datetime completed_at
+    }
+
     core_PushSubscription }o--|| residents_Resident : "user"
     residents_Resident }o--|o residents_Resident : "sponsor"
     residents_Residency }o--|| residents_Resident : "resident"
@@ -635,6 +649,8 @@ erDiagram
     photo_album_Media }o--|| residents_Resident : "requested_by"
     photo_album_Media }o--|o residents_Resident : "approved_by"
     photo_album_Media }o--|o residents_Resident : "deleted_by"
+    photo_album_AlbumDownload }o--|| photo_album_Album : "album"
+    photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
 ```
 
 ## admissions
@@ -1186,12 +1202,28 @@ erDiagram
         int deleted_by_id FK
     }
 
+    photo_album_AlbumDownload {
+        int id PK
+        int album_id FK
+        int requested_by_id FK
+        json media_ids
+        string token
+        string task_id
+        string state
+        string archive_key
+        string error
+        datetime created_at
+        datetime completed_at
+    }
+
     residents_Resident { }
 
     photo_album_Media }o--|| photo_album_Album : "album"
     photo_album_Media }o--|| residents_Resident : "requested_by"
     photo_album_Media }o--|o residents_Resident : "approved_by"
     photo_album_Media }o--|o residents_Resident : "deleted_by"
+    photo_album_AlbumDownload }o--|| photo_album_Album : "album"
+    photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
 ```
 
 ## reparationer
