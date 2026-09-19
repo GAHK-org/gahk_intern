@@ -820,6 +820,24 @@
      here, where both of those are deliberately absent. */
   .msg-archived .msg-actions:not(:has(.reaction, .msg-replies)) { display:none; }
 
+  /* A TOMBSTONE — the bubble left behind when a message past DELETE_GRACE is deleted. Drawn as an
+     outline so it reads as an absence while still holding the message's place; nothing else on the
+     feed is dashed. --muted rather than --faint, which measures 2.8:1 on this ground and fails AA.
+
+     NOT named `msg-deleted`: that contains `msg-del`, the delete FORM's class, so every substring
+     check for a delete control matched the messages that have none. The feed tests do exactly that.
+
+     `background:none` overrides both .msg-bubble and .msg-archived (a tombstone can be archived
+     too), winning on later position -- the same ordering the .msg-own overrides rest on.
+     :not(.msg-parent) for the reason the block above documents: a thread heading is not a bubble. */
+  .msg-tombstone:not(.msg-parent) .msg-bubble { background:none; box-shadow:none; filter:none;
+    border:1px dashed var(--border-strong); }
+  .msg-tombstone.msg-own:not(.msg-parent) .msg-bubble { background:none; color:var(--ink); }
+  .tombstone-label { color:var(--muted); font-style:italic; }
+  .msg-tombstone .msg-name { color:var(--muted); font-weight:400; }
+  /* Same empty-row collapse as the archive: a tombstone never has a reaction row. */
+  .msg-tombstone .msg-actions:not(:has(.reaction, .msg-replies)) { display:none; }
+
   /* THE LIVE FEED ALWAYS FILLS THE SCREEN, so scrolling back down puts the archive entirely out
      of sight. Without this a channel holding one short message left the reader unable to get away
      from its own history: the column was archive + divider + one bubble, so the bottom of the

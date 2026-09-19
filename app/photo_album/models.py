@@ -18,6 +18,24 @@ from .storage import get_photo_album_storage
 
 ALBUM_DOWNLOAD_RETENTION = timedelta(days=7)
 
+# How long a ZIP build may sit in QUEUED or BUILDING before it is presumed dead.
+#
+# The task marks BUILDING before the work and clears it on success or on a caught exception — but a
+# worker killed outright (time limit, OOM, redeploy) catches nothing, and the row then kept
+# `completed_at` NULL forever. That is not merely untidy: `purge_expired_downloads` filters on
+# `completed_at`, so the row was never collected either, and photo_album/detail.html renders the
+# "Download klargøres …" branch with a five-second reload in it — so that resident's album page
+# reloaded itself every five seconds, indefinitely. `fail_stalled_downloads` closes it.
+#
+# An hour, to sit safely outside MEDIA_TASK_TIME_LIMIT: a build still legitimately running must
+# never be declared dead underneath itself.
+ALBUM_DOWNLOAD_STALE_AFTER = timedelta(hours=1)
+
+# How long one worker's claim on a media row keeps others off it. Same reasoning as the constant
+# above and deliberately the same hour: it has to outlast the longest honest transcode, because
+# expiring early is what would let a second worker in beside the first.
+DERIVATIVE_CLAIM_TTL = timedelta(hours=1)
+
 
 def album_original_path(instance: "Media", filename: str) -> str:
     return f"photo-album/{instance.album_id}/original/{Path(filename).name}"
@@ -156,6 +174,17 @@ class Media(models.Model):
         max_length=10, choices=DerivativeState.choices, default=DerivativeState.READY
     )
     derivative_attempts = models.PositiveSmallIntegerField(default=0)
+    # When a worker last CLAIMED this row, which is what stops two of them transcoding the same
+    # file. The nightly `process_pending_media` recovery pass can find a row whose first task was
+    # lost, so without a claim a duplicate dispatch could run its own ffmpeg encode and increment
+    # `derivative_attempts` --
+    # tipping a clip that had failed once into FAILED on MAX_DERIVATIVE_ATTEMPTS.
+    #
+    # A timestamp rather than a boolean or a RUNNING state, because the interesting failure is a
+    # worker that DIES holding the claim. A flag would strand the row forever; a timestamp expires
+    # on its own after DERIVATIVE_CLAIM_TTL, so the row becomes eligible again with nothing to
+    # reset by hand. See `build_media_derivatives`, which takes it as a compare-and-swap.
+    derivative_started_at = models.DateTimeField(null=True, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
     requested_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="media_requests"

@@ -360,6 +360,7 @@ erDiagram
         string channel
         datetime created_at
         datetime expires_at
+        datetime deleted_at
     }
 
     den_hurtige_QuickComment {
@@ -550,6 +551,7 @@ erDiagram
         string content_type
         string derivative_state
         int derivative_attempts
+        datetime derivative_started_at
         json metadata
         int requested_by_id FK
         datetime added_at
@@ -917,6 +919,7 @@ erDiagram
         string channel
         datetime created_at
         datetime expires_at
+        datetime deleted_at
     }
 
     den_hurtige_QuickComment {
@@ -1206,6 +1209,7 @@ erDiagram
         string content_type
         string derivative_state
         int derivative_attempts
+        datetime derivative_started_at
         json metadata
         int requested_by_id FK
         datetime added_at
