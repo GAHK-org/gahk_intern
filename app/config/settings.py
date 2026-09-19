@@ -4,6 +4,7 @@ Schema/decisions: see ../02-schema-etl.md. Target DB is PostgreSQL (via DATABASE
 """
 
 import os
+from datetime import timedelta
 from pathlib import Path
 
 import dj_database_url
@@ -51,6 +52,7 @@ INSTALLED_APPS = [
     "reparationer",
     "arkiv",
     "photo_album",
+    "documents",
 ]
 
 MIDDLEWARE = [
@@ -459,3 +461,21 @@ ANIMATED_IMAGE_MAX_MB = int(os.environ.get("ANIMATED_IMAGE_MAX_MB", "5"))
 # each feature caps its own uploads, so an ops change for one cannot silently change another.
 PHOTO_ALBUM_IMAGE_MAX_MB = int(os.environ.get("PHOTO_ALBUM_IMAGE_MAX_MB", "50"))
 PHOTO_ALBUM_VIDEO_MAX_MB = int(os.environ.get("PHOTO_ALBUM_VIDEO_MAX_MB", "1000"))
+
+# ONLYOFFICE Docs is an editor/collaboration engine; document metadata and durable bytes stay in
+# Django/PostgreSQL and the private object bucket. The public URL reaches browsers, the internal URL
+# reaches the Document Server from Django and is the only callback-download origin we accept.
+ONLYOFFICE_PUBLIC_URL = os.environ.get("ONLYOFFICE_PUBLIC_URL", "http://localhost:8088")
+ONLYOFFICE_INTERNAL_URL = os.environ.get("ONLYOFFICE_INTERNAL_URL", "http://onlyoffice")
+ONLYOFFICE_JWT_SECRET = os.environ.get("ONLYOFFICE_JWT_SECRET", "onlyoffice-dev-secret" if DEBUG else "")
+if not ONLYOFFICE_JWT_SECRET:
+    raise ImproperlyConfigured("ONLYOFFICE_JWT_SECRET must be configured outside development.")
+DOCUMENT_PUBLIC_URL = os.environ.get("DOCUMENT_PUBLIC_URL", "")
+DOCUMENT_S3_ENDPOINT_URL = os.environ.get("DOCUMENT_S3_ENDPOINT_URL", S3_ENDPOINT_URL)
+DOCUMENT_DOWNLOAD_URL_TTL = int(os.environ.get("DOCUMENT_DOWNLOAD_URL_TTL", "900"))
+DOCUMENT_FORCE_SAVE_INTERVAL = int(os.environ.get("DOCUMENT_FORCE_SAVE_INTERVAL", "300"))
+DOCUMENT_MAX_FILE_SIZE = int(os.environ.get("DOCUMENT_MAX_FILE_SIZE", str(100 * 1024 * 1024)))
+CELERY_BEAT_SCHEDULE["force-save-active-documents"] = {
+    "task": "documents.tasks.force_save_active_documents",
+    "schedule": timedelta(seconds=DOCUMENT_FORCE_SAVE_INTERVAL),
+}

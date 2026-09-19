@@ -181,12 +181,12 @@ tasks:
     cmds: ['docker compose exec mariadb mariadb -ugahk -pgahk gahk_dk']
 
   services:up:
-     desc: Start Postgres, MinIO, Celery worker, and Beat (use `db:up` for MariaDB ETL too)
-     cmds: ['docker compose --profile docker up -d postgres minio minio-init worker beat']
+      desc: Start Postgres, MinIO, ONLYOFFICE, Celery worker, and Beat (use `db:up` for MariaDB ETL too)
+      cmds: ['docker compose --profile docker up -d postgres minio minio-init onlyoffice worker beat']
 
   services:down:
-     desc: Stop Postgres, MinIO, Celery worker, and Beat
-     cmds: ['docker compose --profile docker stop postgres minio minio-init worker beat']
+      desc: Stop Postgres, MinIO, ONLYOFFICE, Celery worker, and Beat
+      cmds: ['docker compose --profile docker stop postgres minio minio-init onlyoffice worker beat']
 
   minio:up:
     desc: Start MinIO alone (S3-compatible object storage standing in for Hetzner locally)

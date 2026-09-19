@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Dokumenter | GAHK Intern{% endblock %}
+{% block content %}
+<main class="content-wrap">
+  <header class="page-header"><h1>Dokumenter</h1></header>
+  <form method="post" class="form-grid">{% csrf_token %}{{ form.as_p }}<button type="submit">Opret dokument</button></form>
+  <ul class="item-list">
+    {% for document in documents %}<li><a href="{% url 'documents:editor' document.pk %}">{{ document.title }}</a><small>{{ document.get_document_type_display }} · {{ document.updated_at|date:"d. M Y H:i" }}</small></li>
+    {% empty %}<li>Du har ingen dokumenter endnu.</li>{% endfor %}
+  </ul>
+</main>
+{% endblock %}

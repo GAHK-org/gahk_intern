@@ -83,6 +83,20 @@ services:
       mc mb --ignore-existing local/gahk-s3
       "
 
+  onlyoffice:
+    image: onlyoffice/documentserver:8.3.1.1
+    environment:
+      JWT_ENABLED: "true"
+      JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:-onlyoffice-dev-secret}
+      JWT_HEADER: Authorization
+    ports: ["8088:80"]
+    volumes:
+      - onlyoffice-data:/var/www/onlyoffice/Data
+      - onlyoffice-logs:/var/log/onlyoffice
+      - ./onlyoffice/local.json:/etc/onlyoffice/documentserver/local.json:ro
+    depends_on:
+      minio-init: {condition: service_completed_successfully}
+
   # Optional: the Django app itself, hot-reloading (opt-in — see the `services:` comment above).
   # ./app is bind-mounted over the image's copy, so edits on the host are picked up by Django's
   # autoreloader without a rebuild; only changing pyproject.toml/uv.lock needs one.
@@ -107,6 +121,8 @@ services:
       # 403s the request (SigV4 signs the Host header); see core.storage.PublicEndpointS3Storage.
       S3_PUBLIC_ENDPOINT_URL: http://localhost:9000
       S3_ADDRESSING_STYLE: path
+      DOCUMENT_S3_ENDPOINT_URL: http://minio:9000
+      DOCUMENT_PUBLIC_URL: http://web:8000
       # See app/.env.example: required alongside a non-AWS S3 endpoint (Hetzner AND MinIO both need
       # this — botocore's default checksum framing is mis-stored/rejected by both).
       AWS_REQUEST_CHECKSUM_CALCULATION: when_required
@@ -118,6 +134,7 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       minio-init: {condition: service_completed_successfully}
+      onlyoffice: {condition: service_started}
     command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
 
   worker:
@@ -133,6 +150,7 @@ services:
       S3_ENDPOINT_URL: http://minio:9000
       S3_PUBLIC_ENDPOINT_URL: http://localhost:9000
       S3_ADDRESSING_STYLE: path
+      DOCUMENT_S3_ENDPOINT_URL: http://minio:9000
     volumes: ["./app:/src/app"]
     depends_on:
       postgres: {condition: service_healthy}
@@ -161,3 +179,5 @@ volumes:
   pgdata:
   mariadbdata:
   miniodata:
+  onlyoffice-data:
+  onlyoffice-logs:

@@ -593,6 +593,60 @@ erDiagram
         datetime completed_at
     }
 
+    documents_Document {
+        string id PK
+        string title
+        string document_type
+        string original_filename
+        string extension
+        string object_key
+        int owner_id FK
+        datetime created_at
+        datetime updated_at
+        datetime deleted_at
+        int current_version_id FK
+    }
+
+    documents_DocumentGrant {
+        int id PK
+        int document_id FK
+        int resident_id FK
+        string permission
+        int granted_by_id FK
+        datetime created_at
+    }
+
+    documents_DocumentVersion {
+        string id PK
+        int document_id FK
+        int sequence
+        string object_key
+        string content_sha256
+        string size
+        string save_type
+        int editing_session_id FK
+        datetime created_at
+    }
+
+    documents_DocumentEditingSession {
+        string id PK
+        int document_id FK
+        string document_key
+        int source_version_id FK
+        string state
+        datetime created_at
+        datetime finished_at
+        datetime final_saved_at
+    }
+
+    documents_DocumentCallbackReceipt {
+        int id PK
+        int session_id FK
+        string payload_sha256
+        int status
+        datetime created_at
+    }
+
     core_PushSubscription }o--|| residents_Resident : "user"
     residents_Resident }o--|o residents_Resident : "sponsor"
     residents_Residency }o--|| residents_Resident : "resident"
@@ -669,6 +723,16 @@ erDiagram
     photo_album_AlbumDownload }o--|| photo_album_Album : "album"
     photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
     photo_album_AlbumImport }o--|| residents_Resident : "requested_by"
+    documents_Document }o--|| residents_Resident : "owner"
+    documents_Document }o--|o documents_DocumentVersion : "current_version"
+    documents_DocumentGrant }o--|| documents_Document : "document"
+    documents_DocumentGrant }o--|| residents_Resident : "resident"
+    documents_DocumentGrant }o--|| residents_Resident : "granted_by"
+    documents_DocumentVersion }o--|| documents_Document : "document"
+    documents_DocumentVersion }o--|o documents_DocumentEditingSession : "editing_session"
+    documents_DocumentEditingSession }o--|| documents_Document : "document"
+    documents_DocumentEditingSession }o--|| documents_DocumentVersion : "source_version"
+    documents_DocumentCallbackReceipt }o--|| documents_DocumentEditingSession : "session"
 ```
 
 ## admissions
@@ -955,6 +1019,78 @@ erDiagram
     den_hurtige_QuickReaction }o--|| den_hurtige_QuickPost : "post"
     den_hurtige_QuickReaction }o--|| residents_Resident : "author"
     den_hurtige_ChannelMute }o--|| residents_Resident : "resident"
+```
+
+## documents
+
+```mermaid
+erDiagram
+    documents_Document {
+        string id PK
+        string title
+        string document_type
+        string original_filename
+        string extension
+        string object_key
+        int owner_id FK
+        datetime created_at
+        datetime updated_at
+        datetime deleted_at
+        int current_version_id FK
+    }
+
+    documents_DocumentGrant {
+        int id PK
+        int document_id FK
+        int resident_id FK
+        string permission
+        int granted_by_id FK
+        datetime created_at
+    }
+
+    documents_DocumentVersion {
+        string id PK
+        int document_id FK
+        int sequence
+        string object_key
+        string content_sha256
+        string size
+        string save_type
+        int editing_session_id FK
+        datetime created_at
+    }
+
+    documents_DocumentEditingSession {
+        string id PK
+        int document_id FK
+        string document_key
+        int source_version_id FK
+        string state
+        datetime created_at
+        datetime finished_at
+        datetime final_saved_at
+    }
+
+    documents_DocumentCallbackReceipt {
+        int id PK
+        int session_id FK
+        string payload_sha256
+        int status
+        datetime created_at
+    }
+
+    residents_Resident { }
+
+    documents_Document }o--|| residents_Resident : "owner"
+    documents_Document }o--|o documents_DocumentVersion : "current_version"
+    documents_DocumentGrant }o--|| documents_Document : "document"
+    documents_DocumentGrant }o--|| residents_Resident : "resident"
+    documents_DocumentGrant }o--|| residents_Resident : "granted_by"
+    documents_DocumentVersion }o--|| documents_Document : "document"
+    documents_DocumentVersion }o--|o documents_DocumentEditingSession : "editing_session"
+    documents_DocumentEditingSession }o--|| documents_Document : "document"
+    documents_DocumentEditingSession }o--|| documents_DocumentVersion : "source_version"
+    documents_DocumentCallbackReceipt }o--|| documents_DocumentEditingSession : "session"
 ```
 
 ## events
