@@ -34,6 +34,12 @@ reaction, no deletion (den_hurtige.views._post_or_404 resolves writes against `a
 A model-level guard was considered and rejected — the admin must still be able to remove something
 genuinely unlawful, and a save() override that silently refused would make that impossible to do.
 
+Deleting a message is two acts, split by DELETE_GRACE: inside five minutes the row is destroyed,
+after it the message becomes a tombstone (`deleted_at` set, text and image wiped, replies kept). The
+split exists because a message nobody has read yet is a slip, and one that has been answered is part
+of a conversation that stops making sense without it. Moderators follow the same rule; the Django
+admin is the only place a row is destroyed outright. Archived messages cannot be deleted at all.
+
 Posts are filed into a *channel* (`QuickPost.channel`). The channels themselves are constants in
 den_hurtige.channels, not rows here — see that module for why. Nothing in this file knows which
 channels exist, and neither half of the partition may become channel-aware: `active()` and
@@ -45,12 +51,18 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
+from django.utils import timezone
 
 from core.clock import current_datetime
 from core.files import delete_attached_files
+
+# Compared against `created_at`, which is auto_now_add and so always the REAL clock -- hence
+# timezone.now() rather than core.clock in within_delete_grace. Coincides with views.GROUPING_WINDOW
+# and is deliberately not shared with it; the two measure unrelated things.
+DELETE_GRACE = timedelta(minutes=5)
 
 # How long a post stays visible unless the author picks otherwise. Two døgn, raised from one after
 # the feature had been live a while: a day sounds generous and is not, because the thing people
@@ -166,6 +178,14 @@ class QuickPost(models.Model):
         help_text="Hvornår beskeden forlader feedet og lægges i arkivet.",
     )
 
+    # Deliberately NOT part of active()/archived(): a tombstone stays on the feed and then in the
+    # archive, holding the place of the message that was there.
+    deleted_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Sat hvis beskeden er slettet. Selve teksten og billedet er så væk for altid.",
+    )
+
     objects = QuickPostQuerySet.as_manager()
 
     class Meta:
@@ -200,6 +220,50 @@ class QuickPost(models.Model):
         would have meant the same thing while reading as different states, and every caller of it
         is asking whether the message may still be written to."""
         return current_datetime() >= self.expires_at
+
+    @property
+    def is_deleted(self) -> bool:
+        """A tombstone: the message is gone, its place in the conversation is not.
+
+        A stored fact, unlike `is_archived` -- which is why templates read this directly but must be
+        handed `archived` by the view (_message.html says why).
+        """
+        return self.deleted_at is not None
+
+    @property
+    def within_delete_grace(self) -> bool:
+        """Still young enough to be taken back without leaving a tombstone. See DELETE_GRACE."""
+        return timezone.now() - self.created_at < DELETE_GRACE
+
+    def soft_delete(self) -> bool:
+        """Turn this message into a tombstone: destroy what it said, keep where it said it.
+
+        Returns False if the row was hard-deleted or already tombstoned by a concurrent request, so
+        the caller can report that instead of claiming a success that did not happen.
+
+        The replies are left alone on purpose (see the module docstring), which is also why this
+        cannot be a delete() override -- the cascade would take them. The reactions go with the
+        content they were applied to.
+
+        A CONDITIONAL UPDATE RATHER THAN save(update_fields=...), because there is no transaction
+        around the request (no ATOMIC_REQUESTS) and two deletions can therefore overlap: `save` on a
+        row that has just been hard-deleted raises "Save with update_fields did not affect any
+        rows", which is a 500 on the one gesture people double-tap. The filter makes the tombstone a
+        claim -- exactly one caller can win it -- and the rowcount says whether this one did.
+        """
+        with transaction.atomic():
+            claimed = QuickPost.objects.filter(pk=self.pk, deleted_at__isnull=True).update(
+                content="", image="", deleted_at=timezone.now()
+            )
+            if not claimed:
+                return False
+            # Reads `self.image`, which the UPDATE above cleared in the database but not in memory.
+            # The atomic block is what makes this safe: core.files defers the storage delete to
+            # commit, so without one it would unlink the photograph before the row was written.
+            delete_attached_files(self)
+            self.reactions.all().delete()
+        self.refresh_from_db()
+        return True
 
     @property
     def minutes_left(self) -> int:
@@ -243,6 +307,9 @@ class QuickComment(models.Model):
     changed with archiving is only what that means at the end of it -- the whole thread is kept and
     rendered read-only, rather than cascaded away. The CASCADE below therefore now fires only on a
     real deletion (an admin removing something, or an author deleting a message that is still live).
+
+    It also outlives its message being deleted: soft_delete never touches this table, so what an
+    author takes back is their own words and only those.
     """
 
     post = models.ForeignKey(QuickPost, on_delete=models.CASCADE, related_name="comments")
