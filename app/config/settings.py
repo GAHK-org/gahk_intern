@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 
 import dj_database_url
-from celery.schedules import crontab
 from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
@@ -35,7 +34,6 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "django_celery_beat",
     # GAHK domains
     "core",
     "residents",
@@ -120,109 +118,6 @@ LANGUAGE_CODE = "da"
 TIME_ZONE = "Europe/Copenhagen"
 USE_I18N = True
 USE_TZ = True
-
-# Celery persists queued messages and task results in PostgreSQL. Keeping this separate allows a
-# dedicated queue database later, while local and production defaults share the Django database.
-CELERY_DATABASE_URL = os.environ.get("CELERY_DATABASE_URL", DATABASE_URL)
-# Django accepts `postgres://`; SQLAlchemy requires the explicit PostgreSQL dialect and driver.
-if CELERY_DATABASE_URL.startswith("postgres://"):
-    CELERY_DATABASE_URL = CELERY_DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
-elif CELERY_DATABASE_URL.startswith("postgresql://"):
-    CELERY_DATABASE_URL = CELERY_DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
-CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", f"sqla+{CELERY_DATABASE_URL}")
-CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", f"db+{CELERY_DATABASE_URL}")
-CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
-CELERY_TIMEZONE = TIME_ZONE
-# Keep work on the broker until it completes. If a worker process is killed, Celery rejects the
-# unacknowledged delivery so it can be picked up when a worker is available again.
-CELERY_TASK_TRACK_STARTED = True
-CELERY_TASK_ACKS_LATE = True
-CELERY_TASK_REJECT_ON_WORKER_LOST = True
-# Without this, Celery stores only status/result/traceback and leaves `name`, `worker`, `queue` and
-# `retries` NULL in celery_taskmeta — which are four of the columns the siteadmin worker-jobs page
-# selects and displays, so "Worker", "Kø" and "Forsøg" were permanently blank there.
-CELERY_RESULT_EXTENDED = True
-# The default ceiling for a scheduled job: generous for a sweep, and short enough that a wedged one
-# does not hold a worker slot all night. The two photo-album jobs legitimately run longer and set
-# their own limits at the task — see photo_album/tasks.py::MEDIA_TASK_TIME_LIMIT.
-#
-# Redelivery from the two settings above does NOT make the reapers redundant: `build_album_download`
-# and `process_album_import` both refuse to run unless their row is still QUEUED, and by the time a
-# worker is lost it is BUILDING — so the redelivered message returns False and the row stays wedged.
-# What rescues those is fail_stalled_downloads; what rescues a media row is its claim expiring.
-CELERY_TASK_TIME_LIMIT = 900
-
-# A local migration client uses this bearer token to submit album ZIP imports as the non-login
-# System resident. Leave blank to disable token-authenticated imports.
-PHOTO_ALBUM_IMPORT_TOKEN = os.environ.get("PHOTO_ALBUM_IMPORT_TOKEN", "")
-PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL = os.environ.get("PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL", "system@gahk.dk")
-CELERY_BEAT_SCHEDULE = {
-    "purge-expired-applications": {
-        "task": "admissions.tasks.purge_expired_applications",
-        "schedule": crontab(minute=20, hour=3),
-    },
-    "purge-orphaned-notice-images": {
-        "task": "opslagstavle.tasks.purge_orphaned_images",
-        "schedule": crontab(minute=40, hour=3),
-    },
-    "archive-finished-repairs": {
-        "task": "reparationer.tasks.archive_finished_repairs",
-        "schedule": crontab(minute=50, hour=3),
-    },
-    "purge-expired-events": {
-        "task": "events.tasks.purge_expired_events",
-        "schedule": crontab(minute=0, hour=4),
-    },
-    "purge-expired-photo-album-downloads": {
-        "task": "photo_album.tasks.purge_expired_downloads",
-        "schedule": crontab(minute=20, hour=4),
-    },
-    # 04:30, not 04:10: at 04:10 it ran on top of `apply-ak-monthly-assessment` on the 1st of every
-    # month. Every job here is staggered so two never run together on the one small box, and this
-    # was the one pair that wasn't. (The collision is older than Celery — the cron table in
-    # DEPLOY.md §4b had `purge_photo_album` and `ak_monthly_assessment` both at 04:10 — so it was
-    # carried over rather than introduced, but it is fixed here rather than carried further.)
-    "purge-expired-photo-album-media": {
-        "task": "photo_album.tasks.purge_expired_media",
-        "schedule": crontab(minute=30, hour=4),
-    },
-    "apply-ak-monthly-assessment": {
-        "task": "ak.tasks.apply_monthly_assessment",
-        "schedule": crontab(minute=10, hour=4, day_of_month=1),
-    },
-    # Hourly, and deliberately not daily: what it clears is a download the resident is still
-    # watching a spinner for, so the gap between "the worker died" and "the page says so" is the
-    # thing being minimised.
-    "fail-stalled-photo-album-downloads": {
-        "task": "photo_album.tasks.fail_stalled_downloads",
-        "schedule": crontab(minute=5),
-    },
-    # 04:50, after every other sweep: the rows it deletes are the messages those sweeps were
-    # delivered on, so running it last keeps one night's work visible in the table while that work
-    # is still happening.
-    "purge-delivered-broker-messages": {
-        "task": "core.tasks.purge_delivered_broker_messages",
-        "schedule": crontab(minute=50, hour=4),
-    },
-    "process-photo-album-media": {
-        "task": "photo_album.tasks.process_pending_media",
-        # Uploads enqueue their own derivative build on commit. This is only the nightly recovery
-        # pass for broker messages lost while unavailable or work stranded by a killed worker.
-        "schedule": crontab(minute=0, hour=2),
-    },
-    "remind-rsvp-deadlines": {
-        "task": "events.tasks.remind_rsvp_deadlines",
-        "schedule": crontab(minute=0, hour=17),
-    },
-    "email-oelkaelder-monthly-statements": {
-        "task": "oelkaelder.tasks.send_monthly_statements",
-        "schedule": crontab(minute=10, hour=6, day_of_month=1),
-    },
-    "send-admin-dummy-notification": {
-        "task": "core.tasks.send_admin_dummy_notification",
-        "schedule": crontab(minute=0, hour="8,16"),
-    },
-}
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
@@ -434,22 +329,6 @@ NOTICE_IMAGE_MAX_MB = int(os.environ.get("NOTICE_IMAGE_MAX_MB", "5"))
 # feature caps its own uploads, so an ops change for one cannot silently change what residents may
 # post to another.
 EVENT_IMAGE_MAX_MB = int(os.environ.get("EVENT_IMAGE_MAX_MB", "5"))
-
-# The ceiling for an ANIMATED image, which cuts across the per-feature caps above rather than
-# joining them, because what it answers is a question about the FORMAT.
-#
-# Every cap above is written for a file that has already been through the browser downscaler, where
-# a phone photograph becomes a few hundred KB. An animation never goes through it: the canvas step
-# cannot compress an animation, only flatten it to its first frame, so frontend/src/imageupload.ts
-# passes one through at whatever size the resident picked (see `isAnimatedUpload` there). Measured
-# against 5 MB — a ceiling that assumes the downscaler ran — an ordinary reaction GIF from Giphy or
-# Tenor is refused, which is precisely the thing Den Hurtige, opslagstavlen and begivenheder wanted
-# to allow.
-#
-# One knob for every feature, unlike the caps above, and deliberately: the reason for the higher
-# number is the format, so splitting it per feature would be four settings that must all hold the
-# same value to avoid a GIF being postable in one place and not the next.
-ANIMATED_IMAGE_MAX_MB = int(os.environ.get("ANIMATED_IMAGE_MAX_MB", "5"))
 
 # Photo album uploads. Two ceilings rather than one: the album deliberately keeps the ORIGINAL at
 # full resolution (unlike every other feature here, which downscales in the browser first), so a

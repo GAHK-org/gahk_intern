@@ -1,7 +1,7 @@
 version: '3'
 
 # Dev task runner for the GAHK Django rewrite.
-#   task dev       -> the whole app in Docker, including Celery worker + Beat -> http://127.0.0.1:8800
+#   task dev       -> the whole app in Docker, hot-reloading (Postgres+MinIO+Django) -> http://127.0.0.1:8800
 #   task dev:local -> the same thing, but Django runs directly on the host instead of in a container
 #   task debug     -> dev:local's server under debugpy, waiting for your IDE to attach (port 5678)
 #   task debug:pdb -> the same server, but breakpoint() drops into pdb in this terminal instead
@@ -43,7 +43,7 @@ tasks:
     cmds: ['uv sync']
 
   dev:local:
-    desc: Start Postgres+MinIO, Celery worker + Beat, then run Django directly on the host (http://127.0.0.1:8800)
+    desc: Start Postgres+MinIO, build assets, migrate, then run Django directly on the host (http://127.0.0.1:8800)
     dir: '{{.APP}}'
     cmds:
       - task: services:up
@@ -181,12 +181,12 @@ tasks:
     cmds: ['docker compose exec mariadb mariadb -ugahk -pgahk gahk_dk']
 
   services:up:
-     desc: Start Postgres, MinIO, Celery worker, and Beat (use `db:up` for MariaDB ETL too)
-     cmds: ['docker compose --profile docker up -d postgres minio minio-init worker beat']
+    desc: Start Postgres + MinIO (the app's everyday local dependencies; `db:up` also adds MariaDB for ETL)
+    cmds: ['docker compose up -d postgres minio minio-init']
 
   services:down:
-     desc: Stop Postgres, MinIO, Celery worker, and Beat
-     cmds: ['docker compose --profile docker stop postgres minio minio-init worker beat']
+    desc: Stop Postgres + MinIO
+    cmds: ['docker compose stop postgres minio minio-init']
 
   minio:up:
     desc: Start MinIO alone (S3-compatible object storage standing in for Hetzner locally)
@@ -203,23 +203,19 @@ tasks:
     silent: true
 
   dev:
-    desc: Run the whole app in Docker with hot-reload and Celery worker + Beat -> http://127.0.0.1:8800
-    # Foreground, attached to the web and background-process output (not postgres/minio's). Ctrl-C
-    # stops them, same as dev:local's runserver. `dev:logs`/`dev:down` manage a detached start.
+    desc: Run the whole app in Docker with hot-reload (Postgres+MinIO+Django) -> http://127.0.0.1:8800
+    # Foreground, attached to Django's own output (not postgres/minio's) — Ctrl-C stops it, same as
+    # dev:local's runserver. `dev:logs`/`dev:down` are for a `dev` started elsewhere (e.g. in CI).
     deps: [frontend:build]
-    cmds: ['docker compose --profile docker up --build --attach web --attach worker --attach beat web worker beat']
+    cmds: ['docker compose --profile docker up --build --attach web web']
 
   dev:down:
-    desc: Stop the Docker app and Celery processes (Postgres/MinIO keep running; `services:down` stops those too)
-    cmds: ['docker compose --profile docker stop web worker beat']
-
-  dev:local:down:
-    desc: Stop the Docker Celery processes used by dev:local (Postgres/MinIO keep running)
-    cmds: ['docker compose --profile docker stop worker beat']
+    desc: Stop the dockerized app (Postgres/MinIO keep running; `services:down` stops those too)
+    cmds: ['docker compose --profile docker stop web']
 
   dev:logs:
-    desc: Follow logs from the Docker app and Celery processes
-    cmds: ['docker compose logs -f web worker beat']
+    desc: Follow logs from the dockerized app
+    cmds: ['docker compose logs -f web']
 
   etl:
     desc: 'Run the full legacy->clean data migration (needs task db:up + dump loaded)'
