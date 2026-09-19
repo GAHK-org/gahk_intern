@@ -2,7 +2,7 @@
 
 kombu's SQLAlchemy transport never deletes a message it has delivered — taking one only flips
 `visible` to false — and nothing else pruned the table, so it grew by one payload-carrying row per
-message ever sent. `process_pending_media` alone is 144 a day.
+message ever sent. `process_pending_media` contributes one recovery message each night.
 
 The table belongs to kombu, not to Django, so it does not exist in a fresh test database. These
 build it to the shape the running database actually has (verified against it: `timestamp` is

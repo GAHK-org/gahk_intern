@@ -206,7 +206,9 @@ CELERY_BEAT_SCHEDULE = {
     },
     "process-photo-album-media": {
         "task": "photo_album.tasks.process_pending_media",
-        "schedule": 600.0,
+        # Uploads enqueue their own derivative build on commit. This is only the nightly recovery
+        # pass for broker messages lost while unavailable or work stranded by a killed worker.
+        "schedule": crontab(minute=0, hour=2),
     },
     "remind-rsvp-deadlines": {
         "task": "events.tasks.remind_rsvp_deadlines",

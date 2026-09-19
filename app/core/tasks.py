@@ -12,7 +12,8 @@ from residents.models import Resident, active_period
 # WHY THERE IS A SWEEP AT ALL. The broker is kombu's SQLAlchemy transport on our own Postgres, and
 # it never deletes anything on the read path: taking a message only sets `visible = false`, and the
 # row stays. Nothing else prunes the table either, so it is pure accumulation — one row per message
-# ever sent, each carrying its JSON payload. `process_pending_media` alone is 144 messages a day.
+# ever sent, each carrying its JSON payload. `process_pending_media` contributes one recovery
+# message each night.
 #
 # The result backend needs no equivalent: Celery installs its own `celery.backend_cleanup` entry
 # from `result_expires`, which is what keeps `celery_taskmeta` in check.

@@ -1559,9 +1559,7 @@ def test_a_video_stored_without_a_content_type_is_still_treated_as_a_video(
 def test_a_claimed_media_row_is_not_rebuilt_by_a_duplicate_dispatch(
     make_resident: Callable[..., Resident],
 ) -> None:
-    """`process_pending_media` re-dispatches every PENDING row every ten minutes, and a transcode
-    outlasts that — so without a claim the duplicates each ran their own encode and each bumped
-    `derivative_attempts`, marking a clip FAILED that had only genuinely failed once."""
+    """A recovery dispatch must not duplicate a build that already holds the media claim."""
     from photo_album.tasks import build_media_derivatives
 
     resident = make_resident()

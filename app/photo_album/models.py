@@ -175,9 +175,9 @@ class Media(models.Model):
     )
     derivative_attempts = models.PositiveSmallIntegerField(default=0)
     # When a worker last CLAIMED this row, which is what stops two of them transcoding the same
-    # file. `process_pending_media` re-dispatches every PENDING row every ten minutes, and a video
-    # legitimately takes longer than that, so without a claim the second and third dispatch each
-    # ran their own ffmpeg encode of the same upload and each incremented `derivative_attempts` --
+    # file. The nightly `process_pending_media` recovery pass can find a row whose first task was
+    # lost, so without a claim a duplicate dispatch could run its own ffmpeg encode and increment
+    # `derivative_attempts` --
     # tipping a clip that had failed once into FAILED on MAX_DERIVATIVE_ATTEMPTS.
     #
     # A timestamp rather than a boolean or a RUNNING state, because the interesting failure is a
