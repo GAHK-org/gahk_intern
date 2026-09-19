@@ -32,6 +32,15 @@
              message was fetched into is what decides how it renders, and that is a fact the view
              already knows.
 
+  A DELETED message (`post.is_deleted`) renders a tombstone: the bubble keeps the name, the time and
+  its place in the run, and holds "Besked slettet" where the message was — no image, no countdown,
+  no reaction row, no delete form. The "N svar" link survives where there are replies, for the same
+  reason the archive keeps it.
+
+  Read off the post rather than passed in like `archived`, and deliberately the opposite call:
+  `deleted_at` is a stored column, so there is no clock to ask and no window to get wrong. A flag
+  would mean every caller had to remember it, and forgetting puts the deleted text back on screen.
+
   WHY A BUBBLE AND NOT A ROW. This used to be a flat grid: avatar, then a header line carrying the
   name, the time and the expiry, then the text. It read as a forum, and it broke down precisely on
   the case a chat has most of — the same person writing twice. A continuation dropped the name but
@@ -65,7 +74,7 @@
   list is already doing layout work, and because `bare` must not carry it — the thread parent sits
   inside the panel a swipe would open, so swiping it right would re-open the thread being read.
 {% endcomment %}
-<article class="msg{% if post.grouped and not bare %} msg-grouped{% endif %}{% if post.group_end or bare %} msg-tail{% endif %}{% if post.author_id == user.id %} msg-own{% endif %}{% if bare %} msg-parent{% endif %}{% if archived %} msg-archived{% endif %}"
+<article class="msg{% if post.grouped and not bare %} msg-grouped{% endif %}{% if post.group_end or bare %} msg-tail{% endif %}{% if post.author_id == user.id %} msg-own{% endif %}{% if bare %} msg-parent{% endif %}{% if archived %} msg-archived{% endif %}{% if post.is_deleted %} msg-tombstone{% endif %}"
          id="{% if bare %}thread-parent-{{ post.pk }}{% else %}msg-{{ post.pk }}{% endif %}"
          {% if not bare and not archived %}data-msg-swipe{% endif %}>
   {% comment %}
@@ -90,10 +99,16 @@
       would escape to whatever ancestor IS one and paint behind the feed itself. Markup order and
       opacity do the work instead, and neither needs any stacking at all.
     {% endcomment %}
-    <span class="msg-hint msg-hint-thread" aria-hidden="true">
-      <svg class="ni"><use href="#i-chat"></use></svg>
-    </span>
-    {% if post.author_id == user.id or can_moderate %}
+    {% comment %}
+      On a tombstone each hint is tied to its control, for the reason the archive gives above: a
+      revealed icon that does nothing reads as a broken gesture.
+    {% endcomment %}
+    {% if not post.is_deleted or post.reply_count %}
+      <span class="msg-hint msg-hint-thread" aria-hidden="true">
+        <svg class="ni"><use href="#i-chat"></use></svg>
+      </span>
+    {% endif %}
+    {% if not post.is_deleted and post.author_id == user.id or not post.is_deleted and can_moderate %}
       <span class="msg-hint msg-hint-del" aria-hidden="true">🗑</span>
     {% endif %}
   {% endif %}
@@ -137,6 +152,13 @@
         of every message -- the full sentence survives in the title for anyone who hovers.
       {% endcomment %}
       <div class="msg-line-text">
+        {% if post.is_deleted %}
+          {% comment %}
+            Not a mask over text that is still there: soft_delete emptied `content` in the database.
+            An <em> because these are the template's words, not a resident's.
+          {% endcomment %}
+          <span class="msg-text"><em class="tombstone-label">Besked slettet</em></span>
+        {% else %}
         {% comment %}
           |links escapes the message and then makes every URL in it clickable and short.
           A pasted link is routinely 120 characters of tracking parameters, and a bubble is
@@ -144,6 +166,7 @@
           was sent with. The full URL stays in href and title; see core/links.py.
         {% endcomment %}
         <span class="msg-text">{{ post.content|links }}</span>
+        {% endif %}
         <span class="msg-clock">
           <span class="msg-meta msg-time">{{ post.created_at|date:"H:i" }}</span>
           {% comment %}
@@ -152,12 +175,20 @@
             it would count down to a moment that has already passed, and the date is on the day
             heading above (_archive_chunk.html) where it is said once instead of on every bubble.
           {% endcomment %}
-          {% if not archived %}
+          {% comment %}
+            Dropped on a tombstone too. The countdown is still true there — it archives on its
+            original timer — but it counts down on behalf of something nobody can read.
+          {% endcomment %}
+          {% if not archived and not post.is_deleted %}
             <span class="msg-meta msg-expiry" title="Arkiveres om {{ post.expires_label }}"
                   aria-label="Arkiveres om {{ post.expires_label }}"><span aria-hidden="true">⏱</span> {{ post.expires_label }}</span>
           {% endif %}
         </span>
       </div>
+      {% comment %}
+        No is_deleted guard: soft_delete empties the field, so there is nothing for this to be true
+        of. A second condition here would imply otherwise.
+      {% endcomment %}
       {% if post.image %}
         {% comment %}
           data-viewer hands the tap to the shared picture viewer (frontend/src/imageviewer.ts),
@@ -188,7 +219,13 @@
       (styles.css): swiping is the gesture there, and a permanent ✕ on every message in the feed
       was easy to catch with a thumb while scrolling.
     {% endcomment %}
-    {% if not bare and not archived and post.author_id == user.id or not bare and not archived and can_moderate %}
+    {% comment %}
+      Not rendered on a tombstone: delete_post refuses a second deletion, and the confirm() quotes a
+      message that no longer exists. Its "permanent" is a half-truth past five minutes — true of the
+      words, not of the bubble — and left that way on purpose: what it names is the irreversible
+      part. The distinction is drawn afterwards, in delete_post's success message.
+    {% endcomment %}
+    {% if not bare and not archived and not post.is_deleted and post.author_id == user.id or not bare and not archived and not post.is_deleted and can_moderate %}
       <form method="post" action="{% url 'den_hurtige:delete_post' post.pk %}" class="msg-del"
             onsubmit="return confirm('Slet «{{ post.content|truncatechars:60|escapejs }}» permanent?')">
         {% csrf_token %}
@@ -208,7 +245,13 @@
     row exists anyway — where above the text it was a line of its own.
   {% endcomment %}
   <div class="msg-actions">
-    {% include "den_hurtige/_reactions.html" with reactions=post.reaction_rows %}
+    {% comment %}
+      No reaction row on a tombstone, picker included: soft_delete deleted the reactions, so this
+      would render an empty row and a "+" that toggle_reaction refuses.
+    {% endcomment %}
+    {% if not post.is_deleted %}
+      {% include "den_hurtige/_reactions.html" with reactions=post.reaction_rows %}
+    {% endif %}
 
     {% comment %}
       RENDERED IN THE ARCHIVE TOO. A thread was briefly inlined there behind a <details> instead,
@@ -228,7 +271,11 @@
       OTHER job, which survives archiving intact: it is the only evidence on the feed that a
       conversation happened at all, and opening it is a read.
     {% endcomment %}
-    {% if not bare and post.reply_count or not bare and not archived %}
+    {% comment %}
+      A tombstone follows the archive's rule, one clause on: with replies this link is the only way
+      to them, empty it offers an answer to a message that no longer exists.
+    {% endcomment %}
+    {% if not bare and post.reply_count or not bare and not archived and not post.is_deleted %}
       {% comment %}
         An <a href>, not a button: it is a real URL (den_hurtige:thread), so it works with no JS at
         all — the browser navigates to the standalone thread page — and htmx upgrades it into the

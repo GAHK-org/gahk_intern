@@ -9,11 +9,54 @@ services:
     restart: unless-stopped
     command: >-
       sh -c "python manage.py migrate --noinput &&
-             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 60"
+             daphne --bind 0.0.0.0 --port 8000 config.asgi:application"
     volumes:
       - media:/app/media       # uploaded files (room-inspection photos, relocated legacy images)
     expose:
       - "8000"                 # reached by Coolify/Traefik over the internal network (not host-published)
 
+  # `web` runs the migrations; these two WAIT for them rather than racing them. Without the gate,
+  # every deploy that adds a migration starts `beat` against a database with no
+  # django_celery_beat_periodictask and `worker` against one with no photo_album_albumdownload, and
+  # both crash-loop until `web` catches up — recoverable, thanks to `restart`, but it means a wall
+  # of tracebacks on each deploy and no way to tell a real breakage from the usual noise.
+  #
+  # `migrate --check` exits non-zero while anything is unapplied AND while the database is
+  # unreachable, so one loop covers both. Neither service runs `migrate` itself: three containers
+  # migrating the same database concurrently is its own failure.
+  worker:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - web
+    command: >-
+      sh -c "until python manage.py migrate --check; do echo 'waiting for migrations'; sleep 3; done;
+             celery -A config worker --loglevel=INFO --concurrency=2"
+
+  beat:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - web
+    command: >-
+      sh -c "until python manage.py migrate --check; do echo 'waiting for migrations'; sleep 3; done;
+             celery -A config beat --loglevel=INFO"
+
+  onlyoffice:
+    image: onlyoffice/documentserver:8.3.1.1
+    restart: unless-stopped
+    environment:
+      JWT_ENABLED: "true"
+      JWT_SECRET: ${ONLYOFFICE_JWT_SECRET}
+      JWT_HEADER: AuthorizationJwt
+      ALLOW_PRIVATE_IP_ADDRESS: "true"
+    expose:
+      - "80"
+    volumes:
+      - onlyoffice-data:/var/www/onlyoffice/Data
+      - onlyoffice-logs:/var/log/onlyoffice
+
 volumes:
   media:
+  onlyoffice-data:
+  onlyoffice-logs:

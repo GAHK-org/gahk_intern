@@ -1,6 +1,6 @@
 # Deployment runbook
 
-Target stack (scope §4): **Django 5.2 + gunicorn** behind **nginx/Traefik**, **PostgreSQL**, **WhiteNoise**
+Target stack (scope §4): **Django 5.2 + Daphne/ASGI** behind **nginx/Traefik**, **PostgreSQL**, **WhiteNoise**
 for static, on **Hetzner** with **Coolify** (git-push deploys + Let's Encrypt TLS) or **Kamal**. MediaWiki
 stays a separate **PHP + MariaDB** app on the same box. No SPA/API — one monolith.
 
@@ -97,27 +97,41 @@ Fresh repo (do **not** import the legacy history — it contains plaintext secre
 3. Run **Postgres** (managed, or the `postgres` service in `docker-compose.prod.yml`) and **MariaDB** (for
    MediaWiki). Mount the **`media` volume** for uploads — still required, and still the rollback,
    even after the object-storage migration in §4c.
-4. `web` runs `migrate` on start then gunicorn; Coolify/Traefik terminates TLS and proxies to :8000.
+4. `web` runs `migrate` on start then Daphne; Coolify/Traefik terminates TLS and proxies HTTP and WebSocket traffic to :8000.
 5. `Scaleway` is the fallback if you prefer a first-party managed Postgres.
 
-### 4b. Scheduled tasks (Coolify → the `web` resource → **Scheduled Tasks**)
+### 4b. Scheduled tasks (Celery Beat → worker)
 
-Coolify runs each of these *inside the already-running `web` container* on a cron expression, and
-keeps the output in its own log view. That is why there is no cron sidecar, no host crontab (which
-would fight Coolify's control of the compose lifecycle) and no Celery beat (a broker plus a worker
-for four jobs a month). Container name: `web`. Every command below is **idempotent** — a double run
-or an overlapping run is harmless.
+Celery Beat stores schedules in PostgreSQL and publishes work to the Celery worker. The schedules
+are declared in `config/settings.py`, using the `Europe/Copenhagen` timezone. The worker-job admin
+page at `/admin/worker-jobs` shows active schedules and recent execution history. Every task is
+idempotent, so a retry or an overlapping run is harmless.
 
-| Command | Cron | Why |
+| Celery task | Schedule | Why |
 | --- | --- | --- |
-| `python manage.py purge_applications` | `20 3 * * *` | **The one that is genuinely missing.** F-001 says applications are kept one year; nothing has ever enforced it, so applicant PII accumulates indefinitely — the exact GDPR gap 99-index.md flags in the legacy system. |
-| `python manage.py ak_monthly_assessment` | `10 4 1 * *` | Books the month's AK deduction on the 1st instead of whenever someone happens to open an internal page. |
-| `python manage.py purge_notices` | `40 3 * * *` | Sweeps compose-toolbar images uploaded to a post nobody ever saved. **It no longer deletes opslag** — the board keeps its archive (spec/features/opslagstavle.md). The name is kept so this row and the Coolify task stay valid; if it is ever renamed, both move in the same change. Offset from `purge_applications` (03:20) so two deletes never overlap on the same small box. |
-| `python manage.py archive_finished_repairs` | `50 3 * * *` | Archives (never deletes) a Reparationer ticket that has sat in Færdig for over 30 days, so the board does not fill up with old closed repairs — still searchable via the Arkiv page. Offset from `purge_notices` (03:40) so the two never overlap. |
-| `python manage.py purge_events` | `0 4 * * *` | Enforces Begivenheder's retention: an event goes a week after it ends, a cancelled one thirty days after it was cancelled (two clocks, see `events/models.py`). Offset to 04:00 so it does not overlap `purge_applications` (03:20), `purge_notices` (03:40) or `archive_finished_repairs` (03:50) on the same small box. |
-| `python manage.py purge_photo_album` | `10 4 * * *` | Enforces the photo album's retention: pending media nobody approved within 30 days, and anything held in the bin for 30 days, go with all three stored variants. Offset from `purge_events` (04:00) so two deletes never overlap on the same small box. |
-| `python manage.py process_photo_album_media` | `*/10 * * * *` | Builds the viewer/grid derivatives for uploaded **videos**. The upload itself only stores the original — an H.264 encode takes far longer than gunicorn's 60 s timeout, so doing it in the request killed the worker and lost the upload (see `photo_album.models.DerivativeState`). Every ten minutes because a resident who just posted a clip is waiting to see it; `--limit` keeps one run bounded, and a clip that fails three times is marked failed rather than retried forever. |
-| `python manage.py remind_rsvp_deadlines` | `0 17 * * *` | Nudges the people who have not answered when a svarfrist falls inside the next 24 hours. **Once per event** — the claim is a compare-and-swap on `reminder_sent_at`, taken *before* the send, so a crash between the two loses one reminder rather than pushing the whole house twice. Runs at 17:00 rather than overnight because it is a notification people are meant to act on. |
+| `admissions.tasks.purge_expired_applications` | Daily 03:20 | Enforces the one-year application retention policy. |
+| `opslagstavle.tasks.purge_orphaned_images` | Daily 03:40 | Removes unused compose-toolbar image uploads. |
+| `reparationer.tasks.archive_finished_repairs` | Daily 03:50 | Archives completed repairs after 30 days. |
+| `events.tasks.purge_expired_events` | Daily 04:00 | Enforces event retention. |
+| `ak.tasks.apply_monthly_assessment` | Day 1, 04:10 | Books the monthly AK deduction. |
+| `photo_album.tasks.purge_expired_downloads` | Daily 04:20 | Removes album ZIPs and their rows seven days after they were built. |
+| `photo_album.tasks.purge_expired_media` | Daily 04:30 | Removes expired pending and binned photo-album media. **04:30, not 04:10** — it collided with the AK assessment on the 1st of every month. |
+| `core.tasks.purge_delivered_broker_messages` | Daily 04:50 | Deletes acknowledged rows from `kombu_message`. The SQLAlchemy transport never removes a message it has delivered — it only flips `visible` — so without this the broker table is pure accumulation. Runs last, so one night's sweeps stay visible while they are still running. |
+| `photo_album.tasks.process_pending_media` | Daily 02:00 | Recovery sweep for derivative builds whose queued task was lost. |
+| `photo_album.tasks.fail_stalled_downloads` | Hourly, :05 | Closes out ZIP builds no worker came back to. A worker killed outright runs no handler, so its row stays `BUILDING` — never collected, and the album page keeps reloading itself every five seconds waiting for it. |
+| `events.tasks.remind_rsvp_deadlines` | Daily 17:00 | Sends due RSVP reminders. |
+| `oelkaelder.tasks.send_monthly_statements` | Day 1, 06:10 | Mails every active ølkælder account its previous calendar month. **Sends real mail to residents** — the only task here that does. |
+| `core.tasks.send_admin_dummy_notification` | Daily 08:00 and 16:00 | **Temporary, and deliberately still here.** Mails every administrator and superuser twice a day to prove Beat and the worker are alive in production. Delete this entry and `core.tasks.send_admin_dummy_notification` once that is confirmed — nothing else depends on it. |
+
+**Delete the matching Coolify Scheduled Tasks in the same deploy, not afterwards.** Coolify runs
+them *inside the already-running `web` container*, so nothing here can see them or turn them off,
+and until they are gone every maintenance command has two independent schedulers firing it.
+
+The table above says every task is idempotent, and that is true of each one *run twice in sequence*
+— it is not a claim that two copies may run **concurrently**. `purge_applications` deletes
+permanently and has no undo, so it is the one to switch off first. `purge_quick_posts` is the
+precedent for how this is discovered otherwise: its command was removed months ago and its Coolify
+task is still there, failing on every run.
 
 **`purge_quick_posts` is gone, and its Coolify task has to be deleted by hand.** Den Hurtige stopped
 deleting messages: they leave the feed when `expires_at` passes and are *archived* by that same

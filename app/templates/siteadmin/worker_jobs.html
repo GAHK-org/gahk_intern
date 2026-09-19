@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Worker-job - GAHK{% endblock %}
+{% block content %}
+  <div class="flex items-center justify-between mb-6">
+    <h1>Worker-job</h1>
+    <a class="btn" href="{% url 'siteadmin:home' %}">Administration</a>
+  </div>
+
+  <h2>Jobs i kø ({{ queued_jobs|length }})</h2>
+  <div class="card overflow-x-auto">
+    <table class="w-full border-collapse text-sm">
+      <thead><tr class="border-b border-gray-200 text-left"><th class="p-2">Opgave</th><th class="p-2">Kø</th><th class="p-2">Modtaget</th><th class="p-2">Kør efter</th></tr></thead>
+      <tbody>
+        {% for job in queued_jobs %}
+          <tr class="border-b border-gray-100"><td class="p-2 font-mono break-all">{% if job.id %}<a href="{% url 'siteadmin:worker_job_detail' job.id %}">{{ job.task }}</a>{% else %}{{ job.task }}{% endif %}</td><td class="p-2">{{ job.queue }}</td><td class="p-2">{{ job.timestamp|date:"Y-m-d H:i:s" }}</td><td class="p-2">{{ job.eta|default:"Nu" }}</td></tr>
+        {% empty %}<tr><td class="p-2 muted" colspan="4">Ingen jobs venter i køen.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h2 class="mt-8">Seneste jobs ({{ past_jobs|length }})</h2>
+  <div class="card overflow-x-auto">
+    <table class="w-full border-collapse text-sm">
+      <thead><tr class="border-b border-gray-200 text-left"><th class="p-2">Opgave</th><th class="p-2">Status</th><th class="p-2">Sendt</th><th class="p-2">Afsluttet</th><th class="p-2">Kø</th><th class="p-2">Worker</th><th class="p-2">Forsøg</th></tr></thead>
+      <tbody>
+        {% for job in past_jobs %}
+          <tr class="border-b border-gray-100">
+            <td class="p-2"><div class="font-mono break-all">{% if job.id %}<a href="{% url 'siteadmin:worker_job_detail' job.id %}">{{ job.task }}</a>{% else %}{{ job.task }}{% endif %}</div><div class="muted text-xs font-mono">{{ job.id }}</div>{% if job.arguments or job.keyword_arguments %}<div class="muted text-xs font-mono break-all">{{ job.arguments }}{% if job.keyword_arguments %} {{ job.keyword_arguments }}{% endif %}</div>{% endif %}</td>
+            <td class="p-2">{{ job.status }}</td><td class="p-2">{{ job.submitted_at|date:"Y-m-d H:i:s"|default:"-" }}</td><td class="p-2">{{ job.finished_at|date:"Y-m-d H:i:s" }}</td><td class="p-2">{{ job.queue|default:"-" }}</td><td class="p-2">{{ job.worker|default:"-" }}</td><td class="p-2">{{ job.retries|default:0 }}</td>
+          </tr>
+        {% empty %}<tr><td class="p-2 muted" colspan="7">Ingen afsluttede jobs endnu.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h2 class="mt-8">Aktive planlagte opgaver ({{ schedules|length }})</h2>
+  <div class="card overflow-x-auto">
+    <table class="w-full border-collapse text-sm">
+      <thead><tr class="border-b border-gray-200 text-left"><th class="p-2">Navn</th><th class="p-2">Opgave</th><th class="p-2">Plan</th><th class="p-2">Sidst kørt</th><th class="p-2">Antal kørsler</th></tr></thead>
+      <tbody>
+        {% for schedule in schedules %}
+          <tr class="border-b border-gray-100"><td class="p-2">{{ schedule.name }}</td><td class="p-2 font-mono break-all">{{ schedule.task }}</td><td class="p-2">{{ schedule.schedule }}</td><td class="p-2">{{ schedule.last_run_at|date:"Y-m-d H:i:s"|default:"Aldrig" }}</td><td class="p-2">{{ schedule.total_run_count }}</td></tr>
+        {% empty %}<tr><td class="p-2 muted" colspan="5">Ingen aktive planlagte opgaver.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

@@ -360,6 +360,7 @@ erDiagram
         string channel
         datetime created_at
         datetime expires_at
+        datetime deleted_at
     }
 
     den_hurtige_QuickComment {
@@ -550,6 +551,7 @@ erDiagram
         string content_type
         string derivative_state
         int derivative_attempts
+        datetime derivative_started_at
         json metadata
         int requested_by_id FK
         datetime added_at
@@ -559,6 +561,90 @@ erDiagram
         datetime approved_at
         datetime deleted_at
         int deleted_by_id FK
+    }
+
+    photo_album_AlbumDownload {
+        int id PK
+        int album_id FK
+        int requested_by_id FK
+        json media_ids
+        string token
+        string task_id
+        string state
+        string archive_key
+        string error
+        datetime created_at
+        datetime completed_at
+    }
+
+    photo_album_AlbumImport {
+        int id PK
+        int requested_by_id FK
+        string folder
+        string archive_name
+        string archive
+        string token
+        string task_id
+        string state
+        json album_ids
+        json skipped
+        string error
+        datetime created_at
+        datetime completed_at
+    }
+
+    documents_Document {
+        string id PK
+        string title
+        string document_type
+        string original_filename
+        string extension
+        string object_key
+        int owner_id FK
+        datetime created_at
+        datetime updated_at
+        datetime deleted_at
+        int current_version_id FK
+    }
+
+    documents_DocumentGrant {
+        int id PK
+        int document_id FK
+        int resident_id FK
+        string permission
+        int granted_by_id FK
+        datetime created_at
+    }
+
+    documents_DocumentVersion {
+        string id PK
+        int document_id FK
+        int sequence
+        string object_key
+        string content_sha256
+        string size
+        string save_type
+        int editing_session_id FK
+        datetime created_at
+    }
+
+    documents_DocumentEditingSession {
+        string id PK
+        int document_id FK
+        string document_key
+        int source_version_id FK
+        string state
+        datetime created_at
+        datetime finished_at
+        datetime final_saved_at
+    }
+
+    documents_DocumentCallbackReceipt {
+        int id PK
+        int session_id FK
+        string payload_sha256
+        int status
+        datetime created_at
     }
 
     core_PushSubscription }o--|| residents_Resident : "user"
@@ -634,6 +720,19 @@ erDiagram
     photo_album_Media }o--|| residents_Resident : "requested_by"
     photo_album_Media }o--|o residents_Resident : "approved_by"
     photo_album_Media }o--|o residents_Resident : "deleted_by"
+    photo_album_AlbumDownload }o--|| photo_album_Album : "album"
+    photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
+    photo_album_AlbumImport }o--|| residents_Resident : "requested_by"
+    documents_Document }o--|| residents_Resident : "owner"
+    documents_Document }o--|o documents_DocumentVersion : "current_version"
+    documents_DocumentGrant }o--|| documents_Document : "document"
+    documents_DocumentGrant }o--|| residents_Resident : "resident"
+    documents_DocumentGrant }o--|| residents_Resident : "granted_by"
+    documents_DocumentVersion }o--|| documents_Document : "document"
+    documents_DocumentVersion }o--|o documents_DocumentEditingSession : "editing_session"
+    documents_DocumentEditingSession }o--|| documents_Document : "document"
+    documents_DocumentEditingSession }o--|| documents_DocumentVersion : "source_version"
+    documents_DocumentCallbackReceipt }o--|| documents_DocumentEditingSession : "session"
 ```
 
 ## admissions
@@ -884,6 +983,7 @@ erDiagram
         string channel
         datetime created_at
         datetime expires_at
+        datetime deleted_at
     }
 
     den_hurtige_QuickComment {
@@ -919,6 +1019,78 @@ erDiagram
     den_hurtige_QuickReaction }o--|| den_hurtige_QuickPost : "post"
     den_hurtige_QuickReaction }o--|| residents_Resident : "author"
     den_hurtige_ChannelMute }o--|| residents_Resident : "resident"
+```
+
+## documents
+
+```mermaid
+erDiagram
+    documents_Document {
+        string id PK
+        string title
+        string document_type
+        string original_filename
+        string extension
+        string object_key
+        int owner_id FK
+        datetime created_at
+        datetime updated_at
+        datetime deleted_at
+        int current_version_id FK
+    }
+
+    documents_DocumentGrant {
+        int id PK
+        int document_id FK
+        int resident_id FK
+        string permission
+        int granted_by_id FK
+        datetime created_at
+    }
+
+    documents_DocumentVersion {
+        string id PK
+        int document_id FK
+        int sequence
+        string object_key
+        string content_sha256
+        string size
+        string save_type
+        int editing_session_id FK
+        datetime created_at
+    }
+
+    documents_DocumentEditingSession {
+        string id PK
+        int document_id FK
+        string document_key
+        int source_version_id FK
+        string state
+        datetime created_at
+        datetime finished_at
+        datetime final_saved_at
+    }
+
+    documents_DocumentCallbackReceipt {
+        int id PK
+        int session_id FK
+        string payload_sha256
+        int status
+        datetime created_at
+    }
+
+    residents_Resident { }
+
+    documents_Document }o--|| residents_Resident : "owner"
+    documents_Document }o--|o documents_DocumentVersion : "current_version"
+    documents_DocumentGrant }o--|| documents_Document : "document"
+    documents_DocumentGrant }o--|| residents_Resident : "resident"
+    documents_DocumentGrant }o--|| residents_Resident : "granted_by"
+    documents_DocumentVersion }o--|| documents_Document : "document"
+    documents_DocumentVersion }o--|o documents_DocumentEditingSession : "editing_session"
+    documents_DocumentEditingSession }o--|| documents_Document : "document"
+    documents_DocumentEditingSession }o--|| documents_DocumentVersion : "source_version"
+    documents_DocumentCallbackReceipt }o--|| documents_DocumentEditingSession : "session"
 ```
 
 ## events
@@ -1173,6 +1345,7 @@ erDiagram
         string content_type
         string derivative_state
         int derivative_attempts
+        datetime derivative_started_at
         json metadata
         int requested_by_id FK
         datetime added_at
@@ -1184,12 +1357,45 @@ erDiagram
         int deleted_by_id FK
     }
 
+    photo_album_AlbumDownload {
+        int id PK
+        int album_id FK
+        int requested_by_id FK
+        json media_ids
+        string token
+        string task_id
+        string state
+        string archive_key
+        string error
+        datetime created_at
+        datetime completed_at
+    }
+
+    photo_album_AlbumImport {
+        int id PK
+        int requested_by_id FK
+        string folder
+        string archive_name
+        string archive
+        string token
+        string task_id
+        string state
+        json album_ids
+        json skipped
+        string error
+        datetime created_at
+        datetime completed_at
+    }
+
     residents_Resident { }
 
     photo_album_Media }o--|| photo_album_Album : "album"
     photo_album_Media }o--|| residents_Resident : "requested_by"
     photo_album_Media }o--|o residents_Resident : "approved_by"
     photo_album_Media }o--|o residents_Resident : "deleted_by"
+    photo_album_AlbumDownload }o--|| photo_album_Album : "album"
+    photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
+    photo_album_AlbumImport }o--|| residents_Resident : "requested_by"
 ```
 
 ## reparationer

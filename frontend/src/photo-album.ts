@@ -4,7 +4,111 @@ const uploadInput = document.querySelector<HTMLInputElement>("[data-album-upload
 const uploadSelection = document.querySelector<HTMLElement>("[data-album-upload-selection]")
 const uploadCount = document.querySelector<HTMLElement>("[data-album-upload-count]")
 const uploadFiles = document.querySelector<HTMLUListElement>("[data-album-upload-files]")
+const uploadDialog = document.querySelector<HTMLDialogElement>("[data-album-upload-dialog]")
+const uploadForm = document.querySelector<HTMLFormElement>("[data-album-upload-form]")
+const uploadProgress = document.querySelector<HTMLElement>("[data-album-upload-progress]")
+const uploadProgressBar = document.querySelector<HTMLProgressElement>("[data-album-upload-progress-bar]")
+const uploadProgressLabel = document.querySelector<HTMLElement>("[data-album-upload-progress-label]")
+const uploadSubmit = document.querySelector<HTMLButtonElement>("[data-album-upload-submit]")
+const zipImportForm = document.querySelector<HTMLFormElement>("[data-album-zip-import]")
+const zipImportJob = document.querySelector<HTMLElement>("[data-album-import-job]")
 
+document.querySelectorAll<HTMLElement>("[data-album-folder-selector]").forEach((selector) => {
+  const choice = selector.querySelector<HTMLSelectElement>("[data-album-folder-choice]")!
+  const input = selector.querySelector<HTMLInputElement>("[data-album-folder-input]")!
+  const currentValue = selector.dataset.currentValue ?? "Andet"
+  choice.value = Array.from(choice.options).some((option) => option.value === currentValue)
+    ? currentValue
+    : "__new__"
+
+  const syncFolderInput = (): void => {
+    const isNewFolder = choice.value === "__new__"
+    if (isNewFolder) {
+      input.value = ""
+      input.focus()
+    } else {
+      input.value = choice.value
+    }
+  }
+
+  choice.addEventListener("change", syncFolderInput)
+  syncFolderInput()
+})
+
+const pollZipImport = (root: HTMLElement, statusUrl: string, resultUrl: string): void => {
+  const label = root.querySelector<HTMLElement>("[data-album-import-progress-label]")!
+  window.setTimeout(() => {
+    void fetch(statusUrl, { headers: { Accept: "application/json" }, credentials: "same-origin" })
+      .then((response) => response.json() as Promise<{ state: string; error: string }>)
+      .then((job) => {
+        if (job.state === "ready") {
+          window.location.assign(resultUrl)
+          return
+        }
+        if (job.state === "failed") {
+          label.textContent = `Importen mislykkedes: ${job.error || "ukendt fejl"}`
+          return
+        }
+        label.textContent = job.state === "building"
+          ? "ZIP-filen er uploadet. Serveren importerer nu filerne …"
+          : "ZIP-filen er uploadet. Serveren venter på at starte importen …"
+        pollZipImport(root, statusUrl, resultUrl)
+      })
+      .catch(() => {
+        label.textContent = "Kunne ikke hente importens status. Prøver igen …"
+        pollZipImport(root, statusUrl, resultUrl)
+      })
+  }, 1500)
+}
+
+if (zipImportJob) pollZipImport(zipImportJob, zipImportJob.dataset.statusUrl!, zipImportJob.dataset.resultUrl!)
+
+if (zipImportForm) {
+  const archive = zipImportForm.querySelector<HTMLInputElement>("[name=archive]")!
+  const submit = zipImportForm.querySelector<HTMLButtonElement>("[data-album-zip-import-submit]")!
+  const progress = zipImportForm.querySelector<HTMLElement>("[data-album-import-progress]")!
+  const progressBar = progress.querySelector<HTMLProgressElement>("[data-album-import-progress-bar]")!
+  const label = progress.querySelector<HTMLElement>("[data-album-import-progress-label]")!
+  const setFormDisabled = (disabled: boolean): void => {
+    zipImportForm.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input, button").forEach((control) => {
+      control.disabled = disabled
+    })
+  }
+  zipImportForm.addEventListener("submit", (event) => {
+    if (!archive.files?.length) return
+    event.preventDefault()
+    const data = new FormData(zipImportForm)
+    const request = new XMLHttpRequest()
+    setFormDisabled(true)
+    zipImportForm.classList.add("is-submitted")
+    submit.textContent = "Upload i gang …"
+    progress.hidden = false
+    label.textContent = "Uploader ZIP-fil: 0%"
+    request.open("POST", zipImportForm.action)
+    request.setRequestHeader("Accept", "application/json")
+    request.upload.addEventListener("progress", (progressEvent) => {
+      if (!progressEvent.lengthComputable) return
+      const percent = Math.round((progressEvent.loaded / progressEvent.total) * 100)
+      progressBar.value = percent
+      label.textContent = `Uploader ZIP-fil: ${percent}%`
+    })
+    request.addEventListener("load", () => {
+      if (request.status !== 202) {
+        label.textContent = "ZIP-filen kunne ikke uploades. Genindlæs siden for at prøve igen."
+        return
+      }
+      const response = JSON.parse(request.responseText) as { statusUrl: string; resultUrl: string }
+      progressBar.removeAttribute("value")
+      submit.textContent = "Importerer …"
+      label.textContent = "ZIP-filen er uploadet. Serveren importerer nu filerne …"
+      pollZipImport(progress, response.statusUrl, response.resultUrl)
+    })
+    request.addEventListener("error", () => {
+      label.textContent = "ZIP-filen kunne ikke uploades. Genindlæs siden for at prøve igen."
+    })
+    request.send(data)
+  })
+}
 if (uploadInput && uploadSelection && uploadCount && uploadFiles) {
   uploadInput.addEventListener("change", () => {
     const files = Array.from(uploadInput.files ?? [])
@@ -15,6 +119,75 @@ if (uploadInput && uploadSelection && uploadCount && uploadFiles) {
       item.textContent = file.name
       return item
     }))
+  })
+}
+
+if (uploadDialog && uploadForm && uploadInput && uploadProgress && uploadProgressBar && uploadProgressLabel && uploadSubmit) {
+  const openUpload = document.querySelector<HTMLButtonElement>("[data-album-upload-open]")
+  const closeUpload = (): void => uploadDialog.close()
+
+  openUpload?.addEventListener("click", () => uploadDialog.showModal())
+  uploadDialog.querySelectorAll<HTMLElement>("[data-album-upload-close]").forEach((button) => button.addEventListener("click", closeUpload))
+  uploadDialog.addEventListener("click", (event) => {
+    if (event.target === uploadDialog) closeUpload()
+  })
+
+  uploadForm.addEventListener("submit", (event) => {
+    const files = Array.from(uploadInput.files ?? [])
+    if (!files.length) return
+    event.preventDefault()
+
+    const totalBytes = files.reduce((sum, file) => sum + file.size, 0)
+    let completedBytes = 0
+    let fileIndex = 0
+    const formData = new FormData(uploadForm)
+    const title = formData.get("title")?.toString() ?? ""
+    const csrfToken = formData.get("csrfmiddlewaretoken")?.toString() ?? ""
+    uploadSubmit.disabled = true
+    uploadProgress.hidden = false
+
+    const setProgress = (loadedBytes: number): void => {
+      const percent = totalBytes ? Math.round(((completedBytes + loadedBytes) / totalBytes) * 100) : 100
+      uploadProgressBar.value = percent
+      uploadProgressLabel.textContent = `Uploader fil ${fileIndex + 1} af ${files.length}: ${percent}%`
+    }
+
+    const uploadNext = (): void => {
+      const file = files[fileIndex]
+      if (!file) {
+        window.location.reload()
+        return
+      }
+      const data = new FormData()
+      data.append("uploads", file)
+      data.append("title", title)
+      data.append("csrfmiddlewaretoken", csrfToken)
+      const request = new XMLHttpRequest()
+      request.open("POST", uploadForm.action)
+      request.setRequestHeader("Accept", "application/json")
+      request.upload.addEventListener("progress", (progressEvent) => {
+        if (progressEvent.lengthComputable) setProgress(progressEvent.loaded)
+      })
+      request.addEventListener("load", () => {
+        if (request.status >= 200 && request.status < 300) {
+          completedBytes += file.size
+          fileIndex += 1
+          setProgress(0)
+          uploadNext()
+          return
+        }
+        uploadSubmit.disabled = false
+        uploadProgressLabel.textContent = `Kunne ikke uploade ${file.name}. Prøv igen.`
+      })
+      request.addEventListener("error", () => {
+        uploadSubmit.disabled = false
+        uploadProgressLabel.textContent = `Kunne ikke uploade ${file.name}. Kontrollér din forbindelse og prøv igen.`
+      })
+      request.send(data)
+    }
+
+    setProgress(0)
+    uploadNext()
   })
 }
 

@@ -18,7 +18,7 @@
     <a href="{{ channel.url }}">&larr; Tilbage til {{ channel.name }}</a>
   </p>
 
-  <div class="thread-page card-flat{% if archived %} thread-archived{% endif %}">
+  <div class="thread-page card-flat{% if archived or deleted %} thread-archived{% endif %}">
     {% include "den_hurtige/_message.html" with post=post bare=1 archived=archived %}
     {% include "den_hurtige/_replies.html" with post=post %}
 
@@ -26,8 +26,14 @@
       No reply form once the message is archived — the same rule the panel enforces
       (_thread.html), applied to the no-JS path it would otherwise leave open. views.create_comment
       refuses the post regardless; omitting the form is what stops somebody typing into it first.
+
+      A deleted message closes it the same way, checked first so a tombstone that has since archived
+      explains why it is really shut. Reached often enough to matter: a reply notification goes out,
+      the author thinks better of the message, and the link is opened the next morning.
     {% endcomment %}
-    {% if archived %}
+    {% if deleted %}
+      <p class="thread-empty muted">Beskeden er slettet. Der kan ikke længere svares på den.</p>
+    {% elif archived %}
       <p class="thread-empty muted">Beskeden er arkiveret. Der kan ikke længere svares på den.</p>
     {% else %}
     <form class="reply-form" method="post" enctype="multipart/form-data"

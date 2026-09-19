@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Versioner | GAHK Intern{% endblock %}
+{% block content %}
+<main class="content-wrap"><header class="page-header"><h1>Versioner: {{ document.title }}</h1><a href="{% url 'documents:editor' document.pk %}">Åbn dokument</a></header>
+  <form method="post" action="{% url 'documents:grant_access' document.pk %}">{% csrf_token %}<label>E-mail <input type="email" name="email" required></label><select name="permission"><option value="editor">Kan redigere</option><option value="viewer">Kan læse</option></select><button type="submit">Giv adgang</button></form>
+  <ul class="item-list">{% for version in versions %}<li>Version {{ version.sequence }} · {{ version.get_save_type_display }} · {{ version.created_at|date:"d. M Y H:i" }} <a href="{% url 'documents:version_download' document.pk version.pk %}">Hent</a>{% if document.owner_id == request.user.pk %}<form method="post" action="{% url 'documents:restore' document.pk version.pk %}">{% csrf_token %}<button type="submit">Gendan</button></form>{% endif %}</li>{% endfor %}</ul>
+</main>
+{% endblock %}
