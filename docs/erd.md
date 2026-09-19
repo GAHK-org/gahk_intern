@@ -360,6 +360,7 @@ erDiagram
         string channel
         datetime created_at
         datetime expires_at
+        datetime deleted_at
     }
 
     den_hurtige_QuickComment {
@@ -550,6 +551,7 @@ erDiagram
         string content_type
         string derivative_state
         int derivative_attempts
+        datetime derivative_started_at
         json metadata
         int requested_by_id FK
         datetime added_at
@@ -559,6 +561,36 @@ erDiagram
         datetime approved_at
         datetime deleted_at
         int deleted_by_id FK
+    }
+
+    photo_album_AlbumDownload {
+        int id PK
+        int album_id FK
+        int requested_by_id FK
+        json media_ids
+        string token
+        string task_id
+        string state
+        string archive_key
+        string error
+        datetime created_at
+        datetime completed_at
+    }
+
+    photo_album_AlbumImport {
+        int id PK
+        int requested_by_id FK
+        string folder
+        string archive_name
+        string archive
+        string token
+        string task_id
+        string state
+        json album_ids
+        json skipped
+        string error
+        datetime created_at
+        datetime completed_at
     }
 
     core_PushSubscription }o--|| residents_Resident : "user"
@@ -634,6 +666,9 @@ erDiagram
     photo_album_Media }o--|| residents_Resident : "requested_by"
     photo_album_Media }o--|o residents_Resident : "approved_by"
     photo_album_Media }o--|o residents_Resident : "deleted_by"
+    photo_album_AlbumDownload }o--|| photo_album_Album : "album"
+    photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
+    photo_album_AlbumImport }o--|| residents_Resident : "requested_by"
 ```
 
 ## admissions
@@ -884,6 +919,7 @@ erDiagram
         string channel
         datetime created_at
         datetime expires_at
+        datetime deleted_at
     }
 
     den_hurtige_QuickComment {
@@ -1173,6 +1209,7 @@ erDiagram
         string content_type
         string derivative_state
         int derivative_attempts
+        datetime derivative_started_at
         json metadata
         int requested_by_id FK
         datetime added_at
@@ -1184,12 +1221,45 @@ erDiagram
         int deleted_by_id FK
     }
 
+    photo_album_AlbumDownload {
+        int id PK
+        int album_id FK
+        int requested_by_id FK
+        json media_ids
+        string token
+        string task_id
+        string state
+        string archive_key
+        string error
+        datetime created_at
+        datetime completed_at
+    }
+
+    photo_album_AlbumImport {
+        int id PK
+        int requested_by_id FK
+        string folder
+        string archive_name
+        string archive
+        string token
+        string task_id
+        string state
+        json album_ids
+        json skipped
+        string error
+        datetime created_at
+        datetime completed_at
+    }
+
     residents_Resident { }
 
     photo_album_Media }o--|| photo_album_Album : "album"
     photo_album_Media }o--|| residents_Resident : "requested_by"
     photo_album_Media }o--|o residents_Resident : "approved_by"
     photo_album_Media }o--|o residents_Resident : "deleted_by"
+    photo_album_AlbumDownload }o--|| photo_album_Album : "album"
+    photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
+    photo_album_AlbumImport }o--|| residents_Resident : "requested_by"
 ```
 
 ## reparationer
