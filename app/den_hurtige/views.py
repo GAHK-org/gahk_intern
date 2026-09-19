@@ -201,7 +201,11 @@ def channel_counts() -> dict[str, int]:
     expire, "how much is live in there right now" is the more honest number anyway, and the push
     notification remains the signal that something actually happened.
     """
-    rows = QuickPost.objects.active().values("channel").annotate(n=Count("id"))
+    # Tombstones excluded, though the feed still draws them: a deleted message is not something to
+    # go and read.
+    rows = (
+        QuickPost.objects.active().filter(deleted_at__isnull=True).values("channel").annotate(n=Count("id"))
+    )
     return {row["channel"]: row["n"] for row in rows}
 
 
@@ -565,6 +569,8 @@ def _render_thread(request: HttpRequest, pk: int, *, fragment: bool) -> HttpResp
         "quick_emoji": QUICK_EMOJI,
         "can_moderate": can_moderate(request),
         "archived": post.is_archived,
+        # Separate from `archived` because the panel names which state it is; both can be true.
+        "deleted": post.is_deleted,
     }
     template = "den_hurtige/_thread.html" if fragment else "den_hurtige/thread.html"
     return render(request, template, context)
@@ -676,10 +682,16 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponse:
     # Replies, deletions and reactions take the channel from the post, never from the request: the
     # post already knows where it lives, so there is no hidden field to disagree with.
     back = _channel_of(post)
-    # Archived while the reply was being typed — the panel renders no form once a thread is
-    # archived, so this is the race and not a crafted request. Answered with the reply LIST, as
-    # every other outcome here is, so the explanation lands in the panel the person is looking at
-    # rather than in a session message nothing will surface until the next full page load.
+    # Deleted or archived while the reply was being typed — the panel renders no form in either
+    # case, so this is the race and not a crafted request. Answered with the reply LIST, as every
+    # other outcome here is, so the explanation lands in the panel the person is looking at rather
+    # than in a session message nothing will surface until the next full page load.
+    #
+    # Deletion is checked first because a tombstone eventually archives too, and then it is the
+    # answer that explains why the reply box went away.
+    if post.is_deleted:
+        messages.error(request, "Beskeden er slettet, og der kan ikke længere svares på den.")
+        return _comment_response(request, post, back)
     if post.is_archived:
         messages.error(request, "Beskeden er arkiveret, og der kan ikke længere svares på den.")
         return _comment_response(request, post, back)
@@ -731,7 +743,9 @@ def toggle_reaction(request: HttpRequest, pk: int) -> HttpResponse:
     # somebody's thumb -- the message archived between the poll that drew it and the tap. Swapping
     # the read-only row in answers that truthfully: the counts they were looking at, now inert. A
     # 404 would leave the live-looking row sitting there and the tap appearing to have been lost.
-    if post.is_archived:
+    # A tombstone answers the same way: soft_delete cleared the reactions, so this returns the empty
+    # read-only row the next poll would draw anyway.
+    if post.is_deleted or post.is_archived:
         return _reaction_row(request, post, resident.pk, archived=True)
     form = ReactionForm(request.POST)
     if form.is_valid():
@@ -771,6 +785,9 @@ def delete_post(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     """Authors clean up after themselves; administrators and Inspektionen moderate. Everyone else
     gets a 403 — and nobody at all may delete a message once it has archived.
 
+    Which of the two deletions you get is decided here from the row's own age, identically for an
+    author and a moderator; neither the form nor the swipe gesture chooses. See models.DELETE_GRACE.
+
     THE ARCHIVED CHECK COMES BEFORE THE PERMISSION CHECK, deliberately. The two answers are "you may
     not do this" and "this cannot be done", and the second is the true one here: a moderator is not
     being denied a privilege, the button no longer exists for anybody. Ordering it the other way
@@ -785,11 +802,24 @@ def delete_post(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     if post.is_archived:
         messages.error(request, "Beskeden er arkiveret, og arkiverede beskeder kan ikke slettes.")
         return redirect(_channel_of(post))
+    # Before the permission check for the same reason as the archived case above.
+    if post.is_deleted:
+        messages.error(request, "Beskeden er allerede slettet.")
+        return redirect(_channel_of(post))
     if post.author_id != current_resident(request).pk and not can_moderate(request):
         raise PermissionDenied
     back = _channel_of(post)
-    post.delete()
-    messages.success(request, "Opslaget er slettet.")
+    if post.within_delete_grace:
+        post.delete()
+        messages.success(request, "Opslaget er slettet.")
+    elif post.soft_delete():
+        # Spelled out because it is the half people do not expect: the words are gone, the bubble
+        # is not.
+        messages.success(request, "Beskeden er slettet. «Besked slettet» bliver stående i samtalen.")
+    else:
+        # Lost the claim to a concurrent delete — same answer as the is_deleted check above, which
+        # a request arriving a moment earlier would have taken instead.
+        messages.error(request, "Beskeden er allerede slettet.")
     return redirect(back)
 
 

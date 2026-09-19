@@ -360,6 +360,7 @@ erDiagram
         string channel
         datetime created_at
         datetime expires_at
+        datetime deleted_at
     }
 
     den_hurtige_QuickComment {
@@ -884,6 +885,7 @@ erDiagram
         string channel
         datetime created_at
         datetime expires_at
+        datetime deleted_at
     }
 
     den_hurtige_QuickComment {
