@@ -115,6 +115,18 @@ def download_album(request: HttpRequest, pk: int) -> HttpResponseBase:
     if not media_ids:
         messages.error(request, "Albummet har ingen medier, du kan hente.")
         return redirect("photo_album:detail", pk=album.pk)
+    # ONE BUILD PER RESIDENT PER ALBUM AT A TIME. The button stays on the page while a build runs,
+    # and a whole-album ZIP is slow enough to invite a second click — which used to queue a second
+    # complete archive of the same album and leave a second object in the bucket, while `detail`
+    # only ever surfaces the newest row anyway. So an in-flight request is reported, not restarted.
+    in_flight = AlbumDownload.objects.filter(
+        album=album,
+        requested_by=resident,
+        state__in=(AlbumDownloadState.QUEUED, AlbumDownloadState.BUILDING),
+    ).first()
+    if in_flight is not None:
+        messages.info(request, "Din download er allerede ved at blive klargjort.")
+        return redirect("photo_album:detail", pk=album.pk)
     download = AlbumDownload.objects.create(album=album, requested_by=resident, media_ids=media_ids)
     from .tasks import build_album_download
 

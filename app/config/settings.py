@@ -138,6 +138,18 @@ CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_ACKS_LATE = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
+# Without this, Celery stores only status/result/traceback and leaves `name`, `worker`, `queue` and
+# `retries` NULL in celery_taskmeta — which are four of the columns the siteadmin worker-jobs page
+# selects and displays, so "Worker", "Kø" and "Forsøg" were permanently blank there.
+CELERY_RESULT_EXTENDED = True
+# The default ceiling for a scheduled job: generous for a sweep, and short enough that a wedged one
+# does not hold a worker slot all night. The two photo-album jobs legitimately run longer and set
+# their own limits at the task — see photo_album/tasks.py::MEDIA_TASK_TIME_LIMIT.
+#
+# Redelivery from the two settings above does NOT make the reapers redundant: `build_album_download`
+# and `process_album_import` both refuse to run unless their row is still QUEUED, and by the time a
+# worker is lost it is BUILDING — so the redelivered message returns False and the row stays wedged.
+# What rescues those is fail_stalled_downloads; what rescues a media row is its claim expiring.
 CELERY_TASK_TIME_LIMIT = 900
 
 # A local migration client uses this bearer token to submit album ZIP imports as the non-login
@@ -161,21 +173,42 @@ CELERY_BEAT_SCHEDULE = {
         "task": "events.tasks.purge_expired_events",
         "schedule": crontab(minute=0, hour=4),
     },
-    "purge-expired-photo-album-media": {
-        "task": "photo_album.tasks.purge_expired_media",
-        "schedule": crontab(minute=10, hour=4),
-    },
     "purge-expired-photo-album-downloads": {
         "task": "photo_album.tasks.purge_expired_downloads",
         "schedule": crontab(minute=20, hour=4),
+    },
+    # 04:30, not 04:10: at 04:10 it ran on top of `apply-ak-monthly-assessment` on the 1st of every
+    # month. Every job here is staggered so two never run together on the one small box, and this
+    # was the one pair that wasn't. (The collision is older than Celery — the cron table in
+    # DEPLOY.md §4b had `purge_photo_album` and `ak_monthly_assessment` both at 04:10 — so it was
+    # carried over rather than introduced, but it is fixed here rather than carried further.)
+    "purge-expired-photo-album-media": {
+        "task": "photo_album.tasks.purge_expired_media",
+        "schedule": crontab(minute=30, hour=4),
     },
     "apply-ak-monthly-assessment": {
         "task": "ak.tasks.apply_monthly_assessment",
         "schedule": crontab(minute=10, hour=4, day_of_month=1),
     },
+    # Hourly, and deliberately not daily: what it clears is a download the resident is still
+    # watching a spinner for, so the gap between "the worker died" and "the page says so" is the
+    # thing being minimised.
+    "fail-stalled-photo-album-downloads": {
+        "task": "photo_album.tasks.fail_stalled_downloads",
+        "schedule": crontab(minute=5),
+    },
+    # 04:50, after every other sweep: the rows it deletes are the messages those sweeps were
+    # delivered on, so running it last keeps one night's work visible in the table while that work
+    # is still happening.
+    "purge-delivered-broker-messages": {
+        "task": "core.tasks.purge_delivered_broker_messages",
+        "schedule": crontab(minute=50, hour=4),
+    },
     "process-photo-album-media": {
         "task": "photo_album.tasks.process_pending_media",
-        "schedule": 600.0,
+        # Uploads enqueue their own derivative build on commit. This is only the nightly recovery
+        # pass for broker messages lost while unavailable or work stranded by a killed worker.
+        "schedule": crontab(minute=0, hour=2),
     },
     "remind-rsvp-deadlines": {
         "task": "events.tasks.remind_rsvp_deadlines",

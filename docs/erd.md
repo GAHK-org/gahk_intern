@@ -550,6 +550,7 @@ erDiagram
         string content_type
         string derivative_state
         int derivative_attempts
+        datetime derivative_started_at
         json metadata
         int requested_by_id FK
         datetime added_at
@@ -1206,6 +1207,7 @@ erDiagram
         string content_type
         string derivative_state
         int derivative_attempts
+        datetime derivative_started_at
         json metadata
         int requested_by_id FK
         datetime added_at

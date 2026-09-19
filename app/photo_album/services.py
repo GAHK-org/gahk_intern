@@ -152,6 +152,23 @@ def upload_media(
 MAX_DERIVATIVE_ATTEMPTS = 3
 
 
+def is_video_media(media: Media) -> bool:
+    """Whether a STORED row is a video, asking both things that know.
+
+    `is_video` decides from `.content_type` and `.name`. A Media has the first and not the second,
+    so calling it on the row alone quietly reduced the test to the content type — and
+    `uploads.check_media_upload` deliberately accepts an EMPTY content type when the extension
+    vouches for the file, which is exactly what several browsers send for `.mov`. Such a row then
+    took the IMAGE path: `image_variants` returned None, the "unsupported source" branch below
+    copied the raw video bytes into `high_definition` and `thumbnail`, and the item was marked
+    READY — leaving a multi-megabyte .mov being served inside an <img> in the grid.
+
+    The upload path never had this problem, because there `is_video` is handed the UploadedFile and
+    can see its filename. This puts the filename back by asking the stored original for it.
+    """
+    return is_video(media) or is_video(media.original)
+
+
 def build_derivatives(media: Media) -> bool:
     """Build stored image or video derivatives. Returns whether they are now available.
 
@@ -160,11 +177,12 @@ def build_derivatives(media: Media) -> bool:
     """
     media.derivative_attempts += 1
     filename = Path(media.original.name or "upload").name
+    video = is_video_media(media)
     with media.original.open("rb") as original:
         source = File(original, name=filename)
-        variants = video_variants(source, filename) if is_video(media) else image_variants(source, filename)
+        variants = video_variants(source, filename) if video else image_variants(source, filename)
     if variants is None:
-        if not is_video(media):
+        if not video:
             for field in (media.high_definition, media.thumbnail):
                 with media.original.open("rb") as original:
                     field.save(filename, File(original, name=filename), save=False)
