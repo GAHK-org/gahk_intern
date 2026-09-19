@@ -11,13 +11,13 @@ from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile, File
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
-from django.test import Client
+from django.test import Client, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from PIL import Image
 
 from photo_album import access
-from photo_album.models import Album, DerivativeState, Media, MediaStatus
+from photo_album.models import Album, AlbumImport, DerivativeState, Media, MediaStatus
 from photo_album.services import (
     MAX_DERIVATIVE_ATTEMPTS,
     build_derivatives,
@@ -28,6 +28,7 @@ from photo_album.services import (
     reject,
     upload_media,
 )
+from photo_album.tasks import process_album_import
 from residents.models import Resident, Role
 
 
@@ -47,6 +48,189 @@ def test_only_photo_group_or_administrator_can_create_album(
     response = client.post(reverse("photo_album:create_album"), {"folder": "2026", "name": "Fest"})
     assert response.status_code == 302
     assert Album.objects.get().name == "Fest"
+
+
+@pytest.mark.django_db
+def test_album_create_and_zip_import_offer_existing_or_new_folders(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    Album.objects.create(folder="2025", name="Eksisterende")
+    client.force_login(administrator)
+
+    create_content = client.get(reverse("photo_album:create_album")).content.decode()
+    import_content = client.get(reverse("photo_album:import_zip")).content.decode()
+
+    assert '<select id="folder-choice"' in create_content
+    assert '<select id="folder-choice"' in import_content
+    assert '<option value="2025">2025</option>' in create_content
+    assert '<option value="2025">2025</option>' in import_content
+    assert '<option value="__new__">Ny mappe...</option>' in create_content
+    assert '<option value="__new__">Ny mappe...</option>' in import_content
+    assert 'name="folder" type="text"' in create_content
+    assert 'name="folder" type="text"' in import_content
+    assert 'name="name"' in create_content
+
+
+def _zip_upload(*members: tuple[str, bytes]) -> SimpleUploadedFile:
+    payload = BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        for name, content in members:
+            archive.writestr(name, content)
+    return SimpleUploadedFile("foo.zip", payload.getvalue(), content_type="application/zip")
+
+
+@pytest.mark.django_db
+def test_only_photo_group_or_administrator_can_import_zip_albums(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    resident = make_resident()
+    client.force_login(resident)
+
+    response = client.post(
+        reverse("photo_album:import_zip"),
+        {"folder": "2026", "archive": _zip_upload(("one.jpg", b"one"))},
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.django_db
+@override_settings(PHOTO_ALBUM_IMPORT_TOKEN="migration-token")
+def test_token_import_uses_system_resident() -> None:
+    csrf_client = Client(enforce_csrf_checks=True)
+    response = csrf_client.post(
+        reverse("photo_album:system_import_zip"),
+        {"folder": "2026", "archive": _zip_upload(("one.jpg", b"one"))},
+        HTTP_AUTHORIZATION="Bearer migration-token",
+        HTTP_ACCEPT="application/json",
+    )
+
+    assert response.status_code == 202
+    album_import = AlbumImport.objects.get()
+    assert album_import.requested_by.full_name == "System"
+    assert process_album_import(album_import.pk)
+    assert Media.objects.get().requested_by.full_name == "System"
+
+
+@pytest.mark.django_db
+def test_zip_import_creates_recursive_albums_and_reports_skipped_files(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    client.force_login(administrator)
+
+    response = client.post(
+        reverse("photo_album:import_zip"),
+        {
+            "folder": "2026",
+            "archive": _zip_upload(
+                ("root.jpg", b"root"),
+                ("bar/nested.png", b"nested"),
+                ("bar/baz/deep.webp", b"deep"),
+                ("bar/notes.txt", b"not media"),
+            ),
+        },
+    )
+
+    assert response.status_code == 302
+    album_import = AlbumImport.objects.get()
+    assert process_album_import(album_import.pk)
+    assert list(Album.objects.order_by("name").values_list("name", flat=True)) == [
+        "foo",
+        "foo/bar",
+        "foo/bar/baz",
+    ]
+    assert Media.objects.count() == 3
+    completed = client.get(f"{reverse('photo_album:import_zip')}?job={album_import.token}")
+    assert "bar/notes.txt" in completed.content.decode()
+    assert "Filtypen er ikke understøttet" in completed.content.decode()
+
+
+@pytest.mark.django_db
+def test_zip_import_treats_a_matching_root_directory_as_the_archive_root(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    client.force_login(administrator)
+    archive = _zip_upload(("foo/photo.jpg", b"photo"), ("foo/bar/nested.png", b"nested"))
+
+    response = client.post(
+        reverse("photo_album:import_zip"),
+        {"folder": "2026", "archive": archive},
+    )
+
+    assert response.status_code == 302
+    album_import = AlbumImport.objects.get()
+    assert process_album_import(album_import.pk)
+    assert list(Album.objects.order_by("name").values_list("name", flat=True)) == ["foo", "foo/bar"]
+
+
+@pytest.mark.django_db
+def test_zip_import_collapses_repeated_matching_root_directories(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    client.force_login(administrator)
+    archive = _zip_upload(("foo/foo/photo.jpg", b"photo"), ("foo/foo/bar/nested.png", b"nested"))
+
+    response = client.post(
+        reverse("photo_album:import_zip"),
+        {"folder": "2026", "archive": archive},
+    )
+
+    assert response.status_code == 302
+    album_import = AlbumImport.objects.get()
+    assert process_album_import(album_import.pk)
+    assert list(Album.objects.order_by("name").values_list("name", flat=True)) == ["foo", "foo/bar"]
+
+
+@pytest.mark.django_db
+def test_zip_import_returns_status_and_result_urls_for_the_progress_uploader(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    client.force_login(administrator)
+
+    response = client.post(
+        reverse("photo_album:import_zip"),
+        {"folder": "2026", "archive": _zip_upload(("one.jpg", b"one"))},
+        HTTP_ACCEPT="application/json",
+    )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["statusUrl"].endswith("/status")
+    assert payload["resultUrl"].startswith(f"{reverse('photo_album:import_zip')}?job=")
+
+
+@pytest.mark.django_db
+def test_zip_import_ignores_macos_metadata_files(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    client.force_login(administrator)
+
+    response = client.post(
+        reverse("photo_album:import_zip"),
+        {
+            "folder": "2026",
+            "archive": _zip_upload(
+                ("Mathildefest/photo.jpg", b"photo"),
+                ("__MACOSX/Mathildefest/._photo.jpg", b"resource fork"),
+                ("Mathildefest/.AppleDouble/photo.jpg", b"resource fork"),
+                ("Mathildefest/._another.jpg", b"resource fork"),
+            ),
+        },
+    )
+
+    assert response.status_code == 302
+    album_import = AlbumImport.objects.get()
+    assert process_album_import(album_import.pk)
+    assert list(Album.objects.values_list("name", flat=True)) == ["foo/Mathildefest"]
+    assert Media.objects.count() == 1
+    completed = client.get(f"{reverse('photo_album:import_zip')}?job={album_import.token}")
+    assert "macOS-metadata" in completed.content.decode()
 
 
 @pytest.mark.django_db
@@ -151,6 +335,26 @@ def test_album_upload_page_has_a_selected_files_summary(
     assert "data-album-upload-selection" in content
     assert "data-album-upload-count" in content
     assert "data-album-upload-files" in content
+    assert "data-album-upload-dialog" in content
+    assert "data-album-upload-progress" in content
+
+
+@pytest.mark.django_db
+def test_upload_returns_json_for_the_queued_browser_uploader(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    album = Album.objects.create(folder="2026", name="Fest")
+    client.force_login(administrator)
+
+    response = client.post(
+        reverse("photo_album:upload", args=[album.pk]),
+        {"uploads": [_image()]},
+        HTTP_ACCEPT="application/json",
+    )
+
+    assert response.status_code == 201
+    assert response.json() == {"uploaded": 1}
 
 
 @pytest.mark.django_db
@@ -1318,3 +1522,156 @@ def test_a_locked_album_stops_deletion_for_everyone_including_administrators(
     assert access.can_delete(media, request) is False
     assert access.can_curate_delete(media, request) is False
     assert access.can_withdraw(media, request) is False
+
+
+# --- what the Celery review turned up ------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_a_video_stored_without_a_content_type_is_still_treated_as_a_video(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """Several browsers send NO content type for .mov, and `check_media_upload` accepts that when
+    the extension vouches for the file — so the row is stored with content_type "".
+
+    `build_derivatives` asked `is_video(media)`, and a Media has no `.name`, so the test collapsed
+    to the content type and said "image". `image_variants` then returned None, the unsupported-source
+    branch copied the raw video bytes into BOTH derivative fields, and the item was marked READY —
+    putting a .mov inside the grid's <img>.
+    """
+    resident = make_resident()
+    album = Album.objects.create(folder="2026", name="Fest")
+    upload = SimpleUploadedFile("clip.mov", b"bytes", content_type="")
+
+    media = upload_media(album=album, uploaded_file=upload, resident=resident)
+
+    assert media.content_type == ""
+    assert media.derivative_state == DerivativeState.PENDING
+    # False because these bytes are not a real video — the point is that it took the VIDEO path and
+    # failed honestly, rather than the image path and "succeeding" with the original copied over.
+    assert build_derivatives(media) is False
+    assert not media.thumbnail
+    assert not media.high_definition
+    assert media.derivative_state != DerivativeState.READY
+
+
+@pytest.mark.django_db
+def test_a_claimed_media_row_is_not_rebuilt_by_a_duplicate_dispatch(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """A recovery dispatch must not duplicate a build that already holds the media claim."""
+    from photo_album.tasks import build_media_derivatives
+
+    resident = make_resident()
+    album = Album.objects.create(folder="2026", name="Fest")
+    media = upload_media(album=album, uploaded_file=_video(), resident=resident)
+
+    build_media_derivatives.run(media.pk)
+    media.refresh_from_db()
+    assert media.derivative_attempts == 1
+    assert media.derivative_started_at is not None
+
+    assert build_media_derivatives.run(media.pk) is False
+
+    media.refresh_from_db()
+    assert media.derivative_attempts == 1
+
+
+@pytest.mark.django_db
+def test_an_expired_claim_lets_another_worker_pick_the_row_up(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """The claim is a timestamp precisely so a worker that DIES holding one strands nothing."""
+    from photo_album.models import DERIVATIVE_CLAIM_TTL
+    from photo_album.tasks import build_media_derivatives
+
+    resident = make_resident()
+    album = Album.objects.create(folder="2026", name="Fest")
+    media = upload_media(album=album, uploaded_file=_video(), resident=resident)
+    Media.objects.filter(pk=media.pk).update(
+        derivative_started_at=timezone.now() - DERIVATIVE_CLAIM_TTL - timedelta(minutes=1)
+    )
+
+    build_media_derivatives.run(media.pk)
+
+    media.refresh_from_db()
+    assert media.derivative_attempts == 1
+
+
+@pytest.mark.django_db
+def test_process_pending_media_skips_held_rows_and_reports_what_it_dispatched(
+    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The old return value re-queried AFTER dispatching, so it reported whatever was still pending
+    at that instant — racing the worker it had just started."""
+    from photo_album import tasks
+
+    resident = make_resident()
+    album = Album.objects.create(folder="2026", name="Fest")
+    held = upload_media(album=album, uploaded_file=_video("held.mp4"), resident=resident)
+    free = upload_media(album=album, uploaded_file=_video("free.mp4"), resident=resident)
+    Media.objects.filter(pk=held.pk).update(derivative_started_at=timezone.now())
+
+    dispatched: list[int] = []
+    monkeypatch.setattr(tasks.build_media_derivatives, "delay", dispatched.append)
+
+    assert tasks.process_pending_media.run() == 1
+    assert dispatched == [free.pk]
+
+
+@pytest.mark.django_db
+def test_a_download_whose_worker_never_returned_is_closed_out(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """A worker killed outright runs no handler, so the row kept BUILDING and completed_at NULL —
+    which `purge_expired_downloads` filters on, and which detail.html answers with a five-second
+    reload. The page reloaded itself forever and the row was never collected."""
+    from photo_album.models import ALBUM_DOWNLOAD_STALE_AFTER, AlbumDownload, AlbumDownloadState
+    from photo_album.tasks import fail_stalled_downloads
+
+    resident = make_resident()
+    album = Album.objects.create(folder="2026", name="Fest")
+    stalled = AlbumDownload.objects.create(
+        album=album, requested_by=resident, media_ids=[], state=AlbumDownloadState.BUILDING
+    )
+    fresh = AlbumDownload.objects.create(
+        album=album, requested_by=resident, media_ids=[], state=AlbumDownloadState.BUILDING
+    )
+    AlbumDownload.objects.filter(pk=stalled.pk).update(
+        created_at=timezone.now() - ALBUM_DOWNLOAD_STALE_AFTER - timedelta(minutes=1)
+    )
+
+    assert fail_stalled_downloads.run() == 1
+
+    stalled.refresh_from_db()
+    fresh.refresh_from_db()
+    assert stalled.state == AlbumDownloadState.FAILED
+    # Set so `purge_expired_downloads`, which filters on it, can eventually collect the row.
+    assert stalled.completed_at is not None
+    assert fresh.state == AlbumDownloadState.BUILDING
+
+
+@pytest.mark.django_db
+def test_a_second_download_click_does_not_queue_a_second_archive(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The button stays on the page while the build runs, and a whole-album ZIP is slow enough to
+    invite a second click — which used to queue a second complete archive and leave a second object
+    in the bucket, while the page only ever shows the newest row anyway."""
+    from photo_album.models import AlbumDownload
+
+    resident = make_resident()
+    album = Album.objects.create(folder="2026", name="Fest")
+    upload_media(
+        album=album,
+        uploaded_file=SimpleUploadedFile("first.jpg", b"first", content_type="image/jpeg"),
+        resident=resident,
+        approved=True,
+    )
+    client.force_login(resident)
+    url = reverse("photo_album:download_album", args=[album.pk])
+
+    client.post(url)
+    client.post(url)
+
+    assert AlbumDownload.objects.filter(album=album, requested_by=resident).count() == 1

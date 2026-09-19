@@ -551,6 +551,7 @@ erDiagram
         string content_type
         string derivative_state
         int derivative_attempts
+        datetime derivative_started_at
         json metadata
         int requested_by_id FK
         datetime added_at
@@ -571,6 +572,22 @@ erDiagram
         string task_id
         string state
         string archive_key
+        string error
+        datetime created_at
+        datetime completed_at
+    }
+
+    photo_album_AlbumImport {
+        int id PK
+        int requested_by_id FK
+        string folder
+        string archive_name
+        string archive
+        string token
+        string task_id
+        string state
+        json album_ids
+        json skipped
         string error
         datetime created_at
         datetime completed_at
@@ -651,6 +668,7 @@ erDiagram
     photo_album_Media }o--|o residents_Resident : "deleted_by"
     photo_album_AlbumDownload }o--|| photo_album_Album : "album"
     photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
+    photo_album_AlbumImport }o--|| residents_Resident : "requested_by"
 ```
 
 ## admissions
@@ -1191,6 +1209,7 @@ erDiagram
         string content_type
         string derivative_state
         int derivative_attempts
+        datetime derivative_started_at
         json metadata
         int requested_by_id FK
         datetime added_at
@@ -1216,6 +1235,22 @@ erDiagram
         datetime completed_at
     }
 
+    photo_album_AlbumImport {
+        int id PK
+        int requested_by_id FK
+        string folder
+        string archive_name
+        string archive
+        string token
+        string task_id
+        string state
+        json album_ids
+        json skipped
+        string error
+        datetime created_at
+        datetime completed_at
+    }
+
     residents_Resident { }
 
     photo_album_Media }o--|| photo_album_Album : "album"
@@ -1224,6 +1259,7 @@ erDiagram
     photo_album_Media }o--|o residents_Resident : "deleted_by"
     photo_album_AlbumDownload }o--|| photo_album_Album : "album"
     photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
+    photo_album_AlbumImport }o--|| residents_Resident : "requested_by"
 ```
 
 ## reparationer

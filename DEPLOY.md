@@ -113,13 +113,25 @@ idempotent, so a retry or an overlapping run is harmless.
 | `opslagstavle.tasks.purge_orphaned_images` | Daily 03:40 | Removes unused compose-toolbar image uploads. |
 | `reparationer.tasks.archive_finished_repairs` | Daily 03:50 | Archives completed repairs after 30 days. |
 | `events.tasks.purge_expired_events` | Daily 04:00 | Enforces event retention. |
-| `photo_album.tasks.purge_expired_media` | Daily 04:10 | Removes expired pending and binned photo-album media. |
 | `ak.tasks.apply_monthly_assessment` | Day 1, 04:10 | Books the monthly AK deduction. |
-| `photo_album.tasks.process_pending_media` | Every 10 minutes | Builds photo-album derivatives. |
+| `photo_album.tasks.purge_expired_downloads` | Daily 04:20 | Removes album ZIPs and their rows seven days after they were built. |
+| `photo_album.tasks.purge_expired_media` | Daily 04:30 | Removes expired pending and binned photo-album media. **04:30, not 04:10** — it collided with the AK assessment on the 1st of every month. |
+| `core.tasks.purge_delivered_broker_messages` | Daily 04:50 | Deletes acknowledged rows from `kombu_message`. The SQLAlchemy transport never removes a message it has delivered — it only flips `visible` — so without this the broker table is pure accumulation. Runs last, so one night's sweeps stay visible while they are still running. |
+| `photo_album.tasks.process_pending_media` | Daily 02:00 | Recovery sweep for derivative builds whose queued task was lost. |
+| `photo_album.tasks.fail_stalled_downloads` | Hourly, :05 | Closes out ZIP builds no worker came back to. A worker killed outright runs no handler, so its row stays `BUILDING` — never collected, and the album page keeps reloading itself every five seconds waiting for it. |
 | `events.tasks.remind_rsvp_deadlines` | Daily 17:00 | Sends due RSVP reminders. |
+| `oelkaelder.tasks.send_monthly_statements` | Day 1, 06:10 | Mails every active ølkælder account its previous calendar month. **Sends real mail to residents** — the only task here that does. |
+| `core.tasks.send_admin_dummy_notification` | Daily 08:00 and 16:00 | **Temporary, and deliberately still here.** Mails every administrator and superuser twice a day to prove Beat and the worker are alive in production. Delete this entry and `core.tasks.send_admin_dummy_notification` once that is confirmed — nothing else depends on it. |
 
-Delete the matching Coolify Scheduled Tasks after deploying this change. Leaving them enabled runs
-each maintenance command twice through two independent schedulers.
+**Delete the matching Coolify Scheduled Tasks in the same deploy, not afterwards.** Coolify runs
+them *inside the already-running `web` container*, so nothing here can see them or turn them off,
+and until they are gone every maintenance command has two independent schedulers firing it.
+
+The table above says every task is idempotent, and that is true of each one *run twice in sequence*
+— it is not a claim that two copies may run **concurrently**. `purge_applications` deletes
+permanently and has no undo, so it is the one to switch off first. `purge_quick_posts` is the
+precedent for how this is discovered otherwise: its command was removed months ago and its Coolify
+task is still there, failing on every run.
 
 **`purge_quick_posts` is gone, and its Coolify task has to be deleted by hand.** Den Hurtige stopped
 deleting messages: they leave the feed when `expires_at` passes and are *archived* by that same
