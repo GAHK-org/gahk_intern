@@ -78,3 +78,23 @@ def test_force_save_callback_is_idempotent(make_resident):
 
     assert DocumentVersion.objects.filter(document=document).count() == 2
     assert DocumentCallbackReceipt.objects.filter(session=session).count() == 1
+
+
+@pytest.mark.django_db
+def test_callback_accepts_onlyoffice_transport_token(client, make_resident, settings):
+    settings.ONLYOFFICE_JWT_SECRET = "test-secret"
+    owner = make_resident()
+    document = services.create_document(owner=owner, title="Budget", document_type="xlsx")
+    session = services.active_session(document.pk)
+    payload = {"key": session.document_key, "status": 1}
+    token = services.sign_jwt({**payload, "iat": 0, "exp": 2_000_000_000})
+
+    response = client.post(
+        reverse("documents:callback", args=[document.pk]),
+        data=json.dumps({**payload, "token": token}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION="Bearer unrelated-token",
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"error": 0}

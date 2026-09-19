@@ -164,15 +164,20 @@ def delete(request: HttpRequest, document_id: str) -> HttpResponse:
 @require_POST
 def callback(request: HttpRequest, document_id: str) -> JsonResponse:
     authorization = request.headers.get("Authorization", "")
-    token = authorization.removeprefix("Bearer ").strip()
-    claims = services.verify_jwt(token)
+    header_token = authorization.removeprefix("Bearer ").strip()
     try:
         payload = json.loads(request.body)
         if not isinstance(payload, dict):
             raise ValueError("payload must be an object")
-        # ONLYOFFICE signs its callback payload. The token claims must exactly cover the body so a
-        # valid token cannot be replayed with a substituted key or source URL.
-        if claims != payload:
+        body_token = payload.get("token")
+        claims = services.verify_jwt(body_token) if isinstance(body_token, str) else None
+        if claims is None:
+            claims = services.verify_jwt(header_token)
+        signed_payload = {key: value for key, value in payload.items() if key != "token"}
+        callback_claims = {key: value for key, value in (claims or {}).items() if key not in {"iat", "exp"}}
+        # ONLYOFFICE appends the transport token after signing. All other callback fields must
+        # exactly match the JWT claims so the token cannot authorize a substituted payload.
+        if callback_claims != signed_payload:
             raise ValueError("callback JWT does not match payload")
         document = Document.objects.get(pk=document_id, deleted_at__isnull=True)
         services.persist_callback(document=document, payload=payload, raw_payload=request.body)

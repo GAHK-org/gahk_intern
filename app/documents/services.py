@@ -171,11 +171,7 @@ def restore_version(*, document: Document, version: DocumentVersion) -> Document
 
 @transaction.atomic
 def active_session(document_id: UUID | str) -> DocumentEditingSession:
-    document = (
-        Document.objects.select_for_update()
-        .select_related("current_version")
-        .get(pk=document_id, deleted_at__isnull=True)
-    )
+    document = Document.objects.select_for_update().get(pk=document_id, deleted_at__isnull=True)
     session = document.editing_sessions.filter(state=DocumentSessionState.ACTIVE).first()
     if session is not None:
         return session

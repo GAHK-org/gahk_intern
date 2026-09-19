@@ -48,13 +48,13 @@ services:
     environment:
       JWT_ENABLED: "true"
       JWT_SECRET: ${ONLYOFFICE_JWT_SECRET}
-      JWT_HEADER: Authorization
+      JWT_HEADER: AuthorizationJwt
+      ALLOW_PRIVATE_IP_ADDRESS: "true"
     expose:
       - "80"
     volumes:
       - onlyoffice-data:/var/www/onlyoffice/Data
       - onlyoffice-logs:/var/log/onlyoffice
-      - ./onlyoffice/local.json:/etc/onlyoffice/documentserver/local.json:ro
 
 volumes:
   media:

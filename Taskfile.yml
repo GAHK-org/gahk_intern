@@ -256,6 +256,9 @@ tasks:
     dir: '{{.APP}}'
     env:
       DJANGO_DEBUG: '0'
+      # collectstatic imports settings but does not start an editor or sign a token. Keep the
+      # production settings guard intact while giving this artifact-only command a non-secret value.
+      ONLYOFFICE_JWT_SECRET: build-only-not-a-runtime-secret
     cmds:
       - task: frontend:build
       - '{{.PY}} manage.py collectstatic --noinput'

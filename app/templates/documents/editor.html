@@ -1,11 +1,14 @@
 {% extends "base.html" %}
 {% block title %}{{ document.title }} | GAHK Intern{% endblock %}
 {% block content %}
-<main class="content-wrap"><header class="page-header"><h1>{{ document.title }}</h1><a href="{% url 'documents:versions' document.pk %}">Versionshistorik</a></header><div id="onlyoffice-editor" style="height: calc(100vh - 12rem)"></div></main>
+<main class="content-wrap document-editor"><header class="page-header"><h1>{{ document.title }}</h1><a href="{% url 'documents:versions' document.pk %}">Versionshistorik</a></header><div id="onlyoffice-editor"></div></main>
 {{ editor_config|json_script:"onlyoffice-config" }}
 <script src="{{ onlyoffice_public_url }}/web-apps/apps/api/documents/api.js"></script>
 <script>
   const configuration = JSON.parse(document.getElementById("onlyoffice-config").textContent);
   new DocsAPI.DocEditor("onlyoffice-editor", configuration);
+  const frame = document.querySelector(".document-editor > iframe");
+  frame.style.width = "100%";
+  frame.style.height = "calc(100dvh - 12rem)";
 </script>
 {% endblock %}
