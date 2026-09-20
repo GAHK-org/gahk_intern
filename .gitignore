@@ -14,6 +14,8 @@ app/.env
 *.sqlite3-journal
 *.sqlite3-wal
 *.sqlite3-shm
+# The Beat scheduler now stores its state in PostgreSQL through django-celery-beat.
+app/celerybeat-schedule*
 app/staticfiles/
 app/static/dist/
 frontend/node_modules/

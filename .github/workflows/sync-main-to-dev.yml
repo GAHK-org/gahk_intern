@@ -1,0 +1,48 @@
+name: Sync main to dev
+
+on:
+  push:
+    branches: [main]
+
+# The workflow only updates the integration branch. A conflict makes the merge fail visibly instead
+# of overwriting dev; resolve it in a normal pull request.
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-main-to-dev
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Merge main into dev
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main dev
+          git merge --no-edit origin/main
+
+      - name: Push synchronization branch
+        id: branch
+        run: |
+          branch="automation/sync-main-${GITHUB_SHA}"
+          git push origin "HEAD:refs/heads/${branch}"
+          echo "name=${branch}" >> "$GITHUB_OUTPUT"
+
+      - name: Open pull request into dev
+        run: |
+          gh pr create \
+            --base dev \
+            --head "${{ steps.branch.outputs.name }}" \
+            --title "Sync main into dev" \
+            --body "Automated synchronization after ${GITHUB_SHA}."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

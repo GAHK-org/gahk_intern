@@ -29,13 +29,14 @@ from den_hurtige.channels import Channel
 from den_hurtige.checks import check_channels
 from den_hurtige.models import (
     DEFAULT_DURATION_MINUTES,
+    DELETE_GRACE,
     QUICK_EMOJI,
     ChannelMute,
     QuickComment,
     QuickPost,
     QuickReaction,
 )
-from den_hurtige.views import ARCHIVE_PAGE, posts_for, reactions_for
+from den_hurtige.views import ARCHIVE_PAGE, channel_counts, posts_for, reactions_for
 from residents.models import Resident, Role
 
 FEED_URL = "/intern/den-hurtige/"
@@ -2890,3 +2891,377 @@ def test_the_live_feed_still_offers_it(client: Client, make_resident: Callable[.
     client.force_login(author)
 
     assert "Svar på beskeden" in client.get(FEED_URL).content.decode()
+
+
+# --- deleting a message: the grace period and the tombstone ---------------------------------------
+#
+# Two acts split by models.DELETE_GRACE: inside five minutes the row is destroyed, after it the
+# message becomes a tombstone. Refusal on archived messages is covered in the archive section above.
+
+
+def aged(author: Resident, content: str, *, minutes: float = 30, **kwargs: object) -> QuickPost:
+    """A live message written `minutes` ago — past DELETE_GRACE by default, and never archived, so
+    these tests exercise the grace period alone."""
+    written = timezone.now() - timedelta(minutes=minutes)
+    post = QuickPost.objects.create(author=author, content=content, **kwargs)
+    QuickPost.objects.filter(pk=post.pk).update(created_at=written)
+    post.refresh_from_db()
+    return post
+
+
+def test_deleting_within_five_minutes_leaves_nothing_behind(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The slip nobody has read yet — a tombstone would advertise it more loudly than the message."""
+    author = make_resident(email="a@gahk.dk")
+    post = aged(author, "Ups", minutes=1)
+    client.force_login(author)
+
+    client.post(f"{FEED_URL}{post.pk}/slet")
+
+    assert not QuickPost.objects.filter(pk=post.pk).exists()
+
+
+def test_deleting_after_five_minutes_leaves_a_tombstone(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The row survives, holding the message's place; the message does not."""
+    author = make_resident(email="a@gahk.dk")
+    post = aged(author, "Noget jeg fortryder")
+    client.force_login(author)
+
+    client.post(f"{FEED_URL}{post.pk}/slet")
+
+    post.refresh_from_db()
+    assert post.deleted_at is not None
+    assert post.is_deleted
+    assert post.content == "", "the words are gone, not hidden"
+
+
+def test_the_grace_period_is_measured_from_writing_not_from_expiry(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """Both plausible off-by-ones fail silently: `<=` would destroy a message somebody had just
+    answered, and measuring from `expires_at` would tie the grace period to the chosen duration."""
+    author = make_resident(email="a@gahk.dk")
+    post = aged(author, "Lige på stregen", minutes=DELETE_GRACE.total_seconds() / 60)
+    client.force_login(author)
+
+    client.post(f"{FEED_URL}{post.pk}/slet")
+
+    assert QuickPost.objects.filter(pk=post.pk).exists(), "on the line is past it"
+    post.refresh_from_db()
+    assert post.is_deleted
+
+
+def test_a_tombstone_keeps_the_replies_other_people_wrote(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The reason the tombstone exists: deleting your own message is not authority over the answers
+    to it."""
+    author = make_resident(email="a@gahk.dk")
+    other = make_resident(email="b@gahk.dk")
+    post = aged(author, "Nogen der har en boremaskine?")
+    QuickComment.objects.create(post=post, author=other, content="Ja, kom forbi")
+    client.force_login(author)
+
+    client.post(f"{FEED_URL}{post.pk}/slet")
+
+    assert QuickComment.objects.filter(post=post).count() == 1
+    assert QuickComment.objects.get(post=post).content == "Ja, kom forbi"
+
+
+def test_a_tombstone_drops_the_reactions_that_were_on_it(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """Unlike the replies: a reaction is an opinion about content nobody can read any more."""
+    author = make_resident(email="a@gahk.dk")
+    other = make_resident(email="b@gahk.dk")
+    post = aged(author, "Kage i køkkenet")
+    QuickReaction.objects.create(post=post, author=other, emoji="👍")
+    client.force_login(author)
+
+    client.post(f"{FEED_URL}{post.pk}/slet")
+
+    assert not QuickReaction.objects.filter(post=post).exists()
+
+
+def test_a_tombstones_photograph_is_erased_from_storage(
+    client: Client,
+    make_resident: Callable[..., Resident],
+    settings: object,
+    tmp_path: Path,
+    django_capture_on_commit_callbacks: Callable,
+) -> None:
+    """The row survives, so the post_delete receiver never fires — without soft_delete calling
+    core.files itself the photograph would stay in the bucket with nothing pointing at it."""
+    settings.MEDIA_ROOT = tmp_path  # type: ignore[attr-defined]
+    author = make_resident(email="a@gahk.dk")
+    post = aged(
+        author,
+        "Se her",
+        image=SimpleUploadedFile("k.jpg", b"jpegbytes", content_type="image/jpeg"),
+    )
+    stored = tmp_path / post.image.name
+    assert stored.is_file()
+    client.force_login(author)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        client.post(f"{FEED_URL}{post.pk}/slet")
+
+    assert not stored.exists(), "the file goes even though the row stays"
+    post.refresh_from_db()
+    assert post.image.name == ""
+
+
+def test_the_feed_draws_a_tombstone_where_the_message_was(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    author = make_resident(email="a@gahk.dk")
+    post = aged(author, "Hemmeligheden")
+    client.force_login(author)
+    client.post(f"{FEED_URL}{post.pk}/slet")
+
+    body = client.get(FEED_URL).content.decode()
+
+    assert "Besked slettet" in body
+    assert "Hemmeligheden" not in body, "the text must not survive anywhere in the render"
+    assert f'id="msg-{post.pk}"' in body, "it still holds its place in the conversation"
+
+
+def test_a_tombstone_offers_no_control_that_would_write(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The server refuses all of these regardless; this is about not offering them."""
+    author = make_resident(email="a@gahk.dk")
+    post = aged(author, "Noget")
+    client.force_login(author)
+    client.post(f"{FEED_URL}{post.pk}/slet")
+
+    body = client.get(FEED_URL).content.decode()
+
+    assert "msg-del" not in body, "nothing left to delete"
+    assert "emoji-picker" not in body, "nothing to react to"
+    assert "msg-expiry" not in body, "a countdown on behalf of a message nobody can read"
+    assert "Svar på beskeden" not in body, "no invitation to answer a message that is gone"
+
+
+def test_a_tombstone_still_links_to_the_thread_it_started(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The counterweight: the replies outlive the message and this link is the only way to them."""
+    author = make_resident(email="a@gahk.dk")
+    other = make_resident(email="b@gahk.dk")
+    post = aged(author, "Nogen der har en boremaskine?")
+    QuickComment.objects.create(post=post, author=other, content="Ja, kom forbi")
+    client.force_login(author)
+    client.post(f"{FEED_URL}{post.pk}/slet")
+
+    body = client.get(FEED_URL).content.decode()
+
+    assert "1 svar" in body
+    assert f"/intern/den-hurtige/{post.pk}/traad" in body
+
+
+def test_a_tombstone_cannot_be_replied_to(client: Client, make_resident: Callable[..., Resident]) -> None:
+    author = make_resident(email="a@gahk.dk")
+    other = make_resident(email="b@gahk.dk")
+    post = aged(author, "Noget")
+    client.force_login(author)
+    client.post(f"{FEED_URL}{post.pk}/slet")
+    client.force_login(other)
+
+    client.post(f"{FEED_URL}{post.pk}/kommentar", {"content": "et svar"})
+
+    assert not QuickComment.objects.filter(post=post).exists()
+
+
+def test_a_tombstone_cannot_be_reacted_to(client: Client, make_resident: Callable[..., Resident]) -> None:
+    """Answered with the now-empty row rather than a 404, for the same reason the archive is: a 404
+    would leave the live-looking row on screen and the tap appearing to have been lost."""
+    author = make_resident(email="a@gahk.dk")
+    other = make_resident(email="b@gahk.dk")
+    post = aged(author, "Noget")
+    client.force_login(author)
+    client.post(f"{FEED_URL}{post.pk}/slet")
+    client.force_login(other)
+
+    response = client.post(f"{FEED_URL}{post.pk}/reaktion", {"emoji": "👍"})
+
+    assert response.status_code == 200
+    assert not QuickReaction.objects.filter(post=post).exists()
+
+
+def test_a_tombstone_cannot_be_deleted_a_second_time(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """Refused outright, rather than succeeding at doing nothing and reporting success."""
+    author = make_resident(email="a@gahk.dk")
+    post = aged(author, "Noget")
+    client.force_login(author)
+    client.post(f"{FEED_URL}{post.pk}/slet")
+    first = QuickPost.objects.get(pk=post.pk).deleted_at
+
+    response = client.post(f"{FEED_URL}{post.pk}/slet")
+
+    assert response.status_code == 302, "refused with a message, not a 403"
+    assert QuickPost.objects.get(pk=post.pk).deleted_at == first, "not re-stamped"
+
+
+def test_a_moderator_deleting_an_old_message_leaves_the_same_tombstone(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """Moderators are not a special case: a takedown leaves the same visible marker."""
+    author = make_resident(email="a@gahk.dk")
+    moderator = make_resident(email="mod@gahk.dk", roles=[Role.INSPEKTION])
+    post = aged(author, "Noget upassende")
+    client.force_login(moderator)
+
+    client.post(f"{FEED_URL}{post.pk}/slet")
+
+    post.refresh_from_db()
+    assert post.is_deleted
+    assert post.content == ""
+
+
+def test_a_moderator_inside_the_grace_period_still_removes_it_outright(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The split is decided by the message's age, not by who is deleting it."""
+    author = make_resident(email="a@gahk.dk")
+    moderator = make_resident(email="mod@gahk.dk", roles=[Role.INSPEKTION])
+    post = aged(author, "Noget upassende", minutes=1)
+    client.force_login(moderator)
+
+    client.post(f"{FEED_URL}{post.pk}/slet")
+
+    assert not QuickPost.objects.filter(pk=post.pk).exists()
+
+
+def test_a_plain_resident_still_cannot_delete_someone_elses_message(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The permission check now runs after the two "cannot be done" checks; it still runs."""
+    author = make_resident(email="a@gahk.dk")
+    other = make_resident(email="b@gahk.dk")
+    post = aged(author, "Mit opslag")
+    client.force_login(other)
+
+    assert client.post(f"{FEED_URL}{post.pk}/slet").status_code == 403
+    assert not QuickPost.objects.get(pk=post.pk).is_deleted
+
+
+def test_a_tombstone_archives_on_its_original_timer_like_any_other_message(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """`deleted_at` is not part of the active()/archived() partition. A tombstone that fell out of
+    both would not be hidden, it would be lost."""
+    author = make_resident(email="a@gahk.dk")
+    post = aged(author, "Noget")
+    client.force_login(author)
+    client.post(f"{FEED_URL}{post.pk}/slet")
+
+    QuickPost.objects.filter(pk=post.pk).update(expires_at=timezone.now() - timedelta(minutes=1))
+
+    assert QuickPost.objects.archived().filter(pk=post.pk).exists()
+    assert "Besked slettet" in client.get(ARCHIVE_URL, HTTP_HX_REQUEST="true").content.decode()
+
+
+def test_the_channel_strip_does_not_count_tombstones(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """A deleted message is not something to go and read."""
+    author = make_resident(email="a@gahk.dk")
+    QuickPost.objects.create(author=author, content="Stadig her")
+    gone = aged(author, "Vaek")
+    client.force_login(author)
+    client.post(f"{FEED_URL}{gone.pk}/slet")
+
+    assert channel_counts() == {channels.DEFAULT.slug: 1}
+
+
+def test_the_thread_panel_of_a_tombstone_is_read_only(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """Still shows the conversation, with nowhere to add to it and no poll for an answer that
+    cannot change."""
+    author = make_resident(email="a@gahk.dk")
+    other = make_resident(email="b@gahk.dk")
+    post = aged(author, "Nogen der har en boremaskine?")
+    QuickComment.objects.create(post=post, author=other, content="Ja, kom forbi")
+    client.force_login(author)
+    client.post(f"{FEED_URL}{post.pk}/slet")
+
+    body = client.get(f"{FEED_URL}{post.pk}/traad", HTTP_HX_REQUEST="true").content.decode()
+
+    assert "Ja, kom forbi" in body, "the replies are still readable"
+    assert "reply-form" not in body, "nowhere to answer a message that is gone"
+    assert "every 5s" not in body, "nothing about a tombstone can change"
+    assert "slettet" in body
+
+
+def test_the_standalone_thread_page_of_a_tombstone_says_so(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The no-JS half of the same rule."""
+    author = make_resident(email="a@gahk.dk")
+    post = aged(author, "Nogen der har en boremaskine?")
+    QuickComment.objects.create(post=post, author=author, content="et svar")
+    client.force_login(author)
+    client.post(f"{FEED_URL}{post.pk}/slet")
+
+    body = client.get(f"{FEED_URL}{post.pk}/traad").content.decode()
+
+    assert "Beskeden er slettet. Der kan ikke længere svares på den." in body
+    assert "reply-form" not in body
+
+
+def test_soft_deleting_a_row_that_vanished_underneath_reports_rather_than_raises(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """The interleaving a request cannot be held open long enough to show: delete_post fetched the
+    post, another delete hard-removed the row, and only then did this one write. There is no
+    transaction around the request, so save(update_fields=...) raised "Save with update_fields did
+    not affect any rows" here — a 500 on the one gesture people double-tap."""
+    author = make_resident(email="a@gahk.dk")
+    post = aged(author, "Noget")  # the instance delete_post is holding
+    QuickPost.objects.filter(pk=post.pk).delete()  # the other request, committed in between
+
+    assert post.soft_delete() is False
+
+
+def test_two_overlapping_soft_deletes_only_one_takes_effect(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """Both callers passed the is_deleted guard before either wrote. The tombstone is a claim, so
+    the second reports failure rather than re-stamping deleted_at."""
+    author = make_resident(email="a@gahk.dk")
+    post = aged(author, "Noget")
+    racer = QuickPost.objects.get(pk=post.pk)  # a second request's copy of the same row
+
+    assert post.soft_delete() is True
+    assert racer.soft_delete() is False, "the loser must not overwrite the winner's timestamp"
+
+    post.refresh_from_db()
+    assert QuickPost.objects.get(pk=post.pk).deleted_at == post.deleted_at
+
+
+def test_the_photograph_survives_a_soft_delete_that_does_not_happen(
+    make_resident: Callable[..., Resident],
+    settings: object,
+    tmp_path: Path,
+    django_capture_on_commit_callbacks: Callable,
+) -> None:
+    """core.files defers the unlink to commit, so it must be inside soft_delete's transaction: a
+    caller that loses the claim has to leave the winner's file alone."""
+    settings.MEDIA_ROOT = tmp_path  # type: ignore[attr-defined]
+    author = make_resident(email="a@gahk.dk")
+    post = aged(author, "Se her", image=SimpleUploadedFile("k.jpg", b"jpegbytes", content_type="image/jpeg"))
+    stored = tmp_path / post.image.name
+    racer = QuickPost.objects.get(pk=post.pk)
+    QuickPost.objects.filter(pk=post.pk).update(deleted_at=timezone.now())  # somebody else won
+
+    with django_capture_on_commit_callbacks(execute=True):
+        assert racer.soft_delete() is False
+
+    assert stored.is_file(), "a lost claim must not unlink the file"

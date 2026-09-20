@@ -15,5 +15,32 @@ services:
     expose:
       - "8000"                 # reached by Coolify/Traefik over the internal network (not host-published)
 
+  # `web` runs the migrations; these two WAIT for them rather than racing them. Without the gate,
+  # every deploy that adds a migration starts `beat` against a database with no
+  # django_celery_beat_periodictask and `worker` against one with no photo_album_albumdownload, and
+  # both crash-loop until `web` catches up — recoverable, thanks to `restart`, but it means a wall
+  # of tracebacks on each deploy and no way to tell a real breakage from the usual noise.
+  #
+  # `migrate --check` exits non-zero while anything is unapplied AND while the database is
+  # unreachable, so one loop covers both. Neither service runs `migrate` itself: three containers
+  # migrating the same database concurrently is its own failure.
+  worker:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - web
+    command: >-
+      sh -c "until python manage.py migrate --check; do echo 'waiting for migrations'; sleep 3; done;
+             celery -A config worker --loglevel=INFO --concurrency=2"
+
+  beat:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - web
+    command: >-
+      sh -c "until python manage.py migrate --check; do echo 'waiting for migrations'; sleep 3; done;
+             celery -A config beat --loglevel=INFO"
+
 volumes:
   media:
