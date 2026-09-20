@@ -10,6 +10,7 @@
       <div><dt class="muted">Opgave</dt><dd class="font-mono break-all">{{ job.task }}</dd></div>
       <div><dt class="muted">Job-ID</dt><dd class="font-mono break-all">{{ job.id }}</dd></div>
       <div><dt class="muted">Status</dt><dd>{{ job.status|default:"Venter i kø" }}</dd></div>
+      {% if job.task_context %}<div><dt class="muted">Behandlet</dt><dd>{{ job.task_context }}</dd></div>{% endif %}
       <div><dt class="muted">Kø</dt><dd>{{ job.queue|default:"-" }}</dd></div>
       <div><dt class="muted">Sendt</dt><dd>{{ job.submitted_at|date:"Y-m-d H:i:s"|default:"-" }}</dd></div>
       <div><dt class="muted">Afsluttet</dt><dd>{{ job.finished_at|date:"Y-m-d H:i:s"|default:"-" }}</dd></div>
