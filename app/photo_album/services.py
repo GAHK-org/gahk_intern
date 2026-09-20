@@ -1,12 +1,17 @@
 """State transitions for albums. Views and scheduled cleanup use these rules together."""
 
+import logging
 import subprocess  # nosec B404
+import zipfile
 from datetime import datetime, timedelta
 from io import BytesIO
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
 
+from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile, File
+from django.db import transaction
 from django.db.models import QuerySet
 from django.utils import timezone
 from PIL import ExifTags, Image, ImageOps
@@ -15,15 +20,108 @@ from pillow_heif import register_heif_opener
 from residents.models import Resident
 
 from .models import Album, DerivativeState, Media, MediaStatus
-from .uploads import is_video
+from .uploads import check_media_upload, is_video
 
 register_heif_opener()
+logger = logging.getLogger(__name__)
+
+
+def _is_macos_archive_metadata(path: PurePosixPath) -> bool:
+    """Whether a Finder-created ZIP member is metadata rather than user media."""
+    return (
+        "__MACOSX" in path.parts
+        or ".AppleDouble" in path.parts
+        or path.name.startswith("._")
+        or path.name == ".DS_Store"
+    )
+
+
+def import_zip_album(*, archive: File, folder: str, resident: Resident) -> tuple[list[Album], list[str]]:
+    """Import supported archive members into albums named after their archive paths.
+
+    Members are deliberately processed independently: one corrupt file or a storage failure is
+    reported, while the rest of a family archive remains useful. Archive paths are never extracted.
+    """
+    imported_albums: dict[str, Album] = {}
+    skipped: list[str] = []
+    root_name = Path(archive.name or "album.zip").stem
+    maximum_member_bytes = (
+        max(settings.PHOTO_ALBUM_IMAGE_MAX_MB, settings.PHOTO_ALBUM_VIDEO_MAX_MB) * 1024 * 1024
+    )
+
+    archive.seek(0)
+    try:
+        with zipfile.ZipFile(archive) as zip_archive:
+            file_paths = [
+                PurePosixPath(member.filename)
+                for member in zip_archive.infolist()
+                if not member.is_dir() and not _is_macos_archive_metadata(PurePosixPath(member.filename))
+            ]
+            root_parts = 0
+            while file_paths and all(
+                len(path.parts) > root_parts + 1 and path.parts[root_parts] == root_name
+                for path in file_paths
+            ):
+                root_parts += 1
+            for member in zip_archive.infolist():
+                member_path = PurePosixPath(member.filename)
+                if member.is_dir():
+                    continue
+                if _is_macos_archive_metadata(member_path):
+                    skipped.append(f"{member.filename}: macOS-metadata")
+                    continue
+                if member_path.is_absolute() or ".." in member_path.parts or not member_path.name:
+                    skipped.append(f"{member.filename}: ugyldig sti i ZIP-filen")
+                    continue
+                if root_parts:
+                    member_path = PurePosixPath(*member_path.parts[root_parts:])
+                if member.file_size > maximum_member_bytes:
+                    skipped.append(f"{member.filename}: filen er for stor")
+                    continue
+                try:
+                    with zip_archive.open(member) as source:
+                        content = source.read(maximum_member_bytes + 1)
+                except (OSError, RuntimeError, zipfile.BadZipFile) as exc:
+                    skipped.append(f"{member.filename}: kunne ikke læses ({exc})")
+                    continue
+                if len(content) > maximum_member_bytes:
+                    skipped.append(f"{member.filename}: filen er for stor")
+                    continue
+
+                uploaded_file = ContentFile(content, name=member_path.name)
+                error = check_media_upload(uploaded_file)
+                if error:
+                    skipped.append(f"{member.filename}: {error}")
+                    continue
+                album_name = (
+                    root_name
+                    if member_path.parent == PurePosixPath(".")
+                    else f"{root_name}/{member_path.parent}"
+                )
+                album = imported_albums.get(album_name)
+                if album is None:
+                    try:
+                        album = Album(folder=folder, name=album_name)
+                        album.full_clean()
+                        album.save()
+                    except (ValidationError, ValueError) as exc:
+                        skipped.append(f"{member.filename}: albummet kunne ikke oprettes ({exc})")
+                        continue
+                    imported_albums[album_name] = album
+                try:
+                    upload_media(album=album, uploaded_file=uploaded_file, resident=resident, approved=True)
+                except Exception as exc:  # A broken member must not abandon the rest of the archive.
+                    logger.warning("Could not import photo album member %s: %s", member.filename, exc)
+                    skipped.append(f"{member.filename}: kunne ikke tilføjes ({exc})")
+    except zipfile.BadZipFile as exc:
+        raise ValidationError("ZIP-filen kunne ikke læses.") from exc
+    return list(imported_albums.values()), skipped
 
 
 def upload_media(
     *, album: Album, uploaded_file: File, resident: Resident, title: str = "", approved: bool = False
 ) -> Media:
-    """Store three independently-addressable variants and extract safe, available image metadata."""
+    """Store an original and queue its derivatives after the database transaction commits."""
     if album.is_locked():
         raise ValueError("Albummet er låst.")
     filename = uploaded_file.name or "upload"
@@ -40,26 +138,11 @@ def upload_media(
         captured_at=extract_captured_at(uploaded_file),
     )
     media.original.save(filename, uploaded_file, save=False)
-    if is_video(uploaded_file):
-        # Deferred on purpose — see DerivativeState. Transcoding here would run an H.264 encode
-        # inside the request, past gunicorn's 60 s timeout, and the resident would get a 502 with
-        # the upload lost. The original is stored now; the derivatives follow out of band.
-        media.derivative_state = DerivativeState.PENDING
-        media.save()
-        return media
-    variants = image_variants(uploaded_file, filename)
-    if variants is None:
-        # Preserve an unsupported source rather than rejecting the resident's original upload.
-        # `uploads.check_media_upload` has already refused anything we are not willing to serve, so
-        # this is a decode failure on a permitted type, not an arbitrary file.
-        for field in (media.high_definition, media.thumbnail):
-            uploaded_file.seek(0)
-            field.save(filename, File(uploaded_file), save=False)
-    else:
-        high_definition, thumbnail = variants
-        media.high_definition.save(high_definition.name or "high-definition.jpg", high_definition, save=False)
-        media.thumbnail.save(thumbnail.name or "thumbnail.jpg", thumbnail, save=False)
+    media.derivative_state = DerivativeState.PENDING
     media.save()
+    from .tasks import build_media_derivatives
+
+    transaction.on_commit(lambda: build_media_derivatives.delay(media.pk))
     return media
 
 
@@ -69,17 +152,45 @@ def upload_media(
 MAX_DERIVATIVE_ATTEMPTS = 3
 
 
+def is_video_media(media: Media) -> bool:
+    """Whether a STORED row is a video, asking both things that know.
+
+    `is_video` decides from `.content_type` and `.name`. A Media has the first and not the second,
+    so calling it on the row alone quietly reduced the test to the content type — and
+    `uploads.check_media_upload` deliberately accepts an EMPTY content type when the extension
+    vouches for the file, which is exactly what several browsers send for `.mov`. Such a row then
+    took the IMAGE path: `image_variants` returned None, the "unsupported source" branch below
+    copied the raw video bytes into `high_definition` and `thumbnail`, and the item was marked
+    READY — leaving a multi-megabyte .mov being served inside an <img> in the grid.
+
+    The upload path never had this problem, because there `is_video` is handed the UploadedFile and
+    can see its filename. This puts the filename back by asking the stored original for it.
+    """
+    return is_video(media) or is_video(media.original)
+
+
 def build_derivatives(media: Media) -> bool:
-    """Build the pending derivatives for one stored video. Returns whether they are now available.
+    """Build stored image or video derivatives. Returns whether they are now available.
 
     Safe to call on the same row twice — it re-reads the original from storage and overwrites — so
     an overlapping run of the management command is harmless, as DEPLOY.md §4b requires.
     """
     media.derivative_attempts += 1
     filename = Path(media.original.name or "upload").name
+    video = is_video_media(media)
     with media.original.open("rb") as original:
-        variants = video_variants(File(original), filename)
+        source = File(original, name=filename)
+        variants = video_variants(source, filename) if video else image_variants(source, filename)
     if variants is None:
+        if not video:
+            for field in (media.high_definition, media.thumbnail):
+                with media.original.open("rb") as original:
+                    field.save(filename, File(original, name=filename), save=False)
+            media.derivative_state = DerivativeState.READY
+            media.save(
+                update_fields=["high_definition", "thumbnail", "derivative_state", "derivative_attempts"]
+            )
+            return True
         media.derivative_state = (
             DerivativeState.FAILED
             if media.derivative_attempts >= MAX_DERIVATIVE_ATTEMPTS

@@ -4,7 +4,7 @@
 <section class="album-index">
 	<header class="album-heading">
 		<div><p class="album-eyebrow">GAHKs fælles minder</p><h1>Fotoalbum</h1></div>
-		{% if can_create %}<a class="btn" href="{% url 'photo_album:create_album' %}">Opret album</a>{% endif %}
+		{% if can_create %}<div class="album-actions"><a class="btn" href="{% url 'photo_album:create_album' %}">Opret album</a><a class="btn btn-secondary" href="{% url 'photo_album:import_zip' %}">Importer</a></div>{% endif %}
 	</header>
 	{% regroup albums by folder as folders %}
 	<div class="album-folders">

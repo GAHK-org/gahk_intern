@@ -120,6 +120,43 @@ services:
       minio-init: {condition: service_completed_successfully}
     command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
 
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    profiles: ["docker"]
+    env_file:
+      - path: "app/.env"
+        required: false
+    environment:
+      DATABASE_URL: postgres://gahk:gahk@postgres:5432/gahk
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_PUBLIC_ENDPOINT_URL: http://localhost:9000
+      S3_ADDRESSING_STYLE: path
+    volumes: ["./app:/src/app"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
+    command: ["celery", "-A", "config", "worker", "--loglevel=INFO", "--concurrency=2"]
+
+  beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    profiles: ["docker"]
+    env_file:
+      - path: "app/.env"
+        required: false
+    environment:
+      DATABASE_URL: postgres://gahk:gahk@postgres:5432/gahk
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_PUBLIC_ENDPOINT_URL: http://localhost:9000
+      S3_ADDRESSING_STYLE: path
+    volumes: ["./app:/src/app"]
+    depends_on:
+      postgres: {condition: service_healthy}
+    command: ["celery", "-A", "config", "beat", "--loglevel=INFO"]
+
 volumes:
   pgdata:
   mariadbdata:

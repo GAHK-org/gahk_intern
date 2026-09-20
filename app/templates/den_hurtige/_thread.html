@@ -48,11 +48,15 @@
     reaction can move, it cannot be deleted -- so the timer would be a request every five seconds
     for a byte-identical answer, for as long as the panel stayed open. Same reasoning as the "gone"
     branch above, one state along.
+
+    Neither does a deleted one, by the same argument -- hence `archived or deleted` on the class,
+    the poll and the reply form. Two flags rather than one because the subtitle names which state
+    it is.
   {% endcomment %}
-  <section class="thread-panel{% if archived %} thread-archived{% endif %}"
+  <section class="thread-panel{% if archived or deleted %} thread-archived{% endif %}"
            id="js-thread-{{ post.pk }}" data-thread-pk="{{ post.pk }}"
            role="complementary" aria-labelledby="thread-title-{{ post.pk }}" tabindex="-1"
-           {% if not archived %}
+           {% if not archived and not deleted %}
            hx-get="{% url 'den_hurtige:thread' post.pk %}"
            hx-trigger="every 5s"
            hx-ext="morph"
@@ -77,7 +81,11 @@
       <div style="min-width:0;flex:1">
         <div class="thread-title" id="thread-title-{{ post.pk }}">Tråd</div>
         <div class="thread-sub">
-          {% if channel %}{{ channel.name }} · {% endif %}{{ post.comments.all|length }} svar{% if archived %} · arkiveret{% endif %}
+          {% comment %}
+            Deleted wins over archived on a tombstone that has since aged out: it is the reason the
+            thread is read-only.
+          {% endcomment %}
+          {% if channel %}{{ channel.name }} · {% endif %}{{ post.comments.all|length }} svar{% if deleted %} · slettet{% elif archived %} · arkiveret{% endif %}
         </div>
       </div>
       <button type="button" class="thread-x" data-thread-close aria-label="Luk tråd">
@@ -96,7 +104,7 @@
       away with an error — and "there is nowhere to type" says the rule better than an error does.
       The note at the top of the archive panel is where the rule is explained in words.
     {% endcomment %}
-    {% if not archived %}
+    {% if not archived and not deleted %}
     {% comment %}
       data-morph-skip: the panel's own poll must not touch this subtree. Idiomorph's
       ignoreActiveValue only spares the field being TYPED INTO, so a reply typed and then unfocused
