@@ -312,7 +312,9 @@ def _job_details(task_id: str) -> dict[str, object] | None:
     return job
 
 
-def _past_jobs(status: str = "", sort: str = "finished_desc") -> list[dict[str, object]]:
+def _past_jobs(
+    status: str = "", sort: str = "finished_desc", include_children: bool = False
+) -> list[dict[str, object]]:
     """Return completed task metadata paired with its acknowledged broker message."""
     parameters = [status, status, sort, sort]
     try:
@@ -391,7 +393,8 @@ def _past_jobs(status: str = "", sort: str = "finished_desc") -> list[dict[str, 
             }
         )
     _add_photo_album_context(jobs)
-    jobs = [job for job in jobs if not job["parent_id"]]
+    if not include_children:
+        jobs = [job for job in jobs if not job["parent_id"]]
     sort_field, reverse = JOB_SORTS[sort]
     present_jobs = [job for job in jobs if job[sort_field] is not None]
     missing_jobs = [job for job in jobs if job[sort_field] is None]
@@ -421,10 +424,13 @@ def worker_jobs(request: HttpRequest) -> HttpResponse:
     sort = request.GET.get("sort", "finished_desc")
     if sort not in JOB_SORTS:
         sort = "finished_desc"
+    include_children = request.GET.get("children") == "1"
     schedules = PeriodicTask.objects.filter(enabled=True).select_related(
         "interval", "crontab", "solar", "clocked"
     )
-    past_jobs = Paginator(_past_jobs(status, sort), JOB_PAGE_SIZE).get_page(request.GET.get("page"))
+    past_jobs = Paginator(_past_jobs(status, sort, include_children), JOB_PAGE_SIZE).get_page(
+        request.GET.get("page")
+    )
     return render(
         request,
         "siteadmin/worker_jobs.html",
@@ -436,6 +442,7 @@ def worker_jobs(request: HttpRequest) -> HttpResponse:
             "job_statuses": JOB_STATUSES,
             "selected_status": status,
             "selected_sort": sort,
+            "include_children": include_children,
         },
     )
 
