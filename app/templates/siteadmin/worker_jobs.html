@@ -19,7 +19,7 @@
   </div>
 
   <div class="mt-8 flex flex-wrap items-end justify-between gap-3">
-    <h2>Seneste jobs (viser {{ past_jobs.paginator.count }} af {{ total_past_jobs }})</h2>
+    <h2>Seneste jobs (viser {{ past_jobs.paginator.count }} overordnede jobs af {{ total_past_jobs }} opgaver)</h2>
     <form method="get" class="flex flex-wrap items-end gap-2">
       <label class="text-sm">Status
         <select name="status" class="block"><option value="">Alle</option>{% for status in job_statuses %}<option value="{{ status }}"{% if selected_status == status %} selected{% endif %}>{{ status }}</option>{% endfor %}</select>

@@ -13,6 +13,7 @@ from photo_album.models import Album, AlbumImport, Media
 from residents.models import Resident, Role
 from residents.views_admin import (
     _add_photo_album_context,
+    _child_jobs,
     _display_task_result,
     _format_runtime,
     _past_job_count,
@@ -91,6 +92,27 @@ def test_past_jobs_limits_results_before_looking_up_broker_messages(monkeypatch:
     assert sql.index("WITH recent_results") < sql.index("LEFT JOIN LATERAL")
 
 
+def test_child_jobs_are_looked_up_by_parent_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    cursor = MagicMock()
+    cursor.fetchall.return_value = [
+        ("child-id", "SUCCESS", None, "photo_album.tasks.build_media_derivatives", None, None)
+    ]
+    database_connection = MagicMock()
+    database_connection.cursor.return_value.__enter__.return_value = cursor
+    monkeypatch.setattr("residents.views_admin.connection", database_connection)
+
+    assert _child_jobs("parent-id") == [
+        {
+            "id": "child-id",
+            "status": "SUCCESS",
+            "task": "photo_album.tasks.build_media_derivatives",
+            "finished_at": None,
+            "runtime": None,
+        }
+    ]
+    assert cursor.execute.call_args.args[1] == ["parent-id"]
+
+
 def test_past_job_count_honours_the_status_filter(monkeypatch: pytest.MonkeyPatch) -> None:
     cursor = MagicMock()
     cursor.fetchone.return_value = (42,)
@@ -162,7 +184,7 @@ def test_worker_jobs_shows_job_data_and_active_schedules(
     assert "core.tasks.send_admin_dummy_notification" in response.content.decode()
     assert "(42,)" in response.content.decode()
     assert "Medie: sommer.jpg" in response.content.decode()
-    assert "viser 1 af 321" in response.content.decode()
+    assert "viser 1 overordnede jobs af 321 opgaver" in response.content.decode()
     assert 'value="finished_desc" selected' in response.content.decode()
     assert "Process media" in response.content.decode()
     assert reverse("siteadmin:worker_job_detail", args=["completed-task-id"]) in response.content.decode()
@@ -182,6 +204,15 @@ def test_worker_job_detail_shows_result_metadata(
             "submitted_at": None,
             "finished_at": None,
             "runtime": "0:00:03",
+            "children": [
+                {
+                    "id": "child-task-id",
+                    "task": "photo_album.tasks.build_media_derivatives",
+                    "status": "SUCCESS",
+                    "finished_at": None,
+                    "runtime": "0 min. 1 sek. 2 ms",
+                }
+            ],
             "result": "download failed",
             "traceback": "Traceback (most recent call last):\\nExampleError",
             "logs_available": False,
@@ -194,6 +225,8 @@ def test_worker_job_detail_shows_result_metadata(
     assert response.status_code == 200
     assert "build_album_download" in response.content.decode()
     assert "0:00:03" in response.content.decode()
+    assert "Underopgaver (1)" in response.content.decode()
+    assert reverse("siteadmin:worker_job_detail", args=["child-task-id"]) in response.content.decode()
     assert "ExampleError" in response.content.decode()
     assert "Worker-logge gemmes ikke" in response.content.decode()
 

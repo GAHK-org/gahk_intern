@@ -194,6 +194,49 @@ def _add_photo_album_context(jobs: list[dict[str, object]]) -> None:
             job["task_context"] = context
 
 
+def _child_jobs(parent_task_id: str) -> list[dict[str, object]]:
+    """Return completed child jobs whose broker metadata names the given parent task."""
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT result.task_id, result.status, result.date_done, result.name, m.timestamp, m.payload
+                FROM kombu_message AS m
+                JOIN celery_taskmeta AS result
+                  ON result.task_id = convert_from(m.payload::bytea, 'UTF8')::jsonb->'headers'->>'id'
+                WHERE convert_from(m.payload::bytea, 'UTF8')::jsonb->'headers'->>'parent_id' = %s
+                ORDER BY result.date_done DESC
+                """,
+                [parent_task_id],
+            )
+            rows = cursor.fetchall()
+    except DatabaseError:
+        return []
+
+    children = []
+    for task_id, status, finished_at, name, submitted_at, payload in rows:
+        try:
+            headers = json.loads(payload).get("headers", {}) if payload is not None else {}
+        except (TypeError, json.JSONDecodeError):
+            headers = {}
+        runtime = (
+            _task_runtime(finished_at, submitted_at)
+            if isinstance(finished_at, datetime.datetime) and isinstance(submitted_at, datetime.datetime)
+            else None
+        )
+        children.append(
+            {
+                "id": task_id,
+                "status": status,
+                "task": name or headers.get("task", "Ukendt opgave"),
+                "finished_at": finished_at,
+                "runtime": runtime,
+            }
+        )
+    _add_photo_album_context(children)
+    return children
+
+
 def _job_details(task_id: str) -> dict[str, object] | None:
     """Return the retained broker and result-backend metadata for one Celery task."""
     try:
@@ -265,6 +308,7 @@ def _job_details(task_id: str) -> dict[str, object] | None:
         if isinstance(submitted_at, datetime.datetime) and isinstance(finished_at, datetime.datetime):
             job["runtime"] = _task_runtime(finished_at, submitted_at)
     _add_photo_album_context([job])
+    job["children"] = _child_jobs(task_id)
     return job
 
 
@@ -341,11 +385,13 @@ def _past_jobs(status: str = "", sort: str = "finished_desc") -> list[dict[str, 
                 "queue": queue or message_queue,
                 "submitted_at": timestamp,
                 "runtime": runtime,
+                "parent_id": headers.get("parent_id"),
                 "arguments": headers.get("argsrepr", ""),
                 "keyword_arguments": headers.get("kwargsrepr", ""),
             }
         )
     _add_photo_album_context(jobs)
+    jobs = [job for job in jobs if not job["parent_id"]]
     sort_field, reverse = JOB_SORTS[sort]
     present_jobs = [job for job in jobs if job[sort_field] is not None]
     missing_jobs = [job for job in jobs if job[sort_field] is None]
