@@ -191,6 +191,26 @@ def test_worker_jobs_shows_job_data_and_active_schedules(
 
 
 @pytest.mark.django_db
+def test_worker_jobs_can_include_child_jobs(
+    client: Client, make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[str, str, bool]] = []
+    monkeypatch.setattr("residents.views_admin._queued_jobs", list)
+    monkeypatch.setattr(
+        "residents.views_admin._past_jobs",
+        lambda status, sort, include_children: calls.append((status, sort, include_children)) or [],
+    )
+    monkeypatch.setattr("residents.views_admin._past_job_count", lambda *_: 0)
+    client.force_login(make_resident(roles=(Role.ADMINISTRATOR,)))
+
+    response = client.get(reverse("siteadmin:worker_jobs"), {"children": "1"})
+
+    assert response.status_code == 200
+    assert calls == [("", "finished_desc", True)]
+    assert "Vis kun overordnede jobs" in response.content.decode()
+
+
+@pytest.mark.django_db
 def test_worker_job_detail_shows_result_metadata(
     client: Client, make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
 ) -> None:
