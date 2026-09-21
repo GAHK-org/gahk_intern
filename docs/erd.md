@@ -593,6 +593,58 @@ erDiagram
         datetime completed_at
     }
 
+    koekken_VagtRegel {
+        int id PK
+        string kind
+        bool weekend
+        int duration_minutes
+        int headcount
+    }
+
+    koekken_Periode {
+        int id PK
+        string kind
+        int year
+        date start_date
+        date end_date
+    }
+
+    koekken_Vagt {
+        int id PK
+        int periode_id FK
+        date date
+        string kind
+        int headcount
+        int duration_minutes
+    }
+
+    koekken_VagtTildeling {
+        int id PK
+        int vagt_id FK
+        int resident_id FK
+        string status
+        datetime created_at
+    }
+
+    koekken_KoekkenPost {
+        int id PK
+        int resident_id FK
+        int delta_minutes
+        string kind
+        int periode_id FK
+        int month
+        int vagt_id FK
+        datetime created_at
+        int created_by_id FK
+    }
+
+    koekken_Praeference {
+        int id PK
+        int resident_id FK
+        int periode_id FK
+        bool weekday_unavailable
+    }
+
     core_PushSubscription }o--|| residents_Resident : "user"
     residents_Resident }o--|o residents_Resident : "sponsor"
     residents_Residency }o--|| residents_Resident : "resident"
@@ -669,6 +721,15 @@ erDiagram
     photo_album_AlbumDownload }o--|| photo_album_Album : "album"
     photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
     photo_album_AlbumImport }o--|| residents_Resident : "requested_by"
+    koekken_Vagt }o--|| koekken_Periode : "periode"
+    koekken_VagtTildeling }o--|| koekken_Vagt : "vagt"
+    koekken_VagtTildeling }o--|| residents_Resident : "resident"
+    koekken_KoekkenPost }o--|| residents_Resident : "resident"
+    koekken_KoekkenPost }o--|| koekken_Periode : "periode"
+    koekken_KoekkenPost }o--|o koekken_Vagt : "vagt"
+    koekken_KoekkenPost }o--|o residents_Resident : "created_by"
+    koekken_Praeference }o--|| residents_Resident : "resident"
+    koekken_Praeference }o--|| koekken_Periode : "periode"
 ```
 
 ## admissions
@@ -1028,6 +1089,75 @@ erDiagram
     events_EventComment }o--|| events_Event : "event"
     events_EventComment }o--|| residents_Resident : "author"
     events_CalendarFeedToken ||--|| residents_Resident : "resident"
+```
+
+## koekken
+
+```mermaid
+erDiagram
+    koekken_VagtRegel {
+        int id PK
+        string kind
+        bool weekend
+        int duration_minutes
+        int headcount
+    }
+
+    koekken_Periode {
+        int id PK
+        string kind
+        int year
+        date start_date
+        date end_date
+    }
+
+    koekken_Vagt {
+        int id PK
+        int periode_id FK
+        date date
+        string kind
+        int headcount
+        int duration_minutes
+    }
+
+    koekken_VagtTildeling {
+        int id PK
+        int vagt_id FK
+        int resident_id FK
+        string status
+        datetime created_at
+    }
+
+    koekken_KoekkenPost {
+        int id PK
+        int resident_id FK
+        int delta_minutes
+        string kind
+        int periode_id FK
+        int month
+        int vagt_id FK
+        datetime created_at
+        int created_by_id FK
+    }
+
+    koekken_Praeference {
+        int id PK
+        int resident_id FK
+        int periode_id FK
+        bool weekday_unavailable
+    }
+
+    residents_Resident { }
+
+    koekken_Vagt }o--|| koekken_Periode : "periode"
+    koekken_VagtTildeling }o--|| koekken_Vagt : "vagt"
+    koekken_VagtTildeling }o--|| residents_Resident : "resident"
+    koekken_KoekkenPost }o--|| residents_Resident : "resident"
+    koekken_KoekkenPost }o--|| koekken_Periode : "periode"
+    koekken_KoekkenPost }o--|o koekken_Vagt : "vagt"
+    koekken_KoekkenPost }o--|o residents_Resident : "created_by"
+    koekken_Praeference }o--|| residents_Resident : "resident"
+    koekken_Praeference }o--|| koekken_Periode : "periode"
 ```
 
 ## oelkaelder

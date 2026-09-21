@@ -15,6 +15,8 @@ import pytest
         ("events.tasks", "purge_expired_events", "purge_events"),
         ("events.tasks", "remind_rsvp_deadlines", "remind_rsvp_deadlines"),
         ("photo_album.tasks", "purge_expired_media", "purge_photo_album"),
+        ("koekken.tasks", "generate_koekkenvagter", "generate_koekkenvagter"),
+        ("koekken.tasks", "post_koekken_obligation", "post_koekken_obligation"),
     ],
 )
 def test_scheduled_task_runs_its_management_command(

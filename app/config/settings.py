@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     "reparationer",
     "arkiv",
     "photo_album",
+    "koekken",
 ]
 
 MIDDLEWARE = [
@@ -189,6 +190,21 @@ CELERY_BEAT_SCHEDULE = {
     "apply-ak-monthly-assessment": {
         "task": "ak.tasks.apply_monthly_assessment",
         "schedule": crontab(minute=10, hour=4, day_of_month=1),
+    },
+    # Monthly, like the AK assessment above (Vagt generation is idempotent, so more often would be
+    # harmless, but there is nothing to gain from it — a periode's slots don't change between runs).
+    # 04:15, five minutes after apply-ak-monthly-assessment, so the two monthly 1st-of-month jobs at
+    # hour=4 never land on the same minute.
+    "generate-koekkenvagter": {
+        "task": "koekken.tasks.generate_koekkenvagter",
+        "schedule": crontab(minute=15, hour=4, day_of_month=1),
+    },
+    # 06:20, ten minutes after email-oelkaelder-monthly-statements (also hour=6, day_of_month=1) and
+    # a full two hours after generate-koekkenvagter above — which it depends on having already run,
+    # so that month's Vagt supply exists to divide across present residents.
+    "post-koekken-obligation": {
+        "task": "koekken.tasks.post_koekken_obligation",
+        "schedule": crontab(minute=20, hour=6, day_of_month=1),
     },
     # Hourly, and deliberately not daily: what it clears is a download the resident is still
     # watching a spinner for, so the gap between "the worker died" and "the page says so" is the

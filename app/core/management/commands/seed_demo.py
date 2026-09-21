@@ -46,6 +46,8 @@ from den_hurtige.demo import seed as seed_den_hurtige
 from den_hurtige.models import QuickComment, QuickPost, QuickReaction
 from events.demo import seed as seed_events
 from events.models import CalendarFeedToken, Event, EventInvite, Rsvp
+from koekken.demo import seed as seed_koekken
+from koekken.models import KoekkenPost, Periode, Praeference, Vagt, VagtTildeling
 from oelkaelder.models import (
     Deposit,
     Product,
@@ -125,6 +127,11 @@ WIPE_ORDER: list[type[models.Model]] = [
     KvotientApplication,
     RoomOffer,
     AkEntry,
+    KoekkenPost,
+    VagtTildeling,
+    Praeference,
+    Vagt,
+    Periode,
     Application,
     RoleAssignment,
     Residency,
@@ -192,6 +199,7 @@ class Command(BaseCommand):
             self._seed_roles(residents)
             self._seed_profile_pictures(residents)
             self._seed_ak(residents)
+            seed_koekken(residents, self.now, self.rng)
             self._seed_oelkaelder(residents)
             self._seed_admissions(residents)
             self._seed_cms()
