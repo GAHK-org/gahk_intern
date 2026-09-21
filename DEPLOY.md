@@ -100,6 +100,24 @@ Fresh repo (do **not** import the legacy history — it contains plaintext secre
 4. `web` runs `migrate` on start then Daphne; Coolify/Traefik terminates TLS and proxies HTTP and WebSocket traffic to :8000.
 5. `Scaleway` is the fallback if you prefer a first-party managed Postgres.
 
+**Daphne is ONE process, where gunicorn was three, and this is a deliberate trade rather than an
+oversight.** Daphne has no worker model at all — there is no `--workers` to set. What changed:
+
+* Concurrency is *not* lost. Django wraps every request in its own `ThreadSensitiveContext`, so a
+  synchronous view still runs on its own thread and several are served at once. Requests that are
+  waiting on Postgres or on object storage — which is nearly all of them here — release the GIL and
+  are unaffected.
+* What is lost is *parallelism* for CPU-bound work. Three processes meant three interpreters;
+  rendering the album grid, signing media URLs and building the Excel export now contend for one.
+* WhiteNoise is not async (6.12 has no `async_capable`), so static serving and the whole middleware
+  chain still run through a thread hop. **The ASGI switch does not make HTTP faster** — it is here
+  to make WebSockets possible, and the process count is what it costs.
+
+**If that ceases to be an acceptable trade**, the answer is more Daphne processes behind Traefik,
+not a bigger one: run the `web` service at several replicas and let Coolify load-balance them. Do
+that before raising `-t` above 60 (§4c), not after — a longer timeout on a single process is the
+combination that hurts.
+
 ### 4b. Scheduled tasks (Celery Beat → worker)
 
 Celery Beat stores schedules in PostgreSQL and publishes work to the Celery worker. The schedules
@@ -371,15 +389,19 @@ writing the archive back, all inside `fsn1` — plus the temporary file it is as
 recipient's connection is no longer involved at all: they are redirected, and Hetzner serves them.
 
 That is a real change in what the numbers mean. They used to be at the mercy of a resident's hotel
-wifi, which is unmeasurable; they are now bounded by our own internal bandwidth against
-`--timeout 60`, which is. So raising them is a reasonable conversation — measure a large build
-first, and if `--timeout` needs to go up as well, add a worker in the same change:
+wifi, which is unmeasurable; they are now bounded by our own internal bandwidth against Daphne's
+`-t 60`, which is. So raising them is a reasonable conversation — measure a large build first, and
+if the timeout needs to go up as well, raise it in the same change:
 
 ```
-CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "4", "--timeout", "300"]
+CMD ["daphne", "--bind", "0.0.0.0", "--port", "8000", "-t", "300", "config.asgi:application"]
 ```
 
-A longer timeout with the same three workers makes the capacity problem worse, not better.
+**But understand what that now costs, because it is not what it used to cost.** Under gunicorn a
+long request tied up one of three worker *processes* and the other two carried on. Daphne is a
+single process: a long request holds a thread in it, and every other request in the building is
+sharing that one interpreter. Raising the timeout without raising the process count is therefore a
+worse trade than it was, not a comparable one — see §4 on scaling Daphne.
 
 #### `/media/` is no longer public
 

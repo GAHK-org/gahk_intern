@@ -103,8 +103,9 @@ would be a broken file in a listing with nothing to explain it.
 
 This is the one place direct-to-bucket earns its complexity, and it is the opposite of what media
 does: opslag images are capped at 5 MB and already downscaled, so posting them through Django costs
-nothing. Arkiv holds the 2 GB video from sommerfest, uploaded from a phone, against three
-synchronous gunicorn workers with a 60-second timeout. That cannot go through the app at all.
+nothing. Arkiv holds the 2 GB video from sommerfest, uploaded from a phone, against a single
+Daphne process with a 60-second timeout (`-t 60`). That cannot go through the app at all — less
+than ever, now that there is one process rather than three.
 
 **The `HEAD` is the real check.** The size, the content type and the hash were all the client's word
 until then; the row records what the bucket actually has. The policy's `content-length-range` is
@@ -165,11 +166,12 @@ every other download here. `ZIP_STORED`, because the contents are JPEGs and vide
 spend real CPU on the machine serving the site to save a percent.
 
 The first version streamed the zip straight to the browser, and that was a mistake worth recording.
-It made this the only route in Arkiv that holds a gunicorn worker — and held it not for as long as
+It made this the only route in Arkiv that holds a server thread — and held it not for as long as
 the zip took to *build* but for as long as the recipient took to *receive* it, because TCP
 backpressure means the server can only write as fast as the browser reads. One resident on hotel
-wifi occupied one of three synchronous workers for the whole download, and was killed at
-`--timeout 60` regardless, left holding a truncated archive.
+wifi occupied a worker for the whole download, and was killed at the request timeout regardless,
+left holding a truncated archive. (Written when that was one of three gunicorn workers; under
+Daphne it is a thread in the one process, which makes the argument stronger, not weaker.)
 
 Building it as an object decouples that completely: the worker waits only for the build, which is
 server-to-Hetzner traffic inside `fsn1`, and then hands back a redirect. **This needed no job
