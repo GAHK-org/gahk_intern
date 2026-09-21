@@ -23,12 +23,6 @@ COPY --from=frontend /build/app/static/dist /app/static/dist
 RUN DJANGO_DEBUG=0 DJANGO_SECRET_KEY=build DATABASE_URL=sqlite:///:memory: python manage.py collectstatic --noinput
 EXPOSE 8000
 # migrate is run as a release/deploy step (see DEPLOY.md), not here.
-# `-t 60` is gunicorn's old `--timeout 60`, which this server swap would otherwise drop silently.
-# It is not decoration: DEPLOY.md §4c and spec/features/arkiv.md both reason about what may and may
-# not be served through the app on the basis that a request is cut off at sixty seconds, and
-# photo_album defers video transcode to Celery for the same reason. Losing the bound would not
-# reopen those decisions so much as quietly invalidate the argument for them.
-#
-# ONE PROCESS, unlike gunicorn's three. Daphne has no worker model — scaling it means running more
-# of these behind the proxy. See DEPLOY.md §4 for what that costs and when to do it.
+# `-t 60` keeps the 60 s request timeout that arkiv, photo_album and core.push all argue from.
+# Daphne is one process and has no worker model; scaling means more of these (DEPLOY.md §4).
 CMD ["daphne", "--bind", "0.0.0.0", "--port", "8000", "-t", "60", "config.asgi:application"]

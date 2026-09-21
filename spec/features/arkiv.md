@@ -169,9 +169,8 @@ The first version streamed the zip straight to the browser, and that was a mista
 It made this the only route in Arkiv that holds a server thread — and held it not for as long as
 the zip took to *build* but for as long as the recipient took to *receive* it, because TCP
 backpressure means the server can only write as fast as the browser reads. One resident on hotel
-wifi occupied a worker for the whole download, and was killed at the request timeout regardless,
-left holding a truncated archive. (Written when that was one of three gunicorn workers; under
-Daphne it is a thread in the one process, which makes the argument stronger, not weaker.)
+wifi occupied a server thread for the whole download, and was killed at the request timeout
+regardless, left holding a truncated archive.
 
 Building it as an object decouples that completely: the worker waits only for the build, which is
 server-to-Hetzner traffic inside `fsn1`, and then hands back a redirect. **This needed no job

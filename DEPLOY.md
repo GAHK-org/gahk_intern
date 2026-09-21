@@ -285,7 +285,7 @@ broken on the live site today, independently of any of this, and are a separate 
 #### The bucket needs a CORS rule once Arkiv can upload
 
 Arkiv sends files **straight from the browser to Hetzner** (`arkiv/uploads.py`) — a 2 GB video
-cannot go through three synchronous gunicorn workers. That POST is cross-origin, from
+cannot go through the app server. That POST is cross-origin, from
 `https://gahk.dk` to `https://<bucket>.<loc>.your-objectstorage.com`, so the bucket has to say the
 origin is allowed or the browser refuses to send it.
 
