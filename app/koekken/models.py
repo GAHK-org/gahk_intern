@@ -22,8 +22,11 @@ Load-bearing invariants, so a later edit does not undo them by accident:
   `TILBAGEFOERSEL`), never edits or deletes of a posted entry. Balance is `SUM(delta_minutes)`.
 * **`VagtTildeling` is stored, not derived** — unlike `events.Rsvp`, which deliberately derives
   seating from claim order because claims there are voluntary. Assignment here is the authoritative
-  *output* of an allocator (`koekken.services.allocate_tier_a`), so it is a row, and a resident's
-  shift history survives even if the allocator that produced it is re-run.
+  *output* of an allocator (`koekken.services.allocate_tier_a`), so it is a row. Plain `TILDELT`
+  rows are deliberately recomputed on every re-run (that is the idempotency), but once a row has
+  moved past `TILDELT` — self-reported `UDFOERT`, or flagged `ANMELDT`/`IKKE_UDFOERT` — the allocator
+  never deletes or overwrites it and never hands its resident a second row for that vagt, so that
+  part of a resident's shift history genuinely survives a re-run of the allocator that produced it.
 * **`Praeference` is scoped to `(resident, periode)`, not to a month.** A weekday-unavailable
   declaration holds for the whole semester it is made in — every month's tier-A run inside that
   `Periode` sees the same declarers, which is also why `Vagt`/`KoekkenPost` key off `Periode`, not a
@@ -210,6 +213,17 @@ class KoekkenPost(models.Model):
                 fields=["resident", "periode", "month"],
                 condition=Q(kind="forpligtelse"),
                 name="uniq_koekken_forpligtelse_per_period_month",
+            ),
+            # At most one STARTSALDO per resident, structurally — mirrors the partial-unique pattern
+            # above and `ak.AkEntry`'s own constraints. Without it, `KoekkenPostAdmin` allows creating
+            # a second STARTSALDO row for the same resident, and both `seed_koekken_balances` and
+            # `koekken.demo` key their `update_or_create(resident=, kind=STARTSALDO)` on there being at
+            # most one — a second row makes that `get()` raise `MultipleObjectsReturned` as a bare
+            # traceback instead of a clean `CommandError`.
+            models.UniqueConstraint(
+                fields=["resident"],
+                condition=Q(kind="startsaldo"),
+                name="uniq_koekken_startsaldo_per_resident",
             ),
         ]
 

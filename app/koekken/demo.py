@@ -39,8 +39,8 @@ from .services import (
 UNAVAILABLE_COUNT = 2
 
 # Tier-A capacity the shortfall month is shrunk to: UNAVAILABLE_COUNT weekend seats (exactly enough
-# for the declarers above, so seating them never raises WeekendCapacityExceeded) plus a couple of
-# weekday seats. Anything beyond that is left with no slot -- the shortfall.
+# for the declarers above, so none of them land in `refused_weekend`) plus a couple of weekday
+# seats. Anything beyond that is left with no slot -- the shortfall.
 SHORTFALL_WEEKDAY_CAPACITY = 2
 
 # Informal (hours) balances fed through the same rebase as seed_koekken_balances, spread around zero

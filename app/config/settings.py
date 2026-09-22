@@ -157,6 +157,17 @@ CELERY_TASK_TIME_LIMIT = 900
 # System resident. Leave blank to disable token-authenticated imports.
 PHOTO_ALBUM_IMPORT_TOKEN = os.environ.get("PHOTO_ALBUM_IMPORT_TOKEN", "")
 PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL = os.environ.get("PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL", "system@gahk.dk")
+
+# Køkkenvagter's two scheduled jobs below (generate-koekkenvagter, post-koekken-obligation) are gated
+# by this flag rather than by `koekken.access.Gate`: that Gate reads `effective_roles(request)`, and
+# there is no request in a Celery task context, so the view-layer rollout gate can't be checked from
+# here. Default False (closed): P1 has no path that ever posts a KoekkenPost CREDIT (that's P2's
+# self-report UDFOERT flow) — so opening these jobs before P2 ships would silently accrue monthly
+# obligation debt for every resident with no possible way to work it off, which is exactly the
+# "everyone drifts into debt through no fault of their own" bug this feature exists to fix. Flip to
+# True only once P2's credit path exists (see `koekken.tasks` for the no-op the flag guards).
+KOEKKEN_JOBS_ENABLED = os.environ.get("KOEKKEN_JOBS_ENABLED", "0") == "1"
+
 CELERY_BEAT_SCHEDULE = {
     "purge-expired-applications": {
         "task": "admissions.tasks.purge_expired_applications",

@@ -7,7 +7,7 @@ import argparse
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from koekken.services import KoekkenAllocationError, WeekendCapacityExceeded, allocate_tier_a
+from koekken.services import KoekkenAllocationError, allocate_tier_a
 
 
 class Command(BaseCommand):
@@ -26,7 +26,7 @@ class Command(BaseCommand):
                 result = allocate_tier_a(year, month)
                 if dry_run:
                     transaction.set_rollback(True)
-        except (WeekendCapacityExceeded, KoekkenAllocationError) as exc:
+        except KoekkenAllocationError as exc:
             raise CommandError(str(exc)) from exc
 
         prefix = "[dry-run] " if dry_run else ""
@@ -34,6 +34,7 @@ class Command(BaseCommand):
             self.style.SUCCESS(
                 f"{prefix}{year}-{month:02d}: {len(result.weekend_assigned)} tildelt weekend "
                 f"({len(result.drafted)} udtrukket), {len(result.weekday_assigned)} tildelt hverdag, "
-                f"{len(result.unassigned)} uden tier-A-vagt denne måned."
+                f"{len(result.unassigned)} uden tier-A-vagt denne måned "
+                f"({len(result.refused_weekend)} pga. overfyldt weekend-pulje)."
             )
         )
