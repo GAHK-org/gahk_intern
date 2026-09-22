@@ -1,6 +1,8 @@
 # Design: Køkkenvagter — kitchen cleaning shift allocation
 
-**Status:** approved 2026-09-21. Design only; no code written yet.
+**Status:** approved 2026-09-21. **P1 implemented** (commit `27195a2`, review-fix cycle in flight).
+**Amendment 1** (2026-09-22, FCFS tiebreak + allocation look-ahead and preference locking) is at the
+end of this document and **awaits sign-off**; where it changes a decision below, the section says so.
 **Feature spec (to be written at implementation time):** `spec/features/koekkenvagter.md`, **unnumbered**.
 
 > **Unnumbered on purpose**, for the reason `spec/features/begivenheder.md` gives: `F-001`–`F-015` are
@@ -159,6 +161,10 @@ because tier-B preference priority depends on who tier A routed to a weekend slo
 Ranking on raw balance is deliberate and load-bearing: ranking is invariant under adding a constant, which
 is what makes arrivals, departures and historical artifacts unable to distort who gets priority.
 
+> **Amended by Amendment 1.** Ties in the balance ranking are now broken by who declared their preference
+> first, and the balance used is a *projected* balance that accounts for shifts already assigned in
+> look-ahead months. See "Amendment 1" below.
+
 ## Ledger and obligation
 
 Obligation is posted monthly, **per month of presence**, at that month's supply divided by present
@@ -282,3 +288,142 @@ penalty at move-out. Relative standing between residents is preserved exactly; o
 - Whether the general-cleaning rotation should later adopt this machinery — it has none of its own today.
 - Whether weekly presence is extended beyond summer to cover exchange, internship and long illness. The
   model is already shaped for it.
+
+---
+
+# Amendment 1 — FCFS tiebreak, allocation look-ahead, preference locking
+
+**Raised 2026-09-22. Awaiting sign-off.** Two requirements, plus the consequences they force.
+
+## A1.1 First-come-first-served, as a tiebreaker only
+
+Balance-ascending ranking **stays primary**. FCFS decides only exact ties: when two residents have the
+same balance, whoever declared their preference earlier wins. Today the tie falls to `Resident.pk`
+(the population queryset is `.order_by("pk")` and Python's sort is stable), which is arbitrary and, worse,
+*stably* arbitrary — the same low-pk resident wins every tie forever.
+
+**Comparator becomes `(projected_balance ASC, declared_at ASC, pk ASC)`.** `pk` stays as the final
+fallback so the ordering is always total and allocation is deterministic under test.
+
+A resident with no `Praeference` row has no `declared_at`. They sort **last** among tied residents —
+declaring is what earns priority, so a non-declarer cannot outrank a declarer on a tie. Implement as a
+sentinel (`date.max`, or `NULLS LAST`), never as a null that sorts first by accident.
+
+## A1.2 Allocation look-ahead, and what it forces
+
+The requirement is that residents can see two to three months of their shifts in advance, rather than
+allocation happening one month at a time whenever Køkkengruppen triggers it.
+
+**Mechanism: a preference deadline two months before each period starts, then a batch plus a monthly
+roll-forward.**
+
+1. Each `Periode` has a **preference deadline two calendar months before its start** — derived, not a
+   stored field (Feb–Jun's deadline is 1 December; Sep–Jan's is 1 July; Jul–Aug's is 1 May).
+2. At the deadline, Køkkengruppen runs a **batch allocating the period's first three months**. This stays
+   a deliberate human action: the first run of a new period is the one worth eyeballing.
+3. Thereafter a **scheduled monthly job rolls the window forward one month**, allocating the next
+   not-yet-allocated month inside the current period.
+
+Visibility under this scheme never drops below two months and is usually three. Worked through Feb–Jun:
+the Jul–Aug deadline falls on 1 May, so standing in June — the period's last month — July and August are
+already allocated, giving two months ahead; standing in May gives three (June, July, August).
+
+**Why not allocate a whole semester at once.** It looks simpler and it is worse. Ranking is by balance,
+and balances move as shifts are completed, so a five-month batch ranks months four and five on data that
+is months stale — exactly defeating the mechanism that gives priority to whoever is currently behind. A
+three-month window is the compromise the requirement asks for anyway.
+
+**Why the deadline is two months out, not one.** A rolling three-month window reaches across a period
+boundary: allocating three months ahead in November touches February, which belongs to Feb–Jun. Those
+months must be allocated from Feb–Jun preferences, so Feb–Jun preferences have to exist before the window
+arrives. Two months is the smallest offset that keeps visibility at two-or-more everywhere. It also has a
+practical benefit for the summer period: holiday weeks become due on 1 May rather than in March, which is
+a far more reasonable thing to ask people.
+
+**Consequence — the balance used for ranking must be projected, not the raw ledger balance.** With a
+look-ahead window, months N+1 and N+2 are allocated but not yet worked, so their hours are not in the
+ledger. Ranking on the raw balance would show the same residents as equally behind each time and hand them
+the next month's shifts too, compounding across the window.
+
+    projected_balance = ledger balance + Σ hours of TILDELT assignments not yet credited
+
+`TILDELT` is exactly the set of assigned-but-uncredited rows (credit is posted on `UDFOERT`), so the
+projection needs no extra bookkeeping. Note that the monthly obligation debit is deliberately **not**
+projected: it is uniform across everyone present in a month, so it cannot change a relative ranking, and
+projecting it would mean guessing at presence three months out.
+
+**Consequence — an allocated month must not be silently re-shuffled.** `allocate_tier_a` currently
+deletes the month's `TILDELT` rows and re-allocates, which is correct for a single-month manual run and
+wrong the moment residents are relying on a published schedule. Re-running must **refuse** when a month
+already has `TILDELT` rows, unless an explicit `--force` is passed for a genuine correction. Without this
+the look-ahead promise — "people know which vagter they get" — is not actually kept.
+
+## A1.3 Preference locking
+
+Preferences for a period are editable until that period's deadline. **At the deadline they freeze**, and a
+later edit is written to the *following* period's row instead, taking effect then. This is directly
+expressible because `Praeference` is already keyed `(resident, periode)` with a unique constraint: the
+form simply targets a different `periode`. The UI must say plainly which period an edit will apply to —
+silently redirecting an edit to a future period would be worse than refusing it.
+
+Locking on **the deadline** rather than on "any allocation has run" is deliberate. The two are nearly the
+same moment by construction, but a date is something a resident can be told in advance and reminded about,
+whereas "whenever an officer happens to press the button" is not.
+
+**Edge cases and their resolutions:**
+
+- **Mid-period arrival.** A resident with no `Praeference` row for the current period may **create** one at
+  any time, deadline passed or not. They have never had the chance to state a preference, and defaulting
+  them to weekday-available could assign shifts they cannot do. The rule is narrower than "no changes
+  within a period": *you may always create an initial preference; you may not edit one that has been
+  used.* A new preference affects only months not yet allocated, and if none remain it simply becomes the
+  next period's.
+- **Departure inside the window.** Months already allocated may contain shifts for someone who then leaves.
+  Køkkengruppen reassigns via the override path; nothing about the ledger changes, and per the approved
+  design no entry is ever written after `move_out_date`.
+- **Look-ahead crossing a period boundary.** Each month is allocated using the preferences of the period
+  *that month* belongs to — never the period the allocation run was triggered from. The two-month deadline
+  offset is what guarantees those rows exist.
+- **Missed deadline.** Not an error and must not block allocation. A resident with no row for the new period
+  carries forward the previous period's value as the default, and sorts last on FCFS ties (A1.1) since they
+  declared nothing.
+
+## A1.4 What this changes in already-built P1, and what it does not
+
+**Touches committed P1 code** (`27195a2` plus the in-flight review fixes):
+
+| where | change |
+| --- | --- |
+| `models.py` `Praeference` | Add `declared_at`. New migration. |
+| `services.py` `allocate_tier_a` | Composite sort key in all three rankings (declarers, weekend draft, weekday pool); switch `bulk_balances` to the projected balance; add the already-allocated guard. |
+| `services.py` | New helper for the projected balance, and period-deadline derivation alongside `_periode_bounds`. |
+| `management/commands/allocate_koekkenvagter.py` | `--force`; a batch mode for a period's first three months. |
+| `tasks.py` + `CELERY_BEAT_SCHEDULE` | New scheduled roll-forward job. **This reverses P1's deliberate decision to leave allocation manual-only** — the monthly roll-forward becomes a cron job, while the period-opening batch stays a Køkkengruppen action. The P1 reasoning ("a Køkkengruppen decision, not a cron job") was sound for one-month-at-a-time allocation and does not survive a rolling window. Extend the parametrised table in `app/tests/test_scheduled_tasks.py`. |
+| `demo.py` | Show a locked preference, a three-month allocated window, and a tie broken by `declared_at`. |
+
+**Explicitly NOT affected — do not re-open these:**
+
+- **`post_obligation` is unchanged.** Obligation is still posted per month of presence, monthly, for
+  whoever is actually on that month's list. It must *not* move to the look-ahead schedule: presence three
+  months out is a guess, and posting ahead would write entries that could fall after a `move_out_date`.
+- **The ledger, `KoekkenPost`, integer minutes, the rebase and the penalty basis** are all untouched.
+- **`generate_vagter`, `VagtRegel`, `Vagt`, `VagtTildeling` shapes** are untouched; only *when*
+  `allocate_tier_a` runs and *how it ranks* change, not what it writes.
+- **Tier-A capacity arithmetic, the soft floor, and the weekend-overflow draft** are untouched. February
+  still legitimately leaves five residents without a tier-A slot.
+
+## A1.5 Additional tests this requires
+
+- Two residents on identical balances: the earlier `declared_at` is seated first; reversing the declaration
+  order reverses the outcome; a non-declarer sorts last on a tie.
+- Allocating three consecutive months in sequence spreads load rather than compounding it onto the same
+  residents — the projected-balance regression, and the one most likely to be got wrong.
+- Re-running allocation for an already-allocated month refuses without `--force` and proceeds with it.
+- An edit after the deadline writes the *next* period's row and leaves the current period's allocation
+  untouched.
+- A mid-period arrival can create a first preference after the deadline, and it affects only
+  not-yet-allocated months.
+- A month in the look-ahead window that falls in the next period reads that period's preferences.
+- A resident with no row for a new period inherits the previous period's value and allocation still runs.
+- Visibility invariant: stepping `DevClock` month by month across a full period boundary, at least two
+  months are always allocated ahead.
