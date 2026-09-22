@@ -191,7 +191,7 @@ def fail_stalled_downloads() -> int:
     )
 
 
-@shared_task
+@shared_task(time_limit=MEDIA_TASK_TIME_LIMIT, soft_time_limit=MEDIA_TASK_SOFT_TIME_LIMIT)
 def process_album_import(import_id: int) -> bool:
     """Unpack a stored ZIP outside the web request that received it."""
     try:
