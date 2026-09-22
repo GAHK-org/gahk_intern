@@ -1,8 +1,9 @@
 # Design: Køkkenvagter — kitchen cleaning shift allocation
 
-**Status:** approved 2026-09-21. **P1 implemented** (commit `27195a2`, review-fix cycle in flight).
-**Amendment 1** (2026-09-22, FCFS tiebreak + allocation look-ahead and preference locking) is at the
-end of this document and **awaits sign-off**; where it changes a decision below, the section says so.
+**Status:** approved 2026-09-21. **P1 implemented** (`27195a2`) and review-fixed (`a8575fd`, F1–F5).
+**Amendment 1** (2026-09-22, FCFS tiebreak + allocation look-ahead and preference locking) is approved.
+**Amendment 2** (2026-09-22, where a three-months-out population comes from) **awaits sign-off**. Both are at the
+end of this document; where either changes a decision below, the section says so.
 **Feature spec (to be written at implementation time):** `spec/features/koekkenvagter.md`, **unnumbered**.
 
 > **Unnumbered on purpose**, for the reason `spec/features/begivenheder.md` gives: `F-001`–`F-015` are
@@ -427,3 +428,133 @@ whereas "whenever an officer happens to press the button" is not.
 - A resident with no row for a new period inherits the previous period's value and allocation still runs.
 - Visibility invariant: stepping `DevClock` month by month across a full period boundary, at least two
   months are always allocated ahead.
+
+---
+
+# Amendment 2 — where a three-months-out population comes from
+
+**Raised 2026-09-22 after review of Amendment 1. Awaiting sign-off.**
+
+## A2.1 The gap
+
+Amendment 1 assumes allocation can run two to three months ahead. It never says where the *population*
+for those months comes from, and the answer turns out to be: nowhere.
+
+`allocate_tier_a` draws its population from `Residency` rows, and **nothing in this codebase ever creates
+a `Residency` row more than one month ahead.** `residents.views._target_period` is hard-capped to the
+current month or the next one, and says so deliberately: *"Deliberately only those two... nothing in the
+kollegium's workflow needs it."* So the deadline batch allocates months with no roster at all, and the
+roll-forward job walks straight into the same wall one month later — raising, inside a Celery task, in
+direct contradiction of its own docstring promise that it must not raise.
+
+This is a design gap Amendment 1 opened, not an implementation slip.
+
+## A2.2 Resolution: project the population in memory
+
+When a target month has no `Residency` rows, the allocator **projects** one:
+
+> the most recent published `Residency` list at or before the target month, minus any resident whose
+> `Resident.move_out_date` falls before that month begins.
+
+The subtraction matters and costs nothing: `move_out_date` is already on `Resident`, and departures are
+normally known well in advance, so the largest and most predictable source of projection error is removed
+by reading a field we already have. Arrivals cannot be predicted and are handled by reconciliation (A2.3).
+
+**The projection is computed in memory and never written.** `Residency` is *indstilling's* table — roles,
+`active_period`, the alumneliste, the kvotient lottery and the stamtræ all read it — and a kitchen feature
+that writes rows into it would become a silent producer of the roster every other feature trusts. This is
+worth stating explicitly because the codebase makes the wrong version easy: `rooms.views_soegvaerelse.
+_carry_roster_forward` already carries a roster forward non-destructively, and calling it from here would
+work, look tidy, and quietly make køkken a co-owner of the resident list. Do not.
+
+When projection is impossible — no published list at all — allocation **logs and no-ops**. It must not
+raise: a scheduled job that dies on an empty database is a monthly page for no reason, and this is exactly
+the promise the roll-forward's docstring already makes.
+
+## A2.3 Reconciliation, when the real list arrives
+
+Projection is an approximation, so the real list must be allowed to correct it. But Amendment 1 forbids
+silently re-shuffling an allocated month, and that rule exists for the same reason the look-ahead exists:
+people are relying on what they were shown.
+
+Both hold at once, because reconciliation is **additive only**:
+
+- A resident on the projection who is **not** on the real list has their assignments **vacated** (they are
+  not here) and those slots are refilled from the real population, balance ascending.
+- A resident on the real list who was **not** on the projection — a new arrival — is assigned to any
+  **unfilled** slots, balance ascending.
+- **Every other existing assignment is left exactly as it was.**
+
+This yields a guarantee worth stating in the resident-facing UI: **an assignment shown to a resident who
+is still living in the dorm is never revoked by reconciliation.** Only slots belonging to someone who has
+left, or slots nobody held, can move.
+
+Reconciliation runs monthly for the month whose list was most recently published — i.e. next month — and
+is idempotent: if the population already matches the assignments it does nothing. It is **not** a `--force`
+re-run. `--force` keeps its Amendment 1 meaning: a deliberate Køkkengruppen re-shuffle for a genuine
+correction, which *may* move anyone.
+
+## A2.4 Accepted failure modes
+
+- **A new arrival may get no shifts in their first allocated month**, because nothing could have predicted
+  them. They still accrue that month's obligation, so they end the month behind. This self-corrects — the
+  projected balance ranks them most-behind, so they take priority at the next allocation — but the
+  correction is up to three months out, because that is how far ahead allocation runs. Reconciliation
+  shortens this whenever unfilled slots exist to give them.
+- **A departure not recorded as a `move_out_date`** is invisible to the projection and is caught only at
+  reconciliation, one month before the month in question. That is still a month of lead time for
+  Køkkengruppen to act, and the slot is refilled automatically rather than silently going unstaffed.
+- **The ledger is never wrong because of projection.** Obligation is posted monthly from the *real* list,
+  per month of presence, so a projected-but-departed resident never receives an entry, and the move-out
+  rule ("no entries after `move_out_date`") is untouched. Projection affects assignments only.
+
+## A2.5 Rejected alternatives
+
+- **Ask indstilling to publish rosters three months ahead.** Pushes this feature's requirement into
+  another workgroup's workflow, against an editor that deliberately refuses the case, and asks them to
+  guess room assignments that depend on the kvotient lottery and actual move-ins. If it ever becomes real,
+  projection simply stops being used — the allocator prefers a real list whenever one exists — so nothing
+  here blocks it.
+- **Skip months with no population and rely on a later catch-up run.** Since `Residency` never exists more
+  than one month ahead, "skip" is not an edge case, it is every month: the window would sit permanently at
+  one month while appearing to function. That fails the requirement Amendment 1 exists for, quietly rather
+  than loudly. Retained only as the genuine-impossibility no-op in A2.2.
+- **Write projected `Residency` rows** (e.g. via `_carry_roster_forward`). See A2.2.
+
+## A2.6 What this changes
+
+| where | change |
+| --- | --- |
+| `services.py` | A population resolver: real `Residency` rows when present, otherwise the projection in A2.2. `allocate_tier_a` calls it instead of querying `Residency` directly. |
+| `services.py` | New `reconcile_month()` implementing A2.3. |
+| roll-forward task | No-op-and-log instead of raising when no population can be resolved, honouring its docstring. |
+| `tasks.py` + beat | Reconciliation added to the monthly chain, after the roster for next month exists. Same stagger discipline as every other job here. |
+| `demo.py` | A projected month, and a reconciliation that vacates a departure and seats an arrival. |
+
+**Unchanged, and not to be re-opened:** `post_obligation` (still monthly, from the real list, per month of
+presence); the ledger, rebase and penalty basis; the `Vagt`/`VagtTildeling`/`VagtRegel` shapes; tier-A
+capacity arithmetic and the soft floor; and Amendment 1's ranking, locking and `--force` semantics.
+
+## A2.7 Tests
+
+- Allocating a month with no `Residency` rows uses the latest list and excludes anyone whose
+  `move_out_date` precedes that month.
+- No published list at all: the roll-forward logs and returns rather than raising.
+- Reconciliation vacates a projected resident absent from the real list and refills the slot.
+- Reconciliation seats a new arrival into an unfilled slot.
+- **Reconciliation never moves the assignment of a resident present on both lists** — the guarantee in
+  A2.3, and the one a regression here would hurt most.
+- Reconciliation is idempotent when projection and reality already agree.
+- No `Residency` row is created by any køkken code path.
+
+## A2.8 Two implementation-level bugs bundled with this
+
+Both were found in the same review and are fixes, not design questions:
+
+- **`--batch` must clamp to the period's actual length.** It walks a fixed three months from a period's
+  start, so for the two-month summer period it steps into autumn — allocating a month before its own
+  preference deadline has passed, which inverts Amendment 1's locking rule. Clamp to the period.
+- **`test_missing_preference_row_falls_back_to_previous_periode_value` does not test what it claims.**
+  It passes with the fallback deliberately broken, because the resident it checks would have been seated
+  anyway by the mandatory weekend draft. It needs an assertion that the resident arrived *via the
+  fallback* specifically.
