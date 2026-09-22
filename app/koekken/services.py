@@ -1,10 +1,22 @@
-"""Køkkenvagter's decision layer — P1 (slots, tier-A allocation, ledger, obligation posting).
+"""Køkkenvagter's decision layer — P1 (slots, tier-A allocation, ledger, obligation posting) plus
+Amendment 1 (FCFS tiebreak, allocation look-ahead, preference locking).
 
 There is no view layer yet (see the design doc's "Phasing"), so this module, not a views.py, is the
 primary interface: management commands are thin wrappers around the functions below, and so will the
-eventual views be. Read `docs/plans/2026-09-21-koekkenvagter-design.md` — particularly "Allocation"
-and "Ledger and obligation" — before changing any of this; the choices below (soft floor, raw-balance
-ranking, largest-remainder obligation split) are explained there, not repeated here beyond a pointer.
+eventual views be. Read `docs/plans/2026-09-21-koekkenvagter-design.md` — particularly "Allocation",
+"Ledger and obligation" and the "Amendment 1" section at the end — before changing any of this; the
+choices below (soft floor, projected-balance ranking, largest-remainder obligation split, the
+look-ahead guard, preference locking) are explained there, not repeated here beyond a pointer.
+
+**Amendment 1 in one paragraph:** ties in every tier-A ranking now break on `Praeference.declared_at`
+(earlier wins; no row sorts last) rather than on an arbitrary, stably-arbitrary `pk` order; the
+balance used for that ranking is *projected* (ledger balance plus not-yet-credited `TILDELT` hours),
+so a look-ahead window of several months allocated in one sitting doesn't keep handing the next
+month to the same "most behind" residents before the ledger has caught up; `allocate_tier_a` now
+refuses to silently re-shuffle a month that already has `TILDELT` rows unless `force=True`; and
+`set_preference` resolves which `Periode`'s row a preference edit actually lands in, per the
+locking rule in A1.3. `post_obligation` and everything below "Ledger and obligation" in the design
+doc are explicitly untouched.
 """
 
 import logging
@@ -79,6 +91,35 @@ def resolve_periode(for_date: date) -> Periode:
     return periode
 
 
+def _next_periode(periode: Periode) -> Periode:
+    """The `Periode` immediately following `periode`. Periods are calendar-anchored and contiguous
+    (EFTERAAR's Jan 31 is followed by FORAAR's Feb 1, FORAAR's Jun 30 by SOMMER's Jul 1, SOMMER's Aug
+    31 by the next EFTERAAR's Sep 1) — see the design doc's data model — so "the day after this one
+    ends" always resolves to the right next periode, created via the same idempotent `resolve_periode`
+    the rest of this module uses. Amendment 1 (A1.3): the target of a locked-preference redirect."""
+    return resolve_periode(periode.end_date + timedelta(days=1))
+
+
+def _previous_periode(periode: Periode) -> Periode:
+    """The `Periode` immediately preceding `periode` — the mirror of `_next_periode`. Amendment 1
+    (A1.3, missed deadline): the source a resident's effective preference falls back to when they
+    have no row yet for `periode`."""
+    return resolve_periode(periode.start_date - timedelta(days=1))
+
+
+def periode_deadline(periode: Periode) -> date:
+    """`periode`'s preference deadline — Amendment 1, A1.2: exactly two calendar months before its
+    start (Feb-Jun's is 1 December, Sep-Jan's is 1 July, Jul-Aug's is 1 May). Derived, not stored:
+    every `Periode.start_date` is the 1st of a month, so this is exact date arithmetic, not an
+    approximation."""
+    month = periode.start_date.month - 2
+    year = periode.start_date.year
+    if month <= 0:
+        month += 12
+        year -= 1
+    return date(year, month, periode.start_date.day)
+
+
 def generate_vagter(periode: Periode) -> list[Vagt]:
     """Create the `Vagt` rows for every day in `periode`, one per applicable `VagtRegel`.
 
@@ -131,28 +172,82 @@ def _fill_slots(
             VagtTildeling.objects.create(vagt=vagt, resident=resident, status=VagtTildeling.Status.TILDELT)
 
 
-def allocate_tier_a(year: int, month: int) -> TierAResult:
-    """Tier-A (morgen + frokost) allocation for one calendar month — design doc "Allocation", step 1.
+def _tier_a_sort_key(
+    resident: Resident, balances: dict[int, int], declared_at_by_id: dict[int, date]
+) -> tuple[int, date, int]:
+    """`(projected_balance ASC, declared_at ASC, pk ASC)` — Amendment 1's A1.1 comparator, shared by
+    every ranking in `allocate_tier_a` (declarers, the weekend draft, the weekday pool). `pk` is the
+    final fallback so the ordering is always total. A resident with no `declared_at` for this
+    `Periode` (no `Praeference` row) sorts LAST among ties via the `date.max` sentinel — declaring is
+    what earns FCFS priority, so a non-declarer must never sort ahead of a declarer on a tie; never a
+    null, which could sort first by accident."""
+    return (balances[resident.pk], declared_at_by_id.get(resident.pk, date.max), resident.pk)
+
+
+def _effective_weekday_unavailable_ids(resident_ids: list[int], periode: Periode) -> set[int]:
+    """Which of `resident_ids` are effectively weekday-unavailable in `periode` — Amendment 1's
+    missed-deadline fallback (A1.3): a resident with no `Praeference` row yet for `periode` reads as
+    if they carried forward their previous `Periode`'s value, rather than defaulting to available
+    (which could hand them a weekday shift they said last periode they could not do) or blocking
+    allocation entirely. This supplies only the boolean — a resident who falls back this way still
+    has no `declared_at` for `periode` and so still sorts last on an FCFS tie (A1.1); the fallback
+    value is never treated as if they had declared it themselves this periode."""
+    rows = Praeference.objects.filter(periode=periode, resident_id__in=resident_ids).values(
+        "resident_id", "weekday_unavailable"
+    )
+    current = {row["resident_id"]: row["weekday_unavailable"] for row in rows}
+    missing = [rid for rid in resident_ids if rid not in current]
+    fallback: dict[int, bool] = {}
+    if missing:
+        previous = _previous_periode(periode)
+        previous_rows = Praeference.objects.filter(periode=previous, resident_id__in=missing).values(
+            "resident_id", "weekday_unavailable"
+        )
+        fallback = {row["resident_id"]: row["weekday_unavailable"] for row in previous_rows}
+    return {rid for rid in resident_ids if current.get(rid, fallback.get(rid, False))}
+
+
+def allocate_tier_a(year: int, month: int, *, force: bool = False) -> TierAResult:
+    """Tier-A (morgen + frokost) allocation for one calendar month — design doc "Allocation", step 1,
+    as amended by Amendment 1 (A1.1 FCFS tiebreak, A1.2 look-ahead).
 
     Population is every resident on that month's `Residency` list. Weekday-unavailable declarers
-    (scoped to the `Periode` this month falls in — see `Praeference`) are seated into the weekend
-    pool first, ranked by balance ascending (most behind first); declarers beyond weekend capacity
-    are refused (design doc finding 2: "the excess are refused with a clear message") and land in
-    `unassigned`/`refused_weekend` rather than aborting the run or being forced onto a weekday slot
-    they said they can't do. Remaining weekend capacity is then drafted from the rest of the
-    population (finding 2: the weekend pool is mandatory overflow, not opt-in). Weekday slots are
-    filled last, balance ascending, from whoever is left. Anyone left over gets no tier-A slot this
-    month — the soft floor; it is absorbed by the ledger, not an error (design doc finding 3: this is
-    expected in roughly half the semester's months).
+    (scoped to the `Periode` this month falls in — see `Praeference`, and note that a resident with
+    no row for that periode reads as if they carried forward their previous periode's value, per
+    `_effective_weekday_unavailable_ids`) are seated into the weekend pool first, ranked by
+    `_tier_a_sort_key` (projected balance ascending, most behind first, ties broken by who declared
+    earliest); declarers beyond weekend capacity are refused (design doc finding 2: "the excess are
+    refused with a clear message") and land in `unassigned`/`refused_weekend` rather than aborting the
+    run or being forced onto a weekday slot they said they can't do. Remaining weekend capacity is
+    then drafted from the rest of the population (finding 2: the weekend pool is mandatory overflow,
+    not opt-in), same ranking. Weekday slots are filled last, same ranking, from whoever is left.
+    Anyone left over gets no tier-A slot this month — the soft floor; it is absorbed by the ledger,
+    not an error (design doc finding 3: this is expected in roughly half the semester's months).
 
-    Idempotent, including across membership/ranking changes between runs: any existing `TILDELT`
-    assignment on this month's tier-A `Vagt` rows is cleared and recomputed from current balances
-    before writing. Assignments already moved past `TILDELT` (self-reported or flagged — P2) are
-    never touched or overwritten — but they DO still occupy their vagt's headcount and their holder
-    is excluded from this run's candidate population, so a re-run cannot try to hand them a second
-    row (a `UniqueViolation` on `(vagt, resident)`) or silently exceed a vagt's headcount by
-    recomputing capacity as if those rows didn't exist. Both the write path and the reported
-    capacity/`unassigned` figures below account for surviving rows identically.
+    **The ranking balance is projected, not raw** (Amendment 1, A1.2): ledger balance plus the
+    duration of this resident's `TILDELT` (assigned, not yet credited) rows — see
+    `bulk_projected_balances`. A look-ahead window allocates months before they're worked, so without
+    this a multi-month run would keep re-picking the same "most behind" residents every month purely
+    because the ledger hasn't caught up; projecting the already-assigned-but-uncredited hours is what
+    stops that compounding. It is computed *after* this month's own `TILDELT` rows are cleared below,
+    so a resident's own about-to-be-recomputed assignment for THIS month never inflates their own
+    ranking balance — only other months' still-standing `TILDELT` rows do.
+
+    **Already-allocated guard** (Amendment 1, A1.2): once residents may be relying on a published,
+    look-ahead-window schedule, silently re-shuffling it on every re-run is no longer acceptable (it
+    was fine, and remains the mechanism, for a single manually-triggered month). If this month already
+    has any `TILDELT` rows, this raises `KoekkenAllocationError` unless `force=True` is passed for a
+    deliberate correction — checked, and refused, before anything else runs.
+
+    Idempotent (given `force=True` on a re-run), including across membership/ranking changes between
+    runs: any existing `TILDELT` assignment on this month's tier-A `Vagt` rows is cleared and
+    recomputed from current (projected) balances before writing. Assignments already moved past
+    `TILDELT` (self-reported or flagged — P2) are never touched or overwritten — but they DO still
+    occupy their vagt's headcount and their holder is excluded from this run's candidate population,
+    so a re-run cannot try to hand them a second row (a `UniqueViolation` on `(vagt, resident)`) or
+    silently exceed a vagt's headcount by recomputing capacity as if those rows didn't exist. Both the
+    write path and the reported capacity/`unassigned` figures below account for surviving rows
+    identically.
     """
     periode = resolve_periode(date(year, month, 1))
     tier_a_kinds = [VagtRegel.Kind.MORGEN, VagtRegel.Kind.FROKOST]
@@ -166,6 +261,16 @@ def allocate_tier_a(year: int, month: int) -> TierAResult:
             f"Ingen vagter fundet for {year}-{month:02d}. Kør generate_koekkenvagter først."
         )
 
+    already_allocated = VagtTildeling.objects.filter(
+        vagt__in=vagter, status=VagtTildeling.Status.TILDELT
+    ).exists()
+    if already_allocated and not force:
+        raise KoekkenAllocationError(
+            f"{year}-{month:02d} har allerede tildelte tier-A-vagter -- brug --force for at "
+            "gentildele (Amendment 1, A1.2: en offentliggjort måned i look-ahead-vinduet må ikke "
+            "stille om uden et eksplicit tilvalg)."
+        )
+
     weekend_vagter = [v for v in vagter if v.date.weekday() >= 5]
     weekday_vagter = [v for v in vagter if v.date.weekday() < 5]
 
@@ -175,7 +280,11 @@ def allocate_tier_a(year: int, month: int) -> TierAResult:
     if not population_all:
         raise KoekkenAllocationError(f"Ingen beboere på alumnelisten for {year}-{month:02d}.")
 
-    balances = bulk_balances(population_all)
+    declared_at_by_id = dict(
+        Praeference.objects.filter(
+            periode=periode, resident_id__in=[r.pk for r in population_all]
+        ).values_list("resident_id", "declared_at")
+    )
 
     with transaction.atomic():
         VagtTildeling.objects.filter(vagt__in=vagter, status=VagtTildeling.Status.TILDELT).delete()
@@ -192,15 +301,19 @@ def allocate_tier_a(year: int, month: int) -> TierAResult:
 
         population = [r for r in population_all if r.pk not in surviving_resident_ids]
 
+        # Projected balances, computed AFTER the delete above so this month's own (just-cleared)
+        # TILDELT rows never feed back into its own ranking — see the docstring's "projected, not
+        # raw" note.
+        balances = bulk_projected_balances(population_all)
+
         weekend_capacity = sum(max(v.headcount - surviving_by_vagt.get(v.pk, 0), 0) for v in weekend_vagter)
         weekday_capacity = sum(max(v.headcount - surviving_by_vagt.get(v.pk, 0), 0) for v in weekday_vagter)
 
-        declared_ids = set(
-            Praeference.objects.filter(
-                periode=periode, weekday_unavailable=True, resident__in=population
-            ).values_list("resident_id", flat=True)
+        declared_ids = _effective_weekday_unavailable_ids([r.pk for r in population], periode)
+        declarers = sorted(
+            (r for r in population if r.pk in declared_ids),
+            key=lambda r: _tier_a_sort_key(r, balances, declared_at_by_id),
         )
-        declarers = sorted((r for r in population if r.pk in declared_ids), key=lambda r: balances[r.pk])
 
         accepted_declarers = declarers[:weekend_capacity]
         refused_declarers = declarers[weekend_capacity:]
@@ -221,7 +334,9 @@ def allocate_tier_a(year: int, month: int) -> TierAResult:
         drafted: list[Resident] = []
         needed = weekend_capacity - len(weekend_assigned)
         if needed > 0:
-            remaining_by_balance = sorted(remaining_pop, key=lambda r: balances[r.pk])
+            remaining_by_balance = sorted(
+                remaining_pop, key=lambda r: _tier_a_sort_key(r, balances, declared_at_by_id)
+            )
             drafted = remaining_by_balance[:needed]
             weekend_assigned += drafted
 
@@ -230,7 +345,7 @@ def allocate_tier_a(year: int, month: int) -> TierAResult:
         # forcing one on them would contradict the declaration rather than merely miss the floor.
         weekday_pool = sorted(
             (r for r in population if r.pk not in assigned_ids and r.pk not in refused_ids),
-            key=lambda r: balances[r.pk],
+            key=lambda r: _tier_a_sort_key(r, balances, declared_at_by_id),
         )
 
         _fill_slots(weekend_vagter, weekend_assigned, surviving_by_vagt)
@@ -247,6 +362,90 @@ def allocate_tier_a(year: int, month: int) -> TierAResult:
         unassigned=unassigned,
         refused_weekend=refused_declarers,
     )
+
+
+def roll_forward_allocation(today: date | None = None) -> TierAResult | None:
+    """Allocate the next not-yet-allocated tier-A month inside the `Periode` containing `today`
+    (default `core.clock.current_date()`) — Amendment 1's monthly roll-forward job (A1.2), the
+    deliberate reversal of P1's "allocation is manual-only" decision (see the design doc's A1.4): a
+    rolling look-ahead window nobody remembers to advance is not actually a window.
+
+    Deliberately scoped to the CURRENT periode only — it never reaches into the next one. Crossing a
+    periode boundary is Køkkengruppen's own deadline-triggered batch (the period's first three
+    months), not this job's concern; see A1.2's "why the deadline is two months out" for why that
+    keeps visibility at two-or-more everywhere without this job ever needing to guess at a periode
+    whose `Praeference` rows may not exist yet.
+
+    A no-op (returns `None`) once every month in the periode that has `Vagt` rows is already
+    allocated, or if the periode has no `Vagt` rows at all yet. Either way there is nothing this job
+    can safely do, and it must not raise: a scheduled task failing loudly every month after a periode
+    is fully allocated (or before it has been generated) would be its own kind of noise.
+    """
+    today = today or current_date()
+    periode = resolve_periode(today)
+    tier_a_kinds = [VagtRegel.Kind.MORGEN, VagtRegel.Kind.FROKOST]
+    month_cursor = periode.start_date
+    while month_cursor <= periode.end_date:
+        year, month = month_cursor.year, month_cursor.month
+        vagter = Vagt.objects.filter(
+            periode=periode, date__year=year, date__month=month, kind__in=tier_a_kinds
+        )
+        if vagter.exists():
+            already_allocated = VagtTildeling.objects.filter(
+                vagt__in=vagter, status=VagtTildeling.Status.TILDELT
+            ).exists()
+            if not already_allocated:
+                return allocate_tier_a(year, month)
+        month_cursor = date(year + (1 if month == 12 else 0), month % 12 + 1, 1)
+    return None
+
+
+def set_preference(resident: Resident, weekday_unavailable: bool, *, at: date | None = None) -> Praeference:
+    """Write `resident`'s weekday-unavailable preference, resolving which `Periode`'s row the write
+    actually targets — Amendment 1, A1.3's preference locking.
+
+    **Mid-period arrival, exempt from the deadline entirely:** if `resident` has no `Praeference` row
+    yet for the `Periode` containing `at` (default `core.clock.current_date()`) -- the period they
+    are CURRENTLY living in -- this always creates one there directly. They have never had the chance
+    to declare for it, and its own deadline (two months before ITS start) is, by construction, already
+    in the past the moment any date falls inside it; exempting this case is the only way a resident
+    who arrives mid-period could ever declare at all.
+
+    **Otherwise, this is a declaration for the UPCOMING periode:** once a resident already has a row
+    for the periode they're in, they've already been through this once, so a further call is read as
+    a preference for what comes next -- editable (created or edited in place) until THAT periode's own
+    deadline. At or after that deadline it is redirected one periode further still, exactly per A1.3
+    ("a later edit is written to the following period's row instead, taking effect then") -- and the
+    already-set periode it would otherwise have touched is left completely untouched, which is what
+    keeps a change of mind mid-period from retroactively disturbing a periode that may already be
+    substantially allocated.
+    """
+    today = at or current_date()
+    current_periode = resolve_periode(today)
+
+    existing_current = Praeference.objects.filter(resident=resident, periode=current_periode).first()
+    if existing_current is None:
+        return Praeference.objects.create(
+            resident=resident,
+            periode=current_periode,
+            weekday_unavailable=weekday_unavailable,
+            declared_at=today,
+        )
+
+    target = _next_periode(current_periode)
+    if today >= periode_deadline(target):
+        target = _next_periode(target)
+
+    row, created = Praeference.objects.get_or_create(
+        resident=resident,
+        periode=target,
+        defaults={"weekday_unavailable": weekday_unavailable, "declared_at": today},
+    )
+    if not created:
+        row.weekday_unavailable = weekday_unavailable
+        row.declared_at = today
+        row.save(update_fields=["weekday_unavailable", "declared_at"])
+    return row
 
 
 def _calendar_year_for_month(periode: Periode, month: int) -> int:
@@ -364,6 +563,37 @@ def bulk_balances(residents: Iterable[Resident]) -> dict[int, int]:
     )
     balances = {row["resident_id"]: row["b"] or 0 for row in rows}
     return {rid: balances.get(rid, 0) for rid in ids}
+
+
+def projected_balance_for(resident: Resident) -> int:
+    """`resident`'s projected balance, in minutes — Amendment 1, A1.2: ledger balance plus the
+    duration of every `TILDELT` (assigned, not yet credited — credit posts on `UDFOERT`) row they
+    currently hold. This is the ranking balance `allocate_tier_a` uses for its look-ahead window;
+    `post_obligation` deliberately keeps using the plain, unprojected balance concept (see that
+    function and the design doc's A1.4) — projection only ever feeds *ranking*, never the ledger
+    itself, and never the obligation charge."""
+    ledger = balance_for(resident)
+    tildelt_minutes = (
+        VagtTildeling.objects.filter(resident=resident, status=VagtTildeling.Status.TILDELT).aggregate(
+            total=Sum("vagt__duration_minutes")
+        )["total"]
+        or 0
+    )
+    return ledger + tildelt_minutes
+
+
+def bulk_projected_balances(residents: Iterable[Resident]) -> dict[int, int]:
+    """`projected_balance_for` for many residents in one pair of queries, mirroring `bulk_balances`."""
+    residents = list(residents)
+    ids = [r.pk for r in residents]
+    balances = bulk_balances(residents)
+    rows = (
+        VagtTildeling.objects.filter(resident_id__in=ids, status=VagtTildeling.Status.TILDELT)
+        .values("resident_id")
+        .annotate(total=Sum("vagt__duration_minutes"))
+    )
+    tildelt_by_id = {row["resident_id"]: row["total"] or 0 for row in rows}
+    return {rid: balances[rid] + tildelt_by_id.get(rid, 0) for rid in ids}
 
 
 def house_mean() -> float:

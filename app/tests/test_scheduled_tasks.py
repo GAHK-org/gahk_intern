@@ -17,6 +17,7 @@ import pytest
         ("photo_album.tasks", "purge_expired_media", "purge_photo_album"),
         ("koekken.tasks", "generate_koekkenvagter", "generate_koekkenvagter"),
         ("koekken.tasks", "post_koekken_obligation", "post_koekken_obligation"),
+        ("koekken.tasks", "roll_forward_koekkenvagter", "roll_forward_koekkenvagter"),
     ],
 )
 def test_scheduled_task_runs_its_management_command(
@@ -47,14 +48,17 @@ def test_scheduled_task_runs_its_management_command(
     [
         ("generate_koekkenvagter", "generate_koekkenvagter"),
         ("post_koekken_obligation", "post_koekken_obligation"),
+        ("roll_forward_koekkenvagter", "roll_forward_koekkenvagter"),
     ],
 )
 def test_koekken_scheduled_tasks_noop_when_gate_closed(
     task_name: str, command_name: str, monkeypatch: pytest.MonkeyPatch, settings: object
 ) -> None:
-    """FIX 2: deploying this branch must not silently start real monthly debt accrual. Both
+    """FIX 2: deploying this branch must not silently start real monthly debt accrual. All three
     koekken jobs must no-op — never call their management command — while KOEKKEN_JOBS_ENABLED is
-    at its default (False)."""
+    at its default (False). (roll_forward_koekkenvagter never itself posts debt -- it only writes
+    VagtTildeling rows -- but Amendment 1 gates it the same way anyway, for consistency with the
+    other two while the feature is staged closed.)"""
     import koekken.tasks as module
 
     settings.KOEKKEN_JOBS_ENABLED = False  # type: ignore[attr-defined]
@@ -72,6 +76,7 @@ def test_koekken_scheduled_tasks_noop_when_gate_closed(
     [
         ("generate_koekkenvagter", "generate_koekkenvagter"),
         ("post_koekken_obligation", "post_koekken_obligation"),
+        ("roll_forward_koekkenvagter", "roll_forward_koekkenvagter"),
     ],
 )
 def test_koekken_scheduled_tasks_run_command_when_gate_open(

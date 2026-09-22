@@ -1,40 +1,72 @@
-"""Allocate tier-A (morgen/frokost) køkkenvagter for one calendar month. Not scheduled — allocation
-is a Køkkengruppen decision, run when they are ready to publish a month, not a nightly job (unlike
-generate_koekkenvagter/post_koekken_obligation; see config/settings.py's CELERY_BEAT_SCHEDULE)."""
+"""Allocate tier-A køkkenvagter (morgen/frokost) for one calendar month, or — with --batch — a
+period's first three months in one call (Amendment 1, A1.2: the deadline-triggered batch
+Køkkengruppen runs by hand at a period's preference deadline). Not scheduled itself — allocating a
+month for the first time remains a Køkkengruppen decision; `roll_forward_koekkenvagter` is the
+scheduled follow-up that only ever advances an already-opened period one month at a time."""
 
 import argparse
+from datetime import date
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from koekken.services import KoekkenAllocationError, allocate_tier_a
+from koekken.services import KoekkenAllocationError, allocate_tier_a, resolve_periode
 
 
 class Command(BaseCommand):
-    help = "Fordel tier-A køkkenvagter (morgen/frokost) for en given måned. Idempotent."
+    help = (
+        "Fordel tier-A køkkenvagter (morgen/frokost) for en given måned, eller -- med --batch -- "
+        "periodens tre første måneder i ét kald. Idempotent (kræver --force ved gentildeling)."
+    )
 
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("year", type=int)
         parser.add_argument("month", type=int)
         parser.add_argument("--dry-run", action="store_true")
+        parser.add_argument(
+            "--force",
+            action="store_true",
+            help="Gentildel (allerede tildelte) måned(er) -- Amendment 1, A1.2.",
+        )
+        parser.add_argument(
+            "--batch",
+            action="store_true",
+            help="Allokér de tre første måneder i den periode, år/måned falder i.",
+        )
 
     def handle(self, *args: object, **opts: object) -> None:
         year, month = int(str(opts["year"])), int(str(opts["month"]))
         dry_run = bool(opts["dry_run"])
+        force = bool(opts["force"])
+        batch = bool(opts["batch"])
+
+        months: list[tuple[int, int]]
+        if batch:
+            periode = resolve_periode(date(year, month, 1))
+            months = []
+            cursor = periode.start_date
+            for _ in range(3):
+                months.append((cursor.year, cursor.month))
+                cursor = date(cursor.year + (1 if cursor.month == 12 else 0), cursor.month % 12 + 1, 1)
+        else:
+            months = [(year, month)]
+
+        lines: list[str] = []
         try:
             with transaction.atomic():
-                result = allocate_tier_a(year, month)
+                for y, m in months:
+                    result = allocate_tier_a(y, m, force=force)
+                    lines.append(
+                        f"{y}-{m:02d}: {len(result.weekend_assigned)} tildelt weekend "
+                        f"({len(result.drafted)} udtrukket), {len(result.weekday_assigned)} tildelt "
+                        f"hverdag, {len(result.unassigned)} uden tier-A-vagt denne måned "
+                        f"({len(result.refused_weekend)} pga. overfyldt weekend-pulje)."
+                    )
                 if dry_run:
                     transaction.set_rollback(True)
         except KoekkenAllocationError as exc:
             raise CommandError(str(exc)) from exc
 
         prefix = "[dry-run] " if dry_run else ""
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"{prefix}{year}-{month:02d}: {len(result.weekend_assigned)} tildelt weekend "
-                f"({len(result.drafted)} udtrukket), {len(result.weekday_assigned)} tildelt hverdag, "
-                f"{len(result.unassigned)} uden tier-A-vagt denne måned "
-                f"({len(result.refused_weekend)} pga. overfyldt weekend-pulje)."
-            )
-        )
+        for line in lines:
+            self.stdout.write(self.style.SUCCESS(prefix + line))

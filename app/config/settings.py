@@ -210,6 +210,16 @@ CELERY_BEAT_SCHEDULE = {
         "task": "koekken.tasks.generate_koekkenvagter",
         "schedule": crontab(minute=15, hour=4, day_of_month=1),
     },
+    # 05:15, an hour after generate-koekkenvagter above -- Amendment 1's monthly roll-forward
+    # (A1.2), which depends on that month's Vagt rows already existing (it allocates, never
+    # generates). Clear of both generate-koekkenvagter (04:15) and post-koekken-obligation (06:20)
+    # below, per this file's own stagger rule; it has no ordering dependency on the latter, since the
+    # obligation debit is uniform across everyone present in a month and so can't change a relative
+    # ranking either way.
+    "roll-forward-koekkenvagter": {
+        "task": "koekken.tasks.roll_forward_koekkenvagter",
+        "schedule": crontab(minute=15, hour=5, day_of_month=1),
+    },
     # 06:20, ten minutes after email-oelkaelder-monthly-statements (also hour=6, day_of_month=1) and
     # a full two hours after generate-koekkenvagter above — which it depends on having already run,
     # so that month's Vagt supply exists to divide across present residents.

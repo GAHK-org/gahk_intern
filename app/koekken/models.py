@@ -36,17 +36,37 @@ Load-bearing invariants, so a later edit does not undo them by accident:
   `uniq_ak_monthly_per_period` exactly (a partial unique index on `kind="forpligtelse"`), so a
   double-run of `post_koekken_obligation` cannot double-post even if the calling code has a bug.
 
+**Amendment 1** (`docs/plans/2026-09-21-koekkenvagter-design.md`, the section after P1's sign-off)
+adds `Praeference.declared_at` (FCFS tiebreak), an allocation look-ahead window with a projected
+ranking balance, and preference locking — see `koekken.services` for the mechanics
+(`allocate_tier_a`'s guard/ranking, `set_preference`, `periode_deadline`, `roll_forward_allocation`).
+It does **not** change any of the invariants above: `post_obligation` is untouched, `KoekkenPost` and
+its integer minutes are untouched, and `VagtTildeling`'s shape and survivor handling are untouched —
+only *when* `allocate_tier_a` may run and *how it ranks* changed.
+
 `Periode.Kind.SOMMER` exists as a choice even though nothing generates a summer period's slots yet
 (that needs `FerieUge`, weekly presence — P3, see the design doc's "Summer" section on why `Residency`
 alone is wrong for July/August). Leaving the choice in now means the eventual P3 migration adds a
 model, not a schema change to this one.
 """
 
+from datetime import date
+
 from django.db import models
 from django.db.models import Q
 from django.utils import timezone
 
 from residents.models import Resident
+
+
+def _declared_at_default() -> date:
+    """Default for `Praeference.declared_at`: today, read through `core.clock` (imported locally to
+    avoid a models-import-time dependency, matching `residents.models.active_period`'s own reason for
+    the same local import) so a DevClock override under DEBUG is honoured -- see Amendment 1's A1.1
+    (the FCFS tiebreak) and A1.5's DevClock walk test."""
+    from core.clock import current_date
+
+    return current_date()
 
 
 class VagtRegel(models.Model):
@@ -234,6 +254,12 @@ class KoekkenPost(models.Model):
 class Praeference(models.Model):
     """A resident's kitchen-duty preference for one `Periode`. P1 holds only the single boolean
     tier-A needs; the aftenvagt weekday preference field is P2 (tier-B signup does not exist yet).
+
+    **Amendment 1 (A1.1, A1.3):** `declared_at` is when this row was (last) written, via
+    `koekken.services.set_preference` -- it is the FCFS tiebreak `allocate_tier_a` sorts on
+    (`(projected_balance ASC, declared_at ASC, pk ASC)`), and re-declaring counts as declaring again.
+    A resident with no row for a `Periode` has no `declared_at` and sorts LAST on a tie -- see
+    `allocate_tier_a`'s ranking helper, which uses `date.max` as the sentinel, never a null default.
     """
 
     resident = models.ForeignKey(Resident, on_delete=models.CASCADE, related_name="koekken_praeferencer")
@@ -241,6 +267,11 @@ class Praeference(models.Model):
     weekday_unavailable = models.BooleanField(
         default=False,
         help_text="Ruter beboeren til weekend-puljen for morgen-/frokostvagt (tier A) i denne periode.",
+    )
+    declared_at = models.DateField(
+        default=_declared_at_default,
+        help_text="Hvornår denne præference (senest) blev erklæret -- bruges som FCFS-tiebreak ved "
+        "allokering (Amendment 1, A1.1).",
     )
 
     class Meta:

@@ -643,6 +643,7 @@ erDiagram
         int resident_id FK
         int periode_id FK
         bool weekday_unavailable
+        date declared_at
     }
 
     core_PushSubscription }o--|| residents_Resident : "user"
@@ -1145,6 +1146,7 @@ erDiagram
         int resident_id FK
         int periode_id FK
         bool weekday_unavailable
+        date declared_at
     }
 
     residents_Resident { }

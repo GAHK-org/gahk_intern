@@ -30,3 +30,17 @@ def post_koekken_obligation() -> None:
         logger.info("koekken.tasks.post_koekken_obligation skipped: KOEKKEN_JOBS_ENABLED is False.")
         return
     call_command("post_koekken_obligation")
+
+
+@shared_task
+def roll_forward_koekkenvagter() -> None:
+    """Advance the tier-A allocation window one month within the active periode (idempotent —
+    Amendment 1, A1.2) — no-ops while KOEKKEN_JOBS_ENABLED is False, the same gate as the two tasks
+    above. Allocation itself never writes a KoekkenPost ledger entry (only VagtTildeling rows), so
+    this gate isn't a debt-accrual safety requirement the way it is for post_koekken_obligation —
+    it's gated anyway, for consistency with the other two koekken jobs while the feature is staged
+    closed."""
+    if not settings.KOEKKEN_JOBS_ENABLED:
+        logger.info("koekken.tasks.roll_forward_koekkenvagter skipped: KOEKKEN_JOBS_ENABLED is False.")
+        return
+    call_command("roll_forward_koekkenvagter")
