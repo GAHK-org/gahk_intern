@@ -6,11 +6,11 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "django>=5.2,<5.3",
+    "channels[daphne]>=4.2,<5.0",
     "dj-database-url>=2.1",
     "python-dotenv>=1.0",
     "psycopg[binary]>=3.1",
     "whitenoise>=6.6",
-    "gunicorn>=22.0",
     "pymysql>=1.1", # ETL source reader (legacy MariaDB); harmless in prod
     "openpyxl>=3.1", # alumneliste Excel (.xlsx) export
     # >=0.3 is required, not cosmetic: core.markdown uses nh3.clean(attribute_filter=...), which

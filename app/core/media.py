@@ -7,7 +7,7 @@ STORAGES["default"] happens to be.
 Two branches, and both are load-bearing rather than a dev convenience:
 
   * object storage -> 302 to a short-lived presigned GET. The bytes come straight from Hetzner, so
-    gunicorn never streams a file and a slow client cannot pin one of three sync workers.
+    the app server never streams a file and a slow client cannot pin a thread.
   * anything else  -> stream it, which is what django.views.static.serve did before this existed.
     The test suite runs this way (tests/conftest.py forces plain FileSystemStorage so pytest never
     touches a real bucket); a single code path that only works when a bucket is configured would

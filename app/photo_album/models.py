@@ -64,8 +64,8 @@ class DerivativeState(models.TextChoices):
 
     Images are derived inline — Pillow on a phone photo is milliseconds and the resident who just
     uploaded it is the one about to look at it. Video cannot be: an H.264 encode of a phone clip
-    runs well past gunicorn's 60 s timeout, which killed the worker mid-transcode and lost the
-    upload. So a video is stored as its original with state PENDING, and
+    runs well past the 60 s request timeout, which killed the worker mid-transcode and lost the
+    upload. So a video is stored as its original with PENDING, and
     `manage.py process_photo_album_media` (DEPLOY.md §4b) builds the derivatives out of band.
     """
 

@@ -8,7 +8,7 @@ every remaining recipient — while a 410 looked like a success to the caller. O
 here means one error path instead of two, and one table instead of its three.
 
 Delivery runs off the request thread: each subscription is a separate HTTPS round-trip to FCM/APNs
-(~0.3-1 s), and gunicorn runs with `--timeout 60`, so a dorm-wide fan-out inline would kill the
+(~0.3-1 s), and Daphne runs with `-t 60`, so a dorm-wide fan-out inline would kill the
 worker. `_run_in_background` fires after the transaction commits, so the thread never races the post
 it is announcing.
 
@@ -175,7 +175,7 @@ def send(
     exiting — a different number every night, with no error anywhere to say so.
 
     The cost of inline is the one the threading exists to avoid: the caller blocks for ~0.3-1 s per
-    device. That is unacceptable in a request under gunicorn's 60 s timeout and completely fine in a
+    device. That is unacceptable in a request under the 60 s timeout and completely fine in a
     cron job, which has nothing else to do.
 
     core/management/commands/send_test_push.py predates this argument and reaches for the private
