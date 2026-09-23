@@ -131,6 +131,20 @@ class Resident(AbstractBaseUser, PermissionsMixin):
         year, month = period or active_period()
         return self.role_assignments.filter(role=role, year=year, month=month).exists()
 
+    def has_perm(self, perm: str, obj: object = None) -> bool:
+        """Netvaerksgruppen (spelled `administrator`) gets every Django admin permission, for exactly
+        as long as they hold the role. Derived per request rather than stored in `is_superuser`:
+        role holding expires with the monthly period, and nothing fires on that rollover."""
+        return super().has_perm(perm, obj) or self._has_admin_role()
+
+    def has_module_perms(self, app_label: str) -> bool:
+        return super().has_module_perms(app_label) or self._has_admin_role()
+
+    def _has_admin_role(self) -> bool:
+        from .permissions import has_active_role  # imported here: permissions imports this module
+
+        return self.is_active and has_active_role(self, Role.ADMINISTRATOR)
+
 
 class Residency(models.Model):
     """One row per resident per month (legacy intern_alumne_liste): which room + chore groups."""

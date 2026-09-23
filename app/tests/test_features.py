@@ -538,6 +538,34 @@ def test_is_staff_synced_with_roles(make_resident: Callable) -> None:
 
 
 @pytest.mark.django_db
+def test_administrator_has_full_admin_permissions_while_in_role(make_resident: Callable) -> None:
+    """Netvaerksgruppen (= `administrator`) gets superuser-equivalent admin rights, but only for the
+    active period — the role is never mirrored into `is_superuser`, which would outlive it."""
+    from residents.models import RoleAssignment, active_period
+
+    y, m = active_period()
+    admin = make_resident(email="netvaerk@gahk.dk", roles=[Role.ADMINISTRATOR])
+    assert admin.is_superuser is False  # the flag is never set
+    assert admin.has_perm("residents.delete_resident") is True
+    assert admin.has_module_perms("oelkaelder") is True
+
+    other = make_resident(email="ak2@gahk.dk", roles=[Role.AK])
+    assert other.has_perm("residents.delete_resident") is False
+    assert other.has_module_perms("oelkaelder") is False
+
+    RoleAssignment.objects.filter(resident=admin, role=Role.ADMINISTRATOR).delete()
+    admin = Resident.objects.get(pk=admin.pk)  # fresh instance: real_roles memoises per instance
+    assert admin.has_perm("residents.delete_resident") is False
+
+    # Held last month only -> expired, even though is_staff (any period) is still True.
+    prev = (y - 1, 12) if m == 1 else (y, m - 1)
+    RoleAssignment.objects.create(resident=admin, role=Role.ADMINISTRATOR, year=prev[0], month=prev[1])
+    admin = Resident.objects.get(pk=admin.pk)
+    assert admin.is_staff is True
+    assert admin.has_perm("residents.delete_resident") is False
+
+
+@pytest.mark.django_db
 def test_dashboard_shows_shared_calendar_credentials(
     make_resident: Callable, monkeypatch: pytest.MonkeyPatch
 ) -> None:
