@@ -2,8 +2,10 @@
 
 **Status:** approved 2026-09-21. **P1 implemented** (`27195a2`) and review-fixed (`a8575fd`, F1–F5).
 **Amendment 1** (2026-09-22, FCFS tiebreak + allocation look-ahead and preference locking) is approved.
-**Amendment 2** (2026-09-22, where a three-months-out population comes from) **awaits sign-off**. Both are at the
-end of this document; where either changes a decision below, the section says so.
+**Amendment 2** (2026-09-22, where a three-months-out population comes from) and **Amendment 3**
+(2026-09-23, reconciliation eligibility and residents arriving with no preference) **await sign-off**;
+A3.1 corrects A2.3. All three are at the end of this document; where any changes a decision below, the
+section says so.
 **Feature spec (to be written at implementation time):** `spec/features/koekkenvagter.md`, **unnumbered**.
 
 > **Unnumbered on purpose**, for the reason `spec/features/begivenheder.md` gives: `F-001`–`F-015` are
@@ -558,3 +560,126 @@ Both were found in the same review and are fixes, not design questions:
   It passes with the fallback deliberately broken, because the resident it checks would have been seated
   anyway by the mandatory weekend draft. It needs an assertion that the resident arrived *via the
   fallback* specifically.
+
+---
+
+# Amendment 3 — reconciliation eligibility, and residents who arrive with no preference
+
+**Raised 2026-09-23 in review of Amendment 2. Awaiting sign-off.** Amendment 2's reconciliation rule
+("a resident on the real list who was not on the projection is seated into unfilled slots only, balance
+ascending") is **wrong as written**, and separately it assumes a preference that a new arrival cannot
+have had the chance to give. Both are fixed here; the rest of Amendment 2 stands.
+
+## A3.1 Reconciliation must re-derive eligibility, not hand over a slot
+
+As written, Amendment 2's seating rule is pool-blind: it says "unfilled slots", not "unfilled slots this
+resident is eligible for". In the exact scenario that exposed it — one resident moves out holding a
+**weekday** slot, one resident moves in — the arrival would mechanically inherit that weekday slot no
+matter what they can actually do. **That is a real defect in the design as written, not an omission.**
+
+**A vacated slot is never inherited.** It returns to the pool of unfilled slots, and reconciliation seats
+people into it by the same eligibility rules normal allocation uses. The resident who takes it may well not
+be the arrival at all — an existing resident who is further behind is the more likely taker.
+
+The rule this hangs on is an asymmetry established by finding 2 and already honoured by `allocate_tier_a`,
+which refuses to force a declarer onto "a weekday slot they said they can't do":
+
+| | may take a weekend slot | may take a weekday slot |
+| --- | --- | --- |
+| weekday-**unavailable** | yes — their only option | **never** |
+| weekday-**available** | yes — draftable, the pool is mandatory overflow | yes |
+
+So the two pools are not interchangeable and the constraint runs one way only. A vacated **weekend** slot
+can go to anyone; a vacated **weekday** slot can go only to a weekday-available resident. If no eligible
+candidate exists, **the slot stays unfilled and surfaces in Køkkengruppen's queue** rather than being
+forced on someone who cannot work it. An unfilled slot that somebody knows about is a better outcome than
+an assigned slot that silently will not happen — the latter is the original complaint wearing a disguise.
+
+**Implementation shape, and the point of it:** reconciliation must not hand-roll its own seating. Extract
+the seating core of `allocate_tier_a` — declarers to weekend first, draft the remainder of the weekend
+pool, then weekday, all on the Amendment 1 ranking — and have both paths call it, reconciliation passing a
+restricted slot set (only unfilled) and a restricted population (only unseated). Two hand-written copies of
+this logic would drift, and the direction they would drift in is precisely this bug.
+
+Reconciliation also prefers residents **without** a tier-A slot this month. Residents may take more than
+one voluntarily (that was the Q4 answer), but reconciliation must not force a second shift on someone who
+has already done their share; if nobody unassigned is eligible, the slot goes to the queue.
+
+## A3.2 Residents who arrive with no preference at all
+
+Amendment 1's fallback — no row for this period, carry forward the previous period's value — has nothing
+to carry forward for a first-ever residency. And new residents are created close to move-in, so the
+two-month deadline machinery gives them no opportunity at all.
+
+**Decision: an undeclared resident is treated as weekday-available**, which is already the model's default
+(`weekday_unavailable = False`) and already what the built fallback produces for someone with no history.
+No new field and no new default are needed. Three reasons:
+
+1. **It is the right statistical guess.** Weekday-unavailability is a minority condition by construction:
+   the weekend pool holds only 16–20 of 61, and it has to be *drafted* into, which means fewer people
+   declare it than the pool needs. Most residents can do weekdays.
+2. **The other default is systemically harmful, not merely wrong.** Defaulting arrivals to
+   weekday-*unavailable* would spend scarce weekend capacity on an assumption, and since declarers beyond
+   capacity are refused, assumed non-declarers would push genuine declarers out of the only pool they can
+   work. A wrong guess in this direction costs one person an awkward month; a wrong guess in the other
+   corrupts the allocation for people who did declare.
+3. **Being wrong is recoverable and visible.** The resident asks Køkkengruppen to move them, via the
+   override path that already exists, or flags the shift. It is a one-month inconvenience, not a
+   structural failure.
+
+**What makes this acceptable rather than merely defensible is that the gap is closed at the other end:**
+a resident with no `Praeference` row for the current period is **prompted to declare on first login**, and
+Amendment 1 already permits creating an initial preference at any time, deadline or not. The declaration
+is a single yes/no question — the two-month deadline exists to stop preferences being changed *after*
+people see their allocation, not because answering takes two months. There is real lead time to use:
+records are created around move-in, reconciliation runs for the following month, so days to weeks are
+available in which one question can be answered.
+
+**Assumed and declared are already distinguishable, with no schema change.** Amendment 1 added
+`declared_at`; a resident with no row has none, so `declared_at IS NULL` *is* the "we are guessing" marker.
+It already sorts them last on ties (A1.1), and it lets Køkkengruppen see at a glance who is on a guess
+rather than a statement. Køkkengruppen's month view should show that, and the move-in process is the
+natural place to ask the question.
+
+## A3.3 One interaction worth recording, not changing
+
+A new resident starts at a ledger balance of **0**, while the house mean drifts *negative* over time (the
+departure drift the absolute-balance decision knowingly accepted: −0.8 h after a year, −2.6 h after five).
+So a newcomer is relatively "ahead" of the house and ranks **last** for shifts until they accrue enough
+obligation to sink toward the mean.
+
+Two consequences, and both are fine:
+
+- It is *helpful* here: arrivals are not at the front of the queue, which is exactly the breathing room an
+  undeclared newcomer needs to answer the question before being handed anything.
+- It means each cohort does slightly less work than the incumbents it joins, for as long as the mean sits
+  below zero. **Do not "fix" this by seeding newcomers at the house mean.** That would hand a resident who
+  has done nothing wrong a negative balance, which under the approved rule is a monetary penalty at
+  move-out. Starting at 0 is correct precisely because the balance converts to money; the mild work
+  inequity is the price of that correctness, and it is the smaller of the two errors.
+
+## A3.4 What this changes
+
+| where | change |
+| --- | --- |
+| `services.py` | Extract the tier-A seating core; `allocate_tier_a` and `reconcile_month` both call it. Reconciliation passes unfilled slots + unseated residents and **must not** contain its own seating rules. |
+| `services.py` | Reconciliation prefers residents with no tier-A slot this month; leaves a slot unfilled and queued rather than forcing a second shift or an ineligible one. |
+| views/templates | Prompt a resident with no `Praeference` row for the current period to declare, on first login. Show `declared_at IS NULL` as "assumed" in Køkkengruppen's view. |
+| `demo.py` | An arrival with no preference row seated correctly, and a vacated weekday slot that an ineligible arrival does *not* inherit. |
+
+**Unchanged:** everything else in Amendments 1 and 2, the ledger, the obligation, and the newcomer's
+starting balance of 0.
+
+## A3.5 Tests
+
+- A weekday-unavailable arrival is **never** seated into a vacated weekday slot, even when it is the only
+  unfilled slot in the month — the defect this amendment exists to fix.
+- A vacated weekday slot with no eligible unassigned candidate stays unfilled and is surfaced, not forced.
+- A vacated weekend slot can be filled by either kind of resident.
+- A departing resident's slot may go to an existing resident who is further behind, not automatically to
+  the arrival — "no inheritance".
+- An arrival with no `Praeference` row anywhere is treated as weekday-available and may take either pool.
+- Reconciliation does not give a second tier-A slot to a resident who already has one while an unassigned
+  eligible resident exists.
+- Reconciliation seating and `allocate_tier_a` produce the same choice given the same slots and population
+  — the shared-core guarantee, and the regression test that stops the two drifting apart.
