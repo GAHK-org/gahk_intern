@@ -3,9 +3,9 @@
 **Status:** approved 2026-09-21. **P1 implemented** (`27195a2`) and review-fixed (`a8575fd`, F1–F5).
 **Amendment 1** (2026-09-22, FCFS tiebreak + allocation look-ahead and preference locking) is approved.
 **Amendment 2** (2026-09-22, where a three-months-out population comes from) and **Amendment 3**
-(2026-09-23, reconciliation eligibility and residents arriving with no preference) **await sign-off**;
-A3.1 corrects A2.3. All three are at the end of this document; where any changes a decision below, the
-section says so.
+(2026-09-23, reconciliation eligibility and residents arriving with no preference) and **Amendment 4**
+(2026-09-23, swapping vagter — a Phase 2b feature) **await sign-off**; A3.1 corrects A2.3. All are at the
+end of this document; where any changes a decision below, the section says so.
 **Feature spec (to be written at implementation time):** `spec/features/koekkenvagter.md`, **unnumbered**.
 
 > **Unnumbered on purpose**, for the reason `spec/features/begivenheder.md` gives: `F-001`–`F-015` are
@@ -269,6 +269,8 @@ penalty at move-out. Relative standing between residents is preserved exactly; o
 - **Full auto-allocation of both tiers with a swap market.** Strongest fairness guarantee, but the most
   code by a wide margin (allocator plus swap workflow plus appeals) and the largest behaviour change.
   Rejected because the ledger, not per-month control, is what delivers fairness — see finding 1.
+  *(Amendment 4 adds swapping as a correction tool on top of allocation. That is not this proposal
+  returning; see A4.4 for why the distinction is load-bearing rather than a technicality.)*
 - **Pure assisted signup for both tiers.** Rejected because tier A has essentially no slack (60.8 slots for
   61 residents), so "signing up" for it is a fiction; there is close to one satisfying assignment.
 - **Equal shift counts instead of equal hours.** Rejected: a weekday aftenvagt is 3 h against a morgenvagt's
@@ -683,3 +685,100 @@ starting balance of 0.
   eligible resident exists.
 - Reconciliation seating and `allocate_tier_a` produce the same choice given the same slots and population
   — the shared-core guarantee, and the regression test that stops the two drifting apart.
+
+---
+
+# Amendment 4 — swapping vagter
+
+**Raised 2026-09-23. Awaiting sign-off.** A resident marks a shift they cannot take; another resident
+either takes it over outright or offers one of their own in trade.
+
+## A4.1 It is a good idea, but it answers a different question than the one it was offered for
+
+Swapping was proposed as a way to avoid needing reconciliation's seating to be eligibility-aware: seat
+people mechanically, and let anyone mis-seated trade their way out. **That specific substitution should not
+be made**, and the reason is a distinction worth stating plainly:
+
+> Swapping is the remedy for what the system **could not know**. Eligibility is the remedy for what it
+> **already knows**. A swap market is not a licence to ignore information you are holding.
+
+A resident who has declared themselves weekday-unavailable has told the system a fact. Seating them into a
+weekday slot anyway, and requiring them to find a counterparty to undo it, fails in two ways at once if the
+market happens to be thin that week: the shift goes unworked (the original complaint), and they take the
+ledger debit for it, which under the approved rule is money at move-out. That is a system-generated error
+whose cost lands on the resident. Honouring the declaration instead costs a filter on a list.
+
+**So A3.1 stands unchanged.** What swapping genuinely improves is A3.2 — the *undeclared* case, where there
+is no information to honour and a default guess is unavoidable. Swapping makes that guess cheap to be wrong
+about, which is exactly the reassurance A3.2 needed and did not have. The two amendments compose: the
+allocator never assigns against a declaration, and any resident whose circumstances the system could not
+know has a self-service way out.
+
+## A4.2 Scope: a separate phase, not part of the reconciliation fix
+
+This is a **general-purpose feature**, far broader than new arrivals — sickness, travel, exam periods, a
+weekend away. It carries its own UI surface (an offer board, propose/accept, notifications), its own
+states, and its own abuse question (someone offering every shift they are given). Meanwhile the
+reconciliation gap is already closed by A3.1 and A3.2 without it.
+
+So: **Phase 2b, after P2.** It depends on P2 existing anyway — there is no resident-facing shift UI to
+swap from, and no `UDFOERT`/flag state machine to interact with, until P2 ships. Folding it into the
+reconciliation fix would delay a correction that is ready in order to start a feature that is not.
+
+## A4.3 Rules
+
+**A voluntary swap may cross the eligibility boundary.** A weekday-unavailable resident may choose to take
+a weekday slot; the declaration constrains what the *allocator may impose*, not what the resident may opt
+into. Any trade of any two shifts is permissible — weekday for weekend, weekend for weekend, unequal
+durations included.
+
+What a swap must respect has nothing to do with pools:
+
+- **Only `TILDELT`, future-dated shifts.** Never one already self-reported, adjudicated, or in the past.
+- **Capacity is preserved exactly.** A take-over transfers one assignment; it must re-check the slot is
+  still open, since two residents may claim the same offer concurrently. A trade is a 1:1 exchange. The
+  existing `unique (vagt, resident)` prevents the degenerate case.
+- **No double-booking** — a resident must not end up holding two shifts that overlap in time on one day.
+- **Nothing lands after a resident's `move_out_date`.**
+- **A departing resident may exceed the 2× work-off cap by choice.** The cap exists to stop the *allocator*
+  dumping unrealistic load; volunteering is not that.
+
+**Unequal trades are allowed and self-correcting.** Trading a 1 h morgenvagt for a 3 h aftenvagt moves both
+balances by 2 h, and that is simply true: one resident did two hours more work than the other. Future
+allocation compensates automatically through the ranking.
+
+## A4.4 Why this is not the rejected "swap market" returning
+
+The rejected alternative was a **fill mechanism**: allocate everything up front and let a market sort out
+who actually works. That makes the market load-bearing for *fairness* — if trading is thin, the allocation
+stays unfair, and it is unfair in a way that converts to money.
+
+This is a **correction tool on top of an allocation that is already fair by construction**. If nobody ever
+swaps, the distribution is exactly as fair as it was; only individual convenience is lost. The market
+carries convenience here, never fairness, and that is the whole difference. It also could not carry
+fairness even if asked to: with roughly 113 slots across 61 residents, most people hold one or two shifts a
+month, so the pool of tradeable shifts at any moment is thin by construction.
+
+## A4.5 The ledger is indifferent, and that is not an accident
+
+Credit is posted on `UDFOERT`, against the assignment row, so **whoever actually works the shift receives
+the hours**. Swapping is invisible to the ledger. This falls out of an earlier decision — crediting on
+completion rather than on assignment — and it is what makes swapping safe to add without touching any
+accounting.
+
+One better-than-neutral interaction: because the allocator ranks on the *projected* balance (ledger plus
+uncredited `TILDELT` hours, per A1.2), a swap immediately moves both parties' standing — the resident who
+gave a shift away looks more behind, the one who took it looks more ahead — so future allocations
+compensate without anything extra being written. Obligation is untouched: it is per resident per month of
+presence and has never depended on assignments.
+
+## A4.6 Sketch of what it needs
+
+A `VagtBytte` offer record (offered assignment, optional requested assignment for a trade, state, who took
+it), views for offering, browsing and accepting, a notification when an offer is taken, and Køkkengruppen
+visibility of shifts offered but unclaimed as the deadline approaches — an unclaimed offer is an early
+warning of exactly the failure this whole feature exists to prevent.
+
+**Open for the human, when this phase comes up:** whether an unclaimed offer eventually reverts to the
+offerer (who then owes the shift or the debit), or escalates to Køkkengruppen to reassign. Not needed to
+approve the direction; needed before building it.
