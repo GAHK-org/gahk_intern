@@ -131,7 +131,7 @@ class Resident(AbstractBaseUser, PermissionsMixin):
         year, month = period or active_period()
         return self.role_assignments.filter(role=role, year=year, month=month).exists()
 
-    def has_perm(self, perm: str, obj: object = None) -> bool:
+    def has_perm(self, perm: str, obj: models.Model | None = None) -> bool:
         """Netvaerksgruppen (spelled `administrator`) gets every Django admin permission, for exactly
         as long as they hold the role. Derived per request rather than stored in `is_superuser`:
         role holding expires with the monthly period, and nothing fires on that rollover."""
