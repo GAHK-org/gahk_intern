@@ -16,7 +16,7 @@ nothing extra: `reconcile_month` already no-ops for any of them that aren't read
 import argparse
 from datetime import date
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from core.clock import current_date
@@ -66,14 +66,17 @@ class Command(BaseCommand):
         year_opt, month_opt = opts["year"], opts["month"]
         dry_run = bool(opts["dry_run"])
 
-        if year_opt is not None and month_opt is not None:
-            months = [(int(str(year_opt)), int(str(month_opt)))]
-        else:
-            months = _allocated_months_in_window()
+        if (year_opt is None) != (month_opt is None):
+            raise CommandError("--year kræver --month (og omvendt).")
+        single_month = (int(str(year_opt)), int(str(month_opt))) if year_opt is not None else None
 
         prefix = "[dry-run] " if dry_run else ""
         lines: list[str] = []
         with transaction.atomic():
+            # `_allocated_months_in_window()` calls `resolve_periode()` (get_or_create) -- kept inside
+            # this block so --dry-run's set_rollback(True) below also undoes any Periode row it might
+            # have created, matching the explicit --year/--month path's own resolve_periode() call.
+            months = [single_month] if single_month is not None else _allocated_months_in_window()
             for year, month in months:
                 result = reconcile_month(year, month)
                 seated_count = len(result.seated.weekend_assigned) + len(result.seated.weekday_assigned)

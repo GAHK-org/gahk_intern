@@ -2,7 +2,7 @@
 
 Lives here rather than inside seed_demo so the Danish copy sits with the feature (the same split
 opslagstavle.demo/events.demo made). Builds every P1 edge state a developer would otherwise have to
-construct by hand, plus (Amendment 1) the FCFS tiebreak, a three-month allocated look-ahead window
+construct by hand, plus (Amendment 1) the FCFS tiebreak, a two-month allocated look-ahead window
 and a locked preference, plus (Amendments 2 and 3, F3) a genuinely PROJECTED month reconciled against
 a real list arriving later -- a departure vacated and refilled, a no-preference arrival seated
 correctly, and a vacated weekday slot an ineligible arrival does not inherit:
@@ -18,9 +18,11 @@ correctly, and a vacated weekday slot an ineligible arrival does not inherit:
     `seed_koekken_balances` does;
   * (**Amendment 1, A1.3**) a **locked preference**: editing an already-declared preference for the
     period a resident is currently living in always redirects to the next period's row instead;
-  * (**Amendment 1, A1.2**) a **three-month allocated look-ahead window**, alongside the current
+  * (**Amendment 1, A1.2**) a **two-month allocated look-ahead window**, alongside the current
     month, so the effect of the batch + monthly roll-forward mechanism is visible without waiting a
-    quarter for cron to build it up;
+    quarter for cron to build it up (kept to one extra month rather than the batch's real three, so a
+    5-month semester periode still has room left for the FCFS-tiebreak and reconciliation scenarios
+    below);
   * (**Amendment 1, A1.1**) a **tie broken by `declared_at`**: two residents with an identical
     balance and a single contested weekend seat, seated in declaration order rather than by an
     arbitrary `pk`;
@@ -76,8 +78,12 @@ LAUNCH_BALANCES_HOURS = [6.0, 3.0, 0.0, -2.0, -4.0, -1.0]
 TIEBREAK_COUNT = 2
 
 # Amendment 1 -- how many extra months (beyond the current one) should form the demo's look-ahead
-# window, mirroring the design doc's "batch allocates the period's first three months" (A1.2).
-WINDOW_EXTRA_MONTHS = 2
+# window, mirroring the design doc's "batch allocates the period's first three months" (A1.2). Kept
+# at 1 rather than 2: a 5-month semester periode (EFTERAAR/FORAAR) only has 5 months total, and the
+# current month + shortfall month + this window + the reconciliation month + the FCFS-tiebreak month
+# need to fit in it without any of them starving another out of ever running (see `_demo_reconciliation`
+# and `_demo_fcfs_tiebreak` below).
+WINDOW_EXTRA_MONTHS = 1
 
 
 def _shrink_capacity(vagter: list[Vagt], target: int) -> None:
@@ -181,8 +187,9 @@ def _demo_reconciliation(
     residents: list[Resident], periode: Periode, year: int, month: int, rng: random.Random
 ) -> None:
     """Amendment 2 (A2.6) + Amendment 3 (A3.4), all in one month so it costs only a single spare
-    look-ahead slot (a 5-month semester periode has exactly one left after the current month,
-    shortfall month and 2-month window above -- the FCFS tiebreak below needs the rest).
+    look-ahead slot (a 5-month semester periode has exactly two left after the current month,
+    shortfall month and 1-month window above -- this takes one of them, the FCFS tiebreak below
+    takes the other).
 
     Shrinks (year, month)'s tier-A capacity to exactly match `residents` (mirroring
     `_force_shortfall`'s shrink pattern) so a plain allocation leaves nobody unassigned and nothing
@@ -339,9 +346,11 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
     if declarers:
         set_preference(declarers[0], False, at=today)
 
-    # Amendment 1, A1.2: a three-month allocated look-ahead window (the current month above, plus up
-    # to two more), so the effect of the batch + monthly-roll-forward mechanism is visible without
-    # waiting on cron. Best-effort: a short periode (SOMMER) may not have enough spare months left.
+    # Amendment 1, A1.2: a two-month allocated look-ahead window (the current month above, plus one
+    # more -- WINDOW_EXTRA_MONTHS, kept below the batch's real three so the reconciliation and
+    # FCFS-tiebreak scenarios below still have a month each), so the effect of the batch +
+    # monthly-roll-forward mechanism is visible without waiting on cron. Best-effort: a short periode
+    # (SOMMER) may not have enough spare months left.
     window_months = _next_unused_months(periode, used_months, WINDOW_EXTRA_MONTHS)
     for year, month in window_months:
         _ensure_residency(residents, year, month)

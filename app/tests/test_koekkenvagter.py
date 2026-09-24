@@ -916,6 +916,26 @@ def test_reconcile_koekkenvagter_command_default_sweep_reconciles_once_real_list
     assert VagtTildeling.objects.filter(resident=arrival, status=VagtTildeling.Status.TILDELT).count() == 1
 
 
+def test_reconcile_koekkenvagter_command_dry_run_sweep_creates_no_periode() -> None:
+    """F2's default sweep resolves the active periode via `_allocated_months_in_window()`'s own
+    `resolve_periode()` call (get_or_create) -- on an empty DB that alone creates a `Periode` row. It
+    must happen inside the same `--dry-run` transaction as the rest of the command (matching the
+    explicit --year/--month path, whose own resolve_periode() call already rolled back correctly), not
+    leak one out from underneath it."""
+    assert Periode.objects.count() == 0
+
+    call_command("reconcile_koekkenvagter", "--dry-run", verbosity=0)
+
+    assert Periode.objects.count() == 0
+
+
+def test_reconcile_koekkenvagter_command_year_without_month_raises() -> None:
+    """The command's own help text says --year "Kræver --month" -- confirm passing --year alone
+    actually raises instead of silently falling through to a full sweep."""
+    with pytest.raises(CommandError):
+        call_command("reconcile_koekkenvagter", "--year", "2046", verbosity=0)
+
+
 # ------------------------------------------------------- Amendment 2, A2.2: population projection
 
 

@@ -299,7 +299,7 @@ penalty at move-out. Relative standing between residents is preserved exactly; o
 
 # Amendment 1 — FCFS tiebreak, allocation look-ahead, preference locking
 
-**Raised 2026-09-22. Awaiting sign-off.** Two requirements, plus the consequences they force.
+**Raised 2026-09-22. Approved 2026-09-22.** Two requirements, plus the consequences they force.
 
 ## A1.1 First-come-first-served, as a tiebreaker only
 

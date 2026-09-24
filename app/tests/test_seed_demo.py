@@ -51,6 +51,41 @@ def test_seed_demo_populates_and_is_idempotent() -> None:
 
 
 @pytest.mark.django_db
+def test_seed_demo_koekken_reconciliation_and_fcfs_tiebreak_both_seed() -> None:
+    """koekken.demo.seed's Amendment 2/3 reconciliation scenario and Amendment 1 FCFS-tiebreak
+    scenario each need their own spare month inside the active periode (see `WINDOW_EXTRA_MONTHS`'s
+    comment in koekken/demo.py) -- a regression that lets one silently starve the other out of a month
+    (as `_demo_reconciliation` once did to `_demo_fcfs_tiebreak`) would otherwise pass every other
+    assertion in this file unnoticed, since none of them look at either scenario's data. Checks each
+    scenario's own signature: the reconciliation scenario's genuine-arrival residents, and the
+    tiebreak scenario's two Praeference rows declared a day apart starting at the periode's own
+    start_date."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from koekken.models import Praeference
+    from koekken.services import resolve_periode
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+
+    # _demo_reconciliation's signature: the genuine new-arrival residents it creates.
+    assert Resident.objects.filter(email="koekken.demo.ankomst@gahk.dk").exists()
+    assert Resident.objects.filter(email="koekken.demo.ankomst.hverdage.utilgaengelig@gahk.dk").exists()
+
+    # _demo_fcfs_tiebreak's signature: two weekday_unavailable Praeference rows for the active
+    # periode, declared_at exactly periode.start_date and periode.start_date + 1 day.
+    periode = resolve_periode(timezone.localdate())
+    early, late = periode.start_date, periode.start_date + timedelta(days=1)
+    declared_ats = set(
+        Praeference.objects.filter(
+            periode=periode, weekday_unavailable=True, declared_at__in=[early, late]
+        ).values_list("declared_at", flat=True)
+    )
+    assert declared_ats == {early, late}, "the FCFS-tiebreak demo scenario's signature data is missing"
+
+
+@pytest.mark.django_db
 def test_seed_demo_fills_the_board_including_the_two_awkward_cases() -> None:
     """The board needs demo content, but two specific rows are what make it useful locally: a pinned
     post (so the pinned-first layout and the 📌 marker are visible without anyone pinning something)
