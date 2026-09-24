@@ -158,8 +158,9 @@ CELERY_TASK_TIME_LIMIT = 900
 PHOTO_ALBUM_IMPORT_TOKEN = os.environ.get("PHOTO_ALBUM_IMPORT_TOKEN", "")
 PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL = os.environ.get("PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL", "system@gahk.dk")
 
-# Køkkenvagter's two scheduled jobs below (generate-koekkenvagter, post-koekken-obligation) are gated
-# by this flag rather than by `koekken.access.Gate`: that Gate reads `effective_roles(request)`, and
+# Køkkenvagter's scheduled jobs below (generate-koekkenvagter, roll-forward-koekkenvagter,
+# reconcile-koekkenvagter, post-koekken-obligation) are gated by this flag rather than by
+# `koekken.access.Gate`: that Gate reads `effective_roles(request)`, and
 # there is no request in a Celery task context, so the view-layer rollout gate can't be checked from
 # here. Default False (closed): P1 has no path that ever posts a KoekkenPost CREDIT (that's P2's
 # self-report UDFOERT flow) — so opening these jobs before P2 ships would silently accrue monthly
@@ -219,6 +220,20 @@ CELERY_BEAT_SCHEDULE = {
     "roll-forward-koekkenvagter": {
         "task": "koekken.tasks.roll_forward_koekkenvagter",
         "schedule": crontab(minute=15, hour=5, day_of_month=1),
+    },
+    # 05:45, thirty minutes after roll-forward-koekkenvagter above -- Amendment 2/3's reconciliation
+    # (A2.3/A3.1), which corrects the look-ahead window's projected population against the real
+    # Residency list once it plausibly exists. Runs early in the month like the rest of this chain
+    # (indstilling's own "next month" list is ordinarily published progressively over the PRECEDING
+    # month, not on this exact date, so by the time this runs there is usually something real to
+    # reconcile against; if not, reconcile_month simply no-ops for that month, same as
+    # roll-forward-koekkenvagter). Clear of both roll-forward-koekkenvagter (05:15) and
+    # post-koekken-obligation (06:20) per this file's stagger rule; no ordering dependency on
+    # post-koekken-obligation, which posts from the real list directly and is untouched by
+    # reconciliation.
+    "reconcile-koekkenvagter": {
+        "task": "koekken.tasks.reconcile_koekkenvagter",
+        "schedule": crontab(minute=45, hour=5, day_of_month=1),
     },
     # 06:20, ten minutes after email-oelkaelder-monthly-statements (also hour=6, day_of_month=1) and
     # a full two hours after generate-koekkenvagter above — which it depends on having already run,

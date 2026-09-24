@@ -45,7 +45,11 @@ class Command(BaseCommand):
             periode = resolve_periode(date(year, month, 1))
             months = []
             cursor = periode.start_date
-            for _ in range(3):
+            # Clamped to the periode's actual length (A2.8): a fixed 3-month walk steps past a
+            # 2-month SOMMER periode into the next EFTERAAR's September, which either has no Vagt
+            # rows yet or belongs to a periode whose preference deadline hasn't passed -- either way
+            # allocating it here would be wrong, not just early.
+            while cursor <= periode.end_date and len(months) < 3:
                 months.append((cursor.year, cursor.month))
                 cursor = date(cursor.year + (1 if cursor.month == 12 else 0), cursor.month % 12 + 1, 1)
         else:

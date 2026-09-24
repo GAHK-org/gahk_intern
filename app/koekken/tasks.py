@@ -44,3 +44,16 @@ def roll_forward_koekkenvagter() -> None:
         logger.info("koekken.tasks.roll_forward_koekkenvagter skipped: KOEKKEN_JOBS_ENABLED is False.")
         return
     call_command("roll_forward_koekkenvagter")
+
+
+@shared_task
+def reconcile_koekkenvagter() -> None:
+    """Reconcile tier-A assignments against the real Residency list, additive only (Amendment 2/3,
+    A2.3/A3.1) — no-ops while KOEKKEN_JOBS_ENABLED is False, the same gate as the other three. Like
+    roll_forward_koekkenvagter, this never writes a KoekkenPost ledger entry -- only VagtTildeling
+    rows -- so the gate is for consistency with the other koekken jobs while the feature is staged
+    closed, not a debt-accrual safety requirement."""
+    if not settings.KOEKKEN_JOBS_ENABLED:
+        logger.info("koekken.tasks.reconcile_koekkenvagter skipped: KOEKKEN_JOBS_ENABLED is False.")
+        return
+    call_command("reconcile_koekkenvagter")

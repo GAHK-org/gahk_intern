@@ -1,5 +1,7 @@
 """Køkkenvagter's decision layer — P1 (slots, tier-A allocation, ledger, obligation posting) plus
-Amendment 1 (FCFS tiebreak, allocation look-ahead, preference locking).
+Amendment 1 (FCFS tiebreak, allocation look-ahead, preference locking), Amendment 2 (where a
+three-months-out population comes from) and Amendment 3 (reconciliation eligibility, residents who
+arrive with no preference).
 
 There is no view layer yet (see the design doc's "Phasing"), so this module, not a views.py, is the
 primary interface: management commands are thin wrappers around the functions below, and so will the
@@ -17,6 +19,19 @@ refuses to silently re-shuffle a month that already has `TILDELT` rows unless `f
 `set_preference` resolves which `Periode`'s row a preference edit actually lands in, per the
 locking rule in A1.3. `post_obligation` and everything below "Ledger and obligation" in the design
 doc are explicitly untouched.
+
+**Amendments 2 and 3 in one paragraph:** the look-ahead window Amendment 1 allocates into has no
+real `Residency` list to draw on (nothing in this codebase ever creates one more than a month
+ahead), so `_resolve_population` projects one in memory -- the most recent published list at or
+before the target month, minus anyone whose `move_out_date` has already passed -- and is never
+written back (see A2.2; writing it would make køkken a silent co-owner of `Residency`). When the
+real list is later published, `reconcile_month` corrects the projection additively: assignments for
+anyone the projection got wrong are vacated and the freed slots, plus any genuine new arrival, are
+re-seated by the exact same eligibility rules `allocate_tier_a` uses -- both now call a shared
+`_seat_tier_a` core (A3.1 correcting A2.3's original pool-blind wording), so a weekday slot can
+never land on a resident who declared `weekday_unavailable=True` and a slot with no eligible
+candidate stays unfilled and queued rather than forced. Every assignment for a resident present on
+both the projection and the real list is left completely untouched.
 """
 
 import logging
@@ -26,10 +41,10 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 from django.db import transaction
-from django.db.models import F, Sum
+from django.db.models import F, Q, Sum
 
 from core.clock import current_date
-from residents.models import Resident
+from residents.models import Residency, Resident
 
 from .models import KoekkenPost, Periode, Praeference, Vagt, VagtRegel, VagtTildeling
 
@@ -58,6 +73,25 @@ class TierAResult:
     weekday_assigned: list[Resident] = field(default_factory=list)
     unassigned: list[Resident] = field(default_factory=list)
     refused_weekend: list[Resident] = field(default_factory=list)
+
+
+@dataclass
+class ReconciliationResult:
+    """What one `reconcile_month` run did -- Amendment 2 (A2.3), corrected by Amendment 3 (A3.1).
+
+    `vacated` are residents who held a `TILDELT` row that got deleted because they are no longer on
+    the real `Residency` list for this month. `seated` is the outcome of re-seating the resulting
+    unfilled capacity via the shared `_seat_tier_a` core, restricted to residents who did not already
+    hold a slot this month -- its `weekend_assigned`/`weekday_assigned` are who newly got a slot,
+    `unassigned` is who was eligible and available but still missed out (never forced, never handed a
+    slot they're ineligible for). `still_unfilled` is the A3.1 queue: `Vagt` rows that remain short of
+    headcount after reconciliation, because no eligible unseated candidate existed for them -- these
+    are what should surface to Køkkengruppen rather than being silently left short.
+    """
+
+    vacated: list[Resident] = field(default_factory=list)
+    seated: TierAResult = field(default_factory=TierAResult)
+    still_unfilled: list[Vagt] = field(default_factory=list)
 
 
 def _periode_bounds(for_date: date) -> tuple[str, int, date, date]:
@@ -184,6 +218,51 @@ def _tier_a_sort_key(
     return (balances[resident.pk], declared_at_by_id.get(resident.pk, date.max), resident.pk)
 
 
+def _resolve_population(year: int, month: int) -> list[Resident]:
+    """Who tier-A allocation considers eligible for (year, month) -- Amendment 2, A2.2's population
+    resolver. A real `Residency` list for that month wins whenever one exists (indstilling's actual
+    published roster is always authoritative over a guess). Otherwise this **projects** one in
+    memory: the most recent published `Residency` list at or before the target month, minus anyone
+    whose `Resident.move_out_date` falls before the month begins.
+
+    **Never written.** This is the whole point of A2.2 -- `Residency` is indstilling's table, read by
+    roles, the alumneliste, the kvotient lottery and the stamtræ, and a kitchen feature writing rows
+    into it would make it a silent co-owner of the roster every other feature trusts. Do not persist
+    this, even via something that looks like the existing `rooms.views_soegvaerelse.
+    _carry_roster_forward` roster-carry helper -- calling that (or anything like it) from here was
+    explicitly rejected in the design doc for exactly this reason.
+
+    Returns `[]` when no population can be resolved at all -- no real list for the month AND no
+    published list to project from ever existed. That is a genuine impossibility (this codebase
+    always has at least one published `Residency` list once the house has residents), not a normal
+    case: `allocate_tier_a` still raises on it like any other empty-population run, and it is
+    `roll_forward_allocation`'s job specifically (per its own docstring) to catch that and no-op
+    rather than let a scheduled task die on it.
+    """
+    real = list(
+        Resident.objects.filter(residencies__year=year, residencies__month=month).distinct().order_by("pk")
+    )
+    if real:
+        return real
+
+    latest = (
+        Residency.objects.filter(Q(year__lt=year) | Q(year=year, month__lte=month))
+        .order_by("-year", "-month")
+        .values("year", "month")
+        .first()
+    )
+    if not latest:
+        return []
+
+    month_start = date(year, month, 1)
+    return list(
+        Resident.objects.filter(residencies__year=latest["year"], residencies__month=latest["month"])
+        .exclude(move_out_date__isnull=False, move_out_date__lt=month_start)
+        .distinct()
+        .order_by("pk")
+    )
+
+
 def _effective_weekday_unavailable_ids(resident_ids: list[int], periode: Periode) -> set[int]:
     """Which of `resident_ids` are effectively weekday-unavailable in `periode` — Amendment 1's
     missed-deadline fallback (A1.3): a resident with no `Praeference` row yet for `periode` reads as
@@ -207,11 +286,102 @@ def _effective_weekday_unavailable_ids(resident_ids: list[int], periode: Periode
     return {rid for rid in resident_ids if current.get(rid, fallback.get(rid, False))}
 
 
+def _seat_tier_a(
+    weekend_vagter: list[Vagt],
+    weekday_vagter: list[Vagt],
+    population: list[Resident],
+    periode: Periode,
+    balances: dict[int, int],
+    declared_at_by_id: dict[int, date],
+    surviving_by_vagt: dict[int, int] | None = None,
+    *,
+    log_label: str = "",
+) -> TierAResult:
+    """The seating core shared by `allocate_tier_a` and `reconcile_month` -- Amendment 3, A3.1's fix
+    to Amendment 2's originally pool-blind reconciliation rule. Declarers (per
+    `_effective_weekday_unavailable_ids`) go to the weekend pool first, ranked by `_tier_a_sort_key`;
+    declarers beyond weekend capacity are refused rather than forced onto a weekday slot they said
+    they can't do (design doc finding 2). Remaining weekend capacity is drafted from the rest of
+    `population`, same ranking (the weekend pool is mandatory overflow, not opt-in). Weekday slots are
+    filled last, same ranking, from whoever is left -- so a weekday slot can never land on a
+    weekday-unavailable resident, whether the caller is a fresh month-wide allocation or a
+    reconciliation run re-seating only leftover capacity.
+
+    Pure seating logic plus the actual `VagtTildeling` writes (via `_fill_slots`) -- it has no opinion
+    on *which* slots or *which* residents are in play. `allocate_tier_a` passes the whole month's
+    slots and full population; `reconcile_month` passes the same vagter but with `surviving_by_vagt`
+    reflecting who already holds a row (so only the leftover capacity is actually open) and
+    `population` restricted to residents who do not already hold one (A3.1: reconciliation never
+    hands out a second shift while an eligible unassigned resident exists). Extracting this was the
+    point of A3.1 -- two hand-written copies of this ranking would drift, and the direction they
+    would drift in is exactly the pool-blind bug A3.1 exists to fix.
+    """
+    surviving_by_vagt = surviving_by_vagt or {}
+    weekend_capacity = sum(max(v.headcount - surviving_by_vagt.get(v.pk, 0), 0) for v in weekend_vagter)
+    weekday_capacity = sum(max(v.headcount - surviving_by_vagt.get(v.pk, 0), 0) for v in weekday_vagter)
+
+    declared_ids = _effective_weekday_unavailable_ids([r.pk for r in population], periode)
+    declarers = sorted(
+        (r for r in population if r.pk in declared_ids),
+        key=lambda r: _tier_a_sort_key(r, balances, declared_at_by_id),
+    )
+
+    accepted_declarers = declarers[:weekend_capacity]
+    refused_declarers = declarers[weekend_capacity:]
+    refused_ids = {r.pk for r in refused_declarers}
+    if refused_declarers:
+        logger.warning(
+            "%d beboer(e) meldte sig hverdage-utilgængelige ud over weekend-puljens kapacitet "
+            "på %d for %s og fik ingen tier-A-vagt denne måned: %s",
+            len(refused_declarers),
+            weekend_capacity,
+            log_label or periode,
+            ", ".join(r.full_name for r in refused_declarers),
+        )
+
+    weekend_assigned = list(accepted_declarers)
+    remaining_pop = [r for r in population if r.pk not in declared_ids]
+    drafted: list[Resident] = []
+    needed = weekend_capacity - len(weekend_assigned)
+    if needed > 0:
+        remaining_by_balance = sorted(
+            remaining_pop, key=lambda r: _tier_a_sort_key(r, balances, declared_at_by_id)
+        )
+        drafted = remaining_by_balance[:needed]
+        weekend_assigned += drafted
+
+    assigned_ids = {r.pk for r in weekend_assigned}
+    # Refused declarers never enter the weekday pool: they said they can't do weekdays, and forcing
+    # one on them would contradict the declaration rather than merely miss the floor.
+    weekday_pool = sorted(
+        (r for r in population if r.pk not in assigned_ids and r.pk not in refused_ids),
+        key=lambda r: _tier_a_sort_key(r, balances, declared_at_by_id),
+    )
+
+    _fill_slots(weekend_vagter, weekend_assigned, surviving_by_vagt)
+    _fill_slots(weekday_vagter, weekday_pool, surviving_by_vagt)
+
+    weekday_assigned = weekday_pool[:weekday_capacity]
+    assigned_all_ids = assigned_ids | {r.pk for r in weekday_assigned}
+    unassigned = [r for r in population if r.pk not in assigned_all_ids]
+
+    return TierAResult(
+        weekend_assigned=weekend_assigned,
+        drafted=drafted,
+        weekday_assigned=weekday_assigned,
+        unassigned=unassigned,
+        refused_weekend=refused_declarers,
+    )
+
+
 def allocate_tier_a(year: int, month: int, *, force: bool = False) -> TierAResult:
     """Tier-A (morgen + frokost) allocation for one calendar month — design doc "Allocation", step 1,
-    as amended by Amendment 1 (A1.1 FCFS tiebreak, A1.2 look-ahead).
+    as amended by Amendment 1 (A1.1 FCFS tiebreak, A1.2 look-ahead) and Amendment 2 (A2.2 population
+    projection).
 
-    Population is every resident on that month's `Residency` list. Weekday-unavailable declarers
+    Population is every resident on that month's `Residency` list, or -- when none exists yet, which
+    is the normal case for a look-ahead month -- the in-memory projection `_resolve_population`
+    computes per Amendment 2 (A2.2). Weekday-unavailable declarers
     (scoped to the `Periode` this month falls in — see `Praeference`, and note that a resident with
     no row for that periode reads as if they carried forward their previous periode's value, per
     `_effective_weekday_unavailable_ids`) are seated into the weekend pool first, ranked by
@@ -274,11 +444,12 @@ def allocate_tier_a(year: int, month: int, *, force: bool = False) -> TierAResul
     weekend_vagter = [v for v in vagter if v.date.weekday() >= 5]
     weekday_vagter = [v for v in vagter if v.date.weekday() < 5]
 
-    population_all = list(
-        Resident.objects.filter(residencies__year=year, residencies__month=month).distinct().order_by("pk")
-    )
+    population_all = _resolve_population(year, month)
     if not population_all:
-        raise KoekkenAllocationError(f"Ingen beboere på alumnelisten for {year}-{month:02d}.")
+        raise KoekkenAllocationError(
+            f"Ingen beboere kunne findes for {year}-{month:02d} -- hverken en direkte alumneliste "
+            "eller en tidligere offentliggjort liste at projicere ud fra (Amendment 2, A2.2)."
+        )
 
     declared_at_by_id = dict(
         Praeference.objects.filter(
@@ -306,62 +477,123 @@ def allocate_tier_a(year: int, month: int, *, force: bool = False) -> TierAResul
         # raw" note.
         balances = bulk_projected_balances(population_all)
 
-        weekend_capacity = sum(max(v.headcount - surviving_by_vagt.get(v.pk, 0), 0) for v in weekend_vagter)
-        weekday_capacity = sum(max(v.headcount - surviving_by_vagt.get(v.pk, 0), 0) for v in weekday_vagter)
-
-        declared_ids = _effective_weekday_unavailable_ids([r.pk for r in population], periode)
-        declarers = sorted(
-            (r for r in population if r.pk in declared_ids),
-            key=lambda r: _tier_a_sort_key(r, balances, declared_at_by_id),
+        return _seat_tier_a(
+            weekend_vagter,
+            weekday_vagter,
+            population,
+            periode,
+            balances,
+            declared_at_by_id,
+            surviving_by_vagt,
+            log_label=f"{year}-{month:02d}",
         )
 
-        accepted_declarers = declarers[:weekend_capacity]
-        refused_declarers = declarers[weekend_capacity:]
-        refused_ids = {r.pk for r in refused_declarers}
-        if refused_declarers:
-            logger.warning(
-                "%d beboer(e) meldte sig hverdage-utilgængelige ud over weekend-puljens kapacitet "
-                "på %d for %s-%02d og fik ingen tier-A-vagt denne måned: %s",
-                len(refused_declarers),
-                weekend_capacity,
-                year,
-                month,
-                ", ".join(r.full_name for r in refused_declarers),
-            )
 
-        weekend_assigned = list(accepted_declarers)
-        remaining_pop = [r for r in population if r.pk not in declared_ids]
-        drafted: list[Resident] = []
-        needed = weekend_capacity - len(weekend_assigned)
-        if needed > 0:
-            remaining_by_balance = sorted(
-                remaining_pop, key=lambda r: _tier_a_sort_key(r, balances, declared_at_by_id)
-            )
-            drafted = remaining_by_balance[:needed]
-            weekend_assigned += drafted
+def reconcile_month(year: int, month: int) -> ReconciliationResult:
+    """Correct one calendar month's tier-A assignments against the now-real `Residency` list --
+    Amendment 2 (A2.3), corrected by Amendment 3 (A3.1). Additive only, and the counterpart to
+    `allocate_tier_a`'s `force=True`: that is a deliberate Køkkengruppen re-shuffle that may move
+    anyone, this never touches an assignment for a resident present on both the projection that was
+    used and the real list now.
 
-        assigned_ids = {r.pk for r in weekend_assigned}
-        # Refused declarers never enter the weekday pool: they said they can't do weekdays, and
-        # forcing one on them would contradict the declaration rather than merely miss the floor.
-        weekday_pool = sorted(
-            (r for r in population if r.pk not in assigned_ids and r.pk not in refused_ids),
-            key=lambda r: _tier_a_sort_key(r, balances, declared_at_by_id),
+    A no-op (`ReconciliationResult()`) when this month has no `Vagt` rows yet, or has never been
+    allocated (no `TILDELT`/other `VagtTildeling` rows at all) -- there is nothing to reconcile
+    against, and per the same discipline as `roll_forward_allocation` this must log and return rather
+    than raise, since it may run in a scheduled task before a month has reached that point.
+
+    **Vacate:** every current holder of a `TILDELT` row this month who is *not* on the real
+    `Residency` list has that row deleted -- they were only ever a projection, or they have since
+    left, either way they are not here. Rows already moved past `TILDELT` (self-reported/flagged, P2)
+    are never touched, matching `allocate_tier_a`'s own survivor rule.
+
+    **Re-seat:** the resulting open capacity (vacated slots, plus any slot that was never filled) is
+    re-seated by the shared `_seat_tier_a` core -- the SAME eligibility rules `allocate_tier_a` uses,
+    never a hand-rolled substitute (A3.1's explicit point: two copies of this ranking would drift, and
+    the direction is exactly "a weekday slot mechanically inherited by whoever happens to be new",
+    which is the bug A3.1 exists to fix). The candidate population is every real-list resident who
+    does **not** already hold a row this month, in any status -- so reconciliation can never hand out
+    a second slot to someone who already has one while an eligible unassigned resident exists, and a
+    genuine new arrival competes on the exact same ranking as an existing resident who simply missed
+    the floor the first time (no inheritance, no favouritism for "new"). A vacated weekend slot may go
+    to anyone; a vacated weekday slot only to a weekday-available resident (declared or defaulted, per
+    A3.2) -- if nobody eligible is unassigned, the slot stays open and is reported in
+    `still_unfilled` rather than forced.
+
+    Idempotent: when the real list already matches who holds a slot, nothing is vacated and there is
+    no open capacity to re-seat, so a repeat run writes nothing.
+    """
+    periode = resolve_periode(date(year, month, 1))
+    tier_a_kinds = [VagtRegel.Kind.MORGEN, VagtRegel.Kind.FROKOST]
+    vagter = list(
+        Vagt.objects.filter(date__year=year, date__month=month, kind__in=tier_a_kinds).order_by(
+            "date", "kind"
         )
-
-        _fill_slots(weekend_vagter, weekend_assigned, surviving_by_vagt)
-        _fill_slots(weekday_vagter, weekday_pool, surviving_by_vagt)
-
-        weekday_assigned = weekday_pool[:weekday_capacity]
-        assigned_all_ids = assigned_ids | {r.pk for r in weekday_assigned}
-        unassigned = [r for r in population if r.pk not in assigned_all_ids]
-
-    return TierAResult(
-        weekend_assigned=weekend_assigned,
-        drafted=drafted,
-        weekday_assigned=weekday_assigned,
-        unassigned=unassigned,
-        refused_weekend=refused_declarers,
     )
+    if not vagter:
+        logger.info(
+            "koekken.reconcile_month: ingen vagter for %s-%02d endnu -- intet at afstemme.", year, month
+        )
+        return ReconciliationResult()
+
+    existing = list(VagtTildeling.objects.filter(vagt__in=vagter).select_related("resident"))
+    if not existing:
+        logger.info(
+            "koekken.reconcile_month: %s-%02d er ikke allokeret endnu -- intet at afstemme.", year, month
+        )
+        return ReconciliationResult()
+
+    weekend_vagter = [v for v in vagter if v.date.weekday() >= 5]
+    weekday_vagter = [v for v in vagter if v.date.weekday() < 5]
+
+    real_population = list(
+        Resident.objects.filter(residencies__year=year, residencies__month=month).distinct().order_by("pk")
+    )
+    real_ids = {r.pk for r in real_population}
+
+    with transaction.atomic():
+        vacated: list[Resident] = []
+        for row in existing:
+            if row.status == VagtTildeling.Status.TILDELT and row.resident_id not in real_ids:
+                vacated.append(row.resident)
+                row.delete()
+
+        # Re-read occupancy after vacating -- every status counts towards "already has a slot this
+        # month" (mirrors allocate_tier_a's survivor handling), so a resident who already holds a row
+        # is never a candidate for a second one (A3.1).
+        surviving_by_vagt: dict[int, int] = defaultdict(int)
+        holder_ids: set[int] = set()
+        for vagt_id, resident_id in VagtTildeling.objects.filter(vagt__in=vagter).values_list(
+            "vagt_id", "resident_id"
+        ):
+            surviving_by_vagt[vagt_id] += 1
+            holder_ids.add(resident_id)
+
+        candidates = [r for r in real_population if r.pk not in holder_ids]
+
+        balances = bulk_projected_balances(candidates)
+        declared_at_by_id = dict(
+            Praeference.objects.filter(
+                periode=periode, resident_id__in=[r.pk for r in candidates]
+            ).values_list("resident_id", "declared_at")
+        )
+
+        seated = _seat_tier_a(
+            weekend_vagter,
+            weekday_vagter,
+            candidates,
+            periode,
+            balances,
+            declared_at_by_id,
+            surviving_by_vagt,
+            log_label=f"{year}-{month:02d} (afstemning)",
+        )
+
+        occupied_after: dict[int, int] = defaultdict(int)
+        for vagt_id in VagtTildeling.objects.filter(vagt__in=vagter).values_list("vagt_id", flat=True):
+            occupied_after[vagt_id] += 1
+        still_unfilled = [v for v in vagter if occupied_after.get(v.pk, 0) < v.headcount]
+
+    return ReconciliationResult(vacated=vacated, seated=seated, still_unfilled=still_unfilled)
 
 
 def roll_forward_allocation(today: date | None = None) -> TierAResult | None:
@@ -380,6 +612,12 @@ def roll_forward_allocation(today: date | None = None) -> TierAResult | None:
     allocated, or if the periode has no `Vagt` rows at all yet. Either way there is nothing this job
     can safely do, and it must not raise: a scheduled task failing loudly every month after a periode
     is fully allocated (or before it has been generated) would be its own kind of noise.
+
+    **Amendment 2, A2.2:** also a no-op, logged rather than raised, when `allocate_tier_a` cannot
+    resolve a population at all for the next month -- no real `Residency` list and no earlier
+    published list to project from. That is the genuine-impossibility case A2.2 describes (it can
+    only happen before the house has ever had a published alumneliste); this is the specific place
+    the design doc requires it be caught rather than left to kill a scheduled task.
     """
     today = today or current_date()
     periode = resolve_periode(today)
@@ -395,7 +633,17 @@ def roll_forward_allocation(today: date | None = None) -> TierAResult | None:
                 vagt__in=vagter, status=VagtTildeling.Status.TILDELT
             ).exists()
             if not already_allocated:
-                return allocate_tier_a(year, month)
+                try:
+                    return allocate_tier_a(year, month)
+                except KoekkenAllocationError as exc:
+                    logger.warning(
+                        "koekken.roll_forward_allocation: kunne ikke allokere %s-%02d (%s) -- logger "
+                        "og springer over i stedet for at fejle (Amendment 2, A2.2).",
+                        year,
+                        month,
+                        exc,
+                    )
+                    return None
         month_cursor = date(year + (1 if month == 12 else 0), month % 12 + 1, 1)
     return None
 

@@ -13,6 +13,7 @@ the management-command dry-run tests, which use a real month.
 
 import calendar
 import json
+import logging
 from collections.abc import Callable
 from datetime import date, timedelta
 from pathlib import Path
@@ -35,6 +36,7 @@ from koekken.services import (
     periode_deadline,
     post_obligation,
     rebase_to_zero_mean,
+    reconcile_month,
     resolve_periode,
     roll_forward_allocation,
     set_preference,
@@ -582,6 +584,28 @@ def test_allocate_koekkenvagter_batch_allocates_periodes_first_three_months(make
     assert not VagtTildeling.objects.filter(vagt__date__year=2032, vagt__date__month=12).exists()
 
 
+def test_allocate_koekkenvagter_batch_clamps_to_periode_length_for_sommer(make_resident: Callable) -> None:
+    """A2.8: --batch must clamp to the periode's actual length. SOMMER is only 2 months (Jul-Aug), so
+    a fixed 3-month walk from its start would step into the following EFTERAAR's September -- which
+    has no Vagt rows generated yet (this command would raise KoekkenAllocationError on it) and, even
+    if it did, would be allocating a month before ITS OWN periode's preference deadline has passed,
+    inverting Amendment 1's locking rule. The fix clamps the walk to `periode.end_date`."""
+    periode = resolve_periode(date(2033, 7, 15))  # SOMMER 2033 (Jul-Aug only)
+    generate_vagter(periode)
+    residents = [make_resident(email=f"sommerbatch{i}@gahk.dk") for i in range(3)]
+    for r in residents:
+        for month in (7, 8):
+            _place(r, 2033, month)
+
+    call_command("allocate_koekkenvagter", "2033", "7", "--batch", verbosity=0)  # must not raise
+
+    for month in (7, 8):
+        assert VagtTildeling.objects.filter(
+            vagt__date__year=2033, vagt__date__month=month, status=VagtTildeling.Status.TILDELT
+        ).exists()
+    assert not VagtTildeling.objects.filter(vagt__date__year=2033, vagt__date__month=9).exists()
+
+
 def test_roll_forward_koekkenvagter_command_dry_run_writes_nothing(make_resident: Callable) -> None:
     """Only THIS month gets hand-built Vagt rows (unlike a real generate_vagter, which would create
     the whole periode's slots and so give roll_forward_allocation earlier, population-less months to
@@ -717,6 +741,12 @@ def test_missing_preference_row_falls_back_to_previous_periode_value(make_reside
     result = allocate_tier_a(year, 7)  # must not raise, and must route r to the weekend pool
 
     assert result.weekend_assigned == [r]
+    # A2.8: r is the ONLY resident this month, so the mandatory weekend draft would have seated them
+    # anyway even with the fallback completely disabled -- that made the assertion above pass for the
+    # wrong reason. `drafted == []` is the discriminating assertion: it proves r arrived via the
+    # DECLARER path (the fallback correctly read SOMMER's carried-forward weekday_unavailable=True),
+    # not via the draft, which is what would happen if the fallback silently defaulted to available.
+    assert result.drafted == []
     assert Praeference.objects.filter(periode=sommer, resident=r).count() == 0  # no physical row copy
 
 
@@ -818,3 +848,398 @@ def test_post_koekken_obligation_dry_run_writes_nothing(make_resident: Callable)
     )
 
     assert KoekkenPost.objects.filter(kind=KoekkenPost.Kind.FORPLIGTELSE).count() == 0
+
+
+def test_reconcile_koekkenvagter_command_dry_run_writes_nothing(make_resident: Callable) -> None:
+    year, month = 2039, 4
+    departing = make_resident(email="cmd_dryrecon_dep@gahk.dk")
+    _place(departing, year, month - 1)
+    _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
+    allocate_tier_a(year, month)
+    before = set(VagtTildeling.objects.values_list("pk", flat=True))
+
+    call_command(
+        "reconcile_koekkenvagter", "--year", str(year), "--month", str(month), "--dry-run", verbosity=0
+    )
+
+    assert set(VagtTildeling.objects.values_list("pk", flat=True)) == before
+
+
+def test_reconcile_koekkenvagter_command_runs_reconciliation(make_resident: Callable) -> None:
+    year, month = 2039, 5
+    departing = make_resident(email="cmd_recon_dep@gahk.dk")
+    _place(departing, year, month - 1)
+    _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
+    allocate_tier_a(year, month)
+    assert VagtTildeling.objects.filter(resident=departing).count() == 1
+
+    arrival = make_resident(email="cmd_recon_arrival@gahk.dk")
+    _place(arrival, year, month)
+
+    call_command("reconcile_koekkenvagter", "--year", str(year), "--month", str(month), verbosity=0)
+
+    assert VagtTildeling.objects.filter(resident=departing).count() == 0
+    assert VagtTildeling.objects.filter(resident=arrival, status=VagtTildeling.Status.TILDELT).count() == 1
+
+
+# ------------------------------------------------------- Amendment 2, A2.2: population projection
+
+
+def test_population_projected_from_latest_published_list_excludes_moved_out(make_resident: Callable) -> None:
+    """A2.7: allocating a month with no Residency rows at all falls back to the most recent published
+    list, minus anyone whose move_out_date falls before that month begins."""
+    year = 2040
+    stayed = make_resident(email="proj_stayed@gahk.dk")
+    left = make_resident(email="proj_left@gahk.dk", move_out_date=date(year, 5, 15))
+    _place(stayed, year, 4)  # the "latest published list" -- April, not June
+    _place(left, year, 4)
+
+    _build_month(year, 6, weekday_capacity=2, weekend_capacity=0)
+
+    result = allocate_tier_a(year, 6)  # no Residency rows at all for June -- must project April's list
+
+    assert stayed in result.weekday_assigned
+    assert left not in result.weekday_assigned
+    assert left not in result.unassigned  # excluded from the projection entirely, not merely unseated
+    assert set(result.weekday_assigned) | set(result.unassigned) == {stayed}
+
+
+def test_no_published_residency_list_rollforward_logs_and_returns_none(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A2.7: with no Residency rows anywhere -- real or to project from -- roll_forward_allocation
+    must log and return None rather than let allocate_tier_a's KoekkenAllocationError propagate out of
+    a scheduled task (A2.2's genuine-impossibility case)."""
+    year, month = 2041, 3
+    _build_month(year, month, weekday_capacity=1, weekend_capacity=0)  # Vagt rows exist; no Residency ever
+
+    with caplog.at_level(logging.WARNING, logger="koekken.services"):
+        result = roll_forward_allocation(date(year, month, 10))
+
+    assert result is None
+    assert VagtTildeling.objects.count() == 0
+    assert any("kunne ikke allokere" in record.getMessage() for record in caplog.records)
+
+
+# ------------------------------------------------------------- Amendment 2/3: reconciliation (A2.3/A3.1)
+
+
+def test_reconciliation_vacates_departed_and_refills_via_shared_seating(make_resident: Callable) -> None:
+    """A2.7: reconciliation vacates a projected resident absent from the real list and refills the
+    slot via the shared eligibility-aware seating logic."""
+    year, month = 2042, 5
+    departing = make_resident(email="recon_dep@gahk.dk")
+    backup = make_resident(email="recon_backup@gahk.dk")
+    _place(departing, year, 4)  # projection source month
+    _place(backup, year, 4)
+    periode = _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
+    _adjust(departing, periode, -1000)  # most behind -> wins the sole slot at the projected run
+
+    allocate_tier_a(year, month)  # projected population = {departing, backup}; departing wins
+    assert VagtTildeling.objects.filter(resident=departing, status=VagtTildeling.Status.TILDELT).count() == 1
+    assert not VagtTildeling.objects.filter(resident=backup).exists()
+
+    _place(backup, year, month)  # the real list is published: backup only, not departing
+
+    result = reconcile_month(year, month)
+
+    assert departing in result.vacated
+    assert VagtTildeling.objects.filter(resident=departing).count() == 0
+    assert backup in result.seated.weekday_assigned
+    assert VagtTildeling.objects.filter(resident=backup, status=VagtTildeling.Status.TILDELT).count() == 1
+    assert result.still_unfilled == []
+
+
+def test_reconciliation_seats_genuine_new_arrival_into_unfilled_slot(make_resident: Callable) -> None:
+    """A2.7: reconciliation seats a genuine new arrival (never in the projection) into an unfilled
+    slot freed by a departure."""
+    year, month = 2042, 6
+    departing = make_resident(email="recon_dep2@gahk.dk")
+    _place(departing, year, 5)  # projection source month only
+    _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
+
+    allocate_tier_a(year, month)  # projected population = {departing}; seated
+    assert VagtTildeling.objects.filter(resident=departing).count() == 1
+
+    arrival = make_resident(email="recon_arrival@gahk.dk")
+    _place(arrival, year, month)  # real list: arrival only -- departing was never published here
+
+    result = reconcile_month(year, month)
+
+    assert departing in result.vacated
+    assert arrival in result.seated.weekday_assigned
+    assert VagtTildeling.objects.filter(resident=arrival, status=VagtTildeling.Status.TILDELT).count() == 1
+
+
+def test_reconciliation_never_touches_resident_present_on_both_lists(make_resident: Callable) -> None:
+    """A2.7: the single most important guarantee -- a resident present on both the projection and the
+    real list is never moved, touched or re-derived by reconciliation."""
+    year, month = 2042, 7
+    stays = make_resident(email="recon_stays@gahk.dk")
+    _place(stays, year, month)  # real from the start -- no projection involved
+    _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
+    allocate_tier_a(year, month)
+    original = VagtTildeling.objects.get(resident=stays)
+    original_pk, original_vagt_id, original_created_at = original.pk, original.vagt_id, original.created_at
+
+    result = reconcile_month(year, month)
+
+    assert result.vacated == []
+    refreshed = VagtTildeling.objects.get(pk=original_pk)
+    assert refreshed.vagt_id == original_vagt_id
+    assert refreshed.created_at == original_created_at
+    assert VagtTildeling.objects.filter(resident=stays).count() == 1
+
+
+def test_reconciliation_idempotent_when_projection_and_reality_agree(make_resident: Callable) -> None:
+    """A2.7: when the real list already matches who holds a slot, reconciliation is a true no-op --
+    including on a second consecutive run."""
+    year, month = 2042, 8
+    a = make_resident(email="recon_idem_a@gahk.dk")
+    b = make_resident(email="recon_idem_b@gahk.dk")
+    for r in (a, b):
+        _place(r, year, month)
+    _build_month(year, month, weekday_capacity=2, weekend_capacity=0)
+    allocate_tier_a(year, month)
+    before = set(VagtTildeling.objects.values_list("pk", flat=True))
+
+    first = reconcile_month(year, month)
+    after_first = set(VagtTildeling.objects.values_list("pk", flat=True))
+    second = reconcile_month(year, month)
+    after_second = set(VagtTildeling.objects.values_list("pk", flat=True))
+
+    assert first.vacated == [] and first.still_unfilled == []
+    assert after_first == before
+    assert second.vacated == [] and second.still_unfilled == []
+    assert after_second == before
+
+
+def test_koekken_never_creates_residency_rows(make_resident: Callable) -> None:
+    """A2.7: no køkken code path -- projected allocation or reconciliation -- ever writes a
+    Residency row. The projection in A2.2 is explicitly in-memory only."""
+    year, month = 2043, 3
+    r = make_resident(email="noresidency@gahk.dk")
+    _place(r, year, 2)  # earlier month only -- the projection source
+    _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
+    before = Residency.objects.count()
+
+    allocate_tier_a(year, month)  # uses the in-memory projection
+    reconcile_month(year, month)  # the real list for this month is still empty -- may vacate r, fine
+
+    assert Residency.objects.count() == before
+
+
+# ---------------------------------------------------- Amendment 3, A3.1: reconciliation eligibility
+
+
+def test_vacated_weekday_slot_not_inherited_by_ineligible_arrival(make_resident: Callable) -> None:
+    """A3.5's adversarial case, and the exact defect A3.1 exists to fix: a resident who declared
+    weekday_unavailable=True must NEVER be seated into a vacated weekday slot, even when it is the
+    only unfilled slot in the month."""
+    year, month = 2044, 4
+    periode = _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
+
+    departing = make_resident(email="adv_dep@gahk.dk")
+    _place(departing, year, 3)  # projection source only
+    allocate_tier_a(year, month)  # departing seated into the sole weekday slot
+    assert VagtTildeling.objects.filter(resident=departing).count() == 1
+
+    arrival = make_resident(email="adv_arrival@gahk.dk")
+    _place(arrival, year, month)  # real list: arrival only
+    Praeference.objects.create(resident=arrival, periode=periode, weekday_unavailable=True)
+
+    result = reconcile_month(year, month)
+
+    assert departing in result.vacated
+    assert arrival not in result.seated.weekday_assigned
+    assert arrival in result.seated.unassigned  # refused, not forced
+    assert arrival in result.seated.refused_weekend
+    assert VagtTildeling.objects.filter(resident=arrival).count() == 0
+    weekday_vagt = Vagt.objects.get(
+        periode=periode, date__year=year, date__month=month, kind=VagtRegel.Kind.MORGEN
+    )
+    assert weekday_vagt in result.still_unfilled
+
+
+def test_vacated_weekday_slot_with_no_eligible_candidate_stays_unfilled_and_queued(
+    make_resident: Callable,
+) -> None:
+    """A3.5: a vacated weekday slot with no eligible unassigned candidate at all stays open and is
+    surfaced in `still_unfilled` -- reconciliation's queue for Køkkengruppen -- rather than silently
+    vanishing or being forced on someone."""
+    year, month = 2044, 5
+    periode = _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
+
+    departing = make_resident(email="queue_dep@gahk.dk")
+    _place(departing, year, 4)  # projection source only
+    allocate_tier_a(year, month)
+    assert VagtTildeling.objects.filter(resident=departing).count() == 1
+
+    # No real Residency at all for the target month -- departing is gone, nobody replaces them.
+    result = reconcile_month(year, month)
+
+    assert departing in result.vacated
+    assert result.seated.weekday_assigned == []
+    assert result.seated.unassigned == []  # no candidates at all -- nobody even to refuse
+    weekday_vagt = Vagt.objects.get(
+        periode=periode, date__year=year, date__month=month, kind=VagtRegel.Kind.MORGEN
+    )
+    assert result.still_unfilled == [weekday_vagt]
+    assert VagtTildeling.objects.filter(vagt=weekday_vagt).count() == 0
+
+
+def test_vacated_weekend_slot_can_be_filled_by_either_kind_of_resident(make_resident: Callable) -> None:
+    """A3.5: unlike a weekday slot, a vacated WEEKEND slot may go to a weekday-unavailable resident
+    too -- the eligibility constraint runs one way only (design doc finding 2 / A3.1's table)."""
+    year, month = 2044, 6
+    periode = _build_month(year, month, weekday_capacity=0, weekend_capacity=1)
+
+    departing = make_resident(email="wknd_dep@gahk.dk")
+    _place(departing, year, 5)  # projection source only
+    allocate_tier_a(year, month)
+    assert VagtTildeling.objects.filter(resident=departing).count() == 1
+
+    candidate = make_resident(email="wknd_candidate@gahk.dk")
+    _place(candidate, year, month)  # real list: candidate only
+    Praeference.objects.create(resident=candidate, periode=periode, weekday_unavailable=True)
+
+    result = reconcile_month(year, month)
+
+    assert departing in result.vacated
+    assert candidate in result.seated.weekend_assigned
+    assert VagtTildeling.objects.filter(resident=candidate, status=VagtTildeling.Status.TILDELT).count() == 1
+    assert result.still_unfilled == []
+
+
+def test_reconciliation_no_inheritance_existing_unassigned_resident_beats_new_arrival(
+    make_resident: Callable,
+) -> None:
+    """A3.5: a departing resident's slot may go to an EXISTING resident who is further behind on
+    balance, not automatically to the new arrival who happens to show up in their place -- "no
+    inheritance", per A3.1."""
+    year, month = 2044, 7
+    departing = make_resident(email="noinherit_dep@gahk.dk")
+    existing_unassigned = make_resident(email="noinherit_existing@gahk.dk")
+    _place(departing, year, 6)  # both in the ORIGINAL projected population...
+    _place(existing_unassigned, year, 6)
+    periode = _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
+    _adjust(departing, periode, -10_000)  # most behind -> wins the sole slot at the projected run
+    _adjust(existing_unassigned, periode, -5_000)  # behind, but not enough -- misses out (soft floor)
+
+    allocate_tier_a(year, month)
+    assert VagtTildeling.objects.filter(resident=departing).count() == 1
+    assert not VagtTildeling.objects.filter(resident=existing_unassigned).exists()
+
+    arrival = make_resident(email="noinherit_arrival@gahk.dk")
+    # Real list: existing_unassigned stays, departing leaves, arrival is a genuine newcomer with a
+    # much BETTER (less negative) balance than existing_unassigned's.
+    _place(existing_unassigned, year, month)
+    _place(arrival, year, month)
+    _adjust(arrival, periode, 0)
+
+    result = reconcile_month(year, month)
+
+    assert departing in result.vacated
+    assert existing_unassigned in result.seated.weekday_assigned  # further behind -- wins the slot
+    assert arrival not in result.seated.weekday_assigned  # NOT automatically inherited by the arrival
+    assert VagtTildeling.objects.filter(resident=existing_unassigned).count() == 1
+    assert VagtTildeling.objects.filter(resident=arrival).count() == 0
+
+
+def test_reconciliation_does_not_hand_second_slot_to_existing_holder(make_resident: Callable) -> None:
+    """A3.5: reconciliation must not force a second tier-A shift onto a resident who already holds one
+    this month -- even if their balance would rank them first -- while an eligible unassigned resident
+    exists."""
+    year, month = 2044, 8
+    holds_one = make_resident(email="secondslot_holder@gahk.dk")
+    departing = make_resident(email="secondslot_dep@gahk.dk")
+    _place(holds_one, year, 7)
+    _place(departing, year, 7)
+    periode = _build_month(year, month, weekday_capacity=2, weekend_capacity=0)
+
+    allocate_tier_a(year, month)  # both projected -> both slots filled
+    assert VagtTildeling.objects.filter(resident=holds_one).count() == 1
+    assert VagtTildeling.objects.filter(resident=departing).count() == 1
+
+    _place(holds_one, year, month)  # real list: holds_one stays -- departing does not
+    other = make_resident(email="secondslot_other@gahk.dk")
+    _place(other, year, month)  # eligible, unassigned real resident
+    # holds_one gets the worst balance in the house -- if the "already has a slot" exclusion were
+    # broken, ranking alone would hand them departing's freed slot too.
+    _adjust(holds_one, periode, -1_000_000)
+    _adjust(other, periode, -10)
+
+    result = reconcile_month(year, month)
+
+    assert departing in result.vacated
+    assert other in result.seated.weekday_assigned
+    assert VagtTildeling.objects.filter(resident=holds_one).count() == 1  # never a second row
+    assert VagtTildeling.objects.filter(resident=other, status=VagtTildeling.Status.TILDELT).count() == 1
+
+
+# ---------------------------------------------------------------- Amendment 3, A3.2: no preference at all
+
+
+def test_zero_history_arrival_defaults_to_weekday_available(make_resident: Callable) -> None:
+    """A3.5: a resident with NO Praeference row anywhere -- not even in a previous periode, a true
+    first-ever residency -- is treated as weekday-available (the model default), and may take the
+    weekday pool. `_effective_weekday_unavailable_ids`'s fallback already produces this correctly for
+    someone with zero history (A3.2); this proves it end-to-end via allocate_tier_a."""
+    year, month = 2045, 3
+    newcomer = make_resident(email="zerohistory@gahk.dk")
+    _place(newcomer, year, month)
+    _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
+
+    result = allocate_tier_a(year, month)  # no Praeference row for newcomer, in ANY periode, ever
+
+    assert result.weekday_assigned == [newcomer]
+    assert result.refused_weekend == []
+
+
+# ------------------------------------------------------------------- Amendment 3: shared-core guarantee
+
+
+def test_shared_seating_core_gives_same_choice_via_allocate_and_reconcile(make_resident: Callable) -> None:
+    """A3.5's regression guard: allocate_tier_a and reconcile_month must make the exact same seating
+    choice given equivalent slots and population, because they share ONE seating core
+    (`_seat_tier_a`) -- two hand-written copies of this ranking would drift, and the direction they
+    would drift in is exactly the pool-blind bug A3.1 exists to fix."""
+    year = 2046
+    periode = resolve_periode(date(year, 5, 15))  # FORAAR 2046
+    p = make_resident(email="shared_p@gahk.dk")
+    q = make_resident(email="shared_q@gahk.dk")
+    r = make_resident(email="shared_r@gahk.dk")
+    # Balances spaced 1000 min apart so a single ~60-min TILDELT bump from M1's own run can never
+    # reorder the ranking relative to M2's reconciliation run, which happens afterwards.
+    _adjust(p, periode, -2000)
+    _adjust(q, periode, -1000)
+    _adjust(r, periode, 0)
+
+    # M2's setup happens FIRST, and entirely before p/q/r appear in Residency at all: month 6 is
+    # seeded with an unrelated, wrong projected population (x, y, z) -- the ONLY list that exists yet,
+    # so _resolve_population has nothing else to prefer -- that later gets entirely vacated, simulating
+    # "the projection turned out to be wrong".
+    x = make_resident(email="shared_x@gahk.dk")
+    y = make_resident(email="shared_y@gahk.dk")
+    z = make_resident(email="shared_z@gahk.dk")
+    for resident in (x, y, z):
+        _place(resident, year, 4)
+    _build_month(year, 6, weekday_capacity=1, weekend_capacity=1)
+    allocate_tier_a(year, 6)  # seats (some of) x, y, z via the projection
+
+    # M1: a plain, direct allocation -- the baseline "what should happen" for this population.
+    for resident in (p, q, r):
+        _place(resident, year, 5)
+    _build_month(year, 5, weekday_capacity=1, weekend_capacity=1)
+    m1 = allocate_tier_a(year, 5)
+
+    # Now the real list for month 6 is published: p, q, r -- none of x, y, z. Reconciliation reaches
+    # the SAME population as M1 via vacate + re-seat, not a direct allocation.
+    for resident in (p, q, r):
+        _place(resident, year, 6)
+
+    m2 = reconcile_month(year, 6)
+
+    assert {res.pk for res in m1.weekend_assigned} == {res.pk for res in m2.seated.weekend_assigned}
+    assert {res.pk for res in m1.weekday_assigned} == {res.pk for res in m2.seated.weekday_assigned}
+    assert {res.pk for res in m1.unassigned} == {res.pk for res in m2.seated.unassigned}
