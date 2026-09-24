@@ -882,6 +882,40 @@ def test_reconcile_koekkenvagter_command_runs_reconciliation(make_resident: Call
     assert VagtTildeling.objects.filter(resident=arrival, status=VagtTildeling.Status.TILDELT).count() == 1
 
 
+def test_reconcile_koekkenvagter_command_default_sweep_reconciles_once_real_list_arrives(
+    make_resident: Callable,
+) -> None:
+    """F2: with no --year/--month, the command must reconcile every already-allocated month in the
+    active periode's look-ahead window that now has a real list -- not a single hardcoded
+    next_period() target. Proven by running the bare command twice, naming no month either time: once
+    before the real list is published (must no-op, per F1) and once after (must find and reconcile
+    `month` on its own)."""
+    year, month = 2046, 4  # inside FORAAR (Feb-Jun)
+    departing = make_resident(email="sweep_dep@gahk.dk")
+    _place(departing, year, month - 1)  # projection source only
+    _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
+    allocate_tier_a(year, month)
+    assert VagtTildeling.objects.filter(resident=departing).count() == 1
+
+    with override_settings(DEBUG=True):
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": date(year, month, 1)})
+
+        # No real Residency list published yet -- the sweep finds `month` (it has TILDELT rows), but
+        # reconcile_month itself correctly no-ops on it (F1).
+        call_command("reconcile_koekkenvagter", verbosity=0)
+        assert VagtTildeling.objects.filter(resident=departing).count() == 1
+
+        # The real list arrives: departing has left, a genuine arrival takes their place.
+        arrival = make_resident(email="sweep_arrival@gahk.dk")
+        _place(arrival, year, month)
+
+        # Still no --year/--month -- the sweep must find and reconcile `month` on its own.
+        call_command("reconcile_koekkenvagter", verbosity=0)
+
+    assert VagtTildeling.objects.filter(resident=departing).count() == 0
+    assert VagtTildeling.objects.filter(resident=arrival, status=VagtTildeling.Status.TILDELT).count() == 1
+
+
 # ------------------------------------------------------- Amendment 2, A2.2: population projection
 
 
@@ -1024,9 +1058,44 @@ def test_koekken_never_creates_residency_rows(make_resident: Callable) -> None:
     before = Residency.objects.count()
 
     allocate_tier_a(year, month)  # uses the in-memory projection
-    reconcile_month(year, month)  # the real list for this month is still empty -- may vacate r, fine
+    # F1: the real list for this month is still empty -- reconcile_month must no-op rather than
+    # vacate r's projected assignment (an empty real list means "not published yet", never "everyone
+    # left").
+    result = reconcile_month(year, month)
 
     assert Residency.objects.count() == before
+    assert result.vacated == []
+    assert result.still_unfilled == []
+    assert VagtTildeling.objects.filter(resident=r, status=VagtTildeling.Status.TILDELT).count() == 1
+
+
+def test_reconcile_month_no_real_list_leaves_tildelt_assignments_untouched(make_resident: Callable) -> None:
+    """F1 (CRITICAL): reconciling a month with real-Residency-count == 0 must leave every existing
+    TILDELT assignment completely untouched and return an empty result -- an empty real list means
+    "not published yet", not "everyone left". Before the fix, `real_ids` was empty, so EVERY TILDELT
+    row in the month got vacated and nothing was re-seated (`candidates` was empty too), inverting
+    A2.3's headline guarantee that an assignment shown to a resident still living in the dorm is
+    never revoked by reconciliation."""
+    year, month = 2045, 3
+    a = make_resident(email="f1_a@gahk.dk")
+    b = make_resident(email="f1_b@gahk.dk")
+    for r in (a, b):
+        _place(r, year, month - 1)  # projection source only -- nothing published for `month` itself
+    _build_month(year, month, weekday_capacity=2, weekend_capacity=0)
+    allocate_tier_a(year, month)  # projects from month - 1, seats both a and b
+    before = set(VagtTildeling.objects.values_list("pk", flat=True))
+    assert len(before) == 2
+    assert Residency.objects.filter(year=year, month=month).count() == 0  # real list genuinely absent
+
+    result = reconcile_month(year, month)
+
+    assert result.vacated == []
+    assert result.seated.weekend_assigned == []
+    assert result.seated.weekday_assigned == []
+    assert result.seated.unassigned == []
+    assert result.still_unfilled == []
+    assert set(VagtTildeling.objects.values_list("pk", flat=True)) == before
+    assert VagtTildeling.objects.filter(status=VagtTildeling.Status.TILDELT).count() == 2
 
 
 # ---------------------------------------------------- Amendment 3, A3.1: reconciliation eligibility
@@ -1075,12 +1144,22 @@ def test_vacated_weekday_slot_with_no_eligible_candidate_stays_unfilled_and_queu
     allocate_tier_a(year, month)
     assert VagtTildeling.objects.filter(resident=departing).count() == 1
 
-    # No real Residency at all for the target month -- departing is gone, nobody replaces them.
+    # F1: a REAL Residency list IS published for the target month -- an empty one would mean "not
+    # published yet" and must no-op instead (see test_reconcile_month_no_real_list_leaves_tildelt_
+    # assignments_untouched). Departing has left, and the only other resident on the real list
+    # declared weekday_unavailable, so nobody eligible exists for the vacated weekday slot.
+    unavailable = make_resident(email="queue_unavailable@gahk.dk")
+    _place(unavailable, year, month)
+    Praeference.objects.create(resident=unavailable, periode=periode, weekday_unavailable=True)
+
     result = reconcile_month(year, month)
 
     assert departing in result.vacated
     assert result.seated.weekday_assigned == []
-    assert result.seated.unassigned == []  # no candidates at all -- nobody even to refuse
+    # `unavailable` is refused as an excess weekend declarer (weekend_capacity=0), not forced onto
+    # the weekday slot they said they can't do.
+    assert unavailable in result.seated.unassigned
+    assert unavailable in result.seated.refused_weekend
     weekday_vagt = Vagt.objects.get(
         periode=periode, date__year=year, date__month=month, kind=VagtRegel.Kind.MORGEN
     )

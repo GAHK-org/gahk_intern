@@ -438,7 +438,7 @@ whereas "whenever an officer happens to press the button" is not.
 
 # Amendment 2 — where a three-months-out population comes from
 
-**Raised 2026-09-22 after review of Amendment 1. Awaiting sign-off.**
+**Raised 2026-09-22 after review of Amendment 1. Approved 2026-09-22.**
 
 ## A2.1 The gap
 
@@ -568,7 +568,7 @@ Both were found in the same review and are fixes, not design questions:
 
 # Amendment 3 — reconciliation eligibility, and residents who arrive with no preference
 
-**Raised 2026-09-23 in review of Amendment 2. Awaiting sign-off.** Amendment 2's reconciliation rule
+**Raised 2026-09-23 in review of Amendment 2. Approved 2026-09-23.** Amendment 2's reconciliation rule
 ("a resident on the real list who was not on the projection is seated into unfilled slots only, balance
 ascending") is **wrong as written**, and separately it assumes a preference that a new arrival cannot
 have had the chance to give. Both are fixed here; the rest of Amendment 2 stands.

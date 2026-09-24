@@ -15,7 +15,10 @@ def test_seed_demo_populates_and_is_idempotent() -> None:
     # --force because Django's test runner forces DEBUG=False, which the safety guard blocks.
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
     first_count = Resident.objects.count()
-    assert first_count == 12
+    # >= rather than ==: koekken.demo seeds a couple of extra "genuine new arrival" residents on top
+    # of the requested 12 (Amendment 2/3, F3's reconciliation scenarios) -- best-effort and calendar
+    # dependent, so the exact extra count isn't pinned here, only that --residents is a floor.
+    assert first_count >= 12
 
     # Re-running with --fresh must not duplicate or raise (idempotent).
     # --force because Django's test runner forces DEBUG=False, which the safety guard blocks.

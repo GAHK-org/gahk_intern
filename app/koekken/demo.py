@@ -3,7 +3,9 @@
 Lives here rather than inside seed_demo so the Danish copy sits with the feature (the same split
 opslagstavle.demo/events.demo made). Builds every P1 edge state a developer would otherwise have to
 construct by hand, plus (Amendment 1) the FCFS tiebreak, a three-month allocated look-ahead window
-and a locked preference:
+and a locked preference, plus (Amendments 2 and 3, F3) a genuinely PROJECTED month reconciled against
+a real list arriving later -- a departure vacated and refilled, a no-preference arrival seated
+correctly, and a vacated weekday slot an ineligible arrival does not inherit:
 
   * a **normal allocated month** (the current one), with tier-A allocation and obligation posted;
   * a couple of residents with **weekday_unavailable** set, so they show up routed into the weekend
@@ -21,7 +23,18 @@ and a locked preference:
     quarter for cron to build it up;
   * (**Amendment 1, A1.1**) a **tie broken by `declared_at`**: two residents with an identical
     balance and a single contested weekend seat, seated in declaration order rather than by an
-    arbitrary `pk`.
+    arbitrary `pk`;
+  * (**Amendment 2, A2.6**) a **genuinely projected month**: no `Residency` row exists for it at
+    allocation time, so `allocate_tier_a` must build its population from `_resolve_population`'s A2.2
+    projection, not a real list — visibly distinct from the look-ahead window above, whose months get
+    a real `Residency` row up front;
+  * (**Amendment 2/3, A2.6/A3.4**) **reconciliation once the real list arrives**: one projected
+    resident has since left — their assignment is vacated and the slot refilled — and one genuine new
+    arrival with no `Praeference` row anywhere is seated into it, correctly defaulting to
+    weekday-available (A3.2);
+  * (**Amendment 3, A3.1/A3.4**) a **vacated weekday slot an ineligible arrival does not inherit**:
+    the only real-list candidate for it declared `weekday_unavailable=True`, so the slot stays open
+    and queued rather than being forced on them.
 
 Uses residents' EXISTING `Residency` rows (written earlier in `seed_demo.handle` by
 `_seed_residencies`) rather than taking a `rooms` argument, to keep the same `seed(residents, now,
@@ -30,7 +43,7 @@ rng)` signature every other domain's demo.py uses.
 
 import random
 from collections.abc import Iterator
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from residents.models import Residency, Resident
 
@@ -40,6 +53,7 @@ from .services import (
     generate_vagter,
     post_obligation,
     rebase_to_zero_mean,
+    reconcile_month,
     resolve_periode,
     set_preference,
 )
@@ -146,6 +160,103 @@ def _force_shortfall(residents: list[Resident], periode: Periode, year: int, mon
     post_obligation(periode, month)
 
 
+def _next_lookahead_month(periode: Periode, used: set[tuple[int, int]]) -> tuple[int, int] | None:
+    """One calendar month strictly after every month already claimed by an earlier demo scenario,
+    still inside `periode`. Amendment 2's projection demo needs a month with NO `Residency` row yet
+    (see `_demo_projected_departure` below), which only works if there is an earlier month `used`
+    already has a full-population `Residency` list for `_resolve_population` to project from --
+    unlike `_next_unused_months` (which can return an early gap in `periode` before any such list
+    exists), this always looks strictly forward from the latest claimed month. `None` (best-effort,
+    like `_next_unused_months`) if the periode is too short to offer one."""
+    if not used:
+        return None
+    year, month = max(used)
+    candidate = date(year + (1 if month == 12 else 0), month % 12 + 1, 1)
+    if candidate > periode.end_date:
+        return None
+    return candidate.year, candidate.month
+
+
+def _demo_reconciliation(
+    residents: list[Resident], periode: Periode, year: int, month: int, rng: random.Random
+) -> None:
+    """Amendment 2 (A2.6) + Amendment 3 (A3.4), all in one month so it costs only a single spare
+    look-ahead slot (a 5-month semester periode has exactly one left after the current month,
+    shortfall month and 2-month window above -- the FCFS tiebreak below needs the rest).
+
+    Shrinks (year, month)'s tier-A capacity to exactly match `residents` (mirroring
+    `_force_shortfall`'s shrink pattern) so a plain allocation leaves nobody unassigned and nothing
+    unfilled, then allocates it WITHOUT giving anyone a `Residency` row for it first -- unlike the
+    look-ahead window above, so `allocate_tier_a` has no choice but to build its population from
+    `_resolve_population`'s A2.2 projection (this is what makes the month "projected"). Two of that
+    month's weekday holders then "leave": their real list is published without them, vacating both
+    weekday slots, alongside two genuine new arrivals who were never in the projection at all -- one
+    with no `Praeference` row anywhere, one who declared `weekday_unavailable=True`. Reconciling then
+    demonstrates all of A3.4's cases at once: the no-preference arrival is correctly seated (A3.2)
+    into one of the two vacated slots, while the declared-unavailable arrival is refused (an excess
+    weekend declarer, capacity already exactly matched the pre-existing declarers) and does NOT
+    inherit the other one (A3.1) -- which stays open and queued in `still_unfilled` instead, since
+    nobody else is left to fill it.
+
+    Best-effort, like the rest of this module's optional scenarios: no-ops if fewer than two
+    residents land on a weekday slot to vacate, or if `year`/`month` predates every resident's known
+    room (so there is nothing to hand the arrivals)."""
+    tier_a_kinds = [VagtRegel.Kind.MORGEN, VagtRegel.Kind.FROKOST]
+    month_vagter = list(
+        Vagt.objects.filter(periode=periode, date__year=year, date__month=month, kind__in=tier_a_kinds)
+    )
+    weekend_vagter = [v for v in month_vagter if v.date.weekday() >= 5]
+    weekday_vagter = [v for v in month_vagter if v.date.weekday() < 5]
+    # Dynamic, not UNAVAILABLE_COUNT: by the time this runs, the tiebreak scenario below may not have
+    # run yet, but a locked-preference redirect above may have changed who's currently declared for
+    # this periode -- counting live keeps the shrink exact regardless of call order.
+    declared_count = Praeference.objects.filter(
+        periode=periode, resident__in=residents, weekday_unavailable=True
+    ).count()
+    _shrink_capacity(weekend_vagter, declared_count)
+    _shrink_capacity(weekday_vagter, max(len(residents) - declared_count, 0))
+
+    projected = allocate_tier_a(year, month)  # no Residency row exists yet -- projects (A2.2)
+    if len(projected.weekday_assigned) < 2:
+        return
+
+    departing_a, departing_b = rng.sample(projected.weekday_assigned, k=2)
+    stayed = [r for r in residents if r.pk not in {departing_a.pk, departing_b.pk}]
+    _ensure_residency(stayed, year, month)
+
+    latest = departing_a.residencies.order_by("-year", "-month").first()
+    if latest is None:
+        return
+    room = latest.room
+
+    available_arrival, created = Resident.objects.get_or_create(
+        email="koekken.demo.ankomst@gahk.dk",
+        defaults={"first_name": "Ny", "last_name": "Tilflytter"},
+    )
+    if created:
+        available_arrival.set_password("demo1234")
+        available_arrival.save()
+    Residency.objects.get_or_create(
+        resident=available_arrival, year=year, month=month, defaults={"room": room}
+    )
+
+    unavailable_arrival, created = Resident.objects.get_or_create(
+        email="koekken.demo.ankomst.hverdage.utilgaengelig@gahk.dk",
+        defaults={"first_name": "Ny", "last_name": "Utilgaengelig"},
+    )
+    if created:
+        unavailable_arrival.set_password("demo1234")
+        unavailable_arrival.save()
+    Residency.objects.get_or_create(
+        resident=unavailable_arrival, year=year, month=month, defaults={"room": room}
+    )
+    Praeference.objects.update_or_create(
+        resident=unavailable_arrival, periode=periode, defaults={"weekday_unavailable": True}
+    )
+
+    reconcile_month(year, month)
+
+
 def _demo_fcfs_tiebreak(residents: list[Resident], periode: Periode, year: int, month: int) -> None:
     """Amendment 1, A1.1: two residents with an identical (zero) balance and no other preference this
     periode, weekend capacity shrunk to exactly one seat -- whoever declared weekday_unavailable
@@ -236,6 +347,19 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
         _ensure_residency(residents, year, month)
         allocate_tier_a(year, month)
     used_months.update(window_months)
+
+    # Amendment 2 (A2.6) + Amendment 3 (A3.4): a genuinely PROJECTED month (no Residency row at
+    # allocation time, unlike the look-ahead window above), reconciled once a real list arrives -- a
+    # departure vacated and a genuine no-preference arrival correctly seated into it, alongside a
+    # second vacated slot whose only real-list candidate is weekday-unavailable and correctly stays
+    # queued rather than inheriting it (see `_demo_reconciliation`). Picks the next month strictly
+    # after everything used so far (see `_next_lookahead_month`), so `_resolve_population` always has
+    # an earlier full-population list to project from. Best-effort: a short periode (SOMMER) may not
+    # have a spare month left.
+    recon_month = _next_lookahead_month(periode, used_months)
+    if recon_month is not None:
+        used_months.add(recon_month)
+        _demo_reconciliation(residents, periode, *recon_month, rng)
 
     # Amendment 1, A1.1: a tie broken by declared_at, isolated to its own month so it never
     # interacts with the scenarios above. Also best-effort.

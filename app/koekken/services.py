@@ -55,6 +55,16 @@ class KoekkenAllocationError(Exception):
     """Base for allocation failures that must be surfaced, never swallowed."""
 
 
+class KoekkenNoPopulationError(KoekkenAllocationError):
+    """Raised specifically when `_resolve_population` could resolve no population at all for a
+    month -- no real `Residency` list AND no earlier published list to project from (A2.2's genuine
+    impossibility, not a normal case). A narrower subclass than the generic `KoekkenAllocationError`
+    on purpose: `roll_forward_allocation` needs to catch exactly this and no-op, per its own
+    docstring's promise never to let a scheduled task die, without also silently swallowing the
+    "no vagter generated" or "already allocated, use --force" errors `allocate_tier_a` raises for
+    other reasons -- those are bugs if they ever reach that catch, not the expected no-op case."""
+
+
 @dataclass
 class TierAResult:
     """What one `allocate_tier_a` run did, for the management command to report and for tests to
@@ -84,9 +94,13 @@ class ReconciliationResult:
     unfilled capacity via the shared `_seat_tier_a` core, restricted to residents who did not already
     hold a slot this month -- its `weekend_assigned`/`weekday_assigned` are who newly got a slot,
     `unassigned` is who was eligible and available but still missed out (never forced, never handed a
-    slot they're ineligible for). `still_unfilled` is the A3.1 queue: `Vagt` rows that remain short of
-    headcount after reconciliation, because no eligible unseated candidate existed for them -- these
-    are what should surface to Køkkengruppen rather than being silently left short.
+    slot they're ineligible for). `still_unfilled` is the A3.1 queue for Køkkengruppen: every `Vagt`
+    row that remains short of headcount after this run -- **note this is looser than "reconciliation
+    had no eligible candidate for a specific vacated/new slot" (F6)**: a month with a pre-existing
+    structural shortfall baked in from normal allocation (February's soft floor, design doc finding
+    3) reports those already-short vagter here too, not only ones reconciliation itself tried and
+    failed to fill. Treat it as "currently short of headcount", not "reconciliation specifically
+    failed on this one".
     """
 
     vacated: list[Resident] = field(default_factory=list)
@@ -252,15 +266,36 @@ def _resolve_population(year: int, month: int) -> list[Resident]:
         .first()
     )
     if not latest:
+        logger.info(
+            "koekken._resolve_population: ingen beboerliste er nogensinde blevet offentliggjort -- "
+            "kan ikke projicere en befolkning for %s-%02d.",
+            year,
+            month,
+        )
         return []
 
     month_start = date(year, month, 1)
-    return list(
+    projected = list(
         Resident.objects.filter(residencies__year=latest["year"], residencies__month=latest["month"])
         .exclude(move_out_date__isnull=False, move_out_date__lt=month_start)
         .distinct()
         .order_by("pk")
     )
+    if not projected:
+        # Distinct from the "never published anything" case above (F5): a projection SOURCE existed
+        # (latest["year"]/["month"]) but excluding everyone's move_out_date emptied it completely --
+        # a mass move-out, which is either real or a data problem worth a human noticing, so this
+        # logs at a higher level even though both cases currently no-op identically.
+        logger.warning(
+            "koekken._resolve_population: seneste offentliggjorte liste (%s-%02d) fandtes, men blev "
+            "tom for %s-%02d efter udelukkelse af fraflyttede -- undersøg om dette er en reel "
+            "masseudflytning eller en datafejl.",
+            latest["year"],
+            latest["month"],
+            year,
+            month,
+        )
+    return projected
 
 
 def _effective_weekday_unavailable_ids(resident_ids: list[int], periode: Periode) -> set[int]:
@@ -446,7 +481,7 @@ def allocate_tier_a(year: int, month: int, *, force: bool = False) -> TierAResul
 
     population_all = _resolve_population(year, month)
     if not population_all:
-        raise KoekkenAllocationError(
+        raise KoekkenNoPopulationError(
             f"Ingen beboere kunne findes for {year}-{month:02d} -- hverken en direkte alumneliste "
             "eller en tidligere offentliggjort liste at projicere ud fra (Amendment 2, A2.2)."
         )
@@ -496,10 +531,13 @@ def reconcile_month(year: int, month: int) -> ReconciliationResult:
     anyone, this never touches an assignment for a resident present on both the projection that was
     used and the real list now.
 
-    A no-op (`ReconciliationResult()`) when this month has no `Vagt` rows yet, or has never been
-    allocated (no `TILDELT`/other `VagtTildeling` rows at all) -- there is nothing to reconcile
-    against, and per the same discipline as `roll_forward_allocation` this must log and return rather
-    than raise, since it may run in a scheduled task before a month has reached that point.
+    A no-op (`ReconciliationResult()`) when this month has no `Vagt` rows yet, has never been
+    allocated (no `TILDELT`/other `VagtTildeling` rows at all), or has no real `Residency` list
+    published yet (F1: the normal state for any look-ahead month, since nothing in this codebase ever
+    publishes a list more than a month ahead -- an empty real list means "nothing to compare the
+    projection against yet", never "everyone left") -- there is nothing to reconcile against in any
+    of these cases, and per the same discipline as `roll_forward_allocation` this must log and return
+    rather than raise, since it may run in a scheduled task before a month has reached that point.
 
     **Vacate:** every current holder of a `TILDELT` row this month who is *not* on the real
     `Residency` list has that row deleted -- they were only ever a projection, or they have since
@@ -518,6 +556,11 @@ def reconcile_month(year: int, month: int) -> ReconciliationResult:
     to anyone; a vacated weekday slot only to a weekday-available resident (declared or defaulted, per
     A3.2) -- if nobody eligible is unassigned, the slot stays open and is reported in
     `still_unfilled` rather than forced.
+
+    **`still_unfilled` (F6) is every `Vagt` row still short of headcount after this run, not only the
+    ones reconciliation itself tried and failed to seat** -- a month with a pre-existing structural
+    shortfall (February's soft floor, design doc finding 3) reports those already-short vagter here
+    too. See `ReconciliationResult`'s docstring.
 
     Idempotent: when the real list already matches who holds a slot, nothing is vacated and there is
     no open capacity to re-seat, so a repeat run writes nothing.
@@ -548,6 +591,21 @@ def reconcile_month(year: int, month: int) -> ReconciliationResult:
     real_population = list(
         Resident.objects.filter(residencies__year=year, residencies__month=month).distinct().order_by("pk")
     )
+    if not real_population:
+        # F1: no real Residency list published yet for this month -- the normal state for any
+        # look-ahead month, since nothing in this codebase ever publishes one more than a month
+        # ahead. There is nothing to reconcile a projection AGAINST here, so this must no-op rather
+        # than treat an empty real list as "everyone left": that would vacate every TILDELT row in
+        # the month and re-seat nothing (candidates would be empty too), directly inverting A2.3's
+        # guarantee that an assignment shown to a resident still living in the dorm is never revoked
+        # by reconciliation.
+        logger.info(
+            "koekken.reconcile_month: ingen reel beboerliste offentliggjort endnu for %s-%02d -- "
+            "intet at afstemme imod.",
+            year,
+            month,
+        )
+        return ReconciliationResult()
     real_ids = {r.pk for r in real_population}
 
     with transaction.atomic():
@@ -635,7 +693,7 @@ def roll_forward_allocation(today: date | None = None) -> TierAResult | None:
             if not already_allocated:
                 try:
                     return allocate_tier_a(year, month)
-                except KoekkenAllocationError as exc:
+                except KoekkenNoPopulationError as exc:
                     logger.warning(
                         "koekken.roll_forward_allocation: kunne ikke allokere %s-%02d (%s) -- logger "
                         "og springer over i stedet for at fejle (Amendment 2, A2.2).",
