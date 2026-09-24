@@ -1,11 +1,12 @@
 # Design: Køkkenvagter — kitchen cleaning shift allocation
 
 **Status:** approved 2026-09-21. **P1 implemented** (`27195a2`) and review-fixed (`a8575fd`, F1–F5).
-**Amendment 1** (2026-09-22, FCFS tiebreak + allocation look-ahead and preference locking) is approved.
-**Amendment 2** (2026-09-22, where a three-months-out population comes from) and **Amendment 3**
-(2026-09-23, reconciliation eligibility and residents arriving with no preference) and **Amendment 4**
-(2026-09-23, swapping vagter — a Phase 2b feature) **await sign-off**; A3.1 corrects A2.3. All are at the
-end of this document; where any changes a decision below, the section says so.
+**Amendments 1–3 are approved** and in implementation: A1 (2026-09-22, FCFS tiebreak, allocation
+look-ahead, preference locking), A2 (2026-09-22, where a three-months-out population comes from) and
+A3 (2026-09-23, reconciliation eligibility and residents arriving with no preference) — note **A3.1
+corrects A2.3**, so read them together. **Amendment 4** (2026-09-23, swapping vagter) is an **approved
+direction for Phase 2b, not being built now**. All are at the end of this document; where any changes a
+decision above, that section says so.
 **Feature spec (to be written at implementation time):** `spec/features/koekkenvagter.md`, **unnumbered**.
 
 > **Unnumbered on purpose**, for the reason `spec/features/begivenheder.md` gives: `F-001`–`F-015` are
