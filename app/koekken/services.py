@@ -32,21 +32,47 @@ re-seated by the exact same eligibility rules `allocate_tier_a` uses -- both now
 never land on a resident who declared `weekday_unavailable=True` and a slot with no eligible
 candidate stays unfilled and queued rather than forced. Every assignment for a resident present on
 both the projection and the real list is left completely untouched.
+
+**P2** (`docs/plans/2026-09-28-koekkenvagter-p2-design.md`) adds everything below the Amendment 3
+section: `allocate_tier_b` (aftenvagt, a single algorithmic pass -- never a claim-based signup --
+that reads THIS MONTH'S already-written tier-A outcome for the weekend-compensation ordering and the
+aftenvagt-avoidance exclusion, so it must run after `allocate_tier_a`; see `allocate_month`), a
+`_fill_leftover_tier_a` follow-up step used ONLY by `allocate_tier_a` (never by `reconcile_month`,
+whose Amendment-3 behaviour is untouched) that makes "no tier-A slot left open" actually hold and
+gives the aftenvagt-avoidance pattern its extra tier-A slot when capacity allows, the day-preference
+write path (`set_preference_dage`/`set_preferences`) alongside Amendment 1's `set_preference`, the
+marking-done self-report flow (`mark_udfoert`, `marking_window`, read live off `VagtRegel.start_time`
+-- see that field's docstring for why it is never snapshotted), and the flag/adjudication flow
+(`flag_tildeling`, `resolve_anmeldelse`). **The single most important invariant added here:**
+preferences decide WHICH slot a resident gets, never WHO is picked next -- `allocate_tier_b`'s
+ranking never reads a day preference, only the existing balance/declared_at/pk comparator (plus the
+one already-approved exception, weekend compensation) -- see that function's docstring.
 """
 
+import itertools
 import logging
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 
 from django.db import transaction
-from django.db.models import F, Q, Sum
+from django.db.models import F, Q, QuerySet, Sum
+from django.utils import timezone
 
-from core.clock import current_date
+from core.clock import current_date, current_datetime
 from residents.models import Residency, Resident
 
-from .models import KoekkenPost, Periode, Praeference, Vagt, VagtRegel, VagtTildeling
+from .models import (
+    KoekkenPost,
+    Periode,
+    Praeference,
+    PraeferenceDag,
+    Vagt,
+    VagtAnmeldelse,
+    VagtRegel,
+    VagtTildeling,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +109,25 @@ class TierAResult:
     weekday_assigned: list[Resident] = field(default_factory=list)
     unassigned: list[Resident] = field(default_factory=list)
     refused_weekend: list[Resident] = field(default_factory=list)
+
+
+@dataclass
+class TierBResult:
+    """What one `allocate_tier_b` run did -- P2 design doc §4. `assigned` is every resident seated
+    into an aftenvagt slot this run (may include a resident more than once if capacity genuinely
+    exceeds population -- see `allocate_tier_b`'s overflow handling). `preference_honoured` is the
+    subset who were seated onto a day they actually declared for aftenvagt in `PraeferenceDag`;
+    everyone else in `assigned` still got a slot, just not necessarily their declared day (the soft
+    floor equivalent for tier B -- a preference is best-effort, never a guarantee). `skipped_avoidance`
+    is who was excluded from this run's candidate pool entirely because they already picked up a
+    second tier-A shift via `_fill_leftover_tier_a`'s avoidance mechanic -- the whole point of that
+    mechanic is that they get MORE tier-A instead of an aftenvagt, so putting them in `assigned` too
+    would defeat it.
+    """
+
+    assigned: list[Resident] = field(default_factory=list)
+    preference_honoured: list[Resident] = field(default_factory=list)
+    skipped_avoidance: list[Resident] = field(default_factory=list)
 
 
 @dataclass
@@ -155,17 +200,25 @@ def _previous_periode(periode: Periode) -> Periode:
     return resolve_periode(periode.start_date - timedelta(days=1))
 
 
+def _deadline_from_start(start_date: date) -> date:
+    """The pure arithmetic behind `periode_deadline`, taking a bare start date instead of a
+    `Periode` row -- split out so `in_preference_window` can compute a window with NO database
+    access at all when `at` doesn't fall inside one (see that function's docstring for why that
+    split matters, not just for tidiness)."""
+    month = start_date.month - 2
+    year = start_date.year
+    if month <= 0:
+        month += 12
+        year -= 1
+    return date(year, month, start_date.day)
+
+
 def periode_deadline(periode: Periode) -> date:
     """`periode`'s preference deadline — Amendment 1, A1.2: exactly two calendar months before its
     start (Feb-Jun's is 1 December, Sep-Jan's is 1 July, Jul-Aug's is 1 May). Derived, not stored:
     every `Periode.start_date` is the 1st of a month, so this is exact date arithmetic, not an
     approximation."""
-    month = periode.start_date.month - 2
-    year = periode.start_date.year
-    if month <= 0:
-        month += 12
-        year -= 1
-    return date(year, month, periode.start_date.day)
+    return _deadline_from_start(periode.start_date)
 
 
 def generate_vagter(periode: Periode) -> list[Vagt]:
@@ -409,6 +462,114 @@ def _seat_tier_a(
     )
 
 
+def _avoidance_resident_ids(resident_ids: list[int], periode: Periode) -> set[int]:
+    """Which of `resident_ids` are signalling the aftenvagt-avoidance pattern in `periode` -- P2
+    design doc §4: "selecting several morgen/frokost days while leaving aftenvagt empty is a
+    deliberate signal". Derived entirely from existing data, no new field:
+
+        declared_at IS NOT NULL      (a Praeference row exists for this periode at all)
+        AND >= 1 morgen-or-frokost PraeferenceDag day
+        AND 0 aften PraeferenceDag days
+
+    `declared_at` is never actually NULL on a `Praeference` row that exists (it defaults to the date
+    the row was written) -- "IS NOT NULL" in the design doc's own wording is exactly "a row exists
+    for this periode", i.e. what `_effective_weekday_unavailable_ids`'s fallback already treats as
+    the "did they engage at all" signal. The middle clause is the discriminator the doc calls out:
+    someone who declared and selected NOTHING anywhere is genuinely no-opinion, not avoidance.
+    """
+    declared_ids = set(
+        Praeference.objects.filter(periode=periode, resident_id__in=resident_ids).values_list(
+            "resident_id", flat=True
+        )
+    )
+    if not declared_ids:
+        return set()
+    tier_a_kinds = [VagtRegel.Kind.MORGEN, VagtRegel.Kind.FROKOST]
+    has_tier_a_day = set(
+        PraeferenceDag.objects.filter(
+            praeference__periode=periode, praeference__resident_id__in=declared_ids, kind__in=tier_a_kinds
+        ).values_list("praeference__resident_id", flat=True)
+    )
+    has_aften_day = set(
+        PraeferenceDag.objects.filter(
+            praeference__periode=periode, praeference__resident_id__in=declared_ids, kind=VagtRegel.Kind.AFTEN
+        ).values_list("praeference__resident_id", flat=True)
+    )
+    return (declared_ids & has_tier_a_day) - has_aften_day
+
+
+def _fill_leftover_tier_a(
+    weekend_vagter: list[Vagt],
+    weekday_vagter: list[Vagt],
+    population_all: list[Resident],
+    periode: Periode,
+    declared_ids: set[int],
+    balances: dict[int, int],
+    declared_at_by_id: dict[int, date],
+    result: TierAResult,
+) -> None:
+    """Fill any tier-A headcount `_seat_tier_a`'s one-shift-per-resident pass left open -- P2 design
+    doc §1's correction ("the allocator must be *willing* to assign a second slot where the numbers
+    require it") and §4's aftenvagt-avoidance mechanic ("give them extra tier-A instead of an
+    aftenvagt when capacity allows"). Mutates `result` in place (moves any now-filled resident out of
+    `result.unassigned` and into `weekend_assigned`/`weekday_assigned`).
+
+    **Called ONLY from `allocate_tier_a`, never from `reconcile_month`.** `_seat_tier_a` itself stays
+    completely untouched (it is the shared core both `allocate_tier_a` and `reconcile_month` call),
+    and so does Amendment 3's reconciliation behaviour: A3.1 is explicit that reconciliation must
+    leave a slot with no eligible UNASSIGNED candidate in `still_unfilled` rather than double-book an
+    existing holder, and that rule is untouched here -- this only ever runs as a follow-up step
+    inside a fresh, month-wide `allocate_tier_a` run.
+
+    A resident may pick up at most ONE extra tier-A shift this way (two total this month) -- enough
+    for the design doc's "at most one weekday slot per month" forced-doubling case and for a tiny
+    test population's leftover capacity, without letting one person's ranking silently absorb an
+    entire month's shortfall. `weekday_unavailable` stays a HARD exclusion here exactly as it is in
+    `_seat_tier_a`: `declared_ids` (every resident routed to the weekend pool this periode, accepted
+    or refused) never enters a weekday vagt's eligible pool, extra shift or not.
+
+    Avoidance-pattern residents (`_avoidance_resident_ids`) get first claim on any leftover capacity,
+    on BOTH pools -- that is what "extra tier-A instead of an aftenvagt" means. Everyone else is
+    still eligible too, so a genuine capacity shortfall (population short of tier-A capacity) is
+    fully absorbed even when nobody at all opted into the avoidance pattern.
+    """
+    avoidance_ids = _avoidance_resident_ids([r.pk for r in population_all], periode)
+    counts: dict[int, int] = defaultdict(int)
+    for r in result.weekend_assigned:
+        counts[r.pk] += 1
+    for r in result.weekday_assigned:
+        counts[r.pk] += 1
+
+    def ranked(pool: list[Resident]) -> list[Resident]:
+        return sorted(pool, key=lambda r: _tier_a_sort_key(r, balances, declared_at_by_id))
+
+    for is_weekend, vagter in ((True, weekend_vagter), (False, weekday_vagter)):
+        for vagt in vagter:
+            open_slots = vagt.headcount - vagt.tildelinger.count()
+            if open_slots <= 0:
+                continue
+            holder_ids = set(vagt.tildelinger.values_list("resident_id", flat=True))
+            eligible = [
+                r
+                for r in population_all
+                if r.pk not in holder_ids
+                and counts.get(r.pk, 0) < 2
+                and (is_weekend or r.pk not in declared_ids)
+            ]
+            candidates = ranked([r for r in eligible if r.pk in avoidance_ids]) + ranked(
+                [r for r in eligible if r.pk not in avoidance_ids]
+            )
+            for resident in candidates[:open_slots]:
+                VagtTildeling.objects.create(
+                    vagt=vagt, resident=resident, status=VagtTildeling.Status.TILDELT
+                )
+                counts[resident.pk] += 1
+                bucket = result.weekend_assigned if is_weekend else result.weekday_assigned
+                bucket.append(resident)
+                if resident in result.unassigned:
+                    result.unassigned.remove(resident)
+
+
 def allocate_tier_a(year: int, month: int, *, force: bool = False) -> TierAResult:
     """Tier-A (morgen + frokost) allocation for one calendar month — design doc "Allocation", step 1,
     as amended by Amendment 1 (A1.1 FCFS tiebreak, A1.2 look-ahead) and Amendment 2 (A2.2 population
@@ -512,7 +673,7 @@ def allocate_tier_a(year: int, month: int, *, force: bool = False) -> TierAResul
         # raw" note.
         balances = bulk_projected_balances(population_all)
 
-        return _seat_tier_a(
+        result = _seat_tier_a(
             weekend_vagter,
             weekday_vagter,
             population,
@@ -522,6 +683,188 @@ def allocate_tier_a(year: int, month: int, *, force: bool = False) -> TierAResul
             surviving_by_vagt,
             log_label=f"{year}-{month:02d}",
         )
+        # P2, §1/§4: fill any tier-A headcount the one-shift-per-resident pass above left open. Never
+        # called from reconcile_month -- see _fill_leftover_tier_a's own docstring for why touching
+        # it there would relitigate Amendment 3 (A3.1).
+        declared_ids = _effective_weekday_unavailable_ids([r.pk for r in population_all], periode)
+        _fill_leftover_tier_a(
+            weekend_vagter,
+            weekday_vagter,
+            population_all,
+            periode,
+            declared_ids,
+            balances,
+            declared_at_by_id,
+            result,
+        )
+        return result
+
+
+def _resident_aften_preferences(resident_ids: list[int], periode: Periode) -> dict[int, set[int]]:
+    """resident_id -> the set of weekdays (0-6) they declared for AFTEN in `PraeferenceDag`, for
+    `periode`. A resident with no rows (or no `Praeference` row at all) is simply absent from the
+    returned dict -- `allocate_tier_b` reads that as "no opinion", not as a refusal."""
+    rows = PraeferenceDag.objects.filter(
+        praeference__periode=periode, praeference__resident_id__in=resident_ids, kind=VagtRegel.Kind.AFTEN
+    ).values_list("praeference__resident_id", "weekday")
+    prefs: dict[int, set[int]] = defaultdict(set)
+    for resident_id, weekday in rows:
+        prefs[resident_id].add(weekday)
+    return prefs
+
+
+def allocate_tier_b(year: int, month: int, *, force: bool = False) -> TierBResult:
+    """Tier-B (aftenvagt) allocation for one calendar month -- P2 design doc §4. A single algorithmic
+    pass, never a claim-based signup: there is no live claiming and no separate auto-assign deadline.
+    **Must run AFTER `allocate_tier_a` for the same month** (see `allocate_month`) -- both the
+    weekend-compensation ordering and the aftenvagt-avoidance exclusion below read THIS MONTH'S
+    already-committed tier-A `VagtTildeling` rows straight out of the database.
+
+    **`weekday_unavailable` is NOT an eligibility filter here** (design doc: the flag means "not home
+    early-to-afternoon on weekdays", which says nothing about evenings) -- tier B has no eligibility
+    constraint of its own, so every resident in the month's population is a candidate for every AFTEN
+    vagt, weekday or weekend.
+
+    **The ranking that decides who is picked next never reads a day preference** -- this is the
+    feature's central fairness invariant (design doc: "preferences decide which slot, never who is
+    next"). The order is `(not a weekend-tier-A-assignee this month, projected balance ASC,
+    declared_at ASC, pk ASC)` -- the same `_tier_a_sort_key` comparator every tier-A ranking uses,
+    with exactly one addition: a resident who holds a weekend tier-A slot THIS MONTH sorts strictly
+    ahead of everyone who does not (the already-approved weekend-compensation mechanic -- "Weekend-
+    tier-A assignees get aftenvagt preference priority", parent design doc's Decisions table). Once a
+    resident's turn comes, THEIR declared AFTEN weekdays (if any) decide which of the still-open
+    vagter they are offered; a resident with no matching open day, or no declaration at all, is
+    offered the earliest still-open vagt instead -- never left out for lack of a preference.
+
+    Avoidance-pattern residents (`_avoidance_resident_ids`) who picked up a SECOND tier-A shift this
+    month via `_fill_leftover_tier_a`'s avoidance mechanic are excluded from the candidate pool
+    entirely (`TierBResult.skipped_avoidance`) -- that extra tier-A shift was given to them INSTEAD
+    of an aftenvagt, so assigning them one too would defeat the point. An avoidance-pattern resident
+    who could NOT get the extra tier-A slot (no capacity) is simply an ordinary tier-B candidate --
+    "gracefully assigns them an aftenvagt anyway when it doesn't [have capacity]", per the design doc.
+
+    **No slot is ever left open** by ranking alone: if AFTEN capacity genuinely exceeds the candidate
+    population (never expected at the real ~61-resident scale, but possible with a small population),
+    the ranked list is cycled through again -- and again -- until every slot is filled or a full lap
+    produces no further assignment (population genuinely exhausted, e.g. an empty candidate pool).
+
+    A graceful no-op (`TierBResult()`) when this month has no AFTEN `Vagt` rows at all -- unlike
+    `allocate_tier_a`'s hard raise on no vagter, this is not a misconfiguration to alert on: every
+    P1/Amendment 1-3 test builds tier-A-only capacity by hand (`_build_month`, see
+    `test_koekkenvagter.py`), and `generate_vagter` always creates AFTEN rows alongside tier-A ones in
+    real operation, so an AFTEN-less month here is a deliberate test fixture, not a real outcome.
+
+    Idempotent the same way `allocate_tier_a` is: refuses to re-run over existing `TILDELT` rows
+    unless `force=True`, and any row already moved past `TILDELT` (self-reported/flagged) survives a
+    re-run untouched and still occupies its vagt's headcount.
+    """
+    periode = resolve_periode(date(year, month, 1))
+    vagter = sorted(
+        Vagt.objects.filter(date__year=year, date__month=month, kind=VagtRegel.Kind.AFTEN),
+        key=lambda v: v.date,
+    )
+    if not vagter:
+        return TierBResult()
+
+    already_allocated = VagtTildeling.objects.filter(
+        vagt__in=vagter, status=VagtTildeling.Status.TILDELT
+    ).exists()
+    if already_allocated and not force:
+        raise KoekkenAllocationError(
+            f"{year}-{month:02d} har allerede tildelte tier-B-vagter -- brug --force for at gentildele."
+        )
+
+    population_all = _resolve_population(year, month)
+    if not population_all:
+        raise KoekkenNoPopulationError(f"Ingen beboere kunne findes for {year}-{month:02d} (tier B).")
+
+    tier_a_kinds = [VagtRegel.Kind.MORGEN, VagtRegel.Kind.FROKOST]
+    tier_a_vagter = Vagt.objects.filter(date__year=year, date__month=month, kind__in=tier_a_kinds)
+    tier_a_counts: dict[int, int] = defaultdict(int)
+    weekend_tier_a_ids: set[int] = set()
+    for resident_id, vagt_date in VagtTildeling.objects.filter(vagt__in=tier_a_vagter).values_list(
+        "resident_id", "vagt__date"
+    ):
+        tier_a_counts[resident_id] += 1
+        if vagt_date.weekday() >= 5:
+            weekend_tier_a_ids.add(resident_id)
+
+    avoidance_ids = _avoidance_resident_ids([r.pk for r in population_all], periode)
+    skipped = [r for r in population_all if r.pk in avoidance_ids and tier_a_counts.get(r.pk, 0) >= 2]
+    skipped_ids = {r.pk for r in skipped}
+    candidates = [r for r in population_all if r.pk not in skipped_ids]
+
+    balances = bulk_projected_balances(candidates)
+    declared_at_by_id = dict(
+        Praeference.objects.filter(periode=periode, resident_id__in=[r.pk for r in candidates]).values_list(
+            "resident_id", "declared_at"
+        )
+    )
+    preferences = _resident_aften_preferences([r.pk for r in candidates], periode)
+
+    def sort_key(r: Resident) -> tuple[int, int, date, int]:
+        balance, declared_at, pk = _tier_a_sort_key(r, balances, declared_at_by_id)
+        return (0 if r.pk in weekend_tier_a_ids else 1, balance, declared_at, pk)
+
+    ranked = sorted(candidates, key=sort_key)
+
+    with transaction.atomic():
+        VagtTildeling.objects.filter(vagt__in=vagter, status=VagtTildeling.Status.TILDELT).delete()
+
+        held: dict[int, set[int]] = defaultdict(set)
+        open_by_vagt: dict[int, int] = {}
+        for vagt in vagter:
+            open_by_vagt[vagt.pk] = vagt.headcount
+        for vagt_id, resident_id in VagtTildeling.objects.filter(vagt__in=vagter).values_list(
+            "vagt_id", "resident_id"
+        ):
+            held[resident_id].add(vagt_id)
+            open_by_vagt[vagt_id] -= 1
+
+        result = TierBResult(skipped_avoidance=skipped)
+        remaining = sum(max(n, 0) for n in open_by_vagt.values())
+        if ranked and remaining > 0:
+            pool = itertools.cycle(ranked)
+            stall = 0
+            lap_bound = len(ranked)
+            while remaining > 0 and stall <= lap_bound:
+                resident = next(pool)
+                open_vagter = [
+                    v for v in vagter if open_by_vagt.get(v.pk, 0) > 0 and v.pk not in held[resident.pk]
+                ]
+                if not open_vagter:
+                    stall += 1
+                    continue
+                prefs = preferences.get(resident.pk, set())
+                preferred_open = [v for v in open_vagter if v.date.weekday() in prefs]
+                chosen = preferred_open[0] if preferred_open else open_vagter[0]
+                VagtTildeling.objects.create(
+                    vagt=chosen, resident=resident, status=VagtTildeling.Status.TILDELT
+                )
+                open_by_vagt[chosen.pk] -= 1
+                held[resident.pk].add(chosen.pk)
+                result.assigned.append(resident)
+                if preferred_open:
+                    result.preference_honoured.append(resident)
+                remaining -= 1
+                stall = 0
+
+    return result
+
+
+def allocate_month(year: int, month: int, *, force: bool = False) -> tuple[TierAResult, TierBResult]:
+    """The monthly allocation pass, tier-A then tier-B, in ONE run -- P2 design doc §4: "the monthly
+    pass becomes: tier-A, then tier-B, in one run, with tier-A's outcomes feeding tier-B's ordering".
+    This ordering is load-bearing (`allocate_tier_b`'s docstring); calling the two legs separately in
+    the wrong order silently loses the weekend-compensation mechanic and the avoidance exclusion.
+
+    Both legs remain callable standalone -- every P1/Amendment 1-3 test calls `allocate_tier_a`
+    directly and this wrapper changes nothing about that path; it exists for `allocate_koekkenvagter`
+    and the resident/Køkkengruppen views, which always want the whole month done at once.
+    """
+    tier_a = allocate_tier_a(year, month, force=force)
+    tier_b = allocate_tier_b(year, month, force=force)
+    return tier_a, tier_b
 
 
 def reconcile_month(year: int, month: int) -> ReconciliationResult:
@@ -692,7 +1035,7 @@ def roll_forward_allocation(today: date | None = None) -> TierAResult | None:
             ).exists()
             if not already_allocated:
                 try:
-                    return allocate_tier_a(year, month)
+                    tier_a_result = allocate_tier_a(year, month)
                 except KoekkenNoPopulationError as exc:
                     logger.warning(
                         "koekken.roll_forward_allocation: kunne ikke allokere %s-%02d (%s) -- logger "
@@ -702,6 +1045,23 @@ def roll_forward_allocation(today: date | None = None) -> TierAResult | None:
                         exc,
                     )
                     return None
+                # P2, §4: "the monthly pass becomes tier-A then tier-B, in one run" -- also true for
+                # the scheduled roll-forward, not only the Køkkengruppen-triggered batch/manual run.
+                # Best-effort and additive on top of the tier-A result above: this function's return
+                # type and its tier-A behaviour (including every Amendment 1/2 test asserting on it)
+                # are UNCHANGED by this call -- tier-B failures are logged, never raised, matching the
+                # "a scheduled task must not die" promise this function already makes for tier-A.
+                try:
+                    allocate_tier_b(year, month)
+                except KoekkenAllocationError as exc:
+                    logger.warning(
+                        "koekken.roll_forward_allocation: tier-B-allokering fejlede for %s-%02d (%s) "
+                        "-- tier-A står stadig, logger og fortsætter.",
+                        year,
+                        month,
+                        exc,
+                    )
+                return tier_a_result
         month_cursor = date(year + (1 if month == 12 else 0), month % 12 + 1, 1)
     return None
 
@@ -752,6 +1112,271 @@ def set_preference(resident: Resident, weekday_unavailable: bool, *, at: date | 
         row.declared_at = today
         row.save(update_fields=["weekday_unavailable", "declared_at"])
     return row
+
+
+def set_preference_dage(praeference: Praeference, kind: str, weekdays: Iterable[int]) -> None:
+    """Replace `praeference`'s declared days for `kind` with `weekdays` -- P2 design doc §2/§3's soft
+    day-preferences. A full replace (delete-then-recreate), not a diff: the preference form always
+    submits the complete checked set for one kind in one POST, so there is nothing to diff against,
+    and `PraeferenceDag`'s unique constraint would reject re-inserting an already-declared day anyway.
+    """
+    weekdays = sorted(set(weekdays))
+    praeference.dage.filter(kind=kind).delete()
+    PraeferenceDag.objects.bulk_create(
+        [PraeferenceDag(praeference=praeference, kind=kind, weekday=w) for w in weekdays]
+    )
+
+
+def set_preferences(
+    resident: Resident,
+    *,
+    weekday_unavailable: bool,
+    morgen_dage: Iterable[int] = (),
+    frokost_dage: Iterable[int] = (),
+    aften_dage: Iterable[int] = (),
+    at: date | None = None,
+) -> Praeference:
+    """The whole P2 preference form in one call: the one hard flag plus all three soft day-
+    preferences, all landing on whichever `Periode` `set_preference`'s locking rule (Amendment 1,
+    A1.3) resolves the write to. Kept as one function so a view never has to resolve that target
+    Periode twice and risk the flag landing on one periode while a day-preference lands on another.
+    """
+    row = set_preference(resident, weekday_unavailable, at=at)
+    set_preference_dage(row, VagtRegel.Kind.MORGEN, morgen_dage)
+    set_preference_dage(row, VagtRegel.Kind.FROKOST, frokost_dage)
+    set_preference_dage(row, VagtRegel.Kind.AFTEN, aften_dage)
+    return row
+
+
+def preference_window(periode: Periode) -> tuple[date, date]:
+    """(opens, closes) -- the ~1-week preference collection window for `periode`, P2 design doc §3.
+    Not a new schedule: it CLOSES exactly at `periode_deadline(periode)`, the deadline the look-ahead
+    machinery already computes, and opens 7 days before that. See the design doc's §3 for why this is
+    the deadline "to the day", not an approximation of it."""
+    deadline = periode_deadline(periode)
+    return deadline - timedelta(days=7), deadline
+
+
+def in_preference_window(*, at: date | None = None) -> Periode | None:
+    """The `Periode` whose preference window `at` (default today) currently falls inside, or `None`.
+    Checks the periode `at` falls in AND the next one -- the window that matters to a resident living
+    in periode N is almost always periode N+1's (its deadline is still ahead; periode N's own deadline
+    is already in the past the moment anyone is living inside it), but checking both keeps this
+    correct right at a boundary without hardcoding which one it must be.
+
+    **Deliberately does NOT call `resolve_periode` (or anything else that touches the database)
+    until it already knows `at` falls inside a window.** This runs from `core.context_processors.
+    navigation` on every single authenticated page view (it is what drives the base.html banner,
+    §8) -- on the ~355 days a year nobody is inside a window, this must cost zero queries, not the
+    two a naive `resolve_periode(today)` + `_next_periode(...)` pair would add to every page in the
+    whole site. `_periode_bounds`/`_deadline_from_start` are pure date arithmetic; the one query this
+    function can still cost is the single `resolve_periode` needed to return an actual `Periode` row,
+    and only on the rare day that is actually inside a window.
+    """
+    today = at or current_date()
+    _kind, _year, current_start, current_end = _periode_bounds(today)
+    _next_kind, _next_year, next_start, _next_end = _periode_bounds(current_end + timedelta(days=1))
+    for start in (current_start, next_start):
+        deadline = _deadline_from_start(start)
+        if deadline - timedelta(days=7) <= today <= deadline:
+            return resolve_periode(start)
+    return None
+
+
+def resident_needs_to_declare(resident: Resident, *, at: date | None = None) -> bool:
+    """Whether `resident` should see the "declare your kitchen preferences" dashboard todo card --
+    P2 design doc §8. True for a resident with NO `Praeference` row at all for their current periode
+    -- the exact `declared_at IS NULL` condition Amendment 3 (A3.2) already established as "we are
+    guessing, not reading a declaration", reused here rather than a new check invented for the UI."""
+    periode = resolve_periode(at or current_date())
+    return not Praeference.objects.filter(resident=resident, periode=periode).exists()
+
+
+def _vagt_regel_for(vagt: Vagt) -> VagtRegel:
+    """The `VagtRegel` row governing `vagt` -- read LIVE, matching `VagtRegel.start_time`'s own
+    docstring on why that field is never snapshotted onto `Vagt`."""
+    return VagtRegel.objects.get(kind=vagt.kind, weekend=vagt.date.weekday() >= 5)
+
+
+def marking_window(vagt: Vagt) -> tuple[datetime, datetime]:
+    """(opens_at, closes_at) for marking `vagt` done at the kitchen tablet -- P2 design doc §5, tz-
+    aware Europe/Copenhagen wall-clock. Opens at the shift's own start time on its own date (read
+    LIVE off `VagtRegel.start_time`), closes at the very start of the day AFTER the day after the
+    shift -- i.e. inclusive through the end of the FOLLOWING day. A Tuesday shift's window therefore
+    runs from Tuesday's start_time through the last instant of Wednesday.
+    """
+    regel = _vagt_regel_for(vagt)
+    opens_at = timezone.make_aware(datetime.combine(vagt.date, regel.start_time))
+    closes_at = timezone.make_aware(datetime.combine(vagt.date + timedelta(days=2), time.min))
+    return opens_at, closes_at
+
+
+def can_mark_done(vagt_tildeling: VagtTildeling, *, at: datetime | None = None) -> bool:
+    """Whether `vagt_tildeling` may be marked done RIGHT NOW -- P2 design doc §5. Only a still-
+    `TILDELT` row inside its marking window; a row already `UDFOERT`/`ANMELDT`/`IKKE_UDFOERT` has
+    nothing further to self-report. The kitchen-tablet view calls this to decide whether to render
+    the mark-done button at all (§10: a closed action removes its button, never disables it)."""
+    if vagt_tildeling.status != VagtTildeling.Status.TILDELT:
+        return False
+    now = at or current_datetime()
+    opens_at, closes_at = marking_window(vagt_tildeling.vagt)
+    return opens_at <= now < closes_at
+
+
+def mark_udfoert(vagt_tildeling: VagtTildeling, *, at: datetime | None = None) -> VagtTildeling:
+    """Self-report `vagt_tildeling` done -- P2 design doc §5. Posts the work credit the moment the
+    status flips: an `ARBEJDE` `KoekkenPost` (`delta_minutes = +vagt.duration_minutes`), reusing the
+    `Kind.ARBEJDE` choice P1 already reserved for "credit for a self-reported UDFOERT shift" without
+    ever wiring a view to trigger it.
+
+    Raises `KoekkenAllocationError` when `can_mark_done` refuses -- outside the marking window, or a
+    row that has already moved past `TILDELT`. The kitchen-tablet view is expected to have already
+    removed the button for either case (§10), so reaching here means a stale page or a replayed POST;
+    refusing loudly is correct for both rather than silently doing nothing.
+    """
+    if not can_mark_done(vagt_tildeling, at=at):
+        raise KoekkenAllocationError(
+            f"{vagt_tildeling} kan ikke markeres udført lige nu (uden for tidsvinduet, eller allerede afgjort)."
+        )
+    vagt_tildeling.status = VagtTildeling.Status.UDFOERT
+    vagt_tildeling.save(update_fields=["status"])
+    KoekkenPost.objects.create(
+        resident=vagt_tildeling.resident,
+        periode=vagt_tildeling.vagt.periode,
+        kind=KoekkenPost.Kind.ARBEJDE,
+        delta_minutes=vagt_tildeling.vagt.duration_minutes,
+        vagt=vagt_tildeling.vagt,
+    )
+    return vagt_tildeling
+
+
+def can_flag(vagt_tildeling: VagtTildeling, *, at: date | None = None) -> bool:
+    """Whether `vagt_tildeling` may be flagged right now -- P2 design doc §6: any shift dated today
+    or earlier, whatever its status, PROVIDED it has no open flag already (a second one would violate
+    `VagtAnmeldelse`'s partial-unique constraint; checked here so the view never renders a flag
+    button that would fail)."""
+    today = at or current_date()
+    if vagt_tildeling.vagt.date > today:
+        return False
+    return not vagt_tildeling.anmeldelser.filter(status=VagtAnmeldelse.Status.AABEN).exists()
+
+
+def flag_tildeling(vagt_tildeling: VagtTildeling, flagged_by: Resident, reason: str = "") -> VagtAnmeldelse:
+    """ "Denne vagt blev ikke udført" -- P2 design doc §6. ONE uniform action, whatever the
+    assignment's current status. Freezes `previous_status` (what the assignment was AT THE MOMENT of
+    flagging -- `UDFOERT` or `TILDELT` in practice) so `resolve_anmeldelse` later knows the ledger
+    consequence and a dismissal knows what to restore, then moves the assignment itself to `ANMELDT`
+    so it stops reading as settled while the flag is open.
+
+    The caller (the view) is responsible for `can_flag`'s checks; this is the mechanical write, like
+    every other function in this module.
+    """
+    anmeldelse = VagtAnmeldelse.objects.create(
+        vagt_tildeling=vagt_tildeling,
+        flagged_by=flagged_by,
+        previous_status=vagt_tildeling.status,
+        reason=reason,
+    )
+    vagt_tildeling.status = VagtTildeling.Status.ANMELDT
+    vagt_tildeling.save(update_fields=["status"])
+    return anmeldelse
+
+
+def resolve_anmeldelse(anmeldelse: VagtAnmeldelse, *, upheld: bool, resolved_by: Resident) -> VagtAnmeldelse:
+    """Adjudicate an open `VagtAnmeldelse` -- P2 design doc §6's table, verbatim:
+
+    * **Dismissed**: the assignment reverts to whatever it was before the flag (`previous_status`);
+      no ledger entry, ever -- a dismissal means nothing happened, so nothing should change.
+    * **Upheld, previously `UDFOERT`**: the assignment becomes `IKKE_UDFOERT` and the credit is
+      reversed with a `TILBAGEFOERSEL` `KoekkenPost` (`delta_minutes = -vagt.duration_minutes`) --
+      NEVER by deleting the original `ARBEJDE` row, matching the ledger's append-only shape
+      everywhere else in this feature.
+    * **Upheld, previously `TILDELT`**: the assignment becomes `IKKE_UDFOERT` but NOTHING is written
+      to the ledger -- no credit was ever posted, so there is nothing to reverse. Design doc: "an
+      operational alert, not an accounting event" -- the flag itself is still real (Køkkengruppen's
+      queue shows it), it just has no ledger consequence.
+
+    Either upheld branch pushes a notification to the flagged resident's own `wants_koekken` topic
+    (`core.push`, per-topic, opt-in) -- a ruling against them is exactly the kind of thing nobody
+    should discover only at move-out.
+
+    Raises `KoekkenAllocationError` if `anmeldelse` is not currently open -- resolving twice (a
+    replayed POST) must not double-reverse a credit or double-notify.
+    """
+    if anmeldelse.status != VagtAnmeldelse.Status.AABEN:
+        raise KoekkenAllocationError(f"{anmeldelse} er allerede afgjort.")
+    vagt_tildeling = anmeldelse.vagt_tildeling
+
+    if upheld:
+        anmeldelse.status = VagtAnmeldelse.Status.OPRETHOLDT
+        vagt_tildeling.status = VagtTildeling.Status.IKKE_UDFOERT
+        if anmeldelse.previous_status == VagtTildeling.Status.UDFOERT:
+            KoekkenPost.objects.create(
+                resident=vagt_tildeling.resident,
+                periode=vagt_tildeling.vagt.periode,
+                kind=KoekkenPost.Kind.TILBAGEFOERSEL,
+                delta_minutes=-vagt_tildeling.vagt.duration_minutes,
+                vagt=vagt_tildeling.vagt,
+                created_by=resolved_by,
+            )
+        from core.models import PushSubscription  # local: avoids a core.push/core.models import for
+        from core.push import send  # every caller of this module that never resolves a flag.
+
+        send(
+            PushSubscription.objects.filter(user=vagt_tildeling.resident, wants_koekken=True),
+            "Køkkenvagt",
+            f"{vagt_tildeling.vagt} blev meldt ikke udført, og afgørelsen er opretholdt.",
+            "/intern/koekken/",
+        )
+    else:
+        anmeldelse.status = VagtAnmeldelse.Status.AFVIST
+        vagt_tildeling.status = anmeldelse.previous_status
+
+    anmeldelse.resolved_by = resolved_by
+    anmeldelse.resolved_at = current_datetime()
+    anmeldelse.save(update_fields=["status", "resolved_by", "resolved_at"])
+    vagt_tildeling.save(update_fields=["status"])
+    return anmeldelse
+
+
+def open_anmeldelser() -> QuerySet[VagtAnmeldelse]:
+    """Køkkengruppen's flag queue (P2 design doc §7): every open flag, reason and flagger included,
+    newest first."""
+    return VagtAnmeldelse.objects.filter(status=VagtAnmeldelse.Status.AABEN).select_related(
+        "vagt_tildeling__vagt", "vagt_tildeling__resident", "flagged_by"
+    )
+
+
+def unreported_tildelinger(*, before: date | None = None) -> QuerySet[VagtTildeling]:
+    """Køkkengruppen's "ikke rapporteret" list (P2 design doc §7): past `TILDELT` shifts nobody
+    marked done -- the silent-sweep half of §6, distinct from the active flag queue above. "Past"
+    means the shift's own date is strictly before `before` (default today via `core.clock`) -- a
+    shift dated today may still be inside its own marking window."""
+    cutoff = before or current_date()
+    return (
+        VagtTildeling.objects.filter(status=VagtTildeling.Status.TILDELT, vagt__date__lt=cutoff)
+        .select_related("vagt", "resident")
+        .order_by("vagt__date")
+    )
+
+
+def todays_tildelinger(*, today: date | None = None) -> QuerySet[VagtTildeling]:
+    """Every assignment for today's shifts -- the kitchen tablet's whole page (P2 design doc §7).
+    Every status is included, not only `TILDELT`: a shift already marked done or already flagged
+    still belongs on the tablet (its mark-done button just isn't rendered, per §10), so the tablet
+    stays an honest picture of the day rather than one that empties out as people tap in."""
+    day = today or current_date()
+    return (
+        VagtTildeling.objects.filter(vagt__date=day)
+        .select_related("vagt", "resident")
+        .order_by("vagt__kind", "resident__first_name")
+    )
+
+
+def resident_tildelinger(resident: Resident) -> QuerySet[VagtTildeling]:
+    """One resident's whole shift history, newest first -- the resident "my shifts" page (P2 design
+    doc §7)."""
+    return VagtTildeling.objects.filter(resident=resident).select_related("vagt").order_by("-vagt__date")
 
 
 def _calendar_year_for_month(periode: Periode, month: int) -> int:
