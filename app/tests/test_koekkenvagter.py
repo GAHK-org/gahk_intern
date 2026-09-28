@@ -1668,6 +1668,85 @@ def test_allocate_tier_b_force_rerun_is_idempotent_and_does_not_reshuffle_from_o
 
 
 # =============================================================================================
+# Review finding A: allocate_month (tier-A + tier-B composite) must be idempotent under force
+# =============================================================================================
+
+
+def test_allocate_month_force_rerun_is_idempotent_across_both_tiers(make_resident: Callable) -> None:
+    """Finding A: the composite `allocate_month(force=True)` was not idempotent, and could oscillate
+    between two different valid schedules on repeated force re-runs with no underlying data change.
+    Root cause: `allocate_tier_a` cleared only its OWN tier-A TILDELT rows before computing
+    `bulk_projected_balances` -- this month's tier-B (AFTEN) TILDELT rows from the PREVIOUS run were
+    still standing at that moment and inflated their holder's projected balance against themselves,
+    distorting tier-A's ranking, which changes tier-A's outcome, which changes tier-B's weekend-
+    compensation-priority input (tier-B's ordering reads tier-A's THIS-month result straight out of
+    the database), which changes tier-B's outcome -- and the cycle could flip back on the next force
+    re-run. Fixed by clearing BOTH tiers' TILDELT rows together, before either tier's ranking runs
+    (see `allocate_month`'s docstring).
+
+    Reproduction, verbatim from the review: 2 residents, 1 MORGEN vagt (60 min), 1 AFTEN vagt
+    (300 min), resident A starting more behind than B -- five consecutive
+    `allocate_month(force=True)` runs, no underlying data change, must produce the exact same
+    assignment every time.
+    """
+    year, month = 2054, 3
+    periode = resolve_periode(date(year, month, 15))
+    d = date(year, month, 3)  # a Tuesday -- an ordinary weekday, nothing declared either way
+    morgen = Vagt.objects.create(
+        periode=periode, date=d, kind=VagtRegel.Kind.MORGEN, headcount=1, duration_minutes=60
+    )
+    aften = Vagt.objects.create(
+        periode=periode, date=d, kind=VagtRegel.Kind.AFTEN, headcount=1, duration_minutes=300
+    )
+
+    a = make_resident(email="oscillate_a@gahk.dk")
+    b = make_resident(email="oscillate_b@gahk.dk")
+    _place(a, year, month)
+    _place(b, year, month)
+    _adjust(a, periode, -300)  # more behind than b
+    _adjust(b, periode, -1)
+
+    def snapshot() -> tuple[int | None, int | None]:
+        morgen_holder = (
+            VagtTildeling.objects.filter(vagt=morgen).values_list("resident_id", flat=True).first()
+        )
+        aften_holder = VagtTildeling.objects.filter(vagt=aften).values_list("resident_id", flat=True).first()
+        return morgen_holder, aften_holder
+
+    results = []
+    for _ in range(5):
+        allocate_month(year, month, force=True)
+        results.append(snapshot())
+
+    assert len(set(results)) == 1, f"assignments changed across force re-runs: {results}"
+
+
+def test_allocate_month_force_rerun_is_idempotent_at_realistic_scale(make_resident: Callable) -> None:
+    """Finding A, at realistic scale: a full month (via `generate_vagter`, every `VagtRegel` kind)
+    against ~70 residents, force-reallocated twice with no underlying data change, must produce ZERO
+    changed `VagtTildeling` rows between the two runs -- not merely fewer changes than before the fix."""
+    year, month = 2054, 4
+    periode = resolve_periode(date(year, month, 15))
+    generate_vagter(periode)
+    residents = [make_resident(email=f"scale_idem{i}@gahk.dk") for i in range(70)]
+    for r in residents:
+        _place(r, year, month)
+
+    allocate_month(year, month)  # initial, unforced allocation
+
+    def snapshot() -> set[tuple[int, int]]:
+        return set(VagtTildeling.objects.values_list("vagt_id", "resident_id"))
+
+    allocate_month(year, month, force=True)
+    first_force = snapshot()
+    allocate_month(year, month, force=True)
+    second_force = snapshot()
+
+    changed = first_force.symmetric_difference(second_force)
+    assert not changed, f"{len(changed)} (vagt, resident) rows changed between two force re-runs"
+
+
+# =============================================================================================
 # P2: verification -- marking done at the tablet (design doc §5)
 # =============================================================================================
 
@@ -2025,6 +2104,45 @@ def test_flagger_name_shown_to_the_flagged_resident_on_both_resident_facing_surf
         },
     )
     assert flagger.full_name in index_html
+
+
+def test_flagged_by_names_attributes_the_flag_actually_responsible_for_current_status(
+    make_resident: Callable,
+) -> None:
+    """Review finding B: `flagged_by_names` used to take the newest `VagtAnmeldelse` row for a
+    tildeling regardless of THAT row's own outcome (`order_by("-created_at")` + `setdefault`), which
+    misattributes the flagger in this reachable sequence: (1) Anna flags a shift, it's upheld, status
+    becomes `IKKE_UDFOERT`. (2) Bodil re-flags the same, now-`IKKE_UDFOERT` shift. (3) Bodil's flag is
+    dismissed, and the status reverts back to `IKKE_UDFOERT` (`resolve_anmeldelse`'s dismissed branch
+    restores `previous_status`, which was frozen as `IKKE_UDFOERT` at the moment Bodil flagged). The
+    newest row is Bodil's, but it is `AFVIST` (rejected) -- Anna's `OPRETHOLDT` row is the one actually
+    explaining the current `IKKE_UDFOERT` status, so the display must show Anna, not Bodil."""
+    year, month, day = 2052, 9, 21
+    # Distinct first_name per resident -- make_resident defaults every resident to the same "Test
+    # Beboer" full_name, which would make an assertion on the DISPLAYED name pass regardless of which
+    # resident's row was actually picked. This is the whole point of the assertion below, so it must
+    # actually distinguish Anna's name from Bodil's.
+    worker = make_resident(email="misattrib_worker@gahk.dk", first_name="Worker")
+    anna = make_resident(email="misattrib_anna@gahk.dk", first_name="Anna")
+    bodil = make_resident(email="misattrib_bodil@gahk.dk", first_name="Bodil")
+    adjudicator = make_resident(email="misattrib_adjudicator@gahk.dk", first_name="Adjudicator")
+    tildeling = _tildeling_for_marking(year, month, day, VagtRegel.Kind.MORGEN, worker)
+
+    anna_flag = flag_tildeling(tildeling, anna, "Ikke gjort.")
+    resolve_anmeldelse(anna_flag, upheld=True, resolved_by=adjudicator)
+    tildeling.refresh_from_db()
+    assert tildeling.status == VagtTildeling.Status.IKKE_UDFOERT
+
+    bodil_flag = flag_tildeling(tildeling, bodil, "Anmelder igen.")
+    tildeling.refresh_from_db()
+    assert tildeling.status == VagtTildeling.Status.ANMELDT
+
+    resolve_anmeldelse(bodil_flag, upheld=False, resolved_by=adjudicator)
+    tildeling.refresh_from_db()
+    assert tildeling.status == VagtTildeling.Status.IKKE_UDFOERT  # back to Anna's ruling
+
+    names = flagged_by_names([tildeling])
+    assert names == {tildeling.pk: anna.full_name}  # not bodil, whose flag was rejected
 
 
 def test_flag_queue_buttons_removed_once_resolved(make_resident: Callable) -> None:

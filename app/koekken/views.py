@@ -64,8 +64,11 @@ def _resident_context(request: HttpRequest) -> dict[str, object]:
         # on gruppe()/balance_export() themselves is unchanged and unduplicated here.
         "can_manage": access.can_manage(request),
         "can_view_balance_export": access.can_view_balance_export(request),
-        # F4: the push opt-in bar (core/_push_bar.html) needs both of these -- mirrors
-        # reparationer.views.board / opslagstavle.views.board.
+        # F4: the push opt-in bar (core/_push_bar.html) needs all three -- mirrors
+        # reparationer.views.board / opslagstavle.views.board, including push_configured, which the
+        # template must gate the bar's {% include %} on so it doesn't render when the server has no
+        # VAPID keys set at all.
+        "push_configured": push.is_configured(),
         "vapid_public_key": push.vapid_public_key(),
         "push_subscribed": services.is_subscribed(resident),
     }

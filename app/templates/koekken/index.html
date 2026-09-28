@@ -28,12 +28,16 @@
     </div>
   </div>
 
-  {% comment %}
-    F4: the push opt-in bar -- the `wants_koekken` topic had no opt-in UI anywhere, so
-    resolve_anmeldelse's flag-ruling notification could never fire for anyone. Mirrors
-    reparationer/board.html's include exactly.
-  {% endcomment %}
-  {% include "core/_push_bar.html" with topic="koekken" url_name="koekken:save_subscription" on_label="Få besked om afgørelser" success_text="Du får nu besked, hvis en anmeldelse mod dig bliver opretholdt." off_text="Beskeder om køkkenvagter er slået fra på denne enhed." %}
+  {% if push_configured %}
+    {% comment %}
+      F4: the push opt-in bar -- the `wants_koekken` topic had no opt-in UI anywhere, so
+      resolve_anmeldelse's flag-ruling notification could never fire for anyone. Mirrors
+      reparationer/board.html's include exactly, including the push_configured guard, so the bar is
+      hidden entirely (not shown with a "not set up on the server" message) when no VAPID keys are
+      configured.
+    {% endcomment %}
+    {% include "core/_push_bar.html" with topic="koekken" url_name="koekken:save_subscription" on_label="Få besked om afgørelser" success_text="Du får nu besked, hvis en anmeldelse mod dig bliver opretholdt." off_text="Beskeder om køkkenvagter er slået fra på denne enhed." %}
+  {% endif %}
 
   {% if needs_to_declare %}
     <p class="card" style="border-color:var(--brass, #b08d57)">

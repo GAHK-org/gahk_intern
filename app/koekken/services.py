@@ -584,7 +584,7 @@ def _fill_leftover_tier_a(
                     result.unassigned.remove(resident)
 
 
-def allocate_tier_a(year: int, month: int, *, force: bool = False) -> TierAResult:
+def allocate_tier_a(year: int, month: int, *, force: bool = False, _skip_clear: bool = False) -> TierAResult:
     """Tier-A (morgen + frokost) allocation for one calendar month — design doc "Allocation", step 1,
     as amended by Amendment 1 (A1.1 FCFS tiebreak, A1.2 look-ahead) and Amendment 2 (A2.2 population
     projection).
@@ -628,6 +628,13 @@ def allocate_tier_a(year: int, month: int, *, force: bool = False) -> TierAResul
     silently exceed a vagt's headcount by recomputing capacity as if those rows didn't exist. Both the
     write path and the reported capacity/`unassigned` figures below account for surviving rows
     identically.
+
+    `_skip_clear` is private, used only by `allocate_month`: when True, this function's own "clear my
+    tier's TILDELT rows, then compute balances" step below is skipped (the caller has already cleared
+    it, and tier-B's, together -- see `allocate_month`'s docstring for why that ordering matters), and
+    `force` is expected to already be True by the time it reaches here since the caller's own combined
+    guard has already run. Standalone callers (every P1/Amendment 1-3 test, `roll_forward_allocation`)
+    never pass it and get exactly the behaviour described above.
     """
     periode = resolve_periode(date(year, month, 1))
     tier_a_kinds = [VagtRegel.Kind.MORGEN, VagtRegel.Kind.FROKOST]
@@ -668,7 +675,8 @@ def allocate_tier_a(year: int, month: int, *, force: bool = False) -> TierAResul
     )
 
     with transaction.atomic():
-        VagtTildeling.objects.filter(vagt__in=vagter, status=VagtTildeling.Status.TILDELT).delete()
+        if not _skip_clear:
+            VagtTildeling.objects.filter(vagt__in=vagter, status=VagtTildeling.Status.TILDELT).delete()
 
         # Rows that survived the delete above (self-reported/flagged, P2) still occupy headcount and
         # must not be handed a second row this month — see the docstring above.
@@ -727,7 +735,7 @@ def _resident_aften_preferences(resident_ids: list[int], periode: Periode) -> di
     return prefs
 
 
-def allocate_tier_b(year: int, month: int, *, force: bool = False) -> TierBResult:
+def allocate_tier_b(year: int, month: int, *, force: bool = False, _skip_clear: bool = False) -> TierBResult:
     """Tier-B (aftenvagt) allocation for one calendar month -- P2 design doc §4. A single algorithmic
     pass, never a claim-based signup: there is no live claiming and no separate auto-assign deadline.
     **Must run AFTER `allocate_tier_a` for the same month** (see `allocate_month`) -- both the
@@ -771,6 +779,9 @@ def allocate_tier_b(year: int, month: int, *, force: bool = False) -> TierBResul
     Idempotent the same way `allocate_tier_a` is: refuses to re-run over existing `TILDELT` rows
     unless `force=True`, and any row already moved past `TILDELT` (self-reported/flagged) survives a
     re-run untouched and still occupies its vagt's headcount.
+
+    `_skip_clear` is private, used only by `allocate_month` -- see `allocate_tier_a`'s docstring for
+    what it does and why; the same note applies here verbatim.
     """
     periode = resolve_periode(date(year, month, 1))
     vagter = sorted(
@@ -809,7 +820,8 @@ def allocate_tier_b(year: int, month: int, *, force: bool = False) -> TierBResul
     candidates = [r for r in population_all if r.pk not in skipped_ids]
 
     with transaction.atomic():
-        VagtTildeling.objects.filter(vagt__in=vagter, status=VagtTildeling.Status.TILDELT).delete()
+        if not _skip_clear:
+            VagtTildeling.objects.filter(vagt__in=vagter, status=VagtTildeling.Status.TILDELT).delete()
 
         # F2: projected balances (and declared_at/day-preferences, for the same reason) computed
         # AFTER the delete above, exactly mirroring `allocate_tier_a`'s identical fix (Amendment 1,
@@ -883,9 +895,50 @@ def allocate_month(year: int, month: int, *, force: bool = False) -> tuple[TierA
     Both legs remain callable standalone -- every P1/Amendment 1-3 test calls `allocate_tier_a`
     directly and this wrapper changes nothing about that path; it exists for `allocate_koekkenvagter`
     and the resident/Køkkengruppen views, which always want the whole month done at once.
+
+    **Both tiers' existing `TILDELT` rows for the month are cleared together, in one atomic step,
+    BEFORE either tier's ranking runs** -- this is what makes a `force=True` re-run of the COMPOSITE
+    pass actually idempotent, which calling `allocate_tier_a` and `allocate_tier_b` back to back did
+    not achieve on its own even though each is independently idempotent in isolation: `allocate_tier_a`
+    clears only ITS OWN (tier-A) rows before computing `bulk_projected_balances`, so this month's
+    tier-B rows from the PREVIOUS run were still standing at that moment and inflated their holders'
+    projected balance against themselves -- distorting tier-A's ranking, which changes tier-A's
+    outcome, which changes tier-B's weekend-compensation-priority input (tier-B's ordering reads
+    tier-A's THIS-month result straight out of the database), which changes tier-B's outcome. Nothing
+    forced the two possible resolutions to agree, so repeated force re-runs with no underlying data
+    change could oscillate between them forever. Clearing both tiers first means `allocate_tier_a`'s
+    balances are computed against a state where this month's about-to-be-redone assignments, in
+    EITHER tier, are already gone -- matching what each tier already does correctly for its own rows,
+    now also relative to the other tier.
+
+    Each leg's own "clear my tier's rows, then compute balances" step (see their docstrings) is
+    skipped here via their private `_skip_clear=True` -- clearing twice would be harmless but
+    redundant, and clearing tier-A's rows only right before `allocate_tier_a` runs (i.e. leaving the
+    original per-leg ordering) is exactly the bug above, so the composite step must happen first,
+    covering both tiers, not be delegated to either leg individually. `force` is required the normal
+    way (a combined guard covering both tiers' existing rows) before anything is cleared; each leg is
+    then called with `force=True` since the guard has already run.
     """
-    tier_a = allocate_tier_a(year, month, force=force)
-    tier_b = allocate_tier_b(year, month, force=force)
+    tier_a_kinds = [VagtRegel.Kind.MORGEN, VagtRegel.Kind.FROKOST]
+    month_vagter = list(
+        Vagt.objects.filter(
+            date__year=year, date__month=month, kind__in=[*tier_a_kinds, VagtRegel.Kind.AFTEN]
+        )
+    )
+    already_allocated = VagtTildeling.objects.filter(
+        vagt__in=month_vagter, status=VagtTildeling.Status.TILDELT
+    ).exists()
+    if already_allocated and not force:
+        raise KoekkenAllocationError(
+            f"{year}-{month:02d} har allerede tildelte vagter -- brug --force for at gentildele "
+            "(Amendment 1, A1.2: en offentliggjort måned i look-ahead-vinduet må ikke stille om uden "
+            "et eksplicit tilvalg)."
+        )
+
+    with transaction.atomic():
+        VagtTildeling.objects.filter(vagt__in=month_vagter, status=VagtTildeling.Status.TILDELT).delete()
+        tier_a = allocate_tier_a(year, month, force=True, _skip_clear=True)
+        tier_b = allocate_tier_b(year, month, force=True, _skip_clear=True)
     return tier_a, tier_b
 
 
@@ -1347,26 +1400,37 @@ def flagged_by_names(tildelinger: Iterable[VagtTildeling]) -> dict[int, str]:
     (F3). A tildeling not currently showing a flag (never flagged, or flagged-and-dismissed back to
     its previous status) is simply absent from the returned dict.
 
-    One query for however many rows a caller passes, mirroring `open_flag_tildeling_ids` above (F7):
-    `VagtAnmeldelse` rows for the relevant ids, newest first, kept only the first (most recent) one
-    seen per tildeling id -- a tildeling can accumulate more than one `VagtAnmeldelse` over time (a
-    dismissed flag may be re-flagged later), and the most recent one is always the one explaining the
-    CURRENT status.
+    One query per relevant `VagtAnmeldelse.Status`, mirroring `open_flag_tildeling_ids` above (F7).
+    A tildeling can accumulate more than one `VagtAnmeldelse` over time (a dismissed flag may be
+    re-flagged later, and a re-flag of an already-upheld shift may itself later be dismissed), so
+    "most recent row regardless of its own outcome" is NOT the same as "the row responsible for the
+    CURRENT status" -- e.g. flag A upheld (tildeling -> `IKKE_UDFOERT`), then flag B re-flags it and is
+    later dismissed (tildeling reverts to `IKKE_UDFOERT`, per `resolve_anmeldelse`'s dismissed branch):
+    the newest row is B, an `AFVIST` one, but the status is still explained by A's `OPRETHOLDT` row.
+    So this filters each tildeling's candidate rows down to the one `VagtAnmeldelse.Status` that
+    actually produces its CURRENT `VagtTildeling.Status` (`ANMELDT` <- `AABEN`, `IKKE_UDFOERT` <-
+    `OPRETHOLDT`) before picking the newest (`-created_at`, `-pk` as a tiebreak -- `created_at` alone
+    has none) among those.
     """
-    ids = [
-        t.pk
-        for t in tildelinger
-        if t.status in (VagtTildeling.Status.ANMELDT, VagtTildeling.Status.IKKE_UDFOERT)
-    ]
-    if not ids:
+    status_wants_anmeldelse_status: dict[str, str] = {
+        VagtTildeling.Status.ANMELDT: VagtAnmeldelse.Status.AABEN,
+        VagtTildeling.Status.IKKE_UDFOERT: VagtAnmeldelse.Status.OPRETHOLDT,
+    }
+    ids_by_anmeldelse_status: dict[str, list[int]] = defaultdict(list)
+    for t in tildelinger:
+        anmeldelse_status = status_wants_anmeldelse_status.get(t.status)
+        if anmeldelse_status is not None:
+            ids_by_anmeldelse_status[anmeldelse_status].append(t.pk)
+    if not ids_by_anmeldelse_status:
         return {}
     names: dict[int, str] = {}
-    for anmeldelse in (
-        VagtAnmeldelse.objects.filter(vagt_tildeling_id__in=ids)
-        .select_related("flagged_by")
-        .order_by("-created_at")
-    ):
-        names.setdefault(anmeldelse.vagt_tildeling_id, anmeldelse.flagged_by.full_name)
+    for anmeldelse_status, ids in ids_by_anmeldelse_status.items():
+        for anmeldelse in (
+            VagtAnmeldelse.objects.filter(vagt_tildeling_id__in=ids, status=anmeldelse_status)
+            .select_related("flagged_by")
+            .order_by("-created_at", "-pk")
+        ):
+            names.setdefault(anmeldelse.vagt_tildeling_id, anmeldelse.flagged_by.full_name)
     return names
 
 
