@@ -14,6 +14,7 @@ urlpatterns = [
     path("", views.index, name="index"),
     path("praeferencer", views.praeferencer, name="praeferencer"),
     path("praeferencer/forklaring", views.praeferencer_forklaring, name="praeferencer_forklaring"),
+    path("abonner", views.save_subscription, name="save_subscription"),
     path("vagt/<int:pk>/anmeld", views.flag_vagt, name="flag_vagt"),
     path("gruppe/", views.gruppe, name="gruppe"),
     path("gruppe/anmeldelse/<int:pk>/opretholdt", views.flag_opretholdt, name="flag_opretholdt"),

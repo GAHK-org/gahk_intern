@@ -25,6 +25,7 @@ from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
+from core import push
 from core.clock import current_date
 from core.exports import csv_or_xlsx_response
 from residents.models import Resident
@@ -47,32 +48,56 @@ def _resident_context(request: HttpRequest) -> dict[str, object]:
     resident = current_resident(request)
     today = current_date()
     tildelinger = list(services.resident_tildelinger(resident))
+    flagged_by = services.flagged_by_names(tildelinger)  # F3: flagger identity, resident-facing too
     balance_minutes = services.balance_for(resident)
     house_mean_minutes = services.house_mean()
     return {
         "resident": resident,
-        "upcoming": [t for t in tildelinger if t.vagt.date >= today],
-        "past": [t for t in tildelinger if t.vagt.date < today],
+        "upcoming": [(t, flagged_by.get(t.pk)) for t in tildelinger if t.vagt.date >= today],
+        "past": [(t, flagged_by.get(t.pk)) for t in tildelinger if t.vagt.date < today],
         "balance_minutes": balance_minutes,
         "balance_hours": round(balance_minutes / 60, 1),
         "house_mean_minutes": house_mean_minutes,
         "house_mean_hours": round(house_mean_minutes / 60, 1),
         "needs_to_declare": services.resident_needs_to_declare(resident, at=today),
+        # F10: officer-facing links, template-gated (§9's second, narrower check) -- the view re-check
+        # on gruppe()/balance_export() themselves is unchanged and unduplicated here.
+        "can_manage": access.can_manage(request),
+        "can_view_balance_export": access.can_view_balance_export(request),
+        # F4: the push opt-in bar (core/_push_bar.html) needs both of these -- mirrors
+        # reparationer.views.board / opslagstavle.views.board.
+        "vapid_public_key": push.vapid_public_key(),
+        "push_subscribed": services.is_subscribed(resident),
     }
 
 
 def _recent_context(request: HttpRequest) -> dict[str, object]:
     """The "seneste vagter i køkkenet" flaggable list -- P2 design doc §6 ("anyone may flag a
     shift"), so this is every resident's assignment, not just the viewer's own. Shared by the full
-    resident page and the htmx swap after a flag POST (`flag_vagt`)."""
+    resident page and the htmx swap after a flag POST (`flag_vagt`).
+
+    F7: `can_flag` per row is batched into one query (`open_flag_tildeling_ids`) instead of the one-
+    query-per-row `services.can_flag` would cost at this list's realistic scale (RECENT_DAYS=14,
+    every resident's assignments -- 60-80 extra queries). Every row here already satisfies
+    `can_flag`'s own date check (`vagt.date <= today`, since `since <= today` bounds the query below),
+    so membership in the open-flag id set is the only other thing `can_flag` checks."""
     today = current_date()
     since = today - timedelta(days=RECENT_DAYS)
-    rows = (
+    rows = list(
         VagtTildeling.objects.filter(vagt__date__gte=since, vagt__date__lte=today)
         .select_related("vagt", "resident")
         .order_by("-vagt__date", "vagt__kind")
     )
-    return {"recent": [(t, services.can_flag(t, at=today)) for t in rows]}
+    open_flag_ids = services.open_flag_tildeling_ids(t.pk for t in rows)
+    flagged_by = services.flagged_by_names(rows)  # F3
+    return {
+        "recent": [(t, t.pk not in open_flag_ids, flagged_by.get(t.pk)) for t in rows],
+        # F11: the template renders THIS form's own `reason` Textarea widget, not a hand-written
+        # <input>, so the field's own validation/whitespace-stripping actually applies. `auto_id=False`
+        # -- the same unbound form is rendered once per row in the template, and a shared "id_reason"
+        # on every row would be invalid, duplicate-id HTML.
+        "anmeldelse_form": AnmeldelseForm(auto_id=False),
+    }
 
 
 @access.access_required
@@ -91,9 +116,22 @@ def flag_vagt(request: HttpRequest, pk: int) -> HttpResponse:
         # like every other "closed action" write path in this module.
         raise PermissionDenied
     form = AnmeldelseForm(request.POST)
-    reason = form.data.get("reason", "") if form.is_valid() else ""
+    # F11: `form.cleaned_data`, not the raw POST value -- `form.data.get("reason", "")` bypassed the
+    # form's own whitespace-stripping (and any future length validation) even though `form.is_valid()`
+    # had already been checked; reading the raw value made that check pointless.
+    reason = form.cleaned_data["reason"] if form.is_valid() else ""
     services.flag_tildeling(vagt_tildeling, current_resident(request), reason)
     return render(request, "koekken/_recent.html", _recent_context(request))
+
+
+@require_POST
+@access.access_required
+def save_subscription(request: HttpRequest) -> HttpResponse:
+    """Store (or drop) this browser's opt-in to Køkkenvagter push notifications -- F4. Mirrors
+    `reparationer.views.save_subscription`/`opslagstavle.views.save_subscription` exactly, behind the
+    same `access.access_required` gate as every other resident-facing koekken view (module docstring)
+    rather than login-only, since this whole feature is currently Køkkengruppen-only."""
+    return push.handle_subscription_request(request, services.TOPIC)
 
 
 @access.access_required
@@ -312,10 +350,25 @@ def _is_kiosk(request: HttpRequest) -> bool:
 
 
 def _tablet_context(*, today: date | None = None) -> dict[str, object]:
-    """Shared by the full tablet page and the htmx swap after `marker_udfoert`."""
+    """Shared by the full tablet page and the htmx swap after `marker_udfoert`.
+
+    F1: `services.todays_tildelinger` now returns today's shifts PLUS yesterday's still-`TILDELT`
+    ones (still inside their own marking window) -- split back into `rows` (today, unchanged shape/
+    key, so the existing "§10 button removed" template test keeps working untouched) and
+    `yesterday_rows` (yesterday's still-open leftovers, rendered in their own labelled section so
+    residents are never confused about which day a row belongs to).
+
+    F7: `services.vagt_regel_lookup()` is built ONCE here and threaded through `can_mark_done`,
+    instead of the one-`VagtRegel.objects.get(...)`-per-row `_vagt_regel_for` would otherwise cost.
+    """
     day = today or current_date()
-    rows = [(t, services.can_mark_done(t)) for t in services.todays_tildelinger(today=day)]
-    return {"today": day, "rows": rows}
+    regel_lookup = services.vagt_regel_lookup()
+    rows: list[tuple[VagtTildeling, bool]] = []
+    yesterday_rows: list[tuple[VagtTildeling, bool]] = []
+    for t in services.todays_tildelinger(today=day):
+        can_mark = services.can_mark_done(t, regel_lookup=regel_lookup)
+        (rows if t.vagt.date == day else yesterday_rows).append((t, can_mark))
+    return {"today": day, "rows": rows, "yesterday_rows": yesterday_rows}
 
 
 def idag(request: HttpRequest) -> HttpResponse:

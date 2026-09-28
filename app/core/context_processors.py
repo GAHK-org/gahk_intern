@@ -125,10 +125,14 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
         (settings.WIKI_URL, "Wiki", "book"),
         (settings.FEEDBACK_URL, "Fejl & ønsker", "bug"),
     ]
-    # kokkengruppe: dedicated screen shipped in P2 -- see the koekken_allowed() entry under
-    # "Grupper & konti" above. Still gated to Køkkengruppen/administrator via koekken.access
-    # (ACCESS_ROLES) -- the P2 design doc's §9 explicitly leaves widening that to the whole house as
-    # an open rollout decision, not resolved here.
+    # kokkengruppe: dedicated screens shipped in P2 -- see the koekken_allowed() entry under
+    # "Grupper & konti" above, which is the ONE sidebar link (the resident index). Køkkengruppen's
+    # queue and Regnskab's balance export have no separate sidebar entries of their own (F10) -- they
+    # are reached from that same resident index page, as `can_manage`/`can_view_balance_export`-gated
+    # links (koekken.views._resident_context), matching this house's existing preference for surfacing
+    # an officer view from within a feature's own page rather than growing the sidebar per role. Still
+    # gated to Køkkengruppen/administrator via koekken.access (ACCESS_ROLES) -- the P2 design doc's §9
+    # explicitly leaves widening that to the whole house as an open rollout decision, not resolved here.
     sections: list[NavSection] = [
         ("Oversigt", oversigt),
         ("Værelser", vaerelser),

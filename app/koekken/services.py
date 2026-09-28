@@ -57,7 +57,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 
 from django.db import transaction
-from django.db.models import F, Q, QuerySet, Sum
+from django.db.models import Count, F, Q, QuerySet, Sum
 from django.utils import timezone
 
 from core.clock import current_date, current_datetime
@@ -75,6 +75,8 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
+
+TOPIC = "koekken"  # core.models.TOPIC_FIELDS key -- P2 design doc §6's flag-ruling notification (F4).
 
 
 class KoekkenAllocationError(Exception):
@@ -534,11 +536,23 @@ def _fill_leftover_tier_a(
     fully absorbed even when nobody at all opted into the avoidance pattern.
     """
     avoidance_ids = _avoidance_resident_ids([r.pk for r in population_all], periode)
+    # Seeded from the DATABASE, not from `result` (F5) -- `result.weekend_assigned`/`weekday_assigned`
+    # only reflects residents `_seat_tier_a` itself just wrote into `population` (this run's fresh
+    # TILDELT rows). A resident holding a SURVIVING non-TILDELT row from a PRIOR run (self-reported/
+    # flagged, P2) is deliberately excluded from `_seat_tier_a`'s own `population` -- see
+    # `allocate_tier_a`'s docstring -- so they are simply absent from `result` too, and `counts` would
+    # silently start at 0 for them even though they may already hold 2 tier-A shifts this month.
+    # Counting every VagtTildeling row (whatever its status) already sitting on this month's tier-A
+    # vagter is a resident's TRUE total for the month -- both this run's freshly-written rows AND any
+    # surviving one -- which is what the "two total this month" cap must be enforced against.
     counts: dict[int, int] = defaultdict(int)
-    for r in result.weekend_assigned:
-        counts[r.pk] += 1
-    for r in result.weekday_assigned:
-        counts[r.pk] += 1
+    for resident_id, n in (
+        VagtTildeling.objects.filter(vagt__in=weekend_vagter + weekday_vagter)
+        .values("resident_id")
+        .annotate(n=Count("id"))
+        .values_list("resident_id", "n")
+    ):
+        counts[resident_id] = n
 
     def ranked(pool: list[Resident]) -> list[Resident]:
         return sorted(pool, key=lambda r: _tier_a_sort_key(r, balances, declared_at_by_id))
@@ -794,22 +808,30 @@ def allocate_tier_b(year: int, month: int, *, force: bool = False) -> TierBResul
     skipped_ids = {r.pk for r in skipped}
     candidates = [r for r in population_all if r.pk not in skipped_ids]
 
-    balances = bulk_projected_balances(candidates)
-    declared_at_by_id = dict(
-        Praeference.objects.filter(periode=periode, resident_id__in=[r.pk for r in candidates]).values_list(
-            "resident_id", "declared_at"
-        )
-    )
-    preferences = _resident_aften_preferences([r.pk for r in candidates], periode)
-
-    def sort_key(r: Resident) -> tuple[int, int, date, int]:
-        balance, declared_at, pk = _tier_a_sort_key(r, balances, declared_at_by_id)
-        return (0 if r.pk in weekend_tier_a_ids else 1, balance, declared_at, pk)
-
-    ranked = sorted(candidates, key=sort_key)
-
     with transaction.atomic():
         VagtTildeling.objects.filter(vagt__in=vagter, status=VagtTildeling.Status.TILDELT).delete()
+
+        # F2: projected balances (and declared_at/day-preferences, for the same reason) computed
+        # AFTER the delete above, exactly mirroring `allocate_tier_a`'s identical fix (Amendment 1,
+        # A1.2, ~line 671-674) -- so a candidate's own about-to-be-recomputed TILDELT row for THIS
+        # run never inflates their own ranking balance. Without this, force-reallocating a month with
+        # no underlying balance change could still reshuffle who gets which aftenvagt, purely because
+        # each holder's own current assignment was counted against themselves before it was cleared --
+        # the docstring's "idempotent the same way allocate_tier_a is" claim was false until this was
+        # moved inside the transaction.
+        balances = bulk_projected_balances(candidates)
+        declared_at_by_id = dict(
+            Praeference.objects.filter(
+                periode=periode, resident_id__in=[r.pk for r in candidates]
+            ).values_list("resident_id", "declared_at")
+        )
+        preferences = _resident_aften_preferences([r.pk for r in candidates], periode)
+
+        def sort_key(r: Resident) -> tuple[int, int, date, int]:
+            balance, declared_at, pk = _tier_a_sort_key(r, balances, declared_at_by_id)
+            return (0 if r.pk in weekend_tier_a_ids else 1, balance, declared_at, pk)
+
+        ranked = sorted(candidates, key=sort_key)
 
         held: dict[int, set[int]] = defaultdict(set)
         open_by_vagt: dict[int, int] = {}
@@ -1164,14 +1186,27 @@ def in_preference_window(*, at: date | None = None) -> Periode | None:
     is already in the past the moment anyone is living inside it), but checking both keeps this
     correct right at a boundary without hardcoding which one it must be.
 
-    **Deliberately does NOT call `resolve_periode` (or anything else that touches the database)
-    until it already knows `at` falls inside a window.** This runs from `core.context_processors.
-    navigation` on every single authenticated page view (it is what drives the base.html banner,
-    §8) -- on the ~355 days a year nobody is inside a window, this must cost zero queries, not the
-    two a naive `resolve_periode(today)` + `_next_periode(...)` pair would add to every page in the
-    whole site. `_periode_bounds`/`_deadline_from_start` are pure date arithmetic; the one query this
-    function can still cost is the single `resolve_periode` needed to return an actual `Periode` row,
-    and only on the rare day that is actually inside a window.
+    **Never touches the database, in EVERY case -- not only the common "no window" one (F6).** This
+    runs from `core.context_processors.navigation` on every single authenticated page view (it is
+    what drives the base.html banner, §8), so a naive `resolve_periode(start)` (a `get_or_create`)
+    would cost 1-2 extra queries on EVERY page view during the ~1-week window, several times a year
+    -- and worse, it is a WRITE triggered from a GET request, which is bad practice independent of
+    the query count. `_periode_bounds`/`_deadline_from_start` are pure date arithmetic, so the
+    `Periode` this returns when `at` does fall inside a window is built straight from them, as an
+    UNSAVED, in-memory instance -- never persisted, and never read back from the database either.
+
+    This is deliberately not "read the row if it exists, else no banner": nothing in this codebase's
+    scheduling creates the NEXT periode's row before its own deadline. `generate_koekkenvagter`,
+    `roll_forward_allocation` and the reconciliation sweep are all scoped to the CURRENT periode only
+    (see each one's own docstring) -- the earliest anything creates the next periode's row is either
+    a resident's OWN preference submission (`set_preference`, once they already have a row for the
+    current periode) or Køkkengruppen's deadline-triggered `--batch` allocation, which by definition
+    runs AT the deadline, i.e. the day the window closes. A read-only lookup would therefore silently
+    show no banner for exactly the periode that most needs one: the first time anyone is asked about
+    it, before any row exists yet. Every actual caller (this function, `praeferencer`'s view/template)
+    only ever reads the result for display -- `str(periode)` ("Efterår 2026") -- never for its `pk`
+    or a relation, so an unsaved instance is exactly as useful as a persisted one here and costs
+    nothing.
     """
     today = at or current_date()
     _kind, _year, current_start, current_end = _periode_bounds(today)
@@ -1179,7 +1214,8 @@ def in_preference_window(*, at: date | None = None) -> Periode | None:
     for start in (current_start, next_start):
         deadline = _deadline_from_start(start)
         if deadline - timedelta(days=7) <= today <= deadline:
-            return resolve_periode(start)
+            kind, year, p_start, p_end = _periode_bounds(start)
+            return Periode(kind=kind, year=year, start_date=p_start, end_date=p_end)
     return None
 
 
@@ -1192,34 +1228,60 @@ def resident_needs_to_declare(resident: Resident, *, at: date | None = None) -> 
     return not Praeference.objects.filter(resident=resident, periode=periode).exists()
 
 
-def _vagt_regel_for(vagt: Vagt) -> VagtRegel:
+def vagt_regel_lookup() -> dict[tuple[str, bool], VagtRegel]:
+    """Every `VagtRegel` row, keyed by (kind, weekend) -- there are only a handful in the whole table
+    (one per kind per weekday/weekend, per that model's docstring), so a caller that needs
+    `_vagt_regel_for` for MANY `Vagt` rows in one request (the kitchen tablet's shift list, F7) should
+    build this ONCE and pass it through rather than pay one `VagtRegel.objects.get(...)` query per
+    row."""
+    return {(regel.kind, regel.weekend): regel for regel in VagtRegel.objects.all()}
+
+
+def _vagt_regel_for(vagt: Vagt, regel_lookup: dict[tuple[str, bool], VagtRegel] | None = None) -> VagtRegel:
     """The `VagtRegel` row governing `vagt` -- read LIVE, matching `VagtRegel.start_time`'s own
-    docstring on why that field is never snapshotted onto `Vagt`."""
-    return VagtRegel.objects.get(kind=vagt.kind, weekend=vagt.date.weekday() >= 5)
+    docstring on why that field is never snapshotted onto `Vagt`. Pass `regel_lookup` (from
+    `vagt_regel_lookup()`) to look it up in memory instead of running a fresh query -- omitted, this
+    still queries directly, so every existing single-row caller/test keeps working unchanged."""
+    key = (vagt.kind, vagt.date.weekday() >= 5)
+    if regel_lookup is not None:
+        return regel_lookup[key]
+    return VagtRegel.objects.get(kind=key[0], weekend=key[1])
 
 
-def marking_window(vagt: Vagt) -> tuple[datetime, datetime]:
+def marking_window(
+    vagt: Vagt, *, regel_lookup: dict[tuple[str, bool], VagtRegel] | None = None
+) -> tuple[datetime, datetime]:
     """(opens_at, closes_at) for marking `vagt` done at the kitchen tablet -- P2 design doc §5, tz-
     aware Europe/Copenhagen wall-clock. Opens at the shift's own start time on its own date (read
     LIVE off `VagtRegel.start_time`), closes at the very start of the day AFTER the day after the
     shift -- i.e. inclusive through the end of the FOLLOWING day. A Tuesday shift's window therefore
     runs from Tuesday's start_time through the last instant of Wednesday.
+
+    `regel_lookup` is forwarded to `_vagt_regel_for` (F7) -- see that function's docstring.
     """
-    regel = _vagt_regel_for(vagt)
+    regel = _vagt_regel_for(vagt, regel_lookup)
     opens_at = timezone.make_aware(datetime.combine(vagt.date, regel.start_time))
     closes_at = timezone.make_aware(datetime.combine(vagt.date + timedelta(days=2), time.min))
     return opens_at, closes_at
 
 
-def can_mark_done(vagt_tildeling: VagtTildeling, *, at: datetime | None = None) -> bool:
+def can_mark_done(
+    vagt_tildeling: VagtTildeling,
+    *,
+    at: datetime | None = None,
+    regel_lookup: dict[tuple[str, bool], VagtRegel] | None = None,
+) -> bool:
     """Whether `vagt_tildeling` may be marked done RIGHT NOW -- P2 design doc §5. Only a still-
     `TILDELT` row inside its marking window; a row already `UDFOERT`/`ANMELDT`/`IKKE_UDFOERT` has
     nothing further to self-report. The kitchen-tablet view calls this to decide whether to render
-    the mark-done button at all (§10: a closed action removes its button, never disables it)."""
+    the mark-done button at all (§10: a closed action removes its button, never disables it).
+
+    `regel_lookup` is forwarded to `marking_window` (F7) -- pass `vagt_regel_lookup()`'s result once
+    per request when calling this for many rows, rather than once per row."""
     if vagt_tildeling.status != VagtTildeling.Status.TILDELT:
         return False
     now = at or current_datetime()
-    opens_at, closes_at = marking_window(vagt_tildeling.vagt)
+    opens_at, closes_at = marking_window(vagt_tildeling.vagt, regel_lookup=regel_lookup)
     return opens_at <= now < closes_at
 
 
@@ -1261,6 +1323,53 @@ def can_flag(vagt_tildeling: VagtTildeling, *, at: date | None = None) -> bool:
     return not vagt_tildeling.anmeldelser.filter(status=VagtAnmeldelse.Status.AABEN).exists()
 
 
+def open_flag_tildeling_ids(tildeling_ids: Iterable[int]) -> set[int]:
+    """The batched form of `can_flag`'s own open-flag check -- one query for however many
+    `VagtTildeling` ids a caller has in hand, instead of `can_flag`'s per-row
+    `vagt_tildeling.anmeldelser.filter(...).exists()` (F7: the resident index page's "seneste vagter"
+    list otherwise runs that once per row -- 60-80 extra queries at realistic scale). A caller that
+    already knows every row's date is <= today (as `_recent_context`'s date-windowed query does) needs
+    nothing else from `can_flag`; one that doesn't should still apply that date check itself."""
+    ids = list(tildeling_ids)
+    if not ids:
+        return set()
+    return set(
+        VagtAnmeldelse.objects.filter(
+            status=VagtAnmeldelse.Status.AABEN, vagt_tildeling_id__in=ids
+        ).values_list("vagt_tildeling_id", flat=True)
+    )
+
+
+def flagged_by_names(tildelinger: Iterable[VagtTildeling]) -> dict[int, str]:
+    """tildeling id -> the flagger's full name, for whichever of `tildelinger` is currently showing a
+    flag's consequence (an open `ANMELDT` row, or an upheld `IKKE_UDFOERT` one) -- P2 design doc §6:
+    "flagger identity is fully visible, including to the flagged resident", not only to Køkkengruppen
+    (F3). A tildeling not currently showing a flag (never flagged, or flagged-and-dismissed back to
+    its previous status) is simply absent from the returned dict.
+
+    One query for however many rows a caller passes, mirroring `open_flag_tildeling_ids` above (F7):
+    `VagtAnmeldelse` rows for the relevant ids, newest first, kept only the first (most recent) one
+    seen per tildeling id -- a tildeling can accumulate more than one `VagtAnmeldelse` over time (a
+    dismissed flag may be re-flagged later), and the most recent one is always the one explaining the
+    CURRENT status.
+    """
+    ids = [
+        t.pk
+        for t in tildelinger
+        if t.status in (VagtTildeling.Status.ANMELDT, VagtTildeling.Status.IKKE_UDFOERT)
+    ]
+    if not ids:
+        return {}
+    names: dict[int, str] = {}
+    for anmeldelse in (
+        VagtAnmeldelse.objects.filter(vagt_tildeling_id__in=ids)
+        .select_related("flagged_by")
+        .order_by("-created_at")
+    ):
+        names.setdefault(anmeldelse.vagt_tildeling_id, anmeldelse.flagged_by.full_name)
+    return names
+
+
 def flag_tildeling(vagt_tildeling: VagtTildeling, flagged_by: Resident, reason: str = "") -> VagtAnmeldelse:
     """ "Denne vagt blev ikke udført" -- P2 design doc §6. ONE uniform action, whatever the
     assignment's current status. Freezes `previous_status` (what the assignment was AT THE MOMENT of
@@ -1298,7 +1407,11 @@ def resolve_anmeldelse(anmeldelse: VagtAnmeldelse, *, upheld: bool, resolved_by:
 
     Either upheld branch pushes a notification to the flagged resident's own `wants_koekken` topic
     (`core.push`, per-topic, opt-in) -- a ruling against them is exactly the kind of thing nobody
-    should discover only at move-out.
+    should discover only at move-out. The audience is narrowed through `koekken.access.
+    allowed_subscribers` (F4), not a hand-rolled `PushSubscription.objects.filter(...)` -- without
+    that gate-aware narrowing, a resident who opted in before the rollout gate closed (or before it
+    is ever opened) could still be notified with a link that then 403s them (see `core.rollout.
+    Gate.allowed_subscribers`'s own docstring).
 
     Raises `KoekkenAllocationError` if `anmeldelse` is not currently open -- resolving twice (a
     replayed POST) must not double-reverse a credit or double-notify.
@@ -1319,11 +1432,13 @@ def resolve_anmeldelse(anmeldelse: VagtAnmeldelse, *, upheld: bool, resolved_by:
                 vagt=vagt_tildeling.vagt,
                 created_by=resolved_by,
             )
-        from core.models import PushSubscription  # local: avoids a core.push/core.models import for
-        from core.push import send  # every caller of this module that never resolves a flag.
+        from core.push import send, subscribers  # local: avoids a core.push import for every caller
 
+        from . import access  # of this module that never resolves a flag; same reasoning for access.
+
+        audience = access.allowed_subscribers(subscribers(TOPIC).filter(user=vagt_tildeling.resident))
         send(
-            PushSubscription.objects.filter(user=vagt_tildeling.resident, wants_koekken=True),
+            audience,
             "Køkkenvagt",
             f"{vagt_tildeling.vagt} blev meldt ikke udført, og afgørelsen er opretholdt.",
             "/intern/koekken/",
@@ -1337,6 +1452,15 @@ def resolve_anmeldelse(anmeldelse: VagtAnmeldelse, *, upheld: bool, resolved_by:
     anmeldelse.save(update_fields=["status", "resolved_by", "resolved_at"])
     vagt_tildeling.save(update_fields=["status"])
     return anmeldelse
+
+
+def is_subscribed(resident: Resident) -> bool:
+    """Whether any of `resident`'s devices wants Køkkenvagter push notifications -- the initial state
+    of the resident index page's subscribe toggle (F4), mirroring `reparationer.services.
+    is_subscribed`/`opslagstavle.services.is_subscribed`."""
+    from core.push import subscribers
+
+    return subscribers(TOPIC).filter(user=resident).exists()
 
 
 def open_anmeldelser() -> QuerySet[VagtAnmeldelse]:
@@ -1361,15 +1485,31 @@ def unreported_tildelinger(*, before: date | None = None) -> QuerySet[VagtTildel
 
 
 def todays_tildelinger(*, today: date | None = None) -> QuerySet[VagtTildeling]:
-    """Every assignment for today's shifts -- the kitchen tablet's whole page (P2 design doc §7).
-    Every status is included, not only `TILDELT`: a shift already marked done or already flagged
-    still belongs on the tablet (its mark-done button just isn't rendered, per §10), so the tablet
-    stays an honest picture of the day rather than one that empties out as people tap in."""
+    """Every assignment for today's shifts, PLUS yesterday's shifts still inside their own marking
+    window -- the kitchen tablet's whole page (P2 design doc §7). Every status is included for TODAY,
+    not only `TILDELT`: a shift already marked done or already flagged still belongs on the tablet
+    (its mark-done button just isn't rendered, per §10), so the tablet stays an honest picture of the
+    day rather than one that empties out as people tap in.
+
+    **F1: yesterday's shifts are included too, restricted to still-`TILDELT` ones.** The marking
+    window (§5) opens at a shift's own start time and stays open through the END of the FOLLOWING
+    day -- so filtering to `vagt__date=today` alone made half that window unreachable at the tablet: a
+    shift from yesterday still inside its window had no way to ever be marked done, because it simply
+    never appeared. A still-`TILDELT` row dated yesterday is, by construction, ALWAYS inside its own
+    window for the whole of today (`marking_window`'s `closes_at` for a `vagt.date` of yesterday is
+    the very start of tomorrow), so no further window check is needed here -- `can_mark_done` still
+    decides per row whether to render the button, exactly as it already does for today's rows. A
+    shift from yesterday that is no longer `TILDELT` (self-reported or flagged yesterday) has nothing
+    left to do today and is deliberately left out, so the tablet does not reopen settled history.
+    """
     day = today or current_date()
+    yesterday = day - timedelta(days=1)
     return (
-        VagtTildeling.objects.filter(vagt__date=day)
+        VagtTildeling.objects.filter(
+            Q(vagt__date=day) | Q(vagt__date=yesterday, status=VagtTildeling.Status.TILDELT)
+        )
         .select_related("vagt", "resident")
-        .order_by("vagt__kind", "resident__first_name")
+        .order_by("vagt__date", "vagt__kind", "resident__first_name")
     )
 
 

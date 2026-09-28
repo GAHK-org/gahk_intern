@@ -1994,4 +1994,9 @@
      (§10) -- this only dims the card itself so it still reads as "no longer actionable" at a
      glance, without a disabled button sitting on top of it. */
   .idag-status-udfoert, .idag-status-anmeldt, .idag-status-ikke_udfoert { opacity:.6; }
+  /* F1: yesterday's still-open leftovers get their own labelled section, ahead of today's grid, so
+     a resident glancing at the tablet is never confused about which day a card is actually for. */
+  .idag-section { margin-bottom:20px; }
+  .idag-section-title { font-size:14px; text-transform:uppercase; letter-spacing:.04em;
+    color:var(--muted); margin:0 0 8px; }
 }

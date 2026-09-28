@@ -11,7 +11,36 @@
   `#idag-vagter` wrapper in idag.html, not swapped itself with `outerHTML` -- so that wrapper node
   survives every swap and `frontend/src/koekken.ts`'s delegated submit listener on it never goes
   stale (an outerHTML swap would replace the very node the listener is bound to).
+
+  F1: `yesterday_rows` -- shifts from yesterday still inside their own marking window (the window
+  runs through the end of the day AFTER the shift, per §5), so filtering to today alone made half
+  that window unreachable at the tablet. Rendered in its OWN labelled section ("I går") rather than
+  folded silently into today's grid, so residents are never confused about which day a row is
+  actually for. `rows` keeps its original shape/key so this partial renders identically to before
+  when `yesterday_rows` is absent (e.g. the existing §10 button test, which only ever passes `rows`).
 {% endcomment %}
+{% if yesterday_rows %}
+  <div class="idag-section">
+    <h2 class="idag-section-title">I går — stadig åbne vagter</h2>
+    <div class="idag-grid">
+      {% for tildeling, can_mark in yesterday_rows %}
+        <div class="idag-card idag-status-{{ tildeling.status }}">
+          <div class="idag-kind">{{ tildeling.vagt.get_kind_display }} ({{ tildeling.vagt.date|date:"D j. F" }})</div>
+          <div class="idag-name">{{ tildeling.resident.full_name }}</div>
+          <div class="idag-state">{{ tildeling.get_status_display }}</div>
+          {% if can_mark %}
+            <form method="post" action="{% url 'koekken:marker_udfoert' tildeling.pk %}"
+                  hx-post="{% url 'koekken:marker_udfoert' tildeling.pk %}"
+                  hx-target="#idag-vagter" hx-swap="innerHTML">
+              {% csrf_token %}
+              <button type="submit" class="btn idag-done-btn">Jeg har gjort det</button>
+            </form>
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+{% endif %}
 {% if rows %}
   <div class="idag-grid">
     {% for tildeling, can_mark in rows %}

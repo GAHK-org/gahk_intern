@@ -5,6 +5,14 @@
 
   A closed action removes its button entirely (§10) -- `can_flag` decides per row, and a row with no
   flag left renders no form and no POST target at all.
+
+  `recent` is (tildeling, can_flag, flagged_by_name) triples -- `flagged_by_name` is set only when
+  the row is currently showing a flag's consequence, per design doc §6's explicit "flagger identity is
+  fully visible, including to the flagged resident" decision (F3; see
+  koekken.services.flagged_by_names).
+
+  The reason field renders the form's OWN Textarea widget (F11), not a hand-written <input>, so it
+  gets that field's actual validation/whitespace-stripping rather than bypassing it.
 {% endcomment %}
 <div id="koekken-recent" class="card-flat">
   <div class="card-head"><h2>Seneste vagter i køkkenet</h2></div>
@@ -18,12 +26,15 @@
             </tr>
           </thead>
           <tbody>
-            {% for tildeling, can_flag in recent %}
+            {% for tildeling, can_flag, flagged_by in recent %}
               <tr style="border-bottom:1px solid #f0f1f4">
                 <td>{{ tildeling.vagt.date|date:"D j. F" }}</td>
                 <td>{{ tildeling.vagt.get_kind_display }}</td>
                 <td>{{ tildeling.resident.full_name }}</td>
-                <td>{{ tildeling.get_status_display }}</td>
+                <td>
+                  {{ tildeling.get_status_display }}
+                  {% if flagged_by %}<span class="muted"> — anmeldt af {{ flagged_by }}</span>{% endif %}
+                </td>
                 <td>
                   {% if can_flag %}
                     <form method="post" action="{% url 'koekken:flag_vagt' tildeling.pk %}"
@@ -31,7 +42,7 @@
                           hx-target="#koekken-recent" hx-swap="outerHTML"
                           style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
                       {% csrf_token %}
-                      <input type="text" name="reason" placeholder="Begrundelse (valgfri)" style="min-width:10rem;padding:.3rem">
+                      {{ anmeldelse_form.reason }}
                       <button type="submit" class="btn btn-secondary" style="white-space:nowrap">
                         Denne vagt blev ikke udført
                       </button>

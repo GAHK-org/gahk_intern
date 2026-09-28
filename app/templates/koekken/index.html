@@ -2,6 +2,10 @@
 {% comment %}
   Resident surface: my shifts (upcoming/past), my balance against the house average, and the
   flaggable "seneste vagter" list -- P2 design doc §7.
+
+  `upcoming`/`past` are (tildeling, flagged_by_name) tuples -- design doc §6: "flagger identity is
+  fully visible, including to the flagged resident" (F3). `flagged_by_name` is only set when the row
+  is currently showing a flag's consequence (open, or upheld); see koekken.services.flagged_by_names.
 {% endcomment %}
 {% block title %}Køkkenvagter - GAHK Intern{% endblock %}
 {% block content %}
@@ -11,10 +15,25 @@
       <h1>Mine køkkenvagter</h1>
     </div>
     <div class="head-actions">
+      {% if can_manage %}
+        {% comment %}F10: Køkkengruppen's queue view was otherwise reachable only by typing the exact URL.{% endcomment %}
+        <a class="btn btn-secondary" href="{% url 'koekken:gruppe' %}">Køkkengruppen</a>
+      {% endif %}
+      {% if can_view_balance_export %}
+        {% comment %}F10: Regnskab's balance export was otherwise reachable only by typing the exact URL.{% endcomment %}
+        <a class="btn btn-secondary" href="{% url 'koekken:balance_export' %}">Saldo-eksport</a>
+      {% endif %}
       <a class="btn btn-secondary" href="{% url 'koekken:praeferencer_forklaring' %}">Hvad betyder mine præferencer?</a>
       <a class="btn" href="{% url 'koekken:praeferencer' %}">Mine præferencer</a>
     </div>
   </div>
+
+  {% comment %}
+    F4: the push opt-in bar -- the `wants_koekken` topic had no opt-in UI anywhere, so
+    resolve_anmeldelse's flag-ruling notification could never fire for anyone. Mirrors
+    reparationer/board.html's include exactly.
+  {% endcomment %}
+  {% include "core/_push_bar.html" with topic="koekken" url_name="koekken:save_subscription" on_label="Få besked om afgørelser" success_text="Du får nu besked, hvis en anmeldelse mod dig bliver opretholdt." off_text="Beskeder om køkkenvagter er slået fra på denne enhed." %}
 
   {% if needs_to_declare %}
     <p class="card" style="border-color:var(--brass, #b08d57)">
@@ -36,8 +55,11 @@
       <div class="card-pad">
         {% if upcoming %}
           <ul>
-            {% for t in upcoming %}
-              <li>{{ t.vagt.date|date:"D j. F" }} — {{ t.vagt.get_kind_display }} ({{ t.get_status_display }})</li>
+            {% for t, flagged_by in upcoming %}
+              <li>
+                {{ t.vagt.date|date:"D j. F" }} — {{ t.vagt.get_kind_display }} ({{ t.get_status_display }})
+                {% if flagged_by %}<span class="muted"> — anmeldt af {{ flagged_by }}</span>{% endif %}
+              </li>
             {% endfor %}
           </ul>
         {% else %}
@@ -50,8 +72,11 @@
       <div class="card-pad">
         {% if past %}
           <ul>
-            {% for t in past %}
-              <li>{{ t.vagt.date|date:"D j. F" }} — {{ t.vagt.get_kind_display }} ({{ t.get_status_display }})</li>
+            {% for t, flagged_by in past %}
+              <li>
+                {{ t.vagt.date|date:"D j. F" }} — {{ t.vagt.get_kind_display }} ({{ t.get_status_display }})
+                {% if flagged_by %}<span class="muted"> — anmeldt af {{ flagged_by }}</span>{% endif %}
+              </li>
             {% endfor %}
           </ul>
         {% else %}
