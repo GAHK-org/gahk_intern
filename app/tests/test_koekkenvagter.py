@@ -1,8 +1,13 @@
-"""Køkkenvagter — P1: slot generation, tier-A allocation, the ledger and obligation posting, launch
-seeding. Full design: `docs/plans/2026-09-21-koekkenvagter-design.md`.
+"""Køkkenvagter — P1 (slot generation, tier-A allocation, the ledger and obligation posting, launch
+seeding) plus Amendments 1-3, plus P2 (tier-B allocation, the full preference model, verification/
+flagging, the kitchen tablet, the four UI surfaces). Full design:
+`docs/plans/2026-09-21-koekkenvagter-design.md` and `docs/plans/2026-09-28-koekkenvagter-p2-design.md`.
 
-No views exist yet (see that doc's "Phasing"), so everything here goes through `koekken.services`
-and the management commands directly, not through a Client.
+The P1/Amendment section below goes through `koekken.services` and the management commands directly,
+not through a Client -- no views existed yet at that point. The P2 section at the bottom of this file
+uses `render_to_string` for the §10 "closed action removes its button" assertions (a template-level
+check of exactly the invariant that matters, independent of how the service computed the permission)
+and Django's test `Client` for the kiosk IP gate and the rollout gate.
 
 Tier-A capacity in most of these tests is built by hand (a handful of `Vagt` rows on chosen dates)
 rather than through `generate_vagter` against a real calendar month — a real month's weekend pool is
@@ -15,28 +20,45 @@ import calendar
 import json
 import logging
 from collections.abc import Callable
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import IntegrityError, transaction
-from django.test import override_settings
+from django.template.loader import render_to_string
+from django.test import Client, override_settings
 from django.utils import timezone
 
 from core.models import DevClock, Room
-from koekken.models import KoekkenPost, Periode, Praeference, Vagt, VagtRegel, VagtTildeling
+from koekken.models import (
+    KoekkenPost,
+    Periode,
+    Praeference,
+    PraeferenceDag,
+    Vagt,
+    VagtAnmeldelse,
+    VagtRegel,
+    VagtTildeling,
+)
 from koekken.services import (
     KoekkenAllocationError,
+    allocate_month,
     allocate_tier_a,
+    allocate_tier_b,
     balance_for,
+    can_mark_done,
+    flag_tildeling,
     generate_vagter,
     house_mean,
+    mark_udfoert,
+    marking_window,
     periode_deadline,
     post_obligation,
     rebase_to_zero_mean,
     reconcile_month,
+    resolve_anmeldelse,
     resolve_periode,
     roll_forward_allocation,
     set_preference,
@@ -1342,3 +1364,433 @@ def test_shared_seating_core_gives_same_choice_via_allocate_and_reconcile(make_r
     assert {res.pk for res in m1.weekend_assigned} == {res.pk for res in m2.seated.weekend_assigned}
     assert {res.pk for res in m1.weekday_assigned} == {res.pk for res in m2.seated.weekday_assigned}
     assert {res.pk for res in m1.unassigned} == {res.pk for res in m2.seated.unassigned}
+
+
+# =============================================================================================
+# P2: tier-B allocation (design doc §4)
+# =============================================================================================
+
+
+def _aften_vagt(periode: Periode, d: date, *, headcount: int = 1) -> Vagt:
+    return Vagt.objects.create(
+        periode=periode, date=d, kind=VagtRegel.Kind.AFTEN, headcount=headcount, duration_minutes=180
+    )
+
+
+def test_no_slot_left_open_in_either_tier_after_allocate_month(make_resident: Callable) -> None:
+    """The design doc's headline invariant, insisted on twice: after a run, NO slot in EITHER tier
+    is unfilled. A real month (via generate_vagter, every VagtRegel kind) against a population large
+    enough to exceed both tiers' capacity comfortably (real capacity tops out around 62 tier-A slots
+    and 54 tier-B slots) -- every generated Vagt this month must end up at full headcount."""
+    year, month = 2050, 3
+    periode = resolve_periode(date(year, month, 15))
+    generate_vagter(periode)
+    residents = [make_resident(email=f"fill{i}@gahk.dk") for i in range(70)]
+    for r in residents:
+        _place(r, year, month)
+
+    allocate_month(year, month)
+
+    vagter = list(Vagt.objects.filter(date__year=year, date__month=month))
+    assert vagter  # sanity: the month actually generated shifts
+    kinds_present = {v.kind for v in vagter}
+    assert kinds_present == {VagtRegel.Kind.MORGEN, VagtRegel.Kind.FROKOST, VagtRegel.Kind.AFTEN}
+    for vagt in vagter:
+        assert vagt.tildelinger.count() == vagt.headcount, f"{vagt} is short of headcount"
+
+
+def test_tier_b_preferences_never_reorder_the_queue(make_resident: Callable) -> None:
+    """The design doc's second headline invariant, and the one most likely to be got wrong:
+    preferences decide WHICH slot, never WHO is next. Adversarial by construction -- exactly ONE
+    open aftenvagt slot, on the one day a much-better-balance resident strongly prefers; a much-
+    worse-balance resident has no preference anywhere. The worse-balance resident must still be
+    picked for the sole slot, and the better-balance resident's preference buys them NOTHING."""
+    year, month = 2051, 3
+    periode = resolve_periode(date(year, month, 15))
+    target_date = next(d for d in (date(year, month, day) for day in range(1, 8)) if d.weekday() == 2)
+    _aften_vagt(periode, target_date)
+
+    good = make_resident(email="good_balance@gahk.dk")
+    bad = make_resident(email="bad_balance@gahk.dk")
+    for r in (good, bad):
+        _place(r, year, month)
+    _adjust(good, periode, 10_000)  # far AHEAD of the house -- should be served last, if at all
+    _adjust(bad, periode, -10_000)  # far BEHIND -- should be served first, preference or not
+
+    good_pref = Praeference.objects.create(resident=good, periode=periode, declared_at=date(year, 1, 1))
+    PraeferenceDag.objects.create(praeference=good_pref, kind=VagtRegel.Kind.AFTEN, weekday=2)
+    # bad declares nothing anywhere.
+
+    result = allocate_tier_b(year, month)
+
+    assert result.assigned == [bad]  # worse balance wins the turn regardless of preference
+    assert good not in result.assigned  # good's preference for the very slot available bought nothing
+    assert VagtTildeling.objects.filter(resident=bad, status=VagtTildeling.Status.TILDELT).count() == 1
+    assert not VagtTildeling.objects.filter(resident=good).exists()
+
+
+def test_tier_a_runs_before_tier_b_weekend_assignee_outranks_weekday_for_aftenvagt(
+    make_resident: Callable,
+) -> None:
+    """Weekend-tier-A assignees outrank a weekday assignee for aftenvagt -- the already-approved
+    weekend-compensation mechanic, which depends on tier-A having already run and written its
+    result before tier-B reads it. `weekend_resident` has a far BETTER ledger balance than
+    `weekday_resident` -- without the compensation mechanic, balance alone would hand the sole
+    aftenvagt slot to `weekday_resident` instead."""
+    year, month = 2051, 4
+    periode = _build_month(year, month, weekday_capacity=1, weekend_capacity=1)
+    _aften_vagt(periode, date(year, month, 1))
+
+    weekday_resident = make_resident(email="wd_outrank@gahk.dk")
+    weekend_resident = make_resident(email="we_outrank@gahk.dk")
+    for r in (weekday_resident, weekend_resident):
+        _place(r, year, month)
+    _adjust(weekend_resident, periode, 10_000)  # far AHEAD -- would lose tier B on balance alone
+    _adjust(weekday_resident, periode, 0)
+    Praeference.objects.create(resident=weekend_resident, periode=periode, weekday_unavailable=True)
+
+    tier_a = allocate_tier_a(year, month)
+    assert weekend_resident in tier_a.weekend_assigned
+    assert weekday_resident in tier_a.weekday_assigned
+
+    tier_b = allocate_tier_b(year, month)
+
+    assert tier_b.assigned == [weekend_resident]  # compensation outranks the raw balance ordering
+
+
+def test_undeclared_resident_is_assigned_in_tier_b(make_resident: Callable) -> None:
+    """An undeclared resident is ranked and seated in tier B like anyone else, with no day
+    preference to honour -- mirrors tier-A's own undeclared handling (Amendment 3, A3.2)."""
+    year, month = 2051, 5
+    periode = resolve_periode(date(year, month, 15))
+    _aften_vagt(periode, date(year, month, 3))
+    r = make_resident(email="undeclared_tb@gahk.dk")
+    _place(r, year, month)
+
+    result = allocate_tier_b(year, month)
+
+    assert result.assigned == [r]
+
+
+def test_weekday_unavailable_does_not_exclude_from_aftenvagt(make_resident: Callable) -> None:
+    """§4: weekday_unavailable means "not home early-to-afternoon on weekdays" -- it must NOT
+    restrict aftenvagt eligibility. A resident who declared it is still assigned an aftenvagt like
+    anyone else."""
+    year, month = 2051, 6
+    periode = resolve_periode(date(year, month, 15))
+    _aften_vagt(periode, date(year, month, 3))
+    r = make_resident(email="unavailable_tb@gahk.dk")
+    _place(r, year, month)
+    Praeference.objects.create(resident=r, periode=periode, weekday_unavailable=True)
+
+    result = allocate_tier_b(year, month)
+
+    assert result.assigned == [r]
+
+
+def test_avoidance_pattern_gets_extra_tier_a_instead_of_aftenvagt_when_capacity_allows(
+    make_resident: Callable,
+) -> None:
+    """§4's aftenvagt-avoidance pattern: declared_at set, >=1 tier-A day preferred, 0 aften days.
+    With 2 open weekday tier-A slots and only ONE candidate, the leftover-capacity mechanic
+    (`_fill_leftover_tier_a`) gives them BOTH -- extra tier-A instead of an aftenvagt -- and
+    `allocate_tier_b` then excludes them from its candidate pool entirely."""
+    year, month = 2051, 7
+    periode = _build_month(year, month, weekday_capacity=2, weekend_capacity=0)
+    _aften_vagt(periode, date(year, month, 3))
+
+    avoider = make_resident(email="avoider@gahk.dk")
+    _place(avoider, year, month)
+    pref = Praeference.objects.create(resident=avoider, periode=periode, weekday_unavailable=False)
+    PraeferenceDag.objects.create(praeference=pref, kind=VagtRegel.Kind.MORGEN, weekday=0)
+    # 0 aften days declared -> avoidance pattern.
+
+    tier_a = allocate_tier_a(year, month)
+    assert tier_a.weekday_assigned.count(avoider) == 2  # both leftover weekday slots, via the mechanic
+    assert VagtTildeling.objects.filter(resident=avoider).count() == 2
+
+    tier_b = allocate_tier_b(year, month)
+
+    assert tier_b.assigned == []
+    assert tier_b.skipped_avoidance == [avoider]
+
+
+def test_avoidance_signal_requires_an_actual_declaration_not_mere_silence(make_resident: Callable) -> None:
+    """The discriminator §4 calls out: a resident who declared nothing anywhere (no Praeference row
+    at all) is genuinely no-opinion, never avoidance -- even though "0 aften days" is trivially true
+    for them too. Proven by NOT getting the avoidance treatment: with a single open weekday slot and
+    exactly one leftover candidate who never declared, they still only ever hold ONE tier-A shift
+    (the ordinary leftover-fill "ranked, not avoidance-first" path), and remain an ordinary tier-B
+    candidate rather than being skipped."""
+    year, month = 2051, 8
+    periode = _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
+    _aften_vagt(periode, date(year, month, 3))
+    r = make_resident(email="silent_no_declare@gahk.dk")
+    _place(r, year, month)
+    # No Praeference row at all for r.
+
+    tier_a = allocate_tier_a(year, month)
+    assert tier_a.weekday_assigned.count(r) == 1  # ordinary single seat, not the avoidance double
+
+    tier_b = allocate_tier_b(year, month)
+    assert tier_b.skipped_avoidance == []
+    assert tier_b.assigned == [r]
+
+
+# =============================================================================================
+# P2: verification -- marking done at the tablet (design doc §5)
+# =============================================================================================
+
+
+def _tildeling_for_marking(year: int, month: int, day: int, kind: str, resident: Resident) -> VagtTildeling:
+    periode = resolve_periode(date(year, month, day))
+    vagt = Vagt.objects.create(
+        periode=periode, date=date(year, month, day), kind=kind, headcount=1, duration_minutes=60
+    )
+    return VagtTildeling.objects.create(vagt=vagt, resident=resident, status=VagtTildeling.Status.TILDELT)
+
+
+@pytest.mark.parametrize(
+    "kind,start_hour",
+    [(VagtRegel.Kind.MORGEN, 6), (VagtRegel.Kind.FROKOST, 12), (VagtRegel.Kind.AFTEN, 17)],
+)
+def test_marking_window_boundaries_per_kind(make_resident: Callable, kind: str, start_hour: int) -> None:
+    """§5's table, one kind at a time: opens at the shift's own start time on its own date, closes
+    at the very start of the day AFTER the following day (inclusive through the end of that day)."""
+    year, month, day = 2052, 3, 6  # a Wednesday
+    r = make_resident(email=f"markwin_{kind}@gahk.dk")
+    tildeling = _tildeling_for_marking(year, month, day, kind, r)
+
+    opens_at, closes_at = marking_window(tildeling.vagt)
+    assert opens_at == timezone.make_aware(datetime.combine(date(year, month, day), time(start_hour, 0)))
+    assert closes_at == timezone.make_aware(datetime.combine(date(year, month, day + 2), time.min))
+
+    assert can_mark_done(tildeling, at=opens_at - timedelta(minutes=1)) is False  # not open yet
+    assert can_mark_done(tildeling, at=opens_at) is True  # opens exactly at start_time
+    assert can_mark_done(tildeling, at=closes_at - timedelta(seconds=1)) is True  # last instant open
+    assert can_mark_done(tildeling, at=closes_at) is False  # closed
+
+
+def test_marking_devclock_walk_across_boundary(make_resident: Callable) -> None:
+    """A DevClock walk across the marking-window boundary, per §11's requirement. DevClock only
+    carries a date (midnight local time -- core.clock.current_datetime's own docstring), so a
+    morgenvagt's 06:00 opening is never reachable via the simulated clock on ITS OWN day; walking to
+    the FOLLOWING day (still inside the window) and then the day after (closed) is what actually
+    exercises the boundary with date-only granularity."""
+    year, month, day = 2052, 3, 10
+    r = make_resident(email="devclockmark@gahk.dk")
+    tildeling = _tildeling_for_marking(year, month, day, VagtRegel.Kind.MORGEN, r)
+
+    with override_settings(DEBUG=True):
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": date(year, month, day)})
+        assert can_mark_done(tildeling) is False  # midnight of the shift's own day -- before 06:00
+
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": date(year, month, day + 1)})
+        assert can_mark_done(tildeling) is True  # still inside the following day
+
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": date(year, month, day + 2)})
+        assert can_mark_done(tildeling) is False  # window closed
+
+
+def test_mark_udfoert_posts_credit_and_refuses_outside_window(make_resident: Callable) -> None:
+    year, month, day = 2052, 4, 2
+    r = make_resident(email="markudfoert@gahk.dk")
+    tildeling = _tildeling_for_marking(year, month, day, VagtRegel.Kind.MORGEN, r)
+    opens_at, _closes_at = marking_window(tildeling.vagt)
+
+    with pytest.raises(KoekkenAllocationError):
+        mark_udfoert(tildeling, at=opens_at - timedelta(minutes=1))
+    assert not KoekkenPost.objects.filter(resident=r).exists()
+
+    mark_udfoert(tildeling, at=opens_at)
+    tildeling.refresh_from_db()
+    assert tildeling.status == VagtTildeling.Status.UDFOERT
+    post = KoekkenPost.objects.get(resident=r, kind=KoekkenPost.Kind.ARBEJDE)
+    assert post.delta_minutes == tildeling.vagt.duration_minutes
+
+    with pytest.raises(KoekkenAllocationError):  # already UDFOERT -- nothing left to self-report
+        mark_udfoert(tildeling, at=opens_at)
+
+
+def test_koekken_kiosk_gate_uses_forwarded_ip() -> None:
+    """Mirrors test_features.py::test_oelkaelder_kiosk_gate_uses_forwarded_ip exactly, for the
+    kitchen tablet's own KOEKKEN_KIOSK_IPS -- the last-hop X-Forwarded-For rule (§5/§7)."""
+    with override_settings(DEBUG=False, KOEKKEN_KIOSK_IPS=["130.225.243.26"]):
+        c = Client()
+        ok = c.get("/intern/koekken/idag/", HTTP_X_FORWARDED_FOR="130.225.243.26")
+        assert ok.status_code == 200  # kiosk open from the dorm egress IP
+        blocked = c.get("/intern/koekken/idag/", HTTP_X_FORWARDED_FOR="203.0.113.9")
+        assert blocked.status_code == 403  # any other IP is denied
+
+
+# =============================================================================================
+# P2: flagging and adjudication (design doc §6)
+# =============================================================================================
+
+
+def test_flag_udfoert_upheld_reverses_credit_via_tilbagefoersel_and_preserves_original(
+    make_resident: Callable,
+) -> None:
+    year, month = 2052, 5
+    _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
+    worker = make_resident(email="flagworker@gahk.dk")
+    adjudicator = make_resident(email="flagadjudicator@gahk.dk")
+    flagger = make_resident(email="flagreporter@gahk.dk")
+    _place(worker, year, month)
+    allocate_tier_a(year, month)
+    tildeling = VagtTildeling.objects.get(resident=worker)
+    mark_udfoert(tildeling, at=marking_window(tildeling.vagt)[0])
+    tildeling.refresh_from_db()
+    arbejde_post = KoekkenPost.objects.get(resident=worker, kind=KoekkenPost.Kind.ARBEJDE)
+
+    anmeldelse = flag_tildeling(tildeling, flagger, "Køkkenet var ikke rent.")
+    tildeling.refresh_from_db()
+    assert tildeling.status == VagtTildeling.Status.ANMELDT
+    assert anmeldelse.previous_status == VagtTildeling.Status.UDFOERT
+
+    resolve_anmeldelse(anmeldelse, upheld=True, resolved_by=adjudicator)
+
+    tildeling.refresh_from_db()
+    assert tildeling.status == VagtTildeling.Status.IKKE_UDFOERT
+    assert KoekkenPost.objects.filter(pk=arbejde_post.pk).exists()  # NEVER deleted
+    tilbagefoersel = KoekkenPost.objects.get(resident=worker, kind=KoekkenPost.Kind.TILBAGEFOERSEL)
+    assert tilbagefoersel.delta_minutes == -tildeling.vagt.duration_minutes
+    anmeldelse.refresh_from_db()
+    assert anmeldelse.status == VagtAnmeldelse.Status.OPRETHOLDT
+    assert anmeldelse.resolved_by == adjudicator
+
+
+def test_flag_tildelt_upheld_writes_no_ledger_entry(make_resident: Callable) -> None:
+    """§6's table: a flagged shift that was still TILDELT (nobody ever marked it done) writes
+    NOTHING to the ledger when upheld -- there was no credit to reverse. The flag itself still moves
+    the assignment to IKKE_UDFOERT."""
+    year, month = 2052, 6
+    _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
+    worker = make_resident(email="flagnoop@gahk.dk")
+    adjudicator = make_resident(email="flagnoop_adj@gahk.dk")
+    flagger = make_resident(email="flagnoop_reporter@gahk.dk")
+    _place(worker, year, month)
+    allocate_tier_a(year, month)
+    tildeling = VagtTildeling.objects.get(resident=worker)
+    assert tildeling.status == VagtTildeling.Status.TILDELT
+
+    anmeldelse = flag_tildeling(tildeling, flagger)
+    resolve_anmeldelse(anmeldelse, upheld=True, resolved_by=adjudicator)
+
+    tildeling.refresh_from_db()
+    assert tildeling.status == VagtTildeling.Status.IKKE_UDFOERT
+    assert not KoekkenPost.objects.filter(resident=worker).exists()  # nothing posted, ever
+
+
+def test_flag_dismissed_restores_previous_status_and_writes_nothing(make_resident: Callable) -> None:
+    year, month = 2052, 7
+    _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
+    worker = make_resident(email="flagdismiss@gahk.dk")
+    adjudicator = make_resident(email="flagdismiss_adj@gahk.dk")
+    flagger = make_resident(email="flagdismiss_reporter@gahk.dk")
+    _place(worker, year, month)
+    allocate_tier_a(year, month)
+    tildeling = VagtTildeling.objects.get(resident=worker)
+    mark_udfoert(tildeling, at=marking_window(tildeling.vagt)[0])
+
+    anmeldelse = flag_tildeling(tildeling, flagger)
+    resolve_anmeldelse(anmeldelse, upheld=False, resolved_by=adjudicator)
+
+    tildeling.refresh_from_db()
+    assert tildeling.status == VagtTildeling.Status.UDFOERT  # restored to what it was
+    assert not KoekkenPost.objects.filter(kind=KoekkenPost.Kind.TILBAGEFOERSEL).exists()
+    anmeldelse.refresh_from_db()
+    assert anmeldelse.status == VagtAnmeldelse.Status.AFVIST
+
+
+def test_resolving_an_already_resolved_flag_raises(make_resident: Callable) -> None:
+    year, month = 2052, 8
+    _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
+    worker = make_resident(email="flagtwice@gahk.dk")
+    adjudicator = make_resident(email="flagtwice_adj@gahk.dk")
+    flagger = make_resident(email="flagtwice_reporter@gahk.dk")
+    _place(worker, year, month)
+    allocate_tier_a(year, month)
+    tildeling = VagtTildeling.objects.get(resident=worker)
+    anmeldelse = flag_tildeling(tildeling, flagger)
+    resolve_anmeldelse(anmeldelse, upheld=False, resolved_by=adjudicator)
+
+    with pytest.raises(KoekkenAllocationError):
+        resolve_anmeldelse(anmeldelse, upheld=True, resolved_by=adjudicator)
+
+
+# =============================================================================================
+# P2: §10 -- a closed/out-of-window action renders no button and no action URL
+# =============================================================================================
+
+
+def test_kiosk_mark_done_button_removed_when_cannot_mark(make_resident: Callable) -> None:
+    year, month, day = 2052, 9, 5
+    r = make_resident(email="tablet_btn@gahk.dk")
+    tildeling = _tildeling_for_marking(year, month, day, VagtRegel.Kind.MORGEN, r)
+    action_url = f"/intern/koekken/idag/{tildeling.pk}/marker"
+
+    closed_html = render_to_string("koekken/_idag_vagter.html", {"rows": [(tildeling, False)]})
+    assert action_url not in closed_html
+
+    open_html = render_to_string("koekken/_idag_vagter.html", {"rows": [(tildeling, True)]})
+    assert action_url in open_html
+
+
+def test_flag_button_removed_when_cannot_flag(make_resident: Callable) -> None:
+    year, month, day = 2052, 9, 6
+    r = make_resident(email="recent_btn@gahk.dk")
+    tildeling = _tildeling_for_marking(year, month, day, VagtRegel.Kind.MORGEN, r)
+    action_url = f"/intern/koekken/vagt/{tildeling.pk}/anmeld"
+
+    closed_html = render_to_string("koekken/_recent.html", {"recent": [(tildeling, False)]})
+    assert action_url not in closed_html
+
+    open_html = render_to_string("koekken/_recent.html", {"recent": [(tildeling, True)]})
+    assert action_url in open_html
+
+
+def test_flag_queue_buttons_removed_once_resolved(make_resident: Callable) -> None:
+    year, month, day = 2052, 9, 7
+    r = make_resident(email="queue_btn@gahk.dk")
+    flagger = make_resident(email="queue_btn_flagger@gahk.dk")
+    tildeling = _tildeling_for_marking(year, month, day, VagtRegel.Kind.MORGEN, r)
+    anmeldelse = flag_tildeling(tildeling, flagger)
+    uphold_url = f"/intern/koekken/gruppe/anmeldelse/{anmeldelse.pk}/opretholdt"
+    dismiss_url = f"/intern/koekken/gruppe/anmeldelse/{anmeldelse.pk}/afvist"
+
+    open_html = render_to_string("koekken/_gruppe_flags.html", {"open_flags": [anmeldelse]})
+    assert uphold_url in open_html
+    assert dismiss_url in open_html
+
+    # Once resolved it is no longer in open_flags at all -- row and buttons disappear together.
+    resolved_html = render_to_string("koekken/_gruppe_flags.html", {"open_flags": []})
+    assert uphold_url not in resolved_html
+    assert dismiss_url not in resolved_html
+
+
+# =============================================================================================
+# P2: §9 -- the rollout gate opens views and the sidebar together
+# =============================================================================================
+
+
+def test_rollout_gate_opens_views_and_sidebar_together(
+    make_resident: Callable, client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from core.context_processors import _nav_intern
+    from koekken import access as koekken_access
+
+    plain = make_resident(email="plain_resident_rollout@gahk.dk")
+
+    def has_koekken_item(roles: set[str]) -> bool:
+        sections = _nav_intern(roles, plain.pk)
+        return any("Køkkenvagter" in [item[1] for item in items] for _section, items in sections)
+
+    client.force_login(plain)
+    assert client.get("/intern/koekken/").status_code == 403  # closed default: Køkkengruppen-only
+    assert has_koekken_item(set()) is False
+
+    monkeypatch.setattr(koekken_access, "ACCESS_ROLES", None)  # the documented one-line rollout switch
+
+    assert client.get("/intern/koekken/").status_code == 200
+    assert has_koekken_item(set()) is True
