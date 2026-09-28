@@ -422,6 +422,12 @@ TURNSTILE_SECRET_KEY = os.environ.get("TURNSTILE_SECRET_KEY", "")
 # but only from these source IPs (as seen by the server). In DEBUG the gate is open for testing.
 OELKAELDER_KIOSK_IPS = [ip for ip in os.environ.get("OELKAELDER_KIOSK_IPS", "").split(",") if ip]
 
+# Kitchen tablet at /intern/koekken/idag/ (P2 design doc §7): the same IP-whitelist kiosk gate as
+# the ølkælder till above, its own setting -- koekken.views duplicates (never imports)
+# oelkaelder.views's `_client_ip`/`_is_kiosk` helpers, per the design doc's copy-at-n=2/extract-at-n=3
+# reasoning (see core/rollout.py's own docstring for the house rule this follows).
+KOEKKEN_KIOSK_IPS = [ip for ip in os.environ.get("KOEKKEN_KIOSK_IPS", "").split(",") if ip]
+
 # GAHK Wiki — standalone MediaWiki, served at /wiki/ in prod (legacy path). Point WIKI_URL at the
 # preview container (e.g. http://localhost:8899) during local development.
 WIKI_URL = os.environ.get("WIKI_URL", "/wiki/")

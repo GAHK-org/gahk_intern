@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% comment %}
+  P2 design doc §2/§3: the preference form. Hand-rendered field by field (house convention -- no
+  label_tag), plain POST + redirect (see koekken.views.praeferencer's own docstring on why this is
+  not an htmx partial). The three day-pickers use CheckboxSelectMultiple so each checkbox's "checked"
+  state is computed by Django's own bound-field iteration rather than re-implemented in the
+  template -- `checkbox.tag` is the bare <input>, `checkbox.choice_label` the text; never
+  `label_tag`, which would wrap it in a Django-generated <label>.
+{% endcomment %}
+{% block title %}Mine præferencer - Køkkenvagter - GAHK Intern{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Køkken</div>
+      <h1>Mine køkkenvagt-præferencer</h1>
+    </div>
+  </div>
+
+  <p class="muted">
+    Gælder <strong>{{ current_periode }}</strong>.
+    {% if in_window %}
+      Vinduet for at erklære præferencer for <strong>{{ window_periode }}</strong> er åbent nu.
+    {% endif %}
+    Kun det første valg nedenfor er et løfte -- de tre dagsvalg er ønsker, som opfyldes når der er
+    plads til det. <a href="{% url 'koekken:praeferencer_forklaring' %}">Læs hvad det betyder →</a>
+  </p>
+
+  <form method="post" class="card-flat card-pad" style="max-width:40rem">
+    {% csrf_token %}
+
+    <div class="field" style="margin-bottom:16px">
+      <label>
+        <input type="checkbox" name="weekday_unavailable" {% if form.weekday_unavailable.value %}checked{% endif %}>
+        {{ form.fields.weekday_unavailable.label }}
+      </label>
+      <p class="muted" style="margin-top:4px">{{ form.fields.weekday_unavailable.help_text }}</p>
+      {% for error in form.weekday_unavailable.errors %}<p class="text-red-500">{{ error }}</p>{% endfor %}
+    </div>
+
+    <div class="field" style="margin-bottom:16px">
+      <p><strong>{{ form.fields.morgen_dage.label }}</strong></p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        {% for checkbox in form.morgen_dage %}
+          <label>{{ checkbox.tag }} {{ checkbox.choice_label }}</label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="field" style="margin-bottom:16px">
+      <p><strong>{{ form.fields.frokost_dage.label }}</strong></p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        {% for checkbox in form.frokost_dage %}
+          <label>{{ checkbox.tag }} {{ checkbox.choice_label }}</label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="field" style="margin-bottom:16px">
+      <p><strong>{{ form.fields.aften_dage.label }}</strong></p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        {% for checkbox in form.aften_dage %}
+          <label>{{ checkbox.tag }} {{ checkbox.choice_label }}</label>
+        {% endfor %}
+      </div>
+      <p class="muted" style="margin-top:4px">
+        Ingen dage valgt her, men mindst én til morgen/frokost? Så foretrækker du ekstra morgen-/
+        frokostvagt frem for en aftenvagt -- se forklaringen for hvad det betyder i praksis.
+      </p>
+    </div>
+
+    <button type="submit" class="btn">Gem præferencer</button>
+  </form>
+{% endblock %}

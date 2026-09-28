@@ -1,0 +1,35 @@
+{% comment %}
+  Today's shifts, grouped by kind -- the whole point of the kitchen tablet (P2 design doc §5/§7).
+  Shared by koekken/idag.html and the htmx swap after a mark-done POST
+  (koekken.views._tablet_context), so the tablet's list can never disagree with what a tap just did.
+
+  A closed/out-of-window mark-done button is REMOVED, not disabled (§10) -- `can_mark` decides per
+  row, and a row whose window has not opened yet, or has already closed, or is already
+  udført/anmeldt/ikke udført, simply has no button and no POST target at all.
+
+  Deliberately no `id` on this root: it is swapped with `hx-swap="innerHTML"` INTO the persistent
+  `#idag-vagter` wrapper in idag.html, not swapped itself with `outerHTML` -- so that wrapper node
+  survives every swap and `frontend/src/koekken.ts`'s delegated submit listener on it never goes
+  stale (an outerHTML swap would replace the very node the listener is bound to).
+{% endcomment %}
+{% if rows %}
+  <div class="idag-grid">
+    {% for tildeling, can_mark in rows %}
+      <div class="idag-card idag-status-{{ tildeling.status }}">
+        <div class="idag-kind">{{ tildeling.vagt.get_kind_display }}</div>
+        <div class="idag-name">{{ tildeling.resident.full_name }}</div>
+        <div class="idag-state">{{ tildeling.get_status_display }}</div>
+        {% if can_mark %}
+          <form method="post" action="{% url 'koekken:marker_udfoert' tildeling.pk %}"
+                hx-post="{% url 'koekken:marker_udfoert' tildeling.pk %}"
+                hx-target="#idag-vagter" hx-swap="innerHTML">
+            {% csrf_token %}
+            <button type="submit" class="btn idag-done-btn">Jeg har gjort det</button>
+          </form>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <p class="muted">Ingen vagter i dag.</p>
+{% endif %}

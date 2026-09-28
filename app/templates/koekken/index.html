@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% comment %}
+  Resident surface: my shifts (upcoming/past), my balance against the house average, and the
+  flaggable "seneste vagter" list -- P2 design doc §7.
+{% endcomment %}
+{% block title %}Køkkenvagter - GAHK Intern{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Køkken</div>
+      <h1>Mine køkkenvagter</h1>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-secondary" href="{% url 'koekken:praeferencer_forklaring' %}">Hvad betyder mine præferencer?</a>
+      <a class="btn" href="{% url 'koekken:praeferencer' %}">Mine præferencer</a>
+    </div>
+  </div>
+
+  {% if needs_to_declare %}
+    <p class="card" style="border-color:var(--brass, #b08d57)">
+      Du har ikke erklæret dine præferencer for denne periode endnu.
+      <a href="{% url 'koekken:praeferencer' %}">Gør det her →</a>
+    </p>
+  {% endif %}
+
+  <div class="kv" style="max-width:28rem">
+    <span class="l">Min saldo</span><span class="r">{{ balance_hours }} t ({{ balance_minutes }} min)</span>
+  </div>
+  <div class="kv" style="max-width:28rem">
+    <span class="l">Husets gennemsnit</span><span class="r">{{ house_mean_hours }} t</span>
+  </div>
+
+  <div class="grid2" style="margin-top:16px">
+    <div class="card-flat">
+      <div class="card-head"><h2>Kommende vagter</h2></div>
+      <div class="card-pad">
+        {% if upcoming %}
+          <ul>
+            {% for t in upcoming %}
+              <li>{{ t.vagt.date|date:"D j. F" }} — {{ t.vagt.get_kind_display }} ({{ t.get_status_display }})</li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="muted">Ingen kommende vagter tildelt endnu.</p>
+        {% endif %}
+      </div>
+    </div>
+    <div class="card-flat">
+      <div class="card-head"><h2>Tidligere vagter</h2></div>
+      <div class="card-pad">
+        {% if past %}
+          <ul>
+            {% for t in past %}
+              <li>{{ t.vagt.date|date:"D j. F" }} — {{ t.vagt.get_kind_display }} ({{ t.get_status_display }})</li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="muted">Ingen tidligere vagter.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:16px">
+    {% include "koekken/_recent.html" %}
+  </div>
+{% endblock %}

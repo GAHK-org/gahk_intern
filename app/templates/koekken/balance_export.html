@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% comment %}
+  Regnskab surface: a read-only balance export for the move-out penalty -- P2 design doc §7.
+  Plain GET, bookmarkable, per §10's "filters and queue views are plain GET" rule -- CSV/XLSX
+  download via ?format= is handled entirely in the view (core.exports.csv_or_xlsx_response), same
+  idiom as oelkaelder's reports.
+{% endcomment %}
+{% block title %}Køkken-saldi - Regnskab - GAHK Intern{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Regnskab</div>
+      <h1>Køkken-saldi</h1>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-secondary" href="?format=csv">CSV</a>
+      <a class="btn btn-secondary" href="?format=xlsx">Excel</a>
+    </div>
+  </div>
+
+  <p class="muted">Husets gennemsnit: {{ house_mean_minutes|default:0 }} min. Mest bagud øverst.</p>
+
+  <div class="overflow-x-auto">
+    <table class="text-sm" style="width:100%; border-collapse:collapse">
+      <thead>
+        <tr style="text-align:left; border-bottom:1px solid #e6e8ec; white-space:nowrap">
+          <th>Navn</th><th>E-mail</th><th>Saldo (timer)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for resident, minutes in rows %}
+          <tr style="border-bottom:1px solid #f0f1f4">
+            <td>{{ resident.full_name }}</td>
+            <td>{{ resident.email }}</td>
+            <td {% if minutes < 0 %}style="color:#b3261e"{% endif %}>{{ minutes|floatformat:0 }} min</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

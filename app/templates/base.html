@@ -86,6 +86,19 @@
       </form>
     </div>
   {% endif %}
+  {% if koekken_preference_window_periode %}
+    {% comment %}
+      P2 design doc §8: a site-wide banner during the ~1-week preference window -- comes round two
+      or three times a year and governs five months of shifts, so it is deliberately hard to miss.
+      Whether it should be dismissible is an explicit open item (design doc §12); not dismissible
+      here, on purpose, pending that decision.
+    {% endcomment %}
+    <div class="banner banner-preview">
+      <span>🍳 Køkkenvagter: erklær dine præferencer for {{ koekken_preference_window_periode }} inden
+        fristen udløber.</span>
+      <a href="{% url 'koekken:praeferencer' %}" class="btn btn-secondary">Gå til præferencer</a>
+    </div>
+  {% endif %}
 
   <div class="app">
     <div class="brandcell">

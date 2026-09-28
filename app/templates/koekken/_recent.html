@@ -1,0 +1,50 @@
+{% comment %}
+  "Seneste vagter i køkkenet" -- flaggable by ANY resident (P2 design doc §6: "anyone may flag a
+  shift"), not just the viewer's own. Rendered by both koekken/index.html and the htmx swap after a
+  flag POST (koekken.views._recent_context), so the two can never disagree about what is left to flag.
+
+  A closed action removes its button entirely (§10) -- `can_flag` decides per row, and a row with no
+  flag left renders no form and no POST target at all.
+{% endcomment %}
+<div id="koekken-recent" class="card-flat">
+  <div class="card-head"><h2>Seneste vagter i køkkenet</h2></div>
+  <div class="card-pad">
+    {% if recent %}
+      <div class="overflow-x-auto">
+        <table class="text-sm" style="width:100%; border-collapse:collapse">
+          <thead>
+            <tr style="text-align:left; border-bottom:1px solid #e6e8ec; white-space:nowrap">
+              <th>Dato</th><th>Vagt</th><th>Beboer</th><th>Status</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for tildeling, can_flag in recent %}
+              <tr style="border-bottom:1px solid #f0f1f4">
+                <td>{{ tildeling.vagt.date|date:"D j. F" }}</td>
+                <td>{{ tildeling.vagt.get_kind_display }}</td>
+                <td>{{ tildeling.resident.full_name }}</td>
+                <td>{{ tildeling.get_status_display }}</td>
+                <td>
+                  {% if can_flag %}
+                    <form method="post" action="{% url 'koekken:flag_vagt' tildeling.pk %}"
+                          hx-post="{% url 'koekken:flag_vagt' tildeling.pk %}"
+                          hx-target="#koekken-recent" hx-swap="outerHTML"
+                          style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                      {% csrf_token %}
+                      <input type="text" name="reason" placeholder="Begrundelse (valgfri)" style="min-width:10rem;padding:.3rem">
+                      <button type="submit" class="btn btn-secondary" style="white-space:nowrap">
+                        Denne vagt blev ikke udført
+                      </button>
+                    </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted">Ingen vagter i denne periode.</p>
+    {% endif %}
+  </div>
+</div>

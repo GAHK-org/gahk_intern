@@ -8,6 +8,7 @@ from django.http import HttpRequest
 from arkiv.access import roles_allowed as arkiv_allowed
 from den_hurtige.access import roles_allowed as den_hurtige_allowed
 from events.access import roles_allowed as events_allowed
+from koekken.access import roles_allowed as koekken_allowed
 from opslagstavle.access import roles_allowed as opslagstavle_allowed
 from photo_album.access import roles_allowed as photo_album_allowed
 from residents.permissions import CMS_EDITOR_ROLES, can_preview, effective_roles
@@ -85,6 +86,8 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
         grupper.append(("/intern/oelkaelder/admin", "Ølkælder-admin", "beer"))
     if "regnskab" in roles:
         grupper.append(("/intern/regnskab/", "Regnskab", "receipt"))
+    if koekken_allowed(roles):
+        grupper.append(("/intern/koekken/", "Køkkenvagter", "check"))
     # Open to every resident, same as Opslagstavlen: reporting a repair needs no role. Reppergruppen
     # manages the board once inside — see reparationer.views.MANAGE_ROLES.
     vaerktoejer: list[NavItem] = [
@@ -122,7 +125,10 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
         (settings.WIKI_URL, "Wiki", "book"),
         (settings.FEEDBACK_URL, "Fejl & ønsker", "bug"),
     ]
-    # kokkengruppe: no dedicated screen today (documented gap; no menu item).
+    # kokkengruppe: dedicated screen shipped in P2 -- see the koekken_allowed() entry under
+    # "Grupper & konti" above. Still gated to Køkkengruppen/administrator via koekken.access
+    # (ACCESS_ROLES) -- the P2 design doc's §9 explicitly leaves widening that to the whole house as
+    # an open rollout decision, not resolved here.
     sections: list[NavSection] = [
         ("Oversigt", oversigt),
         ("Værelser", vaerelser),
@@ -176,4 +182,15 @@ def navigation(request: HttpRequest) -> dict[str, object]:
 
         ctx["dev_clock_debug"] = True
         ctx["dev_clock_date"] = current_date()
+    # Køkkenvagter preference-window banner -- P2 design doc §8: a site-wide banner during the ~1-
+    # week window, extending this same base.html mechanism to a RESIDENT-facing case for the first
+    # time (the two blocks above are administrator/dev-only). Gated on koekken_allowed too, not just
+    # the window itself, so nobody sees a banner for a feature they cannot yet open (the rollout gate
+    # is currently Køkkengruppen-only; see koekken.access's module docstring).
+    if authed and koekken_allowed(roles):
+        from koekken.services import in_preference_window
+
+        window_periode = in_preference_window()
+        if window_periode is not None:
+            ctx["koekken_preference_window_periode"] = window_periode
     return ctx

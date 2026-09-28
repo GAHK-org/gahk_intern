@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% comment %}
+  P2 design doc §7's own honesty requirement: tell residents explicitly what leaving aftenvagt
+  empty actually buys them, in the UI, not only in internal design docs.
+{% endcomment %}
+{% block title %}Hvad betyder mine præferencer? - Køkkenvagter - GAHK Intern{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Køkken</div>
+      <h1>Hvad betyder mine præferencer?</h1>
+    </div>
+  </div>
+
+  <div class="card-flat card-pad" style="max-width:44rem">
+    <h2>Det ene løfte</h2>
+    <p>
+      "Jeg er ikke hjemme i dagtimerne på hverdage" er det eneste af de fire valg, der er et rigtigt
+      løfte. Sætter du kryds her, får du <strong>aldrig</strong> en hverdags-morgen- eller
+      frokostvagt — du hører i stedet til weekend-puljen.
+    </p>
+
+    <h2>De tre andre er ønsker, ikke garantier</h2>
+    <p>
+      Hvilke dage du helst tager morgen-, frokost- eller aftenvagt afgør <strong>hvilken</strong>
+      vagt du får, aldrig <strong>om</strong> du kommer i betragtning, og aldrig hvornår i køen du
+      står. Din tur afgøres udelukkende af, hvor langt bagud du er i forhold til husets gennemsnit —
+      dine dagsønsker ændrer ikke på det. De bliver opfyldt, når der er plads til det, og ellers
+      tilsidesat uden varsel.
+    </p>
+
+    <h2>Hvis du ikke vælger nogen aftenvagt-dage</h2>
+    <p>
+      Vælger du mindst én morgen- eller frokostdag, men ingen aftenvagt-dage overhovedet, tolkes
+      det som et bevidst ønske: du vil hellere dække dine timer med ekstra morgen- og frokostvagt
+      end med en aftenvagt. Vi forsøger at give dig en ekstra morgen-/frokostvagt i stedet for en
+      aftenvagt, når der er plads i tier A til det.
+    </p>
+    <p>
+      <strong>Det du reelt vælger:</strong> cirka <strong>én morgen- eller frokostvagt om ugen</strong>
+      i stedet for én aftenvagt. Samme antal timer i alt — men en helt anden rytme i hverdagen. Er
+      der ikke plads (fordi mange andre har valgt det samme), får du en aftenvagt alligevel, uden
+      varsel.
+    </p>
+
+    <h2>Hvis du slet ikke erklærer noget</h2>
+    <p>
+      Du bliver stadig tildelt vagter — ingen vagt står ubemandet. Men uden en erklæring har du ingen
+      dagsønsker at blive tilgodeset med, og du stilles bagest ved uafgjorte prioriteringer.
+    </p>
+
+    <a class="btn" href="{% url 'koekken:praeferencer' %}">Gå til mine præferencer</a>
+  </div>
+{% endblock %}

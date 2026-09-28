@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% comment %}
+  The kitchen tablet at /intern/koekken/idag/ -- P2 design doc §5/§7. IP-gated, unauthenticated: no
+  login block, no sidebar reliance on `user.is_authenticated` (base.html already handles that: the
+  sidebar and topbar user menu simply don't render for an anonymous request).
+
+  Modern device, so this uses the normal base.html/frontend stack, NOT kiosk_base.html (that one is
+  deliberately iOS-10/WebKit-602-safe for the ølkælder till's ancient iPad) -- following
+  den_hurtige/feed.html's pattern for a kiosk-style page on a modern device: a `{% block viewport %}`
+  override and a `{% block body_class %}`.
+{% endcomment %}
+{% block title %}Køkkenet i dag - GAHK{% endblock %}
+{% block viewport %}
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+{% endblock %}
+{% block body_class %}koekken-idag-page{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Køkken</div>
+      <h1>Køkkenet i dag — {{ today|date:"l j. F" }}</h1>
+    </div>
+  </div>
+  <p class="muted">Tryk "Jeg har gjort det" ud for dit eget navn, når din vagt er udført.</p>
+  {% comment %}
+    The id lives on THIS wrapper, not inside the partial -- see _idag_vagter.html's own comment on
+    why the htmx swap must be innerHTML here, not outerHTML.
+  {% endcomment %}
+  <div id="idag-vagter">
+    {% include "koekken/_idag_vagter.html" %}
+  </div>
+{% endblock %}

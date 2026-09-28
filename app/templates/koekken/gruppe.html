@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% comment %}
+  Køkkengruppen surface: the flag queue, the "ikke rapporteret" sweep, allocation run, and
+  overrides -- P2 design doc §7. `access.can_manage` is re-checked in the view too (§9): this
+  template gate alone would only hide the button, not refuse a replayed POST.
+{% endcomment %}
+{% block title %}Køkkengruppen - Køkkenvagter - GAHK Intern{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Køkken</div>
+      <h1>Køkkengruppen</h1>
+    </div>
+  </div>
+
+  {% include "koekken/_gruppe_flags.html" %}
+
+  <div class="card-flat" style="margin-top:16px">
+    <div class="card-head"><h2>Ikke rapporteret</h2></div>
+    <div class="card-pad">
+      <p class="muted">Tidligere tildelte vagter, som ingen har markeret udført — den stille
+        gennemgang, adskilt fra de åbne anmeldelser ovenfor.</p>
+      {% if unreported %}
+        <div class="overflow-x-auto">
+          <table class="text-sm" style="width:100%; border-collapse:collapse">
+            <thead>
+              <tr style="text-align:left; border-bottom:1px solid #e6e8ec; white-space:nowrap">
+                <th>Dato</th><th>Vagt</th><th>Beboer</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for t in unreported %}
+                <tr style="border-bottom:1px solid #f0f1f4">
+                  <td>{{ t.vagt.date|date:"D j. F" }}</td>
+                  <td>{{ t.vagt.get_kind_display }}</td>
+                  <td>{{ t.resident.full_name }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="muted">Alt er rapporteret.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="grid2" style="margin-top:16px">
+    <div class="card-flat">
+      <div class="card-head"><h2>Kør allokering</h2></div>
+      <div class="card-pad">
+        <p class="muted">Tier A og tier B i ét kald, for én måned ad gangen.</p>
+        <form method="post" action="{% url 'koekken:allokering' %}">
+          {% csrf_token %}
+          <label>{{ allokering_form.year.label }} <input type="number" name="year" value="{{ allokering_form.year.value|default:'' }}" required></label>
+          <label>{{ allokering_form.month.label }} <input type="number" name="month" min="1" max="12" value="{{ allokering_form.month.value|default:'' }}" required></label>
+          <label><input type="checkbox" name="force"> {{ allokering_form.fields.force.label }}</label>
+          <button type="submit" class="btn">Allokér</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card-flat">
+      <div class="card-head"><h2>Manuel tildeling (override)</h2></div>
+      <div class="card-pad">
+        <p class="muted">Tildel en beboer direkte til en vagt med ledig plads.</p>
+        <form method="post" action="{% url 'koekken:override_assign' %}">
+          {% csrf_token %}
+          <label>Vagt (id) <input type="number" name="vagt" required></label>
+          <label>Beboer (id) <input type="number" name="resident" required></label>
+          <button type="submit" class="btn">Tildel</button>
+        </form>
+      </div>
+    </div>
+  </div>
+{% endblock %}
