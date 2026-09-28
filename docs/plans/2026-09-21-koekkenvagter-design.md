@@ -252,7 +252,7 @@ opened to the house by setting it to `None`.
 | phase | contents |
 | --- | --- |
 | 1 | Slot model, generation, tier-A allocation, ledger, obligation posting, launch seeding command. |
-| 2 | Tier-B signup, preferences, verification and flagging, kitchen tablet view. |
+| 2 | Tier-B allocation, preferences, verification and flagging, kitchen tablet. **Designed in `2026-09-28-koekkenvagter-p2-design.md`** — note it supersedes two things here: tier-B is *not* signup-based, and the tablet is *not* read-only. |
 | 3 | Summer period and the holiday-weeks input. |
 
 Staged behind the rollout gate, because fairness only becomes observable over a full semester — a two-week
