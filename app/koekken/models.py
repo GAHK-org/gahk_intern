@@ -1,10 +1,11 @@
 """Køkkenvagter — allocated kitchen-cleaning shifts plus a fairness ledger.
 
-Full design: `docs/plans/2026-09-21-koekkenvagter-design.md`. This is **P1 only** (per that doc's
-"Phasing" table): the slot model, generation, tier-A (morgen/frokost) allocation, the ledger and
-obligation posting, and the launch-seeding command. Tier-B (aftenvagt) signup, preferences beyond
-the single `weekday_unavailable` flag, verification/flagging, and the summer `FerieUge` presence
-model are **not** built here — they are P2/P3, deliberately absent rather than stubbed.
+Full design: `docs/plans/2026-09-21-koekkenvagter-design.md` (P1 + Amendments 1-3) and
+`docs/plans/2026-09-28-koekkenvagter-p2-design.md` (P2: tier-B allocation, the full preference
+model, verification/flagging, the kitchen tablet, the four UI surfaces). P1 was the slot model,
+generation, tier-A (morgen/frokost) allocation, the ledger and obligation posting, and the
+launch-seeding command. The summer `FerieUge` presence model is still **not** built here — that is
+P3, deliberately absent rather than stubbed.
 
 This replaces an informal, manual kitchen-credit scoreboard. It does **not** touch `ak.AkEntry`,
 which is a separate system (monthly krydser for dorm labour) — the two must never be conflated.
@@ -50,8 +51,9 @@ alone is wrong for July/August). Leaving the choice in now means the eventual P3
 model, not a schema change to this one.
 """
 
-from datetime import date
+from datetime import date, time
 
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models import Q
 from django.utils import timezone
@@ -76,8 +78,20 @@ class VagtRegel(models.Model):
     schedule rather than logic baked into code. Seeded (migration 0001): morgen 1 h / 1 person,
     frokost 1 h / 1 person (same both weekday and weekend), weekday aften 3 h / 2 people, weekend
     aften 2 h / 1 person — see the design doc's "arithmetic" section for where those numbers came
-    from. `Vagt` generation snapshots these values; editing a rule here only affects months
+    from. `Vagt` generation snapshots duration/headcount; editing a rule here only affects months
     generated afterwards.
+
+    **`start_time` (P2, §5) is NOT snapshotted onto `Vagt`, unlike `duration_minutes`/`headcount`
+    above -- read it live, straight off this table, every time.** That is a deliberate asymmetry
+    with the snapshot invariant right above it, not an oversight: `duration_minutes`/`headcount` are
+    *allocation inputs* that must not retroactively change a published month (that is the whole
+    point of the snapshot). `start_time` is instead an *operational* fact used only at the moment a
+    resident taps "done" at the tablet (`koekken.services.marking_window`) -- if the kitchen moves
+    lunch duty to 13:00, every future lunch shift should open at 13:00 immediately, and a past
+    shift's already-evaluated window is unaffected regardless, because it was checked against
+    whatever this table said at tap time. Seeded (migration 0004): morgen 06:00, frokost 12:00,
+    aften 17:00 -- the same start time for a kind's weekday and weekend row, per the design doc's
+    table in "The marking window".
     """
 
     class Kind(models.TextChoices):
@@ -89,6 +103,11 @@ class VagtRegel(models.Model):
     weekend = models.BooleanField(help_text="Gælder for lørdag/søndag frem for hverdage.")
     duration_minutes = models.PositiveSmallIntegerField()
     headcount = models.PositiveSmallIntegerField()
+    start_time = models.TimeField(
+        default=time(6, 0),
+        help_text="Hvornår vagten kan markeres udført fra køkken-tabletten (læses direkte herfra, "
+        "aldrig snapshottet på Vagt -- se modellens docstring).",
+    )
 
     class Meta:
         ordering = ["kind", "weekend"]
@@ -252,8 +271,10 @@ class KoekkenPost(models.Model):
 
 
 class Praeference(models.Model):
-    """A resident's kitchen-duty preference for one `Periode`. P1 holds only the single boolean
-    tier-A needs; the aftenvagt weekday preference field is P2 (tier-B signup does not exist yet).
+    """A resident's kitchen-duty preference for one `Periode`. Exactly one field here is a HARD
+    constraint (`weekday_unavailable`); the three soft day-preferences (which weekdays a resident
+    would prefer for morgen/frokost/aften) live in the related `PraeferenceDag` model below, not as
+    columns here -- see that model's docstring for why. P2 design doc §2.
 
     **Amendment 1 (A1.1, A1.3):** `declared_at` is when this row was (last) written, via
     `koekken.services.set_preference` -- it is the FCFS tiebreak `allocate_tier_a` sorts on
@@ -282,3 +303,98 @@ class Praeference(models.Model):
     def __str__(self) -> str:
         flag = "hverdage utilgængelig" if self.weekday_unavailable else "ingen præference"
         return f"{self.resident.full_name} ({self.periode}): {flag}"
+
+
+class PraeferenceDag(models.Model):
+    """One SOFT day-preference: "for `kind` (morgen/frokost/aften), I would prefer `weekday`."
+    P2 design doc §2. Unlike `Praeference.weekday_unavailable`, nothing here ever excludes anyone
+    from anything -- these rows only ever influence WHICH slot a resident already being seated is
+    offered (`koekken.services.allocate_tier_b`'s preferred-day matching, and the day-preference part
+    of tier-A's soft floor), never WHO is picked next. That "preferences decide which slot, never who
+    is next" rule is this feature's central fairness invariant; see `allocate_tier_b`'s docstring.
+
+    **A related model, not three list columns, and not one combined per-weekday structure** -- see
+    the P2 design doc's "Storage" subsection for the full reasoning; in short: a single per-weekday
+    "choose morgen/frokost/either/neither" shape cannot express wanting BOTH Tuesday morgen AND
+    Tuesday frokost, and this repo has no `ArrayField` despite running Postgres (a `JSONField` list of
+    ints would get no DB-level validation, unlike the choices + unique constraint here). `kind` reuses
+    `VagtRegel.Kind` rather than inventing a parallel enum, because it is the exact same three shift
+    kinds and the allocator's real query ("which days does this resident prefer for kind K") becomes
+    one filtered prefetch instead of three differently-shaped ones.
+    """
+
+    praeference = models.ForeignKey(Praeference, on_delete=models.CASCADE, related_name="dage")
+    kind = models.CharField(max_length=10, choices=VagtRegel.Kind.choices)
+    weekday = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(0), MaxValueValidator(6)],
+        help_text="0 = mandag .. 6 = søndag (Python's date.weekday()).",
+    )
+
+    class Meta:
+        ordering = ["kind", "weekday"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["praeference", "kind", "weekday"], name="uniq_praeferencedag_praeference_kind_weekday"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.praeference.resident.full_name}: {self.get_kind_display()} ugedag {self.weekday}"
+
+
+class VagtAnmeldelse(models.Model):
+    """A flag on one `VagtTildeling`: "denne vagt blev ikke udført" -- P2 design doc §6. ONE uniform
+    action, available on any shift dated today or earlier regardless of its `VagtTildeling.Status`
+    (self-reported, still just assigned, or already flagged before) -- the ledger consequence of an
+    upheld ruling differs by what `previous_status` was, but the flag itself is the same row shape
+    either way. Named after the existing `VagtTildeling.Status.ANMELDT` choice ("anmeldt" = flagged/
+    reported), which P1 already reserved for exactly this state without a view ever setting it.
+
+    **Flagger identity is never hidden** -- `flagged_by` is a plain, always-populated FK, shown to
+    Køkkengruppen AND to the flagged resident (design doc §6: "one consequence is recorded here
+    without arguing it" -- no anonymity mechanism exists or should be added here.
+
+    `previous_status` freezes what `vagt_tildeling.status` was AT THE MOMENT OF FLAGGING (always
+    `UDFOERT` or `TILDELT` in practice -- see `koekken.services.flag_tildeling`), because that is what
+    decides the ledger consequence of an upheld ruling (`koekken.services.resolve_anmeldelse`) and
+    what a DISMISSED ruling restores the assignment to. Read it, never re-derive it from
+    `vagt_tildeling.status`, which `flag_tildeling` immediately overwrites to `ANMELDT`.
+    """
+
+    class Status(models.TextChoices):
+        AABEN = "aaben", "Åben"
+        OPRETHOLDT = "opretholdt", "Opretholdt"
+        AFVIST = "afvist", "Afvist"
+
+    vagt_tildeling = models.ForeignKey(VagtTildeling, on_delete=models.CASCADE, related_name="anmeldelser")
+    flagged_by = models.ForeignKey(
+        Resident, on_delete=models.CASCADE, related_name="koekken_anmeldelser_lavet"
+    )
+    previous_status = models.CharField(max_length=15, choices=VagtTildeling.Status.choices)
+    reason = models.TextField(blank=True, verbose_name="Begrundelse")
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.AABEN)
+    resolved_by = models.ForeignKey(
+        Resident,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="koekken_anmeldelser_afgjort",
+    )
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            # At most one OPEN flag per assignment at a time -- mirrors the STARTSALDO partial-unique
+            # pattern above. A second flag on the same vagt_tildeling is only meaningful once the
+            # first has been resolved (a re-flag after a dismissal is a genuinely new claim).
+            models.UniqueConstraint(
+                fields=["vagt_tildeling"],
+                condition=Q(status="aaben"),
+                name="uniq_vagtanmeldelse_open_per_tildeling",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"Anmeldelse af {self.vagt_tildeling} af {self.flagged_by.full_name} ({self.get_status_display()})"

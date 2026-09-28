@@ -47,6 +47,7 @@ erDiagram
         bool wants_opslagstavle
         bool wants_begivenheder
         bool wants_reparationer
+        bool wants_koekken
     }
 
     residents_Resident {
@@ -599,6 +600,7 @@ erDiagram
         bool weekend
         int duration_minutes
         int headcount
+        time start_time
     }
 
     koekken_Periode {
@@ -644,6 +646,25 @@ erDiagram
         int periode_id FK
         bool weekday_unavailable
         date declared_at
+    }
+
+    koekken_PraeferenceDag {
+        int id PK
+        int praeference_id FK
+        string kind
+        int weekday
+    }
+
+    koekken_VagtAnmeldelse {
+        int id PK
+        int vagt_tildeling_id FK
+        int flagged_by_id FK
+        string previous_status
+        text reason
+        string status
+        int resolved_by_id FK
+        datetime resolved_at
+        datetime created_at
     }
 
     core_PushSubscription }o--|| residents_Resident : "user"
@@ -731,6 +752,10 @@ erDiagram
     koekken_KoekkenPost }o--|o residents_Resident : "created_by"
     koekken_Praeference }o--|| residents_Resident : "resident"
     koekken_Praeference }o--|| koekken_Periode : "periode"
+    koekken_PraeferenceDag }o--|| koekken_Praeference : "praeference"
+    koekken_VagtAnmeldelse }o--|| koekken_VagtTildeling : "vagt_tildeling"
+    koekken_VagtAnmeldelse }o--|| residents_Resident : "flagged_by"
+    koekken_VagtAnmeldelse }o--|o residents_Resident : "resolved_by"
 ```
 
 ## admissions
@@ -962,6 +987,7 @@ erDiagram
         bool wants_opslagstavle
         bool wants_begivenheder
         bool wants_reparationer
+        bool wants_koekken
     }
 
     residents_Resident { }
@@ -1102,6 +1128,7 @@ erDiagram
         bool weekend
         int duration_minutes
         int headcount
+        time start_time
     }
 
     koekken_Periode {
@@ -1149,6 +1176,25 @@ erDiagram
         date declared_at
     }
 
+    koekken_PraeferenceDag {
+        int id PK
+        int praeference_id FK
+        string kind
+        int weekday
+    }
+
+    koekken_VagtAnmeldelse {
+        int id PK
+        int vagt_tildeling_id FK
+        int flagged_by_id FK
+        string previous_status
+        text reason
+        string status
+        int resolved_by_id FK
+        datetime resolved_at
+        datetime created_at
+    }
+
     residents_Resident { }
 
     koekken_Vagt }o--|| koekken_Periode : "periode"
@@ -1160,6 +1206,10 @@ erDiagram
     koekken_KoekkenPost }o--|o residents_Resident : "created_by"
     koekken_Praeference }o--|| residents_Resident : "resident"
     koekken_Praeference }o--|| koekken_Periode : "periode"
+    koekken_PraeferenceDag }o--|| koekken_Praeference : "praeference"
+    koekken_VagtAnmeldelse }o--|| koekken_VagtTildeling : "vagt_tildeling"
+    koekken_VagtAnmeldelse }o--|| residents_Resident : "flagged_by"
+    koekken_VagtAnmeldelse }o--|o residents_Resident : "resolved_by"
 ```
 
 ## oelkaelder

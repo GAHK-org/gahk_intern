@@ -135,6 +135,11 @@ class PushSubscription(models.Model):
     # migration is not consent.
     wants_begivenheder = models.BooleanField(default=False, verbose_name="Begivenheder")
     wants_reparationer = models.BooleanField(default=False, verbose_name="Reparationer")
+    # No data migration opting existing rows in, same reasoning as wants_begivenheder above: nobody
+    # has ever consented to køkkenvagt notifications, and consent granted by migration is not
+    # consent. Notified moment: koekken.services.resolve_anmeldelse, only when a flag is UPHELD
+    # against them -- see the P2 design doc's §6.
+    wants_koekken = models.BooleanField(default=False, verbose_name="Køkkenvagter")
 
     class Meta:
         verbose_name = "Push-abonnement"
@@ -157,4 +162,5 @@ TOPIC_FIELDS = {
     "opslagstavle": "wants_opslagstavle",
     "begivenheder": "wants_begivenheder",
     "reparationer": "wants_reparationer",
+    "koekken": "wants_koekken",
 }
