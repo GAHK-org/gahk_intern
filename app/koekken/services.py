@@ -1281,6 +1281,34 @@ def resident_needs_to_declare(resident: Resident, *, at: date | None = None) -> 
     return not Praeference.objects.filter(resident=resident, periode=periode).exists()
 
 
+def resident_has_declared_for(resident: Resident, periode: Periode) -> bool:
+    """Whether `resident` already has a `Praeference` row for `periode` -- the per-resident half of
+    the preference-window banner (P2 design doc §8; §12's open item resolved: the banner persists
+    for each resident individually until they've declared for the window's periode OR the window's
+    time runs out, rather than showing for the window's whole duration regardless of whether that
+    resident has already acted).
+
+    NOT the same question as `resident_needs_to_declare` -- that one is scoped to the periode the
+    resident is CURRENTLY living in (their own dashboard todo card, A3.2's zero-history case); this
+    one is scoped to whatever `periode` the caller passes, which for the banner is specifically
+    `in_preference_window()`'s result -- almost always the UPCOMING periode, per that function's own
+    docstring on why a currently-open window governs periode N+1, not periode N.
+
+    Matched by `(periode.kind, periode.year)` rather than `periode=periode` on purpose:
+    `in_preference_window()` returns an UNSAVED, in-memory `Periode` (see its docstring on why), so
+    filtering on the FK by object identity would compare against a `None` pk and match nothing --
+    silently showing the banner to every resident forever. `Periode.Meta.constraints` guarantees
+    (kind, year) is exactly as selective as the pk would have been.
+
+    Callers must only call this once `in_preference_window()` has already returned a periode: unlike
+    that function, this one genuinely needs a database read (it is per-resident), so it must not run
+    on the ~355 days/year when no window is open -- see `in_preference_window`'s own docstring on why
+    that discipline matters here."""
+    return Praeference.objects.filter(
+        resident=resident, periode__kind=periode.kind, periode__year=periode.year
+    ).exists()
+
+
 def vagt_regel_lookup() -> dict[tuple[str, bool], VagtRegel]:
     """Every `VagtRegel` row, keyed by (kind, weekend) -- there are only a handful in the whole table
     (one per kind per weekday/weekend, per that model's docstring), so a caller that needs

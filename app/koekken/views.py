@@ -8,8 +8,8 @@ the back door (mirrors `events.access_required`'s own reasoning). The Køkkengru
 surfaces layer a SECOND, narrower check on top (`access.can_manage`/`access.can_view_balance_export`)
 -- both in the template (so a button is never rendered for someone who may not press it) and here in
 the view (so a replayed POST gets the same refusal), per §9's explicit requirement. `access.py`'s
-`ACCESS_ROLES` itself is left exactly as it was (Køkkengruppen-only) -- see that module's docstring;
-widening it to the whole house is an explicitly open rollout decision, not made here.
+`ACCESS_ROLES` is now open to the whole house (§13 phase 3) -- see that module's docstring; the
+narrower `can_manage`/`can_view_balance_export` checks above are unaffected by that and still apply.
 
 The kitchen tablet (`idag`/`marker_udfoert`) is the one pair of views that does NOT carry
 `access.access_required` -- it is IP-gated instead (`_is_kiosk`), unauthenticated by design (§5): a

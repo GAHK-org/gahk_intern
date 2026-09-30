@@ -2172,8 +2172,13 @@ def test_flag_queue_buttons_removed_once_resolved(make_resident: Callable) -> No
 def test_rollout_gate_opens_views_and_sidebar_together(
     make_resident: Callable, client: Client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Exercises the Gate mechanism in both directions, independent of whatever ACCESS_ROLES is
+    currently set to in production (§13 phase 3: open to the whole house as of ~20 Nov 2026) --
+    starts by explicitly closing the gate to Køkkengruppen-only so this stays a test of the
+    mechanism, not an assertion about the feature's current rollout stage."""
     from core.context_processors import _nav_intern
     from koekken import access as koekken_access
+    from residents.models import Role
 
     plain = make_resident(email="plain_resident_rollout@gahk.dk")
 
@@ -2182,7 +2187,9 @@ def test_rollout_gate_opens_views_and_sidebar_together(
         return any("Køkkenvagter" in [item[1] for item in items] for _section, items in sections)
 
     client.force_login(plain)
-    assert client.get("/intern/koekken/").status_code == 403  # closed default: Køkkengruppen-only
+    monkeypatch.setattr(koekken_access, "ACCESS_ROLES", (Role.KOKKENGRUPPE,))  # gate closed
+
+    assert client.get("/intern/koekken/").status_code == 403
     assert has_koekken_item(set()) is False
 
     monkeypatch.setattr(koekken_access, "ACCESS_ROLES", None)  # the documented one-line rollout switch
@@ -2205,13 +2212,14 @@ def test_rollout_gate_covers_the_banner_and_the_tablet_stays_outside_it(
 
     plain = make_resident(email="plain_resident_banner_rollout@gahk.dk")
     client.force_login(plain)
+    monkeypatch.setattr(koekken_access, "ACCESS_ROLES", (Role.KOKKENGRUPPE,))  # gate closed, explicitly
 
     with override_settings(DEBUG=True):
         DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": date(2026, 11, 27)})
         assert in_preference_window() is not None  # sanity: this date really is inside a window
 
         closed = client.get("/intern/")
-        assert "erklær dine præferencer" not in closed.content.decode()  # closed default: gated out
+        assert "erklær dine præferencer" not in closed.content.decode()  # closed gate: gated out
 
         monkeypatch.setattr(koekken_access, "ACCESS_ROLES", None)  # the documented one-line rollout switch
         opened = client.get("/intern/")
@@ -2246,3 +2254,129 @@ def test_in_preference_window_never_creates_a_periode_row(make_resident: Callabl
     assert result is not None
     assert str(result) == "Forår 2027"
     assert Periode.objects.filter(kind=Periode.Kind.FORAAR, year=2027).exists() is False  # still none
+
+
+# =============================================================================================
+# P2 design doc §12's open item, resolved: the banner persists PER RESIDENT until they've declared
+# for the window's periode, or the window's time runs out -- not "is a window open" for everyone.
+# =============================================================================================
+
+
+def test_preference_window_banner_persists_per_resident_until_they_declare(
+    make_resident: Callable, client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stakeholder decision resolving §12: a resident who already has a `Praeference` row for the
+    window's own periode must stop seeing the banner, even while the window stays open for everyone
+    else who hasn't declared yet -- it is not a single site-wide on/off switch."""
+    from koekken import access as koekken_access
+
+    monkeypatch.setattr(koekken_access, "ACCESS_ROLES", None)  # open, independent of the rollout stage
+
+    declared = make_resident(email="banner_declared@gahk.dk")
+    undeclared = make_resident(email="banner_undeclared@gahk.dk")
+
+    with override_settings(DEBUG=True):
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": date(2026, 11, 27)})
+        window_periode = in_preference_window()
+        assert window_periode is not None
+        assert str(window_periode) == "Forår 2027"  # sanity: this is the window's own periode
+
+        # `resolve_periode` (not `set_preference`) so this test does not also depend on Amendment 1's
+        # locking rule resolving the write to the same periode `in_preference_window` names.
+        periode = resolve_periode(date(2027, 3, 1))
+        assert (periode.kind, periode.year) == (Periode.Kind.FORAAR, 2027)
+        Praeference.objects.create(resident=declared, periode=periode)
+
+        client.force_login(undeclared)
+        undeclared_html = client.get("/intern/").content.decode()
+        assert "erklær dine præferencer" in undeclared_html  # window open, not yet declared
+
+        client.force_login(declared)
+        declared_html = client.get("/intern/").content.decode()
+        assert "erklær dine præferencer" not in declared_html  # window still open, but already declared
+
+
+def test_preference_window_banner_hidden_outside_any_window_regardless_of_declaration(
+    make_resident: Callable, client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Outside any window, `in_preference_window()` is `None` and the banner must not show for
+    anyone -- not even a resident who happens to already hold a `Praeference` row for the upcoming
+    periode. The per-resident check is irrelevant here; what matters is that nothing short-circuits
+    the existing "no window, no banner" behaviour."""
+    from koekken import access as koekken_access
+
+    monkeypatch.setattr(koekken_access, "ACCESS_ROLES", None)
+
+    resident = make_resident(email="banner_outside_window_declared@gahk.dk")
+
+    with override_settings(DEBUG=True):
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": date(2026, 10, 15)})
+        assert in_preference_window() is None  # sanity: not inside any window
+
+        # A row for the (not yet open) upcoming periode -- proves the banner's absence here is about
+        # there being no window at all, not a side effect of the resident having already declared.
+        upcoming = resolve_periode(date(2026, 11, 27))
+        Praeference.objects.create(resident=resident, periode=upcoming)
+
+        client.force_login(resident)
+        html = client.get("/intern/").content.decode()
+        assert "erklær dine præferencer" not in html
+
+
+def test_banner_declaration_check_never_runs_outside_a_window(
+    make_resident: Callable, client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F6, extended to the new per-resident check: `resident_has_declared_for` genuinely needs a
+    database read (it is per-resident, unlike `in_preference_window` itself), so
+    `core.context_processors.navigation` must call it ONLY once `in_preference_window()` has already
+    found a window open -- never on the ~355 days/year it hasn't. Proven directly, the same way
+    `test_in_preference_window_never_creates_a_periode_row` proves F6 for `in_preference_window`:
+    outside a window, the per-resident check must not run at all, not even to correctly return
+    `False`."""
+    from koekken import access as koekken_access
+    from koekken import services as koekken_services
+
+    monkeypatch.setattr(koekken_access, "ACCESS_ROLES", None)
+
+    def _must_not_run(*args: object, **kwargs: object) -> bool:
+        raise AssertionError("resident_has_declared_for must not run when no window is open")
+
+    # `core.context_processors.navigation` imports this function fresh on every call (a local
+    # import, matching `in_preference_window`'s own import right above it), so patching the
+    # `koekken.services` attribute here is enough to reach it.
+    monkeypatch.setattr(koekken_services, "resident_has_declared_for", _must_not_run)
+
+    resident = make_resident(email="banner_query_discipline@gahk.dk")
+
+    with override_settings(DEBUG=True):
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": date(2026, 10, 15)})
+        assert in_preference_window() is None  # sanity: not inside any window
+
+        client.force_login(resident)
+        resp = client.get("/intern/")
+
+    assert resp.status_code == 200
+    assert "erklær dine præferencer" not in resp.content.decode()
+
+
+def test_resident_has_declared_for_matches_by_kind_and_year_not_object_identity(
+    make_resident: Callable,
+) -> None:
+    """`in_preference_window()` returns an UNSAVED, in-memory `Periode` (see its own docstring) --
+    `resident_has_declared_for` must match the resident's `Praeference` row by (kind, year), not by
+    filtering the FK on that unsaved instance's `None` pk, which would silently match nothing and
+    show the banner to every resident forever."""
+    from koekken.services import resident_has_declared_for
+
+    resident = make_resident(email="banner_matches_by_kind_year@gahk.dk")
+    persisted = resolve_periode(date(2027, 3, 1))  # Forår 2027, saved
+    unsaved = Periode(
+        kind=Periode.Kind.FORAAR, year=2027, start_date=date(2027, 2, 1), end_date=date(2027, 6, 30)
+    )
+    assert unsaved.pk is None
+
+    assert resident_has_declared_for(resident, unsaved) is False
+
+    Praeference.objects.create(resident=resident, periode=persisted)
+
+    assert resident_has_declared_for(resident, unsaved) is True

@@ -130,9 +130,9 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     # queue and Regnskab's balance export have no separate sidebar entries of their own (F10) -- they
     # are reached from that same resident index page, as `can_manage`/`can_view_balance_export`-gated
     # links (koekken.views._resident_context), matching this house's existing preference for surfacing
-    # an officer view from within a feature's own page rather than growing the sidebar per role. Still
-    # gated to Køkkengruppen/administrator via koekken.access (ACCESS_ROLES) -- the P2 design doc's §9
-    # explicitly leaves widening that to the whole house as an open rollout decision, not resolved here.
+    # an officer view from within a feature's own page rather than growing the sidebar per role. Those
+    # two officer-only checks are separate from koekken.access's ACCESS_ROLES (now open to the whole
+    # house, P2 design doc §13 phase 3) and are unaffected by it -- see koekken.access's docstring.
     sections: list[NavSection] = [
         ("Oversigt", oversigt),
         ("Værelser", vaerelser),
@@ -189,12 +189,21 @@ def navigation(request: HttpRequest) -> dict[str, object]:
     # Køkkenvagter preference-window banner -- P2 design doc §8: a site-wide banner during the ~1-
     # week window, extending this same base.html mechanism to a RESIDENT-facing case for the first
     # time (the two blocks above are administrator/dev-only). Gated on koekken_allowed too, not just
-    # the window itself, so nobody sees a banner for a feature they cannot yet open (the rollout gate
-    # is currently Køkkengruppen-only; see koekken.access's module docstring).
+    # the window itself, so nobody sees a banner for a feature they cannot yet open (see
+    # koekken.access's module docstring for the current rollout state).
+    #
+    # §12's open item, resolved: the banner persists PER RESIDENT until they've declared for the
+    # window's periode or the window closes -- not just "is a window open" for everyone. The extra
+    # `resident_has_declared_for` read only runs once `in_preference_window()` has already found a
+    # window (still `None`, no query, on every other day of the year) -- see both functions'
+    # docstrings in koekken.services for why that ordering is load-bearing (F6).
     if authed and koekken_allowed(roles):
-        from koekken.services import in_preference_window
+        from koekken.services import in_preference_window, resident_has_declared_for
+        from residents.permissions import current_resident
 
         window_periode = in_preference_window()
-        if window_periode is not None:
+        if window_periode is not None and not resident_has_declared_for(
+            current_resident(request), window_periode
+        ):
             ctx["koekken_preference_window_periode"] = window_periode
     return ctx

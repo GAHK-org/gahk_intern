@@ -90,8 +90,10 @@
     {% comment %}
       P2 design doc §8: a site-wide banner during the ~1-week preference window -- comes round two
       or three times a year and governs five months of shifts, so it is deliberately hard to miss.
-      Whether it should be dismissible is an explicit open item (design doc §12); not dismissible
-      here, on purpose, pending that decision.
+      Design doc §12's open item is resolved: it persists per resident until EITHER they've declared
+      their preference for the window's periode OR the window's time runs out -- not dismissible, on
+      purpose (core.context_processors.navigation only sets this context key once that per-resident
+      check has already come back "not yet declared").
     {% endcomment %}
     <div class="banner banner-preview">
       <span>🍳 Køkkenvagter: erklær dine præferencer for {{ koekken_preference_window_periode }} inden
