@@ -315,10 +315,12 @@ template never renders a button you may not press, *and* the view refuses a repl
 booleans are computed in the view and passed into the template, because a Django template cannot call
 an access predicate with arguments.
 
-**Open item, not a design question:** `access.py` currently sets `ACCESS_ROLES = (Role.KOKKENGRUPPE,)`,
-but every P2 surface except the tablet is for ordinary residents. Under that gate the preference round
-has almost nobody to collect from and the ledger has nothing to balance. This needs a rollout decision
-before P2 **ships** — it does not block building it.
+**Resolved — see §13.** `access.py` now sets `ACCESS_ROLES = None`: the gate opened to the whole
+house on 2026-09-30, at the stakeholder's explicit direction, ahead of the originally-planned §13
+phase-3 date (~20 Nov 2026). It was `(Role.KOKKENGRUPPE,)` through phase 1's dry run, matching this
+section's original open item — every P2 surface except the tablet is for ordinary residents, and
+under that narrower gate the preference round had almost nobody to collect from and the ledger
+nothing to balance.
 
 ## 10. Conventions this must follow
 
@@ -367,6 +369,17 @@ before P2 **ships** — it does not block building it.
 - Whether the preference-window banner is dismissible. A banner you can dismiss weakens a deadline
   that comes round twice a year; one you cannot is aggressive for a week. Worth deciding with the
   first real window rather than in the abstract.
+
+**Per-resident persistence — decided, not open (the code comments citing this section for it are about
+this, not the dismissibility item above):** the banner persists for each resident individually until
+they have personally declared for whatever periode their own submission would currently target, OR
+the window's time runs out — not a single site-wide on/off switch that stays lit for everyone
+regardless of who has already acted. This is a distinct stakeholder decision from dismissibility
+above (which is still open): non-dismissible means "no close button"; per-resident persistence means
+the banner's own on/off condition is evaluated per viewer, not once for the whole window. Landed
+alongside the fix for the banner/write-path periode mismatch (`koekken.services.
+preference_target_periode`, `resident_has_declared_for`) — see those functions' docstrings for the
+mechanism.
 
 ## 13. Rollout runbook
 

@@ -1141,9 +1141,34 @@ def roll_forward_allocation(today: date | None = None) -> TierAResult | None:
     return None
 
 
+def _redirect_past_deadline(current_periode: Periode, today: date) -> Periode:
+    """The "further still" half of Amendment 1's A1.3 locking rule, shared by `_preference_write_target`
+    and `preference_target_periode`: the periode right after `current_periode`, pushed one periode
+    further again if `today` has already reached (or passed) THAT periode's own deadline -- "a later
+    edit is written to the following period's row instead, taking effect then." Split out purely so
+    the two callers above can't drift on this half of the rule while differing on the other half (see
+    `preference_target_periode`'s docstring for why they differ at all)."""
+    target = _next_periode(current_periode)
+    if today >= periode_deadline(target):
+        target = _next_periode(target)
+    return target
+
+
+def _preference_write_target(resident: Resident, today: date) -> Periode:
+    """Which `Periode`'s row a preference write from `resident` on `today` actually targets --
+    Amendment 1, A1.3's locking rule, exactly as `set_preference` applies it. Pulled out of
+    `set_preference` so the resolution itself has exactly one implementation and `set_preference` is
+    just "resolve, then write" -- see that function's docstring for the rule in full.
+    """
+    current_periode = resolve_periode(today)
+    if not Praeference.objects.filter(resident=resident, periode=current_periode).exists():
+        return current_periode
+    return _redirect_past_deadline(current_periode, today)
+
+
 def set_preference(resident: Resident, weekday_unavailable: bool, *, at: date | None = None) -> Praeference:
     """Write `resident`'s weekday-unavailable preference, resolving which `Periode`'s row the write
-    actually targets — Amendment 1, A1.3's preference locking.
+    actually targets — Amendment 1, A1.3's preference locking (`_preference_write_target`).
 
     **Mid-period arrival, exempt from the deadline entirely:** if `resident` has no `Praeference` row
     yet for the `Periode` containing `at` (default `core.clock.current_date()`) -- the period they
@@ -1162,20 +1187,7 @@ def set_preference(resident: Resident, weekday_unavailable: bool, *, at: date | 
     substantially allocated.
     """
     today = at or current_date()
-    current_periode = resolve_periode(today)
-
-    existing_current = Praeference.objects.filter(resident=resident, periode=current_periode).first()
-    if existing_current is None:
-        return Praeference.objects.create(
-            resident=resident,
-            periode=current_periode,
-            weekday_unavailable=weekday_unavailable,
-            declared_at=today,
-        )
-
-    target = _next_periode(current_periode)
-    if today >= periode_deadline(target):
-        target = _next_periode(target)
+    target = _preference_write_target(resident, today)
 
     row, created = Praeference.objects.get_or_create(
         resident=resident,
@@ -1256,10 +1268,16 @@ def in_preference_window(*, at: date | None = None) -> Periode | None:
     current periode) or Køkkengruppen's deadline-triggered `--batch` allocation, which by definition
     runs AT the deadline, i.e. the day the window closes. A read-only lookup would therefore silently
     show no banner for exactly the periode that most needs one: the first time anyone is asked about
-    it, before any row exists yet. Every actual caller (this function, `praeferencer`'s view/template)
-    only ever reads the result for display -- `str(periode)` ("Efterår 2026") -- never for its `pk`
-    or a relation, so an unsaved instance is exactly as useful as a persisted one here and costs
-    nothing.
+    it, before any row exists yet.
+
+    `praeferencer`'s view/template still reads the result directly for display -- `str(periode)`
+    ("Efterår 2026") -- never for its `pk` or a relation. `core.context_processors.navigation` (the
+    banner) now uses this function only as the cheap "is a window open at all" gate -- once it returns
+    non-`None`, the banner's own displayed periode and its per-resident check both come from
+    `preference_target_periode`/`resident_has_declared_for` instead (see those functions' docstrings
+    on why: this function's result is pure date arithmetic, not aware of any one resident's actual
+    `Praeference` history). Either way, an unsaved instance is exactly as useful as a persisted one
+    here and costs nothing.
     """
     today = at or current_date()
     _kind, _year, current_start, current_end = _periode_bounds(today)
@@ -1281,6 +1299,50 @@ def resident_needs_to_declare(resident: Resident, *, at: date | None = None) -> 
     return not Praeference.objects.filter(resident=resident, periode=periode).exists()
 
 
+def preference_target_periode(
+    resident: Resident, window_periode: Periode, *, at: date | None = None
+) -> Periode:
+    """Which `Periode`'s row a preference write from `resident` would actually land on right now --
+    the read-only question the preference-window banner (P2 design doc §8) must ask, in place of
+    trusting `window_periode` (`in_preference_window()`'s result) itself. That result is pure date
+    arithmetic -- it says nothing about `resident`'s own `Praeference` history -- while the real write
+    path (`set_preference`, `_preference_write_target`) resolves its target from exactly that history
+    (Amendment 1, A1.3): a first-time declarer's submission lands on their CURRENT periode, not the
+    upcoming one the window is named after, and a resident who already has a row for their current
+    periode gets redirected to the next periode, or the one after that once its own deadline has
+    passed. Calling the banner's "has this resident already handled it" check against `window_periode`
+    instead of THIS function's result is exactly the bug this exists to fix: it let the banner nag a
+    first-time declarer forever, since their write never touched the periode the old check asked about.
+
+    **Deliberately not a byte-for-byte replay of `_preference_write_target`** -- it shares
+    `_redirect_past_deadline` for the "already has a row for the current periode, so redirect forward"
+    half of the rule, but the "does resident already have a row for their current periode" half only
+    counts a row declared BEFORE `window_periode`'s own window opened (`preference_window`), not one
+    written by a submission made DURING this same window. Without that distinction, a genuine
+    first-time declarer's bootstrap row (created by their own submission, landing on their current
+    periode per A1.3's exemption) would flip THIS function's own branch on the very next call -- their
+    new row now exists, so it would start asking about the periode AFTER that instead -- sending the
+    banner chasing a moving target rather than clearing once they've done what §12's decision asks
+    ("persists ... until a resident personally declares"). `set_preference` itself is completely
+    unaffected by this -- it has no notion of a "window" and keeps resolving off plain row existence
+    exactly as before; this refinement exists only in this read-only mirror, and only changes anything
+    during the handful of days a window is actually open.
+
+    Like `resident_has_declared_for`, this genuinely needs database reads (it is per-resident) and
+    must only be called once `in_preference_window()` has already found a window open -- see that
+    function's own docstring on why that discipline matters.
+    """
+    today = at or current_date()
+    opens, _closes = preference_window(window_periode)
+    current_periode = resolve_periode(today)
+    has_prior_row = Praeference.objects.filter(
+        resident=resident, periode=current_periode, declared_at__lt=opens
+    ).exists()
+    if not has_prior_row:
+        return current_periode
+    return _redirect_past_deadline(current_periode, today)
+
+
 def resident_has_declared_for(resident: Resident, periode: Periode) -> bool:
     """Whether `resident` already has a `Praeference` row for `periode` -- the per-resident half of
     the preference-window banner (P2 design doc §8; §12's open item resolved: the banner persists
@@ -1291,14 +1353,17 @@ def resident_has_declared_for(resident: Resident, periode: Periode) -> bool:
     NOT the same question as `resident_needs_to_declare` -- that one is scoped to the periode the
     resident is CURRENTLY living in (their own dashboard todo card, A3.2's zero-history case); this
     one is scoped to whatever `periode` the caller passes, which for the banner is specifically
-    `in_preference_window()`'s result -- almost always the UPCOMING periode, per that function's own
-    docstring on why a currently-open window governs periode N+1, not periode N.
+    `preference_target_periode()`'s result -- the periode a submission from this resident would
+    actually target right now, NOT simply `in_preference_window()`'s purely date-arithmetic display
+    periode (see `preference_target_periode`'s docstring for why those two routinely diverge).
 
     Matched by `(periode.kind, periode.year)` rather than `periode=periode` on purpose:
     `in_preference_window()` returns an UNSAVED, in-memory `Periode` (see its docstring on why), so
     filtering on the FK by object identity would compare against a `None` pk and match nothing --
     silently showing the banner to every resident forever. `Periode.Meta.constraints` guarantees
-    (kind, year) is exactly as selective as the pk would have been.
+    (kind, year) is exactly as selective as the pk would have been. (`preference_target_periode`'s
+    result is always a SAVED periode, but matching this way costs nothing extra and keeps this
+    function correct for either kind of caller.)
 
     Callers must only call this once `in_preference_window()` has already returned a periode: unlike
     that function, this one genuinely needs a database read (it is per-resident), so it must not run

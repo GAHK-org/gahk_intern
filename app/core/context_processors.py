@@ -192,18 +192,33 @@ def navigation(request: HttpRequest) -> dict[str, object]:
     # the window itself, so nobody sees a banner for a feature they cannot yet open (see
     # koekken.access's module docstring for the current rollout state).
     #
-    # §12's open item, resolved: the banner persists PER RESIDENT until they've declared for the
-    # window's periode or the window closes -- not just "is a window open" for everyone. The extra
-    # `resident_has_declared_for` read only runs once `in_preference_window()` has already found a
-    # window (still `None`, no query, on every other day of the year) -- see both functions'
-    # docstrings in koekken.services for why that ordering is load-bearing (F6).
+    # §12's open item, resolved: the banner persists PER RESIDENT until they've personally declared or
+    # the window closes -- not just "is a window open" for everyone. The extra per-resident reads
+    # (`preference_target_periode`, `resident_has_declared_for`) only run once `in_preference_window()`
+    # has already found a window (still `None`, no query, on every other day of the year) -- see all
+    # three functions' docstrings in koekken.services for why that ordering is load-bearing (F6).
+    #
+    # The periode named here is `preference_target_periode`'s result, NOT `in_preference_window()`'s --
+    # a review finding: `in_preference_window()`'s periode is pure date arithmetic, while a resident's
+    # own actual submission (`set_preference`) routinely resolves to a DIFFERENT periode once their own
+    # `Praeference` history is accounted for (a first-time declarer's write lands on their CURRENT
+    # periode, not the upcoming one; a deadline-day submission can be pushed one periode further
+    # still). Asking `resident_has_declared_for` about `in_preference_window()`'s periode directly left
+    # the banner permanently stuck for exactly a first-time declarer -- their write never touched the
+    # periode being asked about -- and would have shown them a periode name their submission would not
+    # actually land on, which is its own kind of confusing.
     if authed and koekken_allowed(roles):
-        from koekken.services import in_preference_window, resident_has_declared_for
+        from koekken.services import (
+            in_preference_window,
+            preference_target_periode,
+            resident_has_declared_for,
+        )
         from residents.permissions import current_resident
 
         window_periode = in_preference_window()
-        if window_periode is not None and not resident_has_declared_for(
-            current_resident(request), window_periode
-        ):
-            ctx["koekken_preference_window_periode"] = window_periode
+        if window_periode is not None:
+            resident = current_resident(request)
+            target_periode = preference_target_periode(resident, window_periode)
+            if not resident_has_declared_for(resident, target_periode):
+                ctx["koekken_preference_window_periode"] = target_periode
     return ctx

@@ -59,12 +59,15 @@ from koekken.services import (
     marking_window,
     periode_deadline,
     post_obligation,
+    preference_target_periode,
     rebase_to_zero_mean,
     reconcile_month,
+    resident_has_declared_for,
     resolve_anmeldelse,
     resolve_periode,
     roll_forward_allocation,
     set_preference,
+    set_preferences,
 )
 from residents.models import Residency, Resident
 
@@ -2265,27 +2268,47 @@ def test_in_preference_window_never_creates_a_periode_row(make_resident: Callabl
 def test_preference_window_banner_persists_per_resident_until_they_declare(
     make_resident: Callable, client: Client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The stakeholder decision resolving §12: a resident who already has a `Praeference` row for the
-    window's own periode must stop seeing the banner, even while the window stays open for everyone
-    else who hasn't declared yet -- it is not a single site-wide on/off switch."""
+    """The stakeholder decision resolving §12: a resident who has already declared for whatever
+    periode THEIR OWN submission would currently target stops seeing the banner, even while the
+    window stays open for everyone else who hasn't -- it is not a single site-wide on/off switch.
+
+    Both residents here already have a `Praeference` row for their CURRENT periode, predating this
+    window (the ordinary "already engaged with the system" case, not the first-time-declarer edge
+    case -- see `test_first_time_declarer_banner_clears_after_one_real_submission` for that one), so
+    Amendment 1's locking rule (A1.3) resolves a submission from either of them to the SAME target as
+    `in_preference_window()` names: `set_preferences` (the real write path), not a hand-crafted
+    `Praeference.objects.create` for the window's own periode, is what actually proves that -- a
+    hand-crafted row for `in_preference_window()`'s periode is exactly what let the original banner
+    bug (it never cleared for a first-time declarer, whose real write target diverges from that
+    periode) slip past this same test previously."""
     from koekken import access as koekken_access
 
     monkeypatch.setattr(koekken_access, "ACCESS_ROLES", None)  # open, independent of the rollout stage
 
     declared = make_resident(email="banner_declared@gahk.dk")
     undeclared = make_resident(email="banner_undeclared@gahk.dk")
+    today = date(2026, 11, 27)
 
     with override_settings(DEBUG=True):
-        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": date(2026, 11, 27)})
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": today})
         window_periode = in_preference_window()
         assert window_periode is not None
         assert str(window_periode) == "Forår 2027"  # sanity: this is the window's own periode
 
-        # `resolve_periode` (not `set_preference`) so this test does not also depend on Amendment 1's
-        # locking rule resolving the write to the same periode `in_preference_window` names.
-        periode = resolve_periode(date(2027, 3, 1))
-        assert (periode.kind, periode.year) == (Periode.Kind.FORAAR, 2027)
-        Praeference.objects.create(resident=declared, periode=periode)
+        # Both residents already have a row for their current periode, from well before this window
+        # opened -- a resident who has been through a declaration cycle before, not a first-timer.
+        current_periode = resolve_periode(today)
+        for resident in (declared, undeclared):
+            Praeference.objects.create(
+                resident=resident, periode=current_periode, declared_at=date(2026, 6, 1)
+            )
+
+        # Sanity: for exactly this history, a submission today really does target the window's own
+        # periode -- the common case where `preference_target_periode` and `in_preference_window`
+        # agree (they don't always -- see the dedicated divergence tests below).
+        assert str(preference_target_periode(declared, window_periode, at=today)) == "Forår 2027"
+
+        set_preferences(declared, weekday_unavailable=True, at=today)
 
         client.force_login(undeclared)
         undeclared_html = client.get("/intern/").content.decode()
@@ -2294,6 +2317,146 @@ def test_preference_window_banner_persists_per_resident_until_they_declare(
         client.force_login(declared)
         declared_html = client.get("/intern/").content.decode()
         assert "erklær dine præferencer" not in declared_html  # window still open, but already declared
+
+
+def test_first_time_declarer_banner_clears_after_one_real_submission(
+    make_resident: Callable, client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reviewer's repro #1 -- the bug this whole fix is for. A resident with NO `Praeference` row
+    anywhere submits during a window. Amendment 1, A1.3's "mid-period arrival, exempt from the
+    deadline entirely" rule sends their FIRST-EVER write to their CURRENT periode (Efterår 2026), not
+    the window's own upcoming periode (Forår 2027) `in_preference_window()` names -- `set_preference`'s
+    "no row yet for current periode" branch, not its "redirect to what's next" one.
+
+    Before the fix, the banner asked `resident_has_declared_for(resident, in_preference_window())`
+    -- i.e. whether a Forår-2027 row existed -- which this resident's submission never creates, so it
+    never cleared. The fix must both (a) tell this resident the TRUTH about where their declaration
+    is headed (Efterår 2026, not Forår 2027) and (b) clear once they've made it -- proven end to end
+    through the real form-submission view, not a hand-crafted `Praeference` row."""
+    from koekken import access as koekken_access
+
+    monkeypatch.setattr(koekken_access, "ACCESS_ROLES", None)
+
+    resident = make_resident(email="banner_first_time_declarer@gahk.dk")
+    today = date(2026, 11, 27)
+
+    with override_settings(DEBUG=True):
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": today})
+        assert in_preference_window() is not None  # sanity: really inside Forår 2027's window
+        assert str(in_preference_window()) == "Forår 2027"
+        assert not Praeference.objects.filter(resident=resident).exists()  # sanity: truly no history
+
+        client.force_login(resident)
+        before_html = client.get("/intern/").content.decode()
+        # The banner must name the periode a submission ACTUALLY targets (Efterår 2026) -- never
+        # Forår 2027, which this resident's declaration will not touch.
+        assert "erklær dine præferencer for Efterår 2026" in before_html
+        assert "erklær dine præferencer for Forår 2027" not in before_html
+
+        response = client.post(
+            "/intern/koekken/praeferencer",
+            {
+                "weekday_unavailable": "on",
+                "morgen_dage": [],
+                "frokost_dage": [],
+                "aften_dage": [],
+            },
+        )
+        assert response.status_code == 302  # the real form-submission path, via set_preferences
+
+        # The write really did land on the current periode (Amendment 1, A1.3), not the window's own.
+        current_periode = resolve_periode(today)
+        assert Praeference.objects.filter(resident=resident, periode=current_periode).exists()
+        assert not Praeference.objects.filter(
+            resident=resident, periode__kind=Periode.Kind.FORAAR, periode__year=2027
+        ).exists()
+
+        after_html = client.get("/intern/").content.decode()
+        assert "erklær dine præferencer" not in after_html  # the banner must be gone, not just relabelled
+
+
+def test_deadline_day_pushes_the_banners_target_one_periode_further(
+    make_resident: Callable, client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reviewer's repro #2. A resident who already has a row for their CURRENT periode (an ordinary
+    declaration history, predating the window), checked/declaring on the window's DEADLINE DAY itself
+    (2026-12-01, Forår 2027's deadline): Amendment 1, A1.3's redirect rule pushes a submission on or
+    after a target's own deadline one periode further still, so `set_preference` -- and therefore the
+    banner -- must both land on Sommer 2027, not Forår 2027, even though this is still "Forår 2027's
+    window" by name."""
+    from koekken import access as koekken_access
+
+    monkeypatch.setattr(koekken_access, "ACCESS_ROLES", None)
+
+    resident = make_resident(email="banner_deadline_day@gahk.dk")
+    deadline_day = date(2026, 12, 1)
+
+    with override_settings(DEBUG=True):
+        # An ordinary declaration from well before this window opened -- not the first-time case.
+        current_periode = resolve_periode(deadline_day)
+        Praeference.objects.create(resident=resident, periode=current_periode, declared_at=date(2026, 6, 1))
+
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": deadline_day})
+        window_periode = in_preference_window()
+        assert window_periode is not None
+        assert str(window_periode) == "Forår 2027"  # sanity: still named after Forår 2027
+
+        target = preference_target_periode(resident, window_periode, at=deadline_day)
+        assert str(target) == "Sommer 2027"  # pushed one further, per A1.3's deadline-day rule
+        assert resident_has_declared_for(resident, target) is False
+
+        client.force_login(resident)
+        before_html = client.get("/intern/").content.decode()
+        assert "erklær dine præferencer for Sommer 2027" in before_html
+        assert "erklær dine præferencer for Forår 2027" not in before_html
+
+        set_preferences(resident, weekday_unavailable=True, at=deadline_day)
+
+        # The real write landed on Sommer 2027, exactly where the banner said it would.
+        assert Praeference.objects.filter(
+            resident=resident, periode__kind=Periode.Kind.SOMMER, periode__year=2027
+        ).exists()
+
+        after_html = client.get("/intern/").content.decode()
+        assert "erklær dine præferencer" not in after_html  # clears correctly once they've declared
+
+
+def test_banner_general_case_uses_the_write_paths_actual_target(
+    make_resident: Callable, client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reviewer's repro #3: mid-window, a resident who already declared for whatever periode
+    `set_preference` would currently target for them does not see the banner; one who hasn't does --
+    proven with two residents sharing the exact same declaration history, one of whom then declares
+    for that target (via the real write path) and one who doesn't."""
+    from koekken import access as koekken_access
+
+    monkeypatch.setattr(koekken_access, "ACCESS_ROLES", None)
+
+    has_declared = make_resident(email="banner_general_declared@gahk.dk")
+    has_not_declared = make_resident(email="banner_general_undeclared@gahk.dk")
+    today = date(2026, 11, 27)  # mid-window, not the deadline day
+
+    with override_settings(DEBUG=True):
+        current_periode = resolve_periode(today)
+        for resident in (has_declared, has_not_declared):
+            Praeference.objects.create(
+                resident=resident, periode=current_periode, declared_at=date(2026, 6, 1)
+            )
+
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": today})
+        window_periode = in_preference_window()
+        assert window_periode is not None
+
+        target = preference_target_periode(has_declared, window_periode, at=today)
+        set_preferences(has_declared, weekday_unavailable=False, at=today)
+        assert resident_has_declared_for(has_declared, target) is True
+        assert resident_has_declared_for(has_not_declared, target) is False
+
+        client.force_login(has_not_declared)
+        assert "erklær dine præferencer" in client.get("/intern/").content.decode()
+
+        client.force_login(has_declared)
+        assert "erklær dine præferencer" not in client.get("/intern/").content.decode()
 
 
 def test_preference_window_banner_hidden_outside_any_window_regardless_of_declaration(
@@ -2366,8 +2529,6 @@ def test_resident_has_declared_for_matches_by_kind_and_year_not_object_identity(
     `resident_has_declared_for` must match the resident's `Praeference` row by (kind, year), not by
     filtering the FK on that unsaved instance's `None` pk, which would silently match nothing and
     show the banner to every resident forever."""
-    from koekken.services import resident_has_declared_for
-
     resident = make_resident(email="banner_matches_by_kind_year@gahk.dk")
     persisted = resolve_periode(date(2027, 3, 1))  # Forår 2027, saved
     unsaved = Periode(
