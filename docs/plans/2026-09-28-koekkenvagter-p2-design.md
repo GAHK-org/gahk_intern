@@ -1,6 +1,8 @@
 # Design: Køkkenvagter P2 — preferences, tier-B, verification, UI
 
-**Status: awaiting sign-off (2026-09-28).** Phase design; the architecture it sits inside is
+**Status: approved and implemented** (2026-09-28; code at `bdc01ad` after three review/fix cycles).
+**The rollout is planned but has not happened yet — see §13, which is live until February 2027.**
+Phase design; the architecture it sits inside is
 `2026-09-21-koekkenvagter-design.md` (approved, with Amendments 1–3 approved and implemented, and
 Amendment 4 an approved direction for a later phase). Read that first — this document assumes it and
 does not restate it.
@@ -361,7 +363,82 @@ before P2 **ships** — it does not block building it.
 
 ## 12. Open items
 
-- The rollout decision in §9, before ship.
+- ~~The rollout decision in §9, before ship.~~ **Decided 2026-09-30 — see §13.**
 - Whether the preference-window banner is dismissible. A banner you can dismiss weakens a deadline
   that comes round twice a year; one you cannot is aggressive for a week. Worth deciding with the
   first real window rather than in the abstract.
+
+## 13. Rollout runbook
+
+**Decided 2026-09-30: a clean start at the Feb–Jun 2027 periode.** No code changes beyond two
+settings values. This section is the operational plan; it is live until February 2027 and is history
+after that.
+
+### Why February, and not sooner
+
+The calendar decided this, not preference. The preference window is the seven days ending at
+`periode_deadline()`, and the current Sep–Jan 2026/27 periode passed its deadline on **1 July 2026 —
+before this system existed**, so its preferences are locked and unreachable. The first window this
+system can honestly run is the next one, and the first shifts it governs are February's.
+
+The alternative considered and rejected was a one-time off-cycle preference round to take over in
+December/January. It would have gained about two months, but Amendment 1's locking deliberately
+prevents collecting preferences for a periode past its deadline, so it needed new code plus a
+deliberate exception to a rule written on purpose. Also rejected: opening now and allocating with no
+preferences at all, which is fastest and makes a resident's first experience a schedule they were
+never asked about, with every day-preference unhonoured and the weekend pool filled entirely by
+drafting. The shape below is chosen so that **the first thing a resident ever meets is being asked
+something**, and the first shifts they see are ones their own answers shaped.
+
+### Timeline
+
+| phase | when | what happens | gate state |
+| --- | --- | --- | --- |
+| 1 | 30 Sep → mid-Nov 2026 | **Køkkengruppen dry run.** Generate a periode, run an allocation, work the flag queue, mark a shift done on the tablet, try an override. Doubles as their training. | `ACCESS_ROLES = (KOKKENGRUPPE,)`, `KOEKKEN_JOBS_ENABLED = 0` |
+| 2 | before 20 Nov 2026 | **Seed the balances.** Enter the informal scoreboard figures; run `seed_koekken_balances` (idempotent per resident via `uniq_koekken_startsaldo_per_resident`). | unchanged |
+| 3 | ~20 Nov 2026 | **Open the house.** A few days before the window, so people can look round before the banner appears. | **`ACCESS_ROLES = None`** |
+| 4 | 24 Nov → 1 Dec 2026 | **First real preference window.** Banner up house-wide; everyone declares all four inputs. | unchanged |
+| 5 | 1 Dec 2026 | **First real allocation** at the deadline, covering February, March and April 2027. | **`KOEKKEN_JOBS_ENABLED = 1`** |
+| — | 1 Feb 2027 | First shift anyone is expected to actually work. | steady state |
+
+### The two settings changes
+
+```
+koekken/access.py   ACCESS_ROLES = (Role.KOKKENGRUPPE,)  ->  None      ~20 Nov 2026
+config/settings.py  KOEKKEN_JOBS_ENABLED = 0             ->  1          1 Dec 2026
+```
+
+That is the entire code delta. `ACCESS_ROLES = None` opens the views, the sidebar entry, the banner
+and the tablet together, which is what `core.rollout.Gate` was built for.
+
+**Order matters between them, and the reason is the bug this feature exists to fix.**
+`post_obligation` derives each month's charge from actual `Vagt` supply and defaults to zero, so a
+month with no generated shifts charges nobody — the flag is therefore harmless to flip late, and
+dangerous to flip early. Turning it on while phase 1 has dry-run shifts generated would accrue real
+obligation for a trial nobody outside Køkkengruppen could even see, which is precisely the *"everyone
+drifts into debt through no fault of their own"* failure the settings comment on that flag warns
+about. Leave it at 0 until the house is live.
+
+**Seeding before access, not after** (phase 2 before phase 3), so that no resident ever sees a balance
+of zero that later jumps for reasons they did not cause. Their first view of their balance should be
+the real one.
+
+### Two prerequisites that are not code, and are not optional
+
+**1. Tell residents the ledger converts to money.** A negative balance becomes a monetary penalty at
+move-out. People are being enrolled in that, and must be told plainly **before it starts accruing** —
+in the announcement, not buried in a help page. This is a fairness point first and the cheapest
+dispute-avoidance available second.
+
+**2. Show each resident their seeded starting balance, and how to contest it.** The figure comes from
+an informal paper scoreboard, rebased so the house average is zero. Two things follow. People should
+see their own number before it starts converting to money, with some route to dispute it. And the
+announcement should say explicitly that the rebase already removed the old 4 h/month rate's
+structural artifact — otherwise someone opening the page to a negative number will reasonably read it
+as an accusation, when in fact much of the old scoreboard's drift was an accounting error rather than
+anybody shirking.
+
+### Køkkengruppen readiness
+
+Not a separate gate: phase 1 *is* the training. They should have run an allocation, adjudicated at
+least one flag and marked at least one shift done on the tablet before phase 3 opens the house.
