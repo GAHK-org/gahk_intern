@@ -481,6 +481,8 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
     workgroups = list(Workgroup.objects.order_by("name"))
     cleanings = list(Cleaning.objects.order_by("name"))
 
+    next_rows = None  # Sporer om vi skal hente fra databasen eller bruge brugerens kladde
+
     if request.method == "POST":
         action = request.POST.get("action")
         admins = set(
@@ -507,8 +509,9 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                     )
                     _sync_month_roles(res.resident_id, res.workgroup, ny, nm, res.resident_id in admins)
             messages.success(request, f"Listen er kopieret til {ny}-{nm:02d}.")
+            return redirect(f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}")
 
-        elif action == "save":  # edit room/workgroup/cleaning + remove people
+        if action == "save":  # edit room/workgroup/cleaning + remove people
             removed: set[int] = set()
             intended: dict[int, tuple[Room, Workgroup | None, Cleaning | None]] = {}
             me = current_resident(request).pk
@@ -563,6 +566,30 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                 for e in errors:
                     messages.error(request, e)
                 messages.error(request, "Ingen ændringer gemt.")
+                
+                # FEJL-TILSTAND: Vi overskriver listemodellerne med brugerens rettelser 
+                # (lokalt i hukommelsen), så viewet tegner kladden i stedet for databasen.
+                db_rows = list(
+                    Residency.objects.filter(year=ny, month=nm)
+                    .select_related("resident", "room", "workgroup", "cleaning")
+                    .order_by("room__number")
+                )
+                
+                next_rows = []
+                for res in db_rows:
+                    if res.resident_id in removed:
+                        continue
+                        
+                    if res.resident_id in intended:
+                        i_room, i_wg, i_cl = intended[res.resident_id]
+                        res.room = i_room
+                        res.workgroup = i_wg
+                        res.cleaning = i_cl
+                        res.room_id = i_room.id if i_room else None
+                        res.workgroup_id = i_wg.id if i_wg else None
+                        res.cleaning_id = i_cl.id if i_cl else None
+                        
+                    next_rows.append(res)
             else:
                 with transaction.atomic():
                     RoleAssignment.objects.filter(resident_id__in=removed, year=ny, month=nm).delete()
@@ -573,6 +600,7 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                         )
                         _sync_month_roles(rid, wg, ny, nm, rid in admins)
                 messages.success(request, "Ændringer gemt.")
+                return redirect(f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}")
 
         elif action == "add_existing":  # add a resident already in the system
             room = _pick(room_by_id, request.POST.get("room", ""))
@@ -595,6 +623,7 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                 )
                 _sync_month_roles(resident.id, wg, ny, nm, resident.id in admins)
                 messages.success(request, f"{resident.full_name} tilføjet til {ny}-{nm:02d}.")
+            return redirect(f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}")
 
         elif action == "add_new":  # create a new resident and add them
             email = (request.POST.get("email") or "").strip().lower()
@@ -635,14 +664,18 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                         "Velkomstmailen kunne ikke sendes — bed dem bruge “glemt kodeord”, "
                         "og tjek serverloggen.",
                     )
+            return redirect(f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}")
 
-        return redirect(f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}")
+    # Hvis next_rows stadig er None, betyder det at det er en GET request ELLER 
+    # en action (som "save") slog fejl og allerede populerede listen lokalt. 
+    # I så fald henter vi den friske tilstand fra databasen.
+    if next_rows is None:
+        next_rows = list(
+            Residency.objects.filter(year=ny, month=nm)
+            .select_related("resident", "room", "workgroup", "cleaning")
+            .order_by("room__number")
+        )
 
-    next_rows = list(
-        Residency.objects.filter(year=ny, month=nm)
-        .select_related("resident", "room", "workgroup", "cleaning")
-        .order_by("room__number")
-    )
     in_next = {r.resident_id for r in next_rows}
     available = (
         Resident.objects.filter(is_active=True).exclude(id__in=in_next).order_by("first_name", "last_name")
