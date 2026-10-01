@@ -84,6 +84,10 @@ class ResidentManager(BaseUserManager["Resident"]):
         return self.create_user(email, password, **extra)
 
 
+# Attribute `_has_admin_role` memoises its grant lookup under, on the request's user instance.
+_ADMIN_GRANT_MEMO = "_gahk_admin_grant"
+
+
 class Resident(AbstractBaseUser, PermissionsMixin):
     # identity / login (legacy intern_alumne.email becomes the unique login id)
     email = models.EmailField(unique=True)
@@ -133,8 +137,9 @@ class Resident(AbstractBaseUser, PermissionsMixin):
 
     def has_perm(self, perm: str, obj: models.Model | None = None) -> bool:
         """Netvaerksgruppen (spelled `administrator`) gets every Django admin permission, for exactly
-        as long as they hold the role. Derived per request rather than stored in `is_superuser`:
-        role holding expires with the monthly period, and nothing fires on that rollover."""
+        as long as they hold the role AND a second administrator has accepted the grant. Derived per
+        request rather than stored in `is_superuser`: role holding expires with the monthly period,
+        and nothing fires on that rollover."""
         return super().has_perm(perm, obj) or self._has_admin_role()
 
     def has_module_perms(self, app_label: str) -> bool:
@@ -143,7 +148,16 @@ class Resident(AbstractBaseUser, PermissionsMixin):
     def _has_admin_role(self) -> bool:
         from .permissions import has_active_role  # imported here: permissions imports this module
 
-        return self.is_active and has_active_role(self, Role.ADMINISTRATOR)
+        if not (self.is_active and has_active_role(self, Role.ADMINISTRATOR)):
+            return False
+        # Memoised per instance, like real_roles: the admin index asks once per registered model.
+        approved = getattr(self, _ADMIN_GRANT_MEMO, None)
+        if approved is None:
+            approved = AdminAccessGrant.objects.filter(
+                resident_id=self.pk, status=AdminAccessGrant.Status.APPROVED
+            ).exists()
+            setattr(self, _ADMIN_GRANT_MEMO, approved)
+        return approved
 
 
 class Residency(models.Model):

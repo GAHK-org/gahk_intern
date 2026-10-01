@@ -540,11 +540,16 @@ def test_is_staff_synced_with_roles(make_resident: Callable) -> None:
 @pytest.mark.django_db
 def test_administrator_has_full_admin_permissions_while_in_role(make_resident: Callable) -> None:
     """Netvaerksgruppen (= `administrator`) gets superuser-equivalent admin rights, but only for the
-    active period — the role is never mirrored into `is_superuser`, which would outlive it."""
-    from residents.models import RoleAssignment, active_period
+    active period — the role is never mirrored into `is_superuser`, which would outlive it.
+
+    Approval (the two-person rule) is covered in test_admin_access; here it is granted outright so
+    this test stays about the *period* half of the condition."""
+    from residents.models import AdminAccessGrant, RoleAssignment, active_period
 
     y, m = active_period()
     admin = make_resident(email="netvaerk@gahk.dk", roles=[Role.ADMINISTRATOR])
+    AdminAccessGrant.objects.filter(resident=admin).update(status=AdminAccessGrant.Status.APPROVED)
+    admin = Resident.objects.get(pk=admin.pk)
     assert admin.is_superuser is False  # the flag is never set
     assert admin.has_perm("residents.delete_resident") is True
     assert admin.has_module_perms("oelkaelder") is True

@@ -11,6 +11,7 @@ urlpatterns = [
     path("worker-jobs", views_admin.worker_jobs, name="worker_jobs"),
     path("worker-jobs/<str:task_id>", views_admin.worker_job_detail, name="worker_job_detail"),
     path("roles", views_admin.roles, name="roles"),
+    path("adminadgang", views_admin.admin_access_view, name="admin_access"),
     path("preview", views_admin.preview, name="preview"),
     path("preview/set", views_admin.preview_set, name="preview_set"),
     path("dev-clock/set", views_admin.dev_clock_set, name="dev_clock_set"),  # DEBUG-only
