@@ -3,9 +3,12 @@ does not need covering, e.g. juleaften. The normal case, not an edge case: a per
 ~122 days before it starts, so a fridag declared in the months leading up to it is almost always
 against an already-generated/already-allocated month -- this ONE action creates the Fridag row(s),
 deletes the matching Vagt row(s) if that month was already generated, re-allocates the affected month
-(the existing --force mechanism) and re-posts its obligation -- but only when the month was already
-allocated before this call touched it (2026-10 review, F3; see koekken.services.declare_fridag) -- all
-in one atomic step, then notifies any resident who genuinely lost an assignment as a net result (F2).
+(the existing --force mechanism) and re-posts its obligation -- the two re-runs gated by two SEPARATE,
+independent checks (2026-10 review, F3, refined by finding (b); see koekken.services.declare_fridag):
+re-allocation only when the month already had `TILDELT` rows to reseat, re-posting only when the
+month already had obligation posted for it -- NEITHER tied to the other, since a month can be fully
+settled (nothing left to reseat) while still needing its obligation reconciled down. All in one atomic
+step, then notifies any resident who genuinely lost an assignment as a net result (F2).
 See koekken.services.declare_fridag for the full mechanics and its two guards (no UDFOERT/ANMELDT
 assignment may be disturbed, no date in the past).
 
@@ -24,11 +27,15 @@ convention: run it first to see exactly what would change (how many Fridag rows,
 deleted, which month(s) re-allocated and re-posted, and -- F5 -- which residents are actually affected,
 either notified of a cancelled shift or left with a merely-moved one) before committing for real.
 
-**Recommended timing, per the stakeholder:** declare a periode's fridage as part of generating that
-periode -- before its deadline-triggered batch allocation runs -- rather than in the middle of an
-already-allocated periode. Declared this early, there is nothing yet to delete, re-allocate or
-re-post; `generate_vagter`'s own `is_fridag` seam (A5.3) simply never creates those rows in the first
-place, which is the simpler of this command's two paths."""
+**Recommended timing, per the stakeholder:** declare a periode's fridage BEFORE generating that
+periode's shifts (i.e. before `generate_koekkenvagter` runs for it), rather than after generation or
+in the middle of an already-allocated periode. Declared this early, there is nothing yet to delete,
+re-allocate or re-post; `generate_vagter`'s own `is_fridag` seam (A5.3) simply never creates those
+rows in the first place, which is the simpler of this command's two paths. (2026-10 review round 2,
+F5: this note previously said "before its deadline-triggered batch allocation runs", which is a wider
+window that includes AFTER generation but before allocation -- that window does have `Vagt` rows to
+delete, exactly what `test_declare_fridag_on_not_yet_allocated_month_only_deletes_vagt_rows` exercises,
+contradicting the "nothing yet to delete" claim.)"""
 
 import argparse
 from datetime import date
@@ -92,20 +99,36 @@ class Command(BaseCommand):
     def _report(self, for_date: date, dry_run: bool, result: FridagResult) -> None:
         """F5: an actual preview, not bare counts -- names the affected month(s) and the residents
         whose assignment changed, on both --dry-run (so it is a useful preview) and a real run (as a
-        record of what happened)."""
+        record of what happened).
+
+        2026-10 review round 2, F2: reallocation and obligation re-posting are reported from their
+        OWN, independently-gated fields (`result.reallocated_months` /
+        `result.obligation_reposted_months` -- see `FridagResult`'s docstring) on SEPARATE lines,
+        never folded into one combined "genallokeret og genbogført" claim the way the previous
+        version did. That combined claim was only ever true of `reallocated_months`, so it was wrong
+        whenever obligation was re-posted WITHOUT a reallocation (a month fully settled past `TILDELT`
+        still needing its obligation reconciled down) -- it both under-reported (missing the actual
+        repost) and, via its "ingen (måneden var endnu ikke allokeret, eller intet blev slettet)"
+        fallback, actively asserted that nothing was deleted and nothing re-posted even when a `Vagt`
+        row WAS deleted and obligation WAS re-posted. Reporting each field on its own line, naming
+        only what that field actually says happened, can never produce that contradiction."""
         prefix = "[dry-run] " if dry_run else ""
-        months = (
-            ", ".join(f"{y}-{m:02d}" for y, m in result.reallocated_months)
-            if result.reallocated_months
-            else "ingen (måneden var endnu ikke allokeret, eller intet blev slettet)"
-        )
         self.stdout.write(
             self.style.SUCCESS(
                 f"{prefix}{for_date}: {len(result.created)} fridag-række(r) oprettet, "
-                f"{result.deleted_vagter} vagt(er) slettet, "
-                f"{len(result.reallocated_months)} måned(er) genallokeret og genbogført ({months})."
+                f"{result.deleted_vagter} vagt(er) slettet."
             )
         )
+        if result.reallocated_months:
+            months = ", ".join(f"{y}-{m:02d}" for y, m in result.reallocated_months)
+            self.stdout.write(f"  {len(result.reallocated_months)} måned(er) genallokeret ({months}).")
+        else:
+            self.stdout.write("  Ingen måneder genallokeret.")
+        if result.obligation_reposted_months:
+            months = ", ".join(f"{y}-{m:02d}" for y, m in result.obligation_reposted_months)
+            self.stdout.write(f"  {len(result.obligation_reposted_months)} måned(er) genbogført ({months}).")
+        else:
+            self.stdout.write("  Ingen måneder genbogført.")
         if result.notifications:
             names = ", ".join(resident.full_name for resident, _audience, _message in result.notifications)
             self.stdout.write(

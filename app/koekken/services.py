@@ -173,11 +173,14 @@ class FridagResult:
     deleted AND when the month had no `TILDELT` rows to reseat in the first place (2026-10 review, F3:
     there is nothing to re-seat yet, and force-allocating it now would stick permanently, pre-empting
     the normal batch/roll-forward schedule -- see `declare_fridag`'s docstring). **Obligation
-    re-posting is gated independently of this field** (2026-10 review, finding (b)):
-    `post_obligation` can still run for a month that is NOT in `reallocated_months` (e.g. every
-    assignment is already settled past `TILDELT`, so there is nothing left to reseat, but the month
-    still carries `FORPLIGTELSE` rows that need reconciling against the reduced supply) -- see
-    `declare_fridag`'s docstring for exactly what gates each.
+    re-posting is gated independently of this field** (2026-10 review, finding (b)), and tracked in
+    its OWN field, `obligation_reposted_months` (2026-10 review round 2, F2 -- added because the two
+    had become independently gated but the command's report was still deriving its obligation line
+    from `reallocated_months` alone, producing a self-contradictory report whenever a month reposted
+    obligation without reallocating): `post_obligation` can still run for a month that is NOT in
+    `reallocated_months` (e.g. every assignment is already settled past `TILDELT`, so there is nothing
+    left to reseat, but the month still carries `FORPLIGTELSE` rows that need reconciling against the
+    reduced supply) -- see `declare_fridag`'s docstring for exactly what gates each.
 
     `notifications` is every resident who genuinely lost their last assignment in the affected month
     as a net result of re-allocation (2026-10 review, F2) -- NOT merely whoever held the exact
@@ -185,7 +188,9 @@ class FridagResult:
     month, tier A and B together, so who held the deleted slot and who ends up worse off are
     different sets. Each entry is `(resident, audience, message)` -- `audience` already narrowed via
     `koekken.access.allowed_subscribers` exactly as `resolve_anmeldelse` narrows its own, `message`
-    naming the specific shift(s) they lost (F6) -- ready for the caller to hand straight to
+    naming the specific shift(s) they lost (F6), restricted to pks THIS fridag actually deleted, never
+    one that merely changed hands via the reshuffle (2026-10 review round 2, F1 -- see
+    `declare_fridag`'s docstring) -- ready for the caller to hand straight to
     `core.push.send(audience, "Køkkenvagt", message, "/intern/koekken/", background=False)`.
     **Never sent here** (F1): a management command's own `--dry-run` rolls its wrapping transaction
     back via `transaction.set_rollback(True)` *after* `declare_fridag` returns, so this function must
@@ -200,6 +205,7 @@ class FridagResult:
     created: list[Fridag] = field(default_factory=list)
     deleted_vagter: int = 0
     reallocated_months: list[tuple[int, int]] = field(default_factory=list)
+    obligation_reposted_months: list[tuple[int, int]] = field(default_factory=list)
     notifications: list[tuple[Resident, QuerySet, str]] = field(default_factory=list)
     moved_residents: list[Resident] = field(default_factory=list)
 
@@ -2063,16 +2069,38 @@ def _month_tildelt_by_resident(year: int, month: int) -> dict[int, list[Vagt]]:
 
 
 def _fridag_notification_message(vagter: list[Vagt], reason: str) -> str:
-    """The "your assignment is cancelled" message for one resident who genuinely lost a shift (F2) --
-    F6: reuses `Vagt.__str__`'s own "Morgenvagt 2075-03-06" rendering, the same convention
+    """The "your assignment is cancelled" message for one resident who genuinely lost a shift (F2;
+    2026-10 review round 2, F1: `vagter` must already be narrowed to pks this fridag ACTUALLY
+    DELETED -- see the caller -- never a pk that merely changed hands via the reshuffle, since this
+    message's whole claim is "er aflyst" and that is only true of a `Vagt` row that no longer exists)
+    -- F6: reuses `Vagt.__str__`'s own "Morgenvagt 2075-03-06" rendering, the same convention
     `resolve_anmeldelse` already relies on for its own notification, rather than inventing new
     date/kind formatting -- and states the reason exactly once, never a separate, doubled "(fridag)"
-    parenthetical alongside an explicit `reason`."""
+    parenthetical alongside an explicit `reason`. Never called with an empty `vagter` -- that case
+    (a net loser whose loss was pure reassignment, nothing of theirs actually deleted) is
+    `_fridag_reassignment_notification_message` instead."""
     reason_text = reason or "fridag"
     if len(vagter) == 1:
         return f"Din {vagter[0]} er aflyst ({reason_text})."
     shifts = ", ".join(str(v) for v in sorted(vagter, key=lambda v: (v.date, v.kind)))
     return f"Dine køkkenvagter ({shifts}) er aflyst ({reason_text})."
+
+
+def _fridag_reassignment_notification_message(reason: str) -> str:
+    """2026-10 review round 2, F1: the fallback for a resident who is a net loser (their held-shift
+    count shrank) purely because the whole-month reshuffle reassigned their shift(s) to someone else
+    -- NOT because this fridag deleted anything of theirs. Every one of their lost pks still exists
+    as a real `Vagt` row, just held by a different resident now, so naming it would be a false "er
+    aflyst" claim; staying silent would be worse (the design doc says residents who lose a shift are
+    notified, and a resident who never finds out their month's assignments shifted under them is
+    exactly the "no-show their actual shift" failure mode F1 exists to prevent). This wording commits
+    to neither falsehood -- it names no specific shift, cancelled or otherwise, and simply points the
+    resident at the app to see what they currently hold."""
+    reason_text = reason or "fridag"
+    return (
+        f"Dine køkkenvagter denne måned er blevet omfordelt som følge af en fridag ({reason_text}) "
+        "-- se dine aktuelle vagter i app'en."
+    )
 
 
 def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> FridagResult:
@@ -2122,7 +2150,10 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
            `post_obligation` derives the month's total purely from `Sum(headcount x duration_minutes)`
            over actual `Vagt` rows and reconciles via delete-stale-then-`update_or_create` -- it never
            reads `VagtTildeling`/`TILDELT` state, so it is correct whether or not re-allocation ran in
-           the same call.
+           the same call. Recorded in its OWN field, `FridagResult.obligation_reposted_months`
+           (2026-10 review round 2, F2) -- never inferred from `reallocated_months`, which the
+           management command's report used to do, producing a self-contradictory report on exactly
+           this fully-settled-but-still-overposted case (see that field's docstring).
 
     **Two guards, both checked BEFORE any write** (A5.5), so a refusal leaves the database completely
     unchanged -- no partial `Fridag` row, no partially-deleted month:
@@ -2148,8 +2179,21 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
     net gain) is a pure reshuffle -- `moved`, never notified. Without this, a resident holding two
     shifts who loses only one of them (the other staying `TILDELT`) would never disappear from
     `after_by_resident` entirely, so the old per-resident-presence check wrongly filed them as
-    "moved" and they were never told their shift was cancelled. Only genuine net losses land in
-    `FridagResult.notifications` -- see that dataclass's docstring
+    "moved" and they were never told their shift was cancelled.
+
+    **The MESSAGE for a net loser only ever names pks this fridag ACTUALLY DELETED, never one that
+    merely changed hands** (2026-10 review round 2, F1 -- a distinct bug from finding (a) above: that
+    one fixed who counts as a net loser, this one fixes what the message is allowed to claim about
+    them). `before_pks - after_pks` is not, by itself, "what got cancelled": `allocate_month`'s
+    whole-month reshuffle can reseat a surviving `Vagt` to a DIFFERENT resident, which drops it out of
+    the original holder's `after_pks` exactly like a genuine deletion would, even though the row still
+    exists. The lost pks are therefore intersected with the set of pks THIS call actually deleted
+    (captured before the delete, as `deleted_vagt_pks`) before anything is reported as "er aflyst" --
+    see `_fridag_notification_message`. When that intersection is empty (the resident's entire net
+    loss was reassignment to someone else, nothing of theirs was actually deleted), no specific shift
+    is named at all: `_fridag_reassignment_notification_message` is used instead, which points the
+    resident at the app rather than asserting a still-existing row is cancelled. Only genuine net
+    losses land in `FridagResult.notifications` -- see that dataclass's docstring
     for the exact `(resident, audience, message)` shape and for why dispatch itself is NOT done here
     (F1: a management command's `--dry-run` only rolls back AFTER this function returns, so sending a
     real push from inside it would survive the rollback that undoes every other write). The audience
@@ -2180,9 +2224,17 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
         )
 
     year, month = for_date.year, for_date.month
-    periode = resolve_periode(for_date)
     result = FridagResult()
     with transaction.atomic():
+        # 2026-10 review round 2, F4: resolved INSIDE the atomic block, after both guards above --
+        # `resolve_periode` is a `get_or_create`, and `allocate_batch`'s own docstring states the
+        # principle this mirrors: a get_or_create must never run before a point where failure is
+        # still possible, so a refused/no-op call never leaves a stray `Periode` row behind. Every
+        # raise from here on requires `affected_vagter` to be non-empty (which implies the `Periode`
+        # already existed), but that is incidental to those specific guards, not something this
+        # ordering should depend on -- a pure look-ahead call (no `Vagt` rows, no existing `Periode`)
+        # must not create one just by being asked.
+        periode = resolve_periode(for_date)
         for kind in kind_list:
             fridag, created = Fridag.objects.get_or_create(
                 date=for_date, kind=kind, defaults={"reason": reason}
@@ -2205,6 +2257,10 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
         before_by_resident = _month_tildelt_by_resident(year, month) if has_tildelt_to_reseat else {}
 
         result.deleted_vagter = len(affected_vagter)
+        # 2026-10 review round 2, F1: captured BEFORE the delete, so the lost/moved diff below can
+        # tell apart a pk this fridag ACTUALLY DELETED from a pk that merely changed hands via
+        # `allocate_month`'s whole-month reshuffle -- only the former is truly "aflyst".
+        deleted_vagt_pks = {v.pk for v in affected_vagter}
         for vagt in affected_vagter:
             vagt.delete()
 
@@ -2226,7 +2282,15 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
                 after_pks = {v.pk for v in after_by_resident.get(rid, [])}
                 if len(after_pks) < len(before_pks):
                     lost_ids.add(rid)
-                    lost_vagter_by_id[rid] = [v for v in before_vagter if v.pk not in after_pks]
+                    # 2026-10 review round 2, F1: `before_pks - after_pks` alone over-reports --
+                    # it includes pks that still exist, just reseated to a DIFFERENT resident by
+                    # the reshuffle. Intersecting with `deleted_vagt_pks` keeps only the pks THIS
+                    # fridag actually deleted -- the only ones truthfully "aflyst". This can end up
+                    # empty (the resident's net loss was pure reassignment-to-someone-else); that
+                    # is handled below, where it does NOT get the "er aflyst" wording.
+                    lost_vagter_by_id[rid] = [
+                        v for v in before_vagter if v.pk not in after_pks and v.pk in deleted_vagt_pks
+                    ]
                 elif before_pks != after_pks:
                     moved_ids.add(rid)
 
@@ -2244,11 +2308,17 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
                     if resident is None:
                         continue
                     audience = access.allowed_subscribers(subscribers(TOPIC).filter(user_id=rid))
-                    message = _fridag_notification_message(lost_vagter_by_id[rid], reason)
+                    genuinely_deleted = lost_vagter_by_id[rid]
+                    message = (
+                        _fridag_notification_message(genuinely_deleted, reason)
+                        if genuinely_deleted
+                        else _fridag_reassignment_notification_message(reason)
+                    )
                     result.notifications.append((resident, audience, message))
 
         if affected_vagter and has_existing_obligation:
             post_obligation(periode, month)
+            result.obligation_reposted_months.append((year, month))
 
     return result
 

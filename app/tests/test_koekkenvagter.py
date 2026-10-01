@@ -3412,13 +3412,79 @@ def test_declare_fridag_notifies_resident_who_loses_one_of_two_shifts(make_resid
     assert str(kept_date) not in message  # names only the shift actually lost, not the one still held
 
 
+def test_declare_fridag_lost_message_never_claims_a_reassigned_shift_is_cancelled(
+    make_resident: Callable,
+) -> None:
+    """2026-10 review round 2, F1 -- the reviewer's exact multi-resident reproduction (the single-
+    resident tests above only exercise the best case, where every pk the holder "loses" genuinely was
+    deleted). `first` (lower pk) holds TWO shifts -- the earliest and the latest of three weekday
+    slots, the same "two-shift cap" pattern as the test above, but now with `second` also in the
+    population. The fridag deletes only `first`'s EARLIEST shift. The whole-month reshuffle then: (1)
+    gives `first` a genuinely NEW shift (the middle slot) instead, and (2) reseats `first`'s OTHER,
+    UNDELETED shift (the latest slot) to `second` -- a completely different resident. `first`'s held-pk
+    count still drops (2 -> 1), so they are correctly classified `lost` (unchanged from the prior fix),
+    but `before_pks - after_pks` for them is BOTH the deleted pk and the merely-reassigned one. Before
+    this fix, `first` would be told both shifts were "aflyst" -- including the latest one, which still
+    exists, is still a real Vagt row, and is now `second`'s to work -- and would never hear about the
+    new middle shift they actually hold. The fixed message must name ONLY the slot this fridag actually
+    deleted, never the one that merely changed hands, and must never read as "you have nothing this
+    month" when `first` demonstrably still holds one."""
+    year, month = 2074, 3
+    periode = _build_month(year, month, weekday_capacity=3, weekend_capacity=0)
+    first = make_resident(email="fridag_msg_first@gahk.dk")
+    second = make_resident(email="fridag_msg_second@gahk.dk")
+    _place(first, year, month)
+    _place(second, year, month)
+
+    with override_settings(DEBUG=True):
+        _past_deadline(periode)
+        allocate_tier_a(year, month)
+        first_tildelinger = list(VagtTildeling.objects.filter(resident=first).order_by("vagt__date"))
+        assert len(first_tildelinger) == 2  # lower-pk resident gets the earliest AND the leftover
+        deleted_date, kept_date = (t.vagt.date for t in first_tildelinger)
+        second_before_date = VagtTildeling.objects.get(resident=second).vagt.date
+        assert second_before_date not in (deleted_date, kept_date)
+
+        result = declare_fridag(deleted_date, [VagtRegel.Kind.MORGEN], reason="Juleaften")
+
+    notified = {r.pk for r, _audience, _message in result.notifications}
+    moved = {r.pk for r in result.moved_residents}
+    assert notified == {first.pk}
+    assert moved == {second.pk}  # second's shift merely moved (d2 -> d3 in this scenario)
+
+    _resident, _audience, message = result.notifications[0]
+    assert "aflyst" in message
+    assert str(deleted_date) in message  # the genuinely deleted shift IS named
+    assert str(kept_date) not in message  # the merely-reassigned shift is NEVER named as cancelled
+
+    # `kept_date`'s Vagt row still exists -- it was reassigned, not deleted -- and is now held by a
+    # DIFFERENT resident than `first`.
+    assert Vagt.objects.filter(date=kept_date, kind=VagtRegel.Kind.MORGEN).exists()
+    assert not Vagt.objects.filter(date=deleted_date, kind=VagtRegel.Kind.MORGEN).exists()
+    kept_tildeling = VagtTildeling.objects.get(
+        vagt__date=kept_date, vagt__kind=VagtRegel.Kind.MORGEN, status=VagtTildeling.Status.TILDELT
+    )
+    assert kept_tildeling.resident_id == second.pk
+
+    # `first` still holds SOME shift this month (the reshuffle gave them a new one) -- the message
+    # must not be misread as "you have no duty this month".
+    assert VagtTildeling.objects.filter(resident=first, status=VagtTildeling.Status.TILDELT).exists()
+
+
 def test_declare_koekken_fridag_command_notifies_the_resident_who_actually_ends_up_without_a_shift(
     make_resident: Callable, pushes: list
 ) -> None:
     """2026-10 review, F1/F2, reproduced end-to-end through the management command: the push itself
     only fires once the command's transaction has actually committed (F1), and reaches the resident
     who truly ended up without a shift (F2), not merely whoever held the excluded slot -- same
-    scenario as the service-level test above."""
+    scenario as the service-level test above.
+
+    2026-10 review round 2, F1: `second`'s own shift (`the_date`'s sibling slot) is never the one the
+    fridag deletes -- it is `first`'s original slot that gets deleted, and the whole-month reshuffle
+    then reassigns `second`'s untouched slot to `first` instead, leaving `second` with nothing. That
+    slot still exists, just held by `first` now, so it is NOT truthfully "aflyst" -- the push must use
+    the generic reassignment wording, not name a shift that still exists and is being worked by
+    someone else."""
     year, month = 2068, 9
     periode = _build_month(year, month, weekday_capacity=2, weekend_capacity=0)
     first = make_resident(email="fridag_cmd_first@gahk.dk")
@@ -3434,6 +3500,7 @@ def test_declare_koekken_fridag_command_notifies_the_resident_who_actually_ends_
         _past_deadline(periode)
         allocate_tier_a(year, month)
         the_date = VagtTildeling.objects.get(resident=first).vagt.date
+        second_original_date = VagtTildeling.objects.get(resident=second).vagt.date
 
         call_command(
             "declare_koekken_fridag", str(the_date), "--kind", "morgen", "--reason", "Test", verbosity=0
@@ -3441,12 +3508,19 @@ def test_declare_koekken_fridag_command_notifies_the_resident_who_actually_ends_
 
     assert VagtTildeling.objects.filter(resident=first, status=VagtTildeling.Status.TILDELT).exists()
     assert not VagtTildeling.objects.filter(resident=second, status=VagtTildeling.Status.TILDELT).exists()
+    # second's original slot still exists -- reassigned to first, not deleted.
+    assert Vagt.objects.filter(date=second_original_date, kind=VagtRegel.Kind.MORGEN).exists()
+    assert VagtTildeling.objects.filter(
+        vagt__date=second_original_date, status=VagtTildeling.Status.TILDELT, resident=first
+    ).exists()
 
     assert len(pushes) == 1  # not first, who kept a (moved) shift -- no false "cancelled" push (F2)
     user_ids, payload = pushes[0]
     assert user_ids == [second.pk]
-    assert "aflyst" in payload["body"]
-    assert "Morgenvagt" in payload["body"]  # F6: the shift's own kind, via Vagt.__str__
+    # 2026-10 review round 2, F1: second's only held shift was reassigned to first, not deleted by
+    # this fridag -- it must never be announced as "aflyst".
+    assert "aflyst" not in payload["body"]
+    assert str(second_original_date) not in payload["body"]
 
 
 def test_declare_koekken_fridag_dry_run_sends_no_pushes_and_changes_nothing(
@@ -3514,10 +3588,15 @@ def test_declare_koekken_fridag_command_creates_fridag_rows_and_reports_summary(
     string is always a PREFIX of `str(the_date)` (e.g. "2070-09" is a prefix of "2070-09-07"), which
     this test already asserts is in `output`, so the month assertion proved nothing of its own and
     would have passed even if the summary never named the month itself. Asserting on the command's
-    own `"... genallokeret og genbogført (YYYY-MM)"` phrase can only be satisfied by that specific
-    month-naming logic, never by `the_date`'s own substring. Resident full names are asserted too,
-    each pinned to the section (`moved`/`notified`) the reviewer's own F2 reproduction says it lands
-    in -- the reviewer noted this was never checked at all before."""
+    own `"... genallokeret (YYYY-MM)"` phrase can only be satisfied by that specific month-naming
+    logic, never by `the_date`'s own substring. Resident full names are asserted too, each pinned to
+    the section (`moved`/`notified`) the reviewer's own F2 reproduction says it lands in -- the
+    reviewer noted this was never checked at all before.
+
+    2026-10 review round 2, F2: `post_obligation` is called BEFORE `declare_fridag`, same as the
+    service-level obligation tests, so this scenario genuinely re-posts obligation as well as
+    re-allocating -- exercising the "genallokeret" and "genbogført" lines together, each asserted as
+    its own, independently-produced phrase (not the old single combined claim)."""
     year, month = 2070, 9
     # weekday_capacity=2, not 1: declaring the fridag deletes one of the two Vagt rows, and
     # allocate_tier_a raises if a month ends up with NO tier-A Vagt rows left at all -- unrelated to
@@ -3535,6 +3614,7 @@ def test_declare_koekken_fridag_command_creates_fridag_rows_and_reports_summary(
     with override_settings(DEBUG=True):
         _past_deadline(periode)
         allocate_tier_a(year, month)
+        post_obligation(periode, month)
         # Same determinism as test_declare_fridag_result_distinguishes_lost_from_moved_assignments:
         # with no declared_at for either resident, ranking falls back to pk ASC, so `resident`
         # (created first, lower pk, holder of the slot about to be deleted) is the one the reshuffle
@@ -3557,13 +3637,69 @@ def test_declare_koekken_fridag_command_creates_fridag_rows_and_reports_summary(
     assert Fridag.objects.filter(date=the_date, kind=VagtRegel.Kind.MORGEN).exists()
     output = out.getvalue()
     assert str(the_date) in output
-    # F5, finding (d): a phrase only the month-naming report logic itself can produce.
-    assert f"genallokeret og genbogført ({year}-{month:02d})" in output
+    # F5, finding (d): phrases only the month-naming report logic itself can produce, each on its
+    # own line (2026-10 review round 2, F2 -- no single combined "genallokeret og genbogført" claim).
+    assert f"genallokeret ({year}-{month:02d})" in output
+    assert f"genbogført ({year}-{month:02d})" in output
 
     assert VagtTildeling.objects.filter(resident=resident, status=VagtTildeling.Status.TILDELT).exists()
     assert not VagtTildeling.objects.filter(resident=other, status=VagtTildeling.Status.TILDELT).exists()
     assert other.full_name in output  # genuinely lost -- named in the "mistede en vagt" line
     assert resident.full_name in output  # merely moved -- named in the "fik en vagt flyttet" line
+
+
+def test_declare_koekken_fridag_command_reports_obligation_only_repost_accurately(
+    make_resident: Callable,
+) -> None:
+    """2026-10 review round 2, F2: a month that is fully settled (every held assignment already
+    progressed past `TILDELT`, same setup as
+    `test_declare_fridag_reposts_obligation_even_when_month_fully_settled_past_tildelt`) has nothing
+    left to re-seat, so `allocate_month` is correctly skipped -- but it still carries `FORPLIGTELSE`
+    rows from an earlier `post_obligation` run that need reconciling after the fridag shrinks supply,
+    so `post_obligation` DOES re-run. The command's report must say so accurately on BOTH counts
+    (0 months reallocated, 1 month re-posted) and must never fall back to the old combined
+    "genallokeret og genbogført" phrasing or its "intet blev slettet" parenthetical -- both would be
+    false here: a `Vagt` row genuinely was deleted, and obligation genuinely was re-posted."""
+    year, month = 2073, 4
+    periode = _build_month(year, month, weekday_capacity=3, weekend_capacity=0)
+    resident = make_resident(email="fridag_cmd_obligation_only@gahk.dk")
+    _place(resident, year, month)
+
+    with override_settings(DEBUG=True):
+        _past_deadline(periode)
+        allocate_tier_a(year, month)
+        tildelinger = list(VagtTildeling.objects.filter(resident=resident))
+        assert len(tildelinger) == 2  # the two-shift cap -- sole resident, leftover-fill gives both
+        unfilled_date = (
+            Vagt.objects.exclude(pk__in=[t.vagt_id for t in tildelinger]).get(kind=VagtRegel.Kind.MORGEN).date
+        )
+
+        post_obligation(periode, month)
+        for tildeling in tildelinger:
+            mark_udfoert(tildeling, at=marking_window(tildeling.vagt)[0])
+        assert not VagtTildeling.objects.filter(
+            vagt__date__year=year, vagt__date__month=month, status=VagtTildeling.Status.TILDELT
+        ).exists()  # nothing left in TILDELT -- allocate_month must be skipped
+
+        out = StringIO()
+        call_command(
+            "declare_koekken_fridag",
+            str(unfilled_date),
+            "--kind",
+            "morgen",
+            "--reason",
+            "Test",
+            stdout=out,
+            verbosity=1,
+        )
+
+    output = out.getvalue()
+    assert "1 vagt(er) slettet" in output  # the Vagt row genuinely was deleted
+    assert "Ingen måneder genallokeret." in output  # nothing left to reseat -- correctly skipped
+    assert f"1 måned(er) genbogført ({year}-{month:02d})" in output  # obligation WAS re-posted
+    # Never the old combined claim, nor its contradictory "nothing happened" fallback.
+    assert "genallokeret og genbogført" not in output
+    assert "intet blev slettet" not in output
 
 
 def test_declare_koekken_fridag_command_surfaces_allocation_errors_as_command_error(
