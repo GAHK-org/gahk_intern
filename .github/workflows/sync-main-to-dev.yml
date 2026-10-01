@@ -6,9 +6,14 @@ on:
 
 # The workflow only updates the integration branch. A conflict makes the merge fail visibly instead
 # of overwriting dev; resolve it in a normal pull request.
+#
+# It prepares the merge but does NOT open the pull request: the organisation forbids Actions from
+# creating or approving one (409 "The organization does not allow GitHub Actions to create or
+# approve pull requests"), and the repo-level toggle cannot override that. Automating it would mean
+# a PAT or App token, which is a long-lived credential for a link somebody clicks a few times a
+# year. So the job prints the compare link instead, and `pull-requests: write` is gone with it.
 permissions:
   contents: write
-  pull-requests: write
 
 concurrency:
   group: sync-main-to-dev
@@ -37,12 +42,16 @@ jobs:
           git push origin "HEAD:refs/heads/${branch}"
           echo "name=${branch}" >> "$GITHUB_OUTPUT"
 
-      - name: Open pull request into dev
-        run: |
-          gh pr create \
-            --base dev \
-            --head "${{ steps.branch.outputs.name }}" \
-            --title "Sync main into dev" \
-            --body "Automated synchronization after ${GITHUB_SHA}."
+      - name: Link the pull request to open
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ steps.branch.outputs.name }}
+        run: |
+          url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/dev...${BRANCH}?expand=1"
+          {
+            echo "### Sync main into dev"
+            echo
+            echo "Branch \`${BRANCH}\` holds the merge of \`main\` into \`dev\`."
+            echo "Actions may not open the pull request here, so open it by hand:"
+            echo
+            echo "[Open the pull request](${url})"
+          } >> "$GITHUB_STEP_SUMMARY"
