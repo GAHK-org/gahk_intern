@@ -198,15 +198,16 @@ def navigation(request: HttpRequest) -> dict[str, object]:
     # has already found a window (still `None`, no query, on every other day of the year) -- see all
     # three functions' docstrings in koekken.services for why that ordering is load-bearing (F6).
     #
-    # The periode named here is `preference_target_periode`'s result, NOT `in_preference_window()`'s --
-    # a review finding: `in_preference_window()`'s periode is pure date arithmetic, while a resident's
-    # own actual submission (`set_preference`) routinely resolves to a DIFFERENT periode once their own
-    # `Praeference` history is accounted for (a first-time declarer's write lands on their CURRENT
-    # periode, not the upcoming one; a deadline-day submission can be pushed one periode further
-    # still). Asking `resident_has_declared_for` about `in_preference_window()`'s periode directly left
-    # the banner permanently stuck for exactly a first-time declarer -- their write never touched the
-    # periode being asked about -- and would have shown them a periode name their submission would not
-    # actually land on, which is its own kind of confusing.
+    # The periode named here is `preference_target_periode`'s result -- the SAME shared, pure resolver
+    # `koekken.views.praeferencer`'s form page also calls (F3), so the two can never show a resident a
+    # different periode name. Since the A1.3 supplement (2026-10-01, "an open preference window wins
+    # over everything else"), that result now always EQUALS `in_preference_window()`'s own periode
+    # whenever a window is open -- the two used to routinely diverge (a first-time declarer's write
+    # landed on their CURRENT periode, not the window's; a deadline-day submission could be pushed one
+    # periode further still), which is why this went through a dedicated resolver rather than the
+    # window's own periode in the first place. That divergence is gone now, but the shared call stays:
+    # it is what keeps the banner and the form page unable to drift apart again if either side's
+    # resolution logic ever changes.
     if authed and koekken_allowed(roles):
         from koekken.services import (
             in_preference_window,
@@ -215,10 +216,9 @@ def navigation(request: HttpRequest) -> dict[str, object]:
         )
         from residents.permissions import current_resident
 
-        window_periode = in_preference_window()
-        if window_periode is not None:
+        if in_preference_window() is not None:
             resident = current_resident(request)
-            target_periode = preference_target_periode(resident, window_periode)
+            target_periode = preference_target_periode(resident)
             if not resident_has_declared_for(resident, target_periode):
                 ctx["koekken_preference_window_periode"] = target_periode
     return ctx

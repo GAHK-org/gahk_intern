@@ -45,6 +45,7 @@ from koekken.models import (
 from koekken.services import (
     KoekkenAllocationError,
     _avoidance_resident_ids,
+    allocate_batch,
     allocate_month,
     allocate_tier_a,
     allocate_tier_b,
@@ -603,7 +604,13 @@ def test_allocate_koekkenvagter_batch_allocates_periodes_first_three_months(make
         for month in (9, 10, 11):
             _place(r, 2032, month)
 
-    call_command("allocate_koekkenvagter", "2032", "9", "--batch", verbosity=0)
+    with override_settings(DEBUG=True):
+        # The batch may only run the day AFTER the periode's own preference deadline (A1.3
+        # supplement) -- not exercised by this test, see the dedicated guard tests below.
+        DevClock.objects.update_or_create(
+            pk=1, defaults={"simulated_date": periode_deadline(periode) + timedelta(days=1)}
+        )
+        call_command("allocate_koekkenvagter", "2032", "9", "--batch", verbosity=0)
 
     for month in (9, 10, 11):
         assert VagtTildeling.objects.filter(
@@ -625,13 +632,92 @@ def test_allocate_koekkenvagter_batch_clamps_to_periode_length_for_sommer(make_r
         for month in (7, 8):
             _place(r, 2033, month)
 
-    call_command("allocate_koekkenvagter", "2033", "7", "--batch", verbosity=0)  # must not raise
+    with override_settings(DEBUG=True):
+        DevClock.objects.update_or_create(
+            pk=1, defaults={"simulated_date": periode_deadline(periode) + timedelta(days=1)}
+        )
+        call_command("allocate_koekkenvagter", "2033", "7", "--batch", verbosity=0)  # must not raise
 
     for month in (7, 8):
         assert VagtTildeling.objects.filter(
             vagt__date__year=2033, vagt__date__month=month, status=VagtTildeling.Status.TILDELT
         ).exists()
     assert not VagtTildeling.objects.filter(vagt__date__year=2033, vagt__date__month=9).exists()
+
+
+# ------------------------------------------------------- A1.3 supplement: the batch-timing guard
+
+
+def test_allocate_batch_refuses_on_deadline_day_succeeds_day_after(make_resident: Callable) -> None:
+    """A1.3 supplement (2026-10-01): the preference WINDOW stays inclusive of the deadline date (not
+    touched here), but the deadline-triggered batch may not run until the day AFTER, so a declaration
+    made on the deadline day itself can never be silently overtaken by a same-morning batch run.
+    Enforced at the service level (`KoekkenAllocationError`), surfaced by the command as a
+    `CommandError` -- matching how `allocate_tier_a`'s own already-allocated guard is surfaced. No
+    `--force` escape: that flag keeps its original, unrelated "re-run an already-allocated month"
+    meaning and must not also bypass this check."""
+    periode = resolve_periode(date(2034, 9, 15))  # EFTERAAR 2034
+    generate_vagter(periode)
+    deadline = periode_deadline(periode)
+    residents = [make_resident(email=f"deadlineguard{i}@gahk.dk") for i in range(2)]
+    for r in residents:
+        for month in (9, 10, 11):
+            _place(r, 2034, month)
+
+    with override_settings(DEBUG=True):
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": deadline})
+        with pytest.raises(CommandError):
+            call_command("allocate_koekkenvagter", "2034", "9", "--batch", verbosity=0)
+        # --force must NOT bypass the guard -- it keeps its original, unrelated meaning.
+        with pytest.raises(CommandError):
+            call_command("allocate_koekkenvagter", "2034", "9", "--batch", "--force", verbosity=0)
+        assert not VagtTildeling.objects.filter(vagt__date__year=2034, vagt__date__month=9).exists()
+
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": deadline + timedelta(days=1)})
+        call_command("allocate_koekkenvagter", "2034", "9", "--batch", verbosity=0)  # succeeds now
+
+    assert VagtTildeling.objects.filter(
+        vagt__date__year=2034, vagt__date__month=9, status=VagtTildeling.Status.TILDELT
+    ).exists()
+
+
+def test_allocate_batch_service_raises_koekken_allocation_error_directly(make_resident: Callable) -> None:
+    """The guard lives at the SERVICE level (`allocate_batch`), not only in the command -- proven by
+    calling it directly and checking the exception type the command's `except KoekkenAllocationError`
+    relies on to convert it to a `CommandError`."""
+    periode = resolve_periode(date(2035, 9, 15))  # EFTERAAR 2035
+    generate_vagter(periode)
+    deadline = periode_deadline(periode)
+
+    with override_settings(DEBUG=True):
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": deadline})
+        with pytest.raises(KoekkenAllocationError):
+            allocate_batch(2035, 9)
+
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": deadline - timedelta(days=1)})
+        with pytest.raises(KoekkenAllocationError):
+            allocate_batch(2035, 9)  # still before the deadline -- also refused
+
+
+def test_roll_forward_allocation_unaffected_by_batch_deadline_guard(make_resident: Callable) -> None:
+    """The batch-timing guard (A1.3 supplement) is scoped to `allocate_batch`/`--batch` only.
+    `roll_forward_allocation` must keep running regardless of any periode's deadline timing -- per its
+    own docstring it is deliberately confined to the CURRENT periode, whose own preference deadline has
+    always already passed by the time anyone is living inside it, so this guard could never actually
+    apply to it; this proves it was not accidentally added there anyway."""
+    year, month = 2035, 3  # deep inside FORAAR 2035
+    _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
+    r = make_resident(email="rollforward_unaffected@gahk.dk")
+    _place(r, year, month)
+
+    with override_settings(DEBUG=True):
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": date(year, month, 1)})
+        result = roll_forward_allocation(date(year, month, 1))
+
+    assert result is not None
+    assert VagtTildeling.objects.filter(
+        vagt__date__year=year, vagt__date__month=month, status=VagtTildeling.Status.TILDELT
+    ).exists()
 
 
 def test_roll_forward_koekkenvagter_command_dry_run_writes_nothing(make_resident: Callable) -> None:
@@ -657,6 +743,72 @@ def test_set_preference_mid_period_arrival_creates_for_current_periode(make_resi
     assert row.periode == resolve_periode(date(2033, 1, 15))
     assert row.weekday_unavailable is True
     assert row.declared_at == date(2033, 1, 15)
+
+
+def test_mid_period_arrival_exemption_still_applies_outside_any_window(make_resident: Callable) -> None:
+    """The A1.3 supplement (2026-10-01) only changes anything while a window is open -- outside one,
+    the original mid-period-arrival exemption (no row yet for the resident's CURRENT periode -> create
+    it there directly, deadline or not) is completely unchanged from before this commit. A date deep
+    inside a periode, nowhere near either neighbour's window, so this is unambiguously the
+    no-window case the exemption was originally built for."""
+    r = make_resident(email="exemption_outside_window@gahk.dk")
+    today = date(2033, 1, 15)  # deep in EFTERAAR 2032; no window is open anywhere near this date
+    assert in_preference_window(at=today) is None  # sanity
+
+    row = set_preference(r, True, at=today)
+
+    assert row.periode == resolve_periode(today)
+    assert row.weekday_unavailable is True
+    assert row.declared_at == today
+
+
+def test_set_preference_during_open_window_targets_windows_periode_not_current(
+    make_resident: Callable,
+) -> None:
+    """A1.3 supplement (2026-10-01): an open window wins over the mid-period-arrival exemption. A
+    resident with NO `Praeference` row for their current periode -- exactly the exemption's own
+    trigger condition -- who declares WHILE a window is open must still land on the WINDOW's periode,
+    not their current one, which by this point in the schedule has already been fully allocated for
+    months and will never be read again (the design doc's "provably vacuous" argument)."""
+    r = make_resident(email="window_wins@gahk.dk")
+    today = date(2026, 11, 27)  # inside Forår 2027's window; r has no Praeference row anywhere
+    assert in_preference_window(at=today) is not None
+    assert str(in_preference_window(at=today)) == "Forår 2027"
+
+    row = set_preference(r, True, at=today)
+
+    assert row.periode.kind == Periode.Kind.FORAAR
+    assert row.periode.year == 2027
+    assert row.declared_at == today
+    current_periode = resolve_periode(today)
+    assert not Praeference.objects.filter(resident=r, periode=current_periode).exists()
+
+
+def test_first_time_declarer_during_window_gets_usable_declared_at_for_fcfs(make_resident: Callable) -> None:
+    """The FCFS-tiebreak regression this supplement exists for. BEFORE it, a first-time declarer's
+    very first submission during a window landed on their CURRENT periode (already fully allocated,
+    never read again), so `declared_at` was recorded somewhere no ranking would ever consult --
+    silently breaking Amendment 1's FCFS tiebreak for exactly the residents the window exists to
+    onboard. Two first-time declarers, same balance, declare on different days inside the SAME window:
+    the earlier declarer's `declared_at` must actually be recorded against the periode
+    `allocate_tier_a` later ranks on, and must win the exact tie."""
+    earlier = make_resident(email="fcfs_window_earlier@gahk.dk")
+    later = make_resident(email="fcfs_window_later@gahk.dk")
+
+    set_preference(earlier, False, at=date(2026, 11, 24))  # window opens
+    set_preference(later, False, at=date(2026, 11, 27))
+
+    periode = _build_month(2027, 3, weekday_capacity=1, weekend_capacity=0)  # Forår 2027
+    row_earlier = Praeference.objects.get(resident=earlier, periode=periode)
+    row_later = Praeference.objects.get(resident=later, periode=periode)
+    assert row_earlier.declared_at == date(2026, 11, 24)
+    assert row_later.declared_at == date(2026, 11, 27)
+
+    _place(earlier, 2027, 3)
+    _place(later, 2027, 3)
+    result = allocate_tier_a(2027, 3)
+
+    assert result.weekday_assigned == [earlier]  # the earlier declarer wins the exact tie
 
 
 def test_set_preference_edit_after_deadline_targets_next_periode_and_leaves_current_row_untouched(
@@ -2259,6 +2411,71 @@ def test_in_preference_window_never_creates_a_periode_row(make_resident: Callabl
     assert Periode.objects.filter(kind=Periode.Kind.FORAAR, year=2027).exists() is False  # still none
 
 
+def test_authenticated_get_during_window_creates_no_periode_row_at_the_real_call_site(
+    make_resident: Callable, client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The actual F2 regression, at the REAL call site -- not a unit test of a resolution function in
+    isolation. `test_in_preference_window_never_creates_a_periode_row` above only ever tests
+    `in_preference_window` itself, and every banner test elsewhere in this file pre-creates the window
+    periode's row via `resolve_periode` in its own setup BEFORE calling anything else -- which means
+    even a `preference_target_periode` that wrongly called `resolve_periode` (a `get_or_create`) would
+    have found that row already there and silently passed every one of those tests. Here NOTHING
+    pre-creates Forår 2027's row, and a real authenticated `client.get` exercises both the dashboard
+    banner (`core.context_processors.navigation`) and the preference form page
+    (`koekken.views.praeferencer`) -- the two real call sites `preference_target_periode` serves --
+    and both must leave the database exactly as they found it."""
+    from koekken import access as koekken_access
+
+    monkeypatch.setattr(koekken_access, "ACCESS_ROLES", None)
+
+    resident = make_resident(email="get_writes_nothing@gahk.dk")
+    today = date(2026, 11, 27)
+
+    with override_settings(DEBUG=True):
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": today})
+        assert in_preference_window() is not None  # sanity: really inside a window
+        assert Periode.objects.filter(kind=Periode.Kind.FORAAR, year=2027).exists() is False
+        assert Periode.objects.filter(kind=Periode.Kind.EFTERAAR, year=2026).exists() is False
+
+        client.force_login(resident)
+        before_count = Periode.objects.count()
+        dashboard = client.get("/intern/")
+        form = client.get("/intern/koekken/praeferencer")
+        after_count = Periode.objects.count()
+
+    assert dashboard.status_code == 200
+    assert form.status_code == 200
+    assert after_count == before_count  # not one extra Periode row, from either real call site
+    assert Periode.objects.filter(kind=Periode.Kind.FORAAR, year=2027).exists() is False
+    assert Periode.objects.filter(kind=Periode.Kind.EFTERAAR, year=2026).exists() is False
+
+
+def test_banner_and_form_page_render_the_identical_periode_name(
+    make_resident: Callable, client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F3: the dashboard banner and the preference form page must call the SAME pure resolver
+    (`preference_target_periode`) so they can never disagree -- proven by scraping the actual
+    rendered periode name off both real pages, for the same resident at the same moment."""
+    from koekken import access as koekken_access
+
+    monkeypatch.setattr(koekken_access, "ACCESS_ROLES", None)
+
+    resident = make_resident(email="banner_form_agree@gahk.dk")
+    today = date(2026, 11, 27)
+
+    with override_settings(DEBUG=True):
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": today})
+        expected = str(preference_target_periode(resident, at=today))
+        assert expected == "Forår 2027"  # sanity
+
+        client.force_login(resident)
+        dashboard_html = client.get("/intern/").content.decode()
+        form_html = client.get("/intern/koekken/praeferencer").content.decode()
+
+    assert f"erklær dine præferencer for {expected}" in dashboard_html
+    assert f"Dit valg gælder <strong>{expected}</strong>" in form_html
+
+
 # =============================================================================================
 # P2 design doc §12's open item, resolved: the banner persists PER RESIDENT until they've declared
 # for the window's periode, or the window's time runs out -- not "is a window open" for everyone.
@@ -2274,13 +2491,13 @@ def test_preference_window_banner_persists_per_resident_until_they_declare(
 
     Both residents here already have a `Praeference` row for their CURRENT periode, predating this
     window (the ordinary "already engaged with the system" case, not the first-time-declarer edge
-    case -- see `test_first_time_declarer_banner_clears_after_one_real_submission` for that one), so
+    case -- see `test_first_time_declarer_during_window_targets_windows_periode` for that one), so
     Amendment 1's locking rule (A1.3) resolves a submission from either of them to the SAME target as
     `in_preference_window()` names: `set_preferences` (the real write path), not a hand-crafted
     `Praeference.objects.create` for the window's own periode, is what actually proves that -- a
     hand-crafted row for `in_preference_window()`'s periode is exactly what let the original banner
-    bug (it never cleared for a first-time declarer, whose real write target diverges from that
-    periode) slip past this same test previously."""
+    bug (it never cleared for a first-time declarer, whose real write target diverged from that
+    periode before the A1.3 supplement) slip past this same test previously."""
     from koekken import access as koekken_access
 
     monkeypatch.setattr(koekken_access, "ACCESS_ROLES", None)  # open, independent of the rollout stage
@@ -2303,10 +2520,10 @@ def test_preference_window_banner_persists_per_resident_until_they_declare(
                 resident=resident, periode=current_periode, declared_at=date(2026, 6, 1)
             )
 
-        # Sanity: for exactly this history, a submission today really does target the window's own
-        # periode -- the common case where `preference_target_periode` and `in_preference_window`
-        # agree (they don't always -- see the dedicated divergence tests below).
-        assert str(preference_target_periode(declared, window_periode, at=today)) == "Forår 2027"
+        # Sanity: a submission today really does target the window's own periode -- true for EVERY
+        # resident now that an open window always wins (A1.3 supplement, 2026-10-01), not only for
+        # this particular declaration history as it was before that supplement.
+        assert str(preference_target_periode(declared, at=today)) == "Forår 2027"
 
         set_preferences(declared, weekday_unavailable=True, at=today)
 
@@ -2319,20 +2536,21 @@ def test_preference_window_banner_persists_per_resident_until_they_declare(
         assert "erklær dine præferencer" not in declared_html  # window still open, but already declared
 
 
-def test_first_time_declarer_banner_clears_after_one_real_submission(
+def test_first_time_declarer_during_window_targets_windows_periode(
     make_resident: Callable, client: Client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Reviewer's repro #1 -- the bug this whole fix is for. A resident with NO `Praeference` row
-    anywhere submits during a window. Amendment 1, A1.3's "mid-period arrival, exempt from the
-    deadline entirely" rule sends their FIRST-EVER write to their CURRENT periode (Efterår 2026), not
-    the window's own upcoming periode (Forår 2027) `in_preference_window()` names -- `set_preference`'s
-    "no row yet for current periode" branch, not its "redirect to what's next" one.
+    """Reviewer's repro #1, as resolved by the A1.3 supplement (2026-10-01). A resident with NO
+    `Praeference` row anywhere submits during a window -- exactly the mid-period-arrival exemption's
+    own trigger condition (no row yet for their CURRENT periode). BEFORE the supplement, that
+    exemption fired first and sent their FIRST-EVER write to their CURRENT periode (Efterår 2026), an
+    already-fully-allocated periode nothing would ever read again -- the bug the supplement exists to
+    fix. Now the window-first check runs ahead of the exemption, so the write lands on the window's
+    own periode (Forår 2027) instead, proven end to end through the real form-submission view, not a
+    hand-crafted `Praeference` row.
 
-    Before the fix, the banner asked `resident_has_declared_for(resident, in_preference_window())`
-    -- i.e. whether a Forår-2027 row existed -- which this resident's submission never creates, so it
-    never cleared. The fix must both (a) tell this resident the TRUTH about where their declaration
-    is headed (Efterår 2026, not Forår 2027) and (b) clear once they've made it -- proven end to end
-    through the real form-submission view, not a hand-crafted `Praeference` row."""
+    This is also the FCFS-tiebreak regression: a `declared_at` recorded against an already-allocated
+    periode is useless to Amendment 1's ranking forever; recorded against the window's periode, it is
+    exactly the value `allocate_tier_a` will rank on once Forår 2027's months are allocated."""
     from koekken import access as koekken_access
 
     monkeypatch.setattr(koekken_access, "ACCESS_ROLES", None)
@@ -2348,10 +2566,11 @@ def test_first_time_declarer_banner_clears_after_one_real_submission(
 
         client.force_login(resident)
         before_html = client.get("/intern/").content.decode()
-        # The banner must name the periode a submission ACTUALLY targets (Efterår 2026) -- never
-        # Forår 2027, which this resident's declaration will not touch.
-        assert "erklær dine præferencer for Efterår 2026" in before_html
-        assert "erklær dine præferencer for Forår 2027" not in before_html
+        # The banner must name the periode a submission ACTUALLY targets -- the window's own (Forår
+        # 2027), never the resident's current periode (Efterår 2026), which this declaration will not
+        # touch now that an open window wins over the mid-period-arrival exemption.
+        assert "erklær dine præferencer for Forår 2027" in before_html
+        assert "erklær dine præferencer for Efterår 2026" not in before_html
 
         response = client.post(
             "/intern/koekken/praeferencer",
@@ -2364,26 +2583,30 @@ def test_first_time_declarer_banner_clears_after_one_real_submission(
         )
         assert response.status_code == 302  # the real form-submission path, via set_preferences
 
-        # The write really did land on the current periode (Amendment 1, A1.3), not the window's own.
-        current_periode = resolve_periode(today)
-        assert Praeference.objects.filter(resident=resident, periode=current_periode).exists()
-        assert not Praeference.objects.filter(
+        # The write really did land on the window's periode (A1.3 supplement), not the current one --
+        # and `declared_at` is the usable FCFS-tiebreak value, set on the row that actually matters.
+        row = Praeference.objects.get(
             resident=resident, periode__kind=Periode.Kind.FORAAR, periode__year=2027
-        ).exists()
+        )
+        assert row.declared_at == today
+        current_periode = resolve_periode(today)
+        assert not Praeference.objects.filter(resident=resident, periode=current_periode).exists()
 
         after_html = client.get("/intern/").content.decode()
         assert "erklær dine præferencer" not in after_html  # the banner must be gone, not just relabelled
 
 
-def test_deadline_day_pushes_the_banners_target_one_periode_further(
+def test_deadline_day_itself_still_targets_the_open_windows_periode(
     make_resident: Callable, client: Client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Reviewer's repro #2. A resident who already has a row for their CURRENT periode (an ordinary
-    declaration history, predating the window), checked/declaring on the window's DEADLINE DAY itself
-    (2026-12-01, Forår 2027's deadline): Amendment 1, A1.3's redirect rule pushes a submission on or
-    after a target's own deadline one periode further still, so `set_preference` -- and therefore the
-    banner -- must both land on Sommer 2027, not Forår 2027, even though this is still "Forår 2027's
-    window" by name."""
+    """A1.3 supplement (2026-10-01): "the deadline day belongs to the resident" -- the window stays
+    INCLUSIVE of the deadline date, so a resident who already has a row for their CURRENT periode (an
+    ordinary declaration history, predating the window) and declares ON the window's deadline day
+    itself (2026-12-01, Forår 2027's deadline) must still land on Forår 2027, NOT get pushed to Sommer
+    2027. Before the supplement, A1.3's "redirect past deadline" rule fired on this exact day (its
+    check is `today >= periode_deadline(target)`, and the deadline day satisfies `>=`), silently
+    overtaking a declaration the window itself was still actively accepting -- window-first now
+    catches this day too, since the window's own close date IS the deadline day."""
     from koekken import access as koekken_access
 
     monkeypatch.setattr(koekken_access, "ACCESS_ROLES", None)
@@ -2399,26 +2622,52 @@ def test_deadline_day_pushes_the_banners_target_one_periode_further(
         DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": deadline_day})
         window_periode = in_preference_window()
         assert window_periode is not None
-        assert str(window_periode) == "Forår 2027"  # sanity: still named after Forår 2027
+        assert str(window_periode) == "Forår 2027"  # sanity: still open, inclusive of the deadline day
 
-        target = preference_target_periode(resident, window_periode, at=deadline_day)
-        assert str(target) == "Sommer 2027"  # pushed one further, per A1.3's deadline-day rule
+        target = preference_target_periode(resident, at=deadline_day)
+        assert str(target) == "Forår 2027"  # NOT pushed further -- window-first wins on this day too
         assert resident_has_declared_for(resident, target) is False
 
         client.force_login(resident)
         before_html = client.get("/intern/").content.decode()
-        assert "erklær dine præferencer for Sommer 2027" in before_html
-        assert "erklær dine præferencer for Forår 2027" not in before_html
+        assert "erklær dine præferencer for Forår 2027" in before_html
+        assert "erklær dine præferencer for Sommer 2027" not in before_html
 
         set_preferences(resident, weekday_unavailable=True, at=deadline_day)
 
-        # The real write landed on Sommer 2027, exactly where the banner said it would.
+        # The real write landed on Forår 2027, exactly where the banner said it would.
         assert Praeference.objects.filter(
+            resident=resident, periode__kind=Periode.Kind.FORAAR, periode__year=2027
+        ).exists()
+        assert not Praeference.objects.filter(
             resident=resident, periode__kind=Periode.Kind.SOMMER, periode__year=2027
         ).exists()
 
         after_html = client.get("/intern/").content.decode()
         assert "erklær dine præferencer" not in after_html  # clears correctly once they've declared
+
+
+def test_day_after_window_closes_pushes_target_one_periode_further(make_resident: Callable) -> None:
+    """The A1.3 "redirect past deadline" rule -- unchanged by the supplement, just no longer reachable
+    ON the deadline day itself (see the test above). The day AFTER Forår 2027's window closes
+    (2026-12-02), no window is open at all, so `_preference_write_target`'s window-first check falls
+    through and a resident who already has a row for their current periode is redirected past Forår
+    2027 (whose own deadline has now genuinely passed) to Sommer 2027 instead -- exactly the pre-
+    supplement behaviour, just triggered one day later than the old test asserted."""
+    resident = make_resident(email="day_after_deadline@gahk.dk")
+    day_after = date(2026, 12, 2)
+
+    current_periode = resolve_periode(day_after)
+    Praeference.objects.create(resident=resident, periode=current_periode, declared_at=date(2026, 6, 1))
+
+    assert in_preference_window(at=day_after) is None  # sanity: the window has genuinely closed
+
+    target = preference_target_periode(resident, at=day_after)
+    assert str(target) == "Sommer 2027"
+
+    row = set_preference(resident, True, at=day_after)
+    assert row.periode.kind == Periode.Kind.SOMMER
+    assert row.periode.year == 2027
 
 
 def test_banner_general_case_uses_the_write_paths_actual_target(
@@ -2447,7 +2696,7 @@ def test_banner_general_case_uses_the_write_paths_actual_target(
         window_periode = in_preference_window()
         assert window_periode is not None
 
-        target = preference_target_periode(has_declared, window_periode, at=today)
+        target = preference_target_periode(has_declared, at=today)
         set_preferences(has_declared, weekday_unavailable=False, at=today)
         assert resident_has_declared_for(has_declared, target) is True
         assert resident_has_declared_for(has_not_declared, target) is False

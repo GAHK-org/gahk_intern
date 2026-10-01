@@ -141,12 +141,19 @@ def save_subscription(request: HttpRequest) -> HttpResponse:
 def praeferencer(request: HttpRequest) -> HttpResponse:
     """The whole preference form -- P2 design doc §2/§3. A plain POST + redirect (not htmx): this is
     a one-shot declaration, not a "button that must disappear" action, so it follows
-    `reparationer.create`'s ordinary form pattern rather than §10's htmx-partial rule."""
+    `reparationer.create`'s ordinary form pattern rather than §10's htmx-partial rule.
+
+    **F2/F3:** the displayed/edited periode is `services.preference_target_periode`'s result -- the
+    SAME pure resolver the dashboard banner uses (`core.context_processors.navigation`), so this page
+    and the banner can never disagree about which periode a submission targets. Never
+    `services.resolve_periode(today)` here: that is a `get_or_create`, and this runs on every GET.
+    """
     resident = current_resident(request)
     today = current_date()
-    current_periode = services.resolve_periode(today)
-    window_periode = services.in_preference_window(at=today)
-    existing = Praeference.objects.filter(resident=resident, periode=current_periode).first()
+    target_periode = services.preference_target_periode(resident, at=today)
+    existing = Praeference.objects.filter(
+        resident=resident, periode__kind=target_periode.kind, periode__year=target_periode.year
+    ).first()
 
     if request.method == "POST":
         form = PraeferenceForm(request.POST)
@@ -182,9 +189,8 @@ def praeferencer(request: HttpRequest) -> HttpResponse:
         {
             "form": form,
             "existing": existing,
-            "current_periode": current_periode,
-            "in_window": window_periode is not None,
-            "window_periode": window_periode,
+            "target_periode": target_periode,
+            "in_window": services.in_preference_window(at=today) is not None,
         },
     )
 

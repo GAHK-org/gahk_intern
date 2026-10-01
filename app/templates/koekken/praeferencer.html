@@ -17,9 +17,9 @@
   </div>
 
   <p class="muted">
-    Gælder <strong>{{ current_periode }}</strong>.
+    Dit valg gælder <strong>{{ target_periode }}</strong>.
     {% if in_window %}
-      Vinduet for at erklære præferencer for <strong>{{ window_periode }}</strong> er åbent nu.
+      Præferencevinduet er åbent nu.
     {% endif %}
     Kun det første valg nedenfor er et løfte -- de tre dagsvalg er ønsker, som opfyldes når der er
     plads til det. <a href="{% url 'koekken:praeferencer_forklaring' %}">Læs hvad det betyder →</a>
