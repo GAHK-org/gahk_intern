@@ -185,6 +185,40 @@ class RoleAssignment(models.Model):
         return f"{self.resident.full_name} = {self.get_role_display()} ({self.year}-{self.month:02d})"
 
 
+class AdminAccessGrant(models.Model):
+    """One resident's accepted (or pending) Django-admin access — the two-person rule on `administrator`.
+
+    Holding the role is necessary but not sufficient: a *second* administrator must accept before
+    `Resident._has_admin_role` returns True. Both doors that mint the role (the role editor and the
+    monthly list roll-forward) are reachable by the group itself, so without this Netvaerksgruppen
+    decides its own membership. Opened and closed by residents.signals, decided in residents.admin_access.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Afventer godkendelse"
+        APPROVED = "approved", "Godkendt"
+        DENIED = "denied", "Afvist"
+
+    resident = models.OneToOneField(Resident, on_delete=models.CASCADE, related_name="admin_access")
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+    # Who granted the role, when known. The role editor stamps it; the monthly roll-forward and the
+    # ETL leave it NULL, and a NULL only means the "granter may not approve" rule has nobody to bar.
+    requested_by = models.ForeignKey(
+        Resident, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    decided_by = models.ForeignKey(
+        Resident, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.resident.full_name} — {self.get_status_display()}"
+
+
 def active_period() -> tuple[int, int]:
     """The (year, month) currently *in effect*: the most recent published residency list that has
     already started. A list indstilling is preparing for a future month does NOT become active until
