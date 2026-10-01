@@ -920,7 +920,46 @@ def allocate_month(year: int, month: int, *, force: bool = False) -> tuple[TierA
     covering both tiers, not be delegated to either leg individually. `force` is required the normal
     way (a combined guard covering both tiers' existing rows) before anything is cleared; each leg is
     then called with `force=True` since the guard has already run.
+
+    **Refuses to run at any point on or before the OWN periode's preference deadline** (2026-10
+    review, F5; the same guard `allocate_batch` already enforced for its own `--batch` command, now
+    also covering the two paths that call this function directly and so had no guard at all before:
+    the manual single-month command (`allocate_koekkenvagter YEAR MONTH`, no `--batch`) and the
+    Køkkengruppen "allokering" form in `koekken.views.allokering`). Both could silently allocate a
+    periode's month before that periode's own preference deadline had passed, overtaking a
+    deadline-day (or earlier) declaration -- exactly the failure Amendment 1's A1.3 supplement exists
+    to prevent, which `--batch` alone did not close. `(year, month)`'s OWN periode is resolved purely
+    (`_periode_from_bounds`, no DB write -- same reasoning as `allocate_batch`'s F4 fix: a refused call
+    must not leave a `Periode` row behind) and checked against `periode_deadline`, exactly like
+    `allocate_batch`'s check, with its own distinct message naming the month and the periode it
+    belongs to.
+
+    **This is a DIFFERENT check from the "already allocated" guard below, and the two coexist.** One
+    is about timing (is it too early to read this periode's declarations at all), the other about
+    re-allocation (has this exact month already been given an answer). Both can fire independently,
+    both raise the same `KoekkenAllocationError` type but with distinct wording, and **`force` bypasses
+    only the second one** -- it keeps its sole Amendment 1 meaning, "re-run an already-allocated
+    month", and must never also mean "ignore the deadline timing" (the same "no escape hatch"
+    principle `allocate_batch` already applies to its own guard).
+
+    **`roll_forward_allocation` is unaffected.** It calls `allocate_tier_a`/`allocate_tier_b` directly,
+    never through this function (see its own docstring: deliberately confined to the CURRENT periode,
+    whose own deadline has, by construction, already passed by the time anyone is living inside it).
+    This guard lives in `allocate_month` precisely so it only ever reaches callers choosing to go
+    through the composite monthly pass -- the batch, the manual command, and the UI form -- never the
+    scheduled roll-forward job.
     """
+    pure_periode = _periode_from_bounds(date(year, month, 1))
+    today = current_date()
+    deadline = periode_deadline(pure_periode)
+    if today <= deadline:
+        raise KoekkenAllocationError(
+            f"{year}-{month:02d} hører til {pure_periode}, som har præferencefrist {deadline} -- "
+            "allokering af denne måned kan tidligst ske dagen efter (Amendment 1, A1.3-tillægget af "
+            "2026-10-01: fristdagen tilhører beboeren, ikke allokeringen; --force omgår kun 'allerede "
+            "tildelt' nedenfor, ikke dette)."
+        )
+
     tier_a_kinds = [VagtRegel.Kind.MORGEN, VagtRegel.Kind.FROKOST]
     month_vagter = list(
         Vagt.objects.filter(
@@ -956,11 +995,13 @@ def allocate_batch(
     rule either way). Returns one `(year, month, TierAResult, TierBResult)` tuple per month allocated,
     in order, for the management command to report on.
 
-    **Refuses to run on or before the periode's own preference deadline** (A1.3 supplement, approved
-    2026-10-01). The preference WINDOW stays inclusive of the deadline date -- that is untouched here,
-    residents keep their full declaration day -- but the batch that reads those declarations may not
-    run until the day AFTER, so a submission made on the deadline day itself can never be silently
-    overtaken by a batch run that same morning. Raised as `KoekkenAllocationError`, exactly like
+    **Refuses to run at any point on or before the periode's own preference deadline -- not only
+    "on" the deadline day, but arbitrarily early too** (A1.3 supplement, approved 2026-10-01; this
+    docstring was previously imprecise about that -- see the 2026-10 review). The preference WINDOW
+    stays inclusive of the deadline date -- that is untouched here, residents keep their full
+    declaration day -- but the batch that reads those declarations may not run until the day AFTER,
+    checked as `today <= deadline`, so it only ever succeeds strictly after the deadline date, no
+    matter how far before it this is called. Raised as `KoekkenAllocationError`, exactly like
     `allocate_tier_a`'s already-allocated guard, and read through `core.clock.current_date()` --
     never `django.utils.timezone` -- so `DevClock` can exercise both sides of the boundary in tests.
 
@@ -971,23 +1012,34 @@ def allocate_batch(
     more months out -- waiting one more day costs nothing, and there is no legitimate reason to ever
     skip it. There is deliberately no parameter that does.
 
-    **Scoped to this function (and so to the `--batch` command) only.** `allocate_tier_a`/
-    `allocate_tier_b`/`allocate_month` are unaffected whether called directly or via the scheduled
-    `roll_forward_allocation` -- that job is deliberately confined to the CURRENT periode (its own
-    docstring), whose own preference deadline has, by construction, already passed by the time anyone
-    is living inside it, so it could never actually collide with this guard; adding it there would
-    only relitigate that already-settled scoping.
+    **The same deadline-timing check also lives in `allocate_month` itself** (2026-10 review, F5),
+    covering the manual single-month command and the Køkkengruppen "allokering" form, which both call
+    `allocate_month` directly and never went through this function's guard. This function's own check
+    is therefore no longer the only place the rule is enforced, but it is kept here too: it is what
+    lets this function raise BEFORE materialising a `Periode` row at all (see the ordering below), and
+    its message is specific to the batch action. `roll_forward_allocation` remains unaffected either
+    way -- see `allocate_month`'s docstring for why.
+
+    **Checked against a PURE, unsaved `Periode` before any database write** (2026-10 review, F4).
+    `resolve_periode` is a `get_or_create`; resolving it first and refusing afterward would leave a
+    `Periode` row behind on every refusal unless the caller happens to wrap this in a transaction that
+    rolls back on the raised exception (today's only caller, the management command, does -- but
+    nothing about this function should depend on that). `_periode_from_bounds` (pure date arithmetic,
+    no DB access) computes the same periode in memory, the deadline check runs against that, and only
+    once it passes is `resolve_periode` called to materialise the row this function actually needs to
+    read `start_date`/`end_date` off.
     """
-    periode = resolve_periode(date(year, month, 1))
+    pure_periode = _periode_from_bounds(date(year, month, 1))
     today = current_date()
-    deadline = periode_deadline(periode)
+    deadline = periode_deadline(pure_periode)
     if today <= deadline:
         raise KoekkenAllocationError(
-            f"{periode} har præferencefrist {deadline} -- batch-allokeringen kan tidligst køre dagen "
-            "efter (Amendment 1, A1.3-tillægget af 2026-10-01: fristdagen tilhører beboeren, ikke "
-            "allokeringen, og kan ikke omgås med --force)."
+            f"{pure_periode} har præferencefrist {deadline} -- batch-allokeringen kan tidligst køre "
+            "dagen efter (Amendment 1, A1.3-tillægget af 2026-10-01: fristdagen tilhører beboeren, "
+            "ikke allokeringen, og kan ikke omgås med --force)."
         )
 
+    periode = resolve_periode(date(year, month, 1))
     months: list[tuple[int, int]] = []
     cursor = periode.start_date
     while cursor <= periode.end_date and len(months) < 3:
@@ -1411,19 +1463,46 @@ def in_preference_window(*, at: date | None = None) -> Periode | None:
 
 def resident_needs_to_declare(resident: Resident, *, at: date | None = None) -> bool:
     """Whether `resident` should see the "declare your kitchen preferences" dashboard todo card --
-    P2 design doc §8. True for a resident with NO `Praeference` row at all for their current periode
-    -- the exact `declared_at IS NULL` condition Amendment 3 (A3.2) already established as "we are
-    guessing, not reading a declaration", reused here rather than a new check invented for the UI.
+    P2 design doc §8, read literally: *"A resident who has NEVER declared gets a todo card"*, not
+    scoped to any particular periode. True for a resident with NO `Praeference` row AT ALL, in ANY
+    periode -- Amendment 3 (A3.2) already established `declared_at IS NULL` (no row) as "we are
+    guessing, not reading a declaration"; this reuses that exact idea at the scope the design doc's
+    own wording asks for (every periode, not just the current one).
+
+    **Fixed 2026-10-01 review: this was previously scoped to the CURRENT periode only**
+    (`Praeference.objects.filter(resident=resident, periode__kind=..., periode__year=...)`), which
+    regressed the moment the window-first resolution (A1.3 supplement) shipped: a first-time
+    declarer's submission made DURING an active preference window targets the WINDOW's periode, not
+    the resident's current one (`_preference_write_target`/`set_preferences`), so a current-periode
+    check never sees that row. The card became permanently unclearable for exactly the cohort it
+    exists to onboard -- the only way to silence it drove the resident into submitting a SECOND,
+    contradictory declaration against an already-dead periode. Checking "ever declared anywhere"
+    instead sidesteps the problem entirely rather than chasing which periode a write landed on.
+
+    **Deliberate long-term semantic, confirmed rather than assumed:** once a resident has declared a
+    single time, in any periode past or present, this card never shows again for them -- even in a
+    later periode they have not yet re-declared for. That is correct, not merely convenient, because
+    this specific UI surface's job (§8: "a standing task rather than a deadline") is the ZERO-HISTORY
+    case only. Amendment 1's missed-deadline fallback (A1.3: "a resident with no row for the new
+    period carries forward the previous period's value as the default") is deliberately NOT meant to
+    re-trigger a todo-card nag every periode -- ongoing, periode-scoped reminding for someone who has
+    already declared at least once is the SEPARATE preference-window banner's job
+    (`resident_has_declared_for`/`preference_target_periode`, via `core.context_processors`), which
+    correctly re-triggers each periode and is unaffected by this change. Re-scoping this card to "has
+    declared for the periode `preference_target_periode` currently resolves to" was considered and
+    rejected: outside an open window that target is the CURRENT periode, so it would reproduce this
+    exact bug for every ordinary mid-period resident who has not yet gotten around to re-declaring --
+    fixing it would need its own window-open gating logic, which is unnecessary complexity this
+    surface does not need.
+
+    **`at` is accepted for API symmetry with this module's other "as of a date" helpers, but plays no
+    role in the check any more** -- "ever declared anywhere" has no date-scoping left to apply.
 
     **Never writes (F2).** `residents.views.dashboard` calls this on EVERY authenticated dashboard GET
-    once the rollout gate is open (not only during a preference window, unlike the banner) -- so, like
-    `in_preference_window`/`preference_target_periode`, it must never call `resolve_periode` (a
-    `get_or_create`). Matched by `(kind, year)`, never FK object identity, for the same reason those
-    functions are -- see `resident_has_declared_for`'s docstring."""
-    periode = _periode_from_bounds(at or current_date())
-    return not Praeference.objects.filter(
-        resident=resident, periode__kind=periode.kind, periode__year=periode.year
-    ).exists()
+    once the rollout gate is open (not only during a preference window, unlike the banner) -- this
+    query needs no `resolve_periode` (a `get_or_create`) at all now, which also means it no longer
+    needs `_periode_from_bounds` either."""
+    return not Praeference.objects.filter(resident=resident).exists()
 
 
 def preference_target_periode(resident: Resident, *, at: date | None = None) -> Periode:
@@ -1486,14 +1565,19 @@ def resident_has_declared_for(resident: Resident, periode: Periode) -> bool:
     time runs out, rather than showing for the window's whole duration regardless of whether that
     resident has already acted).
 
-    NOT the same question as `resident_needs_to_declare` -- that one is scoped to the periode the
-    resident is CURRENTLY living in (their own dashboard todo card, A3.2's zero-history case); this one
-    is scoped to whatever `periode` the caller passes, which for the banner is specifically
+    NOT the same question as `resident_needs_to_declare` (2026-10 review, Finding 1) -- that one now
+    checks "has this resident EVER declared, in any periode at all" (the dashboard todo card, §8 /
+    A3.2's zero-history case; deliberately NOT scoped to any particular periode any more -- see its
+    own docstring for why scoping it to the current periode was the regression that made the card
+    permanently unclearable for a first-time declarer during a window). THIS function is scoped to
+    whatever `periode` the caller passes, which for the banner is specifically
     `preference_target_periode()`'s result -- the periode a submission from this resident would
     actually target right now. Since the 2026-10-01 A1.3 supplement ("an open window wins over
     everything else"), that result now always EQUALS `in_preference_window()`'s own periode whenever a
     window is open -- the two no longer routinely diverge the way an earlier revision of this
-    docstring described.
+    docstring described. The two functions are correctly complementary: this one re-triggers every
+    periode for an established resident (the ongoing per-periode reminder), `resident_needs_to_declare`
+    never does once a resident has declared once (the one-time onboarding nudge).
 
     Matched by `(periode.kind, periode.year)` rather than `periode=periode` on purpose:
     `in_preference_window()` returns an UNSAVED, in-memory `Periode` (see its docstring on why), so

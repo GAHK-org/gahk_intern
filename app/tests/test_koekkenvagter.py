@@ -64,13 +64,14 @@ from koekken.services import (
     rebase_to_zero_mean,
     reconcile_month,
     resident_has_declared_for,
+    resident_needs_to_declare,
     resolve_anmeldelse,
     resolve_periode,
     roll_forward_allocation,
     set_preference,
     set_preferences,
 )
-from residents.models import Residency, Resident
+from residents.models import Residency, Resident, Role
 
 pytestmark = pytest.mark.django_db
 
@@ -588,12 +589,18 @@ def test_allocate_koekkenvagter_command_refuses_rerun_without_force(make_residen
     r = make_resident(email="cmd_force@gahk.dk")
     _place(r, year, month)
 
-    call_command("allocate_koekkenvagter", str(year), str(month), verbosity=0)
-
-    with pytest.raises(CommandError):
+    with override_settings(DEBUG=True):
+        # F5: allocate_month now also refuses on/before its OWN periode's preference deadline --
+        # past the deadline here, so this test still exercises only the already-allocated guard.
+        DevClock.objects.update_or_create(
+            pk=1, defaults={"simulated_date": periode_deadline(periode) + timedelta(days=1)}
+        )
         call_command("allocate_koekkenvagter", str(year), str(month), verbosity=0)
 
-    call_command("allocate_koekkenvagter", str(year), str(month), "--force", verbosity=0)  # no raise
+        with pytest.raises(CommandError):
+            call_command("allocate_koekkenvagter", str(year), str(month), verbosity=0)
+
+        call_command("allocate_koekkenvagter", str(year), str(month), "--force", verbosity=0)  # no raise
 
 
 def test_allocate_koekkenvagter_batch_allocates_periodes_first_three_months(make_resident: Callable) -> None:
@@ -731,6 +738,110 @@ def test_roll_forward_koekkenvagter_command_dry_run_writes_nothing(make_resident
     call_command("roll_forward_koekkenvagter", "--date", f"{year}-{month:02d}-10", "--dry-run", verbosity=0)
 
     assert VagtTildeling.objects.count() == 0
+
+
+# ------------------------------------------- Finding 5 (2026-10 review): the deadline-timing guard,
+# extended from allocate_batch/--batch to allocate_month itself, so it also covers the two paths
+# that were reachable gaps: the manual single-month command (no --batch) and the Køkkengruppen
+# "allokering" form, both of which call allocate_month directly and had no timing guard at all.
+
+
+def test_manual_single_month_command_refuses_before_deadline_succeeds_day_after(
+    make_resident: Callable,
+) -> None:
+    """The manual `allocate_koekkenvagter YEAR MONTH` path (no `--batch`) goes straight to
+    `allocate_month`, which previously had no deadline-timing guard at all -- it could silently
+    allocate a periode's month before that periode's own preference deadline had passed, overtaking a
+    deadline-day (or earlier) declaration. Same boundary as `allocate_batch`'s own guard: refused on
+    the deadline day itself, succeeds only the day after. `--force` must not bypass this -- it keeps
+    its original, unrelated "re-run an already-allocated month" meaning."""
+    periode = resolve_periode(date(2036, 9, 15))  # EFTERAAR 2036
+    generate_vagter(periode)
+    deadline = periode_deadline(periode)
+    r = make_resident(email="manual_deadline_guard@gahk.dk")
+    _place(r, 2036, 9)
+
+    with override_settings(DEBUG=True):
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": deadline})
+        with pytest.raises(CommandError):
+            call_command("allocate_koekkenvagter", "2036", "9", verbosity=0)
+        # --force must NOT bypass the deadline-timing guard -- same "no escape hatch" principle as
+        # allocate_batch's own guard.
+        with pytest.raises(CommandError):
+            call_command("allocate_koekkenvagter", "2036", "9", "--force", verbosity=0)
+        assert not VagtTildeling.objects.filter(vagt__date__year=2036, vagt__date__month=9).exists()
+
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": deadline + timedelta(days=1)})
+        call_command("allocate_koekkenvagter", "2036", "9", verbosity=0)  # succeeds now
+
+    assert VagtTildeling.objects.filter(
+        vagt__date__year=2036, vagt__date__month=9, status=VagtTildeling.Status.TILDELT
+    ).exists()
+
+
+def test_allokering_view_refuses_before_deadline_succeeds_day_after(
+    make_resident: Callable, client: Client
+) -> None:
+    """The Køkkengruppen "allokering" form (`koekken.views.allokering`) calls `allocate_month`
+    directly too -- the second reachable gap Finding 5 closes, proven through the real view (not just
+    the service function), matching this test file's own convention of exercising P2 UI surfaces via
+    `Client`. `--force` in the POST must not bypass the deadline-timing guard either."""
+    periode = resolve_periode(date(2037, 9, 15))  # EFTERAAR 2037
+    generate_vagter(periode)
+    deadline = periode_deadline(periode)
+
+    with override_settings(DEBUG=True):
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": deadline})
+        manager = make_resident(email="allokering_view_guard@gahk.dk", roles=(Role.KOKKENGRUPPE,))
+        r = make_resident(email="allokering_view_resident@gahk.dk")
+        _place(r, 2037, 9)
+
+        client.force_login(manager)
+
+        response = client.post(
+            "/intern/koekken/gruppe/allokering", {"year": 2037, "month": 9, "force": False}
+        )
+        assert response.status_code == 302  # plain POST + redirect, per this view's own docstring
+        assert not VagtTildeling.objects.filter(vagt__date__year=2037, vagt__date__month=9).exists()
+
+        # --force in the form must not bypass the deadline-timing guard either.
+        response = client.post(
+            "/intern/koekken/gruppe/allokering", {"year": 2037, "month": 9, "force": True}, follow=True
+        )
+        assert "præferencefrist" in response.content.decode()  # the refusal message, via messages.error
+        assert not VagtTildeling.objects.filter(vagt__date__year=2037, vagt__date__month=9).exists()
+
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": deadline + timedelta(days=1)})
+        response = client.post(
+            "/intern/koekken/gruppe/allokering", {"year": 2037, "month": 9, "force": False}
+        )
+        assert response.status_code == 302
+
+    assert VagtTildeling.objects.filter(
+        vagt__date__year=2037, vagt__date__month=9, status=VagtTildeling.Status.TILDELT
+    ).exists()
+
+
+def test_roll_forward_allocation_unaffected_by_allocate_month_deadline_guard(make_resident: Callable) -> None:
+    """Re-confirms, explicitly and separately from the batch-guard version of this test above, that
+    `roll_forward_allocation` is unaffected by the NEW guard living in `allocate_month` (Finding 5) --
+    it calls `allocate_tier_a`/`allocate_tier_b` DIRECTLY (see its own docstring and source), never
+    through `allocate_month`, so this guard can never reach it. Run with `today` set to the FIRST day
+    of the month being rolled forward -- deep inside its own periode, whose own preference deadline is
+    therefore always already in the past -- and the job must still succeed regardless."""
+    year, month = 2038, 3  # deep inside FORAAR 2038
+    _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
+    r = make_resident(email="rollforward_unaffected_by_month_guard@gahk.dk")
+    _place(r, year, month)
+
+    with override_settings(DEBUG=True):
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": date(year, month, 1)})
+        result = roll_forward_allocation(date(year, month, 1))
+
+    assert result is not None
+    assert VagtTildeling.objects.filter(
+        vagt__date__year=year, vagt__date__month=month, status=VagtTildeling.Status.TILDELT
+    ).exists()
 
 
 # ------------------------------------------------------------ Amendment 1, A1.3: preference locking
@@ -1011,7 +1122,13 @@ def test_allocate_koekkenvagter_dry_run_writes_nothing(make_resident: Callable) 
     for i in range(3):
         _place(make_resident(email=f"dryalloc{i}@gahk.dk"), year, month)
 
-    call_command("allocate_koekkenvagter", str(year), str(month), "--dry-run", verbosity=0)
+    with override_settings(DEBUG=True):
+        # F5: past this periode's own preference deadline, so the new allocate_month timing guard
+        # does not interfere with what this test actually checks (--dry-run writes nothing).
+        DevClock.objects.update_or_create(
+            pk=1, defaults={"simulated_date": periode_deadline(periode) + timedelta(days=1)}
+        )
+        call_command("allocate_koekkenvagter", str(year), str(month), "--dry-run", verbosity=0)
 
     assert VagtTildeling.objects.count() == 0
 
@@ -1547,7 +1664,12 @@ def test_no_slot_left_open_in_either_tier_after_allocate_month(make_resident: Ca
     for r in residents:
         _place(r, year, month)
 
-    allocate_month(year, month)
+    with override_settings(DEBUG=True):
+        # F5: allocate_month now refuses on/before its own periode's preference deadline too.
+        DevClock.objects.update_or_create(
+            pk=1, defaults={"simulated_date": periode_deadline(periode) + timedelta(days=1)}
+        )
+        allocate_month(year, month)
 
     vagter = list(Vagt.objects.filter(date__year=year, date__month=month))
     assert vagter  # sanity: the month actually generated shifts
@@ -1869,9 +1991,14 @@ def test_allocate_month_force_rerun_is_idempotent_across_both_tiers(make_residen
         return morgen_holder, aften_holder
 
     results = []
-    for _ in range(5):
-        allocate_month(year, month, force=True)
-        results.append(snapshot())
+    with override_settings(DEBUG=True):
+        # F5: allocate_month now refuses on/before its own periode's preference deadline too.
+        DevClock.objects.update_or_create(
+            pk=1, defaults={"simulated_date": periode_deadline(periode) + timedelta(days=1)}
+        )
+        for _ in range(5):
+            allocate_month(year, month, force=True)
+            results.append(snapshot())
 
     assert len(set(results)) == 1, f"assignments changed across force re-runs: {results}"
 
@@ -1887,15 +2014,20 @@ def test_allocate_month_force_rerun_is_idempotent_at_realistic_scale(make_reside
     for r in residents:
         _place(r, year, month)
 
-    allocate_month(year, month)  # initial, unforced allocation
+    with override_settings(DEBUG=True):
+        # F5: allocate_month now refuses on/before its own periode's preference deadline too.
+        DevClock.objects.update_or_create(
+            pk=1, defaults={"simulated_date": periode_deadline(periode) + timedelta(days=1)}
+        )
+        allocate_month(year, month)  # initial, unforced allocation
 
-    def snapshot() -> set[tuple[int, int]]:
-        return set(VagtTildeling.objects.values_list("vagt_id", "resident_id"))
+        def snapshot() -> set[tuple[int, int]]:
+            return set(VagtTildeling.objects.values_list("vagt_id", "resident_id"))
 
-    allocate_month(year, month, force=True)
-    first_force = snapshot()
-    allocate_month(year, month, force=True)
-    second_force = snapshot()
+        allocate_month(year, month, force=True)
+        first_force = snapshot()
+        allocate_month(year, month, force=True)
+        second_force = snapshot()
 
     changed = first_force.symmetric_difference(second_force)
     assert not changed, f"{len(changed)} (vagt, resident) rows changed between two force re-runs"
@@ -2477,6 +2609,71 @@ def test_banner_and_form_page_render_the_identical_periode_name(
 
 
 # =============================================================================================
+# Finding 1 (2026-10 review): resident_needs_to_declare direct behavioural coverage. Previously had
+# ZERO direct tests -- only exercised incidentally through a hand-built dashboard context dict, which
+# gave false confidence: the regression this function was fixed for (scoped to the CURRENT periode,
+# so a first-time declarer's window-targeted write never cleared the card) was never caught by any
+# test until the review found it by inspection.
+# =============================================================================================
+
+
+def test_resident_needs_to_declare_true_with_zero_history(make_resident: Callable) -> None:
+    """A resident with no `Praeference` row anywhere must see the card -- the design doc's literal
+    wording (§8 / A3.2): "a resident who has NEVER declared gets a todo card"."""
+    resident = make_resident(email="needs_declare_zero_history@gahk.dk")
+    today = date(2033, 4, 15)  # deep in EFTERAAR 2032, nowhere near any window
+
+    assert not Praeference.objects.filter(resident=resident).exists()  # sanity
+    assert resident_needs_to_declare(resident, at=today) is True
+
+
+def test_resident_needs_to_declare_false_after_declaring_via_real_form_path(
+    make_resident: Callable,
+) -> None:
+    """After declaring via the real `set_preferences` path (not a hand-crafted `Praeference.objects.
+    create`), the card must clear. Using the real write path matters: it is exactly what exposed the
+    Finding 1 regression (a first-time declarer's real write during a window lands on the WINDOW's
+    periode via `_preference_write_target`, not the resident's current one -- a hand-crafted row for
+    the "obviously right" periode would not have caught that)."""
+    resident = make_resident(email="needs_declare_real_write@gahk.dk")
+    today = date(2033, 4, 15)  # deep in EFTERAAR 2032, no window open -- ordinary mid-period arrival
+
+    assert resident_needs_to_declare(resident, at=today) is True
+
+    set_preferences(resident, weekday_unavailable=True, at=today)
+
+    assert resident_needs_to_declare(resident, at=today) is False
+
+
+def test_resident_needs_to_declare_stays_false_in_a_later_periode_with_no_re_declaration(
+    make_resident: Callable,
+) -> None:
+    """**The Finding 1 semantic decision, confirmed by a direct test.** Once a resident has declared
+    a single time, this card must NEVER come back for them, even standing in a LATER periode for
+    which they have no row of their own -- the fix is deliberately "declared anywhere, ever", not
+    "declared for a periode this function re-derives". This is NOT a bug: this card's job (§8, "a
+    standing task rather than a deadline") is the zero-history case only. Ongoing, PERIODE-SCOPED
+    reminding for an established resident who has not yet re-declared is the separate preference-
+    window BANNER's job (`resident_has_declared_for`/`preference_target_periode`), which is correctly
+    scoped and unaffected by this change -- proven alongside this test."""
+    resident = make_resident(email="needs_declare_later_periode@gahk.dk")
+    first_declaration = date(2026, 6, 1)  # ordinary declaration, well inside EFTERAAR 2026
+    much_later = date(2033, 4, 15)  # several periodes on, no Praeference row for THIS periode at all
+
+    set_preferences(resident, weekday_unavailable=False, at=first_declaration)
+    assert resident_needs_to_declare(resident, at=first_declaration) is False
+
+    later_periode = resolve_periode(much_later)
+    assert not Praeference.objects.filter(resident=resident, periode=later_periode).exists()  # sanity
+
+    # The todo card: gone for good once they've ever declared, per the Finding 1 decision.
+    assert resident_needs_to_declare(resident, at=much_later) is False
+    # The banner's own per-periode question, by contrast, is answered freshly each periode: this
+    # resident genuinely has NOT declared for the periode a submission from them would target now.
+    assert resident_has_declared_for(resident, preference_target_periode(resident, at=much_later)) is False
+
+
+# =============================================================================================
 # P2 design doc §12's open item, resolved: the banner persists PER RESIDENT until they've declared
 # for the window's periode, or the window's time runs out -- not "is a window open" for everyone.
 # =============================================================================================
@@ -2550,13 +2747,24 @@ def test_first_time_declarer_during_window_targets_windows_periode(
 
     This is also the FCFS-tiebreak regression: a `declared_at` recorded against an already-allocated
     periode is useless to Amendment 1's ranking forever; recorded against the window's periode, it is
-    exactly the value `allocate_tier_a` will rank on once Forår 2027's months are allocated."""
+    exactly the value `allocate_tier_a` will rank on once Forår 2027's months are allocated.
+
+    **Also the Finding 1 regression (2026-10 review).** `/intern/` carries BOTH the site-wide
+    preference-window BANNER (`erklær dine præferencer ...`, periode-scoped) and the dashboard's
+    separate "never declared" TODO CARD (`Du har ikke erklæret dine køkkenvagt-præferencer endnu.`,
+    `koekken.services.resident_needs_to_declare`) -- two different surfaces with different wording,
+    and the original version of this test asserted only on the banner's text. Before the Finding 1
+    fix, `resident_needs_to_declare` stayed scoped to the resident's CURRENT periode, which this
+    declaration never touches (it lands on the window's periode instead) -- so the card would have
+    stayed on the page, permanently unclearable, while the banner correctly cleared and this test
+    still passed. Both texts are checked below so a regression on either surface fails this test."""
     from koekken import access as koekken_access
 
     monkeypatch.setattr(koekken_access, "ACCESS_ROLES", None)
 
     resident = make_resident(email="banner_first_time_declarer@gahk.dk")
     today = date(2026, 11, 27)
+    card_text = "Du har ikke erklæret dine køkkenvagt-præferencer endnu."
 
     with override_settings(DEBUG=True):
         DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": today})
@@ -2571,6 +2779,7 @@ def test_first_time_declarer_during_window_targets_windows_periode(
         # touch now that an open window wins over the mid-period-arrival exemption.
         assert "erklær dine præferencer for Forår 2027" in before_html
         assert "erklær dine præferencer for Efterår 2026" not in before_html
+        assert card_text in before_html  # the dashboard todo card, distinct from the banner above
 
         response = client.post(
             "/intern/koekken/praeferencer",
@@ -2594,6 +2803,7 @@ def test_first_time_declarer_during_window_targets_windows_periode(
 
         after_html = client.get("/intern/").content.decode()
         assert "erklær dine præferencer" not in after_html  # the banner must be gone, not just relabelled
+        assert card_text not in after_html  # Finding 1: the todo card must clear too, not just the banner
 
 
 def test_deadline_day_itself_still_targets_the_open_windows_periode(
