@@ -805,3 +805,104 @@ warning of exactly the failure this whole feature exists to prevent.
 **Open for the human, when this phase comes up:** whether an unclaimed offer eventually reverts to the
 offerer (who then owes the shift or the debit), or escalates to Køkkengruppen to reassign. Not needed to
 approve the direction; needed before building it.
+
+---
+
+# Amendment 5 — fridage (days where shifts are not generated)
+
+**Approved 2026-10-01. Not yet built.** Køkkengruppen can mark specific dates on which specific shift
+types are not generated at all — juleaften, nytårsaften, and any other day the kitchen does not need
+covering.
+
+## A5.1 Scope
+
+**Per shift type, not per day.** A date is excluded for a chosen set of kinds: aftenvagt may be
+dropped on juleaften while morgen and frokost still run, or the whole day may go. Whole-day is simply
+every kind for that date, so it needs no separate concept.
+
+**Concrete dates, entered per periode. No recurring rules.** Danish holidays split awkwardly:
+juleaften, nytårsaften and grundlovsdag are the same date every year, but påske, Kristi himmelfart and
+pinse all *move* — and they all fall in Forår, so a month-and-day rule would be wrong for exactly the
+periode with the most holidays in it. A rule engine that handles movable feasts is wildly
+disproportionate here, and the movable ones need a human with a calendar regardless. The burden is
+about four dates per periode, three times a year, at a moment Køkkengruppen are already doing periode
+admin. If re-entry ever grates, a "copy last year's fridage" helper is a small later addition; it is
+not worth building now.
+
+## A5.2 Data model
+
+```
+Fridag(date, kind, reason)        unique (date, kind)
+```
+
+One row per excluded `(date, kind)`. This mirrors `Vagt`'s own key exactly, and is the same shape as
+`PraeferenceDag(praeference, kind, weekday)` from P2 — the app's existing idiom rather than a new one.
+`reason` ("Juleaften") is shown on the tablet and in Køkkengruppen's list; the UI writes the same text
+across a date's rows and the tablet groups by date, so the duplication is harmless and has a single
+writer.
+
+## A5.3 The generation seam — **and its second user**
+
+`generate_vagter` consults one exclusion check and skips excluded `(date, kind)` pairs. That is the
+entire happy path.
+
+**Build this as a seam, not as an `if Fridag.objects…` inline.** P3's summer work is the same question
+with a different source: its design says summer slots are generated only for weeks with reported
+presence, which is "should this date generate shifts?" answered from `FerieUge` and per-week, rather
+than from `Fridag` and per-kind. P3 is not built yet, so making generation ask **one** question now
+costs nothing and avoids a second, independent skip path growing beside the first. **Do not build the
+summer source here** — only make sure there is one place for it to plug into.
+
+## A5.4 The officer action — and why it is the normal path
+
+A fridag declared for a month whose `Vagt` rows already exist cannot be handled by skipping at
+generation. The action is therefore: **delete the matching `Vagt` rows → re-allocate the affected
+months with the existing `force` flag → re-post obligation for those months.** One officer action
+doing all three, with a preview of what it will change before it commits.
+
+**This is the normal case, not an edge case.** December 2026 is allocated on **1 August 2026**, 122
+days ahead. Anyone who thinks about Christmas in October or November is declaring a fridag against an
+already-allocated month. A design that only skipped rows at generation time would be wrong most of the
+time it was used.
+
+There is still a clean happy path, and it belongs in an existing routine rather than a new ritual:
+`generate_koekkenvagter` takes `--date`, so Køkkengruppen generate and batch-allocate a periode at its
+deadline, three times a year. *"Set this periode's fridage"* goes there. A5.4's action is for when
+somebody remembers late.
+
+**The obligation re-post is bundled deliberately.** `post_obligation` derives a month's total from
+`Sum(headcount × duration_minutes)` over actual `Vagt` rows, so removing rows reduces that month's
+obligation correctly with **no new ledger logic** — but only if it is re-run. It reconciles properly on
+re-run (stale rows deleted, then `update_or_create`), so this is mechanical; it simply will not happen
+by itself, and must not be left to be remembered.
+
+**Residents who lose a shift are notified.** They were shown it. Their projected balance drops with the
+assignment, so they rank further behind and the allocator compensates them later without anything
+extra being written.
+
+## A5.5 Two guards
+
+- **Refuse a date carrying any `UDFOERT` or `ANMELDT` assignment.** You cannot retroactively un-hold a
+  shift somebody actually worked, and its ledger entry would be left pointing at nothing.
+- **Refuse a date in the past.** Pointless, and it only disturbs history.
+
+## A5.6 Verified mechanics
+
+Two foreign keys decide what deletion costs, and they differ:
+
+- **`KoekkenPost.vagt` is `on_delete=SET_NULL`.** Deleting a `Vagt` nulls the reference and **leaves the
+  ledger intact** — a resident who already worked a shift keeps their credit. The append-only ledger is
+  not at risk here.
+- **`VagtTildeling.vagt` is `on_delete=CASCADE`.** Assignments vanish with the shift. Correct, and the
+  reason A5.4 notifies.
+
+## A5.7 Tests
+
+- An excluded `(date, kind)` is not generated; other kinds on that date still are.
+- A whole-day exclusion removes every kind for that date and nothing on adjacent dates.
+- Declaring a fridag on an already-allocated month deletes the shifts, re-allocates, and re-posts
+  obligation — and that month's total obligation falls by exactly the removed supply.
+- The ledger is unchanged by the deletion: an existing `ARBEJDE` credit survives with a null `vagt`.
+- Both guards refuse, with a clear Danish message, and change nothing.
+- Generation asks the exclusion seam exactly once per `(date, kind)` — the regression that would let a
+  second skip path grow beside it.
