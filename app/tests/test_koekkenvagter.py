@@ -21,6 +21,7 @@ import json
 import logging
 from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
+from io import StringIO
 from pathlib import Path
 
 import pytest
@@ -3289,31 +3290,225 @@ def test_declare_fridag_refuses_past_date_and_changes_nothing() -> None:
     assert Vagt.objects.count() == vagt_count_before
 
 
-def test_declare_fridag_notifies_residents_who_lose_an_assignment(
-    make_resident: Callable, pushes: list
-) -> None:
-    """A5.4/A5.7: a resident who loses a `VagtTildeling` to a fridag declaration is pushed a
-    notification on their own `wants_koekken` topic -- the same mechanism, audience-narrowing included,
-    `resolve_anmeldelse` already uses for a flag ruling."""
-    year, month = 2066, 9
+def test_declare_fridag_result_distinguishes_lost_from_moved_assignments(make_resident: Callable) -> None:
+    """2026-10 review, F2, at the service layer directly: with 2 residents and 2 slots, declaring a
+    fridag against ONE slot leaves a single slot for both residents to compete over once
+    `allocate_month` reshuffles the whole month -- the lower-pk resident (`first`, who originally held
+    the now-deleted slot) keeps a shift, just on a different day; `second` (who originally held the
+    OTHER, untouched slot) ends up with none. `FridagResult.notifications` must contain only `second`
+    -- who genuinely lost a shift -- and `moved_residents` only `first`, never the reverse (the
+    reviewer's exact reproduction: the resident who lost their only shift entirely was never notified
+    under the old code, while the resident whose shift merely moved was wrongly told it was cancelled)."""
+    year, month = 2067, 9
     periode = _build_month(year, month, weekday_capacity=2, weekend_capacity=0)
-    worker = make_resident(email="fridag_notify_worker@gahk.dk")
-    other = make_resident(email="fridag_notify_other@gahk.dk")
-    _place(worker, year, month)
-    _place(other, year, month)
-    PushSubscription.objects.create(
-        user=worker, endpoint="https://example.test/ep1", auth="a", p256dh="p", wants_koekken=True
-    )
+    first = make_resident(email="fridag_result_first@gahk.dk")
+    second = make_resident(email="fridag_result_second@gahk.dk")
+    _place(first, year, month)
+    _place(second, year, month)
 
     with override_settings(DEBUG=True):
         _past_deadline(periode)
         allocate_tier_a(year, month)
-        tildeling = VagtTildeling.objects.get(resident=worker)
-        the_date = tildeling.vagt.date
+        first_tildeling = VagtTildeling.objects.get(resident=first)
+        the_date = first_tildeling.vagt.date
+        assert VagtTildeling.objects.get(resident=second).vagt.date != the_date
 
-        declare_fridag(the_date, [VagtRegel.Kind.MORGEN], reason="Juleaften")
+        result = declare_fridag(the_date, [VagtRegel.Kind.MORGEN], reason="Test")
 
-    assert len(pushes) == 1
+    notified = {resident.pk for resident, _audience, _message in result.notifications}
+    moved = {r.pk for r in result.moved_residents}
+    assert notified == {second.pk}
+    assert moved == {first.pk}
+    assert VagtTildeling.objects.filter(resident=first, status=VagtTildeling.Status.TILDELT).exists()
+    assert not VagtTildeling.objects.filter(resident=second, status=VagtTildeling.Status.TILDELT).exists()
+
+
+def test_declare_koekken_fridag_command_notifies_the_resident_who_actually_ends_up_without_a_shift(
+    make_resident: Callable, pushes: list
+) -> None:
+    """2026-10 review, F1/F2, reproduced end-to-end through the management command: the push itself
+    only fires once the command's transaction has actually committed (F1), and reaches the resident
+    who truly ended up without a shift (F2), not merely whoever held the excluded slot -- same
+    scenario as the service-level test above."""
+    year, month = 2068, 9
+    periode = _build_month(year, month, weekday_capacity=2, weekend_capacity=0)
+    first = make_resident(email="fridag_cmd_first@gahk.dk")
+    second = make_resident(email="fridag_cmd_second@gahk.dk")
+    _place(first, year, month)
+    _place(second, year, month)
+    for r in (first, second):
+        PushSubscription.objects.create(
+            user=r, endpoint=f"https://example.test/{r.pk}", auth="a", p256dh="p", wants_koekken=True
+        )
+
+    with override_settings(DEBUG=True):
+        _past_deadline(periode)
+        allocate_tier_a(year, month)
+        the_date = VagtTildeling.objects.get(resident=first).vagt.date
+
+        call_command(
+            "declare_koekken_fridag", str(the_date), "--kind", "morgen", "--reason", "Test", verbosity=0
+        )
+
+    assert VagtTildeling.objects.filter(resident=first, status=VagtTildeling.Status.TILDELT).exists()
+    assert not VagtTildeling.objects.filter(resident=second, status=VagtTildeling.Status.TILDELT).exists()
+
+    assert len(pushes) == 1  # not first, who kept a (moved) shift -- no false "cancelled" push (F2)
     user_ids, payload = pushes[0]
-    assert user_ids == [worker.pk]
+    assert user_ids == [second.pk]
     assert "aflyst" in payload["body"]
+    assert "Morgenvagt" in payload["body"]  # F6: the shift's own kind, via Vagt.__str__
+
+
+def test_declare_koekken_fridag_dry_run_sends_no_pushes_and_changes_nothing(
+    make_resident: Callable, pushes: list
+) -> None:
+    """2026-10 review, F1: `--dry-run` must never fire a real push, even on a scenario that would, on
+    a real run, genuinely notify someone (the F2 scenario above) -- and must leave the database
+    completely unchanged, asserted in the SAME test."""
+    year, month = 2069, 9
+    periode = _build_month(year, month, weekday_capacity=2, weekend_capacity=0)
+    first = make_resident(email="fridag_dryrun_first@gahk.dk")
+    second = make_resident(email="fridag_dryrun_second@gahk.dk")
+    _place(first, year, month)
+    _place(second, year, month)
+    for r in (first, second):
+        PushSubscription.objects.create(
+            user=r, endpoint=f"https://example.test/{r.pk}", auth="a", p256dh="p", wants_koekken=True
+        )
+
+    with override_settings(DEBUG=True):
+        _past_deadline(periode)
+        allocate_tier_a(year, month)
+        the_date = VagtTildeling.objects.get(resident=first).vagt.date
+
+        fridag_count_before = Fridag.objects.count()
+        vagt_count_before = Vagt.objects.count()
+        tildeling_before = {
+            (t.resident_id, t.vagt_id, t.status)
+            for t in VagtTildeling.objects.filter(vagt__date__year=year, vagt__date__month=month)
+        }
+        post_count_before = KoekkenPost.objects.count()
+
+        call_command(
+            "declare_koekken_fridag",
+            str(the_date),
+            "--kind",
+            "morgen",
+            "--reason",
+            "Test",
+            "--dry-run",
+            verbosity=0,
+        )
+
+    assert pushes == []  # zero push notifications sent
+
+    assert Fridag.objects.count() == fridag_count_before
+    assert Vagt.objects.count() == vagt_count_before
+    tildeling_after = {
+        (t.resident_id, t.vagt_id, t.status)
+        for t in VagtTildeling.objects.filter(vagt__date__year=year, vagt__date__month=month)
+    }
+    assert tildeling_after == tildeling_before
+    assert KoekkenPost.objects.count() == post_count_before
+
+
+def test_declare_koekken_fridag_command_creates_fridag_rows_and_reports_summary(
+    make_resident: Callable,
+) -> None:
+    """2026-10 review, F4/F5: the management command itself, exercised via `call_command` rather than
+    only the underlying service function -- creates the expected `Fridag` row(s) on a real
+    (non-dry-run) run, and its printed summary actually names the affected month, not merely a bare
+    count (F5)."""
+    year, month = 2070, 9
+    # weekday_capacity=2, not 1: declaring the fridag deletes one of the two Vagt rows, and
+    # allocate_tier_a raises if a month ends up with NO tier-A Vagt rows left at all -- unrelated to
+    # F1-F6, just a fixture choice that must leave at least one slot standing.
+    periode = _build_month(year, month, weekday_capacity=2, weekend_capacity=0)
+    resident = make_resident(email="fridag_cmd_summary@gahk.dk")
+    other = make_resident(email="fridag_cmd_summary_other@gahk.dk")
+    _place(resident, year, month)
+    _place(other, year, month)
+
+    with override_settings(DEBUG=True):
+        _past_deadline(periode)
+        allocate_tier_a(year, month)
+        the_date = VagtTildeling.objects.get(resident=resident).vagt.date
+
+        out = StringIO()
+        call_command(
+            "declare_koekken_fridag",
+            str(the_date),
+            "--kind",
+            "morgen",
+            "--reason",
+            "Test",
+            stdout=out,
+            verbosity=1,
+        )
+
+    assert Fridag.objects.filter(date=the_date, kind=VagtRegel.Kind.MORGEN).exists()
+    output = out.getvalue()
+    assert str(the_date) in output
+    assert f"{year}-{month:02d}" in output  # F5: names the affected month, not just a count
+
+
+def test_declare_koekken_fridag_command_surfaces_allocation_errors_as_command_error(
+    make_resident: Callable,
+) -> None:
+    """2026-10 review, F4: both of `declare_fridag`'s guards surface as `CommandError`, matching
+    `allocate_koekkenvagter`'s own established `except KoekkenAllocationError as exc: raise
+    CommandError(str(exc)) from exc` pattern -- not a bare traceback."""
+    past_date = date(2020, 1, 1)
+    with pytest.raises(CommandError, match="fortiden"):
+        call_command("declare_koekken_fridag", str(past_date), verbosity=0)
+
+    year, month = 2071, 6
+    periode = _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
+    worker = make_resident(email="fridag_cmd_settled@gahk.dk")
+    _place(worker, year, month)
+    with override_settings(DEBUG=True):
+        _past_deadline(periode)
+        allocate_tier_a(year, month)
+        tildeling = VagtTildeling.objects.get(resident=worker)
+        mark_udfoert(tildeling, at=marking_window(tildeling.vagt)[0])
+
+        with pytest.raises(CommandError, match="udført eller anmeldt"):
+            call_command("declare_koekken_fridag", str(tildeling.vagt.date), "--kind", "morgen", verbosity=0)
+
+
+def test_declare_fridag_on_not_yet_allocated_month_only_deletes_vagt_rows() -> None:
+    """2026-10 review, F3: a GENERATED-but-NOT-YET-ALLOCATED month (a normal, long-lived state -- the
+    A5.4 happy path of declaring fridage right after generating, before the deadline/batch) must have
+    its matching `Vagt` row(s) deleted and nothing else: no re-allocation, no re-post, and critically
+    no `KoekkenAllocationError` from `allocate_month`'s deadline-timing guard, even though this is
+    called well BEFORE the periode's own preference deadline (case (a) of the review's reproduction --
+    resolved as a side effect of the gate below, not with a separate fix)."""
+    periode = resolve_periode(date(2072, 9, 15))  # EFTERAAR 2072
+    generate_vagter(periode)
+    deadline = periode_deadline(periode)
+    the_date = date(2072, 9, 10)
+    assert Vagt.objects.filter(date=the_date, kind=VagtRegel.Kind.MORGEN).exists()
+
+    vagt_count_before = Vagt.objects.count()
+    tildeling_count_before = VagtTildeling.objects.count()
+    post_count_before = KoekkenPost.objects.count()
+
+    with override_settings(DEBUG=True):
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": deadline - timedelta(days=30)})
+        # Sanity: a direct allocate_month call against this month, this early, is indeed refused --
+        # proving the scenario genuinely exercises the "not yet allocated, too early" case.
+        with pytest.raises(KoekkenAllocationError):
+            allocate_month(2072, 9, force=True)
+
+        result = declare_fridag(the_date, [VagtRegel.Kind.MORGEN], reason="Test")  # must NOT raise
+
+    assert result.deleted_vagter == 1
+    assert result.reallocated_months == []
+    assert result.notifications == []
+    assert result.moved_residents == []
+    assert not Vagt.objects.filter(date=the_date, kind=VagtRegel.Kind.MORGEN).exists()
+
+    assert Vagt.objects.count() == vagt_count_before - 1
+    assert VagtTildeling.objects.count() == tildeling_count_before  # no new TILDELT rows
+    assert KoekkenPost.objects.count() == post_count_before  # no new FORPLIGTELSE rows

@@ -169,12 +169,34 @@ class FridagResult:
     removed -- 0 when the affected month had not been generated yet, in which case `generate_vagter`'s
     own seam (A5.3) is the only mechanism that will ever apply and there is nothing to re-allocate or
     re-post. `reallocated_months` is every `(year, month)` that was actually re-allocated and
-    re-posted as a consequence.
+    re-posted as a consequence -- empty both when nothing was deleted AND when the month had not yet
+    been allocated in the first place (2026-10 review, F3: there is nothing to re-seat yet, and
+    force-allocating it now would stick permanently, pre-empting the normal batch/roll-forward
+    schedule -- see `declare_fridag`'s docstring).
+
+    `notifications` is every resident who genuinely lost their last assignment in the affected month
+    as a net result of re-allocation (2026-10 review, F2) -- NOT merely whoever held the exact
+    `(date, kind)` pair just excluded, since `allocate_month` reshuffles assignments across the WHOLE
+    month, tier A and B together, so who held the deleted slot and who ends up worse off are
+    different sets. Each entry is `(resident, audience, message)` -- `audience` already narrowed via
+    `koekken.access.allowed_subscribers` exactly as `resolve_anmeldelse` narrows its own, `message`
+    naming the specific shift(s) they lost (F6) -- ready for the caller to hand straight to
+    `core.push.send(audience, "Køkkenvagt", message, "/intern/koekken/", background=False)`.
+    **Never sent here** (F1): a management command's own `--dry-run` rolls its wrapping transaction
+    back via `transaction.set_rollback(True)` *after* `declare_fridag` returns, so this function must
+    not have already fired a real push before that rollback happens -- dispatch is the CALLER's job,
+    done only once it knows the transaction actually committed (i.e. only when `not dry_run`).
+
+    `moved_residents` is who still holds SOME assignment in the affected month after re-allocation,
+    just not the one they started with -- correctly never in `notifications` (F2's core fix: no false
+    "your shift is cancelled" message to someone who still has a shift, merely a different one).
     """
 
     created: list[Fridag] = field(default_factory=list)
     deleted_vagter: int = 0
     reallocated_months: list[tuple[int, int]] = field(default_factory=list)
+    notifications: list[tuple[Resident, QuerySet, str]] = field(default_factory=list)
+    moved_residents: list[Resident] = field(default_factory=list)
 
 
 def _periode_bounds(for_date: date) -> tuple[str, int, date, date]:
@@ -2011,6 +2033,43 @@ def post_obligation(periode: Periode, month: int, *, officer: Resident | None = 
     return (written, len(present))
 
 
+def _month_tildelt_by_resident(year: int, month: int) -> dict[int, list[Vagt]]:
+    """resident_id -> every `Vagt` they hold a `TILDELT` `VagtTildeling` on, for `(year, month)` --
+    the before/after snapshot `declare_fridag`'s F2 fix diffs to find who actually lost (or merely had
+    moved) a shift as a net result of `allocate_month`'s WHOLE-month reshuffle, as opposed to who
+    merely held the specific `(date, kind)` pair just excluded. Scoped to every kind (not only the
+    excluded one) because `allocate_month` clears and reseats the entire month, both tiers together --
+    see that function's docstring -- so a ripple can move or drop an assignment that was never on one
+    of the deleted `Vagt` rows at all. Restricted to `TILDELT` on purpose: any other status
+    (`UDFOERT`/`ANMELDT`/`IKKE_UDFOERT`) is never touched by a force re-allocation, so it can never
+    appear in this diff either way, and it is a settled or disputed shift already, not a future one
+    worth notifying about."""
+    by_resident: dict[int, list[Vagt]] = defaultdict(list)
+    rows = (
+        VagtTildeling.objects.filter(
+            vagt__date__year=year, vagt__date__month=month, status=VagtTildeling.Status.TILDELT
+        )
+        .select_related("vagt")
+        .order_by("vagt__date", "vagt__kind")
+    )
+    for row in rows:
+        by_resident[row.resident_id].append(row.vagt)
+    return by_resident
+
+
+def _fridag_notification_message(vagter: list[Vagt], reason: str) -> str:
+    """The "your assignment is cancelled" message for one resident who genuinely lost a shift (F2) --
+    F6: reuses `Vagt.__str__`'s own "Morgenvagt 2075-03-06" rendering, the same convention
+    `resolve_anmeldelse` already relies on for its own notification, rather than inventing new
+    date/kind formatting -- and states the reason exactly once, never a separate, doubled "(fridag)"
+    parenthetical alongside an explicit `reason`."""
+    reason_text = reason or "fridag"
+    if len(vagter) == 1:
+        return f"Din {vagter[0]} er aflyst ({reason_text})."
+    shifts = ", ".join(str(v) for v in sorted(vagter, key=lambda v: (v.date, v.kind)))
+    return f"Dine køkkenvagter ({shifts}) er aflyst ({reason_text})."
+
+
 def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> FridagResult:
     """Declare `for_date` a fridag for each of `kinds` -- Amendment 5, A5.4. **This is the normal
     path, not an edge case**: a periode is allocated ~122 days before it starts (the design doc's own
@@ -2022,14 +2081,31 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
       1. Create the `Fridag` row(s) -- idempotent; a pair already declared is left as-is (the unique
          constraint already guarantees that).
       2. Delete the matching `Vagt` row(s), if the month was already generated. `VagtTildeling`
-         CASCADEs with its `Vagt` (A5.6) -- this is WHY residents holding one of those are notified
-         below. `KoekkenPost.vagt` SET_NULLs instead (A5.6) -- the ledger is left completely intact,
-         no special handling needed for it here.
+         CASCADEs with its `Vagt` (A5.6) -- this is WHY residents holding one of those can end up
+         notified below. `KoekkenPost.vagt` SET_NULLs instead (A5.6) -- the ledger is left completely
+         intact, no special handling needed for it here.
       3. Re-allocate the affected month (`allocate_month(year, month, force=True)` -- reusing the
          existing force mechanism, never new allocation logic) and re-post its obligation
          (`post_obligation` -- reusing its existing stale-row reconciliation, never new ledger logic;
          it derives a month's total from actual `Vagt` rows, so a smaller supply reconciles correctly
-         on re-run with nothing extra written here).
+         on re-run with nothing extra written here) -- **but only when the month had already been
+         allocated BEFORE this call touched it** (2026-10 review, F3). Whether any `TILDELT` row
+         existed for `(year, month)` -- any kind, not only the excluded one, matching exactly what
+         `allocate_month` itself re-seats -- is checked BEFORE any `Vagt` row is deleted. A
+         generated-but-not-yet-allocated month is a normal, long-lived state in this codebase
+         (generation can run up to 5 months ahead; allocation only reaches a month at its periode's
+         deadline batch, or later via the one-month-at-a-time roll-forward) -- exactly A5.4's own
+         happy path, declaring fridage right after generating, before the deadline. Force-allocating
+         it here anyway would (a) hit `allocate_month`'s own deadline-timing guard and refuse the
+         WHOLE declaration, including the `Fridag` row, whenever called before that deadline, and (b)
+         when called early enough that the guard does not even apply yet, seat it prematurely against
+         whatever population/balance data exists AT DECLARATION TIME -- and since
+         `roll_forward_allocation` skips months that are ALREADY allocated, that premature allocation
+         would stick permanently, never redone closer to the month with current data. Skipping
+         re-allocation/re-post entirely for a not-yet-allocated month sidesteps both: there is nothing
+         to re-seat yet, the `Fridag` row just written is permanent, and `generate_vagter`'s `is_fridag`
+         seam (A5.3, untouched) is what keeps the excluded `(date, kind)` pair from ever being
+         regenerated later, even if generation for this periode somehow runs again.
 
     **Two guards, both checked BEFORE any write** (A5.5), so a refusal leaves the database completely
     unchanged -- no partial `Fridag` row, no partially-deleted month:
@@ -2040,15 +2116,19 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
     * Refuses a `for_date` in the past, read via `core.clock.current_date()` (never
       `django.utils.timezone` directly) -- pointless, and it would only disturb settled history.
 
-    **Residents who lose an assignment are notified** -- every resident who held a `VagtTildeling` on
-    one of the deleted `Vagt` rows (whatever its surviving status; the guard above has already ruled
-    out `UDFOERT`/`ANMELDT`, so what remains is `TILDELT` or `IKKE_UDFOERT`), pushed to their own
-    `wants_koekken` topic, narrowed through `koekken.access.allowed_subscribers` exactly as
-    `resolve_anmeldelse` already does for a flag ruling -- same reasoning: a resident who opted in
-    before a rollout gate closes (or before it is ever opened) must never be sent a link that then
-    403s them. Delivered inline (`background=False`), matching `events.services.
-    send_deadline_reminder`'s reasoning for anything reachable from a management command: a daemon
-    thread started from `handle()` is killed mid-send the moment the process exits.
+    **Who gets notified is computed from a before/after DIFF of the whole month's `TILDELT` rows, not
+    from who held the deleted `Vagt` row(s)** (2026-10 review, F2): `allocate_month` reshuffles every
+    `TILDELT` assignment in the month, tier A and B together, so "held the excluded slot" and
+    "actually ended up worse off" are different sets -- a resident whose only shift was the deleted
+    one and who the reshuffle does not reseat anywhere has genuinely lost a shift; a resident whose
+    assignment merely MOVED to a different day/slot still has one and must never be told theirs is
+    cancelled. Only the former land in `FridagResult.notifications` -- see that dataclass's docstring
+    for the exact `(resident, audience, message)` shape and for why dispatch itself is NOT done here
+    (F1: a management command's `--dry-run` only rolls back AFTER this function returns, so sending a
+    real push from inside it would survive the rollback that undoes every other write). The audience
+    is narrowed through `koekken.access.allowed_subscribers` exactly as `resolve_anmeldelse` already
+    does for a flag ruling -- same reasoning: a resident who opted in before a rollout gate closes (or
+    before it is ever opened) must never be sent a link that then 403s them.
 
     Declaring a fridag for a kind that has no `Vagt` row yet (a genuine look-ahead month) still writes
     its `Fridag` row -- there is simply nothing to delete, re-allocate, re-post or notify for it; that
@@ -2072,6 +2152,7 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
             "vagt på denne dato, som ikke kan omgøres."
         )
 
+    year, month = for_date.year, for_date.month
     result = FridagResult()
     with transaction.atomic():
         for kind in kind_list:
@@ -2081,35 +2162,47 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
             if created:
                 result.created.append(fridag)
 
-        affected_tildelinger = list(
-            VagtTildeling.objects.filter(vagt__in=affected_vagter).select_related("resident")
-        )
-        resident_ids = {t.resident_id for t in affected_tildelinger}
+        # F3: whether the month was already allocated, checked BEFORE any Vagt row is touched -- see
+        # the docstring above. Scoped to the whole month (every kind), matching allocate_month exactly.
+        month_was_allocated = VagtTildeling.objects.filter(
+            vagt__date__year=year, vagt__date__month=month, status=VagtTildeling.Status.TILDELT
+        ).exists()
+        before_by_resident = _month_tildelt_by_resident(year, month) if month_was_allocated else {}
 
         result.deleted_vagter = len(affected_vagter)
         for vagt in affected_vagter:
             vagt.delete()
 
-        if affected_vagter:
-            year, month = for_date.year, for_date.month
+        if affected_vagter and month_was_allocated:
             allocate_month(year, month, force=True)
             post_obligation(resolve_periode(for_date), month)
             result.reallocated_months.append((year, month))
 
-        if resident_ids:
-            from core.push import send, subscribers  # local -- see resolve_anmeldelse's own reasoning
+            after_by_resident = _month_tildelt_by_resident(year, month)
+            lost_ids = set(before_by_resident) - set(after_by_resident)
+            moved_ids = {
+                rid
+                for rid, before_vagter in before_by_resident.items()
+                if rid in after_by_resident
+                and {v.pk for v in before_vagter} != {v.pk for v in after_by_resident[rid]}
+            }
 
-            from . import access
+            if lost_ids or moved_ids:
+                from core.push import subscribers
 
-            audience = access.allowed_subscribers(subscribers(TOPIC).filter(user_id__in=resident_ids))
-            reason_suffix = f" ({reason})" if reason else ""
-            send(
-                audience,
-                "Køkkenvagt",
-                f"Din køkkenvagt {for_date:%d.%m.%Y} er aflyst{reason_suffix} (fridag).",
-                "/intern/koekken/",
-                background=False,
-            )
+                from . import access  # local -- see resolve_anmeldelse's own reasoning
+
+                residents_by_id = {r.pk: r for r in Resident.objects.filter(pk__in=lost_ids | moved_ids)}
+                result.moved_residents = [
+                    residents_by_id[rid] for rid in sorted(moved_ids) if rid in residents_by_id
+                ]
+                for rid in sorted(lost_ids):
+                    resident = residents_by_id.get(rid)
+                    if resident is None:
+                        continue
+                    audience = access.allowed_subscribers(subscribers(TOPIC).filter(user_id=rid))
+                    message = _fridag_notification_message(before_by_resident[rid], reason)
+                    result.notifications.append((resident, audience, message))
 
     return result
 
