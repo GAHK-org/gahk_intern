@@ -566,29 +566,26 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                 for e in errors:
                     messages.error(request, e)
                 messages.error(request, "Ingen ændringer gemt.")
-                
-                # FEJL-TILSTAND: Vi overskriver listemodellerne med brugerens rettelser 
+
+                # FEJL-TILSTAND: Vi overskriver listemodellerne med brugerens rettelser
                 # (lokalt i hukommelsen), så viewet tegner kladden i stedet for databasen.
                 db_rows = list(
                     Residency.objects.filter(year=ny, month=nm)
                     .select_related("resident", "room", "workgroup", "cleaning")
                     .order_by("room__number")
                 )
-                
+
                 next_rows = []
                 for res in db_rows:
                     if res.resident_id in removed:
                         continue
-                        
+
                     if res.resident_id in intended:
                         i_room, i_wg, i_cl = intended[res.resident_id]
                         res.room = i_room
                         res.workgroup = i_wg
                         res.cleaning = i_cl
-                        res.room_id = i_room.id if i_room else None
-                        res.workgroup_id = i_wg.id if i_wg else None
-                        res.cleaning_id = i_cl.id if i_cl else None
-                        
+
                     next_rows.append(res)
             else:
                 with transaction.atomic():
@@ -600,7 +597,9 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                         )
                         _sync_month_roles(rid, wg, ny, nm, rid in admins)
                 messages.success(request, "Ændringer gemt.")
-                return redirect(f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}")
+                return redirect(
+                    f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}"
+                )
 
         elif action == "add_existing":  # add a resident already in the system
             room = _pick(room_by_id, request.POST.get("room", ""))
@@ -666,8 +665,8 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                     )
             return redirect(f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}")
 
-    # Hvis next_rows stadig er None, betyder det at det er en GET request ELLER 
-    # en action (som "save") slog fejl og allerede populerede listen lokalt. 
+    # Hvis next_rows stadig er None, betyder det at det er en GET request ELLER
+    # en action (som "save") slog fejl og allerede populerede listen lokalt.
     # I så fald henter vi den friske tilstand fra databasen.
     if next_rows is None:
         next_rows = list(
