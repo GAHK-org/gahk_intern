@@ -28,6 +28,10 @@ CSRF_TRUSTED_ORIGINS = [o for o in os.environ.get("CSRF_TRUSTED_ORIGINS", "").sp
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 
+# Absolute base for links in mail sent off the request thread, where there is no request to
+# call build_absolute_uri on (residents.tasks).
+SITE_URL = os.environ.get("SITE_URL", "http://localhost:8000" if DEBUG else "https://gahk.dk")
+
 INSTALLED_APPS = [
     "daphne",
     "django.contrib.admin",
