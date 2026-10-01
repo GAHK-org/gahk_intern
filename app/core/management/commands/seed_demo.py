@@ -163,7 +163,7 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--fresh", action="store_true", help="Delete existing demo data first.")
-        parser.add_argument("--residents", type=int, default=40, help="How many residents to create.")
+        parser.add_argument("--residents", type=int, default=61, help="How many residents to create.")
         parser.add_argument("--force", action="store_true", help="Allow running when DEBUG is off.")
 
     def handle(self, *args, **opts) -> None:  # noqa: ANN002, ANN003
@@ -186,7 +186,7 @@ class Command(BaseCommand):
             if opts["fresh"]:
                 self._wipe()
             rooms = self._seed_rooms()
-            workgroups, cleanings = self._seed_lookups()
+            workgroups, cleanings = self._seed_lookups(opts["residents"])
             residents = self._seed_residents(opts["residents"])
             self._seed_residencies(residents, rooms, workgroups, cleanings)
             self._seed_roles(residents)
@@ -218,14 +218,26 @@ class Command(BaseCommand):
             Room.objects.update_or_create(legacy_index=r["legacy_index"], defaults=r)
         return list(Room.objects.all())
 
-    def _seed_lookups(self) -> tuple[list[Workgroup], list[Cleaning]]:
-        workgroups = []
-        for name in list(WORKGROUP_ROLE.keys()) + EXTRA_WORKGROUPS:
-            wg, _ = Workgroup.objects.get_or_create(name=name)
-            workgroups.append(wg)
-        cleanings = [Cleaning.objects.get_or_create(name=n)[0] for n in CLEANING_GROUPS]
-        return workgroups, cleanings
+    def _seed_lookups(self, total_residents: int) -> tuple[list[Workgroup], list[Cleaning]]:
+            # Henter og sorterer ALLE grupper (både faste og ekstra) for at sikre determinisme
+            all_names = sorted(list(WORKGROUP_ROLE.keys()) + EXTRA_WORKGROUPS)
+            
+            # Matematisk fordeling så summen af 'size' bliver eksakt lig 'total_residents' (61)
+            base_size = total_residents // len(all_names)
+            remainder = total_residents % len(all_names)
+            
+            workgroups = []
+            for i, name in enumerate(all_names):
+                target_size = base_size + (1 if i < remainder else 0)
+                
+                wg, _ = Workgroup.objects.get_or_create(name=name)
+                if wg.size != target_size:
+                    wg.size = target_size
+                    wg.save(update_fields=["size"])
+                workgroups.append(wg)
 
+            cleanings = [Cleaning.objects.get_or_create(name=n)[0] for n in CLEANING_GROUPS]
+            return workgroups, cleanings
     # ----------------------------------------------------------- residents
     def _seed_residents(self, count: int) -> list[Resident]:
         residents = []
@@ -315,23 +327,45 @@ class Command(BaseCommand):
             "regnskab@gahk.dk": "Regnskabsgruppen",
         }
         workgroups_by_name = {workgroup.name: workgroup for workgroup in workgroups}
+        
         for y, m in self._iter_recent_months(3):
-            # Give each resident a distinct room this month (rooms outnumber residents).
+            wg_counts = {wg.name: 0 for wg in workgroups}
+            
             chosen_rooms = self.rng.sample(rooms, k=min(len(residents), len(rooms)))
             for resident, room in zip(residents, chosen_rooms, strict=False):
+                
+                target_wg_name = fixed_groups.get(resident.email)
+                wg = None
+                
+                # 1. Prøv faste roller først
+                if target_wg_name and target_wg_name in workgroups_by_name:
+                    preferred_wg = workgroups_by_name[target_wg_name]
+                    if preferred_wg.size == 0 or wg_counts[preferred_wg.name] < preferred_wg.size:
+                        wg = preferred_wg
+                        
+                # 2. Fyld op i grupper, der mangler folk
+                if not wg:
+                    strict_wgs = [w for w in workgroups if w.size > 0 and wg_counts[w.name] < w.size]
+                    if strict_wgs:
+                        wg = self.rng.choice(strict_wgs)
+                    else:
+                        available_wgs = [w for w in workgroups if w.size == 0 or wg_counts[w.name] < w.size]
+                        wg = self.rng.choice(available_wgs or workgroups)
+
+                wg_counts[wg.name] += 1
+
                 Residency.objects.update_or_create(
                     resident=resident,
                     year=y,
                     month=m,
                     defaults={
                         "room": room,
-                        "workgroup": workgroups_by_name.get(
-                            fixed_groups.get(resident.email, ""), self.rng.choice(workgroups)
-                        ),
+                        "workgroup": wg,
                         "cleaning": self.rng.choice(cleanings),
                     },
                 )
-        # Make one resident a "leaver" (present last month, gone this month) so the regnskab page has data.
+                
+        # Sletter den sidst tilføjede beboer i nuværende måned, så næste måned præcis mangler 1 fordeling
         if residents:
             Residency.objects.filter(resident=residents[-1], year=self.year, month=self.month).delete()
 
