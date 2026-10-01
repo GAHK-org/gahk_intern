@@ -366,6 +366,28 @@ the look-ahead promise — "people know which vagter they get" — is not actual
 
 ## A1.3 Preference locking
 
+> **Supplement, 2026-10-01 (approved).** An **open preference window wins over everything below.** A
+> declaration made while a window is open targets *that window's* periode, and this check runs **first**,
+> ahead of the mid-period-arrival exemption. Without it the exemption fires first and captures the write:
+> in the first real window every resident has no row for the periode they are living in, so the whole
+> house's declaration lands on a periode whose deadline passed months earlier and which nothing will read
+> again — while the banner truthfully reports that they have declared.
+>
+> This **supplements** the rules below rather than changing them. The exemption keeps its exact meaning;
+> it is simply unreachable during a window, where it is **provably vacuous** anyway: it only does real work
+> when the current periode still has unallocated months, and by the time any window opens the current
+> periode has been fully allocated for months (Forår 2027's window opens 24 Nov 2026, by which point
+> Efterår 2026 has been complete since ~1 Sep; the same holds for every window).
+>
+> **That vacuity is a property of this schedule, not a coincidence** — deadline two months before a periode
+> starts, a batch of its first three months, roll-forward monthly thereafter. The one-month-lead
+> alternative rejected in Q2 would **not** have it, and window-first would then genuinely cost a
+> mid-period arrival their only chance to declare. **If the lead time is ever shortened, revisit this.**
+>
+> **The deadline day belongs to the resident, not the allocator.** The window is inclusive of the deadline
+> date, and the deadline-triggered batch is refused until the day *after* — enforced, not conventional, so
+> a declaration made on the deadline day cannot be silently overtaken by a batch run that morning.
+
 Preferences for a period are editable until that period's deadline. **At the deadline they freeze**, and a
 later edit is written to the *following* period's row instead, taking effect then. This is directly
 expressible because `Praeference` is already keyed `(resident, periode)` with a unique constraint: the
