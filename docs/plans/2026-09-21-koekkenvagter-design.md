@@ -5,8 +5,9 @@
 look-ahead, preference locking), A2 (2026-09-22, where a three-months-out population comes from) and
 A3 (2026-09-23, reconciliation eligibility and residents arriving with no preference) — note **A3.1
 corrects A2.3**, so read them together. **Amendment 4** (2026-09-23, swapping vagter) is an **approved
-direction for Phase 2b, not being built now**. All are at the end of this document; where any changes a
-decision above, that section says so.
+direction for Phase 2b, not being built now**. **Amendment 5** (2026-10-01, fridage) is **approved and
+not yet built**. All are at the end of this document; where any changes a decision above, that section
+says so. A1.3 additionally carries an approved supplement (2026-10-01) on preference-window ordering.
 **Feature spec (to be written at implementation time):** `spec/features/koekkenvagter.md`, **unnumbered**.
 
 > **Unnumbered on purpose**, for the reason `spec/features/begivenheder.md` gives: `F-001`–`F-015` are
