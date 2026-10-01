@@ -706,6 +706,26 @@ def test_allocate_batch_service_raises_koekken_allocation_error_directly(make_re
             allocate_batch(2035, 9)  # still before the deadline -- also refused
 
 
+def test_allocate_batch_refused_before_deadline_leaves_no_periode_row(make_resident: Callable) -> None:
+    """F4 regression test (2026-10 review): mutation-testing F4 by reverting it (moving
+    `resolve_periode` back ABOVE the deadline check in `allocate_batch`) left the entire suite green
+    -- nothing caught the regression. Proven here directly, on an EMPTY database, with NOTHING
+    pre-creating the periode's row (unlike the two guard tests above, both of which call
+    `resolve_periode`/`generate_vagter` in their own setup and so could never have caught this): a
+    refused `allocate_batch` call must not leave a `Periode` row behind."""
+    assert Periode.objects.count() == 0  # sanity: truly nothing in the database yet
+
+    year, month = 2099, 9  # EFTERAAR 2099 -- deadline 1 Jul 2099, two calendar months before 1 Sep
+    deadline = date(2099, 7, 1)
+
+    with override_settings(DEBUG=True):
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": deadline})
+        with pytest.raises(KoekkenAllocationError):
+            allocate_batch(year, month)
+
+    assert Periode.objects.count() == 0  # still none -- the refusal created no row
+
+
 def test_roll_forward_allocation_unaffected_by_batch_deadline_guard(make_resident: Callable) -> None:
     """The batch-timing guard (A1.3 supplement) is scoped to `allocate_batch`/`--batch` only.
     `roll_forward_allocation` must keep running regardless of any periode's deadline timing -- per its
@@ -2671,6 +2691,45 @@ def test_resident_needs_to_declare_stays_false_in_a_later_periode_with_no_re_dec
     # The banner's own per-periode question, by contrast, is answered freshly each periode: this
     # resident genuinely has NOT declared for the periode a submission from them would target now.
     assert resident_has_declared_for(resident, preference_target_periode(resident, at=much_later)) is False
+
+
+def test_koekken_index_page_reflects_resident_needs_to_declare(
+    make_resident: Callable, client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """2026-10 review: `koekken.views._resident_context`'s own "needs_to_declare" context key (the
+    todo card on `/intern/koekken/`, `templates/koekken/index.html`) is a SECOND consumer of
+    `resident_needs_to_declare` -- besides `residents.views.dashboard` -- and had ZERO test coverage
+    of its own before this. Proven end to end through the real page and the real form-submission
+    path: a zero-history resident sees the card, and after declaring it is gone from THIS page too."""
+    from koekken import access as koekken_access
+
+    monkeypatch.setattr(koekken_access, "ACCESS_ROLES", None)  # open, independent of the rollout stage
+
+    resident = make_resident(email="koekken_index_needs_declare@gahk.dk")
+    today = date(2033, 4, 15)  # deep in EFTERAAR 2032, nowhere near any window
+    card_text = "Du har ikke erklæret dine køkkenvagt-præferencer endnu."
+
+    with override_settings(DEBUG=True):
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": today})
+        assert not Praeference.objects.filter(resident=resident).exists()  # sanity: truly no history
+
+        client.force_login(resident)
+        before_html = client.get("/intern/koekken/").content.decode()
+        assert card_text in before_html
+
+        response = client.post(
+            "/intern/koekken/praeferencer",
+            {
+                "weekday_unavailable": "on",
+                "morgen_dage": [],
+                "frokost_dage": [],
+                "aften_dage": [],
+            },
+        )
+        assert response.status_code == 302  # the real form-submission path, via set_preferences
+
+        after_html = client.get("/intern/koekken/").content.decode()
+        assert card_text not in after_html
 
 
 # =============================================================================================

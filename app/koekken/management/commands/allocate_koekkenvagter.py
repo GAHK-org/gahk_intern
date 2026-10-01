@@ -1,11 +1,12 @@
 """Allocate a calendar month's køkkenvagter -- tier A (morgen/frokost) THEN tier B (aftenvagt), in
 one run (P2 design doc §4: "the monthly pass becomes tier-A, then tier-B, in one run") -- or, with
 --batch, a period's first three months in one call (Amendment 1, A1.2: the deadline-triggered batch
-Køkkengruppen runs by hand at a period's preference deadline, refused until the day after that
-deadline -- the A1.3 supplement of 2026-10-01, enforced in `koekken.services.allocate_batch`). Not
-scheduled itself — allocating a month for the first time remains a Køkkengruppen decision;
-`roll_forward_koekkenvagter` is the scheduled follow-up that only ever advances an already-opened
-period one month at a time."""
+Køkkengruppen runs by hand at a period's preference deadline). ANY allocation of a month -- with or
+without --batch -- is refused until the day after that month's own periode's preference deadline has
+passed (the A1.3 supplement of 2026-10-01, enforced in `koekken.services.allocate_month` and
+`allocate_batch` alike). Not scheduled itself — allocating a month for the first time remains a
+Køkkengruppen decision; `roll_forward_koekkenvagter` is the scheduled follow-up that only ever
+advances an already-opened period one month at a time."""
 
 import argparse
 
@@ -30,7 +31,8 @@ class Command(BaseCommand):
     help = (
         "Fordel køkkenvagter (tier A + tier B) for en given måned, eller -- med --batch -- "
         "periodens tre første måneder i ét kald. Idempotent (kræver --force ved gentildeling). "
-        "--batch nægter at køre på eller før periodens egen præferencefrist -- --force omgår ikke det."
+        "Enhver allokering -- med eller uden --batch -- nægter at køre på eller før den måneds "
+        "periodes egen præferencefrist -- --force omgår ikke det."
     )
 
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:

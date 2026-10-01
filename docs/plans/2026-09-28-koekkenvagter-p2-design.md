@@ -411,14 +411,14 @@ something**, and the first shifts they see are ones their own answers shaped.
 | 2 | before 20 Nov 2026 | **Seed the balances.** Enter the informal scoreboard figures; run `seed_koekken_balances` (idempotent per resident via `uniq_koekken_startsaldo_per_resident`). | unchanged |
 | 3 | ~20 Nov 2026 | **Open the house.** A few days before the window, so people can look round before the banner appears. | **`ACCESS_ROLES = None`** |
 | 4 | 24 Nov → 1 Dec 2026 | **First real preference window.** Banner up house-wide; everyone declares all four inputs. | unchanged |
-| 5 | 1 Dec 2026 | **First real allocation** at the deadline, covering February, March and April 2027. | **`KOEKKEN_JOBS_ENABLED = 1`** |
+| 5 | 2 Dec 2026 | **First real allocation**, the day after the deadline (the deadline-timing guard refuses to run on or before 1 Dec, the deadline day itself), covering February, March and April 2027. | **`KOEKKEN_JOBS_ENABLED = 1`** |
 | — | 1 Feb 2027 | First shift anyone is expected to actually work. | steady state |
 
 ### The two settings changes
 
 ```
 koekken/access.py   ACCESS_ROLES = (Role.KOKKENGRUPPE,)  ->  None      ~20 Nov 2026
-config/settings.py  KOEKKEN_JOBS_ENABLED = 0             ->  1          1 Dec 2026
+config/settings.py  KOEKKEN_JOBS_ENABLED = 0             ->  1          2 Dec 2026
 ```
 
 That is the entire code delta. `ACCESS_ROLES = None` opens the views, the sidebar entry, the banner

@@ -22,8 +22,8 @@
   {% if koekken_needs_to_declare %}
     {% comment %}
       P2 design doc §8: a standing todo card, not a deadline banner -- shown to any resident who has
-      never declared a kitchen preference at all for their current periode (Amendment 3's
-      declared_at IS NULL condition, reused via koekken.services.resident_needs_to_declare).
+      never declared a kitchen preference at all, ever (Amendment 3's declared_at IS NULL condition,
+      reused via koekken.services.resident_needs_to_declare).
     {% endcomment %}
     <div class="card-flat" style="border-color:var(--brass, #b08d57)">
       <div class="card-pad" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">

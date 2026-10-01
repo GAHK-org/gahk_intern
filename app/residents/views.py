@@ -51,8 +51,8 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     roles = sorted(effective_roles(request))
 
     # P2 design doc §8: a dashboard todo card for a resident who has never declared a kitchen
-    # preference at all for their current periode -- gated on the rollout gate too, same reasoning
-    # as the base.html preference-window banner (koekken.context_processors' own note applies here).
+    # preference at all, ever -- gated on the rollout gate too, same reasoning as the base.html
+    # preference-window banner (koekken.context_processors' own note applies here).
     koekken_needs_to_declare = False
     from koekken.access import roles_allowed as koekken_allowed
 

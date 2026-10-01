@@ -1498,10 +1498,12 @@ def resident_needs_to_declare(resident: Resident, *, at: date | None = None) -> 
     **`at` is accepted for API symmetry with this module's other "as of a date" helpers, but plays no
     role in the check any more** -- "ever declared anywhere" has no date-scoping left to apply.
 
-    **Never writes (F2).** `residents.views.dashboard` calls this on EVERY authenticated dashboard GET
-    once the rollout gate is open (not only during a preference window, unlike the banner) -- this
-    query needs no `resolve_periode` (a `get_or_create`) at all now, which also means it no longer
-    needs `_periode_from_bounds` either."""
+    **Never writes (F2).** Two callers, both gated on the rollout gate being open (not only during a
+    preference window, unlike the banner): `residents.views.dashboard` calls this on EVERY
+    authenticated dashboard GET (the §8 todo card), and `koekken.views._resident_context` calls it for
+    the equivalent "needs_to_declare" card on the resident's own `/intern/koekken/` page
+    (`templates/koekken/index.html`) -- this query needs no `resolve_periode` (a `get_or_create`) at
+    all now, which also means it no longer needs `_periode_from_bounds` either."""
     return not Praeference.objects.filter(resident=resident).exists()
 
 
