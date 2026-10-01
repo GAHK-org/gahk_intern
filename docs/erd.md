@@ -667,6 +667,13 @@ erDiagram
         datetime created_at
     }
 
+    koekken_Fridag {
+        int id PK
+        date date
+        string kind
+        string reason
+    }
+
     core_PushSubscription }o--|| residents_Resident : "user"
     residents_Resident }o--|o residents_Resident : "sponsor"
     residents_Residency }o--|| residents_Resident : "resident"
@@ -1193,6 +1200,13 @@ erDiagram
         int resolved_by_id FK
         datetime resolved_at
         datetime created_at
+    }
+
+    koekken_Fridag {
+        int id PK
+        date date
+        string kind
+        string reason
     }
 
     residents_Resident { }
