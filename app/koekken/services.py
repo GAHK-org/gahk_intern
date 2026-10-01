@@ -168,11 +168,16 @@ class FridagResult:
     reports it). `deleted_vagter` is how many already-generated `Vagt` rows for those pairs were
     removed -- 0 when the affected month had not been generated yet, in which case `generate_vagter`'s
     own seam (A5.3) is the only mechanism that will ever apply and there is nothing to re-allocate or
-    re-post. `reallocated_months` is every `(year, month)` that was actually re-allocated and
-    re-posted as a consequence -- empty both when nothing was deleted AND when the month had not yet
-    been allocated in the first place (2026-10 review, F3: there is nothing to re-seat yet, and
-    force-allocating it now would stick permanently, pre-empting the normal batch/roll-forward
-    schedule -- see `declare_fridag`'s docstring).
+    re-post. `reallocated_months` is every `(year, month)` whose `TILDELT` rows were actually
+    re-seated (`allocate_month(force=True)` ran) as a consequence -- empty both when nothing was
+    deleted AND when the month had no `TILDELT` rows to reseat in the first place (2026-10 review, F3:
+    there is nothing to re-seat yet, and force-allocating it now would stick permanently, pre-empting
+    the normal batch/roll-forward schedule -- see `declare_fridag`'s docstring). **Obligation
+    re-posting is gated independently of this field** (2026-10 review, finding (b)):
+    `post_obligation` can still run for a month that is NOT in `reallocated_months` (e.g. every
+    assignment is already settled past `TILDELT`, so there is nothing left to reseat, but the month
+    still carries `FORPLIGTELSE` rows that need reconciling against the reduced supply) -- see
+    `declare_fridag`'s docstring for exactly what gates each.
 
     `notifications` is every resident who genuinely lost their last assignment in the affected month
     as a net result of re-allocation (2026-10 review, F2) -- NOT merely whoever held the exact
@@ -2088,24 +2093,36 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
          existing force mechanism, never new allocation logic) and re-post its obligation
          (`post_obligation` -- reusing its existing stale-row reconciliation, never new ledger logic;
          it derives a month's total from actual `Vagt` rows, so a smaller supply reconciles correctly
-         on re-run with nothing extra written here) -- **but only when the month had already been
-         allocated BEFORE this call touched it** (2026-10 review, F3). Whether any `TILDELT` row
-         existed for `(year, month)` -- any kind, not only the excluded one, matching exactly what
-         `allocate_month` itself re-seats -- is checked BEFORE any `Vagt` row is deleted. A
-         generated-but-not-yet-allocated month is a normal, long-lived state in this codebase
-         (generation can run up to 5 months ahead; allocation only reaches a month at its periode's
-         deadline batch, or later via the one-month-at-a-time roll-forward) -- exactly A5.4's own
-         happy path, declaring fridage right after generating, before the deadline. Force-allocating
-         it here anyway would (a) hit `allocate_month`'s own deadline-timing guard and refuse the
-         WHOLE declaration, including the `Fridag` row, whenever called before that deadline, and (b)
-         when called early enough that the guard does not even apply yet, seat it prematurely against
-         whatever population/balance data exists AT DECLARATION TIME -- and since
-         `roll_forward_allocation` skips months that are ALREADY allocated, that premature allocation
-         would stick permanently, never redone closer to the month with current data. Skipping
-         re-allocation/re-post entirely for a not-yet-allocated month sidesteps both: there is nothing
-         to re-seat yet, the `Fridag` row just written is permanent, and `generate_vagter`'s `is_fridag`
-         seam (A5.3, untouched) is what keeps the excluded `(date, kind)` pair from ever being
-         regenerated later, even if generation for this periode somehow runs again.
+         on re-run with nothing extra written here) -- **gated by two SEPARATE checks, both evaluated
+         BEFORE any `Vagt` row is deleted** (2026-10 review, F3, refined by finding (b)):
+
+         * Re-allocation runs only when `(year, month)` already had any `TILDELT` row -- any kind, not
+           only the excluded one, matching exactly what `allocate_month` itself re-seats. A
+           generated-but-not-yet-allocated month is a normal, long-lived state in this codebase
+           (generation can run up to 5 months ahead; allocation only reaches a month at its periode's
+           deadline batch, or later via the one-month-at-a-time roll-forward) -- exactly A5.4's own
+           happy path, declaring fridage right after generating, before the deadline. Force-allocating
+           it here anyway would (a) hit `allocate_month`'s own deadline-timing guard and refuse the
+           WHOLE declaration, including the `Fridag` row, whenever called before that deadline, and (b)
+           when called early enough that the guard does not even apply yet, seat it prematurely against
+           whatever population/balance data exists AT DECLARATION TIME -- and since
+           `roll_forward_allocation` skips months that are ALREADY allocated, that premature allocation
+           would stick permanently, never redone closer to the month with current data. Skipping
+           re-allocation entirely for a not-yet-allocated month sidesteps both: there is nothing to
+           re-seat yet, the `Fridag` row just written is permanent, and `generate_vagter`'s `is_fridag`
+           seam (A5.3, untouched) is what keeps the excluded `(date, kind)` pair from ever being
+           regenerated later, even if generation for this periode somehow runs again.
+         * Re-posting obligation runs independently, whenever `(year, month)` already has any
+           `FORPLIGTELSE`-kind `KoekkenPost` row -- i.e. obligation was posted for it at some earlier
+           point and now needs reconciling against the reduced supply. This is deliberately NOT tied
+           to whether there is anything to re-seat: a month can be fully "settled" (every assignment
+           already `UDFOERT`/`IKKE_UDFOERT`/etc, so there is nothing left in `TILDELT` to re-allocate)
+           while still having an unfilled or future slot that a fridag removes -- obligation is still
+           too high for that month until `post_obligation` re-runs. Safe to call on its own:
+           `post_obligation` derives the month's total purely from `Sum(headcount x duration_minutes)`
+           over actual `Vagt` rows and reconciles via delete-stale-then-`update_or_create` -- it never
+           reads `VagtTildeling`/`TILDELT` state, so it is correct whether or not re-allocation ran in
+           the same call.
 
     **Two guards, both checked BEFORE any write** (A5.5), so a refusal leaves the database completely
     unchanged -- no partial `Fridag` row, no partially-deleted month:
@@ -2122,7 +2139,17 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
     "actually ended up worse off" are different sets -- a resident whose only shift was the deleted
     one and who the reshuffle does not reseat anywhere has genuinely lost a shift; a resident whose
     assignment merely MOVED to a different day/slot still has one and must never be told theirs is
-    cancelled. Only the former land in `FridagResult.notifications` -- see that dataclass's docstring
+    cancelled. **The diff is per-shift, not merely per-resident-presence** (2026-10 review, finding
+    (a)): for each resident who held anything before, their held `Vagt` pks before and after are
+    compared as SETS -- a strict reduction in how many they end up holding (`len(after) < len(before)`)
+    means they genuinely lost one or more of their shifts, named by exactly which pks dropped out of
+    their holdings, REGARDLESS of whether they still hold (or even gained) some other shift that same
+    month; a resident whose set merely changed without shrinking (same count, different pk(s), or a
+    net gain) is a pure reshuffle -- `moved`, never notified. Without this, a resident holding two
+    shifts who loses only one of them (the other staying `TILDELT`) would never disappear from
+    `after_by_resident` entirely, so the old per-resident-presence check wrongly filed them as
+    "moved" and they were never told their shift was cancelled. Only genuine net losses land in
+    `FridagResult.notifications` -- see that dataclass's docstring
     for the exact `(resident, audience, message)` shape and for why dispatch itself is NOT done here
     (F1: a management command's `--dry-run` only rolls back AFTER this function returns, so sending a
     real push from inside it would survive the rollback that undoes every other write). The audience
@@ -2153,6 +2180,7 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
         )
 
     year, month = for_date.year, for_date.month
+    periode = resolve_periode(for_date)
     result = FridagResult()
     with transaction.atomic():
         for kind in kind_list:
@@ -2162,30 +2190,45 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
             if created:
                 result.created.append(fridag)
 
-        # F3: whether the month was already allocated, checked BEFORE any Vagt row is touched -- see
-        # the docstring above. Scoped to the whole month (every kind), matching allocate_month exactly.
-        month_was_allocated = VagtTildeling.objects.filter(
+        # Finding (b), 2026-10 review: two INDEPENDENT questions, both checked BEFORE any Vagt row is
+        # touched -- see the docstring above. `has_tildelt_to_reseat` gates allocate_month (scoped to
+        # the whole month, every kind, matching allocate_month exactly); `has_existing_obligation`
+        # gates post_obligation and does NOT depend on TILDELT state at all -- a month can be fully
+        # settled (nothing left in TILDELT) while still carrying FORPLIGTELSE rows that need
+        # reconciling against the reduced supply.
+        has_tildelt_to_reseat = VagtTildeling.objects.filter(
             vagt__date__year=year, vagt__date__month=month, status=VagtTildeling.Status.TILDELT
         ).exists()
-        before_by_resident = _month_tildelt_by_resident(year, month) if month_was_allocated else {}
+        has_existing_obligation = KoekkenPost.objects.filter(
+            periode=periode, month=month, kind=KoekkenPost.Kind.FORPLIGTELSE
+        ).exists()
+        before_by_resident = _month_tildelt_by_resident(year, month) if has_tildelt_to_reseat else {}
 
         result.deleted_vagter = len(affected_vagter)
         for vagt in affected_vagter:
             vagt.delete()
 
-        if affected_vagter and month_was_allocated:
+        if affected_vagter and has_tildelt_to_reseat:
             allocate_month(year, month, force=True)
-            post_obligation(resolve_periode(for_date), month)
             result.reallocated_months.append((year, month))
 
+            # Finding (a), 2026-10 review: per-shift diff, not per-resident-presence -- see the
+            # docstring above. A resident is genuinely LOST if their held-Vagt-pk set shrank (they
+            # end up holding fewer of the month's shifts than before), regardless of whether they
+            # also still hold, or even gained, some other shift that month. A resident whose set
+            # merely changed without shrinking is a pure reshuffle -- MOVED, never notified.
             after_by_resident = _month_tildelt_by_resident(year, month)
-            lost_ids = set(before_by_resident) - set(after_by_resident)
-            moved_ids = {
-                rid
-                for rid, before_vagter in before_by_resident.items()
-                if rid in after_by_resident
-                and {v.pk for v in before_vagter} != {v.pk for v in after_by_resident[rid]}
-            }
+            lost_ids: set[int] = set()
+            moved_ids: set[int] = set()
+            lost_vagter_by_id: dict[int, list[Vagt]] = {}
+            for rid, before_vagter in before_by_resident.items():
+                before_pks = {v.pk for v in before_vagter}
+                after_pks = {v.pk for v in after_by_resident.get(rid, [])}
+                if len(after_pks) < len(before_pks):
+                    lost_ids.add(rid)
+                    lost_vagter_by_id[rid] = [v for v in before_vagter if v.pk not in after_pks]
+                elif before_pks != after_pks:
+                    moved_ids.add(rid)
 
             if lost_ids or moved_ids:
                 from core.push import subscribers
@@ -2201,8 +2244,11 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
                     if resident is None:
                         continue
                     audience = access.allowed_subscribers(subscribers(TOPIC).filter(user_id=rid))
-                    message = _fridag_notification_message(before_by_resident[rid], reason)
+                    message = _fridag_notification_message(lost_vagter_by_id[rid], reason)
                     result.notifications.append((resident, audience, message))
+
+        if affected_vagter and has_existing_obligation:
+            post_obligation(periode, month)
 
     return result
 

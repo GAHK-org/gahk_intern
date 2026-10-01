@@ -22,7 +22,13 @@ No UI view exists for this yet (P2 design doc's "Phasing" -- this amendment adds
 --dry-run is this action's preview, matching every other koekken management command's own --dry-run
 convention: run it first to see exactly what would change (how many Fridag rows, how many Vagt rows
 deleted, which month(s) re-allocated and re-posted, and -- F5 -- which residents are actually affected,
-either notified of a cancelled shift or left with a merely-moved one) before committing for real."""
+either notified of a cancelled shift or left with a merely-moved one) before committing for real.
+
+**Recommended timing, per the stakeholder:** declare a periode's fridage as part of generating that
+periode -- before its deadline-triggered batch allocation runs -- rather than in the middle of an
+already-allocated periode. Declared this early, there is nothing yet to delete, re-allocate or
+re-post; `generate_vagter`'s own `is_fridag` seam (A5.3) simply never creates those rows in the first
+place, which is the simpler of this command's two paths."""
 
 import argparse
 from datetime import date
@@ -40,7 +46,9 @@ class Command(BaseCommand):
         "Erklær en fridag for en dato (eller udvalgte vagttyper på den) -- opret Fridag-række(r), "
         "slet evt. allerede genererede vagter, genallokér og genbogfør de(n) berørte måned(er) hvis "
         "den allerede var allokeret, og notificér beboere der reelt mister en vagt. --dry-run viser "
-        "konsekvensen -- inklusive hvem der berøres -- uden at gennemføre den eller sende noget."
+        "konsekvensen -- inklusive hvem der berøres -- uden at gennemføre den eller sende noget. "
+        "Anbefales erklæret som en del af generering af periodens vagter, dvs. før periodens "
+        "deadline-udløste batch-allokering kører -- så er der intet at genallokere eller genbogføre."
     )
 
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
