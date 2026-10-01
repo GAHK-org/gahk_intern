@@ -31,8 +31,10 @@ from django.template.loader import render_to_string
 from django.test import Client, override_settings
 from django.utils import timezone
 
-from core.models import DevClock, Room
+from core import push
+from core.models import DevClock, PushSubscription, Room
 from koekken.models import (
+    Fridag,
     KoekkenPost,
     Periode,
     Praeference,
@@ -51,6 +53,7 @@ from koekken.services import (
     allocate_tier_b,
     balance_for,
     can_mark_done,
+    declare_fridag,
     flag_tildeling,
     flagged_by_names,
     generate_vagter,
@@ -3059,3 +3062,258 @@ def test_resident_has_declared_for_matches_by_kind_and_year_not_object_identity(
     Praeference.objects.create(resident=resident, periode=persisted)
 
     assert resident_has_declared_for(resident, unsaved) is True
+
+
+# =============================================================================================
+# Amendment 5: fridage -- A5.1-A5.7 (docs/plans/2026-09-21-koekkenvagter-design.md)
+# =============================================================================================
+
+
+@pytest.fixture
+def pushes(monkeypatch: pytest.MonkeyPatch, settings: object) -> list:
+    """Record push fan-outs instead of sending them. Lifted from test_events.py's identical fixture."""
+    settings.VAPID_PUBLIC_KEY = "test-public-key"  # type: ignore[attr-defined]
+    settings.VAPID_PRIVATE_KEY = "test-private-key"  # type: ignore[attr-defined]
+    settings.VAPID_ADMIN_EMAIL = "drift@gahk.dk"  # type: ignore[attr-defined]
+    sent: list = []
+
+    def record(subscriptions: object, payload: dict) -> int:
+        sent.append((sorted(s.user_id for s in subscriptions), payload))  # type: ignore[union-attr]
+        return len(sent)
+
+    monkeypatch.setattr(push, "_dispatch", record)
+    monkeypatch.setattr(push, "_run_in_background", lambda fn: fn())
+    return sent
+
+
+def _past_deadline(periode: Periode) -> None:
+    """Fast-forward DevClock past `periode`'s own preference deadline -- `allocate_month`'s timing
+    guard (which `declare_fridag`'s re-allocation step runs through) otherwise refuses every month in
+    these tests, exactly as it would for a real officer acting on a month this close. Callers must
+    already be inside `override_settings(DEBUG=True)`."""
+    DevClock.objects.update_or_create(
+        pk=1, defaults={"simulated_date": periode_deadline(periode) + timedelta(days=1)}
+    )
+
+
+def test_fridag_excluded_kind_not_generated_other_kinds_still_are() -> None:
+    """A5.3/A5.7: an excluded (date, kind) is skipped entirely by generate_vagter; other kinds on the
+    SAME date still generate normally -- A5.1's "per shift type, not per day" scope."""
+    excluded_date = date(2061, 7, 24)
+    Fridag.objects.create(date=excluded_date, kind=VagtRegel.Kind.AFTEN, reason="Test aften fri")
+
+    periode = resolve_periode(excluded_date)
+    generate_vagter(periode)
+
+    assert not Vagt.objects.filter(date=excluded_date, kind=VagtRegel.Kind.AFTEN).exists()
+    assert Vagt.objects.filter(date=excluded_date, kind=VagtRegel.Kind.MORGEN).exists()
+    assert Vagt.objects.filter(date=excluded_date, kind=VagtRegel.Kind.FROKOST).exists()
+
+
+def test_fridag_whole_day_exclusion_removes_every_kind_leaves_adjacent_dates_untouched() -> None:
+    """A5.1/A5.7: a whole day off is simply every kind excluded for that date -- no separate concept
+    -- and must not disturb the days immediately before/after it."""
+    excluded_date = date(2061, 12, 24)  # "juleaften"
+    for kind in VagtRegel.Kind:
+        Fridag.objects.create(date=excluded_date, kind=kind, reason="Juleaften")
+
+    periode = resolve_periode(excluded_date)
+    generate_vagter(periode)
+
+    assert not Vagt.objects.filter(date=excluded_date).exists()
+
+    for neighbour in (excluded_date - timedelta(days=1), excluded_date + timedelta(days=1)):
+        expected = VagtRegel.objects.filter(weekend=(neighbour.weekday() >= 5)).count()
+        assert Vagt.objects.filter(date=neighbour).count() == expected
+
+
+def test_generate_vagter_consults_fridag_seam_exactly_once_per_date_kind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A5.7's regression test for the seam itself (A5.3): generate_vagter must ask exactly ONE
+    question per (date, kind) candidate pair -- never twice, which is exactly what a future second,
+    independent skip path (e.g. P3's summer-presence source growing beside `is_fridag` instead of
+    plugging into it) would produce."""
+    from koekken import services as koekken_services
+
+    periode = resolve_periode(date(2062, 7, 1))  # SOMMER -- the shortest periode (62 days)
+
+    calls: list[tuple[date, str]] = []
+    original = koekken_services.is_fridag
+
+    def counting(for_date: date, kind: str) -> bool:
+        calls.append((for_date, kind))
+        return original(for_date, kind)
+
+    monkeypatch.setattr(koekken_services, "is_fridag", counting)
+
+    generate_vagter(periode)
+
+    expected: list[tuple[date, str]] = []
+    cursor = periode.start_date
+    while cursor <= periode.end_date:
+        for regel in VagtRegel.objects.filter(weekend=(cursor.weekday() >= 5)):
+            expected.append((cursor, regel.kind))
+        cursor += timedelta(days=1)
+
+    assert sorted(calls) == sorted(expected)
+    assert len(calls) == len(set(calls))  # no (date, kind) pair consulted more than once
+
+
+def test_declare_fridag_on_allocated_month_deletes_reallocates_and_reposts_exact_decrease(
+    make_resident: Callable,
+) -> None:
+    """A5.4/A5.7: declaring a fridag against an ALREADY-ALLOCATED month -- the normal case, per the
+    design doc's own ~122-days-ahead finding -- deletes the matching Vagt row, re-allocates the
+    month and re-posts obligation. The month's total obligation must fall by EXACTLY the removed
+    supply (headcount x duration_minutes), not merely "some"."""
+    year, month = 2063, 3
+    periode = resolve_periode(date(year, month, 15))
+    weekdays, _ = _weekday_and_weekend_dates(year, month)
+    kept_date, removed_date = weekdays[0], weekdays[1]
+    Vagt.objects.create(
+        periode=periode, date=kept_date, kind=VagtRegel.Kind.MORGEN, headcount=1, duration_minutes=60
+    )
+    Vagt.objects.create(
+        periode=periode, date=removed_date, kind=VagtRegel.Kind.MORGEN, headcount=1, duration_minutes=60
+    )
+    residents = [make_resident(email=f"fridag_decrease{i}@gahk.dk") for i in range(2)]
+    for r in residents:
+        _place(r, year, month)
+
+    with override_settings(DEBUG=True):
+        _past_deadline(periode)
+        allocate_tier_a(year, month)
+        post_obligation(periode, month)
+        total_before = -sum(
+            KoekkenPost.objects.filter(
+                periode=periode, month=month, kind=KoekkenPost.Kind.FORPLIGTELSE
+            ).values_list("delta_minutes", flat=True)
+        )
+        assert total_before == 120
+
+        result = declare_fridag(removed_date, [VagtRegel.Kind.MORGEN], reason="Test")
+
+        assert result.deleted_vagter == 1
+        assert result.reallocated_months == [(year, month)]
+        assert not Vagt.objects.filter(date=removed_date, kind=VagtRegel.Kind.MORGEN).exists()
+        assert Vagt.objects.filter(date=kept_date, kind=VagtRegel.Kind.MORGEN).exists()
+
+        total_after = -sum(
+            KoekkenPost.objects.filter(
+                periode=periode, month=month, kind=KoekkenPost.Kind.FORPLIGTELSE
+            ).values_list("delta_minutes", flat=True)
+        )
+
+    assert total_after == 60
+    assert total_before - total_after == 60  # exactly the removed supply (1 x 60 min)
+
+
+def test_declare_fridag_ledger_unchanged_by_deletion_arbejde_post_survives_with_null_vagt(
+    make_resident: Callable,
+) -> None:
+    """A5.6/A5.7: `KoekkenPost.vagt` is SET_NULL -- deleting its Vagt leaves an existing ARBEJDE
+    credit completely intact, just pointing at nothing. Reached via flag + uphold (-> IKKE_UDFOERT),
+    which the UDFOERT/ANMELDT guard (A5.5) does NOT block: the guard protects a shift CURRENTLY held
+    as done or disputed, not one already adjudicated away from that -- the credit itself remains a
+    real, untouched ledger row either way, append-only as always."""
+    year, month = 2064, 5
+    periode = _build_month(year, month, weekday_capacity=2, weekend_capacity=0)
+    worker = make_resident(email="fridag_ledger_worker@gahk.dk")
+    other = make_resident(email="fridag_ledger_other@gahk.dk")
+    flagger = make_resident(email="fridag_ledger_flagger@gahk.dk")
+    adjudicator = make_resident(email="fridag_ledger_adj@gahk.dk")
+    _place(worker, year, month)
+    _place(other, year, month)
+
+    with override_settings(DEBUG=True):
+        _past_deadline(periode)
+        allocate_tier_a(year, month)
+        tildeling = VagtTildeling.objects.get(resident=worker)
+        the_date = tildeling.vagt.date
+        mark_udfoert(tildeling, at=marking_window(tildeling.vagt)[0])
+        arbejde_post = KoekkenPost.objects.get(resident=worker, kind=KoekkenPost.Kind.ARBEJDE)
+
+        anmeldelse = flag_tildeling(tildeling, flagger, "Test")
+        resolve_anmeldelse(anmeldelse, upheld=True, resolved_by=adjudicator)
+        tildeling.refresh_from_db()
+        assert tildeling.status == VagtTildeling.Status.IKKE_UDFOERT  # not blocked by the guard
+
+        result = declare_fridag(the_date, [VagtRegel.Kind.MORGEN], reason="Test")
+
+    assert result.deleted_vagter == 1
+    assert not VagtTildeling.objects.filter(pk=tildeling.pk).exists()  # cascaded with its Vagt (A5.6)
+    arbejde_post.refresh_from_db()
+    assert arbejde_post.vagt is None
+    assert arbejde_post.delta_minutes == 60  # untouched -- the ledger is append-only
+
+
+def test_declare_fridag_refuses_settled_assignment_and_changes_nothing(make_resident: Callable) -> None:
+    """A5.5/A5.7: a date carrying an UDFOERT assignment refuses, with a clear Danish message, and
+    leaves the database COMPLETELY unchanged -- no Fridag row, no deleted Vagt, nothing."""
+    year, month = 2065, 4
+    periode = _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
+    worker = make_resident(email="fridag_guard_worker@gahk.dk")
+    _place(worker, year, month)
+
+    with override_settings(DEBUG=True):
+        _past_deadline(periode)
+        allocate_tier_a(year, month)
+        tildeling = VagtTildeling.objects.get(resident=worker)
+        the_date = tildeling.vagt.date
+        mark_udfoert(tildeling, at=marking_window(tildeling.vagt)[0])
+
+        vagt_count_before = Vagt.objects.count()
+        tildeling_count_before = VagtTildeling.objects.count()
+        post_count_before = KoekkenPost.objects.count()
+
+        with pytest.raises(KoekkenAllocationError, match="udført eller anmeldt"):
+            declare_fridag(the_date, [VagtRegel.Kind.MORGEN], reason="Test")
+
+    assert Fridag.objects.count() == 0
+    assert Vagt.objects.count() == vagt_count_before
+    assert VagtTildeling.objects.count() == tildeling_count_before
+    assert KoekkenPost.objects.count() == post_count_before
+
+
+def test_declare_fridag_refuses_past_date_and_changes_nothing() -> None:
+    """A5.5/A5.7: a date in the past refuses, with a clear Danish message, and changes nothing."""
+    past_date = date(2020, 1, 1)
+    fridag_count_before = Fridag.objects.count()
+    vagt_count_before = Vagt.objects.count()
+
+    with pytest.raises(KoekkenAllocationError, match="fortiden"):
+        declare_fridag(past_date, [VagtRegel.Kind.MORGEN], reason="Test")
+
+    assert Fridag.objects.count() == fridag_count_before
+    assert Vagt.objects.count() == vagt_count_before
+
+
+def test_declare_fridag_notifies_residents_who_lose_an_assignment(
+    make_resident: Callable, pushes: list
+) -> None:
+    """A5.4/A5.7: a resident who loses a `VagtTildeling` to a fridag declaration is pushed a
+    notification on their own `wants_koekken` topic -- the same mechanism, audience-narrowing included,
+    `resolve_anmeldelse` already uses for a flag ruling."""
+    year, month = 2066, 9
+    periode = _build_month(year, month, weekday_capacity=2, weekend_capacity=0)
+    worker = make_resident(email="fridag_notify_worker@gahk.dk")
+    other = make_resident(email="fridag_notify_other@gahk.dk")
+    _place(worker, year, month)
+    _place(other, year, month)
+    PushSubscription.objects.create(
+        user=worker, endpoint="https://example.test/ep1", auth="a", p256dh="p", wants_koekken=True
+    )
+
+    with override_settings(DEBUG=True):
+        _past_deadline(periode)
+        allocate_tier_a(year, month)
+        tildeling = VagtTildeling.objects.get(resident=worker)
+        the_date = tildeling.vagt.date
+
+        declare_fridag(the_date, [VagtRegel.Kind.MORGEN], reason="Juleaften")
+
+    assert len(pushes) == 1
+    user_ids, payload = pushes[0]
+    assert user_ids == [worker.pk]
+    assert "aflyst" in payload["body"]

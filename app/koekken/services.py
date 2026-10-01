@@ -66,6 +66,7 @@ from core.clock import current_date, current_datetime
 from residents.models import Residency, Resident
 
 from .models import (
+    Fridag,
     KoekkenPost,
     Periode,
     Praeference,
@@ -157,6 +158,25 @@ class ReconciliationResult:
     still_unfilled: list[Vagt] = field(default_factory=list)
 
 
+@dataclass
+class FridagResult:
+    """What one `declare_fridag` call did -- Amendment 5 (A5.4), for the management command to report
+    on and for tests to assert on.
+
+    `created` is the new `Fridag` rows actually written (a `(date, kind)` pair already declared is
+    left untouched, not duplicated -- the unique constraint already guarantees that, this just
+    reports it). `deleted_vagter` is how many already-generated `Vagt` rows for those pairs were
+    removed -- 0 when the affected month had not been generated yet, in which case `generate_vagter`'s
+    own seam (A5.3) is the only mechanism that will ever apply and there is nothing to re-allocate or
+    re-post. `reallocated_months` is every `(year, month)` that was actually re-allocated and
+    re-posted as a consequence.
+    """
+
+    created: list[Fridag] = field(default_factory=list)
+    deleted_vagter: int = 0
+    reallocated_months: list[tuple[int, int]] = field(default_factory=list)
+
+
 def _periode_bounds(for_date: date) -> tuple[str, int, date, date]:
     """(kind, year, start, end) for the semester/summer period containing `for_date`.
 
@@ -225,8 +245,23 @@ def periode_deadline(periode: Periode) -> date:
     return _deadline_from_start(periode.start_date)
 
 
+def is_fridag(for_date: date, kind: str) -> bool:
+    """Whether `(for_date, kind)` is excluded from generation entirely -- Amendment 5 (A5.3). The
+    SINGLE question `generate_vagter` asks per `(date, kind)` pair, built as a seam rather than an
+    inline `Fridag.objects.filter(...)` check: P3's future summer-presence mechanism is the same
+    question ("should this date generate shifts?") answered from a different source (`FerieUge`,
+    per-week presence, rather than `Fridag`, per-kind exclusion) -- routing every caller through this
+    one function now means that later source has exactly one place to plug an additional check into,
+    rather than growing a second, independent skip path beside this one. P3 is not built here; only
+    the seam is.
+    """
+    return Fridag.objects.filter(date=for_date, kind=kind).exists()
+
+
 def generate_vagter(periode: Periode) -> list[Vagt]:
-    """Create the `Vagt` rows for every day in `periode`, one per applicable `VagtRegel`.
+    """Create the `Vagt` rows for every day in `periode`, one per applicable `VagtRegel` -- except a
+    `(date, kind)` pair declared a `Fridag` (Amendment 5, A5.3), which `is_fridag` skips before ever
+    reaching `get_or_create` below.
 
     Idempotent via `get_or_create` on the `(date, kind)` constraint — re-running after `VagtRegel`
     has changed does NOT touch already-generated `Vagt` rows (the snapshot invariant; see
@@ -242,6 +277,8 @@ def generate_vagter(periode: Periode) -> list[Vagt]:
     while current <= periode.end_date:
         is_weekend = current.weekday() >= 5  # Saturday=5, Sunday=6
         for regel in regler_by_weekend[is_weekend]:
+            if is_fridag(current, regel.kind):
+                continue
             vagt, was_created = Vagt.objects.get_or_create(
                 date=current,
                 kind=regel.kind,
@@ -1972,6 +2009,109 @@ def post_obligation(periode: Periode, month: int, *, officer: Resident | None = 
         )
         written += 1
     return (written, len(present))
+
+
+def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> FridagResult:
+    """Declare `for_date` a fridag for each of `kinds` -- Amendment 5, A5.4. **This is the normal
+    path, not an edge case**: a periode is allocated ~122 days before it starts (the design doc's own
+    finding), so a fridag declared in the months leading up to it is almost always against a month
+    whose `Vagt` rows (and likely assignments) already exist, which `generate_vagter`'s seam (A5.3)
+    cannot retroactively undo. One officer action does all three steps A5.4 calls for, as ONE atomic
+    write:
+
+      1. Create the `Fridag` row(s) -- idempotent; a pair already declared is left as-is (the unique
+         constraint already guarantees that).
+      2. Delete the matching `Vagt` row(s), if the month was already generated. `VagtTildeling`
+         CASCADEs with its `Vagt` (A5.6) -- this is WHY residents holding one of those are notified
+         below. `KoekkenPost.vagt` SET_NULLs instead (A5.6) -- the ledger is left completely intact,
+         no special handling needed for it here.
+      3. Re-allocate the affected month (`allocate_month(year, month, force=True)` -- reusing the
+         existing force mechanism, never new allocation logic) and re-post its obligation
+         (`post_obligation` -- reusing its existing stale-row reconciliation, never new ledger logic;
+         it derives a month's total from actual `Vagt` rows, so a smaller supply reconciles correctly
+         on re-run with nothing extra written here).
+
+    **Two guards, both checked BEFORE any write** (A5.5), so a refusal leaves the database completely
+    unchanged -- no partial `Fridag` row, no partially-deleted month:
+
+    * Refuses when any existing assignment for `for_date`/`kinds` already has status `UDFOERT` or
+      `ANMELDT` -- you cannot retroactively un-hold a shift somebody actually worked or is disputing,
+      and its ledger entry would be left pointing at nothing useful to re-adjudicate.
+    * Refuses a `for_date` in the past, read via `core.clock.current_date()` (never
+      `django.utils.timezone` directly) -- pointless, and it would only disturb settled history.
+
+    **Residents who lose an assignment are notified** -- every resident who held a `VagtTildeling` on
+    one of the deleted `Vagt` rows (whatever its surviving status; the guard above has already ruled
+    out `UDFOERT`/`ANMELDT`, so what remains is `TILDELT` or `IKKE_UDFOERT`), pushed to their own
+    `wants_koekken` topic, narrowed through `koekken.access.allowed_subscribers` exactly as
+    `resolve_anmeldelse` already does for a flag ruling -- same reasoning: a resident who opted in
+    before a rollout gate closes (or before it is ever opened) must never be sent a link that then
+    403s them. Delivered inline (`background=False`), matching `events.services.
+    send_deadline_reminder`'s reasoning for anything reachable from a management command: a daemon
+    thread started from `handle()` is killed mid-send the moment the process exits.
+
+    Declaring a fridag for a kind that has no `Vagt` row yet (a genuine look-ahead month) still writes
+    its `Fridag` row -- there is simply nothing to delete, re-allocate, re-post or notify for it; that
+    is `generate_vagter`'s seam doing its job later, with no re-allocation ever needed.
+    """
+    today = current_date()
+    if for_date < today:
+        raise KoekkenAllocationError(
+            f"{for_date} ligger i fortiden -- der kan ikke erklæres fridag for en dato der er passeret."
+        )
+
+    kind_list = list(kinds)
+    affected_vagter = list(Vagt.objects.filter(date=for_date, kind__in=kind_list))
+    has_settled_assignment = VagtTildeling.objects.filter(
+        vagt__in=affected_vagter,
+        status__in=[VagtTildeling.Status.UDFOERT, VagtTildeling.Status.ANMELDT],
+    ).exists()
+    if has_settled_assignment:
+        raise KoekkenAllocationError(
+            f"{for_date} kan ikke erklæres fridag -- der findes allerede en udført eller anmeldt "
+            "vagt på denne dato, som ikke kan omgøres."
+        )
+
+    result = FridagResult()
+    with transaction.atomic():
+        for kind in kind_list:
+            fridag, created = Fridag.objects.get_or_create(
+                date=for_date, kind=kind, defaults={"reason": reason}
+            )
+            if created:
+                result.created.append(fridag)
+
+        affected_tildelinger = list(
+            VagtTildeling.objects.filter(vagt__in=affected_vagter).select_related("resident")
+        )
+        resident_ids = {t.resident_id for t in affected_tildelinger}
+
+        result.deleted_vagter = len(affected_vagter)
+        for vagt in affected_vagter:
+            vagt.delete()
+
+        if affected_vagter:
+            year, month = for_date.year, for_date.month
+            allocate_month(year, month, force=True)
+            post_obligation(resolve_periode(for_date), month)
+            result.reallocated_months.append((year, month))
+
+        if resident_ids:
+            from core.push import send, subscribers  # local -- see resolve_anmeldelse's own reasoning
+
+            from . import access
+
+            audience = access.allowed_subscribers(subscribers(TOPIC).filter(user_id__in=resident_ids))
+            reason_suffix = f" ({reason})" if reason else ""
+            send(
+                audience,
+                "Køkkenvagt",
+                f"Din køkkenvagt {for_date:%d.%m.%Y} er aflyst{reason_suffix} (fridag).",
+                "/intern/koekken/",
+                background=False,
+            )
+
+    return result
 
 
 def rebase_to_zero_mean(entries: list[tuple[Resident, int]]) -> dict[int, int]:

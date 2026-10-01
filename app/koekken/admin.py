@@ -1,6 +1,7 @@
 from django.contrib import admin
 
 from .models import (
+    Fridag,
     KoekkenPost,
     Periode,
     Praeference,
@@ -65,3 +66,10 @@ class VagtAnmeldelseAdmin(admin.ModelAdmin):
     list_filter = ["status", "previous_status"]
     search_fields = ["flagged_by__first_name", "flagged_by__last_name", "flagged_by__email"]
     readonly_fields = ["created_at"]
+
+
+@admin.register(Fridag)
+class FridagAdmin(admin.ModelAdmin):
+    list_display = ["date", "kind", "reason"]
+    list_filter = ["kind"]
+    date_hierarchy = "date"

@@ -49,6 +49,16 @@ only *when* `allocate_tier_a` may run and *how it ranks* changed.
 (that needs `FerieUge`, weekly presence — P3, see the design doc's "Summer" section on why `Residency`
 alone is wrong for July/August). Leaving the choice in now means the eventual P3 migration adds a
 model, not a schema change to this one.
+
+**Amendment 5** (the design doc's "fridage" section) adds `Fridag`: concrete, per-(date, kind)
+exclusion rows Køkkengruppen enters by hand (juleaften, nytårsaften, ...) so `generate_vagter` never
+creates a `Vagt` for them in the first place. It is a new, self-contained leaf on top of everything
+above — it changes nothing about `Vagt`'s snapshot invariant, the ledger's append-only shape, or
+`VagtTildeling`'s survivor handling; `koekken.services.declare_fridag` is the one place that reaches
+backwards into an already-generated month (delete the matching `Vagt` rows, `allocate_month(...,
+force=True)`, `post_obligation(...)` — all three reusing existing machinery, never new logic) when a
+fridag is declared too late to be caught by generation alone, which the design doc's own arithmetic
+(a periode is allocated ~122 days before it starts) says is the normal case, not an edge case.
 """
 
 from datetime import date, time
@@ -398,3 +408,37 @@ class VagtAnmeldelse(models.Model):
 
     def __str__(self) -> str:
         return f"Anmeldelse af {self.vagt_tildeling} af {self.flagged_by.full_name} ({self.get_status_display()})"
+
+
+class Fridag(models.Model):
+    """One excluded `(date, kind)` pair -- Amendment 5 (A5.2): a day the kitchen does not need
+    covering for that shift type at all, e.g. juleaften, nytårsaften. `koekken.services.is_fridag` is
+    the SINGLE question `generate_vagter` asks per `(date, kind)` before creating a `Vagt` for it --
+    see that function's docstring for why it is built as a seam rather than an inline query, and never
+    bypass it with a direct `Fridag.objects` check elsewhere.
+
+    Mirrors `Vagt`'s own `(date, kind)` key exactly, and is the same shape as P2's
+    `PraeferenceDag(praeference, kind, weekday)` -- this app's existing idiom for "one row per
+    excluded/selected (something, kind)" rather than a new one. A whole day off is simply every kind
+    excluded for that date; it needs no separate flag.
+
+    Concrete dates only, entered per periode -- there is deliberately no recurring month/day rule here
+    (the design doc's "fridage" section: Danish holidays split awkwardly between fixed dates like
+    juleaften and movable ones like påske, which a rule engine would handle no better than a human
+    with a calendar). `reason` ("Juleaften") is shown on the tablet and in Køkkengruppen's list; the
+    UI writes the same text across a date's rows, so duplication across kinds for the same date is
+    harmless and has a single writer.
+    """
+
+    date = models.DateField()
+    kind = models.CharField(max_length=10, choices=VagtRegel.Kind.choices)
+    reason = models.CharField(max_length=255, blank=True, verbose_name="Begrundelse")
+
+    class Meta:
+        ordering = ["date", "kind"]
+        constraints = [
+            models.UniqueConstraint(fields=["date", "kind"], name="uniq_fridag_date_kind"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.get_kind_display()} {self.date:%Y-%m-%d} (fridag)"
