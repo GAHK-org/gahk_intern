@@ -885,8 +885,8 @@
   /* The box a day's sticky heading is confined to -- see _archive_chunk.html for why it has to
      exist. No styling of its own on purpose: the messages inside are the same partial the live
      feed renders, and anything set here would apply to them and not to their live counterparts. */
-  .archive-dayblock { display:block; }
-  .archive-day { position:sticky; top:4px; z-index:1; width:fit-content;
+  .day-block { display:block; }
+  .day-chip { position:sticky; top:4px; z-index:1; width:fit-content;
     margin:18px auto 4px; padding:3px 12px; border-radius:999px;
     background:var(--paper); border:1px solid var(--border);
     /* The shadow is what makes a STUCK chip legible. Parked at the top of the scrollport it sits
