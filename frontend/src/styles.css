@@ -885,6 +885,31 @@
   /* The box a day's sticky heading is confined to -- see _archive_chunk.html for why it has to
      exist. No styling of its own on purpose: the messages inside are the same partial the live
      feed renders, and anything set here would apply to them and not to their live counterparts. */
+  /* ---- the duration sheet (#192) ----
+     Anchored to the composer rather than centred on the viewport: the question is about the message
+     being sent, and the composer is where that message is. `.pop` already supplies the backdrop and
+     the dismissal; what is here is the panel's own layout. */
+  .duration-sheet > summary { list-style:none; }
+  .duration-sheet > summary::-webkit-details-marker { display:none; }
+  .duration-panel { position:absolute; right:0; bottom:calc(100% + 8px); z-index:3;
+    width:min(320px, calc(100vw - 24px)); padding:14px;
+    background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+    box-shadow:0 6px 24px rgba(24, 40, 30, .18); }
+  .duration-title { margin:0 0 10px; font-weight:700; font-size:14px; color:var(--ink); }
+  .duration-options { display:grid; grid-template-columns:repeat(3, 1fr); gap:6px; }
+  /* 44px is the smallest target reliably hit with a thumb, and this is a phone-first feed -- the
+     whole point of the sheet is that it is answered in one tap without aiming. */
+  .duration-option { min-height:44px; padding:6px 4px; border-radius:var(--radius-sm);
+    border:1px solid var(--border); background:var(--surface); color:var(--ink);
+    font:inherit; font-size:13px; font-weight:600; cursor:pointer; }
+  .duration-option.is-chosen { background:var(--green); border-color:var(--green); color:#fff; }
+  .duration-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
+  .duration-cancel, .duration-confirm { min-height:40px; padding:0 14px; border-radius:var(--radius-sm);
+    font:inherit; font-size:14px; font-weight:600; cursor:pointer; }
+  .duration-cancel { border:1px solid var(--border); background:var(--surface); color:var(--ink); }
+  .duration-confirm { border:1px solid var(--green); background:var(--green); color:#fff; }
+  .duration-confirm:disabled { opacity:.45; cursor:not-allowed; }
+
   .archive-dayblock { display:block; }
   .archive-day { position:sticky; top:4px; z-index:1; width:fit-content;
     margin:18px auto 4px; padding:3px 12px; border-radius:999px;

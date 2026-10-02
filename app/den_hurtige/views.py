@@ -253,8 +253,10 @@ def feed(request: HttpRequest, channel: str | None = None) -> HttpResponse:
         {
             "posts": posts_for(request, resolved),
             "duration_choices": DURATION_CHOICES,
-            # Per channel: a plan for tonight and a lost bike key go stale on different schedules.
-            "default_duration": resolved.default_duration,
+            # Nothing is preselected (#192): the author answers before the message goes out.
+            # `draft` is the text of a submission the server just refused, carried across the
+            # redirect so a rejected message is not retyped.
+            "draft": request.session.pop(DRAFT_SESSION_KEY, ""),
             "max_content_chars": MAX_CONTENT_CHARS,
             "push_configured": services.is_configured(),
             "vapid_public_key": services.vapid_public_key(),
@@ -599,6 +601,22 @@ def _channel_of(post: QuickPost) -> str:
     return channel.url
 
 
+DRAFT_SESSION_KEY = "den_hurtige_draft"
+
+
+def _reject(request: HttpRequest, channel: Channel, content: str, message: str) -> HttpResponseRedirect:
+    """Refuse a submission and bounce back to the feed with the text still in the box.
+
+    The composer posts and redirects, so without this a rejected message is simply gone — and it was
+    typed in a hurry by somebody who thought they had sent it. An attached image cannot be carried:
+    no server can refill a file input. The text is the part worth saving and the part that took the
+    effort; the warning says the image has to be picked again.
+    """
+    messages.error(request, message)
+    request.session[DRAFT_SESSION_KEY] = content
+    return redirect(channel.url)
+
+
 def _posting_channel(request: HttpRequest) -> Channel:
     """The channel a submitted form belongs to.
 
@@ -623,15 +641,19 @@ def create_post(request: HttpRequest) -> HttpResponseRedirect:
         messages.error(request, "Skriv en besked før du slår op.")
         return redirect(channel.url)
     if len(content) > MAX_CONTENT_CHARS:
-        messages.error(request, f"Beskeden må højst fylde {MAX_CONTENT_CHARS} tegn.")
-        return redirect(channel.url)
+        return _reject(request, channel, content, f"Beskeden må højst fylde {MAX_CONTENT_CHARS} tegn.")
 
+    # THE ONE FIELD THIS VIEW WILL NOT GUESS AT (#192). Every other unrecognised value here falls
+    # back to a default, because a resident who has typed an urgent message should not lose it to a
+    # hidden field they never saw — but the duration is not hidden any more, it is the question the
+    # composer asks before it will send, and quietly answering it with 2 døgn is the whole reason
+    # nothing ever left the feed.
     try:
-        minutes = int(request.POST.get("duration", channel.default_duration))
+        minutes = int(request.POST.get("duration") or 0)
     except ValueError:
-        minutes = channel.default_duration
+        minutes = 0
     if minutes not in VALID_DURATIONS:
-        minutes = channel.default_duration
+        return _reject(request, channel, content, "Vælg hvor længe beskeden skal være relevant.")
 
     post = QuickPost.objects.create(
         author=author,

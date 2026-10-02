@@ -233,7 +233,17 @@
     {% comment %}
       Composer, pinned to the bottom like a chat input. `.main` is the scroll container (not the
       window), so position:sticky is enough — no fixed positioning, which would fight the iOS
-      keyboard. The duration stays a native <select> so iOS gives it the wheel picker.
+      keyboard.
+
+        THE DURATION IS ASKED, NOT ASSUMED (#192). Pressing send opens the sheet below; the author
+        answers, and that choice is what posts the message. Nothing is preselected anywhere, because
+        a preselected 2 døgn is precisely what stopped anybody choosing.
+
+        The native <select> is the NO-JAVASCRIPT path and nothing else. It is `required` with an
+        empty first option, so the browser itself refuses to send until a duration is picked — the
+        same rule the sheet enforces, by the only means available without scripting. feed.ts hides
+        it and drops `required` the moment it takes over, so a scripted browser is asked exactly
+        once, by the sheet. It stays a native <select> there so iOS gives it the wheel picker.
     {% endcomment %}
     <form class="composer" method="post" action="{% url 'den_hurtige:create_post' %}"
           enctype="multipart/form-data" id="js-composer">
@@ -252,20 +262,47 @@
       <div class="composer-main">
         <label class="sr-only" for="id_content">Besked</label>
         <textarea id="id_content" name="content" rows="1" maxlength="{{ max_content_chars }}" required
-                  placeholder="Skriv i {{ channel.name }}…" enterkeyhint="enter"></textarea>
+                  placeholder="Skriv i {{ channel.name }}…" enterkeyhint="enter">{{ draft }}</textarea>
         <div class="composer-file" id="js-composer-file" hidden></div>
       </div>
 
-      <label class="composer-duration" title="Hvor længe beskeden er relevant">
+      <label class="composer-duration" id="js-composer-duration" title="Hvor længe beskeden er relevant">
         <span class="sr-only">Relevant i</span>
-        <select name="duration">
+        <select name="duration" id="id_duration" required>
+          <option value="" selected>⏱ Vælg tid</option>
           {% for minutes, label in duration_choices %}
-            <option value="{{ minutes }}" {% if minutes == default_duration %}selected{% endif %}>⏱ {{ label }}</option>
+            <option value="{{ minutes }}">⏱ {{ label }}</option>
           {% endfor %}
         </select>
       </label>
 
       <button type="submit" class="composer-send" title="Send" aria-label="Send">↑</button>
+
+      {% comment %}
+        The sheet. A <details class="pop"> rather than a hand-rolled overlay, so it inherits the
+        click-away and Escape handling every other panel on this page already has (feed.ts,
+        DISMISSABLE) — it is opened from script instead of by pressing its summary, which is the
+        only thing unusual about it. The summary is still there and still focusable: Escape hands
+        focus back to it, and that has to land on something real.
+
+        Inside the form, so the answer is simply the <select>'s value by the time it submits and
+        there is no second source of truth to keep in step.
+      {% endcomment %}
+      <details class="pop duration-sheet" id="js-duration-sheet">
+        <summary class="duration-sheet-summary sr-only">Vælg hvor længe beskeden er relevant</summary>
+        <div class="pop-panel duration-panel">
+          <p class="duration-title">Hvor længe er den relevant?</p>
+          <div class="duration-options">
+            {% for minutes, label in duration_choices %}
+              <button type="button" class="duration-option" data-duration="{{ minutes }}">{{ label }}</button>
+            {% endfor %}
+          </div>
+          <div class="duration-actions">
+            <button type="button" class="duration-cancel">Annullér</button>
+            <button type="button" class="duration-confirm" disabled>Slå op</button>
+          </div>
+        </div>
+      </details>
     </form>
   </div>
 {% endblock %}
