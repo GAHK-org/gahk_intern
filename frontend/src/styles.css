@@ -885,6 +885,35 @@
   /* The box a day's sticky heading is confined to -- see _archive_chunk.html for why it has to
      exist. No styling of its own on purpose: the messages inside are the same partial the live
      feed renders, and anything set here would apply to them and not to their live counterparts. */
+  /* ---- the duration sheet (#192) ----
+     Positioning, backdrop and shadow all come from `.pop`/`.pop-panel` above -- this is the panel's
+     CONTENTS and nothing else. An earlier version re-anchored the panel beside the composer with
+     position:absolute, which is the exact arrangement the .pop block was written to replace: it
+     hung off the send button at the right edge and #js-feed could clip it. */
+  .duration-sheet { display:block; }
+  .duration-panel { width:min(320px, calc(100vw - 32px)); }
+  /* FOUR COLUMNS AT EVERY WIDTH, which is the least-bad answer to seven options. 3-up left the
+     last one alone beside two empty cells; a wrapping flex row filled the gap by growing the
+     orphan, which at the desktop panel width made "2 døgn" the widest target in the sheet -- the
+     exact nudge #192 exists to remove. 4-up splits 4 + 3 and leaves one empty cell, which reads as
+     a short last row rather than as a highlighted option. A fixed count also keeps the split the
+     same on a phone and on a laptop; a flex basis silently re-columned between the two. */
+  .duration-options { display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; }
+  /* 44px is the smallest target reliably hit with a thumb, and this is a phone-first feed: the
+     whole point of the sheet is that it is answered in one tap without aiming. */
+  .duration-option { min-height:44px; padding:6px 4px; border-radius:var(--radius-sm);
+    border:1px solid var(--border); background:var(--surface); color:var(--ink);
+    font:inherit; font-size:13px; font-weight:600; cursor:pointer; }
+  .duration-option:hover { background:var(--surface-2); }
+  .duration-option.is-chosen { background:var(--green); border-color:var(--green); color:#fff; }
+  .duration-actions { display:flex; justify-content:flex-end; gap:8px;
+    margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
+  .duration-cancel, .duration-confirm { min-height:40px; padding:0 14px;
+    border-radius:var(--radius-sm); font:inherit; font-size:14px; font-weight:600; cursor:pointer; }
+  .duration-cancel { border:1px solid var(--border); background:var(--surface); color:var(--ink); }
+  .duration-confirm { border:1px solid var(--green); background:var(--green); color:#fff; }
+  .duration-confirm:disabled { opacity:.45; cursor:not-allowed; }
+
   .archive-dayblock { display:block; }
   .archive-day { position:sticky; top:4px; z-index:1; width:fit-content;
     margin:18px auto 4px; padding:3px 12px; border-radius:999px;

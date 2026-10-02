@@ -28,8 +28,8 @@ from den_hurtige.channels import Channel
 # The VAPID checks moved to core with the push stack; check_channels stayed. See core/checks.py.
 from den_hurtige.checks import check_channels
 from den_hurtige.models import (
-    DEFAULT_DURATION_MINUTES,
     DELETE_GRACE,
+    DURATION_CHOICES,
     QUICK_EMOJI,
     ChannelMute,
     QuickComment,
@@ -372,17 +372,25 @@ def test_create_post_honours_the_chosen_duration(
     assert 118 <= post.minutes_left <= 120
 
 
-def test_create_post_rejects_an_unknown_duration(
-    client: Client, make_resident: Callable[..., Resident], pushes: list
+@pytest.mark.parametrize(
+    "duration", ["99999", "", "toogtyve", None], ids=["unknown", "blank", "not a number", "absent"]
+)
+def test_create_post_refuses_a_duration_it_cannot_honour(
+    client: Client, make_resident: Callable[..., Resident], pushes: list, duration: str | None
 ) -> None:
-    user = make_resident(email="a@gahk.dk")
-    client.force_login(user)
+    """#192: the one field this view will not guess at.
 
-    client.post(FEED_URL + "opret", {"content": "Fest", "duration": "99999"})
+    It used to coerce anything unrecognised to the channel default, which is how every message
+    became a 2-døgn message. Nothing is written now, and the text comes back for a second go.
+    """
+    client.force_login(make_resident(email="a@gahk.dk"))
+    payload = {"content": "Fest"} | ({} if duration is None else {"duration": duration})
 
-    # Against the constant, not a hardcoded 60: this assertion went stale the moment the
-    # default duration changed.
-    assert QuickPost.objects.get().minutes_left <= DEFAULT_DURATION_MINUTES
+    response = client.post(FEED_URL + "opret", payload, follow=True)
+
+    assert not QuickPost.objects.exists()
+    assert "Vælg hvor længe beskeden skal være relevant." in [m.message for m in response.context["messages"]]
+    assert "Fest" in response.content.decode()  # the typed message is still in the box
 
 
 def test_create_post_stores_an_attached_image(
@@ -1384,7 +1392,7 @@ def test_the_composer_posts_into_the_channel_it_was_rendered_in(
     page — and the redirect goes back to that channel rather than dumping you on the default."""
     client.force_login(make_resident(email="a@gahk.dk"))
 
-    response = client.post(FEED_URL + "opret", {"content": "Afgang 21", "kanal": OTHER})
+    response = client.post(FEED_URL + "opret", {"content": "Afgang 21", "kanal": OTHER, "duration": "60"})
 
     assert QuickPost.objects.get().channel == OTHER
     assert response["Location"] == f"{FEED_URL}{OTHER}/"
@@ -1397,31 +1405,9 @@ def test_a_post_with_an_unknown_channel_lands_in_the_default_one(
     create_post already makes for an unrecognised duration."""
     client.force_login(make_resident(email="a@gahk.dk"))
 
-    client.post(FEED_URL + "opret", {"content": "Uden kanal", "kanal": "findes-ikke"})
+    client.post(FEED_URL + "opret", {"content": "Uden kanal", "kanal": "findes-ikke", "duration": "60"})
 
     assert QuickPost.objects.get().channel == channels.DEFAULT.slug
-
-
-def test_the_composer_offers_the_channels_own_default_duration(
-    client: Client, make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A plan for tonight and a lost bike key go stale on different schedules.
-
-    Patches in a channel with a duration nothing else uses, because every real channel now defaults
-    to the same 2 døgn. Comparing two channels that agree would assert 2880 == 2880 and pass just as
-    happily against a view that ignored the channel and always handed back channels.DEFAULT --
-    which is the regression this test exists to catch."""
-    slow = Channel("langsom", "Langsom", "flash", "", 30)
-    monkeypatch.setattr(channels, "CHANNELS", (*channels.CHANNELS, slow))
-    monkeypatch.setattr(channels, "BY_SLUG", {c.slug: c for c in channels.CHANNELS})
-    client.force_login(make_resident(email="a@gahk.dk"))
-
-    default_page = client.get(FEED_URL)
-    slow_page = client.get(f"{FEED_URL}{slow.slug}/")
-
-    assert default_page.context["default_duration"] == channels.DEFAULT.default_duration
-    assert slow_page.context["default_duration"] == 30
-    assert default_page.context["default_duration"] != 30  # the two really are distinguishable
 
 
 def test_replying_and_deleting_return_to_the_posts_own_channel(
@@ -1541,7 +1527,7 @@ def test_a_channel_can_be_restricted_to_a_role(
 ) -> None:
     """The per-channel gate stacks on top of den_hurtige.access. 404 rather than 403 on purpose: a
     403 would confirm the channel exists to someone who may not read it."""
-    secret = Channel("internt", "Internt", "flash", "", 60, roles=(Role.INSPEKTION,))
+    secret = Channel("internt", "Internt", "flash", "", roles=(Role.INSPEKTION,))
     monkeypatch.setattr(channels, "CHANNELS", (*channels.CHANNELS, secret))
     monkeypatch.setattr(channels, "BY_SLUG", {**channels.BY_SLUG, "internt": secret})
 
@@ -1567,7 +1553,7 @@ def test_every_channel_notifies_until_it_is_muted(
     subscribe(other, "https://push.example/b")
     client.force_login(author)
 
-    client.post(FEED_URL + "opret", {"content": "Afgang 21", "kanal": OTHER})
+    client.post(FEED_URL + "opret", {"content": "Afgang 21", "kanal": OTHER, "duration": "60"})
 
     assert pushes[0][0] == [other.pk]
 
@@ -1581,10 +1567,10 @@ def test_a_mute_silences_only_the_channel_it_names(
     ChannelMute.objects.create(resident=quiet, channel=OTHER)
     client.force_login(author)
 
-    client.post(FEED_URL + "opret", {"content": "Afgang 21", "kanal": OTHER})
+    client.post(FEED_URL + "opret", {"content": "Afgang 21", "kanal": OTHER, "duration": "60"})
     assert pushes[-1][0] == []
 
-    client.post(FEED_URL + "opret", {"content": "Kaffe", "kanal": "generelt"})
+    client.post(FEED_URL + "opret", {"content": "Kaffe", "kanal": "generelt", "duration": "60"})
     assert pushes[-1][0] == [quiet.pk]
 
 
@@ -1661,7 +1647,7 @@ def test_a_notification_deep_links_to_the_channel_the_message_is_in(
     subscribe(make_resident(email="b@gahk.dk"), "https://push.example/b")
     client.force_login(author)
 
-    client.post(FEED_URL + "opret", {"content": "Afgang 21", "kanal": OTHER})
+    client.post(FEED_URL + "opret", {"content": "Afgang 21", "kanal": OTHER, "duration": "60"})
 
     assert pushes[-1][1]["url"] == f"{FEED_URL}{OTHER}/"
 
@@ -1675,7 +1661,7 @@ def test_a_notification_carries_no_tag(
     subscribe(make_resident(email="b@gahk.dk"), "https://push.example/b")
     client.force_login(author)
 
-    client.post(FEED_URL + "opret", {"content": "Kaffe"})
+    client.post(FEED_URL + "opret", {"content": "Kaffe", "duration": "60"})
 
     assert "tag" not in pushes[-1][1]
 
@@ -1691,19 +1677,14 @@ def test_the_shipped_channel_registry_is_valid() -> None:
     ("registry", "expected"),
     [
         pytest.param(
-            (Channel("dup", "A", "flash", "", 60), Channel("dup", "B", "flash", "", 60)),
+            (Channel("dup", "A", "flash", ""), Channel("dup", "B", "flash", "")),
             "den_hurtige.E007",
             id="duplicate slug",
         ),
         pytest.param(
-            (Channel("opret", "Opret", "flash", "", 60),),
+            (Channel("opret", "Opret", "flash", ""),),
             "den_hurtige.E008",
             id="slug shadowed by a fixed URL segment",
-        ),
-        pytest.param(
-            (Channel("odd", "Odd", "flash", "", 7),),
-            "den_hurtige.E009",
-            id="duration the composer does not offer",
         ),
     ],
 )
@@ -1722,7 +1703,7 @@ def test_the_default_channel_must_match_the_model_field_default(
 ) -> None:
     """Every row written before the channel field existed carries the model default. If the two
     disagree, those posts sit in a channel no tab links to."""
-    monkeypatch.setattr(channels, "DEFAULT", Channel("andet", "Andet", "flash", "", 60))
+    monkeypatch.setattr(channels, "DEFAULT", Channel("andet", "Andet", "flash", ""))
 
     assert "den_hurtige.E010" in [error.id for error in check_channels(None)]
 
@@ -1814,11 +1795,14 @@ def test_both_reaction_panels_are_overlays_with_a_backdrop(
     client.force_login(author)
 
     body = client.get(FEED_URL).content.decode()
+    # Scoped to the reaction row rather than counted over the page: the composer's duration sheet is
+    # a `.pop` too (#192), so a page-wide count measures something other than this test's subject.
+    row = body.split('<form class="composer"', 1)[0].split('id="reactions-', 1)[1]
 
-    assert body.count('class="pop-backdrop"') == 2  # one per panel
-    assert body.count('class="pop-panel"') == 2
-    assert 'class="pop who-picker"' in body
-    assert 'class="pop emoji-picker"' in body
+    assert row.count('class="pop-backdrop"') == 2  # one per panel
+    assert row.count('class="pop-panel"') == 2
+    assert 'class="pop who-picker"' in row
+    assert 'class="pop emoji-picker"' in row
 
 
 def test_the_reaction_row_survives_a_toggle_with_its_reader_panel(
@@ -2279,7 +2263,7 @@ def test_a_thread_in_a_restricted_channel_is_404(
     caller may read the CHANNEL it lives in. That mattered less while they were all writes; a
     thread is a READ, so guessing a pk would otherwise hand over a restricted channel's
     contents."""
-    secret = Channel("internt", "Internt", "flash", "", 60, roles=(Role.INSPEKTION,))
+    secret = Channel("internt", "Internt", "flash", "", roles=(Role.INSPEKTION,))
     monkeypatch.setattr(channels, "CHANNELS", (*channels.CHANNELS, secret))
     monkeypatch.setattr(channels, "BY_SLUG", {c.slug: c for c in channels.CHANNELS})
     author = make_resident(email="a@gahk.dk")
@@ -2486,7 +2470,7 @@ def test_the_archive_of_a_restricted_channel_is_refused(
     """The archive is a READ over every message a channel has ever held, so it is the widest leak
     in the feature if it forgets the per-channel roles. Same answer as every other surface: the
     page 404s rather than 403ing, because a 403 confirms the channel exists."""
-    secret = Channel("internt", "Internt", "flash", "", 60, roles=(Role.INSPEKTION,))
+    secret = Channel("internt", "Internt", "flash", "", roles=(Role.INSPEKTION,))
     monkeypatch.setattr(channels, "CHANNELS", (*channels.CHANNELS, secret))
     monkeypatch.setattr(channels, "BY_SLUG", {c.slug: c for c in channels.CHANNELS})
     author = make_resident(email="a@gahk.dk")
@@ -3265,3 +3249,65 @@ def test_the_photograph_survives_a_soft_delete_that_does_not_happen(
         assert racer.soft_delete() is False
 
     assert stored.is_file(), "a lost claim must not unlink the file"
+
+
+# ---- the composer asks for a duration, it does not assume one (#192) ----------------------------
+
+
+def test_the_composer_preselects_no_duration(client: Client, make_resident: Callable[..., Resident]) -> None:
+    """A preselected 2 døgn is the whole reason nothing ever left the feed."""
+    client.force_login(make_resident(email="a@gahk.dk"))
+
+    html = client.get(FEED_URL).content.decode()
+    picker = html.split('name="duration"', 1)[1].split("</select>", 1)[0]
+
+    assert picker.count("selected") == 1  # exactly one, and it is the empty placeholder
+    assert '<option value="" selected>' in picker
+
+
+def test_the_no_js_picker_is_required(client: Client, make_resident: Callable[..., Resident]) -> None:
+    """Without JavaScript there is no sheet, so the browser's own required check is what forces the
+    choice. feed.ts drops the attribute when it takes over."""
+    client.force_login(make_resident(email="a@gahk.dk"))
+
+    html = client.get(FEED_URL).content.decode()
+
+    assert '<select name="duration" id="id_duration" required>' in html
+
+
+def test_the_composer_offers_the_sheet_with_every_duration(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    client.force_login(make_resident(email="a@gahk.dk"))
+
+    html = client.get(FEED_URL).content.decode()
+    sheet = html.split('id="js-duration-sheet"', 1)[1].split("</details>", 1)[0]
+
+    for minutes, label in DURATION_CHOICES:
+        assert f'data-duration="{minutes}"' in sheet
+        assert label in sheet
+    assert "Slå op" in sheet and "Annullér" in sheet
+
+
+def test_a_rejected_post_does_not_keep_the_draft_forever(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The draft is handed back once. Left in the session it would reappear in the box on the next
+    visit, next to messages that were posted since."""
+    client.force_login(make_resident(email="a@gahk.dk"))
+    client.post(FEED_URL + "opret", {"content": "Mislykket"})
+
+    assert "Mislykket" in client.get(FEED_URL).content.decode()
+    assert "Mislykket" not in client.get(FEED_URL).content.decode()
+
+
+def test_a_post_with_a_valid_duration_still_goes_straight_through(
+    client: Client, make_resident: Callable[..., Resident], pushes: list
+) -> None:
+    """The sheet is the only new gate; a complete submission is unchanged."""
+    client.force_login(make_resident(email="a@gahk.dk"))
+
+    response = client.post(FEED_URL + "opret", {"content": "Kaffe nu", "duration": "60"})
+
+    assert response.status_code == 302
+    assert QuickPost.objects.get().minutes_left <= 60
