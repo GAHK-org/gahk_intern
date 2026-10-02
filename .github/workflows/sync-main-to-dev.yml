@@ -12,6 +12,12 @@ on:
 # approve pull requests"), and the repo-level toggle cannot override that. Automating it would mean
 # a PAT or App token, which is a long-lived credential for a link somebody clicks a few times a
 # year. So the job prints the compare link instead, and `pull-requests: write` is gone with it.
+#
+# It also stops when the merge carries nothing. Every dev -> main pull request leaves main holding a
+# merge commit dev lacks, so main always reads as "unmerged" even though the files are identical —
+# which produced a branch and a 0-file pull request after each release. The tree comparison below is
+# the honest test of whether there is anything to carry back; the topology catches up by itself the
+# next time there is.
 permissions:
   contents: write
 
@@ -35,14 +41,27 @@ jobs:
           git fetch origin main dev
           git merge --no-edit origin/main
 
+      # `git diff --quiet` exits 0 when the trees match, i.e. the merge changed no file.
+      - name: Does the merge carry anything?
+        id: carries
+        run: |
+          if git diff --quiet origin/dev HEAD; then
+            echo "result=false" >> "$GITHUB_OUTPUT"
+            echo "\`main\` brings no file changes to \`dev\` — nothing to sync." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "result=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Push synchronization branch
         id: branch
+        if: steps.carries.outputs.result == 'true'
         run: |
           branch="automation/sync-main-${GITHUB_SHA}"
           git push origin "HEAD:refs/heads/${branch}"
           echo "name=${branch}" >> "$GITHUB_OUTPUT"
 
       - name: Link the pull request to open
+        if: steps.carries.outputs.result == 'true'
         env:
           BRANCH: ${{ steps.branch.outputs.name }}
         run: |
