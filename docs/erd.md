@@ -91,6 +91,16 @@ erDiagram
         int month
     }
 
+    residents_AdminAccessGrant {
+        int id PK
+        int resident_id FK
+        string status
+        int requested_by_id FK
+        int decided_by_id FK
+        datetime decided_at
+        datetime created_at
+    }
+
     admissions_Application {
         int id PK
         string type
@@ -600,6 +610,9 @@ erDiagram
     residents_Residency }o--|o core_Workgroup : "workgroup"
     residents_Residency }o--|o core_Cleaning : "cleaning"
     residents_RoleAssignment }o--|| residents_Resident : "resident"
+    residents_AdminAccessGrant ||--|| residents_Resident : "resident"
+    residents_AdminAccessGrant }o--|o residents_Resident : "requested_by"
+    residents_AdminAccessGrant }o--|o residents_Resident : "decided_by"
     admissions_Application }o--|o residents_Resident : "received_by"
     admissions_Application }o--|o residents_Resident : "discarded_by"
     cms_CmsImage }o--|o residents_Resident : "uploaded_by"
@@ -1340,6 +1353,16 @@ erDiagram
         int month
     }
 
+    residents_AdminAccessGrant {
+        int id PK
+        int resident_id FK
+        string status
+        int requested_by_id FK
+        int decided_by_id FK
+        datetime decided_at
+        datetime created_at
+    }
+
     core_Cleaning { }
 
     core_Room { }
@@ -1352,6 +1375,9 @@ erDiagram
     residents_Residency }o--|o core_Workgroup : "workgroup"
     residents_Residency }o--|o core_Cleaning : "cleaning"
     residents_RoleAssignment }o--|| residents_Resident : "resident"
+    residents_AdminAccessGrant ||--|| residents_Resident : "resident"
+    residents_AdminAccessGrant }o--|o residents_Resident : "requested_by"
+    residents_AdminAccessGrant }o--|o residents_Resident : "decided_by"
 ```
 
 ## rooms

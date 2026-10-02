@@ -269,7 +269,7 @@ def upload_direct(request: HttpRequest, pk: int) -> HttpResponseBase:
 
     Only reachable when there is no object storage configured, which is dev and CI. Refusing
     outright when a bucket exists is deliberate - otherwise this becomes the quiet way a 2 GB video
-    ends up going through gunicorn after all.
+    ends up going through the app server after all.
     """
     _writable_folder(request, pk)
 
@@ -617,8 +617,8 @@ def download_selected(request: HttpRequest, pk: int) -> HttpResponseBase:
     thread start a multi-hundred-megabyte transfer for whoever clicked it.
 
     **The zip is an object, not a stream, and that is the whole design.** The first version streamed
-    it straight to the browser, which quietly made this the only route in Arkiv that holds a gunicorn
-    worker - and held it not for as long as the zip took to BUILD, but for as long as the recipient
+    it straight to the browser, which quietly made this the only route in Arkiv that holds a server
+    thread - and held it not for as long as the zip took to BUILD, but for as long as the recipient
     took to RECEIVE it. TCP backpressure: the server can only write as fast as the browser reads, so
     one resident on hotel wifi occupied one of three synchronous workers until they were done, and
     was killed at `--timeout 60` regardless, left holding a truncated archive.

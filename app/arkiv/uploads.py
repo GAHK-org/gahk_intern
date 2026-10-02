@@ -1,4 +1,4 @@
-"""Getting bytes into the archive without routing them through gunicorn.
+"""Getting bytes into the archive without routing them through the app server.
 
     THE FILE NEVER TOUCHES THE APP SERVER IN PRODUCTION.
 
@@ -6,7 +6,7 @@ This is the one place in the project where direct-to-object-storage earns its co
 worth being clear about why, because the media path deliberately does the opposite. Opslag images
 are capped at 5 MB and already downscaled in the browser, so posting them through Django costs
 nothing. Arkiv holds the video somebody took at sommerfest: 2 GB, uploaded from a phone on dorm
-wifi, against three synchronous gunicorn workers with a 60-second timeout. That upload cannot go
+wifi, against a single Daphne process with a 60-second timeout. That upload cannot go
 through the app - not slowly, not at all.
 
 **Two steps, so the database never holds a row for bytes that never arrived.**
