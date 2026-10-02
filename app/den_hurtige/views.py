@@ -20,6 +20,7 @@ and not a column anyone could constrain:
 Every view here is scoped to one channel.
 """
 
+from collections.abc import Sequence
 from datetime import date, datetime, timedelta
 from typing import NamedTuple
 
@@ -147,9 +148,33 @@ def mark_runs(posts: list[QuickPost], user_id: int) -> list[QuickPost]:
     return posts
 
 
-def posts_for(request: HttpRequest, channel: Channel) -> list[QuickPost]:
-    """One channel's active messages, ready to render."""
-    return mark_runs(list(_active_posts(channel)), current_resident(request).pk)
+def group_by_day(posts: Sequence[QuickPost], user_id: int) -> list["DayGroup"]:
+    """Split messages IN READING ORDER into one group per calendar day, each with its heading.
+
+    `mark_runs` is called per day rather than over the whole list: a date heading interrupts a run
+    visually, so a burst that straddles midnight must not be drawn as one group with the heading
+    wedged into the middle of it.
+    """
+    today = current_date()
+    days: list[DayGroup] = []
+    for post in posts:
+        day = timezone.localdate(post.created_at)
+        if not days or days[-1].date != day:
+            days.append(DayGroup(day, _day_label(day, today), []))
+        days[-1].posts.append(post)
+    for entry in days:
+        mark_runs(entry.posts, user_id)
+    return days
+
+
+def posts_for(request: HttpRequest, channel: Channel) -> list["DayGroup"]:
+    """One channel's active messages, grouped under date headings and ready to render.
+
+    Grouped rather than flat since #197: the bubble carries only a clock, so without a heading a
+    message from yesterday is indistinguishable from one an hour old. The archive already read this
+    way; the live feed holds up to two days of messages and did not.
+    """
+    return group_by_day(list(_active_posts(channel)), current_resident(request).pk)
 
 
 def _channel_or_404(request: HttpRequest, slug: str | None) -> Channel:
@@ -251,7 +276,7 @@ def feed(request: HttpRequest, channel: str | None = None) -> HttpResponse:
         request,
         "den_hurtige/feed.html",
         {
-            "posts": posts_for(request, resolved),
+            "days": posts_for(request, resolved),
             "duration_choices": DURATION_CHOICES,
             # Per channel: a plan for tonight and a lost bike key go stale on different schedules.
             "default_duration": resolved.default_duration,
@@ -307,7 +332,7 @@ def feed_items(request: HttpRequest) -> HttpResponse:
         request,
         "den_hurtige/_posts.html",
         {
-            "posts": posts_for(request, channel),
+            "days": posts_for(request, channel),
             "max_content_chars": MAX_CONTENT_CHARS,
             "quick_emoji": QUICK_EMOJI,
             "can_moderate": can_moderate(request),
@@ -336,14 +361,15 @@ def feed_items(request: HttpRequest) -> HttpResponse:
 ARCHIVE_PAGE = 30
 
 
-class ArchiveDay(NamedTuple):
-    """One day's archived messages, oldest first, under one date heading.
+class DayGroup(NamedTuple):
+    """One day's messages, oldest first, under one date heading. Used by the feed and the archive.
 
     Built here rather than with {% ifchanged %} in the template, for a reason that only shows up on
     the second chunk: `ifchanged` resets with each render, so the first message of every fetched
     chunk would emit a date heading whether or not the chunk below it had just emitted the same one.
-    Grouping server-side also lets the day carry its own label, which needs "i dag"/"i går" and the
-    Danish month names, and lets each day's runs be marked against its own neighbours.
+    The live feed has the same problem for the same reason — its 20s poll re-renders the list on its
+    own. Grouping server-side also lets the day carry its own label, which needs "i dag"/"i går" and
+    the Danish month names, and lets each day's runs be marked against its own neighbours.
     """
 
     date: date
@@ -351,7 +377,7 @@ class ArchiveDay(NamedTuple):
     posts: list[QuickPost]
 
 
-def _archive_label(day: date, today: date) -> str:
+def _day_label(day: date, today: date) -> str:
     """A date heading a resident reads without decoding: "i dag", "i går", "12. marts", "12. marts
     2024". The year appears only when it is not this one, which is the only time it carries any
     information and is otherwise most of the width of the heading."""
@@ -380,7 +406,7 @@ def _archive_before(request: HttpRequest) -> datetime | None:
 
 def _archive_chunk(
     channel: Channel, before: datetime | None, user_id: int
-) -> tuple[list[ArchiveDay], datetime | None]:
+) -> tuple[list[DayGroup], datetime | None]:
     """One chunk of the channel's archive, oldest first, plus the cursor for the chunk before it.
 
     OLDEST FIRST, because this is prepended above the live messages and has to read downwards into
@@ -427,19 +453,7 @@ def _archive_chunk(
     older_than = page[-1].created_at if more else None
     page.reverse()
 
-    today = current_date()
-    days: list[ArchiveDay] = []
-    for post in page:
-        day = timezone.localdate(post.created_at)
-        if not days or days[-1].date != day:
-            days.append(ArchiveDay(day, _archive_label(day, today), []))
-        days[-1].posts.append(post)
-    # Per day, not across the chunk: a date heading interrupts a run visually, so a burst that
-    # straddles midnight must not be drawn as one group with the heading wedged into the middle
-    # of it. Same call the live feed makes, on each day's own list.
-    for entry in days:
-        mark_runs(entry.posts, user_id)
-    return days, older_than
+    return group_by_day(page, user_id), older_than
 
 
 def _archive_context(request: HttpRequest, channel: Channel) -> dict[str, object]:

@@ -9,7 +9,7 @@ the VAPID checks, per-topic consent) is tested in test_push.py.
 import json
 import re
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -53,6 +53,12 @@ FEED_URL = "/intern/den-hurtige/"
 GATED_ROLES = access.ACCESS_ROLES or (Role.ADMINISTRATOR, Role.INSPEKTION)
 
 pytestmark = pytest.mark.django_db
+
+
+def _messages(days: list) -> list:
+    """The posts across every day group, in reading order — for assertions about runs rather than
+    about the date headings themselves (views.posts_for groups by day since #197)."""
+    return [post for day in days for post in day.posts]
 
 
 @pytest.fixture(autouse=True)
@@ -836,7 +842,7 @@ def test_consecutive_messages_from_one_person_are_grouped(
     request = RequestFactory().get(FEED_URL)
     request.user = author
 
-    assert [p.grouped for p in posts_for(request, channels.DEFAULT)] == [False, True, False]
+    assert [p.grouped for p in _messages(posts_for(request, channels.DEFAULT))] == [False, True, False]
 
 
 def test_a_continuation_repeats_no_name_and_the_run_carries_one_avatar(
@@ -919,7 +925,7 @@ def test_the_end_of_a_run_is_marked_for_the_avatar_and_the_tail(
     request = RequestFactory().get(FEED_URL)
     request.user = author
 
-    posts = posts_for(request, channels.DEFAULT)
+    posts = _messages(posts_for(request, channels.DEFAULT))
 
     assert [p.group_end for p in posts] == [False, True, True]
     # The two flags are independent, not opposites: a lone message both starts and ends its run.
@@ -936,7 +942,7 @@ def test_a_single_message_ends_its_own_run(
     request = RequestFactory().get(FEED_URL)
     request.user = author
 
-    (post,) = posts_for(request, channels.DEFAULT)
+    (post,) = _messages(posts_for(request, channels.DEFAULT))
 
     assert post.grouped is False
     assert post.group_end is True
@@ -3265,3 +3271,75 @@ def test_the_photograph_survives_a_soft_delete_that_does_not_happen(
         assert racer.soft_delete() is False
 
     assert stored.is_file(), "a lost claim must not unlink the file"
+
+
+# ---- date headings on the live feed (#197) ------------------------------------------------------
+#
+# The bubble carries a clock and nothing else, so without a heading a message from yesterday is
+# indistinguishable from one an hour old. The archive already read this way; the feed holds up to
+# two days of messages and did not.
+
+
+def _post_at(author: Resident, when: datetime, content: str) -> QuickPost:
+    """A message whose created_at is backdated — auto_now_add has to be overwritten after the fact."""
+    post = QuickPost.objects.create(author=author, content=content)
+    QuickPost.objects.filter(pk=post.pk).update(created_at=when)
+    return QuickPost.objects.get(pk=post.pk)
+
+
+def test_the_feed_groups_messages_under_a_date_heading(
+    make_resident: Callable[..., Resident],
+) -> None:
+    author = make_resident(email="a@gahk.dk")
+    now = timezone.now()
+    _post_at(author, now - timedelta(days=1), "I gaar")
+    _post_at(author, now, "I dag")
+
+    request = RequestFactory().get(FEED_URL)
+    request.user = author
+    days = posts_for(request, channels.DEFAULT)
+
+    assert [day.label for day in days] == ["i går", "i dag"]
+    assert [[p.content for p in day.posts] for day in days] == [["I gaar"], ["I dag"]]
+
+
+def test_a_run_does_not_span_midnight(make_resident: Callable[..., Resident]) -> None:
+    """A date heading interrupts a run visually, so the same author either side of midnight must
+    read as two runs — not one group with the heading wedged into the middle of it."""
+    author = make_resident(email="a@gahk.dk")
+    now = timezone.now()
+    _post_at(author, now - timedelta(days=1), "Sent i gaar")
+    _post_at(author, now, "Tidligt i dag")
+
+    request = RequestFactory().get(FEED_URL)
+    request.user = author
+    days = posts_for(request, channels.DEFAULT)
+
+    # Each day's first message starts its own run, and each day's last ends one.
+    assert [p.grouped for p in _messages(days)] == [False, False]
+    assert [p.group_end for p in _messages(days)] == [True, True]
+
+
+def test_the_heading_is_rendered_in_the_feed(client: Client, make_resident: Callable[..., Resident]) -> None:
+    author = make_resident(email="a@gahk.dk")
+    client.force_login(author)
+    _post_at(author, timezone.now() - timedelta(days=1), "Gammel besked")
+
+    html = client.get(FEED_URL).content.decode()
+
+    assert 'class="day-chip"' in html
+    assert "i går" in html
+
+
+def test_the_poll_fragment_carries_the_headings_too(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """#js-feed is morphed wholesale from this fragment, so a heading missing here would vanish
+    from the feed 20 seconds after the page loaded."""
+    author = make_resident(email="a@gahk.dk")
+    client.force_login(author)
+    _post_at(author, timezone.now(), "Ny besked")
+
+    html = client.get(f"{FEED_URL}opslag?kanal={channels.DEFAULT.slug}").content.decode()
+
+    assert 'class="day-chip"' in html and "i dag" in html
