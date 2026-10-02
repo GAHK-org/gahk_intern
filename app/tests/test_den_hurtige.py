@@ -1795,11 +1795,14 @@ def test_both_reaction_panels_are_overlays_with_a_backdrop(
     client.force_login(author)
 
     body = client.get(FEED_URL).content.decode()
+    # Scoped to the reaction row rather than counted over the page: the composer's duration sheet is
+    # a `.pop` too (#192), so a page-wide count measures something other than this test's subject.
+    row = body.split('<form class="composer"', 1)[0].split('id="reactions-', 1)[1]
 
-    assert body.count('class="pop-backdrop"') == 2  # one per panel
-    assert body.count('class="pop-panel"') == 2
-    assert 'class="pop who-picker"' in body
-    assert 'class="pop emoji-picker"' in body
+    assert row.count('class="pop-backdrop"') == 2  # one per panel
+    assert row.count('class="pop-panel"') == 2
+    assert 'class="pop who-picker"' in row
+    assert 'class="pop emoji-picker"' in row
 
 
 def test_the_reaction_row_survives_a_toggle_with_its_reader_panel(

@@ -278,31 +278,38 @@
 
       <button type="submit" class="composer-send" title="Send" aria-label="Send">↑</button>
 
-      {% comment %}
-        The sheet. A <details class="pop"> rather than a hand-rolled overlay, so it inherits the
-        click-away and Escape handling every other panel on this page already has (feed.ts,
-        DISMISSABLE) — it is opened from script instead of by pressing its summary, which is the
-        only thing unusual about it. The summary is still there and still focusable: Escape hands
-        focus back to it, and that has to land on something real.
-
-        Inside the form, so the answer is simply the <select>'s value by the time it submits and
-        there is no second source of truth to keep in step.
-      {% endcomment %}
-      <details class="pop duration-sheet" id="js-duration-sheet">
-        <summary class="duration-sheet-summary sr-only">Vælg hvor længe beskeden er relevant</summary>
-        <div class="pop-panel duration-panel">
-          <p class="duration-title">Hvor længe er den relevant?</p>
-          <div class="duration-options">
-            {% for minutes, label in duration_choices %}
-              <button type="button" class="duration-option" data-duration="{{ minutes }}">{{ label }}</button>
-            {% endfor %}
-          </div>
-          <div class="duration-actions">
-            <button type="button" class="duration-cancel">Annullér</button>
-            <button type="button" class="duration-confirm" disabled>Slå op</button>
-          </div>
-        </div>
-      </details>
     </form>
+
+    {% comment %}
+      The duration sheet (#192). A <details class="pop">, so it inherits the backdrop, the
+      click-away and the Escape handling every other panel on this page already has (feed.ts,
+      DISMISSABLE). It is opened from script rather than by pressing its summary, which is the only
+      unusual thing about it; the summary is still real and still focusable, because Escape hands
+      focus back to it.
+
+      OUTSIDE THE COMPOSER, and that is not cosmetic. `.composer` is a grid whose every child is
+      placed by name (styles.css: .composer-attach/-main/-duration/-send), so a child without a
+      grid-area is auto-placed into a cell of its own and the sheet turned up wedged into the input
+      row. Out here it is not a grid item at all.
+
+      It still writes its answer into the composer's <select>, which feed.ts looks up by id — the
+      two do not need to be in the same subtree for that, only on the same page.
+    {% endcomment %}
+    <details class="pop duration-sheet" id="js-duration-sheet">
+      <summary class="sr-only">Vælg hvor længe beskeden er relevant</summary>
+      <div class="pop-backdrop"></div>
+      <div class="pop-panel duration-panel">
+        <div class="pop-title">Hvor længe er den relevant?</div>
+        <div class="duration-options">
+          {% for minutes, label in duration_choices %}
+            <button type="button" class="duration-option" data-duration="{{ minutes }}">{{ label }}</button>
+          {% endfor %}
+        </div>
+        <div class="duration-actions">
+          <button type="button" class="duration-cancel">Annullér</button>
+          <button type="button" class="duration-confirm" disabled>Slå op</button>
+        </div>
+      </div>
+    </details>
   </div>
 {% endblock %}
