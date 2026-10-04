@@ -105,10 +105,19 @@ class Command(BaseCommand):
                 f"{resident.full_name} ({vagt.get_kind_display().lower()})"
                 for resident, vagt in result.removed
             )
-            trailing = "De får besked, når kommandoen køres uden --dry-run." if dry_run else "De får besked."
+            # Only claim a message when at least one removed resident has an active subscription;
+            # the per-resident detail is in the subscription lines further down.
+            any_reachable = any(audience.exists() for _r, audience, _m in result.notifications)
+            if not any_reachable:
+                trailing = "Ingen af de berørte har et aktivt notifikationsabonnement."
+            elif dry_run:
+                trailing = "De får besked, når kommandoen køres uden --dry-run."
+            else:
+                trailing = "De får besked."
+            residents_count = len({resident.pk for resident, _vagt in result.removed})
             self.stdout.write(
                 self.style.WARNING(
-                    f"{prefix}{for_date} er allerede allokeret: {len(result.removed)} beboer(e) "
+                    f"{prefix}{for_date} er allerede allokeret: {residents_count} beboer(e) "
                     f"fjernes fra deres vagter: {who}. {trailing}"
                 )
             )

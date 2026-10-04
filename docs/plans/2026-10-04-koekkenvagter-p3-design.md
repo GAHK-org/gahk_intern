@@ -88,7 +88,7 @@ rule has one definition.
 | `allocate_month`, `allocate_batch` | Same refusal, checked **before** the deadline-timing guard so the message is the right one. Reaches the Køkkengruppen allocation form and `allocate_koekkenvagter` through their existing error handling. |
 | `roll_forward_allocation` | Log and return `None` before trying anything. It currently catches only `KoekkenNoPopulationError`, so without this explicit check the July cron run would die on the new guard. |
 | `reconcile_month` | Log and no-op. |
-| `declare_fridag` | Delete the `Vagt` rows (claims cascade), **never** call `allocate_month`, re-post obligation as normal, and notify every resident whose claim disappeared — same before/after diff, with a summer variant of the generic message (shifts are removed, not "omfordelt"). |
+| `declare_fridag` | Delete the `Vagt` rows (claims cascade), **never** call `allocate_month`, re-post obligation as normal, and notify every resident whose claim disappeared, with the "bortfaldet" message. **As of the Amendment 5 supplement of 2026-10-04 (main design doc), this is no longer a SOMMER special case: every periode behaves this way**, and the report names the removed residents. |
 | `post_obligation`, `mark_udfoert`, `resolve_anmeldelse` | **Unchanged.** |
 
 **This part is needed regardless of P3's other pieces and regardless of the vote.** Once
@@ -164,7 +164,7 @@ partial, an unavailable action's button is absent rather than disabled, hand-ren
 
 - **The shift grid**, week by week: each shift with its claimants' names and free places. A "Tag vagt"
   button only where `claim_vagt` would succeed, with an htmx confirm: *"Vagten er bindende — kun
-  Køkkengruppen kan fjerne den."* Until Amendment 4 ships, the page also says to contact Køkkengruppen
+  Køkkengruppen kan fjerne den."* Until Amendment 4 (`2026-10-04-koekkenvagter-a4-design.md`) ships, the page also says to contact Køkkengruppen
   if you cannot take a shift you claimed.
 - **"Væk denne uge"**: for each week, the names of residents whose away ranges overlap it.
 - **"Mit fravær"**: your own ranges, an add form (fra/til), and delete on ranges that have not ended.
@@ -186,6 +186,9 @@ option any time"* — *"but you should still be able to swap a shift or let some
 offer to."* That is exactly Amendment 4's two modes (take-over and trade), and "any time" makes it
 system-wide. **Amendment 4 is therefore approved in direction and is the next design round**, ahead of
 P3 steps 2–3, because regular allocated shifts start on 1 Feb 2027 and need it before summer claims do.
+
+**Now designed in `2026-10-04-koekkenvagter-a4-design.md`.** P3 step 3's `claim_vagt` must reuse its
+`may_hold` helper rather than write its own population/move-out check.
 
 It needs nothing special from P3: summer claims are ordinary future `TILDELT` rows, which is exactly
 what A4.3 operates on. The stakeholder's "binding" answer also largely resolves A4.6's open question —

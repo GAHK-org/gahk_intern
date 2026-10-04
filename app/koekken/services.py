@@ -2260,10 +2260,12 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
         removed_rows = list(
             VagtTildeling.objects.filter(vagt__in=affected_vagter, status=VagtTildeling.Status.TILDELT)
             .select_related("resident", "vagt")
-            .order_by(
-                "vagt__date", "vagt__kind", "resident__first_name", "resident__last_name", "resident_id"
-            )
+            .order_by("vagt__date", "resident__first_name", "resident__last_name", "resident_id")
         )
+        # Chronological within a day (morgen, frokost, aften) = `VagtRegel.Kind` declaration order; the
+        # stored values sort alphabetically the wrong way round. Stable, so the name order is kept.
+        kind_order = [kind.value for kind in VagtRegel.Kind]
+        removed_rows.sort(key=lambda row: (row.vagt.date, kind_order.index(row.vagt.kind)))
         result.removed = [(row.resident, row.vagt) for row in removed_rows]
 
         result.deleted_vagter = len(affected_vagter)

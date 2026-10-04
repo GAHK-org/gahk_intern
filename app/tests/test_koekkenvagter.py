@@ -3487,8 +3487,8 @@ def test_declare_fridag_resident_holding_two_shifts_that_day_gets_one_notificati
 
     assert result.deleted_vagter == 2
     assert [(r.pk, v.kind) for r, v in result.removed] == [
-        (resident.pk, VagtRegel.Kind.AFTEN),  # ordered by date, then kind value
-        (resident.pk, VagtRegel.Kind.MORGEN),
+        (resident.pk, VagtRegel.Kind.MORGEN),  # ordered by date, then chronologically (enum order)
+        (resident.pk, VagtRegel.Kind.AFTEN),
     ]
     assert [r.pk for r, _a, _m in result.notifications] == [resident.pk]
     assert result.notifications[0][2] == _fridag_message(year, month, "Test")
@@ -3602,7 +3602,7 @@ def test_declare_koekken_fridag_report_removal_notice_and_does_not_overclaim_not
     lines = output.splitlines()
     assert lines[1] == (  # first line after the summary line
         f"[dry-run] {the_date} er allerede allokeret: 2 beboer(e) fjernes fra deres vagter: "
-        f"{third.full_name} (aftenvagt), {first.full_name} (morgenvagt). "
+        f"{first.full_name} (morgenvagt), {third.full_name} (aftenvagt). "
         "De får besked, når kommandoen køres uden --dry-run."
     )
     assert "De får besked." not in output.replace("De får besked, når", "")
@@ -3615,6 +3615,62 @@ def test_declare_koekken_fridag_report_removal_notice_and_does_not_overclaim_not
     assert VagtTildeling.objects.count() == 2
     assert Vagt.objects.filter(date=the_date).count() == 2
     assert not Fridag.objects.filter(date=the_date).exists()
+
+
+def test_declare_koekken_fridag_report_counts_residents_not_shifts_and_does_not_claim_unreachable(
+    make_resident: Callable, pushes: list
+) -> None:
+    """One resident holding two shifts on a whole-day fridag is "1 beboer(e)", with both shifts listed
+    in chronological order; with no subscription the notice must not say "De får besked"."""
+    year, month = 2080, 3
+    periode = resolve_periode(date(year, month, 15))
+    the_date = _weekday_and_weekend_dates(year, month)[0][0]
+    morgen = Vagt.objects.create(
+        periode=periode, date=the_date, kind=VagtRegel.Kind.MORGEN, headcount=1, duration_minutes=60
+    )
+    aften = Vagt.objects.create(
+        periode=periode, date=the_date, kind=VagtRegel.Kind.AFTEN, headcount=1, duration_minutes=60
+    )
+    resident = make_resident(email="fridag_rep_count@gahk.dk", first_name="Dobbelt", last_name="Vagt")
+    _hold(resident, morgen)
+    _hold(resident, aften)
+
+    out = StringIO()
+    call_command("declare_koekken_fridag", str(the_date), stdout=out, verbosity=1)
+
+    lines = out.getvalue().splitlines()
+    assert lines[1] == (
+        f"{the_date} er allerede allokeret: 1 beboer(e) fjernes fra deres vagter: "
+        f"{resident.full_name} (morgenvagt), {resident.full_name} (aftenvagt). "
+        "Ingen af de berørte har et aktivt notifikationsabonnement."
+    )
+    assert "De får besked" not in out.getvalue()
+    assert f"uden notifikationsabonnement (ingen besked sendt): {resident.full_name}." in out.getvalue()
+
+
+def test_declare_fridag_for_today_captures_only_tildelt_rows_not_ikke_udfoert(
+    make_resident: Callable,
+) -> None:
+    """The settled-assignment guard only refuses UDFOERT/ANMELDT, and the past-date guard only refuses
+    dates before today, so a shift TODAY can hold an `IKKE_UDFOERT` row next to a `TILDELT` one and
+    still be declared a fridag. Only the `TILDELT` holder is "removed" and notified; the flagged
+    `IKKE_UDFOERT` row is deleted with its Vagt but never reported or notified."""
+    from core.clock import current_date
+
+    today = current_date()
+    periode = resolve_periode(today)
+    vagt = Vagt.objects.create(
+        periode=periode, date=today, kind=VagtRegel.Kind.MORGEN, headcount=2, duration_minutes=60
+    )
+    holder = make_resident(email="fridag_today_tildelt@gahk.dk")
+    flagged = make_resident(email="fridag_today_flagged@gahk.dk")
+    _hold(holder, vagt)
+    VagtTildeling.objects.create(vagt=vagt, resident=flagged, status=VagtTildeling.Status.IKKE_UDFOERT)
+
+    result = declare_fridag(today, [VagtRegel.Kind.MORGEN], reason="Test")
+
+    assert [r.pk for r, _v in result.removed] == [holder.pk]
+    assert [r.pk for r, _a, _m in result.notifications] == [holder.pk]
 
 
 def test_declare_koekken_fridag_command_notifies_only_the_removed_resident(
