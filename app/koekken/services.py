@@ -22,6 +22,18 @@ ahead of A1.3's own rules, which are otherwise unchanged (see `_preference_write
 `post_obligation` and everything below "Ledger and obligation" in the design doc are explicitly
 untouched.
 
+**P3 step 1** (`docs/plans/2026-10-04-koekkenvagter-p3-design.md` §4-§5): the summer periode
+(`SOMMER`) is never allocated -- residents claim its shifts themselves (a later P3 step). One
+predicate, `periode_is_allocated`, is the single definition of that rule. Every allocation entry point
+refuses a SOMMER month (`allocate_tier_a`/`allocate_tier_b`/`allocate_month`/`allocate_batch` raise
+`KoekkenAllocationError`; `roll_forward_allocation` and `reconcile_month` log and no-op; `declare_fridag`
+deletes the shifts but never re-allocates), while `post_obligation` is deliberately UNCHANGED -- summer
+obligation posts exactly as any other month. The preference machinery treats SOMMER as transparent:
+everywhere A1.3 says "next"/"previous" periode it now means the next/previous ALLOCATED one, and a
+resident living inside SOMMER has the following Efterår as their preference "home" periode
+(`_preference_home_periode`/`_preference_home_periode_pure`). `in_preference_window` also stops missing
+Efterår's 24-30 June window (a pre-existing bug, see its docstring).
+
 **Amendments 2 and 3 in one paragraph:** the look-ahead window Amendment 1 allocates into has no
 real `Residency` list to draw on (nothing in this codebase ever creates one more than a month
 ahead), so `_resolve_population` projects one in memory -- the most recent published list at or
@@ -234,6 +246,14 @@ def _periode_bounds(for_date: date) -> tuple[str, int, date, date]:
     return Periode.Kind.EFTERAAR, year, date(year, 9, 1), date(year + 1, 1, 31)
 
 
+def periode_is_allocated(kind: str) -> bool:
+    """Whether a periode of `kind` is run through the allocation algorithm at all -- P3 design doc §4.
+    False only for SOMMER, whose shifts residents claim themselves. The ONE definition of that rule:
+    every guard in this module (and anywhere else) asks this rather than comparing against
+    `Periode.Kind.SOMMER` inline, so the rule cannot drift between call sites."""
+    return kind != Periode.Kind.SOMMER
+
+
 def resolve_periode(for_date: date) -> Periode:
     """The `Periode` containing `for_date`, creating it (calendar-anchored bounds) if it doesn't
     exist yet. Idempotent: re-resolving the same date always returns the same row."""
@@ -260,6 +280,31 @@ def _previous_periode(periode: Periode) -> Periode:
     return resolve_periode(periode.start_date - timedelta(days=1))
 
 
+def _next_allocated_periode(periode: Periode) -> Periode:
+    """The next `Periode` after `periode` that is allocated (`periode_is_allocated`) -- `_next_periode`
+    that skips SOMMER (P3 design doc §5). Write-path twin of `_next_allocated_periode_pure`. The skip
+    is decided on the pure periode first, so only the allocated target's row is ever materialised --
+    never a transient SOMMER `Periode` row nothing will use."""
+    return resolve_periode(_next_allocated_periode_pure(periode).start_date)
+
+
+def _previous_allocated_periode(periode: Periode) -> Periode:
+    """The closest preceding `Periode` that is allocated -- `_previous_periode` that skips SOMMER (P3
+    design doc §5): Efterår's missed-deadline fallback must read Forår, not an empty SOMMER."""
+    target = _periode_from_bounds(periode.start_date - timedelta(days=1))
+    if not periode_is_allocated(target.kind):
+        target = _periode_from_bounds(target.start_date - timedelta(days=1))
+    return resolve_periode(target.start_date)
+
+
+def _preference_home_periode(today: date) -> Periode:
+    """The periode a resident "lives in" for preference resolution on `today` (write path): the one
+    containing `today`, EXCEPT inside SOMMER, where it is the following Efterår (P3 design doc §5) --
+    SOMMER has no preferences, so the A1.3 mid-period-arrival exemption and the redirect both anchor
+    on Efterår. Persists the row via `resolve_periode`; pure twin: `_preference_home_periode_pure`."""
+    return resolve_periode(_preference_home_periode_pure(today).start_date)
+
+
 def _deadline_from_start(start_date: date) -> date:
     """The pure arithmetic behind `periode_deadline`, taking a bare start date instead of a
     `Periode` row -- split out so `in_preference_window` can compute a window with NO database
@@ -284,12 +329,14 @@ def periode_deadline(periode: Periode) -> date:
 def is_fridag(for_date: date, kind: str) -> bool:
     """Whether `(for_date, kind)` is excluded from generation entirely -- Amendment 5 (A5.3). The
     SINGLE question `generate_vagter` asks per `(date, kind)` pair, built as a seam rather than an
-    inline `Fridag.objects.filter(...)` check: P3's future summer-presence mechanism is the same
-    question ("should this date generate shifts?") answered from a different source (`FerieUge`,
-    per-week presence, rather than `Fridag`, per-kind exclusion) -- routing every caller through this
-    one function now means that later source has exactly one place to plug an additional check into,
-    rather than growing a second, independent skip path beside this one. P3 is not built here; only
-    the seam is.
+    inline `Fridag.objects.filter(...)` check, so any additional exclusion source would have exactly
+    one place to plug in rather than growing a second, independent skip path beside this one.
+
+    **No second source exists, and none is currently planned.** Amendment 5 built this seam for a
+    P3 summer-presence mechanism (`FerieUge`), but P3 as designed does not need it: summer generates the
+    full schedule and presence (away ranges) does not affect generation -- see the P3 design doc §3
+    (`2026-10-04-koekkenvagter-p3-design.md`). The seam stays as it is; do not go looking for a summer
+    source that was never built.
     """
     return Fridag.objects.filter(date=for_date, kind=kind).exists()
 
@@ -435,7 +482,9 @@ def _effective_weekday_unavailable_ids(resident_ids: list[int], periode: Periode
     (which could hand them a weekday shift they said last periode they could not do) or blocking
     allocation entirely. This supplies only the boolean — a resident who falls back this way still
     has no `declared_at` for `periode` and so still sorts last on an FCFS tie (A1.1); the fallback
-    value is never treated as if they had declared it themselves this periode."""
+    value is never treated as if they had declared it themselves this periode. "Previous" means the
+    previous ALLOCATED periode (P3 design doc §5): nobody writes SOMMER preference rows any more, so
+    Efterår falls back to Forår rather than landing on an empty SOMMER."""
     rows = Praeference.objects.filter(periode=periode, resident_id__in=resident_ids).values(
         "resident_id", "weekday_unavailable"
     )
@@ -443,7 +492,7 @@ def _effective_weekday_unavailable_ids(resident_ids: list[int], periode: Periode
     missing = [rid for rid in resident_ids if rid not in current]
     fallback: dict[int, bool] = {}
     if missing:
-        previous = _previous_periode(periode)
+        previous = _previous_allocated_periode(periode)
         previous_rows = Praeference.objects.filter(periode=previous, resident_id__in=missing).values(
             "resident_id", "weekday_unavailable"
         )
@@ -711,6 +760,11 @@ def allocate_tier_a(year: int, month: int, *, force: bool = False, _skip_clear: 
     guard has already run. Standalone callers (every P1/Amendment 1-3 test, `roll_forward_allocation`)
     never pass it and get exactly the behaviour described above.
     """
+    if not periode_is_allocated(_periode_from_bounds(date(year, month, 1)).kind):
+        raise KoekkenAllocationError(
+            f"{year}-{month:02d} hører til sommerperioden, som ikke allokeres -- vagter tages af "
+            "beboerne selv (P3)."
+        )
     periode = resolve_periode(date(year, month, 1))
     tier_a_kinds = [VagtRegel.Kind.MORGEN, VagtRegel.Kind.FROKOST]
     vagter = list(
@@ -858,6 +912,11 @@ def allocate_tier_b(year: int, month: int, *, force: bool = False, _skip_clear: 
     `_skip_clear` is private, used only by `allocate_month` -- see `allocate_tier_a`'s docstring for
     what it does and why; the same note applies here verbatim.
     """
+    if not periode_is_allocated(_periode_from_bounds(date(year, month, 1)).kind):
+        raise KoekkenAllocationError(
+            f"{year}-{month:02d} hører til sommerperioden, som ikke allokeres -- vagter tages af "
+            "beboerne selv (P3)."
+        )
     periode = resolve_periode(date(year, month, 1))
     vagter = sorted(
         Vagt.objects.filter(date__year=year, date__month=month, kind=VagtRegel.Kind.AFTEN),
@@ -994,6 +1053,10 @@ def allocate_month(year: int, month: int, *, force: bool = False) -> tuple[TierA
     way (a combined guard covering both tiers' existing rows) before anything is cleared; each leg is
     then called with `force=True` since the guard has already run.
 
+    **Refuses a SOMMER month first** (P3 design doc §4, `periode_is_allocated`), before the deadline-
+    timing guard below so an officer sees the right message, and via the pure `_periode_from_bounds` so a
+    refused call leaves no `Periode` row behind.
+
     **Refuses to run at any point on or before the OWN periode's preference deadline** (2026-10
     review, F5; the same guard `allocate_batch` already enforced for its own `--batch` command, now
     also covering the two paths that call this function directly and so had no guard at all before:
@@ -1023,6 +1086,11 @@ def allocate_month(year: int, month: int, *, force: bool = False) -> tuple[TierA
     scheduled roll-forward job.
     """
     pure_periode = _periode_from_bounds(date(year, month, 1))
+    if not periode_is_allocated(pure_periode.kind):
+        raise KoekkenAllocationError(
+            f"{year}-{month:02d} hører til sommerperioden, som ikke allokeres -- vagter tages af "
+            "beboerne selv (P3)."
+        )
     today = current_date()
     deadline = periode_deadline(pure_periode)
     if today <= deadline:
@@ -1062,11 +1130,15 @@ def allocate_batch(
     """Allocate a periode's first three months in one call -- Amendment 1, A1.2: the deadline-
     triggered batch Køkkengruppen runs by hand at a periode's preference deadline. `(year, month)`
     names any date inside the periode to batch; the periode containing it is resolved and the walk
-    starts at its `start_date`, clamped to `periode.end_date` (A2.8 -- a fixed three-month walk would
-    step a two-month SOMMER periode into the next EFTERAAR, which either has no `Vagt` rows yet or
-    belongs to a periode whose own preference deadline hasn't passed, inverting Amendment 1's locking
-    rule either way). Returns one `(year, month, TierAResult, TierBResult)` tuple per month allocated,
+    starts at its `start_date`, clamped to `periode.end_date` (A2.8 -- a fixed three-month walk over a
+    short periode would step into the next one, which either has no `Vagt` rows yet or belongs to a
+    periode whose own preference deadline hasn't passed, inverting Amendment 1's locking rule either
+    way; with SOMMER now refused, a clamp is a safety net for 5-month periodes only). Returns one `(year, month, TierAResult, TierBResult)` tuple per month allocated,
     in order, for the management command to report on.
+
+    **Refuses a SOMMER periode first** (P3 design doc §4, `periode_is_allocated`), checked purely before
+    the deadline guard and before any `Periode` row is materialised. Note the A2.8 clamp below now only
+    ever matters for the 5-month periodes: SOMMER, the only 2-month one, can no longer be batched.
 
     **Refuses to run at any point on or before the periode's own preference deadline -- not only
     "on" the deadline day, but arbitrarily early too** (A1.3 supplement, approved 2026-10-01; this
@@ -1103,6 +1175,11 @@ def allocate_batch(
     read `start_date`/`end_date` off.
     """
     pure_periode = _periode_from_bounds(date(year, month, 1))
+    if not periode_is_allocated(pure_periode.kind):
+        raise KoekkenAllocationError(
+            f"{year}-{month:02d} hører til sommerperioden, som ikke allokeres -- vagter tages af "
+            "beboerne selv (P3)."
+        )
     today = current_date()
     deadline = periode_deadline(pure_periode)
     if today <= deadline:
@@ -1129,7 +1206,8 @@ def reconcile_month(year: int, month: int) -> ReconciliationResult:
     anyone, this never touches an assignment for a resident present on both the projection that was
     used and the real list now.
 
-    A no-op (`ReconciliationResult()`) when this month has no `Vagt` rows yet, has never been
+    A no-op (`ReconciliationResult()`, logged) for a SOMMER month, which is never allocated (P3 design
+    doc §4) -- checked purely, before anything that could write. Likewise when this month has no `Vagt` rows yet, has never been
     allocated (no `TILDELT`/other `VagtTildeling` rows at all), or has no real `Residency` list
     published yet (F1: the normal state for any look-ahead month, since nothing in this codebase ever
     publishes a list more than a month ahead -- an empty real list means "nothing to compare the
@@ -1163,6 +1241,15 @@ def reconcile_month(year: int, month: int) -> ReconciliationResult:
     Idempotent: when the real list already matches who holds a slot, nothing is vacated and there is
     no open capacity to re-seat, so a repeat run writes nothing.
     """
+    if not periode_is_allocated(_periode_from_bounds(date(year, month, 1)).kind):
+        logger.info(
+            "koekken.reconcile_month: %s-%02d hører til sommerperioden, som ikke allokeres -- intet "
+            "at afstemme (P3).",
+            year,
+            month,
+        )
+        return ReconciliationResult()
+
     periode = resolve_periode(date(year, month, 1))
     tier_a_kinds = [VagtRegel.Kind.MORGEN, VagtRegel.Kind.FROKOST]
     vagter = list(
@@ -1264,7 +1351,9 @@ def roll_forward_allocation(today: date | None = None) -> TierAResult | None:
     keeps visibility at two-or-more everywhere without this job ever needing to guess at a periode
     whose `Praeference` rows may not exist yet.
 
-    A no-op (returns `None`) once every month in the periode that has `Vagt` rows is already
+    A no-op (returns `None`, logged, nothing written, nothing raised) when `today` falls inside SOMMER:
+    summer is never allocated (P3 design doc §4), and without this explicit check the 1 July run would
+    die on `allocate_tier_a`'s new refusal. Likewise once every month in the periode that has `Vagt` rows is already
     allocated, or if the periode has no `Vagt` rows at all yet. Either way there is nothing this job
     can safely do, and it must not raise: a scheduled task failing loudly every month after a periode
     is fully allocated (or before it has been generated) would be its own kind of noise.
@@ -1276,6 +1365,13 @@ def roll_forward_allocation(today: date | None = None) -> TierAResult | None:
     the design doc requires it be caught rather than left to kill a scheduled task.
     """
     today = today or current_date()
+    if not periode_is_allocated(_periode_from_bounds(today).kind):
+        logger.info(
+            "koekken.roll_forward_allocation: %s ligger i sommerperioden, som ikke allokeres -- "
+            "intet at gøre (P3).",
+            today,
+        )
+        return None
     periode = resolve_periode(today)
     tier_a_kinds = [VagtRegel.Kind.MORGEN, VagtRegel.Kind.FROKOST]
     month_cursor = periode.start_date
@@ -1323,16 +1419,16 @@ def roll_forward_allocation(today: date | None = None) -> TierAResult | None:
 
 def _redirect_past_deadline(current_periode: Periode, today: date) -> Periode:
     """The "further still" half of Amendment 1's A1.3 locking rule, used by `_preference_write_target`:
-    the periode right after `current_periode`, pushed one periode further again if `today` has already
+    the ALLOCATED periode right after `current_periode` (SOMMER skipped, P3 design doc §5), pushed one allocated periode further again if `today` has already
     reached (or passed) THAT periode's own deadline -- "a later edit is written to the following
     period's row instead, taking effect then." This is the WRITE-PATH version -- it persists rows via
-    `_next_periode`/`resolve_periode`, which is fine here because `_preference_write_target` only ever
+    `_next_allocated_periode`/`resolve_periode`, which is fine here because `_preference_write_target` only ever
     calls this from inside `set_preference`'s own legitimate write (a POST). The display-only mirror
     used by `preference_target_periode` is `_redirect_past_deadline_pure`, which must never write --
     see that function's docstring for why the two are kept separate rather than shared."""
-    target = _next_periode(current_periode)
+    target = _next_allocated_periode(current_periode)
     if today >= periode_deadline(target):
-        target = _next_periode(target)
+        target = _next_allocated_periode(target)
     return target
 
 
@@ -1355,18 +1451,37 @@ def _next_periode_pure(periode: Periode) -> Periode:
     return _periode_from_bounds(periode.end_date + timedelta(days=1))
 
 
+def _next_allocated_periode_pure(periode: Periode) -> Periode:
+    """The no-DB counterpart to `_next_allocated_periode`: an unsaved `Periode` for the next ALLOCATED
+    one after `periode` (SOMMER skipped, P3 design doc §5), built from `_next_periode_pure`."""
+    target = _next_periode_pure(periode)
+    if not periode_is_allocated(target.kind):
+        target = _next_periode_pure(target)
+    return target
+
+
+def _preference_home_periode_pure(today: date) -> Periode:
+    """The no-DB counterpart to `_preference_home_periode`: an unsaved `Periode` for the one containing
+    `today`, except inside SOMMER where it is the following Efterår. Used by
+    `preference_target_periode`."""
+    periode = _periode_from_bounds(today)
+    if not periode_is_allocated(periode.kind):
+        periode = _next_periode_pure(periode)
+    return periode
+
+
 def _redirect_past_deadline_pure(current_periode: Periode, today: date) -> Periode:
     """The no-DB counterpart to `_redirect_past_deadline`, for `preference_target_periode`'s
     display-only resolution (F2): the SAME rule ("push one periode further again if `today` has
     already reached that periode's own deadline"), built entirely from unsaved `Periode` instances
-    (`_next_periode_pure`) and pure date arithmetic (`periode_deadline` reads only `start_date`, never
+    (`_next_allocated_periode_pure`) and pure date arithmetic (`periode_deadline` reads only `start_date`, never
     the database). `preference_target_periode` runs on every authenticated page view while a window is
     open (via the banner) and on every GET to the preference form -- a `get_or_create` here would be
     both extra queries on a common path and a write triggered by a GET, independent of the query count
     (see `in_preference_window`'s docstring for the same reasoning, which this mirrors)."""
-    target = _next_periode_pure(current_periode)
+    target = _next_allocated_periode_pure(current_periode)
     if today >= periode_deadline(target):
-        target = _next_periode_pure(target)
+        target = _next_allocated_periode_pure(target)
     return target
 
 
@@ -1390,8 +1505,9 @@ def _preference_write_target(resident: Resident, today: date) -> Periode:
     -- so the exemption's own wording is left completely unchanged below; it simply never runs while a
     window is open.
 
-    Otherwise, exactly as before this supplement: a resident with no row yet for the periode `today`
-    falls in gets one created directly there (the mid-period-arrival exemption); one who already has a
+    Otherwise, exactly as before this supplement (P3 design doc §5 changes only what "the periode
+    `today` falls in" means: inside SOMMER it is the following Efterår, `_preference_home_periode`):
+    a resident with no row yet for the periode `today` falls in gets one created directly there (the mid-period-arrival exemption); one who already has a
     row for it is instead redirected to the next periode, or the one after that once ITS deadline has
     also passed (`_redirect_past_deadline`).
     """
@@ -1399,7 +1515,7 @@ def _preference_write_target(resident: Resident, today: date) -> Periode:
     if window_periode is not None:
         return resolve_periode(window_periode.start_date)
 
-    current_periode = resolve_periode(today)
+    current_periode = _preference_home_periode(today)
     if not Praeference.objects.filter(resident=resident, periode=current_periode).exists():
         return current_periode
     return _redirect_past_deadline(current_periode, today)
@@ -1488,10 +1604,18 @@ def preference_window(periode: Periode) -> tuple[date, date]:
 
 def in_preference_window(*, at: date | None = None) -> Periode | None:
     """The `Periode` whose preference window `at` (default today) currently falls inside, or `None`.
-    Checks the periode `at` falls in AND the next one -- the window that matters to a resident living
-    in periode N is almost always periode N+1's (its deadline is still ahead; periode N's own deadline
-    is already in the past the moment anyone is living inside it), but checking both keeps this
-    correct right at a boundary without hardcoding which one it must be.
+    Checks the periode `at` falls in AND the next TWO, dropping any that is SOMMER (it has no
+    preferences and so no window or banner -- P3 design doc §5). The window that matters to a resident
+    living in periode N is almost always periode N+1's (its deadline is still ahead; periode N's own
+    deadline is already in the past the moment anyone is living inside it), but checking the periode
+    itself keeps this correct right at a boundary without hardcoding which one it must be.
+
+    **Why two periodes ahead, and a pre-existing bug this fixes:** this used to check only the current
+    and the next periode. Efterår's window is 24 Jun-1 Jul, a date range in which the current periode is
+    Forår and the NEXT periode is SOMMER, so Efterår -- the one after that -- was never looked at and its
+    window was only detected on 1 July itself, when SOMMER became current (reproduced 2026-10-04:
+    `at=2027-06-24` and `2027-06-30` returned `None`, `2027-07-01` returned Efterår). Looking two ahead
+    and skipping SOMMER finds it for the whole week.
 
     **Never touches the database, in EVERY case -- not only the common "no window" one (F6).** This
     runs from `core.context_processors.navigation` on every single authenticated page view (it is
@@ -1525,9 +1649,15 @@ def in_preference_window(*, at: date | None = None) -> Periode | None:
     persisted one for that gate and costs nothing.
     """
     today = at or current_date()
-    _kind, _year, current_start, current_end = _periode_bounds(today)
-    _next_kind, _next_year, next_start, _next_end = _periode_bounds(current_end + timedelta(days=1))
-    for start in (current_start, next_start):
+    current_kind, _year, current_start, current_end = _periode_bounds(today)
+    candidates = [(current_kind, current_start)]
+    cursor = current_end
+    for _ in range(2):
+        next_kind, _next_year, next_start, cursor = _periode_bounds(cursor + timedelta(days=1))
+        candidates.append((next_kind, next_start))
+    for kind, start in candidates:
+        if not periode_is_allocated(kind):
+            continue
         deadline = _deadline_from_start(start)
         if deadline - timedelta(days=7) <= today <= deadline:
             return _periode_from_bounds(start)
@@ -1609,8 +1739,9 @@ def preference_target_periode(resident: Resident, *, at: date | None = None) -> 
        `_preference_write_target`), so unlike an earlier revision of this function, no extra
        bookkeeping is needed to stop the banner chasing a moving target -- window-first collapses that
        distinction away entirely.
-    2. **Otherwise, the mid-period-arrival exemption** (A1.3): no row yet for the periode `at` falls
-       in -> the target is that periode directly.
+    2. **Otherwise, the mid-period-arrival exemption** (A1.3): no row yet for the resident's home
+       periode (the one `at` falls in, or the following Efterår when `at` is inside SOMMER --
+       `_preference_home_periode_pure`, P3 design doc §5) -> the target is that periode directly.
     3. **Otherwise**, `resident` already has a row for their current periode, so the target is the next
        one -- redirected one further still if `at` has already reached THAT periode's own deadline
        (`_redirect_past_deadline_pure`, the no-DB mirror of `_redirect_past_deadline`).
@@ -1624,7 +1755,7 @@ def preference_target_periode(resident: Resident, *, at: date | None = None) -> 
     if window_periode is not None:
         return window_periode
 
-    current_periode = _periode_from_bounds(today)
+    current_periode = _preference_home_periode_pure(today)
     has_row = Praeference.objects.filter(
         resident=resident, periode__kind=current_periode.kind, periode__year=current_periode.year
     ).exists()
@@ -2071,15 +2202,23 @@ def _month_tildelt_by_resident(year: int, month: int) -> dict[int, list[Vagt]]:
     return by_resident
 
 
-def _fridag_notification_message(for_date: date, reason: str) -> str:
+def _fridag_notification_message(for_date: date, reason: str, *, reallocated: bool = True) -> str:
     """The ONE resident-facing message for `declare_fridag`, sent to anyone whose held shifts in the
     affected month changed at all (lost, gained, reassigned, any combination). It names no specific
     shift or date -- and so can never be factually wrong about which shift went where -- and simply
     points the resident at the app to see what they currently hold. It does name the affected MONTH
     (from `for_date`, never "denne måned"): a fridag is normally declared months ahead, so the
-    affected month is routinely not the current one."""
+    affected month is routinely not the current one.
+
+    `reallocated=False` is the SOMMER variant (P3 design doc §4): summer is never re-allocated, so a
+    deleted claim is simply gone -- "omfordelt" would be false."""
     reason_text = reason or "fridag"
     month_text = f"{MONTHS[for_date.month]} {for_date.year}"
+    if not reallocated:
+        return (
+            f"En eller flere af dine køkkenvagter i {month_text} er bortfaldet som følge af en fridag "
+            f"({reason_text}) -- se dine aktuelle vagter i app'en."
+        )
     return (
         f"Dine køkkenvagter i {month_text} er blevet omfordelt som følge af en fridag ({reason_text}) "
         "-- se dine aktuelle vagter i app'en."
@@ -2100,9 +2239,13 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
          CASCADEs with its `Vagt` (A5.6) -- this is WHY residents holding one of those can end up
          notified below. `KoekkenPost.vagt` SET_NULLs instead (A5.6) -- the ledger is left completely
          intact, no special handling needed for it here.
-      3. Re-allocate the affected month (`allocate_month(year, month, force=True)` -- reusing the
+      3. Re-allocate the affected month -- **only when its periode is allocated at all
+         (`periode_is_allocated`; never for SOMMER, P3 design doc §4: summer claims are simply deleted
+         with their `Vagt` rows, and the residents who lost one are still diffed and notified, with the
+         summer variant of the message)** -- (`allocate_month(year, month, force=True)` -- reusing the
          existing force mechanism, never new allocation logic) and re-post its obligation
-         (`post_obligation` -- reusing its existing stale-row reconciliation, never new ledger logic;
+         (`post_obligation` -- UNCHANGED for SOMMER too: summer obligation posts normally, only
+         ALLOCATION is switched off there -- reusing its existing stale-row reconciliation, never new ledger logic;
          it derives a month's total from actual `Vagt` rows, so a smaller supply reconciles correctly
          on re-run with nothing extra written here) -- **gated by two SEPARATE checks, both evaluated
          BEFORE any `Vagt` row is deleted** (2026-10 review, F3, refined by finding (b)):
@@ -2224,8 +2367,10 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
             vagt.delete()
 
         if affected_vagter and has_tildelt_to_reseat:
-            allocate_month(year, month, force=True)
-            result.reallocated_months.append((year, month))
+            reallocated = periode_is_allocated(periode.kind)
+            if reallocated:
+                allocate_month(year, month, force=True)
+                result.reallocated_months.append((year, month))
 
             # Per-shift diff of held-Vagt-pk SETS, over every resident who held anything before OR
             # holds anything now. Anyone whose set changed at all is notified (same generic message);
@@ -2260,7 +2405,7 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
                 result.gained_residents = [
                     residents_by_id[rid] for rid in sorted(gained_ids) if rid in residents_by_id
                 ]
-                message = _fridag_notification_message(for_date, reason)
+                message = _fridag_notification_message(for_date, reason, reallocated=reallocated)
                 for rid in sorted(affected_ids):
                     resident = residents_by_id.get(rid)
                     if resident is None:

@@ -53,6 +53,7 @@ from .models import KoekkenPost, Periode, Praeference, Vagt, VagtRegel
 from .services import (
     allocate_tier_a,
     generate_vagter,
+    periode_is_allocated,
     post_obligation,
     rebase_to_zero_mean,
     reconcile_month,
@@ -317,6 +318,10 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
     today = now.date()
     periode = resolve_periode(today)
     generate_vagter(periode)
+    if not periode_is_allocated(periode.kind):
+        # Summer is never allocated (P3 design doc §4): its shifts are generated for residents to claim
+        # themselves, so none of the allocation scenarios below can run. Generation only.
+        return KoekkenPost.objects.count()
 
     # A few weekday-unavailable declarers for the WHOLE periode (Praeference is periode-scoped, not
     # month-scoped -- see koekken.models), so they show up routed to the weekend pool both in the

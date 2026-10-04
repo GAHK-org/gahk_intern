@@ -4,8 +4,9 @@ Full design: `docs/plans/2026-09-21-koekkenvagter-design.md` (P1 + Amendments 1-
 `docs/plans/2026-09-28-koekkenvagter-p2-design.md` (P2: tier-B allocation, the full preference
 model, verification/flagging, the kitchen tablet, the four UI surfaces). P1 was the slot model,
 generation, tier-A (morgen/frokost) allocation, the ledger and obligation posting, and the
-launch-seeding command. The summer `FerieUge` presence model is still **not** built here — that is
-P3, deliberately absent rather than stubbed.
+launch-seeding command. Summer (P3) is designed in `docs/plans/2026-10-04-koekkenvagter-p3-design.md`,
+which supersedes the original design doc's "Summer" section and its `FerieUge` model: summer is never
+allocated, residents claim shifts themselves, and its models (away ranges) are built in later P3 steps.
 
 This replaces an informal, manual kitchen-credit scoreboard. It does **not** touch `ak.AkEntry`,
 which is a separate system (monthly krydser for dorm labour) — the two must never be conflated.
@@ -45,10 +46,8 @@ It does **not** change any of the invariants above: `post_obligation` is untouch
 its integer minutes are untouched, and `VagtTildeling`'s shape and survivor handling are untouched —
 only *when* `allocate_tier_a` may run and *how it ranks* changed.
 
-`Periode.Kind.SOMMER` exists as a choice even though nothing generates a summer period's slots yet
-(that needs `FerieUge`, weekly presence — P3, see the design doc's "Summer" section on why `Residency`
-alone is wrong for July/August). Leaving the choice in now means the eventual P3 migration adds a
-model, not a schema change to this one.
+`Periode.Kind.SOMMER` exists as a choice: summer is a real periode (its shifts are generated and its
+obligation posts) but is never allocated — see the P3 design doc, `koekken.services.periode_is_allocated`.
 
 **Amendment 5** (the design doc's "fridage" section) adds `Fridag`: concrete, per-(date, kind)
 exclusion rows Køkkengruppen enters by hand (juleaften, nytårsaften, ...) so `generate_vagter` never
@@ -141,7 +140,7 @@ class Periode(models.Model):
     class Kind(models.TextChoices):
         EFTERAAR = "efteraar", "Efterår"
         FORAAR = "foraar", "Forår"
-        SOMMER = "sommer", "Sommer"  # P3: no generation/allocation targets this yet.
+        SOMMER = "sommer", "Sommer"  # self-signup, never allocated (P3)
 
     kind = models.CharField(max_length=10, choices=Kind.choices)
     year = models.PositiveSmallIntegerField()

@@ -48,7 +48,10 @@ from koekken.models import (
 )
 from koekken.services import (
     KoekkenAllocationError,
+    ReconciliationResult,
     _avoidance_resident_ids,
+    _preference_home_periode,
+    _preference_home_periode_pure,
     allocate_batch,
     allocate_month,
     allocate_tier_a,
@@ -64,6 +67,7 @@ from koekken.services import (
     mark_udfoert,
     marking_window,
     periode_deadline,
+    periode_is_allocated,
     post_obligation,
     preference_target_periode,
     rebase_to_zero_mean,
@@ -201,7 +205,7 @@ def test_reallocation_after_status_change_does_not_crash_or_double_book(make_res
     force=True on the re-run because this month already has TILDELT rows from the first run --
     Amendment 1's A1.2 guard now requires it for ANY re-run, including this "genuine correction"
     one; the guard is tested on its own further down (test_reallocation_refuses_without_force...)."""
-    year, month = 2027, 8
+    year, month = 2027, 11
     periode = _build_month(year, month, weekday_capacity=2, weekend_capacity=0)
 
     a = make_resident(email="rerun_a@gahk.dk")
@@ -285,7 +289,7 @@ def test_no_vagt_rows_raises_a_clear_error(make_resident: Callable) -> None:
 
 
 def test_obligation_posting_is_idempotent(make_resident: Callable) -> None:
-    year, month = 2027, 7
+    year, month = 2027, 10
     periode = _build_month(year, month, weekday_capacity=2, weekend_capacity=1)
     residents = [make_resident(email=f"obl{i}@gahk.dk") for i in range(3)]
     for r in residents:
@@ -631,12 +635,11 @@ def test_allocate_koekkenvagter_batch_allocates_periodes_first_three_months(make
     assert not VagtTildeling.objects.filter(vagt__date__year=2032, vagt__date__month=12).exists()
 
 
-def test_allocate_koekkenvagter_batch_clamps_to_periode_length_for_sommer(make_resident: Callable) -> None:
-    """A2.8: --batch must clamp to the periode's actual length. SOMMER is only 2 months (Jul-Aug), so
-    a fixed 3-month walk from its start would step into the following EFTERAAR's September -- which
-    has no Vagt rows generated yet (this command would raise KoekkenAllocationError on it) and, even
-    if it did, would be allocating a month before ITS OWN periode's preference deadline has passed,
-    inverting Amendment 1's locking rule. The fix clamps the walk to `periode.end_date`."""
+def test_allocate_koekkenvagter_batch_refuses_sommer_and_writes_nothing(make_resident: Callable) -> None:
+    """P3 design doc §4 (replaces the A2.8 SOMMER clamp test): SOMMER is never allocated, so --batch
+    for it is refused with a CommandError even long after its deadline, and writes nothing. (The A2.8
+    clamp to `periode.end_date` can no longer trigger at all: SOMMER, the only periode shorter than the
+    three-month batch, is refused before the walk starts.)"""
     periode = resolve_periode(date(2033, 7, 15))  # SOMMER 2033 (Jul-Aug only)
     generate_vagter(periode)
     residents = [make_resident(email=f"sommerbatch{i}@gahk.dk") for i in range(3)]
@@ -648,13 +651,12 @@ def test_allocate_koekkenvagter_batch_clamps_to_periode_length_for_sommer(make_r
         DevClock.objects.update_or_create(
             pk=1, defaults={"simulated_date": periode_deadline(periode) + timedelta(days=1)}
         )
-        call_command("allocate_koekkenvagter", "2033", "7", "--batch", verbosity=0)  # must not raise
+        with pytest.raises(CommandError, match="sommerperioden"):
+            call_command("allocate_koekkenvagter", "2033", "7", "--batch", verbosity=0)
+        with pytest.raises(CommandError, match="sommerperioden"):
+            call_command("allocate_koekkenvagter", "2033", "7", verbosity=0)
 
-    for month in (7, 8):
-        assert VagtTildeling.objects.filter(
-            vagt__date__year=2033, vagt__date__month=month, status=VagtTildeling.Status.TILDELT
-        ).exists()
-    assert not VagtTildeling.objects.filter(vagt__date__year=2033, vagt__date__month=9).exists()
+    assert not VagtTildeling.objects.exists()
 
 
 # ------------------------------------------------------- A1.3 supplement: the batch-timing guard
@@ -953,8 +955,9 @@ def test_set_preference_edit_after_deadline_targets_next_periode_and_leaves_curr
     r = make_resident(email="lock@gahk.dk")
     efteraar = resolve_periode(date(2031, 9, 15))
     foraar = resolve_periode(date(2032, 2, 15))
-    sommer = resolve_periode(date(2032, 7, 15))
+    next_efteraar = resolve_periode(date(2032, 9, 15))
     assert periode_deadline(foraar) == date(2031, 12, 1)
+    assert periode_deadline(next_efteraar) == date(2032, 7, 1)
 
     # Mid-period declaration for the period the resident is currently in (EFTERAAR).
     current_row = set_preference(r, True, at=date(2031, 9, 10))
@@ -966,16 +969,18 @@ def test_set_preference_edit_after_deadline_targets_next_periode_and_leaves_curr
     assert foraar_row.weekday_unavailable is True
 
     # After FORAAR's deadline (still standing in EFTERAAR): the edit is redirected past FORAAR to
-    # SOMMER instead, and FORAAR's already-set value is left completely untouched.
-    sommer_row = set_preference(r, False, at=date(2031, 12, 20))
-    assert sommer_row.periode == sommer
-    assert sommer_row.weekday_unavailable is False
+    # the NEXT EFTERAAR instead (SOMMER is skipped, P3 design doc §5), and FORAAR's already-set value
+    # is left completely untouched.
+    next_row = set_preference(r, False, at=date(2031, 12, 20))
+    assert next_row.periode == next_efteraar
+    assert next_row.weekday_unavailable is False
 
     foraar_row.refresh_from_db()
     assert foraar_row.weekday_unavailable is True  # untouched
     assert Praeference.objects.filter(resident=r, periode=efteraar).count() == 1
     assert Praeference.objects.filter(resident=r, periode=foraar).count() == 1
-    assert Praeference.objects.filter(resident=r, periode=sommer).count() == 1
+    assert Praeference.objects.filter(resident=r, periode=next_efteraar).count() == 1
+    assert not Periode.objects.filter(kind=Periode.Kind.SOMMER).exists()  # no SOMMER row ever created
 
 
 def test_mid_period_arrival_preference_only_affects_unallocated_months(make_resident: Callable) -> None:
@@ -1015,25 +1020,26 @@ def test_mid_period_arrival_preference_only_affects_unallocated_months(make_resi
 def test_allocation_crossing_periode_boundary_uses_target_month_periode_preferences(
     make_resident: Callable,
 ) -> None:
+    # An allocated-to-allocated boundary (EFTERAAR -> FORAAR); SOMMER is never allocated (P3).
     year = 2034
-    foraar = resolve_periode(date(year, 5, 15))  # FORAAR (Feb-Jun)
-    sommer = resolve_periode(date(year, 7, 15))  # SOMMER (Jul-Aug)
+    efteraar = resolve_periode(date(year - 1, 10, 15))  # EFTERAAR 2033 (Sep 2033 - Jan 2034)
+    foraar = resolve_periode(date(year, 3, 15))  # FORAAR 2034 (Feb-Jun)
 
     r = make_resident(email="boundary@gahk.dk")
-    # Declares weekday_unavailable for FORAAR, but the OPPOSITE for SOMMER.
+    # Declares weekday_unavailable for EFTERAAR, but the OPPOSITE for FORAAR.
     Praeference.objects.create(
-        resident=r, periode=foraar, weekday_unavailable=True, declared_at=date(year, 1, 1)
+        resident=r, periode=efteraar, weekday_unavailable=True, declared_at=date(year - 1, 9, 1)
     )
     Praeference.objects.create(
-        resident=r, periode=sommer, weekday_unavailable=False, declared_at=date(year, 1, 1)
+        resident=r, periode=foraar, weekday_unavailable=False, declared_at=date(year - 1, 11, 25)
     )
 
-    # Zero weekend capacity in July: if the allocator wrongly consulted FORAAR's declaration
+    # Zero weekend capacity in February: if the allocator wrongly consulted EFTERAAR's declaration
     # (weekday_unavailable=True), r would be refused rather than given a weekday slot.
-    _build_month(year, 7, weekday_capacity=1, weekend_capacity=0)
-    _place(r, year, 7)
+    _build_month(year, 2, weekday_capacity=1, weekend_capacity=0)
+    _place(r, year, 2)
 
-    result = allocate_tier_a(year, 7)
+    result = allocate_tier_a(year, 2)
 
     assert result.weekday_assigned == [r]
     assert result.refused_weekend == []
@@ -1042,37 +1048,66 @@ def test_allocation_crossing_periode_boundary_uses_target_month_periode_preferen
 
 def test_missing_preference_row_falls_back_to_previous_periode_value(make_resident: Callable) -> None:
     year = 2035
-    foraar = resolve_periode(date(year, 4, 15))
-    sommer = resolve_periode(date(year, 7, 15))
+    efteraar = resolve_periode(date(year - 1, 10, 15))  # EFTERAAR 2034
+    foraar = resolve_periode(date(year, 3, 15))  # FORAAR 2035
 
     r = make_resident(email="carryforward@gahk.dk")
     Praeference.objects.create(
-        resident=r, periode=foraar, weekday_unavailable=True, declared_at=date(year, 1, 1)
+        resident=r, periode=efteraar, weekday_unavailable=True, declared_at=date(year - 1, 9, 1)
     )
-    # No Praeference row at all for SOMMER -- a missed deadline.
+    # No Praeference row at all for FORAAR -- a missed deadline.
 
-    _build_month(year, 7, weekday_capacity=0, weekend_capacity=1)  # only a weekend seat available
-    _place(r, year, 7)
+    _build_month(year, 3, weekday_capacity=0, weekend_capacity=1)  # only a weekend seat available
+    _place(r, year, 3)
 
-    result = allocate_tier_a(year, 7)  # must not raise, and must route r to the weekend pool
+    result = allocate_tier_a(year, 3)  # must not raise, and must route r to the weekend pool
 
     assert result.weekend_assigned == [r]
     # A2.8: r is the ONLY resident this month, so the mandatory weekend draft would have seated them
     # anyway even with the fallback completely disabled -- that made the assertion above pass for the
     # wrong reason. `drafted == []` is the discriminating assertion: it proves r arrived via the
-    # DECLARER path (the fallback correctly read SOMMER's carried-forward weekday_unavailable=True),
+    # DECLARER path (the fallback correctly read EFTERAAR's carried-forward weekday_unavailable=True),
     # not via the draft, which is what would happen if the fallback silently defaulted to available.
     assert result.drafted == []
-    assert Praeference.objects.filter(periode=sommer, resident=r).count() == 0  # no physical row copy
+    assert Praeference.objects.filter(periode=foraar, resident=r).count() == 0  # no physical row copy
+
+
+def test_efteraar_missing_preference_row_falls_back_to_foraar_skipping_sommer(
+    make_resident: Callable,
+) -> None:
+    """P3 design doc §5: nobody writes SOMMER preference rows any more, so EFTERAAR's missed-deadline
+    fallback must skip over SOMMER to FORAAR -- landing on the empty SOMMER would silently drop every
+    resident's FORAAR `weekday_unavailable` declaration."""
+    year = 2035
+    foraar = resolve_periode(date(year, 4, 15))  # FORAAR 2035
+    efteraar = resolve_periode(date(year, 10, 15))  # EFTERAAR 2035
+
+    r = make_resident(email="carryforward_skip@gahk.dk")
+    Praeference.objects.create(
+        resident=r, periode=foraar, weekday_unavailable=True, declared_at=date(year, 1, 1)
+    )
+    # No row for EFTERAAR (missed deadline), and none for SOMMER either.
+
+    _build_month(year, 10, weekday_capacity=0, weekend_capacity=1)
+    _place(r, year, 10)
+
+    result = allocate_tier_a(year, 10)
+
+    assert result.weekend_assigned == [r]
+    assert result.drafted == []  # declarer path: FORAAR's True was read, not an empty SOMMER's default
+    assert Praeference.objects.filter(periode=efteraar, resident=r).count() == 0
+    assert not Praeference.objects.filter(periode__kind=Periode.Kind.SOMMER).exists()
 
 
 def test_devclock_walk_across_periode_boundary_keeps_two_months_allocated_ahead(
     make_resident: Callable,
 ) -> None:
-    """A1.5's visibility invariant, walked with DevClock exactly as the design doc's Feb-Jun worked
-    example describes: the Dec-1 deadline batch (Feb/Mar/Apr), the monthly roll-forward filling in
-    May and June as the clock advances, and the May-1 deadline batch for SOMMER (Jul/Aug) -- at every
-    point along the walk, at least two months from "today" onward are already allocated."""
+    """A1.5's visibility invariant, walked with DevClock across the FORAAR -> EFTERAAR boundary and
+    restated for P3 (design doc §12): it holds over ALLOCATED periodes only. SOMMER is never allocated
+    (nothing happens on 1 May or 1 July), so July/August never count as "allocated ahead"; the
+    EFTERAAR deadline batch instead lands on 2 July (its deadline, 1 July, belongs to the residents).
+    Between the last FORAAR month being allocated and that batch, the count over allocated months
+    honestly shrinks -- that gap is the summer-claiming period, by design."""
     r = make_resident(email="walker@gahk.dk")
     months = [
         (2036, 2),
@@ -1081,7 +1116,10 @@ def test_devclock_walk_across_periode_boundary_keeps_two_months_allocated_ahead(
         (2036, 5),
         (2036, 6),  # FORAAR 2036
         (2036, 7),
-        (2036, 8),  # SOMMER 2036
+        (2036, 8),  # SOMMER 2036 -- built (generated) but never allocated
+        (2036, 9),
+        (2036, 10),
+        (2036, 11),  # EFTERAAR 2036
     ]
     for y, m in months:
         _build_month(y, m, weekday_capacity=1, weekend_capacity=0)
@@ -1093,19 +1131,20 @@ def test_devclock_walk_across_periode_boundary_keeps_two_months_allocated_ahead(
         ).exists()
 
     def months_ahead_allocated(today: date) -> int:
-        """Consecutive allocated months strictly AFTER `today`'s own month -- the design doc's "N
-        months ahead" framing; the current month itself doesn't count."""
+        """Consecutive allocated months strictly AFTER `today`'s own month, SOMMER months skipped
+        (they are neither allocated nor a break in the chain of allocated periodes)."""
         count = 0
         y, m = today.year, today.month
-        m += 1
-        if m == 13:
-            y, m = y + 1, 1
-        while (y, m) in months and is_allocated(y, m):
-            count += 1
+        while True:
             m += 1
             if m == 13:
                 y, m = y + 1, 1
-        return count
+            if m in (7, 8):
+                continue
+            if (y, m) in months and is_allocated(y, m):
+                count += 1
+            else:
+                return count
 
     with override_settings(DEBUG=True):
         # Dec 1 2035: FORAAR's deadline -- Køkkengruppen's own batch, first three months.
@@ -1117,18 +1156,32 @@ def test_devclock_walk_across_periode_boundary_keeps_two_months_allocated_ahead(
         for step in (date(2036, 1, 1), date(2036, 2, 1), date(2036, 3, 1), date(2036, 4, 1)):
             DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": step})
             roll_forward_allocation(step)
+            assert months_ahead_allocated(step) >= 2
 
-        # May 1 2036: SOMMER's own deadline-triggered batch (only 2 months exist to batch).
+        # May 1 2036: SOMMER has no deadline batch any more -- it is refused outright.
         DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": date(2036, 5, 1)})
-        for y, m in months[5:7]:
-            allocate_tier_a(y, m)
-        assert months_ahead_allocated(date(2036, 5, 1)) == 3  # June, July, August
-        assert months_ahead_allocated(date(2036, 5, 1)) >= 2
+        with pytest.raises(CommandError):
+            call_command("allocate_koekkenvagter", "2036", "7", "--batch", verbosity=0)
+        assert not is_allocated(2036, 7)
+        assert months_ahead_allocated(date(2036, 5, 1)) == 1  # June only
 
+        # June 1 and July 1: roll-forward is a no-op (FORAAR fully allocated; then SOMMER, never).
         DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": date(2036, 6, 1)})
-        roll_forward_allocation(date(2036, 6, 1))  # no-op: FORAAR is already fully allocated
-        assert months_ahead_allocated(date(2036, 6, 1)) == 2  # July, August
-        assert months_ahead_allocated(date(2036, 6, 1)) >= 2
+        assert roll_forward_allocation(date(2036, 6, 1)) is None
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": date(2036, 7, 1)})
+        assert roll_forward_allocation(date(2036, 7, 1)) is None
+        assert not is_allocated(2036, 7)
+        assert not is_allocated(2036, 8)
+
+        # July 2 2036: EFTERAAR's own deadline batch (deadline 1 July) -- visibility restored.
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": date(2036, 7, 2)})
+        for y, m in months[7:]:
+            if m == 8:
+                continue
+            allocate_tier_a(y, m)
+        assert months_ahead_allocated(date(2036, 7, 2)) == 3  # September, October, November
+        assert not is_allocated(2036, 7)
+        assert not is_allocated(2036, 8)
 
 
 # --------------------------------------------------------------------------- dry-run writes nothing
@@ -1350,7 +1403,7 @@ def test_reconciliation_seats_genuine_new_arrival_into_unfilled_slot(make_reside
 def test_reconciliation_never_touches_resident_present_on_both_lists(make_resident: Callable) -> None:
     """A2.7: the single most important guarantee -- a resident present on both the projection and the
     real list is never moved, touched or re-derived by reconciliation."""
-    year, month = 2042, 7
+    year, month = 2042, 10
     stays = make_resident(email="recon_stays@gahk.dk")
     _place(stays, year, month)  # real from the start -- no projection involved
     _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
@@ -1370,7 +1423,7 @@ def test_reconciliation_never_touches_resident_present_on_both_lists(make_reside
 def test_reconciliation_idempotent_when_projection_and_reality_agree(make_resident: Callable) -> None:
     """A2.7: when the real list already matches who holds a slot, reconciliation is a true no-op --
     including on a second consecutive run."""
-    year, month = 2042, 8
+    year, month = 2042, 11
     a = make_resident(email="recon_idem_a@gahk.dk")
     b = make_resident(email="recon_idem_b@gahk.dk")
     for r in (a, b):
@@ -1538,11 +1591,11 @@ def test_reconciliation_no_inheritance_existing_unassigned_resident_beats_new_ar
     """A3.5: a departing resident's slot may go to an EXISTING resident who is further behind on
     balance, not automatically to the new arrival who happens to show up in their place -- "no
     inheritance", per A3.1."""
-    year, month = 2044, 7
+    year, month = 2044, 10
     departing = make_resident(email="noinherit_dep@gahk.dk")
     existing_unassigned = make_resident(email="noinherit_existing@gahk.dk")
-    _place(departing, year, 6)  # both in the ORIGINAL projected population...
-    _place(existing_unassigned, year, 6)
+    _place(departing, year, 9)  # both in the ORIGINAL projected population...
+    _place(existing_unassigned, year, 9)
     periode = _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
     _adjust(departing, periode, -10_000)  # most behind -> wins the sole slot at the projected run
     _adjust(existing_unassigned, periode, -5_000)  # behind, but not enough -- misses out (soft floor)
@@ -1571,11 +1624,11 @@ def test_reconciliation_does_not_hand_second_slot_to_existing_holder(make_reside
     """A3.5: reconciliation must not force a second tier-A shift onto a resident who already holds one
     this month -- even if their balance would rank them first -- while an eligible unassigned resident
     exists."""
-    year, month = 2044, 8
+    year, month = 2044, 11
     holds_one = make_resident(email="secondslot_holder@gahk.dk")
     departing = make_resident(email="secondslot_dep@gahk.dk")
-    _place(holds_one, year, 7)
-    _place(departing, year, 7)
+    _place(holds_one, year, 10)
+    _place(departing, year, 10)
     periode = _build_month(year, month, weekday_capacity=2, weekend_capacity=0)
 
     allocate_tier_a(year, month)  # both projected -> both slots filled
@@ -1800,7 +1853,7 @@ def test_avoidance_pattern_gets_extra_tier_a_instead_of_aftenvagt_when_capacity_
     With 2 open weekday tier-A slots and only ONE candidate, the leftover-capacity mechanic
     (`_fill_leftover_tier_a`) gives them BOTH -- extra tier-A instead of an aftenvagt -- and
     `allocate_tier_b` then excludes them from its candidate pool entirely."""
-    year, month = 2051, 7
+    year, month = 2051, 10
     periode = _build_month(year, month, weekday_capacity=2, weekend_capacity=0)
     _aften_vagt(periode, date(year, month, 3))
 
@@ -1858,7 +1911,7 @@ def test_avoidance_signal_requires_an_actual_declaration_not_mere_silence(make_r
     exactly one leftover candidate who never declared, they still only ever hold ONE tier-A shift
     (the ordinary leftover-fill "ranked, not avoidance-first" path), and remain an ordinary tier-B
     candidate rather than being skipped."""
-    year, month = 2051, 8
+    year, month = 2051, 11
     periode = _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
     _aften_vagt(periode, date(year, month, 3))
     r = make_resident(email="silent_no_declare@gahk.dk")
@@ -2305,7 +2358,7 @@ def test_flag_tildelt_upheld_writes_no_ledger_entry(make_resident: Callable) -> 
 
 
 def test_flag_dismissed_restores_previous_status_and_writes_nothing(make_resident: Callable) -> None:
-    year, month = 2052, 7
+    year, month = 2052, 10
     _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
     worker = make_resident(email="flagdismiss@gahk.dk")
     adjudicator = make_resident(email="flagdismiss_adj@gahk.dk")
@@ -2326,7 +2379,7 @@ def test_flag_dismissed_restores_previous_status_and_writes_nothing(make_residen
 
 
 def test_resolving_an_already_resolved_flag_raises(make_resident: Callable) -> None:
-    year, month = 2052, 8
+    year, month = 2052, 11
     _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
     worker = make_resident(email="flagtwice@gahk.dk")
     adjudicator = make_resident(email="flagtwice_adj@gahk.dk")
@@ -2876,8 +2929,8 @@ def test_deadline_day_itself_still_targets_the_open_windows_periode(
     """A1.3 supplement (2026-10-01): "the deadline day belongs to the resident" -- the window stays
     INCLUSIVE of the deadline date, so a resident who already has a row for their CURRENT periode (an
     ordinary declaration history, predating the window) and declares ON the window's deadline day
-    itself (2026-12-01, Forår 2027's deadline) must still land on Forår 2027, NOT get pushed to Sommer
-    2027. Before the supplement, A1.3's "redirect past deadline" rule fired on this exact day (its
+    itself (2026-12-01, Forår 2027's deadline) must still land on Forår 2027, NOT get pushed to Efterår
+    2027 (the next allocated periode past Forår -- SOMMER is skipped). Before the supplement, A1.3's "redirect past deadline" rule fired on this exact day (its
     check is `today >= periode_deadline(target)`, and the deadline day satisfies `>=`), silently
     overtaking a declaration the window itself was still actively accepting -- window-first now
     catches this day too, since the window's own close date IS the deadline day."""
@@ -2905,7 +2958,7 @@ def test_deadline_day_itself_still_targets_the_open_windows_periode(
         client.force_login(resident)
         before_html = client.get("/intern/").content.decode()
         assert "erklær dine præferencer for Forår 2027" in before_html
-        assert "erklær dine præferencer for Sommer 2027" not in before_html
+        assert "erklær dine præferencer for Efterår 2027" not in before_html
 
         set_preferences(resident, weekday_unavailable=True, at=deadline_day)
 
@@ -2914,8 +2967,9 @@ def test_deadline_day_itself_still_targets_the_open_windows_periode(
             resident=resident, periode__kind=Periode.Kind.FORAAR, periode__year=2027
         ).exists()
         assert not Praeference.objects.filter(
-            resident=resident, periode__kind=Periode.Kind.SOMMER, periode__year=2027
+            resident=resident, periode__kind=Periode.Kind.EFTERAAR, periode__year=2027
         ).exists()
+        assert not Periode.objects.filter(kind=Periode.Kind.SOMMER).exists()
 
         after_html = client.get("/intern/").content.decode()
         assert "erklær dine præferencer" not in after_html  # clears correctly once they've declared
@@ -2926,8 +2980,9 @@ def test_day_after_window_closes_pushes_target_one_periode_further(make_resident
     ON the deadline day itself (see the test above). The day AFTER Forår 2027's window closes
     (2026-12-02), no window is open at all, so `_preference_write_target`'s window-first check falls
     through and a resident who already has a row for their current periode is redirected past Forår
-    2027 (whose own deadline has now genuinely passed) to Sommer 2027 instead -- exactly the pre-
-    supplement behaviour, just triggered one day later than the old test asserted."""
+    2027 (whose own deadline has now genuinely passed) to Efterår 2027 instead (SOMMER is skipped, P3
+    design doc §5) -- the pre-supplement behaviour, just triggered one day later than the old test
+    asserted."""
     resident = make_resident(email="day_after_deadline@gahk.dk")
     day_after = date(2026, 12, 2)
 
@@ -2937,11 +2992,12 @@ def test_day_after_window_closes_pushes_target_one_periode_further(make_resident
     assert in_preference_window(at=day_after) is None  # sanity: the window has genuinely closed
 
     target = preference_target_periode(resident, at=day_after)
-    assert str(target) == "Sommer 2027"
+    assert str(target) == "Efterår 2027"
 
     row = set_preference(resident, True, at=day_after)
-    assert row.periode.kind == Periode.Kind.SOMMER
+    assert row.periode.kind == Periode.Kind.EFTERAAR
     assert row.periode.year == 2027
+    assert not Periode.objects.filter(kind=Periode.Kind.SOMMER).exists()
 
 
 def test_banner_general_case_uses_the_write_paths_actual_target(
@@ -3903,3 +3959,346 @@ def test_declare_fridag_on_not_yet_allocated_month_only_deletes_vagt_rows() -> N
     assert Vagt.objects.count() == vagt_count_before - 1
     assert VagtTildeling.objects.count() == tildeling_count_before  # no new TILDELT rows
     assert KoekkenPost.objects.count() == post_count_before  # no new FORPLIGTELSE rows
+
+
+# =============================================================================================
+# P3 step 1 (design doc 2026-10-04 §4-§5): summer is never allocated; preferences skip SOMMER
+# =============================================================================================
+
+
+def test_periode_is_allocated_only_false_for_sommer() -> None:
+    assert periode_is_allocated(Periode.Kind.EFTERAAR) is True
+    assert periode_is_allocated(Periode.Kind.FORAAR) is True
+    assert periode_is_allocated(Periode.Kind.SOMMER) is False
+
+
+def test_every_allocation_entry_point_refuses_a_sommer_month_and_leaves_no_periode_row(
+    make_resident: Callable,
+) -> None:
+    year, month = 2037, 7
+    # Nothing generated, nothing placed: the SOMMER refusal must be the FIRST check, so it is the
+    # message that is seen (not "ingen vagter fundet") and no Periode row is materialised.
+    with override_settings(DEBUG=True):
+        # Long past any deadline, so a deadline error could never be what refuses these.
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": date(2038, 1, 1)})
+        for call in (
+            lambda: allocate_tier_a(year, month),
+            lambda: allocate_tier_a(year, month, force=True),
+            lambda: allocate_tier_b(year, month),
+            lambda: allocate_month(year, month),
+            lambda: allocate_month(year, month, force=True),
+            lambda: allocate_batch(year, month),
+            lambda: allocate_batch(year, 8),
+        ):
+            with pytest.raises(KoekkenAllocationError, match="sommerperioden"):
+                call()
+            assert Periode.objects.count() == 0
+
+    # Even with real shifts and a roster in place, nothing is written.
+    periode = resolve_periode(date(year, 7, 1))
+    generate_vagter(periode)
+    r = make_resident(email="sommer_refuse@gahk.dk")
+    _place(r, year, month)
+    with override_settings(DEBUG=True):
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": date(2038, 1, 1)})
+        for call in (
+            lambda: allocate_tier_a(year, month),
+            lambda: allocate_tier_b(year, month),
+            lambda: allocate_month(year, month),
+            lambda: allocate_batch(year, month),
+        ):
+            with pytest.raises(KoekkenAllocationError, match="sommerperioden"):
+                call()
+    assert not VagtTildeling.objects.exists()
+
+
+def test_sommer_refusal_is_not_the_no_population_error() -> None:
+    from koekken.services import KoekkenNoPopulationError
+
+    with pytest.raises(KoekkenAllocationError) as excinfo:
+        allocate_tier_a(2037, 8)
+    assert not isinstance(excinfo.value, KoekkenNoPopulationError)
+
+
+def test_roll_forward_allocation_is_a_pure_noop_inside_sommer(make_resident: Callable) -> None:
+    # No periode row yet: nothing is raised, returned or written -- not even the Periode.
+    assert roll_forward_allocation(date(2037, 7, 1)) is None
+    assert Periode.objects.count() == 0
+
+    periode = resolve_periode(date(2037, 7, 1))
+    generate_vagter(periode)
+    for month in (7, 8):
+        _place(make_resident(email=f"sommer_roll{month}@gahk.dk"), 2037, month)
+    for day in (date(2037, 7, 1), date(2037, 8, 15), date(2037, 8, 31)):
+        assert roll_forward_allocation(day) is None
+    assert not VagtTildeling.objects.exists()
+
+
+def test_reconcile_month_is_a_noop_for_a_sommer_month(make_resident: Callable) -> None:
+    result = reconcile_month(2037, 7)
+    assert result == ReconciliationResult()
+    assert Periode.objects.count() == 0  # checked purely, before anything could write
+
+    # Even a hand-made TILDELT row for someone NOT on the roster is left alone -- reconcile does not
+    # touch summer at all (a claim is never a projection artefact).
+    periode = _build_month(2037, 7, weekday_capacity=1, weekend_capacity=0)
+    on_roster = make_resident(email="sommer_recon_on@gahk.dk")
+    claimant = make_resident(email="sommer_recon_claimant@gahk.dk")
+    _place(on_roster, 2037, 7)
+    vagt = Vagt.objects.get(periode=periode)
+    VagtTildeling.objects.create(vagt=vagt, resident=claimant, status=VagtTildeling.Status.TILDELT)
+
+    result = reconcile_month(2037, 7)
+
+    assert result.vacated == []
+    assert VagtTildeling.objects.filter(resident=claimant, status=VagtTildeling.Status.TILDELT).exists()
+
+
+def test_allokering_form_for_a_sommer_month_shows_the_danish_error_and_writes_nothing(
+    make_resident: Callable, client: Client
+) -> None:
+    periode = resolve_periode(date(2037, 7, 1))
+    generate_vagter(periode)
+
+    with override_settings(DEBUG=True):
+        # Past the deadline (1 May), so only the SOMMER guard could be what refuses. The manager is
+        # created AFTER the clock is set, like the other allokering view test (role validity is dated).
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": date(2037, 6, 1)})
+        manager = make_resident(email="allokering_sommer@gahk.dk", roles=(Role.KOKKENGRUPPE,))
+        _place(make_resident(email="allokering_sommer_r@gahk.dk"), 2037, 7)
+        client.force_login(manager)
+        for force in (False, True):
+            response = client.post(
+                "/intern/koekken/gruppe/allokering",
+                {"year": 2037, "month": 7, "force": force},
+                follow=True,
+            )
+            assert response.status_code == 200
+            assert "hører til sommerperioden, som ikke allokeres" in response.content.decode()
+
+    assert not VagtTildeling.objects.exists()
+
+
+def test_in_preference_window_detects_efteraars_window_throughout_late_june() -> None:
+    """The window-bug regression (design doc §5): the next periode in late June is SOMMER, so Efterår
+    (the one after) was only detected on its last day, 1 July."""
+    for day in range(24, 31):
+        window = in_preference_window(at=date(2027, 6, day))
+        assert window is not None, f"2027-06-{day}"
+        assert (window.kind, window.year) == (Periode.Kind.EFTERAAR, 2027)
+    final = in_preference_window(at=date(2027, 7, 1))
+    assert final is not None and (final.kind, final.year) == (Periode.Kind.EFTERAAR, 2027)
+
+    # Not before it opens, not after it closes -- in particular never a SOMMER window in late April.
+    assert in_preference_window(at=date(2027, 6, 23)) is None
+    assert in_preference_window(at=date(2027, 7, 2)) is None
+    for d in (date(2027, 4, 20), date(2027, 4, 24), date(2027, 4, 30), date(2027, 5, 1), date(2027, 5, 2)):
+        assert in_preference_window(at=d) is None, d
+
+    # The existing Forår window (24 Nov - 1 Dec) is unaffected.
+    for d in (date(2026, 11, 24), date(2026, 11, 30), date(2026, 12, 1)):
+        window = in_preference_window(at=d)
+        assert window is not None and (window.kind, window.year) == (Periode.Kind.FORAAR, 2027), d
+    assert in_preference_window(at=date(2026, 11, 23)) is None
+    assert in_preference_window(at=date(2026, 12, 2)) is None
+
+
+def test_in_preference_window_stays_database_free_in_every_branch(
+    django_assert_num_queries: Callable,
+) -> None:
+    with django_assert_num_queries(0):
+        for d in (
+            date(2027, 4, 25),  # SOMMER candidate dropped
+            date(2027, 6, 27),  # window found two periodes ahead
+            date(2027, 7, 15),  # inside SOMMER
+            date(2026, 11, 27),  # ordinary Forår window
+            date(2027, 1, 10),
+        ):
+            in_preference_window(at=d)
+    assert Periode.objects.count() == 0
+
+
+def test_in_preference_window_never_returns_sommer_on_any_day() -> None:
+    day = date(2026, 1, 1)
+    while day < date(2029, 1, 1):
+        window = in_preference_window(at=day)
+        if window is not None:
+            assert window.kind != Periode.Kind.SOMMER, day
+        day += timedelta(days=1)
+
+
+def test_no_sommer_banner_renders_on_any_date(
+    make_resident: Callable, client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from koekken import access as koekken_access
+
+    monkeypatch.setattr(koekken_access, "ACCESS_ROLES", None)
+    resident = make_resident(email="no_sommer_banner@gahk.dk")
+    client.force_login(resident)
+
+    with override_settings(DEBUG=True):
+        for d in (
+            date(2027, 4, 24),
+            date(2027, 5, 1),
+            date(2027, 6, 1),
+            date(2027, 7, 15),
+            date(2027, 8, 15),
+        ):
+            DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": d})
+            html = client.get("/intern/").content.decode()
+            assert "erklær dine præferencer" not in html, d
+            assert "Sommer" not in html, d
+
+        # ...while Efterår's own window banner shows during 24 Jun - 1 Jul, naming Efterår.
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": date(2027, 6, 26)})
+        html = client.get("/intern/").content.decode()
+        assert "erklær dine præferencer for Efterår 2027" in html
+        assert "Sommer" not in html
+
+    assert not Periode.objects.filter(kind=Periode.Kind.SOMMER).exists()
+
+
+def _write_and_check_agreement(resident: Resident, today: date) -> Periode:
+    """The banner/form (pure) target and the real write target must agree on `today` -- checked on the
+    pure answer BEFORE writing, then against the row the write actually produced."""
+    shown = preference_target_periode(resident, at=today)
+    row = set_preference(resident, True, at=today)
+    assert (row.periode.kind, row.periode.year) == (shown.kind, shown.year), today
+    assert row.periode.kind != Periode.Kind.SOMMER, today
+    return row.periode
+
+
+def test_preference_write_with_history_between_december_and_april_lands_on_efteraar_never_sommer(
+    make_resident: Callable,
+) -> None:
+    for i, today in enumerate(
+        (date(2027, 12, 2), date(2028, 1, 15), date(2028, 2, 1), date(2028, 3, 10), date(2028, 4, 30))
+    ):
+        resident = make_resident(email=f"hist{i}@gahk.dk")
+        # "History": a row for the periode they are currently living in.
+        Praeference.objects.create(
+            resident=resident, periode=resolve_periode(today), declared_at=date(2027, 9, 1)
+        )
+        target = _write_and_check_agreement(resident, today)
+        assert (target.kind, target.year) == (Periode.Kind.EFTERAAR, 2028), today
+    assert not Periode.objects.filter(kind=Periode.Kind.SOMMER).exists()
+
+
+def test_first_declaration_ever_during_sommer_creates_an_efteraar_row(make_resident: Callable) -> None:
+    for i, today in enumerate((date(2027, 7, 2), date(2027, 8, 15), date(2027, 8, 31))):
+        resident = make_resident(email=f"sommer_arrival{i}@gahk.dk")
+        target = _write_and_check_agreement(resident, today)
+        assert (target.kind, target.year) == (Periode.Kind.EFTERAAR, 2027), today
+        assert Praeference.objects.filter(resident=resident, periode__kind=Periode.Kind.EFTERAAR).count() == 1
+    assert not Periode.objects.filter(kind=Periode.Kind.SOMMER).exists()
+
+
+def test_declaration_during_sommer_with_existing_efteraar_row_is_redirected_to_next_foraar(
+    make_resident: Callable,
+) -> None:
+    for i, today in enumerate((date(2027, 7, 2), date(2027, 8, 15))):
+        resident = make_resident(email=f"sommer_redirect{i}@gahk.dk")
+        Praeference.objects.create(
+            resident=resident, periode=resolve_periode(date(2027, 10, 1)), declared_at=date(2027, 6, 1)
+        )
+        target = _write_and_check_agreement(resident, today)
+        assert (target.kind, target.year) == (Periode.Kind.FORAAR, 2028), today
+    assert not Periode.objects.filter(kind=Periode.Kind.SOMMER).exists()
+
+
+def test_declaration_during_efteraars_open_window_wins_even_in_late_june(make_resident: Callable) -> None:
+    resident = make_resident(email="june_window@gahk.dk")
+    Praeference.objects.create(
+        resident=resident, periode=resolve_periode(date(2027, 3, 1)), declared_at=date(2027, 1, 1)
+    )
+    target = _write_and_check_agreement(resident, date(2027, 6, 27))
+    assert (target.kind, target.year) == (Periode.Kind.EFTERAAR, 2027)
+
+
+def test_pure_and_write_preference_resolution_agree_on_every_date() -> None:
+    day = date(2026, 1, 1)
+    while day < date(2029, 1, 1):
+        pure = _preference_home_periode_pure(day)
+        written = _preference_home_periode(day)
+        assert (pure.kind, pure.year, pure.start_date, pure.end_date) == (
+            written.kind,
+            written.year,
+            written.start_date,
+            written.end_date,
+        ), day
+        assert pure.kind != Periode.Kind.SOMMER
+        day += timedelta(days=9)
+    assert not Periode.objects.filter(kind=Periode.Kind.SOMMER).exists()
+
+
+_SOMMER_FRIDAG_MESSAGE = (
+    "En eller flere af dine køkkenvagter i {month_text} er bortfaldet som følge af en fridag ({reason}) "
+    "-- se dine aktuelle vagter i app'en."
+)
+
+
+def test_declare_fridag_in_sommer_deletes_claim_never_allocates_notifies_and_reposts_obligation(
+    make_resident: Callable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    year, month = 2072, 7
+    periode = _build_month(year, month, weekday_capacity=2, weekend_capacity=0)
+    resident = make_resident(email="sommer_fridag@gahk.dk")
+    _place(resident, year, month)
+    vagter = list(Vagt.objects.filter(periode=periode).order_by("date"))
+    removed_vagt, kept_vagt = vagter
+    # An officer-assigned (self-signup style) claim on each shift.
+    for vagt in vagter:
+        VagtTildeling.objects.create(vagt=vagt, resident=resident, status=VagtTildeling.Status.TILDELT)
+    post_obligation(periode, month)
+
+    def total_obligation() -> int:
+        return -sum(
+            KoekkenPost.objects.filter(
+                periode=periode, month=month, kind=KoekkenPost.Kind.FORPLIGTELSE
+            ).values_list("delta_minutes", flat=True)
+        )
+
+    assert total_obligation() == 120
+
+    from koekken import services
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise AssertionError("allocate_month must never be called for SOMMER")
+
+    monkeypatch.setattr(services, "allocate_month", _boom)
+
+    with override_settings(DEBUG=True):
+        DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": date(year, 6, 1)})
+        result = declare_fridag(removed_vagt.date, [VagtRegel.Kind.MORGEN], reason="Test")
+
+    assert result.deleted_vagter == 1
+    assert result.reallocated_months == []
+    assert not Vagt.objects.filter(pk=removed_vagt.pk).exists()
+    # The deleted shift's claim is gone with it; the other claim is untouched (nothing reshuffled).
+    assert list(VagtTildeling.objects.values_list("vagt_id", flat=True)) == [kept_vagt.pk]
+    # Fully lost shifts show up as lost residents and the summer wording is used.
+    assert [r.pk for r in result.lost_residents] == [resident.pk]
+    assert len(result.notifications) == 1
+    _resident, _audience, message = result.notifications[0]
+    assert message == _SOMMER_FRIDAG_MESSAGE.format(month_text=f"{MONTHS[month]} {year}", reason="Test")
+    assert "omfordelt" not in message
+    # Obligation re-posting is unchanged for summer: it is reconciled to the smaller supply.
+    assert result.obligation_reposted_months == [(year, month)]
+    assert total_obligation() == 60
+
+
+def test_post_obligation_for_a_sommer_month_still_splits_supply_over_the_roster(
+    make_resident: Callable,
+) -> None:
+    """Guard: P3 step 1 did not special-case obligation anywhere -- summer posts like any month."""
+    year, month = 2073, 8
+    periode = _build_month(year, month, weekday_capacity=2, weekend_capacity=0)
+    assert periode.kind == Periode.Kind.SOMMER
+    residents = [make_resident(email=f"sommer_obl{i}@gahk.dk") for i in range(3)]
+    for r in residents:
+        _place(r, year, month)
+
+    written, present = post_obligation(periode, month)
+
+    assert (written, present) == (3, 3)
+    assert [balance_for(r) for r in residents] == [-40, -40, -40]  # supply 120 min / 3 residents

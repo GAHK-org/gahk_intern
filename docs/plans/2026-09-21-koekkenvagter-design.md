@@ -1,6 +1,6 @@
 # Design: Køkkenvagter — kitchen cleaning shift allocation
 
-**Status:** approved 2026-09-21. **P1 implemented** (`27195a2`) and review-fixed (`a8575fd`, F1–F5).
+**Status:** approved 2026-09-21. **P3 (summer) is now designed in `2026-10-04-koekkenvagter-p3-design.md`**, which supersedes the "Summer (Jul–Aug)" section below, the `FerieUge` data-model bullet, and Amendment 4's "awaiting sign-off" framing (Amendment 4 is now approved in direction, to be designed next; its content below is unchanged). **P1 implemented** (`27195a2`) and review-fixed (`a8575fd`, F1–F5).
 **Amendments 1–3 are approved** and in implementation: A1 (2026-09-22, FCFS tiebreak, allocation
 look-ahead, preference locking), A2 (2026-09-22, where a three-months-out population comes from) and
 A3 (2026-09-23, reconciliation eligibility and residents arriving with no preference) — note **A3.1
@@ -137,7 +137,7 @@ New app `koekken`.
   **Integer minutes, not float and not `Decimal`.** This balance converts to money at move-out, so
   accumulated rounding is not acceptable; integers make every balance exact by construction.
 - **`Praeference`** — resident, periode, `weekday_unavailable`, preferred aftenvagt weekdays.
-- **`FerieUge`** — resident, ISO year, ISO week, `present`. Modelled generally as weekly presence so it can
+- *(Superseded by `2026-10-04-koekkenvagter-p3-design.md` §3: away date ranges (`Fravaer`), not weekly presence.)* **`FerieUge`** — resident, ISO year, ISO week, `present`. Modelled generally as weekly presence so it can
   later cover exchange, internship and long illness, but **collected and used for the summer period only**
   in v1 — shaped to generalise without building a second model, and without speculative UI now.
 
@@ -207,6 +207,8 @@ No separate no-show punishment exists: withholding the credit **is** the consequ
 move-out penalty.
 
 ## Summer (Jul–Aug)
+
+> **Superseded by `2026-10-04-koekkenvagter-p3-design.md`:** summer is not allocated at all; residents claim shifts themselves. The text below is kept as history.
 
 Its own `Periode`. Slots are generated only for weeks with reported presence, and obligation remains supply
 divided by present residents — so the same rule that fixes the obligation rate everywhere else
@@ -713,6 +715,8 @@ starting balance of 0.
 ---
 
 # Amendment 4 — swapping vagter
+
+> **Status update (2026-10-04):** now approved in direction and the next design round -- see `2026-10-04-koekkenvagter-p3-design.md` §8. The content below is unchanged.
 
 **Raised 2026-09-23. Awaiting sign-off.** A resident marks a shift they cannot take; another resident
 either takes it over outright or offers one of their own in trade.
