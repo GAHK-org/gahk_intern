@@ -1,16 +1,12 @@
-"""Declare a fridag -- Amendment 5 (A5.4): a date (or a chosen set of shift kinds on it) the kitchen
-does not need covering, e.g. juleaften. The normal case, not an edge case: a periode is allocated
-~122 days before it starts, so a fridag declared in the months leading up to it is almost always
-against an already-generated/already-allocated month -- this ONE action creates the Fridag row(s),
-deletes the matching Vagt row(s) if that month was already generated, re-allocates the affected month
-(the existing --force mechanism) and re-posts its obligation -- the two re-runs gated by two SEPARATE,
-independent checks (2026-10 review, F3, refined by finding (b); see koekken.services.declare_fridag):
-re-allocation only when the month already had `TILDELT` rows to reseat, re-posting only when the
-month already had obligation posted for it -- NEITHER tied to the other, since a month can be fully
-settled (nothing left to reseat) while still needing its obligation reconciled down. All in one atomic
-step, then notifies any resident whose held assignments in the month changed at all (one generic message).
-See koekken.services.declare_fridag for the full mechanics and its two guards (no UDFOERT/ANMELDT
-assignment may be disturbed, no date in the past).
+"""Declare a fridag -- Amendment 5 (A5.4, simplified by the 2026-10-04 supplement): a date (or a chosen
+set of shift kinds on it) the kitchen does not need covering, e.g. juleaften. The normal case, not an
+edge case: a periode is allocated ~122 days before it starts, so a fridag declared in the months
+leading up to it is almost always against an already-generated/already-allocated month. This ONE
+action creates the Fridag row(s), deletes the matching Vagt row(s) if that month was already generated
+(the residents holding them are removed from those shifts and notified) and re-posts the month's
+obligation if it already had obligation posted. Nothing is ever re-allocated: only that day's shifts
+change. All in one atomic step. See koekken.services.declare_fridag for the full mechanics and its two
+guards (no UDFOERT/ANMELDT assignment may be disturbed, no date in the past).
 
 **Notification dispatch happens HERE, not inside the service function, and only when `not dry_run`**
 (2026-10 review, F1): `declare_fridag` returns ready-to-send `(resident, audience, message)` tuples in
@@ -21,21 +17,15 @@ rollback happens. Sent inline (`background=False`), matching `events.services.
 send_deadline_reminder`'s reasoning for anything reachable from a management command: a daemon thread
 started from `handle()` is killed mid-send the moment the process exits.
 
-No UI view exists for this yet (P2 design doc's "Phasing" -- this amendment adds no new UI surface);
---dry-run is this action's preview, matching every other koekken management command's own --dry-run
-convention: run it first to see exactly what would change (how many Fridag rows, how many Vagt rows
-deleted, which month(s) re-allocated and re-posted, and -- F5 -- which residents are actually affected,
-reported as having lost a shift, had one moved or gained a new one, and notified) before committing for real.
+No UI view exists for this yet; --dry-run is this action's preview, matching every other koekken
+management command's own --dry-run convention: run it first to see exactly which residents would be
+removed from which shifts before committing for real. The command is deliberately non-interactive.
 
 **Recommended timing, per the stakeholder:** declare a periode's fridage BEFORE generating that
 periode's shifts (i.e. before `generate_koekkenvagter` runs for it), rather than after generation or
-in the middle of an already-allocated periode. Declared this early, there is nothing yet to delete,
-re-allocate or re-post; `generate_vagter`'s own `is_fridag` seam (A5.3) simply never creates those
-rows in the first place, which is the simpler of this command's two paths. (2026-10 review round 2,
-F5: this note previously said "before its deadline-triggered batch allocation runs", which is a wider
-window that includes AFTER generation but before allocation -- that window does have `Vagt` rows to
-delete, exactly what `test_declare_fridag_on_not_yet_allocated_month_only_deletes_vagt_rows` exercises,
-contradicting the "nothing yet to delete" claim.)"""
+in the middle of an already-allocated periode. Declared this early, there is nothing yet to delete or
+re-post; `generate_vagter`'s own `is_fridag` seam (A5.3) simply never creates those rows in the first
+place, which is the simpler of this command's two paths."""
 
 import argparse
 from datetime import date
@@ -51,11 +41,12 @@ from koekken.services import FridagResult, KoekkenAllocationError, declare_frida
 class Command(BaseCommand):
     help = (
         "Erklær en fridag for en dato (eller udvalgte vagttyper på den) -- opret Fridag-række(r), "
-        "slet evt. allerede genererede vagter, genallokér og genbogfør de(n) berørte måned(er) hvis "
-        "den allerede var allokeret, og notificér alle beboere hvis vagter i måneden er ændret (mistet, flyttet eller ny). --dry-run viser "
-        "konsekvensen -- inklusive hvem der berøres -- uden at gennemføre den eller sende noget. "
-        "Anbefales erklæret som en del af generering af periodens vagter, dvs. før periodens "
-        "deadline-udløste batch-allokering kører -- så er der intet at genallokere eller genbogføre."
+        "slet evt. allerede genererede vagter og genbogfør måneden hvis den allerede havde "
+        "forpligtelse bogført. Der genallokeres ikke. En fridag på en allerede allokeret dag fjerner "
+        "de beboere, der var tildelt de berørte vagter, fra vagterne og sender dem besked. Kør "
+        "gerne --dry-run først: den viser hvem der fjernes fra hvilke vagter uden at gennemføre "
+        "noget eller sende besked. Anbefales erklæret før periodens vagter genereres -- så er der "
+        "intet at slette eller genbogføre."
     )
 
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
@@ -97,21 +88,11 @@ class Command(BaseCommand):
         self._report(for_date, dry_run, result)
 
     def _report(self, for_date: date, dry_run: bool, result: FridagResult) -> None:
-        """F5: an actual preview, not bare counts -- names the affected month(s) and the residents
-        whose assignment changed, on both --dry-run (so it is a useful preview) and a real run (as a
-        record of what happened).
-
-        2026-10 review round 2, F2: reallocation and obligation re-posting are reported from their
-        OWN, independently-gated fields (`result.reallocated_months` /
-        `result.obligation_reposted_months` -- see `FridagResult`'s docstring) on SEPARATE lines,
-        never folded into one combined "genallokeret og genbogført" claim the way the previous
-        version did. That combined claim was only ever true of `reallocated_months`, so it was wrong
-        whenever obligation was re-posted WITHOUT a reallocation (a month fully settled past `TILDELT`
-        still needing its obligation reconciled down) -- it both under-reported (missing the actual
-        repost) and, via its "ingen (måneden var endnu ikke allokeret, eller intet blev slettet)"
-        fallback, actively asserted that nothing was deleted and nothing re-posted even when a `Vagt`
-        row WAS deleted and obligation WAS re-posted. Reporting each field on its own line, naming
-        only what that field actually says happened, can never produce that contradiction."""
+        """An actual preview, not bare counts -- on both --dry-run (so it is a useful preview) and a
+        real run (as a record of what happened). The first line after the summary is the removal
+        notice (supplement, point 3): every resident removed from a shift, by name and shift type.
+        Its trailing sentence is chosen by `dry_run` so a dry run never claims a message was sent.
+        Obligation re-posting is reported from its own field, `obligation_reposted_months`."""
         prefix = "[dry-run] " if dry_run else ""
         self.stdout.write(
             self.style.SUCCESS(
@@ -119,25 +100,25 @@ class Command(BaseCommand):
                 f"{result.deleted_vagter} vagt(er) slettet."
             )
         )
-        if result.reallocated_months:
-            months = ", ".join(f"{y}-{m:02d}" for y, m in result.reallocated_months)
-            self.stdout.write(f"  {len(result.reallocated_months)} måned(er) genallokeret ({months}).")
+        if result.removed:
+            who = ", ".join(
+                f"{resident.full_name} ({vagt.get_kind_display().lower()})"
+                for resident, vagt in result.removed
+            )
+            trailing = "De får besked, når kommandoen køres uden --dry-run." if dry_run else "De får besked."
+            self.stdout.write(
+                self.style.WARNING(
+                    f"{prefix}{for_date} er allerede allokeret: {len(result.removed)} beboer(e) "
+                    f"fjernes fra deres vagter: {who}. {trailing}"
+                )
+            )
         else:
-            self.stdout.write("  Ingen måneder genallokeret.")
+            self.stdout.write("  Ingen beboere var tildelt de berørte vagter.")
         if result.obligation_reposted_months:
             months = ", ".join(f"{y}-{m:02d}" for y, m in result.obligation_reposted_months)
             self.stdout.write(f"  {len(result.obligation_reposted_months)} måned(er) genbogført ({months}).")
         else:
             self.stdout.write("  Ingen måneder genbogført.")
-        if result.lost_residents:
-            names = ", ".join(r.full_name for r in result.lost_residents)
-            self.stdout.write(f"  {len(result.lost_residents)} beboer(e) mistede en vagt: {names}.")
-        if result.moved_residents:
-            names = ", ".join(r.full_name for r in result.moved_residents)
-            self.stdout.write(f"  {len(result.moved_residents)} beboer(e) fik en vagt flyttet: {names}.")
-        if result.gained_residents:
-            names = ", ".join(r.full_name for r in result.gained_residents)
-            self.stdout.write(f"  {len(result.gained_residents)} beboer(e) fik en ny vagt: {names}.")
         # Notification may not reach everyone: `core.push.send` silently does nothing for a resident
         # with no (eligible) push subscription. Only claim "notificeret" for residents whose audience
         # is genuinely non-empty; list the rest separately so the report never overclaims.

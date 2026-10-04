@@ -54,8 +54,8 @@ exclusion rows Køkkengruppen enters by hand (juleaften, nytårsaften, ...) so `
 creates a `Vagt` for them in the first place. It is a new, self-contained leaf on top of everything
 above — it changes nothing about `Vagt`'s snapshot invariant, the ledger's append-only shape, or
 `VagtTildeling`'s survivor handling; `koekken.services.declare_fridag` is the one place that reaches
-backwards into an already-generated month (delete the matching `Vagt` rows, `allocate_month(...,
-force=True)`, `post_obligation(...)` — all three reusing existing machinery, never new logic) when a
+backwards into an already-generated month (delete the matching `Vagt` rows and re-post obligation via `post_obligation(...)`, never
+re-allocate — 2026-10-04 supplement) when a
 fridag is declared too late to be caught by generation alone, which the design doc's own arithmetic
 (a periode is allocated ~122 days before it starts) says is the normal case, not an edge case.
 """
