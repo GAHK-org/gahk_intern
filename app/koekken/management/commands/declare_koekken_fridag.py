@@ -8,7 +8,7 @@ independent checks (2026-10 review, F3, refined by finding (b); see koekken.serv
 re-allocation only when the month already had `TILDELT` rows to reseat, re-posting only when the
 month already had obligation posted for it -- NEITHER tied to the other, since a month can be fully
 settled (nothing left to reseat) while still needing its obligation reconciled down. All in one atomic
-step, then notifies any resident who genuinely lost an assignment as a net result (F2).
+step, then notifies any resident whose held assignments in the month changed at all (one generic message).
 See koekken.services.declare_fridag for the full mechanics and its two guards (no UDFOERT/ANMELDT
 assignment may be disturbed, no date in the past).
 
@@ -25,7 +25,7 @@ No UI view exists for this yet (P2 design doc's "Phasing" -- this amendment adds
 --dry-run is this action's preview, matching every other koekken management command's own --dry-run
 convention: run it first to see exactly what would change (how many Fridag rows, how many Vagt rows
 deleted, which month(s) re-allocated and re-posted, and -- F5 -- which residents are actually affected,
-either notified of a cancelled shift or left with a merely-moved one) before committing for real.
+reported as having lost a shift or had one moved, and notified) before committing for real.
 
 **Recommended timing, per the stakeholder:** declare a periode's fridage BEFORE generating that
 periode's shifts (i.e. before `generate_koekkenvagter` runs for it), rather than after generation or
@@ -129,15 +129,15 @@ class Command(BaseCommand):
             self.stdout.write(f"  {len(result.obligation_reposted_months)} måned(er) genbogført ({months}).")
         else:
             self.stdout.write("  Ingen måneder genbogført.")
+        if result.lost_residents:
+            names = ", ".join(r.full_name for r in result.lost_residents)
+            self.stdout.write(f"  {len(result.lost_residents)} beboer(e) mistede en vagt: {names}.")
+        if result.moved_residents:
+            names = ", ".join(r.full_name for r in result.moved_residents)
+            self.stdout.write(f"  {len(result.moved_residents)} beboer(e) fik en vagt flyttet: {names}.")
         if result.notifications:
             names = ", ".join(resident.full_name for resident, _audience, _message in result.notifications)
             self.stdout.write(
-                f"  {len(result.notifications)} beboer(e) mistede en vagt og "
-                f"{'ville være' if dry_run else 'er'} blevet notificeret: {names}."
-            )
-        if result.moved_residents:
-            names = ", ".join(r.full_name for r in result.moved_residents)
-            self.stdout.write(
-                f"  {len(result.moved_residents)} beboer(e) fik en vagt flyttet (ikke aflyst, ikke "
-                f"notificeret): {names}."
+                f"  {len(result.notifications)} beboer(e) {'ville være' if dry_run else 'er'} "
+                f"blevet notificeret: {names}."
             )

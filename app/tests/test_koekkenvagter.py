@@ -3341,15 +3341,20 @@ def test_declare_fridag_refuses_past_date_and_changes_nothing() -> None:
     assert Vagt.objects.count() == vagt_count_before
 
 
+_FRIDAG_MESSAGE = (
+    "Dine køkkenvagter denne måned er blevet omfordelt som følge af en fridag ({reason}) "
+    "-- se dine aktuelle vagter i app'en."
+)
+
+
 def test_declare_fridag_result_distinguishes_lost_from_moved_assignments(make_resident: Callable) -> None:
     """2026-10 review, F2, at the service layer directly: with 2 residents and 2 slots, declaring a
     fridag against ONE slot leaves a single slot for both residents to compete over once
     `allocate_month` reshuffles the whole month -- the lower-pk resident (`first`, who originally held
     the now-deleted slot) keeps a shift, just on a different day; `second` (who originally held the
-    OTHER, untouched slot) ends up with none. `FridagResult.notifications` must contain only `second`
-    -- who genuinely lost a shift -- and `moved_residents` only `first`, never the reverse (the
-    reviewer's exact reproduction: the resident who lost their only shift entirely was never notified
-    under the old code, while the resident whose shift merely moved was wrongly told it was cancelled)."""
+    OTHER, untouched slot) ends up with none. For the officer report, `lost_residents` must be only
+    `second` and `moved_residents` only `first`, never the reverse; both are in `notifications`,
+    since both residents' holdings changed."""
     year, month = 2067, 9
     periode = _build_month(year, month, weekday_capacity=2, weekend_capacity=0)
     first = make_resident(email="fridag_result_first@gahk.dk")
@@ -3367,8 +3372,10 @@ def test_declare_fridag_result_distinguishes_lost_from_moved_assignments(make_re
         result = declare_fridag(the_date, [VagtRegel.Kind.MORGEN], reason="Test")
 
     notified = {resident.pk for resident, _audience, _message in result.notifications}
+    lost = {r.pk for r in result.lost_residents}
     moved = {r.pk for r in result.moved_residents}
-    assert notified == {second.pk}
+    assert notified == {first.pk, second.pk}  # anyone whose holdings changed is notified
+    assert lost == {second.pk}  # report classification only
     assert moved == {first.pk}
     assert VagtTildeling.objects.filter(resident=first, status=VagtTildeling.Status.TILDELT).exists()
     assert not VagtTildeling.objects.filter(resident=second, status=VagtTildeling.Status.TILDELT).exists()
@@ -3399,6 +3406,7 @@ def test_declare_fridag_notifies_resident_who_loses_one_of_two_shifts(make_resid
     notified = {r.pk for r, _audience, _message in result.notifications}
     moved = {r.pk for r in result.moved_residents}
     assert notified == {resident.pk}
+    assert {r.pk for r in result.lost_residents} == {resident.pk}
     assert moved == set()  # must NOT be misclassified as merely moved
     assert not Vagt.objects.filter(date=removed_date, kind=VagtRegel.Kind.MORGEN).exists()
     assert VagtTildeling.objects.filter(
@@ -3407,28 +3415,17 @@ def test_declare_fridag_notifies_resident_who_loses_one_of_two_shifts(make_resid
     assert VagtTildeling.objects.filter(resident=resident, status=VagtTildeling.Status.TILDELT).count() == 1
 
     _resident, _audience, message = result.notifications[0]
-    assert "Morgenvagt" in message
-    assert str(removed_date) in message
-    assert str(kept_date) not in message  # names only the shift actually lost, not the one still held
+    assert message == _FRIDAG_MESSAGE.format(reason="Test")
 
 
-def test_declare_fridag_lost_message_never_claims_a_reassigned_shift_is_cancelled(
+def test_declare_fridag_notifies_resident_who_loses_one_shift_and_has_another_reassigned(
     make_resident: Callable,
 ) -> None:
-    """2026-10 review round 2, F1 -- the reviewer's exact multi-resident reproduction (the single-
-    resident tests above only exercise the best case, where every pk the holder "loses" genuinely was
-    deleted). `first` (lower pk) holds TWO shifts -- the earliest and the latest of three weekday
-    slots, the same "two-shift cap" pattern as the test above, but now with `second` also in the
-    population. The fridag deletes only `first`'s EARLIEST shift. The whole-month reshuffle then: (1)
-    gives `first` a genuinely NEW shift (the middle slot) instead, and (2) reseats `first`'s OTHER,
-    UNDELETED shift (the latest slot) to `second` -- a completely different resident. `first`'s held-pk
-    count still drops (2 -> 1), so they are correctly classified `lost` (unchanged from the prior fix),
-    but `before_pks - after_pks` for them is BOTH the deleted pk and the merely-reassigned one. Before
-    this fix, `first` would be told both shifts were "aflyst" -- including the latest one, which still
-    exists, is still a real Vagt row, and is now `second`'s to work -- and would never hear about the
-    new middle shift they actually hold. The fixed message must name ONLY the slot this fridag actually
-    deleted, never the one that merely changed hands, and must never read as "you have nothing this
-    month" when `first` demonstrably still holds one."""
+    """The multi-resident case where `first` holds TWO shifts (earliest and latest of three weekday
+    slots) and `second` one. The fridag deletes `first`'s EARLIEST shift; the whole-month reshuffle
+    gives `first` a NEW middle shift and reseats `first`'s other, undeleted shift to `second`. Both
+    residents' holdings changed, so BOTH get the same generic message -- which names no shift, so it
+    cannot misreport the deleted vs the reassigned one."""
     year, month = 2074, 3
     periode = _build_month(year, month, weekday_capacity=3, weekend_capacity=0)
     first = make_resident(email="fridag_msg_first@gahk.dk")
@@ -3448,14 +3445,10 @@ def test_declare_fridag_lost_message_never_claims_a_reassigned_shift_is_cancelle
         result = declare_fridag(deleted_date, [VagtRegel.Kind.MORGEN], reason="Juleaften")
 
     notified = {r.pk for r, _audience, _message in result.notifications}
-    moved = {r.pk for r in result.moved_residents}
-    assert notified == {first.pk}
-    assert moved == {second.pk}  # second's shift merely moved (d2 -> d3 in this scenario)
-
-    _resident, _audience, message = result.notifications[0]
-    assert "aflyst" in message
-    assert str(deleted_date) in message  # the genuinely deleted shift IS named
-    assert str(kept_date) not in message  # the merely-reassigned shift is NEVER named as cancelled
+    assert notified == {first.pk, second.pk}
+    assert {message for _r, _a, message in result.notifications} == {
+        _FRIDAG_MESSAGE.format(reason="Juleaften")
+    }
 
     # `kept_date`'s Vagt row still exists -- it was reassigned, not deleted -- and is now held by a
     # DIFFERENT resident than `first`.
@@ -3466,12 +3459,37 @@ def test_declare_fridag_lost_message_never_claims_a_reassigned_shift_is_cancelle
     )
     assert kept_tildeling.resident_id == second.pk
 
-    # `first` still holds SOME shift this month (the reshuffle gave them a new one) -- the message
-    # must not be misread as "you have no duty this month".
     assert VagtTildeling.objects.filter(resident=first, status=VagtTildeling.Status.TILDELT).exists()
 
 
-def test_declare_koekken_fridag_command_notifies_the_resident_who_actually_ends_up_without_a_shift(
+def test_declare_fridag_does_not_notify_resident_whose_holdings_are_unchanged(
+    make_resident: Callable,
+) -> None:
+    """A resident whose held shifts are identical before and after the reshuffle gets no
+    notification. Sole resident, 3 weekday slots (two-shift cap -> holds 2, one slot unfilled);
+    deleting the UNFILLED slot changes nothing they hold."""
+    year, month = 2075, 5
+    periode = _build_month(year, month, weekday_capacity=3, weekend_capacity=0)
+    resident = make_resident(email="fridag_unchanged@gahk.dk")
+    _place(resident, year, month)
+
+    with override_settings(DEBUG=True):
+        _past_deadline(periode)
+        allocate_tier_a(year, month)
+        held = list(VagtTildeling.objects.filter(resident=resident))
+        assert len(held) == 2
+        unfilled_date = (
+            Vagt.objects.exclude(pk__in=[t.vagt_id for t in held]).get(kind=VagtRegel.Kind.MORGEN).date
+        )
+
+        result = declare_fridag(unfilled_date, [VagtRegel.Kind.MORGEN], reason="Test")
+
+    assert result.notifications == []
+    assert result.lost_residents == []
+    assert result.moved_residents == []
+
+
+def test_declare_koekken_fridag_command_notifies_every_resident_whose_holdings_changed(
     make_resident: Callable, pushes: list
 ) -> None:
     """2026-10 review, F1/F2, reproduced end-to-end through the management command: the push itself
@@ -3514,13 +3532,10 @@ def test_declare_koekken_fridag_command_notifies_the_resident_who_actually_ends_
         vagt__date=second_original_date, status=VagtTildeling.Status.TILDELT, resident=first
     ).exists()
 
-    assert len(pushes) == 1  # not first, who kept a (moved) shift -- no false "cancelled" push (F2)
-    user_ids, payload = pushes[0]
-    assert user_ids == [second.pk]
-    # 2026-10 review round 2, F1: second's only held shift was reassigned to first, not deleted by
-    # this fridag -- it must never be announced as "aflyst".
-    assert "aflyst" not in payload["body"]
-    assert str(second_original_date) not in payload["body"]
+    # Both residents' holdings changed (first's shift moved, second lost theirs): both get the SAME
+    # generic message, which names no shift.
+    assert sorted(user_ids for user_ids, _payload in pushes) == sorted([[first.pk], [second.pk]])
+    assert {payload["body"] for _user_ids, payload in pushes} == {_FRIDAG_MESSAGE.format(reason="Test")}
 
 
 def test_declare_koekken_fridag_dry_run_sends_no_pushes_and_changes_nothing(
@@ -3644,8 +3659,9 @@ def test_declare_koekken_fridag_command_creates_fridag_rows_and_reports_summary(
 
     assert VagtTildeling.objects.filter(resident=resident, status=VagtTildeling.Status.TILDELT).exists()
     assert not VagtTildeling.objects.filter(resident=other, status=VagtTildeling.Status.TILDELT).exists()
-    assert other.full_name in output  # genuinely lost -- named in the "mistede en vagt" line
-    assert resident.full_name in output  # merely moved -- named in the "fik en vagt flyttet" line
+    assert f"mistede en vagt: {other.full_name}" in output
+    assert f"fik en vagt flyttet: {resident.full_name}" in output
+    assert "er blevet notificeret" in output
 
 
 def test_declare_koekken_fridag_command_reports_obligation_only_repost_accurately(
