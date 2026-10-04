@@ -318,11 +318,11 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
     today = now.date()
     periode = resolve_periode(today)
     generate_vagter(periode)
-    # Seeded before the SOMMER early-return so a demo run in July/August still gets starting balances.
-    _seed_launch_balances(residents, periode)
     if not periode_is_allocated(periode.kind):
         # Summer is never allocated (P3 design doc §4): its shifts are generated for residents to claim
-        # themselves, so none of the allocation scenarios below can run. Generation only.
+        # themselves, so none of the allocation scenarios below can run. Generation only, plus the
+        # starting balances so a July/August demo run still shows them.
+        _seed_launch_balances(residents, periode)
         return KoekkenPost.objects.count()
 
     # A few weekday-unavailable declarers for the WHOLE periode (Praeference is periode-scoped, not
@@ -383,4 +383,8 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
     if tiebreak_months:
         _demo_fcfs_tiebreak(residents, periode, *tiebreak_months[0])
 
+    # Deliberately LAST: tier-A allocation orders by projected balance, so seeding STARTSALDO any
+    # earlier would hand the FCFS-tiebreak pair (usually residents[0] and [1], who carry launch
+    # balances) unequal balances and let the lower one win regardless of declared_at.
+    _seed_launch_balances(residents, periode)
     return KoekkenPost.objects.count()

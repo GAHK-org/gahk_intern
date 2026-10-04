@@ -84,6 +84,41 @@ def test_seed_demo_koekken_reconciliation_and_fcfs_tiebreak_both_seed() -> None:
     )
     assert declared_ats == {early, late}, "the FCFS-tiebreak demo scenario's signature data is missing"
 
+    # ...and the tiebreak must actually go to the earlier declarer. The tiebreak month is the one
+    # whose weekend morgen/frokost capacity was shrunk to exactly one seat.
+    from collections import defaultdict
+
+    from koekken.models import Vagt, VagtRegel, VagtTildeling
+
+    seats: dict[tuple[int, int], int] = defaultdict(int)
+    for vagt in Vagt.objects.filter(
+        periode=periode, kind__in=[VagtRegel.Kind.MORGEN, VagtRegel.Kind.FROKOST]
+    ):
+        if vagt.date.weekday() >= 5:
+            seats[(vagt.date.year, vagt.date.month)] += vagt.headcount
+    tiebreak_months = [ym for ym, n in seats.items() if n == 1]
+    assert len(tiebreak_months) == 1, "expected exactly one month with a single weekend seat"
+    year, month = tiebreak_months[0]
+
+    def weekend_seats(declared_at: object) -> int:
+        resident = Praeference.objects.get(
+            periode=periode, weekday_unavailable=True, declared_at=declared_at
+        ).resident
+        return sum(
+            1
+            for t in VagtTildeling.objects.filter(
+                resident=resident,
+                vagt__periode=periode,
+                vagt__date__year=year,
+                vagt__date__month=month,
+                vagt__kind__in=[VagtRegel.Kind.MORGEN, VagtRegel.Kind.FROKOST],
+            ).select_related("vagt")
+            if t.vagt.date.weekday() >= 5
+        )
+
+    assert weekend_seats(early) == 1, "the earlier declarer should hold the tiebreak month's weekend seat"
+    assert weekend_seats(late) == 0, "the later declarer must lose the tiebreak"
+
 
 @pytest.mark.django_db
 def test_seed_demo_fills_the_board_including_the_two_awkward_cases() -> None:
