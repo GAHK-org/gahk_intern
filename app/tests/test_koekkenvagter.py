@@ -1097,6 +1097,9 @@ def test_efteraar_missing_preference_row_falls_back_to_foraar_skipping_sommer(
     assert result.drafted == []  # declarer path: FORAAR's True was read, not an empty SOMMER's default
     assert Praeference.objects.filter(periode=efteraar, resident=r).count() == 0
     assert not Praeference.objects.filter(periode__kind=Periode.Kind.SOMMER).exists()
+    # Guards `_previous_allocated_periode` against naive chaining, which would materialise a stray
+    # SOMMER Periode row on the way to FORAAR.
+    assert not Periode.objects.filter(kind=Periode.Kind.SOMMER).exists()
 
 
 def test_devclock_walk_across_periode_boundary_keeps_two_months_allocated_ahead(

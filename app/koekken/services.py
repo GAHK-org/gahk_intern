@@ -264,6 +264,12 @@ def resolve_periode(for_date: date) -> Periode:
     return periode
 
 
+# NOTE: `_next_periode` and `_previous_periode` below currently have no callers. They are kept on
+# purpose, not forgotten: they do NOT skip SOMMER, so reaching for them where a periode that is
+# actually allocated is needed would reintroduce the window bug fixed in P3 step 1 (a
+# periode-resolution path that doesn't skip SOMMER -- see the P3 design doc §5). Use
+# `_next_allocated_periode` / `_previous_allocated_periode` for that; use these two only where SOMMER
+# genuinely is the wanted answer.
 def _next_periode(periode: Periode) -> Periode:
     """The `Periode` immediately following `periode`. Periods are calendar-anchored and contiguous
     (EFTERAAR's Jan 31 is followed by FORAAR's Feb 1, FORAAR's Jun 30 by SOMMER's Jul 1, SOMMER's Aug
@@ -273,6 +279,7 @@ def _next_periode(periode: Periode) -> Periode:
     return resolve_periode(periode.end_date + timedelta(days=1))
 
 
+# Intentionally kept though uncalled -- see the note above `_next_periode` (P3 step 1 window-bug fix).
 def _previous_periode(periode: Periode) -> Periode:
     """The `Periode` immediately preceding `periode` — the mirror of `_next_periode`. Amendment 1
     (A1.3, missed deadline): the source a resident's effective preference falls back to when they

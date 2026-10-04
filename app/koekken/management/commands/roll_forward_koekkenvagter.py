@@ -11,7 +11,12 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from core.clock import current_date
-from koekken.services import KoekkenAllocationError, roll_forward_allocation
+from koekken.services import (
+    KoekkenAllocationError,
+    _periode_from_bounds,
+    periode_is_allocated,
+    roll_forward_allocation,
+)
 
 
 class Command(BaseCommand):
@@ -38,6 +43,11 @@ class Command(BaseCommand):
 
         prefix = "[dry-run] " if dry_run else ""
         if result is None:
+            if not periode_is_allocated(_periode_from_bounds(for_date).kind):
+                self.stdout.write(
+                    f"{prefix}Sommerperioden allokeres ikke automatisk -- vagter tages af beboerne selv."
+                )
+                return
             self.stdout.write(f"{prefix}Intet at rulle frem -- perioden er allerede fuldt allokeret.")
             return
         self.stdout.write(

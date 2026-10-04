@@ -318,6 +318,8 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
     today = now.date()
     periode = resolve_periode(today)
     generate_vagter(periode)
+    # Seeded before the SOMMER early-return so a demo run in July/August still gets starting balances.
+    _seed_launch_balances(residents, periode)
     if not periode_is_allocated(periode.kind):
         # Summer is never allocated (P3 design doc §4): its shifts are generated for residents to claim
         # themselves, so none of the allocation scenarios below can run. Generation only.
@@ -354,8 +356,8 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
     # Amendment 1, A1.2: a two-month allocated look-ahead window (the current month above, plus one
     # more -- WINDOW_EXTRA_MONTHS, kept below the batch's real three so the reconciliation and
     # FCFS-tiebreak scenarios below still have a month each), so the effect of the batch +
-    # monthly-roll-forward mechanism is visible without waiting on cron. Best-effort: a short periode
-    # (SOMMER) may not have enough spare months left.
+    # monthly-roll-forward mechanism is visible without waiting on cron. Best-effort: the periode may
+    # not have enough spare months left.
     window_months = _next_unused_months(periode, used_months, WINDOW_EXTRA_MONTHS)
     for year, month in window_months:
         _ensure_residency(residents, year, month)
@@ -368,8 +370,8 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
     # second vacated slot whose only real-list candidate is weekday-unavailable and correctly stays
     # queued rather than inheriting it (see `_demo_reconciliation`). Picks the next month strictly
     # after everything used so far (see `_next_lookahead_month`), so `_resolve_population` always has
-    # an earlier full-population list to project from. Best-effort: a short periode (SOMMER) may not
-    # have a spare month left.
+    # an earlier full-population list to project from. Best-effort: the periode may not have a spare
+    # month left.
     recon_month = _next_lookahead_month(periode, used_months)
     if recon_month is not None:
         used_months.add(recon_month)
@@ -380,8 +382,5 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
     tiebreak_months = _next_unused_months(periode, used_months, 1)
     if tiebreak_months:
         _demo_fcfs_tiebreak(residents, periode, *tiebreak_months[0])
-
-    # Launch-seeded balances, some positive and some negative after rebasing.
-    _seed_launch_balances(residents, periode)
 
     return KoekkenPost.objects.count()
