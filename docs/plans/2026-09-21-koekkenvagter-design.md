@@ -4,9 +4,11 @@
 **Amendments 1–3 are approved** and in implementation: A1 (2026-09-22, FCFS tiebreak, allocation
 look-ahead, preference locking), A2 (2026-09-22, where a three-months-out population comes from) and
 A3 (2026-09-23, reconciliation eligibility and residents arriving with no preference) — note **A3.1
-corrects A2.3**, so read them together. **Amendment 4** (2026-09-23, swapping vagter) is an **approved
-direction for Phase 2b, not being built now**. **Amendment 5** (2026-10-01, fridage) is **approved and
-not yet built**. All are at the end of this document; where any changes a decision above, that section
+corrects A2.3**, so read them together. **Amendment 4** (2026-09-23, swapping vagter) is now **designed in
+`2026-10-04-koekkenvagter-a4-design.md`** (decisions approved 2026-10-04; the written doc awaits
+confirmation; not yet built). **Amendment 5** (2026-10-01, fridage) is **approved and built**
+(`fa0fca8`), and carries a **supplement of 2026-10-04** (approved, not yet built) that replaces A5.4's
+whole-month re-allocation -- read it before A5.4. All are at the end of this document; where any changes a decision above, that section
 says so. A1.3 additionally carries an approved supplement (2026-10-01) on preference-window ordering.
 **Feature spec (to be written at implementation time):** `spec/features/koekkenvagter.md`, **unnumbered**.
 
@@ -716,7 +718,11 @@ starting balance of 0.
 
 # Amendment 4 — swapping vagter
 
-> **Status update (2026-10-04):** now approved in direction and the next design round -- see `2026-10-04-koekkenvagter-p3-design.md` §8. The content below is unchanged.
+> **Status update (2026-10-04):** now **designed in `2026-10-04-koekkenvagter-a4-design.md`**, which
+> replaces A4.3's rules and A4.6's sketch below (A4.1, A4.4 and A4.5 still stand as reasoning; A4.6's
+> open question is answered there: an untaken offer expires at shift start and the offerer stays
+> responsible). Its prerequisite is the Amendment 5 supplement of 2026-10-04. The content below is
+> unchanged history.
 
 **Raised 2026-09-23. Awaiting sign-off.** A resident marks a shift they cannot take; another resident
 either takes it over outright or offers one of their own in trade.
@@ -815,9 +821,50 @@ approve the direction; needed before building it.
 
 # Amendment 5 — fridage (days where shifts are not generated)
 
-**Approved 2026-10-01. Not yet built.** Køkkengruppen can mark specific dates on which specific shift
-types are not generated at all — juleaften, nytårsaften, and any other day the kitchen does not need
-covering.
+**Approved 2026-10-01. Built (`fa0fca8` plus review fixes).** Køkkengruppen can mark specific dates on
+which specific shift types are not generated at all — juleaften, nytårsaften, and any other day the
+kitchen does not need covering.
+
+> **Supplement, 2026-10-04 (approved; stakeholder answers Q2a/Q2b of the Amendment 4 round, relayed
+> through the coordinating session). Built (`fba6616`).** It **replaces A5.4's re-allocation step and its
+> notification rule**. A5.1–A5.3, A5.5 and A5.6 are unchanged.
+>
+> 1. **A fridag on an already-allocated month never re-allocates.** `declare_fridag` deletes the
+>    matching `Vagt` rows (their assignments cascade, A5.6), re-posts obligation under the existing,
+>    independent gate (the month already had `FORPLIGTELSE` posted), and notifies **exactly the
+>    residents whose assignment was deleted**. They get the existing "bortfaldet" wording
+>    (`_fridag_notification_message(..., reallocated=False)`), which becomes the only message.
+>    `allocate_month` is never called. This is what P3 §4 already specified for SOMMER, now for every
+>    periode, so the SOMMER branch becomes the only branch.
+> 2. **Compensation needs no code.** Losing a `TILDELT` assignment lowers the resident's projected
+>    balance (A1.2), so the next allocation ranks them further behind and gives them more: *"removed
+>    from the shift and gets an extra shift in another month"*, in the stakeholder's words. The
+>    alternative offered, *"get the points anyway"*, was rejected. It would credit hours nobody
+>    worked, so total credit would exceed supply, and the ledger would no longer mean hours worked.
+> 3. **No lead-time guard.** The stakeholder first proposed one ("not less than a month away"), then
+>    dropped it once a late fridag only removes that day's shifts. Instead, **the command's report
+>    opens with an explicit notice whenever the day is already allocated**, on both `--dry-run` and a
+>    real run, naming every resident being removed and their shift, e.g. *"[dry-run] 2027-03-25 er
+>    allerede allokeret: 2 beboer(e) fjernes fra deres vagter: Anna Hansen (morgenvagt), Bo Lund
+>    (aftenvagt). De får besked."* It stays **non-interactive**. No management command in this
+>    codebase prompts, and `--dry-run` is the preview everywhere. The help text says plainly that a
+>    fridag on an allocated day removes residents, and recommends `--dry-run` first. If a fridag UI is
+>    ever built, the same notice belongs in an htmx `hx-confirm` (P3 §7's convention).
+> 4. **Why.** A5.4's whole-month reshuffle moved residents who had nothing to do with the fridag
+>    date, and it would silently undo hand-offs residents had agreed under Amendment 4 (December is
+>    allocated in August, its fridage are declared in November, and its hand-offs exist by then).
+>    Removing only that day's shifts touches only the people on that day. The A5.4 notification
+>    wording, which took four review rounds to settle, was a symptom of the reshuffle and goes with it.
+>
+> **Code consequences:**
+> - `FridagResult` drops `reallocated_months`, `moved_residents` and `gained_residents`, and
+>   `lost_residents` becomes `removed`: `(resident, vagt)` pairs, captured before the delete.
+> - `_month_tildelt_by_resident` loses its only caller and is deleted.
+> - The "omfordelt" message variant is deleted.
+> - `declare_koekken_fridag`'s report and help text change as in point 3.
+> - The A5.5 guards (no `UDFOERT`/`ANMELDT` assignment on the date, no past date) are unchanged.
+> - The existing reshuffle and notification-diff tests are rewritten against the new behaviour
+>   (A5.7), not deleted.
 
 ## A5.1 Scope
 
@@ -859,6 +906,11 @@ costs nothing and avoids a second, independent skip path growing beside the firs
 summer source here** — only make sure there is one place for it to plug into.
 
 ## A5.4 The officer action — and why it is the normal path
+
+> **Superseded in part by the 2026-10-04 supplement above:** the re-allocation step
+> (`allocate_month(force=True)`) and the whole-month "lost, moved or gained" notification below no
+> longer apply. A fridag deletes only that day's shifts, re-posts obligation, and notifies only the
+> removed holders. The rest of this section is kept as history.
 
 A fridag declared for a month whose `Vagt` rows already exist cannot be handled by skipping at
 generation. The action is therefore: **delete the matching `Vagt` rows → re-allocate the affected
@@ -905,8 +957,12 @@ Two foreign keys decide what deletion costs, and they differ:
 
 - An excluded `(date, kind)` is not generated; other kinds on that date still are.
 - A whole-day exclusion removes every kind for that date and nothing on adjacent dates.
-- Declaring a fridag on an already-allocated month deletes the shifts, re-allocates, and re-posts
-  obligation — and that month's total obligation falls by exactly the removed supply.
+- *(Revised by the 2026-10-04 supplement.)* Declaring a fridag on an already-allocated month deletes
+  only that day's shifts and **never re-allocates**. Every other assignment in the month is identical
+  before and after, a completed Amendment 4 hand-off on another day included. Obligation is re-posted,
+  and that month's total obligation falls by exactly the removed supply. Only the removed holders are
+  notified, with the "bortfaldet" message. The command's report names them on both `--dry-run` and a
+  real run, and says so when nobody is affected. `allocate_month` is never called.
 - The ledger is unchanged by the deletion: an existing `ARBEJDE` credit survives with a null `vagt`.
 - Both guards refuse, with a clear Danish message, and change nothing.
 - Generation asks the exclusion seam exactly once per `(date, kind)` — the regression that would let a
