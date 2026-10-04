@@ -63,6 +63,7 @@ from django.db.models import Count, F, Q, QuerySet, Sum
 from django.utils import timezone
 
 from core.clock import current_date, current_datetime
+from core.danish import MONTHS
 from residents.models import Residency, Resident
 
 from .models import (
@@ -196,9 +197,10 @@ class FridagResult:
     not have already fired a real push before that rollback happens -- dispatch is the CALLER's job,
     done only once it knows the transaction actually committed (i.e. only when `not dry_run`).
 
-    `lost_residents` / `moved_residents` are for the officer-facing report only (they do NOT decide
-    who is notified): the former ended up holding FEWER of the month's shifts than before, the latter
-    a changed set that did not shrink (same count with different shifts, or a net gain).
+    `lost_residents` / `moved_residents` / `gained_residents` are for the officer-facing report only
+    (they do NOT decide who is notified): the first ended up holding FEWER of the month's shifts than
+    before, the last held NOTHING before and holds something now, and `moved_residents` is the rest of
+    the changed sets (same count with different shifts, or a net gain on top of something already held).
     """
 
     created: list[Fridag] = field(default_factory=list)
@@ -208,6 +210,7 @@ class FridagResult:
     notifications: list[tuple[Resident, QuerySet, str]] = field(default_factory=list)
     lost_residents: list[Resident] = field(default_factory=list)
     moved_residents: list[Resident] = field(default_factory=list)
+    gained_residents: list[Resident] = field(default_factory=list)
 
 
 def _periode_bounds(for_date: date) -> tuple[str, int, date, date]:
@@ -2068,14 +2071,17 @@ def _month_tildelt_by_resident(year: int, month: int) -> dict[int, list[Vagt]]:
     return by_resident
 
 
-def _fridag_notification_message(reason: str) -> str:
+def _fridag_notification_message(for_date: date, reason: str) -> str:
     """The ONE resident-facing message for `declare_fridag`, sent to anyone whose held shifts in the
     affected month changed at all (lost, gained, reassigned, any combination). It names no specific
     shift or date -- and so can never be factually wrong about which shift went where -- and simply
-    points the resident at the app to see what they currently hold."""
+    points the resident at the app to see what they currently hold. It does name the affected MONTH
+    (from `for_date`, never "denne måned"): a fridag is normally declared months ahead, so the
+    affected month is routinely not the current one."""
     reason_text = reason or "fridag"
+    month_text = f"{MONTHS[for_date.month]} {for_date.year}"
     return (
-        f"Dine køkkenvagter denne måned er blevet omfordelt som følge af en fridag ({reason_text}) "
+        f"Dine køkkenvagter i {month_text} er blevet omfordelt som følge af en fridag ({reason_text}) "
         "-- se dine aktuelle vagter i app'en."
     )
 
@@ -2148,8 +2154,8 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
     the before and after snapshots (including from or to empty) gets the SAME single generic message
     (`_fridag_notification_message`), which names no shift or date -- earlier rounds that tried to
     classify and name exactly what each resident lost kept finding new wrong cases, so the precision
-    was dropped. Separately, residents are classified `lost` (their held count shrank) or `moved`
-    (changed without shrinking) purely for the officer-facing report. The notifications land in
+    was dropped. Separately, residents are classified `lost` (their held count shrank), `gained` (held
+    nothing before) or `moved` (anything else that changed) purely for the officer-facing report. The notifications land in
     `FridagResult.notifications` -- see that dataclass's docstring for the exact
     `(resident, audience, message)` shape and for why dispatch itself is NOT done here
     (F1: a management command's `--dry-run` only rolls back AFTER this function returns, so sending a
@@ -2227,15 +2233,18 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
             after_by_resident = _month_tildelt_by_resident(year, month)
             lost_ids: set[int] = set()
             moved_ids: set[int] = set()
+            gained_ids: set[int] = set()
             for rid in before_by_resident.keys() | after_by_resident.keys():
                 before_pks = {v.pk for v in before_by_resident.get(rid, [])}
                 after_pks = {v.pk for v in after_by_resident.get(rid, [])}
                 if len(after_pks) < len(before_pks):
                     lost_ids.add(rid)
+                elif not before_pks:
+                    gained_ids.add(rid)  # held nothing before: nothing of theirs "moved"
                 elif before_pks != after_pks:
                     moved_ids.add(rid)
 
-            affected_ids = lost_ids | moved_ids
+            affected_ids = lost_ids | moved_ids | gained_ids
             if affected_ids:
                 from core.push import subscribers
 
@@ -2248,7 +2257,10 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
                 result.moved_residents = [
                     residents_by_id[rid] for rid in sorted(moved_ids) if rid in residents_by_id
                 ]
-                message = _fridag_notification_message(reason)
+                result.gained_residents = [
+                    residents_by_id[rid] for rid in sorted(gained_ids) if rid in residents_by_id
+                ]
+                message = _fridag_notification_message(for_date, reason)
                 for rid in sorted(affected_ids):
                     resident = residents_by_id.get(rid)
                     if resident is None:

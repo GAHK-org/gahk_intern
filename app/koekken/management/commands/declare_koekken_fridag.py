@@ -25,7 +25,7 @@ No UI view exists for this yet (P2 design doc's "Phasing" -- this amendment adds
 --dry-run is this action's preview, matching every other koekken management command's own --dry-run
 convention: run it first to see exactly what would change (how many Fridag rows, how many Vagt rows
 deleted, which month(s) re-allocated and re-posted, and -- F5 -- which residents are actually affected,
-reported as having lost a shift or had one moved, and notified) before committing for real.
+reported as having lost a shift, had one moved or gained a new one, and notified) before committing for real.
 
 **Recommended timing, per the stakeholder:** declare a periode's fridage BEFORE generating that
 periode's shifts (i.e. before `generate_koekkenvagter` runs for it), rather than after generation or
@@ -52,7 +52,7 @@ class Command(BaseCommand):
     help = (
         "Erklær en fridag for en dato (eller udvalgte vagttyper på den) -- opret Fridag-række(r), "
         "slet evt. allerede genererede vagter, genallokér og genbogfør de(n) berørte måned(er) hvis "
-        "den allerede var allokeret, og notificér beboere der reelt mister en vagt. --dry-run viser "
+        "den allerede var allokeret, og notificér alle beboere hvis vagter i måneden er ændret (mistet, flyttet eller ny). --dry-run viser "
         "konsekvensen -- inklusive hvem der berøres -- uden at gennemføre den eller sende noget. "
         "Anbefales erklæret som en del af generering af periodens vagter, dvs. før periodens "
         "deadline-udløste batch-allokering kører -- så er der intet at genallokere eller genbogføre."
@@ -135,9 +135,23 @@ class Command(BaseCommand):
         if result.moved_residents:
             names = ", ".join(r.full_name for r in result.moved_residents)
             self.stdout.write(f"  {len(result.moved_residents)} beboer(e) fik en vagt flyttet: {names}.")
-        if result.notifications:
-            names = ", ".join(resident.full_name for resident, _audience, _message in result.notifications)
+        if result.gained_residents:
+            names = ", ".join(r.full_name for r in result.gained_residents)
+            self.stdout.write(f"  {len(result.gained_residents)} beboer(e) fik en ny vagt: {names}.")
+        # Notification may not reach everyone: `core.push.send` silently does nothing for a resident
+        # with no (eligible) push subscription. Only claim "notificeret" for residents whose audience
+        # is genuinely non-empty; list the rest separately so the report never overclaims.
+        reachable = [r for r, audience, _message in result.notifications if audience.exists()]
+        unreachable = [r for r, audience, _message in result.notifications if not audience.exists()]
+        if reachable:
+            names = ", ".join(r.full_name for r in reachable)
             self.stdout.write(
-                f"  {len(result.notifications)} beboer(e) {'ville være' if dry_run else 'er'} "
+                f"  {len(reachable)} beboer(e) {'ville være' if dry_run else 'er'} "
                 f"blevet notificeret: {names}."
+            )
+        if unreachable:
+            names = ", ".join(r.full_name for r in unreachable)
+            self.stdout.write(
+                f"  {len(unreachable)} beboer(e) berørt men uden notifikationsabonnement "
+                f"(ingen besked sendt): {names}."
             )

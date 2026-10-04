@@ -33,6 +33,7 @@ from django.test import Client, override_settings
 from django.utils import timezone
 
 from core import push
+from core.danish import MONTHS
 from core.models import DevClock, PushSubscription, Room
 from koekken.models import (
     Fridag,
@@ -3342,9 +3343,13 @@ def test_declare_fridag_refuses_past_date_and_changes_nothing() -> None:
 
 
 _FRIDAG_MESSAGE = (
-    "Dine køkkenvagter denne måned er blevet omfordelt som følge af en fridag ({reason}) "
+    "Dine køkkenvagter i {month_text} er blevet omfordelt som følge af en fridag ({reason}) "
     "-- se dine aktuelle vagter i app'en."
 )
+
+
+def _fridag_message(year: int, month: int, reason: str) -> str:
+    return _FRIDAG_MESSAGE.format(month_text=f"{MONTHS[month]} {year}", reason=reason)
 
 
 def test_declare_fridag_result_distinguishes_lost_from_moved_assignments(make_resident: Callable) -> None:
@@ -3415,7 +3420,7 @@ def test_declare_fridag_notifies_resident_who_loses_one_of_two_shifts(make_resid
     assert VagtTildeling.objects.filter(resident=resident, status=VagtTildeling.Status.TILDELT).count() == 1
 
     _resident, _audience, message = result.notifications[0]
-    assert message == _FRIDAG_MESSAGE.format(reason="Test")
+    assert message == _fridag_message(year, month, "Test")
 
 
 def test_declare_fridag_notifies_resident_who_loses_one_shift_and_has_another_reassigned(
@@ -3447,7 +3452,7 @@ def test_declare_fridag_notifies_resident_who_loses_one_shift_and_has_another_re
     notified = {r.pk for r, _audience, _message in result.notifications}
     assert notified == {first.pk, second.pk}
     assert {message for _r, _a, message in result.notifications} == {
-        _FRIDAG_MESSAGE.format(reason="Juleaften")
+        _fridag_message(year, month, "Juleaften")
     }
 
     # `kept_date`'s Vagt row still exists -- it was reassigned, not deleted -- and is now held by a
@@ -3487,6 +3492,123 @@ def test_declare_fridag_does_not_notify_resident_whose_holdings_are_unchanged(
     assert result.notifications == []
     assert result.lost_residents == []
     assert result.moved_residents == []
+
+
+def test_declare_fridag_notification_names_the_affected_future_month_not_this_month(
+    make_resident: Callable,
+) -> None:
+    """F1: a fridag is normally declared months ahead, so "denne måned" would be false. "Today"
+    (DevClock) is in an EARLIER month than the declared date; the message must name the declared
+    date's month and year."""
+    year, month = 2077, 12
+    periode = _build_month(year, month, weekday_capacity=2, weekend_capacity=0)
+    first = make_resident(email="fridag_future_first@gahk.dk")
+    second = make_resident(email="fridag_future_second@gahk.dk")
+    _place(first, year, month)
+    _place(second, year, month)
+
+    with override_settings(DEBUG=True):
+        _past_deadline(periode)
+        allocate_tier_a(year, month)
+        the_date = VagtTildeling.objects.get(resident=first).vagt.date
+        from core.clock import current_date
+
+        clock_today = current_date()
+        assert (clock_today.year, clock_today.month) < (year, month)  # declared in a LATER month
+
+        result = declare_fridag(the_date, [VagtRegel.Kind.MORGEN], reason="Juleaften")
+
+    assert result.notifications
+    for _r, _a, message in result.notifications:
+        assert "december 2077" in message
+        assert "denne måned" not in message
+        assert f"{MONTHS[clock_today.month]} {clock_today.year}" not in message
+
+
+def _seat_third_after_reallocation(monkeypatch: pytest.MonkeyPatch, third: Resident) -> None:
+    """Replace `allocate_month` (as seen by `declare_fridag`) with a reshuffle that drops every TILDELT
+    row and seats `third` -- who held nothing before -- on a remaining Vagt. Natural ranking rarely
+    produces a gain-from-empty, so this pins the classification itself."""
+    from koekken import services
+
+    def fake_allocate_month(year: int, month: int, force: bool = False) -> None:
+        VagtTildeling.objects.filter(
+            vagt__date__year=year, vagt__date__month=month, status=VagtTildeling.Status.TILDELT
+        ).delete()
+        vagt = Vagt.objects.filter(date__year=year, date__month=month).order_by("date").first()
+        assert vagt is not None
+        VagtTildeling.objects.create(vagt=vagt, resident=third, status=VagtTildeling.Status.TILDELT)
+
+    monkeypatch.setattr(services, "allocate_month", fake_allocate_month)
+
+
+def test_declare_fridag_notifies_and_classifies_resident_who_gains_a_shift_from_none(
+    make_resident: Callable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F3/F4: a resident who held NOTHING before and holds a shift after is notified (generic
+    message) and classified `gained`, never `moved`."""
+    year, month = 2078, 3
+    periode = _build_month(year, month, weekday_capacity=2, weekend_capacity=0)
+    first = make_resident(email="fridag_gain_first@gahk.dk")
+    third = make_resident(email="fridag_gain_third@gahk.dk")
+    _place(first, year, month)
+    _place(third, year, month)
+
+    with override_settings(DEBUG=True):
+        _past_deadline(periode)
+        allocate_tier_a(year, month)
+        held = VagtTildeling.objects.filter(status=VagtTildeling.Status.TILDELT)
+        assert held.count() == 2
+        # Make `third` hold nothing before: hand everything to `first`.
+        held.exclude(resident=first).update(resident=first)
+        assert not VagtTildeling.objects.filter(resident=third).exists()
+        the_date = VagtTildeling.objects.filter(resident=first).order_by("vagt__date").first().vagt.date
+        _seat_third_after_reallocation(monkeypatch, third)
+
+        result = declare_fridag(the_date, [VagtRegel.Kind.MORGEN], reason="Test")
+
+    assert {r.pk for r in result.gained_residents} == {third.pk}
+    assert {r.pk for r in result.lost_residents} == {first.pk}
+    assert result.moved_residents == []
+    notified = {r.pk: message for r, _a, message in result.notifications}
+    assert set(notified) == {first.pk, third.pk}
+    assert set(notified.values()) == {_fridag_message(year, month, "Test")}
+
+
+def test_declare_koekken_fridag_report_gained_wording_and_does_not_overclaim_notification(
+    make_resident: Callable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F2/F3: the officer report lists the gainer under "fik en ny vagt" (not "flyttet"), and only
+    claims "notificeret" for residents with an actual push subscription -- `first` has none and is
+    reported separately as not reached."""
+    year, month = 2079, 3
+    periode = _build_month(year, month, weekday_capacity=2, weekend_capacity=0)
+    first = make_resident(email="fridag_rep_first@gahk.dk", first_name="Ingenabo", last_name="Nyman")
+    third = make_resident(email="fridag_rep_third@gahk.dk", first_name="Gainia", last_name="Abonnent")
+    _place(first, year, month)
+    _place(third, year, month)
+    PushSubscription.objects.create(
+        user=third, endpoint="https://example.test/third", auth="a", p256dh="p", wants_koekken=True
+    )
+
+    with override_settings(DEBUG=True):
+        _past_deadline(periode)
+        allocate_tier_a(year, month)
+        VagtTildeling.objects.filter(status=VagtTildeling.Status.TILDELT).update(resident=first)
+        the_date = VagtTildeling.objects.filter(resident=first).order_by("vagt__date").first().vagt.date
+        _seat_third_after_reallocation(monkeypatch, third)
+
+        out = StringIO()
+        call_command(
+            "declare_koekken_fridag", str(the_date), "--kind", "morgen", "--dry-run", stdout=out, verbosity=1
+        )
+
+    output = out.getvalue()
+    assert f"fik en ny vagt: {third.full_name}" in output
+    assert "flyttet" not in output
+    assert f"blevet notificeret: {third.full_name}." in output  # only the subscribed one
+    assert f"uden notifikationsabonnement (ingen besked sendt): {first.full_name}." in output
+    assert first.full_name not in output.split("blevet notificeret:")[1].split("\n")[0]
 
 
 def test_declare_koekken_fridag_command_notifies_every_resident_whose_holdings_changed(
@@ -3535,7 +3657,7 @@ def test_declare_koekken_fridag_command_notifies_every_resident_whose_holdings_c
     # Both residents' holdings changed (first's shift moved, second lost theirs): both get the SAME
     # generic message, which names no shift.
     assert sorted(user_ids for user_ids, _payload in pushes) == sorted([[first.pk], [second.pk]])
-    assert {payload["body"] for _user_ids, payload in pushes} == {_FRIDAG_MESSAGE.format(reason="Test")}
+    assert {payload["body"] for _user_ids, payload in pushes} == {_fridag_message(year, month, "Test")}
 
 
 def test_declare_koekken_fridag_dry_run_sends_no_pushes_and_changes_nothing(
@@ -3625,6 +3747,10 @@ def test_declare_koekken_fridag_command_creates_fridag_rows_and_reports_summary(
     )
     _place(resident, year, month)
     _place(other, year, month)
+    for r in (resident, other):
+        PushSubscription.objects.create(
+            user=r, endpoint=f"https://example.test/{r.pk}", auth="a", p256dh="p", wants_koekken=True
+        )
 
     with override_settings(DEBUG=True):
         _past_deadline(periode)

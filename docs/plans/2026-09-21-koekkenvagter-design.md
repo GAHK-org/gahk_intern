@@ -877,7 +877,7 @@ obligation correctly with **no new ledger logic** — but only if it is re-run. 
 re-run (stale rows deleted, then `update_or_create`), so this is mechanical; it simply will not happen
 by itself, and must not be left to be remembered.
 
-**Residents who lose a shift are notified.** They were shown it. Their projected balance drops with the
+**Every resident whose held shifts in the month changed at all -- lost, moved or newly gained -- is notified**, with one generic message that names the affected month but no specific shift or date. (Notifying only residents who "lose a shift" went through four rounds of precision bugs -- who lost what, which shift moved where -- each fixing one wrong case and exposing the next; one always-true message to anyone affected replaced it.) Residents who lose a shift were shown it. Their projected balance drops with the
 assignment, so they rank further behind and the allocator compensates them later without anything
 extra being written.
 
