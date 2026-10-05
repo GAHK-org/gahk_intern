@@ -684,6 +684,16 @@ erDiagram
         datetime closed_at
     }
 
+    koekken_VagtBytteForslag {
+        int id PK
+        int bytte_id FK
+        int modydelse_id FK
+        int foreslaaet_af_id FK
+        string status
+        datetime created_at
+        datetime closed_at
+    }
+
     core_PushSubscription }o--|| residents_Resident : "user"
     residents_Resident }o--|o residents_Resident : "sponsor"
     residents_Residency }o--|| residents_Resident : "resident"
@@ -776,6 +786,9 @@ erDiagram
     koekken_VagtBytte }o--|| koekken_VagtTildeling : "tildeling"
     koekken_VagtBytte }o--|| residents_Resident : "tilbudt_af"
     koekken_VagtBytte }o--|o residents_Resident : "overtaget_af"
+    koekken_VagtBytteForslag }o--|| koekken_VagtBytte : "bytte"
+    koekken_VagtBytteForslag }o--|| koekken_VagtTildeling : "modydelse"
+    koekken_VagtBytteForslag }o--|| residents_Resident : "foreslaaet_af"
 ```
 
 ## admissions
@@ -1232,6 +1245,16 @@ erDiagram
         datetime closed_at
     }
 
+    koekken_VagtBytteForslag {
+        int id PK
+        int bytte_id FK
+        int modydelse_id FK
+        int foreslaaet_af_id FK
+        string status
+        datetime created_at
+        datetime closed_at
+    }
+
     residents_Resident { }
 
     koekken_Vagt }o--|| koekken_Periode : "periode"
@@ -1250,6 +1273,9 @@ erDiagram
     koekken_VagtBytte }o--|| koekken_VagtTildeling : "tildeling"
     koekken_VagtBytte }o--|| residents_Resident : "tilbudt_af"
     koekken_VagtBytte }o--|o residents_Resident : "overtaget_af"
+    koekken_VagtBytteForslag }o--|| koekken_VagtBytte : "bytte"
+    koekken_VagtBytteForslag }o--|| koekken_VagtTildeling : "modydelse"
+    koekken_VagtBytteForslag }o--|| residents_Resident : "foreslaaet_af"
 ```
 
 ## oelkaelder

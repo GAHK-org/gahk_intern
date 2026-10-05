@@ -97,3 +97,10 @@ class OverrideAssignForm(forms.Form):
 
     vagt = forms.IntegerField(label="Vagt (id)", widget=forms.HiddenInput)
     resident = forms.IntegerField(label="Beboer (id)")
+
+
+class ForeslaaByttForm(forms.Form):
+    """ "Foreslå bytte" on an open offer (Amendment 4 step 2): the id of the viewer's own row to offer in
+    exchange. Only the shape is checked here; `services.propose_trade` does the real validation."""
+
+    modydelse = forms.IntegerField(min_value=1)

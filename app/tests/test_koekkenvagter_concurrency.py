@@ -24,13 +24,16 @@ from django.test import Client
 
 from core.clock import clear_cache
 from core.models import DevClock, Room
-from koekken.models import Vagt, VagtBytte, VagtRegel, VagtTildeling
+from koekken.models import Vagt, VagtBytte, VagtBytteForslag, VagtRegel, VagtTildeling
 from koekken.services import (
     KoekkenAllocationError,
+    accept_trade,
     allocate_month,
     offer_tildeling,
+    propose_trade,
     resolve_periode,
     take_over,
+    withdraw_offer,
 )
 from residents.models import Residency, Resident, Role
 
@@ -38,6 +41,7 @@ pytestmark = pytest.mark.django_db(transaction=True, serialized_rollback=True)
 
 T = VagtTildeling.Status
 B = VagtBytte.Status
+F = VagtBytteForslag.Status
 YEAR, MONTH = 2042, 3
 DAYS = [date(2042, 3, 10), date(2042, 3, 11)]  # Monday, Tuesday: morgen, 1 x 60
 JOIN = 15.0  # seconds; a hung thread (deadlock) fails the test instead of hanging the suite
@@ -253,3 +257,294 @@ def test_override_remove_and_a_concurrent_take_over_do_not_deadlock(
     # The take-over won the race and the (still TILDELT) row was then removed: nothing half-done.
     assert not VagtTildeling.objects.filter(pk=world["row"].pk).exists()
     assert not VagtBytte.objects.filter(pk=bytte.pk).exists()  # cascaded with its row
+
+
+# ======================================================================= Amendment 4, step 2: trading
+#
+# The lock order is rows (ascending pk) -> Vagt -> offers -> proposals. These tests drive real threads
+# against real row locks: each pauses one side while it HOLDS its locks, starts the other side, proves it
+# is blocked, resumes, and checks the end state and that nothing deadlocked.
+
+
+@pytest.fixture
+def tw(settings: object, make_resident: Callable[..., Resident]) -> Iterator[dict[str, Any]]:
+    """Hand-built world (no allocator): a, b, c, d on March and April's lists. `yl` is b's April row and has
+    the LOWEST pk; then March rows `ra` (a), `rc` (c), `rb` (b), `rd` (d), each on its own morgen vagt."""
+    settings.DEBUG = True  # type: ignore[attr-defined]
+    _reseed()
+    DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": date(2042, 3, 1)})
+    clear_cache()
+    people = {n: make_resident(email=f"{n}@gahk.dk", first_name=n.upper()) for n in "abcd"}
+    for i, r in enumerate(people.values()):
+        room = Room.objects.create(legacy_index=200 + i, number=200 + i, floor="stuen", side="mod gaden")
+        for month in (3, 4):
+            Residency.objects.create(resident=r, room=room, year=YEAR, month=month)
+
+    def row(d: date, who: str) -> VagtTildeling:
+        vagt = Vagt.objects.create(
+            periode=resolve_periode(d), date=d, kind=VagtRegel.Kind.MORGEN, headcount=1, duration_minutes=60
+        )
+        return VagtTildeling.objects.create(vagt=vagt, resident=people[who], status=T.TILDELT)
+
+    world: dict[str, Any] = {"people": people}
+    world["yl"] = row(date(2042, 4, 7), "b")
+    world["ra"] = row(date(2042, 3, 10), "a")
+    world["rc"] = row(date(2042, 3, 11), "c")
+    world["rb"] = row(date(2042, 3, 12), "b")
+    world["rd"] = row(date(2042, 3, 13), "d")
+    yield world
+    clear_cache()
+
+
+def _paused(
+    fn: Callable[[], Any], pattern: "re.Pattern[str]", *, nth: int = 1, after: bool = True
+) -> tuple[threading.Event, threading.Event, threading.Thread, dict[str, Any]]:
+    """Run `fn` in a thread, paused at the `nth` statement matching `pattern` (just after it has run when
+    `after`, so the locks it takes are held; just before it otherwise). `(paused, resume, thread, outcome)`."""
+    paused, resume = threading.Event(), threading.Event()
+    seen = {"n": 0}
+
+    def wrapper(execute: Callable, sql: str, params: object, many: bool, context: object) -> object:
+        hit = False
+        if pattern.search(sql):
+            seen["n"] += 1
+            hit = seen["n"] == nth
+        if hit and not after:
+            paused.set()
+            assert resume.wait(JOIN), "test never resumed the paused call"
+        result = execute(sql, params, many, context)
+        if hit and after:
+            paused.set()
+            assert resume.wait(JOIN), "test never resumed the paused call"
+        return result
+
+    def run() -> object:
+        with connection.execute_wrapper(wrapper):
+            return fn()
+
+    thread, outcome = _run_in_thread(run)
+    return paused, resume, thread, outcome
+
+
+FOR_UPDATE = re.compile(r"FOR UPDATE")
+
+
+def _propose(world: dict[str, Any], x: str, who: str, y: str) -> tuple[VagtBytte, VagtBytteForslag]:
+    row = world[x]
+    bytte = VagtBytte.objects.filter(tildeling=row, status=B.AABEN).first() or offer_tildeling(
+        row, row.resident
+    )
+    return bytte, propose_trade(bytte, world[y], world["people"][who])
+
+
+def _joined(*threads: threading.Thread) -> None:
+    for t in threads:
+        t.join(JOIN)
+    assert not any(t.is_alive() for t in threads), "deadlock"
+
+
+def test_propose_blocks_on_force_rerun_then_gets_a_clean_refusal(tw: dict[str, Any]) -> None:
+    """Re-run paused AFTER locking the month's rows (right before its first DELETE). A `propose_trade` on
+    an X in that month must BLOCK on X's row lock (it takes Y first, which is free) instead of inserting a
+    proposal beneath the deleter; after the re-run commits it gets a clean refusal, and nothing dangles."""
+    bytte = offer_tildeling(tw["ra"], tw["people"]["a"])
+    paused, resume, rerun = _paused_rerun(re.compile(r'^DELETE FROM "koekken_'))
+    assert paused.wait(JOIN)
+
+    proposer, outcome = _run_in_thread(lambda: propose_trade(bytte, tw["yl"], tw["people"]["b"]))
+    proposer.join(1.5)
+    assert proposer.is_alive(), "propose_trade was not blocked by the re-run's row locks (race is open)"
+    assert not VagtBytteForslag.objects.exists()
+
+    resume.set()
+    _joined(rerun, proposer)
+    assert "error" not in rerun.outcome  # type: ignore[attr-defined]
+    assert isinstance(outcome.get("error"), KoekkenAllocationError), outcome
+    assert "findes ikke" in str(outcome["error"])
+    assert not VagtBytteForslag.objects.exists()
+
+
+def test_rerun_blocks_on_accept_then_both_sides_survive(tw: dict[str, Any]) -> None:
+    """accept_trade paused after taking its locks; a force re-run of the month must block; once the swap
+    commits, the re-run's exclusion sees BOTH rows as completed hand-offs (X via the BYTTET offer, Y via the
+    ACCEPTERET proposal) and deletes neither."""
+    a, b = tw["people"]["a"], tw["people"]["b"]
+    _bytte, forslag = _propose(tw, "ra", "b", "rb")
+    paused, resume, acceptor, accepted = _paused(lambda: accept_trade(forslag, a), FOR_UPDATE)
+    assert paused.wait(JOIN)
+
+    _p, _r, rerun = _paused_rerun(re.compile(r"(?!)"))  # never pauses
+    rerun.join(1.5)
+    assert rerun.is_alive(), "the re-run was not blocked by the accept's row locks"
+
+    resume.set()
+    _joined(acceptor, rerun)
+    assert "error" not in accepted, accepted
+    assert "error" not in rerun.outcome  # type: ignore[attr-defined]
+    ra, rb = VagtTildeling.objects.get(pk=tw["ra"].pk), VagtTildeling.objects.get(pk=tw["rb"].pk)
+    assert (ra.resident, rb.resident) == (b, a)
+    assert VagtBytte.objects.get(tildeling=ra).status == B.BYTTET
+    assert VagtBytteForslag.objects.get(modydelse=rb).status == F.ACCEPTERET
+
+
+def test_accept_with_lower_pk_y_in_another_month_does_not_deadlock_with_the_rerun(tw: dict[str, Any]) -> None:
+    """The re-run holds X's lock (March). accept_trade wants Y (April, LOWER pk) then X. It takes Y, blocks
+    on X, and -- the re-run never asks for Y -- there is no cycle. Once the re-run has replaced X the accept
+    gets a clean refusal."""
+    a = tw["people"]["a"]
+    _bytte, forslag = _propose(tw, "ra", "b", "yl")
+    assert tw["yl"].pk < tw["ra"].pk
+    paused, resume, rerun = _paused_rerun(re.compile(r'^DELETE FROM "koekken_'))
+    assert paused.wait(JOIN)
+
+    acceptor, accepted = _run_in_thread(lambda: accept_trade(forslag, a))
+    acceptor.join(1.5)
+    assert acceptor.is_alive(), "accept_trade was not blocked by the re-run's lock on X"
+
+    resume.set()
+    _joined(rerun, acceptor)
+    assert "error" not in rerun.outcome  # type: ignore[attr-defined]
+    assert isinstance(accepted.get("error"), KoekkenAllocationError), accepted
+    assert VagtTildeling.objects.get(pk=tw["yl"].pk).resident == tw["people"]["b"]  # Y never moved
+
+
+@pytest.mark.parametrize("natural", [False, True])
+def test_two_accepts_sharing_y_exactly_one_wins(tw: dict[str, Any], natural: bool) -> None:
+    """Two offerers each hold a proposal naming b's row Y. Their locks {X1, Y} and {X2, Y} overlap and are
+    taken in ascending pk order, so they serialise: exactly one swap happens, the other proposal is
+    lapsed, and both calls return."""
+    a, c = tw["people"]["a"], tw["people"]["c"]
+    _b1, f1 = _propose(tw, "ra", "b", "rb")
+    _b2, f2 = _propose(tw, "rc", "b", "rb")
+    if natural:
+        barrier = threading.Barrier(2)
+
+        def go(f: VagtBytteForslag, who: Resident) -> VagtBytteForslag:
+            barrier.wait(JOIN)
+            return accept_trade(f, who)
+
+        t1, o1 = _run_in_thread(lambda: go(f1, a))
+        t2, o2 = _run_in_thread(lambda: go(f2, c))
+        _joined(t1, t2)
+    else:
+        paused, resume, t1, o1 = _paused(lambda: accept_trade(f1, a), FOR_UPDATE)
+        assert paused.wait(JOIN)
+        t2, o2 = _run_in_thread(lambda: accept_trade(f2, c))
+        t2.join(1.5)
+        assert t2.is_alive(), "the second accept was not blocked on the shared Y"
+        resume.set()
+        _joined(t1, t2)
+    wins = [o for o in (o1, o2) if "result" in o]
+    losses = [o for o in (o1, o2) if "error" in o]
+    assert len(wins) == 1 and len(losses) == 1, (o1, o2)
+    assert isinstance(losses[0]["error"], KoekkenAllocationError), losses
+    statuses = sorted(VagtBytteForslag.objects.values_list("status", flat=True))
+    assert statuses == sorted([F.ACCEPTERET, F.BORTFALDET])
+    assert VagtBytte.objects.filter(status=B.BYTTET).count() == 1
+    holders = sorted(
+        VagtTildeling.objects.filter(pk=tw["rb"].pk).values_list("resident__first_name", flat=True)
+    )
+    assert holders in (["A"], ["C"])  # b's Y went to exactly one of the offerers
+
+
+@pytest.mark.parametrize("accept_first", [True, False])
+def test_accept_versus_take_over_of_ys_own_offer(tw: dict[str, Any], accept_first: bool) -> None:
+    """Y has an open offer of its own (made after the proposal). accept_trade and take_over of THAT offer
+    both lock Y first: one wins, the other gets a clean refusal, nobody deadlocks."""
+    a, d = tw["people"]["a"], tw["people"]["d"]
+    _bytte, forslag = _propose(tw, "ra", "b", "rb")
+    y_offer = offer_tildeling(tw["rb"], tw["people"]["b"])
+    accept = lambda: accept_trade(forslag, a)  # noqa: E731
+    take = lambda: take_over(y_offer, d)  # noqa: E731
+    first, second = (accept, take) if accept_first else (take, accept)
+    paused, resume, t1, o1 = _paused(first, FOR_UPDATE)
+    assert paused.wait(JOIN)
+    t2, o2 = _run_in_thread(second)
+    t2.join(1.5)
+    assert t2.is_alive(), "the second call was not blocked by the first one's row locks"
+    resume.set()
+    _joined(t1, t2)
+    assert "result" in o1, o1
+    assert isinstance(o2.get("error"), KoekkenAllocationError), o2
+    rb, ra = VagtTildeling.objects.get(pk=tw["rb"].pk), VagtTildeling.objects.get(pk=tw["ra"].pk)
+    if accept_first:
+        assert (ra.resident, rb.resident) == (tw["people"]["b"], a)
+        assert VagtBytte.objects.get(pk=y_offer.pk).status == B.BORTFALDET
+    else:
+        assert (ra.resident, rb.resident) == (a, d)
+        assert VagtBytteForslag.objects.get(pk=forslag.pk).status == F.BORTFALDET
+
+
+@pytest.mark.parametrize("accept_first", [True, False])
+def test_accept_versus_override_remove_of_y(
+    tw: dict[str, Any], make_resident: Callable[..., Resident], accept_first: bool
+) -> None:
+    manager = make_resident(email="manager@gahk.dk", roles=(Role.KOKKENGRUPPE,))
+    client = Client()
+    client.force_login(manager)
+    a = tw["people"]["a"]
+    _bytte, forslag = _propose(tw, "ra", "b", "rb")
+    accept = lambda: accept_trade(forslag, a)  # noqa: E731
+    remove = lambda: client.post(f"/intern/koekken/gruppe/override/{tw['rb'].pk}/fjern")  # noqa: E731
+    first, second = (accept, remove) if accept_first else (remove, accept)
+    paused, resume, t1, o1 = _paused(first, FOR_UPDATE)
+    assert paused.wait(JOIN)
+    t2, o2 = _run_in_thread(second)
+    t2.join(1.5)
+    assert t2.is_alive(), "the second call was not blocked by the first one's row locks"
+    resume.set()
+    _joined(t1, t2)
+    assert "error" not in o1, o1
+    assert not VagtTildeling.objects.filter(pk=tw["rb"].pk).exists()  # Y was removed either way
+    ra = VagtTildeling.objects.get(pk=tw["ra"].pk)
+    if accept_first:  # the swap committed, THEN the (now a's) row was removed
+        assert "error" not in o2 and ra.resident == tw["people"]["b"]
+        assert VagtBytte.objects.get(tildeling=ra).status == B.BYTTET
+    else:  # the removal won; the accept refuses cleanly and X did not move
+        assert isinstance(o2.get("error"), KoekkenAllocationError), o2
+        assert ra.resident == a and VagtBytte.objects.get(tildeling=ra).status == B.AABEN
+    assert not VagtBytteForslag.objects.filter(status=F.AABEN).exists()
+
+
+@pytest.mark.parametrize("accept_first", [True, False])
+def test_accept_versus_withdraw_of_the_same_offer(tw: dict[str, Any], accept_first: bool) -> None:
+    a = tw["people"]["a"]
+    bytte, forslag = _propose(tw, "ra", "b", "rb")
+    accept = lambda: accept_trade(forslag, a)  # noqa: E731
+    withdraw = lambda: withdraw_offer(bytte, a)  # noqa: E731
+    first, second = (accept, withdraw) if accept_first else (withdraw, accept)
+    paused, resume, t1, o1 = _paused(first, FOR_UPDATE)
+    assert paused.wait(JOIN)
+    t2, o2 = _run_in_thread(second)
+    t2.join(1.5)
+    assert t2.is_alive(), "the second call was not blocked by the first one's row locks"
+    resume.set()
+    _joined(t1, t2)
+    assert "result" in o1, o1
+    assert isinstance(o2.get("error"), KoekkenAllocationError), o2
+    final = VagtBytte.objects.get(pk=bytte.pk).status
+    assert final == (B.BYTTET if accept_first else B.TRUKKET)
+    assert VagtBytteForslag.objects.get(pk=forslag.pk).status == (
+        F.ACCEPTERET if accept_first else F.BORTFALDET
+    )
+
+
+def test_accept_and_withdraw_of_another_offer_both_closing_the_same_proposal(tw: dict[str, Any]) -> None:
+    """accept_trade (offer 1, Y = rb) lapses every other proposal naming rb, among them F, which sits on
+    offer 2. withdraw_offer(offer 2) lapses F as well. Both must reach F through lock level 4 in ascending
+    order: the withdraw waits for the accept, then finds F already closed. No deadlock."""
+    a, c = tw["people"]["a"], tw["people"]["c"]
+    _b1, f_main = _propose(tw, "ra", "b", "rb")
+    b2, f_shared = _propose(tw, "rc", "b", "rb")
+    # Pause the accept after its LAST up-front lock (tildelinger, offers, proposals = 3 statements).
+    paused, resume, t1, o1 = _paused(lambda: accept_trade(f_main, a), FOR_UPDATE, nth=3)
+    assert paused.wait(JOIN)
+    t2, o2 = _run_in_thread(lambda: withdraw_offer(b2, c))
+    t2.join(1.5)
+    assert t2.is_alive(), "withdraw_offer was not blocked (it must wait for the proposal lock)"
+    resume.set()
+    _joined(t1, t2)
+    assert "result" in o1 and "result" in o2, (o1, o2)
+    assert VagtBytteForslag.objects.get(pk=f_shared.pk).status == F.BORTFALDET
+    assert VagtBytte.objects.get(pk=b2.pk).status == B.TRUKKET
+    assert VagtBytteForslag.objects.get(pk=f_main.pk).status == F.ACCEPTERET

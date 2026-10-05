@@ -41,8 +41,17 @@ MOVES the existing row) or, on a two-person shift, the offerer's partner takes t
 and never written (`has_started`), so every read goes through it. Completed hand-offs survive a force
 re-run: the three TILDELT deletes first lock the candidate rows (`select_for_update`) and only then
 delete with `handed_off_tildeling_filter()` excluded (see `_delete_replaceable_tildelinger`). Every write
-locks rows, then the Vagt, then the offer (see the comment above `has_started`). Trading and Den
-Hurtige are later steps.
+locks rows, then the Vagt, then the offer (see the comment above `has_started`). Den Hurtige is a later
+step.
+
+**Amendment 4, step 2** (same design doc): trading. A resident proposes one of their own future rows Y
+in exchange for an open offer's row X (`propose_trade`); the offerer accepts (`accept_trade`, an atomic
+two-row swap of the residents, pks unchanged), declines, or the proposer withdraws. Lock order is now
+four levels (rows ascending pk -> Vagt -> offers ascending pk -> proposals ascending pk), every service
+locks BOTH X and Y before touching an offer or proposal, and every bulk close (`_close_invalidated_offers`,
+`_close_forslag`) selects its rows `FOR UPDATE` in ascending pk order before updating them -- never a bare
+`.filter().update()`. A row that is the `modydelse` of an `ACCEPTERET` proposal is a completed hand-off
+too (`handed_off_tildeling_filter`), so both sides of a trade survive a force re-run.
 
 **Amendments 2 and 3 in one paragraph:** the look-ahead window Amendment 1 allocates into has no
 real `Residency` list to draw on (nothing in this codebase ever creates one more than a month
@@ -98,6 +107,7 @@ from .models import (
     Vagt,
     VagtAnmeldelse,
     VagtBytte,
+    VagtBytteForslag,
     VagtRegel,
     VagtTildeling,
 )
@@ -2026,9 +2036,10 @@ def flag_tildeling(vagt_tildeling: VagtTildeling, flagged_by: Resident, reason: 
         # From here on use the LOCKED row, not the caller's pre-lock copy: its status may have changed
         # (e.g. marked UDFOERT) between the view's read and the lock.
         vagt_tildeling = locked
-        VagtBytte.objects.filter(tildeling=vagt_tildeling, status=VagtBytte.Status.AABEN).update(
-            status=VagtBytte.Status.BORTFALDET, closed_at=current_datetime()
-        )
+        # Lock-then-update (LOCK ORDER): the offer on the row (and its proposals), then every open proposal
+        # that uses the flagged row as `modydelse` -- a row with flag history can never be traded.
+        _close_invalidated_offers([vagt_tildeling])
+        _close_invalidated_forslag([vagt_tildeling])
         anmeldelse = VagtAnmeldelse.objects.create(
             vagt_tildeling=vagt_tildeling,
             flagged_by=flagged_by,
@@ -2106,17 +2117,28 @@ def resolve_anmeldelse(anmeldelse: VagtAnmeldelse, *, upheld: bool, resolved_by:
 # ---------------------------------------------------------------------------------------------------
 # Amendment 4, step 1: hand-off of vagter (`VagtBytte`). Design doc `2026-10-04-koekkenvagter-a4-design.md`.
 #
-# LOCK ORDER (critical): every write below locks, in this order and never another,
-#   (1) the `VagtTildeling` rows involved, via `select_for_update`, in ASCENDING pk order;
+# LOCK ORDER (critical): every write below locks, in this order and never another, never skipping a
+# level that it needs, never going back up:
+#   (1) the `VagtTildeling` rows involved (for a trade BOTH X and Y), via `select_for_update`, in
+#       ASCENDING pk order;
 #   (2) the `Vagt` (whole-shift take-over only);
-#   (3) finally the `VagtBytte` row.
-# Never lock the offer before its row. Anything that DELETES `VagtTildeling` rows cascades into
-# `VagtBytte` (offer deleted before the row), so a deleter that does not lock the rows first would
-# hold an offer and then ask for its row while a take-over holds the row and asks for the offer: a
-# deadlock. Every deleter therefore locks the rows first, in the same ascending order
-# (`_delete_replaceable_tildelinger`, `override_remove`, `reconcile_month`, `declare_fridag`), which
-# makes the two sides block on each other instead. Every predicate (`can_offer`, `can_take`, `can_take_whole`) is a pure read with no
-# locking: the services re-check everything after locking.
+#   (3) the `VagtBytte` rows, ascending pk;
+#   (4) the `VagtBytteForslag` rows (step 2), ascending pk.
+# Corollaries:
+#   * Never lock the offer before its row. Anything that DELETES `VagtTildeling` rows cascades into
+#     `VagtBytte` and `VagtBytteForslag` (offers/proposals deleted before the row), so a deleter that
+#     does not lock the rows first would hold an offer or proposal and then ask for its row while a
+#     take-over or trade holds the row and asks for it: a deadlock. Every deleter therefore locks the rows
+#     first, in the same ascending order (`_delete_replaceable_tildelinger`, `override_remove`,
+#     `reconcile_month`, `declare_fridag`), which makes the two sides block on each other instead.
+#   * Every INSERT of a dependent row first locks all its parent `VagtTildeling` rows (an offer: its row;
+#     a proposal: X and Y). Otherwise a deleter's unlocked cascade-collect SELECT could miss a
+#     just-inserted dependent and the deleter's commit would fail on the foreign key.
+#   * Closing or lapsing SEVERAL offers or proposals SELECTs them `FOR UPDATE` in ascending pk order
+#     first (`_lock_byttes`, `_lock_forslag`) and only then updates exactly the locked pks. A bare
+#     `.filter(...).update(...)` makes no ordering promise, so two overlapping ones can deadlock.
+# Every predicate (`can_offer`, `can_take`, `can_take_whole`, `proposable_rows`, `can_accept`, ...) is a
+# pure read with no locking: the services re-check everything after locking.
 # ---------------------------------------------------------------------------------------------------
 
 _HANDED_OFF_STATUSES = [
@@ -2158,15 +2180,20 @@ def may_hold(resident: Resident, vagt: Vagt, *, population_ids: set[int] | None 
     return resident.pk in population_ids
 
 
-def handed_off_tildeling_filter() -> Exists:
-    """An `Exists` expression matching every `VagtTildeling` that is a completed Amendment 4 hand-off:
-    a `VagtBytte` with status `OVERTAGET`/`OVERTAGET_HEL`/`BYTTET` points at it. Identified by query,
-    never by a flag on the row (design doc §4). Used by the delete of the three force re-run entry points
-    (`_delete_replaceable_tildelinger`, after it has locked the rows) and by `force_rerun_impact`.
-
-    Step 2 extends this with accepted `VagtBytteForslag` proposals (`ACCEPTERET`, as `modydelse`).
-    """
-    return Exists(VagtBytte.objects.filter(tildeling=OuterRef("pk"), status__in=_HANDED_OFF_STATUSES))
+def handed_off_tildeling_filter() -> Q:
+    """A condition matching every `VagtTildeling` that is a completed Amendment 4 hand-off: a
+    `VagtBytte` with status `OVERTAGET`/`OVERTAGET_HEL`/`BYTTET` points at it (the offered side X of a
+    take-over or trade), OR a `VagtBytteForslag` with status `ACCEPTERET` has it as `modydelse` (the
+    proposer's side Y of a trade). Identified by query, never by a flag on the row (design doc §4). Usable
+    in `.filter()` and `.exclude()`. Used by the delete of the three force re-run entry points
+    (`_delete_replaceable_tildelinger`, after it has locked the rows) and by `force_rerun_impact`."""
+    return Q(Exists(VagtBytte.objects.filter(tildeling=OuterRef("pk"), status__in=_HANDED_OFF_STATUSES))) | Q(
+        Exists(
+            VagtBytteForslag.objects.filter(
+                modydelse=OuterRef("pk"), status=VagtBytteForslag.Status.ACCEPTERET
+            )
+        )
+    )
 
 
 def tildeling_ids_with_anmeldelse(tildeling_ids: Iterable[int]) -> set[int]:
@@ -2318,6 +2345,145 @@ def can_take_whole(
     return may_hold(resident, vagt, population_ids=_population_for(vagt, population))
 
 
+def proposable_rows(
+    resident: Resident,
+    bytte: VagtBytte,
+    *,
+    at: datetime | None = None,
+    regel_lookup: dict[tuple[str, bool], VagtRegel] | None = None,
+    population: dict[tuple[int, int], set[int]] | None = None,
+    flagged_ids: set[int] | None = None,
+    offered_ids: set[int] | None = None,
+    held_by_offerer: dict[int, VagtTildeling] | None = None,
+    own_rows: Iterable[VagtTildeling] | None = None,
+    held: dict[int, VagtTildeling] | None = None,
+    proposed_ids: set[int] | None = None,
+) -> list[VagtTildeling]:
+    """`resident`'s own rows Y that they may propose in exchange for `bytte`'s row X (UI predicate, pure
+    read -- `propose_trade` re-checks everything under lock). Empty unless X's offer is live (open,
+    unexpired, X still the offerer's own `TILDELT` row, no flag history), `resident` is not the offerer,
+    holds no row on X's `Vagt` and `may_hold` it. Each Y must satisfy `can_offer` (so: `resident`'s own,
+    `TILDELT`, unstarted, no flag history, and no open offer of its own), the offerer must not already hold
+    a row on Y's `Vagt` and must `may_hold` it, and Y must not already be an open proposal of `resident`
+    on this offer. Batching inputs: `flagged_ids`/`offered_ids` as for `can_offer` (covering X and the
+    rows), `held_by_offerer` = the offerer's rows keyed by `vagt_id`, `held` = `resident`'s rows keyed by
+    `vagt_id`, `own_rows` = `resident`'s candidate rows (with `vagt` loaded), `proposed_ids` = Y ids with
+    an open proposal by `resident` on this offer; `population` is the per-month cache of `can_take`."""
+    if resident.pk == bytte.tilbudt_af_id or not _offer_is_live(bytte, at=at, regel_lookup=regel_lookup):
+        return []
+    x = bytte.tildeling
+    if own_rows is None:
+        own_rows = VagtTildeling.objects.filter(
+            resident=resident, status=VagtTildeling.Status.TILDELT
+        ).select_related("vagt")
+    own = list(own_rows)
+    if flagged_ids is None:
+        flagged_ids = tildeling_ids_with_anmeldelse([x.pk, *(r.pk for r in own)])
+    if x.pk in flagged_ids:
+        return []
+    if held is None:
+        held = held_by_vagt(resident, [x.vagt_id])
+    if x.vagt_id in held:
+        return []
+    if population is None:
+        population = {}
+    if not may_hold(resident, x.vagt, population_ids=_population_for(x.vagt, population)):
+        return []
+    if offered_ids is None:
+        offered_ids = tildeling_ids_with_open_offer(r.pk for r in own)
+    if held_by_offerer is None:
+        held_by_offerer = held_by_vagt(bytte.tilbudt_af, [r.vagt_id for r in own])
+    if proposed_ids is None:
+        proposed_ids = set(
+            VagtBytteForslag.objects.filter(
+                bytte=bytte, foreslaaet_af=resident, status=VagtBytteForslag.Status.AABEN
+            ).values_list("modydelse_id", flat=True)
+        )
+    result = []
+    for y in own:
+        if y.pk in proposed_ids or y.vagt_id in held_by_offerer:
+            continue
+        if not can_offer(
+            y, resident, at=at, regel_lookup=regel_lookup, flagged_ids=flagged_ids, offered_ids=offered_ids
+        ):
+            continue
+        if not may_hold(bytte.tilbudt_af, y.vagt, population_ids=_population_for(y.vagt, population)):
+            continue
+        result.append(y)
+    return result
+
+
+def forslag_is_live(
+    forslag: VagtBytteForslag,
+    *,
+    at: datetime | None = None,
+    regel_lookup: dict[tuple[str, bool], VagtRegel] | None = None,
+    flagged_ids: set[int] | None = None,
+) -> bool:
+    """Whether an open proposal is still live (derived, never written): `AABEN`, its offer live (X
+    unstarted, `TILDELT`, still the offerer's, no flag history) and Y still the proposer's own unstarted,
+    `TILDELT`, flag-free row. Needs `forslag.bytte.tildeling.vagt` and `forslag.modydelse.vagt` loaded."""
+    bytte, y = forslag.bytte, forslag.modydelse
+    if forslag.status != VagtBytteForslag.Status.AABEN:
+        return False
+    if not _offer_is_live(bytte, at=at, regel_lookup=regel_lookup):
+        return False
+    if y.resident_id != forslag.foreslaaet_af_id or y.status != VagtTildeling.Status.TILDELT:
+        return False
+    if has_started(y.vagt, at=at, regel_lookup=regel_lookup):
+        return False
+    if flagged_ids is None:
+        flagged_ids = tildeling_ids_with_anmeldelse([bytte.tildeling_id, y.pk])
+    return bytte.tildeling_id not in flagged_ids and y.pk not in flagged_ids
+
+
+def can_accept(
+    forslag: VagtBytteForslag,
+    resident: Resident,
+    *,
+    at: datetime | None = None,
+    regel_lookup: dict[tuple[str, bool], VagtRegel] | None = None,
+    population: dict[tuple[int, int], set[int]] | None = None,
+    flagged_ids: set[int] | None = None,
+    vagt_residents: set[tuple[int, int]] | None = None,
+) -> bool:
+    """Whether `resident` may accept `forslag` (UI predicate, pure read): they are the offerer, the proposal
+    is `forslag_is_live`, neither side already holds a row on the other's `Vagt`, and both `may_hold`
+    checks pass. The "Y has no open offer" rule of `propose_trade` deliberately does NOT apply here: the
+    swap lapses such an offer. `vagt_residents` is an optional batched set of `(vagt_id, resident_id)`
+    pairs covering both shifts."""
+    bytte = forslag.bytte
+    if resident.pk != bytte.tilbudt_af_id:
+        return False
+    if not forslag_is_live(forslag, at=at, regel_lookup=regel_lookup, flagged_ids=flagged_ids):
+        return False
+    vagt_x, vagt_y, proposer = bytte.tildeling.vagt, forslag.modydelse.vagt, forslag.foreslaaet_af
+    if vagt_residents is None:
+        vagt_residents = set(
+            VagtTildeling.objects.filter(vagt_id__in=[vagt_x.pk, vagt_y.pk]).values_list(
+                "vagt_id", "resident_id"
+            )
+        )
+    if (vagt_x.pk, proposer.pk) in vagt_residents or (vagt_y.pk, resident.pk) in vagt_residents:
+        return False
+    if population is None:
+        population = {}
+    return may_hold(proposer, vagt_x, population_ids=_population_for(vagt_x, population)) and may_hold(
+        resident, vagt_y, population_ids=_population_for(vagt_y, population)
+    )
+
+
+def can_decline(forslag: VagtBytteForslag, resident: Resident) -> bool:
+    """Whether `resident` may decline `forslag`: they are the offerer and it is `AABEN`. Allowed even when
+    it has gone stale or expired, as cleanup."""
+    return forslag.status == VagtBytteForslag.Status.AABEN and resident.pk == forslag.bytte.tilbudt_af_id
+
+
+def can_withdraw_proposal(forslag: VagtBytteForslag, resident: Resident) -> bool:
+    """Whether `resident` may withdraw `forslag`: they are the proposer and it is `AABEN`."""
+    return forslag.status == VagtBytteForslag.Status.AABEN and resident.pk == forslag.foreslaaet_af_id
+
+
 def _lock_tildelinger(pks: Iterable[int]) -> dict[int, VagtTildeling]:
     """Lock the given `VagtTildeling` rows in ASCENDING pk order (lock step 1). Rows that no longer
     exist are simply absent from the result. `of=("self",)` so no joined table is locked."""
@@ -2331,24 +2497,78 @@ def lock_tildeling(pk: int) -> VagtTildeling | None:
     return _lock_tildelinger([pk]).get(pk)
 
 
+def _lock_byttes(pks: Iterable[int]) -> dict[int, VagtBytte]:
+    """Lock the given `VagtBytte` rows in ASCENDING pk order (lock step 3), materialised, keyed by pk.
+    Rows that no longer exist are simply absent. Same pattern as `_lock_tildelinger`."""
+    rows = VagtBytte.objects.select_for_update(of=("self",)).filter(pk__in=list(pks)).order_by("pk")
+    return {row.pk: row for row in rows}
+
+
+def _lock_forslag(pks: Iterable[int]) -> dict[int, VagtBytteForslag]:
+    """Lock the given `VagtBytteForslag` rows in ASCENDING pk order (lock step 4), materialised, keyed by
+    pk. Rows that no longer exist are simply absent. Same pattern as `_lock_tildelinger`."""
+    rows = VagtBytteForslag.objects.select_for_update(of=("self",)).filter(pk__in=list(pks)).order_by("pk")
+    return {row.pk: row for row in rows}
+
+
+def _close_forslag(qs: QuerySet[VagtBytteForslag]) -> None:
+    """Lapse (`BORTFALDET`) every `AABEN` proposal in `qs`. The candidates are first locked `FOR UPDATE` in
+    ascending pk order (`_lock_forslag`), status is re-checked on the locked versions, and only those
+    exact pks are updated -- never a bare multi-row `UPDATE` over a filter. The caller must already hold
+    the `VagtTildeling` rows (lock 1) that make the candidate set complete."""
+    candidates = list(qs.filter(status=VagtBytteForslag.Status.AABEN).values_list("pk", flat=True))
+    if not candidates:
+        return
+    locked = _lock_forslag(candidates)
+    ids = [pk for pk, f in locked.items() if f.status == VagtBytteForslag.Status.AABEN]
+    if ids:
+        VagtBytteForslag.objects.filter(pk__in=ids).update(
+            status=VagtBytteForslag.Status.BORTFALDET, closed_at=current_datetime()
+        )
+
+
+def _close_invalidated_forslag(
+    rows: Iterable[VagtTildeling], *, keep: VagtBytteForslag | None = None
+) -> None:
+    """After a move (design doc §5.6): every `AABEN` proposal that uses a moved row as `modydelse` lapses,
+    except `keep` (the proposal being accepted)."""
+    qs = VagtBytteForslag.objects.filter(modydelse__in=list(rows))
+    if keep is not None:
+        qs = qs.exclude(pk=keep.pk)
+    _close_forslag(qs)
+
+
 def _close_invalidated_offers(tildelinger: Iterable[VagtTildeling], *, keep: VagtBytte | None = None) -> None:
-    """After a move (design doc §5.6): every OTHER open offer on a moved row lapses to `BORTFALDET`,
-    because the row now belongs to someone who never offered it. Unreachable in step 1 (the partial
-    unique constraint allows one open offer per row, and `keep` is it), but step 2's trades reuse it."""
+    """After a move or a flag (design doc §5.6): every OTHER open offer on a touched row lapses to
+    `BORTFALDET`, because the row now belongs to someone who never offered it (or can no longer be
+    offered), and so do the open proposals on each offer it closes (`_close_forslag`). The target offers are
+    locked `FOR UPDATE` in ascending pk order BEFORE the update, never a bare `.update()` over a filter.
+    Offers are normally unique per row (partial unique constraint), but a trade moves TWO rows, so Y's own
+    open offer is a real target here."""
     qs = VagtBytte.objects.filter(tildeling__in=list(tildelinger), status=VagtBytte.Status.AABEN)
     if keep is not None:
         qs = qs.exclude(pk=keep.pk)
-    qs.update(status=VagtBytte.Status.BORTFALDET, closed_at=current_datetime())
+    candidates = list(qs.values_list("pk", flat=True))
+    if not candidates:
+        return
+    locked = _lock_byttes(candidates)  # lock 3
+    ids = [pk for pk, b in locked.items() if b.status == VagtBytte.Status.AABEN]  # re-check when locked
+    if not ids:
+        return
+    VagtBytte.objects.filter(pk__in=ids).update(
+        status=VagtBytte.Status.BORTFALDET, closed_at=current_datetime()
+    )
+    _close_forslag(VagtBytteForslag.objects.filter(bytte_id__in=ids))  # lock 4
 
 
-def _notify_offerer(offerer: Resident, body: str) -> None:
-    """Push to the offerer, the `resolve_anmeldelse` way: the audience is narrowed through
+def _notify(resident: Resident, body: str) -> None:
+    """Push to one resident, the `resolve_anmeldelse` way: the audience is narrowed through
     `access.allowed_subscribers`, and `send` (default background mode) dispatches after commit."""
     from core.push import send, subscribers  # local: same reasoning as resolve_anmeldelse
 
     from . import access
 
-    audience = access.allowed_subscribers(subscribers(TOPIC).filter(user=offerer))
+    audience = access.allowed_subscribers(subscribers(TOPIC).filter(user=resident))
     send(audience, "Køkkenvagt", body, "/intern/koekken/")
 
 
@@ -2401,6 +2621,7 @@ def withdraw_offer(bytte: VagtBytte, by: Resident) -> VagtBytte:
         offer.status = VagtBytte.Status.TRUKKET
         offer.closed_at = current_datetime()
         offer.save(update_fields=["status", "closed_at"])
+        _close_forslag(VagtBytteForslag.objects.filter(bytte=offer))  # lock 4: its proposals lapse with it
         return offer
 
 
@@ -2504,7 +2725,11 @@ def _take(bytte: VagtBytte, by: Resident, *, whole: bool) -> VagtBytte:
                 offer.closed_at = now
                 offer.save(update_fields=["status", "overtaget_af", "closed_at"])
                 _close_invalidated_offers([row], keep=offer)
-                _notify_offerer(
+                # The offer is closed: its open proposals lapse; and X moved, so proposals that offer X
+                # elsewhere as their `modydelse` are invalid too.
+                _close_forslag(VagtBytteForslag.objects.filter(bytte=offer))
+                _close_invalidated_forslag([row])
+                _notify(
                     offer.tilbudt_af,
                     f"{by.full_name} har overtaget din {vagt}. Du er ikke længere på vagten.",
                 )
@@ -2517,11 +2742,19 @@ def _take(bytte: VagtBytte, by: Resident, *, whole: bool) -> VagtBytte:
                 offer.overtaget_af = by
                 offer.closed_at = now
                 offer.save(update_fields=["tildeling", "status", "overtaget_af", "closed_at"])
+                # Lapse the proposals BEFORE the delete (the same cascade-trap lesson): the offer's own, and
+                # those using the partner's surviving row as `modydelse` (it is now a different, whole
+                # shift). Proposals using the vacated row as `modydelse` go with it by cascade (design doc §5.6).
+                _close_forslag(VagtBytteForslag.objects.filter(bytte=offer))
+                _close_invalidated_forslag([cast(VagtTildeling, partner)])
+                # The delete's cascade reaches the proposals that use the vacated row: lock them first
+                # (level 4, ascending), like every other deleter locks what it cascades into.
+                _lock_forslag(VagtBytteForslag.objects.filter(modydelse=row).values_list("pk", flat=True))
                 row.delete()  # (2) the vacated row
                 vagt.headcount = 1  # (3) (2, d) -> (1, 2d): the one sanctioned snapshot change
                 vagt.duration_minutes = 2 * vagt.duration_minutes
                 vagt.save(update_fields=["headcount", "duration_minutes"])
-                _notify_offerer(  # (4)
+                _notify(  # (4)
                     offerer,
                     f"{by.full_name} har overtaget hele {vagt}. Du er ikke længere på vagten.",
                 )
@@ -2545,6 +2778,244 @@ def take_over_whole(bytte: VagtBytte, by: Resident) -> VagtBytte:
     cascade trap), then the `Vagt` collapses from `(2, d)` to `(1, 2d)`. Only a `Vagt` whose own
     snapshot says `headcount == 2` qualifies; `by`'s row must be `TILDELT` with no open offer of its own."""
     return _take(bytte, by, whole=True)
+
+
+def _forslag_rows(forslag: VagtBytteForslag) -> tuple[int, int] | None:
+    """`(x_pk, y_pk)` of `forslag`: an UNLOCKED read, only to learn which rows to lock; every service
+    re-verifies against the locked rows."""
+    x_pk = VagtBytte.objects.filter(pk=forslag.bytte_id).values_list("tildeling_id", flat=True).first()
+    return None if x_pk is None else (x_pk, forslag.modydelse_id)
+
+
+def _close_own_forslag(
+    forslag: VagtBytteForslag, by: Resident, *, as_offerer: bool, status: VagtBytteForslag.Status
+) -> VagtBytteForslag:
+    """The shared body of `withdraw_proposal` (proposer, `TRUKKET`) and `decline_proposal` (offerer,
+    `AFVIST`): lock X and Y, then the offer, then the proposal."""
+    gone = "Forslaget findes ikke længere."
+    rows = _forslag_rows(forslag)
+    if rows is None:
+        raise KoekkenAllocationError(gone)
+    with transaction.atomic():
+        locked = _lock_tildelinger(rows)  # lock 1: X and Y, ascending pk
+        if len(locked) != 2:
+            raise KoekkenAllocationError(gone)
+        offer = _lock_byttes([forslag.bytte_id]).get(forslag.bytte_id)  # lock 3
+        fresh = _lock_forslag([forslag.pk]).get(forslag.pk)  # lock 4
+        if offer is None or fresh is None or offer.tildeling_id != rows[0]:
+            raise KoekkenAllocationError(gone)
+        if fresh.status != VagtBytteForslag.Status.AABEN:
+            raise KoekkenAllocationError("Forslaget er ikke længere åbent.")
+        if as_offerer and by.pk != offer.tilbudt_af_id:
+            raise KoekkenAllocationError("Kun tilbyderen kan afvise et forslag.")
+        if not as_offerer and by.pk != fresh.foreslaaet_af_id:
+            raise KoekkenAllocationError("Du kan kun trække dine egne forslag tilbage.")
+        fresh.status = status
+        fresh.closed_at = current_datetime()
+        fresh.save(update_fields=["status", "closed_at"])
+        return fresh
+
+
+def propose_trade(bytte: VagtBytte, modydelse: VagtTildeling, by: Resident) -> VagtBytteForslag:
+    """`by` proposes their own row `modydelse` (Y) in exchange for `bytte`'s row X (design doc §3, §5.4).
+    Locks X and Y together FIRST (a proposal must never be inserted without both parents locked, or a
+    deleter's commit could fail on the foreign key), then the offer, and re-checks everything: the offer is
+    open, X unstarted, the offerer's own `TILDELT` and flag-free (else the offer lapses, persisted, and the
+    call refuses); Y is `by`'s own `TILDELT`, unstarted row with no `VagtAnmeldelse` in any status and no
+    open offer of its own; `by` is not the offerer, holds no place on X's `Vagt`, the offerer holds none on
+    Y's, and both `may_hold`. The offerer gets a push."""
+    gone = "Tilbuddet findes ikke længere."
+    lapsed: str | None = None
+    with transaction.atomic():
+        locked = _lock_tildelinger([bytte.tildeling_id, modydelse.pk])  # lock 1: X and Y, ascending
+        x = locked.get(bytte.tildeling_id)
+        if x is None:
+            raise KoekkenAllocationError(gone)
+        y = locked.get(modydelse.pk)
+        if y is None:
+            raise KoekkenAllocationError("Din vagt findes ikke længere.")
+        offer = _lock_byttes([bytte.pk]).get(bytte.pk)  # lock 3
+        if offer is None:
+            raise KoekkenAllocationError(gone)
+        if offer.status != VagtBytte.Status.AABEN or offer.tildeling_id != x.pk:
+            raise KoekkenAllocationError("Tilbuddet er ikke længere åbent -- nogen andre var først.")
+        vagt_x = Vagt.objects.get(pk=x.vagt_id)
+        vagt_y = Vagt.objects.get(pk=y.vagt_id)
+        if has_started(vagt_x):
+            raise KoekkenAllocationError("Vagten er allerede startet, så tilbuddet er udløbet.")
+        offerer = offer.tilbudt_af
+        if x.resident_id != offer.tilbudt_af_id or x.status != VagtTildeling.Status.TILDELT:
+            lapsed = "Tilbuddet er bortfaldet: tilbyderen står ikke længere på vagten."
+        elif VagtAnmeldelse.objects.filter(vagt_tildeling=x).exists():
+            lapsed = "Tilbuddet er bortfaldet: vagten har en anmeldelse i sin historik."
+        if lapsed:
+            offer.status = VagtBytte.Status.BORTFALDET
+            offer.closed_at = current_datetime()
+            offer.save(update_fields=["status", "closed_at"])
+            _close_forslag(VagtBytteForslag.objects.filter(bytte=offer))  # lock 4
+        else:
+            if by.pk == offer.tilbudt_af_id:
+                raise KoekkenAllocationError("Du kan ikke foreslå bytte på dit eget tilbud.")
+            if y.resident_id != by.pk:
+                raise KoekkenAllocationError("Du kan kun bytte med dine egne vagter.")
+            if y.status != VagtTildeling.Status.TILDELT:
+                raise KoekkenAllocationError(
+                    "Din vagt kan ikke bruges i et bytte: den er allerede meldt udført eller anmeldt."
+                )
+            if has_started(vagt_y):
+                raise KoekkenAllocationError("Din vagt er allerede startet og kan ikke længere byttes.")
+            if VagtAnmeldelse.objects.filter(vagt_tildeling=y).exists():
+                raise KoekkenAllocationError(
+                    "Din vagt kan ikke byttes, fordi den har en anmeldelse i sin historik."
+                )
+            if VagtBytte.objects.filter(tildeling=y, status=VagtBytte.Status.AABEN).exists():
+                raise KoekkenAllocationError(f"Træk dit eget tilbud på {vagt_y} tilbage først.")
+            if VagtTildeling.objects.filter(vagt=vagt_x, resident=by).exists():
+                raise KoekkenAllocationError(f"Du har allerede en plads på {vagt_x}.")
+            if VagtTildeling.objects.filter(vagt=vagt_y, resident=offerer).exists():
+                raise KoekkenAllocationError(f"{offerer.full_name} har allerede en plads på {vagt_y}.")
+            if not may_hold(by, vagt_x):
+                raise KoekkenAllocationError(
+                    f"Du kan ikke tage {vagt_x}: du står ikke på beboerlisten for måneden, "
+                    "eller du er fraflyttet inden vagtens dato."
+                )
+            if not may_hold(offerer, vagt_y):
+                raise KoekkenAllocationError(
+                    f"{offerer.full_name} kan ikke tage {vagt_y}: "
+                    "vedkommende står ikke på beboerlisten for måneden eller er fraflyttet inden vagtens dato."
+                )
+            already = "Du har allerede foreslået dette bytte."
+            try:
+                with transaction.atomic():  # savepoint: an IntegrityError must not poison the outer block
+                    forslag = VagtBytteForslag.objects.create(bytte=offer, modydelse=y, foreslaaet_af=by)
+            except IntegrityError:
+                raise KoekkenAllocationError(already) from None
+            _notify(
+                offerer,
+                f"{by.full_name} foreslår at bytte din {vagt_x} med {vagt_y} — svar i app'en.",
+            )
+            return forslag
+    raise KoekkenAllocationError(lapsed or gone)
+
+
+def withdraw_proposal(forslag: VagtBytteForslag, by: Resident) -> VagtBytteForslag:
+    """The proposer withdraws an open proposal (`TRUKKET`). Locks X and Y, then the offer, then the
+    proposal. Sends nothing."""
+    return _close_own_forslag(forslag, by, as_offerer=False, status=VagtBytteForslag.Status.TRUKKET)
+
+
+def decline_proposal(forslag: VagtBytteForslag, by: Resident) -> VagtBytteForslag:
+    """The offerer declines an open proposal (`AFVIST`), allowed even when it has gone stale or expired
+    (cleanup). Locks X and Y, then the offer, then the proposal. Sends nothing."""
+    return _close_own_forslag(forslag, by, as_offerer=True, status=VagtBytteForslag.Status.AFVIST)
+
+
+def accept_trade(forslag: VagtBytteForslag, by: Resident) -> VagtBytteForslag:
+    """The offerer accepts a proposal (design doc §5.4): the residents of X and Y are exchanged in ONE
+    savepoint (never two take-overs), the proposal becomes `ACCEPTERET`, the offer `BYTTET` with
+    `overtaget_af` = the proposer, everything the move invalidated lapses (§5.6) and the proposer is
+    notified.
+
+    Lock order: X and Y (ascending pk), then every offer that will be touched (this one and any open offer
+    on X or Y, ascending), then every proposal that will be touched (ascending) -- all taken up front, so
+    the closes below only re-lock rows this transaction already holds. Every §3 rule is re-checked against
+    the locked state. On a stale condition the lapse is PERSISTED (`BORTFALDET` on the proposal, and on the
+    offer when X is the stale side) and the error is raised only AFTER the transaction block, so the write is
+    not rolled back. Y may have gained an open offer since the proposal was made: that is NOT a refusal,
+    the swap lapses it."""
+    gone = "Forslaget findes ikke længere."
+    rows = _forslag_rows(forslag)
+    if rows is None:
+        raise KoekkenAllocationError(gone)
+    x_pk, y_pk = rows
+    lapsed: str | None = None
+    with transaction.atomic():
+        locked = _lock_tildelinger([x_pk, y_pk])  # lock 1: X and Y, ascending pk
+        x, y = locked.get(x_pk), locked.get(y_pk)
+        if x is None or y is None:
+            raise KoekkenAllocationError(gone)
+        offer_pks = {forslag.bytte_id}
+        offer_pks.update(
+            VagtBytte.objects.filter(
+                tildeling_id__in=[x_pk, y_pk], status=VagtBytte.Status.AABEN
+            ).values_list("pk", flat=True)
+        )
+        offers = _lock_byttes(offer_pks)  # lock 3: the offer and Y's own open offer, ascending
+        offer = offers.get(forslag.bytte_id)
+        proposal_pks = {forslag.pk}
+        proposal_pks.update(
+            VagtBytteForslag.objects.filter(status=VagtBytteForslag.Status.AABEN)
+            .filter(Q(bytte_id__in=list(offers)) | Q(modydelse_id__in=[x_pk, y_pk]))
+            .values_list("pk", flat=True)
+        )
+        fresh = _lock_forslag(proposal_pks).get(forslag.pk)  # lock 4, ascending
+        if offer is None or fresh is None or offer.tildeling_id != x_pk:
+            raise KoekkenAllocationError(gone)
+        if fresh.status != VagtBytteForslag.Status.AABEN:
+            raise KoekkenAllocationError("Forslaget er ikke længere åbent.")
+        if by.pk != offer.tilbudt_af_id:
+            raise KoekkenAllocationError("Kun tilbyderen kan acceptere et forslag.")
+        vagt_x, vagt_y = Vagt.objects.get(pk=x.vagt_id), Vagt.objects.get(pk=y.vagt_id)
+        proposer = fresh.foreslaaet_af
+        lapse_offer = False
+        if offer.status != VagtBytte.Status.AABEN:
+            lapsed = "Tilbuddet er ikke længere åbent."
+        elif has_started(vagt_x):
+            lapsed = "Vagten er allerede startet, så tilbuddet er udløbet."
+        elif x.resident_id != offer.tilbudt_af_id or x.status != VagtTildeling.Status.TILDELT:
+            lapsed, lapse_offer = "Tilbuddet er bortfaldet: du står ikke længere på vagten.", True
+        elif VagtAnmeldelse.objects.filter(vagt_tildeling=x).exists():
+            lapsed, lapse_offer = "Tilbuddet er bortfaldet: vagten har en anmeldelse i sin historik.", True
+        elif y.resident_id != fresh.foreslaaet_af_id or y.status != VagtTildeling.Status.TILDELT:
+            lapsed = "Forslaget er bortfaldet: forslagsstilleren står ikke længere på sin vagt."
+        elif has_started(vagt_y):
+            lapsed = "Forslaget er bortfaldet: forslagsstillerens vagt er allerede startet."
+        elif VagtAnmeldelse.objects.filter(vagt_tildeling=y).exists():
+            lapsed = "Forslaget er bortfaldet: forslagsstillerens vagt har en anmeldelse i sin historik."
+        elif VagtTildeling.objects.filter(vagt=vagt_x, resident=proposer).exists():
+            lapsed = f"Forslaget er bortfaldet: {proposer.full_name} har allerede en plads på {vagt_x}."
+        elif VagtTildeling.objects.filter(vagt=vagt_y, resident=by).exists():
+            lapsed = f"Forslaget er bortfaldet: du har allerede en plads på {vagt_y}."
+        elif not may_hold(proposer, vagt_x) or not may_hold(by, vagt_y):
+            lapsed = "Forslaget er bortfaldet: en af jer står ikke på beboerlisten eller er fraflyttet."
+        if lapsed is None:
+            offerer = offer.tilbudt_af
+            x.resident, y.resident = proposer, offerer
+            try:
+                with transaction.atomic():  # ONE savepoint: both updates or neither
+                    x.save(update_fields=["resident"])
+                    y.save(update_fields=["resident"])
+            except IntegrityError:
+                # A row inserted concurrently by a path that does not lock VagtTildeling rows
+                # (override_assign): the savepoint rolled the swap back. The proposal can never succeed now.
+                lapsed = "En af jer har fået en plads på den anden vagt imens."
+            else:
+                now = current_datetime()
+                fresh.status = VagtBytteForslag.Status.ACCEPTERET
+                fresh.closed_at = now
+                fresh.save(update_fields=["status", "closed_at"])
+                offer.status = VagtBytte.Status.BYTTET
+                offer.overtaget_af = proposer
+                offer.closed_at = now
+                offer.save(update_fields=["status", "overtaget_af", "closed_at"])
+                _close_invalidated_offers([x, y], keep=offer)  # Y's own offer, and ITS proposals
+                _close_forslag(VagtBytteForslag.objects.filter(bytte=offer))  # the offer's other proposals
+                _close_invalidated_forslag([x, y], keep=fresh)
+                _notify(
+                    proposer,
+                    f"{by.full_name} har accepteret byttet: du har nu {vagt_x} i stedet for {vagt_y}.",
+                )
+                return fresh
+        # Stale: persist the lapse, raise after the block.
+        fresh.status = VagtBytteForslag.Status.BORTFALDET
+        fresh.closed_at = current_datetime()
+        fresh.save(update_fields=["status", "closed_at"])
+        if lapse_offer:
+            offer.status = VagtBytte.Status.BORTFALDET
+            offer.closed_at = fresh.closed_at
+            offer.save(update_fields=["status", "closed_at"])
+            _close_forslag(VagtBytteForslag.objects.filter(bytte=offer))
+    raise KoekkenAllocationError(lapsed or gone)
 
 
 def open_offers(

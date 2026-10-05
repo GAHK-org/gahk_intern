@@ -139,7 +139,9 @@ class PushSubscription(models.Model):
     # has ever consented to køkkenvagt notifications, and consent granted by migration is not
     # consent. Notified moments: koekken.services.resolve_anmeldelse, only when a flag is UPHELD
     # against them -- see the P2 design doc's §6; and (Amendment 4) koekken.services.take_over /
-    # take_over_whole, when someone takes a shift they offered (the offerer is notified).
+    # take_over_whole, when someone takes a shift they offered (the offerer is notified); and (Amendment 4
+    # step 2) koekken.services.propose_trade (the offerer is told a trade was proposed on their offer)
+    # and accept_trade (the proposer is told their proposal was accepted).
     wants_koekken = models.BooleanField(default=False, verbose_name="Køkkenvagter")
 
     class Meta:

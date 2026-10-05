@@ -5,8 +5,11 @@
   INSIDE this partial (`error`), never through the messages framework; an unavailable action's button is
   ABSENT, never disabled -- the predicates (services.can_offer/can_take/can_take_whole) decide per row.
 
-  `upcoming` is (tildeling, flagged_by_name, open_offer_or_None, can_offer, handoff_label) tuples.
-  `board` is (bytte, can_take, can_take_whole) triples.
+  Amendment 4 step 2 adds trading: `upcoming` is (tildeling, flagged_by_name, open_offer_or_None,
+  can_offer, handoff_label, incoming) tuples, where `incoming` is the live proposals on that offer as
+  (forslag, can_accept, can_decline). `board` is (bytte, can_take, can_take_whole, proposable_rows,
+  own_proposals) tuples, where `own_proposals` is the viewer's live open proposals on it as
+  (forslag, can_withdraw_proposal). A select/form/button is rendered only when its predicate holds.
   The whole-shift hours are 2 x the shift's own duration: widthratio computes duration / 30 (and duration / 60 for the shift's own hours).
 {% endcomment %}
 <div id="koekken-bytte">
@@ -19,7 +22,7 @@
       <div class="card-pad">
         {% if upcoming %}
           <ul>
-            {% for t, flagged_by, open_offer, can_offer, handoff_label in upcoming %}
+            {% for t, flagged_by, open_offer, can_offer, handoff_label, incoming in upcoming %}
               <li>
                 {{ t.vagt.date|date:"D j. F" }} — {{ t.vagt.get_kind_display }} ({{ t.get_status_display }})
                 {% if handoff_label %}<span class="muted"> — {{ handoff_label }}</span>{% endif %}
@@ -42,6 +45,38 @@
                     <button type="submit" class="btn btn-secondary">Tilbyd vagten</button>
                   </form>
                 {% endif %}
+                {% if incoming %}
+                  <div>
+                    <strong>Forslag til dig</strong>
+                    <ul>
+                      {% for f, can_accept, can_decline in incoming %}
+                        <li>
+                          {{ f.foreslaaet_af.full_name }} tilbyder {{ f.modydelse.vagt }}
+                          ({% widthratio f.modydelse.vagt.duration_minutes 60 1 %} t)
+                          {% if can_accept %}
+                            <form method="post" action="{% url 'koekken:accepter_forslag' f.pk %}"
+                                  hx-post="{% url 'koekken:accepter_forslag' f.pk %}"
+                                  hx-target="#koekken-bytte" hx-swap="outerHTML"
+                                  hx-confirm="Du får {{ f.modydelse.vagt }} i stedet for {{ t.vagt }}. Det kan ikke fortrydes."
+                                  style="display:inline">
+                              {% csrf_token %}
+                              <button type="submit" class="btn">Acceptér bytte</button>
+                            </form>
+                          {% endif %}
+                          {% if can_decline %}
+                            <form method="post" action="{% url 'koekken:afvis_forslag' f.pk %}"
+                                  hx-post="{% url 'koekken:afvis_forslag' f.pk %}"
+                                  hx-target="#koekken-bytte" hx-swap="outerHTML"
+                                  style="display:inline">
+                              {% csrf_token %}
+                              <button type="submit" class="btn btn-secondary">Afvis</button>
+                            </form>
+                          {% endif %}
+                        </li>
+                      {% endfor %}
+                    </ul>
+                  </div>
+                {% endif %}
               </li>
             {% endfor %}
           </ul>
@@ -55,7 +90,7 @@
       <div class="card-pad">
         {% if board %}
           <ul>
-            {% for bytte, can_take, can_take_whole in board %}
+            {% for bytte, can_take, can_take_whole, proposable, own_proposals in board %}
               <li>
                 {{ bytte.tildeling.vagt.date|date:"D j. F" }} — {{ bytte.tildeling.vagt.get_kind_display }},
                 {% widthratio bytte.tildeling.vagt.duration_minutes 60 1 %} t
@@ -80,6 +115,38 @@
                     {% csrf_token %}
                     <button type="submit" class="btn">Tag hele vagten ({{ hele_timer }} t)</button>
                   </form>
+                {% endif %}
+                {% if proposable %}
+                  <form method="post" action="{% url 'koekken:foreslaa_bytte' bytte.pk %}"
+                        hx-post="{% url 'koekken:foreslaa_bytte' bytte.pk %}"
+                        hx-target="#koekken-bytte" hx-swap="outerHTML"
+                        style="display:inline">
+                    {% csrf_token %}
+                    <select name="modydelse">
+                      {% for y in proposable %}
+                        <option value="{{ y.pk }}">{{ y.vagt.date|date:"D j. F" }} — {{ y.vagt.get_kind_display }}, {% widthratio y.vagt.duration_minutes 60 1 %} t</option>
+                      {% endfor %}
+                    </select>
+                    <button type="submit" class="btn btn-secondary">Foreslå bytte</button>
+                  </form>
+                {% endif %}
+                {% if own_proposals %}
+                  <ul>
+                    {% for f, can_withdraw in own_proposals %}
+                      <li>
+                        <span class="muted">Dit forslag: {{ f.modydelse.vagt.date|date:"D j. F" }} — {{ f.modydelse.vagt.get_kind_display }}, {% widthratio f.modydelse.vagt.duration_minutes 60 1 %} t</span>
+                        {% if can_withdraw %}
+                          <form method="post" action="{% url 'koekken:traek_forslag_tilbage' f.pk %}"
+                                hx-post="{% url 'koekken:traek_forslag_tilbage' f.pk %}"
+                                hx-target="#koekken-bytte" hx-swap="outerHTML"
+                                style="display:inline">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-secondary">Træk forslag tilbage</button>
+                          </form>
+                        {% endif %}
+                      </li>
+                    {% endfor %}
+                  </ul>
                 {% endif %}
               </li>
             {% endfor %}

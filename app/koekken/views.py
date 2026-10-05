@@ -35,13 +35,14 @@ from residents.models import Resident
 from residents.permissions import current_resident
 
 from . import access, services
-from .forms import AllokeringForm, AnmeldelseForm, OverrideAssignForm, PraeferenceForm
+from .forms import AllokeringForm, AnmeldelseForm, ForeslaaByttForm, OverrideAssignForm, PraeferenceForm
 from .models import (
     Praeference,
     PraeferenceDag,
     Vagt,
     VagtAnmeldelse,
     VagtBytte,
+    VagtBytteForslag,
     VagtRegel,
     VagtTildeling,
 )
@@ -114,22 +115,24 @@ def _recent_context(request: HttpRequest) -> dict[str, object]:
 
 
 def _bytte_context(request: HttpRequest, *, error: str | None = None) -> dict[str, object]:
-    """The shared builder for `_bytte.html` -- Amendment 4 step 1 (design doc §7): "Mine kommende
-    vagter" (this resident's future rows, with their offer state) and "Vagter til overtagelse" (everyone
-    else's open, unexpired offers). Rendered by the full index page AND by every offer/withdraw/take POST,
-    which re-render the partial with `error` set when the service refused (never the messages framework).
+    """The shared builder for `_bytte.html` -- Amendment 4 steps 1-2 (design doc §7): "Mine kommende
+    vagter" (this resident's future rows, with their offer state and incoming trade proposals) and "Vagter
+    til overtagelse" (everyone else's open, unexpired offers, with the viewer's proposable rows and own open
+    proposals). Rendered by the full index page AND by every offer/withdraw/take/trade POST, which
+    re-render the partial with `error` set when the service refused (never the messages framework).
 
-    Every predicate input is batched, so the query count does not grow with the number of rows: flagged
-    ids, open-offer ids, hand-off labels, the viewer's own rows, one population lookup per month and a
-    single `vagt_regel_lookup()`.
+    Every predicate input is batched, so the query count does not grow with the number of rows or
+    proposals: flagged ids (one query for the rows, the offers' rows and the proposals' Y rows), open-offer
+    ids, hand-off labels, ONE query for every open proposal on a listed offer / by the viewer / accepted
+    onto the viewer's rows, the viewer's and the offerers' rows by `Vagt`, one population lookup per month
+    and a single `vagt_regel_lookup()`.
     """
     resident = current_resident(request)
     today = current_date()
     regel_lookup = services.vagt_regel_lookup()
     rows = [t for t in services.resident_tildelinger(resident) if t.vagt.date >= today]
     row_ids = [t.pk for t in rows]
-    flagged_by = services.flagged_by_names(rows)  # F3
-    flagged_ids = services.tildeling_ids_with_anmeldelse(row_ids)
+    flagged_by = services.flagged_by_names(rows)  # F3: flagger identity, resident-facing too
     open_by_row: dict[int, VagtBytte] = {}
     handoff_labels: dict[int, str] = {}
     for bytte in (
@@ -137,7 +140,11 @@ def _bytte_context(request: HttpRequest, *, error: str | None = None) -> dict[st
         .filter(
             Q(status=VagtBytte.Status.AABEN)
             | Q(
-                status__in=[VagtBytte.Status.OVERTAGET, VagtBytte.Status.OVERTAGET_HEL],
+                status__in=[
+                    VagtBytte.Status.OVERTAGET,
+                    VagtBytte.Status.OVERTAGET_HEL,
+                    VagtBytte.Status.BYTTET,
+                ],
                 overtaget_af=resident,
             )
         )
@@ -148,6 +155,8 @@ def _bytte_context(request: HttpRequest, *, error: str | None = None) -> dict[st
             open_by_row.setdefault(bytte.tildeling_id, bytte)
         elif bytte.status == VagtBytte.Status.OVERTAGET_HEL:
             handoff_labels.setdefault(bytte.tildeling_id, "hele vagten")
+        elif bytte.status == VagtBytte.Status.BYTTET:
+            handoff_labels.setdefault(bytte.tildeling_id, f"byttet med {bytte.tilbudt_af.full_name}")
         else:
             handoff_labels.setdefault(bytte.tildeling_id, f"overtaget fra {bytte.tilbudt_af.full_name}")
     now = current_datetime()
@@ -157,54 +166,143 @@ def _bytte_context(request: HttpRequest, *, error: str | None = None) -> dict[st
         for t in rows
         if t.pk in open_by_row and not services.has_started(t.vagt, at=now, regel_lookup=regel_lookup)
     }
-    upcoming = [
-        (
-            t,
-            flagged_by.get(t.pk),
-            open_by_row[t.pk] if t.pk in live_offer_ids else None,
-            services.can_offer(
-                t,
-                resident,
-                at=now,
-                regel_lookup=regel_lookup,
-                flagged_ids=flagged_ids,
-                offered_ids=set(open_by_row),
-            ),
-            handoff_labels.get(t.pk),
-        )
-        for t in rows
-    ]
-
     offers = services.open_offers(exclude_resident=resident, at=now, regel_lookup=regel_lookup)
+    my_offer_ids = [open_by_row[pk].pk for pk in live_offer_ids]
+
+    # ONE query for every proposal this page can show: open ones on the viewer's live offers (incoming)
+    # and by the viewer on listed offers (own), plus accepted ones that put a row on the viewer (labels).
+    open_ = VagtBytteForslag.Status.AABEN
+    proposals = list(
+        VagtBytteForslag.objects.filter(
+            Q(status=open_, bytte_id__in=my_offer_ids)
+            | Q(status=open_, foreslaaet_af=resident, bytte_id__in=[o.pk for o in offers])
+            | Q(
+                status=VagtBytteForslag.Status.ACCEPTERET,
+                modydelse_id__in=row_ids,
+                bytte__tilbudt_af=resident,
+            )
+        )
+        .select_related("modydelse__vagt", "foreslaaet_af", "bytte__tilbudt_af", "bytte__tildeling__vagt")
+        .order_by("created_at", "pk")
+    )
+    incoming_raw: dict[int, list[VagtBytteForslag]] = {}
+    own_raw: dict[int, list[VagtBytteForslag]] = {}
+    for f in proposals:
+        if f.status == VagtBytteForslag.Status.ACCEPTERET:
+            handoff_labels.setdefault(f.modydelse_id, f"byttet med {f.foreslaaet_af.full_name}")
+        elif f.foreslaaet_af_id == resident.pk:
+            own_raw.setdefault(f.bytte_id, []).append(f)
+        else:
+            incoming_raw.setdefault(f.bytte_id, []).append(f)
+
+    flagged_ids = services.tildeling_ids_with_anmeldelse(
+        {
+            *row_ids,
+            *(o.tildeling_id for o in offers),
+            *(f.modydelse_id for fs in incoming_raw.values() for f in fs),
+            *(f.modydelse_id for fs in own_raw.values() for f in fs),
+        }
+    )
+    population: dict[tuple[int, int], set[int]] = {}
+    pair_vagt_ids = {
+        v
+        for fs in incoming_raw.values()
+        for f in fs
+        for v in (f.bytte.tildeling.vagt_id, f.modydelse.vagt_id)
+    }
+    vagt_residents = (
+        set(VagtTildeling.objects.filter(vagt_id__in=pair_vagt_ids).values_list("vagt_id", "resident_id"))
+        if pair_vagt_ids
+        else set()
+    )
+
+    upcoming = []
+    for t in rows:
+        offer = open_by_row[t.pk] if t.pk in live_offer_ids else None
+        incoming = []
+        if offer is not None:
+            for f in incoming_raw.get(offer.pk, []):
+                if services.can_accept(
+                    f,
+                    resident,
+                    at=now,
+                    regel_lookup=regel_lookup,
+                    population=population,
+                    flagged_ids=flagged_ids,
+                    vagt_residents=vagt_residents,
+                ):
+                    incoming.append((f, True, services.can_decline(f, resident)))
+        upcoming.append(
+            (
+                t,
+                flagged_by.get(t.pk),
+                offer,
+                services.can_offer(
+                    t,
+                    resident,
+                    at=now,
+                    regel_lookup=regel_lookup,
+                    flagged_ids=flagged_ids,
+                    offered_ids=set(open_by_row),
+                ),
+                handoff_labels.get(t.pk),
+                incoming,
+            )
+        )
+
     held = services.held_by_vagt(resident, [o.tildeling.vagt_id for o in offers])
     own_offered_ids = services.tildeling_ids_with_open_offer(t.pk for t in held.values())
-    offer_flagged_ids = services.tildeling_ids_with_anmeldelse(o.tildeling_id for o in offers)
-    population: dict[tuple[int, int], set[int]] = {}
-    board = [
-        (
-            o,
-            services.can_take(
+    offerer_held: dict[int, dict[int, VagtTildeling]] = {}
+    if offers and rows:
+        for held_row in VagtTildeling.objects.filter(
+            resident_id__in={o.tilbudt_af_id for o in offers}, vagt_id__in={t.vagt_id for t in rows}
+        ):
+            offerer_held.setdefault(held_row.resident_id, {})[held_row.vagt_id] = held_row
+    board = []
+    for o in offers:
+        mine = [
+            (f, services.can_withdraw_proposal(f, resident))
+            for f in own_raw.get(o.pk, [])
+            if services.forslag_is_live(f, at=now, regel_lookup=regel_lookup, flagged_ids=flagged_ids)
+        ]
+        board.append(
+            (
                 o,
-                resident,
-                at=now,
-                regel_lookup=regel_lookup,
-                population=population,
-                held=held,
-                flagged_ids=offer_flagged_ids,
-            ),
-            services.can_take_whole(
-                o,
-                resident,
-                at=now,
-                regel_lookup=regel_lookup,
-                population=population,
-                held=held,
-                offered_ids=own_offered_ids,
-                flagged_ids=offer_flagged_ids,
-            ),
+                services.can_take(
+                    o,
+                    resident,
+                    at=now,
+                    regel_lookup=regel_lookup,
+                    population=population,
+                    held=held,
+                    flagged_ids=flagged_ids,
+                ),
+                services.can_take_whole(
+                    o,
+                    resident,
+                    at=now,
+                    regel_lookup=regel_lookup,
+                    population=population,
+                    held=held,
+                    offered_ids=own_offered_ids,
+                    flagged_ids=flagged_ids,
+                ),
+                services.proposable_rows(
+                    resident,
+                    o,
+                    at=now,
+                    regel_lookup=regel_lookup,
+                    population=population,
+                    flagged_ids=flagged_ids,
+                    offered_ids=set(open_by_row),
+                    held_by_offerer=offerer_held.get(o.tilbudt_af_id, {}),
+                    own_rows=rows,
+                    held=held,
+                    proposed_ids={f.modydelse_id for f, _w in mine},
+                ),
+                mine,
+            )
         )
-        for o in offers
-    ]
     return {"upcoming": upcoming, "board": board, "error": error}
 
 
@@ -245,6 +343,15 @@ def _bytte_response(request: HttpRequest, action: Callable[[Resident], object]) 
     return render(request, "koekken/_bytte.html", _bytte_context(request, error=error))
 
 
+def _refuse(message: str) -> Callable[[Resident], object]:
+    """An action that refuses with `message` without touching a service (a malformed form post)."""
+
+    def action(resident: Resident) -> object:
+        raise services.KoekkenAllocationError(message)
+
+    return action
+
+
 @access.access_required
 @require_POST
 def tilbyd_vagt(request: HttpRequest, pk: int) -> HttpResponse:
@@ -275,6 +382,46 @@ def tag_vagt(request: HttpRequest, pk: int) -> HttpResponse:
 def tag_hele_vagten(request: HttpRequest, pk: int) -> HttpResponse:
     bytte = get_object_or_404(VagtBytte, pk=pk)
     return _bytte_response(request, lambda resident: services.take_over_whole(bytte, resident))
+
+
+@access.access_required
+@require_POST
+def foreslaa_bytte(request: HttpRequest, pk: int) -> HttpResponse:
+    bytte = get_object_or_404(VagtBytte, pk=pk)
+    form = ForeslaaByttForm(request.POST)
+    if not form.is_valid():
+        return _bytte_response(request, _refuse("Vælg en af dine egne vagter at bytte med."))
+    modydelse = get_object_or_404(VagtTildeling, pk=form.cleaned_data["modydelse"])
+    if modydelse.resident_id != current_resident(request).pk:
+        raise PermissionDenied
+    return _bytte_response(request, lambda resident: services.propose_trade(bytte, modydelse, resident))
+
+
+@access.access_required
+@require_POST
+def accepter_forslag(request: HttpRequest, pk: int) -> HttpResponse:
+    forslag = get_object_or_404(VagtBytteForslag.objects.select_related("bytte"), pk=pk)
+    if forslag.bytte.tilbudt_af_id != current_resident(request).pk:
+        raise PermissionDenied
+    return _bytte_response(request, lambda resident: services.accept_trade(forslag, resident))
+
+
+@access.access_required
+@require_POST
+def afvis_forslag(request: HttpRequest, pk: int) -> HttpResponse:
+    forslag = get_object_or_404(VagtBytteForslag.objects.select_related("bytte"), pk=pk)
+    if forslag.bytte.tilbudt_af_id != current_resident(request).pk:
+        raise PermissionDenied
+    return _bytte_response(request, lambda resident: services.decline_proposal(forslag, resident))
+
+
+@access.access_required
+@require_POST
+def traek_forslag_tilbage(request: HttpRequest, pk: int) -> HttpResponse:
+    forslag = get_object_or_404(VagtBytteForslag, pk=pk)
+    if forslag.foreslaaet_af_id != current_resident(request).pk:
+        raise PermissionDenied
+    return _bytte_response(request, lambda resident: services.withdraw_proposal(forslag, resident))
 
 
 @require_POST

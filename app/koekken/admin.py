@@ -9,6 +9,7 @@ from .models import (
     Vagt,
     VagtAnmeldelse,
     VagtBytte,
+    VagtBytteForslag,
     VagtRegel,
     VagtTildeling,
 )
@@ -81,3 +82,10 @@ class VagtBytteAdmin(admin.ModelAdmin):
     list_display = ["tildeling", "tilbudt_af", "status", "overtaget_af", "created_at", "closed_at"]
     list_filter = ["status"]
     raw_id_fields = ["tildeling", "tilbudt_af", "overtaget_af"]
+
+
+@admin.register(VagtBytteForslag)
+class VagtBytteForslagAdmin(admin.ModelAdmin):
+    list_display = ["bytte", "modydelse", "foreslaaet_af", "status", "created_at", "closed_at"]
+    list_filter = ["status"]
+    raw_id_fields = ["bytte", "modydelse", "foreslaaet_af"]

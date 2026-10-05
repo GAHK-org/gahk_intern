@@ -119,11 +119,34 @@ Admin registration for both. Regenerate `erd.md`, as `004577a` did for `Fridag`.
 
 ## 5. Mechanics
 
-Each state-changing service runs in one `transaction.atomic()`. It locks with `select_for_update`
-the offer, any proposal, and every `VagtTildeling` involved, **in ascending pk order** so that two
-concurrent actions cannot deadlock. It then re-checks every §3 rule against the locked rows. If
-someone got there first, it raises `KoekkenAllocationError` with a Danish message, the same pattern
-as P3's claim.
+Each state-changing service runs in one `transaction.atomic()`, re-checks every §3 rule against
+the locked rows, and raises `KoekkenAllocationError` with a Danish message if someone got there first,
+the same pattern as P3's claim.
+
+> **Corrected 2026-10-05, after step 1's concurrency review** (two HIGH findings, reproduced against
+> real Postgres with real threads). The original wording here and in §5.5 said only "lock in ascending
+> pk order" and "the exclusion lives inside the `DELETE`". That was not enough. **The binding rule is
+> the LOCK ORDER comment in `koekken/services.py`**, extended in step 2 as follows:
+>
+> 1. The `VagtTildeling` rows involved, via `select_for_update`, in **ascending pk** order.
+> 2. Any `Vagt` involved (whole-shift take-over only).
+> 3. `VagtBytte` rows, ascending pk.
+> 4. `VagtBytteForslag` rows (step 2), ascending pk.
+>
+> Three corollaries:
+> - **Never take a `VagtTildeling` lock after any lock at level 2–4.**
+> - **Every deleter locks the rows it deletes first.** This covers the three allocation deletes,
+>   `override_remove`, `reconcile_month` and `declare_fridag`. Their cascade reaches `VagtBytte` and
+>   `VagtBytteForslag`, so without the row lock first they would deadlock against a take-over or a
+>   trade.
+> - **Every insert of a dependent row first locks all its parent `VagtTildeling` rows.** Dependent
+>   rows are a `VagtBytte`, or a `VagtBytteForslag`, whose parents are the offered row *and* its
+>   `modydelse`. Without this, a deleter's unlocked cascade-collect SELECT could miss a just-inserted
+>   dependent, and the deleter's commit would then fail on the foreign key.
+>
+> Bulk closing of several offers or proposals (§5.6) first selects them `FOR UPDATE` in ascending pk
+> order, then updates them. It never runs a bare multi-row `UPDATE`, whose lock order Postgres does
+> not guarantee.
 
 ### 5.1 Offer and withdraw
 
@@ -177,16 +200,29 @@ taker takes the whole 6 h shift alone.
 
 ### 5.4 Trade (step 2)
 
+Every proposal write (propose, withdraw, decline, accept) locks **both** rows, the offered row X and
+the `modydelse` Y, in ascending pk order. Only then does it lock the offer, and then the
+proposal(s), per the lock order in §5.
+
 - `propose_trade(bytte, modydelse, by)` creates an `AABEN` proposal. The offerer gets a push (§6).
 - `withdraw_proposal` → `TRUKKET`. `decline_proposal` → `AFVIST`, by the offerer.
-- `accept_trade(forslag, by)`, by the offerer only, in one locked transaction: swap the residents on the two rows **as one atomic two-row exchange** (never two take-overs, which could leave one person holding both shifts if the second step failed). Then set the proposal to `ACCEPTERET`, the offer to `BYTTET` with `overtaget_af` = the proposer, and close everything invalidated (§5.6). No transient unique-constraint conflict is possible, because §3 already refused the case where either side holds the other's `Vagt`.
+- `accept_trade(forslag, by)`, by the offerer only, in one locked transaction: swap the residents on the two rows **as one atomic two-row exchange** (never two take-overs, which could leave one person holding both shifts if the second step failed). Then set the proposal to `ACCEPTERET`, the offer to `BYTTET` with `overtaget_af` = the proposer, and close everything invalidated (§5.6).
+  - §3 refuses the case where either side holds the other's `Vagt`, so the swap itself cannot conflict on `(vagt, resident)`.
+  - A row inserted concurrently by an insert path that does not lock `VagtTildeling` rows (`override_assign`, P3's claim) still can conflict. Both updates therefore run in one savepoint, and an `IntegrityError` becomes a clean refusal, as in step 1.
 
 ### 5.5 Surviving a force re-run (Q2c)
 
 `allocate_tier_a`, `allocate_tier_b` and `allocate_month` each clear a month's `TILDELT` rows before
-reseating. **Each of those three delete statements excludes completed hand-off rows**, using
-`handed_off_tildeling_filter()` **inside the `DELETE` itself** (`.exclude(Exists(...))`), not as a
-pk list computed beforehand. A hand-off committed between the two steps would otherwise be deleted.
+reseating. **Each of them spares completed hand-off rows.** As built (`_delete_replaceable_tildelinger`,
+corrected in step 1's review), the candidate `TILDELT` rows are **locked first** (`select_for_update`,
+ascending pk, materialised). They are then deleted by that locked pk list, with
+`handed_off_tildeling_filter()` applied in a separate statement.
+
+The original wording ("the exclusion inside the `DELETE` is enough") was wrong. Django splits a
+cascading delete into an unlocked SELECT followed by per-table DELETEs, and Postgres does not re-run a
+`NOT EXISTS` when it re-checks a concurrently updated row. So a hand-off committed in between was
+deleted anyway. Step 2 extends `handed_off_tildeling_filter()` so that a row which is the `modydelse` of
+an `ACCEPTERET` proposal also counts as handed off.
 
 After the delete, the existing survivor logic already does the right thing, because it reads
 *whatever rows remain*:
@@ -213,7 +249,9 @@ After any take-over, whole-shift take-over or trade, in the same transaction:
 - every **other** `AABEN` `VagtBytte` on a moved row → `BORTFALDET`. The row now belongs to someone who never offered it;
 - every `AABEN` proposal on an offer just closed → `BORTFALDET`;
 - every `AABEN` proposal that uses a moved row as `modydelse` → `BORTFALDET`;
-- whole-shift take-over only: open proposals using the **deleted** row as `modydelse` disappear with it by cascade. That is acceptable, because the proposer still holds nothing different.
+- whole-shift take-over only: every `AABEN` proposal on the closed offer → `BORTFALDET`, and every `AABEN` proposal that uses the partner's surviving row as `modydelse` → `BORTFALDET` (it is now a different, whole shift). Open proposals using the **deleted** row as `modydelse` disappear with it by cascade. That is acceptable, because the proposer still holds nothing different;
+- withdrawing an offer lapses its open proposals;
+- flagging a row (step 1 already lapses its open offer) also lapses that offer's open proposals, and every open proposal that uses the flagged row as `modydelse`. A row with flag history can never be traded.
 
 ### 5.7 Interactions with existing machinery
 

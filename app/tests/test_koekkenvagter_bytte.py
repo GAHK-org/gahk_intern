@@ -29,11 +29,13 @@ from koekken.models import (
     Praeference,
     Vagt,
     VagtBytte,
+    VagtBytteForslag,
     VagtRegel,
     VagtTildeling,
 )
 from koekken.services import (
     KoekkenAllocationError,
+    accept_trade,
     allocate_month,
     allocate_tier_a,
     allocate_tier_b,
@@ -41,6 +43,7 @@ from koekken.services import (
     can_take,
     can_take_whole,
     declare_fridag,
+    decline_proposal,
     flag_tildeling,
     force_rerun_impact,
     generate_vagter,
@@ -50,12 +53,14 @@ from koekken.services import (
     open_offers,
     post_obligation,
     projected_balance_for,
+    propose_trade,
     reconcile_month,
     resolve_anmeldelse,
     resolve_periode,
     take_over,
     take_over_whole,
     withdraw_offer,
+    withdraw_proposal,
 )
 from residents.models import Residency, Resident, Role
 
@@ -63,6 +68,7 @@ pytestmark = pytest.mark.django_db
 
 T = VagtTildeling.Status
 B = VagtBytte.Status
+F = VagtBytteForslag.Status
 _seq = iter(range(1, 100_000))
 
 M1 = date(2042, 3, 12)  # Wednesday, morgen
@@ -856,5 +862,725 @@ def test_demo_produces_handoffs() -> None:
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
     assert VagtBytte.objects.filter(status=B.AABEN).count() == 1
     assert VagtBytte.objects.filter(status=B.OVERTAGET).count() == 1
+    # Step 2: one pending proposal on the open offer, one completed trade between two other residents.
+    pending = VagtBytteForslag.objects.get(status=F.AABEN)
+    assert pending.bytte.status == B.AABEN
+    done = VagtBytteForslag.objects.get(status=F.ACCEPTERET)
+    assert done.bytte.status == B.BYTTET and done.bytte.overtaget_af == done.foreslaaet_af
+    assert done.bytte.tilbudt_af_id not in (pending.foreslaaet_af_id, pending.bytte.tilbudt_af_id)
     hel = VagtBytte.objects.get(status=B.OVERTAGET_HEL)
     assert (hel.tildeling.vagt.headcount, hel.tildeling.vagt.duration_minutes) == (1, 360)
+
+
+# ======================================================================== Amendment 4, step 2: trading
+
+
+def _ye(w: World) -> VagtTildeling:
+    """e's own single 3 h row, on a later date than every `w` row: the unequal-trade partner."""
+    return _hold(_vagt(date(2042, 3, 20), VagtRegel.Kind.AFTEN, 1, 180), w.e)
+
+
+def _open_proposals() -> int:
+    return VagtBytteForslag.objects.filter(status=F.AABEN).count()
+
+
+def _state(*rows: VagtTildeling) -> list[tuple[int, int, str]]:
+    return [
+        (r.pk, r.resident_id, r.status) for r in VagtTildeling.objects.filter(pk__in=[r.pk for r in rows])
+    ]
+
+
+# ------------------------------------------------------------------------------------- propose
+
+
+def test_propose_creates_open_proposal_and_moves_nothing(w: World) -> None:
+    bytte = offer_tildeling(w.ra, w.a)
+    before = _state(w.ra, w.rb)
+    forslag = propose_trade(bytte, w.rb, w.b)
+    assert forslag.status == F.AABEN and forslag.foreslaaet_af == w.b and forslag.modydelse_id == w.rb.pk
+    assert forslag.bytte_id == bytte.pk and forslag.closed_at is None
+    assert _state(w.ra, w.rb) == before
+
+
+def test_propose_refusals(w: World, clock: Callable) -> None:
+    bytte = offer_tildeling(w.ra, w.a)
+    assert "egne" in _refuses(propose_trade, bytte, w.rb, w.e)  # not your row
+    assert "eget tilbud" in _refuses(propose_trade, bytte, w.ra, w.a)  # the offerer's own offer
+
+    done = _hold(_vagt(date(2042, 3, 20), VagtRegel.Kind.MORGEN, 1, 60), w.e, T.UDFOERT)
+    assert "udført" in _refuses(propose_trade, bytte, done, w.e)  # not TILDELT
+
+    flagged = _hold(_vagt(date(2042, 3, 21), VagtRegel.Kind.MORGEN, 1, 60), w.e)
+    flag_tildeling(flagged, w.b, "x")
+    resolve_anmeldelse(flagged.anmeldelser.get(), upheld=False, resolved_by=w.c)
+    flagged.refresh_from_db()
+    assert flagged.status == T.TILDELT
+    assert "anmeldelse" in _refuses(propose_trade, bytte, flagged, w.e)  # flag history, any status
+
+    own = _hold(_vagt(date(2042, 3, 22), VagtRegel.Kind.MORGEN, 1, 60), w.e)
+    offer_tildeling(own, w.e)
+    assert "Træk dit eget tilbud" in _refuses(propose_trade, bytte, own, w.e)
+
+    # Y started: an earlier shift of e's, with the clock past it but before X.
+    early = _hold(_vagt(date(2042, 3, 10), VagtRegel.Kind.MORGEN, 1, 60), w.e)
+    clock(date(2042, 3, 11))
+    assert "startet" in _refuses(propose_trade, bytte, early, w.e)
+    assert _open_proposals() == 0
+
+
+def test_propose_refuses_same_vagt_places_and_offerer_holds_y(w: World) -> None:
+    # Both places of a two-person shift: d holds X's Vagt, so trading rd for rc would change nothing.
+    bc = offer_tildeling(w.rc, w.c)
+    assert "allerede en plads" in _refuses(propose_trade, bc, w.rd, w.d)
+    assert not services.proposable_rows(w.d, bc)
+    # The offerer already holds a place on Y's Vagt.
+    other = _vagt(date(2042, 3, 18), VagtRegel.Kind.AFTEN, 2, 180)
+    _hold(other, w.a)
+    ye = _hold(other, w.e)
+    ba = offer_tildeling(w.ra, w.a)
+    assert "allerede en plads" in _refuses(propose_trade, ba, ye, w.e)
+    assert ye not in services.proposable_rows(w.e, ba)
+
+
+def test_propose_refuses_when_may_hold_fails(w: World) -> None:
+    ba = offer_tildeling(w.ra, w.a)
+    y_out = _hold(_vagt(date(2042, 3, 24), VagtRegel.Kind.MORGEN, 1, 60), w.outsider)
+    assert "beboerlisten" in _refuses(propose_trade, ba, y_out, w.outsider)  # proposer may not hold X
+    ye = _ye(w)
+    Resident.objects.filter(pk=w.a.pk).update(move_out_date=date(2042, 3, 15))  # before Y, after X
+    w.a.refresh_from_db()
+    msg = _refuses(propose_trade, ba, ye, w.e)
+    assert "fraflyttet" in msg and w.a.full_name in msg  # the offerer may not hold Y
+
+
+def test_propose_duplicate_and_stale_offer(w: World, clock: Callable) -> None:
+    ba = offer_tildeling(w.ra, w.a)
+    propose_trade(ba, w.rb, w.b)
+    assert "allerede foreslået" in _refuses(propose_trade, ba, w.rb, w.b)
+    assert _open_proposals() == 1
+    with pytest.raises(IntegrityError), transaction.atomic():
+        VagtBytteForslag.objects.create(bytte=ba, modydelse=w.rb, foreslaaet_af=w.b)  # the DB constraint
+    # A different Y by the same person is fine, and a closed one does not block a new one.
+    ye = _ye(w)
+    propose_trade(ba, ye, w.e)
+    withdraw_offer(ba, w.a)
+    assert _open_proposals() == 0
+    assert "ikke længere åbent" in _refuses(propose_trade, ba, w.rb, w.b)  # withdrawn offer
+    # X's offerer no longer holds it: the offer lapses, persisted, and the call refuses.
+    bb = offer_tildeling(w.rb, w.b)
+    VagtTildeling.objects.filter(pk=w.rb.pk).update(resident=w.e)
+    assert "bortfaldet" in _refuses(propose_trade, bb, w.ra, w.a)
+    assert VagtBytte.objects.get(pk=bb.pk).status == B.BORTFALDET
+    # Expired offer: refused, not persisted (lazy expiry).
+    bc = offer_tildeling(w.ra, w.a)
+    clock(date(2042, 3, 13))
+    assert "startet" in _refuses(propose_trade, bc, w.rb, w.b)
+    assert VagtBytte.objects.get(pk=bc.pk).status == B.AABEN
+
+
+def test_propose_refuses_flag_history_on_x_and_lapses_offer(w: World) -> None:
+    bytte = _flagged_then_dismissed_offer(w, w.ra, w.a)
+    assert not services.proposable_rows(w.b, bytte)
+    assert "anmeldelse" in _refuses(propose_trade, bytte, w.rb, w.b)
+    assert VagtBytte.objects.get(pk=bytte.pk).status == B.BORTFALDET
+    assert _open_proposals() == 0
+
+
+# -------------------------------------------------------------------------------------- accept
+
+
+def test_accept_mechanics_unequal_trade(w: World) -> None:
+    ye = _ye(w)  # 3 h for a's 1 h
+    bytte = offer_tildeling(w.ra, w.a)
+    forslag = propose_trade(bytte, ye, w.e)
+    a_before, e_before = projected_balance_for(w.a), projected_balance_for(w.e)
+    out = accept_trade(forslag, w.a)
+    assert out.pk == forslag.pk and out.status == F.ACCEPTERET and out.closed_at is not None
+    w.ra.refresh_from_db()
+    ye.refresh_from_db()
+    assert (w.ra.resident, ye.resident) == (w.e, w.a)  # pks unchanged, residents swapped
+    assert w.ra.status == ye.status == T.TILDELT
+    bytte.refresh_from_db()
+    assert bytte.status == B.BYTTET and bytte.overtaget_af == w.e and bytte.closed_at is not None
+    assert projected_balance_for(w.a) == a_before + 120  # gave 1 h, got 3 h
+    assert projected_balance_for(w.e) == e_before - 120
+    mark_udfoert(w.ra, at=timezone.make_aware(datetime(2042, 3, 12, 12, 0)))
+    mark_udfoert(ye, at=timezone.make_aware(datetime(2042, 3, 20, 19, 0)))
+    credits = {
+        p.resident_id: p.delta_minutes for p in KoekkenPost.objects.filter(kind=KoekkenPost.Kind.ARBEJDE)
+    }
+    assert credits == {w.e.pk: 60, w.a.pk: 180}  # each earns the row they now hold
+    # Both sides are completed hand-offs.
+    assert VagtTildeling.objects.filter(services.handed_off_tildeling_filter()).count() == 2
+
+
+def test_accept_lapses_everything_the_swap_invalidated(w: World) -> None:
+    ye = _ye(w)
+    third = _hold(_vagt(date(2042, 3, 25), VagtRegel.Kind.MORGEN, 1, 60), w.d)
+    ba = offer_tildeling(w.ra, w.a)
+    f_main = propose_trade(ba, w.rb, w.b)
+    f_other = propose_trade(ba, ye, w.e)  # a second proposal on the same offer
+    f_elsewhere = propose_trade(ba, third, w.d)
+    # b then offers rb (Y's own offer), and e proposes on THAT offer; a proposal naming rb as its
+    # modydelse on yet another offer also exists.
+    other_offer = offer_tildeling(_hold(_vagt(date(2042, 3, 26), VagtRegel.Kind.MORGEN, 1, 60), w.c), w.c)
+    f_uses_y = propose_trade(other_offer, w.rb, w.b)
+    bb = offer_tildeling(w.rb, w.b)
+    f_on_yoffer = VagtBytteForslag.objects.create(bytte=bb, modydelse=ye, foreslaaet_af=w.e)
+    # (f_on_yoffer is created directly: e's ye is already proposed elsewhere, which is allowed.)
+    accept_trade(f_main, w.a)
+    for f in (f_other, f_elsewhere, f_uses_y, f_on_yoffer):
+        f.refresh_from_db()
+        assert f.status == F.BORTFALDET and f.closed_at is not None, f
+    assert VagtBytte.objects.get(pk=bb.pk).status == B.BORTFALDET  # Y's own offer lapsed
+    assert VagtBytte.objects.get(pk=other_offer.pk).status == B.AABEN  # unrelated offer untouched
+    assert VagtBytteForslag.objects.get(pk=f_main.pk).status == F.ACCEPTERET
+
+
+def test_accept_integrity_race_on_second_row_leaves_both_unchanged(
+    w: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ye = _ye(w)
+    ba = offer_tildeling(w.ra, w.a)
+    forslag = propose_trade(ba, ye, w.e)
+    real = services.may_hold
+
+    def conflicting(resident: Resident, vagt: Vagt, **kw: object) -> bool:
+        if resident.pk == w.a.pk and vagt.pk == ye.vagt_id:
+            _hold(vagt, w.a)  # a concurrent insert landing on Y's Vagt AFTER the existence checks
+        return real(resident, vagt, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(services, "may_hold", conflicting)
+    assert "plads på den anden vagt" in _refuses(accept_trade, forslag, w.a)
+    w.ra.refresh_from_db()
+    ye.refresh_from_db()
+    assert (w.ra.resident, ye.resident) == (w.a, w.e)  # the first row's update was rolled back too
+    assert VagtBytte.objects.get(pk=ba.pk).status == B.AABEN
+    assert VagtBytteForslag.objects.get(pk=forslag.pk).status == F.BORTFALDET  # can never succeed now
+    assert not VagtBytte.objects.filter(status=B.BYTTET).exists()
+
+
+def test_accept_refusals(w: World, clock: Callable) -> None:
+    ye = _ye(w)
+    ba = offer_tildeling(w.ra, w.a)
+    f1 = propose_trade(ba, w.rb, w.b)
+    assert "tilbyderen" in _refuses(accept_trade, f1, w.b)  # not the offerer
+    assert "tilbyderen" in _refuses(accept_trade, f1, w.e)
+    assert VagtBytteForslag.objects.get(pk=f1.pk).status == F.AABEN
+    accept_trade(f1, w.a)
+    assert "ikke længere åbent" in _refuses(accept_trade, f1, w.a)  # already closed (stale object)
+    # Y moved since proposing: lapse is persisted, then refused.
+    bb = offer_tildeling(VagtTildeling.objects.get(pk=w.rb.pk), w.a)  # a now holds rb
+    f2 = propose_trade(bb, ye, w.e)
+    VagtTildeling.objects.filter(pk=ye.pk).update(resident=w.d)
+    assert not services.can_accept(
+        VagtBytteForslag.objects.select_related(
+            "bytte__tildeling__vagt", "modydelse__vagt", "foreslaaet_af"
+        ).get(pk=f2.pk),
+        w.a,
+    )
+    assert "bortfaldet" in _refuses(accept_trade, f2, w.a)
+    assert VagtBytteForslag.objects.get(pk=f2.pk).status == F.BORTFALDET
+    assert VagtBytte.objects.get(pk=bb.pk).status == B.AABEN  # X's side was fine: the offer stays open
+
+
+def test_accept_refuses_when_y_started_or_flagged_or_x_flagged(w: World, clock: Callable) -> None:
+    early = _hold(_vagt(date(2042, 3, 10), VagtRegel.Kind.MORGEN, 1, 60), w.e)
+    ba = offer_tildeling(w.ra, w.a)
+    f = propose_trade(ba, early, w.e)
+    clock(date(2042, 3, 11))  # Y has started, X has not
+    assert "startet" in _refuses(accept_trade, f, w.a)
+    assert VagtBytteForslag.objects.get(pk=f.pk).status == F.BORTFALDET
+    clock(TODAY)
+    # Y flagged since proposing. Flagging lapses the proposal at once; reopen it by hand to simulate a
+    # row left open by data from before that rule, which the accept-time re-check must still refuse.
+    y2 = _hold(_vagt(date(2042, 3, 21), VagtRegel.Kind.MORGEN, 1, 60), w.e)
+    f2 = propose_trade(ba, y2, w.e)
+    flag_tildeling(y2, w.b, "x")
+    assert VagtBytteForslag.objects.get(pk=f2.pk).status == F.BORTFALDET
+    resolve_anmeldelse(y2.anmeldelser.get(), upheld=False, resolved_by=w.c)  # back to TILDELT, history kept
+    VagtBytteForslag.objects.filter(pk=f2.pk).update(status=F.AABEN, closed_at=None)
+    assert "anmeldelse" in _refuses(accept_trade, f2, w.a)
+    assert VagtBytteForslag.objects.get(pk=f2.pk).status == F.BORTFALDET
+    # X flagged (dismissed back): the OFFER lapses too.
+    w.ra.refresh_from_db()
+    y3 = _hold(_vagt(date(2042, 3, 22), VagtRegel.Kind.MORGEN, 1, 60), w.e)
+    f3 = propose_trade(ba, y3, w.e)
+    flag_tildeling(w.ra, w.b, "x")
+    resolve_anmeldelse(w.ra.anmeldelser.get(), upheld=False, resolved_by=w.c)
+    VagtBytte.objects.filter(pk=ba.pk).update(status=B.AABEN, closed_at=None)
+    VagtBytteForslag.objects.filter(pk=f3.pk).update(status=F.AABEN, closed_at=None)
+    assert "anmeldelse" in _refuses(accept_trade, f3, w.a)
+    assert VagtBytte.objects.get(pk=ba.pk).status == B.BORTFALDET
+    assert VagtBytteForslag.objects.get(pk=f3.pk).status == F.BORTFALDET
+    w.ra.refresh_from_db()
+    assert w.ra.resident == w.a
+
+
+def test_accept_after_x_was_taken_meanwhile(w: World) -> None:
+    ba = offer_tildeling(w.ra, w.a)
+    f = propose_trade(ba, w.rb, w.b)
+    stale = VagtBytteForslag.objects.get(pk=f.pk)
+    take_over(ba, w.e)  # someone else took X first: the proposal lapsed
+    assert VagtBytteForslag.objects.get(pk=f.pk).status == F.BORTFALDET
+    assert _refuses(accept_trade, stale, w.a)
+    w.ra.refresh_from_db()
+    w.rb.refresh_from_db()
+    assert (w.ra.resident, w.rb.resident) == (w.e, w.b)
+
+
+def test_accept_allows_y_that_gained_an_offer_and_lapses_it(w: World) -> None:
+    ba = offer_tildeling(w.ra, w.a)
+    f = propose_trade(ba, w.rb, w.b)
+    bb = offer_tildeling(w.rb, w.b)  # Y gains an open offer AFTER the proposal was made
+    accept_trade(f, w.a)
+    assert VagtBytte.objects.get(pk=bb.pk).status == B.BORTFALDET
+    w.rb.refresh_from_db()
+    assert w.rb.resident == w.a
+
+
+def test_collapsed_shift_trades_like_any_other(w: World) -> None:
+    take_over_whole(offer_tildeling(w.rc, w.c), w.d)  # av is now (1, 360), held by d via rd
+    ba = offer_tildeling(w.ra, w.a)
+    f = propose_trade(ba, VagtTildeling.objects.get(pk=w.rd.pk), w.d)  # 1 h for 6 h
+    a_before = projected_balance_for(w.a)
+    accept_trade(f, w.a)
+    assert projected_balance_for(w.a) == a_before + 300
+    w.rd.refresh_from_db()
+    assert w.rd.resident == w.a
+
+
+# ---------------------------------------------------------------------------- decline / withdraw
+
+
+def test_decline_and_withdraw(w: World, clock: Callable) -> None:
+    ba = offer_tildeling(w.ra, w.a)
+    f = propose_trade(ba, w.rb, w.b)
+    assert "tilbyderen" in _refuses(decline_proposal, f, w.b)
+    assert "egne" in _refuses(withdraw_proposal, f, w.a)
+    assert _refuses(withdraw_proposal, f, w.e)
+    out = decline_proposal(f, w.a)
+    assert out.status == F.AFVIST and out.closed_at
+    assert "ikke længere åbent" in _refuses(withdraw_proposal, f, w.b)
+    assert "ikke længere åbent" in _refuses(decline_proposal, f, w.a)
+    f2 = propose_trade(ba, w.rb, w.b)  # a declined one does not block a fresh proposal
+    out = withdraw_proposal(f2, w.b)
+    assert out.status == F.TRUKKET and out.closed_at
+    # Declining stays possible after the offer expired (cleanup).
+    f3 = propose_trade(ba, w.rb, w.b)
+    clock(date(2042, 3, 13))
+    assert decline_proposal(f3, w.a).status == F.AFVIST
+    assert w.ra.resident_id == w.a.pk and w.rb.resident_id == w.b.pk
+
+
+def test_predicates(w: World) -> None:
+    ye = _ye(w)
+    ba = offer_tildeling(w.ra, w.a)
+    f = propose_trade(ba, ye, w.e)
+    f = VagtBytteForslag.objects.select_related(
+        "bytte__tildeling__vagt", "modydelse__vagt", "foreslaaet_af"
+    ).get(pk=f.pk)
+    assert services.can_accept(f, w.a) and services.can_decline(f, w.a)
+    assert not services.can_accept(f, w.e) and not services.can_decline(f, w.e)
+    assert services.can_withdraw_proposal(f, w.e) and not services.can_withdraw_proposal(f, w.a)
+    assert services.forslag_is_live(f)
+    assert w.rb in services.proposable_rows(w.b, ba) and ye not in services.proposable_rows(w.a, ba)
+    assert ye not in services.proposable_rows(w.e, ba)  # already proposed
+    assert services.proposable_rows(w.a, ba) == []  # the offerer
+    assert services.proposable_rows(w.outsider, ba) == []
+
+
+# ------------------------------------------------------------------------- step 1 extensions
+
+
+def test_withdraw_offer_lapses_proposals(w: World) -> None:
+    ba = offer_tildeling(w.ra, w.a)
+    f = propose_trade(ba, w.rb, w.b)
+    withdraw_offer(ba, w.a)
+    f.refresh_from_db()
+    assert f.status == F.BORTFALDET and f.closed_at is not None
+
+
+def test_take_over_lapses_the_offers_and_xs_proposals(w: World) -> None:
+    ye = _ye(w)
+    ba = offer_tildeling(w.ra, w.a)
+    on_offer = propose_trade(ba, w.rb, w.b)
+    # a proposes ra (as Y) on someone else's offer BEFORE offering it -- here ra is already offered, so
+    # build that state by hand: the proposal exists, then the row gained its own offer.
+    be = offer_tildeling(ye, w.e)
+    uses_x = VagtBytteForslag.objects.create(bytte=be, modydelse=w.ra, foreslaaet_af=w.a)
+    take_over(ba, w.d)
+    for f in (on_offer, uses_x):
+        f.refresh_from_db()
+        assert f.status == F.BORTFALDET, f
+    assert VagtBytte.objects.get(pk=be.pk).status == B.AABEN  # the unrelated offer itself survives
+
+
+def test_whole_shift_take_over_lapses_and_cascades(w: World) -> None:
+    ye = _ye(w)
+    third = _hold(_vagt(date(2042, 3, 25), VagtRegel.Kind.MORGEN, 1, 60), w.a)
+    be = offer_tildeling(ye, w.e)
+    uses_vacated = propose_trade(be, w.rc, w.c)  # c's row is the one that will be deleted
+    uses_partner = propose_trade(be, w.rd, w.d)  # d's row survives, as a whole shift
+    bc = offer_tildeling(w.rc, w.c)  # c can still offer rc after proposing it
+    on_offer = propose_trade(bc, third, w.a)
+    take_over_whole(bc, w.d)
+    assert not VagtBytteForslag.objects.filter(pk=uses_vacated.pk).exists()  # cascaded with its row
+    for f in (uses_partner, on_offer):
+        f.refresh_from_db()
+        assert f.status == F.BORTFALDET, f
+    assert VagtBytte.objects.get(pk=bc.pk).status == B.OVERTAGET_HEL
+
+
+def test_flagging_lapses_offer_proposals_and_proposals_using_the_row(w: World) -> None:
+    ye = _ye(w)
+    ba = offer_tildeling(w.ra, w.a)
+    on_offer = propose_trade(ba, ye, w.e)
+    be = offer_tildeling(w.rb, w.b)
+    uses_flagged = propose_trade(be, w.rd, w.d)
+    flag_tildeling(w.rd, w.a, "x")  # flagging Y lapses every proposal that uses it ...
+    uses_flagged.refresh_from_db()
+    on_offer.refresh_from_db()
+    assert uses_flagged.status == F.BORTFALDET and on_offer.status == F.AABEN
+    flag_tildeling(w.ra, w.b, "x")  # ... and flagging X lapses the offer and its proposals
+    on_offer.refresh_from_db()
+    assert on_offer.status == F.BORTFALDET
+    assert VagtBytte.objects.get(pk=ba.pk).status == B.BORTFALDET
+    assert VagtBytte.objects.get(pk=be.pk).status == B.AABEN
+
+
+# ------------------------------------------------------------------------ Q2c force survival
+
+
+def _trade_pair(kind: str) -> tuple[VagtTildeling, VagtTildeling]:
+    kinds = [VagtRegel.Kind.MORGEN, VagtRegel.Kind.FROKOST] if kind == "a" else [VagtRegel.Kind.AFTEN]
+    rows = list(
+        VagtTildeling.objects.filter(
+            vagt__kind__in=kinds, vagt__date__gt=TODAY, vagt__date__month=3, status=T.TILDELT
+        )
+        .select_related("vagt")
+        .order_by("vagt__date", "pk")
+    )
+    for x in rows:
+        for y in rows:
+            if y.vagt_id == x.vagt_id or y.resident_id == x.resident_id:
+                continue
+            holders = set(
+                VagtTildeling.objects.filter(vagt__in=[x.vagt_id, y.vagt_id]).values_list(
+                    "vagt_id", "resident_id"
+                )
+            )
+            if (x.vagt_id, y.resident_id) in holders or (y.vagt_id, x.resident_id) in holders:
+                continue
+            return x, y
+    raise AssertionError("no tradable pair")
+
+
+def _trade(kind: str) -> tuple[int, int, int, int]:
+    x, y = _trade_pair(kind)
+    xr, yr = x.resident, y.resident
+    accept_trade(propose_trade(offer_tildeling(x, xr), y, yr), xr)
+    return x.pk, y.pk, yr.pk, xr.pk  # x now with yr, y now with xr
+
+
+TRADE_CASES = [("month", "a"), ("month", "aften"), ("tier_a", "a"), ("tier_b", "aften")]
+
+
+@pytest.mark.parametrize(("entry", "kind"), TRADE_CASES)
+def test_both_sides_of_a_trade_survive_force_rerun(
+    entry: str, kind: str, make_resident: Callable, clock: Callable
+) -> None:
+    _periode, _people = _allocated(make_resident, clock)
+    x_pk, y_pk, x_holder, y_holder = _trade(kind)
+    assert force_rerun_impact(2042, 3) == (2, 0)  # BOTH sides count as kept
+    _force(entry)
+    x, y = VagtTildeling.objects.get(pk=x_pk), VagtTildeling.objects.get(pk=y_pk)
+    assert (x.resident_id, y.resident_id) == (x_holder, y_holder)
+    assert x.status == y.status == T.TILDELT
+    assert VagtBytte.objects.get(tildeling=x).status == B.BYTTET
+    assert VagtBytteForslag.objects.get(modydelse=y).status == F.ACCEPTERET
+    for v in Vagt.objects.filter(date__month=3):
+        assert v.tildelinger.count() <= v.headcount
+    assert force_rerun_impact(2042, 3) == (2, 0)
+
+
+def test_force_rerun_deletes_plain_rows_with_proposals_on_either_side(
+    make_resident: Callable, clock: Callable
+) -> None:
+    """Un-traded rows with an open offer and proposals on either side are replaced by a force re-run: the
+    cascade through offers and proposals must not trip a foreign key, and nothing dangles afterwards."""
+    _periode, _people = _allocated(make_resident, clock)
+    x, y = _trade_pair("a")
+    z = next(
+        r
+        for r in VagtTildeling.objects.filter(vagt__date__gt=TODAY, status=T.TILDELT)
+        if r.pk not in (x.pk, y.pk)
+    )
+    bx = offer_tildeling(x, x.resident)
+    propose_trade(bx, y, y.resident)  # X side (offer + proposal) and Y side (modydelse)
+    bz = offer_tildeling(z, z.resident)
+    assert bz.pk
+    allocate_month(2042, 3, force=True)
+    assert not VagtBytte.objects.filter(status=B.AABEN).exists()
+    assert not VagtBytteForslag.objects.exists()
+    for v in Vagt.objects.filter(date__month=3):
+        assert v.tildelinger.count() <= v.headcount
+
+
+def test_force_rerun_with_trade_is_idempotent(make_resident: Callable, clock: Callable) -> None:
+    _periode, _people = _allocated(make_resident, clock)
+    _trade("a")
+    snap = lambda: set(  # noqa: E731
+        VagtTildeling.objects.filter(vagt__date__month=3).values_list("vagt_id", "resident_id")
+    )
+    allocate_month(2042, 3, force=True)
+    first = snap()
+    allocate_month(2042, 3, force=True)
+    assert snap() == first
+    assert force_rerun_impact(2042, 3) == (2, 0)
+
+
+# ------------------------------------------------------------------------------------ deleters
+
+
+def test_override_remove_deletes_rows_with_proposals_on_either_side(
+    w: World, login: Callable, make_resident: Callable
+) -> None:
+    ye = _ye(w)
+    mgr = make_resident(email="mgr-t@gahk.dk", roles=(Role.KOKKENGRUPPE,))
+    cm = login(mgr)
+    ba = offer_tildeling(w.ra, w.a)
+    on_x = propose_trade(ba, ye, w.e)
+    assert cm.post(f"/intern/koekken/gruppe/override/{w.ra.pk}/fjern").status_code == 302  # X side
+    assert (
+        not VagtBytteForslag.objects.filter(pk=on_x.pk).exists()
+        and not VagtBytte.objects.filter(pk=ba.pk).exists()
+    )
+    bb = offer_tildeling(w.rb, w.b)
+    as_y = propose_trade(bb, ye, w.e)
+    assert cm.post(f"/intern/koekken/gruppe/override/{ye.pk}/fjern").status_code == 302  # Y side
+    assert not VagtBytteForslag.objects.filter(pk=as_y.pk).exists()
+    assert VagtBytte.objects.get(pk=bb.pk).status == B.AABEN  # the offer survives its proposal
+
+
+def test_reconcile_deletes_rows_with_proposals_on_either_side(w: World) -> None:
+    ye = _ye(w)
+    ba = offer_tildeling(w.ra, w.a)
+    on_x = propose_trade(ba, ye, w.e)
+    bb = offer_tildeling(w.rb, w.b)
+    yd = _hold(_vagt(date(2042, 3, 27), VagtRegel.Kind.MORGEN, 1, 60), w.d)  # reconcile vacates tier A only
+    as_y = propose_trade(bb, yd, w.d)
+    Residency.objects.filter(resident__in=[w.a, w.d], year=2042, month=3).delete()  # a and d left
+    result = reconcile_month(2042, 3)
+    assert w.a in result.vacated and w.d in result.vacated
+    assert not VagtTildeling.objects.filter(pk__in=[w.ra.pk, yd.pk]).exists()
+    assert not VagtBytteForslag.objects.filter(pk__in=[on_x.pk, as_y.pk]).exists()
+    assert VagtBytte.objects.get(pk=bb.pk).status == B.AABEN
+
+
+def test_fridag_removes_proposals_and_notifies_the_proposer(w: World, pushes: list) -> None:
+    for r in (w.a, w.c, w.d):
+        _sub(r)
+    ba = offer_tildeling(w.ra, w.a)
+    f = propose_trade(ba, w.rc, w.c)  # Y sits on the aften shift that gets a fridag
+    pushes.clear()
+    result = declare_fridag(AV, [VagtRegel.Kind.AFTEN], "Test")
+    assert w.c in [r for r, _v in result.removed]
+    assert w.c.pk in [r.pk for r, _a, _m in result.notifications]  # the proposer is told too
+    assert not VagtBytteForslag.objects.filter(pk=f.pk).exists()
+    assert VagtBytte.objects.get(pk=ba.pk).status == B.AABEN
+    # And the X side: a fridag on the offered row's day removes offer and proposals together.
+    f2 = propose_trade(ba, w.rb, w.b)
+    declare_fridag(M1, [VagtRegel.Kind.MORGEN], "Test")
+    assert (
+        not VagtBytte.objects.filter(pk=ba.pk).exists()
+        and not VagtBytteForslag.objects.filter(pk=f2.pk).exists()
+    )
+
+
+# --------------------------------------------------------------------------------- notifications
+
+
+def test_trade_notifications(
+    w: World, pushes: list, monkeypatch: pytest.MonkeyPatch, clock: Callable
+) -> None:
+    for r in (w.a, w.b, w.e):
+        _sub(r)
+    ba = offer_tildeling(w.ra, w.a)
+    f = propose_trade(ba, w.rb, w.b)
+    assert len(pushes) == 1 and pushes[0][0] == [w.a.pk]  # the offerer only, never the proposer
+    assert pushes[0][1]["body"] == (
+        f"{w.b.full_name} foreslår at bytte din {w.m1} med {w.m2} — svar i app'en."
+    )
+    pushes.clear()
+    accept_trade(f, w.a)
+    assert len(pushes) == 1 and pushes[0][0] == [w.b.pk]  # the proposer only
+    assert pushes[0][1]["body"] == (
+        f"{w.a.full_name} har accepteret byttet: du har nu {w.m1} i stedet for {w.m2}."
+    )
+    pushes.clear()
+    # Nothing on decline / withdraw / lapse / expiry.
+    ye = _ye(w)
+    bb = offer_tildeling(VagtTildeling.objects.get(pk=w.rb.pk), w.a)
+    pushes.clear()
+    f2 = propose_trade(bb, ye, w.e)
+    pushes.clear()
+    decline_proposal(f2, w.a)
+    f3 = propose_trade(bb, ye, w.e)
+    pushes.clear()
+    withdraw_proposal(f3, w.e)
+    f4 = propose_trade(bb, ye, w.e)
+    pushes.clear()
+    withdraw_offer(bb, w.a)  # lapses f4
+    clock(date(2042, 3, 30))
+    assert pushes == [] and VagtBytteForslag.objects.get(pk=f4.pk).status == F.BORTFALDET
+    # Narrowed through allowed_subscribers: an offerer without access is not notified.
+    clock(TODAY)
+    monkeypatch.setattr(koekken_access, "ACCESS_ROLES", (Role.KOKKENGRUPPE,))
+    bc = offer_tildeling(w.rc, w.c)
+    pushes.clear()
+    propose_trade(bc, VagtTildeling.objects.get(pk=ye.pk), w.e)
+    assert all(recipients == [] for recipients, _payload in pushes)
+
+
+# ------------------------------------------------------------------------------------- views
+
+
+def _proposal_urls(html: str, name: str) -> bool:
+    return f"/intern/koekken/{name}" in html
+
+
+def test_trade_ui_buttons_follow_predicates(w: World, login: Callable) -> None:
+    ye = _ye(w)
+    ba = offer_tildeling(w.ra, w.a)
+    html = _html(login(w.b))
+    assert f"/intern/koekken/bytte/{ba.pk}/foreslaa" in html and "Foreslå bytte" in html
+    sel = re.search(r'<select name="modydelse">(.*?)</select>', html, re.DOTALL)
+    assert sel and f'value="{w.rb.pk}"' in sel.group(1) and f'value="{w.ra.pk}"' not in sel.group(1)
+    # the offerer never sees the form; an outsider neither; d (who has rows) sees only valid options
+    assert "foreslaa" not in _html(login(w.a))
+    assert "foreslaa" not in _html(login(w.outsider))
+    # e's select lists only ye (not another resident's row, not an offered row)
+    html = _html(login(w.e))
+    sel = re.search(r'<select name="modydelse">(.*?)</select>', html, re.DOTALL)
+    assert sel and sel.group(1).count("<option") == 1 and f'value="{ye.pk}"' in sel.group(1)
+    # a resident whose only candidate row has an open offer of its own gets no form
+    offer_tildeling(ye, w.e)
+    assert f"bytte/{ba.pk}/foreslaa" not in _html(login(w.e))
+    # b proposes: the incoming list shows for a, with accept/decline URLs; b sees withdraw, not accept
+    f = propose_trade(ba, w.rb, w.b)
+    html = _html(login(w.a))
+    assert "Forslag til dig" in html and "Acceptér bytte" in html and "Afvis" in html
+    assert f"forslag/{f.pk}/accepter" in html and f"forslag/{f.pk}/afvis" in html
+    assert f"Du får {w.m2} i stedet for {w.m1}. Det kan ikke fortrydes." in html
+    assert f"{w.b.full_name} tilbyder {w.m2} (1 t)" in re.sub(r"\s+", " ", html)
+    html = _html(login(w.b))
+    assert f"forslag/{f.pk}/traek-tilbage" in html and "Træk forslag tilbage" in html
+    assert f"forslag/{f.pk}/accepter" not in html and f"bytte/{ba.pk}/foreslaa" not in html
+    # stale proposal (Y moved) shows nowhere
+    VagtTildeling.objects.filter(pk=w.rb.pk).update(resident=w.e)
+    assert f"forslag/{f.pk}/" not in _html(login(w.a)) and f"forslag/{f.pk}/" not in _html(login(w.b))
+
+
+def test_trade_post_flow_403_and_stale(w: World, login: Callable) -> None:
+    base = "/intern/koekken"
+    ba = offer_tildeling(w.ra, w.a)
+    ca, cb, ce = login(w.a), login(w.b), login(w.e)
+    assert cb.get(f"{base}/bytte/{ba.pk}/foreslaa").status_code == 405
+    assert cb.post(f"{base}/bytte/{ba.pk}/foreslaa", {"modydelse": w.ra.pk}).status_code == 403  # not b's row
+    assert (
+        cb.post(f"{base}/bytte/{ba.pk}/foreslaa", {"modydelse": "x"}).status_code == 200
+    )  # form error, inside
+    resp = cb.post(f"{base}/bytte/{ba.pk}/foreslaa", {"modydelse": w.rb.pk})
+    assert resp.status_code == 200 and 'id="koekken-bytte"' in resp.content.decode()
+    f = VagtBytteForslag.objects.get()
+    dup = cb.post(f"{base}/bytte/{ba.pk}/foreslaa", {"modydelse": w.rb.pk})
+    assert dup.status_code == 200 and "allerede foreslået" in dup.content.decode()
+    # wrong actors -> 403
+    assert cb.post(f"{base}/forslag/{f.pk}/accepter").status_code == 403
+    assert cb.post(f"{base}/forslag/{f.pk}/afvis").status_code == 403
+    assert ca.post(f"{base}/forslag/{f.pk}/traek-tilbage").status_code == 403
+    assert ce.post(f"{base}/forslag/{f.pk}/accepter").status_code == 403
+    assert ca.get(f"{base}/forslag/{f.pk}/accepter").status_code == 405
+    # accept via the view; second accept is a stale 200 with the error inside the partial
+    assert ca.post(f"{base}/forslag/{f.pk}/accepter").status_code == 200
+    w.ra.refresh_from_db()
+    assert w.ra.resident == w.b
+    stale = ca.post(f"{base}/forslag/{f.pk}/accepter")
+    assert stale.status_code == 200 and "ikke længere åbent" in stale.content.decode()
+    # withdraw / decline via the views
+    bb = offer_tildeling(VagtTildeling.objects.get(pk=w.rb.pk), w.a)
+    f2 = propose_trade(bb, VagtTildeling.objects.get(pk=w.ra.pk), w.b)
+    assert cb.post(f"{base}/forslag/{f2.pk}/traek-tilbage").status_code == 200
+    assert VagtBytteForslag.objects.get(pk=f2.pk).status == F.TRUKKET
+    f3 = propose_trade(bb, VagtTildeling.objects.get(pk=w.ra.pk), w.b)
+    assert ca.post(f"{base}/forslag/{f3.pk}/afvis").status_code == 200
+    assert VagtBytteForslag.objects.get(pk=f3.pk).status == F.AFVIST
+    # a proposal form open while the offer is taken meanwhile: a clean error in the partial
+    bc = offer_tildeling(w.rc, w.c)
+    take_over(bc, w.e)
+    late = login(w.b).post(f"{base}/bytte/{bc.pk}/foreslaa", {"modydelse": w.ra.pk})
+    assert late.status_code in (200, 403)
+
+
+def test_trade_partial_and_full_page_render_same_content(w: World, login: Callable) -> None:
+    ba = offer_tildeling(w.ra, w.a)
+    ye = _ye(w)
+    propose_trade(ba, ye, w.e)
+    ca = login(w.a)
+    partial = ca.post(f"/intern/koekken/vagt/{w.rb.pk}/tilbyd").status_code  # a does not hold rb: 403
+    assert partial == 403
+    f = VagtBytteForslag.objects.get()
+    partial_html = ca.post(f"/intern/koekken/forslag/{f.pk}/afvis").content.decode()
+    full = _html(ca)
+
+    def norm(x: str) -> str:
+        x = re.sub(r'name="csrfmiddlewaretoken" value="[^"]*"', "", x)
+        return re.sub(r"\s+", " ", x).strip()
+
+    p = norm(partial_html)
+    start = norm(full).index('<div id="koekken-bytte">')
+    assert norm(full)[start : start + len(p)] == p
+
+
+def test_byttet_med_labels_on_both_sides(w: World, login: Callable) -> None:
+    ye = _ye(w)
+    ba = offer_tildeling(w.ra, w.a)
+    accept_trade(propose_trade(ba, ye, w.e), w.a)
+    html_e = re.sub(r"\s+", " ", _html(login(w.e)))  # e now holds ra: the offered side
+    assert f"byttet med {w.a.full_name}" in html_e
+    html_a = re.sub(r"\s+", " ", _html(login(w.a)))  # a now holds ye: the proposed side
+    assert f"byttet med {w.e.full_name}" in html_a
+
+
+def test_index_query_count_does_not_grow_with_proposals(w: World, login: Callable) -> None:
+    c = login(w.b)
+    for m in (4, 5):
+        _place(w.b, 2042, m)
+        _place(w.a, 2042, m)
+
+    def count() -> int:
+        with CaptureQueriesContext(connection) as ctx:
+            assert c.get("/intern/koekken/").status_code == 200
+        return len(ctx)
+
+    ba = offer_tildeling(w.ra, w.a)
+    offer_tildeling(_hold(_vagt(date(2042, 4, 13), VagtRegel.Kind.FROKOST, 1, 60), w.c), w.c)
+    propose_trade(ba, w.rb, w.b)
+    # Baseline: one incoming proposal too (its batched pair lookup is one query, issued once any exists).
+    base_in = _hold(_vagt(date(2042, 3, 9), VagtRegel.Kind.MORGEN, 1, 60), w.b)
+    base_e = _hold(_vagt(date(2042, 3, 9), VagtRegel.Kind.FROKOST, 1, 60), w.e)
+    propose_trade(offer_tildeling(base_in, w.b), base_e, w.e)
+    c.get("/intern/koekken/")
+    small = count()
+    for i in range(6):
+        d = date(2042, 3, 17) + timedelta(days=i)
+        mine = _hold(_vagt(d, VagtRegel.Kind.MORGEN, 1, 60), w.b)
+        theirs = _hold(_vagt(d + timedelta(days=30), VagtRegel.Kind.FROKOST, 1, 60), w.a)
+        bo = offer_tildeling(theirs, w.a)
+        propose_trade(bo, mine, w.b)
+        incoming = _hold(_vagt(d, VagtRegel.Kind.AFTEN, 1, 60), w.e)
+        mine_offered = _hold(_vagt(d, VagtRegel.Kind.FROKOST, 1, 60), w.b)
+        mo = offer_tildeling(mine_offered, w.b)
+        propose_trade(mo, incoming, w.e)
+    assert count() == small

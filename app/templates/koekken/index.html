@@ -37,7 +37,7 @@
       hidden entirely (not shown with a "not set up on the server" message) when no VAPID keys are
       configured.
     {% endcomment %}
-    {% include "core/_push_bar.html" with topic="koekken" url_name="koekken:save_subscription" on_label="Få besked om dine vagter" success_text="Du får nu besked, når nogen overtager en vagt fra dig, eller hvis en anmeldelse mod dig bliver opretholdt." off_text="Beskeder om køkkenvagter er slået fra på denne enhed." %}
+    {% include "core/_push_bar.html" with topic="koekken" url_name="koekken:save_subscription" on_label="Få besked om dine vagter" success_text="Du får nu besked, når nogen overtager en vagt fra dig, foreslår eller accepterer et bytte, eller hvis en anmeldelse mod dig bliver opretholdt." off_text="Beskeder om køkkenvagter er slået fra på denne enhed." %}
   {% endif %}
 
   {% if needs_to_declare %}

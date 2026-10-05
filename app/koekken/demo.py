@@ -50,9 +50,10 @@ from datetime import date, datetime, timedelta
 from core.clock import current_date
 from residents.models import Residency, Resident
 
-from .models import KoekkenPost, Periode, Praeference, Vagt, VagtRegel, VagtTildeling
+from .models import KoekkenPost, Periode, Praeference, Vagt, VagtBytteForslag, VagtRegel, VagtTildeling
 from .services import (
     KoekkenAllocationError,
+    accept_trade,
     allocate_tier_a,
     generate_vagter,
     held_by_vagt,
@@ -60,12 +61,14 @@ from .services import (
     offer_tildeling,
     periode_is_allocated,
     post_obligation,
+    propose_trade,
     rebase_to_zero_mean,
     reconcile_month,
     resolve_periode,
     set_preference,
     take_over,
     take_over_whole,
+    withdraw_offer,
 )
 
 # How many residents declare weekday_unavailable for the current periode. Small and fixed rather than
@@ -307,7 +310,8 @@ def _demo_fcfs_tiebreak(residents: list[Resident], periode: Periode, year: int, 
 def _demo_handoffs(
     residents: list[Resident], periode: Periode, used_months: set[tuple[int, int]], rng: random.Random
 ) -> None:
-    """Amendment 4, step 1: an open offer, a completed take-over and a whole-shift take-over, all
+    """Amendment 4: an open offer (step 2: with one pending trade proposal on it), a completed take-over,
+    a completed trade between two other residents (offer, propose, accept) and a whole-shift take-over, all
     through the services (never raw writes) and all on FUTURE shifts of one already-allocated month --
     an offer on a started shift is refused. Best-effort like every optional scenario here: skips when no
     month has enough future shifts. The aftenvagt scenario hand-creates its two `TILDELT` rows, because
@@ -335,7 +339,7 @@ def _demo_handoffs(
         if len(in_population) < 3:
             continue
         try:
-            offer_tildeling(rows[0], rows[0].resident)  # left open
+            open_offer = offer_tildeling(rows[0], rows[0].resident)  # left open
             handed = rows[1]
             held = {r.pk: held_by_vagt(r, [handed.vagt_id]) for r in in_population}
             takers = [
@@ -343,6 +347,46 @@ def _demo_handoffs(
             ]
             if takers:
                 take_over(offer_tildeling(handed, handed.resident), rng.choice(takers))
+
+            # Step 2: one pending proposal on the open offer, and one completed trade between two OTHER
+            # residents. Candidates are re-read (the take-over above may have moved a row); each attempt is
+            # best-effort, because the services refuse any pairing the rules forbid.
+            spare = list(
+                VagtTildeling.objects.filter(
+                    pk__in=[r.pk for r in rows[2:]], status=VagtTildeling.Status.TILDELT
+                ).select_related("vagt", "resident")
+            )
+            proposer_id: int | None = None
+            for y in spare:
+                try:
+                    propose_trade(open_offer, y, y.resident)
+                except KoekkenAllocationError:
+                    continue
+                proposer_id = y.resident_id
+                spare = [r for r in spare if r.pk != y.pk and r.resident_id != proposer_id]
+                break
+            traded = False
+            for first in spare:
+                if traded:
+                    break
+                if first.resident_id == rows[0].resident_id:
+                    continue
+                try:
+                    offer = offer_tildeling(first, first.resident)
+                except KoekkenAllocationError:
+                    continue
+                for second in spare:
+                    if second.resident_id in (first.resident_id, rows[0].resident_id):
+                        continue
+                    try:
+                        propose_trade(offer, second, second.resident)
+                        accept_trade(offer.forslag.get(status=VagtBytteForslag.Status.AABEN), first.resident)
+                    except KoekkenAllocationError:
+                        continue
+                    traded = True
+                    break
+                if not traded:
+                    withdraw_offer(offer, first.resident)  # no partner found: not left dangling
 
             aften = list(
                 Vagt.objects.filter(

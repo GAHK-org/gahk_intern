@@ -70,8 +70,11 @@ automatically; there is still no unclaim. A completed hand-off (`OVERTAGET`/`OVE
 identified by query (`koekken.services.handed_off_tildeling_filter`) and is excluded from the three
 force re-run deletes, so it survives a deliberate re-allocation (the delete locks the candidate rows
 first -- `select_for_update` -- so a concurrent take-over cannot slip past the exclusion). Expiry of an unclaimed offer is
-derived (the shift has started) and never written. Trading (`VagtBytteForslag`) and the Den Hurtige
-post are later steps.
+derived (the shift has started) and never written. The Den Hurtige post is a later step.
+
+**Amendment 4, step 2** adds `VagtBytteForslag`: a trade proposal on an open offer ("I'll give you my Y
+for your X"). Accepting swaps the two rows' residents in one atomic exchange (pks unchanged); a row that
+is the `modydelse` of an `ACCEPTERET` proposal is a completed hand-off too and survives a force re-run.
 """
 
 from datetime import date, time
@@ -507,3 +510,44 @@ class VagtBytte(models.Model):
 
     def __str__(self) -> str:
         return f"Byttetilbud af {self.tildeling} af {self.tilbudt_af.full_name} ({self.get_status_display()})"
+
+
+class VagtBytteForslag(models.Model):
+    """A trade proposal on an open offer -- Amendment 4 step 2: "I'll give you my `modydelse` (Y) for
+    your offered row (X)". The offerer accepts or declines; accepting swaps the residents of X and Y in
+    one atomic exchange (`koekken.services.accept_trade`), never two separate take-overs.
+
+    **Expiry is derived, never written.** An `AABEN` proposal is live only while both X and Y are
+    unstarted, `TILDELT`, free of flag history and still held by the offerer / the proposer
+    respectively; otherwise it is stale and shown/acted on as nothing, yet stays `AABEN` in the database
+    (the same lazy shape as `VagtBytte`). Moves and withdrawals that invalidate a proposal persist
+    `BORTFALDET` explicitly (`services._close_forslag`), always after locking the rows first.
+    """
+
+    class Status(models.TextChoices):
+        AABEN = "aaben", "Åben"
+        ACCEPTERET = "accepteret", "Accepteret"
+        AFVIST = "afvist", "Afvist"
+        TRUKKET = "trukket", "Trukket tilbage"
+        BORTFALDET = "bortfaldet", "Bortfaldet"
+
+    bytte = models.ForeignKey(VagtBytte, on_delete=models.CASCADE, related_name="forslag")
+    modydelse = models.ForeignKey(VagtTildeling, on_delete=models.CASCADE, related_name="byttemodydelser")
+    foreslaaet_af = models.ForeignKey(Resident, on_delete=models.CASCADE, related_name="koekken_bytteforslag")
+    status = models.CharField(max_length=15, choices=Status.choices, default=Status.AABEN)
+    created_at = models.DateTimeField(default=timezone.now)
+    closed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            # At most one OPEN proposal per (offer, offered-in-exchange row).
+            models.UniqueConstraint(
+                fields=["bytte", "modydelse"],
+                condition=Q(status="aaben"),
+                name="uniq_vagtbytteforslag_open_per_bytte_modydelse",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"Bytteforslag fra {self.foreslaaet_af.full_name} på {self.bytte_id} ({self.get_status_display()})"
