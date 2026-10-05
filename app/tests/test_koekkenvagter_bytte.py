@@ -399,14 +399,31 @@ def test_withdraw(w: World) -> None:
 
 
 def _flagged_then_dismissed_offer(w: World, row: VagtTildeling, offerer: Resident) -> VagtBytte:
-    """Offer `row`, flag it (same day, allowed), dismiss the flag: back to TILDELT, offer still AABEN."""
+    """Offer `row`, flag it (same day, allowed), dismiss the flag: back to TILDELT. Flagging now lapses
+    the offer, so it is put back to AABEN by hand: this simulates an offer left open by data from before
+    that fix, which the take-time re-check must still refuse."""
     bytte = offer_tildeling(row, offerer)
     flag_tildeling(row, w.e, "x")
     resolve_anmeldelse(row.anmeldelser.get(), upheld=False, resolved_by=w.b)
     row.refresh_from_db()
     assert row.status == T.TILDELT
+    VagtBytte.objects.filter(pk=bytte.pk).update(status=B.AABEN, closed_at=None)
     assert VagtBytte.objects.get(pk=bytte.pk).status == B.AABEN
     return bytte
+
+
+def test_flagging_lapses_an_open_offer(w: World, login: Callable) -> None:
+    bytte = offer_tildeling(w.ra, w.a)
+    assert open_offers() == [bytte]
+    flag_tildeling(w.ra, w.e, "x")
+    bytte.refresh_from_db()
+    assert bytte.status == B.BORTFALDET and bytte.closed_at is not None
+    assert not open_offers()
+    resolve_anmeldelse(w.ra.anmeldelser.get(), upheld=False, resolved_by=w.b)  # dismissal: still lapsed
+    assert VagtBytte.objects.get(pk=bytte.pk).status == B.BORTFALDET and not open_offers()
+    for resident in (w.a, w.b):
+        html = _html(login(resident))
+        assert f"bytte/{bytte.pk}/" not in html  # not on the board, nor on the offerer's own list
 
 
 def test_flagged_then_dismissed_offer_is_not_takeable(w: World) -> None:

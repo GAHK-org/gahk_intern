@@ -4,6 +4,7 @@ These need a real Postgres and real threads (`transaction=True`: each thread has
 the locks are only meaningful across committed transactions). `serialized_rollback` restores what the
 end-of-test flush truncates (migration-seeded `VagtRegel`), and `_reseed` guards the rest. If a
 `--reuse-db` database is ever left corrupted by a transactional test, run once with `--create-db`.
+The session-level restore of the serialized post-migrate state is a global fixture in tests/conftest.py.
 
 The hazard (reviewer's reproduction): Django splits a cascading `.delete()` into an unlocked SELECT
 (where the hand-off exclusion is evaluated) and separate DELETEs by pk list. A take-over committing
@@ -18,8 +19,8 @@ from datetime import date, time
 from typing import Any
 
 import pytest
-from django.db import connection, transaction
-from pytest_django.plugin import DjangoDbBlocker
+from django.db import connection
+from django.test import Client
 
 from core.clock import clear_cache
 from core.models import DevClock, Room
@@ -31,7 +32,7 @@ from koekken.services import (
     resolve_periode,
     take_over,
 )
-from residents.models import Residency, Resident
+from residents.models import Residency, Resident, Role
 
 pytestmark = pytest.mark.django_db(transaction=True, serialized_rollback=True)
 
@@ -40,20 +41,6 @@ B = VagtBytte.Status
 YEAR, MONTH = 2042, 3
 DAYS = [date(2042, 3, 10), date(2042, 3, 11)]  # Monday, Tuesday: morgen, 1 x 60
 JOIN = 15.0  # seconds; a hung thread (deadlock) fails the test instead of hanging the suite
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _restore_migration_data_afterwards(
-    django_db_setup: None, django_db_blocker: DjangoDbBlocker
-) -> Iterator[None]:
-    """pytest-django runs transactional tests LAST, and their teardown flush leaves every table empty:
-    with `--reuse-db` (this project's default) the NEXT session would then start without the
-    migration-seeded rows (workgroups, `VagtRegel`, ...). Put the serialized post-migrate state back."""
-    yield
-    contents = getattr(connection, "_test_serialized_contents", None)
-    if contents:
-        with django_db_blocker.unblock(), transaction.atomic():
-            connection.creation.deserialize_db_from_string(contents)
 
 
 def _reseed() -> None:
@@ -182,3 +169,87 @@ def test_handoff_committed_before_the_rerun_locks_survives_with_its_offer(world:
     assert survivor.resident == world["taker"]
     offer = VagtBytte.objects.get(pk=bytte.pk)
     assert offer.status == B.OVERTAGET and offer.overtaget_af == world["taker"]
+
+
+def _paused_take_over(
+    bytte: VagtBytte, taker: Resident, pause_after: "re.Pattern[str]"
+) -> tuple[threading.Event, threading.Event, threading.Thread, dict[str, Any]]:
+    """Run `take_over` in a thread, paused just AFTER the first statement matching `pause_after` has run
+    (so the transaction is open and holds whatever that statement locked). Returns
+    `(paused, resume, thread, outcome)`."""
+    paused, resume = threading.Event(), threading.Event()
+    state = {"done": False}
+
+    def wrapper(execute: Callable, sql: str, params: object, many: bool, context: object) -> object:
+        result = execute(sql, params, many, context)
+        if not state["done"] and pause_after.search(sql):
+            state["done"] = True
+            paused.set()
+            assert resume.wait(JOIN), "test never resumed the paused take_over"
+        return result
+
+    def run() -> VagtBytte:
+        with connection.execute_wrapper(wrapper):
+            return take_over(VagtBytte.objects.get(pk=bytte.pk), taker)
+
+    thread, outcome = _run_in_thread(run)
+    return paused, resume, thread, outcome
+
+
+def test_rerun_blocks_on_an_uncommitted_take_over_then_excludes_the_handed_off_row(
+    world: dict[str, Any],
+) -> None:
+    """The in-flight interleaving: a take-over has already UPDATEd the row (uncommitted) when the re-run's
+    row-lock pass starts. The re-run must block on that row, and once the take-over commits, re-evaluate
+    and exclude the now-handed-off row: the hand-off survives."""
+    bytte = offer_tildeling(world["row"], world["offerer"])
+    paused, resume, taker_thread, taker = _paused_take_over(
+        bytte, world["taker"], re.compile(r'^UPDATE "koekken_vagttildeling"')
+    )
+    assert paused.wait(JOIN)
+
+    _paused, _resume, rerun = _paused_rerun(re.compile(r"(?!)"))  # a pattern that never matches: no pause
+    rerun.join(1.5)
+    assert rerun.is_alive(), "the re-run was not blocked by the uncommitted take-over's row lock"
+
+    resume.set()
+    taker_thread.join(JOIN)
+    rerun.join(JOIN)
+    assert not taker_thread.is_alive() and not rerun.is_alive(), "deadlock"
+    assert "error" not in taker, taker
+    assert "error" not in rerun.outcome  # type: ignore[attr-defined]
+    survivor = VagtTildeling.objects.get(pk=world["row"].pk)
+    assert survivor.resident == world["taker"]
+    offer = VagtBytte.objects.get(pk=bytte.pk)
+    assert offer.status == B.OVERTAGET and offer.overtaget_af == world["taker"]
+
+
+def test_override_remove_and_a_concurrent_take_over_do_not_deadlock(
+    world: dict[str, Any], make_resident: Callable[..., Resident]
+) -> None:
+    """`override_remove` used to delete (cascading into the offer) before locking the row, the reverse of
+    `take_over`'s order. With the take-over holding the row lock, the removal must now BLOCK on the row
+    (not take the offer lock first), and run cleanly once the take-over commits."""
+    manager = make_resident(email="manager@gahk.dk", roles=(Role.KOKKENGRUPPE,))
+    bytte = offer_tildeling(world["row"], world["offerer"])
+    client = Client()
+    client.force_login(manager)
+    paused, resume, taker_thread, taker = _paused_take_over(bytte, world["taker"], re.compile(r"FOR UPDATE"))
+    assert paused.wait(JOIN)  # take_over holds the row lock, has not yet asked for the offer
+
+    remover, removal = _run_in_thread(
+        lambda: client.post(f"/intern/koekken/gruppe/override/{world['row'].pk}/fjern")
+    )
+    remover.join(1.5)
+    assert remover.is_alive(), "override_remove was not blocked by the take-over's row lock"
+
+    resume.set()
+    taker_thread.join(JOIN)
+    remover.join(JOIN)
+    assert not taker_thread.is_alive() and not remover.is_alive(), "deadlock"
+    assert "error" not in taker, taker
+    assert "error" not in removal, removal
+    assert removal["result"].status_code == 302
+    # The take-over won the race and the (still TILDELT) row was then removed: nothing half-done.
+    assert not VagtTildeling.objects.filter(pk=world["row"].pk).exists()
+    assert not VagtBytte.objects.filter(pk=bytte.pk).exists()  # cascaded with its row

@@ -1,9 +1,26 @@
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 import pytest
+from django.db import connection, transaction
+from pytest_django.plugin import DjangoDbBlocker
 
 from residents.models import Resident, RoleAssignment, active_period
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _restore_migration_data_afterwards(
+    django_db_setup: None, django_db_blocker: DjangoDbBlocker
+) -> Iterator[None]:
+    """pytest-django runs `transaction=True` tests LAST, and their teardown flush leaves every table
+    empty: with `--reuse-db` (this project's default) the NEXT session would then start without the
+    migration-seeded rows (workgroups, `VagtRegel`, ...). Put the serialized post-migrate state back
+    once the session is over, so any file may use `transaction=True` without breaking `--reuse-db`."""
+    yield
+    contents = getattr(connection, "_test_serialized_contents", None)
+    if contents:
+        with django_db_blocker.unblock(), transaction.atomic():
+            connection.creation.deserialize_db_from_string(contents)
 
 
 @pytest.fixture(autouse=True)

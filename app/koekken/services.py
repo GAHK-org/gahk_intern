@@ -2016,14 +2016,22 @@ def flag_tildeling(vagt_tildeling: VagtTildeling, flagged_by: Resident, reason: 
     The caller (the view) is responsible for `can_flag`'s checks; this is the mechanical write, like
     every other function in this module.
     """
-    anmeldelse = VagtAnmeldelse.objects.create(
-        vagt_tildeling=vagt_tildeling,
-        flagged_by=flagged_by,
-        previous_status=vagt_tildeling.status,
-        reason=reason,
-    )
-    vagt_tildeling.status = VagtTildeling.Status.ANMELDT
-    vagt_tildeling.save(update_fields=["status"])
+    with transaction.atomic():
+        # Lock the row first (see the LOCK ORDER note below), then lapse any open offer on it: a flagged
+        # row is hidden from the board, so the offer would otherwise sit as a phantom on the offerer's own
+        # list (and survive a dismissal) without anybody being able to take it.
+        lock_tildeling(vagt_tildeling.pk)
+        VagtBytte.objects.filter(tildeling=vagt_tildeling, status=VagtBytte.Status.AABEN).update(
+            status=VagtBytte.Status.BORTFALDET, closed_at=current_datetime()
+        )
+        anmeldelse = VagtAnmeldelse.objects.create(
+            vagt_tildeling=vagt_tildeling,
+            flagged_by=flagged_by,
+            previous_status=vagt_tildeling.status,
+            reason=reason,
+        )
+        vagt_tildeling.status = VagtTildeling.Status.ANMELDT
+        vagt_tildeling.save(update_fields=["status"])
     return anmeldelse
 
 
