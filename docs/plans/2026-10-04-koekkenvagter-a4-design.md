@@ -361,7 +361,7 @@ aftenvagt, a pending trade proposal (step 2), and a Den Hurtige-posted offer (st
 | 0 | **Amendment 5 supplement** (main design doc): fridag removes only the day's shifts, and the report names who is removed. | **Built** (`2aeb05c`) |
 | 1 | `VagtBytte`; offer / withdraw / take-over / whole-shift take-over; `may_hold`; the §5.5 exclusion in the three deletes plus the report line; §6 notifications (take-over rows); §7 UI except trading; Køkkengruppen list; explanation; admin; demo; `erd.md`. | ideally 1 Feb 2027 |
 | 2 | `VagtBytteForslag`; propose / withdraw / decline / accept; the two trade notifications; trade UI. | after step 1 |
-| 3 | Den Hurtige channel, `publish_post`, checkbox, archive-on-close. | after step 2 |
+| 3 | Den Hurtige channel, `publish_post`, checkbox, archive-on-close. | **Built** (`532d9ce`) |
 
 Each step is independently shippable, and step 3 can be cut without touching steps 1–2.
 
