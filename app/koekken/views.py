@@ -26,16 +26,26 @@ from django.db import transaction
 from django.db.models import Q
 from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from core import push
 from core.clock import current_date, current_datetime
 from core.exports import csv_or_xlsx_response
+from den_hurtige import access as hurtig_access
+from den_hurtige import channels as hurtig_channels
 from residents.models import Resident
-from residents.permissions import current_resident
+from residents.permissions import current_resident, effective_roles
 
 from . import access, services
-from .forms import AllokeringForm, AnmeldelseForm, ForeslaaByttForm, OverrideAssignForm, PraeferenceForm
+from .forms import (
+    AllokeringForm,
+    AnmeldelseForm,
+    ForeslaaByttForm,
+    OverrideAssignForm,
+    PraeferenceForm,
+    TilbydForm,
+)
 from .models import (
     Praeference,
     PraeferenceDag,
@@ -112,6 +122,17 @@ def _recent_context(request: HttpRequest) -> dict[str, object]:
         # on every row would be invalid, duplicate-id HTML.
         "anmeldelse_form": AnmeldelseForm(auto_id=False),
     }
+
+
+def _can_post_den_hurtige(request: HttpRequest) -> bool:
+    """Whether this viewer may share an offer in Den Hurtige's Køkkenvagter channel: they can open Den
+    Hurtige AND that channel. If either feature is ever re-gated, people who cannot open the link in the
+    post could still see the post -- accepted per design doc §8; no mechanism is added for it."""
+    roles = effective_roles(request)
+    channel = hurtig_channels.BY_SLUG.get("koekken")
+    if channel is None:
+        return False
+    return hurtig_access.roles_allowed(roles) and hurtig_channels.allowed(channel, roles)
 
 
 def _bytte_context(request: HttpRequest, *, error: str | None = None) -> dict[str, object]:
@@ -307,7 +328,12 @@ def _bytte_context(request: HttpRequest, *, error: str | None = None) -> dict[st
                 mine,
             )
         )
-    return {"upcoming": upcoming, "board": board, "error": error}
+    return {
+        "upcoming": upcoming,
+        "board": board,
+        "error": error,
+        "can_post_den_hurtige": _can_post_den_hurtige(request),
+    }
 
 
 @access.access_required
@@ -386,7 +412,13 @@ def tilbyd_vagt(request: HttpRequest, pk: int) -> HttpResponse:
     stale = _require_own_row(tildeling, current_resident(request))
     if stale is not None:
         return _bytte_response(request, stale)
-    return _bytte_response(request, lambda resident: services.offer_tildeling(tildeling, resident))
+    form = TilbydForm(request.POST)
+    share = form.is_valid() and form.cleaned_data["del_i_den_hurtige"] and _can_post_den_hurtige(request)
+    # An ABSOLUTE url: Den Hurtige renders post text with |links, which needs one.
+    hurtig_link = request.build_absolute_uri(reverse("koekken:index")) if share else None
+    return _bytte_response(
+        request, lambda resident: services.offer_tildeling(tildeling, resident, hurtig_link=hurtig_link)
+    )
 
 
 @access.access_required

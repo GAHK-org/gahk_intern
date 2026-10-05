@@ -339,7 +339,11 @@ def _demo_handoffs(
         if len(in_population) < 3:
             continue
         try:
-            open_offer = offer_tildeling(rows[0], rows[0].resident)  # left open
+            # Left open, and shared in Den Hurtige like a resident who left the box ticked. No request here, so a
+            # localhost base stands in for build_absolute_uri.
+            open_offer = offer_tildeling(
+                rows[0], rows[0].resident, hurtig_link="http://localhost:8000/intern/koekken/"
+            )
             handed = rows[1]
             held = {r.pk: held_by_vagt(r, [handed.vagt_id]) for r in in_population}
             takers = [

@@ -95,7 +95,7 @@ from django.db.models import Count, Exists, F, OuterRef, Q, QuerySet, Sum
 from django.utils import timezone
 
 from core.clock import current_date, current_datetime
-from core.danish import MONTHS
+from core.danish import MONTHS, WEEKDAYS
 from residents.models import Residency, Resident
 
 from .models import (
@@ -2133,7 +2133,14 @@ def resolve_anmeldelse(anmeldelse: VagtAnmeldelse, *, upheld: bool, resolved_by:
 #       ASCENDING pk order;
 #   (2) the `Vagt` (whole-shift take-over only);
 #   (3) the `VagtBytte` rows, ascending pk;
-#   (4) the `VagtBytteForslag` rows (step 2), ascending pk.
+#   (4) the `VagtBytteForslag` rows (step 2), ascending pk;
+#   (5) the Den Hurtige `QuickPost` that advertises an offer (step 3), ALWAYS LAST. Den Hurtige's own
+#       hard-delete (inside its grace period) nulls `VagtBytte.hurtig_post` and then deletes the post,
+#       and a post is written after the offer on the way in. Both sides therefore lock the offer before
+#       the post, and nothing deadlocks, AS LONG AS the post write/update is the LAST thing locked in
+#       any transaction touching it: `_archive_hurtig_posts` (and the `post_delete` receiver in
+#       koekken.signals, which fires inside the deleter's transaction after the offer row is gone)
+#       are always the last statement, and `_publish_offer` runs after the offer is created.
 # Corollaries:
 #   * Never lock the offer before its row. Anything that DELETES `VagtTildeling` rows cascades into
 #     `VagtBytte` and `VagtBytteForslag` (offers/proposals deleted before the row), so a deleter that
@@ -2605,6 +2612,36 @@ def _close_invalidated_offers(tildelinger: Iterable[VagtTildeling], *, keep: Vag
         status=VagtBytte.Status.BORTFALDET, closed_at=current_datetime()
     )
     _close_forslag(VagtBytteForslag.objects.filter(bytte_id__in=ids))  # lock 4
+    _archive_hurtig_posts(ids)  # lock 5: the posts, LAST
+
+
+def _archive_posts(post_ids: Iterable[int]) -> None:
+    """Archive (`expires_at = now`) the given Den Hurtige posts -- Den Hurtige already defines "expired" as
+    "archived", so no new delete semantics. A post that is already expired (or soft-deleted, which is
+    expired too) is untouched by the `expires_at__gt` filter, and an unknown pk matches nothing. LOCK
+    ORDER level 5: this is always the LAST statement of its transaction -- never lock a `VagtBytte`
+    or anything else after it."""
+    from den_hurtige.models import QuickPost  # local: den_hurtige is not otherwise a dependency here
+
+    ids = sorted(set(post_ids))  # ascending, like every other multi-row write here
+    if not ids:
+        return
+    now = current_datetime()
+    QuickPost.objects.filter(pk__in=ids, expires_at__gt=now).update(expires_at=now)
+
+
+def _archive_hurtig_posts(bytte_ids: Iterable[int]) -> None:
+    """Archive the Den Hurtige post of every offer in `bytte_ids` that has one. Call it at EVERY point where
+    an offer leaves `AABEN`, as the last statement of the transaction (LOCK ORDER level 5). Cascade
+    deletes are covered by the `post_delete` receiver in koekken.signals instead."""
+    ids = list(bytte_ids)
+    if not ids:
+        return
+    _archive_posts(
+        VagtBytte.objects.filter(pk__in=ids, hurtig_post__isnull=False).values_list(
+            "hurtig_post_id", flat=True
+        )
+    )
 
 
 def _notify(resident: Resident, body: str) -> None:
@@ -2618,11 +2655,42 @@ def _notify(resident: Resident, body: str) -> None:
     send(audience, "Køkkenvagt", body, "/intern/koekken/")
 
 
-def offer_tildeling(tildeling: VagtTildeling, by: Resident) -> VagtBytte:
+def _dansk_dato(day: date) -> str:
+    """ "tirsdag 12. januar"."""
+    return f"{WEEKDAYS[day.weekday()]} {day.day}. {MONTHS[day.month]}"
+
+
+def _publish_offer(offer: VagtBytte, vagt: Vagt, by: Resident, hurtig_link: str) -> None:
+    """Share `offer` in Den Hurtige's `koekken` channel, under the offerer's own name (design doc §8). A
+    failed post must NEVER block the offer: the post is attempted in its own savepoint, so even a
+    database-level failure rolls back only the post attempt, and any failure is logged and swallowed.
+    Runs after the offer exists and writes the post last (LOCK ORDER level 5)."""
+    from den_hurtige import (
+        services as hurtig,
+    )  # local: den_hurtige never imports koekken, only this way round
+
+    # The earlier of the shift's start and 2 døgn (the longest duration Den Hurtige offers).
+    expires_at = min(marking_window(vagt)[0], current_datetime() + timedelta(minutes=2880))
+    content = (
+        f"Jeg kan ikke tage min {vagt.get_kind_display().lower()} {_dansk_dato(vagt.date)}. Kan du? "
+        f"Tag den under Køkkenvagter: {hurtig_link}"
+    )
+    try:
+        with transaction.atomic():
+            post = hurtig.publish_post(by, "koekken", content, expires_at)
+            offer.hurtig_post = post
+            offer.save(update_fields=["hurtig_post"])
+    except Exception:
+        offer.hurtig_post = None  # the savepoint rolled the link back; keep the in-memory offer honest
+        logger.warning("Could not share offer %s in Den Hurtige", offer.pk, exc_info=True)
+
+
+def offer_tildeling(tildeling: VagtTildeling, by: Resident, *, hurtig_link: str | None = None) -> VagtBytte:
     """Offer `tildeling` for take-over (design doc §3, §5.1). Moves nothing: `by` stays responsible
     until somebody takes it. Refuses (everything re-checked under lock) unless `by` holds the row, it is
     `TILDELT`, its shift has not started, it has no `VagtAnmeldelse` in ANY status and no open offer.
-    Sends no notification."""
+    Sends no notification of its own. When `hurtig_link` (the absolute URL of the Køkkenvagter page) is given,
+    the offer is also shared as a post in Den Hurtige (`_publish_offer`); None posts nothing."""
     with transaction.atomic():
         row = _lock_tildelinger([tildeling.pk]).get(tildeling.pk)
         if row is None:
@@ -2645,9 +2713,12 @@ def offer_tildeling(tildeling: VagtTildeling, by: Resident) -> VagtBytte:
             raise KoekkenAllocationError(already_open)
         try:
             with transaction.atomic():  # savepoint: an IntegrityError must not poison the outer block
-                return VagtBytte.objects.create(tildeling=row, tilbudt_af=by)
+                offer = VagtBytte.objects.create(tildeling=row, tilbudt_af=by)
         except IntegrityError:
             raise KoekkenAllocationError(already_open) from None
+        if hurtig_link is not None:
+            _publish_offer(offer, vagt, by, hurtig_link)  # the post is written LAST (lock level 5)
+        return offer
 
 
 def withdraw_offer(bytte: VagtBytte, by: Resident) -> VagtBytte:
@@ -2668,6 +2739,7 @@ def withdraw_offer(bytte: VagtBytte, by: Resident) -> VagtBytte:
         offer.closed_at = current_datetime()
         offer.save(update_fields=["status", "closed_at"])
         _close_forslag(VagtBytteForslag.objects.filter(bytte=offer))  # lock 4: its proposals lapse with it
+        _archive_hurtig_posts([offer.pk])  # lock 5: the post, LAST
         return offer
 
 
@@ -2715,6 +2787,7 @@ def _take(bytte: VagtBytte, by: Resident, *, whole: bool) -> VagtBytte:
             offer.status = VagtBytte.Status.BORTFALDET
             offer.closed_at = current_datetime()
             offer.save(update_fields=["status", "closed_at"])
+            _archive_hurtig_posts([offer.pk])
             lapsed = "Tilbuddet er bortfaldet: tilbyderen står ikke længere på vagten."
         elif VagtAnmeldelse.objects.filter(vagt_tildeling=row).exists():
             # Re-checked at take time (design doc §3), not just at offer time: a row flagged after it
@@ -2723,6 +2796,7 @@ def _take(bytte: VagtBytte, by: Resident, *, whole: bool) -> VagtBytte:
             offer.status = VagtBytte.Status.BORTFALDET
             offer.closed_at = current_datetime()
             offer.save(update_fields=["status", "closed_at"])
+            _archive_hurtig_posts([offer.pk])
             lapsed = "Tilbuddet er bortfaldet: vagten har en anmeldelse i sin historik."
         else:
             if by.pk == offer.tilbudt_af_id:
@@ -2777,6 +2851,7 @@ def _take(bytte: VagtBytte, by: Resident, *, whole: bool) -> VagtBytte:
                 _close_invalidated_offers([row], keep=offer)
                 _close_forslag(VagtBytteForslag.objects.filter(bytte=offer))
                 _close_invalidated_forslag([row])
+                _archive_hurtig_posts([offer.pk])  # lock 5: the post, LAST
                 _notify(
                     offer.tilbudt_af,
                     f"{by.full_name} har overtaget din {vagt}. Du er ikke længere på vagten.",
@@ -2806,6 +2881,9 @@ def _take(bytte: VagtBytte, by: Resident, *, whole: bool) -> VagtBytte:
                 vagt.headcount = 1  # (3) (2, d) -> (1, 2d): the one sanctioned snapshot change
                 vagt.duration_minutes = 2 * vagt.duration_minutes
                 vagt.save(update_fields=["headcount", "duration_minutes"])
+                # Lock 5, LAST. (The vacated row's OTHER offers' posts were archived by the post_delete
+                # receiver when the delete above cascaded into them.)
+                _archive_hurtig_posts([offer.pk])
                 _notify(  # (4)
                     offerer,
                     f"{by.full_name} har overtaget hele {vagt}. Du er ikke længere på vagten.",
@@ -2905,6 +2983,7 @@ def propose_trade(bytte: VagtBytte, modydelse: VagtTildeling, by: Resident) -> V
             offer.closed_at = current_datetime()
             offer.save(update_fields=["status", "closed_at"])
             _close_forslag(VagtBytteForslag.objects.filter(bytte=offer))  # lock 4
+            _archive_hurtig_posts([offer.pk])  # lock 5: the post, LAST
         else:
             if by.pk == offer.tilbudt_af_id:
                 raise KoekkenAllocationError("Du kan ikke foreslå bytte på dit eget tilbud.")
@@ -3053,6 +3132,9 @@ def accept_trade(forslag: VagtBytteForslag, by: Resident) -> VagtBytteForslag:
                 _close_invalidated_offers([x, y], keep=offer)  # Y's own offer, and ITS proposals
                 _close_forslag(VagtBytteForslag.objects.filter(bytte=offer))  # the offer's other proposals
                 _close_invalidated_forslag([x, y], keep=fresh)
+                _archive_hurtig_posts(
+                    [offer.pk]
+                )  # lock 5: the post, LAST (Y's offer's went in its own close)
                 _notify(
                     proposer,
                     f"{by.full_name} har accepteret byttet: du har nu {vagt_x} i stedet for {vagt_y}.",
@@ -3067,6 +3149,7 @@ def accept_trade(forslag: VagtBytteForslag, by: Resident) -> VagtBytteForslag:
             offer.closed_at = fresh.closed_at
             offer.save(update_fields=["status", "closed_at"])
             _close_forslag(VagtBytteForslag.objects.filter(bytte=offer))
+            _archive_hurtig_posts([offer.pk])  # lock 5: the post, LAST
     raise KoekkenAllocationError(lapsed or gone)
 
 

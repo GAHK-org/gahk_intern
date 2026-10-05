@@ -57,9 +57,10 @@ from .models import (
 )
 
 # A "hurtig" message is a couple of lines, not an essay. Enforced server-side as well as via the
-# textarea's maxlength so a crafted POST cannot turn the feed into a noticeboard.
-MAX_CONTENT_CHARS = 500
-
+# textarea's maxlength so a crafted POST cannot turn the feed into a noticeboard. The constant now
+# lives in services (publish_post enforces it too) and is re-exported here, where templates and tests
+# have always imported it from.
+MAX_CONTENT_CHARS = services.MAX_CONTENT_CHARS
 VALID_DURATIONS = {minutes for minutes, _label in DURATION_CHOICES}
 
 # Messages from the same person closer together than this are drawn as one group, the way any
@@ -633,14 +634,13 @@ def create_post(request: HttpRequest) -> HttpResponseRedirect:
     if minutes not in VALID_DURATIONS:
         minutes = channel.default_duration
 
-    post = QuickPost.objects.create(
-        author=author,
-        channel=channel.slug,
-        content=content,
+    services.publish_post(
+        author,
+        channel.slug,
+        content,
+        current_datetime() + timedelta(minutes=minutes),
         image=_validated_image(request) or "",
-        expires_at=current_datetime() + timedelta(minutes=minutes),
     )
-    services.notify_new_post(post)
     # No success message on purpose: the message appearing at the bottom of the feed *is* the
     # confirmation, and no chat app interrupts you to say a send worked. The warnings above (a
     # rejected image, over-long text) still surface, because those change what was actually posted.

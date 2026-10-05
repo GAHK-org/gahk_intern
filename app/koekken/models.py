@@ -496,6 +496,13 @@ class VagtBytte(models.Model):
     )
     created_at = models.DateTimeField(default=timezone.now)
     closed_at = models.DateTimeField(null=True, blank=True)
+    # The Den Hurtige post that advertises this offer (Amendment 4 step 3), if the offerer shared it. The
+    # link exists only so the post can be archived when the offer closes (`services._archive_hurtig_posts`,
+    # and the `post_delete` receiver in koekken.signals for cascades); Den Hurtige never reads it. SET_NULL
+    # because the author may hard-delete the post within Den Hurtige's grace period.
+    hurtig_post = models.ForeignKey(
+        "den_hurtige.QuickPost", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
 
     class Meta:
         ordering = ["-created_at"]

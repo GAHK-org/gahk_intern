@@ -3265,3 +3265,115 @@ def test_the_photograph_survives_a_soft_delete_that_does_not_happen(
         assert racer.soft_delete() is False
 
     assert stored.is_file(), "a lost claim must not unlink the file"
+
+
+# --- the koekken channel and publish_post (Amendment 4, step 3) ------------------------------------
+
+
+def test_koekken_channel_is_registered_and_passes_the_startup_checks() -> None:
+    channel = channels.BY_SLUG["koekken"]
+    assert channel in channels.CHANNELS
+    assert (channel.name, channel.icon, channel.default_duration) == ("Køkkenvagter", "check", 2880)
+    assert check_channels(None) == []
+
+
+def test_koekken_channel_shows_in_a_residents_tab_strip(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    client.force_login(make_resident(email="a@gahk.dk"))
+    body = client.get(FEED_URL).content.decode()
+    assert f'href="{channels.BY_SLUG["koekken"].url}"' in body
+
+
+def test_publish_post_creates_one_post_and_notifies(
+    make_resident: Callable[..., Resident], pushes: list[tuple[list[int], dict]]
+) -> None:
+    from den_hurtige import services
+
+    author = make_resident(email="a@gahk.dk")
+    other = make_resident(email="b@gahk.dk")
+    subscribe(author, "https://example.test/a")
+    subscribe(other, "https://example.test/b")
+    expires = timezone.now() + timedelta(hours=1)
+
+    post = services.publish_post(author, "koekken", "Hej", expires)
+
+    assert QuickPost.objects.get() == post
+    assert (post.author, post.channel, post.content, post.expires_at) == (author, "koekken", "Hej", expires)
+    assert [ids for ids, _payload in pushes] == [[other.pk]]
+
+
+@pytest.mark.parametrize(
+    ("channel", "content"),
+    [("findes-ikke", "Hej"), ("koekken", ""), ("koekken", "   "), ("koekken", "x" * 501)],
+)
+def test_publish_post_refuses_malformed_posts_and_creates_nothing(
+    make_resident: Callable[..., Resident],
+    pushes: list[tuple[list[int], dict]],
+    channel: str,
+    content: str,
+) -> None:
+    from den_hurtige import services
+
+    author = make_resident(email="a@gahk.dk")
+    with pytest.raises(ValueError):
+        services.publish_post(author, channel, content, timezone.now() + timedelta(hours=1))
+    assert not QuickPost.objects.exists() and pushes == []
+
+
+def test_publish_post_accepts_exactly_the_limit_and_an_image_only_post(
+    make_resident: Callable[..., Resident],
+) -> None:
+    from den_hurtige import services
+
+    author = make_resident(email="a@gahk.dk")
+    soon = timezone.now() + timedelta(hours=1)
+    services.publish_post(author, "koekken", "x" * services.MAX_CONTENT_CHARS, soon)
+    services.publish_post(author, "koekken", "", soon, image="hurtig/x.jpg")
+    assert QuickPost.objects.count() == 2
+
+
+def test_the_content_limit_is_still_importable_from_the_views() -> None:
+    from den_hurtige import services, views
+
+    assert views.MAX_CONTENT_CHARS == services.MAX_CONTENT_CHARS == 500
+
+
+def test_create_post_goes_through_publish_post(
+    client: Client, make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from den_hurtige import services
+
+    seen: list[tuple] = []
+    real = services.publish_post
+
+    def spy(*args: object, **kwargs: object) -> QuickPost:
+        seen.append((args, kwargs))
+        return real(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(services, "publish_post", spy)
+    client.force_login(make_resident(email="a@gahk.dk"))
+    client.post("/intern/den-hurtige/opret", {"content": "Hej", "kanal": "tv-rezz", "duration": "60"})
+    assert len(seen) == 1 and seen[0][0][1:3] == ("tv-rezz", "Hej")
+    assert QuickPost.objects.get().channel == "tv-rezz"
+
+
+def test_den_hurtige_never_imports_koekken() -> None:
+    """The dependency runs one way only: koekken posts into Den Hurtige, never the reverse."""
+    import ast
+
+    offenders = []
+    for path in sorted((Path(django_settings.BASE_DIR) / "den_hurtige").rglob("*.py")):
+        if "migrations" in path.parts:
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            names = (
+                [a.name for a in node.names]
+                if isinstance(node, ast.Import)
+                else [node.module or ""]
+                if isinstance(node, ast.ImportFrom) and node.level == 0
+                else []
+            )
+            if any(n == "koekken" or n.startswith("koekken.") for n in names):
+                offenders.append(f"{path.name}:{node.lineno}")
+    assert offenders == []

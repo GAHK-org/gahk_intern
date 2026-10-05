@@ -104,3 +104,10 @@ class ForeslaaByttForm(forms.Form):
     exchange. Only the shape is checked here; `services.propose_trade` does the real validation."""
 
     modydelse = forms.IntegerField(min_value=1)
+
+
+class TilbydForm(forms.Form):
+    """ "Tilbyd vagten" (Amendment 4 step 3): whether to also share the offer in Den Hurtige's Køkkenvagter
+    channel. Unticked (or absent) posts nothing."""
+
+    del_i_den_hurtige = forms.BooleanField(required=False)

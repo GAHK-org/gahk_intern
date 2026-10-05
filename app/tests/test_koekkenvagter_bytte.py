@@ -868,6 +868,18 @@ def test_demo_produces_handoffs() -> None:
     done = VagtBytteForslag.objects.get(status=F.ACCEPTERET)
     assert done.bytte.status == B.BYTTET and done.bytte.overtaget_af == done.foreslaaet_af
     assert done.bytte.tilbudt_af_id not in (pending.foreslaaet_af_id, pending.bytte.tilbudt_af_id)
+    # Step 3: the open offer is shared, and Den Hurtige's own seeding (which runs after) leaves it alone.
+    from core.clock import current_datetime
+
+    open_offer = VagtBytte.objects.get(status=B.AABEN)
+    assert open_offer.hurtig_post is not None
+    assert (
+        open_offer.hurtig_post.channel == "koekken" and open_offer.hurtig_post.author == open_offer.tilbudt_af
+    )
+    assert (
+        open_offer.hurtig_post.expires_at > current_datetime()
+        and "/intern/koekken/" in open_offer.hurtig_post.content
+    )
     hel = VagtBytte.objects.get(status=B.OVERTAGET_HEL)
     assert (hel.tildeling.vagt.headcount, hel.tildeling.vagt.duration_minutes) == (1, 360)
 
@@ -1602,3 +1614,412 @@ def test_index_query_count_does_not_grow_with_proposals(w: World, login: Callabl
         mo = offer_tildeling(mine_offered, w.b)
         propose_trade(mo, incoming, w.e)
     assert count() == small
+
+
+# ========================================================== Amendment 4, step 3: Den Hurtige post
+
+LINK = "http://testserver/intern/koekken/"
+
+
+def _share(row: VagtTildeling, by: Resident, link: str | None = LINK) -> VagtBytte:
+    return offer_tildeling(row, by, hurtig_link=link)
+
+
+def _archived(offer: VagtBytte) -> bool:
+    """The offer's post still exists (archived, never deleted) and is expired as of now."""
+    from core.clock import current_datetime
+    from den_hurtige.models import QuickPost
+
+    offer.refresh_from_db()
+    assert offer.hurtig_post_id is not None
+    post = QuickPost.objects.get(pk=offer.hurtig_post_id)
+    return post.expires_at <= current_datetime()
+
+
+def test_offer_with_link_posts_in_the_koekken_channel(w: World, clock: Callable) -> None:
+    from core.clock import current_datetime
+    from den_hurtige.models import QuickPost
+
+    offer = _share(w.ra, w.a)
+    post = QuickPost.objects.get()
+    assert offer.hurtig_post_id == post.pk and VagtBytte.objects.get(pk=offer.pk).hurtig_post == post
+    assert (post.channel, post.author) == ("koekken", w.a)
+    assert post.content == (
+        "Jeg kan ikke tage min morgenvagt onsdag 12. marts. Kan du? "
+        "Tag den under Køkkenvagter: http://testserver/intern/koekken/"
+    )
+    # Shift is on 12 March, "now" is 1 March: now + 2 døgn is the earlier of the two.
+    assert post.expires_at == current_datetime() + timedelta(minutes=2880)
+
+
+def test_offer_for_a_shift_within_two_days_expires_at_the_shift_start(w: World, clock: Callable) -> None:
+    from den_hurtige.models import QuickPost
+
+    clock(date(2042, 3, 11))  # midnight the day before the morning shift
+    _share(w.ra, w.a)
+    assert QuickPost.objects.get().expires_at == timezone.make_aware(datetime(2042, 3, 12, 6, 0))
+
+
+def test_offer_without_link_posts_nothing(w: World) -> None:
+    from den_hurtige.models import QuickPost
+
+    assert _share(w.ra, w.a, link=None).hurtig_post_id is None
+    assert not QuickPost.objects.exists()
+
+
+def test_post_content_stays_well_below_the_limit_with_a_long_absolute_url(w: World) -> None:
+    from den_hurtige.services import MAX_CONTENT_CHARS
+
+    long_link = "https://" + "a" * 100 + ".example.dk/intern/koekken/"
+    offer = _share(w.rc, w.c, link=long_link)  # an aftenvagt: the longest kind name
+    assert offer.hurtig_post is not None and len(offer.hurtig_post.content) < MAX_CONTENT_CHARS // 2
+
+
+def test_post_text_renders_the_url_as_a_link(w: World) -> None:
+    from core.links import linkify
+
+    offer = _share(w.ra, w.a)
+    assert offer.hurtig_post is not None
+    html = linkify(offer.hurtig_post.content)
+    assert 'href="http://testserver/intern/koekken/"' in html
+
+
+def test_posting_failure_never_blocks_the_offer(
+    w: World, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from den_hurtige import services as hurtig
+    from den_hurtige.models import QuickPost
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise ValueError("nej")
+
+    monkeypatch.setattr(hurtig, "publish_post", boom)
+    with caplog.at_level("WARNING", logger="koekken.services"):
+        offer = _share(w.ra, w.a)
+    assert VagtBytte.objects.get(pk=offer.pk).status == B.AABEN and offer.hurtig_post_id is None
+    assert not QuickPost.objects.exists()
+    assert any("Den Hurtige" in r.getMessage() for r in caplog.records)
+
+
+def test_a_database_failure_while_posting_rolls_back_only_the_post(
+    w: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from den_hurtige import services as hurtig
+    from den_hurtige.models import QuickPost
+
+    real = hurtig.publish_post
+
+    def create_then_fail(*args: object, **kwargs: object) -> None:
+        real(*args, **kwargs)  # type: ignore[arg-type]
+        raise IntegrityError("boom")
+
+    monkeypatch.setattr(hurtig, "publish_post", create_then_fail)
+    offer = _share(w.ra, w.a)
+    assert VagtBytte.objects.get(pk=offer.pk).status == B.AABEN
+    assert not QuickPost.objects.exists()  # the half-made post went with the savepoint
+
+
+def _tilbyd(c: Client, row: VagtTildeling, **fields: str) -> str:
+    resp = c.post(f"/intern/koekken/vagt/{row.pk}/tilbyd", fields)
+    assert resp.status_code == 200
+    return resp.content.decode()
+
+
+def test_view_ticked_box_posts_with_an_absolute_link(w: World, login: Callable) -> None:
+    from den_hurtige.models import QuickPost
+
+    html = _html(login(w.a))
+    assert 'name="del_i_den_hurtige"' in html and "Del i Den Hurtige" in html
+    _tilbyd(login(w.a), w.ra, del_i_den_hurtige="1")
+    post = QuickPost.objects.get()
+    assert post.channel == "koekken" and post.content.endswith("http://testserver/intern/koekken/")
+    assert VagtBytte.objects.get().hurtig_post == post
+
+
+def test_view_unticked_box_posts_nothing(w: World, login: Callable) -> None:
+    from den_hurtige.models import QuickPost
+
+    _tilbyd(login(w.a), w.ra)
+    assert not QuickPost.objects.exists() and VagtBytte.objects.get().hurtig_post_id is None
+
+
+def test_view_with_den_hurtige_inaccessible_hides_the_box_and_ignores_a_forged_field(
+    w: World, login: Callable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from den_hurtige import access as hurtig_access
+    from den_hurtige.models import QuickPost
+
+    monkeypatch.setattr(hurtig_access, "ACCESS_ROLES", (Role.ADMINISTRATOR,))
+    assert "del_i_den_hurtige" not in _html(login(w.a))
+    html = _tilbyd(login(w.a), w.ra, del_i_den_hurtige="1")  # forged
+    assert "del_i_den_hurtige" not in html
+    assert VagtBytte.objects.get().status == B.AABEN and not QuickPost.objects.exists()
+
+
+def test_view_with_the_channel_restricted_hides_the_box(
+    w: World, login: Callable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import dataclasses
+
+    from den_hurtige import channels as hurtig_channels
+    from den_hurtige.models import QuickPost
+
+    restricted = dataclasses.replace(hurtig_channels.BY_SLUG["koekken"], roles=(Role.ADMINISTRATOR,))
+    monkeypatch.setitem(hurtig_channels.BY_SLUG, "koekken", restricted)
+    assert "del_i_den_hurtige" not in _html(login(w.a))
+    _tilbyd(login(w.a), w.ra, del_i_den_hurtige="1")
+    assert not QuickPost.objects.exists()
+
+
+def test_open_offer_row_is_marked_as_shared(w: World, login: Callable) -> None:
+    _share(w.ra, w.a)
+    assert "delt i Den Hurtige" in _html(login(w.a))
+
+
+# ------------------------------------------------------------------------------ archive on close
+
+
+def _w_withdraw(w: World, login: Callable, make_resident: Callable) -> list[VagtBytte]:
+    o = _share(w.ra, w.a)
+    withdraw_offer(o, w.a)
+    return [o]
+
+
+def _w_take(w: World, login: Callable, make_resident: Callable) -> list[VagtBytte]:
+    o = _share(w.ra, w.a)
+    take_over(o, w.e)
+    return [o]
+
+
+def _w_take_whole(w: World, login: Callable, make_resident: Callable) -> list[VagtBytte]:
+    o = _share(w.rc, w.c)
+    take_over_whole(o, w.d)
+    return [o]
+
+
+def _w_accept(w: World, login: Callable, make_resident: Callable) -> list[VagtBytte]:
+    o = _share(w.ra, w.a)
+    accept_trade(propose_trade(o, w.rb, w.b), w.a)
+    return [o]
+
+
+def _w_accept_closes_ys_offer(w: World, login: Callable, make_resident: Callable) -> list[VagtBytte]:
+    """`_close_invalidated_offers`: Y's own offer, made after the proposal, lapses with the swap."""
+    o = _share(w.ra, w.a)
+    forslag = propose_trade(o, w.rb, w.b)
+    y_offer = _share(w.rb, w.b)
+    accept_trade(forslag, w.a)
+    assert VagtBytte.objects.get(pk=y_offer.pk).status == B.BORTFALDET
+    return [o, y_offer]
+
+
+def _w_take_closes_other_offers(w: World, login: Callable, make_resident: Callable) -> list[VagtBytte]:
+    """`_close_invalidated_offers` called directly: an open offer on a touched row lapses."""
+    o = _share(w.ra, w.a)
+    with transaction.atomic():
+        services._close_invalidated_offers([w.ra])
+    assert VagtBytte.objects.get(pk=o.pk).status == B.BORTFALDET
+    return [o]
+
+
+def _w_stale_propose(w: World, login: Callable, make_resident: Callable) -> list[VagtBytte]:
+    o = _share(w.ra, w.a)
+    VagtTildeling.objects.filter(pk=w.ra.pk).update(resident=w.e)  # the offerer no longer holds the row
+    with pytest.raises(KoekkenAllocationError):
+        propose_trade(o, w.rb, w.b)
+    assert VagtBytte.objects.get(pk=o.pk).status == B.BORTFALDET
+    return [o]
+
+
+def _w_stale_take(w: World, login: Callable, make_resident: Callable) -> list[VagtBytte]:
+    o = _share(w.ra, w.a)
+    VagtTildeling.objects.filter(pk=w.ra.pk).update(resident=w.e)
+    with pytest.raises(KoekkenAllocationError):
+        take_over(o, w.d)
+    assert VagtBytte.objects.get(pk=o.pk).status == B.BORTFALDET
+    return [o]
+
+
+def _w_stale_accept(w: World, login: Callable, make_resident: Callable) -> list[VagtBytte]:
+    o = _share(w.ra, w.a)
+    forslag = propose_trade(o, w.rb, w.b)
+    VagtTildeling.objects.filter(pk=w.ra.pk).update(resident=w.e)
+    with pytest.raises(KoekkenAllocationError):
+        accept_trade(forslag, w.a)
+    assert VagtBytte.objects.get(pk=o.pk).status == B.BORTFALDET
+    return [o]
+
+
+def _w_flag(w: World, login: Callable, make_resident: Callable) -> list[VagtBytte]:
+    o = _share(w.ra, w.a)
+    flag_tildeling(w.ra, w.e, "x")
+    return [o]
+
+
+def _w_override_remove(w: World, login: Callable, make_resident: Callable) -> list[VagtBytte]:
+    o = _share(w.ra, w.a)
+    mgr = make_resident(email="mgr-hurtig@gahk.dk", roles=(Role.KOKKENGRUPPE,))
+    assert login(mgr).post(f"/intern/koekken/gruppe/override/{w.ra.pk}/fjern").status_code == 302
+    assert not VagtBytte.objects.filter(pk=o.pk).exists()
+    return [o]
+
+
+def _w_reconcile(w: World, login: Callable, make_resident: Callable) -> list[VagtBytte]:
+    o = _share(w.ra, w.a)
+    Residency.objects.filter(resident=w.a, year=2042, month=3).delete()
+    assert w.a in reconcile_month(2042, 3).vacated
+    assert not VagtBytte.objects.filter(pk=o.pk).exists()
+    return [o]
+
+
+def _w_fridag(w: World, login: Callable, make_resident: Callable) -> list[VagtBytte]:
+    o = _share(w.rc, w.c)
+    declare_fridag(AV, [VagtRegel.Kind.AFTEN], "Test")
+    assert not VagtBytte.objects.filter(pk=o.pk).exists()
+    return [o]
+
+
+def _w_whole_shift_vacated_row_delete(w: World, login: Callable, make_resident: Callable) -> list[VagtBytte]:
+    """The whole-shift collapse deletes the vacated row and cascades into every OTHER offer ever made on it.
+    A closed offer's post is already archived, so revive it by hand to prove the receiver does it."""
+    old = _share(w.rc, w.c)
+    withdraw_offer(old, w.c)
+    from den_hurtige.models import QuickPost
+
+    QuickPost.objects.filter(pk=old.hurtig_post_id).update(expires_at=timezone.now() + timedelta(days=1))
+    current = _share(w.rc, w.c)
+    take_over_whole(current, w.d)
+    assert not VagtBytte.objects.filter(pk=old.pk).exists()
+    return [old, current]
+
+
+CLOSE_PATHS = [
+    _w_withdraw,
+    _w_take,
+    _w_take_whole,
+    _w_accept,
+    _w_accept_closes_ys_offer,
+    _w_take_closes_other_offers,
+    _w_stale_propose,
+    _w_stale_take,
+    _w_stale_accept,
+    _w_flag,
+    _w_override_remove,
+    _w_reconcile,
+    _w_fridag,
+    _w_whole_shift_vacated_row_delete,
+]
+
+
+@pytest.mark.parametrize("path", CLOSE_PATHS, ids=lambda f: f.__name__.removeprefix("_w_"))
+def test_every_close_path_archives_the_post(
+    path: Callable, w: World, login: Callable, make_resident: Callable
+) -> None:
+    from core.clock import current_datetime
+    from den_hurtige.models import QuickPost
+
+    path(w, login, make_resident)
+    posts = list(QuickPost.objects.filter(channel="koekken"))
+    assert posts
+    for post in posts:  # archived, never deleted
+        assert post.expires_at <= current_datetime(), path.__name__
+        assert post.deleted_at is None
+
+
+def test_force_rerun_cascade_archives_the_post(make_resident: Callable, clock: Callable) -> None:
+    from core.clock import current_datetime
+    from den_hurtige.models import QuickPost
+
+    _periode, _people = _allocated(make_resident, clock)
+    row = _tier_a_row()
+    o = _share(row, row.resident)
+    post_pk = o.hurtig_post_id
+    allocate_month(2042, 3, force=True)
+    assert not VagtBytte.objects.filter(pk=o.pk).exists()
+    assert QuickPost.objects.get(pk=post_pk).expires_at <= current_datetime()
+
+
+def test_archiving_an_expired_or_soft_deleted_post_changes_nothing(w: World) -> None:
+    from den_hurtige.models import QuickPost
+
+    o = _share(w.ra, w.a)
+    past = timezone.now() - timedelta(days=1)
+    QuickPost.objects.filter(pk=o.hurtig_post_id).update(expires_at=past)
+    withdraw_offer(o, w.a)
+    assert QuickPost.objects.get(pk=o.hurtig_post_id).expires_at == past  # already archived: untouched
+
+    o2 = _share(w.ra, w.a)
+    deleted_at = timezone.now()
+    future = timezone.now() + timedelta(days=1)
+    QuickPost.objects.filter(pk=o2.hurtig_post_id).update(deleted_at=deleted_at, expires_at=future)
+    withdraw_offer(o2, w.a)
+    assert QuickPost.objects.get(pk=o2.hurtig_post_id).expires_at == future  # soft-deleted: left alone
+
+
+def test_author_hard_deleting_within_grace_nulls_the_link_and_a_later_close_is_harmless(w: World) -> None:
+    from den_hurtige.models import QuickPost
+
+    o = _share(w.ra, w.a)
+    QuickPost.objects.get().delete()
+    o.refresh_from_db()
+    assert o.hurtig_post_id is None
+    withdraw_offer(o, w.a)  # nothing to archive, nothing breaks
+    take_over(_share(w.ra, w.a), w.e)
+    assert VagtBytte.objects.filter(status=B.OVERTAGET).count() == 1
+
+
+def test_reoffering_after_a_withdrawal_makes_a_new_post(w: World) -> None:
+    from den_hurtige.models import QuickPost
+
+    first = _share(w.ra, w.a)
+    withdraw_offer(first, w.a)
+    second = _share(w.ra, w.a)
+    assert first.hurtig_post_id != second.hurtig_post_id and QuickPost.objects.count() == 2
+    assert _archived(first) and not _archived(second)
+
+
+# ------------------------------------------------------------------------------------- pushes
+
+
+def test_sharing_pushes_once_through_den_hurtige_only(w: World, pushes: list) -> None:
+    for r in (w.a, w.b, w.c, w.d):
+        PushSubscription.objects.create(
+            user=r,
+            endpoint=f"https://example.test/hurtig/{r.pk}",
+            auth="a",
+            p256dh="p",
+            wants_den_hurtige=True,
+            wants_koekken=True,
+        )
+    from den_hurtige.models import ChannelMute
+
+    ChannelMute.objects.create(resident=w.d, channel="koekken")
+    _share(w.ra, w.a)
+    assert len(pushes) == 1  # one Den Hurtige push; nothing on the koekken topic
+    recipients, payload = pushes[0]
+    assert recipients == sorted([w.b.pk, w.c.pk])  # author excluded, muter excluded
+    assert payload["url"] == "/intern/den-hurtige/koekken/"
+    assert payload["head"] == w.a.full_name
+
+
+def test_a_rolled_back_offer_sends_no_push(
+    w: World,
+    monkeypatch: pytest.MonkeyPatch,
+    settings: object,
+    django_capture_on_commit_callbacks: Callable,
+) -> None:
+    from den_hurtige.models import QuickPost
+
+    settings.VAPID_PUBLIC_KEY = settings.VAPID_PRIVATE_KEY = "k"  # type: ignore[attr-defined]
+    settings.VAPID_ADMIN_EMAIL = "drift@gahk.dk"  # type: ignore[attr-defined]
+    PushSubscription.objects.create(
+        user=w.b, endpoint="https://example.test/b", auth="a", p256dh="p", wants_den_hurtige=True
+    )
+    with django_capture_on_commit_callbacks() as rolled_back:
+        with pytest.raises(RuntimeError), transaction.atomic():
+            _share(w.ra, w.a)
+            raise RuntimeError
+    assert rolled_back == [] and not QuickPost.objects.exists()
+    with django_capture_on_commit_callbacks() as committed:
+        _share(w.ra, w.a)
+    assert len(committed) == 1  # control: a committed offer does queue the push
