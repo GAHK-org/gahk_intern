@@ -154,6 +154,19 @@ the same pattern as P3's claim.
 > Bulk closing of several offers or proposals (§5.6) first selects them `FOR UPDATE` in ascending pk
 > order, then updates them. It never runs a bare multi-row `UPDATE`, whose lock order Postgres does
 > not guarantee.
+>
+> **Known limitation (accepted 2026-10-05): reconciliation across months.** The scheduled
+> `reconcile_koekkenvagter` command (and `allocate_koekkenvagter --batch --force`) processes several
+> months inside ONE transaction, taking the level-1 locks for month N, then month N+1, and so on. If live
+> trade proposals span two of the months processed together and an `accept_trade` is racing in, a
+> deadlock is possible (reproduced by the reviewer with a resident holding rows in two months, both
+> offered, each with a cross-month proposal, removed from Residency in both months at once). This is
+> accepted as a rare risk and not fixed for now: it needs a departing resident with live cross-month
+> trades in flight at the exact moment reconciliation runs. The failure mode is safe: Postgres aborts one
+> of the two transactions cleanly, and it can be retried (the scheduled job on its next run, or by hand
+> from Køkkengruppen); no data is corrupted or lost. If it becomes a live problem, either run
+> reconciliation one month per transaction, or lock all months' rows, offers and proposals up front in
+> one combined pass before processing any month.
 
 ### 5.1 Offer and withdraw
 

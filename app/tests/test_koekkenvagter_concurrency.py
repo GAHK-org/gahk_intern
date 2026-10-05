@@ -678,3 +678,57 @@ def test_allocation_delete_vs_accept_trade_crossing_proposals_do_not_deadlock(tw
 
     _crossing_run(tw, delete, FORSLAG_DELETE, q)
     assert not VagtTildeling.objects.filter(pk=tw["rc"].pk).exists()
+
+
+@pytest.mark.parametrize("variant", ["take_over", "flag_tildeling", "override_remove"])
+def test_take_over_whole_historic_offer_cascade_does_not_deadlock(
+    tw: dict[str, Any], make_resident: Callable[..., Resident], variant: str
+) -> None:
+    """Reviewer's 4th deadlock. Deleting the vacated row V also cascades into V's OTHER (historic) offers and
+    their proposals. c offers V, b proposes rb (F_old), c withdraws (F_old lapses), c offers V again, b
+    proposes rb again (F2 > F_old). `take_over_whole` paused right after its level-4 lock used to hold F2
+    only, then reach F_old via the cascade; a writer on rb locks {F_old, F2} in one ascending pass."""
+    a, b, c, d = (tw["people"][n] for n in "abcd")
+    aften = Vagt.objects.create(
+        periode=resolve_periode(date(2042, 3, 14)),
+        date=date(2042, 3, 14),
+        kind=VagtRegel.Kind.AFTEN,
+        headcount=2,
+        duration_minutes=180,
+    )
+    v = VagtTildeling.objects.create(vagt=aften, resident=c, status=T.TILDELT)
+    VagtTildeling.objects.create(vagt=aften, resident=d, status=T.TILDELT)
+    old_offer = offer_tildeling(v, c)
+    f_old = propose_trade(old_offer, tw["rb"], b)
+    withdraw_offer(old_offer, c)
+    assert VagtBytteForslag.objects.get(pk=f_old.pk).status == F.BORTFALDET
+    new_offer = offer_tildeling(v, c)
+    f2 = propose_trade(new_offer, tw["rb"], b)
+    assert f_old.pk < f2.pk
+    rb_offer = offer_tildeling(tw["rb"], b) if variant == "take_over" else None
+
+    t2_call: Callable[[], Any]
+    if variant == "take_over":
+        assert rb_offer is not None
+        t2_call = lambda: take_over(rb_offer, a)  # noqa: E731
+    elif variant == "flag_tildeling":
+        t2_call = lambda: flag_tildeling(tw["rb"], d, "test")  # noqa: E731
+    else:
+        manager = make_resident(email="manager@gahk.dk", roles=(Role.KOKKENGRUPPE,))
+        client = Client()
+        client.force_login(manager)
+        t2_call = lambda: client.post(f"/intern/koekken/gruppe/override/{tw['rb'].pk}/fjern")  # noqa: E731
+
+    paused, resume, t1, o1 = _paused(lambda: take_over_whole(new_offer, d), FORSLAG_LOCK)
+    assert paused.wait(JOIN)
+    t2, o2 = _run_in_thread(t2_call)
+    t2.join(1.5)
+    resume.set()
+    _joined(t1, t2)
+    assert "error" not in o1, o1
+    assert VagtBytte.objects.get(pk=new_offer.pk).status == B.OVERTAGET_HEL
+    assert not VagtBytte.objects.filter(pk=old_offer.pk).exists()  # cascaded with V
+    assert not VagtBytteForslag.objects.filter(status=F.AABEN).exists()
+    # T2 either completed cleanly or was refused cleanly; never a deadlock or an unhandled error.
+    error = o2.get("error")
+    assert error is None or isinstance(error, KoekkenAllocationError), o2

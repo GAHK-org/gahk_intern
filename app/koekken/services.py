@@ -2795,7 +2795,11 @@ def _take(bytte: VagtBytte, by: Resident, *, whole: bool) -> VagtBytte:
                 # shift). Proposals using the vacated row as `modydelse` go with it by cascade (design doc §5.6).
                 # ONE ascending lock of the whole level-4 set first: the offer's proposals plus those using
                 # the partner row or the vacated row as `modydelse` (the latter reached by the delete's cascade).
-                _lock_forslag_for(offer_pks=[offer.pk], row_pks=[row.pk, cast(VagtTildeling, partner).pk])
+                # The delete also cascades into EVERY other offer ever made on the vacated row (any status:
+                # withdrawn, lapsed, ...) and their proposals, so those offers join the same single pass.
+                # Only V's holder ever reaches them, and we hold V, so locking them here is safe.
+                offer_pks = [offer.pk, *VagtBytte.objects.filter(tildeling=row).values_list("pk", flat=True)]
+                _lock_forslag_for(offer_pks=offer_pks, row_pks=[row.pk, cast(VagtTildeling, partner).pk])
                 _close_forslag(VagtBytteForslag.objects.filter(bytte=offer))
                 _close_invalidated_forslag([cast(VagtTildeling, partner)])
                 row.delete()  # (2) the vacated row
