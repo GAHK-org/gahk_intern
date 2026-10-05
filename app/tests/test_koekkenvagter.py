@@ -2338,6 +2338,43 @@ def test_flag_udfoert_upheld_reverses_credit_via_tilbagefoersel_and_preserves_or
     assert anmeldelse.resolved_by == adjudicator
 
 
+def test_flag_uses_the_locked_row_when_status_changed_after_the_callers_read(make_resident: Callable) -> None:
+    year, month = 2052, 6
+    _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
+    worker = make_resident(email="staleworker@gahk.dk")
+    adjudicator = make_resident(email="staleadjudicator@gahk.dk")
+    flagger = make_resident(email="stalereporter@gahk.dk")
+    _place(worker, year, month)
+    allocate_tier_a(year, month)
+    stale = VagtTildeling.objects.get(resident=worker)
+    assert stale.status == VagtTildeling.Status.TILDELT
+    # The resident marks the shift done AFTER the view read `stale` but before the flag locks the row.
+    fresh = VagtTildeling.objects.get(pk=stale.pk)
+    mark_udfoert(fresh, at=marking_window(fresh.vagt)[0])
+
+    anmeldelse = flag_tildeling(stale, flagger, "Ikke gjort.")
+
+    assert anmeldelse.previous_status == VagtTildeling.Status.UDFOERT
+    resolve_anmeldelse(anmeldelse, upheld=True, resolved_by=adjudicator)
+    assert KoekkenPost.objects.filter(resident=worker, kind=KoekkenPost.Kind.TILBAGEFOERSEL).count() == 1
+    assert VagtTildeling.objects.get(pk=stale.pk).status == VagtTildeling.Status.IKKE_UDFOERT
+
+
+def test_flag_of_a_deleted_row_is_a_clean_refusal(make_resident: Callable) -> None:
+    year, month = 2052, 9
+    _build_month(year, month, weekday_capacity=1, weekend_capacity=0)
+    worker = make_resident(email="goneworker@gahk.dk")
+    flagger = make_resident(email="gonereporter@gahk.dk")
+    _place(worker, year, month)
+    allocate_tier_a(year, month)
+    stale = VagtTildeling.objects.get(resident=worker)
+    VagtTildeling.objects.filter(pk=stale.pk).delete()
+
+    with pytest.raises(KoekkenAllocationError):
+        flag_tildeling(stale, flagger)
+    assert not VagtAnmeldelse.objects.exists()
+
+
 def test_flag_tildelt_upheld_writes_no_ledger_entry(make_resident: Callable) -> None:
     """§6's table: a flagged shift that was still TILDELT (nobody ever marked it done) writes
     NOTHING to the ledger when upheld -- there was no credit to reverse. The flag itself still moves

@@ -2020,7 +2020,12 @@ def flag_tildeling(vagt_tildeling: VagtTildeling, flagged_by: Resident, reason: 
         # Lock the row first (see the LOCK ORDER note below), then lapse any open offer on it: a flagged
         # row is hidden from the board, so the offer would otherwise sit as a phantom on the offerer's own
         # list (and survive a dismissal) without anybody being able to take it.
-        lock_tildeling(vagt_tildeling.pk)
+        locked = lock_tildeling(vagt_tildeling.pk)
+        if locked is None:
+            raise KoekkenAllocationError("Vagten findes ikke længere.")
+        # From here on use the LOCKED row, not the caller's pre-lock copy: its status may have changed
+        # (e.g. marked UDFOERT) between the view's read and the lock.
+        vagt_tildeling = locked
         VagtBytte.objects.filter(tildeling=vagt_tildeling, status=VagtBytte.Status.AABEN).update(
             status=VagtBytte.Status.BORTFALDET, closed_at=current_datetime()
         )

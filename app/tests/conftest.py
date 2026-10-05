@@ -8,6 +8,23 @@ from pytest_django.plugin import DjangoDbBlocker
 from residents.models import Resident, RoleAssignment, active_period
 
 
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Fail collection for `django_db(transaction=True)` without `serialized_rollback=True`: such a test
+    flushes the shared DB and leaves nothing to restore it from, silently breaking `--reuse-db`."""
+    offenders = []
+    for item in items:
+        for marker in item.iter_markers("django_db"):
+            if marker.kwargs.get("transaction") and not marker.kwargs.get("serialized_rollback"):
+                offenders.append(item.nodeid)
+                break
+    if offenders:
+        raise pytest.UsageError(
+            "django_db(transaction=True) must be paired with serialized_rollback=True, otherwise the "
+            "shared test DB is not restored and --reuse-db breaks. Offending tests:\n  "
+            + "\n  ".join(offenders)
+        )
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _restore_migration_data_afterwards(
     django_db_setup: None, django_db_blocker: DjangoDbBlocker
@@ -15,7 +32,11 @@ def _restore_migration_data_afterwards(
     """pytest-django runs `transaction=True` tests LAST, and their teardown flush leaves every table
     empty: with `--reuse-db` (this project's default) the NEXT session would then start without the
     migration-seeded rows (workgroups, `VagtRegel`, ...). Put the serialized post-migrate state back
-    once the session is over, so any file may use `transaction=True` without breaking `--reuse-db`."""
+    once the session is over.
+
+    This only works if `connection._test_serialized_contents` exists, which pytest-django populates only
+    when at least one collected test uses `serialized_rollback=True`. So `transaction=True` MUST always
+    be paired with `serialized_rollback=True`; `pytest_collection_modifyitems` below enforces it."""
     yield
     contents = getattr(connection, "_test_serialized_contents", None)
     if contents:

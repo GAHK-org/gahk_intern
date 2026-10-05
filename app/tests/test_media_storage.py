@@ -298,9 +298,10 @@ def test_the_prefix_check_is_silent_on_the_filesystem_backend() -> None:
 # --- deletion waits for the commit (core.files) ----------------------------------------------------
 #
 # These two use plain `django_db` on purpose: the deferral is observable without real commits, and a
-# rolled-back transaction is cheaper than a flush. `transaction=True` is usable project-wide where real
-# commits matter (see tests/test_koekkenvagter_concurrency.py): the migration-seeded rows that its
-# teardown truncates are restored centrally by the session fixture in tests/conftest.py.
+# rolled-back transaction is cheaper than a flush. Where real commits matter use `django_db(transaction=True,
+# serialized_rollback=True)` (see tests/test_koekkenvagter_concurrency.py): the migration-seeded rows that
+# teardown truncates are restored by the session fixture in tests/conftest.py, but ONLY if
+# `serialized_rollback=True` is always paired with `transaction=True` (conftest enforces this at collection).
 
 
 @pytest.mark.django_db
