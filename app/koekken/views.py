@@ -22,8 +22,9 @@ from datetime import date, timedelta
 from django.conf import settings
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
+from django.db import transaction
 from django.db.models import Q
-from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
+from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
@@ -177,12 +178,19 @@ def _bytte_context(request: HttpRequest, *, error: str | None = None) -> dict[st
     offers = services.open_offers(exclude_resident=resident, at=now, regel_lookup=regel_lookup)
     held = services.held_by_vagt(resident, [o.tildeling.vagt_id for o in offers])
     own_offered_ids = services.tildeling_ids_with_open_offer(t.pk for t in held.values())
+    offer_flagged_ids = services.tildeling_ids_with_anmeldelse(o.tildeling_id for o in offers)
     population: dict[tuple[int, int], set[int]] = {}
     board = [
         (
             o,
             services.can_take(
-                o, resident, at=now, regel_lookup=regel_lookup, population=population, held=held
+                o,
+                resident,
+                at=now,
+                regel_lookup=regel_lookup,
+                population=population,
+                held=held,
+                flagged_ids=offer_flagged_ids,
             ),
             services.can_take_whole(
                 o,
@@ -192,6 +200,7 @@ def _bytte_context(request: HttpRequest, *, error: str | None = None) -> dict[st
                 population=population,
                 held=held,
                 offered_ids=own_offered_ids,
+                flagged_ids=offer_flagged_ids,
             ),
         )
         for o in offers
@@ -451,14 +460,19 @@ def override_remove(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     reshuffle, and must go through the flag/adjudicate path instead."""
     if not access.can_manage(request):
         raise PermissionDenied
-    vagt_tildeling = get_object_or_404(VagtTildeling, pk=pk)
-    if vagt_tildeling.status != VagtTildeling.Status.TILDELT:
-        messages.error(
-            request, "Kun en ikke-udført tildeling kan fjernes direkte — brug anmeldelse i stedet."
-        )
-    else:
-        messages.success(request, f"{vagt_tildeling} fjernet.")
-        vagt_tildeling.delete()
+    with transaction.atomic():
+        # Lock the row first (services' LOCK ORDER): the delete cascades into any offer, and a
+        # concurrent take-over holds the row and then asks for that offer. Status is re-read under lock.
+        vagt_tildeling = services.lock_tildeling(pk)
+        if vagt_tildeling is None:
+            raise Http404
+        if vagt_tildeling.status != VagtTildeling.Status.TILDELT:
+            messages.error(
+                request, "Kun en ikke-udført tildeling kan fjernes direkte — brug anmeldelse i stedet."
+            )
+        else:
+            messages.success(request, f"{vagt_tildeling} fjernet.")
+            vagt_tildeling.delete()
     return redirect("koekken:gruppe")
 
 

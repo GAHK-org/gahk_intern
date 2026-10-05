@@ -68,7 +68,8 @@ of one `VagtTildeling` ("I cannot work this; anyone may take it"). Taking an off
 existing `VagtTildeling` row to the taker (pk unchanged), so credit, flags and the tablet follow
 automatically; there is still no unclaim. A completed hand-off (`OVERTAGET`/`OVERTAGET_HEL`) is
 identified by query (`koekken.services.handed_off_tildeling_filter`) and is excluded from the three
-force re-run deletes, so it survives a deliberate re-allocation. Expiry of an unclaimed offer is
+force re-run deletes, so it survives a deliberate re-allocation (the delete locks the candidate rows
+first -- `select_for_update` -- so a concurrent take-over cannot slip past the exclusion). Expiry of an unclaimed offer is
 derived (the shift has started) and never written. Trading (`VagtBytteForslag`) and the Den Hurtige
 post are later steps.
 """

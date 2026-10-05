@@ -391,7 +391,61 @@ def test_withdraw(w: World) -> None:
     assert out.status == B.TRUKKET and out.closed_at
     again = offer_tildeling(w.ra, w.a)  # can be re-offered
     assert again.pk != bytte.pk and again.status == B.AABEN
-    assert _refuses(take_over, bytte, w.e)  # the withdrawn one cannot be taken
+    msg = _refuses(take_over, bytte, w.e)  # the withdrawn one cannot be taken
+    assert "trukket tilbage" in msg and "først" not in msg  # not "someone else got there first"
+
+
+# ------------------------------------------------------- flag history re-checked at take time
+
+
+def _flagged_then_dismissed_offer(w: World, row: VagtTildeling, offerer: Resident) -> VagtBytte:
+    """Offer `row`, flag it (same day, allowed), dismiss the flag: back to TILDELT, offer still AABEN."""
+    bytte = offer_tildeling(row, offerer)
+    flag_tildeling(row, w.e, "x")
+    resolve_anmeldelse(row.anmeldelser.get(), upheld=False, resolved_by=w.b)
+    row.refresh_from_db()
+    assert row.status == T.TILDELT
+    assert VagtBytte.objects.get(pk=bytte.pk).status == B.AABEN
+    return bytte
+
+
+def test_flagged_then_dismissed_offer_is_not_takeable(w: World) -> None:
+    bytte = _flagged_then_dismissed_offer(w, w.ra, w.a)
+    assert not can_take(bytte, w.d)
+    assert not open_offers()
+    assert "anmeldelse" in _refuses(take_over, bytte, w.d)
+    w.ra.refresh_from_db()
+    assert w.ra.resident == w.a and w.ra.anmeldelser.count() == 1  # nothing moved, history intact
+    assert VagtBytte.objects.get(pk=bytte.pk).status == B.BORTFALDET  # the stale offer is cleaned up
+
+
+def test_flagged_then_dismissed_offer_is_not_takeable_whole(w: World) -> None:
+    bytte = _flagged_then_dismissed_offer(w, w.rc, w.c)
+    assert not can_take_whole(bytte, w.d)
+    assert "anmeldelse" in _refuses(take_over_whole, bytte, w.d)
+    w.av.refresh_from_db()
+    assert (w.av.headcount, w.av.duration_minutes) == (2, 180)
+    assert VagtTildeling.objects.filter(pk=w.rc.pk).exists() and w.rc.anmeldelser.count() == 1
+
+
+def test_take_over_integrity_race_gives_clean_refusal(w: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The (vagt, resident) unique constraint is the backstop for a race the locks cannot see (a row
+    inserted by someone else after the in-lock check): a clean refusal, and nothing partially written."""
+    bytte = offer_tildeling(w.ra, w.a)
+    real = services.may_hold
+
+    def conflicting(resident: Resident, vagt: Vagt, **kw: object) -> bool:
+        if resident.pk == w.e.pk:
+            _hold(vagt, w.e)  # the concurrent insert, landing after the existence check
+        return real(resident, vagt, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(services, "may_hold", conflicting)
+    assert "allerede en plads" in _refuses(take_over, bytte, w.e)
+    w.ra.refresh_from_db()
+    assert w.ra.resident == w.a and w.ra.status == T.TILDELT
+    assert VagtBytte.objects.get(pk=bytte.pk).status == B.AABEN
+    assert not VagtBytte.objects.filter(status=B.OVERTAGET).exists()
+    assert VagtTildeling.objects.filter(vagt=w.m1).count() == 1  # the whole attempt rolled back
 
 
 # ------------------------------------------------------------------------------- notifications
@@ -607,6 +661,7 @@ def test_reconciliation_keeps_present_handoff_and_vacates_departed_taker(make_re
             take_over(offer_tildeling(row, row.resident), to)
         return VagtTildeling.objects.get(pk=row.pk)
 
+    first_was_handed_off = first.resident_id != present.pk  # allocation may already have chosen `present`
     first, second = give(first, present), give(second, leaver)
     for r in (present, other):
         _place(r, year, month)  # the real list excludes `leaver`
@@ -617,10 +672,7 @@ def test_reconciliation_keeps_present_handoff_and_vacates_departed_taker(make_re
     assert not VagtTildeling.objects.filter(pk=second.pk, resident=leaver).exists()
     kept = VagtTildeling.objects.get(pk=first.pk)  # present resident's hand-off untouched
     assert kept.resident == present and kept.vagt_id == first.vagt_id
-    assert (
-        kept.byttetilbud.filter(status=B.OVERTAGET, overtaget_af=present).exists()
-        or first.resident_id == present.pk
-    )
+    assert kept.byttetilbud.filter(status=B.OVERTAGET, overtaget_af=present).exists() == first_was_handed_off
 
 
 def test_fridag_removes_offer_and_notifies_offerer_keeps_other_handoff(w: World, pushes: list) -> None:

@@ -39,7 +39,8 @@ resident offers a future `TILDELT` row (`offer_tildeling`); another takes it ove
 MOVES the existing row) or, on a two-person shift, the offerer's partner takes the whole shift
 (`take_over_whole`, which collapses the `Vagt` to `(1, 2d)`). Offers expire when the shift starts, derived
 and never written (`has_started`), so every read goes through it. Completed hand-offs survive a force
-re-run: the three TILDELT deletes exclude `handed_off_tildeling_filter()` inside the DELETE. Every write
+re-run: the three TILDELT deletes first lock the candidate rows (`select_for_update`) and only then
+delete with `handed_off_tildeling_filter()` excluded (see `_delete_replaceable_tildelinger`). Every write
 locks rows, then the Vagt, then the offer (see the comment above `has_started`). Trading and Den
 Hurtige are later steps.
 
@@ -708,10 +709,31 @@ def _fill_leftover_tier_a(
 
 def _delete_replaceable_tildelinger(vagter: Iterable[Vagt]) -> None:
     """The `TILDELT` delete shared by `allocate_tier_a`/`allocate_tier_b`/`allocate_month`: clears the
-    plain `TILDELT` rows on `vagter` but spares completed Amendment 4 hand-offs. The exclusion lives
-    INSIDE the DELETE statement (design doc §5.5) -- never a precomputed id list, which a hand-off
-    committed in between would slip past."""
-    VagtTildeling.objects.filter(vagt__in=vagter, status=VagtTildeling.Status.TILDELT).exclude(
+    plain `TILDELT` rows on `vagter` but spares completed Amendment 4 hand-offs (design doc §5.5).
+
+    **The exclusion alone is NOT race-safe.** Django splits a cascading `.delete()` into several
+    statements: an unlocked SELECT (which is where the exclusion is evaluated), then separate DELETEs
+    by pk list on `VagtAnmeldelse`/`VagtBytte` and finally `VagtTildeling`. A hand-off committed by a
+    concurrent `take_over` after that SELECT would be deleted anyway (and Postgres's row re-check of a
+    concurrently updated row does not re-run a `NOT EXISTS` subquery, so a single DELETE would not help
+    either). So the candidate rows are locked FIRST (`select_for_update`, ascending pk, materialised),
+    then deleted by that locked pk list with the exclusion applied, as a separate statement.
+
+    Why that closes it under READ COMMITTED: each statement takes a fresh snapshot. Once we hold the row
+    locks, a concurrent `take_over` on any of those rows blocks on its own `_lock_tildelinger` until we
+    commit (after which the row is gone and it gets a clean "findes ikke længere"). A hand-off that
+    committed BEFORE our lock was granted is visible to the exclusion statement that runs after it, and
+    a row it updated while we waited is re-checked by the lock query against its new version. Both
+    sides lock `VagtTildeling` rows first, in ascending pk order, so they block rather than deadlock
+    (see the LOCK ORDER comment above `has_started`)."""
+    vagt_list = list(vagter)
+    locked_pks = list(
+        VagtTildeling.objects.select_for_update(of=("self",))
+        .filter(vagt__in=vagt_list, status=VagtTildeling.Status.TILDELT)
+        .order_by("pk")
+        .values_list("pk", flat=True)
+    )  # materialised: the lock is taken here
+    VagtTildeling.objects.filter(pk__in=locked_pks, status=VagtTildeling.Status.TILDELT).exclude(
         handed_off_tildeling_filter()
     ).delete()
 
@@ -1036,7 +1058,8 @@ def allocate_month(year: int, month: int, *, force: bool = False) -> tuple[TierA
     the wrong order silently loses the weekend-compensation mechanic and the avoidance exclusion.
 
     The clear step spares rows moved past `TILDELT` or completed Amendment 4 hand-offs
-    (`handed_off_tildeling_filter`, excluded inside the DELETE statement itself).
+    (`handed_off_tildeling_filter`, applied after the candidate rows are locked -- see
+    `_delete_replaceable_tildelinger`).
 
     Both legs remain callable standalone -- every P1/Amendment 1-3 test calls `allocate_tier_a`
     directly and this wrapper changes nothing about that path; it exists for `allocate_koekkenvagter`
@@ -1312,11 +1335,21 @@ def reconcile_month(year: int, month: int) -> ReconciliationResult:
     real_ids = {r.pk for r in real_population}
 
     with transaction.atomic():
+        # Lock every row about to be vacated FIRST (LOCK ORDER above `has_started`) and re-read it:
+        # the delete cascades into offers, and a concurrent take-over may have moved the row meanwhile.
+        locked = _lock_tildelinger(
+            row.pk
+            for row in existing
+            if row.status == VagtTildeling.Status.TILDELT and row.resident_id not in real_ids
+        )
         vacated: list[Resident] = []
         for row in existing:
-            if row.status == VagtTildeling.Status.TILDELT and row.resident_id not in real_ids:
-                vacated.append(row.resident)
-                row.delete()
+            current = locked.get(row.pk)
+            if current is None or current.status != VagtTildeling.Status.TILDELT:
+                continue
+            if current.resident_id not in real_ids:
+                vacated.append(current.resident)
+                current.delete()
 
         # Re-read occupancy after vacating -- every status counts towards "already has a slot this
         # month" (mirrors allocate_tier_a's survivor handling), so a resident who already holds a row
@@ -2064,9 +2097,12 @@ def resolve_anmeldelse(anmeldelse: VagtAnmeldelse, *, upheld: bool, resolved_by:
 #   (1) the `VagtTildeling` rows involved, via `select_for_update`, in ASCENDING pk order;
 #   (2) the `Vagt` (whole-shift take-over only);
 #   (3) finally the `VagtBytte` row.
-# Never lock the offer before its row. `allocate_month`'s DELETE locks `VagtTildeling` rows and then
-# cascades into `VagtBytte`, so a writer that held an offer and then asked for its row would deadlock
-# against it. Every predicate (`can_offer`, `can_take`, `can_take_whole`) is a pure read with no
+# Never lock the offer before its row. Anything that DELETES `VagtTildeling` rows cascades into
+# `VagtBytte` (offer deleted before the row), so a deleter that does not lock the rows first would
+# hold an offer and then ask for its row while a take-over holds the row and asks for the offer: a
+# deadlock. Every deleter therefore locks the rows first, in the same ascending order
+# (`_delete_replaceable_tildelinger`, `override_remove`, `reconcile_month`, `declare_fridag`), which
+# makes the two sides block on each other instead. Every predicate (`can_offer`, `can_take`, `can_take_whole`) is a pure read with no
 # locking: the services re-check everything after locking.
 # ---------------------------------------------------------------------------------------------------
 
@@ -2112,8 +2148,8 @@ def may_hold(resident: Resident, vagt: Vagt, *, population_ids: set[int] | None 
 def handed_off_tildeling_filter() -> Exists:
     """An `Exists` expression matching every `VagtTildeling` that is a completed Amendment 4 hand-off:
     a `VagtBytte` with status `OVERTAGET`/`OVERTAGET_HEL`/`BYTTET` points at it. Identified by query,
-    never by a flag on the row (design doc §4). Used inside the DELETE of the three force re-run
-    entry points (`.exclude(handed_off_tildeling_filter())`) and by `force_rerun_impact`.
+    never by a flag on the row (design doc §4). Used by the delete of the three force re-run entry points
+    (`_delete_replaceable_tildelinger`, after it has locked the rows) and by `force_rerun_impact`.
 
     Step 2 extends this with accepted `VagtBytteForslag` proposals (`ACCEPTERET`, as `modydelse`).
     """
@@ -2207,12 +2243,18 @@ def can_take(
     regel_lookup: dict[tuple[str, bool], VagtRegel] | None = None,
     population: dict[tuple[int, int], set[int]] | None = None,
     held: dict[int, VagtTildeling] | None = None,
+    flagged_ids: set[int] | None = None,
 ) -> bool:
     """Whether `resident` may take `bytte` over (UI predicate, pure read). False exactly when
     `can_take_whole` is the one that applies: a resident already holding a row on that `Vagt` (the
     offerer's partner) never gets "Tag vagten". `population` is a per-month cache (filled in place);
-    `held` is `resident`'s rows keyed by `vagt_id`."""
+    `held` is `resident`'s rows keyed by `vagt_id`. A row with flag history (any status) is not takeable
+    (design doc §3); `flagged_ids` is an optional precomputed `tildeling_ids_with_anmeldelse`."""
     if resident.pk == bytte.tilbudt_af_id or not _offer_is_live(bytte, at=at, regel_lookup=regel_lookup):
+        return False
+    if flagged_ids is None:
+        flagged_ids = tildeling_ids_with_anmeldelse([bytte.tildeling_id])
+    if bytte.tildeling_id in flagged_ids:
         return False
     vagt = bytte.tildeling.vagt
     if held is None:
@@ -2233,11 +2275,18 @@ def can_take_whole(
     population: dict[tuple[int, int], set[int]] | None = None,
     held: dict[int, VagtTildeling] | None = None,
     offered_ids: set[int] | None = None,
+    flagged_ids: set[int] | None = None,
 ) -> bool:
     """Whether `resident` may take the WHOLE shift through `bytte` (UI predicate, pure read): the
     shift has headcount 2 (read off the `Vagt`'s own snapshot, never `VagtRegel`), `resident` holds
-    the other row on it, that row is `TILDELT`, and it has no open offer of its own."""
+    the other row on it, that row is `TILDELT`, and it has no open offer of its own. The offered row
+    must have no flag history either (`flagged_ids` as in `can_take`): taking the whole shift would
+    delete it, and its history with it."""
     if resident.pk == bytte.tilbudt_af_id or not _offer_is_live(bytte, at=at, regel_lookup=regel_lookup):
+        return False
+    if flagged_ids is None:
+        flagged_ids = tildeling_ids_with_anmeldelse([bytte.tildeling_id])
+    if bytte.tildeling_id in flagged_ids:
         return False
     vagt = bytte.tildeling.vagt
     if vagt.headcount != 2:
@@ -2261,6 +2310,12 @@ def _lock_tildelinger(pks: Iterable[int]) -> dict[int, VagtTildeling]:
     exist are simply absent from the result. `of=("self",)` so no joined table is locked."""
     rows = VagtTildeling.objects.select_for_update(of=("self",)).filter(pk__in=list(pks)).order_by("pk")
     return {row.pk: row for row in rows}
+
+
+def lock_tildeling(pk: int) -> VagtTildeling | None:
+    """Lock one `VagtTildeling` row (lock step 1) for a caller that is about to DELETE it, or None if it
+    is gone. Must run inside `transaction.atomic()`."""
+    return _lock_tildelinger([pk]).get(pk)
 
 
 def _close_invalidated_offers(tildelinger: Iterable[VagtTildeling], *, keep: VagtBytte | None = None) -> None:
@@ -2357,7 +2412,7 @@ def _take(bytte: VagtBytte, by: Resident, *, whole: bool) -> VagtBytte:
             )
         row_pks.append(partner_pk)
 
-    lapsed = False
+    lapsed: str | None = None
     with transaction.atomic():
         locked = _lock_tildelinger(row_pks)  # lock 1: rows, ascending pk
         row = locked.get(bytte.tildeling_id)
@@ -2368,6 +2423,8 @@ def _take(bytte: VagtBytte, by: Resident, *, whole: bool) -> VagtBytte:
         offer = VagtBytte.objects.select_for_update().filter(pk=bytte.pk).first()  # lock 3: the offer
         if offer is None:
             raise KoekkenAllocationError(gone)
+        if offer.status == VagtBytte.Status.TRUKKET:
+            raise KoekkenAllocationError("Tilbuddet er trukket tilbage.")
         if offer.status != VagtBytte.Status.AABEN or offer.tildeling_id != row.pk:
             raise KoekkenAllocationError("Tilbuddet er ikke længere åbent -- nogen andre var først.")
         if has_started(vagt):
@@ -2378,7 +2435,15 @@ def _take(bytte: VagtBytte, by: Resident, *, whole: bool) -> VagtBytte:
             offer.status = VagtBytte.Status.BORTFALDET
             offer.closed_at = current_datetime()
             offer.save(update_fields=["status", "closed_at"])
-            lapsed = True
+            lapsed = "Tilbuddet er bortfaldet: tilbyderen står ikke længere på vagten."
+        elif VagtAnmeldelse.objects.filter(vagt_tildeling=row).exists():
+            # Re-checked at take time (design doc §3), not just at offer time: a row flagged after it
+            # was offered and then dismissed back to TILDELT must not carry its flag history to the taker
+            # (or lose it by cascade in the whole-shift case). The offer lapses, persisted as above.
+            offer.status = VagtBytte.Status.BORTFALDET
+            offer.closed_at = current_datetime()
+            offer.save(update_fields=["status", "closed_at"])
+            lapsed = "Tilbuddet er bortfaldet: vagten har en anmeldelse i sin historik."
         else:
             if by.pk == offer.tilbudt_af_id:
                 raise KoekkenAllocationError("Du kan ikke overtage din egen vagt.")
@@ -2448,7 +2513,7 @@ def _take(bytte: VagtBytte, by: Resident, *, whole: bool) -> VagtBytte:
                     f"{by.full_name} har overtaget hele {vagt}. Du er ikke længere på vagten.",
                 )
     if lapsed:
-        raise KoekkenAllocationError("Tilbuddet er bortfaldet: tilbyderen står ikke længere på vagten.")
+        raise KoekkenAllocationError(lapsed)
     return offer
 
 
@@ -2479,7 +2544,7 @@ def open_offers(
     """Open, unexpired offers, soonest first (date, then chronological shift kind). Expired offers stay
     `AABEN` in the database, so the not-yet-started filter is applied here in Python and EVERY read of
     offers must go through this or `has_started`. Offers whose row is no longer the offerer's own
-    `TILDELT` row are not listed either. `within_days` serves Køkkengruppen's list (14)."""
+    `TILDELT` row, or whose row has flag history in any status, are not listed either. `within_days` serves Køkkengruppen's list (14)."""
     now = at or current_datetime()
     today = timezone.localtime(now).date()
     qs = VagtBytte.objects.filter(
@@ -2487,7 +2552,7 @@ def open_offers(
         tildeling__status=VagtTildeling.Status.TILDELT,
         tildeling__resident=F("tilbudt_af"),
         tildeling__vagt__date__gte=today,
-    )
+    ).exclude(Exists(VagtAnmeldelse.objects.filter(vagt_tildeling=OuterRef("tildeling_id"))))
     if within_days is not None:
         qs = qs.filter(tildeling__vagt__date__lte=today + timedelta(days=within_days))
     if exclude_resident is not None:
@@ -2737,6 +2802,11 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
     year, month = for_date.year, for_date.month
     result = FridagResult()
     with transaction.atomic():
+        # Lock the affected rows first (LOCK ORDER above `has_started`): deleting the `Vagt` cascades into
+        # its rows and their offers, which a concurrent take-over locks in the opposite direction.
+        _lock_tildelinger(
+            VagtTildeling.objects.filter(vagt__in=affected_vagter).order_by("pk").values_list("pk", flat=True)
+        )
         # Resolved INSIDE the atomic block, after both guards above -- `resolve_periode` is a
         # `get_or_create`, and a pure look-ahead call (no `Vagt` rows, no existing `Periode`) must not
         # leave a stray `Periode` behind just by being refused.
