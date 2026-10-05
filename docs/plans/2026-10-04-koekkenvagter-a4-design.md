@@ -1,8 +1,8 @@
 # Design: Køkkenvagter Amendment 4 — hand-off and trading of vagter
 
 **Status: decisions approved 2026-10-04** (stakeholder answers relayed through the coordinating
-session, one question at a time; recorded in §2). **This written document awaits the stakeholder's
-confirmation. Not yet built.** It sits inside `2026-09-21-koekkenvagter-design.md` (architecture,
+session, one question at a time; recorded in §2). **The written document was confirmed by the
+stakeholder on 2026-10-04. Step 0 built (`2aeb05c`); step 1 in implementation.** It sits inside `2026-09-21-koekkenvagter-design.md` (architecture,
 Amendments 1–5), `2026-09-28-koekkenvagter-p2-design.md` (P2) and
 `2026-10-04-koekkenvagter-p3-design.md` (P3). Read those first. This document assumes them.
 
@@ -300,7 +300,7 @@ aftenvagt, a pending trade proposal (step 2), and a Den Hurtige-posted offer (st
 
 | step | contents | target |
 | --- | --- | --- |
-| 0 | **Amendment 5 supplement** (main design doc): fridag removes only the day's shifts, and the report names who is removed. | before step 1 |
+| 0 | **Amendment 5 supplement** (main design doc): fridag removes only the day's shifts, and the report names who is removed. | **Built** (`2aeb05c`) |
 | 1 | `VagtBytte`; offer / withdraw / take-over / whole-shift take-over; `may_hold`; the §5.5 exclusion in the three deletes plus the report line; §6 notifications (take-over rows); §7 UI except trading; Køkkengruppen list; explanation; admin; demo; `erd.md`. | ideally 1 Feb 2027 |
 | 2 | `VagtBytteForslag`; propose / withdraw / decline / accept; the two trade notifications; trade UI. | after step 1 |
 | 3 | Den Hurtige channel, `publish_post`, checkbox, archive-on-close. | after step 2 |

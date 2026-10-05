@@ -9,11 +9,21 @@ Køkkengruppen decision; `roll_forward_koekkenvagter` is the scheduled follow-up
 advances an already-opened period one month at a time."""
 
 import argparse
+from datetime import date
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from koekken.services import KoekkenAllocationError, TierAResult, TierBResult, allocate_batch, allocate_month
+from koekken.services import (
+    KoekkenAllocationError,
+    TierAResult,
+    TierBResult,
+    allocate_batch,
+    allocate_month,
+    batch_month_list,
+    force_rerun_impact,
+    resolve_periode,
+)
 
 
 def _format_line(year: int, month: int, tier_a: TierAResult, tier_b: TierBResult) -> str:
@@ -25,6 +35,13 @@ def _format_line(year: int, month: int, tier_a: TierAResult, tier_b: TierBResult
         f"Tier B -- {len(tier_b.assigned)} tildelt aftenvagt "
         f"({len(tier_b.skipped_avoidance)} fik ekstra tier-A i stedet)."
     )
+
+
+def _impact_text(impact: tuple[int, int] | None) -> str:
+    if impact is None:
+        return ""
+    kept, lapsing = impact
+    return f" {kept} aftalte byttehandler bevaret, {lapsing} åbne tilbud bortfaldet."
 
 
 class Command(BaseCommand):
@@ -58,13 +75,23 @@ class Command(BaseCommand):
 
         lines: list[str] = []
         try:
+            # A refused run raises inside this atomic block, so it rolls back (incl. any resolve_periode).
             with transaction.atomic():
+                impact: dict[tuple[int, int], tuple[int, int]] = {}
+                if force:
+                    # Amendment 4 (§5.5): computed BEFORE allocating -- afterwards the lapsed offers are gone.
+                    months = (
+                        batch_month_list(resolve_periode(date(year, month, 1))) if batch else [(year, month)]
+                    )
+                    impact = {ym: force_rerun_impact(*ym) for ym in months}
                 if batch:
                     for y, m, tier_a, tier_b in allocate_batch(year, month, force=force):
-                        lines.append(_format_line(y, m, tier_a, tier_b))
+                        lines.append(_format_line(y, m, tier_a, tier_b) + _impact_text(impact.get((y, m))))
                 else:
                     tier_a, tier_b = allocate_month(year, month, force=force)
-                    lines.append(_format_line(year, month, tier_a, tier_b))
+                    lines.append(
+                        _format_line(year, month, tier_a, tier_b) + _impact_text(impact.get((year, month)))
+                    )
                 if dry_run:
                     transaction.set_rollback(True)
         except KoekkenAllocationError as exc:

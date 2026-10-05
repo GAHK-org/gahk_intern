@@ -15,7 +15,11 @@ Load-bearing invariants, so a later edit does not undo them by accident:
 
 * **`Vagt` snapshots `headcount` and `duration_minutes` from `VagtRegel` at generation time.** It does
   not FK `VagtRegel`. `VagtRegel` is an officer-editable schedule (the `ak.AkMonthlyCharge` pattern),
-  so editing a rule must not retroactively change a month whose slots already exist.
+  so editing a rule must not retroactively change a month whose slots already exist. One narrow
+  amendment (Amendment 4, design doc §5.3): an accepted whole-shift take-over
+  (`koekken.services.take_over_whole`) is the one operation that may change a generated `Vagt`'s
+  `headcount`/`duration_minutes`, and only from `(2, d)` to `(1, 2d)`. It is recorded by the
+  `OVERTAGET_HEL` `VagtBytte`, and `generate_vagter`'s `get_or_create` never resets it.
 * **`KoekkenPost.delta_minutes` is an `IntegerField` — never float, never `Decimal`.** This ledger
   converts to money at move-out (per the design doc's move-out-penalty decision), so accumulated
   rounding is not acceptable; integer minutes make every balance exact by construction, the same
@@ -58,6 +62,15 @@ backwards into an already-generated month (delete the matching `Vagt` rows and r
 re-allocate — 2026-10-04 supplement) when a
 fridag is declared too late to be caught by generation alone, which the design doc's own arithmetic
 (a periode is allocated ~122 days before it starts) says is the normal case, not an edge case.
+
+**Amendment 4, step 1** (`docs/plans/2026-10-04-koekkenvagter-a4-design.md`) adds `VagtBytte`: one offer
+of one `VagtTildeling` ("I cannot work this; anyone may take it"). Taking an offer over MOVES the
+existing `VagtTildeling` row to the taker (pk unchanged), so credit, flags and the tablet follow
+automatically; there is still no unclaim. A completed hand-off (`OVERTAGET`/`OVERTAGET_HEL`) is
+identified by query (`koekken.services.handed_off_tildeling_filter`) and is excluded from the three
+force re-run deletes, so it survives a deliberate re-allocation. Expiry of an unclaimed offer is
+derived (the shift has started) and never written. Trading (`VagtBytteForslag`) and the Den Hurtige
+post are later steps.
 """
 
 from datetime import date, time
@@ -441,3 +454,55 @@ class Fridag(models.Model):
 
     def __str__(self) -> str:
         return f"{self.get_kind_display()} {self.date:%Y-%m-%d} (fridag)"
+
+
+class VagtBytte(models.Model):
+    """One offer of one `VagtTildeling` -- Amendment 4 (design doc `2026-10-04-koekkenvagter-a4-design.md`).
+    "I cannot work this shift; anyone may take it over." Offering moves nothing: the offerer stays
+    responsible until somebody takes it (`koekken.services.take_over` / `take_over_whole`).
+
+    **Expiry is derived and never written.** An `AABEN` offer whose shift has started is "expired"
+    whenever it is read (`koekken.services.has_started`): not listed, not takeable. It stays `AABEN` in
+    the database; no scheduled task flips it.
+
+    **Rows are moved, not recreated.** A take-over changes `resident` on the existing `VagtTildeling`
+    (its pk survives, and so does this offer as history). The one exception is the whole-shift collapse,
+    which re-points `tildeling` at the partner's surviving row BEFORE deleting the vacated one, so the
+    offer survives as `OVERTAGET_HEL`. `BYTTET` is written only by step 2 (trading) but is defined now
+    so that step needs no choices-only migration.
+    """
+
+    class Status(models.TextChoices):
+        AABEN = "aaben", "Åben"
+        OVERTAGET = "overtaget", "Overtaget"
+        OVERTAGET_HEL = "overtaget_hel", "Hele vagten overtaget"
+        BYTTET = "byttet", "Byttet"
+        TRUKKET = "trukket", "Trukket tilbage"
+        BORTFALDET = "bortfaldet", "Bortfaldet"
+
+    tildeling = models.ForeignKey(VagtTildeling, on_delete=models.CASCADE, related_name="byttetilbud")
+    tilbudt_af = models.ForeignKey(Resident, on_delete=models.CASCADE, related_name="koekken_byttetilbud")
+    status = models.CharField(max_length=15, choices=Status.choices, default=Status.AABEN)
+    overtaget_af = models.ForeignKey(
+        Resident,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="koekken_overtagelser",
+    )
+    created_at = models.DateTimeField(default=timezone.now)
+    closed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            # At most one OPEN offer per assignment -- the VagtAnmeldelse pattern.
+            models.UniqueConstraint(
+                fields=["tildeling"],
+                condition=Q(status="aaben"),
+                name="uniq_vagtbytte_open_per_tildeling",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"Byttetilbud af {self.tildeling} af {self.tilbudt_af.full_name} ({self.get_status_display()})"

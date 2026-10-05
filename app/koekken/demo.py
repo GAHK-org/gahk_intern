@@ -47,18 +47,25 @@ import random
 from collections.abc import Iterator
 from datetime import date, datetime, timedelta
 
+from core.clock import current_date
 from residents.models import Residency, Resident
 
-from .models import KoekkenPost, Periode, Praeference, Vagt, VagtRegel
+from .models import KoekkenPost, Periode, Praeference, Vagt, VagtRegel, VagtTildeling
 from .services import (
+    KoekkenAllocationError,
     allocate_tier_a,
     generate_vagter,
+    held_by_vagt,
+    month_population_ids,
+    offer_tildeling,
     periode_is_allocated,
     post_obligation,
     rebase_to_zero_mean,
     reconcile_month,
     resolve_periode,
     set_preference,
+    take_over,
+    take_over_whole,
 )
 
 # How many residents declare weekday_unavailable for the current periode. Small and fixed rather than
@@ -297,6 +304,71 @@ def _demo_fcfs_tiebreak(residents: list[Resident], periode: Periode, year: int, 
     allocate_tier_a(year, month)
 
 
+def _demo_handoffs(
+    residents: list[Resident], periode: Periode, used_months: set[tuple[int, int]], rng: random.Random
+) -> None:
+    """Amendment 4, step 1: an open offer, a completed take-over and a whole-shift take-over, all
+    through the services (never raw writes) and all on FUTURE shifts of one already-allocated month --
+    an offer on a started shift is refused. Best-effort like every optional scenario here: skips when no
+    month has enough future shifts. The aftenvagt scenario hand-creates its two `TILDELT` rows, because
+    the demo only runs tier A, so aftenvagt are generated but unallocated. Push is a no-op when VAPID is
+    unconfigured, exactly as for `resolve_anmeldelse`."""
+    today = current_date()
+    tier_a_kinds = [VagtRegel.Kind.MORGEN, VagtRegel.Kind.FROKOST]
+    for year, month in sorted(used_months):
+        rows = list(
+            VagtTildeling.objects.filter(
+                vagt__periode=periode,
+                vagt__date__year=year,
+                vagt__date__month=month,
+                vagt__date__gt=today,
+                vagt__kind__in=tier_a_kinds,
+                status=VagtTildeling.Status.TILDELT,
+            )
+            .select_related("vagt", "resident")
+            .order_by("vagt__date", "vagt__kind")
+        )
+        if len(rows) < 2:
+            continue
+        population = month_population_ids(year, month)
+        in_population = [r for r in residents if r.pk in population]
+        if len(in_population) < 3:
+            continue
+        try:
+            offer_tildeling(rows[0], rows[0].resident)  # left open
+            handed = rows[1]
+            held = {r.pk: held_by_vagt(r, [handed.vagt_id]) for r in in_population}
+            takers = [
+                r for r in in_population if r.pk != handed.resident_id and handed.vagt_id not in held[r.pk]
+            ]
+            if takers:
+                take_over(offer_tildeling(handed, handed.resident), rng.choice(takers))
+
+            aften = list(
+                Vagt.objects.filter(
+                    periode=periode,
+                    date__year=year,
+                    date__month=month,
+                    date__gt=today,
+                    kind=VagtRegel.Kind.AFTEN,
+                    headcount=2,
+                    tildelinger__isnull=True,
+                ).order_by("date")
+            )
+            weekday_aften = [v for v in aften if v.date.weekday() < 5]
+            if weekday_aften:
+                vagt = weekday_aften[0]
+                offerer, partner = rng.sample(in_population, k=2)
+                offered = VagtTildeling.objects.create(
+                    vagt=vagt, resident=offerer, status=VagtTildeling.Status.TILDELT
+                )
+                VagtTildeling.objects.create(vagt=vagt, resident=partner, status=VagtTildeling.Status.TILDELT)
+                take_over_whole(offer_tildeling(offered, offerer), partner)
+        except KoekkenAllocationError:
+            continue
+        return
+
+
 def _seed_launch_balances(residents: list[Resident], periode: Periode) -> None:
     pool = residents[: len(LAUNCH_BALANCES_HOURS)]
     entries = [
@@ -382,6 +454,9 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
     tiebreak_months = _next_unused_months(periode, used_months, 1)
     if tiebreak_months:
         _demo_fcfs_tiebreak(residents, periode, *tiebreak_months[0])
+
+    # Amendment 4, step 1: hand-offs on future shifts of an already-allocated month (best-effort).
+    _demo_handoffs(residents, periode, used_months, rng)
 
     # Deliberately LAST: tier-A allocation orders by projected balance, so seeding STARTSALDO any
     # earlier would hand the FCFS-tiebreak pair (usually residents[0] and [1], who carry launch

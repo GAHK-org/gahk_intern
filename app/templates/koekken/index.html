@@ -3,7 +3,8 @@
   Resident surface: my shifts (upcoming/past), my balance against the house average, and the
   flaggable "seneste vagter" list -- P2 design doc §7.
 
-  `upcoming`/`past` are (tildeling, flagged_by_name) tuples -- design doc §6: "flagger identity is
+  `past` is a list of (tildeling, flagged_by_name) tuples; "Kommende vagter" moved into the
+  koekken/_bytte.html partial (Amendment 4), whose `upcoming` rows carry the same flagged_by name -- design doc §6: "flagger identity is
   fully visible, including to the flagged resident" (F3). `flagged_by_name` is only set when the row
   is currently showing a flag's consequence (open, or upheld); see koekken.services.flagged_by_names.
 {% endcomment %}
@@ -36,7 +37,7 @@
       hidden entirely (not shown with a "not set up on the server" message) when no VAPID keys are
       configured.
     {% endcomment %}
-    {% include "core/_push_bar.html" with topic="koekken" url_name="koekken:save_subscription" on_label="Få besked om afgørelser" success_text="Du får nu besked, hvis en anmeldelse mod dig bliver opretholdt." off_text="Beskeder om køkkenvagter er slået fra på denne enhed." %}
+    {% include "core/_push_bar.html" with topic="koekken" url_name="koekken:save_subscription" on_label="Få besked om dine vagter" success_text="Du får nu besked, når nogen overtager en vagt fra dig, eller hvis en anmeldelse mod dig bliver opretholdt." off_text="Beskeder om køkkenvagter er slået fra på denne enhed." %}
   {% endif %}
 
   {% if needs_to_declare %}
@@ -53,24 +54,9 @@
     <span class="l">Husets gennemsnit</span><span class="r">{{ house_mean_hours }} t</span>
   </div>
 
-  <div class="grid2" style="margin-top:16px">
-    <div class="card-flat">
-      <div class="card-head"><h2>Kommende vagter</h2></div>
-      <div class="card-pad">
-        {% if upcoming %}
-          <ul>
-            {% for t, flagged_by in upcoming %}
-              <li>
-                {{ t.vagt.date|date:"D j. F" }} — {{ t.vagt.get_kind_display }} ({{ t.get_status_display }})
-                {% if flagged_by %}<span class="muted"> — anmeldt af {{ flagged_by }}</span>{% endif %}
-              </li>
-            {% endfor %}
-          </ul>
-        {% else %}
-          <p class="muted">Ingen kommende vagter tildelt endnu.</p>
-        {% endif %}
-      </div>
-    </div>
+  {% include "koekken/_bytte.html" %}
+
+  <div style="margin-top:16px">
     <div class="card-flat">
       <div class="card-head"><h2>Tidligere vagter</h2></div>
       <div class="card-pad">

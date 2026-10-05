@@ -16,24 +16,34 @@ The kitchen tablet (`idag`/`marker_udfoert`) is the one pair of views that does 
 resident on kitchen duty has not logged in, they tapped their own name off a printed-looking list.
 """
 
+from collections.abc import Callable
 from datetime import date, timedelta
 
 from django.conf import settings
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
+from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from core import push
-from core.clock import current_date
+from core.clock import current_date, current_datetime
 from core.exports import csv_or_xlsx_response
 from residents.models import Resident
 from residents.permissions import current_resident
 
 from . import access, services
 from .forms import AllokeringForm, AnmeldelseForm, OverrideAssignForm, PraeferenceForm
-from .models import Praeference, PraeferenceDag, Vagt, VagtAnmeldelse, VagtRegel, VagtTildeling
+from .models import (
+    Praeference,
+    PraeferenceDag,
+    Vagt,
+    VagtAnmeldelse,
+    VagtBytte,
+    VagtRegel,
+    VagtTildeling,
+)
 
 RECENT_DAYS = 14  # how far back the resident-facing "seneste vagter" (flaggable) list looks
 
@@ -47,14 +57,13 @@ def _resident_context(request: HttpRequest) -> dict[str, object]:
     one)."""
     resident = current_resident(request)
     today = current_date()
-    tildelinger = list(services.resident_tildelinger(resident))
+    tildelinger = [t for t in services.resident_tildelinger(resident) if t.vagt.date < today]
     flagged_by = services.flagged_by_names(tildelinger)  # F3: flagger identity, resident-facing too
     balance_minutes = services.balance_for(resident)
     house_mean_minutes = services.house_mean()
     return {
         "resident": resident,
-        "upcoming": [(t, flagged_by.get(t.pk)) for t in tildelinger if t.vagt.date >= today],
-        "past": [(t, flagged_by.get(t.pk)) for t in tildelinger if t.vagt.date < today],
+        "past": [(t, flagged_by.get(t.pk)) for t in tildelinger],
         "balance_minutes": balance_minutes,
         "balance_hours": round(balance_minutes / 60, 1),
         "house_mean_minutes": house_mean_minutes,
@@ -103,9 +112,97 @@ def _recent_context(request: HttpRequest) -> dict[str, object]:
     }
 
 
+def _bytte_context(request: HttpRequest, *, error: str | None = None) -> dict[str, object]:
+    """The shared builder for `_bytte.html` -- Amendment 4 step 1 (design doc §7): "Mine kommende
+    vagter" (this resident's future rows, with their offer state) and "Vagter til overtagelse" (everyone
+    else's open, unexpired offers). Rendered by the full index page AND by every offer/withdraw/take POST,
+    which re-render the partial with `error` set when the service refused (never the messages framework).
+
+    Every predicate input is batched, so the query count does not grow with the number of rows: flagged
+    ids, open-offer ids, hand-off labels, the viewer's own rows, one population lookup per month and a
+    single `vagt_regel_lookup()`.
+    """
+    resident = current_resident(request)
+    today = current_date()
+    regel_lookup = services.vagt_regel_lookup()
+    rows = [t for t in services.resident_tildelinger(resident) if t.vagt.date >= today]
+    row_ids = [t.pk for t in rows]
+    flagged_by = services.flagged_by_names(rows)  # F3
+    flagged_ids = services.tildeling_ids_with_anmeldelse(row_ids)
+    open_by_row: dict[int, VagtBytte] = {}
+    handoff_labels: dict[int, str] = {}
+    for bytte in (
+        VagtBytte.objects.filter(tildeling_id__in=row_ids)
+        .filter(
+            Q(status=VagtBytte.Status.AABEN)
+            | Q(
+                status__in=[VagtBytte.Status.OVERTAGET, VagtBytte.Status.OVERTAGET_HEL],
+                overtaget_af=resident,
+            )
+        )
+        .select_related("tilbudt_af")
+        .order_by("-created_at", "-pk")
+    ):
+        if bytte.status == VagtBytte.Status.AABEN:
+            open_by_row.setdefault(bytte.tildeling_id, bytte)
+        elif bytte.status == VagtBytte.Status.OVERTAGET_HEL:
+            handoff_labels.setdefault(bytte.tildeling_id, "hele vagten")
+        else:
+            handoff_labels.setdefault(bytte.tildeling_id, f"overtaget fra {bytte.tilbudt_af.full_name}")
+    now = current_datetime()
+    # An open offer on a started shift is expired: shown as nothing (derived, never written).
+    live_offer_ids = {
+        t.pk
+        for t in rows
+        if t.pk in open_by_row and not services.has_started(t.vagt, at=now, regel_lookup=regel_lookup)
+    }
+    upcoming = [
+        (
+            t,
+            flagged_by.get(t.pk),
+            open_by_row[t.pk] if t.pk in live_offer_ids else None,
+            services.can_offer(
+                t,
+                resident,
+                at=now,
+                regel_lookup=regel_lookup,
+                flagged_ids=flagged_ids,
+                offered_ids=set(open_by_row),
+            ),
+            handoff_labels.get(t.pk),
+        )
+        for t in rows
+    ]
+
+    offers = services.open_offers(exclude_resident=resident, at=now, regel_lookup=regel_lookup)
+    held = services.held_by_vagt(resident, [o.tildeling.vagt_id for o in offers])
+    own_offered_ids = services.tildeling_ids_with_open_offer(t.pk for t in held.values())
+    population: dict[tuple[int, int], set[int]] = {}
+    board = [
+        (
+            o,
+            services.can_take(
+                o, resident, at=now, regel_lookup=regel_lookup, population=population, held=held
+            ),
+            services.can_take_whole(
+                o,
+                resident,
+                at=now,
+                regel_lookup=regel_lookup,
+                population=population,
+                held=held,
+                offered_ids=own_offered_ids,
+            ),
+        )
+        for o in offers
+    ]
+    return {"upcoming": upcoming, "board": board, "error": error}
+
+
 @access.access_required
 def index(request: HttpRequest) -> HttpResponse:
     context = _resident_context(request)
+    context.update(_bytte_context(request))
     context.update(_recent_context(request))
     return render(request, "koekken/index.html", context)
 
@@ -125,6 +222,50 @@ def flag_vagt(request: HttpRequest, pk: int) -> HttpResponse:
     reason = form.cleaned_data["reason"] if form.is_valid() else ""
     services.flag_tildeling(vagt_tildeling, current_resident(request), reason)
     return render(request, "koekken/_recent.html", _recent_context(request))
+
+
+def _bytte_response(request: HttpRequest, action: Callable[[Resident], object]) -> HttpResponse:
+    """Run one hand-off service call and re-render the partial. A business refusal
+    (`KoekkenAllocationError`) renders inside the partial with status 200 -- P2 §10, never the messages
+    framework; authorization failures are raised as `PermissionDenied` by the callers, before this."""
+    error: str | None = None
+    try:
+        action(current_resident(request))
+    except services.KoekkenAllocationError as exc:
+        error = str(exc)
+    return render(request, "koekken/_bytte.html", _bytte_context(request, error=error))
+
+
+@access.access_required
+@require_POST
+def tilbyd_vagt(request: HttpRequest, pk: int) -> HttpResponse:
+    tildeling = get_object_or_404(VagtTildeling, pk=pk)
+    if tildeling.resident_id != current_resident(request).pk:
+        raise PermissionDenied
+    return _bytte_response(request, lambda resident: services.offer_tildeling(tildeling, resident))
+
+
+@access.access_required
+@require_POST
+def traek_tilbud_tilbage(request: HttpRequest, pk: int) -> HttpResponse:
+    bytte = get_object_or_404(VagtBytte, pk=pk)
+    if bytte.tilbudt_af_id != current_resident(request).pk:
+        raise PermissionDenied
+    return _bytte_response(request, lambda resident: services.withdraw_offer(bytte, resident))
+
+
+@access.access_required
+@require_POST
+def tag_vagt(request: HttpRequest, pk: int) -> HttpResponse:
+    bytte = get_object_or_404(VagtBytte, pk=pk)
+    return _bytte_response(request, lambda resident: services.take_over(bytte, resident))
+
+
+@access.access_required
+@require_POST
+def tag_hele_vagten(request: HttpRequest, pk: int) -> HttpResponse:
+    bytte = get_object_or_404(VagtBytte, pk=pk)
+    return _bytte_response(request, lambda resident: services.take_over_whole(bytte, resident))
 
 
 @require_POST
@@ -224,6 +365,7 @@ def gruppe(request: HttpRequest) -> HttpResponse:
         {
             "allokering_form": AllokeringForm(),
             "override_form": OverrideAssignForm(),
+            "open_offers_soon": services.open_offers(within_days=14),
         }
     )
     return render(request, "koekken/gruppe.html", context)
@@ -262,16 +404,20 @@ def allokering(request: HttpRequest) -> HttpResponseRedirect:
         messages.error(request, "Ugyldig måned.")
         return redirect("koekken:gruppe")
     year, month, force = form.cleaned_data["year"], form.cleaned_data["month"], form.cleaned_data["force"]
+    # Computed BEFORE the re-run (Amendment 4, §5.5): afterwards the lapsed offers are gone.
+    kept, lapsing = services.force_rerun_impact(year, month) if force else (0, 0)
     try:
         tier_a, tier_b = services.allocate_month(year, month, force=force)
     except services.KoekkenAllocationError as exc:
         messages.error(request, str(exc))
     else:
-        messages.success(
-            request,
+        text = (
             f"{year}-{month:02d}: tier A — {len(tier_a.weekend_assigned) + len(tier_a.weekday_assigned)} "
-            f"tildelt, {len(tier_a.unassigned)} uden vagt. Tier B — {len(tier_b.assigned)} tildelt.",
+            f"tildelt, {len(tier_a.unassigned)} uden vagt. Tier B — {len(tier_b.assigned)} tildelt."
         )
+        if force:
+            text += f" {kept} aftalte byttehandler bevaret, {lapsing} åbne tilbud bortfaldet."
+        messages.success(request, text)
     return redirect("koekken:gruppe")
 
 

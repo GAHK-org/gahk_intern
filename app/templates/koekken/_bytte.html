@@ -1,0 +1,93 @@
+{% comment %}
+  Amendment 4 step 1 (design doc §7): "Mine kommende vagter" plus "Vagter til overtagelse". Rendered by
+  both koekken/index.html and the htmx swap after every offer/withdraw/take POST
+  (koekken.views._bytte_context), so the two can never disagree. P2 §10 conventions: a refusal renders
+  INSIDE this partial (`error`), never through the messages framework; an unavailable action's button is
+  ABSENT, never disabled -- the predicates (services.can_offer/can_take/can_take_whole) decide per row.
+
+  `upcoming` is (tildeling, flagged_by_name, open_offer_or_None, can_offer, handoff_label) tuples.
+  `board` is (bytte, can_take, can_take_whole) triples.
+  The whole-shift hours are 2 x the shift's own duration: widthratio computes duration / 30 (and duration / 60 for the shift's own hours).
+{% endcomment %}
+<div id="koekken-bytte">
+  {% if error %}
+    <p class="card" role="alert" style="border-color:#b3261e">{{ error }}</p>
+  {% endif %}
+  <div class="grid2" style="margin-top:16px">
+    <div class="card-flat">
+      <div class="card-head"><h2>Mine kommende vagter</h2></div>
+      <div class="card-pad">
+        {% if upcoming %}
+          <ul>
+            {% for t, flagged_by, open_offer, can_offer, handoff_label in upcoming %}
+              <li>
+                {{ t.vagt.date|date:"D j. F" }} — {{ t.vagt.get_kind_display }} ({{ t.get_status_display }})
+                {% if handoff_label %}<span class="muted"> — {{ handoff_label }}</span>{% endif %}
+                {% if flagged_by %}<span class="muted"> — anmeldt af {{ flagged_by }}</span>{% endif %}
+                {% if open_offer %}
+                  <span class="muted"> — Tilbudt — ingen har taget den endnu</span>
+                  <form method="post" action="{% url 'koekken:traek_tilbud_tilbage' open_offer.pk %}"
+                        hx-post="{% url 'koekken:traek_tilbud_tilbage' open_offer.pk %}"
+                        hx-target="#koekken-bytte" hx-swap="outerHTML" style="display:inline">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-secondary">Træk tilbud tilbage</button>
+                  </form>
+                {% elif can_offer %}
+                  <form method="post" action="{% url 'koekken:tilbyd_vagt' t.pk %}"
+                        hx-post="{% url 'koekken:tilbyd_vagt' t.pk %}"
+                        hx-target="#koekken-bytte" hx-swap="outerHTML"
+                        hx-confirm="Du er stadig ansvarlig for vagten, indtil nogen tager den."
+                        style="display:inline">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-secondary">Tilbyd vagten</button>
+                  </form>
+                {% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="muted">Ingen kommende vagter tildelt endnu.</p>
+        {% endif %}
+      </div>
+    </div>
+    <div class="card-flat">
+      <div class="card-head"><h2>Vagter til overtagelse</h2></div>
+      <div class="card-pad">
+        {% if board %}
+          <ul>
+            {% for bytte, can_take, can_take_whole in board %}
+              <li>
+                {{ bytte.tildeling.vagt.date|date:"D j. F" }} — {{ bytte.tildeling.vagt.get_kind_display }},
+                {% widthratio bytte.tildeling.vagt.duration_minutes 60 1 %} t
+                <span class="muted"> — tilbudt af {{ bytte.tilbudt_af.full_name }}</span>
+                {% if can_take %}
+                  <form method="post" action="{% url 'koekken:tag_vagt' bytte.pk %}"
+                        hx-post="{% url 'koekken:tag_vagt' bytte.pk %}"
+                        hx-target="#koekken-bytte" hx-swap="outerHTML"
+                        hx-confirm="Vagten bliver din, og du er ansvarlig for den."
+                        style="display:inline">
+                    {% csrf_token %}
+                    <button type="submit" class="btn">Tag vagten</button>
+                  </form>
+                {% endif %}
+                {% if can_take_whole %}
+                  {% widthratio bytte.tildeling.vagt.duration_minutes 30 1 as hele_timer %}
+                  <form method="post" action="{% url 'koekken:tag_hele_vagten' bytte.pk %}"
+                        hx-post="{% url 'koekken:tag_hele_vagten' bytte.pk %}"
+                        hx-target="#koekken-bytte" hx-swap="outerHTML"
+                        hx-confirm="Du overtager hele vagten og er alene ansvarlig for den. Du får kreditten for begge pladser ({{ hele_timer }} t)."
+                        style="display:inline">
+                    {% csrf_token %}
+                    <button type="submit" class="btn">Tag hele vagten ({{ hele_timer }} t)</button>
+                  </form>
+                {% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="muted">Ingen vagter til overtagelse lige nu.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>

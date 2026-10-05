@@ -34,6 +34,15 @@ resident living inside SOMMER has the following Efterår as their preference "ho
 (`_preference_home_periode`/`_preference_home_periode_pure`). `in_preference_window` also stops missing
 Efterår's 24-30 June window (a pre-existing bug, see its docstring).
 
+**Amendment 4, step 1** (`docs/plans/2026-10-04-koekkenvagter-a4-design.md`): hand-off of vagter. A
+resident offers a future `TILDELT` row (`offer_tildeling`); another takes it over (`take_over`, which
+MOVES the existing row) or, on a two-person shift, the offerer's partner takes the whole shift
+(`take_over_whole`, which collapses the `Vagt` to `(1, 2d)`). Offers expire when the shift starts, derived
+and never written (`has_started`), so every read goes through it. Completed hand-offs survive a force
+re-run: the three TILDELT deletes exclude `handed_off_tildeling_filter()` inside the DELETE. Every write
+locks rows, then the Vagt, then the offer (see the comment above `has_started`). Trading and Den
+Hurtige are later steps.
+
 **Amendments 2 and 3 in one paragraph:** the look-ahead window Amendment 1 allocates into has no
 real `Residency` list to draw on (nothing in this codebase ever creates one more than a month
 ahead), so `_resolve_population` projects one in memory -- the most recent published list at or
@@ -69,9 +78,10 @@ from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
+from typing import cast
 
-from django.db import transaction
-from django.db.models import Count, F, Q, QuerySet, Sum
+from django.db import IntegrityError, transaction
+from django.db.models import Count, Exists, F, OuterRef, Q, QuerySet, Sum
 from django.utils import timezone
 
 from core.clock import current_date, current_datetime
@@ -86,6 +96,7 @@ from .models import (
     PraeferenceDag,
     Vagt,
     VagtAnmeldelse,
+    VagtBytte,
     VagtRegel,
     VagtTildeling,
 )
@@ -695,6 +706,16 @@ def _fill_leftover_tier_a(
                     result.unassigned.remove(resident)
 
 
+def _delete_replaceable_tildelinger(vagter: Iterable[Vagt]) -> None:
+    """The `TILDELT` delete shared by `allocate_tier_a`/`allocate_tier_b`/`allocate_month`: clears the
+    plain `TILDELT` rows on `vagter` but spares completed Amendment 4 hand-offs. The exclusion lives
+    INSIDE the DELETE statement (design doc §5.5) -- never a precomputed id list, which a hand-off
+    committed in between would slip past."""
+    VagtTildeling.objects.filter(vagt__in=vagter, status=VagtTildeling.Status.TILDELT).exclude(
+        handed_off_tildeling_filter()
+    ).delete()
+
+
 def allocate_tier_a(year: int, month: int, *, force: bool = False, _skip_clear: bool = False) -> TierAResult:
     """Tier-A (morgen + frokost) allocation for one calendar month — design doc "Allocation", step 1,
     as amended by Amendment 1 (A1.1 FCFS tiebreak, A1.2 look-ahead) and Amendment 2 (A2.2 population
@@ -733,7 +754,8 @@ def allocate_tier_a(year: int, month: int, *, force: bool = False, _skip_clear: 
     Idempotent (given `force=True` on a re-run), including across membership/ranking changes between
     runs: any existing `TILDELT` assignment on this month's tier-A `Vagt` rows is cleared and
     recomputed from current (projected) balances before writing. Assignments already moved past
-    `TILDELT` (self-reported or flagged — P2) are never touched or overwritten — but they DO still
+    `TILDELT` (self-reported or flagged — P2) or completed Amendment 4 hand-offs are never touched or
+    overwritten (rows moved past `TILDELT` or completed Amendment 4 hand-offs survive) — but they DO still
     occupy their vagt's headcount and their holder is excluded from this run's candidate population,
     so a re-run cannot try to hand them a second row (a `UniqueViolation` on `(vagt, resident)`) or
     silently exceed a vagt's headcount by recomputing capacity as if those rows didn't exist. Both the
@@ -792,7 +814,7 @@ def allocate_tier_a(year: int, month: int, *, force: bool = False, _skip_clear: 
 
     with transaction.atomic():
         if not _skip_clear:
-            VagtTildeling.objects.filter(vagt__in=vagter, status=VagtTildeling.Status.TILDELT).delete()
+            _delete_replaceable_tildelinger(vagter)
 
         # Rows that survived the delete above (self-reported/flagged, P2) still occupy headcount and
         # must not be handed a second row this month — see the docstring above.
@@ -893,8 +915,8 @@ def allocate_tier_b(year: int, month: int, *, force: bool = False, _skip_clear: 
     real operation, so an AFTEN-less month here is a deliberate test fixture, not a real outcome.
 
     Idempotent the same way `allocate_tier_a` is: refuses to re-run over existing `TILDELT` rows
-    unless `force=True`, and any row already moved past `TILDELT` (self-reported/flagged) survives a
-    re-run untouched and still occupies its vagt's headcount.
+    unless `force=True`, and any row already moved past `TILDELT` (self-reported/flagged) or completed
+    Amendment 4 hand-off survives a re-run untouched and still occupies its vagt's headcount.
 
     `_skip_clear` is private, used only by `allocate_month` -- see `allocate_tier_a`'s docstring for
     what it does and why; the same note applies here verbatim.
@@ -942,7 +964,7 @@ def allocate_tier_b(year: int, month: int, *, force: bool = False, _skip_clear: 
 
     with transaction.atomic():
         if not _skip_clear:
-            VagtTildeling.objects.filter(vagt__in=vagter, status=VagtTildeling.Status.TILDELT).delete()
+            _delete_replaceable_tildelinger(vagter)
 
         # F2: projected balances (and declared_at/day-preferences, for the same reason) computed
         # AFTER the delete above, exactly mirroring `allocate_tier_a`'s identical fix (Amendment 1,
@@ -1012,6 +1034,9 @@ def allocate_month(year: int, month: int, *, force: bool = False) -> tuple[TierA
     pass becomes: tier-A, then tier-B, in one run, with tier-A's outcomes feeding tier-B's ordering".
     This ordering is load-bearing (`allocate_tier_b`'s docstring); calling the two legs separately in
     the wrong order silently loses the weekend-compensation mechanic and the avoidance exclusion.
+
+    The clear step spares rows moved past `TILDELT` or completed Amendment 4 hand-offs
+    (`handed_off_tildeling_filter`, excluded inside the DELETE statement itself).
 
     Both legs remain callable standalone -- every P1/Amendment 1-3 test calls `allocate_tier_a`
     directly and this wrapper changes nothing about that path; it exists for `allocate_koekkenvagter`
@@ -1105,7 +1130,7 @@ def allocate_month(year: int, month: int, *, force: bool = False) -> tuple[TierA
         )
 
     with transaction.atomic():
-        VagtTildeling.objects.filter(vagt__in=month_vagter, status=VagtTildeling.Status.TILDELT).delete()
+        _delete_replaceable_tildelinger(month_vagter)
         tier_a = allocate_tier_a(year, month, force=True, _skip_clear=True)
         tier_b = allocate_tier_b(year, month, force=True, _skip_clear=True)
     return tier_a, tier_b
@@ -1177,13 +1202,19 @@ def allocate_batch(
         )
 
     periode = resolve_periode(date(year, month, 1))
+    return [(y, m, *allocate_month(y, m, force=force)) for y, m in batch_month_list(periode)]
+
+
+def batch_month_list(periode: Periode) -> list[tuple[int, int]]:
+    """The (year, month) pairs `allocate_batch` allocates for `periode`: its first three months,
+    clamped to `periode.end_date` (A2.8). Extracted so the management command can report
+    `force_rerun_impact` per month before allocating."""
     months: list[tuple[int, int]] = []
     cursor = periode.start_date
     while cursor <= periode.end_date and len(months) < 3:
         months.append((cursor.year, cursor.month))
         cursor = date(cursor.year + (1 if cursor.month == 12 else 0), cursor.month % 12 + 1, 1)
-
-    return [(y, m, *allocate_month(y, m, force=force)) for y, m in months]
+    return months
 
 
 def reconcile_month(year: int, month: int) -> ReconciliationResult:
@@ -2024,6 +2055,472 @@ def resolve_anmeldelse(anmeldelse: VagtAnmeldelse, *, upheld: bool, resolved_by:
     anmeldelse.save(update_fields=["status", "resolved_by", "resolved_at"])
     vagt_tildeling.save(update_fields=["status"])
     return anmeldelse
+
+
+# ---------------------------------------------------------------------------------------------------
+# Amendment 4, step 1: hand-off of vagter (`VagtBytte`). Design doc `2026-10-04-koekkenvagter-a4-design.md`.
+#
+# LOCK ORDER (critical): every write below locks, in this order and never another,
+#   (1) the `VagtTildeling` rows involved, via `select_for_update`, in ASCENDING pk order;
+#   (2) the `Vagt` (whole-shift take-over only);
+#   (3) finally the `VagtBytte` row.
+# Never lock the offer before its row. `allocate_month`'s DELETE locks `VagtTildeling` rows and then
+# cascades into `VagtBytte`, so a writer that held an offer and then asked for its row would deadlock
+# against it. Every predicate (`can_offer`, `can_take`, `can_take_whole`) is a pure read with no
+# locking: the services re-check everything after locking.
+# ---------------------------------------------------------------------------------------------------
+
+_HANDED_OFF_STATUSES = [
+    VagtBytte.Status.OVERTAGET,
+    VagtBytte.Status.OVERTAGET_HEL,
+    VagtBytte.Status.BYTTET,
+]
+
+
+def has_started(
+    vagt: Vagt, *, at: datetime | None = None, regel_lookup: dict[tuple[str, bool], VagtRegel] | None = None
+) -> bool:
+    """Whether `vagt`'s shift has started -- the moment an open offer expires (design doc §3/§4). The
+    start is read live off `VagtRegel.start_time`, via `marking_window`'s opening time. Expiry is
+    derived and never written, so every read of an open offer must go through this."""
+    return (at or current_datetime()) >= marking_window(vagt, regel_lookup=regel_lookup)[0]
+
+
+def month_population_ids(year: int, month: int) -> set[int]:
+    """The ids of everyone in (year, month)'s population (real `Residency` list, or the A2.2
+    projection) -- the batched input of `may_hold`."""
+    return {r.pk for r in _resolve_population(year, month)}
+
+
+def may_hold(resident: Resident, vagt: Vagt, *, population_ids: set[int] | None = None) -> bool:
+    """Whether `resident` may hold `vagt`: in that month's population, and not moved out before the
+    shift date (design doc §3). Deliberately NOT checked: `weekday_unavailable`, the avoidance
+    pattern, the 2x cap, away ranges -- those limit what the allocator may impose, not what a
+    resident may choose.
+
+    `population_ids` is an optional precomputed `month_population_ids` for batching.
+
+    **P3 step 3's `claim_vagt` must reuse this** and never write its own copy of the rule.
+    """
+    if resident.move_out_date is not None and resident.move_out_date < vagt.date:
+        return False
+    if population_ids is None:
+        population_ids = month_population_ids(vagt.date.year, vagt.date.month)
+    return resident.pk in population_ids
+
+
+def handed_off_tildeling_filter() -> Exists:
+    """An `Exists` expression matching every `VagtTildeling` that is a completed Amendment 4 hand-off:
+    a `VagtBytte` with status `OVERTAGET`/`OVERTAGET_HEL`/`BYTTET` points at it. Identified by query,
+    never by a flag on the row (design doc §4). Used inside the DELETE of the three force re-run
+    entry points (`.exclude(handed_off_tildeling_filter())`) and by `force_rerun_impact`.
+
+    Step 2 extends this with accepted `VagtBytteForslag` proposals (`ACCEPTERET`, as `modydelse`).
+    """
+    return Exists(VagtBytte.objects.filter(tildeling=OuterRef("pk"), status__in=_HANDED_OFF_STATUSES))
+
+
+def tildeling_ids_with_anmeldelse(tildeling_ids: Iterable[int]) -> set[int]:
+    """Of `tildeling_ids`, those with ANY `VagtAnmeldelse`, in any status (batched `can_offer` input).
+    A row with flag history cannot be offered: moving it would attach another resident's flag
+    history to the taker."""
+    ids = list(tildeling_ids)
+    if not ids:
+        return set()
+    return set(
+        VagtAnmeldelse.objects.filter(vagt_tildeling_id__in=ids).values_list("vagt_tildeling_id", flat=True)
+    )
+
+
+def tildeling_ids_with_open_offer(tildeling_ids: Iterable[int]) -> set[int]:
+    """Of `tildeling_ids`, those with an `AABEN` offer (batched `can_offer`/`can_take_whole` input)."""
+    ids = list(tildeling_ids)
+    if not ids:
+        return set()
+    return set(
+        VagtBytte.objects.filter(tildeling_id__in=ids, status=VagtBytte.Status.AABEN).values_list(
+            "tildeling_id", flat=True
+        )
+    )
+
+
+def held_by_vagt(resident: Resident, vagt_ids: Iterable[int] | None = None) -> dict[int, VagtTildeling]:
+    """`resident`'s rows keyed by `vagt_id` (every status), optionally restricted to `vagt_ids` -- the
+    batched `held` input of `can_take`/`can_take_whole`."""
+    qs = VagtTildeling.objects.filter(resident=resident)
+    if vagt_ids is not None:
+        qs = qs.filter(vagt_id__in=list(vagt_ids))
+    return {row.vagt_id: row for row in qs}
+
+
+def _population_for(vagt: Vagt, cache: dict[tuple[int, int], set[int]]) -> set[int]:
+    key = (vagt.date.year, vagt.date.month)
+    if key not in cache:
+        cache[key] = month_population_ids(*key)
+    return cache[key]
+
+
+def can_offer(
+    tildeling: VagtTildeling,
+    resident: Resident,
+    *,
+    at: datetime | None = None,
+    regel_lookup: dict[tuple[str, bool], VagtRegel] | None = None,
+    flagged_ids: set[int] | None = None,
+    offered_ids: set[int] | None = None,
+) -> bool:
+    """Whether `resident` may offer `tildeling` (UI predicate, pure read -- `offer_tildeling` re-checks
+    everything under lock). `flagged_ids`/`offered_ids` are optional precomputed
+    `tildeling_ids_with_anmeldelse`/`tildeling_ids_with_open_offer` sets, so the context builder can
+    batch."""
+    if tildeling.resident_id != resident.pk or tildeling.status != VagtTildeling.Status.TILDELT:
+        return False
+    if has_started(tildeling.vagt, at=at, regel_lookup=regel_lookup):
+        return False
+    if flagged_ids is None:
+        flagged_ids = tildeling_ids_with_anmeldelse([tildeling.pk])
+    if tildeling.pk in flagged_ids:
+        return False
+    if offered_ids is None:
+        offered_ids = tildeling_ids_with_open_offer([tildeling.pk])
+    return tildeling.pk not in offered_ids
+
+
+def _offer_is_live(
+    bytte: VagtBytte, *, at: datetime | None, regel_lookup: dict[tuple[str, bool], VagtRegel] | None
+) -> bool:
+    """Open, unexpired, and still on the offerer's own `TILDELT` row. Needs `bytte.tildeling.vagt`."""
+    tildeling = bytte.tildeling
+    return (
+        bytte.status == VagtBytte.Status.AABEN
+        and tildeling.status == VagtTildeling.Status.TILDELT
+        and tildeling.resident_id == bytte.tilbudt_af_id
+        and not has_started(tildeling.vagt, at=at, regel_lookup=regel_lookup)
+    )
+
+
+def can_take(
+    bytte: VagtBytte,
+    resident: Resident,
+    *,
+    at: datetime | None = None,
+    regel_lookup: dict[tuple[str, bool], VagtRegel] | None = None,
+    population: dict[tuple[int, int], set[int]] | None = None,
+    held: dict[int, VagtTildeling] | None = None,
+) -> bool:
+    """Whether `resident` may take `bytte` over (UI predicate, pure read). False exactly when
+    `can_take_whole` is the one that applies: a resident already holding a row on that `Vagt` (the
+    offerer's partner) never gets "Tag vagten". `population` is a per-month cache (filled in place);
+    `held` is `resident`'s rows keyed by `vagt_id`."""
+    if resident.pk == bytte.tilbudt_af_id or not _offer_is_live(bytte, at=at, regel_lookup=regel_lookup):
+        return False
+    vagt = bytte.tildeling.vagt
+    if held is None:
+        held = held_by_vagt(resident)
+    if vagt.pk in held:
+        return False
+    if population is None:
+        population = {}
+    return may_hold(resident, vagt, population_ids=_population_for(vagt, population))
+
+
+def can_take_whole(
+    bytte: VagtBytte,
+    resident: Resident,
+    *,
+    at: datetime | None = None,
+    regel_lookup: dict[tuple[str, bool], VagtRegel] | None = None,
+    population: dict[tuple[int, int], set[int]] | None = None,
+    held: dict[int, VagtTildeling] | None = None,
+    offered_ids: set[int] | None = None,
+) -> bool:
+    """Whether `resident` may take the WHOLE shift through `bytte` (UI predicate, pure read): the
+    shift has headcount 2 (read off the `Vagt`'s own snapshot, never `VagtRegel`), `resident` holds
+    the other row on it, that row is `TILDELT`, and it has no open offer of its own."""
+    if resident.pk == bytte.tilbudt_af_id or not _offer_is_live(bytte, at=at, regel_lookup=regel_lookup):
+        return False
+    vagt = bytte.tildeling.vagt
+    if vagt.headcount != 2:
+        return False
+    if held is None:
+        held = held_by_vagt(resident)
+    mine = held.get(vagt.pk)
+    if mine is None or mine.status != VagtTildeling.Status.TILDELT:
+        return False
+    if offered_ids is None:
+        offered_ids = tildeling_ids_with_open_offer([mine.pk])
+    if mine.pk in offered_ids:
+        return False
+    if population is None:
+        population = {}
+    return may_hold(resident, vagt, population_ids=_population_for(vagt, population))
+
+
+def _lock_tildelinger(pks: Iterable[int]) -> dict[int, VagtTildeling]:
+    """Lock the given `VagtTildeling` rows in ASCENDING pk order (lock step 1). Rows that no longer
+    exist are simply absent from the result. `of=("self",)` so no joined table is locked."""
+    rows = VagtTildeling.objects.select_for_update(of=("self",)).filter(pk__in=list(pks)).order_by("pk")
+    return {row.pk: row for row in rows}
+
+
+def _close_invalidated_offers(tildelinger: Iterable[VagtTildeling], *, keep: VagtBytte | None = None) -> None:
+    """After a move (design doc §5.6): every OTHER open offer on a moved row lapses to `BORTFALDET`,
+    because the row now belongs to someone who never offered it. Unreachable in step 1 (the partial
+    unique constraint allows one open offer per row, and `keep` is it), but step 2's trades reuse it."""
+    qs = VagtBytte.objects.filter(tildeling__in=list(tildelinger), status=VagtBytte.Status.AABEN)
+    if keep is not None:
+        qs = qs.exclude(pk=keep.pk)
+    qs.update(status=VagtBytte.Status.BORTFALDET, closed_at=current_datetime())
+
+
+def _notify_offerer(offerer: Resident, body: str) -> None:
+    """Push to the offerer, the `resolve_anmeldelse` way: the audience is narrowed through
+    `access.allowed_subscribers`, and `send` (default background mode) dispatches after commit."""
+    from core.push import send, subscribers  # local: same reasoning as resolve_anmeldelse
+
+    from . import access
+
+    audience = access.allowed_subscribers(subscribers(TOPIC).filter(user=offerer))
+    send(audience, "Køkkenvagt", body, "/intern/koekken/")
+
+
+def offer_tildeling(tildeling: VagtTildeling, by: Resident) -> VagtBytte:
+    """Offer `tildeling` for take-over (design doc §3, §5.1). Moves nothing: `by` stays responsible
+    until somebody takes it. Refuses (everything re-checked under lock) unless `by` holds the row, it is
+    `TILDELT`, its shift has not started, it has no `VagtAnmeldelse` in ANY status and no open offer.
+    Sends no notification."""
+    with transaction.atomic():
+        row = _lock_tildelinger([tildeling.pk]).get(tildeling.pk)
+        if row is None:
+            raise KoekkenAllocationError("Vagten findes ikke længere.")
+        if row.resident_id != by.pk:
+            raise KoekkenAllocationError("Du kan kun tilbyde dine egne vagter.")
+        if row.status != VagtTildeling.Status.TILDELT:
+            raise KoekkenAllocationError(
+                "Vagten kan ikke tilbydes: den er allerede meldt udført eller anmeldt."
+            )
+        vagt = Vagt.objects.get(pk=row.vagt_id)
+        if has_started(vagt):
+            raise KoekkenAllocationError("Vagten er allerede startet og kan ikke længere tilbydes.")
+        if VagtAnmeldelse.objects.filter(vagt_tildeling=row).exists():
+            raise KoekkenAllocationError(
+                "Vagten kan ikke tilbydes, fordi den har en anmeldelse i sin historik."
+            )
+        already_open = "Vagten er allerede tilbudt."
+        if VagtBytte.objects.filter(tildeling=row, status=VagtBytte.Status.AABEN).exists():
+            raise KoekkenAllocationError(already_open)
+        try:
+            with transaction.atomic():  # savepoint: an IntegrityError must not poison the outer block
+                return VagtBytte.objects.create(tildeling=row, tilbudt_af=by)
+        except IntegrityError:
+            raise KoekkenAllocationError(already_open) from None
+
+
+def withdraw_offer(bytte: VagtBytte, by: Resident) -> VagtBytte:
+    """The offerer withdraws an open offer (`TRUKKET`). Not an unclaim: they simply keep the shift.
+    Requires status `AABEN`, `by` == the offerer, and a shift that has not started. Sends nothing."""
+    with transaction.atomic():
+        row = _lock_tildelinger([bytte.tildeling_id]).get(bytte.tildeling_id)  # lock 1: the row
+        if row is None:
+            raise KoekkenAllocationError("Tilbuddet findes ikke længere.")
+        offer = VagtBytte.objects.select_for_update().filter(pk=bytte.pk).first()  # lock 3: the offer
+        if offer is None or offer.status != VagtBytte.Status.AABEN:
+            raise KoekkenAllocationError("Tilbuddet er ikke længere åbent.")
+        if offer.tilbudt_af_id != by.pk:
+            raise KoekkenAllocationError("Du kan kun trække dine egne tilbud tilbage.")
+        if has_started(Vagt.objects.get(pk=row.vagt_id)):
+            raise KoekkenAllocationError("Vagten er allerede startet, så tilbuddet er udløbet.")
+        offer.status = VagtBytte.Status.TRUKKET
+        offer.closed_at = current_datetime()
+        offer.save(update_fields=["status", "closed_at"])
+        return offer
+
+
+def _take(bytte: VagtBytte, by: Resident, *, whole: bool) -> VagtBytte:
+    """The shared body of `take_over` and `take_over_whole`, so the lock order lives in one place."""
+    gone = "Tilbuddet findes ikke længere."
+    row_pks = [bytte.tildeling_id]
+    partner_pk: int | None = None
+    if whole:
+        # An UNLOCKED read, only to learn which second row to lock; everything is re-verified under lock.
+        vagt_id = (
+            VagtTildeling.objects.filter(pk=bytte.tildeling_id).values_list("vagt_id", flat=True).first()
+        )
+        if vagt_id is None:
+            raise KoekkenAllocationError(gone)
+        partner_pk = (
+            VagtTildeling.objects.filter(vagt_id=vagt_id, resident=by).values_list("pk", flat=True).first()
+        )
+        if partner_pk is None:
+            raise KoekkenAllocationError(
+                "Du har ikke en plads på denne vagt og kan derfor ikke tage hele vagten."
+            )
+        row_pks.append(partner_pk)
+
+    lapsed = False
+    with transaction.atomic():
+        locked = _lock_tildelinger(row_pks)  # lock 1: rows, ascending pk
+        row = locked.get(bytte.tildeling_id)
+        if row is None:
+            raise KoekkenAllocationError(gone)
+        vagt_qs = Vagt.objects.select_for_update() if whole else Vagt.objects  # lock 2 (whole only)
+        vagt = vagt_qs.get(pk=row.vagt_id)
+        offer = VagtBytte.objects.select_for_update().filter(pk=bytte.pk).first()  # lock 3: the offer
+        if offer is None:
+            raise KoekkenAllocationError(gone)
+        if offer.status != VagtBytte.Status.AABEN or offer.tildeling_id != row.pk:
+            raise KoekkenAllocationError("Tilbuddet er ikke længere åbent -- nogen andre var først.")
+        if has_started(vagt):
+            raise KoekkenAllocationError("Vagten er allerede startet, så tilbuddet er udløbet.")
+        if row.resident_id != offer.tilbudt_af_id or row.status != VagtTildeling.Status.TILDELT:
+            # Defensive (normal paths delete + cascade the offer): the offerer no longer holds the
+            # row. Mark the offer dead, but raise only AFTER the block so the write is not rolled back.
+            offer.status = VagtBytte.Status.BORTFALDET
+            offer.closed_at = current_datetime()
+            offer.save(update_fields=["status", "closed_at"])
+            lapsed = True
+        else:
+            if by.pk == offer.tilbudt_af_id:
+                raise KoekkenAllocationError("Du kan ikke overtage din egen vagt.")
+            if not whole:
+                if VagtTildeling.objects.filter(vagt=vagt, resident=by).exists():
+                    hint = (
+                        ' Brug i stedet "Tag hele vagten".'
+                        if vagt.headcount == 2
+                        and VagtTildeling.objects.filter(
+                            vagt=vagt, resident=by, status=VagtTildeling.Status.TILDELT
+                        ).exists()
+                        else ""
+                    )
+                    raise KoekkenAllocationError(f"Du har allerede en plads på {vagt}.{hint}")
+            else:
+                if vagt.headcount != 2:
+                    raise KoekkenAllocationError("Kun en vagt med to pladser kan overtages som helhed.")
+                partner = locked.get(partner_pk) if partner_pk is not None else None
+                if partner is None or partner.resident_id != by.pk or partner.vagt_id != vagt.pk:
+                    raise KoekkenAllocationError("Din egen plads på vagten findes ikke længere.")
+                if partner.status != VagtTildeling.Status.TILDELT:
+                    raise KoekkenAllocationError(
+                        "Din egen plads på vagten er allerede meldt udført eller anmeldt."
+                    )
+                if VagtBytte.objects.filter(tildeling=partner, status=VagtBytte.Status.AABEN).exists():
+                    raise KoekkenAllocationError(
+                        "Du har selv tilbudt din plads på vagten -- træk dit tilbud tilbage først."
+                    )
+            if not may_hold(by, vagt):
+                raise KoekkenAllocationError(
+                    "Du kan ikke tage denne vagt: du står ikke på beboerlisten for måneden, "
+                    "eller du er fraflyttet inden vagtens dato."
+                )
+            now = current_datetime()
+            offerer = offer.tilbudt_af
+            if not whole:
+                row.resident = by
+                try:
+                    with transaction.atomic():  # savepoint for the (vagt, resident) race backstop
+                        row.save(update_fields=["resident"])
+                except IntegrityError:
+                    raise KoekkenAllocationError(f"Du har allerede en plads på {vagt}.") from None
+                offer.status = VagtBytte.Status.OVERTAGET
+                offer.overtaget_af = by
+                offer.closed_at = now
+                offer.save(update_fields=["status", "overtaget_af", "closed_at"])
+                _close_invalidated_offers([row], keep=offer)
+                _notify_offerer(
+                    offer.tilbudt_af,
+                    f"{by.full_name} har overtaget din {vagt}. Du er ikke længere på vagten.",
+                )
+            else:
+                # (1) Re-point the offer at the surviving row and SAVE BEFORE the delete below:
+                # `VagtBytte.tildeling` is CASCADE, so deleting the vacated row first would silently
+                # take the offer record with it.
+                offer.tildeling = cast(VagtTildeling, partner)
+                offer.status = VagtBytte.Status.OVERTAGET_HEL
+                offer.overtaget_af = by
+                offer.closed_at = now
+                offer.save(update_fields=["tildeling", "status", "overtaget_af", "closed_at"])
+                row.delete()  # (2) the vacated row
+                vagt.headcount = 1  # (3) (2, d) -> (1, 2d): the one sanctioned snapshot change
+                vagt.duration_minutes = 2 * vagt.duration_minutes
+                vagt.save(update_fields=["headcount", "duration_minutes"])
+                _notify_offerer(  # (4)
+                    offerer,
+                    f"{by.full_name} har overtaget hele {vagt}. Du er ikke længere på vagten.",
+                )
+    if lapsed:
+        raise KoekkenAllocationError("Tilbuddet er bortfaldet: tilbyderen står ikke længere på vagten.")
+    return offer
+
+
+def take_over(bytte: VagtBytte, by: Resident) -> VagtBytte:
+    """`by` takes the offered row over (design doc §5.2). The existing `VagtTildeling` MOVES to `by`
+    (pk unchanged): credit, flags and the tablet follow it. The offer becomes `OVERTAGET`, any other
+    open offer on the moved row lapses (`_close_invalidated_offers`) and the offerer is notified.
+    Refuses an expired/closed offer, the offerer themselves, a taker already on that `Vagt` (pointing at
+    "Tag hele vagten" where that applies), and a taker `may_hold` refuses."""
+    return _take(bytte, by, whole=False)
+
+
+def take_over_whole(bytte: VagtBytte, by: Resident) -> VagtBytte:
+    """`by`, the offerer's partner on a two-person shift, takes over the WHOLE shift (design doc §5.3):
+    the offer is re-pointed at `by`'s own row (`OVERTAGET_HEL`) BEFORE the vacated row is deleted (the
+    cascade trap), then the `Vagt` collapses from `(2, d)` to `(1, 2d)`. Only a `Vagt` whose own
+    snapshot says `headcount == 2` qualifies; `by`'s row must be `TILDELT` with no open offer of its own."""
+    return _take(bytte, by, whole=True)
+
+
+def open_offers(
+    *,
+    exclude_resident: Resident | None = None,
+    within_days: int | None = None,
+    at: datetime | None = None,
+    regel_lookup: dict[tuple[str, bool], VagtRegel] | None = None,
+) -> list[VagtBytte]:
+    """Open, unexpired offers, soonest first (date, then chronological shift kind). Expired offers stay
+    `AABEN` in the database, so the not-yet-started filter is applied here in Python and EVERY read of
+    offers must go through this or `has_started`. Offers whose row is no longer the offerer's own
+    `TILDELT` row are not listed either. `within_days` serves Køkkengruppen's list (14)."""
+    now = at or current_datetime()
+    today = timezone.localtime(now).date()
+    qs = VagtBytte.objects.filter(
+        status=VagtBytte.Status.AABEN,
+        tildeling__status=VagtTildeling.Status.TILDELT,
+        tildeling__resident=F("tilbudt_af"),
+        tildeling__vagt__date__gte=today,
+    )
+    if within_days is not None:
+        qs = qs.filter(tildeling__vagt__date__lte=today + timedelta(days=within_days))
+    if exclude_resident is not None:
+        qs = qs.exclude(tilbudt_af=exclude_resident)
+    offers = list(qs.select_related("tildeling__vagt", "tilbudt_af"))
+    if regel_lookup is None:
+        regel_lookup = vagt_regel_lookup()
+    kind_order = [kind.value for kind in VagtRegel.Kind]
+    live = [o for o in offers if not has_started(o.tildeling.vagt, at=now, regel_lookup=regel_lookup)]
+    live.sort(key=lambda o: (o.tildeling.vagt.date, kind_order.index(o.tildeling.vagt.kind), o.pk))
+    return live
+
+
+def force_rerun_impact(year: int, month: int) -> tuple[int, int]:
+    """`(kept, lapsing)` for a `--force` re-run of (year, month), to be computed BEFORE it runs:
+    `kept` = the month's `TILDELT` rows that are completed hand-offs (they survive), `lapsing` = open,
+    not-yet-started offers on the month's `TILDELT` rows that are NOT hand-offs (they cascade away with
+    their row)."""
+    month_rows = VagtTildeling.objects.filter(
+        vagt__date__year=year, vagt__date__month=month, status=VagtTildeling.Status.TILDELT
+    )
+    kept = month_rows.filter(handed_off_tildeling_filter()).count()
+    candidates = list(
+        VagtBytte.objects.filter(
+            tildeling__in=month_rows.exclude(handed_off_tildeling_filter()), status=VagtBytte.Status.AABEN
+        ).select_related("tildeling__vagt")
+    )
+    regel_lookup = vagt_regel_lookup()
+    now = current_datetime()
+    lapsing = sum(
+        1 for o in candidates if not has_started(o.tildeling.vagt, at=now, regel_lookup=regel_lookup)
+    )
+    return kept, lapsing
 
 
 def is_subscribed(resident: Resident) -> bool:

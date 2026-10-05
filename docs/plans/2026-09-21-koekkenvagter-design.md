@@ -1,12 +1,12 @@
 # Design: Køkkenvagter — kitchen cleaning shift allocation
 
-**Status:** approved 2026-09-21. **P3 (summer) is now designed in `2026-10-04-koekkenvagter-p3-design.md`**, which supersedes the "Summer (Jul–Aug)" section below, the `FerieUge` data-model bullet, and Amendment 4's "awaiting sign-off" framing (Amendment 4 is now approved in direction, to be designed next; its content below is unchanged). **P1 implemented** (`27195a2`) and review-fixed (`a8575fd`, F1–F5).
+**Status:** approved 2026-09-21. **P3 (summer) is now designed in `2026-10-04-koekkenvagter-p3-design.md`**, which supersedes the "Summer (Jul–Aug)" section below, the `FerieUge` data-model bullet, and Amendment 4's "awaiting sign-off" framing (Amendment 4 is now designed in `2026-10-04-koekkenvagter-a4-design.md`; its content below is kept as history). **P1 implemented** (`27195a2`) and review-fixed (`a8575fd`, F1–F5).
 **Amendments 1–3 are approved** and in implementation: A1 (2026-09-22, FCFS tiebreak, allocation
 look-ahead, preference locking), A2 (2026-09-22, where a three-months-out population comes from) and
 A3 (2026-09-23, reconciliation eligibility and residents arriving with no preference) — note **A3.1
 corrects A2.3**, so read them together. **Amendment 4** (2026-09-23, swapping vagter) is now **designed in
-`2026-10-04-koekkenvagter-a4-design.md`** (decisions approved 2026-10-04; the written doc awaits
-confirmation; not yet built). **Amendment 5** (2026-10-01, fridage) is **approved and built**
+`2026-10-04-koekkenvagter-a4-design.md`** (approved 2026-10-04, including the written doc;
+step 1 in implementation). **Amendment 5** (2026-10-01, fridage) is **approved and built**
 (`fa0fca8`), and carries a **supplement of 2026-10-04** (built, `fba6616`) that replaces A5.4's
 whole-month re-allocation -- read it before A5.4. All are at the end of this document; where any changes a decision above, that section
 says so. A1.3 additionally carries an approved supplement (2026-10-01) on preference-window ordering.

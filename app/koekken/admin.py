@@ -8,6 +8,7 @@ from .models import (
     PraeferenceDag,
     Vagt,
     VagtAnmeldelse,
+    VagtBytte,
     VagtRegel,
     VagtTildeling,
 )
@@ -73,3 +74,10 @@ class FridagAdmin(admin.ModelAdmin):
     list_display = ["date", "kind", "reason"]
     list_filter = ["kind"]
     date_hierarchy = "date"
+
+
+@admin.register(VagtBytte)
+class VagtBytteAdmin(admin.ModelAdmin):
+    list_display = ["tildeling", "tilbudt_af", "status", "overtaget_af", "created_at", "closed_at"]
+    list_filter = ["status"]
+    raw_id_fields = ["tildeling", "tilbudt_af", "overtaget_af"]
