@@ -743,6 +743,7 @@ def _delete_replaceable_tildelinger(vagter: Iterable[Vagt]) -> None:
         .order_by("pk")
         .values_list("pk", flat=True)
     )  # materialised: the lock is taken here
+    lock_cascade_dependents(locked_pks)  # offers and proposals the cascade reaches, ascending
     VagtTildeling.objects.filter(pk__in=locked_pks, status=VagtTildeling.Status.TILDELT).exclude(
         handed_off_tildeling_filter()
     ).delete()
@@ -1352,6 +1353,7 @@ def reconcile_month(year: int, month: int) -> ReconciliationResult:
             for row in existing
             if row.status == VagtTildeling.Status.TILDELT and row.resident_id not in real_ids
         )
+        lock_cascade_dependents(locked)  # offers and proposals the deletes cascade into, ascending
         vacated: list[Resident] = []
         for row in existing:
             current = locked.get(row.pk)
@@ -2038,6 +2040,14 @@ def flag_tildeling(vagt_tildeling: VagtTildeling, flagged_by: Resident, reason: 
         vagt_tildeling = locked
         # Lock-then-update (LOCK ORDER): the offer on the row (and its proposals), then every open proposal
         # that uses the flagged row as `modydelse` -- a row with flag history can never be traded.
+        # Lock level 3 (the row's open offers) and then the WHOLE level-4 set in one ascending pass, before
+        # closing anything (the closes below only re-lock rows already held).
+        offer_pks = _lock_byttes(
+            VagtBytte.objects.filter(tildeling=vagt_tildeling, status=VagtBytte.Status.AABEN).values_list(
+                "pk", flat=True
+            )
+        )
+        _lock_forslag_for(offer_pks=offer_pks, row_pks=[vagt_tildeling.pk])
         _close_invalidated_offers([vagt_tildeling])
         _close_invalidated_forslag([vagt_tildeling])
         anmeldelse = VagtAnmeldelse.objects.create(
@@ -2130,7 +2140,14 @@ def resolve_anmeldelse(anmeldelse: VagtAnmeldelse, *, upheld: bool, resolved_by:
 #     does not lock the rows first would hold an offer or proposal and then ask for its row while a
 #     take-over or trade holds the row and asks for it: a deadlock. Every deleter therefore locks the rows
 #     first, in the same ascending order (`_delete_replaceable_tildelinger`, `override_remove`,
-#     `reconcile_month`, `declare_fridag`), which makes the two sides block on each other instead.
+#     `reconcile_month`, `declare_fridag`), which makes the two sides block on each other instead. They
+#     then also call `lock_cascade_dependents`: Django's cascade fast-deletes proposals in two separate
+#     statements (by offer, by `modydelse`), so the offers and proposals it reaches are locked up front.
+#   * A given level's FULL set of rows for one logical operation must be locked in ONE ascending-pk
+#     statement (or a provably-consistent single sequence), never in several separate lock statements for
+#     the same level within one transaction: two such sequences can interleave with another writer's
+#     single ascending pass and cross (take-over / flag / whole take-over lock their proposal set with
+#     `_lock_forslag_for` before closing anything, exactly as `accept_trade` does).
 #   * Every INSERT of a dependent row first locks all its parent `VagtTildeling` rows (an offer: its row;
 #     a proposal: X and Y). Otherwise a deleter's unlocked cascade-collect SELECT could miss a
 #     just-inserted dependent and the deleter's commit would fail on the foreign key.
@@ -2511,6 +2528,35 @@ def _lock_forslag(pks: Iterable[int]) -> dict[int, VagtBytteForslag]:
     return {row.pk: row for row in rows}
 
 
+def lock_cascade_dependents(rows: Iterable[VagtTildeling | int]) -> None:
+    """Before DELETING `VagtTildeling` rows (whose level-1 locks the caller already holds): lock every
+    `VagtBytte` on them (level 3, ascending) and then every `VagtBytteForslag` the cascade will delete
+    (level 4: proposals on those offers OR using a row as `modydelse`) in ONE ascending statement.
+
+    Django's cascade would otherwise fast-delete the proposals in two separate statements
+    (`WHERE bytte_id IN ...`, `WHERE modydelse_id IN ...`), each locking in its own order, which can cross
+    an `accept_trade` that locks its whole proposal set in one ascending pass. Locking everything up front
+    in one ascending pass makes the cascade's own statements lock-free (we already hold the rows)."""
+    pks = [r if isinstance(r, int) else r.pk for r in rows]
+    if not pks:
+        return
+    _lock_byttes(VagtBytte.objects.filter(tildeling_id__in=pks).values_list("pk", flat=True))  # lock 3
+    list(
+        VagtBytteForslag.objects.filter(Q(bytte__tildeling__in=pks) | Q(modydelse__in=pks))
+        .select_for_update(of=("self",))
+        .order_by("pk")
+    )  # lock 4: one ascending statement, materialised
+
+
+def _lock_forslag_for(*, offer_pks: Iterable[int], row_pks: Iterable[int]) -> dict[int, VagtBytteForslag]:
+    """Lock (level 4) in ONE ascending pass every proposal this operation can touch: those on the given
+    offers plus those using one of `row_pks` as `modydelse`. Callers hold the rows and offers already."""
+    pks = VagtBytteForslag.objects.filter(
+        Q(bytte_id__in=list(offer_pks)) | Q(modydelse_id__in=list(row_pks))
+    ).values_list("pk", flat=True)
+    return _lock_forslag(pks)
+
+
 def _close_forslag(qs: QuerySet[VagtBytteForslag]) -> None:
     """Lapse (`BORTFALDET`) every `AABEN` proposal in `qs`. The candidates are first locked `FOR UPDATE` in
     ascending pk order (`_lock_forslag`), status is re-checked on the locked versions, and only those
@@ -2724,9 +2770,11 @@ def _take(bytte: VagtBytte, by: Resident, *, whole: bool) -> VagtBytte:
                 offer.overtaget_af = by
                 offer.closed_at = now
                 offer.save(update_fields=["status", "overtaget_af", "closed_at"])
-                _close_invalidated_offers([row], keep=offer)
                 # The offer is closed: its open proposals lapse; and X moved, so proposals that offer X
-                # elsewhere as their `modydelse` are invalid too.
+                # elsewhere as their `modydelse` are invalid too. Lock that WHOLE level-4 set in one
+                # ascending pass before closing anything (the closes below only re-lock held rows).
+                _lock_forslag_for(offer_pks=[offer.pk], row_pks=[row.pk])
+                _close_invalidated_offers([row], keep=offer)
                 _close_forslag(VagtBytteForslag.objects.filter(bytte=offer))
                 _close_invalidated_forslag([row])
                 _notify(
@@ -2745,11 +2793,11 @@ def _take(bytte: VagtBytte, by: Resident, *, whole: bool) -> VagtBytte:
                 # Lapse the proposals BEFORE the delete (the same cascade-trap lesson): the offer's own, and
                 # those using the partner's surviving row as `modydelse` (it is now a different, whole
                 # shift). Proposals using the vacated row as `modydelse` go with it by cascade (design doc §5.6).
+                # ONE ascending lock of the whole level-4 set first: the offer's proposals plus those using
+                # the partner row or the vacated row as `modydelse` (the latter reached by the delete's cascade).
+                _lock_forslag_for(offer_pks=[offer.pk], row_pks=[row.pk, cast(VagtTildeling, partner).pk])
                 _close_forslag(VagtBytteForslag.objects.filter(bytte=offer))
                 _close_invalidated_forslag([cast(VagtTildeling, partner)])
-                # The delete's cascade reaches the proposals that use the vacated row: lock them first
-                # (level 4, ascending), like every other deleter locks what it cascades into.
-                _lock_forslag(VagtBytteForslag.objects.filter(modydelse=row).values_list("pk", flat=True))
                 row.delete()  # (2) the vacated row
                 vagt.headcount = 1  # (3) (2, d) -> (1, 2d): the one sanctioned snapshot change
                 vagt.duration_minutes = 2 * vagt.duration_minutes
@@ -3288,9 +3336,10 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
     with transaction.atomic():
         # Lock the affected rows first (LOCK ORDER above `has_started`): deleting the `Vagt` cascades into
         # its rows and their offers, which a concurrent take-over locks in the opposite direction.
-        _lock_tildelinger(
+        fridag_locked = _lock_tildelinger(
             VagtTildeling.objects.filter(vagt__in=affected_vagter).order_by("pk").values_list("pk", flat=True)
         )
+        lock_cascade_dependents(fridag_locked)  # offers and proposals the delete cascades into, ascending
         # Resolved INSIDE the atomic block, after both guards above -- `resolve_periode` is a
         # `get_or_create`, and a pure look-ahead call (no `Vagt` rows, no existing `Periode`) must not
         # leave a stray `Periode` behind just by being refused.

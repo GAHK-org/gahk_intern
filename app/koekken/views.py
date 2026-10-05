@@ -222,7 +222,7 @@ def _bytte_context(request: HttpRequest, *, error: str | None = None) -> dict[st
         incoming = []
         if offer is not None:
             for f in incoming_raw.get(offer.pk, []):
-                if services.can_accept(
+                acceptable = services.can_accept(
                     f,
                     resident,
                     at=now,
@@ -230,8 +230,12 @@ def _bytte_context(request: HttpRequest, *, error: str | None = None) -> dict[st
                     population=population,
                     flagged_ids=flagged_ids,
                     vagt_residents=vagt_residents,
-                ):
-                    incoming.append((f, True, services.can_decline(f, resident)))
+                )
+                declinable = services.can_decline(f, resident)
+                # A stale proposal (it can no longer be accepted) stays listed with just "Afvis", so the
+                # offerer can clean it up; "Acceptér" only shows when it can actually be accepted.
+                if acceptable or declinable:
+                    incoming.append((f, acceptable, declinable))
         upcoming.append(
             (
                 t,
@@ -352,12 +356,36 @@ def _refuse(message: str) -> Callable[[Resident], object]:
     return action
 
 
+def _require_own_row(tildeling: VagtTildeling, resident: Resident) -> Callable[[Resident], object] | None:
+    """Ownership gate for a POST that acts with `tildeling` as the resident's own row. Someone else's row
+    is an authorization failure (403). A row the resident held until just now -- they handed it off
+    (a taken offer) or traded it away (an accepted proposal) -- is staleness (page rendered before the
+    move): a business refusal that renders inside the partial (P2 §10). Returns the refusing action in
+    that case, None when the row is the resident's."""
+    if tildeling.resident_id == resident.pk:
+        return None
+    held_before = (
+        VagtBytte.objects.filter(
+            tildeling=tildeling,
+            tilbudt_af=resident,
+            status__in=[VagtBytte.Status.OVERTAGET, VagtBytte.Status.BYTTET],
+        ).exists()
+        or VagtBytteForslag.objects.filter(
+            modydelse=tildeling, foreslaaet_af=resident, status=VagtBytteForslag.Status.ACCEPTERET
+        ).exists()
+    )
+    if not held_before:
+        raise PermissionDenied
+    return _refuse("Vagten er ikke længere din -- siden er forældet.")
+
+
 @access.access_required
 @require_POST
 def tilbyd_vagt(request: HttpRequest, pk: int) -> HttpResponse:
     tildeling = get_object_or_404(VagtTildeling, pk=pk)
-    if tildeling.resident_id != current_resident(request).pk:
-        raise PermissionDenied
+    stale = _require_own_row(tildeling, current_resident(request))
+    if stale is not None:
+        return _bytte_response(request, stale)
     return _bytte_response(request, lambda resident: services.offer_tildeling(tildeling, resident))
 
 
@@ -392,8 +420,9 @@ def foreslaa_bytte(request: HttpRequest, pk: int) -> HttpResponse:
     if not form.is_valid():
         return _bytte_response(request, _refuse("Vælg en af dine egne vagter at bytte med."))
     modydelse = get_object_or_404(VagtTildeling, pk=form.cleaned_data["modydelse"])
-    if modydelse.resident_id != current_resident(request).pk:
-        raise PermissionDenied
+    stale = _require_own_row(modydelse, current_resident(request))
+    if stale is not None:
+        return _bytte_response(request, stale)
     return _bytte_response(request, lambda resident: services.propose_trade(bytte, modydelse, resident))
 
 
@@ -619,6 +648,7 @@ def override_remove(request: HttpRequest, pk: int) -> HttpResponseRedirect:
             )
         else:
             messages.success(request, f"{vagt_tildeling} fjernet.")
+            services.lock_cascade_dependents([vagt_tildeling])  # offers/proposals the cascade reaches
             vagt_tildeling.delete()
     return redirect("koekken:gruppe")
 

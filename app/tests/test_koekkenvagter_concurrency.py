@@ -19,7 +19,7 @@ from datetime import date, time
 from typing import Any
 
 import pytest
-from django.db import connection
+from django.db import connection, transaction
 from django.test import Client
 
 from core.clock import clear_cache
@@ -27,12 +27,17 @@ from core.models import DevClock, Room
 from koekken.models import Vagt, VagtBytte, VagtBytteForslag, VagtRegel, VagtTildeling
 from koekken.services import (
     KoekkenAllocationError,
+    _delete_replaceable_tildelinger,
     accept_trade,
     allocate_month,
+    declare_fridag,
+    flag_tildeling,
     offer_tildeling,
     propose_trade,
+    reconcile_month,
     resolve_periode,
     take_over,
+    take_over_whole,
     withdraw_offer,
 )
 from residents.models import Residency, Resident, Role
@@ -548,3 +553,128 @@ def test_accept_and_withdraw_of_another_offer_both_closing_the_same_proposal(tw:
     assert VagtBytteForslag.objects.get(pk=f_shared.pk).status == F.BORTFALDET
     assert VagtBytte.objects.get(pk=b2.pk).status == B.TRUKKET
     assert VagtBytteForslag.objects.get(pk=f_main.pk).status == F.ACCEPTERET
+
+
+# ============================================ step 2, round 3: a level's full set locked in ONE ascending pass
+#
+# Reviewer's reproductions. Every proposal-touching writer must lock its WHOLE level-4 set in one ascending
+# statement, exactly like `accept_trade`. The crossing setup (pks P_b < Q < P_a):
+#   a offers ra (B2); c proposes rc for B2 (P_b); c ALSO offers rc (B); b proposes rb for B2 (Q) and for B (P_a).
+# T1 touches rc, B, P_a and P_b; T2 = accept_trade(Q) locks {P_b, Q, P_a}. Two separate lock statements in T1
+# (first P_a, then P_b) cross T2's single ascending pass: T1 holds P_a, wants P_b; T2 holds P_b, wants P_a.
+
+FORSLAG_LOCK = re.compile(r'^SELECT .*FROM "koekken_vagtbytteforslag".* FOR UPDATE')
+FORSLAG_DELETE = re.compile(r'^DELETE FROM "koekken_vagtbytteforslag"')
+
+
+def _crossing_setup(tw: dict[str, Any]) -> VagtBytteForslag:
+    """Build the crossing proposals above; returns Q (the one `accept_trade` is called on)."""
+    _propose(tw, "ra", "c", "rc")  # B2 and P_b
+    offer_tildeling(tw["rc"], tw["people"]["c"])  # B: rc is also c's modydelse on B2 (allowed)
+    b2 = VagtBytte.objects.get(tildeling=tw["ra"], status=B.AABEN)
+    q = propose_trade(b2, tw["rb"], tw["people"]["b"])
+    bc = VagtBytte.objects.get(tildeling=tw["rc"], status=B.AABEN)
+    propose_trade(bc, tw["rb"], tw["people"]["b"])  # P_a
+    return q
+
+
+def _crossing_run(
+    tw: dict[str, Any], t1: Callable[[], Any], pattern: "re.Pattern[str]", q: VagtBytteForslag
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Pause T1 right after the first statement matching `pattern` (holding whatever it locked so far), run
+    `accept_trade(q)` against it, resume, and prove neither side deadlocked and the accept went through."""
+    a = tw["people"]["a"]
+    paused, resume, thread1, out1 = _paused(t1, pattern)
+    assert paused.wait(JOIN)
+    thread2, out2 = _run_in_thread(lambda: accept_trade(q, a))
+    thread2.join(1.5)  # give an out-of-order T1 time to let T2 get into the crossing position
+    resume.set()
+    _joined(thread1, thread2)
+    assert "error" not in out1, out1
+    assert "result" in out2, out2
+    assert VagtBytteForslag.objects.get(pk=q.pk).status == F.ACCEPTERET
+    assert VagtTildeling.objects.get(pk=tw["ra"].pk).resident == tw["people"]["b"]
+    return out1, out2
+
+
+def test_take_over_vs_accept_trade_crossing_proposals_do_not_deadlock(tw: dict[str, Any]) -> None:
+    q = _crossing_setup(tw)
+    bc = VagtBytte.objects.get(tildeling=tw["rc"], status=B.AABEN)
+    _crossing_run(tw, lambda: take_over(bc, tw["people"]["d"]), FORSLAG_LOCK, q)
+    assert VagtTildeling.objects.get(pk=tw["rc"].pk).resident == tw["people"]["d"]
+    assert not VagtBytteForslag.objects.filter(status=F.AABEN).exists()
+
+
+def test_flag_tildeling_vs_accept_trade_crossing_proposals_do_not_deadlock(tw: dict[str, Any]) -> None:
+    q = _crossing_setup(tw)
+    _crossing_run(tw, lambda: flag_tildeling(tw["rc"], tw["people"]["d"], "test"), FORSLAG_LOCK, q)
+    assert VagtTildeling.objects.get(pk=tw["rc"].pk).status == T.ANMELDT
+    assert not VagtBytteForslag.objects.filter(status=F.AABEN).exists()
+
+
+def test_take_over_whole_vs_accept_trade_crossing_proposals_do_not_deadlock(tw: dict[str, Any]) -> None:
+    """Whole-shift variant: c offers its aften place (B), d -- the partner -- has proposed its own aften row
+    for B2 (p2 < Q < p1). `take_over_whole` used to lock the offer's proposals (p1), then those using the
+    partner row (p2), then those using the vacated row, in three statements."""
+    c, d = tw["people"]["c"], tw["people"]["d"]
+    aften = Vagt.objects.create(
+        periode=resolve_periode(date(2042, 3, 14)),
+        date=date(2042, 3, 14),
+        kind=VagtRegel.Kind.AFTEN,
+        headcount=2,
+        duration_minutes=180,
+    )
+    c_row = VagtTildeling.objects.create(vagt=aften, resident=c, status=T.TILDELT)
+    d_row = VagtTildeling.objects.create(vagt=aften, resident=d, status=T.TILDELT)
+    b2 = offer_tildeling(tw["ra"], tw["people"]["a"])
+    propose_trade(b2, d_row, d)  # p2
+    q = propose_trade(b2, tw["rb"], tw["people"]["b"])
+    bc = offer_tildeling(c_row, c)
+    p1 = propose_trade(bc, tw["rb"], tw["people"]["b"])
+    _crossing_run(tw, lambda: take_over_whole(bc, d), FORSLAG_LOCK, q)
+    assert VagtBytte.objects.get(pk=bc.pk).status == B.OVERTAGET_HEL
+    assert VagtBytteForslag.objects.get(pk=p1.pk).status == F.BORTFALDET
+    assert not VagtBytteForslag.objects.filter(status=F.AABEN).exists()
+
+
+def test_override_remove_vs_accept_trade_crossing_proposals_do_not_deadlock(
+    tw: dict[str, Any], make_resident: Callable[..., Resident]
+) -> None:
+    """The cascade fast-deletes proposals in two statements (by offer, by `modydelse`); unlocked it crossed
+    `accept_trade`'s single ascending pass. Paused after the first proposal DELETE."""
+    manager = make_resident(email="manager@gahk.dk", roles=(Role.KOKKENGRUPPE,))
+    client = Client()
+    client.force_login(manager)
+    q = _crossing_setup(tw)
+    _crossing_run(
+        tw, lambda: client.post(f"/intern/koekken/gruppe/override/{tw['rc'].pk}/fjern"), FORSLAG_DELETE, q
+    )
+    assert not VagtTildeling.objects.filter(pk=tw["rc"].pk).exists()
+    assert not VagtBytteForslag.objects.filter(status=F.AABEN).exists()
+
+
+def test_reconcile_month_vs_accept_trade_crossing_proposals_do_not_deadlock(tw: dict[str, Any]) -> None:
+    """c is dropped from March's real Residency list, so `reconcile_month` vacates rc (and cascades)."""
+    q = _crossing_setup(tw)
+    Residency.objects.filter(resident=tw["people"]["c"], year=YEAR, month=3).delete()
+    _crossing_run(tw, lambda: reconcile_month(YEAR, 3), FORSLAG_DELETE, q)
+    assert not VagtTildeling.objects.filter(pk=tw["rc"].pk).exists()
+
+
+def test_declare_fridag_vs_accept_trade_crossing_proposals_do_not_deadlock(tw: dict[str, Any]) -> None:
+    q = _crossing_setup(tw)
+    _crossing_run(tw, lambda: declare_fridag(date(2042, 3, 11), [VagtRegel.Kind.MORGEN]), FORSLAG_DELETE, q)
+    assert not VagtTildeling.objects.filter(pk=tw["rc"].pk).exists()
+
+
+def test_allocation_delete_vs_accept_trade_crossing_proposals_do_not_deadlock(tw: dict[str, Any]) -> None:
+    """`_delete_replaceable_tildelinger` (the allocation delete) over the shifts of rc."""
+    q = _crossing_setup(tw)
+    vagter = list(Vagt.objects.filter(pk=tw["rc"].vagt_id))
+
+    def delete() -> None:
+        with transaction.atomic():  # the helper's callers (the allocators) always hold a transaction
+            _delete_replaceable_tildelinger(vagter)
+
+    _crossing_run(tw, delete, FORSLAG_DELETE, q)
+    assert not VagtTildeling.objects.filter(pk=tw["rc"].pk).exists()

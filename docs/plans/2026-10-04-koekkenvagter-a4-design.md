@@ -133,16 +133,23 @@ the same pattern as P3's claim.
 > 3. `VagtBytte` rows, ascending pk.
 > 4. `VagtBytteForslag` rows (step 2), ascending pk.
 >
-> Three corollaries:
+> Four corollaries:
 > - **Never take a `VagtTildeling` lock after any lock at level 2–4.**
 > - **Every deleter locks the rows it deletes first.** This covers the three allocation deletes,
 >   `override_remove`, `reconcile_month` and `declare_fridag`. Their cascade reaches `VagtBytte` and
 >   `VagtBytteForslag`, so without the row lock first they would deadlock against a take-over or a
->   trade.
+>   trade. They also lock the offers and proposals the cascade reaches (`lock_cascade_dependents`), because
+>   Django fast-deletes proposals in two separate statements (by offer, by `modydelse`).
 > - **Every insert of a dependent row first locks all its parent `VagtTildeling` rows.** Dependent
 >   rows are a `VagtBytte`, or a `VagtBytteForslag`, whose parents are the offered row *and* its
 >   `modydelse`. Without this, a deleter's unlocked cascade-collect SELECT could miss a just-inserted
 >   dependent, and the deleter's commit would then fail on the foreign key.
+>
+> - **A given level's full set of rows for one logical operation must be locked in ONE ascending-pk
+>   statement (or a provably-consistent single sequence), never in multiple separate lock statements for
+>   the same level within one transaction.** Two separate ascending passes can interleave with another
+>   writer's single pass and cross (take-over, flag and whole take-over lock their proposal set up front,
+>   like `accept_trade`).
 >
 > Bulk closing of several offers or proposals (§5.6) first selects them `FOR UPDATE` in ascending pk
 > order, then updates them. It never runs a bare multi-row `UPDATE`, whose lock order Postgres does

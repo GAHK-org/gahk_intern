@@ -1477,9 +1477,12 @@ def test_trade_ui_buttons_follow_predicates(w: World, login: Callable) -> None:
     html = _html(login(w.b))
     assert f"forslag/{f.pk}/traek-tilbage" in html and "Træk forslag tilbage" in html
     assert f"forslag/{f.pk}/accepter" not in html and f"bytte/{ba.pk}/foreslaa" not in html
-    # stale proposal (Y moved) shows nowhere
+    # stale proposal (Y moved): the offerer still sees it, with "Afvis" only (cleanup), never "Acceptér";
+    # the old proposer sees nothing
     VagtTildeling.objects.filter(pk=w.rb.pk).update(resident=w.e)
-    assert f"forslag/{f.pk}/" not in _html(login(w.a)) and f"forslag/{f.pk}/" not in _html(login(w.b))
+    stale_html = _html(login(w.a))
+    assert f"forslag/{f.pk}/afvis" in stale_html and f"forslag/{f.pk}/accepter" not in stale_html
+    assert f"forslag/{f.pk}/" not in _html(login(w.b))
 
 
 def test_trade_post_flow_403_and_stale(w: World, login: Callable) -> None:
@@ -1521,6 +1524,21 @@ def test_trade_post_flow_403_and_stale(w: World, login: Callable) -> None:
     take_over(bc, w.e)
     late = login(w.b).post(f"{base}/bytte/{bc.pk}/foreslaa", {"modydelse": w.ra.pk})
     assert late.status_code in (200, 403)
+
+
+def test_foreslaa_with_a_row_that_moved_since_render_is_an_in_partial_error_not_403(
+    w: World, login: Callable
+) -> None:
+    """Y was b's when the page rendered but was traded/taken away since: staleness, not authorization."""
+    base = "/intern/koekken"
+    ba = offer_tildeling(w.ra, w.a)
+    bb = offer_tildeling(w.rb, w.b)
+    take_over(bb, w.e)  # b hands rb to e after b's page was rendered
+    resp = login(w.b).post(f"{base}/bytte/{ba.pk}/foreslaa", {"modydelse": w.rb.pk})
+    assert resp.status_code == 200 and "ikke længere din" in resp.content.decode()
+    # ... while a row that never was b's stays a 403
+    assert login(w.b).post(f"{base}/bytte/{ba.pk}/foreslaa", {"modydelse": w.ra.pk}).status_code == 403
+    assert not VagtBytteForslag.objects.exists()
 
 
 def test_trade_partial_and_full_page_render_same_content(w: World, login: Callable) -> None:
