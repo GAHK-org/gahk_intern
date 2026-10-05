@@ -3364,9 +3364,27 @@ def test_den_hurtige_never_imports_koekken() -> None:
 
     offenders = []
     for path in sorted((Path(django_settings.BASE_DIR) / "den_hurtige").rglob("*.py")):
-        if "migrations" in path.parts:
-            continue
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        docstrings = {
+            id(n.body[0].value)
+            for n in ast.walk(tree)
+            if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+            and n.body
+            and isinstance(n.body[0], ast.Expr)
+            and isinstance(n.body[0].value, ast.Constant)
+        }
+        for node in ast.walk(tree):
+            # string references (`apps.get_model("koekken", ...)`, a `"koekken.X"` lazy FK); docstrings
+            # may mention the app in prose
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and id(node) not in docstrings
+                and "koekken" in node.value
+                # the one legitimate literal: the channel slug declared in channels.py (data, not a dependency)
+                and not (path.name == "channels.py" and node.value == "koekken")
+            ):
+                offenders.append(f"{path.name}:{node.lineno}")
             names = (
                 [a.name for a in node.names]
                 if isinstance(node, ast.Import)

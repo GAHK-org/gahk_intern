@@ -1882,11 +1882,13 @@ def _w_fridag(w: World, login: Callable, make_resident: Callable) -> list[VagtBy
 def _w_whole_shift_vacated_row_delete(w: World, login: Callable, make_resident: Callable) -> list[VagtBytte]:
     """The whole-shift collapse deletes the vacated row and cascades into every OTHER offer ever made on it.
     A closed offer's post is already archived, so revive it by hand to prove the receiver does it."""
-    old = _share(w.rc, w.c)
-    withdraw_offer(old, w.c)
+    from core.clock import current_datetime
     from den_hurtige.models import QuickPost
 
-    QuickPost.objects.filter(pk=old.hurtig_post_id).update(expires_at=timezone.now() + timedelta(days=1))
+    old = _share(w.rc, w.c)
+    withdraw_offer(old, w.c)
+
+    QuickPost.objects.filter(pk=old.hurtig_post_id).update(expires_at=current_datetime() + timedelta(days=1))
     current = _share(w.rc, w.c)
     take_over_whole(current, w.d)
     assert not VagtBytte.objects.filter(pk=old.pk).exists()
@@ -1939,21 +1941,23 @@ def test_force_rerun_cascade_archives_the_post(make_resident: Callable, clock: C
     assert QuickPost.objects.get(pk=post_pk).expires_at <= current_datetime()
 
 
-def test_archiving_an_expired_or_soft_deleted_post_changes_nothing(w: World) -> None:
+def test_archiving_skips_an_expired_post_but_archives_an_unexpired_soft_deleted_one(w: World) -> None:
+    from core.clock import current_datetime
     from den_hurtige.models import QuickPost
 
     o = _share(w.ra, w.a)
-    past = timezone.now() - timedelta(days=1)
+    past = current_datetime() - timedelta(days=1)
     QuickPost.objects.filter(pk=o.hurtig_post_id).update(expires_at=past)
     withdraw_offer(o, w.a)
     assert QuickPost.objects.get(pk=o.hurtig_post_id).expires_at == past  # already archived: untouched
 
     o2 = _share(w.ra, w.a)
-    deleted_at = timezone.now()
-    future = timezone.now() + timedelta(days=1)
-    QuickPost.objects.filter(pk=o2.hurtig_post_id).update(deleted_at=deleted_at, expires_at=future)
+    now = current_datetime()
+    future = now + timedelta(days=1)
+    QuickPost.objects.filter(pk=o2.hurtig_post_id).update(deleted_at=now, expires_at=future)
     withdraw_offer(o2, w.a)
-    assert QuickPost.objects.get(pk=o2.hurtig_post_id).expires_at == future  # soft-deleted: left alone
+    # a tombstone that has not expired is archived along with its offer (harmless)
+    assert QuickPost.objects.get(pk=o2.hurtig_post_id).expires_at <= current_datetime()
 
 
 def test_author_hard_deleting_within_grace_nulls_the_link_and_a_later_close_is_harmless(w: World) -> None:

@@ -14,6 +14,9 @@ Two audience rules layer on top of the shared topic opt-in, and both are this fe
     and a mute is about a channel's chatter rather than about replies to your own post. It still
     respects the *topic* opt-in, though: a resident who turned Den Hurtige notifications off
     entirely hears nothing.
+
+`publish_post` below is also the FIRST time any other feature posts into Den Hurtige: the koekken app
+shares offered shifts through it. The dependency runs one way only (koekken imports den_hurtige).
 """
 
 from typing import TYPE_CHECKING

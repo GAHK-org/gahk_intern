@@ -39,7 +39,7 @@
                   <form method="post" action="{% url 'koekken:tilbyd_vagt' t.pk %}"
                         hx-post="{% url 'koekken:tilbyd_vagt' t.pk %}"
                         hx-target="#koekken-bytte" hx-swap="outerHTML"
-                        hx-confirm="Du er stadig ansvarlig for vagten, indtil nogen tager den.{% if can_post_den_hurtige %} Opslaget fjernes, når vagten er taget.{% endif %}"
+                        hx-confirm="Du er stadig ansvarlig for vagten, indtil nogen tager den.{% if can_post_den_hurtige %} Opslaget fjernes automatisk, når tilbuddet lukkes.{% endif %}"
                         style="display:inline">
                     {% csrf_token %}
                     {% if can_post_den_hurtige %}

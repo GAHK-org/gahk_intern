@@ -41,8 +41,11 @@ MOVES the existing row) or, on a two-person shift, the offerer's partner takes t
 and never written (`has_started`), so every read goes through it. Completed hand-offs survive a force
 re-run: the three TILDELT deletes first lock the candidate rows (`select_for_update`) and only then
 delete with `handed_off_tildeling_filter()` excluded (see `_delete_replaceable_tildelinger`). Every write
-locks rows, then the Vagt, then the offer (see the comment above `has_started`). Den Hurtige is a later
-step.
+locks rows, then the Vagt, then the offer (see the comment above `has_started`).
+
+**Amendment 4, step 3**: an offer can be shared in Den Hurtige's `koekken` channel under the offerer's
+own name, and the post is archived whenever the offer leaves `AABEN`. This is the FIRST time any feature
+posts into Den Hurtige (via `den_hurtige.services.publish_post`); the dependency runs one way only.
 
 **Amendment 4, step 2** (same design doc): trading. A resident proposes one of their own future rows Y
 in exchange for an open offer's row X (`propose_trade`); the offerer accepts (`accept_trade`, an atomic
@@ -2134,13 +2137,16 @@ def resolve_anmeldelse(anmeldelse: VagtAnmeldelse, *, upheld: bool, resolved_by:
 #   (2) the `Vagt` (whole-shift take-over only);
 #   (3) the `VagtBytte` rows, ascending pk;
 #   (4) the `VagtBytteForslag` rows (step 2), ascending pk;
-#   (5) the Den Hurtige `QuickPost` that advertises an offer (step 3), ALWAYS LAST. Den Hurtige's own
+#   (5) the Den Hurtige `QuickPost` that advertises an offer (step 3), taken last. Den Hurtige's own
 #       hard-delete (inside its grace period) nulls `VagtBytte.hurtig_post` and then deletes the post,
 #       and a post is written after the offer on the way in. Both sides therefore lock the offer before
-#       the post, and nothing deadlocks, AS LONG AS the post write/update is the LAST thing locked in
-#       any transaction touching it: `_archive_hurtig_posts` (and the `post_delete` receiver in
+#       the post, and nothing deadlocks, AS LONG AS no NEW lock is taken after level 5 except on rows
+#       already held earlier in the same transaction, or brand-new inserts: every level-4 set is locked
+#       up front, so statements that follow the post update (e.g. `override_remove`'s final
+#       `VagtTildeling` delete, or the `_close_forslag` calls after `_close_invalidated_offers`) only
+#       touch rows already held. `_archive_hurtig_posts` (and the `post_delete` receiver in
 #       koekken.signals, which fires inside the deleter's transaction after the offer row is gone)
-#       are always the last statement, and `_publish_offer` runs after the offer is created.
+#       are the level-5 writes, and `_publish_offer` runs after the offer is created.
 # Corollaries:
 #   * Never lock the offer before its row. Anything that DELETES `VagtTildeling` rows cascades into
 #     `VagtBytte` and `VagtBytteForslag` (offers/proposals deleted before the row), so a deleter that
@@ -2617,10 +2623,11 @@ def _close_invalidated_offers(tildelinger: Iterable[VagtTildeling], *, keep: Vag
 
 def _archive_posts(post_ids: Iterable[int]) -> None:
     """Archive (`expires_at = now`) the given Den Hurtige posts -- Den Hurtige already defines "expired" as
-    "archived", so no new delete semantics. A post that is already expired (or soft-deleted, which is
-    expired too) is untouched by the `expires_at__gt` filter, and an unknown pk matches nothing. LOCK
-    ORDER level 5: this is always the LAST statement of its transaction -- never lock a `VagtBytte`
-    or anything else after it."""
+    "archived", so no new delete semantics. A post that is already expired is untouched by the
+    `expires_at__gt` filter, and an unknown pk matches nothing. Soft-deletion (`QuickPost.soft_delete`)
+    never touches `expires_at`, so a tombstone that has not expired yet IS archived along with its offer,
+    which is harmless. LOCK ORDER level 5: after this, no NEW lock is taken except on rows already held
+    earlier in the transaction (see the LOCK ORDER comment)."""
     from den_hurtige.models import QuickPost  # local: den_hurtige is not otherwise a dependency here
 
     ids = sorted(set(post_ids))  # ascending, like every other multi-row write here

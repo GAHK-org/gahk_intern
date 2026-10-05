@@ -81,7 +81,7 @@ class FridagAdmin(admin.ModelAdmin):
 class VagtBytteAdmin(admin.ModelAdmin):
     list_display = ["tildeling", "tilbudt_af", "status", "overtaget_af", "created_at", "closed_at"]
     list_filter = ["status"]
-    raw_id_fields = ["tildeling", "tilbudt_af", "overtaget_af"]
+    raw_id_fields = ["tildeling", "tilbudt_af", "overtaget_af", "hurtig_post"]
 
 
 @admin.register(VagtBytteForslag)
