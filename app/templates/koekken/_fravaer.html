@@ -30,7 +30,7 @@
               {% if can_delete %}
                 <form method="post" action="{% url 'koekken:fravaer_slet' fravaer.pk %}"
                       hx-post="{% url 'koekken:fravaer_slet' fravaer.pk %}"
-                      hx-target="#koekken-fravaer" hx-swap="outerHTML"
+                      hx-target="#koekken-fravaer" hx-swap="outerHTML" hx-disabled-elt="find button"
                       hx-confirm="Slet fraværet {{ fravaer.start_date|date:'j. F' }}–{{ fravaer.end_date|date:'j. F' }}?"
                       style="display:inline">
                   {% csrf_token %}

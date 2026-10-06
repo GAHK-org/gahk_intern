@@ -3606,23 +3606,18 @@ def summer_link_visible(today: date | None = None) -> bool:
     return periode_deadline(target) <= today <= target.end_date
 
 
-def _fmt_dato(d: date) -> str:
-    return f"{d.day}. {MONTHS[d.month]} {d.year}"
-
-
-def _touches_summer(start_date: date, end_date: date) -> bool:
-    for year in range(start_date.year, end_date.year + 1):
-        summer_start, summer_end = summer_bounds(year)
-        if start_date <= summer_end and end_date >= summer_start:
-            return True
-    return False
+def _fmt_dato_interval(start: date, end: date) -> str:
+    """ "11.-20. juli" within one month, else "28. juni-3. juli" (en-dash; mirrors _fravaer.html's weeks)."""
+    if start.month == end.month and start.year == end.year:
+        return f"{start.day}.\u2013{end.day}. {MONTHS[end.month]}"
+    return f"{start.day}. {MONTHS[start.month]}\u2013{end.day}. {MONTHS[end.month]}"
 
 
 def add_fravaer(
     resident: Resident, start_date: date, end_date: date, *, today: date | None = None
 ) -> Fravaer:
     """Register an away range for `resident`. Refuses (`KoekkenAllocationError`, Danish message, nothing
-    written) a reversed range, one that has already ended, one touching no 1 Jul-31 Aug of any year, and
+    written) a reversed range, one that has already ended, one not intersecting the target summer (`target_summer(today)` -- the one the page displays), and
     one overlapping the resident's OWN existing ranges (`a.start <= b.end and b.start <= a.end`; another
     resident's range is irrelevant). An ongoing range is accepted. No row locking: the only race is the
     same resident double-submitting, whose worst case is a cosmetic duplicate row."""
@@ -3632,8 +3627,11 @@ def add_fravaer(
             raise KoekkenAllocationError("Fra-datoen skal ligge før eller på til-datoen.")
         if end_date < today:
             raise KoekkenAllocationError("Fraværet er allerede slut.")
-        if not _touches_summer(start_date, end_date):
-            raise KoekkenAllocationError("Fravær registreres kun for sommerperioden (juli-august).")
+        summer = target_summer(today)
+        if start_date > summer.end_date or end_date < summer.start_date:
+            raise KoekkenAllocationError(
+                f"Fravær kan kun registreres for sommerperioden {summer.start_date.year} (1. juli-31. august)."
+            )
         clash = (
             Fravaer.objects.filter(resident=resident, start_date__lte=end_date, end_date__gte=start_date)
             .order_by("start_date")
@@ -3641,7 +3639,7 @@ def add_fravaer(
         )
         if clash is not None:
             raise KoekkenAllocationError(
-                f"Overlapper dit fravær {_fmt_dato(clash.start_date)}-{_fmt_dato(clash.end_date)}."
+                f"Overlapper dit fravær {_fmt_dato_interval(clash.start_date, clash.end_date)}."
             )
         return Fravaer.objects.create(resident=resident, start_date=start_date, end_date=end_date)
 

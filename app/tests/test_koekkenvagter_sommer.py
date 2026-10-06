@@ -97,16 +97,28 @@ def test_add_refusals_write_nothing(anna: Resident) -> None:
         "Fra-datoen skal ligge før eller på til-datoen."
     )
     assert _refuses(anna, date(Y, 7, 1), date(Y, 7, 9), today=date(Y, 7, 10)) == "Fraværet er allerede slut."
-    msg = "Fravær registreres kun for sommerperioden (juli-august)."
+    msg = f"Fravær kan kun registreres for sommerperioden {Y} (1. juli-31. august)."
     assert _refuses(anna, date(Y, 12, 20), date(Y + 1, 1, 5), today=TODAY) == msg
     assert _refuses(anna, date(Y, 6, 1), date(Y, 6, 30), today=TODAY) == msg
     assert _refuses(anna, date(Y, 9, 1), date(Y, 9, 5), today=TODAY) == msg
 
 
+def test_add_refuses_range_in_non_target_summer(anna: Resident) -> None:
+    """Regression: a range in another year's summer used to be accepted silently yet never displayed."""
+    msg = f"Fravær kan kun registreres for sommerperioden {Y} (1. juli-31. august)."
+    assert _refuses(anna, date(Y + 1, 7, 10), date(Y + 1, 7, 20), today=TODAY) == msg
+    # after 31 August the target is next year's summer: this year's is now refused, next year's accepted
+    after = date(Y, 9, 5)
+    assert _refuses(anna, date(Y, 8, 20), date(Y, 9, 10), today=after).endswith(
+        f"{Y + 1} (1. juli-31. august)."
+    )
+    assert add_fravaer(anna, date(Y + 1, 7, 10), date(Y + 1, 7, 20), today=after).pk
+
+
 def test_add_refuses_overlap_with_own_range(anna: Resident, bo: Resident) -> None:
     add_fravaer(anna, date(Y, 7, 10), date(Y, 7, 20), today=TODAY)
     msg = _refuses(anna, date(Y, 7, 20), date(Y, 7, 25), today=TODAY)  # single shared day
-    assert msg.startswith("Overlapper dit fravær ") and "10. juli" in msg and "20. juli" in msg
+    assert msg == "Overlapper dit fravær 10.\u201320. juli."
     assert _refuses(anna, date(Y, 7, 1), date(Y, 7, 10), today=TODAY).startswith("Overlapper")
     assert _refuses(anna, date(Y, 7, 12), date(Y, 7, 13), today=TODAY).startswith("Overlapper")
     assert _refuses(anna, date(Y, 7, 5), date(Y, 7, 30), today=TODAY).startswith("Overlapper")
@@ -295,7 +307,7 @@ def test_errors_render_inside_partial(anna: Resident, clock: Callable) -> None:
     assert resp.status_code == 200 and "Fra-datoen er ikke en gyldig dato." in html
     assert "Udfyld til-datoen." in html and not Fravaer.objects.exists()
     resp = c.post(f"{BASE}sommer/fravaer", {"fra": f"{Y}-12-01", "til": f"{Y}-12-05"})
-    assert "kun for sommerperioden" in resp.content.decode()
+    assert "kun registreres for sommerperioden" in resp.content.decode()
 
 
 def test_add_view_overlap_message(anna: Resident, clock: Callable) -> None:

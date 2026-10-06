@@ -6,8 +6,8 @@ model, verification/flagging, the kitchen tablet, the four UI surfaces). P1 was 
 generation, tier-A (morgen/frokost) allocation, the ledger and obligation posting, and the
 launch-seeding command. Summer (P3) is designed in `docs/plans/2026-10-04-koekkenvagter-p3-design.md`,
 which supersedes the original design doc's "Summer" section and its `FerieUge` model: summer is never
-allocated, residents claim shifts themselves, and its models (away ranges) are built in later P3 steps.
-P3 step 2 adds `Fravaer` (informational away ranges, add/delete only).
+allocated, residents claim shifts themselves. P3 step 2 built `Fravaer` (informational away ranges,
+add/delete only); later P3 steps add the rest.
 
 This replaces an informal, manual kitchen-credit scoreboard. It does **not** touch `ak.AkEntry`,
 which is a separate system (monthly krydser for dorm labour) — the two must never be conflated.
