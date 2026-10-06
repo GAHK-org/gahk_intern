@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% comment %}
+  P3 step 2 (design doc §7): the summer page. For now only the away ranges ("Mit fravær" / "Væk denne
+  uge", the koekken/_fravaer.html partial); step 3 adds the shift-claiming grid where marked below.
+{% endcomment %}
+{% block title %}Sommer {{ summer.year }} - GAHK Intern{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Køkken</div>
+      <h1>Sommer {{ summer.year }}</h1>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-secondary" href="{% url 'koekken:index' %}">Mine køkkenvagter</a>
+    </div>
+  </div>
+
+  <p>
+    Fravær er kun til information, så huset kan se, hvem der er væk hvilke uger. Det ændrer ikke din
+    vagtforpligtelse. Du kan tage sommervagter fra 1. maj.
+  </p>
+  {% comment %}
+    P3 STEP 3: replace the sentence above about claiming with the shift grid (week by week, "Tag vagt"),
+    and add its context in koekken.views.sommer. The away-range partial below stays as it is.
+  {% endcomment %}
+
+  {% include "koekken/_fravaer.html" %}
+{% endblock %}

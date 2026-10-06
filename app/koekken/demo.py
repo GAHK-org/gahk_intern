@@ -54,6 +54,7 @@ from .models import KoekkenPost, Periode, Praeference, Vagt, VagtBytteForslag, V
 from .services import (
     KoekkenAllocationError,
     accept_trade,
+    add_fravaer,
     allocate_tier_a,
     generate_vagter,
     held_by_vagt,
@@ -68,6 +69,7 @@ from .services import (
     set_preference,
     take_over,
     take_over_whole,
+    target_summer,
     withdraw_offer,
 )
 
@@ -431,6 +433,23 @@ def _seed_launch_balances(residents: list[Resident], periode: Periode) -> None:
         )
 
 
+def _demo_fravaer(residents: list[Resident]) -> None:
+    """P3 step 2: two away ranges for two residents in the target summer, through `add_fravaer`. `today`
+    is fixed before the summer so the "already ended" refusal cannot bite when the demo runs inside it.
+    Best-effort like every optional scenario here."""
+    summer = target_summer()
+    before = summer.start_date - timedelta(days=30)
+    ranges = [
+        (residents[0], summer.start_date + timedelta(days=5), summer.start_date + timedelta(days=18)),
+        (residents[1], summer.start_date + timedelta(days=12), summer.start_date + timedelta(days=26)),
+    ]
+    for resident, start, end in ranges:
+        try:
+            add_fravaer(resident, start, end, today=before)
+        except KoekkenAllocationError:
+            pass
+
+
 def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
     if len(residents) < UNAVAILABLE_COUNT + SHORTFALL_WEEKDAY_CAPACITY + 1:
         return 0  # too small a demo house to show a real shortfall; nothing useful to build
@@ -443,6 +462,7 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
         # themselves, so none of the allocation scenarios below can run. Generation only, plus the
         # starting balances so a July/August demo run still shows them.
         _seed_launch_balances(residents, periode)
+        _demo_fravaer(residents)
         return KoekkenPost.objects.count()
 
     # A few weekday-unavailable declarers for the WHOLE periode (Praeference is periode-scoped, not
@@ -510,4 +530,5 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
     # earlier would hand the FCFS-tiebreak pair (usually residents[0] and [1], who carry launch
     # balances) unequal balances and let the lower one win regardless of declared_at.
     _seed_launch_balances(residents, periode)
+    _demo_fravaer(residents)
     return KoekkenPost.objects.count()

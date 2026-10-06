@@ -1,6 +1,7 @@
 from django.contrib import admin
 
 from .models import (
+    Fravaer,
     Fridag,
     KoekkenPost,
     Periode,
@@ -89,3 +90,10 @@ class VagtBytteForslagAdmin(admin.ModelAdmin):
     list_display = ["bytte", "modydelse", "foreslaaet_af", "status", "created_at", "closed_at"]
     list_filter = ["status"]
     raw_id_fields = ["bytte", "modydelse", "foreslaaet_af"]
+
+
+@admin.register(Fravaer)
+class FravaerAdmin(admin.ModelAdmin):
+    list_display = ("resident", "start_date", "end_date", "created_at")
+    list_filter = ["start_date"]
+    raw_id_fields = ["resident"]

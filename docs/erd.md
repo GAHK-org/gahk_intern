@@ -695,6 +695,14 @@ erDiagram
         datetime closed_at
     }
 
+    koekken_Fravaer {
+        int id PK
+        int resident_id FK
+        date start_date
+        date end_date
+        datetime created_at
+    }
+
     core_PushSubscription }o--|| residents_Resident : "user"
     residents_Resident }o--|o residents_Resident : "sponsor"
     residents_Residency }o--|| residents_Resident : "resident"
@@ -791,6 +799,7 @@ erDiagram
     koekken_VagtBytteForslag }o--|| koekken_VagtBytte : "bytte"
     koekken_VagtBytteForslag }o--|| koekken_VagtTildeling : "modydelse"
     koekken_VagtBytteForslag }o--|| residents_Resident : "foreslaaet_af"
+    koekken_Fravaer }o--|| residents_Resident : "resident"
 ```
 
 ## admissions
@@ -1258,6 +1267,14 @@ erDiagram
         datetime closed_at
     }
 
+    koekken_Fravaer {
+        int id PK
+        int resident_id FK
+        date start_date
+        date end_date
+        datetime created_at
+    }
+
     den_hurtige_QuickPost { }
 
     residents_Resident { }
@@ -1282,6 +1299,7 @@ erDiagram
     koekken_VagtBytteForslag }o--|| koekken_VagtBytte : "bytte"
     koekken_VagtBytteForslag }o--|| koekken_VagtTildeling : "modydelse"
     koekken_VagtBytteForslag }o--|| residents_Resident : "foreslaaet_af"
+    koekken_Fravaer }o--|| residents_Resident : "resident"
 ```
 
 ## oelkaelder

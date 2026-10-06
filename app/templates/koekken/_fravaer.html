@@ -1,0 +1,73 @@
+{% comment %}
+  P3 step 2 (design doc §2/§7): "Mit fravær" (the viewer's own away ranges, add form, delete) and
+  "Væk denne uge" (every resident away in each week of the summer -- names are visible to the whole
+  house, no anonymity). Rendered by both koekken/sommer.html and the htmx swap after an add/delete POST
+  (koekken.views._fravaer_context), so the two can never disagree.
+
+  P2 §10 conventions: a refusal renders INSIDE this partial (`error` / the bound form's errors), never
+  through the messages framework; a closed action's button is ABSENT, never disabled -- an ended range
+  has no "Slet" form and no delete URL at all. `mine` is (fravaer, can_delete) pairs; `weeks` is
+  (first_day, last_day, residents) rows, the first/last clipped to the summer.
+{% endcomment %}
+<div id="koekken-fravaer">
+  {% if error %}
+    <p class="card" role="alert" style="border-color:#b3261e">{{ error }}</p>
+  {% endif %}
+  {% if form.errors %}
+    <div class="card" role="alert" style="border-color:#b3261e">
+      {% for field_errors in form.errors.values %}{% for message in field_errors %}<p>{{ message }}</p>{% endfor %}{% endfor %}
+    </div>
+  {% endif %}
+
+  <div class="card-flat">
+    <div class="card-head"><h2>Mit fravær</h2></div>
+    <div class="card-pad">
+      {% if mine %}
+        <ul style="list-style:none;padding:0;margin:0 0 12px">
+          {% for fravaer, can_delete in mine %}
+            <li style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:4px 0">
+              <span>{{ fravaer.start_date|date:"l j. F" }} – {{ fravaer.end_date|date:"l j. F" }}</span>
+              {% if can_delete %}
+                <form method="post" action="{% url 'koekken:fravaer_slet' fravaer.pk %}"
+                      hx-post="{% url 'koekken:fravaer_slet' fravaer.pk %}"
+                      hx-target="#koekken-fravaer" hx-swap="outerHTML"
+                      hx-confirm="Slet fraværet {{ fravaer.start_date|date:'j. F' }}–{{ fravaer.end_date|date:'j. F' }}?"
+                      style="display:inline">
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn-secondary">Slet</button>
+                </form>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="muted">Du har ikke registreret noget fravær i sommer.</p>
+      {% endif %}
+
+      <form method="post" action="{% url 'koekken:fravaer_tilfoej' %}"
+            hx-post="{% url 'koekken:fravaer_tilfoej' %}"
+            hx-target="#koekken-fravaer" hx-swap="outerHTML" hx-disabled-elt="find button"
+            style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+        {% csrf_token %}
+        <label class="block text-sm">Fra <input type="date" name="fra" value="{{ form.fra.value|default_if_none:'' }}" required></label>
+        <label class="block text-sm">Til <input type="date" name="til" value="{{ form.til.value|default_if_none:'' }}" required></label>
+        <button type="submit" class="btn">Tilføj fravær</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card-flat">
+    <div class="card-head"><h2>Væk denne uge</h2></div>
+    <div class="card-pad">
+      <ul style="list-style:none;padding:0;margin:0">
+        {% for first, last, residents in weeks %}
+          <li style="padding:3px 0">
+            <strong>Uge {{ first|date:"W" }}</strong>
+            ({% if first.month == last.month %}{{ first.day }}.–{{ last|date:"j. F" }}{% else %}{{ first|date:"j. F" }}–{{ last|date:"j. F" }}{% endif %}):
+            {% if residents %}{% for r in residents %}{{ r.full_name }}{% if not forloop.last %}, {% endif %}{% endfor %}{% else %}<span class="muted">Ingen registreret</span>{% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>

@@ -24,6 +24,9 @@
         {% comment %}F10: Regnskab's balance export was otherwise reachable only by typing the exact URL.{% endcomment %}
         <a class="btn btn-secondary" href="{% url 'koekken:balance_export' %}">Saldo-eksport</a>
       {% endif %}
+      {% if summer_link_visible %}
+        <a class="btn btn-secondary" href="{% url 'koekken:sommer' %}">Sommer {{ summer_year }}</a>
+      {% endif %}
       <a class="btn btn-secondary" href="{% url 'koekken:praeferencer_forklaring' %}">Hvad betyder mine præferencer?</a>
       <a class="btn" href="{% url 'koekken:praeferencer' %}">Mine præferencer</a>
     </div>

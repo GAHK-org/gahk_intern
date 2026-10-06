@@ -42,11 +42,13 @@ from .forms import (
     AllokeringForm,
     AnmeldelseForm,
     ForeslaaByttForm,
+    FravaerForm,
     OverrideAssignForm,
     PraeferenceForm,
     TilbydForm,
 )
 from .models import (
+    Fravaer,
     Praeference,
     PraeferenceDag,
     Vagt,
@@ -92,6 +94,9 @@ def _resident_context(request: HttpRequest) -> dict[str, object]:
         "push_configured": push.is_configured(),
         "vapid_public_key": push.vapid_public_key(),
         "push_subscribed": services.is_subscribed(resident),
+        # P3 step 2: the index links to the summer page only from its deadline through 31 August.
+        "summer_link_visible": services.summer_link_visible(today),
+        "summer_year": services.target_summer(today).year,
     }
 
 
@@ -766,3 +771,63 @@ def marker_udfoert(request: HttpRequest, pk: int) -> HttpResponse:
     # renders the current, honest state instead of raising — the tablet has no session to lose and
     # nobody typed anything that would be lost by a silent no-op.
     return render(request, "koekken/_idag_vagter.html", _tablet_context())
+
+
+# ------------------------------------------------------------------------------------- sommer (P3)
+
+
+def _fravaer_context(
+    request: HttpRequest, *, error: str | None = None, form: FravaerForm | None = None
+) -> dict[str, object]:
+    """Everything `koekken/_fravaer.html` needs -- shared by the full summer page and the htmx swap after
+    an add/delete POST, so the two can never disagree. `summer` is the PURE target summer (no row is
+    written on a GET); `form` is bound-with-errors after an invalid POST, else empty."""
+    resident = current_resident(request)
+    today = current_date()
+    summer = services.target_summer(today)
+    return {
+        "summer": summer,
+        "mine": services.resident_fravaer(resident, today=today),
+        "weeks": services.away_by_week(summer),
+        "form": form if form is not None else FravaerForm(),
+        "error": error,
+    }
+
+
+@access.access_required
+def sommer(request: HttpRequest) -> HttpResponse:
+    context = _fravaer_context(request)
+    # P3 step 3 (shift claiming grid) adds its context here.
+    return render(request, "koekken/sommer.html", context)
+
+
+@access.access_required
+@require_POST
+def fravaer_tilfoej(request: HttpRequest) -> HttpResponse:
+    form = FravaerForm(request.POST)
+    error: str | None = None
+    if form.is_valid():
+        try:
+            services.add_fravaer(
+                current_resident(request), form.cleaned_data["fra"], form.cleaned_data["til"]
+            )
+        except services.KoekkenAllocationError as exc:
+            error = str(exc)
+        else:
+            form = FravaerForm()
+    return render(request, "koekken/_fravaer.html", _fravaer_context(request, error=error, form=form))
+
+
+@access.access_required
+@require_POST
+def fravaer_slet(request: HttpRequest, pk: int) -> HttpResponse:
+    fravaer = get_object_or_404(Fravaer, pk=pk)
+    resident = current_resident(request)
+    if fravaer.resident_id != resident.pk:
+        raise PermissionDenied
+    error: str | None = None
+    try:
+        services.delete_fravaer(fravaer, resident)
+    except services.KoekkenAllocationError as exc:
+        error = str(exc)
+    return render(request, "koekken/_fravaer.html", _fravaer_context(request, error=error))

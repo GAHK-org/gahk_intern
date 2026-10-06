@@ -7,6 +7,7 @@ generation, tier-A (morgen/frokost) allocation, the ledger and obligation postin
 launch-seeding command. Summer (P3) is designed in `docs/plans/2026-10-04-koekkenvagter-p3-design.md`,
 which supersedes the original design doc's "Summer" section and its `FerieUge` model: summer is never
 allocated, residents claim shifts themselves, and its models (away ranges) are built in later P3 steps.
+P3 step 2 adds `Fravaer` (informational away ranges, add/delete only).
 
 This replaces an informal, manual kitchen-credit scoreboard. It does **not** touch `ak.AkEntry`,
 which is a separate system (monthly krydser for dorm labour) — the two must never be conflated.
@@ -81,7 +82,7 @@ from datetime import date, time
 
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
-from django.db.models import Q
+from django.db.models import F, Q
 from django.utils import timezone
 
 from residents.models import Resident
@@ -558,3 +559,32 @@ class VagtBytteForslag(models.Model):
 
     def __str__(self) -> str:
         return f"Bytteforslag fra {self.foreslaaet_af.full_name} på {self.bytte_id} ({self.get_status_display()})"
+
+
+class Fravaer(models.Model):
+    """One away range ("væk fra-til") a resident has registered -- P3 design doc §2/§3.
+
+    **Informational only.** Nothing in allocation, claiming, obligation or generation ever reads this
+    table (`is_fridag` is not a consumer either -- see its docstring); it exists so the whole house can
+    see who is away each week. Collected and shown for summer only in v1, but general in shape (it could
+    later carry exchange, internship, illness), so it is not keyed to a `Periode`.
+
+    Add and delete only -- no edit; a resident deletes and re-adds. Ranges are inclusive. Overlap with
+    the same resident's other ranges is refused in `koekken.services.add_fravaer`, not in the database
+    (this repo uses no Postgres exclusion constraints); only `start_date <= end_date` is a DB check.
+    """
+
+    resident = models.ForeignKey(Resident, on_delete=models.CASCADE, related_name="koekken_fravaer")
+    start_date = models.DateField()
+    end_date = models.DateField()
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["start_date"]
+        constraints = [
+            models.CheckConstraint(condition=Q(start_date__lte=F("end_date")), name="fravaer_start_lte_end"),
+        ]
+        indexes = [models.Index(fields=["resident", "start_date"])]
+
+    def __str__(self) -> str:
+        return f"{self.resident.full_name} væk {self.start_date:%Y-%m-%d} - {self.end_date:%Y-%m-%d}"

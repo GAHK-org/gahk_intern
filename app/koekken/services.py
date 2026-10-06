@@ -34,6 +34,11 @@ resident living inside SOMMER has the following Efterår as their preference "ho
 (`_preference_home_periode`/`_preference_home_periode_pure`). `in_preference_window` also stops missing
 Efterår's 24-30 June window (a pre-existing bug, see its docstring).
 
+**P3 step 2** (same design doc §2/§3/§7, section "P3 step 2: away ranges" at the bottom): `Fravaer`, the
+informational away ranges residents register for summer (`add_fravaer`/`delete_fravaer`, add and delete
+only) and the house-wide weekly listing (`away_by_week`). Nothing here is read by allocation, claiming,
+obligation or generation.
+
 **Amendment 4, step 1** (`docs/plans/2026-10-04-koekkenvagter-a4-design.md`): hand-off of vagter. A
 resident offers a future `TILDELT` row (`offer_tildeling`); another takes it over (`take_over`, which
 MOVES the existing row) or, on a two-person shift, the offerer's partner takes the whole shift
@@ -102,6 +107,7 @@ from core.danish import MONTHS, WEEKDAYS
 from residents.models import Residency, Resident
 
 from .models import (
+    Fravaer,
     Fridag,
     KoekkenPost,
     Periode,
@@ -3568,3 +3574,123 @@ def house_mean() -> float:
         return 0.0
     balances = bulk_balances(Resident.objects.filter(pk__in=resident_ids))
     return sum(balances.values()) / len(balances)
+
+
+# ---------------------------------------------------------------------------------------------------
+# P3 step 2: away ranges (`Fravaer`) -- docs/plans/2026-10-04-koekkenvagter-p3-design.md §2/§3/§7.
+# Informational only: nothing above this line reads any of it. Ranges are inclusive; adjacent ranges
+# (1-10 Jul, 11-20 Jul) are not an overlap and are never merged.
+# ---------------------------------------------------------------------------------------------------
+
+
+def summer_bounds(year: int) -> tuple[date, date]:
+    """(1 July, 31 August) of `year` -- the SOMMER periode's bounds, pure, via `_periode_bounds`."""
+    _kind, _year, start, end = _periode_bounds(date(year, 7, 1))
+    return start, end
+
+
+def target_summer(today: date | None = None) -> Periode:
+    """The summer the away-range page is about: this year's SOMMER while `today` is on or before 31 August,
+    otherwise next year's. An UNSAVED `Periode` (`_periode_from_bounds`) -- never `resolve_periode`, so a
+    GET of the summer page cannot write a row (the same pure/write pairing as `preference_target_periode`)."""
+    today = today or current_date()
+    year = today.year if today <= summer_bounds(today.year)[1] else today.year + 1
+    return _periode_from_bounds(summer_bounds(year)[0])
+
+
+def summer_link_visible(today: date | None = None) -> bool:
+    """Whether the index page links to the summer page: from the target summer's deadline (1 May) through
+    its last day (31 August). The page itself is always reachable by URL."""
+    today = today or current_date()
+    target = target_summer(today)
+    return periode_deadline(target) <= today <= target.end_date
+
+
+def _fmt_dato(d: date) -> str:
+    return f"{d.day}. {MONTHS[d.month]} {d.year}"
+
+
+def _touches_summer(start_date: date, end_date: date) -> bool:
+    for year in range(start_date.year, end_date.year + 1):
+        summer_start, summer_end = summer_bounds(year)
+        if start_date <= summer_end and end_date >= summer_start:
+            return True
+    return False
+
+
+def add_fravaer(
+    resident: Resident, start_date: date, end_date: date, *, today: date | None = None
+) -> Fravaer:
+    """Register an away range for `resident`. Refuses (`KoekkenAllocationError`, Danish message, nothing
+    written) a reversed range, one that has already ended, one touching no 1 Jul-31 Aug of any year, and
+    one overlapping the resident's OWN existing ranges (`a.start <= b.end and b.start <= a.end`; another
+    resident's range is irrelevant). An ongoing range is accepted. No row locking: the only race is the
+    same resident double-submitting, whose worst case is a cosmetic duplicate row."""
+    today = today or current_date()
+    with transaction.atomic():
+        if start_date > end_date:
+            raise KoekkenAllocationError("Fra-datoen skal ligge før eller på til-datoen.")
+        if end_date < today:
+            raise KoekkenAllocationError("Fraværet er allerede slut.")
+        if not _touches_summer(start_date, end_date):
+            raise KoekkenAllocationError("Fravær registreres kun for sommerperioden (juli-august).")
+        clash = (
+            Fravaer.objects.filter(resident=resident, start_date__lte=end_date, end_date__gte=start_date)
+            .order_by("start_date")
+            .first()
+        )
+        if clash is not None:
+            raise KoekkenAllocationError(
+                f"Overlapper dit fravær {_fmt_dato(clash.start_date)}-{_fmt_dato(clash.end_date)}."
+            )
+        return Fravaer.objects.create(resident=resident, start_date=start_date, end_date=end_date)
+
+
+def delete_fravaer(fravaer: Fravaer, by: Resident, *, today: date | None = None) -> None:
+    """Delete one away range. Only its owner may (defense in depth -- the view 403s first), and only while
+    it has not ended."""
+    today = today or current_date()
+    if fravaer.resident_id != by.pk:
+        raise KoekkenAllocationError("Du kan kun slette dit eget fravær.")
+    if fravaer.end_date < today:
+        raise KoekkenAllocationError("Afsluttet fravær kan ikke slettes.")
+    fravaer.delete()
+
+
+def resident_fravaer(resident: Resident, *, today: date | None = None) -> list[tuple[Fravaer, bool]]:
+    """`resident`'s own ranges touching the target summer, by start date, each with a `can_delete` flag
+    (not yet ended)."""
+    today = today or current_date()
+    summer = target_summer(today)
+    rows = Fravaer.objects.filter(
+        resident=resident, start_date__lte=summer.end_date, end_date__gte=summer.start_date
+    ).order_by("start_date", "pk")
+    return [(f, f.end_date >= today) for f in rows]
+
+
+def away_by_week(summer: Periode) -> list[tuple[date, date, list[Resident]]]:
+    """One `(first_day, last_day, residents)` row per ISO week (Monday-Sunday) from the week holding
+    `summer`'s first day to the week holding its last. The first/last weeks are partial: days are clipped
+    to the summer, and the clipped days are both the overlap test and the label. Residents are
+    de-duplicated and sorted by name; one whose `move_out_date` precedes the week's first summer day is
+    left out. One query, bucketed in Python."""
+    ranges = list(
+        Fravaer.objects.filter(start_date__lte=summer.end_date, end_date__gte=summer.start_date)
+        .select_related("resident")
+        .order_by("start_date", "pk")
+    )
+    rows: list[tuple[date, date, list[Resident]]] = []
+    monday = summer.start_date - timedelta(days=summer.start_date.weekday())
+    while monday <= summer.end_date:
+        first = max(monday, summer.start_date)
+        last = min(monday + timedelta(days=6), summer.end_date)
+        present: dict[int, Resident] = {}
+        for f in ranges:
+            r = f.resident
+            if f.start_date <= last and first <= f.end_date:
+                if r.move_out_date is not None and r.move_out_date < first:
+                    continue
+                present[r.pk] = r
+        rows.append((first, last, sorted(present.values(), key=lambda r: r.full_name)))
+        monday += timedelta(days=7)
+    return rows

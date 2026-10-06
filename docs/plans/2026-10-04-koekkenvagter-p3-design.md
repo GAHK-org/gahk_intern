@@ -69,6 +69,10 @@ Fravaer(resident, start_date, end_date, created_at)     check: start_date <= end
   re-add.
 - A range may cross a periode boundary (e.g. 28 Jun–3 Jul); it is stored as entered, and the summer
   page shows only its summer days.
+- **Implementation notes (step 2).** Ranges are inclusive; adjacent ranges (1-10 Jul, 11-20 Jul) are not an
+  overlap (`a.start <= b.end and b.start <= a.end`) and are never merged. An already-ended range cannot be
+  added (mirrors the delete rule); an ongoing one can. No row locking: the only race is one resident
+  double-submitting, whose worst case is a cosmetic duplicate row.
 - **No other schema change.** A claim is an ordinary `TILDELT` `VagtTildeling`. `Vagt`, `KoekkenPost`,
   `VagtRegel`, `Fridag` and `Praeference` are unchanged.
 
@@ -177,6 +181,10 @@ Elsewhere:
   happens to them is the vote's question.
 - The preference explanation page gains one paragraph on summer: obligation as normal, claim your own
   shifts, claims are binding.
+- **Implementation notes (step 2).** The summer page shows the *target summer*: this year's SOMMER while
+  today <= 31 Aug, otherwise next year's. The page is always reachable by URL; the index link shows only
+  from that summer's deadline (1 May) through 31 Aug. Built as pure functions (`target_summer`,
+  `summer_link_visible`) so a GET never writes a `Periode`.
 - `demo.py`: a summer month with claims, an unclaimed shift and two away ranges.
 
 ## 8. Swapping and hand-off: Amendment 4, not P3
@@ -210,7 +218,7 @@ confirmed in the A4 round.
 | --- | --- | --- |
 | 1 | §4 (except the generation change) and §5, including the window-bug fix. | 2 May 2027 (window fix: 24 Jun 2027) |
 | — | Amendment 4 design and build. | ideally 1 Feb 2027 |
-| 2 | `Fravaer` and its UI. | before claiming opens, May 2027 |
+| 2 | `Fravaer` and its UI. **Built** (SHA_PLACEHOLDER). | before claiming opens, May 2027 |
 | 3 | Claiming, the summer page, §4's generation change, Køkkengruppen visibility, demo. | May 2027 |
 | — | Amendment 6 (Køkkengruppen awarding event credit). | after the above |
 

@@ -111,3 +111,19 @@ class TilbydForm(forms.Form):
     channel. Unticked (or absent) posts nothing."""
 
     del_i_den_hurtige = forms.BooleanField(required=False)
+
+
+class FravaerForm(forms.Form):
+    """An away range (P3 step 2): `fra`/`til` from two hand-rendered `<input type="date">`. Only parses;
+    every business rule (order, already ended, summer only, overlap) lives in `services.add_fravaer`."""
+
+    fra = forms.DateField(
+        input_formats=["%Y-%m-%d"],
+        label="Fra",
+        error_messages={"required": "Udfyld fra-datoen.", "invalid": "Fra-datoen er ikke en gyldig dato."},
+    )
+    til = forms.DateField(
+        input_formats=["%Y-%m-%d"],
+        label="Til",
+        error_messages={"required": "Udfyld til-datoen.", "invalid": "Til-datoen er ikke en gyldig dato."},
+    )
