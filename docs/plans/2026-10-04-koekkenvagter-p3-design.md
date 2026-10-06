@@ -218,7 +218,7 @@ confirmed in the A4 round.
 | --- | --- | --- |
 | 1 | §4 (except the generation change) and §5, including the window-bug fix. | 2 May 2027 (window fix: 24 Jun 2027) |
 | — | Amendment 4 design and build. | ideally 1 Feb 2027 |
-| 2 | `Fravaer` and its UI. **Built** (SHA_PLACEHOLDER). | before claiming opens, May 2027 |
+| 2 | `Fravaer` and its UI. **Built** (e31086f). | before claiming opens, May 2027 |
 | 3 | Claiming, the summer page, §4's generation change, Køkkengruppen visibility, demo. | May 2027 |
 | — | Amendment 6 (Køkkengruppen awarding event credit). | after the above |
 
