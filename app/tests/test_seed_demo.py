@@ -162,6 +162,24 @@ def test_seed_demo_leaves_one_tombstone_with_its_replies_intact() -> None:
     assert tombstone.comments.exists(), "the replies outlive the message"
 
 
+def _skip_unless_allocated_current_month() -> None:
+    """Skip when seed() cannot have allocated the current month. Summer (July/August) is never allocated
+    -- seed() only generates and seeds claims there -- so the assertions below do not apply. Also skipped in
+    the rare window where seed()'s `timezone.now().date()` (UTC) and `current_date()` (local) name
+    different days, which can disagree about the current month on a month boundary (predates these tests;
+    accepted as a skip rather than a flake)."""
+    from django.utils import timezone
+
+    from core.clock import current_date
+    from koekken.services import periode_is_allocated, resolve_periode
+
+    today = current_date()
+    if timezone.now().date() != today:
+        pytest.skip("UTC and local date disagree; seed() and the test may pick different months")
+    if not periode_is_allocated(resolve_periode(today).kind):
+        pytest.skip("summer periode is never allocated by seed()")
+
+
 @pytest.mark.django_db
 def test_seed_demo_koekken_allocates_aftenvagt_for_the_current_month() -> None:
     """Tier B runs for the current month, so the kitchen tablet has an aftenvagt crew to mark done
@@ -169,6 +187,7 @@ def test_seed_demo_koekken_allocates_aftenvagt_for_the_current_month() -> None:
     from core.clock import current_date
     from koekken.models import Vagt, VagtRegel, VagtTildeling
 
+    _skip_unless_allocated_current_month()
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
 
     today = current_date()
@@ -177,3 +196,32 @@ def test_seed_demo_koekken_allocates_aftenvagt_for_the_current_month() -> None:
     unassigned = aften.filter(tildelinger__isnull=True).count()
     assert unassigned == 0, f"{unassigned} aftenvagt left unassigned in the current month"
     assert VagtTildeling.objects.filter(vagt__in=aften, status=VagtTildeling.Status.TILDELT).exists()
+
+
+@pytest.mark.django_db
+def test_seed_demo_koekken_seeds_a_whole_shift_takeover() -> None:
+    """The whole-shift take-over scenario runs on real tier-B output; guard against it silently going
+    unseeded. `_demo_handoffs` tries later months when the first has no future weekday 2-person aftenvagt."""
+    from django.db.models import Count
+
+    from core.clock import current_date
+    from koekken.models import Vagt, VagtBytte, VagtRegel
+
+    _skip_unless_allocated_current_month()
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+
+    # Precondition: a future weekday 2-person aftenvagt still held by two residents. Only the current and
+    # window months get tier B, so in the last days of a periode none may remain -- skip rather than flake.
+    # (Whole-shift takeover consumes one of them, hence the check is on remaining OR already-taken shifts.)
+    today = current_date()
+    had_candidate = (
+        VagtBytte.objects.filter(status=VagtBytte.Status.OVERTAGET_HEL).exists()
+        or Vagt.objects.filter(date__gt=today, kind=VagtRegel.Kind.AFTEN, headcount=2)
+        .annotate(n=Count("tildelinger"))
+        .filter(n=2)
+        .exclude(date__week_day__in=[1, 7])
+        .exists()
+    )
+    if not had_candidate:
+        pytest.skip("no future weekday 2-person aftenvagt left in the periode")
+    assert VagtBytte.objects.filter(status=VagtBytte.Status.OVERTAGET_HEL).exists()
