@@ -95,6 +95,14 @@ marking-done self-report flow (`mark_udfoert`, `marking_window`, read live off `
 preferences decide WHICH slot a resident gets, never WHO is picked next -- `allocate_tier_b`'s
 ranking never reads a day preference, only the existing balance/declared_at/pk comparator (plus the
 one already-approved exception, weekend compensation) -- see that function's docstring.
+
+**Amendment 6** (`docs/plans/2026-10-07-koekkenvagter-a6-design.md`): party credit. `festkredit_preview`
+(pure) and `award_festkredit` write one `FESTKREDIT` ledger row per helper and one `FESTBIDRAG` row per
+resident charged (the event month's published list, split by the SAME largest-remainder helper
+`post_obligation` uses, `split_evenly`), so the award is self-balancing; `undo_festkredit` reverses a
+whole award with `TILBAGEFOERSEL` rows. Nothing here touches allocation, `VagtTildeling`, `VagtBytte` or
+the Amendment 4 lock order: ranking and `house_mean` read the ledger and pick the award up unchanged.
+`post_obligation`'s stale-row delete filters FORPLIGTELSE only, so it never touches these kinds.
 """
 
 import itertools
@@ -106,14 +114,15 @@ from datetime import date, datetime, time, timedelta
 from typing import cast
 
 from django.db import IntegrityError, transaction
-from django.db.models import Count, Exists, F, OuterRef, Q, QuerySet, Sum
+from django.db.models import Count, Exists, F, OuterRef, Prefetch, Q, QuerySet, Sum
 from django.utils import timezone
 
 from core.clock import current_date, current_datetime
-from core.danish import MONTHS, WEEKDAYS
+from core.danish import MONTHS, WEEKDAYS, month_label
 from residents.models import Residency, Resident
 
 from .models import (
+    FestKredit,
     Fravaer,
     Fridag,
     KoekkenPost,
@@ -3306,6 +3315,28 @@ def _calendar_year_for_month(periode: Periode, month: int) -> int:
     raise KoekkenAllocationError(f"Måned {month} ligger ikke i {periode}.")
 
 
+def split_evenly(total_minutes: int, residents: list[Resident]) -> list[tuple[Resident, int]]:
+    """Largest-remainder split of `total_minutes` over `residents` (pass them ordered by pk): everyone
+    gets `total // n`, and the first `total % n` get one minute more, so the amounts sum to EXACTLY
+    `total_minutes`. The one place this arithmetic lives -- shared by `post_obligation` and
+    `award_festkredit`, never copied."""
+    base, remainder = divmod(total_minutes, len(residents))
+    return [(resident, base + (1 if index < remainder else 0)) for index, resident in enumerate(residents)]
+
+
+def charged_residents(year: int, month: int, *, today: date | None = None) -> list[Resident]:
+    """Who is charged for (year, month): a published `Residency` row for that month, excluding anyone
+    whose `move_out_date` has already passed (no ledger entry is written after move-out). Distinct,
+    ordered by pk. `post_obligation` and `festkredit_preview` both use this."""
+    today = today or current_date()
+    return list(
+        Resident.objects.filter(residencies__year=year, residencies__month=month)
+        .exclude(move_out_date__isnull=False, move_out_date__lt=today)
+        .distinct()
+        .order_by("pk")
+    )
+
+
 def post_obligation(periode: Periode, month: int, *, officer: Resident | None = None) -> tuple[int, int]:
     """Reconcile FORPLIGTELSE entries for one calendar month against that month's actual supply.
 
@@ -3328,13 +3359,7 @@ def post_obligation(periode: Periode, month: int, *, officer: Resident | None = 
         or 0
     )
 
-    today = current_date()
-    present = list(
-        Resident.objects.filter(residencies__year=year, residencies__month=month)
-        .exclude(move_out_date__isnull=False, move_out_date__lt=today)
-        .distinct()
-        .order_by("pk")
-    )
+    present = charged_residents(year, month)
     present_ids = {r.pk for r in present}
 
     # Reconcile stale FORPLIGTELSE rows before reposting — exactly `ak.services.apply_monthly_charge`'s
@@ -3354,10 +3379,8 @@ def post_obligation(periode: Periode, month: int, *, officer: Resident | None = 
     if not present:
         return (0, 0)
 
-    base, remainder = divmod(total_minutes, len(present))
     written = 0
-    for index, resident in enumerate(present):
-        amount = base + (1 if index < remainder else 0)
+    for resident, amount in split_evenly(total_minutes, present):
         KoekkenPost.objects.update_or_create(
             resident=resident,
             periode=periode,
@@ -3367,6 +3390,207 @@ def post_obligation(periode: Periode, month: int, *, officer: Resident | None = 
         )
         written += 1
     return (written, len(present))
+
+
+# ---------------------------------------------------------------------------------------------------
+# Amendment 6: party credit (`FestKredit`). Design doc `2026-10-07-koekkenvagter-a6-design.md`.
+# Append-only ledger inserts only; the one lock is the award row during undo.
+# ---------------------------------------------------------------------------------------------------
+
+
+@dataclass
+class FestKreditPreview:
+    """What `award_festkredit` would write, computed without writing anything."""
+
+    navn: str
+    dato: date
+    helpers: list[tuple[Resident, int]]  # (resident, whole hours), ordered by name
+    total_minutes: int
+    charged: list[Resident]
+    per_resident_minutes: tuple[int, int]  # (min, max) of the even split
+    month_label: str  # the event month, e.g. "December 2026"
+
+
+def festkredit_preview(
+    navn: str, dato: date, timer_by_resident: dict[int, int], *, today: date | None = None
+) -> FestKreditPreview:
+    """Check every A6 §4 rule and compute the award's numbers. PURE: never writes. Raises
+    `KoekkenAllocationError` (Danish message) on the first rule broken.
+
+    `timer_by_resident` is keyed by resident pk, so a resident cannot appear twice in it by
+    construction; the "no duplicates" rule is therefore enforced where a duplicate could arise, the
+    form's multi-select (a `ModelMultipleChoiceField` yields each resident once)."""
+    today = today or current_date()
+    navn = navn.strip()
+    if dato > today:
+        raise KoekkenAllocationError("Datoen ligger i fremtiden — kredit gives for udført arbejde.")
+    if not navn:
+        raise KoekkenAllocationError("Begivenheden skal have et navn.")
+    if len(navn) > 100:
+        raise KoekkenAllocationError("Navnet på begivenheden må højst være 100 tegn.")
+    if not timer_by_resident:
+        raise KoekkenAllocationError("Vælg mindst én hjælper.")
+    residents = {r.pk: r for r in Resident.objects.filter(pk__in=timer_by_resident.keys()).order_by("pk")}
+    helpers: list[tuple[Resident, int]] = []
+    for pk, hours in timer_by_resident.items():
+        resident = residents.get(pk)
+        if resident is None:
+            raise KoekkenAllocationError("En af hjælperne findes ikke.")
+        if isinstance(hours, bool) or not isinstance(hours, int) or hours < 1:
+            raise KoekkenAllocationError(f"{resident.full_name} skal have mindst 1 time.")
+        if resident.move_out_date is not None and resident.move_out_date < today:
+            raise KoekkenAllocationError(f"{resident.full_name} er fraflyttet.")
+        helpers.append((resident, hours))
+    helpers.sort(key=lambda pair: (pair[0].full_name, pair[0].pk))
+    total_minutes = sum(hours for _, hours in helpers) * 60
+
+    charged = charged_residents(dato.year, dato.month, today=today)
+    label = month_label(dato.year, dato.month)
+    if not charged:
+        raise KoekkenAllocationError(
+            f"Der er ingen offentliggjort alumneliste for {label} — festbidraget kan ikke fordeles."
+        )
+    amounts = [amount for _, amount in split_evenly(total_minutes, charged)]
+    return FestKreditPreview(
+        navn=navn,
+        dato=dato,
+        helpers=helpers,
+        total_minutes=total_minutes,
+        charged=charged,
+        per_resident_minutes=(min(amounts), max(amounts)),
+        month_label=label,
+    )
+
+
+def award_festkredit(
+    navn: str, dato: date, timer_by_resident: dict[int, int], *, by: Resident, today: date | None = None
+) -> FestKredit:
+    """Record a party-credit award in one transaction: the `FestKredit` row, a `FESTKREDIT` row per helper
+    (+hours x 60) and a `FESTBIDRAG` row per charged resident (their even share, negative). The charges
+    sum to exactly minus the credit, so the ledger's total does not move. Helpers are pushed after
+    commit (`_notify`); residents who are only charged are not.
+
+    Two simultaneous submissions would create two awards; either can be undone on its own (A6 §6)."""
+    with transaction.atomic():
+        preview = festkredit_preview(navn, dato, timer_by_resident, today=today)
+        award = FestKredit.objects.create(navn=preview.navn, dato=dato, created_by=by)
+        periode = resolve_periode(dato)
+        posts = [
+            KoekkenPost(
+                resident=resident,
+                delta_minutes=hours * 60,
+                kind=KoekkenPost.Kind.FESTKREDIT,
+                periode=periode,
+                festkredit=award,
+                created_by=by,
+            )
+            for resident, hours in preview.helpers
+        ]
+        posts += [
+            KoekkenPost(
+                resident=resident,
+                delta_minutes=-amount,
+                kind=KoekkenPost.Kind.FESTBIDRAG,
+                periode=periode,
+                festkredit=award,
+                created_by=by,
+            )
+            for resident, amount in split_evenly(preview.total_minutes, preview.charged)
+        ]
+        KoekkenPost.objects.bulk_create(posts)
+        for resident, hours in preview.helpers:
+            _notify(resident, f"Du har fået {hours} t køkkenkredit for {preview.navn}.")
+    return award
+
+
+def undo_festkredit(festkredit: FestKredit, *, by: Resident) -> FestKredit:
+    """Reverse a whole award: one `TILBAGEFOERSEL` per `FESTKREDIT`/`FESTBIDRAG` row with the negated delta,
+    then stamp `fortrudt_at`/`fortrudt_by`. Nothing is deleted. The award row is locked first, so a
+    double-click (or two officers) is refused cleanly the second time. No push on undo (A6 §6).
+
+    A resident who has moved out since is still reversed: this restores their pre-award balance, a
+    correction of an earlier entry rather than a NEW charge or credit, so the "no entry after
+    move_out_date" rule does not apply (an accepted judgment call, A6 design doc)."""
+    with transaction.atomic():
+        locked = FestKredit.objects.select_for_update().get(pk=festkredit.pk)
+        if locked.fortrudt_at is not None:
+            raise KoekkenAllocationError("Tildelingen er allerede fortrudt.")
+        originals = list(
+            KoekkenPost.objects.filter(
+                festkredit=locked, kind__in=[KoekkenPost.Kind.FESTKREDIT, KoekkenPost.Kind.FESTBIDRAG]
+            )
+        )
+        KoekkenPost.objects.bulk_create(
+            [
+                KoekkenPost(
+                    resident_id=post.resident_id,
+                    delta_minutes=-post.delta_minutes,
+                    kind=KoekkenPost.Kind.TILBAGEFOERSEL,
+                    periode_id=post.periode_id,
+                    festkredit=locked,
+                    created_by=by,
+                )
+                for post in originals
+            ]
+        )
+        locked.fortrudt_at = current_datetime()
+        locked.fortrudt_by = by
+        locked.save(update_fields=["fortrudt_at", "fortrudt_by"])
+    return locked
+
+
+@dataclass
+class FestKreditRow:
+    """One award as the history list shows it."""
+
+    festkredit: FestKredit
+    helpers: list[tuple[Resident, int]]  # (resident, hours)
+    total_hours: int
+
+
+def festkredit_history() -> list[FestKreditRow]:
+    """Every award, newest first, with its helpers and hours. Three queries however many awards."""
+    awards = FestKredit.objects.select_related("created_by", "fortrudt_by").prefetch_related(
+        Prefetch(
+            "poster",
+            queryset=KoekkenPost.objects.filter(kind=KoekkenPost.Kind.FESTKREDIT)
+            .select_related("resident")
+            .order_by("resident__first_name", "resident__last_name", "pk"),
+            to_attr="helper_posts",
+        )
+    )
+    rows = []
+    for award in awards:
+        helpers = [(post.resident, post.delta_minutes // 60) for post in award.helper_posts]
+        rows.append(FestKreditRow(award, helpers, sum(hours for _, hours in helpers)))
+    return rows
+
+
+def recent_posts(resident: Resident, limit: int = 10) -> list[tuple[KoekkenPost, str]]:
+    """The resident's latest ledger rows, newest first, each with a Danish label for the index card."""
+    posts = (
+        KoekkenPost.objects.filter(resident=resident)
+        .select_related("festkredit", "vagt")
+        .order_by("-created_at", "-pk")[:limit]
+    )
+    return [(post, _post_label(post)) for post in posts]
+
+
+def _post_label(post: KoekkenPost) -> str:
+    kind = KoekkenPost.Kind
+    if post.festkredit is not None:  # FESTKREDIT, FESTBIDRAG and their TILBAGEFOERSEL
+        return f"Fest: {post.festkredit.navn}"
+    if post.kind == kind.FORPLIGTELSE:
+        return f"Forpligtelse {MONTHS[post.month]}" if post.month else "Forpligtelse"
+    if post.kind == kind.ARBEJDE:
+        return f"Udført: {post.vagt}" if post.vagt is not None else "Udført arbejde"
+    if post.kind == kind.TILBAGEFOERSEL and post.vagt is not None:
+        return f"Tilbageført: {post.vagt}"
+    if post.kind == kind.STARTSALDO:
+        return "Startsaldo"
+    if post.kind == kind.JUSTERING:
+        return "Manuel justering"
+    return post.get_kind_display()
 
 
 def _fridag_notification_message(for_date: date, reason: str) -> str:

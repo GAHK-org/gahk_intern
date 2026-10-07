@@ -234,7 +234,7 @@ confirmed in the A4 round.
 | — | Amendment 4 design and build. | ideally 1 Feb 2027 |
 | 2 | `Fravaer` and its UI. **Built** (e31086f). | before claiming opens, May 2027 |
 | 3 | Claiming, the summer page, §4's generation change, Køkkengruppen visibility, demo. **Built** (50f4208). | May 2027 |
-| — | Amendment 6 (Køkkengruppen awarding event credit). | after the above |
+| — | Amendment 6 (Køkkengruppen awarding event credit) -- designed in `2026-10-07-koekkenvagter-a6-design.md`. | after the above |
 
 ## 11. Implementation-time check
 

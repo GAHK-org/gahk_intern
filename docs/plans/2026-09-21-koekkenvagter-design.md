@@ -10,6 +10,8 @@ step 1 in implementation). **Amendment 5** (2026-10-01, fridage) is **approved a
 (`fa0fca8`), and carries a **supplement of 2026-10-04** (built, `fba6616`) that replaces A5.4's
 whole-month re-allocation -- read it before A5.4. All are at the end of this document; where any changes a decision above, that section
 says so. A1.3 additionally carries an approved supplement (2026-10-01) on preference-window ordering.
+**Amendment 6** (2026-10-07, party credit / festkredit, extends "Ledger and obligation") is designed in
+`2026-10-07-koekkenvagter-a6-design.md` (decisions approved; written doc awaits confirmation; not yet built).
 **Feature spec (to be written at implementation time):** `spec/features/koekkenvagter.md`, **unnumbered**.
 
 > **Unnumbered on purpose**, for the reason `spec/features/begivenheder.md` gives: `F-001`–`F-015` are

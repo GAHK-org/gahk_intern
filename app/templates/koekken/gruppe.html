@@ -11,6 +11,11 @@
       <div class="eyebrow">Køkken</div>
       <h1>Køkkengruppen</h1>
     </div>
+    <div class="head-actions">
+      {% if can_manage %}
+        <a class="btn btn-secondary" href="{% url 'koekken:festkredit' %}">Festkredit</a>
+      {% endif %}
+    </div>
   </div>
 
   {% include "koekken/_gruppe_flags.html" %}

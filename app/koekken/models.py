@@ -76,6 +76,13 @@ derived (the shift has started) and never written. The Den Hurtige post is a lat
 **Amendment 4, step 2** adds `VagtBytteForslag`: a trade proposal on an open offer ("I'll give you my Y
 for your X"). Accepting swaps the two rows' residents in one atomic exchange (pks unchanged); a row that
 is the `modydelse` of an `ACCEPTERET` proposal is a completed hand-off too and survives a force re-run.
+
+**Amendment 6** (`docs/plans/2026-10-07-koekkenvagter-a6-design.md`) adds `FestKredit`: one award of
+credit for party work (1 kryds = 1 hour), recorded by Køkkengruppen. It writes two new ledger kinds,
+`FESTKREDIT` (positive, one per helper) and `FESTBIDRAG` (negative, one per resident on the event
+month's list), which share one `FestKredit` row via `KoekkenPost.festkredit`. The house funds every
+award, so the self-balancing invariant now reads: **total obligation plus festbidrag = total credit**
+(festbidrag exactly offsets festkredit). An undo is a set of `TILBAGEFOERSEL` rows, never a delete.
 """
 
 from datetime import date, time
@@ -230,6 +237,40 @@ class VagtTildeling(models.Model):
         return f"{self.resident.full_name} -> {self.vagt} ({self.get_status_display()})"
 
 
+class FestKredit(models.Model):
+    """One award of party credit (Amendment 6): "Nytårsfest, 8 helpers, 5 h each". The award is funded by
+    the house (every resident on the event month's list pays an even share), so the ledger stays
+    self-balancing. The hours live on the linked `KoekkenPost` rows, not here. Undo is by reversal
+    (`fortrudt_at`/`fortrudt_by` plus `TILBAGEFOERSEL` rows), never deletion -- the rows PROTECT this."""
+
+    navn = models.CharField(max_length=100, verbose_name="Begivenhed")
+    dato = models.DateField()
+    created_by = models.ForeignKey(
+        Resident,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="koekken_festkreditter_oprettet",
+    )
+    created_at = models.DateTimeField(default=timezone.now)
+    fortrudt_at = models.DateTimeField(null=True, blank=True)
+    fortrudt_by = models.ForeignKey(
+        Resident,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="koekken_festkreditter_fortrudt",
+    )
+
+    class Meta:
+        ordering = ["-dato", "-created_at"]
+        verbose_name = "festkredit"
+        verbose_name_plural = "festkreditter"
+
+    def __str__(self) -> str:
+        return f"{self.navn} ({self.dato:%d.%m.%Y})"
+
+
 class KoekkenPost(models.Model):
     """The append-only fairness ledger. Balance is `SUM(delta_minutes)` — see
     `koekken.services.balance_for`. Mirrors `ak.AkEntry`'s shape; read that model first.
@@ -246,6 +287,8 @@ class KoekkenPost(models.Model):
         JUSTERING = "justering", "Manuel justering"
         STARTSALDO = "startsaldo", "Startsaldo"  # launch rebase, see seed_koekken_balances
         TILBAGEFOERSEL = "tilbagefoersel", "Tilbageførsel"  # P2: reverses a flagged IKKE_UDFOERT
+        FESTKREDIT = "festkredit", "Festkredit"  # A6: credit to a party helper (positive)
+        FESTBIDRAG = "festbidrag", "Festbidrag"  # A6: the house's share of funding an award (negative)
 
     resident = models.ForeignKey(Resident, on_delete=models.CASCADE, related_name="koekken_posts")
     delta_minutes = (
@@ -259,6 +302,10 @@ class KoekkenPost(models.Model):
     month = models.PositiveSmallIntegerField(null=True, blank=True)  # 1..12; FORPLIGTELSE only
     vagt = models.ForeignKey(
         Vagt, null=True, blank=True, on_delete=models.SET_NULL, related_name="koekken_posts"
+    )
+    # PROTECT for the same reason as `periode`: an award with ledger rows must never be deletable.
+    festkredit = models.ForeignKey(
+        FestKredit, null=True, blank=True, on_delete=models.PROTECT, related_name="poster"
     )
     created_at = models.DateTimeField(default=timezone.now)
     created_by = models.ForeignKey(

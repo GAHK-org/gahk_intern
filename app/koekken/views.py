@@ -24,7 +24,7 @@ from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.db.models import Q
-from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect
+from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect, QueryDict
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
@@ -41,6 +41,7 @@ from . import access, services
 from .forms import (
     AllokeringForm,
     AnmeldelseForm,
+    FestKreditForm,
     ForeslaaByttForm,
     FravaerForm,
     OverrideAssignForm,
@@ -48,6 +49,7 @@ from .forms import (
     TilbydForm,
 )
 from .models import (
+    FestKredit,
     Fravaer,
     Praeference,
     PraeferenceDag,
@@ -97,6 +99,7 @@ def _resident_context(request: HttpRequest) -> dict[str, object]:
         # P3 step 2: the index links to the summer page only from its deadline through 31 August.
         "summer_link_visible": services.summer_link_visible(today),
         "summer_year": services.target_summer(today).year,
+        "recent_posts": services.recent_posts(resident),  # A6: the "Seneste posteringer" card
     }
 
 
@@ -589,6 +592,7 @@ def gruppe(request: HttpRequest) -> HttpResponse:
             "override_form": OverrideAssignForm(),
             "open_offers_soon": services.open_offers(within_days=14),
             "unclaimed_summer": services.unclaimed_summer_vagter(),
+            "can_manage": True,  # checked above; gates the Festkredit link in the head
         }
     )
     return render(request, "koekken/gruppe.html", context)
@@ -642,6 +646,112 @@ def allokering(request: HttpRequest) -> HttpResponseRedirect:
             text += f" {kept} aftalte byttehandler bevaret, {lapsing} åbne tilbud bortfaldet."
         messages.success(request, text)
     return redirect("koekken:gruppe")
+
+
+def _festkredit_context(**extra: object) -> dict[str, object]:
+    context: dict[str, object] = {"history": services.festkredit_history(), "mode": "form"}
+    context.update(extra)
+    return context
+
+
+def _parse_timer(post: QueryDict) -> dict[int, int] | None:
+    """The confirmation step's `timer_<resident pk>` fields as {pk: hours}; None if any is not a positive
+    whole number (or there are none), so the caller re-renders instead of guessing."""
+    timer: dict[int, int] = {}
+    for key in post:
+        if not key.startswith("timer_"):
+            continue
+        try:
+            pk, hours = int(key.removeprefix("timer_")), int(post.get(key, ""))
+        except ValueError:
+            return None
+        if hours < 1:
+            return None
+        timer[pk] = hours
+    return timer or None
+
+
+def _confirm_context(
+    navn: str,
+    dato: date,
+    timer: dict[int, int],
+    preview: services.FestKreditPreview | None,
+    **extra: object,
+) -> dict[str, object]:
+    """The confirmation step: editable hours per helper plus, when the numbers can be computed, the
+    summary. A refused award still renders this step (with `preview=None` if the refusal is what stopped
+    the preview) so the officer can fix the hours or go back."""
+    residents = {r.pk: r for r in Resident.objects.filter(pk__in=timer)}
+    helpers = sorted(
+        ((residents[pk], hours) for pk, hours in timer.items() if pk in residents),
+        key=lambda pair: (pair[0].full_name, pair[0].pk),
+    )
+    return _festkredit_context(
+        mode="confirm",
+        navn=navn,
+        dato=dato,
+        helpers=helpers,
+        preview=preview,
+        total_hours=preview.total_minutes // 60 if preview else None,
+        **extra,
+    )
+
+
+@access.access_required
+def festkredit(request: HttpRequest) -> HttpResponse:
+    """Amendment 6: award party credit. Plain POST + redirect like `allokering` (not htmx). Step 1
+    (`step=preview`) validates the form and shows the confirmation; step 2 (`step=tildel`) writes."""
+    if not access.can_manage(request):
+        raise PermissionDenied
+    if request.method != "POST":
+        return render(request, "koekken/festkredit.html", _festkredit_context(form=FestKreditForm()))
+
+    if request.POST.get("step") == "tildel":
+        navn = request.POST.get("navn", "")
+        try:
+            dato = date.fromisoformat(request.POST.get("dato", ""))
+        except ValueError:
+            messages.error(request, "Ugyldig dato.")
+            return redirect("koekken:festkredit")
+        timer = _parse_timer(request.POST)
+        if timer is None:
+            messages.error(request, "Timer skal være hele, positive tal.")
+            return redirect("koekken:festkredit")
+        try:
+            award = services.award_festkredit(navn, dato, timer, by=current_resident(request))
+        except services.KoekkenAllocationError as exc:
+            return render(
+                request, "koekken/festkredit.html", _confirm_context(navn, dato, timer, None, error=str(exc))
+            )
+        messages.success(request, f"Festkredit for {award.navn} tildelt {len(timer)} hjælpere.")
+        return redirect("koekken:festkredit")
+
+    form = FestKreditForm(request.POST)
+    if not form.is_valid():
+        return render(request, "koekken/festkredit.html", _festkredit_context(form=form))
+    timer = {r.pk: form.cleaned_data["timer"] for r in form.cleaned_data["hjaelpere"]}
+    try:
+        preview = services.festkredit_preview(form.cleaned_data["navn"], form.cleaned_data["dato"], timer)
+    except services.KoekkenAllocationError as exc:
+        return render(request, "koekken/festkredit.html", _festkredit_context(form=form, error=str(exc)))
+    return render(
+        request, "koekken/festkredit.html", _confirm_context(preview.navn, preview.dato, timer, preview)
+    )
+
+
+@access.access_required
+@require_POST
+def festkredit_fortryd(request: HttpRequest, pk: int) -> HttpResponseRedirect:
+    if not access.can_manage(request):
+        raise PermissionDenied
+    award = get_object_or_404(FestKredit, pk=pk)
+    try:
+        services.undo_festkredit(award, by=current_resident(request))
+    except services.KoekkenAllocationError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, f"Tildelingen for {award.navn} er fortrudt.")
+    return redirect("koekken:festkredit")
 
 
 @access.access_required

@@ -143,7 +143,8 @@ class PushSubscription(models.Model):
     # step 2) koekken.services.propose_trade (the offerer is told a trade was proposed on their offer)
     # and accept_trade (the proposer is told their proposal was accepted); a new offer sends no broadcast on this
     # topic (see den_hurtige channel koekken: the wants_den_hurtige-side notification for a shared offer comes
-    # from den_hurtige.services.notify_new_post, not from here).
+    # from den_hurtige.services.notify_new_post, not from here); and (Amendment 6) koekken.services.award_festkredit,
+    # when a helper is awarded kitchen credit for a party (only the helpers are notified).
     wants_koekken = models.BooleanField(default=False, verbose_name="Køkkenvagter")
 
     class Meta:

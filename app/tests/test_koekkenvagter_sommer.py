@@ -589,6 +589,8 @@ def test_no_unclaim_url() -> None:
     urls = (Path(__file__).parent.parent / "koekken" / "urls.py").read_text()
     claim_paths = re.findall(r'path\("(sommer/vagt/[^"]*)"', urls)
     assert claim_paths == ["sommer/vagt/<int:pk>/tag"]
+    # Amendment 6's "Fortryd tildeling" (undo a festkredit award) is unrelated to claiming a summer shift.
+    urls = "\n".join(line for line in urls.splitlines() if "festkredit" not in line)
     for word in ("unclaim", "fortryd", "opgiv", "afmeld"):
         assert word not in urls
 

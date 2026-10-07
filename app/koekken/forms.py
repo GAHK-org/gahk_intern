@@ -6,6 +6,10 @@ auto-rendered form.
 """
 
 from django import forms
+from django.db.models import Q
+
+from core.clock import current_date
+from residents.models import Resident
 
 # 0 = mandag .. 6 = søndag (Python's date.weekday()), matching PraeferenceDag.weekday.
 WEEKDAYS = [
@@ -127,3 +131,39 @@ class FravaerForm(forms.Form):
         label="Til",
         error_messages={"required": "Udfyld til-datoen.", "invalid": "Til-datoen er ikke en gyldig dato."},
     )
+
+
+class FestKreditForm(forms.Form):
+    """Step 1 of an award (Amendment 6): the event, the helpers and a default number of hours. Only
+    shape is checked here; `services.festkredit_preview` applies the real rules. The confirmation step
+    posts hidden `navn`/`dato` plus one `timer_<resident pk>` field per helper, parsed in the view."""
+
+    navn = forms.CharField(
+        max_length=100,
+        label="Begivenhed",
+        error_messages={"required": "Udfyld navnet på begivenheden."},
+    )
+    dato = forms.DateField(
+        input_formats=["%Y-%m-%d"],
+        label="Dato",
+        error_messages={"required": "Udfyld datoen.", "invalid": "Datoen er ikke en gyldig dato."},
+    )
+    hjaelpere = forms.ModelMultipleChoiceField(
+        queryset=Resident.objects.none(),
+        widget=forms.SelectMultiple,
+        label="Hjælpere",
+        error_messages={"required": "Vælg mindst én hjælper."},
+    )
+    timer = forms.IntegerField(
+        min_value=1,
+        label="Timer pr. person",
+        error_messages={"required": "Udfyld antal timer.", "min_value": "Der skal være mindst 1 time."},
+    )
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        today = current_date()
+        # Only residents who live here now can receive credit (A6 §4); the service re-checks.
+        self.fields["hjaelpere"].queryset = Resident.objects.filter(  # type: ignore[attr-defined]
+            Q(move_out_date__isnull=True) | Q(move_out_date__gte=today)
+        ).order_by("first_name", "last_name", "pk")

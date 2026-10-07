@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% comment %}
+  Amendment 6: Køkkengruppen awards credit for party work ("festkredit"). Two modes of the same page:
+  `form` (event, date, helpers, default hours) and `confirm` (editable hours per helper plus the
+  summary computed by the same split helper the write uses). Below both, the award history with
+  "Fortryd tildeling". Plain POST + redirect, not htmx. `access.can_manage` is re-checked in the views.
+
+  The "Tildel" and "Fortryd" forms disable their submit button in `onsubmit` (not `onclick`, which can
+  cancel the submit) so a double-click cannot post twice; the confirm dialog follows the house
+  `onsubmit="return confirm(...)"` convention.
+{% endcomment %}
+{% block title %}Festkredit - Køkkengruppen - GAHK Intern{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Køkken</div>
+      <h1>Festkredit</h1>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-secondary" href="{% url 'koekken:gruppe' %}">Køkkengruppen</a>
+    </div>
+  </div>
+
+  {% if error %}
+    <p class="card" role="alert" style="border-color:#b3261e">{{ error }}</p>
+  {% endif %}
+
+  {% if mode == "confirm" %}
+    <div class="card-flat">
+      <div class="card-head"><h2>Bekræft: {{ navn }} ({{ dato|date:"j. F Y" }})</h2></div>
+      <div class="card-pad">
+        <form method="post" action="{% url 'koekken:festkredit' %}"
+              onsubmit="this.querySelector('button[type=submit]').disabled = true">
+          {% csrf_token %}
+          <input type="hidden" name="step" value="tildel">
+          <input type="hidden" name="navn" value="{{ navn }}">
+          <input type="hidden" name="dato" value="{{ dato|date:'Y-m-d' }}">
+          <table class="text-sm" style="border-collapse:collapse">
+            <thead>
+              <tr style="text-align:left; border-bottom:1px solid #e6e8ec"><th>Hjælper</th><th>Timer</th></tr>
+            </thead>
+            <tbody>
+              {% for resident, hours in helpers %}
+                <tr style="border-bottom:1px solid #f0f1f4">
+                  <td>{{ resident.full_name }}</td>
+                  <td><input type="number" min="1" name="timer_{{ resident.pk }}" value="{{ hours }}" required></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          {% if preview %}
+            <p style="margin-top:12px">
+              I alt {{ total_hours }} t. Fordeles som festbidrag på {{ preview.charged|length }} beboere på
+              alumnelisten for {{ preview.month_label|lower }}
+              (ca. {{ preview.per_resident_minutes.0 }}{% if preview.per_resident_minutes.0 != preview.per_resident_minutes.1 %}–{{ preview.per_resident_minutes.1 }}{% endif %} min hver).
+            </p>
+          {% endif %}
+          <div style="margin-top:12px">
+            <button type="submit" class="btn">Tildel</button>
+            <a class="btn btn-secondary" href="{% url 'koekken:festkredit' %}">Tilbage</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  {% else %}
+    <div class="card-flat">
+      <div class="card-head"><h2>Ny tildeling</h2></div>
+      <div class="card-pad">
+        {% if form.errors %}
+          <div class="card" role="alert" style="border-color:#b3261e">
+            {% for field_errors in form.errors.values %}{% for message in field_errors %}<p>{{ message }}</p>{% endfor %}{% endfor %}
+          </div>
+        {% endif %}
+        <form method="post" action="{% url 'koekken:festkredit' %}">
+          {% csrf_token %}
+          <input type="hidden" name="step" value="preview">
+          <p><label>Begivenhed <input type="text" name="navn" maxlength="100" value="{{ form.navn.value|default_if_none:'' }}" required></label></p>
+          <p><label>Dato <input type="date" name="dato" value="{{ form.dato.value|default_if_none:''|date:'Y-m-d' }}" required></label></p>
+          <p>
+            <label>Hjælpere {{ form.hjaelpere }}</label>
+            <span class="muted text-sm">hold Ctrl/⌘ for flere</span>
+          </p>
+          <p><label>Timer pr. person <input type="number" name="timer" min="1" value="{{ form.timer.value|default_if_none:'' }}" required></label></p>
+          <button type="submit" class="btn">Videre</button>
+        </form>
+      </div>
+    </div>
+  {% endif %}
+
+  <div class="card-flat" style="margin-top:16px">
+    <div class="card-head"><h2>Tidligere tildelinger</h2></div>
+    <div class="card-pad">
+      {% for row in history %}
+        <div style="border-bottom:1px solid #f0f1f4; padding:8px 0">
+          <strong>{{ row.festkredit.navn }}</strong> — {{ row.festkredit.dato|date:"j. F Y" }}
+          — {{ row.total_hours }} t i alt
+          <div class="muted text-sm">
+            {% for resident, hours in row.helpers %}{{ resident.full_name }} ({{ hours }} t){% if not forloop.last %}, {% endif %}{% endfor %}
+          </div>
+          <div class="muted text-sm">
+            {% if row.festkredit.created_by %}tildelt af {{ row.festkredit.created_by.full_name }}{% else %}tildelt{% endif %}
+          </div>
+          {% if row.festkredit.fortrudt_at %}
+            <div class="text-sm">Fortrudt {{ row.festkredit.fortrudt_at|date:"j. F Y" }}{% if row.festkredit.fortrudt_by %} af {{ row.festkredit.fortrudt_by.full_name }}{% endif %}</div>
+          {% else %}
+            <form method="post" action="{% url 'koekken:festkredit_fortryd' row.festkredit.pk %}"
+                  onsubmit="if (!confirm('Hjælpernes kredit og alles festbidrag tilbageføres. Det kan ikke gøres om.')) return false; this.querySelector('button[type=submit]').disabled = true">
+              {% csrf_token %}
+              <button type="submit" class="btn-link-danger">Fortryd tildeling</button>
+            </form>
+          {% endif %}
+        </div>
+      {% empty %}
+        <p class="muted">Ingen tildelinger endnu.</p>
+      {% endfor %}
+    </div>
+  </div>
+{% endblock %}

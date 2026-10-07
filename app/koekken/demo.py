@@ -47,6 +47,8 @@ import random
 from collections.abc import Iterator
 from datetime import date, datetime, timedelta
 
+from django.db.models import Q
+
 from core.clock import current_date
 from residents.models import Residency, Resident
 
@@ -56,6 +58,7 @@ from .services import (
     accept_trade,
     add_fravaer,
     allocate_tier_a,
+    award_festkredit,
     claim_vagt,
     generate_vagter,
     held_by_vagt,
@@ -71,6 +74,7 @@ from .services import (
     take_over,
     take_over_whole,
     target_summer,
+    undo_festkredit,
     withdraw_offer,
 )
 
@@ -434,6 +438,33 @@ def _seed_launch_balances(residents: list[Resident], periode: Periode) -> None:
         )
 
 
+def _demo_festkredit(residents: list[Resident], today: date) -> None:
+    """Amendment 6: one live party award ("Nytårsfest", 8 helpers x 5 h) and a second, small one that is
+    then undone, both through the real services, so the Festkredit page's history shows a live award and
+    a "Fortrudt" one. Dated in the latest month up to today that has a published `Residency` list; skipped
+    (best-effort, like every optional scenario here) if there is none or the award is refused."""
+    month = (
+        Residency.objects.filter(Q(year__lt=today.year) | Q(year=today.year, month__lte=today.month))
+        .order_by("-year", "-month")
+        .values_list("year", "month")
+        .first()
+    )
+    if month is None:
+        return
+    dato = min(date(month[0], month[1], 15), today)
+    current = [r for r in residents if r.move_out_date is None or r.move_out_date >= today]
+    if not current:
+        return
+    try:
+        award_festkredit("Nytårsfest", dato, {r.pk: 5 for r in current[:8]}, by=current[0], today=today)
+        small = award_festkredit(
+            "Demo-fest", dato, {r.pk: 2 for r in current[-2:]}, by=current[0], today=today
+        )
+        undo_festkredit(small, by=current[0])
+    except KoekkenAllocationError:
+        pass
+
+
 def _demo_fravaer(residents: list[Resident]) -> None:
     """P3 step 2: two away ranges for two residents in the target summer, through `add_fravaer`. `today`
     is fixed before the summer so the "already ended" refusal cannot bite when the demo runs inside it.
@@ -490,6 +521,7 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
         # Summer is never allocated (P3 design doc §4): its shifts are generated for residents to claim
         # themselves, so none of the allocation scenarios below can run. Generation only, plus the
         # starting balances so a July/August demo run still shows them.
+        _demo_festkredit(residents, today)
         _seed_launch_balances(residents, periode)
         _demo_fravaer(residents)
         _demo_claims(residents)
@@ -559,6 +591,7 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
     # Deliberately LAST: tier-A allocation orders by projected balance, so seeding STARTSALDO any
     # earlier would hand the FCFS-tiebreak pair (usually residents[0] and [1], who carry launch
     # balances) unequal balances and let the lower one win regardless of declared_at.
+    _demo_festkredit(residents, today)
     _seed_launch_balances(residents, periode)
     _demo_fravaer(residents)
     _demo_claims(residents)

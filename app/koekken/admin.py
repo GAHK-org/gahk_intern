@@ -1,6 +1,7 @@
 from django.contrib import admin
 
 from .models import (
+    FestKredit,
     Fravaer,
     Fridag,
     KoekkenPost,
@@ -47,6 +48,16 @@ class KoekkenPostAdmin(admin.ModelAdmin):
     list_display = ["resident", "delta_minutes", "kind", "periode", "month", "created_at"]
     list_filter = ["kind", "periode"]
     search_fields = ["resident__first_name", "resident__last_name", "resident__email"]
+    readonly_fields = ["created_at"]
+    raw_id_fields = ["festkredit"]
+
+
+@admin.register(FestKredit)
+class FestKreditAdmin(admin.ModelAdmin):
+    # An award with ledger rows cannot be deleted (KoekkenPost.festkredit is PROTECT, on purpose): undo it
+    # from the Festkredit page instead.
+    list_display = ["navn", "dato", "created_by", "created_at", "fortrudt_at"]
+    raw_id_fields = ["created_by", "fortrudt_by"]
     readonly_fields = ["created_at"]
 
 

@@ -628,6 +628,16 @@ erDiagram
         datetime created_at
     }
 
+    koekken_FestKredit {
+        int id PK
+        string navn
+        date dato
+        int created_by_id FK
+        datetime created_at
+        datetime fortrudt_at
+        int fortrudt_by_id FK
+    }
+
     koekken_KoekkenPost {
         int id PK
         int resident_id FK
@@ -636,6 +646,7 @@ erDiagram
         int periode_id FK
         int month
         int vagt_id FK
+        int festkredit_id FK
         datetime created_at
         int created_by_id FK
     }
@@ -782,9 +793,12 @@ erDiagram
     koekken_Vagt }o--|| koekken_Periode : "periode"
     koekken_VagtTildeling }o--|| koekken_Vagt : "vagt"
     koekken_VagtTildeling }o--|| residents_Resident : "resident"
+    koekken_FestKredit }o--|o residents_Resident : "created_by"
+    koekken_FestKredit }o--|o residents_Resident : "fortrudt_by"
     koekken_KoekkenPost }o--|| residents_Resident : "resident"
     koekken_KoekkenPost }o--|| koekken_Periode : "periode"
     koekken_KoekkenPost }o--|o koekken_Vagt : "vagt"
+    koekken_KoekkenPost }o--|o koekken_FestKredit : "festkredit"
     koekken_KoekkenPost }o--|o residents_Resident : "created_by"
     koekken_Praeference }o--|| residents_Resident : "resident"
     koekken_Praeference }o--|| koekken_Periode : "periode"
@@ -1200,6 +1214,16 @@ erDiagram
         datetime created_at
     }
 
+    koekken_FestKredit {
+        int id PK
+        string navn
+        date dato
+        int created_by_id FK
+        datetime created_at
+        datetime fortrudt_at
+        int fortrudt_by_id FK
+    }
+
     koekken_KoekkenPost {
         int id PK
         int resident_id FK
@@ -1208,6 +1232,7 @@ erDiagram
         int periode_id FK
         int month
         int vagt_id FK
+        int festkredit_id FK
         datetime created_at
         int created_by_id FK
     }
@@ -1282,9 +1307,12 @@ erDiagram
     koekken_Vagt }o--|| koekken_Periode : "periode"
     koekken_VagtTildeling }o--|| koekken_Vagt : "vagt"
     koekken_VagtTildeling }o--|| residents_Resident : "resident"
+    koekken_FestKredit }o--|o residents_Resident : "created_by"
+    koekken_FestKredit }o--|o residents_Resident : "fortrudt_by"
     koekken_KoekkenPost }o--|| residents_Resident : "resident"
     koekken_KoekkenPost }o--|| koekken_Periode : "periode"
     koekken_KoekkenPost }o--|o koekken_Vagt : "vagt"
+    koekken_KoekkenPost }o--|o koekken_FestKredit : "festkredit"
     koekken_KoekkenPost }o--|o residents_Resident : "created_by"
     koekken_Praeference }o--|| residents_Resident : "resident"
     koekken_Praeference }o--|| koekken_Periode : "periode"
