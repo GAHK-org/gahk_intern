@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% load ui_extras %}
+{% block title %}Min køkkenkonto - GAHK Intern{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Køkkenvagter</p>
+      <h1>Min køkkenkonto</h1>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-secondary" href="{% url 'kitchen:market' %}">‹ Til vagterne</a>
+    </div>
+  </div>
+  <p>Saldo: <strong class="{{ balance|sign_class }}">{{ balance }}</strong>
+     <span class="muted">(målet er at holde sig på 0 eller derover)</span></p>
+
+  <h2>Mine kommende vagter</h2>
+  <div class="board-list mb-4">
+    {% for a in upcoming %}
+      <div class="card-flat card-pad">
+        <a href="{% url 'kitchen:shift' a.shift.pk %}"><strong>{{ a.shift.title }}</strong></a>
+        · {{ a.shift.starts_at|date:"D j. M H:i" }}–{{ a.shift.ends_at|date:"H:i" }}
+        {% if a.spots > 1 %}· {{ a.spots }} pladser{% endif %}
+        {% if a.for_sale %}<span class="chip chip-quiet">Til salg</span>{% endif %}
+        {% if a.shift.is_disabled %}<span class="chip chip-quiet">Aflyst</span>{% endif %}
+      </div>
+    {% empty %}
+      <p class="muted">Du har ingen kommende vagter.</p>
+    {% endfor %}
+  </div>
+
+  <h2>Posteringer</h2>
+  {% include "kitchen/_ledger.html" %}
+{% endblock %}

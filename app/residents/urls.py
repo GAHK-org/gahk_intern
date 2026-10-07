@@ -24,6 +24,7 @@ urlpatterns = [
     path("arkiv/", include("arkiv.urls")),
     path("fotoalbum/", include("photo_album.urls")),
     path("ak/", include("ak.urls")),
+    path("koekkenvagter/", include("kitchen.urls")),
     path("oelkaelder/", include("oelkaelder.urls")),
     path("statistik/", include("stats.urls")),
     path("vaerelsestjek/", include("rooms.urls_vaerelsestjek")),

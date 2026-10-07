@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     "reparationer",
     "arkiv",
     "photo_album",
+    "kitchen",
 ]
 
 MIDDLEWARE = [
@@ -227,6 +228,27 @@ CELERY_BEAT_SCHEDULE = {
     "send-admin-dummy-notification": {
         "task": "core.tasks.send_admin_dummy_notification",
         "schedule": crontab(minute=0, hour="8,16"),
+    },
+    # Points are booked when a shift ends, so this runs often; it is one query when nothing is due.
+    "complete-finished-kitchen-shifts": {
+        "task": "kitchen.tasks.complete_finished_shifts",
+        "schedule": crontab(minute="*/15"),
+    },
+    "extend-kitchen-calendar": {
+        "task": "kitchen.tasks.extend_calendar",
+        "schedule": crontab(minute=30, hour=3),
+    },
+    "apply-kitchen-monthly-charge": {
+        "task": "kitchen.tasks.apply_monthly_charge",
+        "schedule": crontab(minute=40, hour=4, day_of_month=1),
+    },
+    "notify-unmanned-kitchen-shifts": {
+        "task": "kitchen.tasks.notify_unmanned_daily",
+        "schedule": crontab(minute=0, hour=10),
+    },
+    "notify-unmanned-kitchen-shifts-weekly": {
+        "task": "kitchen.tasks.notify_unmanned_weekly",
+        "schedule": crontab(minute=5, hour=10, day_of_week=1),
     },
 }
 

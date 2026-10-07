@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Tidligere køkkenvagter - GAHK Intern{% endblock %}
+{% block body_class %}duty-page{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Køkkenvagter</p>
+      <h1>Tidligere vagter</h1>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-secondary" href="{% url 'kitchen:market' %}">‹ Til vagtplanen</a>
+    </div>
+  </div>
+
+  <div class="duty-head">
+    <nav class="duty-nav" aria-label="Bladr i perioder">
+      {% if newer %}<a class="btn btn-secondary" href="?til={{ newer|date:'Y-m-d' }}">‹ Nyere</a>{% endif %}
+      <strong>{{ start|date:"j. M Y" }} – {{ last|date:"j. M Y" }}</strong>
+      {% if older %}<a class="btn btn-secondary" href="?til={{ older|date:'Y-m-d' }}">Ældre ›</a>{% endif %}
+    </nav>
+    <p class="duty-legend">
+      <span class="duty-slot is-mine">Din vagt</span>
+      <span class="duty-slot is-absent"><span class="duty-name">Udeblevet</span></span>
+    </p>
+  </div>
+
+  {% include "kitchen/_duty_table.html" %}
+{% endblock %}

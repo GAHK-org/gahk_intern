@@ -1,0 +1,14 @@
+<div class="duty-scroll">
+  <table class="duty-grid">
+    <thead>
+      <tr>
+        <th class="duty-date">Dato</th>
+        {% for col in columns %}<th>{{ col.start|time:"G:i" }}–{{ col.end|time:"G:i" }}</th>{% endfor %}
+        <th>Særlige</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% include "kitchen/_duty_rows.html" %}
+    </tbody>
+  </table>
+</div>

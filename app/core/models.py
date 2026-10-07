@@ -135,6 +135,7 @@ class PushSubscription(models.Model):
     # migration is not consent.
     wants_begivenheder = models.BooleanField(default=False, verbose_name="Begivenheder")
     wants_reparationer = models.BooleanField(default=False, verbose_name="Reparationer")
+    wants_koekkenvagter = models.BooleanField(default=False, verbose_name="Køkkenvagter")
 
     class Meta:
         verbose_name = "Push-abonnement"
@@ -157,4 +158,5 @@ TOPIC_FIELDS = {
     "opslagstavle": "wants_opslagstavle",
     "begivenheder": "wants_begivenheder",
     "reparationer": "wants_reparationer",
+    "koekkenvagter": "wants_koekkenvagter",
 }

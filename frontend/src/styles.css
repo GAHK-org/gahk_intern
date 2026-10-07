@@ -1980,4 +1980,86 @@
     /* The metadata is the first thing to go: on a phone the name is the whole point. */
     .arkiv-meta { display:none; }
   }
+
+  /* ---- Køkkenvagter: the month sheet, modelled on the paper plan on the kitchen board ---- */
+  .duty-head { display:flex; flex-wrap:wrap; align-items:center; gap:10px 18px; margin:28px 0 12px; }
+  .duty-head h2 { margin:0; }
+  .duty-nav { display:flex; align-items:center; gap:8px; }
+  .duty-nav strong { text-align:center; font-size:15px; }
+  .duty-nav .btn { padding:4px 12px; }
+  .duty-legend { display:flex; gap:6px; margin:0 0 0 auto; }
+  .duty-legend .duty-slot { flex:none; min-height:0; padding:3px 9px; font-size:12px; font-weight:600; }
+
+  /* Scrolls with the page. .main is overflow:auto, which would capture the sticky header, so the
+     duty pages release it; only narrow screens get a sideways scroller (and lose the sticky head). */
+  .duty-page .main { overflow:visible; }
+  .duty-scroll { border:1px solid var(--border-strong); border-radius:var(--radius);
+    background:var(--surface); box-shadow:var(--shadow-sm); }
+  @media (max-width: 1100px) { .duty-scroll { overflow-x:auto; } }
+  .duty-grid { width:100%; min-width:760px; border-collapse:separate; border-spacing:0; font-size:13px; }
+  .duty-grid thead th { position:sticky; top:60px; z-index:2; background:var(--green); color:#fff;
+    font-size:12.5px; font-weight:600; letter-spacing:.02em; padding:9px 8px; text-align:center;
+    white-space:nowrap; }
+  .duty-grid thead th:first-child { border-top-left-radius:calc(var(--radius) - 1px); }
+  .duty-grid thead th:last-child { border-top-right-radius:calc(var(--radius) - 1px); }
+  .duty-grid td, .duty-grid tbody th { padding:4px 5px; border-bottom:1px solid var(--border);
+    border-left:1px solid var(--border); vertical-align:middle; }
+  .duty-grid tbody tr:last-child > * { border-bottom:0; }
+
+  .duty-date { width:5.5rem; text-align:left !important; white-space:nowrap; font-weight:600;
+    border-left:0 !important; padding-left:12px !important; }
+  .duty-wd { display:inline-block; width:2.2em; color:var(--muted); font-weight:500; text-transform:capitalize; }
+
+  .duty-grid tr.is-weekend > * { background:var(--sunken); }
+  .duty-grid tr.is-today > th { box-shadow:inset 4px 0 0 var(--brass); }
+  .duty-grid tr.is-today > * { background:var(--warn-bg); }
+  .duty-grid tr:target > * { background:var(--green-050); }
+  .duty-grid tr.duty-month > th { padding:10px 12px 6px; text-align:left; font-size:14px; font-weight:700;
+    color:var(--green-700); background:var(--green-050); border-left:0; }
+  .duty-grid tr.duty-more > td { padding:14px; text-align:center; border-left:0; color:var(--muted); }
+  /* The 30-day line: above it a taken shift can only be sold, below it you may simply unenroll. */
+  .duty-grid tr.duty-ruler > td { padding:0; border-left:0; border-bottom:0; border-top:2px dashed var(--brass);
+    background:var(--warn-bg); }
+  .duty-ruler span { display:inline-block; padding:4px 12px; font-size:12px; font-weight:600; color:var(--brass-ink); }
+  .duty-ruler span + span { float:right; }
+
+  /* A slot that does not exist on that weekday — the grey boxes on the paper sheet. */
+  .duty-na { background:repeating-linear-gradient(135deg, var(--sunken) 0 6px, var(--border) 6px 7px) !important; }
+
+  .duty-slots { display:flex; gap:4px; }
+  .duty-slot { flex:1 1 0; min-width:0; min-height:28px; display:flex; align-items:stretch;
+    border:1px solid var(--border-strong); border-radius:6px; overflow:hidden; background:var(--surface);
+    color:var(--ink); text-decoration:none; font:inherit; font-size:13px; padding:0; cursor:pointer; }
+  .duty-slot:hover { border-color:var(--green); }
+  .duty-name { flex:1; min-width:0; padding:4px 7px; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; text-align:left; font-weight:600; }
+  /* The points box at the right of every slot, as on the paper. */
+  .duty-pts { flex:none; display:flex; align-items:center; justify-content:center; min-width:24px;
+    padding:0 5px; border-left:1px solid var(--border-strong); background:var(--surface-2);
+    color:var(--muted); font-size:12px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .duty-slot.is-mine { background:var(--green-100); border-color:var(--green); color:var(--green-700); }
+  .duty-slot.is-mine .duty-pts { background:var(--green); border-color:var(--green); color:#fff; }
+  .duty-slot.is-sale { background:var(--warn-bg); border-color:var(--brass); color:var(--brass-ink); }
+  .duty-slot.is-sale .duty-pts { border-color:var(--brass); }
+  .duty-slot.is-absent .duty-name { color:var(--neg); text-decoration:line-through; }
+  .duty-slot.is-free { border-style:dashed; background:transparent; color:var(--muted); }
+  .duty-slot.is-free .duty-name { font-weight:500; }
+  .duty-slot.is-free:hover { background:var(--green-050); color:var(--green-700); border-style:solid; }
+  .duty-slot.is-empty { cursor:default; border-style:dashed; background:transparent; }
+  .duty-take { display:contents; }
+
+  .duty-cancelled { display:block; padding:5px 7px; border-radius:6px; text-align:center;
+    background:var(--neg-bg); color:var(--neg); font-size:12px; font-weight:600; text-decoration:none; }
+  .duty-extra { min-width:11rem; }
+  .duty-special + .duty-special { margin-top:4px; }
+  .duty-special-title { display:block; margin-bottom:2px; font-size:12px; font-weight:600;
+    color:var(--ink); text-decoration:none; }
+
+  .duty-dialog { width:min(440px, calc(100vw - 32px)); margin:auto; padding:22px 24px; border:0;
+    border-radius:var(--radius); background:var(--surface); color:var(--ink); box-shadow:0 20px 50px rgb(0 0 0 / .3); }
+  .duty-dialog::backdrop { background:rgba(15, 30, 22, .45); }
+  .duty-dialog h2 { margin:0 0 10px; font-size:20px; }
+  .duty-dialog [data-duty-dialog-text] { font-weight:600; }
+  .duty-dialog [data-duty-dialog-spots]:empty { display:none; }
+  .duty-dialog-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:18px; }
 }
