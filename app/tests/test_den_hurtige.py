@@ -3327,6 +3327,8 @@ def test_the_poll_fragment_carries_the_headings_too(
     html = client.get(f"{FEED_URL}opslag?kanal={channels.DEFAULT.slug}").content.decode()
 
     assert 'class="day-chip"' in html and "i dag" in html
+
+
 # ---- the composer asks for a duration, it does not assume one (#192) ----------------------------
 
 
