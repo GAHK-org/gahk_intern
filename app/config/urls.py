@@ -46,7 +46,12 @@ urlpatterns = [
     # photo_album.access has a rule one can't enforce (a pending upload is visible only to its
     # uploader and Fotogruppen), so this re-checks that rule on every request instead of handing the
     # signed URL out once at render time. See photo_album.views.serve_media.
-    re_path(r"^fotoalbum-media/(?P<path>.*)$", serve_photo_album_media, name="photo_album_media"),
+    #
+    # `path` captures "photo-album/…" WHOLE rather than consuming it as a literal prefix: the
+    # storage name (FileField.upload_to) already starts with "photo-album/", and url() is just "/"
+    # + that name, so the route has to match on the same terms or `path` would be missing its first
+    # segment and every lookup by key would miss.
+    re_path(r"^(?P<path>photo-album/.*)$", serve_photo_album_media, name="photo_album_media"),
     # PWA service worker for Den Hurtige. Must be served from the ROOT path: a service worker's
     # default scope is its own directory, so only a root-scoped worker covers /intern/. Served via
     # TemplateView because static/ would put it under /static/ and cap its scope there.

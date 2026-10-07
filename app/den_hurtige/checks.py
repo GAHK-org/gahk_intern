@@ -6,8 +6,6 @@ constraint, no FK and no `choices=` behind it. These checks are what replaces th
   E007  two channels share a slug           — the later one is unreachable; BY_SLUG silently keeps one
   E008  a slug collides with a URL segment  — urls.py matches the fixed path first, so the channel
         never resolves and nothing anywhere reports it
-  E009  default_duration is not offered by the composer's picker — the <select> would render with
-        nothing selected and quietly post something else
   E010  channels.DEFAULT disagrees with QuickPost.channel's field default — every row written before
         the channel field existed would sit in a channel no tab links to
 
@@ -49,16 +47,6 @@ def check_channels(app_configs: Sequence[AppConfig] | None, **kwargs: object) ->
                         f"channel would never open. Reserved: {sorted(channels.RESERVED_SLUGS)}."
                     ),
                     id="den_hurtige.E008",
-                )
-            )
-
-        if channel.default_duration not in channels.VALID_DURATIONS:
-            errors.append(
-                Error(
-                    f"Channel {channel.slug!r} defaults to {channel.default_duration} minutes, "
-                    "which the composer does not offer.",
-                    hint=f"Pick one of {sorted(channels.VALID_DURATIONS)} (models.DURATION_CHOICES).",
-                    id="den_hurtige.E009",
                 )
             )
 

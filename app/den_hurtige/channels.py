@@ -14,15 +14,12 @@ The cost is that Inspektionen cannot add a channel without a deploy. If that eve
 bottleneck, this module is the seam to replace: everything else asks it for a Channel by slug.
 
 Because there is no DB constraint behind any of this, checks.py validates the tuple at startup
-(E007-E009): unique slugs, no collision with a fixed URL segment, and a duration the composer can
-actually offer.
+(E007, E008, E010): unique slugs and no collision with a fixed URL segment.
 """
 
 from dataclasses import dataclass
 
 from django.urls import reverse
-
-from .models import DURATION_CHOICES
 
 
 @dataclass(frozen=True)
@@ -33,16 +30,6 @@ class Channel:
     name: str
     icon: str
     description: str
-    # Preselected in the composer's duration picker. Must be one of DURATION_CHOICES (checks.E009);
-    # the author can still pick any of them.
-    #
-    # Per channel because "skal vi i byen om en time" and "hvem har set min cykel" go stale on very
-    # different schedules -- though as of the move to a 2-døgn default every channel happens to
-    # agree, GAHKroom included. The field stays per channel because that is a property of the
-    # channels, not of the number they currently share; test_the_composer_offers_the_channels_own
-    # _default_duration patches in a channel with a different one so the wiring stays covered while
-    # the real values coincide.
-    default_duration: int
     # None = everyone who can reach Den Hurtige at all (den_hurtige.access). A tuple restricts the
     # channel to those roles — the seam for a future "Inspektion internt" without another rollout
     # mechanism. Both launch channels are open.
@@ -68,35 +55,30 @@ CHANNELS: tuple[Channel, ...] = (
         name="Den Hurtige",
         icon="flash",
         description="Alt det korte og hurtige.",
-        default_duration=2880,
     ),
     Channel(
         slug="tv-rezz",
         name="TV-Rezz",
         icon="tv",
         description="TV-Rezz.",
-        default_duration=2880,
     ),
     Channel(
         slug="sportsmann",
         name="G. A. Sportsmann",
         icon="ball",
         description="G. A. Sportsmann.",
-        default_duration=2880,
     ),
     Channel(
         slug="gahkroom",
         name="GAHKroom",
         icon="beer",
         description="Alle er fucking liderlige og rowdy herinde",
-        default_duration=2880,
     ),
     Channel(
         slug="mhga",
         name="M.H.G.A",
         icon="users",
         description="Make Hallen Great Again.",
-        default_duration=2880,
     ),
 )
 
@@ -116,8 +98,6 @@ BY_SLUG: dict[str, Channel] = {c.slug: c for c in CHANNELS}
 # matched last, so these already win — but a channel named after one would be unreachable with no
 # error anywhere, so checks.py rejects the collision instead (E008).
 RESERVED_SLUGS = frozenset({"opslag", "opret", "abonner", "lyd", "arkiv"})
-
-VALID_DURATIONS = {minutes for minutes, _label in DURATION_CHOICES}
 
 
 def lookup(slug: str | None) -> Channel | None:

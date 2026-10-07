@@ -1053,6 +1053,80 @@ if (composer instanceof HTMLFormElement) {
     });
   }
 
+  // ---- the duration sheet (#192) ----
+  //
+  // Sending asks how long the message stays relevant, and the answer is what posts it. The <select>
+  // beside the composer is the no-JS path; with this file running it is hidden and de-required, so
+  // the question is asked exactly once, here.
+  //
+  // The sheet writes its answer INTO that same <select>, so submitting carries it with no extra
+  // field and no state of our own. `confirmed` is the one flag: it lets the second requestSubmit
+  // through instead of re-opening the sheet forever.
+  const sheet = document.getElementById("js-duration-sheet");
+  const durationWrap = document.getElementById("js-composer-duration");
+  const duration = composer.querySelector<HTMLSelectElement>('select[name="duration"]');
+
+  if (sheet instanceof HTMLDetailsElement && duration && durationWrap) {
+    durationWrap.hidden = true;
+    // Dropped together with hiding it: a `required` control that is not visible makes the browser
+    // refuse to submit while reporting the problem on an element nobody can see, which presents as
+    // a send button that silently does nothing.
+    duration.required = false;
+
+    const confirm = sheet.querySelector<HTMLButtonElement>(".duration-confirm");
+    let confirmed = false;
+
+    const choose = (minutes: string): void => {
+      duration.value = minutes;
+      for (const option of sheet.querySelectorAll<HTMLButtonElement>(".duration-option")) {
+        option.classList.toggle("is-chosen", option.dataset.duration === minutes);
+      }
+      if (confirm) confirm.disabled = false;
+    };
+
+    const close = (): void => {
+      sheet.open = false;
+    };
+
+    composer.addEventListener("submit", (event: SubmitEvent) => {
+      if (confirmed) return;
+      // Native validation has already passed by the time `submit` fires, so an empty message never
+      // reaches the sheet — the browser has asked for the text first, which is the right order.
+      event.preventDefault();
+      sheet.open = true;
+      sheet.querySelector<HTMLButtonElement>(".duration-option")?.focus();
+    });
+
+    sheet.addEventListener("click", (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      const option = target.closest<HTMLButtonElement>(".duration-option");
+      if (option?.dataset.duration) {
+        choose(option.dataset.duration);
+        return;
+      }
+      if (target.closest(".duration-cancel")) {
+        close();
+        return;
+      }
+      if (target.closest(".duration-confirm") && duration.value) {
+        confirmed = true;
+        close();
+        composer.requestSubmit();
+      }
+    });
+
+    // The message was not sent, so the choice should not persist as though it had been: reopening
+    // the sheet after a cancel must ask again rather than sit there already answered.
+    sheet.addEventListener("toggle", () => {
+      if (sheet.open || confirmed) return;
+      duration.value = "";
+      for (const option of sheet.querySelectorAll<HTMLButtonElement>(".duration-option")) {
+        option.classList.remove("is-chosen");
+      }
+      if (confirm) confirm.disabled = true;
+    });
+  }
+
   // Confirm the attachment landed — a file input styled as a paperclip gives no other feedback.
   if (fileInput && fileNote) {
     fileInput.addEventListener("change", () => {
