@@ -75,7 +75,7 @@
           {% csrf_token %}
           <input type="hidden" name="step" value="preview">
           <p><label>Begivenhed <input type="text" name="navn" maxlength="100" value="{{ form.navn.value|default_if_none:'' }}" required></label></p>
-          <p><label>Dato <input type="date" name="dato" value="{{ form.dato.value|default_if_none:''|date:'Y-m-d' }}" required></label></p>
+          <p><label>Dato <input type="date" name="dato" value="{{ form.dato.value|default_if_none:'' }}" required></label></p>
           <p>
             <label>Hjælpere {{ form.hjaelpere }}</label>
             <span class="muted text-sm">hold Ctrl/⌘ for flere</span>

@@ -284,6 +284,9 @@ def test_post_obligation_rerun_leaves_festkredit_rows_alone(make_resident: Calla
     post_obligation(periode, 12)
     assert KoekkenPost.objects.filter(festkredit=award).count() == count
     assert KoekkenPost.objects.filter(kind="festbidrag", resident=house[4]).count() == 1
+    # The stale FORPLIGTELSE row really was removed, while the festkredit row survived.
+    assert not KoekkenPost.objects.filter(kind="forpligtelse", resident=house[4]).exists()
+    assert KoekkenPost.objects.filter(kind="festbidrag", resident=house[4], festkredit=award).exists()
 
 
 # --------------------------------------------------------------------------------------- ranking
@@ -460,6 +463,24 @@ def test_refusal_rerenders_confirm_step_with_error(make_resident: Callable, clie
     )
     assert "Datoen ligger i fremtiden" in response.content.decode()
     assert 'name="step" value="preview"' in response.content.decode()
+    # The typed date survives the re-render (a bound form's value is a raw string).
+    assert f'name="dato" value="{future}"' in response.content.decode()
+
+
+def test_form_deduplicates_repeated_helpers(make_resident: Callable) -> None:
+    from koekken.forms import FestKreditForm
+
+    house = _house(make_resident, 3)
+    form = FestKreditForm(
+        {
+            "navn": "Fest",
+            "dato": "2025-12-31",
+            "hjaelpere": [house[0].pk, house[0].pk, house[1].pk],
+            "timer": 2,
+        }
+    )
+    assert form.is_valid(), form.errors
+    assert sorted(r.pk for r in form.cleaned_data["hjaelpere"]) == sorted([house[0].pk, house[1].pk])
 
 
 def test_history_shows_fortrudt_without_undo_button_and_undo_via_view(

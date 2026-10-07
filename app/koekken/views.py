@@ -723,7 +723,10 @@ def festkredit(request: HttpRequest) -> HttpResponse:
             return render(
                 request, "koekken/festkredit.html", _confirm_context(navn, dato, timer, None, error=str(exc))
             )
-        messages.success(request, f"Festkredit for {award.navn} tildelt {len(timer)} hjælpere.")
+        messages.success(
+            request,
+            f"Festkredit for {award.navn} tildelt {len(timer)} {'hjælper' if len(timer) == 1 else 'hjælpere'}.",
+        )
         return redirect("koekken:festkredit")
 
     form = FestKreditForm(request.POST)
