@@ -1,0 +1,29 @@
+{% comment %}
+  The day-grouped message list, shared by the live feed (_posts.html) and the archive
+  (_archive_chunk.html) so the two cannot drift on how a date heading is drawn. The groups come from
+  views.group_by_day; `archived` is passed on to _message.html and is simply absent on the feed.
+
+  EACH DAY IS WRAPPED, AND THE WRAPPER IS WHAT MAKES THE STICKY HEADING STOP.
+
+  A `position:sticky` element stays stuck until its CONTAINING BLOCK has scrolled past. With the
+  headings as flat siblings of everything else in #js-feed, that containing block was the entire
+  scroll region — so the last date chip unstuck at nothing, rode the whole way down and ended up
+  hovering over the LIVE messages at the bottom of the feed, labelling today's conversation with a
+  date from the archive. Giving each day its own box confines the chip to its own messages, which is
+  all "sticky" was ever meant to mean here.
+
+  A plain <section> with no styling of its own: the messages inside must keep behaving exactly as
+  they do in the live feed, since they are drawn by the same partial.
+{% endcomment %}
+{% for day in days %}
+  <section class="day-block">
+    {% comment %}
+      The label is built server-side (views._day_label) because "i dag" and "i går" are not
+      something a date filter can produce.
+    {% endcomment %}
+    <h3 class="day-chip">{{ day.label }}</h3>
+    {% for post in day.posts %}
+      {% include "den_hurtige/_message.html" with post=post archived=archived %}
+    {% endfor %}
+  </section>
+{% endfor %}
