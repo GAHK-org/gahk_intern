@@ -887,6 +887,17 @@
      feed renders, and anything set here would apply to them and not to their live counterparts. */
   .day-block { display:block; }
   .day-chip { position:sticky; top:4px; z-index:1; width:fit-content;
+    margin:18px auto 4px; padding:3px 12px; border-radius:999px;
+    background:var(--paper); border:1px solid var(--border);
+    /* The shadow is what makes a STUCK chip legible. Parked at the top of the scrollport it sits
+       over whatever is passing beneath it, and on a long message that is the middle of a line --
+       flat, that reads as a word having been redacted rather than as a label in front of it. A
+       soft drop makes it obviously float. box-shadow creates no stacking context, so the `.pop`
+       rule this file repeats everywhere is not in play. */
+    box-shadow:0 1px 4px rgba(24, 40, 30, .14);
+    font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase;
+    color:var(--muted); }
+
   /* ---- the duration sheet (#192) ----
      Positioning, backdrop and shadow all come from `.pop`/`.pop-panel` above -- this is the panel's
      CONTENTS and nothing else. An earlier version re-anchored the panel beside the composer with
