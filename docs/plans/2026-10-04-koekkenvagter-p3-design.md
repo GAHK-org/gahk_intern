@@ -69,6 +69,11 @@ Fravaer(resident, start_date, end_date, created_at)     check: start_date <= end
   re-add.
 - A range may cross a periode boundary (e.g. 28 Jun–3 Jul); it is stored as entered, and the summer
   page shows only its summer days.
+- **Implementation readings (step 3).** (a) Generation fires on 1 May itself (`today >= deadline`), not
+  from 2 May, matching the summer link, which is visible from the deadline day. (b) The "until Amendment 4
+  ships, contact Køkkengruppen" placeholder is replaced by a pointer to offering the shift (Amendment 4 has
+  shipped). The grid's context key is `grid_weeks` (each week carries its away names), as `weeks` is
+  already `_fravaer_context`'s on the same page.
 - **Implementation notes (step 2).** Ranges are inclusive; adjacent ranges (1-10 Jul, 11-20 Jul) are not an
   overlap (`a.start <= b.end and b.start <= a.end`) and are never merged. An already-ended range cannot be
   added (mirrors the delete rule); an ongoing one can. No row locking: the only race is one resident
@@ -155,6 +160,15 @@ resident rule, and the no-write-on-GET invariant are all unchanged.
 Deliberately **not** checked: away ranges (informational) and any per-resident claim limit (left to the
 vote). No time-overlap check is needed: morgen 06–07, frokost 12–13 and aften 17–20 cannot overlap.
 
+**Implementation notes (step 3).** The insert is one shared helper, `_insert_tildeling_locked` (locks the
+`Vagt`, re-counts, inserts in a savepoint), used by both `claim_vagt` and `override_assign`; the latter
+previously counted places without a lock and could overfill a shift against a concurrent claim. The helper
+takes no assignment-row lock, so it never goes back up Amendment 4's lock order. A claim committing while
+`declare_fridag` runs on the same date can make the fridag fail on the foreign key (full rollback, nothing
+corrupted); this is deliberately not prevented by locking, since row locks in `declare_fridag` would invert
+against whole-shift take-over and risk a real deadlock. `declare_koekken_fridag` catches the
+`IntegrityError` and tells the officer to re-run.
+
 There is **no unclaim function.** Køkkengruppen uses the existing `override_remove`; `override_assign`
 can fill an empty summer shift. A claimed row is `TILDELT` like any other, so it counts in the projected
 balance — summer claims made before the Efterår batch on 2 July affect autumn ranking, as they should.
@@ -219,7 +233,7 @@ confirmed in the A4 round.
 | 1 | §4 (except the generation change) and §5, including the window-bug fix. | 2 May 2027 (window fix: 24 Jun 2027) |
 | — | Amendment 4 design and build. | ideally 1 Feb 2027 |
 | 2 | `Fravaer` and its UI. **Built** (e31086f). | before claiming opens, May 2027 |
-| 3 | Claiming, the summer page, §4's generation change, Køkkengruppen visibility, demo. | May 2027 |
+| 3 | Claiming, the summer page, §4's generation change, Køkkengruppen visibility, demo. **Built** (50f4208). | May 2027 |
 | — | Amendment 6 (Køkkengruppen awarding event credit). | after the above |
 
 ## 11. Implementation-time check
