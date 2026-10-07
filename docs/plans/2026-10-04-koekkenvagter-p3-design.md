@@ -72,7 +72,7 @@ Fravaer(resident, start_date, end_date, created_at)     check: start_date <= end
 - **Implementation readings (step 3).** (a) Generation fires on 1 May itself (`today >= deadline`), not
   from 2 May, matching the summer link, which is visible from the deadline day. (b) The "until Amendment 4
   ships, contact Køkkengruppen" placeholder is replaced by a pointer to offering the shift (Amendment 4 has
-  shipped). The grid's context key is `grid_weeks` (each week carries its away names), as `weeks` is
+  shipped). The grid's context key is `grid_weeks` (away names are not repeated in the grid; the 'Væk denne uge' card in `_fravaer.html` is the single source), as `weeks` is
   already `_fravaer_context`'s on the same page.
 - **Implementation notes (step 2).** Ranges are inclusive; adjacent ranges (1-10 Jul, 11-20 Jul) are not an
   overlap (`a.start <= b.end and b.start <= a.end`) and are never merged. An already-ended range cannot be
