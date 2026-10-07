@@ -7,7 +7,7 @@ and a locked preference, plus (Amendments 2 and 3, F3) a genuinely PROJECTED mon
 a real list arriving later -- a departure vacated and refilled, a no-preference arrival seated
 correctly, and a vacated weekday slot an ineligible arrival does not inherit:
 
-  * a **normal allocated month** (the current one), with tier-A allocation and obligation posted;
+  * a **normal allocated month** (the current one), with tier-A and tier-B (aftenvagt) allocation and obligation posted;
   * a couple of residents with **weekday_unavailable** set, so they show up routed into the weekend
     pool in that same month's allocation, rather than needing a second contrived scenario;
   * a **February-shaped shortfall month**: tier-A capacity is deliberately shrunk (see
@@ -58,6 +58,7 @@ from .services import (
     accept_trade,
     add_fravaer,
     allocate_tier_a,
+    allocate_tier_b,
     award_festkredit,
     claim_vagt,
     generate_vagter,
@@ -181,6 +182,7 @@ def _force_shortfall(residents: list[Resident], periode: Periode, year: int, mon
     _shrink_capacity(weekday_vagter, SHORTFALL_WEEKDAY_CAPACITY)
 
     allocate_tier_a(year, month)
+    allocate_tier_b(year, month)  # tier B is independent of the tier-A shrink above
     post_obligation(periode, month)
 
 
@@ -321,8 +323,8 @@ def _demo_handoffs(
     a completed trade between two other residents (offer, propose, accept) and a whole-shift take-over, all
     through the services (never raw writes) and all on FUTURE shifts of one already-allocated month --
     an offer on a started shift is refused. Best-effort like every optional scenario here: skips when no
-    month has enough future shifts. The aftenvagt scenario hand-creates its two `TILDELT` rows, because
-    the demo only runs tier A, so aftenvagt are generated but unallocated. Push is a no-op when VAPID is
+    month has enough future shifts. The whole-shift scenario uses a real tier-B-allocated weekday
+    aftenvagt (its two assigned residents), never hand-made rows. Push is a no-op when VAPID is
     unconfigured, exactly as for `resolve_anmeldelse`."""
     today = current_date()
     tier_a_kinds = [VagtRegel.Kind.MORGEN, VagtRegel.Kind.FROKOST]
@@ -399,7 +401,10 @@ def _demo_handoffs(
                 if not traded:
                     withdraw_offer(offer, first.resident)  # no partner found: not left dangling
 
-            aften = list(
+            # Whole-shift take-over on a REAL tier-B allocation: a future 2-person weekday aftenvagt held by
+            # exactly two in-population residents. Skipped quietly when the month has none.
+            in_ids = {r.pk for r in in_population}
+            aften = (
                 Vagt.objects.filter(
                     periode=periode,
                     date__year=year,
@@ -407,18 +412,27 @@ def _demo_handoffs(
                     date__gt=today,
                     kind=VagtRegel.Kind.AFTEN,
                     headcount=2,
-                    tildelinger__isnull=True,
-                ).order_by("date")
-            )
-            weekday_aften = [v for v in aften if v.date.weekday() < 5]
-            if weekday_aften:
-                vagt = weekday_aften[0]
-                offerer, partner = rng.sample(in_population, k=2)
-                offered = VagtTildeling.objects.create(
-                    vagt=vagt, resident=offerer, status=VagtTildeling.Status.TILDELT
+                    tildelinger__isnull=False,
                 )
-                VagtTildeling.objects.create(vagt=vagt, resident=partner, status=VagtTildeling.Status.TILDELT)
-                take_over_whole(offer_tildeling(offered, offerer), partner)
+                .distinct()
+                .order_by("date")
+            )
+            for vagt in aften:
+                if vagt.date.weekday() >= 5:
+                    continue
+                held_rows = list(
+                    VagtTildeling.objects.filter(
+                        vagt=vagt, status=VagtTildeling.Status.TILDELT
+                    ).select_related("resident")
+                )
+                if len(held_rows) != 2 or not all(t.resident_id in in_ids for t in held_rows):
+                    continue
+                offered, other = held_rows
+                try:
+                    take_over_whole(offer_tildeling(offered, offered.resident), other.resident)
+                except KoekkenAllocationError:
+                    continue
+                break
         except KoekkenAllocationError:
             continue
         return
@@ -538,6 +552,7 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
 
     # A normal allocated month: the current one.
     allocate_tier_a(today.year, today.month)
+    allocate_tier_b(today.year, today.month)  # aftenvagt, so the kitchen tablet has someone to mark done
     post_obligation(periode, today.month)
     used_months = {(today.year, today.month)}
 
@@ -564,6 +579,7 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
     for year, month in window_months:
         _ensure_residency(residents, year, month)
         allocate_tier_a(year, month)
+        allocate_tier_b(year, month)
     used_months.update(window_months)
 
     # Amendment 2 (A2.6) + Amendment 3 (A3.4): a genuinely PROJECTED month (no Residency row at
@@ -579,6 +595,8 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
         used_months.add(recon_month)
         _demo_reconciliation(residents, periode, *recon_month, rng)
 
+    # (The reconciliation and FCFS-tiebreak months below stay tier-A only on purpose: they exist to show
+    # one narrow tier-A behaviour each, and have no aftenvagt scenario.)
     # Amendment 1, A1.1: a tie broken by declared_at, isolated to its own month so it never
     # interacts with the scenarios above. Also best-effort.
     tiebreak_months = _next_unused_months(periode, used_months, 1)

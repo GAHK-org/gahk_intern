@@ -160,3 +160,20 @@ def test_seed_demo_leaves_one_tombstone_with_its_replies_intact() -> None:
     tombstone = tombstones.get()
     assert tombstone.content == "", "a tombstone holds no content"
     assert tombstone.comments.exists(), "the replies outlive the message"
+
+
+@pytest.mark.django_db
+def test_seed_demo_koekken_allocates_aftenvagt_for_the_current_month() -> None:
+    """Tier B runs for the current month, so the kitchen tablet has an aftenvagt crew to mark done
+    (the demo used to run tier A only, leaving aftenvagt unassigned)."""
+    from core.clock import current_date
+    from koekken.models import Vagt, VagtRegel, VagtTildeling
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+
+    today = current_date()
+    aften = Vagt.objects.filter(date__year=today.year, date__month=today.month, kind=VagtRegel.Kind.AFTEN)
+    assert aften.exists()
+    unassigned = aften.filter(tildelinger__isnull=True).count()
+    assert unassigned == 0, f"{unassigned} aftenvagt left unassigned in the current month"
+    assert VagtTildeling.objects.filter(vagt__in=aften, status=VagtTildeling.Status.TILDELT).exists()
