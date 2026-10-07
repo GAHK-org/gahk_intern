@@ -7,6 +7,7 @@ monthly roles, admissions email/CSRF rules, POS money integrity, and the front-p
 from collections.abc import Callable
 
 import pytest
+from django.conf import settings
 from django.contrib.auth.hashers import identify_hasher
 from django.core import mail
 from django.test import Client
@@ -14,6 +15,10 @@ from django.utils import timezone
 
 from admissions.models import Application
 from residents.models import Resident, Role, active_period
+
+
+def test_session_cookie_domain_supports_site_hosts() -> None:
+    assert settings.SESSION_COOKIE_DOMAIN == (".gahk.dk" if not settings.DEBUG else None)
 
 
 # ---------------------------------------------------------------- auth (F-014)
