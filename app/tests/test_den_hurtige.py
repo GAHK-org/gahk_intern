@@ -2623,9 +2623,14 @@ def test_the_archive_pages_with_a_cursor_and_keeps_a_day_whole(
     # Four days of twelve. Two days fit inside a chunk of ARCHIVE_PAGE (30) and the third does not,
     # so the first chunk has to stop at 24 rather than cut the third day in half — which is the
     # behaviour under test, and is invisible if every day happens to fill a chunk on its own.
+    # Each day is anchored to local noon: the twelve messages of a day are spread over ~3 hours, and
+    # anchored to `now` they straddled local midnight whenever the suite ran shortly after it, which
+    # split a day in two and moved the chunk boundary this test asserts on.
+    now = timezone.localtime()
+    since_noon = (now - now.replace(hour=12, minute=0, second=0, microsecond=0)).total_seconds() / 86400
     for day in (1, 2, 3, 4):
         for n in range(12):
-            archived_post(author, f"d{day}-n{n}", days_ago=day + n / 100)
+            archived_post(author, f"d{day}-n{n}", days_ago=day + since_noon + n / 100)
     client.force_login(author)
 
     first = client.get(ARCHIVE_URL, HTTP_HX_REQUEST="true").content.decode()

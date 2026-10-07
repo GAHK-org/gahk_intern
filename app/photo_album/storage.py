@@ -12,7 +12,7 @@ token, good for an hour with no further check, and photo_album.access has a real
 can't enforce (`visible_media`: a PENDING upload is visible only to its uploader and Fotogruppen). A
 copied or logged link would leak it to anyone for as long as the signature lives.
 
-So `.url()` returns a site-relative `/fotoalbum-media/<name>` path instead, resolved by
+So `.url()` returns a site-relative `/photo-album/<id>/…` path instead, resolved by
 `photo_album.views.serve_media` — same shape as `core.media.serve_media`, but re-checking
 `photo_album.access`'s own per-item rule on every request instead of just "is logged in", and
 redirecting to a freshly presigned URL from `signed_url()` below rather than streaming. Falls back
@@ -36,11 +36,6 @@ from storages.utils import clean_name
 
 from core.storage import MediaS3Storage, PublicEndpointS3Storage
 
-# The URL prefix photo_album.views.serve_media is mounted at (config/urls.py) and the local-disk
-# fallback's base_url both use this, so the two backends produce identical URL shapes — the same
-# invariant core.storage.MediaS3Storage keeps for "media", just for a route the test suite also hits.
-MEDIA_URL_PREFIX = "fotoalbum-media"
-
 
 class PhotoAlbumS3Storage(PublicEndpointS3Storage):
     """S3 for the bytes; `.url()` is a site-relative path, `signed_url()` the real bucket URL.
@@ -55,12 +50,15 @@ class PhotoAlbumS3Storage(PublicEndpointS3Storage):
         expire: int | None = None,
         http_method: str | None = None,
     ) -> str:
-        """`/fotoalbum-media/<name>`, reproducing FileSystemStorage.url() — see MediaS3Storage.url()
-        for why this has to quote with filepath_to_uri rather than an f-string."""
+        """`/<name>` — `name` already starts with "photo-album/" (see models.py's upload_to
+        functions), so no extra URL segment is added on top of it. Reproduces FileSystemStorage.url()
+        — see MediaS3Storage.url() for why this has to quote with filepath_to_uri rather than an
+        f-string.
+        """
         url = filepath_to_uri(name)
         if url is not None:
             url = url.lstrip("/")
-        return urljoin(f"/{MEDIA_URL_PREFIX}/", url)
+        return urljoin("/", url)
 
     def signed_url(
         self, name: str, expire: int | None = None, parameters: dict[str, Any] | None = None
@@ -92,7 +90,7 @@ def _build_storage() -> FileSystemStorage | PhotoAlbumS3Storage:
     """
     if isinstance(storages["default"], MediaS3Storage):
         return PhotoAlbumS3Storage(**settings.PHOTO_ALBUM_S3_OPTIONS)
-    return FileSystemStorage(location=str(settings.MEDIA_ROOT), base_url=f"/{MEDIA_URL_PREFIX}/")
+    return FileSystemStorage(location=str(settings.MEDIA_ROOT), base_url="/")
 
 
 class _ConfiguredPhotoAlbumStorage(LazyObject):
