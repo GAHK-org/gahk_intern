@@ -25,6 +25,7 @@ urlpatterns = [
     path("forslag/<int:pk>/afvis", views.afvis_forslag, name="afvis_forslag"),
     path("forslag/<int:pk>/traek-tilbage", views.traek_forslag_tilbage, name="traek_forslag_tilbage"),
     path("sommer/", views.sommer, name="sommer"),
+    path("sommer/vagt/<int:pk>/tag", views.tag_sommervagt, name="tag_sommervagt"),
     path("sommer/fravaer", views.fravaer_tilfoej, name="fravaer_tilfoej"),
     path("sommer/fravaer/<int:pk>/slet", views.fravaer_slet, name="fravaer_slet"),
     path("gruppe/", views.gruppe, name="gruppe"),

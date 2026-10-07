@@ -76,6 +76,35 @@
     </div>
   </div>
 
+  <div class="card-flat" style="margin-top:16px">
+    <div class="card-head"><h2>Ledige sommervagter — de næste 14 dage</h2></div>
+    <div class="card-pad">
+      <p class="muted">Sommervagter, som ingen har taget endnu — kun til information.</p>
+      {% if unclaimed_summer %}
+        <div class="overflow-x-auto">
+          <table class="text-sm" style="width:100%; border-collapse:collapse">
+            <thead>
+              <tr style="text-align:left; border-bottom:1px solid #e6e8ec; white-space:nowrap">
+                <th>Dato</th><th>Vagt</th><th>Ledige pladser</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for vagt, free in unclaimed_summer %}
+                <tr style="border-bottom:1px solid #f0f1f4">
+                  <td>{{ vagt.date|date:"D j. F" }}</td>
+                  <td>{{ vagt.get_kind_display }}</td>
+                  <td>{{ free }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="muted">Ingen ledige sommervagter.</p>
+      {% endif %}
+    </div>
+  </div>
+
   <div class="grid2" style="margin-top:16px">
     <div class="card-flat">
       <div class="card-head"><h2>Kør allokering</h2></div>

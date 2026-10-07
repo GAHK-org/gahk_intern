@@ -588,6 +588,7 @@ def gruppe(request: HttpRequest) -> HttpResponse:
             "allokering_form": AllokeringForm(),
             "override_form": OverrideAssignForm(),
             "open_offers_soon": services.open_offers(within_days=14),
+            "unclaimed_summer": services.unclaimed_summer_vagter(),
         }
     )
     return render(request, "koekken/gruppe.html", context)
@@ -655,12 +656,22 @@ def override_assign(request: HttpRequest) -> HttpResponseRedirect:
         return redirect("koekken:gruppe")
     vagt = get_object_or_404(Vagt, pk=form.cleaned_data["vagt"])
     resident = get_object_or_404(Resident, pk=form.cleaned_data["resident"])
-    if vagt.tildelinger.count() >= vagt.headcount:
-        messages.error(request, f"{vagt} har allerede fuld besætning.")
-    elif VagtTildeling.objects.filter(vagt=vagt, resident=resident).exists():
-        messages.error(request, f"{resident.full_name} er allerede tildelt {vagt}.")
+
+    def _override_check(locked: Vagt, taken_count: int, held: set[int]) -> str | None:
+        # Only a full shift or an already-held one is refused (a manual override ignores the rest).
+        if taken_count >= locked.headcount:
+            return f"{locked} har allerede fuld besætning."
+        if locked.pk in held:
+            return f"{resident.full_name} er allerede tildelt {locked}."
+        return None
+
+    try:
+        # Shared locked insert (services' LOCK ORDER): counts under the Vagt lock, so it cannot overfill a
+        # summer shift against a concurrent claim.
+        services._insert_tildeling_locked(vagt.pk, resident, check=_override_check)
+    except services.KoekkenAllocationError as exc:
+        messages.error(request, str(exc))
     else:
-        VagtTildeling.objects.create(vagt=vagt, resident=resident, status=VagtTildeling.Status.TILDELT)
         messages.success(request, f"{resident.full_name} tildelt {vagt}.")
     return redirect("koekken:gruppe")
 
@@ -794,11 +805,44 @@ def _fravaer_context(
     }
 
 
+def _sommer_grid_context(request: HttpRequest, *, error: str | None = None) -> dict[str, object]:
+    """Everything `koekken/_sommer_vagter.html` needs -- shared by the full summer page and the htmx swap
+    after a claim, so the two can never disagree. `grid_weeks` is `services.summer_grid` with each week's
+    `away_by_week` residents appended (`(first, last, days, away)`); the key is not `weeks`, which
+    `_fravaer_context` already uses on the same page. A pure read: nothing is written on a GET."""
+    resident = current_resident(request)
+    summer = services.target_summer(current_date())
+    away = {(first, last): residents for first, last, residents in services.away_by_week(summer)}
+    return {
+        "summer": summer,
+        "grid_weeks": [
+            (first, last, days, away.get((first, last), []))
+            for first, last, days in services.summer_grid(summer, resident)
+        ],
+        "opens_on": services.periode_deadline(summer),
+        "error": error,
+    }
+
+
 @access.access_required
 def sommer(request: HttpRequest) -> HttpResponse:
     context = _fravaer_context(request)
-    # P3 step 3 (shift claiming grid) adds its context here.
+    context.update(_sommer_grid_context(request))
     return render(request, "koekken/sommer.html", context)
+
+
+@access.access_required
+@require_POST
+def tag_sommervagt(request: HttpRequest, pk: int) -> HttpResponse:
+    """Claim one summer shift (design doc §6). A refusal (stale page, full shift) renders INSIDE the
+    partial with status 200, per P2 §10."""
+    vagt = get_object_or_404(Vagt, pk=pk)
+    error: str | None = None
+    try:
+        services.claim_vagt(current_resident(request), vagt)
+    except services.KoekkenAllocationError as exc:
+        error = str(exc)
+    return render(request, "koekken/_sommer_vagter.html", _sommer_grid_context(request, error=error))
 
 
 @access.access_required

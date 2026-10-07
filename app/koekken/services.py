@@ -39,6 +39,13 @@ informational away ranges residents register for summer (`add_fravaer`/`delete_f
 only) and the house-wide weekly listing (`away_by_week`). Nothing here is read by allocation, claiming,
 obligation or generation.
 
+**P3 step 3** (same design doc §4/§6/§7, section "P3 step 3: claiming" at the bottom): residents claim
+SUMMER shifts themselves (`claim_vagt`, which reuses Amendment 4's `may_hold` for the population and
+move-out rule and never copies it). The race-sensitive insert is one shared helper,
+`_insert_tildeling_locked`, used by both `claim_vagt` and the Køkkengruppen `override_assign` view: it
+locks the `Vagt`, re-counts, then inserts. There is no unclaim. Generation also opens the summer shifts
+from 1 May (`periodes_to_generate`).
+
 **Amendment 4, step 1** (`docs/plans/2026-10-04-koekkenvagter-a4-design.md`): hand-off of vagter. A
 resident offers a future `TILDELT` row (`offer_tildeling`); another takes it over (`take_over`, which
 MOVES the existing row) or, on a two-person shift, the offerer's partner takes the whole shift
@@ -93,7 +100,7 @@ one already-approved exception, weekend compensation) -- see that function's doc
 import itertools
 import logging
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from typing import cast
@@ -275,12 +282,12 @@ def resolve_periode(for_date: date) -> Periode:
     return periode
 
 
-# NOTE: `_next_periode` and `_previous_periode` below currently have no callers. They are kept on
-# purpose, not forgotten: they do NOT skip SOMMER, so reaching for them where a periode that is
-# actually allocated is needed would reintroduce the window bug fixed in P3 step 1 (a
+# NOTE: `_next_periode` and `_previous_periode` below do NOT skip SOMMER, so reaching for them where a
+# periode that is actually allocated is needed would reintroduce the window bug fixed in P3 step 1 (a
 # periode-resolution path that doesn't skip SOMMER -- see the P3 design doc §5). Use
 # `_next_allocated_periode` / `_previous_allocated_periode` for that; use these two only where SOMMER
-# genuinely is the wanted answer.
+# genuinely is the wanted answer. `_next_periode` is called by `periodes_to_generate` (P3 step 3), which
+# wants exactly the next periode, SOMMER included; `_previous_periode` is still uncalled.
 def _next_periode(periode: Periode) -> Periode:
     """The `Periode` immediately following `periode`. Periods are calendar-anchored and contiguous
     (EFTERAAR's Jan 31 is followed by FORAAR's Feb 1, FORAAR's Jun 30 by SOMMER's Jul 1, SOMMER's Aug
@@ -2173,6 +2180,9 @@ def resolve_anmeldelse(anmeldelse: VagtAnmeldelse, *, upheld: bool, resolved_by:
 #   * Closing or lapsing SEVERAL offers or proposals SELECTs them `FOR UPDATE` in ascending pk order
 #     first (`_lock_byttes`, `_lock_forslag`) and only then updates exactly the locked pks. A bare
 #     `.filter(...).update(...)` makes no ordering promise, so two overlapping ones can deadlock.
+#   * Inserting a new VagtTildeling (claim, override_assign) locks only the Vagt (level 2) and takes no
+#     level-1 locks, so it never goes back up. Whole-shift take-over (rows -> Vagt) and an insert
+#     serialise on the Vagt.
 # Every predicate (`can_offer`, `can_take`, `can_take_whole`, `proposable_rows`, `can_accept`, ...) is a
 # pure read with no locking: the services re-check everything after locking.
 # ---------------------------------------------------------------------------------------------------
@@ -3412,6 +3422,13 @@ def declare_fridag(for_date: date, kinds: Iterable[str], reason: str = "") -> Fr
 
     Declaring a fridag for a kind that has no `Vagt` row yet (a genuine look-ahead month) still writes
     its `Fridag` row -- there is simply nothing to delete, re-post or notify for it.
+
+    **Known, deliberate race (P3 step 3):** a summer claim on the same date committing while this runs
+    can make this transaction's commit fail on a deferred foreign-key constraint (the new row points at a
+    `Vagt` this deletes). That is NOT prevented by locking: taking assignment-row locks here to cover
+    inserts would invert against whole-shift take-over's lock order (rows -> Vagt) and trade a rare, safe
+    failure (full rollback, nothing corrupted) for a real deadlock. The management command catches the
+    resulting `IntegrityError` and tells the officer to re-run.
     """
     today = current_date()
     if for_date < today:
@@ -3678,10 +3695,7 @@ def away_by_week(summer: Periode) -> list[tuple[date, date, list[Resident]]]:
         .order_by("start_date", "pk")
     )
     rows: list[tuple[date, date, list[Resident]]] = []
-    monday = summer.start_date - timedelta(days=summer.start_date.weekday())
-    while monday <= summer.end_date:
-        first = max(monday, summer.start_date)
-        last = min(monday + timedelta(days=6), summer.end_date)
+    for first, last in _summer_weeks(summer):
         present: dict[int, Resident] = {}
         for f in ranges:
             r = f.resident
@@ -3690,5 +3704,212 @@ def away_by_week(summer: Periode) -> list[tuple[date, date, list[Resident]]]:
                     continue
                 present[r.pk] = r
         rows.append((first, last, sorted(present.values(), key=lambda r: r.full_name)))
-        monday += timedelta(days=7)
     return rows
+
+
+def _summer_weeks(summer: Periode) -> list[tuple[date, date]]:
+    """`(first_day, last_day)` per ISO week (Monday-Sunday) from the week holding `summer`'s first day to
+    the week holding its last, the first and last clipped to the summer. Shared by `away_by_week` and
+    `summer_grid` so the two always show the same weeks."""
+    weeks: list[tuple[date, date]] = []
+    monday = summer.start_date - timedelta(days=summer.start_date.weekday())
+    while monday <= summer.end_date:
+        weeks.append((max(monday, summer.start_date), min(monday + timedelta(days=6), summer.end_date)))
+        monday += timedelta(days=7)
+    return weeks
+
+
+# ---------------------------------------------------------------------------------------------------
+# P3 step 3: claiming -- docs/plans/2026-10-04-koekkenvagter-p3-design.md §4/§6/§7.
+# ---------------------------------------------------------------------------------------------------
+
+
+def _claim_refusal(
+    vagt: Vagt,
+    resident: Resident,
+    *,
+    taken_count: int,
+    held: set[int],
+    population_ids: set[int] | None = None,
+    at: datetime | None = None,
+    regel_lookup: dict[tuple[str, bool], VagtRegel] | None = None,
+) -> str | None:
+    """The ONE place §6's claiming rules live: a Danish refusal, or None when `resident` may claim
+    `vagt`. Checked in order: SOMMER only; not started; a free place (`taken_count` counts rows of ANY
+    status against the shift's own snapshotted `headcount`); not already held (`held` is the set of
+    shift ids the resident holds); `may_hold` (population and move-out -- Amendment 4's helper, never
+    reimplemented here).
+
+    Deliberately NOT checked: away ranges (informational), any per-resident claim cap (left to the house
+    vote) and time overlap (morgen, frokost and aften cannot overlap)."""
+    if periode_is_allocated(vagt.periode.kind):
+        return "Kun sommervagter kan tages."
+    if has_started(vagt, at=at, regel_lookup=regel_lookup):
+        return "Vagten er allerede startet."
+    if taken_count >= vagt.headcount:
+        return "Vagten har ingen ledige pladser."
+    if vagt.pk in held:
+        return "Du har allerede denne vagt."
+    if not may_hold(resident, vagt, population_ids=population_ids):
+        return "Du kan ikke tage denne vagt."
+    return None
+
+
+def can_claim(
+    vagt: Vagt,
+    resident: Resident,
+    *,
+    taken_count: int | None = None,
+    held: set[int] | None = None,
+    population_ids: set[int] | None = None,
+    at: datetime | None = None,
+    regel_lookup: dict[tuple[str, bool], VagtRegel] | None = None,
+) -> bool:
+    """Pure UI predicate: whether `claim_vagt` would (apart from a race) succeed. `taken_count`/`held`/
+    `population_ids`/`regel_lookup` are optional precomputed inputs so a grid can batch."""
+    if taken_count is None:
+        taken_count = vagt.tildelinger.count()
+    if held is None:
+        held = set(held_by_vagt(resident, [vagt.pk]))
+    return (
+        _claim_refusal(
+            vagt,
+            resident,
+            taken_count=taken_count,
+            held=held,
+            population_ids=population_ids,
+            at=at,
+            regel_lookup=regel_lookup,
+        )
+        is None
+    )
+
+
+def _insert_tildeling_locked(
+    vagt_pk: int, resident: Resident, *, check: Callable[[Vagt, int, set[int]], str | None]
+) -> VagtTildeling:
+    """Insert a `TILDELT` row for `resident` on the shift `vagt_pk`, race-safely. Shared by `claim_vagt`
+    and the `override_assign` view, so neither can overfill a shift against the other. Under
+    `transaction.atomic()`: lock the `Vagt` row (LOCK ORDER level 2; no level-1 lock is taken, so this
+    never goes back up), re-count the rows on it (any status) and re-check whether the resident holds
+    it, then run `check(vagt, taken_count, held)` -- a returned message is raised as
+    `KoekkenAllocationError` -- and only then insert, inside a savepoint so an `IntegrityError` on the
+    `(vagt, resident)` unique constraint becomes a clean refusal."""
+    with transaction.atomic():
+        try:
+            vagt = Vagt.objects.select_for_update(of=("self",)).select_related("periode").get(pk=vagt_pk)
+        except Vagt.DoesNotExist:
+            raise KoekkenAllocationError("Vagten findes ikke længere.") from None
+        taken_count = VagtTildeling.objects.filter(vagt=vagt).count()
+        held = {vagt.pk} if VagtTildeling.objects.filter(vagt=vagt, resident=resident).exists() else set()
+        refusal = check(vagt, taken_count, held)
+        if refusal is not None:
+            raise KoekkenAllocationError(refusal)
+        try:
+            with transaction.atomic():
+                return VagtTildeling.objects.create(
+                    vagt=vagt, resident=resident, status=VagtTildeling.Status.TILDELT
+                )
+        except IntegrityError:
+            raise KoekkenAllocationError("Du har allerede denne vagt.") from None
+
+
+def claim_vagt(resident: Resident, vagt: Vagt) -> VagtTildeling:
+    """`resident` claims a place on the SOMMER shift `vagt` (design doc §6). Every rule is
+    `_claim_refusal`, re-checked under the `Vagt` lock by `_insert_tildeling_locked`; a refusal raises
+    `KoekkenAllocationError` with a Danish message and changes nothing. No notification: claiming is
+    your own action.
+
+    There is NO unclaim function anywhere. To give a claimed shift up, use Amendment 4's offer
+    (`offer_tildeling`); Køkkengruppen can force-remove one with `override_remove`."""
+
+    def check(locked: Vagt, taken_count: int, held: set[int]) -> str | None:
+        return _claim_refusal(locked, resident, taken_count=taken_count, held=held)
+
+    return _insert_tildeling_locked(vagt.pk, resident, check=check)
+
+
+def summer_grid(
+    summer: Periode, resident: Resident, *, at: datetime | None = None
+) -> list[tuple[date, date, list[tuple[date, list[tuple[Vagt, list[str], int, bool]]]]]]:
+    """The summer page's shift grid: one `(first_day, last_day, days)` per week (`_summer_weeks`), each
+    day a `(date, shifts)` with its shifts, each a `(vagt, claimant_names, free_places, can_claim)`; the viewer's own name carries " (din)".
+    Days without shifts (a fridag) are left out. Empty list when the summer has no shifts yet.
+
+    Shifts are queried by DATE RANGE, never through `summer` itself: the periode `target_summer` returns
+    is unsaved and a GET must not write. Constant query count: one shift query with the claimants
+    prefetched, one `vagt_regel_lookup`, the viewer's held shifts, and one population per month."""
+    first_day, last_day = summer.start_date, summer.end_date
+    vagter = list(
+        Vagt.objects.filter(date__gte=first_day, date__lte=last_day)
+        .select_related("periode")
+        .prefetch_related("tildelinger__resident")
+        .order_by("date", "kind")
+    )
+    if not vagter:
+        return []
+    now = at or current_datetime()
+    regel_lookup = vagt_regel_lookup()
+    held = set(held_by_vagt(resident, [v.pk for v in vagter]))
+    populations: dict[tuple[int, int], set[int]] = {}
+    kind_order = [kind.value for kind in VagtRegel.Kind]
+    by_day: dict[date, list[tuple[Vagt, list[str], int, bool]]] = defaultdict(list)
+    for vagt in sorted(vagter, key=lambda v: (v.date, kind_order.index(v.kind))):
+        rows = list(vagt.tildelinger.all())
+        taken = len(rows)
+        claimable = _claim_refusal(
+            vagt,
+            resident,
+            taken_count=taken,
+            held=held,
+            population_ids=_population_for(vagt, populations),
+            at=now,
+            regel_lookup=regel_lookup,
+        )
+        names = sorted(
+            row.resident.full_name + (" (din)" if row.resident_id == resident.pk else "") for row in rows
+        )
+        by_day[vagt.date].append((vagt, names, max(vagt.headcount - taken, 0), claimable is None))
+    weeks = []
+    for first, last in _summer_weeks(summer):
+        days = [(d, by_day[d]) for d in sorted(by_day) if first <= d <= last]
+        weeks.append((first, last, days))
+    return weeks
+
+
+def unclaimed_summer_vagter(*, within_days: int = 14, at: datetime | None = None) -> list[tuple[Vagt, int]]:
+    """SOMMER shifts in the next `within_days` days that have not started and have fewer rows (any
+    status) than `headcount`, soonest first, each with its free-place count. Køkkengruppen's visibility
+    list."""
+    now = at or current_datetime()
+    today = timezone.localtime(now).date()
+    qs = (
+        Vagt.objects.filter(
+            periode__kind=Periode.Kind.SOMMER,
+            date__gte=today,
+            date__lte=today + timedelta(days=within_days),
+        )
+        .annotate(taken=Count("tildelinger"))
+        .filter(taken__lt=F("headcount"))
+        .select_related("periode")
+    )
+    regel_lookup = vagt_regel_lookup()
+    kind_order = [kind.value for kind in VagtRegel.Kind]
+    live: list[tuple[Vagt, int]] = [
+        (v, v.headcount - v.taken) for v in qs if not has_started(v, at=now, regel_lookup=regel_lookup)
+    ]
+    live.sort(key=lambda item: (item[0].date, kind_order.index(item[0].kind)))
+    return live
+
+
+def periodes_to_generate(today: date) -> list[Periode]:
+    """The periodes the monthly generation run covers: the one containing `today`, PLUS the next one
+    when that is SOMMER and `today` is on or after its deadline (1 May) -- so claiming opens on 1 May
+    itself (P3 design doc §4 "Generation"; the same day the index link appears). Nothing else changes.
+    The next periode is resolved (a `get_or_create`) only AFTER the pure check passes."""
+    current = resolve_periode(today)
+    result = [current]
+    upcoming = _next_periode_pure(current)
+    if not periode_is_allocated(upcoming.kind) and today >= periode_deadline(upcoming):
+        result.append(_next_periode(current))
+    return result

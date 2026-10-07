@@ -30,6 +30,7 @@ from koekken.services import (
     _delete_replaceable_tildelinger,
     accept_trade,
     allocate_month,
+    claim_vagt,
     declare_fridag,
     flag_tildeling,
     offer_tildeling,
@@ -732,3 +733,137 @@ def test_take_over_whole_historic_offer_cascade_does_not_deadlock(
     # T2 either completed cleanly or was refused cleanly; never a deadlock or an unhandled error.
     error = o2.get("error")
     assert error is None or isinstance(error, KoekkenAllocationError), o2
+
+
+# ======================================================================= P3 step 3: summer claiming
+#
+# `claim_vagt` and the `override_assign` view insert through `_insert_tildeling_locked`: lock the Vagt,
+# re-count, insert. It takes no assignment-row lock, so it never goes back up the LOCK ORDER. Each test
+# pauses one side while it HOLDS the Vagt lock (just after the `FOR UPDATE` statement), starts the other
+# side and proves it blocks, then resumes and checks the end state.
+
+SUMMER_DAY = date(2042, 7, 8)  # a Tuesday: aftenvagt has two places
+
+
+@pytest.fixture
+def sw(settings: object, make_resident: Callable[..., Resident]) -> Iterator[dict[str, Any]]:
+    settings.DEBUG = True  # type: ignore[attr-defined]
+    _reseed()
+    DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": date(2042, 6, 1)})
+    clear_cache()
+    people = {n: make_resident(email=f"{n}@gahk.dk", first_name=n.upper()) for n in "abcd"}
+    for i, r in enumerate(people.values()):
+        room = Room.objects.create(legacy_index=300 + i, number=300 + i, floor="stuen", side="mod gaden")
+        Residency.objects.create(resident=r, room=room, year=2042, month=7)
+    periode = resolve_periode(SUMMER_DAY)
+    morgen = Vagt.objects.create(
+        periode=periode, date=SUMMER_DAY, kind=VagtRegel.Kind.MORGEN, headcount=1, duration_minutes=60
+    )
+    aften = Vagt.objects.create(
+        periode=periode, date=SUMMER_DAY, kind=VagtRegel.Kind.AFTEN, headcount=2, duration_minutes=180
+    )
+    yield {"people": people, "morgen": morgen, "aften": aften}
+    clear_cache()
+
+
+VAGT_LOCK = re.compile(r'FROM "koekken_vagt" .*FOR UPDATE')
+
+
+def test_two_claims_on_the_last_place_exactly_one_wins(sw: dict[str, Any]) -> None:
+    p, vagt = sw["people"], sw["morgen"]
+    paused, resume, first, first_out = _paused(lambda: claim_vagt(p["a"], vagt), VAGT_LOCK)
+    assert paused.wait(JOIN)  # a holds the Vagt lock and has not counted yet
+    second, second_out = _run_in_thread(lambda: claim_vagt(p["b"], vagt))
+    second.join(1.5)
+    assert second.is_alive(), "the second claim was not blocked by the Vagt lock (race is open)"
+    resume.set()
+    _joined(first, second)
+    assert "error" not in first_out, first_out
+    assert isinstance(second_out.get("error"), KoekkenAllocationError), second_out
+    assert "ingen ledige pladser" in str(second_out["error"])
+    assert list(VagtTildeling.objects.filter(vagt=vagt).values_list("resident", flat=True)) == [p["a"].pk]
+
+
+def test_claim_versus_override_assign_on_the_last_place_exactly_one_row(
+    sw: dict[str, Any], make_resident: Callable[..., Resident]
+) -> None:
+    p, vagt = sw["people"], sw["morgen"]
+    manager = make_resident(email="manager@gahk.dk", roles=(Role.KOKKENGRUPPE,))
+    client = Client()
+    client.force_login(manager)
+    paused, resume, claimer, claim_out = _paused(lambda: claim_vagt(p["a"], vagt), VAGT_LOCK)
+    assert paused.wait(JOIN)
+    override, override_out = _run_in_thread(
+        lambda: client.post(
+            "/intern/koekken/gruppe/override", {"vagt": vagt.pk, "resident": p["b"].pk}, follow=True
+        )
+    )
+    override.join(1.5)
+    assert override.is_alive(), "override_assign was not blocked by the claim's Vagt lock"
+    resume.set()
+    _joined(claimer, override)
+    assert "error" not in claim_out and "error" not in override_out, (claim_out, override_out)
+    assert VagtTildeling.objects.filter(vagt=vagt).count() == 1  # never overfilled
+    messages_text = " ".join(str(m) for m in override_out["result"].context["messages"])
+    assert "allerede fuld besætning" in messages_text
+
+
+def test_claim_versus_take_over_whole_does_not_deadlock(sw: dict[str, Any]) -> None:
+    """The claim holds the Vagt lock (and never an assignment-row lock); the whole-shift take-over holds its
+    rows and then asks for the Vagt. It must simply wait for the claim, which is refused (shift full)."""
+    p, aften = sw["people"], sw["aften"]
+    row_a = VagtTildeling.objects.create(vagt=aften, resident=p["a"], status=T.TILDELT)
+    VagtTildeling.objects.create(vagt=aften, resident=p["b"], status=T.TILDELT)
+    bytte = offer_tildeling(row_a, p["a"])
+    paused, resume, claimer, claim_out = _paused(lambda: claim_vagt(p["c"], aften), VAGT_LOCK)
+    assert paused.wait(JOIN)
+    taker, take_out = _run_in_thread(lambda: take_over_whole(VagtBytte.objects.get(pk=bytte.pk), p["b"]))
+    taker.join(1.5)
+    assert taker.is_alive(), "take_over_whole was not blocked on the Vagt the claim holds"
+    resume.set()
+    _joined(claimer, taker)
+    assert isinstance(claim_out.get("error"), KoekkenAllocationError), claim_out
+    assert "error" not in take_out, take_out
+    aften.refresh_from_db()
+    assert VagtTildeling.objects.filter(vagt=aften).count() <= aften.headcount  # consistent final state
+    assert not VagtTildeling.objects.filter(vagt=aften, resident=p["c"]).exists()
+
+
+def test_claim_committing_while_a_fridag_is_declared_never_hangs_or_half_applies(sw: dict[str, Any]) -> None:
+    """declare_fridag paused after its row locks and its cascade collection, right before its first DELETE;
+    a claim on the same date commits in the gap (claim takes no row locks, so it is not blocked). Either the
+    fridag's commit fails on the deferred foreign key (full rollback, `IntegrityError` the management
+    command turns into "re-run"), or it commits and has removed everything. Never a hang, never a half."""
+    from django.db import IntegrityError
+
+    p, aften = sw["people"], sw["aften"]
+    VagtTildeling.objects.create(vagt=aften, resident=p["a"], status=T.TILDELT)
+
+    def declare() -> object:
+        with transaction.atomic():
+            return declare_fridag(SUMMER_DAY, [VagtRegel.Kind.AFTEN])
+
+    paused, resume, declarer, declare_out = _paused(
+        declare, re.compile(r'^DELETE FROM "koekken_vagttildeling"'), after=False
+    )
+    assert paused.wait(JOIN)
+    claimer, claim_out = _run_in_thread(lambda: claim_vagt(p["c"], aften))
+    claimer.join(JOIN)
+    assert not claimer.is_alive(), "the claim hung behind declare_fridag"
+    resume.set()
+    _joined(declarer)
+
+    from koekken.models import Fridag
+
+    if "error" in declare_out:
+        assert isinstance(declare_out["error"], IntegrityError), declare_out
+        assert "error" not in claim_out
+        assert Vagt.objects.filter(pk=aften.pk).exists() and not Fridag.objects.exists()
+        assert set(VagtTildeling.objects.filter(vagt=aften).values_list("resident", flat=True)) == {
+            p["a"].pk,
+            p["c"].pk,
+        }
+    else:
+        assert not Vagt.objects.filter(pk=aften.pk).exists() and Fridag.objects.exists()
+        assert not VagtTildeling.objects.filter(vagt_id=aften.pk).exists()  # no orphan row
+        assert isinstance(claim_out.get("error"), KoekkenAllocationError) or "result" in claim_out

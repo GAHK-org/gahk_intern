@@ -25,13 +25,20 @@ removed from which shifts before committing for real. The command is deliberatel
 periode's shifts (i.e. before `generate_koekkenvagter` runs for it), rather than after generation or
 in the middle of an already-allocated periode. Declared this early, there is nothing yet to delete or
 re-post; `generate_vagter`'s own `is_fridag` seam (A5.3) simply never creates those rows in the first
-place, which is the simpler of this command's two paths."""
+place, which is the simpler of this command's two paths.
+
+**A summer claim racing this command (P3 step 3).** A claim on the same date committing mid-declaration
+can make this command's commit fail on a deferred foreign-key constraint. That is deliberately NOT
+prevented by locking: `declare_fridag` taking assignment-row locks to cover inserts would invert against
+whole-shift take-over's lock order (rows -> Vagt) and create a real deadlock, in exchange for preventing
+a rare and SAFE failure (full rollback, nothing corrupted, no pushes sent). The `IntegrityError` is
+caught in `handle` and turned into a "run it again" message."""
 
 import argparse
 from datetime import date
 
 from django.core.management.base import BaseCommand, CommandError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 
 from core.push import send
 from koekken.models import VagtRegel
@@ -78,6 +85,10 @@ class Command(BaseCommand):
                     transaction.set_rollback(True)
         except KoekkenAllocationError as exc:
             raise CommandError(str(exc)) from exc
+        except IntegrityError as exc:
+            raise CommandError(
+                "En vagt på datoen blev taget samtidig — intet er ændret. Kør kommandoen igen."
+            ) from exc
 
         # F1: dispatched only now that the transaction above is known to have actually committed --
         # never under --dry-run, which rolled it back instead.

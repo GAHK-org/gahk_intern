@@ -56,6 +56,7 @@ from .services import (
     accept_trade,
     add_fravaer,
     allocate_tier_a,
+    claim_vagt,
     generate_vagter,
     held_by_vagt,
     month_population_ids,
@@ -450,6 +451,34 @@ def _demo_fravaer(residents: list[Resident]) -> None:
             pass
 
 
+def _demo_claims(residents: list[Resident]) -> None:
+    """P3 step 3: generate the target summer and claim a handful of shifts in ONE week through
+    `claim_vagt` -- both places of a weekday aftenvagt, plus a few single shifts -- leaving the rest of the
+    summer (and the other place of some shifts) unclaimed for the grid and Køkkengruppen's list. Best-effort
+    like every optional scenario here: a refusal (e.g. the demo runs late in the summer) is skipped."""
+    summer = target_summer()
+    generate_vagter(resolve_periode(summer.start_date))
+    for month in (summer.start_date.month, summer.end_date.month):
+        _ensure_residency(residents, summer.start_date.year, month)
+    # The first Monday at least a week into the summer and after today, so the claims are never refused as
+    # "already started" when the demo runs inside the summer itself.
+    anchor = max(summer.start_date + timedelta(days=7), current_date() + timedelta(days=1))
+    week_start = anchor + timedelta(days=(7 - anchor.weekday()) % 7)
+    week = list(Vagt.objects.filter(date__gte=week_start, date__lt=week_start + timedelta(days=7)))
+    week.sort(key=lambda v: (v.date, v.kind))
+    aften = next((v for v in week if v.kind == VagtRegel.Kind.AFTEN and v.date.weekday() < 5), None)
+    picks: list[tuple[Resident, Vagt]] = []
+    if aften is not None:
+        picks += [(residents[0], aften), (residents[1], aften)]
+    singles = [v for v in week if v != aften][:3]
+    picks += [(residents[2 + i % max(len(residents) - 2, 1)], v) for i, v in enumerate(singles)]
+    for resident, vagt in picks:
+        try:
+            claim_vagt(resident, vagt)
+        except KoekkenAllocationError:
+            pass
+
+
 def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
     if len(residents) < UNAVAILABLE_COUNT + SHORTFALL_WEEKDAY_CAPACITY + 1:
         return 0  # too small a demo house to show a real shortfall; nothing useful to build
@@ -463,6 +492,7 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
         # starting balances so a July/August demo run still shows them.
         _seed_launch_balances(residents, periode)
         _demo_fravaer(residents)
+        _demo_claims(residents)
         return KoekkenPost.objects.count()
 
     # A few weekday-unavailable declarers for the WHOLE periode (Praeference is periode-scoped, not
@@ -531,4 +561,5 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
     # balances) unequal balances and let the lower one win regardless of declared_at.
     _seed_launch_balances(residents, periode)
     _demo_fravaer(residents)
+    _demo_claims(residents)
     return KoekkenPost.objects.count()
