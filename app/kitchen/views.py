@@ -89,11 +89,16 @@ def _grid_columns() -> list[dict]:
 
 
 def _slots(shift: KitchenShift, resident_id: int) -> list[dict | None]:
-    """One entry per spot: the holder's assignment, or None while the spot is free."""
+    """One entry per spot: the holder's assignment, or None while the spot is free. A holder's spots
+    beyond their first are `overridable`: anyone else may take them over before the shift starts."""
     slots: list[dict | None] = [
-        {"a": a, "mine": a.resident_id == resident_id}
+        {
+            "a": a,
+            "mine": a.resident_id == resident_id,
+            "overridable": i > 0 and a.resident_id != resident_id and not shift.has_started,
+        }
         for a in shift.assignments.all()
-        for _ in range(a.spots)
+        for i in range(a.spots)
     ]
     return slots + [None] * max(0, shift.spots - len(slots))
 

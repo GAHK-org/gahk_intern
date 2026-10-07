@@ -1988,7 +1988,8 @@
   .duty-nav strong { text-align:center; font-size:15px; }
   .duty-nav .btn { padding:4px 12px; }
   .duty-legend { display:flex; gap:6px; margin:0 0 0 auto; }
-  .duty-legend .duty-slot { flex:none; min-height:0; padding:3px 9px; font-size:12px; font-weight:600; }
+  .duty-legend .duty-slot { flex:none; min-height:0; padding:3px 9px; font-size:12px; font-weight:600;
+    pointer-events:none; }
 
   /* Scrolls with the page. .main is overflow:auto, which would capture the sticky header, so the
      duty pages release it; only narrow screens get a sideways scroller (and lose the sticky head). */
@@ -2046,6 +2047,17 @@
   .duty-slot.is-free .duty-name { font-weight:500; }
   .duty-slot.is-free:hover { background:var(--green-050); color:var(--green-700); border-style:solid; }
   .duty-slot.is-empty { cursor:default; border-style:dashed; background:transparent; }
+  /* Extra spot of a multi-spot holder: shown as theirs, but taken over on click like a free spot. */
+  .duty-slot.is-override { background:#E6EEF8; border-color:#4A78B0; color:#24508A; }
+  .duty-slot.is-override .duty-pts { border-color:#4A78B0; background:#D5E2F3; color:#24508A; }
+  .duty-take-label { display:none; }
+  .duty-slot.is-override:hover, .duty-slot.is-override:focus-visible { background:var(--green-050);
+    color:var(--green-700); border-color:var(--green); }
+  .duty-slot.is-override:hover .duty-pts, .duty-slot.is-override:focus-visible .duty-pts {
+    border-color:var(--green); background:var(--surface-2); color:var(--muted); }
+  .duty-slot.is-override:hover .duty-name, .duty-slot.is-override:focus-visible .duty-name { display:none; }
+  .duty-slot.is-override:hover .duty-take-label, .duty-slot.is-override:focus-visible .duty-take-label {
+    display:block; font-weight:500; }
   .duty-take { display:contents; }
 
   .duty-cancelled { display:block; padding:5px 7px; border-radius:6px; text-align:center;

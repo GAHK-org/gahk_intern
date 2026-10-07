@@ -3,7 +3,20 @@
 {% else %}
   <div class="duty-slots">
     {% for slot in shift.slots %}
-      {% if slot %}
+      {% if slot and slot.overridable %}
+        <form method="post" action="{% url 'kitchen:enroll' shift.pk %}" class="duty-take"
+              data-duty-confirm="{{ shift.title }}, {{ shift.starts_at|date:'l j. F' }} kl. {{ shift.starts_at|time:'H:i' }}–{{ shift.ends_at|time:'H:i' }} · {{ shift.points_per_spot_total }} point. Du overtager en af {{ slot.a.resident.first_name }}s pladser.">
+          {% csrf_token %}
+          <input type="hidden" name="spots" value="1">
+          <input type="hidden" name="next" value="market">
+          <button type="submit" class="duty-slot is-override"
+                  title="{{ slot.a.resident.full_name }} har taget flere pladser — tag denne">
+            <span class="duty-name">{{ slot.a.resident.first_name }}</span>
+            <span class="duty-name duty-take-label">+ Tag</span>
+            <span class="duty-pts">{{ shift.points_per_spot_total }}</span>
+          </button>
+        </form>
+      {% elif slot %}
         <a href="{% url 'kitchen:shift' shift.pk %}"
            class="duty-slot{% if slot.mine %} is-mine{% endif %}{% if slot.a.for_sale %} is-sale{% endif %}{% if slot.a.is_absent %} is-absent{% endif %}"
            title="{{ slot.a.resident.full_name }}{% if slot.a.for_sale %} — til salg{% endif %}">

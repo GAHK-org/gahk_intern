@@ -270,6 +270,26 @@ def test_sheet_shows_slots_and_take_button_returns_to_it(make_resident: Callable
     assert "duty-slot is-mine" in page and "Vilma" in page
 
 
+def test_extra_spots_of_a_multi_spot_holder_render_as_overridable(make_resident: Callable) -> None:
+    holder = make_resident(email="h@gahk.dk", first_name="Holger")
+    other = make_resident(email="o@gahk.dk")
+    services.ensure_calendar()
+    shift = KitchenShift.objects.filter(kind="evening", spots=2, starts_at__gt=timezone.now()).first()
+    services.enroll(shift, holder, spots=2)
+    client = Client()
+
+    client.force_login(holder)  # the holder never sees their own spots as overridable
+    page = client.get(reverse("kitchen:market")).content.decode()
+    assert "duty-take-label" not in page
+
+    client.force_login(other)
+    page = client.get(reverse("kitchen:market")).content.decode()
+    assert page.count("duty-take-label") == 1
+    client.post(reverse("kitchen:enroll", args=[shift.pk]), {"spots": "1", "next": "market"})
+    assert KitchenAssignment.objects.get(resident=holder).spots == 1
+    assert KitchenAssignment.objects.get(resident=other).spots == 1
+
+
 def test_sheet_shows_30_days_and_loads_more_up_to_the_horizon(make_resident: Callable) -> None:
     client = Client()
     client.force_login(make_resident())
