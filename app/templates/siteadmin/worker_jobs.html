@@ -18,20 +18,44 @@
     </table>
   </div>
 
-  <h2 class="mt-8">Seneste jobs ({{ past_jobs|length }})</h2>
+  <div class="mt-8 flex flex-wrap items-end justify-between gap-3">
+    <h2>Seneste jobs (viser {{ past_jobs.paginator.count }} {% if include_children %}jobs{% else %}overordnede jobs{% endif %} af {{ total_past_jobs }} opgaver)</h2>
+    <form method="get" class="flex flex-wrap items-end gap-2">
+      <label class="text-sm">Status
+        <select name="status" class="block"><option value="">Alle</option>{% for status in job_statuses %}<option value="{{ status }}"{% if selected_status == status %} selected{% endif %}>{{ status }}</option>{% endfor %}</select>
+      </label>
+      <label class="text-sm">Sortering
+        <select name="sort" class="block">
+          <option value="finished_desc"{% if selected_sort == "finished_desc" %} selected{% endif %}>Afsluttet, nyeste først</option>
+          <option value="finished_asc"{% if selected_sort == "finished_asc" %} selected{% endif %}>Afsluttet, ældste først</option>
+          <option value="started_desc"{% if selected_sort == "started_desc" %} selected{% endif %}>Startet, nyeste først</option>
+          <option value="started_asc"{% if selected_sort == "started_asc" %} selected{% endif %}>Startet, ældste først</option>
+          <option value="status_asc"{% if selected_sort == "status_asc" %} selected{% endif %}>Status, A-Å</option>
+          <option value="status_desc"{% if selected_sort == "status_desc" %} selected{% endif %}>Status, Å-A</option>
+        </select>
+      </label>
+      <button type="submit" class="btn">Vis</button>
+    </form>
+  </div>
+  {% if include_children %}
+    <a class="btn" href="{% querystring children=None page=None %}">Vis kun overordnede jobs</a>
+  {% else %}
+    <a class="btn" href="{% querystring children=1 page=None %}">Vis også underopgaver</a>
+  {% endif %}
   <div class="card overflow-x-auto">
     <table class="w-full border-collapse text-sm">
-      <thead><tr class="border-b border-gray-200 text-left"><th class="p-2">Opgave</th><th class="p-2">Status</th><th class="p-2">Sendt</th><th class="p-2">Afsluttet</th><th class="p-2">Kø</th><th class="p-2">Worker</th><th class="p-2">Forsøg</th></tr></thead>
+      <thead><tr class="border-b border-gray-200 text-left"><th class="p-2">Opgave</th><th class="p-2">Status</th><th class="p-2">Sendt</th><th class="p-2">Afsluttet</th><th class="p-2">Varighed</th><th class="p-2">Kø</th><th class="p-2">Worker</th><th class="p-2">Forsøg</th></tr></thead>
       <tbody>
         {% for job in past_jobs %}
           <tr class="border-b border-gray-100">
-            <td class="p-2"><div class="font-mono break-all">{% if job.id %}<a href="{% url 'siteadmin:worker_job_detail' job.id %}">{{ job.task }}</a>{% else %}{{ job.task }}{% endif %}</div><div class="muted text-xs font-mono">{{ job.id }}</div>{% if job.arguments or job.keyword_arguments %}<div class="muted text-xs font-mono break-all">{{ job.arguments }}{% if job.keyword_arguments %} {{ job.keyword_arguments }}{% endif %}</div>{% endif %}</td>
-            <td class="p-2">{{ job.status }}</td><td class="p-2">{{ job.submitted_at|date:"Y-m-d H:i:s"|default:"-" }}</td><td class="p-2">{{ job.finished_at|date:"Y-m-d H:i:s" }}</td><td class="p-2">{{ job.queue|default:"-" }}</td><td class="p-2">{{ job.worker|default:"-" }}</td><td class="p-2">{{ job.retries|default:0 }}</td>
+            <td class="p-2"><div class="font-mono break-all">{% if job.id %}<a href="{% url 'siteadmin:worker_job_detail' job.id %}">{{ job.task }}</a>{% else %}{{ job.task }}{% endif %}</div><div class="muted text-xs font-mono">{{ job.id }}</div>{% if job.task_context %}<div class="muted text-xs break-all">{{ job.task_context }}</div>{% endif %}{% if job.arguments or job.keyword_arguments %}<div class="muted text-xs font-mono break-all">{{ job.arguments }}{% if job.keyword_arguments %} {{ job.keyword_arguments }}{% endif %}</div>{% endif %}</td>
+            <td class="p-2">{{ job.status }}</td><td class="p-2">{{ job.submitted_at|date:"Y-m-d H:i:s"|default:"-" }}</td><td class="p-2">{{ job.finished_at|date:"Y-m-d H:i:s" }}</td><td class="p-2">{{ job.runtime|default:"-" }}</td><td class="p-2">{{ job.queue|default:"-" }}</td><td class="p-2">{{ job.worker|default:"-" }}</td><td class="p-2">{{ job.retries|default:0 }}</td>
           </tr>
-        {% empty %}<tr><td class="p-2 muted" colspan="7">Ingen afsluttede jobs endnu.</td></tr>{% endfor %}
+        {% empty %}<tr><td class="p-2 muted" colspan="8">Ingen afsluttede jobs endnu.</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>
+  {% if past_jobs.paginator.num_pages > 1 %}<p class="muted mt-4 flex items-center gap-3">{% if past_jobs.has_previous %}<a href="{% querystring page=past_jobs.previous_page_number %}">‹ forrige</a>{% endif %}<span>Side {{ past_jobs.number }} / {{ past_jobs.paginator.num_pages }}</span>{% if past_jobs.has_next %}<a href="{% querystring page=past_jobs.next_page_number %}">næste ›</a>{% endif %}</p>{% endif %}
 
   <h2 class="mt-8">Aktive planlagte opgaver ({{ schedules|length }})</h2>
   <div class="card overflow-x-auto">
