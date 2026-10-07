@@ -2,7 +2,7 @@
 
 **Status: decisions approved 2026-10-07** (stakeholder answers relayed through the coordinating
 session, one question at a time; recorded in §2). **This written document awaits the stakeholder's
-confirmation. Not yet built.** It sits inside `2026-09-21-koekkenvagter-design.md`, whose ledger
+confirmation. Status: built (`a46f6a7`).** It sits inside `2026-09-21-koekkenvagter-design.md`, whose ledger
 section ("Ledger and obligation") it extends. Read that section first.
 
 ## 1. What it is
