@@ -44,6 +44,16 @@ def _balance(resident: object) -> int:
     return KitchenPointEntry.balance_for(resident.pk)  # type: ignore[attr-defined]
 
 
+def test_free_spots_are_coloured_by_how_soon_the_shift_starts() -> None:
+    from kitchen.views import _urgency
+
+    now = timezone.now()
+    assert _urgency(_shift(datetime.timedelta(hours=5)), now) == "critical"
+    assert _urgency(_shift(datetime.timedelta(hours=48)), now) == "soon"
+    assert _urgency(_shift(datetime.timedelta(days=5)), now) == ""
+    assert _urgency(_shift(-datetime.timedelta(hours=1)), now) == ""
+
+
 def test_standard_calendar_is_generated_three_months_ahead_and_idempotent() -> None:
     created = services.ensure_calendar()
     assert created > 0

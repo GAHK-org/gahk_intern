@@ -31,7 +31,7 @@
           {% csrf_token %}
           <input type="hidden" name="spots" value="1">
           <input type="hidden" name="next" value="market">
-          <button type="submit" class="duty-slot is-free" title="Tag vagten">
+          <button type="submit" class="duty-slot is-free{% if shift.urgency %} is-{{ shift.urgency }}{% endif %}" title="Tag vagten">
             <span class="duty-name">+ Tag</span>
             <span class="duty-pts">{{ shift.points_per_spot_total }}</span>
           </button>

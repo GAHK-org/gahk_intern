@@ -1987,7 +1987,7 @@
   .duty-nav { display:flex; align-items:center; gap:8px; }
   .duty-nav strong { text-align:center; font-size:15px; }
   .duty-nav .btn { padding:4px 12px; }
-  .duty-legend { display:flex; gap:6px; margin:0 0 0 auto; }
+  .duty-legend { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 0 auto; }
   .duty-legend .duty-slot { flex:none; min-height:0; padding:3px 9px; font-size:12px; font-weight:600;
     pointer-events:none; }
 
@@ -2046,6 +2046,16 @@
   .duty-slot.is-free { border-style:dashed; background:transparent; color:var(--muted); }
   .duty-slot.is-free .duty-name { font-weight:500; }
   .duty-slot.is-free:hover { background:var(--green-050); color:var(--green-700); border-style:solid; }
+  /* Free spots that are running out of time: light red within 72 hours, red within 24. */
+  .duty-slot.is-free.is-soon { border-style:solid; border-color:#E3A9A3; background:var(--neg-bg); color:var(--neg); }
+  .duty-slot.is-free.is-soon .duty-pts { border-color:#E3A9A3; background:#FBF1EF; color:var(--neg); }
+  .duty-slot.is-free.is-critical { border-style:solid; border-color:var(--neg); background:var(--neg); color:#fff; }
+  .duty-slot.is-free.is-critical .duty-name { font-weight:600; }
+  .duty-slot.is-free.is-critical .duty-pts { border-color:rgba(255,255,255,.4); background:#9A2F2F; color:#fff; }
+  .duty-slot.is-free.is-soon:hover, .duty-slot.is-free.is-critical:hover { background:var(--green-050);
+    border-color:var(--green); color:var(--green-700); }
+  .duty-slot.is-free.is-soon:hover .duty-pts, .duty-slot.is-free.is-critical:hover .duty-pts {
+    border-color:var(--green); background:var(--surface-2); color:var(--muted); }
   .duty-slot.is-empty { cursor:default; border-style:dashed; background:transparent; }
   /* Extra spot of a multi-spot holder: shown as theirs, but taken over on click like a free spot. */
   .duty-slot.is-override { background:#E6EEF8; border-color:#4A78B0; color:#24508A; }

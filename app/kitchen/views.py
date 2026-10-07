@@ -103,12 +103,26 @@ def _slots(shift: KitchenShift, resident_id: int) -> list[dict | None]:
     return slots + [None] * max(0, shift.spots - len(slots))
 
 
+def _urgency(shift: KitchenShift, now: datetime.datetime) -> str:
+    """How badly a free spot on this shift needs taking: 'critical' within 24h, 'soon' within 72h."""
+    until_start = shift.starts_at - now
+    if until_start <= datetime.timedelta(0):
+        return ""
+    if until_start <= datetime.timedelta(hours=24):
+        return "critical"
+    if until_start <= datetime.timedelta(hours=72):
+        return "soon"
+    return ""
+
+
 def _rows(start: datetime.date, end: datetime.date, columns: list[dict], resident_id: int) -> list[dict]:
     """Sheet rows for the days start..end (exclusive); a month heading opens each new month."""
     shifts = KitchenShift.objects.filter(date__gte=start, date__lt=end).prefetch_related(_with_assignees())
+    now = current_datetime()
     by_day: dict[datetime.date, list[KitchenShift]] = {}
     for shift in shifts:
         shift.slots = _slots(shift, resident_id)  # type: ignore[attr-defined]
+        shift.urgency = _urgency(shift, now)  # type: ignore[attr-defined]
         by_day.setdefault(shift.date, []).append(shift)
     today = current_datetime().date()
     cutoff = timezone.localtime(current_datetime() + datetime.timedelta(days=services.FREE_UNENROLL_DAYS))
