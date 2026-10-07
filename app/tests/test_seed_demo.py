@@ -201,27 +201,25 @@ def test_seed_demo_koekken_allocates_aftenvagt_for_the_current_month() -> None:
 @pytest.mark.django_db
 def test_seed_demo_koekken_seeds_a_whole_shift_takeover() -> None:
     """The whole-shift take-over scenario runs on real tier-B output; guard against it silently going
-    unseeded. `_demo_handoffs` tries later months when the first has no future weekday 2-person aftenvagt."""
-    from django.db.models import Count
-
+    unseeded. `_demo_handoffs` tries every allocated month until one has a qualifying aftenvagt."""
     from core.clock import current_date
-    from koekken.models import Vagt, VagtBytte, VagtRegel
+    from koekken.demo import whole_shift_candidates
+    from koekken.models import Vagt, VagtBytte
+    from koekken.services import month_population_ids, resolve_periode
 
     _skip_unless_allocated_current_month()
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
 
-    # Precondition: a future weekday 2-person aftenvagt still held by two residents. Only the current and
-    # window months get tier B, so in the last days of a periode none may remain -- skip rather than flake.
-    # (Whole-shift takeover consumes one of them, hence the check is on remaining OR already-taken shifts.)
+    # Precondition, using the seeder's own definition of a qualifying shift (`whole_shift_candidates`): a
+    # candidate in the current periode that the take-over left alone, or one already taken. Only the current
+    # and window months get tier B, so late in a periode none may exist -- skip rather than flake.
     today = current_date()
-    had_candidate = (
-        VagtBytte.objects.filter(status=VagtBytte.Status.OVERTAGET_HEL).exists()
-        or Vagt.objects.filter(date__gt=today, kind=VagtRegel.Kind.AFTEN, headcount=2)
-        .annotate(n=Count("tildelinger"))
-        .filter(n=2)
-        .exclude(date__week_day__in=[1, 7])
-        .exists()
+    periode = resolve_periode(today)
+    months = set(Vagt.objects.filter(periode=periode).values_list("date__year", "date__month"))
+    had_candidate = VagtBytte.objects.filter(status=VagtBytte.Status.OVERTAGET_HEL).exists() or any(
+        whole_shift_candidates(periode, year, month, today, set(month_population_ids(year, month)))
+        for year, month in sorted(months)
     )
     if not had_candidate:
-        pytest.skip("no future weekday 2-person aftenvagt left in the periode")
+        pytest.skip("no future weekday 2-person tier-B aftenvagt left in the periode")
     assert VagtBytte.objects.filter(status=VagtBytte.Status.OVERTAGET_HEL).exists()

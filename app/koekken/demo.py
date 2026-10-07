@@ -322,10 +322,11 @@ def _demo_handoffs(
 ) -> None:
     """Amendment 4: an open offer (step 2: with one pending trade proposal on it), a completed take-over,
     a completed trade between two other residents (offer, propose, accept) and a whole-shift take-over, all
-    through the services (never raw writes) and all on FUTURE shifts of one already-allocated month --
-    an offer on a started shift is refused. Best-effort like every optional scenario here: skips when no
-    month has enough future shifts. The whole-shift scenario uses a real tier-B-allocated weekday
-    aftenvagt (its two assigned residents), never hand-made rows. Push is a no-op when VAPID is
+    through the services (never raw writes) and all on FUTURE shifts -- an offer on a started shift is refused.
+    The first three share the first already-allocated month with enough future tier-A shifts; the
+    whole-shift scenario is independent of that and takes the first allocated month with a qualifying
+    tier-B weekday aftenvagt (its two assigned residents), never hand-made rows. Best-effort like every
+    optional scenario here: skips when no month qualifies. Push is a no-op when VAPID is
     unconfigured, exactly as for `resolve_anmeldelse`."""
     today = current_date()
     tier_a_kinds = [VagtRegel.Kind.MORGEN, VagtRegel.Kind.FROKOST]
@@ -343,13 +344,12 @@ def _demo_handoffs(
             .select_related("vagt", "resident")
             .order_by("vagt__date", "vagt__kind")
         )
-        if len(rows) < 2:
-            continue
         population = month_population_ids(year, month)
         in_population = [r for r in residents if r.pk in population]
-        if len(in_population) < 3:
-            continue
-        if not primary_done:
+        # The tier-A gate belongs to the open offer / take-over / trade only: the whole-shift take-over below
+        # needs just this month's population and its own tier-B candidate, so it is tried in every month.
+        primary_ok = not primary_done and len(rows) >= 2 and len(in_population) >= 3
+        if primary_ok:
             try:
                 # Left open, and shared in Den Hurtige like a resident who left the box ticked. No request here, so a
                 # localhost base stands in for build_absolute_uri.
@@ -408,18 +408,18 @@ def _demo_handoffs(
                     if not traded:
                         withdraw_offer(offer, first.resident)  # no partner found: not left dangling
             except KoekkenAllocationError:
-                continue
-        primary_done = True
-        if _demo_whole_shift_takeover(periode, year, month, today, {r.pk for r in in_population}):
+                primary_ok = False
+        primary_done = primary_done or primary_ok
+        if _demo_whole_shift_takeover(periode, year, month, today, set(population)):
             return
 
 
-def _demo_whole_shift_takeover(
+def whole_shift_candidates(
     periode: Periode, year: int, month: int, today: date, in_ids: set[int]
-) -> bool:
-    """Whole-shift take-over on a REAL tier-B allocation: a future 2-person weekday aftenvagt held by exactly
-    two in-population residents. Returns whether one was made; False when the month has no candidate, so the
-    caller can try the next month."""
+) -> list[tuple[Vagt, VagtTildeling, VagtTildeling]]:
+    """The single definition of "a qualifying shift exists" for the whole-shift take-over: a future weekday
+    2-person aftenvagt in that month, held (TILDELT) by exactly two residents who are both in `in_ids`.
+    Returns (vagt, first holder, second holder) in date order. Shared by the seeder and its test."""
     aften = (
         Vagt.objects.filter(
             periode=periode,
@@ -433,6 +433,7 @@ def _demo_whole_shift_takeover(
         .distinct()
         .order_by("date")
     )
+    found: list[tuple[Vagt, VagtTildeling, VagtTildeling]] = []
     for vagt in aften:
         if vagt.date.weekday() >= 5:
             continue
@@ -443,7 +444,16 @@ def _demo_whole_shift_takeover(
         )
         if len(held_rows) != 2 or not all(t.resident_id in in_ids for t in held_rows):
             continue
-        offered, other = held_rows
+        found.append((vagt, held_rows[0], held_rows[1]))
+    return found
+
+
+def _demo_whole_shift_takeover(
+    periode: Periode, year: int, month: int, today: date, in_ids: set[int]
+) -> bool:
+    """Whole-shift take-over on a REAL tier-B allocation (see `whole_shift_candidates`). Returns whether one
+    was made; False when the month has no usable candidate, so the caller can try the next month."""
+    for vagt, offered, other in whole_shift_candidates(periode, year, month, today, in_ids):
         if not may_hold(other.resident, vagt):  # e.g. moved out before the shift: refuse before any offer
             continue
         try:
@@ -453,7 +463,10 @@ def _demo_whole_shift_takeover(
         try:
             take_over_whole(offer, other.resident)
         except KoekkenAllocationError:
-            withdraw_offer(offer, offered.resident)  # not left dangling
+            try:
+                withdraw_offer(offer, offered.resident)  # not left dangling
+            except KoekkenAllocationError:
+                pass
             continue
         return True
     return False
