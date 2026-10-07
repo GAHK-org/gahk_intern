@@ -3735,9 +3735,10 @@ def _claim_refusal(
     regel_lookup: dict[tuple[str, bool], VagtRegel] | None = None,
 ) -> str | None:
     """The ONE place §6's claiming rules live: a Danish refusal, or None when `resident` may claim
-    `vagt`. Checked in order: SOMMER only; not started; a free place (`taken_count` counts rows of ANY
-    status against the shift's own snapshotted `headcount`); not already held (`held` is the set of
-    shift ids the resident holds); `may_hold` (population and move-out -- Amendment 4's helper, never
+    `vagt`. Checked in order: SOMMER only; not started; not already held (`held` is the set of
+    shift ids the resident holds -- ahead of "full" so a stale POST for a now-full shift you hold gets
+    the accurate message); a free place (`taken_count` counts rows of ANY status against the shift's
+    own snapshotted `headcount`); `may_hold` (population and move-out -- Amendment 4's helper, never
     reimplemented here).
 
     Deliberately NOT checked: away ranges (informational), any per-resident claim cap (left to the house
@@ -3746,10 +3747,10 @@ def _claim_refusal(
         return "Kun sommervagter kan tages."
     if has_started(vagt, at=at, regel_lookup=regel_lookup):
         return "Vagten er allerede startet."
+    if vagt.pk in held:  # before "full": a stale POST for a shift you hold (now full) says so
+        return "Du har allerede denne vagt."
     if taken_count >= vagt.headcount:
         return "Vagten har ingen ledige pladser."
-    if vagt.pk in held:
-        return "Du har allerede denne vagt."
     if not may_hold(resident, vagt, population_ids=population_ids):
         return "Du kan ikke tage denne vagt."
     return None
@@ -3786,7 +3787,11 @@ def can_claim(
 
 
 def _insert_tildeling_locked(
-    vagt_pk: int, resident: Resident, *, check: Callable[[Vagt, int, set[int]], str | None]
+    vagt_pk: int,
+    resident: Resident,
+    *,
+    check: Callable[[Vagt, int, set[int]], str | None],
+    duplicate_message: str,
 ) -> VagtTildeling:
     """Insert a `TILDELT` row for `resident` on the shift `vagt_pk`, race-safely. Shared by `claim_vagt`
     and the `override_assign` view, so neither can overfill a shift against the other. Under
@@ -3794,7 +3799,8 @@ def _insert_tildeling_locked(
     never goes back up), re-count the rows on it (any status) and re-check whether the resident holds
     it, then run `check(vagt, taken_count, held)` -- a returned message is raised as
     `KoekkenAllocationError` -- and only then insert, inside a savepoint so an `IntegrityError` on the
-    `(vagt, resident)` unique constraint becomes a clean refusal."""
+    `(vagt, resident)` unique constraint becomes a clean refusal worded `duplicate_message` (the caller
+    knows whose voice it speaks in: resident-facing for a claim, manager-facing for an override)."""
     with transaction.atomic():
         try:
             vagt = Vagt.objects.select_for_update(of=("self",)).select_related("periode").get(pk=vagt_pk)
@@ -3811,7 +3817,7 @@ def _insert_tildeling_locked(
                     vagt=vagt, resident=resident, status=VagtTildeling.Status.TILDELT
                 )
         except IntegrityError:
-            raise KoekkenAllocationError("Du har allerede denne vagt.") from None
+            raise KoekkenAllocationError(duplicate_message) from None
 
 
 def claim_vagt(resident: Resident, vagt: Vagt) -> VagtTildeling:
@@ -3826,7 +3832,9 @@ def claim_vagt(resident: Resident, vagt: Vagt) -> VagtTildeling:
     def check(locked: Vagt, taken_count: int, held: set[int]) -> str | None:
         return _claim_refusal(locked, resident, taken_count=taken_count, held=held)
 
-    return _insert_tildeling_locked(vagt.pk, resident, check=check)
+    return _insert_tildeling_locked(
+        vagt.pk, resident, check=check, duplicate_message="Du har allerede denne vagt."
+    )
 
 
 def summer_grid(

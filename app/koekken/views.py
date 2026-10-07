@@ -668,7 +668,12 @@ def override_assign(request: HttpRequest) -> HttpResponseRedirect:
     try:
         # Shared locked insert (services' LOCK ORDER): counts under the Vagt lock, so it cannot overfill a
         # summer shift against a concurrent claim.
-        services._insert_tildeling_locked(vagt.pk, resident, check=_override_check)
+        services._insert_tildeling_locked(
+            vagt.pk,
+            resident,
+            check=_override_check,
+            duplicate_message=f"{resident.full_name} er allerede tildelt {vagt}.",
+        )
     except services.KoekkenAllocationError as exc:
         messages.error(request, str(exc))
     else:
@@ -807,18 +812,14 @@ def _fravaer_context(
 
 def _sommer_grid_context(request: HttpRequest, *, error: str | None = None) -> dict[str, object]:
     """Everything `koekken/_sommer_vagter.html` needs -- shared by the full summer page and the htmx swap
-    after a claim, so the two can never disagree. `grid_weeks` is `services.summer_grid` with each week's
-    `away_by_week` residents appended (`(first, last, days, away)`); the key is not `weeks`, which
-    `_fravaer_context` already uses on the same page. A pure read: nothing is written on a GET."""
+    after a claim, so the two can never disagree. `grid_weeks` is `services.summer_grid`. Who is away is
+    deliberately NOT repeated here: the "Væk denne uge" card in `_fravaer.html` is the single source (and
+    the one refreshed by the add/delete swap). A pure read: nothing is written on a GET."""
     resident = current_resident(request)
     summer = services.target_summer(current_date())
-    away = {(first, last): residents for first, last, residents in services.away_by_week(summer)}
     return {
         "summer": summer,
-        "grid_weeks": [
-            (first, last, days, away.get((first, last), []))
-            for first, last, days in services.summer_grid(summer, resident)
-        ],
+        "grid_weeks": services.summer_grid(summer, resident),
         "opens_on": services.periode_deadline(summer),
         "error": error,
     }

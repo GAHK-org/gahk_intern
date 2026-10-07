@@ -495,6 +495,7 @@ def test_claim_refuses_started_shift(summer: Periode, anna: Resident) -> None:
             vagt.pk,
             anna,
             check=lambda v, n, h: services._claim_refusal(v, anna, taken_count=n, held=h, at=started),
+            duplicate_message="dup",
         )
     assert not VagtTildeling.objects.exists()
     assert can_claim(vagt, anna, at=started - timedelta(minutes=1))
@@ -511,6 +512,15 @@ def test_claim_refuses_full_shift_including_udfoert_row(
     claim_vagt(anna, aften)
     claim_vagt(bo, aften)
     _refused(cat, aften, "ingen ledige pladser")
+
+
+def test_claim_stale_post_on_now_full_held_shift_says_already_held(
+    summer: Periode, anna: Resident, bo: Resident
+) -> None:
+    aften = _vagt(WED_AFTEN_DAY, "aften")
+    claim_vagt(anna, aften)
+    VagtTildeling.objects.create(vagt=aften, resident=bo, status=T.TILDELT)  # now full, anna still holds
+    _refused(anna, aften, "Du har allerede denne vagt.")
 
 
 def test_claim_refuses_already_held(summer: Periode, anna: Resident) -> None:
@@ -646,14 +656,13 @@ def test_grid_started_shift_has_no_button(summer: Periode, anna: Resident) -> No
     assert shifts[(WED_AFTEN_DAY, "frokost")] is True
 
 
-def test_grid_weeks_clipped_and_away_names(summer: Periode, anna: Resident, bo: Resident) -> None:
+def test_grid_weeks_clipped_and_away_listed_once(summer: Periode, anna: Resident, bo: Resident) -> None:
     weeks = summer_grid(summer, anna)
     assert (weeks[0][0], weeks[0][1]) == (date(Y, 7, 1), date(Y, 7, 5))
     assert (weeks[-1][0], weeks[-1][1]) == (date(Y, 8, 31), date(Y, 8, 31))
     add_fravaer(bo, date(Y, 7, 6), date(Y, 7, 12), today=TODAY)
-    text = _norm(re.sub(r"<[^>]+>", " ", _grid_html(anna)))
-    assert "Uge 28 (6.–12. juli) Væk: Bo Lund" in text
-    assert "Uge 27 (1.–5. juli) Væk: Ingen registreret" in text
+    html = _grid_html(anna)
+    assert html.count("Bo Lund") == 1  # listed once, in the "Væk denne uge" card, not again in the grid
 
 
 def test_grid_query_count_is_constant(summer: Periode, anna: Resident, bo: Resident) -> None:
@@ -772,6 +781,19 @@ def test_override_assign_messages_unchanged_and_uses_locked_insert(
     vagt = aften
     assert post(anna).endswith("tildelt " + str(aften) + ".")
     assert post(anna) == f"{anna.full_name} er allerede tildelt {aften}."
+
+
+def test_override_assign_duplicate_race_uses_manager_wording(
+    summer: Periode, make_resident: Callable, anna: Resident
+) -> None:
+    """The (vagt, resident) unique-constraint race (a concurrent take_over landing the same resident) is
+    forced by making the insert itself fail; the manager sees the override wording, not the resident's."""
+    manager = make_resident(email="mgr3@gahk.dk", roles=(Role.KOKKENGRUPPE,))
+    c = _login(manager)
+    aften = _vagt(WED_AFTEN_DAY, "aften")
+    with mock.patch.object(VagtTildeling.objects, "create", side_effect=IntegrityError("dup")):
+        resp = c.post(f"{BASE}gruppe/override", {"vagt": aften.pk, "resident": anna.pk}, follow=True)
+    assert [str(m) for m in resp.context["messages"]] == [f"{anna.full_name} er allerede tildelt {aften}."]
 
 
 # ---------------------------------------------------------------------------------------- generation

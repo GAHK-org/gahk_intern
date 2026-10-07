@@ -831,9 +831,9 @@ def test_claim_versus_take_over_whole_does_not_deadlock(sw: dict[str, Any]) -> N
 
 def test_claim_committing_while_a_fridag_is_declared_never_hangs_or_half_applies(sw: dict[str, Any]) -> None:
     """declare_fridag paused after its row locks and its cascade collection, right before its first DELETE;
-    a claim on the same date commits in the gap (claim takes no row locks, so it is not blocked). Either the
-    fridag's commit fails on the deferred foreign key (full rollback, `IntegrityError` the management
-    command turns into "re-run"), or it commits and has removed everything. Never a hang, never a half."""
+    a claim on the same date commits in the gap (claim takes no row locks, so it is not blocked). The
+    fridag's commit therefore fails on the deferred foreign key (full rollback, `IntegrityError` the
+    management command turns into "re-run"). Never a hang, never a half."""
     from django.db import IntegrityError
 
     p, aften = sw["people"], sw["aften"]
@@ -855,15 +855,56 @@ def test_claim_committing_while_a_fridag_is_declared_never_hangs_or_half_applies
 
     from koekken.models import Fridag
 
-    if "error" in declare_out:
-        assert isinstance(declare_out["error"], IntegrityError), declare_out
-        assert "error" not in claim_out
-        assert Vagt.objects.filter(pk=aften.pk).exists() and not Fridag.objects.exists()
-        assert set(VagtTildeling.objects.filter(vagt=aften).values_list("resident", flat=True)) == {
-            p["a"].pk,
-            p["c"].pk,
-        }
-    else:
-        assert not Vagt.objects.filter(pk=aften.pk).exists() and Fridag.objects.exists()
-        assert not VagtTildeling.objects.filter(vagt_id=aften.pk).exists()  # no orphan row
-        assert isinstance(claim_out.get("error"), KoekkenAllocationError) or "result" in claim_out
+    assert isinstance(declare_out.get("error"), IntegrityError), declare_out  # the claim committed first
+    assert "error" not in claim_out, claim_out
+    assert Vagt.objects.filter(pk=aften.pk).exists() and not Fridag.objects.exists()
+    assert set(VagtTildeling.objects.filter(vagt=aften).values_list("resident", flat=True)) == {
+        p["a"].pk,
+        p["c"].pk,
+    }
+
+
+def test_fridag_vs_concurrent_claim_fails_cleanly_with_rerun_message(sw: dict[str, Any]) -> None:
+    """The REAL commit-time path through the management command: paused before its first DELETE, a claim
+    commits in the gap, the deferred FK rejects the command's commit -> CommandError (cause IntegrityError),
+    no push, no Fridag, the Vagt and both rows intact."""
+    from io import StringIO
+    from unittest import mock
+
+    from django.core.management import call_command
+    from django.core.management.base import CommandError
+    from django.db import IntegrityError
+
+    from koekken.models import Fridag
+
+    p, aften = sw["people"], sw["aften"]
+    VagtTildeling.objects.create(vagt=aften, resident=p["a"], status=T.TILDELT)
+
+    def run_command() -> None:
+        with (
+            mock.patch("koekken.management.commands.declare_koekken_fridag.send") as send,
+        ):
+            try:
+                call_command("declare_koekken_fridag", SUMMER_DAY.isoformat(), stdout=StringIO())
+            finally:
+                send.assert_not_called()
+
+    paused, resume, declarer, declare_out = _paused(
+        run_command, re.compile(r'^DELETE FROM "koekken_vagttildeling"'), after=False
+    )
+    assert paused.wait(JOIN)
+    claimer, claim_out = _run_in_thread(lambda: claim_vagt(p["c"], aften))
+    claimer.join(JOIN)
+    assert not claimer.is_alive(), "the claim hung behind declare_koekken_fridag"
+    resume.set()
+    _joined(declarer)
+
+    error = declare_out.get("error")
+    assert isinstance(error, CommandError) and "Kør kommandoen igen" in str(error), declare_out
+    assert isinstance(error.__cause__, IntegrityError)
+    assert "error" not in claim_out, claim_out
+    assert Vagt.objects.filter(pk=aften.pk).exists() and not Fridag.objects.exists()
+    assert set(VagtTildeling.objects.filter(vagt=aften).values_list("resident", flat=True)) == {
+        p["a"].pk,
+        p["c"].pk,
+    }

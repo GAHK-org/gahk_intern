@@ -4,7 +4,7 @@
   disagree. P2 §10 conventions: a refusal renders INSIDE this partial (`error`), never through the
   messages framework; an unavailable action's button is ABSENT -- a started, full, held or otherwise
   refused shift has no "Tag vagt" form and no claim URL at all. `grid_weeks` is
-  (first_day, last_day, days, away) rows, `days` (date, shifts) pairs, each shift
+  (first_day, last_day, days) rows, `days` (date, shifts) pairs, each shift
   (vagt, claimant_names, free_places, can_claim); the first/last weeks are clipped to the summer.
   There is no unclaim: a claim is binding, and can only be offered to others (Mine køkkenvagter).
 {% endcomment %}
@@ -19,16 +19,12 @@
     </div>
   {% endif %}
 
-  {% for first, last, days, away in grid_weeks %}
+  {% for first, last, days in grid_weeks %}
     <div class="card-flat">
       <div class="card-head">
         <h2>Uge {{ first|date:"W" }} ({% if first.month == last.month %}{{ first.day }}.–{{ last|date:"j. F" }}{% else %}{{ first|date:"j. F" }}–{{ last|date:"j. F" }}{% endif %})</h2>
       </div>
       <div class="card-pad">
-        <p class="text-sm">
-          <strong>Væk:</strong>
-          {% if away %}{% for r in away %}{{ r.full_name }}{% if not forloop.last %}, {% endif %}{% endfor %}{% else %}<span class="muted">Ingen registreret</span>{% endif %}
-        </p>
         {% for day, shifts in days %}
           <div style="padding:6px 0;border-top:1px solid #f0f1f4">
             <strong>{{ day|date:"l j. F" }}</strong>
