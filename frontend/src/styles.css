@@ -349,10 +349,8 @@
      highest-contrast thing on the page, which is what makes a conversation scannable: you find
      your own messages by colour, never by reading them. */
   .msg-own .msg-bubble { background:var(--green); color:#fff; }
-  /* The clock rides INSIDE the bubble (see .msg-clock below), so on green it cannot stay --faint,
-     which is a warm grey chosen against paper and all but vanishes here. White at .78 lands at
-     5.4:1 on --green -- above AA for the 11.5px it is set at. */
-  .msg-own .msg-meta { color:rgba(255, 255, 255, .78); }
+  /* The clock rides ABOVE the bubble, on its own line, so it is --faint on paper for every message
+     -- including your own green ones, which is why there is no white-on-green variant any more. */
 
   /* NO BORDER, and the shadow is a FILTER rather than box-shadow. Both follow from the tail being
      a pseudo-element (below): a border cannot be mitred around a separate box, and box-shadow
@@ -438,7 +436,13 @@
   .msg-own .msg-text a:hover { color:#fff; text-decoration-color:#fff; }
   .msg-line-text { display:flow-root; }
   .msg-bubble .msg-text { display:inline; }
-  .msg-bubble .msg-clock { float:right; white-space:nowrap; margin:2px 0 0 8px; }
+  /* Date and time above the bubble, indented past the 34px avatar + 10px gap so it lines up with the
+     bubble's left edge; own messages have no avatar and sit on the right. nowrap keeps
+     "7. Okt 2026, 14:32 · ⏱ 2 timer" on one line. */
+  .msg-clock { padding-left:44px; margin:0 0 2px; white-space:nowrap; line-height:1.3; }
+  .msg-own .msg-clock { padding-left:0; text-align:right; }
+  /* The thread's parent message is always left-aligned, even when it is your own. */
+  .msg-parent .msg-clock { padding-left:44px; text-align:left; }
   .msg-image img { max-width:min(100%, 320px); height:auto; border-radius:10px; margin-top:6px; display:block; }
 
   /* --- What a swipe reveals ------------------------------------------------------------------
