@@ -49,6 +49,18 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     ensure_active_month_applied()
     year, month = active_period()
     roles = sorted(effective_roles(request))
+
+    # P2 design doc §8: a dashboard todo card for a resident who has never declared a kitchen
+    # preference at all, ever -- gated on the rollout gate too, same reasoning as the base.html
+    # preference-window banner (koekken.context_processors' own note applies here).
+    koekken_needs_to_declare = False
+    from koekken.access import roles_allowed as koekken_allowed
+
+    if koekken_allowed(set(roles)):
+        from koekken.services import resident_needs_to_declare
+
+        koekken_needs_to_declare = resident_needs_to_declare(current_resident(request))
+
     return render(
         request,
         "residents/dashboard.html",
@@ -59,6 +71,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             "calendar_user": os.environ.get("GOOGLE_CALENDAR_USER", ""),
             "calendar_password": os.environ.get("GOOGLE_CALENDAR_PASSWORD", ""),
             "calendar_embed_url": _calendar_embed_url(),
+            "koekken_needs_to_declare": koekken_needs_to_declare,
         },
     )
 

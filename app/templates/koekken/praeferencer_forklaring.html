@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% comment %}
+  P2 design doc §7's own honesty requirement: tell residents explicitly what leaving aftenvagt
+  empty actually buys them, in the UI, not only in internal design docs.
+{% endcomment %}
+{% block title %}Hvad betyder mine præferencer? - Køkkenvagter - GAHK Intern{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Køkken</div>
+      <h1>Hvad betyder mine præferencer?</h1>
+    </div>
+  </div>
+
+  <div class="card-flat card-pad" style="max-width:44rem">
+    <h2>Det ene løfte</h2>
+    <p>
+      "Jeg er ikke hjemme i dagtimerne på hverdage" er det eneste af de fire valg, der er et rigtigt
+      løfte. Sætter du kryds her, får du <strong>aldrig</strong> en hverdags-morgen- eller
+      frokostvagt — du hører i stedet til weekend-puljen.
+    </p>
+
+    <h2>De tre andre er ønsker, ikke garantier</h2>
+    <p>
+      Hvilke dage du helst tager morgen-, frokost- eller aftenvagt afgør <strong>hvilken</strong>
+      vagt du får, aldrig <strong>om</strong> du kommer i betragtning, og aldrig hvornår i køen du
+      står. Din tur afgøres udelukkende af, hvor langt bagud du er i forhold til husets gennemsnit —
+      dine dagsønsker ændrer ikke på det. De bliver opfyldt, når der er plads til det, og ellers
+      tilsidesat uden varsel.
+    </p>
+
+    <h2>Hvis du ikke vælger nogen aftenvagt-dage</h2>
+    <p>
+      Vælger du mindst én morgen- eller frokostdag, men ingen aftenvagt-dage overhovedet, tolkes
+      det som et bevidst ønske: du vil hellere dække dine timer med ekstra morgen- og frokostvagt
+      end med en aftenvagt. Vi forsøger at give dig en ekstra morgen-/frokostvagt i stedet for en
+      aftenvagt, når der er plads i tier A til det.
+    </p>
+    <p>
+      <strong>Det du reelt vælger:</strong> cirka <strong>én morgen- eller frokostvagt om ugen</strong>
+      i stedet for én aftenvagt. Samme antal timer i alt — men en helt anden rytme i hverdagen. Er
+      der ikke plads (fordi mange andre har valgt det samme), får du en aftenvagt alligevel, uden
+      varsel.
+    </p>
+
+    <h2>Hvis du slet ikke erklærer noget</h2>
+    <p>
+      Du bliver stadig tildelt vagter — ingen vagt står ubemandet. Men uden en erklæring har du ingen
+      dagsønsker at blive tilgodeset med, og du stilles bagest ved uafgjorte prioriteringer.
+    </p>
+
+    <h2>Hvis du ikke kan tage en vagt</h2>
+    <p>
+      Du kan ikke bare droppe en vagt, men du kan <strong>tilbyde</strong> den. Tilbuddet vises for
+      de andre beboere, og den første der tager den, overtager den med det samme. Indtil nogen har
+      taget den, er du stadig ansvarlig for vagten — og et tilbud, som ingen tager, udløber, når
+      vagten starter.
+    </p>
+    <p>
+      Et tilbud kan også deles i Den Hurtiges kanal Køkkenvagter, under dit eget navn. Opslaget
+      fjernes automatisk, når tilbuddet lukkes.
+    </p>
+    <p>
+      Den der arbejder vagten, får kreditten for den. Og giver du vagter væk, har du færre timer på
+      kontoen, så du får flere vagter senere: du undgår dem ikke, du flytter dem bare.
+    </p>
+    <p>
+      På en aftenvagt på en hverdag, hvor I er to, kan din makker tage <strong>hele vagten</strong>
+      og får så kreditten for begge pladser.
+    </p>
+    <p>
+      Andre kan også foreslå et <strong>bytte</strong>: de tilbyder en af deres egne kommende vagter
+      til gengæld for din. Det er dig, der tilbød vagten, der bestemmer, om du siger ja eller nej.
+      Et bytte behøver ikke være lige: er den ene vagt længere end den anden, jævnes det ud på
+      timekontoen senere.
+    </p>
+
+    <h2>Kredit for fest</h2>
+    <p>
+      Når nogen laver mad og serverer til en fest, kan Køkkengruppen give dem kredit: <strong>1 kryds er
+      1 time</strong> på timekontoen. Kreditten betales af alle beboere på månedens liste med et lille
+      beløb hver (ofte kun en kvart time), så husets samlede regnskab går i nul. Hjælperne får til
+      gengæld lidt færre køkkenvagter senere, og det går på skift rundt i huset. Hver postering kan ses
+      under "Seneste posteringer" på forsiden som "Fest: navnet på begivenheden".
+    </p>
+
+    <h2>Sommer</h2>
+    <p>
+      Sommervagterne (juli og august) fordeles ikke efter præferencer. Din forpligtelse er den samme som
+      i andre måneder, men du tager selv de vagter, der passer dig, fra 1. maj, på siden Sommer. En vagt
+      du har taget, er bindende — kan du alligevel ikke, kan du tilbyde den til andre.
+    </p>
+
+    <a class="btn" href="{% url 'koekken:praeferencer' %}">Gå til mine præferencer</a>
+  </div>
+{% endblock %}

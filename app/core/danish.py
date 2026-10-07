@@ -28,6 +28,9 @@ MONTHS = (
     "december",
 )
 
+# Monday first (datetime.weekday()), full names, for prose like "tirsdag 12. januar".
+WEEKDAYS = ("mandag", "tirsdag", "onsdag", "torsdag", "fredag", "lørdag", "søndag")
+
 # Monday first, matching how a Danish calendar is printed and how datetime.weekday() counts.
 WEEKDAYS_SHORT = ("man", "tir", "ons", "tor", "fre", "lør", "søn")
 

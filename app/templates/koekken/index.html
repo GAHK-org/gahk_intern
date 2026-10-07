@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% load ui_extras %}
+{% comment %}
+  Resident surface: my shifts (upcoming/past), my balance against the house average, and the
+  flaggable "seneste vagter" list -- P2 design doc §7.
+
+  `past` is a list of (tildeling, flagged_by_name) tuples; "Kommende vagter" moved into the
+  koekken/_bytte.html partial (Amendment 4), whose `upcoming` rows carry the same flagged_by name -- design doc §6: "flagger identity is
+  fully visible, including to the flagged resident" (F3). `flagged_by_name` is only set when the row
+  is currently showing a flag's consequence (open, or upheld); see koekken.services.flagged_by_names.
+{% endcomment %}
+{% block title %}Køkkenvagter - GAHK Intern{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Køkken</div>
+      <h1>Mine køkkenvagter</h1>
+    </div>
+    <div class="head-actions">
+      {% if can_manage %}
+        {% comment %}F10: Køkkengruppen's queue view was otherwise reachable only by typing the exact URL.{% endcomment %}
+        <a class="btn btn-secondary" href="{% url 'koekken:gruppe' %}">Køkkengruppen</a>
+      {% endif %}
+      {% if can_view_balance_export %}
+        {% comment %}F10: Regnskab's balance export was otherwise reachable only by typing the exact URL.{% endcomment %}
+        <a class="btn btn-secondary" href="{% url 'koekken:balance_export' %}">Saldo-eksport</a>
+      {% endif %}
+      {% if summer_link_visible %}
+        <a class="btn btn-secondary" href="{% url 'koekken:sommer' %}">Sommer {{ summer_year }}</a>
+      {% endif %}
+      <a class="btn btn-secondary" href="{% url 'koekken:praeferencer_forklaring' %}">Hvad betyder mine præferencer?</a>
+      <a class="btn" href="{% url 'koekken:praeferencer' %}">Mine præferencer</a>
+    </div>
+  </div>
+
+  {% if push_configured %}
+    {% comment %}
+      F4: the push opt-in bar -- the `wants_koekken` topic had no opt-in UI anywhere, so
+      resolve_anmeldelse's flag-ruling notification could never fire for anyone. Mirrors
+      reparationer/board.html's include exactly, including the push_configured guard, so the bar is
+      hidden entirely (not shown with a "not set up on the server" message) when no VAPID keys are
+      configured.
+    {% endcomment %}
+    {% include "core/_push_bar.html" with topic="koekken" url_name="koekken:save_subscription" on_label="Få besked om dine vagter" success_text="Du får nu besked, når nogen overtager en vagt fra dig, foreslår eller accepterer et bytte, eller hvis en anmeldelse mod dig bliver opretholdt, eller når du får køkkenkredit for en fest." off_text="Beskeder om køkkenvagter er slået fra på denne enhed." %}
+  {% endif %}
+
+  {% if needs_to_declare %}
+    <p class="card" style="border-color:var(--brass, #b08d57)">
+      Du har ikke erklæret dine køkkenvagt-præferencer endnu.
+      <a href="{% url 'koekken:praeferencer' %}">Gør det her →</a>
+    </p>
+  {% endif %}
+
+  <div class="kv" style="max-width:28rem">
+    <span class="l">Min saldo</span><span class="r">{{ balance_hours }} t ({{ balance_minutes }} min)</span>
+  </div>
+  <div class="kv" style="max-width:28rem">
+    <span class="l">Husets gennemsnit</span><span class="r">{{ house_mean_hours }} t</span>
+  </div>
+
+  <div style="margin-top:16px">
+    <div class="card-flat">
+      <div class="card-head"><h2>Seneste posteringer</h2></div>
+      <div class="card-pad">
+        {% if recent_posts %}
+          <table class="text-sm" style="width:100%; border-collapse:collapse">
+            <tbody>
+              {% for post, label in recent_posts %}
+                <tr style="border-bottom:1px solid #f0f1f4">
+                  <td style="white-space:nowrap">{{ post.created_at|date:"j. M" }}</td>
+                  <td>{{ label }}</td>
+                  <td style="text-align:right; white-space:nowrap">{{ post.delta_minutes|signed_hours }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="muted">Ingen posteringer endnu.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {% include "koekken/_bytte.html" %}
+
+  <div style="margin-top:16px">
+    <div class="card-flat">
+      <div class="card-head"><h2>Tidligere vagter</h2></div>
+      <div class="card-pad">
+        {% if past %}
+          <ul>
+            {% for t, flagged_by in past %}
+              <li>
+                {{ t.vagt.date|date:"D j. F" }} — {{ t.vagt.get_kind_display }} ({{ t.get_status_display }})
+                {% if flagged_by %}<span class="muted"> — anmeldt af {{ flagged_by }}</span>{% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="muted">Ingen tidligere vagter.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:16px">
+    {% include "koekken/_recent.html" %}
+  </div>
+{% endblock %}

@@ -19,6 +19,23 @@
     </span>
   </div>
 
+  {% if koekken_needs_to_declare %}
+    {% comment %}
+      P2 design doc §8: a standing todo card, not a deadline banner -- shown to any resident who has
+      never declared a kitchen preference at all, ever (Amendment 3's declared_at IS NULL condition,
+      reused via koekken.services.resident_needs_to_declare).
+    {% endcomment %}
+    <div class="card-flat" style="border-color:var(--brass, #b08d57)">
+      <div class="card-pad" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+        <div>
+          <strong>Du har ikke erklæret dine køkkenvagt-præferencer endnu.</strong>
+          <p class="muted">Det tager et minut, og det afgør hvilke dage du helst tager morgen-, frokost- og aftenvagt.</p>
+        </div>
+        <a class="btn" href="{% url 'koekken:praeferencer' %}">Erklær nu</a>
+      </div>
+    </div>
+  {% endif %}
+
   <div class="grid2">
     <div class="card-flat">
       <div class="card-head"><h2>Begivenheder på GAHK</h2>{% if calendar_embed_url %}<a href="https://calendar.google.com/" target="_blank" rel="noopener">Åbn i Google →</a>{% endif %}</div>

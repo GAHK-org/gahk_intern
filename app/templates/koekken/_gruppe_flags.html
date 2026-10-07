@@ -1,0 +1,51 @@
+{% comment %}
+  Køkkengruppen's flag queue -- P2 design doc §6/§7. Shared by the full gruppe.html page and the
+  htmx swap after an uphold/dismiss POST (koekken.views._gruppe_context), so a resolved flag simply
+  stops appearing in either render -- there is no separate "resolved" state to reconcile.
+
+  A closed action removes its button entirely (§10): once resolved, a flag is no longer in
+  `open_flags` at all, so its uphold/dismiss buttons disappear together with the row.
+{% endcomment %}
+<div id="flag-queue" class="card-flat">
+  <div class="card-head"><h2>Åbne anmeldelser</h2></div>
+  <div class="card-pad">
+    {% if open_flags %}
+      <div class="overflow-x-auto">
+        <table class="text-sm" style="width:100%; border-collapse:collapse">
+          <thead>
+            <tr style="text-align:left; border-bottom:1px solid #e6e8ec; white-space:nowrap">
+              <th>Vagt</th><th>Beboer</th><th>Anmeldt af</th><th>Begrundelse</th><th>Status før</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for anmeldelse in open_flags %}
+              <tr style="border-bottom:1px solid #f0f1f4">
+                <td>{{ anmeldelse.vagt_tildeling.vagt }}</td>
+                <td>{{ anmeldelse.vagt_tildeling.resident.full_name }}</td>
+                <td>{{ anmeldelse.flagged_by.full_name }}</td>
+                <td>{{ anmeldelse.reason|default:"—" }}</td>
+                <td>{{ anmeldelse.get_previous_status_display }}</td>
+                <td style="white-space:nowrap">
+                  <form method="post" action="{% url 'koekken:flag_opretholdt' anmeldelse.pk %}"
+                        hx-post="{% url 'koekken:flag_opretholdt' anmeldelse.pk %}"
+                        hx-target="#flag-queue" hx-swap="outerHTML" style="display:inline">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-secondary">Opretholdt</button>
+                  </form>
+                  <form method="post" action="{% url 'koekken:flag_afvist' anmeldelse.pk %}"
+                        hx-post="{% url 'koekken:flag_afvist' anmeldelse.pk %}"
+                        hx-target="#flag-queue" hx-swap="outerHTML" style="display:inline">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-secondary">Afvist</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted">Ingen åbne anmeldelser.</p>
+    {% endif %}
+  </div>
+</div>

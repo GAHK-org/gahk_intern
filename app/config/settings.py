@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     "reparationer",
     "arkiv",
     "photo_album",
+    "koekken",
 ]
 
 MIDDLEWARE = [
@@ -162,6 +163,18 @@ CELERY_TASK_TIME_LIMIT = 900
 # System resident. Leave blank to disable token-authenticated imports.
 PHOTO_ALBUM_IMPORT_TOKEN = os.environ.get("PHOTO_ALBUM_IMPORT_TOKEN", "")
 PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL = os.environ.get("PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL", "system@gahk.dk")
+
+# Køkkenvagter's scheduled jobs below (generate-koekkenvagter, roll-forward-koekkenvagter,
+# reconcile-koekkenvagter, post-koekken-obligation) are gated by this flag rather than by
+# `koekken.access.Gate`: that Gate reads `effective_roles(request)`, and
+# there is no request in a Celery task context, so the view-layer rollout gate can't be checked from
+# here. Default False (closed): P1 has no path that ever posts a KoekkenPost CREDIT (that's P2's
+# self-report UDFOERT flow) — so opening these jobs before P2 ships would silently accrue monthly
+# obligation debt for every resident with no possible way to work it off, which is exactly the
+# "everyone drifts into debt through no fault of their own" bug this feature exists to fix. Flip to
+# True only once P2's credit path exists (see `koekken.tasks` for the no-op the flag guards).
+KOEKKEN_JOBS_ENABLED = os.environ.get("KOEKKEN_JOBS_ENABLED", "0") == "1"
+
 CELERY_BEAT_SCHEDULE = {
     "purge-expired-applications": {
         "task": "admissions.tasks.purge_expired_applications",
@@ -195,6 +208,45 @@ CELERY_BEAT_SCHEDULE = {
     "apply-ak-monthly-assessment": {
         "task": "ak.tasks.apply_monthly_assessment",
         "schedule": crontab(minute=10, hour=4, day_of_month=1),
+    },
+    # Monthly, like the AK assessment above (Vagt generation is idempotent, so more often would be
+    # harmless, but there is nothing to gain from it — a periode's slots don't change between runs).
+    # 04:15, five minutes after apply-ak-monthly-assessment, so the two monthly 1st-of-month jobs at
+    # hour=4 never land on the same minute.
+    "generate-koekkenvagter": {
+        "task": "koekken.tasks.generate_koekkenvagter",
+        "schedule": crontab(minute=15, hour=4, day_of_month=1),
+    },
+    # 05:15, an hour after generate-koekkenvagter above -- Amendment 1's monthly roll-forward
+    # (A1.2), which depends on that month's Vagt rows already existing (it allocates, never
+    # generates). Clear of both generate-koekkenvagter (04:15) and post-koekken-obligation (06:20)
+    # below, per this file's own stagger rule; it has no ordering dependency on the latter, since the
+    # obligation debit is uniform across everyone present in a month and so can't change a relative
+    # ranking either way.
+    "roll-forward-koekkenvagter": {
+        "task": "koekken.tasks.roll_forward_koekkenvagter",
+        "schedule": crontab(minute=15, hour=5, day_of_month=1),
+    },
+    # 05:45, thirty minutes after roll-forward-koekkenvagter above -- Amendment 2/3's reconciliation
+    # (A2.3/A3.1), which corrects the look-ahead window's projected population against the real
+    # Residency list once it plausibly exists. Runs early in the month like the rest of this chain
+    # (indstilling's own "next month" list is ordinarily published progressively over the PRECEDING
+    # month, not on this exact date, so by the time this runs there is usually something real to
+    # reconcile against; if not, reconcile_month simply no-ops for that month, same as
+    # roll-forward-koekkenvagter). Clear of both roll-forward-koekkenvagter (05:15) and
+    # post-koekken-obligation (06:20) per this file's stagger rule; no ordering dependency on
+    # post-koekken-obligation, which posts from the real list directly and is untouched by
+    # reconciliation.
+    "reconcile-koekkenvagter": {
+        "task": "koekken.tasks.reconcile_koekkenvagter",
+        "schedule": crontab(minute=45, hour=5, day_of_month=1),
+    },
+    # 06:20, ten minutes after email-oelkaelder-monthly-statements (also hour=6, day_of_month=1) and
+    # a full two hours after generate-koekkenvagter above — which it depends on having already run,
+    # so that month's Vagt supply exists to divide across present residents.
+    "post-koekken-obligation": {
+        "task": "koekken.tasks.post_koekken_obligation",
+        "schedule": crontab(minute=20, hour=6, day_of_month=1),
     },
     # Hourly, and deliberately not daily: what it clears is a download the resident is still
     # watching a spinner for, so the gap between "the worker died" and "the page says so" is the
@@ -375,6 +427,12 @@ TURNSTILE_SECRET_KEY = os.environ.get("TURNSTILE_SECRET_KEY", "")
 # Ølkælder till is an open kiosk on the GAHK LAN (F-003): purchases allowed without per-user login,
 # but only from these source IPs (as seen by the server). In DEBUG the gate is open for testing.
 OELKAELDER_KIOSK_IPS = [ip for ip in os.environ.get("OELKAELDER_KIOSK_IPS", "").split(",") if ip]
+
+# Kitchen tablet at /intern/koekken/idag/ (P2 design doc §7): the same IP-whitelist kiosk gate as
+# the ølkælder till above, its own setting -- koekken.views duplicates (never imports)
+# oelkaelder.views's `_client_ip`/`_is_kiosk` helpers, per the design doc's copy-at-n=2/extract-at-n=3
+# reasoning (see core/rollout.py's own docstring for the house rule this follows).
+KOEKKEN_KIOSK_IPS = [ip for ip in os.environ.get("KOEKKEN_KIOSK_IPS", "").split(",") if ip]
 
 # GAHK Wiki — standalone MediaWiki, served at /wiki/ in prod (legacy path). Point WIKI_URL at the
 # preview container (e.g. http://localhost:8899) during local development.

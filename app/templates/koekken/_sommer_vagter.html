@@ -1,0 +1,57 @@
+{% comment %}
+  P3 step 3 (design doc §6/§7): the summer shift grid, week by week. Rendered by both koekken/sommer.html
+  and the htmx swap after a claim POST (koekken.views._sommer_grid_context), so the two can never
+  disagree. P2 §10 conventions: a refusal renders INSIDE this partial (`error`), never through the
+  messages framework; an unavailable action's button is ABSENT -- a started, full, held or otherwise
+  refused shift has no "Tag vagt" form and no claim URL at all. `grid_weeks` is
+  (first_day, last_day, days) rows, `days` (date, shifts) pairs, each shift
+  (vagt, claimant_names, free_places, can_claim); the first/last weeks are clipped to the summer.
+  There is no unclaim: a claim is binding, and can only be offered to others (Mine køkkenvagter).
+{% endcomment %}
+<div id="koekken-sommervagter">
+  {% if error %}
+    <p class="card" role="alert" style="border-color:#b3261e">{{ error }}</p>
+  {% endif %}
+
+  {% if not grid_weeks %}
+    <div class="card-flat">
+      <div class="card-pad"><p class="muted">Sommerens vagter åbner {{ opens_on|date:"j. F" }}.</p></div>
+    </div>
+  {% endif %}
+
+  {% for first, last, days in grid_weeks %}
+    <div class="card-flat">
+      <div class="card-head">
+        <h2>Uge {{ first|date:"W" }} ({% if first.month == last.month %}{{ first.day }}.–{{ last|date:"j. F" }}{% else %}{{ first|date:"j. F" }}–{{ last|date:"j. F" }}{% endif %})</h2>
+      </div>
+      <div class="card-pad">
+        {% for day, shifts in days %}
+          <div style="padding:6px 0;border-top:1px solid #f0f1f4">
+            <strong>{{ day|date:"l j. F" }}</strong>
+            <ul style="list-style:none;padding:0;margin:4px 0 0">
+              {% for vagt, names, free, can_claim in shifts %}
+                <li style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:3px 0">
+                  <span>{{ vagt.get_kind_display }}</span>
+                  <span class="muted">
+                    {% if names %}{% for n in names %}{{ n }}{% if not forloop.last %}, {% endif %}{% endfor %}{% else %}ingen endnu{% endif %}
+                  </span>
+                  <span class="muted">{{ free }} ledig{% if free != 1 %}e{% endif %}</span>
+                  {% if can_claim %}
+                    <form method="post" action="{% url 'koekken:tag_sommervagt' vagt.pk %}"
+                          hx-post="{% url 'koekken:tag_sommervagt' vagt.pk %}"
+                          hx-target="#koekken-sommervagter" hx-swap="outerHTML" hx-disabled-elt="find button"
+                          hx-confirm="Vagten er bindende — kun Køkkengruppen kan fjerne den. Kan du ikke alligevel, kan du tilbyde den til andre under Mine køkkenvagter."
+                          style="display:inline">
+                      {% csrf_token %}
+                      <button type="submit" class="btn">Tag vagt</button>
+                    </form>
+                  {% endif %}
+                </li>
+              {% endfor %}
+            </ul>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  {% endfor %}
+</div>

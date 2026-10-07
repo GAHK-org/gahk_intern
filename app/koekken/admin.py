@@ -1,0 +1,110 @@
+from django.contrib import admin
+
+from .models import (
+    FestKredit,
+    Fravaer,
+    Fridag,
+    KoekkenPost,
+    Periode,
+    Praeference,
+    PraeferenceDag,
+    Vagt,
+    VagtAnmeldelse,
+    VagtBytte,
+    VagtBytteForslag,
+    VagtRegel,
+    VagtTildeling,
+)
+
+
+@admin.register(VagtRegel)
+class VagtRegelAdmin(admin.ModelAdmin):
+    list_display = ["kind", "weekend", "start_time", "duration_minutes", "headcount"]
+    list_filter = ["kind", "weekend"]
+
+
+@admin.register(Periode)
+class PeriodeAdmin(admin.ModelAdmin):
+    list_display = ["kind", "year", "start_date", "end_date"]
+    list_filter = ["kind"]
+
+
+@admin.register(Vagt)
+class VagtAdmin(admin.ModelAdmin):
+    list_display = ["date", "kind", "headcount", "duration_minutes", "periode"]
+    list_filter = ["kind", "periode"]
+    date_hierarchy = "date"
+
+
+@admin.register(VagtTildeling)
+class VagtTildelingAdmin(admin.ModelAdmin):
+    list_display = ["vagt", "resident", "status", "created_at"]
+    list_filter = ["status"]
+    search_fields = ["resident__first_name", "resident__last_name", "resident__email"]
+
+
+@admin.register(KoekkenPost)
+class KoekkenPostAdmin(admin.ModelAdmin):
+    list_display = ["resident", "delta_minutes", "kind", "periode", "month", "created_at"]
+    list_filter = ["kind", "periode"]
+    search_fields = ["resident__first_name", "resident__last_name", "resident__email"]
+    readonly_fields = ["created_at"]
+    raw_id_fields = ["festkredit"]
+
+
+@admin.register(FestKredit)
+class FestKreditAdmin(admin.ModelAdmin):
+    # An award with ledger rows cannot be deleted (KoekkenPost.festkredit is PROTECT, on purpose): undo it
+    # from the Festkredit page instead.
+    list_display = ["navn", "dato", "created_by", "created_at", "fortrudt_at"]
+    raw_id_fields = ["created_by", "fortrudt_by"]
+    readonly_fields = ["created_at"]
+
+
+@admin.register(Praeference)
+class PraeferenceAdmin(admin.ModelAdmin):
+    list_display = ["resident", "periode", "weekday_unavailable", "declared_at"]
+    list_filter = ["periode", "weekday_unavailable"]
+    search_fields = ["resident__first_name", "resident__last_name", "resident__email"]
+
+
+@admin.register(PraeferenceDag)
+class PraeferenceDagAdmin(admin.ModelAdmin):
+    list_display = ["praeference", "kind", "weekday"]
+    list_filter = ["kind", "weekday"]
+
+
+@admin.register(VagtAnmeldelse)
+class VagtAnmeldelseAdmin(admin.ModelAdmin):
+    list_display = ["vagt_tildeling", "flagged_by", "previous_status", "status", "created_at"]
+    list_filter = ["status", "previous_status"]
+    search_fields = ["flagged_by__first_name", "flagged_by__last_name", "flagged_by__email"]
+    readonly_fields = ["created_at"]
+
+
+@admin.register(Fridag)
+class FridagAdmin(admin.ModelAdmin):
+    list_display = ["date", "kind", "reason"]
+    list_filter = ["kind"]
+    date_hierarchy = "date"
+
+
+@admin.register(VagtBytte)
+class VagtBytteAdmin(admin.ModelAdmin):
+    list_display = ["tildeling", "tilbudt_af", "status", "overtaget_af", "created_at", "closed_at"]
+    list_filter = ["status"]
+    raw_id_fields = ["tildeling", "tilbudt_af", "overtaget_af", "hurtig_post"]
+
+
+@admin.register(VagtBytteForslag)
+class VagtBytteForslagAdmin(admin.ModelAdmin):
+    list_display = ["bytte", "modydelse", "foreslaaet_af", "status", "created_at", "closed_at"]
+    list_filter = ["status"]
+    raw_id_fields = ["bytte", "modydelse", "foreslaaet_af"]
+
+
+@admin.register(Fravaer)
+class FravaerAdmin(admin.ModelAdmin):
+    list_display = ("resident", "start_date", "end_date", "created_at")
+    list_filter = ["start_date"]
+    raw_id_fields = ["resident"]

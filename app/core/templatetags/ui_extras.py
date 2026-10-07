@@ -22,3 +22,10 @@ def dict_get(mapping: dict[object, object] | None, key: object) -> object:
     """Look up `key` in a dict from the template (`{{ mapping|dict_get:key }}`) — dotted-path lookup
     can't take a variable key."""
     return (mapping or {}).get(key)
+
+
+@register.filter
+def signed_hours(minutes: int | None) -> str:
+    """Signed minutes as hours with one decimal and a Danish comma: `300` -> `+5,0 t`, `-44` -> `-0,7 t`."""
+    value = (minutes or 0) / 60
+    return f"{value:+.1f}".replace(".", ",") + " t"

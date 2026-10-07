@@ -1980,4 +1980,23 @@
     /* The metadata is the first thing to go: on a phone the name is the whole point. */
     .arkiv-meta { display:none; }
   }
+
+  /* ---- Køkkenvagter: the kitchen tablet (app/templates/koekken/idag.html) --------------------- */
+  /* Large, touch-first cards -- read from across the kitchen, one tap per row, no fine print. */
+  .idag-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:14px; }
+  .idag-card { background:var(--surface); border:1px solid var(--border); border-radius:12px;
+    padding:16px; display:flex; flex-direction:column; gap:6px; }
+  .idag-kind { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  .idag-name { font-size:20px; font-weight:600; }
+  .idag-state { font-size:13px; color:var(--muted); }
+  .idag-done-btn { margin-top:8px; width:100%; font-size:18px; padding:14px; }
+  /* A row whose shift is already settled (done, flagged, or ruled not done) has no button at all
+     (§10) -- this only dims the card itself so it still reads as "no longer actionable" at a
+     glance, without a disabled button sitting on top of it. */
+  .idag-status-udfoert, .idag-status-anmeldt, .idag-status-ikke_udfoert { opacity:.6; }
+  /* F1: yesterday's still-open leftovers get their own labelled section, ahead of today's grid, so
+     a resident glancing at the tablet is never confused about which day a card is actually for. */
+  .idag-section { margin-bottom:20px; }
+  .idag-section-title { font-size:14px; text-transform:uppercase; letter-spacing:.04em;
+    color:var(--muted); margin:0 0 8px; }
 }

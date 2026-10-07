@@ -14,6 +14,9 @@ Two audience rules layer on top of the shared topic opt-in, and both are this fe
     and a mute is about a channel's chatter rather than about replies to your own post. It still
     respects the *topic* opt-in, though: a resident who turned Den Hurtige notifications off
     entirely hears nothing.
+
+`publish_post` below is also the FIRST time any other feature posts into Den Hurtige: the koekken app
+shares offered shifts through it. The dependency runs one way only (koekken imports den_hurtige).
 """
 
 from typing import TYPE_CHECKING
@@ -24,16 +27,23 @@ from core import push
 from core.models import PushSubscription
 
 from . import channels
+from .models import QuickPost
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
+    from django.core.files.uploadedfile import UploadedFile
+
     from residents.models import Resident
 
-    from .models import QuickComment, QuickPost
+    from .models import QuickComment
 
 # The topic name this feature subscribes and notifies under (core.push.TOPIC_FIELDS).
 TOPIC = "den_hurtige"
 
 FEED_URL = "/intern/den-hurtige/"
+
+MAX_CONTENT_CHARS = 500
 
 
 def is_configured() -> bool:
@@ -73,6 +83,38 @@ def _audience(channel: str, exclude_user_id: int | None = None) -> QuerySet[Push
     return push.subscribers(TOPIC, exclude_user_id=exclude_user_id).exclude(
         user__channel_mutes__channel=channel
     )
+
+
+def publish_post(
+    author: "Resident",
+    channel_slug: str,
+    content: str,
+    expires_at: "datetime",
+    image: "UploadedFile | str" = "",
+) -> QuickPost:
+    """Create a post and announce it. The one way a post is created: `views.create_post` and the
+    koekken app (an offered shift shared in the `koekken` channel) both call this, so manual and
+    generated posts behave identically.
+
+    The dependency runs ONE WAY: koekken imports den_hurtige, never the reverse. den_hurtige must never
+    import koekken (tests/test_den_hurtige.py enforces it).
+
+    Checks only what makes a post malformed: a known channel, some content (or an image), and at most
+    MAX_CONTENT_CHARS. Access and roles (who may post where) are the caller's decision, and so is
+    the duration: the caller computes `expires_at`. Raises ValueError, creating nothing, on a malformed
+    post.
+    """
+    if channels.lookup(channel_slug) is None:
+        raise ValueError(f"Ukendt kanal: {channel_slug!r}")
+    if not content.strip() and not image:
+        raise ValueError("Opslaget er tomt.")
+    if len(content) > MAX_CONTENT_CHARS:
+        raise ValueError(f"Opslaget må højst fylde {MAX_CONTENT_CHARS} tegn.")
+    post = QuickPost.objects.create(
+        author=author, channel=channel_slug, content=content, image=image, expires_at=expires_at
+    )
+    notify_new_post(post)
+    return post
 
 
 def notify_new_post(post: "QuickPost") -> None:

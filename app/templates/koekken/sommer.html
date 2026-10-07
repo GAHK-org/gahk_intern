@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% comment %}
+  P3 steps 2-3 (design doc §7): the summer page -- the shift-claiming grid (koekken/_sommer_vagter.html)
+  above the away ranges ("Mit fravær" / "Væk denne uge", the koekken/_fravaer.html partial).
+{% endcomment %}
+{% block title %}Sommer {{ summer.year }} - GAHK Intern{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Køkken</div>
+      <h1>Sommer {{ summer.year }}</h1>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-secondary" href="{% url 'koekken:index' %}">Mine køkkenvagter</a>
+    </div>
+  </div>
+
+  <p>
+    Din vagtforpligtelse er den samme som i en hvilken som helst anden måned. Men sommervagterne
+    fordeles ikke automatisk: du tager selv de vagter, der passer dig, fra 1. maj. En vagt du har taget,
+    er bindende, men du kan tilbyde den til andre under Mine køkkenvagter. Fravær er kun til
+    information, så huset kan se, hvem der er væk hvilke uger. Det ændrer ikke din forpligtelse og
+    forhindrer ikke, at du tager en vagt.
+  </p>
+
+  {% include "koekken/_sommer_vagter.html" %}
+
+  {% include "koekken/_fravaer.html" %}
+{% endblock %}

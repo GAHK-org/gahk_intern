@@ -16,6 +16,10 @@ bottleneck, this module is the seam to replace: everything else asks it for a Ch
 Because there is no DB constraint behind any of this, checks.py validates the tuple at startup
 (E007-E009): unique slugs, no collision with a fixed URL segment, and a duration the composer can
 actually offer.
+
+The `koekken` channel's posts are mostly created by the koekken app (an offered shift shared on
+request, via services.publish_post), not typed by residents. Residents can mute it like any other
+channel.
 """
 
 from dataclasses import dataclass
@@ -96,6 +100,13 @@ CHANNELS: tuple[Channel, ...] = (
         name="M.H.G.A",
         icon="users",
         description="Make Hallen Great Again.",
+        default_duration=2880,
+    ),
+    Channel(
+        slug="koekken",
+        name="Køkkenvagter",
+        icon="check",
+        description="Køkkenvagter til overtagelse.",
         default_duration=2880,
     ),
 )
