@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% load ui_extras %}
+{% block title %}Køkkenvagter - GAHK Intern{% endblock %}
+{% block body_class %}duty-page{% endblock %}
+{% block content_width %}max-w-5xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Grupper &amp; konti</p>
+      <h1>Køkkenvagter</h1>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-secondary" href="{% url 'kitchen:account' %}">Min konto (<span class="{{ balance|sign_class }}">{{ balance }}</span>)</a>
+      <a class="btn btn-secondary" href="{% url 'events:feed_settings' %}">Kalenderabonnement</a>
+      {% if is_admin %}<a class="btn" href="{% url 'kitchen:admin' %}">Administration</a>{% endif %}
+    </div>
+  </div>
+
+  {% if push_configured %}
+    {% include "core/_push_bar.html" with topic="koekkenvagter" url_name="kitchen:save_subscription" on_label="Få besked om ledige vagter" success_text="Du får nu besked om vagter til salg og ledige vagter." %}
+  {% endif %}
+
+  <h2>Til salg</h2>
+  <div class="board-list mb-4">
+    {% for a in for_sale %}
+      <div class="card-flat card-pad">
+        <a href="{% url 'kitchen:shift' a.shift.pk %}"><strong>{{ a.shift.title }}</strong></a>
+        · {{ a.shift.starts_at|date:"D j. M H:i" }}–{{ a.shift.ends_at|date:"H:i" }}
+        · {{ a.spots }} plads{{ a.spots|pluralize:"er" }}
+        · {% widthratio a.spots 1 a.shift.points_per_spot_total %} point{% if a.sale_bonus %} + {{ a.sale_bonus }} ekstra{% endif %}
+        <span class="muted">— sælges af {{ a.resident.full_name }}</span>
+        {% if a.resident_id != request.user.pk %}
+          <form method="post" action="{% url 'kitchen:buy' a.pk %}" style="display:inline">
+            {% csrf_token %}<button type="submit">Køb vagten</button>
+          </form>
+        {% endif %}
+      </div>
+    {% empty %}
+      <p class="muted">Ingen vagter til salg lige nu.</p>
+    {% endfor %}
+  </div>
+
+  <h2>Ledige vagter de næste 72 timer</h2>
+  <div class="board-list mb-4">
+    {% for s in soon %}
+      <div class="card-flat card-pad">
+        <a href="{% url 'kitchen:shift' s.pk %}"><strong>{{ s.title }}</strong></a>
+        · {{ s.starts_at|date:"D j. M H:i" }}–{{ s.ends_at|date:"H:i" }}
+        · {{ s.points_per_spot_total }} point pr. plads
+        · {{ s.taken }}/{{ s.spots }} taget
+      </div>
+    {% empty %}
+      <p class="muted">Alle vagter de næste 72 timer er taget.</p>
+    {% endfor %}
+  </div>
+
+  <div class="duty-head">
+    <h2>Vagtplan</h2>
+    <a class="btn btn-secondary" href="{% url 'kitchen:history' %}">Tidligere vagter</a>
+    <p class="duty-legend">
+      <span class="duty-slot is-mine">Din vagt</span>
+      <span class="duty-slot is-sale">Til salg</span>
+      <span class="duty-slot is-free">Ledig</span>
+      <span class="duty-slot is-free is-soon">Ledig &lt; 72 t</span>
+      <span class="duty-slot is-free is-critical">Ledig &lt; 24 t</span>
+      <span class="duty-slot is-override">Kan overtages</span>
+    </p>
+  </div>
+
+  {% include "kitchen/_duty_table.html" %}
+  {% include "kitchen/_confirm_dialog.html" %}
+{% endblock %}

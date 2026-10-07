@@ -1,0 +1,42 @@
+{% if shift.is_disabled %}
+  <a class="duty-cancelled" href="{% url 'kitchen:shift' shift.pk %}" title="{{ shift.disabled_reason }}">Aflyst</a>
+{% else %}
+  <div class="duty-slots">
+    {% for slot in shift.slots %}
+      {% if slot and slot.overridable %}
+        <form method="post" action="{% url 'kitchen:enroll' shift.pk %}" class="duty-take"
+              data-duty-confirm="{{ shift.title }}, {{ shift.starts_at|date:'l j. F' }} kl. {{ shift.starts_at|time:'H:i' }}–{{ shift.ends_at|time:'H:i' }} · {{ shift.points_per_spot_total }} point. Du overtager en af {{ slot.a.resident.first_name }}s pladser.">
+          {% csrf_token %}
+          <input type="hidden" name="spots" value="1">
+          <input type="hidden" name="next" value="market">
+          <button type="submit" class="duty-slot is-override"
+                  title="{{ slot.a.resident.full_name }} har taget flere pladser — tag denne">
+            <span class="duty-name">{{ slot.a.resident.first_name }}</span>
+            <span class="duty-name duty-take-label">+ Tag</span>
+            <span class="duty-pts">{{ shift.points_per_spot_total }}</span>
+          </button>
+        </form>
+      {% elif slot %}
+        <a href="{% url 'kitchen:shift' shift.pk %}"
+           class="duty-slot{% if slot.mine %} is-mine{% endif %}{% if slot.a.for_sale %} is-sale{% endif %}{% if slot.a.is_absent %} is-absent{% endif %}"
+           title="{{ slot.a.resident.full_name }}{% if slot.a.for_sale %} — til salg{% endif %}">
+          <span class="duty-name">{{ slot.a.resident.first_name }}</span>
+          <span class="duty-pts">{{ shift.points_per_spot_total }}</span>
+        </a>
+      {% elif shift.has_started %}
+        <span class="duty-slot is-empty"><span class="duty-name"></span><span class="duty-pts">{{ shift.points_per_spot_total }}</span></span>
+      {% else %}
+        <form method="post" action="{% url 'kitchen:enroll' shift.pk %}" class="duty-take"
+              data-duty-confirm="{{ shift.title }}, {{ shift.starts_at|date:'l j. F' }} kl. {{ shift.starts_at|time:'H:i' }}–{{ shift.ends_at|time:'H:i' }} · {{ shift.points_per_spot_total }} point">
+          {% csrf_token %}
+          <input type="hidden" name="spots" value="1">
+          <input type="hidden" name="next" value="market">
+          <button type="submit" class="duty-slot is-free{% if shift.urgency %} is-{{ shift.urgency }}{% endif %}" title="Tag vagten">
+            <span class="duty-name">+ Tag</span>
+            <span class="duty-pts">{{ shift.points_per_spot_total }}</span>
+          </button>
+        </form>
+      {% endif %}
+    {% endfor %}
+  </div>
+{% endif %}
