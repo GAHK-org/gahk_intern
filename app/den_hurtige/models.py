@@ -72,9 +72,10 @@ DELETE_GRACE = timedelta(minutes=5)
 # It is still short enough to keep the promise the whole feature rests on: nothing here is a record,
 # and anything worth keeping belongs on opslagstavlen or in ankebogen.
 #
-# Whatever this is set to MUST appear in DURATION_CHOICES -- it is what the composer's <select>
-# preselects, and checks.E009 refuses to start if a channel defaults to a value the picker cannot
-# offer.
+# NOT a composer default any more (#192). The composer refuses to guess: a preselected 2 døgn is
+# exactly what stopped anybody choosing, so the author now answers before the message is posted.
+# What is left is the column default, for the rows that are written WITHOUT a composer -- Django
+# admin, seed_demo, a shell. The field is non-null, so something has to fill it there.
 DEFAULT_DURATION_MINUTES = 2880
 DURATION_CHOICES = [
     (30, "30 min"),
@@ -118,7 +119,8 @@ QUICK_EMOJI = [
 
 
 def get_default_expiration() -> datetime:
-    """When a post archives if the composer sends no duration: DEFAULT_DURATION_MINUTES from now."""
+    """The column default: DEFAULT_DURATION_MINUTES from now. Not reachable from the composer, which
+    rejects a post with no duration rather than filling one in (#192)."""
     return current_datetime() + timedelta(minutes=DEFAULT_DURATION_MINUTES)
 
 
