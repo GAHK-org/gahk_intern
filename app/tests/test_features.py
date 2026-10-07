@@ -5,6 +5,7 @@ monthly roles, admissions email/CSRF rules, POS money integrity, and the front-p
 """
 
 from collections.abc import Callable
+from runpy import run_path
 
 import pytest
 from django.contrib.auth.hashers import identify_hasher
@@ -13,7 +14,19 @@ from django.test import Client
 from django.utils import timezone
 
 from admissions.models import Application
+from config import settings as config_settings
 from residents.models import Resident, Role, active_period
+
+
+@pytest.mark.parametrize(("debug", "domain"), [("0", ".gahk.dk"), ("1", None)])
+def test_session_cookie_domain_supports_site_hosts(
+    monkeypatch: pytest.MonkeyPatch, debug: str, domain: str | None
+) -> None:
+    monkeypatch.setenv("DJANGO_DEBUG", debug)
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
+    configured = run_path(config_settings.__file__)
+
+    assert configured["SESSION_COOKIE_DOMAIN"] == domain
 
 
 # ---------------------------------------------------------------- auth (F-014)
