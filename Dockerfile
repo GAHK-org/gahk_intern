@@ -1,5 +1,5 @@
 # --- Stage 1: build the Tailwind/TS bundle (needs app/templates for Tailwind's @source scan) ---
-FROM node:24-slim AS frontend
+FROM node:26-slim AS frontend
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json* ./frontend/
 RUN cd frontend && npm install
