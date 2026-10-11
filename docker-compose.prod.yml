@@ -14,6 +14,18 @@ services:
       - media:/app/media       # uploaded files (room-inspection photos, relocated legacy images)
     expose:
       - "8000"                 # reached by Coolify/Traefik over the internal network (not host-published)
+    # Fails when the app stops answering (see docs/incidents/2026-10-08-web-hang.md). Sends the first
+    # allowed host as Host so ALLOWED_HOSTS accepts it. start_period covers `migrate` on boot.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os, urllib.request as u; h = os.environ.get('DJANGO_ALLOWED_HOSTS', 'localhost').split(',')[0]; u.urlopen(u.Request('http://127.0.0.1:8000/healthz', headers={'Host': h}), timeout=8)"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
 
   # `web` runs the migrations; these two WAIT for them rather than racing them. Without the gate,
   # every deploy that adds a migration starts `beat` against a database with no
