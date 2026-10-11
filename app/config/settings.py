@@ -235,8 +235,8 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 STATICFILES_DIRS = [BASE_DIR / "static"]  # holds the Vite-built bundle (static/dist/)
 
-# Media (user uploads) always go to object storage: Hetzner in production, MinIO for local dev
-# (docker-compose.yml's `minio` service) — there is no local-disk fallback. STORAGES["default"]
+# Media (user uploads) always go to object storage: Hetzner in production, SeaweedFS for local dev
+# (docker-compose.yml's `s3` service) — there is no local-disk fallback. STORAGES["default"]
 # below is unconditionally core.storage.MediaS3Storage, so a missing or wrong S3_BUCKET is a loud
 # S3 error on the first upload, not a silent switch to writing files onto a disk nobody backs up.
 #
@@ -248,7 +248,7 @@ STATICFILES_DIRS = [BASE_DIR / "static"]  # holds the Vite-built bundle (static/
 # core.checks (core.E007-E009) refuses to start the process if it or the backend's URLs ever stop
 # matching. core/storage.py has the full argument.
 #
-# Defaults describe the MinIO container docker-compose.yml runs for local dev (bucket, credentials,
+# Defaults describe the SeaweedFS container docker-compose.yml runs for local dev (bucket, credentials,
 # endpoint, path-style addressing), not Hetzner — so S3 works out of the box on a fresh checkout with
 # no app/.env at all. Gated on DEBUG rather than unconditional: DEPLOY.md requires DJANGO_DEBUG=0 in
 # production, so these defaults can never be what a real deploy silently runs on.
@@ -257,8 +257,8 @@ S3_BUCKET = os.environ.get("S3_BUCKET", "gahk-s3" if DEBUG else "")
 # traffic inside eu-central does not count against the account's egress allowance.
 S3_LOCATION = os.environ.get("S3_LOCATION", "fsn1")
 
-# Overridable for S3-compatible endpoints that are not Hetzner — namely the MinIO container
-# docker-compose.yml runs for local dev. Path-style addressing is required there: MinIO has no
+# Overridable for S3-compatible endpoints that are not Hetzner — namely the SeaweedFS container
+# docker-compose.yml runs for local dev. Path-style addressing is required there: it has no
 # wildcard TLS certificate for virtual-hosted-style requests, and unlike Hetzner it is reached over
 # plain HTTP on the docker network.
 S3_ENDPOINT_URL = os.environ.get(
@@ -268,9 +268,9 @@ S3_ADDRESSING_STYLE = os.environ.get("S3_ADDRESSING_STYLE", "path" if DEBUG else
 
 # The endpoint a BROWSER can actually reach, for presigned URLs only — everything else (uploads,
 # HEAD, delete, ...) keeps using S3_ENDPOINT_URL above, which this process itself resolves fine.
-# The two differ only under `task dev` (the dockerized `web` service): Django reaches MinIO over the
-# compose network at http://minio:9000, but the browser that follows the presigned URL is on the
-# HOST, which can only reach MinIO's published port at http://localhost:9000. Signing the URL with
+# The two differ only under `task dev` (the dockerized `web` service): Django reaches SeaweedFS over the
+# compose network at http://s3:8333, but the browser that follows the presigned URL is on the
+# HOST, which can only reach the published port at http://localhost:9000. Signing the URL with
 # the wrong host is not cosmetic — SigV4 signs the Host header, so the bucket 403s a request whose
 # Host does not match the one it was signed for, and rewriting the URL string afterwards cannot fix
 # that either. `task dev:local` and production both leave this unset, since S3_ENDPOINT_URL there is
@@ -278,7 +278,7 @@ S3_ADDRESSING_STYLE = os.environ.get("S3_ADDRESSING_STYLE", "path" if DEBUG else
 S3_PUBLIC_ENDPOINT_URL = os.environ.get("S3_PUBLIC_ENDPOINT_URL", "") or S3_ENDPOINT_URL
 
 # botocore >= 1.36 defaults to sending x-amz-checksum-crc32 with aws-chunked framing on every PUT,
-# which S3-compatible providers — Hetzner AND MinIO — mis-store or reject. botocore reads these
+# which S3-compatible providers — Hetzner AND SeaweedFS — mis-store or reject. botocore reads these
 # straight out of the environment itself, never through Django, so setdefault() here is what makes
 # uploads work without an app/.env at all; .setdefault leaves an explicit .env/real env var alone.
 os.environ.setdefault("AWS_REQUEST_CHECKSUM_CALCULATION", "when_required")
@@ -286,14 +286,14 @@ os.environ.setdefault("AWS_RESPONSE_CHECKSUM_VALIDATION", "when_required")
 
 _MEDIA_S3_OPTIONS = {
     "bucket_name": S3_BUCKET,
-    # minioadmin/minioadmin (MinIO's own defaults) when nothing is configured — see S3_BUCKET above.
-    "access_key": os.environ.get("S3_ACCESS_KEY", "minioadmin" if DEBUG else ""),
-    "secret_key": os.environ.get("S3_SECRET_KEY", "minioadmin" if DEBUG else ""),
+    # gahkdev/gahkdevsecret (the pair docker-compose.yml's `s3` service is started with) when nothing is configured — see S3_BUCKET above.
+    "access_key": os.environ.get("S3_ACCESS_KEY", "gahkdev" if DEBUG else ""),
+    "secret_key": os.environ.get("S3_SECRET_KEY", "gahkdevsecret" if DEBUG else ""),
     "endpoint_url": S3_ENDPOINT_URL,
     "region_name": S3_LOCATION,
     # Virtual-host style is what Hetzner documents: https://<bucket>.<loc>.your-objectstorage.com.
     # The bucket name must therefore be DNS-safe — lowercase, and NO DOTS, or TLS SNI against their
-    # wildcard certificate fails for every request. MinIO (local dev) overrides this to "path" via
+    # wildcard certificate fails for every request. SeaweedFS (local dev) overrides this to "path" via
     # S3_ADDRESSING_STYLE, since it has no such certificate.
     "addressing_style": S3_ADDRESSING_STYLE,
     "signature_version": "s3v4",
