@@ -1103,7 +1103,7 @@ def test_upload_with_no_files_reports_the_problem_instead_of_looking_successful(
 def test_video_upload_stores_the_original_and_defers_its_derivatives(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
-    """Transcoding in the request outran gunicorn's 60 s timeout and lost the upload."""
+    """Transcoding in the request outran the 60 s request timeout and lost the upload."""
     administrator = make_resident(roles=(Role.ADMINISTRATOR,))
     album = Album.objects.create(folder="2026", name="Fest")
     client.force_login(administrator)

@@ -494,7 +494,7 @@ def serve_media(request: HttpRequest, path: str) -> HttpResponseBase:
 def download_original(request: HttpRequest, pk: int) -> HttpResponseBase:
     """Redirect straight to the bucket when the original is on S3, rather than streaming it here.
 
-    A video is up to PHOTO_ALBUM_VIDEO_MAX_MB (1 GB): reading that through gunicorn on its way from
+    A video is up to PHOTO_ALBUM_VIDEO_MAX_MB (1 GB): reading that through the app server on its way from
     S3 to the browser ties up one of a handful of sync workers for as long as the slowest client's
     connection takes, for no reason — the bytes never need to pass through this process at all. The
     streaming branch below only runs under the test suite, which forces plain FileSystemStorage

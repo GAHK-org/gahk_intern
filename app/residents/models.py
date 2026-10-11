@@ -84,6 +84,10 @@ class ResidentManager(BaseUserManager["Resident"]):
         return self.create_user(email, password, **extra)
 
 
+# Attribute `_has_admin_role` memoises its grant lookup under, on the request's user instance.
+_ADMIN_GRANT_MEMO = "_gahk_admin_grant"
+
+
 class Resident(AbstractBaseUser, PermissionsMixin):
     # identity / login (legacy intern_alumne.email becomes the unique login id)
     email = models.EmailField(unique=True)
@@ -131,6 +135,30 @@ class Resident(AbstractBaseUser, PermissionsMixin):
         year, month = period or active_period()
         return self.role_assignments.filter(role=role, year=year, month=month).exists()
 
+    def has_perm(self, perm: str, obj: models.Model | None = None) -> bool:
+        """Netvaerksgruppen (spelled `administrator`) gets every Django admin permission, for exactly
+        as long as they hold the role AND a second administrator has accepted the grant. Derived per
+        request rather than stored in `is_superuser`: role holding expires with the monthly period,
+        and nothing fires on that rollover."""
+        return super().has_perm(perm, obj) or self._has_admin_role()
+
+    def has_module_perms(self, app_label: str) -> bool:
+        return super().has_module_perms(app_label) or self._has_admin_role()
+
+    def _has_admin_role(self) -> bool:
+        from .permissions import has_active_role  # imported here: permissions imports this module
+
+        if not (self.is_active and has_active_role(self, Role.ADMINISTRATOR)):
+            return False
+        # Memoised per instance, like real_roles: the admin index asks once per registered model.
+        approved = getattr(self, _ADMIN_GRANT_MEMO, None)
+        if approved is None:
+            approved = AdminAccessGrant.objects.filter(
+                resident_id=self.pk, status=AdminAccessGrant.Status.APPROVED
+            ).exists()
+            setattr(self, _ADMIN_GRANT_MEMO, approved)
+        return approved
+
 
 class Residency(models.Model):
     """One row per resident per month (legacy intern_alumne_liste): which room + chore groups."""
@@ -169,6 +197,40 @@ class RoleAssignment(models.Model):
 
     def __str__(self) -> str:
         return f"{self.resident.full_name} = {self.get_role_display()} ({self.year}-{self.month:02d})"
+
+
+class AdminAccessGrant(models.Model):
+    """One resident's accepted (or pending) Django-admin access — the two-person rule on `administrator`.
+
+    Holding the role is necessary but not sufficient: a *second* administrator must accept before
+    `Resident._has_admin_role` returns True. Both doors that mint the role (the role editor and the
+    monthly list roll-forward) are reachable by the group itself, so without this Netvaerksgruppen
+    decides its own membership. Opened and closed by residents.signals, decided in residents.admin_access.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Afventer godkendelse"
+        APPROVED = "approved", "Godkendt"
+        DENIED = "denied", "Afvist"
+
+    resident = models.OneToOneField(Resident, on_delete=models.CASCADE, related_name="admin_access")
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+    # Who granted the role, when known. The role editor stamps it; the monthly roll-forward and the
+    # ETL leave it NULL, and a NULL only means the "granter may not approve" rule has nobody to bar.
+    requested_by = models.ForeignKey(
+        Resident, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    decided_by = models.ForeignKey(
+        Resident, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.resident.full_name} — {self.get_status_display()}"
 
 
 def active_period() -> tuple[int, int]:

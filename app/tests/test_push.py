@@ -315,7 +315,7 @@ def test_send_defers_to_the_thread_by_default(
     monkeypatch: pytest.MonkeyPatch, make_resident: Callable[..., Resident], settings: object
 ) -> None:
     """The request path must stay off the request thread -- one HTTPS round-trip per device against
-    gunicorn's 60s timeout is what the thread exists to avoid."""
+    the 60s request timeout is what the thread exists to avoid."""
     settings.VAPID_PUBLIC_KEY = "test-public-key"  # type: ignore[attr-defined]
     settings.VAPID_PRIVATE_KEY = "test-private-key"  # type: ignore[attr-defined]
     settings.VAPID_ADMIN_EMAIL = "drift@gahk.dk"  # type: ignore[attr-defined]

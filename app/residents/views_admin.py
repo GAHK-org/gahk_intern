@@ -9,6 +9,7 @@ import pickle  # nosec B403: _ResultUnpickler rejects every global/class lookup.
 from typing import Never
 
 from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import DatabaseError, connection
 from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect
@@ -20,13 +21,16 @@ from kombu.exceptions import DecodeError
 
 from config.celery import app as celery_app
 
-from .models import Resident, Role, RoleAssignment, active_period
-from .permissions import PREVIEW_SESSION_KEY, require_can_preview, role_required
+from . import admin_access
+from .models import AdminAccessGrant, Resident, Role, RoleAssignment, active_period
+from .permissions import PREVIEW_SESSION_KEY, current_resident, require_can_preview, role_required
 
 
 @role_required("administrator")
 def home(request: HttpRequest) -> HttpResponse:
-    return render(request, "siteadmin/home.html")
+    # The pending list rides on the front page as well as its own screen: the mail in
+    # residents.tasks is best-effort, and this is the one page every administrator opens.
+    return render(request, "siteadmin/home.html", {"pending_grants": admin_access.pending()})
 
 
 def _queued_jobs() -> list[dict[str, object]]:
@@ -253,6 +257,12 @@ def roles(request: HttpRequest) -> HttpResponse:
             if action == "add":
                 RoleAssignment.objects.get_or_create(resident_id=rid, role=role, year=year, month=month)
                 Resident.objects.filter(id=rid).update(is_staff=True)
+                # Stamp the granter so they cannot also be the approver (residents.admin_access).
+                # The grant itself is opened by the signal, which covers the other three doors.
+                if role == Role.ADMINISTRATOR:
+                    AdminAccessGrant.objects.filter(
+                        resident_id=rid, status=AdminAccessGrant.Status.PENDING, requested_by=None
+                    ).update(requested_by=current_resident(request))
             elif action == "remove":
                 RoleAssignment.objects.filter(resident_id=rid, role=role, year=year, month=month).delete()
         return redirect("siteadmin:roles")
@@ -330,3 +340,35 @@ def dev_clock_set(request: HttpRequest) -> HttpResponseRedirect:
     if ref and url_has_allowed_host_and_scheme(ref, {request.get_host()}, require_https=request.is_secure()):
         return redirect(ref)
     return redirect("dashboard")
+
+
+@role_required("administrator")
+def admin_access_view(request: HttpRequest) -> HttpResponse:
+    """Accept or refuse a new administrator's Django-admin access (the two-person rule).
+
+    Every administrator may open this; `can_decide` is what actually authorises each button, and it
+    is re-checked on POST rather than trusted from the rendered page.
+    """
+    me = current_resident(request)
+    if request.method == "POST":
+        grant = AdminAccessGrant.objects.filter(pk=request.POST.get("grant") or 0).first()
+        if grant is None or grant.status != AdminAccessGrant.Status.PENDING:
+            messages.error(request, "Anmodningen findes ikke længere.")
+        elif not admin_access.can_decide(me, grant):
+            messages.error(request, "Du kan ikke afgøre denne anmodning.")
+        else:
+            approve = request.POST.get("action") == "approve"
+            admin_access.decide(grant, me, approve=approve)
+            messages.success(
+                request,
+                f"{grant.resident.full_name} er {'godkendt' if approve else 'afvist'}.",
+            )
+        return redirect("siteadmin:admin_access")
+
+    rows = [(g, admin_access.can_decide(me, g)) for g in admin_access.pending()]
+    decided = (
+        AdminAccessGrant.objects.exclude(status=AdminAccessGrant.Status.PENDING)
+        .select_related("resident", "decided_by")
+        .order_by("-decided_at")[:20]
+    )
+    return render(request, "siteadmin/admin_access.html", {"rows": rows, "decided": decided})
