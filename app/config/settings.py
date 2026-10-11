@@ -26,6 +26,7 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 # "https://gahk.dk,https://www.gahk.dk". Set in the environment for prod.
 CSRF_TRUSTED_ORIGINS = [o for o in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",") if o]
 SESSION_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_DOMAIN = ".gahk.dk" if not DEBUG else None
 CSRF_COOKIE_SECURE = not DEBUG
 
 # Absolute base for links in mail sent off the request thread, where there is no request to
