@@ -414,6 +414,29 @@ def _pick[T](mapping: dict[int, T], raw: str | None) -> T | None:
     return mapping.get(int(raw)) if raw and raw.isdigit() else None
 
 
+def _add_form_draft(request: HttpRequest, action: str) -> dict[str, object]:
+    """What the add-forms posted, echoed back so a rejected submission keeps what was typed.
+
+    Ids come back as ints so the template can compare them to `room.id` directly rather than
+    stringformat-ing every option.
+    """
+
+    def _int(raw: str | None) -> int | None:
+        return int(raw) if raw and raw.isdigit() else None
+
+    return {
+        "action": action,
+        "resident": _int(request.POST.get("resident")),
+        "room": _int(request.POST.get("room")),
+        "workgroup": _int(request.POST.get("workgroup")),
+        "cleaning": _int(request.POST.get("cleaning")),
+        "sponsor": _int(request.POST.get("sponsor")),
+        "first_name": (request.POST.get("first_name") or "").strip(),
+        "last_name": (request.POST.get("last_name") or "").strip(),
+        "email": (request.POST.get("email") or "").strip(),
+    }
+
+
 def _send_welcome_email(request: HttpRequest, resident: Resident) -> bool:
     """Welcome a newly created resident with a link to set their password (F-014). Best-effort — a
     mail failure must not undo the creation — but it is logged and reported, never swallowed: the
@@ -482,6 +505,9 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
     cleanings = list(Cleaning.objects.order_by("name"))
 
     next_rows = None  # Sporer om vi skal hente fra databasen eller bruge brugerens kladde
+    # Same idea for the two add-forms: a rejected submission re-renders holding what was typed.
+    existing_draft: dict[str, object] | None = None
+    new_draft: dict[str, object] | None = None
 
     if request.method == "POST":
         action = request.POST.get("action")
@@ -606,8 +632,10 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
             resident = _pick({r.id: r for r in Resident.objects.all()}, request.POST.get("resident", ""))
             if not (resident and room):
                 messages.error(request, "Vælg både en beboer og et værelse.")
+                existing_draft = _add_form_draft(request, "add_existing")
             elif _room_taken(room, ny, nm, exclude_resident_id=resident.id):
                 messages.error(request, f"Værelse {room.number:03d} er allerede optaget i {ny}-{nm:02d}.")
+                existing_draft = _add_form_draft(request, "add_existing")
             else:
                 wg = _pick(wg_by_id, request.POST.get("workgroup", ""))
                 Residency.objects.update_or_create(
@@ -622,7 +650,9 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                 )
                 _sync_month_roles(resident.id, wg, ny, nm, resident.id in admins)
                 messages.success(request, f"{resident.full_name} tilføjet til {ny}-{nm:02d}.")
-            return redirect(f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}")
+                return redirect(
+                    f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}"
+                )
 
         elif action == "add_new":  # create a new resident and add them
             email = (request.POST.get("email") or "").strip().lower()
@@ -631,10 +661,13 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
             room = _pick(room_by_id, request.POST.get("room", ""))
             if not (email and first and last and room):
                 messages.error(request, "Udfyld navn, e-mail og værelse for at tilføje en ny beboer.")
+                new_draft = _add_form_draft(request, "add_new")
             elif Resident.objects.filter(email=email).exists():
                 messages.error(request, "Der findes allerede en beboer med den e-mail.")
+                new_draft = _add_form_draft(request, "add_new")
             elif _room_taken(room, ny, nm):
                 messages.error(request, f"Værelse {room.number:03d} er allerede optaget i {ny}-{nm:02d}.")
+                new_draft = _add_form_draft(request, "add_new")
             else:
                 wg = _pick(wg_by_id, request.POST.get("workgroup", ""))
                 # Fylgje is set here rather than left for a follow-up edit: whoever adds a newcomer
@@ -663,7 +696,9 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                         "Velkomstmailen kunne ikke sendes — bed dem bruge “glemt kodeord”, "
                         "og tjek serverloggen.",
                     )
-            return redirect(f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}")
+                return redirect(
+                    f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}"
+                )
 
     # Hvis next_rows stadig er None, betyder det at det er en GET request ELLER
     # en action (som "save") slog fejl og allerede populerede listen lokalt.
@@ -696,6 +731,8 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
             # the person is added rather than in a follow-up edit nobody remembers to make.
             "all_residents": Resident.objects.order_by("first_name", "last_name"),
             "priv_names": sorted(WORKGROUP_ROLE.keys()),
+            "existing_draft": existing_draft,
+            "new_draft": new_draft,
         },
     )
 

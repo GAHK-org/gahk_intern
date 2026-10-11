@@ -96,14 +96,14 @@
           <label>Beboer</label>
           <select name="resident">
             <option value="">— vælg —</option>
-            {% for a in available %}<option value="{{ a.id }}">{{ a.full_name }} ({{ a.email }})</option>{% endfor %}
+            {% for a in available %}<option value="{{ a.id }}" {% if existing_draft.resident == a.id %}selected{% endif %}>{{ a.full_name }} ({{ a.email }})</option>{% endfor %}
           </select>
           <label>Værelse</label>
-          <select name="room"><option value="">— vælg —</option>{% for room in rooms %}<option value="{{ room.id }}">{{ room.number|stringformat:"03d" }}</option>{% endfor %}</select>
+          <select name="room"><option value="">— vælg —</option>{% for room in rooms %}<option value="{{ room.id }}" {% if existing_draft.room == room.id %}selected{% endif %}>{{ room.number|stringformat:"03d" }}</option>{% endfor %}</select>
           <label>Embedsgruppe</label>
-          <select name="workgroup"><option value="">— ingen —</option>{% for w in workgroups %}<option value="{{ w.id }}">{{ w.name }}</option>{% endfor %}</select>
+          <select name="workgroup"><option value="">— ingen —</option>{% for w in workgroups %}<option value="{{ w.id }}" {% if existing_draft.workgroup == w.id %}selected{% endif %}>{{ w.name }}</option>{% endfor %}</select>
           <label>Rengøring</label>
-          <select name="cleaning"><option value="">— ingen —</option>{% for c in cleanings %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}</select>
+          <select name="cleaning"><option value="">— ingen —</option>{% for c in cleanings %}<option value="{{ c.id }}" {% if existing_draft.cleaning == c.id %}selected{% endif %}>{{ c.name }}</option>{% endfor %}</select>
           <p><button type="submit" class="btn">Tilføj</button></p>
         </form>
       </div>
@@ -113,19 +113,19 @@
         <form method="post" action="{% url 'next_month_list' %}" class="space-y-2">
           {% csrf_token %}<input type="hidden" name="period" value="{% if editing_current %}current{% else %}next{% endif %}">
         <input type="hidden" name="action" value="add_new">
-          <label>Fornavn</label><input type="text" name="first_name">
-          <label>Efternavn</label><input type="text" name="last_name">
-          <label>E-mail</label><input type="email" name="email">
+          <label>Fornavn</label><input type="text" name="first_name" value="{{ new_draft.first_name|default:"" }}">
+          <label>Efternavn</label><input type="text" name="last_name" value="{{ new_draft.last_name|default:"" }}">
+          <label>E-mail</label><input type="email" name="email" value="{{ new_draft.email|default:"" }}">
           <label>Værelse</label>
-          <select name="room"><option value="">— vælg —</option>{% for room in rooms %}<option value="{{ room.id }}">{{ room.number|stringformat:"03d" }}</option>{% endfor %}</select>
+          <select name="room"><option value="">— vælg —</option>{% for room in rooms %}<option value="{{ room.id }}" {% if new_draft.room == room.id %}selected{% endif %}>{{ room.number|stringformat:"03d" }}</option>{% endfor %}</select>
           <label>Embedsgruppe</label>
-          <select name="workgroup"><option value="">— ingen —</option>{% for w in workgroups %}<option value="{{ w.id }}">{{ w.name }}</option>{% endfor %}</select>
+          <select name="workgroup"><option value="">— ingen —</option>{% for w in workgroups %}<option value="{{ w.id }}" {% if new_draft.workgroup == w.id %}selected{% endif %}>{{ w.name }}</option>{% endfor %}</select>
           <label>Rengøring</label>
-          <select name="cleaning"><option value="">— ingen —</option>{% for c in cleanings %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}</select>
+          <select name="cleaning"><option value="">— ingen —</option>{% for c in cleanings %}<option value="{{ c.id }}" {% if new_draft.cleaning == c.id %}selected{% endif %}>{{ c.name }}</option>{% endfor %}</select>
           <label>Fylgje (fadder)</label>
           <select name="sponsor">
             <option value="">— ingen —</option>
-            {% for r in all_residents %}<option value="{{ r.id }}">{{ r.full_name }}</option>{% endfor %}
+            {% for r in all_residents %}<option value="{{ r.id }}" {% if new_draft.sponsor == r.id %}selected{% endif %}>{{ r.full_name }}</option>{% endfor %}
           </select>
           <p class="muted">Den nye beboer sætter selv sit kodeord via "glemt kodeord".</p>
           <p><button type="submit" class="btn">Opret og tilføj</button></p>
