@@ -7,6 +7,7 @@ import datetime
 import io
 import json
 import pickle  # nosec B403: _ResultUnpickler rejects every global/class lookup.
+import zoneinfo
 from typing import Never
 
 from django.conf import settings
@@ -30,24 +31,15 @@ from .permissions import PREVIEW_SESSION_KEY, current_resident, require_can_prev
 
 JOB_PAGE_SIZE = 25
 JOB_STATUSES = ("PENDING", "STARTED", "SUCCESS", "FAILURE", "RETRY", "REVOKED")
+# Sort key -> ORDER BY clause. These strings are interpolated into SQL, so they must stay literals
+# here and the request value must only ever select a key (the view validates it against this dict).
 JOB_SORTS = {
-    "started_desc": ("submitted_at", True),
-    "started_asc": ("submitted_at", False),
-    "finished_desc": ("finished_at", True),
-    "finished_asc": ("finished_at", False),
-    "status_asc": ("status", False),
-    "status_desc": ("status", True),
-}
-
-JOB_PAGE_SIZE = 25
-JOB_STATUSES = ("PENDING", "STARTED", "SUCCESS", "FAILURE", "RETRY", "REVOKED")
-JOB_SORTS = {
-    "started_desc": ("submitted_at", True),
-    "started_asc": ("submitted_at", False),
-    "finished_desc": ("finished_at", True),
-    "finished_asc": ("finished_at", False),
-    "status_asc": ("status", False),
-    "status_desc": ("status", True),
+    "started_desc": "sent_at DESC NULLS LAST, date_done DESC NULLS LAST, task_id",
+    "started_asc": "sent_at ASC NULLS LAST, date_done DESC NULLS LAST, task_id",
+    "finished_desc": "date_done DESC NULLS LAST, task_id",
+    "finished_asc": "date_done ASC NULLS LAST, task_id",
+    "status_asc": "status ASC, date_done DESC NULLS LAST, task_id",
+    "status_desc": "status DESC, date_done DESC NULLS LAST, task_id",
 }
 
 
@@ -129,11 +121,18 @@ def _format_runtime(runtime: datetime.timedelta) -> str:
 
 
 def _task_runtime(finished_at: datetime.datetime, submitted_at: datetime.datetime) -> str:
-    """Calculate runtime across Celery's UTC result and local SQL broker timestamps."""
+    """Calculate runtime across Celery's UTC result and the worker-local SQL broker timestamp.
+
+    kombu writes `kombu_message.timestamp` with `datetime.now` in the worker process, which is
+    Django-configured, and Django's settings export TZ=TIME_ZONE into that process. So the naive
+    value is in settings.TIME_ZONE regardless of the container's own TZ (checked: TZ=UTC outside,
+    `datetime.now()` is Copenhagen once settings load). Name the zone rather than use the request's
+    active one, which is the wrong reference if anything ever calls `timezone.activate`.
+    """
     if timezone.is_naive(finished_at):
         finished_at = finished_at.replace(tzinfo=datetime.UTC)
     if timezone.is_naive(submitted_at):
-        submitted_at = timezone.make_aware(submitted_at, timezone.get_current_timezone())
+        submitted_at = submitted_at.replace(tzinfo=zoneinfo.ZoneInfo(settings.TIME_ZONE))
     return _format_runtime(finished_at - submitted_at)
 
 
@@ -141,7 +140,7 @@ def _task_argument_id(job: dict[str, object]) -> int | None:
     """Return the first positional task argument when it is a plain integer ID."""
     try:
         arguments = ast.literal_eval(str(job.get("arguments", "")))
-    except (SyntaxError, ValueError):
+    except (SyntaxError, ValueError, MemoryError, RecursionError):
         return None
     if isinstance(arguments, (tuple, list)) and arguments:
         first_argument = arguments[0]
@@ -154,15 +153,16 @@ def _add_photo_album_context(jobs: list[dict[str, object]]) -> None:
     """Attach concise resource names for photo-album tasks with two batched database queries."""
     media_task = "photo_album.tasks.build_media_derivatives"
     import_task = "photo_album.tasks.process_album_import"
+    argument_ids = [_task_argument_id(job) for job in jobs]
     media_ids: set[int] = {
         argument_id
-        for job in jobs
-        if job["task"] == media_task and (argument_id := _task_argument_id(job)) is not None
+        for job, argument_id in zip(jobs, argument_ids, strict=True)
+        if job["task"] == media_task and argument_id is not None
     }
     import_ids: set[int] = {
         argument_id
-        for job in jobs
-        if job["task"] == import_task and (argument_id := _task_argument_id(job)) is not None
+        for job, argument_id in zip(jobs, argument_ids, strict=True)
+        if job["task"] == import_task and argument_id is not None
     }
     if not media_ids and not import_ids:
         return
@@ -191,8 +191,7 @@ def _add_photo_album_context(jobs: list[dict[str, object]]) -> None:
         album.pk: album for album in Album.objects.filter(pk__in=album_ids).only("pk", "folder", "name")
     }
 
-    for job in jobs:
-        argument_id = _task_argument_id(job)
+    for job, argument_id in zip(jobs, argument_ids, strict=True):
         if argument_id is not None and job["task"] == media_task and (media := media_by_id.get(argument_id)):
             job["task_context"] = f"Medie: {media.title} (album: {media.album})"
         elif (
@@ -210,19 +209,32 @@ def _add_photo_album_context(jobs: list[dict[str, object]]) -> None:
 
 
 def _child_jobs(parent_task_id: str) -> list[dict[str, object]]:
-    """Return completed child jobs whose broker metadata names the given parent task."""
+    """Return completed child jobs whose broker metadata names the given parent task.
+
+    `position()` on the raw payload text discards almost every broker row before the payload is
+    parsed as JSON; without it the cast would run for the whole table on every detail view. A retried
+    task is republished under the same id and kombu keeps every delivery, so DISTINCT ON keeps the
+    newest message per task.
+    """
     try:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT result.task_id, result.status, result.date_done, result.name, m.timestamp, m.payload
-                FROM kombu_message AS m
-                JOIN celery_taskmeta AS result
-                  ON result.task_id = convert_from(m.payload::bytea, 'UTF8')::jsonb->'headers'->>'id'
-                WHERE convert_from(m.payload::bytea, 'UTF8')::jsonb->'headers'->>'parent_id' = %s
-                ORDER BY result.date_done DESC
+                SELECT task_id, status, date_done, name, sent_at, payload
+                FROM (
+                    SELECT DISTINCT ON (result.task_id)
+                        result.task_id, result.status, result.date_done, result.name,
+                        m.timestamp AS sent_at, m.payload
+                    FROM kombu_message AS m
+                    JOIN celery_taskmeta AS result
+                      ON result.task_id = convert_from(m.payload::bytea, 'UTF8')::jsonb->'headers'->>'id'
+                    WHERE position(%s in m.payload) > 0
+                      AND convert_from(m.payload::bytea, 'UTF8')::jsonb->'headers'->>'parent_id' = %s
+                    ORDER BY result.task_id, m.id DESC
+                ) AS latest
+                ORDER BY date_done DESC NULLS LAST, task_id
                 """,
-                [parent_task_id],
+                [parent_task_id, parent_task_id],
             )
             rows = cursor.fetchall()
     except DatabaseError:
@@ -244,6 +256,7 @@ def _child_jobs(parent_task_id: str) -> list[dict[str, object]]:
                 "id": task_id,
                 "status": status,
                 "task": name or headers.get("task", "Ukendt opgave"),
+                "arguments": headers.get("argsrepr", ""),
                 "finished_at": finished_at,
                 "runtime": runtime,
             }
@@ -327,24 +340,57 @@ def _job_details(task_id: str) -> dict[str, object] | None:
     return job
 
 
+# One pass over kombu_message, newest delivery per task id (a retry republishes under the same id and
+# kombu keeps every delivery). Headers are parsed once per row here and only the handful of fields the
+# page shows are carried on, so neither the join nor the sort drags the payload around.
+#
+# `parent_id` comes from this row alone: celery_taskmeta has no parent column and the SQLAlchemy result
+# backend does not store `children`, so there is nothing else to consult. A result whose broker row has
+# been swept therefore reads as top-level.
+_LATEST_MESSAGES_CTE = """
+    WITH latest_messages AS MATERIALIZED (
+        SELECT DISTINCT ON (parsed.headers->>'id')
+            parsed.headers->>'id' AS task_id,
+            q.name AS queue,
+            m.timestamp AS sent_at,
+            parsed.headers->>'task' AS task,
+            parsed.headers->>'argsrepr' AS argsrepr,
+            parsed.headers->>'kwargsrepr' AS kwargsrepr,
+            parsed.headers->>'parent_id' AS parent_id
+        FROM kombu_message AS m
+        JOIN kombu_queue AS q ON q.id = m.queue_id
+        CROSS JOIN LATERAL (
+            SELECT convert_from(m.payload::bytea, 'UTF8')::jsonb->'headers' AS headers
+        ) AS parsed
+        ORDER BY parsed.headers->>'id', m.id DESC
+    )
+"""
+_JOB_FILTER_SQL = """
+    FROM celery_taskmeta AS result
+    LEFT JOIN latest_messages AS message ON message.task_id = result.task_id
+    WHERE (%s = '' OR result.status = %s)
+      AND (%s::boolean OR message.parent_id IS NULL)
+"""
+
+
 def _past_jobs(
-    status: str = "", sort: str = "finished_desc", include_children: bool = False
+    status: str = "",
+    sort: str = "finished_desc",
+    include_children: bool = False,
+    limit: int = JOB_PAGE_SIZE,
+    offset: int = 0,
 ) -> list[dict[str, object]]:
-    """Return completed task metadata paired with its acknowledged broker message."""
-    parameters = [status, status, sort, sort]
+    """Return one page of completed task metadata, filtered and sorted by the database.
+
+    Filtering, ordering and paging all happen in SQL so the sort options reach the whole result table
+    and a fan-out of sub-jobs cannot crowd the parent jobs out of a fixed window.
+    """
+    order_by = JOB_SORTS[sort]
     try:
         with connection.cursor() as cursor:
             cursor.execute(
-                """
-                WITH recent_results AS MATERIALIZED (
-                    SELECT task_id, status, date_done, name, worker, retries, queue
-                    FROM celery_taskmeta
-                    WHERE (%s = '' OR status = %s)
-                    ORDER BY
-                        CASE WHEN %s = 'finished_asc' THEN date_done END ASC,
-                        CASE WHEN %s <> 'finished_asc' THEN date_done END DESC
-                    LIMIT 100
-                )
+                f"""
+                {_LATEST_MESSAGES_CTE}
                 SELECT
                     result.task_id,
                     result.status,
@@ -353,21 +399,17 @@ def _past_jobs(
                     result.worker,
                     result.retries,
                     result.queue,
-                    message.queue,
-                    message.timestamp,
-                    message.payload
-                FROM recent_results AS result
-                LEFT JOIN LATERAL (
-                    SELECT q.name AS queue, m.timestamp, m.payload
-                    FROM kombu_message AS m
-                    JOIN kombu_queue AS q ON q.id = m.queue_id
-                    WHERE convert_from(m.payload::bytea, 'UTF8')::jsonb->'headers'->>'id' = result.task_id
-                    ORDER BY m.id DESC
-                    LIMIT 1
-                ) AS message ON TRUE
-                ORDER BY result.date_done DESC
+                    message.queue AS message_queue,
+                    message.sent_at,
+                    message.task,
+                    message.argsrepr,
+                    message.kwargsrepr,
+                    message.parent_id
+                {_JOB_FILTER_SQL}
+                ORDER BY {order_by}
+                LIMIT %s OFFSET %s
                 """,
-                parameters,
+                [status, status, include_children, limit, offset],
             )
             rows = cursor.fetchall()
     except DatabaseError:
@@ -383,48 +425,46 @@ def _past_jobs(
         retries,
         queue,
         message_queue,
-        timestamp,
-        payload,
+        sent_at,
+        message_task,
+        arguments,
+        keyword_arguments,
+        parent_id,
     ) in rows:
-        try:
-            headers = json.loads(payload).get("headers", {}) if payload is not None else {}
-        except (TypeError, json.JSONDecodeError):
-            headers = {}
-        runtime = _task_runtime(date_done, timestamp) if date_done and timestamp else None
         jobs.append(
             {
                 "id": task_id,
                 "status": job_status,
                 "finished_at": date_done,
-                "task": name or headers.get("task", "Ukendt opgave"),
+                "task": name or message_task or "Ukendt opgave",
                 "worker": worker,
                 "retries": retries,
                 "queue": queue or message_queue,
-                "submitted_at": timestamp,
-                "runtime": runtime,
-                "parent_id": headers.get("parent_id"),
-                "arguments": headers.get("argsrepr", ""),
-                "keyword_arguments": headers.get("kwargsrepr", ""),
+                "submitted_at": sent_at,
+                "runtime": _task_runtime(date_done, sent_at) if date_done and sent_at else None,
+                "parent_id": parent_id,
+                "arguments": arguments or "",
+                "keyword_arguments": keyword_arguments or "",
             }
         )
     _add_photo_album_context(jobs)
-    if not include_children:
-        jobs = [job for job in jobs if not job["parent_id"]]
-    sort_field, reverse = JOB_SORTS[sort]
-    present_jobs = [job for job in jobs if job[sort_field] is not None]
-    missing_jobs = [job for job in jobs if job[sort_field] is None]
-    present_jobs.sort(key=lambda job: job[sort_field], reverse=reverse)
-    return [*present_jobs, *missing_jobs]
+    return jobs
 
 
-def _past_job_count(status: str = "") -> int:
-    """Return the full number of completed jobs for the selected status."""
+def _past_job_count(status: str = "", include_children: bool = False) -> int:
+    """Return how many completed jobs match the same filters `_past_jobs` applies."""
     try:
         with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT COUNT(*) FROM celery_taskmeta WHERE (%s = '' OR status = %s)",
-                [status, status],
-            )
+            if include_children:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM celery_taskmeta WHERE (%s = '' OR status = %s)",
+                    [status, status],
+                )
+            else:
+                cursor.execute(
+                    f"{_LATEST_MESSAGES_CTE} SELECT COUNT(*) {_JOB_FILTER_SQL}",
+                    [status, status, include_children],
+                )
             row = cursor.fetchone()
     except DatabaseError:
         return 0
@@ -443,16 +483,19 @@ def worker_jobs(request: HttpRequest) -> HttpResponse:
     schedules = PeriodicTask.objects.filter(enabled=True).select_related(
         "interval", "crontab", "solar", "clocked"
     )
-    past_jobs = Paginator(_past_jobs(status, sort, include_children), JOB_PAGE_SIZE).get_page(
+    page = Paginator(range(_past_job_count(status, include_children)), JOB_PAGE_SIZE).get_page(
         request.GET.get("page")
+    )
+    jobs = _past_jobs(
+        status, sort, include_children, limit=JOB_PAGE_SIZE, offset=(page.number - 1) * JOB_PAGE_SIZE
     )
     return render(
         request,
         "siteadmin/worker_jobs.html",
         {
             "queued_jobs": _queued_jobs(),
-            "past_jobs": past_jobs,
-            "total_past_jobs": _past_job_count(status),
+            "past_jobs": page,
+            "jobs": jobs,
             "schedules": schedules,
             "job_statuses": JOB_STATUSES,
             "selected_status": status,
