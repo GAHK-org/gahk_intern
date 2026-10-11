@@ -1,0 +1,10 @@
+{
+  "services": {
+    "CoAuthoring": {
+      "request-filtering-agent": {
+        "allowPrivateIPAddress": true,
+        "allowMetaIPAddress": false
+      }
+    }
+  }
+}

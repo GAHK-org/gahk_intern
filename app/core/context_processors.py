@@ -7,6 +7,7 @@ from django.http import HttpRequest
 
 from arkiv.access import roles_allowed as arkiv_allowed
 from den_hurtige.access import roles_allowed as den_hurtige_allowed
+from documents.access import roles_allowed as documents_allowed
 from events.access import roles_allowed as events_allowed
 from opslagstavle.access import roles_allowed as opslagstavle_allowed
 from photo_album.access import roles_allowed as photo_album_allowed
@@ -118,6 +119,8 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     # today, and kept conditional for the reason given up there.
     if arkiv_allowed(roles):
         ressourcer.append(("/intern/arkiv/", "Arkiv", "archive"))
+    if documents_allowed(roles):
+        ressourcer.append(("/intern/dokumenter/", "Dokumenter", "file"))
     ressourcer += [
         (settings.WIKI_URL, "Wiki", "book"),
         (settings.FEEDBACK_URL, "Fejl & ønsker", "bug"),
