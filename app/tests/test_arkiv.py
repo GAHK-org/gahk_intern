@@ -1807,7 +1807,7 @@ def test_the_zip_cannot_be_used_to_reach_a_file_you_cannot_see(
 def test_a_selection_over_the_size_cap_is_refused_with_a_message(
     resident_in: Callable, media_tmp: Path
 ) -> None:
-    """The cap is about gunicorn's worker timeout, not about disk - see views.download_selected.
+    """The cap is about the request timeout, not about disk - see views.download_selected.
     Refused as a message on the folder, not a 500 twenty seconds into a dead download."""
     from arkiv.views import MAX_SELECTED_BYTES
 
@@ -1913,7 +1913,7 @@ def test_the_thumbnailer_makes_both_sizes_in_one_pass(media_tmp: Path) -> None:
 
 def test_the_zip_is_left_in_the_store_as_an_object(resident_in: Callable, media_tmp: Path) -> None:
     """THE POINT OF BUILDING IT RATHER THAN STREAMING IT. An object can be redirected to, which is
-    what takes the recipient's connection off a gunicorn worker - see views.download_selected."""
+    what takes the recipient's connection off a server thread - see views.download_selected."""
     import zipfile
     from io import BytesIO
 

@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Admin-adgang - GAHK Admin{% endblock %}
+{% block content %}
+  <h1>Admin-adgang</h1>
+  <p class="muted mb-4">
+    Et nyt medlem af Netværksgruppen får først adgang til Django admin, når et <em>andet</em>
+    medlem godkender det. Hverken personen selv eller den, der tildelte rollen, kan godkende.
+  </p>
+
+  <div class="card mb-4">
+    <h2>Afventer godkendelse</h2>
+    {% for grant, may_decide in rows %}
+      <div class="border-b border-gray-100 py-2 flex items-center justify-between gap-2">
+        <div>
+          <strong>{{ grant.resident.full_name }}</strong>
+          <span class="muted text-sm">
+            — anmodet {{ grant.created_at|date:"j. F Y" }}
+            {% if grant.requested_by %}af {{ grant.requested_by.full_name }}{% endif %}
+          </span>
+        </div>
+        {% if may_decide %}
+          <div class="flex gap-1">
+            <form method="post" class="inline">{% csrf_token %}
+              <input type="hidden" name="grant" value="{{ grant.id }}">
+              <input type="hidden" name="action" value="approve">
+              <button type="submit" class="text-sm">Godkend</button>
+            </form>
+            <form method="post" class="inline">{% csrf_token %}
+              <input type="hidden" name="grant" value="{{ grant.id }}">
+              <input type="hidden" name="action" value="deny">
+              <button type="submit" class="text-sm bg-gray-200! text-gray-800!">Afvis</button>
+            </form>
+          </div>
+        {% else %}
+          <span class="muted text-sm">Du kan ikke afgøre denne</span>
+        {% endif %}
+      </div>
+    {% empty %}
+      <p class="muted">Ingen anmodninger afventer.</p>
+    {% endfor %}
+  </div>
+
+  <div class="card">
+    <h2>Afgjort</h2>
+    {% for grant in decided %}
+      <div class="border-b border-gray-100 py-2">
+        {{ grant.resident.full_name }} — {{ grant.get_status_display }}
+        {% if grant.decided_by %}af {{ grant.decided_by.full_name }}{% endif %}
+        <span class="muted text-sm">{{ grant.decided_at|date:"j. F Y" }}</span>
+      </div>
+    {% empty %}
+      <p class="muted">Intet afgjort endnu.</p>
+    {% endfor %}
+  </div>
+{% endblock %}

@@ -5,6 +5,7 @@ monthly roles, admissions email/CSRF rules, POS money integrity, and the front-p
 """
 
 from collections.abc import Callable
+from runpy import run_path
 
 import pytest
 from django.contrib.auth.hashers import identify_hasher
@@ -13,7 +14,19 @@ from django.test import Client
 from django.utils import timezone
 
 from admissions.models import Application
+from config import settings as config_settings
 from residents.models import Resident, Role, active_period
+
+
+@pytest.mark.parametrize(("debug", "domain"), [("0", ".gahk.dk"), ("1", None)])
+def test_session_cookie_domain_supports_site_hosts(
+    monkeypatch: pytest.MonkeyPatch, debug: str, domain: str | None
+) -> None:
+    monkeypatch.setenv("DJANGO_DEBUG", debug)
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
+    configured = run_path(config_settings.__file__)
+
+    assert configured["SESSION_COOKIE_DOMAIN"] == domain
 
 
 # ---------------------------------------------------------------- auth (F-014)
@@ -535,6 +548,39 @@ def test_is_staff_synced_with_roles(make_resident: Callable) -> None:
     RoleAssignment.objects.create(resident=su, role=Role.AK, year=y, month=m).delete()
     su.refresh_from_db()
     assert su.is_staff is True  # superuser stays staff regardless
+
+
+@pytest.mark.django_db
+def test_administrator_has_full_admin_permissions_while_in_role(make_resident: Callable) -> None:
+    """Netvaerksgruppen (= `administrator`) gets superuser-equivalent admin rights, but only for the
+    active period — the role is never mirrored into `is_superuser`, which would outlive it.
+
+    Approval (the two-person rule) is covered in test_admin_access; here it is granted outright so
+    this test stays about the *period* half of the condition."""
+    from residents.models import AdminAccessGrant, RoleAssignment, active_period
+
+    y, m = active_period()
+    admin = make_resident(email="netvaerk@gahk.dk", roles=[Role.ADMINISTRATOR])
+    AdminAccessGrant.objects.filter(resident=admin).update(status=AdminAccessGrant.Status.APPROVED)
+    admin = Resident.objects.get(pk=admin.pk)
+    assert admin.is_superuser is False  # the flag is never set
+    assert admin.has_perm("residents.delete_resident") is True
+    assert admin.has_module_perms("oelkaelder") is True
+
+    other = make_resident(email="ak2@gahk.dk", roles=[Role.AK])
+    assert other.has_perm("residents.delete_resident") is False
+    assert other.has_module_perms("oelkaelder") is False
+
+    RoleAssignment.objects.filter(resident=admin, role=Role.ADMINISTRATOR).delete()
+    admin = Resident.objects.get(pk=admin.pk)  # fresh instance: real_roles memoises per instance
+    assert admin.has_perm("residents.delete_resident") is False
+
+    # Held last month only -> expired, even though is_staff (any period) is still True.
+    prev = (y - 1, 12) if m == 1 else (y, m - 1)
+    RoleAssignment.objects.create(resident=admin, role=Role.ADMINISTRATOR, year=prev[0], month=prev[1])
+    admin = Resident.objects.get(pk=admin.pk)
+    assert admin.is_staff is True
+    assert admin.has_perm("residents.delete_resident") is False
 
 
 @pytest.mark.django_db

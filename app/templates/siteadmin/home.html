@@ -2,9 +2,20 @@
 {% block title %}Admin - GAHK{% endblock %}
 {% block content %}
   <h1>Administration</h1>
+  {% if pending_grants %}
+    <div class="card mb-4 border-l-4 border-amber-500">
+      <strong>{{ pending_grants|length }} ny(e) administrator(er) afventer godkendelse.</strong>
+      <p class="muted">
+        {% for g in pending_grants %}{{ g.resident.full_name }}{% if not forloop.last %}, {% endif %}{% endfor %}
+        — ingen adgang til Django admin før et andet medlem godkender.
+      </p>
+      <a href="{% url 'siteadmin:admin_access' %}">Se anmodninger</a>
+    </div>
+  {% endif %}
   <div class="card">
     <ul class="list-disc ml-5">
       <li><a href="{% url 'siteadmin:roles' %}">Roller / embedsgrupper</a> - tildel månedens roller</li>
+      <li><a href="{% url 'siteadmin:admin_access' %}">Admin-adgang</a> - godkend nye administratorer</li>
       <li><a href="{% url 'siteadmin:preview' %}">Vis siden som rolle</a> -se hvordan siden ser ud for hver embedsgruppe</li>
       <li><a href="{% url 'siteadmin:worker_jobs' %}">Worker-job</a> - kø, historik og planlagte opgaver</li>
       <li><a href="/optagelse/listansoegninger">Ansøgninger</a></li>

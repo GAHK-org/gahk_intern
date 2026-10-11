@@ -56,7 +56,7 @@ class _Entry(TypedDict):
 def _client_ip(request: HttpRequest) -> str:
     """The till's real IP. Behind Coolify/Traefik, REMOTE_ADDR is the proxy, so trust the last hop of
     X-Forwarded-For (the IP Traefik observed — the rightmost entry is the one it appended, not a value
-    a client could spoof). Safe only because gunicorn is reachable *only* via the proxy."""
+    a client could spoof). Safe only because the app server is reachable *only* via the proxy."""
     xff = request.META.get("HTTP_X_FORWARDED_FOR", "")
     if xff:
         return xff.split(",")[-1].strip()
@@ -473,8 +473,8 @@ def all_sales(request: HttpRequest) -> HttpResponse:
     if request.GET.get("format") in ("csv", "xlsx"):
         # Export the whole filtered set, not the current page. Capped: _report_response materialises
         # every row, and openpyxl holds each cell as an object — the full ~99k-row history would be
-        # hundreds of MB and outlive gunicorn's 60s worker timeout. Streaming would not help; with sync
-        # workers that timeout counts time since the worker last checked in per request, not per chunk.
+        # hundreds of MB and outlive the 60s request timeout. Streaming would not help; the timeout
+        # counts time since the worker last checked in per request, not per chunk.
         count = qs.count()
         if count > EXPORT_MAX_ROWS:
             messages.error(
