@@ -79,8 +79,10 @@ POSTS = [
     (Category.PRAKTISK, ETAGEPLANER_BODY),
     (
         Category.ANDET,
-        "**Sofa søger nyt hjem.** Den står i kælderen og skal væk inden weekenden — skriv en "
-        "kommentar hvis du vil have den.",
+        (
+            "**Sofa søger nyt hjem.** Den står i kælderen og skal væk inden weekenden — skriv en "
+            "kommentar hvis du vil have den."
+        ),
     ),
 ]
 

@@ -58,7 +58,7 @@ def _verify_turnstile(request: HttpRequest) -> bool:
     ).encode()
     try:
         # URL is a fixed HTTPS constant, not user-controlled — safe from B310 scheme abuse.
-        with urllib.request.urlopen(TURNSTILE_VERIFY_URL, data=data, timeout=5) as resp:  # nosec B310  # noqa: S310
+        with urllib.request.urlopen(TURNSTILE_VERIFY_URL, data=data, timeout=5) as resp:  # nosec B310
             return bool(json.loads(resp.read()).get("success"))
     except Exception:
         logger.warning("Turnstile verification request failed", exc_info=True)

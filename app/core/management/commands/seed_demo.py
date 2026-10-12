@@ -84,15 +84,19 @@ ROOM_CRITERIA = [
         "walls",
         "Vægge",
         5,
-        "Maling.\n1: Nymalet/pæn stand,\n2: Få pletter eller misfarvninger,\n"
-        "3: Større pletter og misfarvninger,\n4: Revner,\n5: Huller el. svamp",
+        (
+            "Maling.\n1: Nymalet/pæn stand,\n2: Få pletter eller misfarvninger,\n"
+            "3: Større pletter og misfarvninger,\n4: Revner,\n5: Huller el. svamp"
+        ),
     ),
     (
         "floor",
         "Gulve",
         5,
-        "Lakering og slibning.\n1: God/pæn stand,\n2: Få ridser og pletter,\n"
-        "3: Større ridser og pletter,\n4: Mellem de to,\n5: Huller i gulvet eller skibslak",
+        (
+            "Lakering og slibning.\n1: God/pæn stand,\n2: Få ridser og pletter,\n"
+            "3: Større ridser og pletter,\n4: Mellem de to,\n5: Huller i gulvet eller skibslak"
+        ),
     ),
     (
         "windows",
