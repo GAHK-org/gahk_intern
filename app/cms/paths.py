@@ -51,6 +51,7 @@ RESERVED_TOP_SEGMENTS = frozenset(
         "static",
         "sw.js",
         "favicon.ico",
+        "healthz",
         "robots.txt",
     }
 )
