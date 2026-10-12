@@ -665,7 +665,7 @@ def test_serve_media_404s_a_key_with_no_matching_row(
 ) -> None:
     client.force_login(make_resident())
 
-    response = client.get("/fotoalbum-media/photo-album/999999/thumbnail/nope.jpg")
+    response = client.get("/photo-album/999999/thumbnail/nope.jpg")
 
     assert response.status_code == 404
 
@@ -960,12 +960,12 @@ def test_bin_displays_media_in_the_gallery_viewer(
     assert response.status_code == 200
     content = response.content.decode()
     assert "data-album-gallery" in content
-    assert 'src="/fotoalbum-media/thumbnail.jpg"' in content
+    assert 'src="/thumbnail.jpg"' in content
     assert "Fra album: Fest" in content
     # The viewer-sized file is not in the grid any more; it arrives when the item is opened.
-    assert "/fotoalbum-media/high-definition.jpg" not in content
+    assert "/high-definition.jpg" not in content
     detail = client.get(reverse("photo_album:media_detail", args=[media.pk])).json()
-    assert detail["full"] == "/fotoalbum-media/high-definition.jpg"
+    assert detail["full"] == "/high-definition.jpg"
     assert detail["album"] == "Fest"
 
 
