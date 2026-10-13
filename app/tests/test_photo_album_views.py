@@ -631,7 +631,10 @@ def test_system_albums_lists_root_albums_of_a_folder(make_resident: Callable[...
     assert client.get(url, {"folder": "2024"}).status_code == 403
     response = client.get(url, {"folder": "2024"}, HTTP_AUTHORIZATION="Bearer migration-token")
 
-    assert response.json() == {"albums": [{"id": root.pk, "name": "Sommerfest", "media": 1}]}
+    payload = response.json()
+    assert payload["albums"] == [{"id": root.pk, "name": "Sommerfest", "media": 1}]
+    assert ".jpg" in payload["rules"]["imageExtensions"] and ".avi" in payload["rules"]["videoExtensions"]
+    assert payload["rules"]["maxSubAlbumLevels"] == 4
 
 
 @pytest.mark.django_db
