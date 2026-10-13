@@ -129,4 +129,4 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 
 ## Development seed data
 
-The photo-album seed generator creates albums in year and `Andet` folders, including a sub-album tree three levels deep, thumbnail-ready media, an album large enough to page, and lifecycle examples for recent/old uploads, binned media, and an automatically locked album.
+The photo-album seed generator creates albums in year and `Andet` folders, including three sub-album trees three levels deep, tags on albums at every level of those trees and on single media (some with several), thumbnail-ready media, an album large enough to page, and lifecycle examples for recent/old uploads, binned media, and an automatically locked album.
