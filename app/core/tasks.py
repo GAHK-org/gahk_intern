@@ -16,17 +16,21 @@ from residents.models import Resident, active_period
 # ever sent, each carrying its JSON payload. `process_pending_media` contributes one recovery
 # message each night.
 #
-# The result backend needs no equivalent: Celery installs its own `celery.backend_cleanup` entry
-# from `result_expires`, which is what keeps `celery_taskmeta` in check.
+# The result backend has its own sweep below, purge_worker_job_results.
 #
 # A day is long enough to be no help to a worker (a message is acknowledged within seconds of being
 # taken) and short enough to keep the table small; it exists only so an operator looking into a
 # failure this morning still has the rows in front of them.
 BROKER_MESSAGE_RETENTION = datetime.timedelta(days=1)
 
-# How long a task's log (core/worker_logs.py) is kept. Longer than the result backend keeps the job
-# itself — a week, so the log of a weekend's Dropbox import is still there on Monday.
-WORKER_JOB_LOG_RETENTION = datetime.timedelta(days=7)
+# How long a SUCCESSFUL job is kept on the worker-jobs page: its result (celery_taskmeta) and its
+# log (core/worker_logs.py) alike. Anything else — failed, revoked, or stuck as started by a worker
+# that died — stays until somebody deletes it, since those are the jobs somebody needs to look into.
+WORKER_JOB_RETENTION = datetime.timedelta(days=30)
+
+# The one status that is purged — Celery's, as stored in celery_taskmeta.status and copied into
+# WorkerJobLog.state.
+_SUCCESS = "SUCCESS"
 
 
 @shared_task
@@ -81,9 +85,34 @@ def purge_delivered_broker_messages() -> int:
 
 @shared_task
 def purge_worker_job_logs() -> int:
-    """Delete stored task logs older than WORKER_JOB_LOG_RETENTION."""
+    """Delete the stored logs of successful jobs older than WORKER_JOB_RETENTION."""
     from .models import WorkerJobLog
 
-    cutoff = timezone.now() - WORKER_JOB_LOG_RETENTION
-    deleted, _ = WorkerJobLog.objects.filter(started_at__lt=cutoff).delete()
+    cutoff = timezone.now() - WORKER_JOB_RETENTION
+    deleted, _ = WorkerJobLog.objects.filter(state=_SUCCESS, started_at__lt=cutoff).delete()
     return deleted
+
+
+@shared_task
+def purge_worker_job_results() -> int:
+    """Delete successful jobs older than WORKER_JOB_RETENTION from the result backend.
+
+    In place of Celery's own `celery.backend_cleanup`, which deletes every result past
+    `result_expires` whatever its status — failures included, which are the ones worth keeping.
+    settings.CELERY_RESULT_EXPIRES is None so Beat no longer installs it, and core migration 0012
+    removes the entry an earlier Beat already stored.
+
+    Raw SQL, a naive UTC cutoff and the guard on the table, all for the reasons given on
+    purge_delivered_broker_messages: the table is Celery's, `date_done` is `timestamp without time
+    zone` holding UTC, and a result backend other than the database has no such table. (Such a
+    backend now keeps results forever unless it expires them itself; Redis does not.)
+    """
+    if "celery_taskmeta" not in connection.introspection.table_names():
+        return 0
+    cutoff = datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - WORKER_JOB_RETENTION
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "DELETE FROM celery_taskmeta WHERE status = %s AND date_done < %s",
+            [_SUCCESS, cutoff],
+        )
+        return cursor.rowcount

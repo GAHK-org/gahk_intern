@@ -1,19 +1,23 @@
+import importlib
 import logging
 import zipfile
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 
 import pytest
 from celery import shared_task
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import connection
+from django.db.backends.utils import CursorWrapper
 from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
+from config.celery import app as celery_app
 from core import worker_logs
 from core.models import WorkerJobLog
-from core.tasks import purge_worker_job_logs
+from core.tasks import WORKER_JOB_RETENTION, purge_worker_job_logs, purge_worker_job_results
 from photo_album.models import AlbumImport
 from photo_album.tasks import process_album_import
 from residents.models import Resident, Role
@@ -137,10 +141,67 @@ def test_worker_job_page_shows_the_log_even_after_the_result_is_gone(
 
 
 @pytest.mark.django_db
-def test_old_job_logs_are_purged() -> None:
+def test_only_the_logs_of_old_successful_jobs_are_purged() -> None:
     now = timezone.now()
-    WorkerJobLog.objects.create(task_id="old", started_at=now - timedelta(days=8))
-    WorkerJobLog.objects.create(task_id="new", started_at=now - timedelta(days=6))
+    for task_id, state, age in [
+        ("old", "SUCCESS", 31),
+        ("new", "SUCCESS", 29),
+        ("old-failure", "FAILURE", 365),
+        ("old-unfinished", "", 365),
+    ]:
+        WorkerJobLog.objects.create(task_id=task_id, state=state, started_at=now - timedelta(days=age))
 
     assert purge_worker_job_logs.run() == 1
-    assert list(WorkerJobLog.objects.values_list("task_id", flat=True)) == ["new"]
+    assert sorted(WorkerJobLog.objects.values_list("task_id", flat=True)) == [
+        "new",
+        "old-failure",
+        "old-unfinished",
+    ]
+
+
+def _store_result(cursor: CursorWrapper, task_id: str, status: str, age: timedelta) -> None:
+    done = datetime.now(UTC).replace(tzinfo=None) - age  # naive UTC, as Celery stores it
+    cursor.execute(
+        "INSERT INTO celery_taskmeta (task_id, status, date_done) VALUES (%s, %s, %s)",
+        [task_id, status, done],
+    )
+
+
+@pytest.mark.django_db
+def test_only_old_successful_jobs_are_purged_from_the_result_backend() -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "CREATE TABLE celery_taskmeta (id serial PRIMARY KEY, task_id varchar(155) UNIQUE,"
+            " status varchar(50), date_done timestamp without time zone)"
+        )
+        _store_result(cursor, "old", "SUCCESS", WORKER_JOB_RETENTION + timedelta(hours=1))
+        _store_result(cursor, "new", "SUCCESS", WORKER_JOB_RETENTION - timedelta(hours=1))
+        _store_result(cursor, "old-failure", "FAILURE", timedelta(days=365))
+        _store_result(cursor, "old-started", "STARTED", timedelta(days=365))
+
+    assert purge_worker_job_results.run() == 1
+
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT task_id FROM celery_taskmeta ORDER BY task_id")
+        assert [row[0] for row in cursor.fetchall()] == ["new", "old-failure", "old-started"]
+
+
+@pytest.mark.django_db
+def test_the_result_sweep_is_a_noop_without_a_database_result_backend() -> None:
+    assert purge_worker_job_results.run() == 0
+
+
+@pytest.mark.django_db
+def test_celerys_own_cleanup_which_deletes_failures_too_is_off() -> None:
+    from django.apps import apps
+    from django_celery_beat.models import CrontabSchedule, PeriodicTask
+
+    migration = importlib.import_module("core.migrations.0012_remove_celery_backend_cleanup")
+    crontab = CrontabSchedule.objects.create(minute="0", hour="4")
+    PeriodicTask.objects.create(name="celery.backend_cleanup", task="celery.backend_cleanup", crontab=crontab)
+    PeriodicTask.objects.create(name="other", task="core.tasks.purge_worker_job_logs", crontab=crontab)
+
+    migration.remove_backend_cleanup(apps, None)  # type: ignore[arg-type]
+
+    assert list(PeriodicTask.objects.values_list("name", flat=True)) == ["other"]
+    assert celery_app.conf.result_expires is None, "Beat would install celery.backend_cleanup again"
