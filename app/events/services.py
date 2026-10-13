@@ -301,6 +301,7 @@ def notify_cancelled(event: Event) -> None:
         title=f"Aflyst: {event.title}",
         body=push.preview(f"{_when(event)} bliver ikke til noget."),
         url=_url(event),
+        exclude=event.organiser_id,
     )
 
 

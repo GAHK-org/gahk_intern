@@ -31,7 +31,7 @@ VIEWS = (("kronologisk", "Kronologisk"), ("kategori", "Efter kategori"))
 def _safe(url: str) -> str:
     """Redirect target for a stored row. Rows are written by our own code with site-relative paths;
     this refuses anything else anyway, so a bad row can never become an open redirect."""
-    return url if url.startswith("/") and not url.startswith("//") else "/intern/notifikationer/"
+    return url if services.is_site_path(url) else "/intern/notifikationer/"
 
 
 @login_required

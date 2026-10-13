@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from django.db import transaction
 from django.db.models import Q, QuerySet
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 
 from core import push
 from core.clock import current_datetime
@@ -46,6 +47,13 @@ DEFAULT_TTL = datetime.timedelta(days=7)
 MAX_ACTORS = 50
 
 Recipients = QuerySet[Resident] | Iterable[int]
+
+
+def is_site_path(url: str) -> bool:
+    """A path on this site and nothing else. `url_has_allowed_host_and_scheme` with no hosts allowed
+    is Django's own guard: it also refuses the forms browsers quietly turn into another host,
+    such as a slash followed by a backslash, which a plain `startswith("/")` lets through."""
+    return url.startswith("/") and url_has_allowed_host_and_scheme(url, allowed_hosts=None)
 
 
 def everyone() -> QuerySet[Resident]:
