@@ -8,7 +8,7 @@
   <button type="button" class="btn-top notif-bell-button" aria-label="Notifikationer" :aria-expanded="open"
           @click="open = !open"
           hx-get="{% url 'notifications:dropdown' %}" hx-target="#notif-panel" hx-trigger="click">
-    <svg aria-hidden="true"><use href="#i-bell"></use></svg>
+    <svg aria-hidden="true"><use href="#i-inbox"></use></svg>
     {% with unseen=notifications_unseen %}
       {% if unseen %}<span class="notif-badge">{% if unseen > 99 %}99+{% else %}{{ unseen }}{% endif %}</span>{% endif %}
     {% endwith %}
