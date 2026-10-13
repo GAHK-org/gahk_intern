@@ -81,3 +81,10 @@ class ZipAlbumImportForm(forms.Form):
         finally:
             archive.seek(0)
         return archive
+
+
+class SystemZipImportForm(ZipAlbumImportForm):
+    """The import script's upload. `album` pins the root album: the archive's paths are then relative
+    to it, rather than the album being named after the ZIP and the folders it descends through."""
+
+    album = forms.CharField(max_length=140, required=False, validators=[validate_album_name])

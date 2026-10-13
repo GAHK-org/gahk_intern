@@ -656,6 +656,9 @@ class AlbumImport(models.Model):
     # Add to a root album of the same name instead of refusing the archive — set for the Dropbox
     # import, which sends the files an earlier attempt left out to the album that attempt created.
     merge_into_existing = models.BooleanField(default=False)
+    # The root album's name when the archive's paths are relative to it (the script's retries);
+    # empty to name it after the ZIP and the folders the import descends through.
+    album_name = models.CharField(max_length=140, blank=True)
     # Whether it did: the archive was added to an album that already existed rather than creating it.
     merged = models.BooleanField(default=False)
     error = models.CharField(max_length=255, blank=True)

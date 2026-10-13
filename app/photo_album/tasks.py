@@ -321,6 +321,7 @@ def process_album_import(import_id: int) -> bool:
                 resident=album_import.requested_by,
                 lock=album_import.lock_when_done,
                 merge=album_import.merge_into_existing,
+                root_name=album_import.album_name,
             )
         album_import.state = AlbumImportState.READY
         album_import.album_ids = [album.pk for album in result.albums]

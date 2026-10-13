@@ -335,13 +335,13 @@ def test_zip_import_refuses_a_root_album_name_already_in_the_folder(
 
 
 def _system_import(
-    *members: tuple[str, bytes], name: str = "Fest.zip"
+    *members: tuple[str, bytes], name: str = "Fest.zip", album: str = ""
 ) -> tuple[AlbumImport, dict[str, object]]:
     """Post a ZIP to the import script's endpoint, run the worker task on it and fetch its status."""
     client = Client()
     response = client.post(
         reverse("photo_album:system_import_zip"),
-        {"folder": "2026", "archive": _zip_upload(*members, name=name)},
+        {"folder": "2026", "album": album, "archive": _zip_upload(*members, name=name)},
         HTTP_AUTHORIZATION="Bearer migration-token",
         HTTP_ACCEPT="application/json",
     )
@@ -386,6 +386,25 @@ def test_system_import_adds_only_new_files_to_an_album_of_the_same_name() -> Non
     root = Album.objects.get(name="Fest")
     assert album_import.album_ids[0] == root.pk
     assert root.is_locked() and status["locked"] is True  # locked again, like everything it imports
+
+
+@pytest.mark.django_db
+@override_settings(PHOTO_ALBUM_IMPORT_TOKEN="migration-token")
+def test_system_import_with_an_album_name_takes_the_paths_as_relative_to_that_album() -> None:
+    """A retry of files from one sub-album must not become an album named after that sub-album."""
+    _system_import(("Fest/first.jpg", jpeg_bytes()), ("Fest/Lørdag/second.jpg", jpeg_bytes()))
+    _unlock("Fest")
+
+    album_import, status = _system_import(("Lørdag/late.jpg", jpeg_bytes()), name="retry.zip", album="Fest")
+
+    assert album_import.state == AlbumImportState.READY
+    assert status["merged"] is True
+    assert _tree() == [("Fest", None), ("Lørdag", "Fest")]
+    assert Media.objects.get(filename="late.jpg").album.name == "Lørdag"
+
+    # Without one, the same archive is named after the ZIP — or here, the folder it descends into.
+    album_import, _ = _system_import(("Lørdag/late.jpg", jpeg_bytes()), name="retry.zip")
+    assert ("Lørdag", None) in _tree()
 
 
 @pytest.mark.django_db
