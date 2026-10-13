@@ -671,6 +671,8 @@ def test_system_albums_lists_root_albums_of_a_folder(make_resident: Callable[...
     assert payload["albums"] == [{"id": root.pk, "name": "Sommerfest", "media": 1}]
     assert ".jpg" in payload["rules"]["imageExtensions"] and ".avi" in payload["rules"]["videoExtensions"]
     assert payload["rules"]["maxSubAlbumLevels"] == 4
+    assert payload["rules"]["macosMetadataMaxBytes"] == 16 * 1024
+    assert payload["rules"]["macosMetadataAnySize"] == [".DS_Store"]
 
 
 @pytest.mark.django_db

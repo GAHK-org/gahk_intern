@@ -191,6 +191,7 @@ class Rules:
     video_max_bytes: int
     max_sub_album_levels: int
     macos_metadata_max_bytes: int
+    macos_metadata_any_size: frozenset[str]
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> "Rules":
@@ -201,6 +202,8 @@ class Rules:
             video_max_bytes=int(data["videoMaxMb"]) * 1024 * 1024,
             max_sub_album_levels=int(data["maxSubAlbumLevels"]),
             macos_metadata_max_bytes=int(data["macosMetadataMaxBytes"]),
+            # Absent from servers older than the .DS_Store exception, which had no such names.
+            macos_metadata_any_size=frozenset(data.get("macosMetadataAnySize", [])),
         )
 
 
@@ -494,7 +497,10 @@ def plan_album(
             or name.startswith("._")
             or name in MACOS_METADATA_FILES
         ):
-            if size <= rules.macos_metadata_max_bytes:
+            if (
+                name in rules.macos_metadata_any_size
+                or size <= rules.macos_metadata_max_bytes
+            ):
                 plan.ignored.append(f"{shown} (macOS metadata)")
             else:
                 plan.problems.append(

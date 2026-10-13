@@ -307,7 +307,11 @@ def tagged_media(media: QuerySet[Media], tag: Tag) -> QuerySet[Media]:
 # Finder litters every archive it makes with these. Small ones are what they claim to be and are
 # dropped; a large "._" file is more likely a real file with an unlucky name, so it fails the import
 # rather than vanishing silently.
-MACOS_METADATA_MAX_BYTES = 4 * 1024
+MACOS_METADATA_MAX_BYTES = 16 * 1024
+# Except these, dropped at any size: a .DS_Store grows with the folder it describes, so a big album's
+# is easily past the limit, and no real photo or video goes by that exact name. Skipped members are
+# never read, so its size costs nothing.
+MACOS_METADATA_ANY_SIZE = frozenset({".DS_Store"})
 _WINDOWS_METADATA = frozenset({"thumbs.db", "desktop.ini"})
 # The DOS timestamp every ZIP entry has, which tools write when they have no real one.
 _ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
@@ -399,7 +403,7 @@ def _plan_import(zip_archive: zipfile.ZipFile, archive_name: str, folder: str, w
             plan.errors.append(f"{name}: ugyldig sti i ZIP-filen.")
             continue
         if _is_macos_archive_metadata(path):
-            if member.file_size <= MACOS_METADATA_MAX_BYTES:
+            if path.name in MACOS_METADATA_ANY_SIZE or member.file_size <= MACOS_METADATA_MAX_BYTES:
                 plan.skipped.append(f"{name}: macOS-metadata (ignoreret)")
             else:
                 plan.errors.append(
