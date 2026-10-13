@@ -14,7 +14,7 @@ from django.core.management import call_command
 from django.test import Client, override_settings
 from django.urls import reverse
 from django.utils import timezone
-from PIL import Image
+from PIL import ExifTags, Image
 
 from photo_album import access
 from photo_album.models import Album, AlbumImport, AlbumImportState, DerivativeState, Media, MediaStatus
@@ -23,6 +23,7 @@ from photo_album.services import (
     build_derivatives,
     delete,
     extract_captured_at,
+    extract_metadata,
     pending_derivatives,
     purge_expired,
     reject,
@@ -1643,6 +1644,20 @@ def test_captured_at_is_null_when_only_the_file_modification_time_is_present() -
     buffer.seek(0)
 
     assert extract_captured_at(File(buffer, name="photo.jpg")) is None
+
+
+def test_exif_text_ends_at_its_first_nul() -> None:
+    """Old cameras pad EXIF strings with NULs and garbage, which Postgres refuses in JSON."""
+    image = Image.new("RGB", (8, 8))
+    exif = image.getexif()
+    exif[271] = "PENTAX\x00junk"
+    exif.get_ifd(ExifTags.IFD.Exif)[36867] = "2001:06:15 12:00:00\x00\x00\x01"
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG", exif=exif)
+    photo = File(buffer, name="photo.jpg")
+
+    assert extract_metadata(photo) == {"Oprindelig dato": "2001:06:15 12:00:00", "Kamera": "PENTAX"}
+    assert extract_captured_at(photo) == timezone.make_aware(datetime(2001, 6, 15, 12, 0, 0))
 
 
 @pytest.mark.django_db

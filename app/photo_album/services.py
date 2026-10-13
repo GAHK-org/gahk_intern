@@ -924,9 +924,9 @@ def extract_metadata(uploaded_file: File) -> dict[str, str]:
             for key, value in {**dict(exif.items()), **_exif_ifd(exif)}.items()
         }
         metadata: dict[str, str] = {}
-        if values.get("DateTimeOriginal"):
-            metadata["Oprindelig dato"] = str(values["DateTimeOriginal"])
-        camera = " ".join(str(values[key]) for key in ("Make", "Model") if values.get(key)).strip()
+        if original := _exif_text(values.get("DateTimeOriginal")):
+            metadata["Oprindelig dato"] = original
+        camera = " ".join(text for key in ("Make", "Model") if (text := _exif_text(values.get(key))))
         if camera:
             metadata["Kamera"] = camera
         location = _gps_location(exif)
@@ -949,16 +949,27 @@ def extract_captured_at(uploaded_file: File) -> datetime | None:
         # DateTime — the file's last-modified stamp, which a re-save in any editor rewrites to
         # today. Falling back to it gave a re-edited photo a confident, wrong "Optaget" date that
         # also drove the grid's sort order; spec/features/Photo-album.md asks for NULL instead.
-        value = exif_values.get(36867) or exif_values.get(36868) or exif.get(36867) or exif.get(36868)
+        value = _exif_text(
+            exif_values.get(36867) or exif_values.get(36868) or exif.get(36867) or exif.get(36868)
+        )
         if not value:
             return None
-        return datetime.strptime(str(value), "%Y:%m:%d %H:%M:%S").replace(
-            tzinfo=timezone.get_current_timezone()
-        )
+        return datetime.strptime(value, "%Y:%m:%d %H:%M:%S").replace(tzinfo=timezone.get_current_timezone())
     except (ImportError, OSError, TypeError, ValueError):
         return None
     finally:
         uploaded_file.seek(0)
+
+
+def _exif_text(value: object) -> str:
+    """An EXIF text value as the text it holds: up to its first NUL, as EXIF strings end there.
+
+    Old cameras leave NULs and garbage after it, and Postgres cannot store a NUL in JSON or text.
+    """
+    if value is None:
+        return ""
+    text = value.decode("utf-8", "replace") if isinstance(value, bytes) else str(value)
+    return text.split("\0", 1)[0].strip()
 
 
 def _exif_ifd(exif: Image.Exif) -> dict[int, object]:
