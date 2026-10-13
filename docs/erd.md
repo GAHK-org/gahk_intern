@@ -553,6 +553,11 @@ erDiagram
         bool has_preview
     }
 
+    photo_album_Tag {
+        int id PK
+        string name
+    }
+
     photo_album_Album {
         int id PK
         string folder
@@ -715,10 +720,12 @@ erDiagram
     arkiv_ArchiveFile }o--|o residents_Resident : "uploaded_by"
     arkiv_ArchiveFile }o--|o residents_Resident : "deleted_by"
     photo_album_Album }o--|o photo_album_Album : "parent"
+    photo_album_Album }o--o{ photo_album_Tag : "tags"
     photo_album_Media }o--|| photo_album_Album : "album"
     photo_album_Media }o--|| residents_Resident : "requested_by"
     photo_album_Media }o--|o residents_Resident : "approved_by"
     photo_album_Media }o--|o residents_Resident : "deleted_by"
+    photo_album_Media }o--o{ photo_album_Tag : "tags"
     photo_album_AlbumDownload }o--|o photo_album_Album : "album"
     photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
     photo_album_AlbumImport }o--|| residents_Resident : "requested_by"
@@ -1257,6 +1264,11 @@ erDiagram
 
 ```mermaid
 erDiagram
+    photo_album_Tag {
+        int id PK
+        string name
+    }
+
     photo_album_Album {
         int id PK
         string folder
@@ -1349,10 +1361,12 @@ erDiagram
     residents_Resident { }
 
     photo_album_Album }o--|o photo_album_Album : "parent"
+    photo_album_Album }o--o{ photo_album_Tag : "tags"
     photo_album_Media }o--|| photo_album_Album : "album"
     photo_album_Media }o--|| residents_Resident : "requested_by"
     photo_album_Media }o--|o residents_Resident : "approved_by"
     photo_album_Media }o--|o residents_Resident : "deleted_by"
+    photo_album_Media }o--o{ photo_album_Tag : "tags"
     photo_album_AlbumDownload }o--|o photo_album_Album : "album"
     photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
     photo_album_AlbumImport }o--|| residents_Resident : "requested_by"

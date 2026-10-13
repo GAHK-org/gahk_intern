@@ -1511,8 +1511,9 @@ def test_album_detail_query_count_does_not_grow_with_the_number_of_photos(
     url = reverse("photo_album:detail", args=[album.pk])
     client.get(url)  # warm any per-process caches so the count below is the steady state
 
-    # One more than before the album tree: the page now lists the album's sub-albums.
-    with django_assert_num_queries(9):  # type: ignore[operator]
+    # One more than before the album tree: the page now lists the album's sub-albums. One more again
+    # for the album's tags (a root album has no ancestors to inherit any from, so no query for those).
+    with django_assert_num_queries(10):  # type: ignore[operator]
         client.get(url)
 
 

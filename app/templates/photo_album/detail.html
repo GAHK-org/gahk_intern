@@ -21,6 +21,7 @@
 		{% if locked_by.pk == album.pk %}<span class="album-locked">Albummet er låst</span>{% else %}<span class="album-locked">Låst, fordi <a href="{% url 'photo_album:detail' locked_by.pk %}">{{ locked_by.name }}</a> er låst</span>{% endif %}
 		{% if can_unlock %}<form method="post" action="{% url 'photo_album:unlock_album' album.pk %}">{% csrf_token %}<button class="btn-link" type="submit">Lås op</button></form>{% elif can_manage and locked_by.pk == album.pk %}<span class="album-lock-note">Albummet har været låst i mere end 6 måneder og kan ikke låses op.</span>{% endif %}
 	</div>{% endif %}
+	{% if album_tags or can_tag %}{% include "photo_album/_tags.html" with tags=album_tags tag_url=album_tag_url editable=can_tag prefix="album" %}{% endif %}
 	{% if download_job %}<section class="card mb-4 album-download-notice">{% if download_job.state == 'ready' %}<a class="btn" href="{% url 'photo_album:download_album_archive' download_job.token %}">Hent {{ download_job.filename }}</a><p class="muted mt-2">Downloadet udløber {{ download_job.expires_at|date:"j. F Y kl. H:i" }}.</p>{% elif download_job.state == 'failed' %}<p>Download kunne ikke klargøres.</p>{% else %}<p>Download klargøres … Du finder den under <a href="{% url 'photo_album:downloads' %}">Mine downloads</a>, når den er klar.</p>{% endif %}</section>{% endif %}
 
 	{% if children %}<section class="album-children" aria-labelledby="album-children-title">
