@@ -10,6 +10,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from photo_album.models import (
+    MAX_ALBUM_DEPTH,
     Album,
     AlbumDownload,
     AlbumDownloadState,
@@ -696,6 +697,16 @@ def test_import_status_reports_every_reason_a_zip_was_refused(
     assert payload["errors"] == ["a.txt: ikke et billede", "b.txt: ikke et billede"]
     page = client.get(f"{reverse('photo_album:import_zip')}?job={album_import.token}").content.decode()
     assert "b.txt: ikke et billede" in page
+
+
+@pytest.mark.django_db
+def test_import_page_explains_that_folders_become_sub_albums(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    client.force_login(make_resident(roles=(Role.ADMINISTRATOR,)))
+    page = client.get(reverse("photo_album:import_zip")).content.decode()
+    assert "Mapper i ZIP-filen bliver til underalbummer" in page
+    assert f"op til {MAX_ALBUM_DEPTH} niveauer ned" in page
 
 
 @pytest.mark.django_db
