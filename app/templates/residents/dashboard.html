@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load photo_album_extras %}
 {% block title %}Intern - GAHK{% endblock %}
 {% block content %}
   <div class="page-head">
@@ -49,4 +50,6 @@
       </div>
     </div>
   </div>
+
+  {% photo_album_strip %}
 {% endblock %}
