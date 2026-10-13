@@ -90,10 +90,14 @@ class PushSubscription(models.Model):
     """One browser/device that has opted in to Web Push notifications.
 
     Lives in core, not in a feature app, because a browser has exactly **one** push endpoint per
-    service-worker registration — so this row is the *device*, not the feature. Two features now
-    notify through it (Den Hurtige and opslagstavlen), and per-topic consent is therefore a column
-    here rather than a second table keyed on the same endpoint: two rows on one natural key would
-    mean two upsert paths that can disagree about who owns the device.
+    service-worker registration — so this row is the *device*, not the feature. Subscribing is done
+    once per device (notifications.views.subscription); WHAT the device is told is the resident's
+    notification settings, which are per person (notifications.models.NotificationPreference).
+
+    It used to carry one consent column per feature (wants_den_hurtige, wants_opslagstavle, …), set
+    from four separate subscribe buttons. That made a device's consent depend on which pages its
+    owner had happened to visit, and the settings could not follow the person to their next phone.
+    The columns were dropped in core/migrations/0011.
 
     Replaces django-webpush's three-table layout (SubscriptionInfo + PushInformation + Group). The
     Group indirection bought nothing — there was exactly one audience, everyone who opted in — and
@@ -115,26 +119,10 @@ class PushSubscription(models.Model):
     p256dh = models.CharField(max_length=100)
     user_agent = models.CharField(max_length=500, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-
-    # Per-topic consent. BOTH default to False, and that is the important part: consent to one
-    # feature's notifications is never consent to another's, so a device subscribing to the
-    # noticeboard must not come out of it also wanting Den Hurtige's urgent buzz. A True default
-    # here would do exactly that to every new subscriber, silently.
-    #
-    # Rows that predate topics are opted into Den Hurtige by an explicit data migration
-    # (core/migrations/0005) rather than by this default — they subscribed when it was the only
-    # topic, and dropping them would look like push breaking.
-    #
-    # The subscribe view writes exactly ONE of these per request; writing both would clear the topic
-    # the resident did not just ask about.
-    wants_den_hurtige = models.BooleanField(default=False, verbose_name="Den Hurtige")
-    wants_opslagstavle = models.BooleanField(default=False, verbose_name="Opslagstavlen")
-    # No data migration opting existing rows in, unlike 0005 above. That one was right because those
-    # rows had subscribed when Den Hurtige was the only topic, so dropping them would have looked
-    # like push breaking. Nobody has ever consented to event notifications, and consent granted by
-    # migration is not consent.
-    wants_begivenheder = models.BooleanField(default=False, verbose_name="Begivenheder")
-    wants_reparationer = models.BooleanField(default=False, verbose_name="Reparationer")
+    # For the admin page: a device that has not accepted a push in months is the one to cancel.
+    last_success_at = models.DateTimeField(null=True, blank=True)
+    # Consecutive transient failures (404/410 delete the row outright). Reset by a success.
+    failure_count = models.PositiveIntegerField(default=0)
 
     class Meta:
         verbose_name = "Push-abonnement"
@@ -148,13 +136,21 @@ class PushSubscription(models.Model):
         return {"endpoint": self.endpoint, "keys": {"auth": self.auth, "p256dh": self.p256dh}}
 
 
-# Topic -> the consent column above. A dict rather than hardcoded branches so adding a third topic
-# is one AddField and one entry, and so core.push.subscribers cannot be called with a topic nobody
-# declared: a KeyError beats silently notifying everyone. Lives here, with the columns it names, so
-# core.forms can validate against it without importing core.push (which imports core.forms).
-TOPIC_FIELDS = {
-    "den_hurtige": "wants_den_hurtige",
-    "opslagstavle": "wants_opslagstavle",
-    "begivenheder": "wants_begivenheder",
-    "reparationer": "wants_reparationer",
-}
+class PushDeliveryDay(models.Model):
+    """Push outcomes per day, for the admin statistics.
+
+    Counted in core.push._dispatch, the one place that sees every attempt. A counter rather than a
+    row per attempt: a dorm-wide chat message is a hundred attempts, and nobody needs them one by
+    one — they need to see that yesterday half of them failed.
+    """
+
+    date = models.DateField(unique=True)
+    delivered = models.PositiveIntegerField(default=0)
+    failed = models.PositiveIntegerField(default=0)
+    # Endpoints the push service reported gone (404/410), and which were deleted for it.
+    removed = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        verbose_name = "Push-statistik (dag)"
+        verbose_name_plural = "Push-statistik (dage)"
+        ordering = ["-date"]

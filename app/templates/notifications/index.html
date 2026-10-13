@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Notifikationer - GAHK{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Intern</div>
+      <h1>Notifikationer</h1>
+    </div>
+    <div class="head-actions">
+      {% if unseen %}
+        <form method="post" action="{% url 'notifications:mark_all_seen' %}">
+          {% csrf_token %}<button type="submit" class="btn-secondary">Markér alle som set</button>
+        </form>
+      {% endif %}
+      <a class="btn" href="{% url 'notifications:preferences' %}"><svg><use href="#i-gear"></use></svg>Indstillinger</a>
+    </div>
+  </div>
+
+  <nav class="notif-views" aria-label="Visning">
+    {% for key, label in views %}
+      <a href="?visning={{ key }}" class="chip{% if key == view %} chip-brass{% endif %}"{% if key == view %} aria-current="page"{% endif %}>{{ label }}</a>
+    {% endfor %}
+  </nav>
+
+  {% comment %}
+    Most important first, then newest — in both views. A cancelled event outranks three likes even
+    when the likes are newer; that ordering is the point of having importance levels at all.
+  {% endcomment %}
+  {% if not rows %}
+    <div class="card-flat card-pad"><p class="muted">Du har ingen notifikationer lige nu.</p></div>
+  {% elif view == "kategori" %}
+    {% for name, items in groups %}
+      <section class="card-flat notif-section">
+        <div class="card-head"><h2>{{ name }}</h2></div>
+        <div class="notif-list">
+          {% for row in items %}{% include "notifications/_item.html" %}{% endfor %}
+        </div>
+      </section>
+    {% endfor %}
+  {% else %}
+    <section class="card-flat notif-section">
+      <div class="notif-list">
+        {% for row in rows %}{% include "notifications/_item.html" %}{% endfor %}
+      </div>
+    </section>
+  {% endif %}
+{% endblock %}

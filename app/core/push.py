@@ -12,11 +12,12 @@ Delivery runs off the request thread: each subscription is a separate HTTPS roun
 worker. `_run_in_background` fires after the transaction commits, so the thread never races the post
 it is announcing.
 
-This module is *transport*. Who gets notified about what — and the wording — stays with each
-feature (den_hurtige/services.py, opslagstavle/services.py), because that is policy and it differs:
-a chat message goes to the whole dorm, a comment on a noticeboard post goes to its author.
+This module is *transport*. Who gets told what, and whether it is a push at all, is
+notifications.services — which reads each resident's settings and calls `send` here with the
+devices that are left. Features do not call this module directly any more.
 """
 
+import datetime
 import json
 import logging
 import threading
@@ -24,22 +25,26 @@ from collections.abc import Callable
 
 from django.conf import settings
 from django.db import connection, transaction
-from django.db.models import QuerySet
+from django.db.models import F, QuerySet
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.templatetags.static import static
 from pywebpush import WebPushException, webpush
 
 from residents.permissions import current_resident
 
+from .clock import current_datetime
 from .forms import PushSubscriptionForm
-from .models import TOPIC_FIELDS, PushSubscription
+from .models import PushDeliveryDay, PushSubscription
 
 logger = logging.getLogger(__name__)
 
-# Time-to-live. Both current topics are worthless long after the fact — a "Den Hurtige" message
-# within the hour, a noticeboard post within the day — so tell the push service to drop it rather
-# than deliver it to a phone that comes back online next week.
+# Time-to-live when the caller has no better answer. Notifications carry their own (the
+# notification's TTL — a Den Hurtige message's is its expiry), so this is the fallback for the test
+# command and anything else that sends without one.
 TTL_SECONDS = 3600
+
+# The push services' own ceiling: FCM rejects a TTL above four weeks.
+MAX_TTL_SECONDS = 28 * 24 * 3600
 
 BODY_PREVIEW_CHARS = 120
 
@@ -66,39 +71,50 @@ def preview(text: str) -> str:
     return text[: BODY_PREVIEW_CHARS - 1].rstrip() + "…"
 
 
-def _payload(head: str, body: str, url: str) -> dict[str, str]:
-    """The JSON the service worker (app/templates/sw.js) reads: head/body/icon/url.
+def _payload(
+    head: str,
+    body: str,
+    url: str,
+    *,
+    open_url: str = "",
+    tag: str = "",
+    vibrate: bool = True,
+    importance: int = 2,
+) -> dict[str, object]:
+    """The JSON the service worker (app/templates/sw.js) reads.
 
     `head` is the sender or the subject, not the feature. Every platform already labels the
     notification with the app it came from — iOS renders the manifest name under the title — so a
     title like "Ny besked på Den Hurtige" said it twice and pushed the part that matters (who, and
     what they wrote) down into the body.
 
-    `url` is a parameter rather than a constant because it is what makes a tap land on the right
-    thing: the feed for a chat message, the individual post for a noticeboard notification.
+    `url` is where the thing lives; `open_url`, when set, is what a tap actually opens — the
+    notifications app's open link, which marks the recipient's row seen and then redirects to `url`.
+    Both travel: `url` is the fallback for a payload from before open links existed.
+
+    `tag` makes a grouped notification REPLACE its predecessor on the device rather than stack under
+    it ("Anders og Bente reagerede" instead of two separate banners). Empty = stands alone.
+
+    `vibrate` is the resident's setting already resolved for this push (notifications.services).
     """
-    return {"head": head, "body": body, "icon": static("icons/icon-192x192.png"), "url": url}
+    return {
+        "head": head,
+        "body": body,
+        "icon": static("icons/icon-192x192.png"),
+        "url": url,
+        "open": open_url,
+        "tag": tag,
+        "vibrate": vibrate,
+        "importance": importance,
+    }
 
 
-def subscribers(topic: str, exclude_user_id: int | None = None) -> QuerySet[PushSubscription]:
-    """Every device opted in to `topic`, optionally minus one user's (normally the author — they
-    just pressed the button, so a push back to their own phone is pure noise).
-
-    `topic` is required, not defaulted: a default would make "notify everyone" the behaviour you get
-    by forgetting the argument, which is the wrong way round for consent.
-    """
-    qs = PushSubscription.objects.filter(**{TOPIC_FIELDS[topic]: True})
-    if exclude_user_id is not None:
-        qs = qs.exclude(user_id=exclude_user_id)
-    return qs
-
-
-def _send(subscription: PushSubscription, body: str) -> None:
+def _send(subscription: PushSubscription, body: str, ttl: int = TTL_SECONDS) -> None:
     """One encrypted push. Raises WebPushException on any non-2xx from the push service."""
     webpush(
         subscription_info=subscription.as_subscription_info(),
         data=body,
-        ttl=TTL_SECONDS,
+        ttl=ttl,
         vapid_private_key=settings.VAPID_PRIVATE_KEY,
         # Built fresh every call on purpose: pywebpush writes `aud` and `exp` into this dict, so a
         # shared/module-level one would carry the first recipient's audience to everyone after it.
@@ -106,7 +122,20 @@ def _send(subscription: PushSubscription, body: str) -> None:
     )
 
 
-def _dispatch(subscriptions: QuerySet[PushSubscription], payload: dict[str, str]) -> int:
+def _count(delivered: int, failed: int, removed: int) -> None:
+    """Add one fan-out's outcome to today's PushDeliveryDay. F() so two concurrent fan-outs add up
+    rather than overwrite each other."""
+    if not (delivered or failed or removed):
+        return
+    day, _created = PushDeliveryDay.objects.get_or_create(date=current_datetime().date())
+    PushDeliveryDay.objects.filter(pk=day.pk).update(
+        delivered=F("delivered") + delivered, failed=F("failed") + failed, removed=F("removed") + removed
+    )
+
+
+def _dispatch(
+    subscriptions: QuerySet[PushSubscription], payload: dict[str, object], ttl: int = TTL_SECONDS
+) -> int:
     """Send `payload` to every subscription. Returns the number actually delivered.
 
     One bad endpoint must never cost the rest of the dorm its notification, so every device is
@@ -114,26 +143,34 @@ def _dispatch(subscriptions: QuerySet[PushSubscription], payload: dict[str, str]
     to accumulate — nothing else ever cleans this table up.
     """
     body = json.dumps(payload)
-    sent = attempted = 0
+    sent = attempted = removed = 0
     for subscription in subscriptions:
         attempted += 1
         try:
-            _send(subscription, body)
+            _send(subscription, body, ttl)
         except WebPushException as exc:
             # pywebpush leaves exc.response as None for connection-level failures, so read the
             # status defensively — a direct exc.response.status_code raises AttributeError there.
             status = getattr(exc.response, "status_code", None)
             if status in DEAD_ENDPOINT_STATUSES:
                 subscription.delete()
+                removed += 1
             else:
                 logger.warning("push failed (%s) for subscription %s", status, subscription.pk)
+                PushSubscription.objects.filter(pk=subscription.pk).update(
+                    failure_count=F("failure_count") + 1
+                )
         except Exception:
             logger.exception("push crashed for subscription %s", subscription.pk)
         else:
             sent += 1
+            PushSubscription.objects.filter(pk=subscription.pk).update(
+                last_success_at=current_datetime(), failure_count=0
+            )
     # Always logged, including the zero cases: "no subscribers" and "every send failed" are
     # indistinguishable from the outside, and both look exactly like the feature being broken.
     logger.info("push delivered to %s/%s device(s)", sent, attempted)
+    _count(sent, attempted - sent - removed, removed)
     return sent
 
 
@@ -156,15 +193,21 @@ def _run_in_background(fn: Callable[[], object]) -> None:
     transaction.on_commit(lambda: threading.Thread(target=runner, daemon=True).start())
 
 
-def send(
-    subscriptions: QuerySet[PushSubscription],
-    head: str,
-    body: str,
-    url: str,
-    *,
-    background: bool = True,
-) -> None:
-    """Queue a push to an already-chosen audience. The feature decides who; this delivers.
+def ttl_until(expires_at: datetime.datetime) -> int:
+    """Seconds from now until `expires_at`, clamped to what a push service accepts. 0 = already
+    expired, which the caller should take as "do not push"."""
+    remaining = int((expires_at - current_datetime()).total_seconds())
+    return max(0, min(remaining, MAX_TTL_SECONDS))
+
+
+Delivery = tuple[QuerySet[PushSubscription], dict[str, object], int]
+
+
+def send_many(deliveries: list[Delivery], *, background: bool = True) -> None:
+    """Queue several (devices, payload, ttl) fan-outs in ONE background thread.
+
+    One notification can need more than one payload — residents who want vibration and residents who
+    do not get different ones — and a thread per payload would be a thread per variant per post.
 
     `background=False` delivers INLINE, and a management command must pass it.
 
@@ -177,56 +220,40 @@ def send(
     The cost of inline is the one the threading exists to avoid: the caller blocks for ~0.3-1 s per
     device. That is unacceptable in a request under the 60 s timeout and completely fine in a
     cron job, which has nothing else to do.
-
-    core/management/commands/send_test_push.py predates this argument and reaches for the private
-    `_send` to sidestep the thread. This parameter is the same fix made available properly; that
-    command can move onto it whenever someone is next in there.
     """
-    if not is_configured():
+    if not is_configured() or not deliveries:
         return
-    payload = _payload(head, body, url)
+
+    def run() -> None:
+        for subscriptions, payload, ttl in deliveries:
+            _dispatch(subscriptions, payload, ttl=ttl)
+
     if background:
-        _run_in_background(lambda: _dispatch(subscriptions, payload))
+        _run_in_background(run)
     else:
-        _dispatch(subscriptions, payload)
+        run()
 
 
-def notify(
-    topic: str,
-    head: str,
-    body: str,
-    url: str,
-    exclude_user_id: int | None = None,
-    *,
-    background: bool = True,
-) -> None:
-    """Queue a push to everyone opted in to `topic`. The common case, on top of `send`."""
-    send(
-        subscribers(topic, exclude_user_id=exclude_user_id),
-        head,
-        body,
-        url,
-        background=background,
-    )
-
-
-def handle_subscription_request(request: HttpRequest, topic: str) -> HttpResponse:
-    """Store (or drop) this browser's opt-in to `topic`. Shared by every feature's subscribe view.
+def handle_subscription_request(request: HttpRequest) -> HttpResponse:
+    """Store, drop or look up this browser's push subscription. The body of the ONE subscribe view
+    (notifications.views.subscription) — a device subscribes once, not once per feature.
 
     Login-gated and CSRF-protected by the calling view, unlike django-webpush's
     /webpush/save_information, which was @csrf_exempt and took its audience from the request body —
     anyone could have registered an endpoint and received every dorm message. Here the subscription
     is always bound to the session's own resident.
 
-    The per-topic semantics are the whole reason this is not a two-liner:
+    Three status types:
 
-      * Subscribing writes exactly ONE consent column. Writing both would mean opting in to the
-        noticeboard silently opted you in to (or out of) the chat.
-      * Unsubscribing clears one column and deletes the row only when NO topic is left. A browser
-        has one push endpoint for both features, so deleting the row on the first opt-out would
-        silently kill the other feature's notifications on that device.
-      * The 202 reports how many topics remain, because the browser must only call its own
-        `subscription.unsubscribe()` once nothing is subscribed any more.
+      * `subscribe` upserts on the endpoint. Re-subscribing, or a second resident logging in on a
+        shared browser and pressing the button, moves the existing row rather than leaving a stale
+        one pushing to the previous owner.
+      * `unsubscribe` deletes it — scoped to this resident, so one person cannot unsubscribe
+        another's phone by replaying its endpoint.
+      * `status` answers whether the endpoint is this resident's ("mine"), someone else's
+        ("other") or unknown ("none"). The browser cannot tell: getSubscription() only says the
+        browser holds *a* subscription, not that the server still has it — an administrator may
+        have cancelled it, or the push service may have reported it gone.
     """
     resident = current_resident(request)
     try:
@@ -241,29 +268,19 @@ def handle_subscription_request(request: HttpRequest, topic: str) -> HttpRespons
         return HttpResponse(status=400)
     fields = form.cleaned_data
 
-    # The view chose the topic (it owns the page); the payload is only a cross-check, so a crafted
-    # body cannot subscribe a device to a feature whose page the caller never passed the gate for.
-    if fields["topic"] != topic:
-        return HttpResponse(status=400)
-    field = TOPIC_FIELDS[topic]
+    if fields["status_type"] == "status":
+        owner = (
+            PushSubscription.objects.filter(endpoint=fields["endpoint"])
+            .values_list("user_id", flat=True)
+            .first()
+        )
+        state = "none" if owner is None else "mine" if owner == resident.pk else "other"
+        return JsonResponse({"state": state})
 
     if fields["status_type"] == "unsubscribe":
-        # Scoped to this user: the endpoint identifies the device, and scoping to the session's
-        # resident stops one person unsubscribing another's phone by replaying it.
-        subscription = PushSubscription.objects.filter(user=resident, endpoint=fields["endpoint"]).first()
-        if subscription is None:
-            return JsonResponse({"remaining_topics": 0}, status=202)
-        setattr(subscription, field, False)
-        remaining = sum(bool(getattr(subscription, f)) for f in TOPIC_FIELDS.values())
-        if remaining:
-            subscription.save(update_fields=[field])
-        else:
-            subscription.delete()
-        return JsonResponse({"remaining_topics": remaining}, status=202)
+        PushSubscription.objects.filter(user=resident, endpoint=fields["endpoint"]).delete()
+        return HttpResponse(status=202)
 
-    # Upsert on the endpoint: re-subscribing, or a second resident logging in on a shared browser,
-    # must move the existing row rather than leave a stale one pushing to the previous owner.
-    # `defaults` deliberately carries only this topic's flag — see the docstring.
     PushSubscription.objects.update_or_create(
         endpoint=fields["endpoint"],
         defaults={
@@ -271,7 +288,7 @@ def handle_subscription_request(request: HttpRequest, topic: str) -> HttpRespons
             "auth": fields["auth"],
             "p256dh": fields["p256dh"],
             "user_agent": fields["user_agent"],
-            field: True,
+            "failure_count": 0,
         },
     )
     return HttpResponse(status=201)

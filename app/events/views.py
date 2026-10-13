@@ -23,7 +23,6 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
-from core import push
 from core.clock import current_date, current_datetime
 from core.danish import MONTHS, WEEKDAYS_SHORT
 from core.uploads import attached_image
@@ -225,9 +224,6 @@ def index(request: HttpRequest) -> HttpResponse:
         "events/index.html",
         {
             "page_obj": page,
-            "push_configured": push.is_configured(),
-            "vapid_public_key": push.vapid_public_key(),
-            "push_subscribed": push.subscribers(services.TOPIC).filter(user=resident).exists(),
             "limited_rollout": access.is_limited(),
         },
     )
@@ -630,9 +626,3 @@ def _touch(feed_token: CalendarFeedToken) -> None:
     if feed_token.last_used_at and now - feed_token.last_used_at < datetime.timedelta(hours=1):
         return
     CalendarFeedToken.objects.filter(pk=feed_token.pk).update(last_used_at=now)
-
-
-@access.access_required
-def save_subscription(request: HttpRequest) -> HttpResponse:
-    """Per-topic push opt-in. The body is shared with the other two features — see core.push."""
-    return push.handle_subscription_request(request, services.TOPIC)
