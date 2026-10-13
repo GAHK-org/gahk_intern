@@ -1,8 +1,8 @@
 import subprocess
 import zipfile
 from collections.abc import Callable
-from datetime import datetime, timedelta
-from io import BytesIO
+from datetime import UTC, datetime, timedelta
+from io import BytesIO, StringIO
 from pathlib import Path
 
 import imageio_ffmpeg
@@ -17,7 +17,7 @@ from django.utils import timezone
 from PIL import Image
 
 from photo_album import access
-from photo_album.models import Album, AlbumImport, DerivativeState, Media, MediaStatus
+from photo_album.models import Album, AlbumImport, AlbumImportState, DerivativeState, Media, MediaStatus
 from photo_album.services import (
     MAX_DERIVATIVE_ATTEMPTS,
     build_derivatives,
@@ -28,8 +28,11 @@ from photo_album.services import (
     reject,
     upload_media,
 )
+from photo_album.storage import get_photo_album_storage
 from photo_album.tasks import process_album_import
 from residents.models import Resident, Role
+
+from .media_samples import image_upload, jpeg_bytes, mp4_bytes, png_bytes, video_upload
 
 
 @pytest.mark.django_db
@@ -72,12 +75,37 @@ def test_album_create_and_zip_import_offer_existing_or_new_folders(
     assert 'name="name"' in create_content
 
 
-def _zip_upload(*members: tuple[str, bytes]) -> SimpleUploadedFile:
+def _zip_upload(*members: tuple[str, bytes], name: str = "foo.zip") -> SimpleUploadedFile:
     payload = BytesIO()
     with zipfile.ZipFile(payload, "w") as archive:
-        for name, content in members:
-            archive.writestr(name, content)
-    return SimpleUploadedFile("foo.zip", payload.getvalue(), content_type="application/zip")
+        for member, content in members:
+            archive.writestr(member, content)
+    return SimpleUploadedFile(name, payload.getvalue(), content_type="application/zip")
+
+
+def _import(
+    client: Client, make_resident: Callable[..., Resident], *members: tuple[str, bytes], name: str = "foo.zip"
+) -> AlbumImport:
+    """Post a ZIP as an administrator and run the worker task on it, as Celery would."""
+    client.force_login(
+        make_resident(email=f"importer-{AlbumImport.objects.count()}@gahk.dk", roles=(Role.ADMINISTRATOR,))
+    )
+    response = client.post(
+        reverse("photo_album:import_zip"), {"folder": "2026", "archive": _zip_upload(*members, name=name)}
+    )
+    assert response.status_code == 302
+    album_import = AlbumImport.objects.latest("pk")
+    process_album_import(album_import.pk)
+    album_import.refresh_from_db()
+    return album_import
+
+
+def _tree() -> list[tuple[str, str | None]]:
+    """Every album as (name, parent name), parents first."""
+    return [
+        (album.name, album.parent.name if album.parent else None)
+        for album in Album.objects.select_related("parent").order_by("depth", "name")
+    ]
 
 
 @pytest.mark.django_db
@@ -89,7 +117,7 @@ def test_only_photo_group_or_administrator_can_import_zip_albums(
 
     response = client.post(
         reverse("photo_album:import_zip"),
-        {"folder": "2026", "archive": _zip_upload(("one.jpg", b"one"))},
+        {"folder": "2026", "archive": _zip_upload(("one.jpg", jpeg_bytes()))},
     )
 
     assert response.status_code == 403
@@ -101,7 +129,7 @@ def test_token_import_uses_system_resident() -> None:
     csrf_client = Client(enforce_csrf_checks=True)
     response = csrf_client.post(
         reverse("photo_album:system_import_zip"),
-        {"folder": "2026", "archive": _zip_upload(("one.jpg", b"one"))},
+        {"folder": "2026", "archive": _zip_upload(("one.jpg", jpeg_bytes()))},
         HTTP_AUTHORIZATION="Bearer migration-token",
         HTTP_ACCEPT="application/json",
     )
@@ -114,75 +142,56 @@ def test_token_import_uses_system_resident() -> None:
 
 
 @pytest.mark.django_db
-def test_zip_import_creates_recursive_albums_and_reports_skipped_files(
+def test_zip_import_builds_an_album_tree_named_after_the_zip_and_its_folders(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
-    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
-    client.force_login(administrator)
-
-    response = client.post(
-        reverse("photo_album:import_zip"),
-        {
-            "folder": "2026",
-            "archive": _zip_upload(
-                ("root.jpg", b"root"),
-                ("bar/nested.png", b"nested"),
-                ("bar/baz/deep.webp", b"deep"),
-                ("bar/notes.txt", b"not media"),
-            ),
-        },
+    album_import = _import(
+        client,
+        make_resident,
+        ("root.jpg", jpeg_bytes()),
+        ("bar/nested.png", png_bytes()),
+        ("bar/baz/deep.jpg", jpeg_bytes()),
+        ("bar/baz/clip.mp4", mp4_bytes()),
     )
 
-    assert response.status_code == 302
-    album_import = AlbumImport.objects.get()
-    assert process_album_import(album_import.pk)
-    assert list(Album.objects.order_by("name").values_list("name", flat=True)) == [
-        "foo",
-        "foo/bar",
-        "foo/bar/baz",
-    ]
-    assert Media.objects.count() == 3
-    completed = client.get(f"{reverse('photo_album:import_zip')}?job={album_import.token}")
-    assert "bar/notes.txt" in completed.content.decode()
-    assert "Filtypen er ikke understøttet" in completed.content.decode()
+    assert album_import.state == AlbumImportState.READY
+    assert _tree() == [("foo", None), ("bar", "foo"), ("baz", "bar")]
+    assert {album.folder for album in Album.objects.all()} == {"2026"}
+    placement = {media.filename: media.album.name for media in Media.objects.select_related("album")}
+    assert placement == {"root.jpg": "foo", "nested.png": "bar", "deep.jpg": "baz", "clip.mp4": "baz"}
+    assert all(media.status == MediaStatus.APPROVED and media.sha256 for media in Media.objects.all())
+    root = Album.objects.get(name="foo")
+    assert album_import.album_ids[0] == root.pk
+    assert root.subtree_media().count() == 4
 
 
 @pytest.mark.django_db
-def test_zip_import_treats_a_matching_root_directory_as_the_archive_root(
+def test_zip_import_names_the_root_after_the_first_folder_that_holds_files(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
-    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
-    client.force_login(administrator)
-    archive = _zip_upload(("foo/photo.jpg", b"photo"), ("foo/bar/nested.png", b"nested"))
-
-    response = client.post(
-        reverse("photo_album:import_zip"),
-        {"folder": "2026", "archive": archive},
+    """A ZIP of a folder wraps it once more, and a ZIP of Downloads/… more than once."""
+    _import(
+        client,
+        make_resident,
+        ("Downloads/Mathildefest/photo.jpg", jpeg_bytes()),
+        ("Downloads/Mathildefest/Lørdag/nested.jpg", jpeg_bytes()),
     )
 
-    assert response.status_code == 302
-    album_import = AlbumImport.objects.get()
-    assert process_album_import(album_import.pk)
-    assert list(Album.objects.order_by("name").values_list("name", flat=True)) == ["foo", "foo/bar"]
+    assert _tree() == [("Mathildefest", None), ("Lørdag", "Mathildefest")]
 
 
 @pytest.mark.django_db
-def test_zip_import_collapses_repeated_matching_root_directories(
+def test_zip_import_stops_descending_at_a_folder_with_several_sub_folders(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
-    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
-    client.force_login(administrator)
-    archive = _zip_upload(("foo/foo/photo.jpg", b"photo"), ("foo/foo/bar/nested.png", b"nested"))
-
-    response = client.post(
-        reverse("photo_album:import_zip"),
-        {"folder": "2026", "archive": archive},
+    _import(
+        client,
+        make_resident,
+        ("Sommer/Fredag/one.jpg", jpeg_bytes()),
+        ("Sommer/Lørdag/two.jpg", jpeg_bytes()),
     )
 
-    assert response.status_code == 302
-    album_import = AlbumImport.objects.get()
-    assert process_album_import(album_import.pk)
-    assert list(Album.objects.order_by("name").values_list("name", flat=True)) == ["foo", "foo/bar"]
+    assert _tree() == [("Sommer", None), ("Fredag", "Sommer"), ("Lørdag", "Sommer")]
 
 
 @pytest.mark.django_db
@@ -194,7 +203,7 @@ def test_zip_import_returns_status_and_result_urls_for_the_progress_uploader(
 
     response = client.post(
         reverse("photo_album:import_zip"),
-        {"folder": "2026", "archive": _zip_upload(("one.jpg", b"one"))},
+        {"folder": "2026", "archive": _zip_upload(("one.jpg", jpeg_bytes()))},
         HTTP_ACCEPT="application/json",
     )
 
@@ -205,32 +214,165 @@ def test_zip_import_returns_status_and_result_urls_for_the_progress_uploader(
 
 
 @pytest.mark.django_db
-def test_zip_import_ignores_macos_metadata_files(
+def test_zip_import_ignores_and_logs_small_macos_metadata(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
-    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
-    client.force_login(administrator)
-
-    response = client.post(
-        reverse("photo_album:import_zip"),
-        {
-            "folder": "2026",
-            "archive": _zip_upload(
-                ("Mathildefest/photo.jpg", b"photo"),
-                ("__MACOSX/Mathildefest/._photo.jpg", b"resource fork"),
-                ("Mathildefest/.AppleDouble/photo.jpg", b"resource fork"),
-                ("Mathildefest/._another.jpg", b"resource fork"),
-            ),
-        },
+    album_import = _import(
+        client,
+        make_resident,
+        ("Mathildefest/photo.jpg", jpeg_bytes()),
+        ("__MACOSX/Mathildefest/._photo.jpg", b"resource fork"),
+        ("Mathildefest/.AppleDouble/photo.jpg", b"resource fork"),
+        ("Mathildefest/._another.jpg", b"resource fork"),
+        ("Mathildefest/.DS_Store", b"finder"),
     )
 
-    assert response.status_code == 302
-    album_import = AlbumImport.objects.get()
-    assert process_album_import(album_import.pk)
-    assert list(Album.objects.values_list("name", flat=True)) == ["foo/Mathildefest"]
+    assert album_import.state == AlbumImportState.READY
+    assert _tree() == [("Mathildefest", None)]
     assert Media.objects.count() == 1
+    assert len(album_import.skipped) == 4
+    assert all("macOS-metadata (ignoreret)" in line for line in album_import.skipped)
     completed = client.get(f"{reverse('photo_album:import_zip')}?job={album_import.token}")
     assert "macOS-metadata" in completed.content.decode()
+
+
+@pytest.mark.django_db
+def test_zip_import_refuses_macos_metadata_over_4_kb(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """Above 4 KB it is not a resource fork any more — perhaps a real photo that lost its name."""
+    album_import = _import(
+        client,
+        make_resident,
+        ("photo.jpg", jpeg_bytes()),
+        ("._photo.jpg", b"x" * 5000),
+    )
+
+    assert album_import.state == AlbumImportState.FAILED
+    assert album_import.errors == ["._photo.jpg: ligner macOS-metadata, men er større end 4 KB."]
+    assert not Album.objects.exists()
+    assert not Media.objects.exists()
+
+
+@pytest.mark.django_db
+def test_zip_import_is_refused_whole_with_every_reason_listed(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    album_import = _import(
+        client,
+        make_resident,
+        ("good.jpg", jpeg_bytes()),
+        ("bar/notes.txt", b"not media"),
+        ("bar/broken.jpg", b"not a jpeg"),
+        ("a/b/c/d/e/too-deep.jpg", jpeg_bytes()),
+        ("Fest/one.jpg", jpeg_bytes()),
+        ("fest/two.jpg", jpeg_bytes()),
+    )
+
+    assert album_import.state == AlbumImportState.FAILED
+    assert album_import.error == "ZIP-filen blev afvist. Intet er importeret."
+    errors = "\n".join(album_import.errors)
+    assert "bar/notes.txt: Filtypen er ikke understøttet" in errors
+    assert "bar/broken.jpg: Billedet kunne ikke læses" in errors
+    assert "a/b/c/d/e/too-deep.jpg: mapperne ligger dybere end 5 niveauer." in errors
+    assert "store/små bogstaver" in errors
+    assert not Album.objects.exists()
+    assert not Media.objects.exists()
+    assert not album_import.archive
+
+
+@pytest.mark.django_db
+def test_zip_import_allows_five_levels(client: Client, make_resident: Callable[..., Resident]) -> None:
+    album_import = _import(
+        client, make_resident, ("top.jpg", jpeg_bytes()), ("a/b/c/d/deepest.jpg", jpeg_bytes())
+    )
+
+    assert album_import.state == AlbumImportState.READY
+    assert Media.objects.get(filename="deepest.jpg").album.depth == 4
+
+
+@pytest.mark.django_db
+def test_zip_import_refuses_a_root_album_name_already_in_the_folder(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    Album.objects.create(folder="2026", name="FOO")
+
+    album_import = _import(client, make_resident, ("one.jpg", jpeg_bytes()))
+
+    assert album_import.state == AlbumImportState.FAILED
+    assert album_import.errors == ['Der findes allerede et album med navnet "foo" i 2026.']
+    assert Album.objects.count() == 1
+
+
+@pytest.mark.django_db
+def test_zip_import_skips_exact_duplicates_but_keeps_same_named_different_files(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """Two phones both write IMG_0001.JPG; only a byte-for-byte copy of the same file is dropped."""
+    same = jpeg_bytes()
+    with pytest.warns(UserWarning, match="Duplicate name"):
+        album_import = _import(
+            client,
+            make_resident,
+            ("IMG_0001.JPG", same),
+            ("IMG_0001.JPG", same),
+            ("IMG_0001.JPG", jpeg_bytes()),
+            ("copy.jpg", same),
+        )
+
+    assert album_import.state == AlbumImportState.READY
+    assert album_import.skipped == ["IMG_0001.JPG: dublet af IMG_0001.JPG (ignoreret)"]
+    assert sorted(Media.objects.values_list("filename", flat=True)) == [
+        "IMG_0001.JPG",
+        "IMG_0001.JPG",
+        "copy.jpg",
+    ]
+
+
+def test_zip_member_names_are_decoded_whichever_encoding_the_tool_used() -> None:
+    """Without the UTF-8 flag Python reads names as CP437 — right for old DOS archives, wrong for Finder."""
+    from photo_album.services import _member_name
+
+    finder = zipfile.ZipInfo("Påske/Bål.jpg".encode().decode("cp437"))
+    dos = zipfile.ZipInfo("Påske/Bål.jpg".encode("cp437").decode("cp437"))
+    flagged = zipfile.ZipInfo("Påske/Bål.jpg")
+    flagged.flag_bits |= 0x800
+
+    assert finder.flag_bits & 0x800 == 0
+    assert _member_name(finder) == "Påske/Bål.jpg"
+    assert _member_name(dos) == "Påske/Bål.jpg"
+    assert _member_name(flagged) == "Påske/Bål.jpg"
+
+
+@pytest.mark.django_db
+def test_zip_import_that_fails_while_storing_leaves_nothing_behind(
+    client: Client, make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from photo_album import services
+    from photo_album.storage import get_photo_album_storage
+
+    real_store_upload = services.store_upload
+    stored: list[str] = []
+
+    def failing_store_upload(**kwargs: object) -> services.UploadOutcome:
+        if stored:
+            raise OSError("bucket went away")
+        outcome = real_store_upload(**kwargs)  # type: ignore[arg-type]
+        assert outcome.media is not None
+        stored.append(outcome.media.original.name)
+        return outcome
+
+    monkeypatch.setattr(services, "store_upload", failing_store_upload)
+
+    with pytest.raises(OSError, match="bucket went away"):
+        _import(client, make_resident, ("one.jpg", jpeg_bytes()), ("two.jpg", jpeg_bytes()))
+
+    album_import = AlbumImport.objects.get()
+    assert album_import.state == AlbumImportState.FAILED
+    assert not Album.objects.exists()
+    assert not Media.objects.exists()
+    assert stored
+    assert not get_photo_album_storage().exists(stored[0])
 
 
 @pytest.mark.django_db
@@ -242,7 +384,7 @@ def test_normal_upload_is_pending_and_only_visible_to_requester(
     client.force_login(requester)
     response = client.post(
         reverse("photo_album:upload", args=[album.pk]),
-        {"uploads": SimpleUploadedFile("x.jpg", b"not-an-image", content_type="image/jpeg")},
+        {"uploads": image_upload("x.jpg")},
     )
     assert response.status_code == 302
     media = Media.objects.get()
@@ -312,8 +454,8 @@ def test_upload_accepts_multiple_media_files(client: Client, make_resident: Call
         reverse("photo_album:upload", args=[album.pk]),
         {
             "uploads": [
-                SimpleUploadedFile("one.jpg", b"one", content_type="image/jpeg"),
-                SimpleUploadedFile("two.jpg", b"two", content_type="image/jpeg"),
+                image_upload("one.jpg"),
+                image_upload("two.jpg"),
             ]
         },
     )
@@ -452,8 +594,13 @@ def test_original_download_returns_original_bytes_and_album_specific_keys(
     assert b"".join(response.streaming_content) == source
     assert first_media.high_definition.read() != source
     assert response.headers["Content-Disposition"].startswith("attachment;")
-    assert first_media.original.name.startswith(f"photo-album/{first_album.pk}/original/")
-    assert second_media.original.name.startswith(f"photo-album/{second_album.pk}/original/")
+    assert (
+        first_media.original.name == f"photo-album/{first_album.pk}/{first_media.uuid}/original/same-name.jpg"
+    )
+    assert second_media.original.name == (
+        f"photo-album/{second_album.pk}/{second_media.uuid}/original/same-name.jpg"
+    )
+    assert first_media.filename == second_media.filename == "same-name.jpg"
 
 
 @pytest.mark.django_db
@@ -467,13 +614,13 @@ def test_album_download_is_built_by_the_worker_and_then_downloaded(
     album = Album.objects.create(folder="2026", name="Sommerfest")
     upload_media(
         album=album,
-        uploaded_file=SimpleUploadedFile("first.jpg", b"first", content_type="image/jpeg"),
+        uploaded_file=image_upload("first.jpg"),
         resident=resident,
         approved=True,
     )
     upload_media(
         album=album,
-        uploaded_file=SimpleUploadedFile("second.mp4", b"second", content_type="video/mp4"),
+        uploaded_file=video_upload("second.mp4"),
         resident=resident,
         approved=True,
     )
@@ -494,8 +641,8 @@ def test_album_download_is_built_by_the_worker_and_then_downloaded(
     assert 'filename="Sommerfest.zip"' in response.headers["Content-Disposition"]
     with zipfile.ZipFile(BytesIO(b"".join(response.streaming_content))) as archive:
         assert archive.namelist() == ["first.jpg", "second.mp4"]
-        assert archive.read("first.jpg") == b"first"
-        assert archive.read("second.mp4") == b"second"
+        assert archive.read("first.jpg") == Media.objects.get(filename="first.jpg").original.read()
+        assert archive.read("second.mp4") == mp4_bytes()
 
 
 @pytest.mark.django_db
@@ -510,13 +657,13 @@ def test_album_download_excludes_another_residents_pending_upload(
     album = Album.objects.create(folder="2026", name="Sommerfest")
     upload_media(
         album=album,
-        uploaded_file=SimpleUploadedFile("visible.jpg", b"visible", content_type="image/jpeg"),
+        uploaded_file=image_upload("visible.jpg"),
         resident=resident,
         approved=True,
     )
     upload_media(
         album=album,
-        uploaded_file=SimpleUploadedFile("pending.jpg", b"pending", content_type="image/jpeg"),
+        uploaded_file=image_upload("pending.jpg"),
         resident=other_resident,
         approved=False,
     )
@@ -607,7 +754,7 @@ def test_serve_media_redirects_anonymous_requests_to_login(
     album = Album.objects.create(folder="2026", name="Fest")
     media = upload_media(
         album=album,
-        uploaded_file=SimpleUploadedFile("x.jpg", b"bytes", content_type="image/jpeg"),
+        uploaded_file=image_upload("x.jpg"),
         resident=make_resident(),
         approved=True,
     )
@@ -625,7 +772,7 @@ def test_serve_media_streams_a_visible_item(client: Client, make_resident: Calla
     album = Album.objects.create(folder="2026", name="Fest")
     media = upload_media(
         album=album,
-        uploaded_file=SimpleUploadedFile("x.jpg", b"bytes", content_type="image/jpeg"),
+        uploaded_file=image_upload("x.jpg"),
         resident=requester,
         approved=True,
     )
@@ -649,7 +796,7 @@ def test_serve_media_refuses_a_pending_upload_to_a_stranger(
     album = Album.objects.create(folder="2026", name="Fest")
     media = upload_media(
         album=album,
-        uploaded_file=SimpleUploadedFile("x.jpg", b"bytes", content_type="image/jpeg"),
+        uploaded_file=image_upload("x.jpg"),
         resident=requester,
         approved=False,
     )
@@ -721,7 +868,7 @@ def test_capture_time_reads_nested_exif_ifd(monkeypatch: pytest.MonkeyPatch) -> 
             return Exif()
 
     monkeypatch.setattr("photo_album.services.Image.open", lambda _: ImageFile())
-    uploaded_file = SimpleUploadedFile("nested.jpg", b"image", content_type="image/jpeg")
+    uploaded_file = image_upload("nested.jpg")
 
     assert extract_captured_at(uploaded_file) == timezone.make_aware(datetime(2026, 8, 6, 23, 43, 39))
 
@@ -769,7 +916,7 @@ def test_photo_manager_upload_is_approved_immediately(
     client.force_login(administrator)
     client.post(
         reverse("photo_album:upload", args=[album.pk]),
-        {"uploads": SimpleUploadedFile("x.jpg", b"not-an-image", content_type="image/jpeg")},
+        {"uploads": image_upload("x.jpg")},
     )
     assert Media.objects.get().status == MediaStatus.APPROVED
 
@@ -995,17 +1142,20 @@ def test_restore_returns_media_to_its_original_album(
 
 
 @pytest.mark.django_db
-def test_album_cannot_be_renamed_or_deleted_while_it_has_media(
+def test_album_with_media_can_be_renamed_but_not_deleted(
     make_resident: Callable[..., Resident],
 ) -> None:
+    """Album names are folder names in downloads, so renaming is allowed; only the lock stops it."""
+    from photo_album.services import rename_album
+
     resident = make_resident()
     album = Album.objects.create(folder="2026", name="Fest")
     Media.objects.create(
         album=album, title="photo", original="a", high_definition="b", thumbnail="c", requested_by=resident
     )
-    album.name = "Nyt navn"
-    with pytest.raises(ValidationError, match="omdøbes"):
-        album.save()
+    rename_album(album, "Nyt navn")
+    album.refresh_from_db()
+    assert album.name == "Nyt navn"
     with pytest.raises(ValidationError, match="tomt"):
         album.delete()
 
@@ -1018,11 +1168,11 @@ def test_album_cannot_be_renamed_or_deleted_while_it_has_media(
 
 
 def _image(name: str = "photo.jpg") -> SimpleUploadedFile:
-    return SimpleUploadedFile(name, b"bytes", content_type="image/jpeg")
+    return image_upload(name)
 
 
 def _video(name: str = "clip.mp4") -> SimpleUploadedFile:
-    return SimpleUploadedFile(name, b"bytes", content_type="video/mp4")
+    return video_upload(name)
 
 
 @pytest.mark.django_db
@@ -1141,7 +1291,8 @@ def test_a_video_whose_transcode_keeps_failing_is_given_up_on(
     """Otherwise one corrupt upload burns every scheduled run forever."""
     resident = make_resident()
     album = Album.objects.create(folder="2026", name="Fest")
-    media = upload_media(album=album, uploaded_file=_video(), resident=resident)
+    corrupt = SimpleUploadedFile("clip.mp4", b"not a video", content_type="video/mp4")
+    media = upload_media(album=album, uploaded_file=corrupt, resident=resident)
 
     for _ in range(MAX_DERIVATIVE_ATTEMPTS):
         assert build_derivatives(media) is False  # the bytes are not a real video
@@ -1282,7 +1433,7 @@ def test_album_detail_query_count_does_not_grow_with_the_number_of_photos(
     url = reverse("photo_album:detail", args=[album.pk])
     client.get(url)  # warm any per-process caches so the count below is the steady state
 
-    with django_assert_num_queries(10):  # type: ignore[operator]
+    with django_assert_num_queries(8):  # type: ignore[operator]
         client.get(url)
 
 
@@ -1544,8 +1695,11 @@ def test_a_video_stored_without_a_content_type_is_still_treated_as_a_video(
     upload = SimpleUploadedFile("clip.mov", b"bytes", content_type="")
 
     media = upload_media(album=album, uploaded_file=upload, resident=resident)
+    # Uploads now take their type from the extension; rows stored before that still have "".
+    assert media.content_type == "video/quicktime"
+    Media.objects.filter(pk=media.pk).update(content_type="")
+    media.refresh_from_db()
 
-    assert media.content_type == ""
     assert media.derivative_state == DerivativeState.PENDING
     # False because these bytes are not a real video — the point is that it took the VIDEO path and
     # failed honestly, rather than the image path and "succeeding" with the original copied over.
@@ -1664,7 +1818,7 @@ def test_a_second_download_click_does_not_queue_a_second_archive(
     album = Album.objects.create(folder="2026", name="Fest")
     upload_media(
         album=album,
-        uploaded_file=SimpleUploadedFile("first.jpg", b"first", content_type="image/jpeg"),
+        uploaded_file=image_upload("first.jpg"),
         resident=resident,
         approved=True,
     )
@@ -1675,3 +1829,183 @@ def test_a_second_download_click_does_not_queue_a_second_archive(
     client.post(url)
 
     assert AlbumDownload.objects.filter(album=album, requested_by=resident).count() == 1
+
+
+@pytest.mark.django_db
+def test_albums_loaded_with_deferred_fields_still_track_moves_and_folder_changes() -> None:
+    """`.only()` used to send Album.__init__ into endless reloads of the fields it remembers."""
+    root = Album.objects.create(folder="2026", name="Fest")
+    child = Album.objects.create(name="Lørdag", parent=root)
+
+    assert Album.objects.only("pk", "name").get(pk=child.pk).name == "Lørdag"
+
+    deferred_root = Album.objects.only("pk", "name").get(pk=root.pk)
+    deferred_root.folder = "2025"
+    deferred_root.save()
+    child.refresh_from_db()
+    assert child.folder == "2025"
+
+    deferred_child = Album.objects.only("pk", "name").get(pk=child.pk)
+    deferred_child.parent = Album.objects.create(folder="2025", name="Andet")
+    with pytest.raises(ValidationError, match="flyttes"):
+        deferred_child.save()
+
+
+# --- Uploads, duplicates, views and download layout ---------------------------------------------
+
+
+@pytest.mark.django_db
+def test_form_upload_refuses_a_file_that_is_not_what_its_name_says(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """A .jpg that does not decode used to be stored and then copied over as its own thumbnail."""
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    album = Album.objects.create(folder="2026", name="Fest")
+    client.force_login(administrator)
+
+    response = client.post(
+        reverse("photo_album:upload", args=[album.pk]),
+        {"uploads": [SimpleUploadedFile("x.jpg", b"not-an-image", content_type="image/jpeg")]},
+        follow=True,
+    )
+
+    assert not Media.objects.exists()
+    assert "Billedet kunne ikke læses" in response.content.decode()
+
+
+@pytest.mark.django_db
+def test_store_upload_keeps_same_named_files_and_skips_exact_copies(
+    make_resident: Callable[..., Resident],
+) -> None:
+    from photo_album.services import store_upload
+
+    resident = make_resident()
+    album = Album.objects.create(folder="2026", name="Fest")
+    other = Album.objects.create(folder="2026", name="Andet")
+    same = jpeg_bytes()
+
+    first = store_upload(album=album, uploaded_file=image_upload("IMG_0001.JPG", same), resident=resident)
+    again = store_upload(album=album, uploaded_file=image_upload("IMG_0001.JPG", same), resident=resident)
+    different = store_upload(album=album, uploaded_file=image_upload("IMG_0001.JPG"), resident=resident)
+    elsewhere = store_upload(album=other, uploaded_file=image_upload("IMG_0001.JPG", same), resident=resident)
+
+    assert first.media is not None
+    assert again.media is None
+    assert again.duplicate == first.media
+    assert different.media is not None
+    assert different.media.original.name != first.media.original.name
+    assert elsewhere.media is not None
+    assert elsewhere.also_in == [album]
+    assert Media.objects.filter(filename="IMG_0001.JPG").count() == 3
+
+
+@pytest.mark.django_db
+def test_store_upload_refuses_a_locked_album(make_resident: Callable[..., Resident]) -> None:
+    from photo_album.services import store_upload
+
+    album = Album.objects.create(folder="2026", name="Fest", manually_locked_at=timezone.now())
+    child = Album.objects.create(name="Lørdag", parent=album)
+
+    with pytest.raises(ValueError, match="låst"):
+        store_upload(album=child, uploaded_file=image_upload(), resident=make_resident())
+
+
+@pytest.mark.django_db
+def test_video_capture_time_comes_from_the_container_metadata(make_resident: Callable[..., Resident]) -> None:
+    media = upload_media(
+        album=Album.objects.create(folder="2026", name="Fest"),
+        uploaded_file=video_upload(),
+        resident=make_resident(),
+        approved=True,
+    )
+
+    assert build_derivatives(media)
+
+    media.refresh_from_db()
+    assert media.captured_at == datetime(2021, 6, 5, 14, 30, tzinfo=UTC)
+    assert media.sort_at == media.captured_at
+
+
+@pytest.mark.django_db
+def test_views_count_unique_viewers_and_repeat_views_outside_ten_minutes(
+    make_resident: Callable[..., Resident],
+) -> None:
+    from photo_album.models import MediaView
+    from photo_album.services import record_view
+
+    resident = make_resident()
+    other = make_resident(email="other@gahk.dk")
+    media = Media.objects.create(
+        album=Album.objects.create(folder="2026", name="Fest"),
+        original="a",
+        requested_by=resident,
+        status=MediaStatus.APPROVED,
+    )
+    start = timezone.now()
+
+    assert record_view(media, resident, now=start)
+    assert not record_view(media, resident, now=start + timedelta(minutes=9))
+    assert record_view(media, resident, now=start + timedelta(minutes=20))
+    assert record_view(media, other, now=start)
+
+    views = MediaView.objects.filter(media=media)
+    assert views.count() == 2
+    assert views.get(resident=resident).count == 2
+    assert sum(view.count for view in views) == 3
+
+
+@pytest.mark.django_db
+def test_archive_mirrors_the_album_tree_and_numbers_clashing_names(
+    make_resident: Callable[..., Resident],
+) -> None:
+    from photo_album.models import AlbumDownload
+    from photo_album.tasks import RENAMED_NOTICE_NAME, archive_entries, build_album_download
+
+    resident = make_resident()
+    root = Album.objects.create(folder="2026", name="Fest")
+    child = Album.objects.create(name="Lørdag", parent=root)
+    ids = [
+        upload_media(album=album, uploaded_file=image_upload(name), resident=resident, approved=True).pk
+        for album, name in [(root, "IMG_1.JPG"), (root, "img_1.jpg"), (child, "IMG_1.JPG"), (child, "b.jpg")]
+    ]
+
+    download = AlbumDownload.objects.create(album=root, name=root.name, requested_by=resident, media_ids=ids)
+    entries, renamed = archive_entries(download)
+
+    assert sorted(name for name, _, _ in entries) == [
+        "IMG_1_01.JPG",
+        "Lørdag/IMG_1.JPG",
+        "Lørdag/b.jpg",
+        "img_1_02.jpg",
+    ]
+    assert sorted(renamed) == [("IMG_1.JPG", "IMG_1_01.JPG"), ("img_1.jpg", "img_1_02.jpg")]
+
+    selection = AlbumDownload.objects.create(requested_by=resident, media_ids=ids[2:])
+    assert sorted(name for name, _, _ in archive_entries(selection)[0]) == [
+        "2026/Fest/Lørdag/IMG_1.JPG",
+        "2026/Fest/Lørdag/b.jpg",
+    ]
+
+    assert build_album_download.run(download.pk)
+    download.refresh_from_db()
+    with get_photo_album_storage().open(download.archive_key) as stored, zipfile.ZipFile(stored) as archive:
+        notice = archive.read(RENAMED_NOTICE_NAME).decode()
+    assert "IMG_1.JPG  ->  IMG_1_01.JPG" in notice
+
+
+@pytest.mark.django_db
+def test_backfill_hashes_fills_in_rows_stored_before_hashing(make_resident: Callable[..., Resident]) -> None:
+    import hashlib
+
+    content = jpeg_bytes()
+    media = upload_media(
+        album=Album.objects.create(folder="2026", name="Fest"),
+        uploaded_file=image_upload("old.jpg", content),
+        resident=make_resident(),
+    )
+    Media.objects.filter(pk=media.pk).update(sha256="")
+
+    call_command("backfill_photo_album_hashes", stdout=StringIO())
+
+    media.refresh_from_db()
+    assert media.sha256 == hashlib.sha256(content).hexdigest()

@@ -47,6 +47,9 @@ DERIVATIVE_CLAIM_TTL = timedelta(hours=1)
 MAX_ALBUM_DEPTH = 4
 MANUAL_MAX_ALBUM_DEPTH = 1
 
+# "Not loaded", for Album's change tracking — distinct from a loaded None (a root album's parent).
+_UNKNOWN = object()
+
 # How long after the newest approved item an album locks itself, and how long a lock may be lifted.
 AUTO_LOCK_AFTER = timedelta(days=90)
 UNLOCK_WINDOW_MONTHS = 6
@@ -198,8 +201,7 @@ class Album(models.Model):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401
         super().__init__(*args, **kwargs)
-        self._original_parent_id = self.parent_id
-        self._original_folder = self.folder
+        self._remember_stored_values()
         self._lock_cache: dict[str, Any] = {}
 
     def save(
@@ -212,7 +214,11 @@ class Album(models.Model):
     ) -> None:
         self.name = normalize_name(self.name)
         creating = self._state.adding
-        if not creating and self.parent_id != self._original_parent_id:
+        if (
+            not creating
+            and "parent_id" in self.__dict__
+            and self.parent_id != self._stored("parent_id", self._original_parent_id)
+        ):
             raise ValidationError("Et album kan ikke flyttes til et andet album.")
         parent_path = "/"
         if creating and self.parent_id is not None:
@@ -222,6 +228,13 @@ class Album(models.Model):
                 raise ValidationError(f"Albummer kan højst ligge {MAX_ALBUM_DEPTH + 1} niveauer dybt.")
             self.folder = parent.folder
             self.depth = parent.depth + 1
+        # Decided before the write: afterwards the database already holds the new folder.
+        folder_changed = (
+            not creating
+            and "folder" in self.__dict__
+            and self.parent_id is None
+            and self.folder != self._stored("folder", self._original_folder)
+        )
         with transaction.atomic(using=using):
             super().save(
                 force_insert=force_insert,
@@ -233,16 +246,22 @@ class Album(models.Model):
                 # The key is only known after the insert, so the path is the one thing written twice.
                 self.path = f"{parent_path}{self.pk}/"
                 type(self).objects.filter(pk=self.pk).update(path=self.path)
-            elif self.folder != self._original_folder and self.parent_id is None:
+            elif folder_changed:
                 self.subtree().exclude(pk=self.pk).update(folder=self.folder)
-        self._original_parent_id = self.parent_id
-        self._original_folder = self.folder
+        self._remember_stored_values()
         self._lock_cache = {}
 
-    def refresh_from_db(self, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401
-        super().refresh_from_db(*args, **kwargs)
-        self._original_parent_id = self.parent_id
-        self._original_folder = self.folder
+    def refresh_from_db(
+        self,
+        using: str | None = None,
+        fields: Iterable[str] | None = None,
+        from_queryset: "models.QuerySet[Album] | None" = None,
+    ) -> None:
+        fields = list(fields) if fields is not None else None
+        super().refresh_from_db(using=using, fields=fields, from_queryset=from_queryset)
+        # Django loads a deferred field through here with fields=[that one]; re-reading the others
+        # would take values the caller has assigned but not saved for what is stored.
+        self._remember_stored_values(fields)
         self._lock_cache = {}
 
     def delete(self, using: str | None = None, keep_parents: bool = False) -> tuple[int, dict[str, int]]:
@@ -253,6 +272,24 @@ class Album(models.Model):
     def clean(self) -> None:
         super().clean()
         self.name = normalize_name(self.name)
+
+    def _remember_stored_values(self, fields: Iterable[str] | None = None) -> None:
+        """Note what is stored, to tell a move or a folder change from a plain save.
+
+        Read straight from __dict__: reading a field deferred by `.only()` would load it, and loading
+        builds another Album, which would read it again — forever. A field not loaded is _UNKNOWN,
+        and `_stored` asks the database should it ever matter.
+        """
+        refreshed = set(fields) if fields is not None else None
+        if refreshed is None or refreshed & {"parent", "parent_id"}:
+            self._original_parent_id = self.__dict__.get("parent_id", _UNKNOWN)
+        if refreshed is None or "folder" in refreshed:
+            self._original_folder = self.__dict__.get("folder", _UNKNOWN)
+
+    def _stored(self, attname: str, remembered: Any) -> Any:  # noqa: ANN401
+        if remembered is not _UNKNOWN:
+            return remembered
+        return type(self).objects.filter(pk=self.pk).values_list(attname, flat=True).first()
 
     # --- The tree -----------------------------------------------------------------------------
 
