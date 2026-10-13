@@ -2190,7 +2190,8 @@
 
   .notif-bell { position:relative; }
   .notif-bell-button { position:relative; padding:6px 9px; }
-  .notif-bell-button svg { width:18px; height:18px; }
+  .notif-head-link svg { stroke:currentColor; fill:none; }
+  .notif-bell-button svg { width:18px; height:18px; stroke:currentColor; fill:none; }
   .notif-badge { position:absolute; top:-6px; right:-6px; min-width:18px; height:18px; padding:0 5px;
     border-radius:999px; background:var(--neg); color:#fff; font-size:11px; font-weight:700; line-height:18px;
     text-align:center; border:2px solid var(--green); }
@@ -2210,7 +2211,7 @@
     color:var(--ink); border-bottom:1px solid var(--border); border-left:3px solid transparent; }
   .notif-item:last-child { border-bottom:none; }
   .notif-item:hover { background:var(--surface-2); color:var(--ink); }
-  .notif-item > svg { width:18px; height:18px; flex:none; margin-top:2px; color:var(--muted); }
+  .notif-item > svg { width:18px; height:18px; flex:none; margin-top:2px; color:var(--muted); stroke:currentColor; fill:none; }
   .notif-text { flex:1; min-width:0; font-size:14px; }
   .notif-title { display:block; font-weight:500; }
   .notif-body { display:block; color:var(--muted); font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
