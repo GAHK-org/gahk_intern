@@ -150,7 +150,8 @@ CELERY_TASK_REJECT_ON_WORKER_LOST = True
 # selects and displays, so "Worker", "Kø" and "Forsøg" were permanently blank there.
 CELERY_RESULT_EXTENDED = True
 # Never expire results by age: Celery's own cleanup would delete failed jobs along with the rest.
-# core.tasks.purge_worker_job_results deletes only successful ones, after a month.
+# core.tasks.purge_worker_job_results deletes successful ones after a month, and others only from
+# piles of more than 1000 of one task and status, once 60 days old.
 CELERY_RESULT_EXPIRES = None
 # A management command run from a task (`purge_photo_album`, …) prints its summary to stdout, which
 # the worker redirects into logging — at WARNING by default, so every routine "Removed 0 item(s)"

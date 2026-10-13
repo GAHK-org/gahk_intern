@@ -17,7 +17,13 @@ from django.utils import timezone
 from config.celery import app as celery_app
 from core import worker_logs
 from core.models import WorkerJobLog
-from core.tasks import WORKER_JOB_RETENTION, purge_worker_job_logs, purge_worker_job_results
+from core.tasks import (
+    UNSUCCESSFUL_JOB_RETENTION,
+    UNSUCCESSFUL_JOBS_KEPT,
+    WORKER_JOB_RETENTION,
+    purge_worker_job_logs,
+    purge_worker_job_results,
+)
 from photo_album.models import AlbumImport
 from photo_album.tasks import process_album_import
 from residents.models import Resident, Role
@@ -141,7 +147,7 @@ def test_worker_job_page_shows_the_log_even_after_the_result_is_gone(
 
 
 @pytest.mark.django_db
-def test_only_the_logs_of_old_successful_jobs_are_purged() -> None:
+def test_the_logs_of_old_successful_jobs_are_purged_and_others_kept() -> None:
     now = timezone.now()
     for task_id, state, age in [
         ("old", "SUCCESS", 31),
@@ -159,21 +165,73 @@ def test_only_the_logs_of_old_successful_jobs_are_purged() -> None:
     ]
 
 
-def _store_result(cursor: CursorWrapper, task_id: str, status: str, age: timedelta) -> None:
+@pytest.mark.django_db
+def test_only_a_pile_of_one_unsuccessful_task_and_state_loses_its_old_excess() -> None:
+    """1003 revoked of one task: the 3 oldest go, being 60 days old. 1003 revoked of one task, but
+    the excess too recent: nothing goes. Failed ones of the first task, and revoked ones of another
+    task, are piles of their own, under the limit."""
+    now = timezone.now()
+    old = now - UNSUCCESSFUL_JOB_RETENTION - timedelta(days=1)
+    recent = now - UNSUCCESSFUL_JOB_RETENTION + timedelta(days=1)
+
+    def pile(task: str, state: str, count: int, oldest: datetime) -> list[WorkerJobLog]:
+        # The oldest three at `oldest`, the rest a minute apart from now on back.
+        return [
+            WorkerJobLog(
+                task_id=f"{task}-{state}-{n}",
+                task_name=task,
+                state=state,
+                started_at=oldest - timedelta(minutes=n) if n >= count - 3 else now - timedelta(minutes=n),
+            )
+            for n in range(count)
+        ]
+
+    WorkerJobLog.objects.bulk_create(
+        pile("notify", "REVOKED", UNSUCCESSFUL_JOBS_KEPT + 3, old)
+        + pile("notify", "FAILURE", 300, old)
+        + pile("other", "REVOKED", 300, old)
+        + pile("recent", "REVOKED", UNSUCCESSFUL_JOBS_KEPT + 3, recent)
+    )
+
+    assert purge_worker_job_logs.run() == 3
+    gone = {f"notify-REVOKED-{n}" for n in range(UNSUCCESSFUL_JOBS_KEPT, UNSUCCESSFUL_JOBS_KEPT + 3)}
+    assert not WorkerJobLog.objects.filter(task_id__in=gone).exists()
+    assert WorkerJobLog.objects.count() == 2 * UNSUCCESSFUL_JOBS_KEPT + 3 + 600
+
+
+@pytest.mark.django_db
+def test_the_newest_thousand_are_kept_however_old() -> None:
+    long_ago = timezone.now() - timedelta(days=365)
+    WorkerJobLog.objects.bulk_create(
+        WorkerJobLog(
+            task_id=str(n), task_name="t", state="FAILURE", started_at=long_ago - timedelta(minutes=n)
+        )
+        for n in range(UNSUCCESSFUL_JOBS_KEPT + 1)
+    )
+
+    assert purge_worker_job_logs.run() == 1
+    assert not WorkerJobLog.objects.filter(task_id=str(UNSUCCESSFUL_JOBS_KEPT)).exists()
+
+
+def _create_result_table(cursor: CursorWrapper) -> None:
+    cursor.execute(
+        "CREATE TABLE celery_taskmeta (id serial PRIMARY KEY, task_id varchar(155) UNIQUE,"
+        " status varchar(50), date_done timestamp without time zone, name varchar(155))"
+    )
+
+
+def _store_result(cursor: CursorWrapper, task_id: str, status: str, age: timedelta, name: str = "t") -> None:
     done = datetime.now(UTC).replace(tzinfo=None) - age  # naive UTC, as Celery stores it
     cursor.execute(
-        "INSERT INTO celery_taskmeta (task_id, status, date_done) VALUES (%s, %s, %s)",
-        [task_id, status, done],
+        "INSERT INTO celery_taskmeta (task_id, status, date_done, name) VALUES (%s, %s, %s, %s)",
+        [task_id, status, done, name],
     )
 
 
 @pytest.mark.django_db
-def test_only_old_successful_jobs_are_purged_from_the_result_backend() -> None:
+def test_old_successful_jobs_are_purged_from_the_result_backend_and_others_kept() -> None:
     with connection.cursor() as cursor:
-        cursor.execute(
-            "CREATE TABLE celery_taskmeta (id serial PRIMARY KEY, task_id varchar(155) UNIQUE,"
-            " status varchar(50), date_done timestamp without time zone)"
-        )
+        _create_result_table(cursor)
         _store_result(cursor, "old", "SUCCESS", WORKER_JOB_RETENTION + timedelta(hours=1))
         _store_result(cursor, "new", "SUCCESS", WORKER_JOB_RETENTION - timedelta(hours=1))
         _store_result(cursor, "old-failure", "FAILURE", timedelta(days=365))
@@ -184,6 +242,28 @@ def test_only_old_successful_jobs_are_purged_from_the_result_backend() -> None:
     with connection.cursor() as cursor:
         cursor.execute("SELECT task_id FROM celery_taskmeta ORDER BY task_id")
         assert [row[0] for row in cursor.fetchall()] == ["new", "old-failure", "old-started"]
+
+
+@pytest.mark.django_db
+def test_a_pile_of_one_unsuccessful_task_and_status_loses_its_old_excess_from_the_result_backend() -> None:
+    old = UNSUCCESSFUL_JOB_RETENTION + timedelta(days=1)
+    recent = UNSUCCESSFUL_JOB_RETENTION - timedelta(days=1)
+    with connection.cursor() as cursor:
+        _create_result_table(cursor)
+        for n in range(UNSUCCESSFUL_JOBS_KEPT):
+            _store_result(cursor, f"kept-{n}", "REVOKED", recent + timedelta(minutes=n), name="notify")
+        _store_result(cursor, "old-excess", "REVOKED", old, name="notify")
+        _store_result(cursor, "recent-excess", "REVOKED", recent - timedelta(hours=1), name="notify")
+        for n in range(300):
+            _store_result(cursor, f"failure-{n}", "FAILURE", old, name="notify")
+
+    assert purge_worker_job_results.run() == 1
+
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT count(*) FROM celery_taskmeta WHERE task_id = 'old-excess'")
+        assert cursor.fetchone() == (0,)
+        cursor.execute("SELECT count(*) FROM celery_taskmeta")
+        assert cursor.fetchone() == (UNSUCCESSFUL_JOBS_KEPT + 1 + 300,)
 
 
 @pytest.mark.django_db

@@ -163,7 +163,8 @@ TOPIC_FIELDS = {
 class WorkerJobLog(models.Model):
     """What one Celery task logged while it ran — see core/worker_logs.py. Shown on the worker-jobs
     admin page. A successful job's is purged after WORKER_JOB_RETENTION by
-    core.tasks.purge_worker_job_logs; any other is kept."""
+    core.tasks.purge_worker_job_logs; any other only from a pile of the same task and state, past
+    UNSUCCESSFUL_JOBS_KEPT and UNSUCCESSFUL_JOB_RETENTION."""
 
     task_id = models.CharField(max_length=255, unique=True)
     task_name = models.CharField(max_length=255, blank=True)
