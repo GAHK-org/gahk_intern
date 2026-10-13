@@ -3,7 +3,7 @@
 {% block content %}
 <section class="album-detail">
 	<header class="album-heading"><div>{% if album %}<a class="album-back" href="{% url 'photo_album:detail' album.pk %}">{{ album.name }}</a>{% else %}<a class="album-back" href="{% url 'photo_album:index' %}">Fotoalbum</a>{% endif %}<h1>Papirkurv{% if album %} — {{ album.name }}{% endif %}</h1>{% if album %}<p class="album-subtitle">Med alle underalbummer. Medier slettes endeligt efter 30 dage.</p>{% else %}<p class="album-subtitle">Alle albummers papirkurve. Medier slettes endeligt efter 30 dage.</p>{% endif %}</div></header>
-	<div class="album-media-grid" data-album-gallery>
+	<div class="album-media-grid" data-album-gallery data-album-no-views>
 	{% for item in media %}
 		<article class="album-media-item">
 			{% if item.has_derivatives %}<button type="button" class="album-media-tile" data-detail-url="{% url 'photo_album:media_detail' item.pk %}">
