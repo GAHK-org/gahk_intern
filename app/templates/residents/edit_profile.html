@@ -59,9 +59,10 @@
         const old = document.getElementById('pp-preview');
         const img = document.createElement('img');
         img.id = 'pp-preview';
-        img.src = e.target.result;
         img.style.cssText = 'width:80px;height:80px;border-radius:50%;object-fit:cover;display:block';
-        old.replaceWith(img);
+        // Swapped in once it decodes: a HEIC does not outside Safari, and the server converts it.
+        img.onload = function () { old.replaceWith(img); };
+        img.src = e.target.result;
       };
       reader.readAsDataURL(file);
     });

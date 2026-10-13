@@ -187,3 +187,72 @@ document.addEventListener(
 export function hookImageForms(_root: ParentNode = document): void {
   /* nothing to do: submit is handled by the delegated capture listener above */
 }
+
+// --- Camera and clipboard (#126) ------------------------------------------------------------------
+
+const IMAGE_INPUT = 'input[type="file"][accept^="image"]';
+
+// ANDROID OFFERS NO CAMERA FOR `accept="image/*"`. Chrome there hands a pure-image accept to the
+// system photo picker, which lists the gallery and nothing else; iOS shows "Take Photo" for the same
+// markup. One accept entry that is not an image type sends Chrome back to the older chooser, which
+// has the camera next to the files. The type is made up, so it lets no extra file through, and the
+// server checks every upload anyway (core.uploads).
+//
+// Added at click time, before the chooser opens, rather than in the templates: it is Android's
+// quirk, so iOS and desktop keep the plain accept, and every image input gets it, including ones
+// htmx swaps in later. `capture` is no answer: it skips the chooser and opens the camera directly,
+// which takes away picking an existing photo instead.
+const ANDROID_CAMERA = "android/force-camera-workaround";
+
+if (/Android/i.test(navigator.userAgent)) {
+  document.addEventListener(
+    "click",
+    (event) => {
+      const input = event.target;
+      if (!(input instanceof HTMLInputElement) || !input.matches(IMAGE_INPUT)) return;
+      if (!input.accept.split(",").includes(ANDROID_CAMERA)) input.accept += `,${ANDROID_CAMERA}`;
+    },
+    true,
+  );
+}
+
+/** The image input a paste at `target` is meant for, or null when that is not clear.
+ *
+ * The one in the same form: the reply box in Den Hurtige's thread panel and the composer above the
+ * feed are both on the page, and a photo pasted into one must not land in the other. Opslagstavlen's
+ * editor prefers its toolbar's image button. Outside any form, only a page with a single image input
+ * gets the photo - two candidates and no form to choose between them is a guess, and a wrong guess
+ * is worse than a paste that does nothing. */
+function pasteTarget(target: EventTarget | null): HTMLInputElement | null {
+  const usable = (inputs: Iterable<HTMLInputElement>): HTMLInputElement[] =>
+    Array.from(inputs).filter((i) => !i.disabled);
+  const form = target instanceof Element ? target.closest("form") : null;
+  if (form) {
+    const editor = form.querySelector<HTMLInputElement>("[data-md-image]");
+    if (editor && !editor.disabled) return editor;
+    const inForm = usable(form.querySelectorAll<HTMLInputElement>(IMAGE_INPUT));
+    if (inForm.length) return inForm.length === 1 ? inForm[0] : null;
+  }
+  const onPage = usable(document.querySelectorAll<HTMLInputElement>(IMAGE_INPUT));
+  return onPage.length === 1 ? onPage[0] : null;
+}
+
+// PASTING A SCREENSHOT ATTACHES IT, as if it had been picked. The files go into the input and a
+// `change` is dispatched, so everything that already listens for a picked photo - the thumbnail
+// note, opslagstavlen's upload, the downscale on submit - handles a pasted one without knowing.
+//
+// Only a clipboard of images and no text. Copying from a document can carry both a picture of the
+// selection and its text, and there the person meant the text; the browser's own paste goes ahead.
+document.addEventListener("paste", (event: ClipboardEvent) => {
+  const clipboard = event.clipboardData;
+  if (!clipboard || clipboard.types.includes("text/plain")) return;
+  const images = Array.from(clipboard.files).filter((f) => f.type.startsWith("image/"));
+  if (!images.length) return;
+  const input = pasteTarget(event.target);
+  if (!input) return;
+  event.preventDefault();
+  const dt = new DataTransfer();
+  for (const image of input.multiple ? images : images.slice(0, 1)) dt.items.add(image);
+  input.files = dt.files;
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+});
