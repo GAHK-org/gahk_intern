@@ -42,6 +42,7 @@ from residents.permissions import current_resident
 from . import access, cache, services
 from .forms import AlbumForm, AlbumNameForm, DownloadForm, MediaUploadForm, ZipAlbumImportForm
 from .models import (
+    MAX_ALBUM_DEPTH,
     Album,
     AlbumDownload,
     AlbumDownloadState,
@@ -53,6 +54,7 @@ from .models import (
     MediaStatus,
 )
 from .storage import PhotoAlbumS3Storage, get_photo_album_storage
+from .uploads import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 
 logger = logging.getLogger(__name__)
 
@@ -758,7 +760,12 @@ def system_import_zip(request: HttpRequest) -> JsonResponse:
 
 @require_GET
 def system_albums(request: HttpRequest) -> JsonResponse:
-    """The root albums of one folder, for the import script to tell what is already there."""
+    """The root albums of one folder, for the import script to tell what is already there.
+
+    Also the rules an archive is checked against, so the script can refuse an album from its
+    Dropbox listing before downloading gigabytes the import would turn down. They are this server's
+    own, so the script never carries a copy that drifts; the import itself still checks everything.
+    """
     if _token_import_resident(request) is None:
         raise PermissionDenied
     roots = Album.objects.filter(parent__isnull=True, folder=request.GET.get("folder", "")).order_by("name")
@@ -767,7 +774,16 @@ def system_albums(request: HttpRequest) -> JsonResponse:
             "albums": [
                 {"id": album.pk, "name": album.name, "media": album.subtree_media().count()}
                 for album in roots
-            ]
+            ],
+            "rules": {
+                "imageExtensions": sorted(IMAGE_EXTENSIONS),
+                "videoExtensions": sorted(VIDEO_EXTENSIONS),
+                "imageMaxMb": settings.PHOTO_ALBUM_IMAGE_MAX_MB,
+                "videoMaxMb": settings.PHOTO_ALBUM_VIDEO_MAX_MB,
+                # Folder levels allowed below the album the archive becomes.
+                "maxSubAlbumLevels": MAX_ALBUM_DEPTH,
+                "macosMetadataMaxBytes": services.MACOS_METADATA_MAX_BYTES,
+            },
         }
     )
 
