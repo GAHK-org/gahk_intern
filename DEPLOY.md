@@ -543,6 +543,12 @@ python manage.py relocate_media   # copy referenced legacy images into MEDIA_ROO
 Encoding: connection charset is utf8mb3 — check per-table charsets, watch latin1→utf8 mojibake (02-schema-etl §1.4/A2).
 **Carve out the `wiki*`-prefixed tables** — they belong to MediaWiki (MariaDB), not the Postgres ETL.
 
+To start a photo-album import over (a botched Dropbox folder, say), `python manage.py
+delete_photo_album --album <id>` or `--folder <yyyy|Andet>` deletes the tree, its media and its
+stored files, locks or not. It asks for a typed confirmation code and refuses anything from
+2026-10-01 on (`PHOTO_ALBUM_DELETE_PROTECTED_FROM` moves that date, never into the future), so
+albums in real use are never at risk. Run it with `docker exec -it` — it needs a terminal.
+
 ## 6. MediaWiki workstream (keep, don't rewrite — scope §3) **[you]**
 - It currently **shares the `gahk_dk` DB** (user `gahk_dk`, table prefix `wiki`; `LocalSettings.php`).
   Split the `wiki*` tables into their **own MariaDB database** on the new box.

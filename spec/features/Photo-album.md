@@ -63,6 +63,7 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 - Deletion moves media to the bin. Each album has its own bin, covering its whole subtree, visible to Fotogruppen members and administrators. Administrators also have one bin listing every album's binned media.
 - Managers can restore binned media to its original album until automatic cleanup removes it after 30 days in the bin. Restoring returns to the album's bin.
 - A binned item may be permanently deleted manually only while it is less than one hour old; otherwise the scheduled 30-day cleanup removes it. All stored variants are removed with the database record.
+- On the server, `manage.py delete_photo_album --folder <folder>` or `--album <id>` deletes a whole folder, or an album with its sub-albums, regardless of locks: every media item (binned ones too), every stored file under the albums' `photo-album/<album id>/` prefixes (leftovers included), every download ZIP that holds any of the media, and the local cache copies. It lists what it will delete and asks for a random 8-character code to be typed back; a wrong code deletes nothing. It refuses outright when any album in scope was created, or any media uploaded, on or after 2026-10-01; `PHOTO_ALBUM_DELETE_PROTECTED_FROM` moves that date, but a date in the future is refused. It stops if anything is added while it waits for the code, and fails loudly if stored files remain afterwards.
 
 ## Viewing experience
 
