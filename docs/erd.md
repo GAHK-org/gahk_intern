@@ -609,6 +609,7 @@ erDiagram
         json album_ids
         json skipped
         json errors
+        bool lock_when_done
         string error
         datetime created_at
         datetime completed_at
@@ -1301,6 +1302,7 @@ erDiagram
         json album_ids
         json skipped
         json errors
+        bool lock_when_done
         string error
         datetime created_at
         datetime completed_at

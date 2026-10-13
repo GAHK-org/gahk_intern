@@ -22,8 +22,17 @@ class AlbumNameForm(forms.Form):
 class DownloadForm(forms.Form):
     variant = forms.ChoiceField(choices=DownloadVariant.choices, required=False)
 
+    # "0" leaves the sub-albums out. Anything else, including nothing at all, downloads the whole
+    # subtree — what "the entire album" meant before the choice existed.
+    sub_albums = forms.ChoiceField(
+        choices=[("1", "Med underalbummer"), ("0", "Kun dette album")], required=False
+    )
+
     def clean_variant(self) -> str:
         return self.cleaned_data["variant"] or DownloadVariant.ORIGINAL
+
+    def clean_sub_albums(self) -> bool:
+        return self.cleaned_data["sub_albums"] != "0"
 
 
 class MultipleFileInput(forms.ClearableFileInput):

@@ -428,6 +428,42 @@ def test_album_download_covers_the_subtree_and_is_not_queued_twice(
 
 
 @pytest.mark.django_db
+def test_album_download_can_leave_the_sub_albums_out(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    resident = make_resident()
+    root = Album.objects.create(folder="2024", name="Sommerfest")
+    child = Album.objects.create(name="Fredag", parent=root)
+    own = _media(root, resident)
+    _media(child, resident)
+    client.force_login(resident)
+
+    page = client.get(reverse("photo_album:detail", args=[root.pk])).content.decode()
+    assert 'name="sub_albums" value="0"' in page
+    assert (
+        'name="sub_albums" value="0"'
+        not in client.get(reverse("photo_album:detail", args=[child.pk])).content.decode()
+    )
+
+    client.post(
+        reverse("photo_album:download_album", args=[root.pk]), {"variant": "original", "sub_albums": "0"}
+    )
+    assert AlbumDownload.objects.get().media_ids == [own.pk]
+
+    response = client.post(reverse("photo_album:download_album", args=[child.pk]), {"sub_albums": "0"})
+    assert response.status_code == 302
+    assert AlbumDownload.objects.count() == 2
+
+    empty = Album.objects.create(folder="2024", name="Tom")
+    _media(Album.objects.create(name="Kun her", parent=empty), resident)
+    response = client.post(
+        reverse("photo_album:download_album", args=[empty.pk]), {"sub_albums": "0"}, follow=True
+    )
+    assert "ingen medier" in response.content.decode()
+    assert AlbumDownload.objects.count() == 2
+
+
+@pytest.mark.django_db
 def test_an_expired_ready_download_is_queued_afresh(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:

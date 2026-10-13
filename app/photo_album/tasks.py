@@ -1,6 +1,8 @@
 import io
+import logging
 import posixpath
 from collections.abc import Buffer, Iterator
+from datetime import timedelta
 from pathlib import Path
 
 from celery import shared_task
@@ -24,8 +26,10 @@ from .models import (
     DownloadVariant,
     Media,
 )
-from .services import build_derivatives, import_zip_album, pending_derivatives
+from .services import backfill_hashes, build_derivatives, import_zip_album, pending_derivatives
 from .storage import PhotoAlbumS3Storage, get_photo_album_storage
+
+logger = logging.getLogger(__name__)
 
 # The two jobs here that legitimately outrun the global CELERY_TASK_TIME_LIMIT of fifteen minutes:
 # an H.264 encode of a phone clip, and a whole-album ZIP streamed into object storage. Under the
@@ -86,6 +90,25 @@ def process_pending_media(limit: int = 10) -> int:
     return dispatched
 
 
+# How long one night's hash backfill may read originals for. Old rows are hashed in portions, so
+# the first nights after a deploy never hold the worker for long; once every row has its hash, a
+# run is one indexed query that finds nothing.
+HASH_BACKFILL_BUDGET = timedelta(minutes=20)
+
+
+@shared_task(time_limit=MEDIA_TASK_TIME_LIMIT, soft_time_limit=MEDIA_TASK_SOFT_TIME_LIMIT)
+def backfill_media_hashes() -> int:
+    """Nightly: hash originals stored before hashes were. Returns how many were hashed."""
+    result = backfill_hashes(until=timezone.now() + HASH_BACKFILL_BUDGET)
+    logger.info(
+        "Hashed %d media item(s); %d could not be read; %d still without a hash.",
+        result.hashed,
+        len(result.unreadable),
+        result.remaining,
+    )
+    return result.hashed
+
+
 @shared_task
 def purge_expired_media() -> None:
     """Permanently remove photo-album media past its retention period."""
@@ -121,7 +144,8 @@ class _ZipReader(io.RawIOBase):
         return size
 
 
-RENAMED_NOTICE_NAME = "OMDØBTE_FILER.txt"
+# The leading underscore sorts it first in most file browsers, ahead of the folders and pictures.
+RENAMED_NOTICE_NAME = "_OMDØBTE_FILER.txt"
 
 
 def archive_entries(download: AlbumDownload) -> tuple[list[tuple[str, Media, File]], list[tuple[str, str]]]:
@@ -132,7 +156,7 @@ def archive_entries(download: AlbumDownload) -> tuple[list[tuple[str, Media, Fil
     original names. Several items in one album may share a name — two phones' IMG_0001.JPG — and so
     may an original and its HD copy's new extension; every member of such a group, compared without
     case as Windows and macOS would, is numbered `IMG_0001_01.JPG`, `IMG_0001_02.JPG`, … and listed
-    in OMDØBTE_FILER.txt.
+    in _OMDØBTE_FILER.txt.
     """
     media_items = list(
         Media.objects.filter(pk__in=download.media_ids, deleted_at__isnull=True)
@@ -279,6 +303,7 @@ def process_album_import(import_id: int) -> bool:
                 archive=File(archive, name=album_import.archive_name),
                 folder=album_import.folder,
                 resident=album_import.requested_by,
+                lock=album_import.lock_when_done,
             )
         album_import.state = AlbumImportState.READY
         album_import.album_ids = [album.pk for album in albums]
