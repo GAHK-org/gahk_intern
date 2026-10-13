@@ -83,6 +83,8 @@ QUEUED_TOO_LONG = 5 * 60  # seconds before a job that never starts gets a hint
 MACOS_METADATA_FOLDERS = {"__MACOSX", ".AppleDouble"}
 MACOS_METADATA_FILES = {".DS_Store", "Icon\r"}
 WINDOWS_METADATA_FILES = {"thumbs.db", "desktop.ini"}
+# How the server reports the metadata it skipped (photo_album.services).
+METADATA_SKIPPED = (": macOS-metadata (ignoreret)", ": Windows-systemfil (ignoreret)")
 
 T = TypeVar("T")
 
@@ -1063,8 +1065,14 @@ def report_job(job: dict[str, Any], album: str | None) -> None:
         f" {albums[0]['path'] if albums else album}"
         + (f" (+{len(albums) - 1} sub-album(s))" if len(albums) > 1 else "")
     )
+    metadata = 0
     for line in job.get("skipped", []):
-        out.info(f"    left out: {line}")
+        if line.endswith(METADATA_SKIPPED):
+            metadata += 1  # .DS_Store, ._*, Thumbs.db, …: there are a lot, and they are kept in metadata/
+        else:
+            out.info(f"    left out: {line}")
+    if metadata:
+        out.info(f"    left out: {metadata} metadata file(s)")
 
 
 # --- Retrying the kept-out files of one album -----------------------------------------------------
