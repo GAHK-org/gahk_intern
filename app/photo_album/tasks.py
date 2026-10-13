@@ -306,34 +306,37 @@ def process_album_import(import_id: int) -> bool:
     album_import.state = AlbumImportState.BUILDING
     album_import.save(update_fields=["state"])
     logger.info(
-        "Importing %s into folder %s for %s%s.",
+        "Importing %s into folder %s for %s%s%s.",
         album_import.archive_name,
         album_import.folder,
         album_import.requested_by,
         " (locked when done)" if album_import.lock_when_done else "",
+        " (merged into an album of the same name)" if album_import.merge_into_existing else "",
     )
     try:
         with album_import.archive.open("rb") as archive:
-            albums, skipped = import_zip_album(
+            result = import_zip_album(
                 archive=File(archive, name=album_import.archive_name),
                 folder=album_import.folder,
                 resident=album_import.requested_by,
                 lock=album_import.lock_when_done,
+                merge=album_import.merge_into_existing,
             )
         album_import.state = AlbumImportState.READY
-        album_import.album_ids = [album.pk for album in albums]
-        album_import.skipped = skipped
+        album_import.album_ids = [album.pk for album in result.albums]
+        album_import.skipped = result.skipped
+        album_import.merged = result.merged
         album_import.completed_at = timezone.now()
-        album_import.save(update_fields=["state", "album_ids", "skipped", "completed_at"])
-        for line in skipped:
+        album_import.save(update_fields=["state", "album_ids", "skipped", "merged", "completed_at"])
+        for line in result.skipped:
             logger.info("Left out: %s", line)
-        media_count = sum(album.media.count() for album in albums)
         logger.info(
-            "Imported %d media item(s) into %d album(s): %s. %d file(s) left out.",
-            media_count,
-            len(albums),
-            ", ".join(album.name for album in albums),
-            len(skipped),
+            "%s %d media item(s) into %d album(s): %s. %d file(s) left out.",
+            "Merged" if result.merged else "Imported",
+            result.added,
+            len(result.albums),
+            ", ".join(album.name for album in result.albums),
+            len(result.skipped),
         )
         return True
     except ValidationError as exc:

@@ -766,7 +766,9 @@ def import_zip(request: HttpRequest) -> HttpResponse:
     )
 
 
-def _queue_import(form: ZipAlbumImportForm, resident: Resident, *, lock: bool = False) -> AlbumImport:
+def _queue_import(
+    form: ZipAlbumImportForm, resident: Resident, *, lock: bool = False, merge: bool = False
+) -> AlbumImport:
     archive = form.cleaned_data["archive"]
     album_import = AlbumImport.objects.create(
         requested_by=resident,
@@ -774,6 +776,7 @@ def _queue_import(form: ZipAlbumImportForm, resident: Resident, *, lock: bool = 
         archive_name=archive.name,
         archive=archive,
         lock_when_done=lock,
+        merge_into_existing=merge,
     )
     from .tasks import process_album_import
 
@@ -796,7 +799,9 @@ def system_import_zip(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
     # Everything the import script brings in is an archive of years gone by: lock it on arrival, so
     # it is not edited by accident. Fotogruppen can unlock an album that does need a change.
-    album_import = _queue_import(form, resident, lock=True)
+    # An album that already exists is added to rather than refused, so the script can send the files
+    # an earlier attempt left out — once it has been unlocked; a locked album is still refused.
+    album_import = _queue_import(form, resident, lock=True, merge=True)
     return JsonResponse(
         {
             "statusUrl": reverse("photo_album:import_zip_status", args=[album_import.token]),
@@ -853,6 +858,7 @@ def import_zip_status(request: HttpRequest, token: str) -> JsonResponse:
             "errors": album_import.errors,
             "skipped": album_import.skipped,
             "locked": bool(albums) and albums[0].is_locked(),
+            "merged": album_import.merged,
             "albums": [
                 {
                     "id": album.pk,
