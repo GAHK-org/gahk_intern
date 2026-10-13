@@ -477,6 +477,243 @@ const setupYears = (gallery: HTMLElement): void => {
   }, { passive: true })
 }
 
+// --- Tags ------------------------------------------------------------------------------------
+//
+// One field for every place a tag is chosen: tagging an album or an item, and filtering the
+// timeline. It searches the tags already in use as the reader types (views.tag_search), and opens
+// on focus listing them all, so picking the existing spelling is easier than inventing a new one.
+
+interface TagEntry {
+  name: string
+  url: string
+  inherited: boolean
+  from: string
+}
+
+// Mirrors photo_album.models.validate_tag_name, to answer before the round trip. The server decides.
+const TAG_PATTERN = /^[\p{L}\p{N}_.-]+$/u
+const TAG_MAX_LENGTH = 30
+
+const tagProblem = (name: string): string => {
+  if (name.length > TAG_MAX_LENGTH) return `Et tag må højst være ${TAG_MAX_LENGTH} tegn.`
+  if (!TAG_PATTERN.test(name)) return "Et tag må kun indeholde bogstaver, tal, punktum, bindestreg og understregning."
+  return ""
+}
+
+const setupTagInput = (
+  input: HTMLInputElement,
+  options: HTMLUListElement,
+  searchUrl: string,
+  taken: () => string[],
+  choose: (name: string) => void,
+): void => {
+  let request = 0
+  let timer: number | undefined
+  let active = -1
+
+  const items = (): HTMLLIElement[] => Array.from(options.querySelectorAll<HTMLLIElement>("li"))
+
+  const close = (): void => {
+    request++
+    options.hidden = true
+    options.replaceChildren()
+    active = -1
+    input.setAttribute("aria-expanded", "false")
+    input.removeAttribute("aria-activedescendant")
+  }
+
+  const move = (delta: 1 | -1): void => {
+    const all = items()
+    if (!all.length) return
+    active = active === -1 ? (delta === 1 ? 0 : all.length - 1) : (active + delta + all.length) % all.length
+    all.forEach((item, index) => item.setAttribute("aria-selected", String(index === active)))
+    input.setAttribute("aria-activedescendant", all[active].id)
+    all[active].scrollIntoView({ block: "nearest" })
+  }
+
+  const search = async (): Promise<void> => {
+    const mine = ++request
+    const url = new URL(searchUrl, window.location.href)
+    url.searchParams.set("q", input.value.trim())
+    try {
+      const response = await fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } })
+      if (!response.ok) return
+      const { tags } = (await response.json()) as { tags: string[] }
+      // Typed on, or left the field, while this was in flight.
+      if (mine !== request || document.activeElement !== input) return
+      const skip = new Set(taken().map((name) => name.toLowerCase()))
+      const names = tags.filter((name) => !skip.has(name.toLowerCase()))
+      options.replaceChildren(...names.map((name, index) => {
+        const item = document.createElement("li")
+        item.id = `${options.id}-${index}`
+        item.setAttribute("role", "option")
+        item.setAttribute("aria-selected", "false")
+        item.textContent = name
+        return item
+      }))
+      active = -1
+      options.hidden = names.length === 0
+      input.setAttribute("aria-expanded", String(names.length > 0))
+      input.removeAttribute("aria-activedescendant")
+    } catch {
+      // No suggestions; typing a tag still works.
+    }
+  }
+
+  const pick = (name: string): void => {
+    close()
+    if (name) choose(name)
+  }
+
+  input.addEventListener("focus", () => void search())
+  input.addEventListener("input", () => {
+    window.clearTimeout(timer)
+    timer = window.setTimeout(() => void search(), 150)
+  })
+  input.addEventListener("blur", close)
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault()
+      if (options.hidden) void search()
+      else move(event.key === "ArrowDown" ? 1 : -1)
+    } else if (event.key === "Escape" && !options.hidden) {
+      // Closes the dropdown only, not the viewer around it.
+      event.preventDefault()
+      close()
+    } else if (event.key === "Enter") {
+      event.preventDefault()
+      pick((items()[active]?.textContent ?? input.value).trim())
+    }
+  })
+  // Keep the focus in the field, so the click lands before blur closes the list.
+  options.addEventListener("mousedown", (event) => event.preventDefault())
+  options.addEventListener("click", (event) => {
+    const item = (event.target as Element).closest("li")
+    if (item) pick(item.textContent ?? "")
+  })
+}
+
+const renderTagList = (list: HTMLElement, tags: TagEntry[], editable: boolean): void => {
+  list.replaceChildren(...tags.map((tag) => {
+    const item = document.createElement("li")
+    item.className = tag.inherited ? "album-tag is-inherited" : "album-tag"
+    item.dataset.tagName = tag.name
+    const link = document.createElement("a")
+    link.href = tag.url
+    link.textContent = tag.name
+    if (tag.inherited) link.title = `Fra albummet ${tag.from}`
+    item.append(link)
+    if (editable && !tag.inherited) {
+      const remove = document.createElement("button")
+      remove.type = "button"
+      remove.dataset.tagRemove = ""
+      remove.setAttribute("aria-label", `Fjern tagget ${tag.name}`)
+      remove.textContent = "×"
+      item.append(remove)
+    }
+    return item
+  }))
+}
+
+/**
+ * A tag list (photo_album/_tags.html) whose tags can be added and removed when it has a URL to post
+ * to. `onChange` hears about every change that went through, with the URL it was made at — the
+ * viewer may have moved on to another item before the answer arrived.
+ */
+const setupTagEditor = (
+  root: HTMLElement,
+  onChange: (tags: TagEntry[], url: string) => void,
+): { show: (tags: TagEntry[], url: string) => void } => {
+  const list = root.querySelector<HTMLElement>("[data-tag-list]")!
+  const add = root.querySelector<HTMLElement>("[data-tag-add]")
+  const input = root.querySelector<HTMLInputElement>("[data-tag-input]")
+  const options = root.querySelector<HTMLUListElement>("[data-tag-options]")
+  const error = root.querySelector<HTMLElement>("[data-tag-error]")
+  let url = root.dataset.tagUrl ?? ""
+
+  const showError = (message: string): void => {
+    if (!error) return
+    error.textContent = message
+    error.hidden = !message
+  }
+
+  const render = (tags: TagEntry[]): void => renderTagList(list, tags, Boolean(url))
+
+  const change = async (action: "add" | "remove", name: string): Promise<void> => {
+    const target = url
+    const body = new FormData()
+    body.set("action", action)
+    body.set("name", name)
+    try {
+      const response = await fetch(target, {
+        method: "POST",
+        body,
+        credentials: "same-origin",
+        headers: { Accept: "application/json", "X-CSRFToken": csrfToken() },
+      })
+      const result = (await response.json()) as { tags?: TagEntry[]; error?: string }
+      if (target === url) showError(response.ok ? "" : (result.error ?? "Tagget kunne ikke gemmes."))
+      if (!response.ok || !result.tags) return
+      if (target === url) render(result.tags)
+      onChange(result.tags, target)
+    } catch {
+      if (target === url) showError("Tagget kunne ikke gemmes. Kontrollér din forbindelse og prøv igen.")
+    }
+  }
+
+  list.addEventListener("click", (event) => {
+    const button = (event.target as Element).closest("[data-tag-remove]")
+    const name = button?.closest<HTMLElement>("[data-tag-name]")?.dataset.tagName
+    if (name && url) void change("remove", name)
+  })
+
+  if (input && options) {
+    const taken = (): string[] =>
+      Array.from(list.querySelectorAll<HTMLElement>("[data-tag-name]")).map((item) => item.dataset.tagName ?? "")
+    setupTagInput(input, options, root.dataset.tagSearchUrl ?? "", taken, (name) => {
+      const problem = tagProblem(name)
+      showError(problem)
+      if (problem) return
+      input.value = ""
+      void change("add", name)
+    })
+  }
+
+  return {
+    show: (tags, newUrl) => {
+      if (newUrl !== url) {
+        if (input) input.value = ""
+        showError("")
+      }
+      url = newUrl
+      if (add) add.hidden = !url
+      render(tags)
+      root.hidden = !url && tags.length === 0
+    },
+  }
+}
+
+// The album page's own tags. Its media inherit them, so the viewer's cached details go stale.
+document.querySelectorAll<HTMLElement>("[data-tag-editor]").forEach((root) => {
+  if (root.closest("[data-album-viewer]")) return
+  setupTagEditor(root, () => document.dispatchEvent(new CustomEvent("photo-album:tags-changed")))
+})
+
+// The timeline's filter: choosing a tag adds it to the ones already filtered on.
+const tagFilter = document.querySelector<HTMLFormElement>("[data-tag-filter]")
+if (tagFilter) {
+  const input = tagFilter.querySelector<HTMLInputElement>("[data-tag-input]")
+  const options = tagFilter.querySelector<HTMLUListElement>("[data-tag-options]")
+  if (input && options) {
+    const taken = (): string[] =>
+      Array.from(tagFilter.querySelectorAll<HTMLInputElement>("input[type=hidden][name=tag]")).map((field) => field.value)
+    setupTagInput(input, options, tagFilter.dataset.tagSearchUrl ?? "", taken, (name) => {
+      input.value = name
+      tagFilter.submit()
+    })
+  }
+}
+
 // --- The viewer ------------------------------------------------------------------------------
 
 interface MediaDetail {
@@ -495,6 +732,8 @@ interface MediaDetail {
   uploadedAt: string
   capturedAt: string
   metadata: Record<string, string>
+  tags: TagEntry[]
+  tagUrl: string
   uniqueViews: number
   totalViews: number
 }
@@ -527,6 +766,22 @@ if (gallery && dialog) {
   let zoomScale = 1
   let pinchStartDistance = 0
   let pinchStartScale = 1
+
+  // The aside on a desktop, the kebab menu on a phone: both show the same tags.
+  const tagEditors: { show: (tags: TagEntry[], url: string) => void }[] = []
+  const tagsChanged = (tags: TagEntry[], url: string): void => {
+    // Cheaper than working out which cached items share the tag: they are fetched again on demand.
+    details.clear()
+    tagEditors.forEach((editor) => editor.show(tags, url))
+  }
+  dialog.querySelectorAll<HTMLElement>("[data-tag-editor]").forEach((root) => {
+    tagEditors.push(setupTagEditor(root, (tags, url) => {
+      if (current && currentTagUrl === url) tagsChanged(tags, url)
+      else details.clear()
+    }))
+  })
+  let currentTagUrl = ""
+  document.addEventListener("photo-album:tags-changed", () => details.clear())
 
   const selection = setupSelection(gallery)
   const paging = setupPaging(gallery, selection.prepare, () => !dialog.open)
@@ -668,6 +923,8 @@ if (gallery && dialog) {
     if (menuViews) menuViews.textContent = ""
     deleteForm.hidden = true
     menuDeleteForm.hidden = true
+    currentTagUrl = ""
+    tagEditors.forEach((editor) => editor.show([], ""))
     menu.hidden = true
     menuButton.setAttribute("aria-expanded", "false")
     updateArrows()
@@ -701,6 +958,8 @@ if (gallery && dialog) {
       menuDeleteForm.hidden = !detail.deleteUrl
       menuDeleteForm.action = detail.deleteUrl
       renderMetadata(detail)
+      currentTagUrl = detail.tagUrl
+      tagEditors.forEach((editor) => editor.show(detail.tags, detail.tagUrl))
       renderViews(detail.uniqueViews, detail.totalViews)
       // Warm the neighbours, so paging with the arrows or a swipe does not wait on the network.
       const all = entries()
@@ -792,6 +1051,8 @@ if (gallery && dialog) {
   }, { passive: true })
   document.addEventListener("keydown", (event) => {
     if (!dialog.open) return
+    // Typing a tag: the arrows move the cursor, not to the next photograph.
+    if ((event.target as Element | null)?.closest?.("input, textarea")) return
     if (event.key === "ArrowLeft") void step(-1)
     if (event.key === "ArrowRight") void step(1)
   })
