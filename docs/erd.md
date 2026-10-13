@@ -49,6 +49,17 @@ erDiagram
         bool wants_reparationer
     }
 
+    core_WorkerJobLog {
+        int id PK
+        string task_id
+        string task_name
+        string state
+        datetime started_at
+        datetime finished_at
+        json lines
+        int omitted
+    }
+
     residents_Resident {
         int id PK
         string password
@@ -945,6 +956,17 @@ erDiagram
         bool wants_opslagstavle
         bool wants_begivenheder
         bool wants_reparationer
+    }
+
+    core_WorkerJobLog {
+        int id PK
+        string task_id
+        string task_name
+        string state
+        datetime started_at
+        datetime finished_at
+        json lines
+        int omitted
     }
 
     residents_Resident { }

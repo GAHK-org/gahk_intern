@@ -229,6 +229,7 @@ def _archive(download: AlbumDownload) -> ZipStream:
             "",
         ]
         archive.add("\r\n".join(lines).encode("utf-8"), arcname=RENAMED_NOTICE_NAME)
+        logger.info("%d file(s) renamed to avoid a clash; listed in %s.", len(renamed), RENAMED_NOTICE_NAME)
     return archive
 
 
@@ -242,6 +243,13 @@ def build_album_download(download_id: int) -> bool:
     download.state = AlbumDownloadState.BUILDING
     download.save(update_fields=["state"])
     key = f"photo-album-zips/{download.token}.zip"
+    logger.info(
+        "Building %s (%s) with %d item(s) for %s.",
+        download.filename,
+        download.variant,
+        len(download.media_ids),
+        download.requested_by,
+    )
     try:
         archive = _archive(download)
         storage = get_photo_album_storage()
@@ -297,6 +305,13 @@ def process_album_import(import_id: int) -> bool:
         return False
     album_import.state = AlbumImportState.BUILDING
     album_import.save(update_fields=["state"])
+    logger.info(
+        "Importing %s into folder %s for %s%s.",
+        album_import.archive_name,
+        album_import.folder,
+        album_import.requested_by,
+        " (locked when done)" if album_import.lock_when_done else "",
+    )
     try:
         with album_import.archive.open("rb") as archive:
             albums, skipped = import_zip_album(
@@ -310,10 +325,23 @@ def process_album_import(import_id: int) -> bool:
         album_import.skipped = skipped
         album_import.completed_at = timezone.now()
         album_import.save(update_fields=["state", "album_ids", "skipped", "completed_at"])
+        for line in skipped:
+            logger.info("Left out: %s", line)
+        media_count = sum(album.media.count() for album in albums)
+        logger.info(
+            "Imported %d media item(s) into %d album(s): %s. %d file(s) left out.",
+            media_count,
+            len(albums),
+            ", ".join(album.name for album in albums),
+            len(skipped),
+        )
         return True
     except ValidationError as exc:
         # Refused, not crashed: the archive had problems the resident can fix, and nothing of it
         # was stored. Every reason is kept so the status page can list them all at once.
+        for message in exc.messages:
+            logger.warning("Refused: %s", message)
+        logger.warning("The ZIP was refused (%d reason(s)); nothing was imported.", len(exc.messages))
         album_import.state = AlbumImportState.FAILED
         album_import.errors = exc.messages
         album_import.error = "ZIP-filen blev afvist. Intet er importeret."

@@ -42,5 +42,19 @@
   {% if job.result is not None %}<h2 class="mt-8">Resultat</h2><pre class="card overflow-x-auto text-sm">{{ job.result }}</pre>{% endif %}
   {% if job.traceback %}<h2 class="mt-8">Undtagelse og traceback</h2><pre class="card overflow-x-auto text-sm">{{ job.traceback }}</pre>{% endif %}
   <h2 class="mt-8">Worker-log</h2>
-  <div class="card"><p class="muted">Worker-logge gemmes ikke i databasen. Se worker-containerens log for dette job-ID.</p></div>
+  {% if job_log %}
+    <div class="card overflow-x-auto">
+      <table class="w-full border-collapse text-sm">
+        <thead><tr class="border-b border-gray-200 text-left"><th class="p-2">Tid</th><th class="p-2">Niveau</th><th class="p-2">Kilde</th><th class="p-2">Besked</th></tr></thead>
+        <tbody>
+          {% for line in job_log.lines %}
+            <tr class="border-b border-gray-100 align-top"><td class="p-2 font-mono whitespace-nowrap">{{ line.at|slice:"11:19" }}</td><td class="p-2{% if line.level != 'INFO' %} font-semibold{% endif %}">{{ line.level }}</td><td class="p-2 font-mono break-all muted">{{ line.logger }}</td><td class="p-2 whitespace-pre-wrap break-words">{{ line.message }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% if job_log.omitted %}<p class="muted mt-2">… og {{ job_log.omitted }} linje{{ job_log.omitted|pluralize:"r" }} mere, som ikke blev gemt.</p>{% endif %}
+    </div>
+  {% else %}
+    <div class="card"><p class="muted">Jobbet har ikke logget noget{% if not job.finished_at %} endnu{% endif %}. Logge gemmes i 7 dage.</p></div>
+  {% endif %}
 {% endblock %}
