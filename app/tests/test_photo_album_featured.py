@@ -1,0 +1,121 @@
+"""The dashboard's photo strip: Dagens billeder and På denne dag (photo_album.featured)."""
+
+from collections.abc import Callable
+from datetime import UTC, date, datetime, timedelta
+
+import pytest
+from django.test import Client
+from django.urls import reverse
+
+from photo_album.featured import FEATURED_PER_DAY, ON_THIS_DAY_LIMIT, featured_for, on_this_day
+from photo_album.models import Album, DerivativeState, FeaturedMedia, Media, MediaStatus
+from residents.models import Resident
+
+DAY = date(2026, 10, 13)
+
+
+def _image(album: Album, resident: Resident, **fields: object) -> Media:
+    defaults: dict[str, object] = {
+        "title": "photo",
+        "original": "a",
+        "high_definition": "b",
+        "thumbnail": "c",
+        "content_type": "image/jpeg",
+        "status": MediaStatus.APPROVED,
+    }
+    return Media.objects.create(album=album, requested_by=resident, **{**defaults, **fields})
+
+
+@pytest.fixture
+def album() -> Album:
+    return Album.objects.create(folder="2026", name="Sommerfest")
+
+
+@pytest.mark.django_db
+def test_the_day_is_picked_once_and_then_fixed(album: Album, make_resident: Callable[..., Resident]) -> None:
+    resident = make_resident()
+    for _ in range(10):
+        _image(album, resident)
+
+    first = featured_for(DAY)
+    assert len(first) == FEATURED_PER_DAY
+    assert featured_for(DAY) == first
+    assert FeaturedMedia.objects.filter(date=DAY).count() == FEATURED_PER_DAY
+
+
+@pytest.mark.django_db
+def test_only_what_everyone_may_see_is_picked(album: Album, make_resident: Callable[..., Resident]) -> None:
+    resident = make_resident()
+    shown = _image(album, resident)
+    _image(album, resident, status=MediaStatus.PENDING)
+    _image(album, resident, deleted_at=datetime(2026, 1, 1, tzinfo=UTC))
+    _image(album, resident, content_type="video/mp4")
+    _image(album, resident, derivative_state=DerivativeState.PENDING)
+    _image(album, resident, thumbnail="")
+
+    assert featured_for(DAY) == [shown]
+
+
+@pytest.mark.django_db
+def test_a_pick_binned_later_drops_out_without_a_replacement(
+    album: Album, make_resident: Callable[..., Resident]
+) -> None:
+    resident = make_resident()
+    for _ in range(6):
+        _image(album, resident)
+    picked = featured_for(DAY)
+    Media.objects.filter(pk=picked[0].pk).update(deleted_at=datetime(2026, 10, 13, tzinfo=UTC))
+
+    assert featured_for(DAY) == picked[1:]
+
+
+@pytest.mark.django_db
+def test_recent_picks_sit_out_but_top_up_a_small_archive(
+    album: Album, make_resident: Callable[..., Resident]
+) -> None:
+    resident = make_resident()
+    items = [_image(album, resident) for _ in range(5)]
+    for position, item in enumerate(items[:3]):
+        FeaturedMedia.objects.create(date=DAY - timedelta(days=1), position=position, media=item)
+
+    picked = {item.pk for item in featured_for(DAY)}
+    assert len(picked) == FEATURED_PER_DAY
+    assert {items[3].pk, items[4].pk} <= picked  # the two fresh ones first, then one cooling down
+
+
+@pytest.mark.django_db
+def test_on_this_day_spreads_over_earlier_years(album: Album, make_resident: Callable[..., Resident]) -> None:
+    resident = make_resident()
+    for year in (2023, 2024, 2025):
+        for hour in range(4):
+            _image(album, resident, captured_at=datetime(year, 10, 13, 10 + hour, tzinfo=UTC))
+    _image(album, resident, captured_at=datetime(2026, 10, 13, 10, tzinfo=UTC))  # this year: not "earlier"
+    _image(album, resident, captured_at=datetime(2025, 10, 14, 10, tzinfo=UTC))  # another day
+
+    earlier = on_this_day(DAY)
+    years = [item.captured_at.year for item in earlier if item.captured_at]
+    assert len(earlier) == ON_THIS_DAY_LIMIT
+    assert years == [2025, 2024, 2023, 2025, 2024, 2023]
+    assert on_this_day(DAY) == earlier  # stable through the day
+
+
+@pytest.mark.django_db
+def test_dashboard_links_each_picture_to_its_album(
+    client: Client, album: Album, make_resident: Callable[..., Resident]
+) -> None:
+    resident = make_resident()
+    item = _image(album, resident, captured_at=datetime(2024, 10, 13, 10, tzinfo=UTC))
+    client.force_login(resident)
+
+    page = client.get("/intern/").content.decode()
+    link = f"{reverse('photo_album:detail', args=[album.pk])}?media={item.pk}"
+    assert "Dagens billeder" in page and "På denne dag" in page
+    assert page.count(link) == 2  # featured, and on this day
+
+
+@pytest.mark.django_db
+def test_dashboard_has_no_strip_without_photos(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    client.force_login(make_resident())
+    assert "Dagens billeder" not in client.get("/intern/").content.decode()

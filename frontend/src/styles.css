@@ -1913,6 +1913,15 @@
    .album-scope a[aria-current] { border-color:var(--brass); color:var(--ink); background:var(--surface-2); }
    /* Paging: sentinels are where the next page arrives. overflow-anchor is off because the script
       keeps the reader's place itself, and the browser doing it as well would move them twice. */
+   .album-strip { margin-top:20px; }
+   .album-strip-featured { display:grid; grid-template-columns:repeat(3, minmax(0, 220px)); gap:12px; }
+   .album-strip-earlier { display:grid; grid-template-columns:repeat(auto-fill, minmax(88px, 1fr)); gap:10px; }
+   .album-strip-subtitle { margin:18px 0 10px; font-size:13px; font-weight:700; color:var(--muted); }
+   .album-strip-subtitle:first-child { margin-top:0; }
+   .album-strip-item { display:grid; gap:5px; min-width:0; color:inherit; text-decoration:none; }
+   .album-strip-item img { width:100%; aspect-ratio:1; object-fit:cover; border-radius:8px; background:var(--sunken); }
+   .album-strip-item span { overflow:hidden; color:var(--muted); font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+   .album-strip-item:hover span { color:var(--green-700); }
    .album-media-grid { overflow-anchor:none; }
    .album-page-sentinel { grid-column:1 / -1; height:1px; }
    .album-page-sentinel.is-loading { height:48px; background:linear-gradient(90deg, transparent, var(--surface-2), transparent); background-size:200% 100%; animation:album-loading 1.2s linear infinite; }
