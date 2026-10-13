@@ -1,0 +1,9 @@
+{% comment %}One tag list, with an add field when `editable`. `tags` are views._tag_entries; photo-album.ts re-renders the list after every change. `prefix` keeps the ids unique when a page has two.{% endcomment %}
+<div class="album-tags" data-tag-editor{% if tag_url %} data-tag-url="{{ tag_url }}"{% endif %} data-tag-search-url="{% url 'photo_album:tag_search' %}">
+	<ul class="album-tag-list" data-tag-list aria-label="Tags">{% for tag in tags %}<li class="album-tag{% if tag.inherited %} is-inherited{% endif %}" data-tag-name="{{ tag.name }}"><a href="{{ tag.url }}"{% if tag.inherited %} title="Fra albummet {{ tag.from }}"{% endif %}>{{ tag.name }}</a>{% if tag_url and not tag.inherited %}<button type="button" data-tag-remove aria-label="Fjern tagget {{ tag.name }}">&times;</button>{% endif %}</li>{% endfor %}</ul>
+	{% if editable %}<div class="album-tag-add" data-tag-add>
+		<input type="text" id="{{ prefix }}-tag-input" maxlength="30" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Tilføj tag" aria-label="Tilføj tag" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="{{ prefix }}-tag-options" data-tag-input>
+		<ul class="album-tag-options" id="{{ prefix }}-tag-options" role="listbox" aria-label="Eksisterende tags" data-tag-options hidden></ul>
+		<p class="album-tag-error" role="alert" data-tag-error hidden></p>
+	</div>{% endif %}
+</div>

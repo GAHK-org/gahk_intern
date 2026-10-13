@@ -17,7 +17,8 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile, File
 from django.db import IntegrityError, transaction
-from django.db.models import F, QuerySet
+from django.db.models import Case, Exists, F, OuterRef, Q, QuerySet, Value, When
+from django.db.models.functions import Lower
 from django.utils import timezone
 from PIL import ExifTags, Image, ImageOps, ImageSequence
 
@@ -31,8 +32,10 @@ from .models import (
     Media,
     MediaStatus,
     MediaView,
+    Tag,
     normalize_name,
     validate_album_name,
+    validate_tag_name,
 )
 from .uploads import (
     check_media_content,
@@ -235,6 +238,68 @@ def rename_album(album: Album, name: str) -> None:
             album.save(update_fields=["name"])
     except IntegrityError as exc:
         raise ValidationError({"name": "Der findes allerede et album med det navn."}) from exc
+
+
+# --- Tags ---------------------------------------------------------------------------------------
+#
+# Tagging describes an album or an item without changing it, so no lock applies: a locked album and
+# everything in it can still be tagged and untagged.
+
+
+def tag_named(name: str) -> Tag:
+    """The tag called `name`, ignoring case, created if there is none yet. Raises ValidationError."""
+    name = normalize_name(name.strip())
+    validate_tag_name(name)
+    if (existing := Tag.objects.filter(name__iexact=name).first()) is not None:
+        return existing
+    try:
+        with transaction.atomic():
+            return Tag.objects.create(name=name)
+    except IntegrityError:  # somebody created the same tag in the meantime
+        return Tag.objects.get(name__iexact=name)
+
+
+def tags_in_use() -> QuerySet[Tag]:
+    """Tags something still carries. One nothing carries is never offered, but stays in the table."""
+    return Tag.objects.filter(
+        Exists(Album.tags.through.objects.filter(tag=OuterRef("pk")))
+        | Exists(Media.tags.through.objects.filter(tag=OuterRef("pk")))
+    )
+
+
+def search_tags(query: str, limit: int = 20) -> list[str]:
+    """Tags in use containing `query`, those starting with it first."""
+    query = normalize_name(query.strip())
+    tags = tags_in_use()
+    if query:
+        tags = tags.filter(name__icontains=query).annotate(
+            rank=Case(When(name__istartswith=query, then=Value(0)), default=Value(1))
+        )
+    else:
+        tags = tags.annotate(rank=Value(0))
+    return list(tags.order_by("rank", Lower("name")).values_list("name", flat=True)[:limit])
+
+
+def add_tag(target: Album | Media, name: str) -> Tag:
+    tag = tag_named(name)
+    target.tags.add(tag)
+    return tag
+
+
+def remove_tag(target: Album | Media, name: str) -> None:
+    target.tags.remove(*target.tags.filter(name__iexact=normalize_name(name.strip())))
+
+
+def tagged_media(media: QuerySet[Media], tag: Tag) -> QuerySet[Media]:
+    """The items of `media` carrying `tag` themselves, or through any album above them."""
+    condition = Q(pk__in=Media.tags.through.objects.filter(tag=tag).values("media_id"))
+    covered: list[str] = []
+    # Sorted, every album comes after its ancestors, so one inside an album already covered is skipped.
+    for path in sorted(Album.objects.filter(tags=tag).values_list("path", flat=True)):
+        if not any(path.startswith(outer) for outer in covered):
+            covered.append(path)
+            condition |= Q(album__path__startswith=path)
+    return media.filter(condition)
 
 
 # --- ZIP import ---------------------------------------------------------------------------------
