@@ -124,7 +124,7 @@ The request listed "Events" and "Posts" as single categories; they were split so
 ### Who is told what
 - **Chat:** a new message → the room's category, to everyone who may read the room, except the author; TTL = the message's expiry. A reply → grouped `chat.replies` to the message's author; if the replier ticks "underret alle", the room is notified too. A reaction → grouped `chat.likes` to the author only, and **only when a reaction is created** — changing or removing an emoji never notifies.
 - **Opslagstavle:** a new post → `posts.new` to everyone who can open the board; comments and reactions → grouped to the post's author only.
-- **Begivenheder:** new → audience (invite list for invite-only events) except organiser; changes → RSVP "ja" except organiser; cancellation → RSVP "ja"; comments → grouped to each host; deadline reminders → `events.personal` with TTL = the RSVP deadline.
+- **Begivenheder:** new → audience (invite list for invite-only events) except organiser; changes → RSVP "ja" except organiser; cancellation → RSVP "ja" except organiser; comments → grouped to each host; deadline reminders → `events.personal` with TTL = the RSVP deadline.
 - **Reparationer:** current role holders + administrators + superusers; the reporter is not told about their own task.
 - The base audience (`everyone()`) is residents with a residency or role in the active period, plus anyone who owns a push device, plus superusers — always narrowed by the feature's own access gate.
 
