@@ -737,7 +737,6 @@ interface MediaDetail {
   full: string
   album: string
   albumUrl: string
-  link: string
   downloadUrl: string
   deleteUrl: string
   viewUrl: string
@@ -859,8 +858,10 @@ if (gallery && dialog) {
 
   const renderMetadata = (detail: MediaDetail): void => {
     const { Sted: location, ...rest } = detail.metadata
+    const album = detail.album ? definition("Album", detail.album, detail.albumUrl) : []
+    album[1]?.firstElementChild?.setAttribute("data-gallery-album", "")
     const nodes = [
-      ...(detail.album ? definition("Album", detail.album, detail.link) : []),
+      ...album,
       ...(detail.filename ? definition("Filnavn", detail.filename) : []),
       ...(detail.capturedAt ? definition("Optaget", detail.capturedAt) : []),
       ...(location ? definition("Sted", location, detail.mapUrl) : []),
@@ -1029,6 +1030,11 @@ if (gallery && dialog) {
   })
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog) dialog.close()
+    // The album name leaves the viewer for the album; on that album already, closing is the trip.
+    const album = (event.target as Element).closest<HTMLAnchorElement>("a[data-gallery-album]")
+    if (!album) return
+    if (album.pathname === window.location.pathname) event.preventDefault()
+    dialog.close()
   })
   previous.addEventListener("click", () => void step(-1))
   next.addEventListener("click", () => void step(1))
