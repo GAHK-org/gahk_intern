@@ -1,13 +1,21 @@
-"""The dashboard's photo strip: Dagens billeder and På denne dag (photo_album.featured)."""
+"""The dashboard's photo strip (Dagens billeder, På denne dag) and the index's timeline mosaic (photo_album.featured)."""
 
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
+from django.core.cache import cache
 from django.test import Client
 from django.urls import reverse
 
-from photo_album.featured import FEATURED_PER_DAY, ON_THIS_DAY_LIMIT, featured_for, on_this_day
+from photo_album.featured import (
+    FEATURED_PER_DAY,
+    MOSAIC_SIZE,
+    ON_THIS_DAY_LIMIT,
+    featured_for,
+    on_this_day,
+    timeline_mosaic,
+)
 from photo_album.models import Album, DerivativeState, FeaturedMedia, Media, MediaStatus
 from residents.models import Resident
 
@@ -119,3 +127,70 @@ def test_dashboard_has_no_strip_without_photos(
 ) -> None:
     client.force_login(make_resident())
     assert "Dagens billeder" not in client.get("/intern/").content.decode()
+
+
+@pytest.fixture
+def fresh_mosaic() -> None:
+    cache.clear()
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("fresh_mosaic")
+def test_the_mosaic_draws_only_what_everyone_may_see(
+    album: Album, make_resident: Callable[..., Resident]
+) -> None:
+    resident = make_resident()
+    shown = _image(album, resident)
+    _image(album, resident, status=MediaStatus.PENDING)
+    _image(album, resident, deleted_at=datetime(2026, 1, 1, tzinfo=UTC))
+    _image(album, resident, content_type="video/mp4")
+    _image(album, resident, derivative_state=DerivativeState.PENDING)
+
+    assert timeline_mosaic() == [shown]
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("fresh_mosaic")
+def test_the_mosaic_holds_its_draw_and_drops_a_binned_pick(
+    album: Album, make_resident: Callable[..., Resident]
+) -> None:
+    resident = make_resident()
+    for _ in range(MOSAIC_SIZE + 3):
+        _image(album, resident)
+    drawn = timeline_mosaic()
+    assert len(drawn) == MOSAIC_SIZE
+    assert timeline_mosaic() == drawn
+
+    Media.objects.filter(pk=drawn[0].pk).update(deleted_at=datetime(2026, 10, 13, tzinfo=UTC))
+    assert timeline_mosaic() == drawn[1:]
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("fresh_mosaic")
+def test_the_index_leads_with_the_timeline_mosaic(
+    client: Client, album: Album, make_resident: Callable[..., Resident]
+) -> None:
+    resident = make_resident()
+    item = _image(album, resident)
+    client.force_login(resident)
+
+    page = client.get(reverse("photo_album:index")).content.decode()
+    assert f'class="album-timeline-card" href="{reverse("photo_album:timeline")}"' in page
+    assert item.thumbnail.url in page
+
+    in_folder = client.get(reverse("photo_album:index"), {"folder": "2026"}).content.decode()
+    assert "album-timeline-card" not in in_folder
+    assert f'href="{reverse("photo_album:timeline")}"' in in_folder
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("fresh_mosaic")
+def test_the_timeline_card_shows_without_photos(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    client.force_login(make_resident())
+    page = client.get(reverse("photo_album:index")).content.decode()
+    assert (
+        "album-timeline-card" in page
+        and "<img" not in page.split("album-timeline-mosaic")[1].split("</span>")[0]
+    )

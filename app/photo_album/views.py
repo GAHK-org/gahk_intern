@@ -39,7 +39,7 @@ from core.media import REDIRECT_CACHE_CONTROL
 from residents.models import Resident
 from residents.permissions import current_resident
 
-from . import access, cache, services
+from . import access, cache, featured, services
 from .forms import AlbumForm, AlbumNameForm, DownloadForm, MediaUploadForm, ZipAlbumImportForm
 from .models import (
     MAX_ALBUM_DEPTH,
@@ -265,6 +265,8 @@ def index(request: HttpRequest) -> HttpResponse:
             "can_create": access.can_create_album(request),
             "can_view_all_bins": access.can_view_all_bins(request),
             "folder": folder,
+            # The timeline's tile leads the full index; a folder page keeps the plain link.
+            "mosaic": [] if folder else featured.timeline_mosaic(),
         },
     )
 
