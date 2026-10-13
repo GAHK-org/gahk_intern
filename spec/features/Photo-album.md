@@ -67,6 +67,8 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 ## Viewing experience
 
 - The album index displays root albums as folders with a cover (the newest thumbnail in the subtree) and a media count for the whole subtree. Album pages show a breadcrumb, the sub-albums, and the album's own media as a thumbnail grid; `Alle medier, også i underalbummer` (`?alle=1`) includes the media of every sub-album.
+- Album cards are a uniform grid (two per row on a phone) with the cover on top; a long name wraps onto two lines and is cut off with an ellipsis, with the full name as a tooltip. Long album titles and breadcrumbs wrap instead of overflowing.
+- An album's actions — download, select, bin, rename, lock, delete and `Nyt underalbum` — sit in one row in the album header; download, rename and `Nyt underalbum` open as small dropdowns.
 - The timeline (`Tidslinje`) shows everything the reader may see across all albums, newest first, with a jump to any year.
 - Grids load 60 items at a time and scroll infinitely in both directions, paged by `(sort_at, pk)` so pages do not shift as uploads arrive.
 - `?media=<pk>` on an album page is a deep link: the grid opens at that item, the viewer opens on it, and the address follows the viewer as the reader browses.
@@ -94,7 +96,7 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 
 ## ZIP import
 
-- Fotogruppen members and administrators can import a ZIP file into a folder as a new album tree. The import runs in the background; the import page shows its progress and result.
+- Fotogruppen members and administrators can import a ZIP file into a folder as a new album tree. The import runs in the background; the import page shows its progress and result. When the upload reaches 100%, a spinner shows that the server is still working until the import is done.
 - The import is all-or-nothing. A first pass reads the whole archive and collects every problem — unsupported or unreadable files, files that are too large, invalid or case-colliding folder names, folders more than five levels deep, an existing root album with the same name — and shows them all at once. Only an archive with no problems is imported, in one transaction; nothing is left behind if storing fails half-way.
 - The root album is named after the ZIP file. While a level holds exactly one folder and no files, the import descends into it, and the album is named after the folder it stops in. Folders below become sub-albums.
 - macOS metadata (`__MACOSX/`, `._*`, `.DS_Store`, `.AppleDouble`) of at most 4 KB, `Thumbs.db` and `desktop.ini` are skipped and listed. A larger file that looks like macOS metadata fails the import.

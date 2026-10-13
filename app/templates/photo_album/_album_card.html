@@ -1,5 +1,4 @@
-<a class="album-card{% if album.cover_url %} has-cover{% endif %}" href="{% url 'photo_album:detail' album.pk %}">
-	{% if album.cover_url %}<img class="album-card-cover" src="{{ album.cover_url }}" alt="" loading="lazy">{% else %}<svg aria-hidden="true"><use href="#i-photo"></use></svg>{% endif %}
-	<span class="album-card-name">{{ album.name }}</span>
-	<span class="album-card-count">{{ album.media_count }} medier</span>
+<a class="album-card" href="{% url 'photo_album:detail' album.pk %}" title="{{ album.name }}">
+	{% if album.cover_url %}<img class="album-card-cover" src="{{ album.cover_url }}" alt="" loading="lazy">{% else %}<span class="album-card-placeholder"><svg aria-hidden="true"><use href="#i-photo"></use></svg></span>{% endif %}
+	<span class="album-card-body"><span class="album-card-name">{{ album.name }}</span><span class="album-card-count">{{ album.media_count }} medie{{ album.media_count|pluralize:"r" }}</span></span>
 </a>
