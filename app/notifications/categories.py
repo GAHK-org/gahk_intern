@@ -60,15 +60,20 @@ class Category:
     # Whether this category can appear in the dropdown / on the notifications page at all. False is
     # "push only" — see the module docstring.
     in_app: bool = True
+    # Whether the resident may turn the in-app row off. False for what the house itself says (system
+    # and general): those are few, and the list is where somebody who has push off still sees them.
+    in_app_optional: bool = True
 
 
+# Display order. System and general last: they are rare and cannot be turned off in-app, so the
+# toggles people actually come to the settings page for are at the top.
 GROUPS: tuple[tuple[str, str], ...] = (
-    ("system", "System"),
-    ("general", "Generelt"),
     ("chat", "Den Hurtige"),
     ("posts", "Opslagstavlen"),
     ("events", "Begivenheder"),
     ("repairs", "Reparationer"),
+    ("system", "System"),
+    ("general", "Generelt"),
 )
 
 # The base.html sprite icon each group's notifications show with.
@@ -118,8 +123,6 @@ def _chat_rooms() -> tuple[Category, ...]:
 
 def _build() -> tuple[Category, ...]:
     return (
-        Category(SYSTEM, "Systembeskeder", "system", "Beskeder fra administratorerne om siden."),
-        Category(GENERAL, "Generelle beskeder", "general", "Meddelelser til hele kollegiet."),
         *_chat_rooms(),
         Category(CHAT_REPLIES, "Svar på dine beskeder", "chat", "Når nogen svarer på din besked."),
         Category(
@@ -160,6 +163,20 @@ def _build() -> tuple[Category, ...]:
             "Når nogen kommenterer en begivenhed, du er vært for.",
         ),
         Category(REPAIRS, "Reparationer", "repairs", "Nye og overdragede reparationer for din gruppe."),
+        Category(
+            SYSTEM,
+            "Systembeskeder",
+            "system",
+            "Beskeder fra administratorerne om siden.",
+            in_app_optional=False,
+        ),
+        Category(
+            GENERAL,
+            "Generelle beskeder",
+            "general",
+            "Meddelelser til hele kollegiet.",
+            in_app_optional=False,
+        ),
     )
 
 

@@ -116,7 +116,9 @@ def preferences(request: HttpRequest) -> HttpResponse:
     if request.method == "POST":
         with transaction.atomic():
             for category in categories.CATEGORIES:
-                in_app = (f"{category.key}__in_app" in request.POST) if category.in_app else True
+                # A category without an optional in-app row is stored as on whatever is posted.
+                optional = category.in_app and category.in_app_optional
+                in_app = (f"{category.key}__in_app" in request.POST) if optional else True
                 push_on = f"{category.key}__push" in request.POST
                 vibrate = f"{category.key}__vibrate" in request.POST
                 if in_app and push_on and vibrate:
@@ -145,7 +147,7 @@ def preferences(request: HttpRequest) -> HttpResponse:
             rows.append(
                 {
                     "category": category,
-                    "in_app": pref.in_app if pref else True,
+                    "in_app": (pref.in_app if pref else True) or not category.in_app_optional,
                     "push": pref.push if pref else True,
                     "vibrate": pref.vibrate if pref else True,
                     "anchor": (
