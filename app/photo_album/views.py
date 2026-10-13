@@ -40,7 +40,14 @@ from residents.models import Resident
 from residents.permissions import current_resident
 
 from . import access, cache, featured, services
-from .forms import AlbumForm, AlbumNameForm, DownloadForm, MediaUploadForm, ZipAlbumImportForm
+from .forms import (
+    AlbumForm,
+    AlbumNameForm,
+    DownloadForm,
+    MediaUploadForm,
+    SystemZipImportForm,
+    ZipAlbumImportForm,
+)
 from .models import (
     MAX_ALBUM_DEPTH,
     Album,
@@ -777,6 +784,7 @@ def _queue_import(
         archive=archive,
         lock_when_done=lock,
         merge_into_existing=merge,
+        album_name=form.cleaned_data.get("album", ""),
     )
     from .tasks import process_album_import
 
@@ -794,7 +802,7 @@ def system_import_zip(request: HttpRequest) -> JsonResponse:
     resident = _token_import_resident(request)
     if resident is None:
         raise PermissionDenied
-    form = ZipAlbumImportForm(request.POST, request.FILES)
+    form = SystemZipImportForm(request.POST, request.FILES)
     if not form.is_valid():
         return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
     # Everything the import script brings in is an archive of years gone by: lock it on arrival, so

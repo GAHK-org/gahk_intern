@@ -410,10 +410,16 @@ def _extract(zip_archive: zipfile.ZipFile, member: zipfile.ZipInfo, target: Path
 
 
 def _plan_import(
-    zip_archive: zipfile.ZipFile, archive_name: str, folder: str, workdir: Path, *, merge: bool = False
+    zip_archive: zipfile.ZipFile,
+    archive_name: str,
+    folder: str,
+    workdir: Path,
+    *,
+    merge: bool = False,
+    root_name: str = "",
 ) -> _ImportPlan:
     """Pass one: read, check and extract everything, collecting EVERY reason to refuse the import."""
-    plan = _ImportPlan(root_name=normalize_name(Path(archive_name or "album.zip").stem))
+    plan = _ImportPlan(root_name=normalize_name(root_name or Path(archive_name or "album.zip").stem))
     maximum_bytes = max(settings.PHOTO_ALBUM_IMAGE_MAX_MB, settings.PHOTO_ALBUM_VIDEO_MAX_MB) * 1024 * 1024
     candidates: list[tuple[zipfile.ZipInfo, str, PurePosixPath]] = []
     for member in zip_archive.infolist():
@@ -441,7 +447,7 @@ def _plan_import(
     # "Fest/…" — or "Downloads/Fest/…" — does not become an album with one empty-but-for-a-folder
     # level. The album is then named after the folder it stopped in.
     prefix: tuple[str, ...] = ()
-    while candidates:
+    while candidates and not root_name:
         level = [path.parts[len(prefix) :] for _, _, path in candidates]
         if any(len(rest) == 1 for rest in level) or len({rest[0] for rest in level}) != 1:
             break
@@ -530,7 +536,13 @@ def _plan_import(
 
 
 def import_zip_album(
-    *, archive: File, folder: str, resident: Resident, lock: bool = False, merge: bool = False
+    *,
+    archive: File,
+    folder: str,
+    resident: Resident,
+    lock: bool = False,
+    merge: bool = False,
+    root_name: str = "",
 ) -> ZipImport:
     """Import a ZIP as one album tree — completely, or not at all.
 
@@ -548,6 +560,10 @@ def import_zip_album(
     out; one that merely shares a name is a different photo and is kept beside it. A locked album
     is still refused. The Dropbox import uses it to send what an earlier attempt left out.
 
+    With `root_name`, that is the root album's name and the archive's paths are relative to it: the
+    import does not descend through single folders. A retry of a few files from one sub-album would
+    otherwise be named after that sub-album rather than merged into the album it belongs to.
+
     Returns the albums (root first), the log of files deliberately left out and how many were
     stored. Raises ValidationError carrying every error when the import is refused.
     """
@@ -556,7 +572,12 @@ def import_zip_album(
         try:
             with zipfile.ZipFile(archive) as zip_archive:
                 plan = _plan_import(
-                    zip_archive, archive.name or "album.zip", folder, Path(directory), merge=merge
+                    zip_archive,
+                    archive.name or "album.zip",
+                    folder,
+                    Path(directory),
+                    merge=merge,
+                    root_name=root_name,
                 )
         except zipfile.BadZipFile as exc:
             raise ValidationError("ZIP-filen kunne ikke læses.") from exc

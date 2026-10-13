@@ -627,6 +627,7 @@ erDiagram
         json errors
         bool lock_when_done
         bool merge_into_existing
+        string album_name
         bool merged
         string error
         datetime created_at
@@ -1340,6 +1341,7 @@ erDiagram
         json errors
         bool lock_when_done
         bool merge_into_existing
+        string album_name
         bool merged
         string error
         datetime created_at
