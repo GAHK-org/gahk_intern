@@ -546,6 +546,9 @@ erDiagram
         int id PK
         string folder
         string name
+        int parent_id FK
+        string path
+        int depth
         datetime created_at
         datetime manually_locked_at
         datetime unlocked_at
@@ -554,7 +557,10 @@ erDiagram
     photo_album_Media {
         int id PK
         int album_id FK
+        string uuid
         string title
+        string filename
+        string sha256
         string original
         string high_definition
         string thumbnail
@@ -566,6 +572,8 @@ erDiagram
         int requested_by_id FK
         datetime added_at
         datetime captured_at
+        datetime file_modified_at
+        datetime sort_at
         string status
         int approved_by_id FK
         datetime approved_at
@@ -577,6 +585,8 @@ erDiagram
         int id PK
         int album_id FK
         int requested_by_id FK
+        string name
+        string variant
         json media_ids
         string token
         string task_id
@@ -598,9 +608,26 @@ erDiagram
         string state
         json album_ids
         json skipped
+        json errors
         string error
         datetime created_at
         datetime completed_at
+    }
+
+    photo_album_MediaView {
+        int id PK
+        int media_id FK
+        int resident_id FK
+        int count
+        datetime first_viewed_at
+        datetime last_viewed_at
+    }
+
+    photo_album_FeaturedMedia {
+        int id PK
+        date date
+        int position
+        int media_id FK
     }
 
     core_PushSubscription }o--|| residents_Resident : "user"
@@ -675,13 +702,17 @@ erDiagram
     arkiv_ArchiveFile }o--|| arkiv_ArchiveFolder : "folder"
     arkiv_ArchiveFile }o--|o residents_Resident : "uploaded_by"
     arkiv_ArchiveFile }o--|o residents_Resident : "deleted_by"
+    photo_album_Album }o--|o photo_album_Album : "parent"
     photo_album_Media }o--|| photo_album_Album : "album"
     photo_album_Media }o--|| residents_Resident : "requested_by"
     photo_album_Media }o--|o residents_Resident : "approved_by"
     photo_album_Media }o--|o residents_Resident : "deleted_by"
-    photo_album_AlbumDownload }o--|| photo_album_Album : "album"
+    photo_album_AlbumDownload }o--|o photo_album_Album : "album"
     photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
     photo_album_AlbumImport }o--|| residents_Resident : "requested_by"
+    photo_album_MediaView }o--|| photo_album_Media : "media"
+    photo_album_MediaView }o--|| residents_Resident : "resident"
+    photo_album_FeaturedMedia }o--|| photo_album_Media : "media"
 ```
 
 ## admissions
@@ -1207,6 +1238,9 @@ erDiagram
         int id PK
         string folder
         string name
+        int parent_id FK
+        string path
+        int depth
         datetime created_at
         datetime manually_locked_at
         datetime unlocked_at
@@ -1215,7 +1249,10 @@ erDiagram
     photo_album_Media {
         int id PK
         int album_id FK
+        string uuid
         string title
+        string filename
+        string sha256
         string original
         string high_definition
         string thumbnail
@@ -1227,6 +1264,8 @@ erDiagram
         int requested_by_id FK
         datetime added_at
         datetime captured_at
+        datetime file_modified_at
+        datetime sort_at
         string status
         int approved_by_id FK
         datetime approved_at
@@ -1238,6 +1277,8 @@ erDiagram
         int id PK
         int album_id FK
         int requested_by_id FK
+        string name
+        string variant
         json media_ids
         string token
         string task_id
@@ -1259,20 +1300,41 @@ erDiagram
         string state
         json album_ids
         json skipped
+        json errors
         string error
         datetime created_at
         datetime completed_at
     }
 
+    photo_album_MediaView {
+        int id PK
+        int media_id FK
+        int resident_id FK
+        int count
+        datetime first_viewed_at
+        datetime last_viewed_at
+    }
+
+    photo_album_FeaturedMedia {
+        int id PK
+        date date
+        int position
+        int media_id FK
+    }
+
     residents_Resident { }
 
+    photo_album_Album }o--|o photo_album_Album : "parent"
     photo_album_Media }o--|| photo_album_Album : "album"
     photo_album_Media }o--|| residents_Resident : "requested_by"
     photo_album_Media }o--|o residents_Resident : "approved_by"
     photo_album_Media }o--|o residents_Resident : "deleted_by"
-    photo_album_AlbumDownload }o--|| photo_album_Album : "album"
+    photo_album_AlbumDownload }o--|o photo_album_Album : "album"
     photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
     photo_album_AlbumImport }o--|| residents_Resident : "requested_by"
+    photo_album_MediaView }o--|| photo_album_Media : "media"
+    photo_album_MediaView }o--|| residents_Resident : "resident"
+    photo_album_FeaturedMedia }o--|| photo_album_Media : "media"
 ```
 
 ## reparationer

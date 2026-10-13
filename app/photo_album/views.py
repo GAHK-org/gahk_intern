@@ -145,7 +145,7 @@ def download_album_archive(request: HttpRequest, token: str) -> HttpResponseBase
     download = get_object_or_404(AlbumDownload, token=token, requested_by=current_resident(request))
     if download.state != AlbumDownloadState.READY or not download.archive_key:
         raise Http404("download is not ready")
-    filename = f"{download.album.name}.zip"
+    filename = download.filename
     storage = get_photo_album_storage()
     if isinstance(storage, PhotoAlbumS3Storage):
         return HttpResponseRedirect(
