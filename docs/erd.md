@@ -626,6 +626,9 @@ erDiagram
         json skipped
         json errors
         bool lock_when_done
+        bool merge_into_existing
+        string album_name
+        bool merged
         string error
         datetime created_at
         datetime completed_at
@@ -1337,6 +1340,9 @@ erDiagram
         json skipped
         json errors
         bool lock_when_done
+        bool merge_into_existing
+        string album_name
+        bool merged
         string error
         datetime created_at
         datetime completed_at

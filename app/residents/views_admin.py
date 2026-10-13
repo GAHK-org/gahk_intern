@@ -512,8 +512,8 @@ def worker_job_detail(request: HttpRequest, task_id: str) -> HttpResponse:
     if job is None:
         if job_log is None:
             raise Http404("worker job not found")
-        # The result backend forgets a job after a day; its log is kept for a week, and is still
-        # worth showing on its own.
+        # The result can be gone while its log is not — a result backend that expires results itself
+        # does not know about the log — and the log is still worth showing on its own.
         job = {
             "id": task_id,
             "task": job_log.task_name,

@@ -10,6 +10,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from photo_album.models import (
+    MAX_ALBUM_DEPTH,
     Album,
     AlbumDownload,
     AlbumDownloadState,
@@ -135,6 +136,23 @@ def test_timeline_spans_albums_and_jumps_to_a_year(
     assert _ids(year) == [old.pk]
     # The newer year is still reachable by scrolling up.
     assert f"before={old.pk}" in year
+
+
+@pytest.mark.django_db
+def test_timeline_tiles_carry_their_month_for_the_rulers(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    resident = make_resident()
+    album = Album.objects.create(folder="2025", name="Fest")
+    _media(album, resident, at=datetime(2025, 10, 1, 12, tzinfo=UTC))
+    # 23:30 UTC on New Year's Eve is already January in Copenhagen, as the reader sees it.
+    _media(album, resident, at=datetime(2024, 12, 31, 23, 30, tzinfo=UTC))
+    client.force_login(resident)
+
+    page = client.get(reverse("photo_album:timeline")).content.decode()
+    assert "data-album-months" in page
+    assert 'data-month="2025-10" data-month-label="Oktober 2025"' in page
+    assert 'data-month="2025-01" data-month-label="Januar 2025"' in page
 
 
 # --- Sub-albums ---------------------------------------------------------------------------------
@@ -564,10 +582,8 @@ def test_viewer_details_include_album_path_link_counts_and_map(
 
     payload = client.get(reverse("photo_album:media_detail", args=[media.pk])).json()
 
-    album_url = reverse("photo_album:detail", args=[child.pk])
     assert payload["album"] == "Sommerfest / Fredag"
-    assert payload["albumUrl"] == album_url
-    assert payload["link"] == f"{album_url}?media={media.pk}"
+    assert payload["albumUrl"] == reverse("photo_album:detail", args=[child.pk])
     assert payload["filename"] == "IMG_0001.JPG"
     assert payload["mapUrl"].startswith("https://www.openstreetmap.org/?mlat=55.676100&mlon=12.568300")
     assert (payload["uniqueViews"], payload["totalViews"]) == (0, 0)
@@ -671,6 +687,8 @@ def test_system_albums_lists_root_albums_of_a_folder(make_resident: Callable[...
     assert payload["albums"] == [{"id": root.pk, "name": "Sommerfest", "media": 1}]
     assert ".jpg" in payload["rules"]["imageExtensions"] and ".avi" in payload["rules"]["videoExtensions"]
     assert payload["rules"]["maxSubAlbumLevels"] == 4
+    assert payload["rules"]["macosMetadataMaxBytes"] == 16 * 1024
+    assert payload["rules"]["macosMetadataAnySize"] == [".DS_Store"]
 
 
 @pytest.mark.django_db
@@ -696,6 +714,16 @@ def test_import_status_reports_every_reason_a_zip_was_refused(
     assert payload["errors"] == ["a.txt: ikke et billede", "b.txt: ikke et billede"]
     page = client.get(f"{reverse('photo_album:import_zip')}?job={album_import.token}").content.decode()
     assert "b.txt: ikke et billede" in page
+
+
+@pytest.mark.django_db
+def test_import_page_explains_that_folders_become_sub_albums(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    client.force_login(make_resident(roles=(Role.ADMINISTRATOR,)))
+    page = client.get(reverse("photo_album:import_zip")).content.decode()
+    assert "mapper i ZIP-filen bliver til underalbummer" in page
+    assert f"op til {MAX_ALBUM_DEPTH} niveauer" in page
 
 
 @pytest.mark.django_db

@@ -23,7 +23,7 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 ### Local cache
 
 - When `PHOTO_ALBUM_CACHE_DIR` is set, thumbnails and image high-definition variants are copied to local disk on first request and served from there afterwards (`Cache-Control: private, max-age=86400`), after the same visibility check as any other request. Originals and video high-definition variants are never cached; they redirect to object storage, which supports range requests.
-- The cache is bounded (`PHOTO_ALBUM_CACHE_THUMBNAIL_MB`, default 2048; `PHOTO_ALBUM_CACHE_HD_MB`, default 3072) and evicts least-recently-used files in the background. A failed copy falls back to the storage redirect. In production it lives on the `photo-album-cache` volume so it survives redeploys.
+- The cache is bounded (`PHOTO_ALBUM_CACHE_THUMBNAIL_MB`, default 2048; `PHOTO_ALBUM_CACHE_HD_MB`, default 3072) and evicts least-recently-used files in the background. A failed copy falls back to the storage redirect. In production it lives on the `photo-album-cache` volume so it survives redeploys. Local development has it on too (`task dev`: the same volume on `web`; `task dev:local`/`debug`: `app/cache/`), so it serves pictures as production does; the test suite leaves it off.
 
 ## Accepted files
 
@@ -36,7 +36,7 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 - `captured_at` is derived from EXIF `DateTimeOriginal`, falling back to `DateTimeDigitized`, or from a video's container metadata. Both standard and nested EXIF IFD layouts, including HEIC/HEIF uploads, are supported.
 - `file_modified_at` is the file's own last-modified time as reported by the browser or the ZIP entry.
 - Media is ordered newest first by `sort_at`: `captured_at`, else `file_modified_at`, else upload time.
-- The viewer displays the capture date as `Optaget`, the location when available, the album path, the uploader, upload time, and view counts.
+- The viewer displays the capture date as `Optaget`, the location when available, the album path, the uploader, upload time, and view counts. The album path links to the album: clicking it closes the viewer and opens the album (on that album already, it only closes the viewer).
 
 ## Access and upload workflow
 
@@ -80,6 +80,9 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 - Album cards are a uniform grid (two per row on a phone) with the cover on top; a long name wraps onto two lines and is cut off with an ellipsis, with the full name as a tooltip. Long album titles and breadcrumbs wrap instead of overflowing.
 - An album's actions — download, select, bin, rename, lock, delete and `Nyt underalbum` — sit in one row in the album header; download, rename and `Nyt underalbum` open as small dropdowns.
 - The timeline (`Tidslinje`) shows everything the reader may see across all albums, newest first, with a jump to any year.
+- A ruler with the month and year (`Oktober 2025`) divides the timeline at each new month, by `sort_at` in local time.
+- A time rail down the right edge marks every year, newest at the top, each with an equal share split into months. A dot shows the month the reader has scrolled to, and while scrolling it is named (`Oktober 2025`). On a phone the rail is a line and a dot at the screen's edge, without the years. The sticky year bar highlights the current year.
+- The album index leads with a large card into the timeline: a mosaic of seven random photos (three on mobile) drawn from what every resident may see, redrawn every ten minutes. A folder page shows a plain `Tidslinje` link instead.
 - The timeline can be filtered on tags (`?tag=<name>`, repeatable). The filter shows media tagged directly or through an album in its lineage. Several tags combine with AND, so an item must carry all of them. Active filters show as chips that remove the filter when clicked. The tag input searches as you type, and paging and year jumps keep the filter. Any signed-in resident can filter; visibility rules apply as usual.
 - Grids load 60 items at a time and scroll infinitely in both directions, paged by `(sort_at, pk)` so pages do not shift as uploads arrive.
 - `?media=<pk>` on an album page is a deep link: the grid opens at that item, the viewer opens on it, and the address follows the viewer as the reader browses.
@@ -109,16 +112,18 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 
 - Fotogruppen members and administrators can import a ZIP file into a folder as a new album tree. The import runs in the background; the import page shows its progress and result. When the upload reaches 100%, a spinner shows that the server is still working until the import is done.
 - The import is all-or-nothing. A first pass reads the whole archive and collects every problem — unsupported or unreadable files, files that are too large, invalid or case-colliding folder names, folders more than five levels deep, an existing root album with the same name — and shows them all at once. Only an archive with no problems is imported, in one transaction; nothing is left behind if storing fails half-way.
-- The root album is named after the ZIP file. While a level holds exactly one folder and no files, the import descends into it, and the album is named after the folder it stops in. Folders below become sub-albums.
-- macOS metadata (`__MACOSX/`, `._*`, `.DS_Store`, `.AppleDouble`) of at most 4 KB, `Thumbs.db` and `desktop.ini` are skipped and listed. A larger file that looks like macOS metadata fails the import.
+- The root album is named after the ZIP file. While a level holds exactly one folder and no files, the import descends into it, and the album is named after the folder it stops in. Folders below become sub-albums. The import page says so briefly.
+- macOS metadata (`__MACOSX/`, `._*`, `.DS_Store`, `.AppleDouble`) of at most 16 KB, `.DS_Store` of any size, `Thumbs.db` and `desktop.ini` are skipped and listed. A larger file that looks like macOS metadata fails the import.
 - Exact duplicates (same folder, same name, same bytes) within the archive are skipped and listed. Imported media is approved immediately and keeps the ZIP entry's modification time as `file_modified_at`.
-- The import job logs what it did — the archive and folder, every skipped file, the result, or every reason it was refused. Administrators see the log on the job's page under `/admin/worker-jobs` for 7 days.
+- The import job logs what it did — the archive and folder, every skipped file, the result, or every reason it was refused. Administrators see the log on the job's page under `/admin/worker-jobs` for 30 days (a failed job's log for longer).
 
 ### System import and the Dropbox script
 
 - With `PHOTO_ALBUM_IMPORT_TOKEN` set, `importer-zip/system` accepts imports authenticated by that bearer token, and `importer-zip/system/albummer?folder=<folder>` lists the folder's root albums and returns the import rules (accepted extensions, size limits, maximum sub-album levels, macOS metadata size limit).
 - `scripts/import_dropbox_photo_albums.py` imports `<Dropbox root>/<year or Andet>/<album folder>` from Dropbox, one album per ZIP. It checks the server first. Using the server's rules, it checks each album against its Dropbox listing before downloading, and skips albums already on the server. Each ZIP is verified before it is sent, and the script waits for the server's result.
 - Every album imported through the system endpoint is locked as soon as it is imported (in the same transaction), so the archive is not edited by accident. Fotogruppen can unlock it within the usual six months; the script reports `Imported and locked`.
+- The system endpoint merges instead of refusing an existing root album name: the archive is added to that album, its folders to the sub-albums of the same names (ignoring case; missing ones are created). Only new files are stored. A file with the same name and the same bytes already in that album is skipped and listed; a file that only shares the name is a different photo and is kept beside it. The merge is still all-or-nothing, it is refused while any album it would add to is locked (unlock it first), and the album is locked again afterwards. The import page always refuses an existing name.
+- The system endpoint takes an optional `album`: the root album's name, with the archive's paths relative to it. The import then does not descend through single folders, so a few files from one sub-album are merged into the album they belong to rather than named after that sub-album.
 - Progress is kept in `<work-dir>/state.json` and everything is logged to `<work-dir>/import.log`. A rerun skips albums already imported, resumes waiting for albums sent on an earlier run, and skips earlier failures unless `--retry-failed` is given. Transient Dropbox and server errors are retried; every failure is reported with all its reasons. `--dry-run`, `--confirm`, `--year`/`--year-range` and `--stop-on-error` control a run.
 
 ## Dashboard
@@ -129,4 +134,4 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 
 ## Development seed data
 
-The photo-album seed generator creates albums in year and `Andet` folders, including a sub-album tree three levels deep, thumbnail-ready media, an album large enough to page, and lifecycle examples for recent/old uploads, binned media, and an automatically locked album.
+The photo-album seed generator creates albums in year and `Andet` folders, including three sub-album trees three levels deep, tags on albums at every level of those trees and on single media (some with several), thumbnail-ready media, an album large enough to page, and lifecycle examples for recent/old uploads, binned media, and an automatically locked album.

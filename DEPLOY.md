@@ -126,7 +126,7 @@ combination that hurts.
 Celery Beat stores schedules in PostgreSQL and publishes work to the Celery worker. The schedules
 are declared in `config/settings.py`, using the `Europe/Copenhagen` timezone. The worker-job admin
 page at `/admin/worker-jobs` shows active schedules and recent execution history, and each job's
-page shows what the job logged (INFO and up, kept for 7 days — see `core/worker_logs.py`). Every task is
+page shows what the job logged (INFO and up — see `core/worker_logs.py`; kept as the purge tasks below say). Every task is
 idempotent, so a retry or an overlapping run is harmless.
 
 | Celery task | Schedule | Why |
@@ -138,7 +138,8 @@ idempotent, so a retry or an overlapping run is harmless.
 | `ak.tasks.apply_monthly_assessment` | Day 1, 04:10 | Books the monthly AK deduction. |
 | `photo_album.tasks.purge_expired_downloads` | Daily 04:20 | Removes album ZIPs and their rows seven days after they were built. |
 | `photo_album.tasks.purge_expired_media` | Daily 04:30 | Removes expired pending and binned photo-album media. **04:30, not 04:10** — it collided with the AK assessment on the 1st of every month. |
-| `core.tasks.purge_worker_job_logs` | Daily 04:40 | Deletes the stored per-job logs (`core.WorkerJobLog`, shown on `/admin/worker-jobs`) after 7 days. |
+| `core.tasks.purge_worker_job_logs` | Daily 04:40 | Deletes the stored per-job logs (`core.WorkerJobLog`, shown on `/admin/worker-jobs`) of successful jobs after 30 days. Logs of other jobs (failed, revoked, unfinished) are kept, except that per task and state only the newest 1000 are safe: older ones beyond them go once 60 days old. |
+| `core.tasks.purge_worker_job_results` | Daily 04:45 | Deletes successful jobs from the result backend (`celery_taskmeta`) after 30 days. Replaces Celery's own `celery.backend_cleanup` (off: `CELERY_RESULT_EXPIRES = None`), which deleted failed jobs after a day too. Other jobs (failed, revoked, unfinished) are kept, except that per task name and status only the newest 1000 are safe: older ones beyond them go once 60 days old. |
 | `core.tasks.purge_delivered_broker_messages` | Daily 04:50 | Deletes acknowledged rows from `kombu_message`. The SQLAlchemy transport never removes a message it has delivered — it only flips `visible` — so without this the broker table is pure accumulation. Runs last, so one night's sweeps stay visible while they are still running. |
 | `photo_album.tasks.process_pending_media` | Daily 02:00 | Recovery sweep for derivative builds whose queued task was lost. |
 | `photo_album.tasks.backfill_media_hashes` | Daily 02:40 | Hashes originals stored before SHA-256 hashing existed, for at most 20 minutes a night, so duplicate detection knows them too. Replaces the manual `backfill_photo_album_hashes` deploy step; once every row is hashed it finds nothing to do. |

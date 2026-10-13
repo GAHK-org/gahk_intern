@@ -307,7 +307,11 @@ def tagged_media(media: QuerySet[Media], tag: Tag) -> QuerySet[Media]:
 # Finder litters every archive it makes with these. Small ones are what they claim to be and are
 # dropped; a large "._" file is more likely a real file with an unlucky name, so it fails the import
 # rather than vanishing silently.
-MACOS_METADATA_MAX_BYTES = 4 * 1024
+MACOS_METADATA_MAX_BYTES = 16 * 1024
+# Except these, dropped at any size: a .DS_Store grows with the folder it describes, so a big album's
+# is easily past the limit, and no real photo or video goes by that exact name. Skipped members are
+# never read, so its size costs nothing.
+MACOS_METADATA_ANY_SIZE = frozenset({".DS_Store"})
 _WINDOWS_METADATA = frozenset({"thumbs.db", "desktop.ini"})
 # The DOS timestamp every ZIP entry has, which tools write when they have no real one.
 _ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
@@ -365,6 +369,26 @@ class _ImportPlan:
     files: list[_ImportFile] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    existing_root: Album | None = None  # the album a merging import adds to
+
+
+@dataclass
+class ZipImport:
+    albums: list[Album]  # root first: those created, and with a merge those added to as well
+    skipped: list[str]  # files deliberately left out, the import still succeeded
+    added: int  # media items stored
+    merged: bool  # added to an album that already existed
+
+
+def _existing_album(root: Album, folders: tuple[str, ...]) -> Album:
+    """The deepest album that already exists along `folders` below `root` (`root` itself if none)."""
+    album = root
+    for name in folders:
+        child = album.children.filter(name__iexact=name).first()
+        if child is None:
+            break
+        album = child
+    return album
 
 
 def _extract(zip_archive: zipfile.ZipFile, member: zipfile.ZipInfo, target: Path, limit: int) -> str | None:
@@ -385,9 +409,17 @@ def _extract(zip_archive: zipfile.ZipFile, member: zipfile.ZipInfo, target: Path
     return digest.hexdigest()
 
 
-def _plan_import(zip_archive: zipfile.ZipFile, archive_name: str, folder: str, workdir: Path) -> _ImportPlan:
+def _plan_import(
+    zip_archive: zipfile.ZipFile,
+    archive_name: str,
+    folder: str,
+    workdir: Path,
+    *,
+    merge: bool = False,
+    root_name: str = "",
+) -> _ImportPlan:
     """Pass one: read, check and extract everything, collecting EVERY reason to refuse the import."""
-    plan = _ImportPlan(root_name=normalize_name(Path(archive_name or "album.zip").stem))
+    plan = _ImportPlan(root_name=normalize_name(root_name or Path(archive_name or "album.zip").stem))
     maximum_bytes = max(settings.PHOTO_ALBUM_IMAGE_MAX_MB, settings.PHOTO_ALBUM_VIDEO_MAX_MB) * 1024 * 1024
     candidates: list[tuple[zipfile.ZipInfo, str, PurePosixPath]] = []
     for member in zip_archive.infolist():
@@ -399,7 +431,7 @@ def _plan_import(zip_archive: zipfile.ZipFile, archive_name: str, folder: str, w
             plan.errors.append(f"{name}: ugyldig sti i ZIP-filen.")
             continue
         if _is_macos_archive_metadata(path):
-            if member.file_size <= MACOS_METADATA_MAX_BYTES:
+            if path.name in MACOS_METADATA_ANY_SIZE or member.file_size <= MACOS_METADATA_MAX_BYTES:
                 plan.skipped.append(f"{name}: macOS-metadata (ignoreret)")
             else:
                 plan.errors.append(
@@ -415,7 +447,7 @@ def _plan_import(zip_archive: zipfile.ZipFile, archive_name: str, folder: str, w
     # "Fest/…" — or "Downloads/Fest/…" — does not become an album with one empty-but-for-a-folder
     # level. The album is then named after the folder it stopped in.
     prefix: tuple[str, ...] = ()
-    while candidates:
+    while candidates and not root_name:
         level = [path.parts[len(prefix) :] for _, _, path in candidates]
         if any(len(rest) == 1 for rest in level) or len({rest[0] for rest in level}) != 1:
             break
@@ -427,7 +459,12 @@ def _plan_import(zip_archive: zipfile.ZipFile, archive_name: str, folder: str, w
         validate_album_name(plan.root_name)
     except ValidationError as exc:
         plan.errors.append(f'Albumnavnet "{plan.root_name}": {" ".join(exc.messages)}')
-    if Album.objects.filter(folder=folder, parent__isnull=True, name__iexact=plan.root_name).exists():
+    existing_root = Album.objects.filter(
+        folder=folder, parent__isnull=True, name__iexact=plan.root_name
+    ).first()
+    if existing_root is not None and merge:
+        plan.existing_root = existing_root
+    elif existing_root is not None:
         plan.errors.append(f'Der findes allerede et album med navnet "{plan.root_name}" i {folder}.')
 
     folder_names: dict[tuple[str, ...], dict[str, str]] = {}  # parent folders -> lower(name) -> name
@@ -482,12 +519,31 @@ def _plan_import(zip_archive: zipfile.ZipFile, archive_name: str, folder: str, w
 
     if not plan.files and not plan.errors:
         plan.errors.append("ZIP-filen indeholder ingen billeder eller videoer.")
+    if plan.existing_root is not None:
+        # A locked album takes nothing new, and the import does not lift the lock for it: someone
+        # unlocks it on purpose first. Checked where each file would land, so a locked sub-album the
+        # archive does not touch is no reason to refuse it.
+        locked: dict[int, Album] = {}
+        for folders in {item.folders for item in plan.files}:
+            locking = _existing_album(plan.existing_root, folders).locking_album()
+            if locking is not None:
+                locked[locking.pk] = locking
+        plan.errors.extend(
+            f'Albummet "{album.name}" er låst. Lås det op, før der tilføjes flere filer.'
+            for album in sorted(locked.values(), key=lambda album: album.path)
+        )
     return plan
 
 
 def import_zip_album(
-    *, archive: File, folder: str, resident: Resident, lock: bool = False
-) -> tuple[list[Album], list[str]]:
+    *,
+    archive: File,
+    folder: str,
+    resident: Resident,
+    lock: bool = False,
+    merge: bool = False,
+    root_name: str = "",
+) -> ZipImport:
     """Import a ZIP as one album tree — completely, or not at all.
 
     Pass one reads the whole archive and collects every reason to refuse it, so the resident gets the
@@ -498,37 +554,67 @@ def import_zip_album(
     With `lock`, the new album is locked in the same transaction, once its last file is stored —
     so it is never visible unlocked. The Dropbox import uses it for albums that are history.
 
-    Returns the albums (root first) and the log of files deliberately left out. Raises
-    ValidationError carrying every error when the import is refused.
+    With `merge`, a root album of the same name in the folder is not a reason to refuse: the archive
+    is added to it, its folders to the sub-albums of the same names (created where missing). Only
+    new files are stored — one with the same name AND the same bytes already in that album is left
+    out; one that merely shares a name is a different photo and is kept beside it. A locked album
+    is still refused. The Dropbox import uses it to send what an earlier attempt left out.
+
+    With `root_name`, that is the root album's name and the archive's paths are relative to it: the
+    import does not descend through single folders. A retry of a few files from one sub-album would
+    otherwise be named after that sub-album rather than merged into the album it belongs to.
+
+    Returns the albums (root first), the log of files deliberately left out and how many were
+    stored. Raises ValidationError carrying every error when the import is refused.
     """
     archive.seek(0)
     with TemporaryDirectory(prefix="photo-album-import-") as directory:
         try:
             with zipfile.ZipFile(archive) as zip_archive:
-                plan = _plan_import(zip_archive, archive.name or "album.zip", folder, Path(directory))
+                plan = _plan_import(
+                    zip_archive,
+                    archive.name or "album.zip",
+                    folder,
+                    Path(directory),
+                    merge=merge,
+                    root_name=root_name,
+                )
         except zipfile.BadZipFile as exc:
             raise ValidationError("ZIP-filen kunne ikke læses.") from exc
         if plan.errors:
             raise ValidationError(plan.errors)
-        return _store_import(plan, folder, resident, lock=lock), plan.skipped
+        albums, added = _store_import(plan, folder, resident, lock=lock)
+        return ZipImport(
+            albums=albums, skipped=plan.skipped, added=added, merged=plan.existing_root is not None
+        )
 
 
-def _store_import(plan: _ImportPlan, folder: str, resident: Resident, *, lock: bool = False) -> list[Album]:
+def _store_import(
+    plan: _ImportPlan, folder: str, resident: Resident, *, lock: bool = False
+) -> tuple[list[Album], int]:
     """Pass two: create the albums and store the files, all or nothing."""
     written: list[str] = []
+    added = 0
     albums: dict[tuple[str, ...], Album] = {}
     try:
         with transaction.atomic():
-            root = Album(folder=folder, name=plan.root_name)
-            root.save()
+            root = plan.existing_root
+            if root is None:
+                root = Album(folder=folder, name=plan.root_name)
+                root.save()
             albums[()] = root
             for item in sorted(plan.files, key=lambda item: (len(item.folders), item.folders, item.member)):
                 for depth in range(1, len(item.folders) + 1):
                     key = tuple(name.lower() for name in item.folders[:depth])
                     if key not in albums:
                         parent = albums[key[:-1]]
-                        album = Album(folder=folder, name=item.folders[depth - 1], parent=parent)
-                        album.save()
+                        name = item.folders[depth - 1]
+                        album = (
+                            parent.children.filter(name__iexact=name).first() if plan.existing_root else None
+                        )
+                        if album is None:
+                            album = Album(folder=folder, name=name, parent=parent)
+                            album.save()
                         albums[key] = album
                 album = albums[tuple(name.lower() for name in item.folders)]
                 with item.path.open("rb") as extracted:
@@ -540,8 +626,12 @@ def _store_import(plan: _ImportPlan, folder: str, resident: Resident, *, lock: b
                         file_modified_at=item.modified_at,
                         sha256=item.sha256,
                     )
-                if outcome.media is not None and outcome.media.original.name:
-                    written.append(outcome.media.original.name)
+                if outcome.duplicate is not None:
+                    plan.skipped.append(f"{item.member}: findes allerede i albummet (ignoreret)")
+                if outcome.media is not None:
+                    added += 1
+                    if outcome.media.original.name:
+                        written.append(outcome.media.original.name)
             if lock:
                 root.manually_locked_at = timezone.now()
                 root.save(update_fields=["manually_locked_at"])
@@ -555,7 +645,7 @@ def _store_import(plan: _ImportPlan, folder: str, resident: Resident, *, lock: b
             except Exception:  # pragma: no cover — best effort; the original error is what matters
                 logger.warning("Could not remove %s after a failed import", written_key, exc_info=True)
         raise
-    return sorted(albums.values(), key=lambda album: (album.depth, album.pk))
+    return sorted(albums.values(), key=lambda album: (album.depth, album.pk)), added
 
 
 # --- Derivatives --------------------------------------------------------------------------------

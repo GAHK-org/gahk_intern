@@ -653,6 +653,14 @@ class AlbumImport(models.Model):
     errors = models.JSONField(default=list)
     # Lock the new album as soon as it is imported — set for the Dropbox import's archive albums.
     lock_when_done = models.BooleanField(default=False)
+    # Add to a root album of the same name instead of refusing the archive — set for the Dropbox
+    # import, which sends the files an earlier attempt left out to the album that attempt created.
+    merge_into_existing = models.BooleanField(default=False)
+    # The root album's name when the archive's paths are relative to it (the script's retries);
+    # empty to name it after the ZIP and the folders the import descends through.
+    album_name = models.CharField(max_length=140, blank=True)
+    # Whether it did: the archive was added to an album that already existed rather than creating it.
+    merged = models.BooleanField(default=False)
     error = models.CharField(max_length=255, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)

@@ -118,8 +118,12 @@ services:
       # dev servers need this — botocore's default checksum framing is mis-stored/rejected by them).
       AWS_REQUEST_CHECKSUM_CALCULATION: when_required
       AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+      # As in production (docker-compose.prod.yml): thumbnails and HD images are served from a
+      # local copy rather than redirected to the bucket. Only `web` serves them, so only it has one.
+      PHOTO_ALBUM_CACHE_DIR: /app/cache
     volumes:
       - "./app:/src/app"
+      - photo-album-cache:/app/cache
     ports:
       - "8800:8000"
     depends_on:
@@ -168,3 +172,4 @@ volumes:
   pgdata:
   mariadbdata:
   s3data:
+  photo-album-cache:

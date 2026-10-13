@@ -246,21 +246,42 @@ def test_zip_import_ignores_and_logs_small_macos_metadata(
 
 
 @pytest.mark.django_db
-def test_zip_import_refuses_macos_metadata_over_4_kb(
+def test_zip_import_refuses_macos_metadata_over_16_kb(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
-    """Above 4 KB it is not a resource fork any more — perhaps a real photo that lost its name."""
+    """Above 16 KB it is not a resource fork any more — perhaps a real photo that lost its name."""
     album_import = _import(
         client,
         make_resident,
         ("photo.jpg", jpeg_bytes()),
-        ("._photo.jpg", b"x" * 5000),
+        ("._photo.jpg", b"x" * (16 * 1024 + 1)),
     )
 
     assert album_import.state == AlbumImportState.FAILED
-    assert album_import.errors == ["._photo.jpg: ligner macOS-metadata, men er større end 4 KB."]
+    assert album_import.errors == ["._photo.jpg: ligner macOS-metadata, men er større end 16 KB."]
     assert not Album.objects.exists()
     assert not Media.objects.exists()
+
+
+@pytest.mark.django_db
+def test_zip_import_skips_macos_metadata_of_exactly_16_kb_and_a_ds_store_of_any_size(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """A big album's .DS_Store is easily past the limit, and nothing real is called that."""
+    album_import = _import(
+        client,
+        make_resident,
+        ("Fest/photo.jpg", jpeg_bytes()),
+        ("Fest/._photo.jpg", b"x" * (16 * 1024)),
+        ("Fest/.DS_Store", b"x" * (1024 * 1024)),
+    )
+
+    assert album_import.state == AlbumImportState.READY
+    assert sorted(album_import.skipped) == [
+        "Fest/.DS_Store: macOS-metadata (ignoreret)",
+        "Fest/._photo.jpg: macOS-metadata (ignoreret)",
+    ]
+    assert Media.objects.count() == 1
 
 
 @pytest.mark.django_db
@@ -311,6 +332,100 @@ def test_zip_import_refuses_a_root_album_name_already_in_the_folder(
     assert album_import.state == AlbumImportState.FAILED
     assert album_import.errors == ['Der findes allerede et album med navnet "foo" i 2026.']
     assert Album.objects.count() == 1
+
+
+def _system_import(
+    *members: tuple[str, bytes], name: str = "Fest.zip", album: str = ""
+) -> tuple[AlbumImport, dict[str, object]]:
+    """Post a ZIP to the import script's endpoint, run the worker task on it and fetch its status."""
+    client = Client()
+    response = client.post(
+        reverse("photo_album:system_import_zip"),
+        {"folder": "2026", "album": album, "archive": _zip_upload(*members, name=name)},
+        HTTP_AUTHORIZATION="Bearer migration-token",
+        HTTP_ACCEPT="application/json",
+    )
+    assert response.status_code == 202
+    album_import = AlbumImport.objects.latest("pk")
+    process_album_import(album_import.pk)
+    album_import.refresh_from_db()
+    status = client.get(response.json()["statusUrl"], HTTP_AUTHORIZATION="Bearer migration-token").json()
+    return album_import, status
+
+
+def _unlock(name: str) -> None:
+    Album.objects.filter(name=name).update(manually_locked_at=None, unlocked_at=timezone.now())
+
+
+@pytest.mark.django_db
+@override_settings(PHOTO_ALBUM_IMPORT_TOKEN="migration-token")
+def test_system_import_adds_only_new_files_to_an_album_of_the_same_name() -> None:
+    """The Dropbox script sends what an earlier attempt left out to the album that attempt created."""
+    first, second = jpeg_bytes(), jpeg_bytes()
+    _system_import(("Fest/first.jpg", first), ("Fest/Lørdag/IMG_0001.JPG", second))
+    _unlock("Fest")
+
+    album_import, status = _system_import(
+        ("Fest/first.jpg", first),  # already there: left out
+        ("Fest/LØRDAG/IMG_0001.JPG", jpeg_bytes()),  # the same name, another photo: kept beside it
+        ("Fest/Søndag/new.png", png_bytes()),  # a folder the first attempt did not have
+        name="fest.zip",
+    )
+
+    assert album_import.state == AlbumImportState.READY
+    assert album_import.merged and status["merged"] is True
+    assert album_import.skipped == ["Fest/first.jpg: findes allerede i albummet (ignoreret)"]
+    assert _tree() == [("Fest", None), ("Lørdag", "Fest"), ("Søndag", "Fest")]
+    placement = sorted(Media.objects.values_list("album__name", "filename"))
+    assert placement == [
+        ("Fest", "first.jpg"),
+        ("Lørdag", "IMG_0001.JPG"),
+        ("Lørdag", "IMG_0001.JPG"),
+        ("Søndag", "new.png"),
+    ]
+    root = Album.objects.get(name="Fest")
+    assert album_import.album_ids[0] == root.pk
+    assert root.is_locked() and status["locked"] is True  # locked again, like everything it imports
+
+
+@pytest.mark.django_db
+@override_settings(PHOTO_ALBUM_IMPORT_TOKEN="migration-token")
+def test_system_import_with_an_album_name_takes_the_paths_as_relative_to_that_album() -> None:
+    """A retry of files from one sub-album must not become an album named after that sub-album."""
+    _system_import(("Fest/first.jpg", jpeg_bytes()), ("Fest/Lørdag/second.jpg", jpeg_bytes()))
+    _unlock("Fest")
+
+    album_import, status = _system_import(("Lørdag/late.jpg", jpeg_bytes()), name="retry.zip", album="Fest")
+
+    assert album_import.state == AlbumImportState.READY
+    assert status["merged"] is True
+    assert _tree() == [("Fest", None), ("Lørdag", "Fest")]
+    assert Media.objects.get(filename="late.jpg").album.name == "Lørdag"
+
+    # Without one, the same archive is named after the ZIP — or here, the folder it descends into.
+    album_import, _ = _system_import(("Lørdag/late.jpg", jpeg_bytes()), name="retry.zip")
+    assert ("Lørdag", None) in _tree()
+
+
+@pytest.mark.django_db
+@override_settings(PHOTO_ALBUM_IMPORT_TOKEN="migration-token")
+def test_system_import_refuses_to_add_to_a_locked_album() -> None:
+    """The import never lifts a lock; Fotogruppen unlocks the album on purpose first."""
+    _system_import(("Fest/first.jpg", jpeg_bytes()), ("Fest/Lørdag/second.jpg", jpeg_bytes()))
+    album_import, _ = _system_import(("Fest/new.jpg", jpeg_bytes()))
+
+    assert album_import.state == AlbumImportState.FAILED
+    assert album_import.errors == ['Albummet "Fest" er låst. Lås det op, før der tilføjes flere filer.']
+
+    # A locked sub-album refuses what would land in it, not the rest of the album.
+    _unlock("Fest")
+    Album.objects.filter(name="Lørdag").update(manually_locked_at=timezone.now())
+    refused, _ = _system_import(("Fest/new.jpg", jpeg_bytes()), ("Fest/Lørdag/late.jpg", jpeg_bytes()))
+    accepted, _ = _system_import(("Fest/new.jpg", jpeg_bytes()), ("Fest/Søndag/late.jpg", jpeg_bytes()))
+
+    assert refused.errors == ['Albummet "Lørdag" er låst. Lås det op, før der tilføjes flere filer.']
+    assert accepted.state == AlbumImportState.READY
+    assert Media.objects.count() == 4
 
 
 @pytest.mark.django_db

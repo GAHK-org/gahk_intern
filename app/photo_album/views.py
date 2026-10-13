@@ -39,8 +39,15 @@ from core.media import REDIRECT_CACHE_CONTROL
 from residents.models import Resident
 from residents.permissions import current_resident
 
-from . import access, cache, services
-from .forms import AlbumForm, AlbumNameForm, DownloadForm, MediaUploadForm, ZipAlbumImportForm
+from . import access, cache, featured, services
+from .forms import (
+    AlbumForm,
+    AlbumNameForm,
+    DownloadForm,
+    MediaUploadForm,
+    SystemZipImportForm,
+    ZipAlbumImportForm,
+)
 from .models import (
     MAX_ALBUM_DEPTH,
     Album,
@@ -265,6 +272,8 @@ def index(request: HttpRequest) -> HttpResponse:
             "can_create": access.can_create_album(request),
             "can_view_all_bins": access.can_view_all_bins(request),
             "folder": folder,
+            # The timeline's tile leads the full index; a folder page keeps the plain link.
+            "mosaic": [] if folder else featured.timeline_mosaic(),
         },
     )
 
@@ -759,11 +768,14 @@ def import_zip(request: HttpRequest) -> HttpResponse:
             "skipped": job.skipped if job and job.state == AlbumImportState.READY else [],
             "errors": job.errors if job and job.state == AlbumImportState.FAILED else [],
             "folder_options": album_folder_options(),
+            "max_sub_album_levels": MAX_ALBUM_DEPTH,
         },
     )
 
 
-def _queue_import(form: ZipAlbumImportForm, resident: Resident, *, lock: bool = False) -> AlbumImport:
+def _queue_import(
+    form: ZipAlbumImportForm, resident: Resident, *, lock: bool = False, merge: bool = False
+) -> AlbumImport:
     archive = form.cleaned_data["archive"]
     album_import = AlbumImport.objects.create(
         requested_by=resident,
@@ -771,6 +783,8 @@ def _queue_import(form: ZipAlbumImportForm, resident: Resident, *, lock: bool = 
         archive_name=archive.name,
         archive=archive,
         lock_when_done=lock,
+        merge_into_existing=merge,
+        album_name=form.cleaned_data.get("album", ""),
     )
     from .tasks import process_album_import
 
@@ -788,12 +802,14 @@ def system_import_zip(request: HttpRequest) -> JsonResponse:
     resident = _token_import_resident(request)
     if resident is None:
         raise PermissionDenied
-    form = ZipAlbumImportForm(request.POST, request.FILES)
+    form = SystemZipImportForm(request.POST, request.FILES)
     if not form.is_valid():
         return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
     # Everything the import script brings in is an archive of years gone by: lock it on arrival, so
     # it is not edited by accident. Fotogruppen can unlock an album that does need a change.
-    album_import = _queue_import(form, resident, lock=True)
+    # An album that already exists is added to rather than refused, so the script can send the files
+    # an earlier attempt left out — once it has been unlocked; a locked album is still refused.
+    album_import = _queue_import(form, resident, lock=True, merge=True)
     return JsonResponse(
         {
             "statusUrl": reverse("photo_album:import_zip_status", args=[album_import.token]),
@@ -828,6 +844,7 @@ def system_albums(request: HttpRequest) -> JsonResponse:
                 # Folder levels allowed below the album the archive becomes.
                 "maxSubAlbumLevels": MAX_ALBUM_DEPTH,
                 "macosMetadataMaxBytes": services.MACOS_METADATA_MAX_BYTES,
+                "macosMetadataAnySize": sorted(services.MACOS_METADATA_ANY_SIZE),
             },
         }
     )
@@ -849,6 +866,7 @@ def import_zip_status(request: HttpRequest, token: str) -> JsonResponse:
             "errors": album_import.errors,
             "skipped": album_import.skipped,
             "locked": bool(albums) and albums[0].is_locked(),
+            "merged": album_import.merged,
             "albums": [
                 {
                     "id": album.pk,
@@ -981,7 +999,6 @@ def media_detail(request: HttpRequest, pk: int) -> JsonResponse:
     media = _viewable_media(request, pk)
     can_delete = access.can_delete(media, request)
     can_tag = access.can_tag(request)
-    album_url = reverse("photo_album:detail", args=[media.album_id])
     return JsonResponse(
         {
             "kind": "video" if media.content_type.startswith("video/") else "image",
@@ -989,8 +1006,7 @@ def media_detail(request: HttpRequest, pk: int) -> JsonResponse:
             "filename": media.display_name,
             "full": media.high_definition.url if media.has_derivatives else "",
             "album": " / ".join(media.album.display_path()),
-            "albumUrl": album_url,
-            "link": f"{album_url}?media={media.pk}",
+            "albumUrl": reverse("photo_album:detail", args=[media.album_id]),
             "downloadUrl": reverse("photo_album:download_original", args=[media.pk]),
             "deleteUrl": reverse("photo_album:delete", args=[media.pk]) if can_delete else "",
             "viewUrl": reverse("photo_album:record_view", args=[media.pk]),

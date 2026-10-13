@@ -149,6 +149,10 @@ CELERY_TASK_REJECT_ON_WORKER_LOST = True
 # `retries` NULL in celery_taskmeta — which are four of the columns the siteadmin worker-jobs page
 # selects and displays, so "Worker", "Kø" and "Forsøg" were permanently blank there.
 CELERY_RESULT_EXTENDED = True
+# Never expire results by age: Celery's own cleanup would delete failed jobs along with the rest.
+# core.tasks.purge_worker_job_results deletes successful ones after a month, and others only from
+# piles of more than 1000 of one task and status, once 60 days old.
+CELERY_RESULT_EXPIRES = None
 # A management command run from a task (`purge_photo_album`, …) prints its summary to stdout, which
 # the worker redirects into logging — at WARNING by default, so every routine "Removed 0 item(s)"
 # showed up as a warning in the job's stored log (core/worker_logs.py) and the worker's own output.
@@ -214,6 +218,10 @@ CELERY_BEAT_SCHEDULE = {
     "purge-worker-job-logs": {
         "task": "core.tasks.purge_worker_job_logs",
         "schedule": crontab(minute=40, hour=4),
+    },
+    "purge-worker-job-results": {
+        "task": "core.tasks.purge_worker_job_results",
+        "schedule": crontab(minute=45, hour=4),
     },
     # 04:50, after every other sweep: the rows it deletes are the messages those sweeps were
     # delivered on, so running it last keeps one night's work visible in the table while that work

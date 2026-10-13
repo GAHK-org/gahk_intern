@@ -1829,11 +1829,42 @@
   .arkiv-grid .ni { width:40px; height:40px; margin:24px auto; display:block; color:var(--muted); }
 
    /* --- Photo album ------------------------------------------------------------------------- */
+   /* .main's overflow:auto makes it the sticky elements' scroller, and as the window does the
+      scrolling they never stuck. On album pages it clips instead, so the year bar and the selection
+      bar stay below the 60 px top bar as intended. */
+   .main:has([data-album-page]) { overflow:clip; }
    .album-heading { display:flex; align-items:end; justify-content:space-between; gap:16px; margin-bottom:28px; }
    .album-heading > div:first-child { min-width:0; }
    .album-heading h1 { margin:0; font-family:Georgia, serif; font-size:32px; color:var(--ink); overflow-wrap:anywhere; }
    .album-eyebrow { margin:0 0 5px; color:var(--brass); font-size:12px; font-weight:700; letter-spacing:0; text-transform:uppercase; }
    .album-folders { display:grid; gap:28px; }
+   /* The index's way into the timeline: a mosaic of random pictures (one large, six small) under a
+      dark band with the title. With few or no pictures the empty cells show the dark ground. On hover
+      each picture zooms inside its own cell, so the seams stay; the card itself stays put, as lifting
+      it and deepening its shadow made the whole thing jump. */
+   .album-timeline-card { position:relative; display:block; margin-bottom:32px; overflow:hidden; border-radius:var(--radius);
+      color:#fffdf7; text-decoration:none; background:var(--ink); box-shadow:var(--shadow); }
+   .album-timeline-card:focus-visible { outline:3px solid var(--brass); outline-offset:3px; }
+   .album-timeline-mosaic { display:grid; grid-template-columns:repeat(5, 1fr); grid-template-rows:repeat(2, 120px); gap:3px; }
+   .album-timeline-mosaic > span { min-width:0; overflow:hidden; }
+   .album-timeline-mosaic > span:first-child { grid-row:span 2; grid-column:span 2; }
+   .album-timeline-mosaic img { display:block; width:100%; height:100%; object-fit:cover; transition:transform .4s; }
+   .album-timeline-card:hover .album-timeline-mosaic img { transform:scale(1.05); }
+   .album-timeline-label { position:absolute; inset:auto 0 0 0; display:grid; gap:4px; padding:56px 22px 18px;
+      background:linear-gradient(to top, rgb(14 20 16 / .92) 0%, rgb(14 20 16 / .72) 55%, transparent); }
+   .album-timeline-label .album-eyebrow { margin:0; color:#e2c27a; }
+   .album-timeline-label strong { font-family:Georgia, serif; font-size:30px; line-height:1.1; }
+   .album-timeline-label > span:not(.album-eyebrow) { color:#e4ebe5; font-size:14px; }
+   .album-timeline-label .album-timeline-go { justify-self:start; margin-top:8px; padding:7px 14px; border-radius:999px;
+      color:var(--ink); background:var(--brass); font-weight:700; }
+   .album-timeline-card:hover .album-timeline-go { background:#c49a3f; }
+   @media (max-width:720px) {
+     .album-timeline-mosaic { grid-template-columns:repeat(3, 1fr); grid-template-rows:repeat(2, 92px); }
+     .album-timeline-mosaic > span:nth-child(n+4) { display:none; }
+     .album-timeline-label { padding:40px 16px 14px; }
+     .album-timeline-label strong { font-size:24px; }
+   }
+   @media (prefers-reduced-motion:reduce) { .album-timeline-mosaic img { transition:none; } }
    .album-folder { border-top:1px solid var(--border); padding-top:16px; }
    .album-folder h2 { display:flex; align-items:center; gap:8px; margin:0 0 12px; font-size:16px; }
    .album-folder h2 svg, .album-subtitle svg { width:19px; height:19px; color:var(--brass); fill:none; stroke:currentColor; }
@@ -1871,6 +1902,7 @@
    .album-upload-selection { padding:10px 12px; border:1px solid var(--border); border-radius:6px; background:var(--surface-2); }
    .album-upload-selection p { margin:0 0 5px; font-size:13px; font-weight:650; }.album-upload-selection ul { max-height:132px; margin:0; padding-left:20px; overflow:auto; color:var(--muted); font-size:13px; }
    .album-upload-progress progress { display:block; width:100%; height:12px; accent-color:var(--brass); }.album-upload-progress p { margin:6px 0 0; color:var(--muted); font-size:13px; }
+   .album-import-help { max-width:680px; margin:0 0 18px; color:var(--muted); }.album-import-help strong { color:var(--ink); }
    .album-import-result { margin-top:24px; }.album-import-result ul { margin:8px 0; padding-left:20px; }.album-import-skipped { color:var(--neg); }
    .album-import-progress { margin-top:16px; }.album-import-progress progress { display:block; width:100%; height:12px; accent-color:var(--brass); }.album-import-progress p { margin:6px 0 0; color:var(--muted); font-size:13px; }
    .album-import-progress.is-working p { display:flex; align-items:center; gap:8px; }
@@ -1942,7 +1974,7 @@
    .album-media-grid.is-selecting .album-video-mark { display:none; }
    .album-media-item.is-selected .album-media-tile { outline:3px solid var(--brass); outline-offset:-3px; }
    .album-media-item.is-selected .album-media-tile img { filter:brightness(.8); }
-   .album-selection-bar { position:sticky; z-index:15; top:8px; display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; margin:0 0 14px; padding:10px 14px; border:1px solid var(--border); border-radius:8px; background:var(--surface); box-shadow:0 8px 20px rgb(0 0 0 / .1); }
+   .album-selection-bar { position:sticky; z-index:15; top:68px; display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; margin:0 0 14px; padding:10px 14px; border:1px solid var(--border); border-radius:8px; background:var(--surface); box-shadow:0 8px 20px rgb(0 0 0 / .1); }
    .album-selection-bar[hidden] { display:none; }
    .album-selection-bar button { border:0; background:none; padding:0; color:var(--brass); cursor:pointer; font:inherit; }
    .album-selection-bar button.btn-link-danger { color:var(--neg); }
@@ -1950,9 +1982,32 @@
    .album-selection-count { font-weight:650; }
    .album-selection-download { display:flex; align-items:center; gap:8px; }.album-selection-download select { min-height:30px; }
    /* Timeline */
-   .album-timeline-years { position:sticky; z-index:14; top:0; display:flex; gap:6px; margin:0 0 16px; padding:8px 0; overflow-x:auto; background:var(--surface); scrollbar-width:none; }
+   .album-timeline-years { position:sticky; z-index:14; top:60px; display:flex; gap:6px; margin:0 0 16px; padding:8px 0; overflow-x:auto; background:var(--surface); scrollbar-width:none; }
    .album-timeline-years a { flex:none; padding:4px 10px; border-radius:999px; color:var(--muted); font-size:13px; text-decoration:none; }
    .album-timeline-years a[aria-current] { color:#fff; background:var(--brass); }
+   .album-month-ruler { grid-column:1 / -1; display:flex; align-items:center; gap:12px; margin:22px 0 2px; color:var(--ink); font-family:Georgia, serif; font-size:19px; }
+   .album-month-ruler::after { content:""; flex:1; height:2px; border-radius:1px; background:linear-gradient(to right, var(--brass), var(--border) 60%); }
+   .album-month-ruler:first-child, .album-page-sentinel + .album-month-ruler { margin-top:0; }
+   /* The time rail (photo-album.ts, timeRail) sits in a lane kept free beside the timeline; on a
+      phone there is no room for a lane, so it shrinks to a line and a dot at the screen's edge. */
+   .album-timeline { padding-right:64px; }
+   .album-time-rail { position:fixed; z-index:15; top:72px; bottom:36px; right:24px; width:3px; border-radius:2px; background:var(--border); }
+   .album-time-rail a { position:absolute; right:12px; translate:0 -50%; padding:1px 6px; border-radius:999px; color:var(--muted); background:var(--surface); font-size:11px; font-weight:600; text-decoration:none; }
+   .album-time-rail a::after { content:""; position:absolute; top:50%; right:-12px; width:9px; height:1px; background:var(--faint); }
+   .album-time-rail a:hover { color:var(--ink); }
+   .album-time-rail-thumb { position:absolute; left:50%; display:none; width:15px; height:15px; box-sizing:border-box; translate:-50% -50%;
+      border:3px solid var(--surface); border-radius:50%; background:var(--brass); box-shadow:0 1px 5px rgb(0 0 0 / .3); transition:top .25s ease; }
+   .album-time-rail.is-placed .album-time-rail-thumb { display:block; }
+   .album-time-rail-thumb span { position:absolute; top:50%; right:24px; translate:0 -50%; padding:5px 12px; border-radius:999px; color:#fffdf7; background:var(--ink);
+      font-size:13px; font-weight:700; white-space:nowrap; box-shadow:var(--shadow); opacity:0; transition:opacity .2s; pointer-events:none; }
+   .album-time-rail.is-scrolling .album-time-rail-thumb span, .album-time-rail:hover .album-time-rail-thumb span { opacity:1; }
+   @media (max-width:720px) {
+     .album-timeline { padding-right:0; }
+     .album-time-rail { right:3px; top:24px; bottom:24px; background:rgb(0 0 0 / .12); }
+     .album-time-rail a { display:none; }
+     .album-time-rail-thumb { width:13px; height:13px; border-width:2px; }
+     .album-month-ruler { margin-top:16px; font-size:17px; }
+   }
    /* Tags: chips linking to the timeline filtered on them; an album's inherited ones are dashed. */
    .album-tags, .album-tag-filter { display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; margin:0 0 20px; }
    .album-heading + .album-tags { margin-top:-14px; }

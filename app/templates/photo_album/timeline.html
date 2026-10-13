@@ -18,7 +18,7 @@
 		{% for each in years %}<a href="{% url 'photo_album:timeline' %}?{% if tag_query %}{{ tag_query }}&amp;{% endif %}year={{ each }}" data-year-link="{{ each }}"{% if each == year %} aria-current="page"{% endif %}>{{ each }}</a>{% endfor %}
 	</nav>{% endif %}
 	{% include "photo_album/_selection_bar.html" %}
-	<div class="album-media-grid" data-album-gallery>{% include "photo_album/_media_tiles.html" %}</div>
+	<div class="album-media-grid" data-album-gallery data-album-months>{% include "photo_album/_media_tiles.html" %}</div>
 	{% if not page.items %}<p class="album-empty">{% if tags %}Ingen medier har {% if tags|length == 1 %}det tag{% else %}alle de tags{% endif %}.{% else %}Der er ingen medier endnu.{% endif %}</p>{% endif %}
 </section>
 {% include "photo_album/_viewer.html" %}

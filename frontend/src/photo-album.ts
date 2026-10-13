@@ -286,6 +286,40 @@ const sentinel = (direction: "before" | "after", url: string): HTMLElement => {
   return element
 }
 
+const monthRuler = (tile: HTMLElement): HTMLElement => {
+  const ruler = document.createElement("h2")
+  ruler.className = "album-month-ruler"
+  ruler.dataset.month = tile.dataset.month ?? ""
+  ruler.textContent = tile.dataset.monthLabel ?? ""
+  return ruler
+}
+
+/** A ruler above the first tile of every month, on the timeline. Pages arrive and leave at both
+ * ends, and a page can start or end mid-month, so the rulers are squared up against the tiles after
+ * every change: one where the month changes (and above the first tile), none anywhere else — not
+ * between two tiles of one month where two pages meet, nor left behind by tiles that were dropped. */
+const markMonths = (gallery: HTMLElement): void => {
+  if (!gallery.hasAttribute("data-album-months")) return
+  let previous: string | undefined
+  let ruler: HTMLElement | undefined
+  for (const child of Array.from(gallery.children) as HTMLElement[]) {
+    if (child.matches(".album-month-ruler")) {
+      ruler?.remove()
+      ruler = child
+    } else if (child.matches(tileSelector)) {
+      const month = child.dataset.month ?? ""
+      if (month === previous) ruler?.remove()
+      else if (ruler?.dataset.month !== month) {
+        ruler?.remove()
+        child.before(monthRuler(child))
+      }
+      ruler = undefined
+      previous = month
+    }
+  }
+  ruler?.remove()
+}
+
 /** Keep `anchor` exactly where it is on screen while `change` adds or removes things above it. */
 const holdPosition = (anchor: Element | null, change: () => void): void => {
   const before = anchor?.getBoundingClientRect().top
@@ -322,6 +356,7 @@ const setupPaging = (gallery: HTMLElement, onTiles: (tiles: HTMLElement[]) => vo
         gallery.querySelector("[data-page-before]")?.remove()
         doomed.forEach((tile) => tile.remove())
         gallery.prepend(sentinel("before", pageUrl("before", firstKept.dataset.mediaId ?? "")))
+        markMonths(gallery)
       })
       observeSentinels()
     } else {
@@ -329,6 +364,7 @@ const setupPaging = (gallery: HTMLElement, onTiles: (tiles: HTMLElement[]) => vo
       gallery.querySelector("[data-page-after]")?.remove()
       all.slice(all.length - excess).forEach((tile) => tile.remove())
       gallery.append(sentinel("after", pageUrl("after", lastKept.dataset.mediaId ?? "")))
+      markMonths(gallery)
       observeSentinels()
     }
   }
@@ -344,11 +380,15 @@ const setupPaging = (gallery: HTMLElement, onTiles: (tiles: HTMLElement[]) => vo
       if (!fragment || !element.isConnected) return false
       const added = Array.from(fragment.querySelectorAll<HTMLElement>(tileSelector))
       if (before) {
-        holdPosition(gallery.querySelector(tileSelector), () => element.replaceWith(fragment))
+        holdPosition(gallery.querySelector(tileSelector), () => {
+          element.replaceWith(fragment)
+          markMonths(gallery)
+        })
         onTiles(added)
         unload("bottom")
       } else {
         element.replaceWith(fragment)
+        markMonths(gallery)
         onTiles(added)
         unload("top")
       }
@@ -372,6 +412,7 @@ const setupPaging = (gallery: HTMLElement, onTiles: (tiles: HTMLElement[]) => vo
     observer.disconnect()
     gallery.querySelectorAll<HTMLElement>(".album-page-sentinel").forEach((element) => observer.observe(element))
   }
+  markMonths(gallery)
   observeSentinels()
 
   return {
@@ -449,28 +490,86 @@ const setupSelection = (gallery: HTMLElement): { isSelecting: () => boolean; pre
   return { isSelecting: () => selecting, prepare }
 }
 
-// --- Year highlighting on the timeline ---------------------------------------------------------
+// --- Where in time the reader is, on the timeline ----------------------------------------------
 
-const setupYears = (gallery: HTMLElement): void => {
+/** Scroll the year strip sideways so `link` is in view — and nothing else. NOT scrollIntoView: that
+ * scrolls every ancestor, the page included, and for an element inside the sticky year bar Chromium
+ * aims at where the bar sits when it is not stuck. Called on every scroll frame, it dragged the page
+ * straight back there, so the timeline could not be scrolled at all. */
+const revealInStrip = (strip: HTMLElement, link: HTMLElement): void => {
+  const bounds = strip.getBoundingClientRect()
+  const box = link.getBoundingClientRect()
+  if (box.left < bounds.left) strip.scrollLeft -= bounds.left - box.left
+  else if (box.right > bounds.right) strip.scrollLeft += box.right - bounds.right
+}
+
+/** A rail down the right edge with every year on it, newest at the top, and a dot for where the
+ * reader is: each year gets an equal stretch, split into its twelve months. While scrolling, the dot
+ * names the month. The year links are the year bar's own, so the rail is hidden from screen readers
+ * and the keyboard, which have the bar. */
+const timeRail = (yearLinks: HTMLAnchorElement[]): { rail: HTMLElement; thumb: HTMLElement; label: HTMLElement } => {
+  const rail = document.createElement("div")
+  rail.className = "album-time-rail"
+  rail.setAttribute("aria-hidden", "true")
+  yearLinks.forEach((link, index) => {
+    const tick = document.createElement("a")
+    tick.href = link.href
+    tick.tabIndex = -1
+    tick.textContent = link.textContent
+    tick.style.top = `${(index / yearLinks.length) * 100}%`
+    rail.append(tick)
+  })
+  const thumb = document.createElement("span")
+  thumb.className = "album-time-rail-thumb"
+  const label = document.createElement("span")
+  thumb.append(label)
+  rail.append(thumb)
+  document.body.append(rail)
+  return { rail, thumb, label }
+}
+
+const setupTimePosition = (gallery: HTMLElement): void => {
   const years = document.querySelector<HTMLElement>("[data-album-years]")
   if (!years) return
+  const yearLinks = Array.from(years.querySelectorAll<HTMLAnchorElement>("a[data-year-link]"))
+  const order = new Map(yearLinks.map((link, index) => [link.dataset.yearLink ?? "", index]))
+  const { rail, thumb, label } = timeRail(yearLinks)
   let scheduled = false
+  let shownYear = ""
+  let shownMonth = ""
+  let quiet: number | undefined
   const update = (): void => {
     scheduled = false
-    // The first row clear of the sticky year bar, not one scrolled up behind it.
-    const below = years.getBoundingClientRect().bottom + 20
+    // The first row clear of the sticky year bar, not one scrolled up behind it. Should the bar not
+    // be stuck, it has scrolled away, and the rows are measured from the top of the window instead.
+    const below = Math.max(years.getBoundingClientRect().bottom, 0) + 20
     const visible = Array.from(gallery.querySelectorAll<HTMLElement>(tileSelector)).find(
       (tile) => tile.getBoundingClientRect().bottom > below,
     )
     const year = visible?.dataset.year
-    if (!year) return
-    years.querySelectorAll<HTMLAnchorElement>("a").forEach((link) => {
-      if (link.dataset.yearLink === year) link.setAttribute("aria-current", "true")
-      else link.removeAttribute("aria-current")
-    })
-    years.querySelector<HTMLElement>(`[data-year-link="${year}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" })
+    if (year && year !== shownYear) {
+      shownYear = year
+      years.querySelectorAll<HTMLAnchorElement>("a").forEach((link) => {
+        if (link.dataset.yearLink === year) link.setAttribute("aria-current", "true")
+        else link.removeAttribute("aria-current")
+      })
+      const link = years.querySelector<HTMLElement>(`[data-year-link="${year}"]`)
+      if (link) revealInStrip(years, link)
+    }
+    const month = visible?.dataset.month
+    const index = order.get(year ?? "")
+    if (!month || month === shownMonth || index === undefined) return
+    shownMonth = month
+    const within = (12 - Number(month.slice(5)) + 0.5) / 12
+    thumb.style.top = `${((index + within) / yearLinks.length) * 100}%`
+    label.textContent = visible?.dataset.monthLabel ?? ""
+    rail.classList.add("is-placed")
   }
+  update()
   window.addEventListener("scroll", () => {
+    rail.classList.add("is-scrolling")
+    window.clearTimeout(quiet)
+    quiet = window.setTimeout(() => rail.classList.remove("is-scrolling"), 1200)
     if (scheduled) return
     scheduled = true
     window.requestAnimationFrame(update)
@@ -723,7 +822,6 @@ interface MediaDetail {
   full: string
   album: string
   albumUrl: string
-  link: string
   downloadUrl: string
   deleteUrl: string
   viewUrl: string
@@ -785,7 +883,7 @@ if (gallery && dialog) {
 
   const selection = setupSelection(gallery)
   const paging = setupPaging(gallery, selection.prepare, () => !dialog.open)
-  setupYears(gallery)
+  setupTimePosition(gallery)
 
   // Read fresh every time: the grid gains and loses pages as the reader scrolls.
   const entries = (): HTMLButtonElement[] =>
@@ -845,8 +943,10 @@ if (gallery && dialog) {
 
   const renderMetadata = (detail: MediaDetail): void => {
     const { Sted: location, ...rest } = detail.metadata
+    const album = detail.album ? definition("Album", detail.album, detail.albumUrl) : []
+    album[1]?.firstElementChild?.setAttribute("data-gallery-album", "")
     const nodes = [
-      ...(detail.album ? definition("Album", detail.album, detail.link) : []),
+      ...album,
       ...(detail.filename ? definition("Filnavn", detail.filename) : []),
       ...(detail.capturedAt ? definition("Optaget", detail.capturedAt) : []),
       ...(location ? definition("Sted", location, detail.mapUrl) : []),
@@ -1015,6 +1115,11 @@ if (gallery && dialog) {
   })
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog) dialog.close()
+    // The album name leaves the viewer for the album; on that album already, closing is the trip.
+    const album = (event.target as Element).closest<HTMLAnchorElement>("a[data-gallery-album]")
+    if (!album) return
+    if (album.pathname === window.location.pathname) event.preventDefault()
+    dialog.close()
   })
   previous.addEventListener("click", () => void step(-1))
   next.addEventListener("click", () => void step(1))

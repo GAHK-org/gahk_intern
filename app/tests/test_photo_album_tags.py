@@ -248,3 +248,33 @@ def test_the_tag_filter_survives_paging_and_year_jumps(
     assert "tag=sommer&amp;after=" in content
     assert "?tag=sommer&amp;year=2024" in content
     assert 'aria-label="Fjern filteret sommer"' in content
+
+
+# --- Demo seed ----------------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_the_demo_seed_tags_albums_at_every_level_and_single_media(
+    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from photo_album import demo
+    from photo_album.services import tagged_media
+
+    monkeypatch.setattr(demo, "DIMENSIONS", [(32, 24)])  # the pictures' size is beside the point here
+    resident = make_resident(email="seed@gahk.dk")
+    demo.seed([resident], timezone.now(), None)  # type: ignore[arg-type]
+
+    for (folder, path), names in demo.ALBUM_TAGS.items():
+        album = demo._album(folder, path)
+        assert sorted(album.tags.values_list("name", flat=True)) == sorted(names)
+    assert Media.objects.filter(tags__isnull=False).distinct().count() == len(demo.MEDIA_TAGS)
+    assert max(media.tags.count() for media in Media.objects.filter(tags__isnull=False)) >= 2
+
+    # "fodbold" sits on Sport/Fodbold, so it reaches the Pokalfinale album below it too.
+    fodbold = tagged_media(Media.objects.all(), Tag.objects.get(name="fodbold"))
+    assert set(fodbold.values_list("album__name", flat=True)) == {"Fodbold", "Pokalfinale"}
+
+    # A re-seed adds nothing new, but tags media an older seed made before tags existed.
+    Media.tags.through.objects.all().delete()
+    demo.seed([resident], timezone.now(), None)  # type: ignore[arg-type]
+    assert Media.objects.filter(tags__isnull=False).distinct().count() == len(demo.MEDIA_TAGS)

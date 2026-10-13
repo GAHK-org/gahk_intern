@@ -1,6 +1,6 @@
-"""The dashboard's photo strip: "Dagens billeder" and "På denne dag".
+"""The dashboard's photo strip ("Dagens billeder", "På denne dag") and the album index's timeline mosaic.
 
-Both draw only on what every resident may see — approved, live images whose thumbnail is built —
+All three draw only on what every resident may see — approved, live images whose thumbnail is built —
 so the strip needs no per-reader filtering and a pick never points at something a reader cannot open.
 """
 
@@ -8,6 +8,7 @@ import random
 from collections import defaultdict
 from datetime import date, timedelta
 
+from django.core.cache import cache
 from django.db import IntegrityError, transaction
 from django.db.models import QuerySet
 
@@ -19,6 +20,11 @@ FEATURED_COOLDOWN_DAYS = 365
 ON_THIS_DAY_LIMIT = 6
 # "På denne dag" picks among at most this many of the day's candidates; plenty for six.
 _ON_THIS_DAY_POOL = 2000
+# The album index's way into the timeline: one large tile and six small ones.
+MOSAIC_SIZE = 7
+# A fresh draw this often rather than on every load: ORDER BY random() reads every showable row.
+_MOSAIC_SECONDS = 10 * 60
+_MOSAIC_CACHE_KEY = "photo_album:timeline_mosaic"
 
 
 def _showable() -> QuerySet[Media]:
@@ -101,3 +107,17 @@ def on_this_day(day: date) -> list[Media]:
                 chosen.append(by_year[year].pop())
     media = _showable().in_bulk(chosen)
     return [media[pk] for pk in chosen]
+
+
+def timeline_mosaic() -> list[Media]:
+    """A handful of random pictures from across the archive, for the timeline's tile on the index.
+
+    Redrawn every few minutes, so coming back to the index shows other pictures. A pick binned since
+    the draw drops out rather than leaving a hole that points at nothing.
+    """
+    chosen = cache.get(_MOSAIC_CACHE_KEY)
+    if chosen is None:
+        chosen = list(_showable().order_by("?").values_list("pk", flat=True)[:MOSAIC_SIZE])
+        cache.set(_MOSAIC_CACHE_KEY, chosen, _MOSAIC_SECONDS)
+    media = _showable().in_bulk(chosen)
+    return [media[pk] for pk in chosen if pk in media]
