@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from django.test import Client
 
+from core import disk_cache
 from photo_album import cache
 from photo_album.models import Album, Media, MediaStatus
 from photo_album.services import build_derivatives, upload_media
@@ -107,7 +108,7 @@ def test_a_failed_copy_falls_back_to_the_bucket(
     def disk_full(*_args: object) -> None:
         raise OSError("No space left on device")
 
-    monkeypatch.setattr(cache, "_fetch", disk_full)
+    monkeypatch.setattr(disk_cache, "_fetch", disk_full)
     response = client.get(media.thumbnail.url)
     assert response.status_code == 200 and _body(response) == _read(media.thumbnail.name)
 

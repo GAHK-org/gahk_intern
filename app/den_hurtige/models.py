@@ -398,3 +398,21 @@ class QuickReaction(models.Model):
 
     def __str__(self) -> str:
         return f"{self.emoji} af {self.author}"
+
+
+# --- which photos the local disk cache may serve (core.media.register_cacheable) -----------------
+#
+# A photo is served from the server's own disk for as long as its message is live, and by a
+# redirect to the bucket once it is archived. A live message is on everybody's feed and looked at
+# by most of the house within the hour; an archived one is opened now and then from the archive.
+# Both are one query through the (channel, expires_at)/expires_at indexes, which narrow to the few
+# live posts before the image name is compared.
+
+
+def post_image_is_live(name: str) -> bool:
+    return QuickPost.objects.active().filter(image=name).exists()
+
+
+def comment_image_is_live(name: str) -> bool:
+    """A reply has no lifetime of its own (QuickComment), so its photo lives as long as its message."""
+    return QuickComment.objects.filter(image=name, post__in=QuickPost.objects.active()).exists()

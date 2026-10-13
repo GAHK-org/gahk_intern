@@ -99,7 +99,10 @@ Fresh repo (do **not** import the legacy history — it contains plaintext secre
    even after the object-storage migration in §4c.
    The **`photo-album-cache` volume** (`/app/cache`, `PHOTO_ALBUM_CACHE_DIR`) holds local copies of
    photo-album thumbnails and HD images, at most ~5 GB (`PHOTO_ALBUM_CACHE_THUMBNAIL_MB`,
-   `PHOTO_ALBUM_CACHE_HD_MB`). It is only a cache: losing it costs a cold start, nothing else.
+   `PHOTO_ALBUM_CACHE_HD_MB`). It also holds, under `attachments/`, the photos on live Den Hurtige
+   messages and recent opslag (`MEDIA_CACHE_DIR`, defaulting to the same directory;
+   `MEDIA_CACHE_ATTACHMENTS_MB`, default 2 GB). It is only a cache: losing it costs a cold start,
+   nothing else.
 4. `web` runs `migrate` on start then uvicorn; Coolify/Traefik terminates TLS and proxies HTTP and WebSocket traffic to :8000.
 5. `Scaleway` is the fallback if you prefer a first-party managed Postgres.
 
