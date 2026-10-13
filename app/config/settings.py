@@ -167,6 +167,9 @@ CELERY_TASK_TIME_LIMIT = 900
 # System resident. Leave blank to disable token-authenticated imports.
 PHOTO_ALBUM_IMPORT_TOKEN = os.environ.get("PHOTO_ALBUM_IMPORT_TOKEN", "")
 PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL = os.environ.get("PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL", "system@gahk.dk")
+# `manage.py delete_photo_album` refuses anything created or uploaded on or after this date
+# (YYYY-MM-DD). Blank means the command's own default, 2026-10-01; a date in the future is refused.
+PHOTO_ALBUM_DELETE_PROTECTED_FROM = os.environ.get("PHOTO_ALBUM_DELETE_PROTECTED_FROM", "")
 CELERY_BEAT_SCHEDULE = {
     "purge-expired-applications": {
         "task": "admissions.tasks.purge_expired_applications",
