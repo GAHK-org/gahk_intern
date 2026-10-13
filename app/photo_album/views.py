@@ -828,6 +828,7 @@ def system_albums(request: HttpRequest) -> JsonResponse:
                 # Folder levels allowed below the album the archive becomes.
                 "maxSubAlbumLevels": MAX_ALBUM_DEPTH,
                 "macosMetadataMaxBytes": services.MACOS_METADATA_MAX_BYTES,
+                "macosMetadataAnySize": sorted(services.MACOS_METADATA_ANY_SIZE),
             },
         }
     )

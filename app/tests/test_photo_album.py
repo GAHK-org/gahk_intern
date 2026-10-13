@@ -246,21 +246,42 @@ def test_zip_import_ignores_and_logs_small_macos_metadata(
 
 
 @pytest.mark.django_db
-def test_zip_import_refuses_macos_metadata_over_4_kb(
+def test_zip_import_refuses_macos_metadata_over_16_kb(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
-    """Above 4 KB it is not a resource fork any more — perhaps a real photo that lost its name."""
+    """Above 16 KB it is not a resource fork any more — perhaps a real photo that lost its name."""
     album_import = _import(
         client,
         make_resident,
         ("photo.jpg", jpeg_bytes()),
-        ("._photo.jpg", b"x" * 5000),
+        ("._photo.jpg", b"x" * (16 * 1024 + 1)),
     )
 
     assert album_import.state == AlbumImportState.FAILED
-    assert album_import.errors == ["._photo.jpg: ligner macOS-metadata, men er større end 4 KB."]
+    assert album_import.errors == ["._photo.jpg: ligner macOS-metadata, men er større end 16 KB."]
     assert not Album.objects.exists()
     assert not Media.objects.exists()
+
+
+@pytest.mark.django_db
+def test_zip_import_skips_macos_metadata_of_exactly_16_kb_and_a_ds_store_of_any_size(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """A big album's .DS_Store is easily past the limit, and nothing real is called that."""
+    album_import = _import(
+        client,
+        make_resident,
+        ("Fest/photo.jpg", jpeg_bytes()),
+        ("Fest/._photo.jpg", b"x" * (16 * 1024)),
+        ("Fest/.DS_Store", b"x" * (1024 * 1024)),
+    )
+
+    assert album_import.state == AlbumImportState.READY
+    assert sorted(album_import.skipped) == [
+        "Fest/.DS_Store: macOS-metadata (ignoreret)",
+        "Fest/._photo.jpg: macOS-metadata (ignoreret)",
+    ]
+    assert Media.objects.count() == 1
 
 
 @pytest.mark.django_db
