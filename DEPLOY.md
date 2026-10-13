@@ -484,19 +484,6 @@ file, so a *private* begivenhed's poster is protected from the public but not fr
 Closing that would mean resolving each path back to its owning row and applying
 `events.access.visible_to`; deliberately not done.
 
-#### Profile thumbnails need a one-off backfill
-
-Avatars draw `Resident.profile_thumbnail`, a 192 px square that `Resident.save()` makes whenever the
-picture changes. Pictures uploaded before that field existed have none, and fall back to the
-original until this has run once after the deploy that adds it:
-
-```
-docker exec <web> python manage.py make_profile_thumbnails --dry-run
-docker exec <web> python manage.py make_profile_thumbnails
-```
-
-Idempotent: it only looks at residents with a picture and no thumbnail, so re-running is cheap.
-
 ### 4d. Backups, versioning and restore
 
 Configured on the **Coolify database resources**, not as management commands: Coolify runs `pg_dump`

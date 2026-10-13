@@ -117,11 +117,10 @@ export async function thumbnailImage(file: File): Promise<Blob | null> {
 
 /** The viewer-sized version, or null when the file is not a decodable image.
  *
- * Made here rather than on the server for the same reason the thumbnail is: the alternative is
- * Pillow in the production image and a scheduled sweep to catch up with uploads, and this project
- * has deliberately no worker and no Celery. It also means the preview exists the moment the photo
- * does - a sweep would leave a window in which the newest photograph is the one that has no
- * preview, and the person who just uploaded it is the one about to go and look at it.
+ * Made here rather than on the server for the same reason the thumbnail is: the preview exists the
+ * moment the photo does. A job on the Celery worker would leave a window in which the newest
+ * photograph is the one that has no preview, and the person who just uploaded it is the one about to
+ * go and look at it.
  *
  * Unlike downscaleImage this never falls back to the original: a preview that is the original is
  * not a preview. The caller treats null as "no preview", which the server then confirms by asking

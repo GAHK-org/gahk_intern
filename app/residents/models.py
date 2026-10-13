@@ -6,18 +6,17 @@ privileges come from the *current month's* assignments, not a static table — s
 02-schema-etl.md §5 / 99-index.md F-010. Network-closed / MAC fields are dropped (feature retired).
 """
 
-from pathlib import PurePath
+import logging
 from typing import Any
 
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
-from django.core.files.base import ContentFile
-from django.db import models
+from django.core.cache import cache
+from django.db import models, transaction
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
 from django.utils import timezone
 
 from core.files import delete_attached_files, delete_files_after_commit
-from core.images import square_jpeg
 
 
 class Role(models.TextChoices):
@@ -93,6 +92,12 @@ _ADMIN_GRANT_MEMO = "_gahk_admin_grant"
 # Edge of the square profile thumbnail, in px. The largest avatar is the profile page's 64 CSS px,
 # and 3x covers the densest phone screen.
 PROFILE_THUMBNAIL_SIZE = 192
+# How long one process waits before asking the worker for the same thumbnail again. Long enough that
+# a page full of avatars does not queue a job per render, short enough that a job lost with a worker
+# restart, or a picture that could not be read, is tried again the same day.
+PROFILE_THUMBNAIL_REQUEUE_SECONDS = 3600
+
+logger = logging.getLogger(__name__)
 
 
 class Resident(AbstractBaseUser, PermissionsMixin):
@@ -113,8 +118,9 @@ class Resident(AbstractBaseUser, PermissionsMixin):
     fylgje_raw = models.CharField(max_length=255, blank=True)  # original free-text, kept if unresolved
     # profile
     profile_picture = models.FileField(upload_to="profile_pictures/", blank=True)
-    # A small square copy of profile_picture, made by save(). Every avatar on the site draws this;
-    # only the profile page's "open in viewer" link reaches the original. See avatar_url.
+    # A small square copy of profile_picture, made by the worker (residents.tasks). Every avatar on
+    # the site draws this; only the profile page's "open in viewer" link reaches the original. See
+    # avatar_url.
     profile_thumbnail = models.FileField(upload_to="profile_pictures/thumbnails/", blank=True, editable=False)
     bio = models.TextField(max_length=500, blank=True)
     facebook_link = models.URLField(blank=True)
@@ -146,11 +152,20 @@ class Resident(AbstractBaseUser, PermissionsMixin):
     # Hurtige draws one per message and the alumneliste one per row, so every page view was pulling
     # whole camera photos to paint circles a few dozen pixels across (#177).
     #
-    # The thumbnail is made HERE, on save, rather than by every caller that sets a picture: the edit
-    # form, the admin and seed_demo all assign profile_picture in different ways, and all of them end
-    # in save(). It compares against the name loaded from the database rather than checking for an
-    # uncommitted upload, because FieldFile.save() (seed_demo, the backfill) commits the file before
-    # save() is called.
+    # The thumbnail is made by the Celery worker (residents.tasks.make_profile_thumbnail), so an upload
+    # does not wait for the original to be read back from the bucket and resized. It is asked for from
+    # two places:
+    #
+    #   save()      whenever the picture changes, however it was changed: the edit form, the admin
+    #               and seed_demo all assign profile_picture in different ways, and all of them end in
+    #               save(). It compares against the name loaded from the database rather than checking
+    #               for an uncommitted upload, because FieldFile.save() (seed_demo) commits the file
+    #               before save() is called.
+    #   avatar_url  whenever an avatar is drawn without one. That is the backfill for pictures that
+    #               predate the thumbnail, and the retry for a job that was lost, with no command to
+    #               remember after a deploy.
+    #
+    # Until the worker has made it, avatars draw the original, as they did before #177.
 
     @classmethod
     def from_db(cls, db: str | None, field_names: Any, values: Any) -> "Resident":  # noqa: ANN401
@@ -171,37 +186,59 @@ class Resident(AbstractBaseUser, PermissionsMixin):
         super().save(*args, **kwargs)
         self._stored_picture = self.profile_picture.name or ""
         if changed:
-            self.refresh_profile_thumbnail()
+            self._drop_profile_thumbnail()
+            self.queue_profile_thumbnail()
 
-    def refresh_profile_thumbnail(self) -> None:
-        """Remake profile_thumbnail from the stored profile_picture, or clear it if there is none.
+    def _drop_profile_thumbnail(self) -> None:
+        """Forget the thumbnail of the previous picture, and delete its file once this commits.
 
-        Reads the picture back from storage rather than from whatever file object the upload left
-        behind: an S3 upload may have closed it. A picture Pillow cannot read gets no thumbnail, and
-        avatar_url falls back to the original rather than to nothing.
+        At once rather than when the new one is ready: until then the avatar should show the new
+        picture at full size, not the old one small.
         """
-        old = self.profile_thumbnail.name or ""
+        old = self.profile_thumbnail.name
+        if not old:
+            return
         self.profile_thumbnail = ""
-        name = self.profile_picture.name
-        if name:
-            with self.profile_picture.storage.open(name, "rb") as source:
-                data = square_jpeg(source, PROFILE_THUMBNAIL_SIZE)
-            if data is not None:
-                stem = PurePath(name).stem
-                self.profile_thumbnail.save(f"{stem}.jpg", ContentFile(data), save=False)
         # update(), not save(): this runs inside save(), and only this one column has changed.
-        Resident.objects.filter(pk=self.pk).update(profile_thumbnail=self.profile_thumbnail.name or "")
-        if old and old != self.profile_thumbnail.name:
-            delete_files_after_commit(
-                [(self.profile_thumbnail.storage, old)], f"residents.Resident:{self.pk}"
-            )
+        Resident.objects.filter(pk=self.pk).update(profile_thumbnail="")
+        delete_files_after_commit([(self.profile_thumbnail.storage, old)], f"residents.Resident:{self.pk}")
+
+    def queue_profile_thumbnail(self) -> None:
+        """Ask the worker for the current picture's thumbnail, at most once an hour per process.
+
+        The cache key is what keeps avatar_url cheap: an alumneliste page draws dozens of avatars,
+        and without it every render of every one still waiting would add a job to the queue. It names
+        the picture as well as the resident, so a new picture is asked for straight away. The job
+        itself is idempotent, so the per-process cache letting a few duplicates through is harmless.
+        """
+        name = self.profile_picture.name
+        if not name or not cache.add(
+            f"profile-thumbnail:{self.pk}:{name}", True, PROFILE_THUMBNAIL_REQUEUE_SECONDS
+        ):
+            return
+        from .tasks import make_profile_thumbnail
+
+        pk = self.pk
+
+        def enqueue() -> None:
+            # Broad on purpose: this can run while a page is rendering, and a queue that is down must
+            # cost the avatar its thumbnail, not the page.
+            try:
+                make_profile_thumbnail.delay(pk, name)
+            except Exception:
+                logger.exception("could not queue the profile thumbnail for resident %s", pk)
+
+        transaction.on_commit(enqueue)
 
     @property
     def avatar_url(self) -> str:
-        """The URL every avatar should draw: the thumbnail, or the original until one exists."""
+        """The URL every avatar should draw: the thumbnail, or the original until the worker has made one."""
         if self.profile_thumbnail:
             return self.profile_thumbnail.url
-        return self.profile_picture.url if self.profile_picture else ""
+        if not self.profile_picture:
+            return ""
+        self.queue_profile_thumbnail()
+        return self.profile_picture.url
 
     @property
     def full_name(self) -> str:
