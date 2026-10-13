@@ -43,7 +43,8 @@ Usage:
 Resuming: progress is saved in <work-dir>/state.json after every step, so stopping (Ctrl-C, a lost
 connection, a reboot) is safe — run the same command again and it continues where it stopped. An
 album already on the server is skipped; one the server was still importing is waited for rather
-than sent twice. Albums that failed are skipped on later runs until you fix them in Dropbox and pass
+than sent twice. A server that stops answering is tried again every 30 seconds, 5 times; then the
+run stops, as every album after it would fail too. Albums that failed are skipped on later runs until you fix them in Dropbox and pass
 --retry-failed. Everything printed is also appended to <work-dir>/import.log, and every failure —
 with all its reasons — to <work-dir>/failures.log.
 """
@@ -78,6 +79,10 @@ YEAR = re.compile(r"^\d{4}$")
 OTHER_FOLDER = "Andet"  # the server's one non-year folder
 CHUNK_SIZE = 1024 * 1024
 RETRIES = 5
+# A server that does not answer at all (down, restarting, its proxy finding nothing behind it) is tried
+# again this often before the run gives up: every album after it would fail the same way.
+UNREACHABLE_RETRIES = 5
+UNREACHABLE_WAIT = 30  # seconds
 QUEUED_TOO_LONG = 5 * 60  # seconds before a job that never starts gets a hint
 # What the server ignores in an archive (photo_album.services); everything else must be media.
 MACOS_METADATA_FOLDERS = {"__MACOSX", ".AppleDouble"}
@@ -246,6 +251,10 @@ def _transient(response: requests.Response) -> bool:
     return response.status_code == 429 or response.status_code >= 500
 
 
+# What a proxy answers when nothing is behind it: the server is down, not busy.
+GATEWAY_ERRORS = {502, 503, 504}
+
+
 class Server:
     def __init__(self, endpoint: str, token: str) -> None:
         self.endpoint = endpoint.rstrip("/")
@@ -257,9 +266,23 @@ class Server:
         )
 
     def _request(
-        self, method: str, url: str, *, what: str, retry: bool = True, **kwargs: object
+        self,
+        method: str,
+        url: str,
+        *,
+        what: str,
+        rewind: Callable[[], object] | None = None,
+        **kwargs: object,
     ) -> requests.Response:
-        for attempt in range(1, RETRIES + 1):
+        """Tries again while the server is busy (the album fails if it stays so) or does not answer
+        (the run stops if it stays so: every album after it would fail the same way).
+
+        `rewind` puts an uploaded file back at its start, which the attempt before read to the end.
+        """
+        busy = unreachable = 0
+        while True:
+            if rewind:
+                rewind()
             try:
                 response = self.session.request(method, url, **kwargs)
             except (requests.ConnectionError, requests.Timeout) as exc:
@@ -273,14 +296,27 @@ class Server:
                 if not _transient(response):
                     return response
                 problem = f"HTTP {response.status_code}"
-            if not retry or attempt == RETRIES:
-                raise AlbumFailed(f"Could not {what}: {problem}.")
-            wait = 2**attempt
+                if response.status_code not in GATEWAY_ERRORS:
+                    busy += 1
+                    if busy == RETRIES:
+                        raise AlbumFailed(f"Could not {what}: {problem}.")
+                    wait = 2**busy
+                    out.warn(
+                        f"    … {what}: {problem}; retrying in {wait}s ({busy}/{RETRIES - 1})"
+                    )
+                    time.sleep(wait)
+                    continue
+            unreachable += 1
+            if unreachable > UNREACHABLE_RETRIES:
+                raise Fatal(
+                    f"The server did not answer {UNREACHABLE_RETRIES + 1} times in a row,"
+                    f" {UNREACHABLE_WAIT}s apart, while trying to {what} ({problem}). Giving up."
+                )
             out.warn(
-                f"    … {what}: {problem}; retrying in {wait}s ({attempt}/{RETRIES - 1})"
+                f"    … {what}: {problem}; the server may be down — trying again in"
+                f" {UNREACHABLE_WAIT}s ({unreachable}/{UNREACHABLE_RETRIES})"
             )
-            time.sleep(wait)
-        raise AssertionError("unreachable")
+            time.sleep(UNREACHABLE_WAIT)
 
     def albums(self, folder: str) -> tuple[set[str], Rules]:
         """The names (compared as the server does) of the root albums already in `folder`, and the rules."""
@@ -308,15 +344,15 @@ class Server:
         The server adds it to an album of the same name if there is one, storing only files that
         album does not already have. With `album`, the ZIP's paths are relative to that album.
 
-        Not retried on a dropped connection: the server may have received it, and whether the first
-        copy worked is better found out by the next run than hidden behind a second one.
+        Sent again if the connection fails: the server only takes an import on once the whole
+        upload is in, and answers it at once, so a connection lost on the way means it has none.
         """
         with archive.open("rb") as handle:
             response = self._request(
                 "POST",
                 self.endpoint,
                 what=f"send {archive.name}",
-                retry=False,
+                rewind=lambda: handle.seek(0),
                 data={"folder": folder, "album": album},
                 files={"archive": (archive.name, handle, "application/zip")},
                 timeout=(30, None),
