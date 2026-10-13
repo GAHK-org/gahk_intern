@@ -11,7 +11,10 @@ core/storage.py carries the full argument. These tests are the enforcement, toge
 round-trip pair in tests/test_markdown.py.
 """
 
+import pickle
+import threading
 from pathlib import Path
+from typing import Any
 
 import pytest
 from django.core.files.storage import FileSystemStorage
@@ -146,6 +149,66 @@ def test_the_storage_check_accepts_our_own_backend(settings: object) -> None:
     }
 
     assert check_media_storage_url(None) == []
+
+
+# --- boto3 sessions -------------------------------------------------------------------------------
+#
+# Under daphne every request runs in a thread of its own. A fresh boto3 session per thread reloads
+# botocore's service models (~80 ms of GIL-holding CPU), which made every redirect queue behind the
+# others — see core.storage.PublicEndpointS3Storage.
+
+
+def _in_thread(read: Any) -> Any:  # noqa: ANN401
+    result: list[Any] = []
+    thread = threading.Thread(target=lambda: result.append(read()))
+    thread.start()
+    thread.join()
+    return result[0]
+
+
+def test_threads_share_one_boto3_session_but_keep_their_own_resource(monkeypatch: pytest.MonkeyPatch) -> None:
+    storage = s3_storage()
+    created: list[object] = []
+    original = MediaS3Storage._create_session
+
+    def counting(self: MediaS3Storage) -> object:
+        session = original(self)
+        created.append(session)
+        return session
+
+    monkeypatch.setattr(MediaS3Storage, "_create_session", counting)
+
+    here = storage.connection
+    elsewhere = [_in_thread(lambda: storage.connection) for _ in range(3)]
+
+    assert len(created) == 1
+    assert storage.connection is here, "a thread reuses its own resource"
+    assert len({id(here), *(id(each) for each in elsewhere)}) == 4, "resources are never shared"
+
+
+def test_the_public_endpoint_resource_comes_from_the_shared_session_too(
+    settings: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings.S3_PUBLIC_ENDPOINT_URL = "http://localhost:9000"  # type: ignore[attr-defined]
+    storage = s3_storage()
+    created: list[object] = []
+    original = MediaS3Storage._create_session
+    monkeypatch.setattr(MediaS3Storage, "_create_session", lambda self: created.append(1) or original(self))
+
+    _in_thread(lambda: storage.connection)
+    url = _in_thread(lambda: storage.signed_url("opslag/a.jpg"))
+
+    assert len(created) == 1
+    assert url.startswith("http://test-bucket.localhost:9000/media/opslag/a.jpg?")
+
+
+def test_the_storage_still_pickles() -> None:
+    storage = s3_storage()
+    storage.connection
+
+    copy = pickle.loads(pickle.dumps(storage))
+
+    assert "X-Amz-Signature" in copy.signed_url("opslag/a.jpg")
 
 
 # --- the /media/ route ----------------------------------------------------------------------------
