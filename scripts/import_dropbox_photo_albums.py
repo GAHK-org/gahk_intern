@@ -37,6 +37,7 @@ Usage:
     uv run scripts/import_dropbox_photo_albums.py --dry-run          # what would happen
     uv run scripts/import_dropbox_photo_albums.py --year-range 2001-2004
     uv run scripts/import_dropbox_photo_albums.py --year 2019 --confirm
+    uv run scripts/import_dropbox_photo_albums.py --retry-failed --year 2019  # send failed albums again
     uv run scripts/import_dropbox_photo_albums.py --retry-invalid .dropbox-photo-album-import/2019/Sommerfest
 
 Resuming: progress is saved in <work-dir>/state.json after every step, so stopping (Ctrl-C, a lost
