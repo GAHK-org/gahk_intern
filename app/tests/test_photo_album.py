@@ -496,7 +496,7 @@ def test_upload_returns_json_for_the_queued_browser_uploader(
     )
 
     assert response.status_code == 201
-    assert response.json() == {"uploaded": 1}
+    assert response.json() == {"uploaded": 1, "skipped": [], "warnings": []}
 
 
 @pytest.mark.django_db
@@ -898,8 +898,12 @@ def test_album_media_orders_capture_time_then_upload_time(
         requested_by=resident,
         status=MediaStatus.APPROVED,
     )
+    # `.update()` skips `Media.save`, which is what keeps `sort_at` in step — so set it here too.
     Media.objects.filter(pk=captured.pk).update(added_at=timezone.make_aware(datetime(2026, 9, 1)))
-    Media.objects.filter(pk=uploaded.pk).update(added_at=timezone.make_aware(datetime(2026, 9, 14)))
+    Media.objects.filter(pk=uploaded.pk).update(
+        added_at=timezone.make_aware(datetime(2026, 9, 14)),
+        sort_at=timezone.make_aware(datetime(2026, 9, 14)),
+    )
     client.force_login(resident)
 
     content = client.get(reverse("photo_album:detail", args=[album.pk])).content.decode()
@@ -1136,7 +1140,8 @@ def test_restore_returns_media_to_its_original_album(
     response = client.post(reverse("photo_album:restore", args=[media.pk]))
 
     media.refresh_from_db()
-    assert response.url == reverse("photo_album:detail", args=[album.pk])
+    # Back to the album's bin, where the resident was working — not out to the album itself.
+    assert response.url == reverse("photo_album:album_bin", args=[album.pk])
     assert media.album_id == album.pk
     assert media.deleted_at is None
 
@@ -1433,7 +1438,8 @@ def test_album_detail_query_count_does_not_grow_with_the_number_of_photos(
     url = reverse("photo_album:detail", args=[album.pk])
     client.get(url)  # warm any per-process caches so the count below is the steady state
 
-    with django_assert_num_queries(8):  # type: ignore[operator]
+    # One more than before the album tree: the page now lists the album's sub-albums.
+    with django_assert_num_queries(9):  # type: ignore[operator]
         client.get(url)
 
 
@@ -1523,9 +1529,11 @@ def test_fotogruppen_role_grants_management_without_being_an_administrator(
     )
     client.force_login(photographer)
 
-    # Can create albums, approve submissions, and reach the bin — none of which a plain resident can.
+    # Can create albums, approve submissions, and reach an album's bin — none of which a plain
+    # resident can. The combined bin of every album is for administrators only.
     assert client.post(reverse("photo_album:approve", args=[media.pk])).status_code == 302
-    assert client.get(reverse("photo_album:bin")).status_code == 200
+    assert client.get(reverse("photo_album:album_bin", args=[album.pk])).status_code == 200
+    assert client.get(reverse("photo_album:bin")).status_code == 403
     assert (
         client.post(
             reverse("photo_album:create_album"), {"folder": "2026", "name": "Julefrokost"}
@@ -1537,6 +1545,7 @@ def test_fotogruppen_role_grants_management_without_being_an_administrator(
     assert media.status == MediaStatus.APPROVED
 
     client.force_login(uploader)
+    assert client.get(reverse("photo_album:album_bin", args=[album.pk])).status_code == 403
     assert client.get(reverse("photo_album:bin")).status_code == 403
 
 

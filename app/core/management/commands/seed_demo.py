@@ -213,6 +213,11 @@ class Command(BaseCommand):
     # ---------------------------------------------------------------- wipe
     def _wipe(self) -> None:
         for model in WIPE_ORDER:
+            if model is Album:
+                # A sub-album PROTECTs its parent, so the tree is cleared from the leaves up.
+                for depth in sorted(set(Album.objects.values_list("depth", flat=True)), reverse=True):
+                    Album.objects.filter(depth=depth).delete()
+                continue
             model._default_manager.all().delete()
         self.stdout.write("  wiped existing demo data")
 
