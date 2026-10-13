@@ -3,7 +3,7 @@ fragment the frontend fetches when the reader scrolls towards either end: a sent
 the bottom says where the next page in that direction comes from (views._page).{% endcomment %}
 {% if page.newer_url %}<div class="album-page-sentinel" data-page-before="{{ page.newer_url }}" aria-hidden="true"></div>{% endif %}
 {% for item in page.items %}
-	<article class="album-media-item" data-media-id="{{ item.pk }}" data-year="{{ item.sort_at|date:'Y' }}">
+	<article class="album-media-item" data-media-id="{{ item.pk }}" data-year="{{ item.sort_at|date:'Y' }}" data-month="{{ item.sort_at|date:'Y-m' }}" data-month-label="{{ item.sort_at|date:'F Y'|capfirst }}">
 	{% comment %}The tile carries an id and nothing else. Everything the viewer needs — the HD
 	url, the uploader, the timestamps, the EXIF blob, whether this reader may delete it — is
 	fetched from photo_album:media_detail when the item is actually opened. Rendering it into

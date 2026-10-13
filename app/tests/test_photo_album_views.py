@@ -138,6 +138,23 @@ def test_timeline_spans_albums_and_jumps_to_a_year(
     assert f"before={old.pk}" in year
 
 
+@pytest.mark.django_db
+def test_timeline_tiles_carry_their_month_for_the_rulers(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    resident = make_resident()
+    album = Album.objects.create(folder="2025", name="Fest")
+    _media(album, resident, at=datetime(2025, 10, 1, 12, tzinfo=UTC))
+    # 23:30 UTC on New Year's Eve is already January in Copenhagen, as the reader sees it.
+    _media(album, resident, at=datetime(2024, 12, 31, 23, 30, tzinfo=UTC))
+    client.force_login(resident)
+
+    page = client.get(reverse("photo_album:timeline")).content.decode()
+    assert "data-album-months" in page
+    assert 'data-month="2025-10" data-month-label="Oktober 2025"' in page
+    assert 'data-month="2025-01" data-month-label="Januar 2025"' in page
+
+
 # --- Sub-albums ---------------------------------------------------------------------------------
 
 
