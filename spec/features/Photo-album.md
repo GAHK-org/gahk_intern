@@ -40,7 +40,7 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 
 ## Access and upload workflow
 
-- Members of Fotogruppen and administrators can create, rename and delete albums, create sub-albums, import ZIP files, manage media, approve/reject submissions, view album bins, and manually lock albums.
+- Members of Fotogruppen and administrators can create, rename and delete albums, create sub-albums, import ZIP files, manage media, approve/reject submissions, view album bins, manually lock albums, and add or remove tags.
 - Any signed-in resident can upload one or more photos or videos to an unlocked album. The upload form lists the chosen filenames before submission and may apply one optional title to all selected uploads.
 - An upload that is an exact copy (same name, same hash, same bytes) of a live item in the same album is skipped with a message. An upload whose content already exists in other albums is stored, with a warning naming those albums.
 - Uploads made by Fotogruppen members or administrators are approved immediately. Other uploads are pending until approved.
@@ -52,10 +52,19 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 
 - A lock covers the album that holds it and its whole subtree. Any album may be locked on its own: locking a sub-album leaves its parent and siblings open; locking a root album closes the whole tree. An album is locked when it or any ancestor holds a lock, and the album page names the album holding it.
 - An album automatically locks when the newest approved, non-deleted media anywhere in its subtree was added at least 90 days ago.
-- A locked album accepts no new uploads or sub-albums, cannot be renamed, and its media cannot be deleted.
+- A locked album accepts no new uploads or sub-albums, cannot be renamed, and its media cannot be deleted. Tags are not subject to locking: they can be added to and removed from a locked album and its media.
 - Fotogruppen members and administrators can manually lock an otherwise unlocked album.
 - An album's own lock can be removed only by Fotogruppen members or administrators, and only before six calendar months have elapsed since that lock took effect. A lock inherited from an ancestor can only be lifted on that ancestor. Unlocking resets the automatic-lock timer; the album locks again after 90 days unless newer approved media is added first.
 - When a Fotogruppen member or administrator attempts to unlock an album after that six-month window, the album page explains that it has been locked for more than six months and cannot be unlocked.
+
+## Tags
+
+- An album or a single media item has any number of tags, including none.
+- A tag name is 1–30 characters of letters (including `æøå`), digits, `.`, `-` and `_`; no spaces or other characters. Tags are one per name ignoring case: adding `Jul` where `jul` exists reuses `jul`, and the first spelling sticks. Names are stored Unicode-normalised (NFC).
+- An album's tags apply to its whole subtree: every media item in the album and its nested albums carries them. The album page and the viewer show an item's own tags first, then the inherited ones (dashed, with the album they come from as a tooltip). An inherited tag can only be removed on the album that holds it.
+- Only Fotogruppen members and administrators add and remove tags, on the album page and in the viewer (in the kebab menu on mobile). The input is a dropdown of existing tags, searched as you type (prefix matches first). Enter or a click picks a suggestion, or adds the typed name as a new tag. Arrow keys move through the suggestions instead of browsing media.
+- A tag that nothing carries any more stays in the database but is never suggested. Administrators manage tags in the Django admin.
+- Every tag chip links to the timeline filtered on that tag.
 
 ## Deletion and bins
 
@@ -71,6 +80,7 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 - Album cards are a uniform grid (two per row on a phone) with the cover on top; a long name wraps onto two lines and is cut off with an ellipsis, with the full name as a tooltip. Long album titles and breadcrumbs wrap instead of overflowing.
 - An album's actions — download, select, bin, rename, lock, delete and `Nyt underalbum` — sit in one row in the album header; download, rename and `Nyt underalbum` open as small dropdowns.
 - The timeline (`Tidslinje`) shows everything the reader may see across all albums, newest first, with a jump to any year.
+- The timeline can be filtered on tags (`?tag=<name>`, repeatable). The filter shows media tagged directly or through an album in its lineage. Several tags combine with AND, so an item must carry all of them. Active filters show as chips that remove the filter when clicked. The tag input searches as you type, and paging and year jumps keep the filter. Any signed-in resident can filter; visibility rules apply as usual.
 - Grids load 60 items at a time and scroll infinitely in both directions, paged by `(sort_at, pk)` so pages do not shift as uploads arrive.
 - `?media=<pk>` on an album page is a deep link: the grid opens at that item, the viewer opens on it, and the address follows the viewer as the reader browses.
 - On desktop, selecting media opens a modal with the high-definition variant, metadata in a right sidebar, an original-download action, and deletion where permitted. Previous/next arrows and keyboard arrow keys navigate without looping past either end.
