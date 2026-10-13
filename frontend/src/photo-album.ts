@@ -52,6 +52,7 @@ const pollZipImport = (root: HTMLElement, statusUrl: string, resultUrl: string):
             window.location.assign(resultUrl)
             return
           }
+          root.classList.remove("is-working")
           label.textContent = `Importen mislykkedes: ${job.error || "ukendt fejl"}`
           return
         }
@@ -95,21 +96,32 @@ if (zipImportForm) {
     request.upload.addEventListener("progress", (progressEvent) => {
       if (!progressEvent.lengthComputable) return
       const percent = Math.round((progressEvent.loaded / progressEvent.total) * 100)
-      progressBar.value = percent
-      label.textContent = `Uploader ZIP-fil: ${percent}%`
+      if (percent < 100) {
+        progressBar.value = percent
+        label.textContent = `Uploader ZIP-fil: ${percent}%`
+        return
+      }
+      // Every byte is sent, but the server still stores the archive before it answers.
+      progressBar.removeAttribute("value")
+      progress.classList.add("is-working")
+      submit.textContent = "Behandler …"
+      label.textContent = "ZIP-filen er uploadet. Serveren behandler den …"
     })
     request.addEventListener("load", () => {
       if (request.status !== 202) {
+        progress.classList.remove("is-working")
         label.textContent = "ZIP-filen kunne ikke uploades. Genindlæs siden for at prøve igen."
         return
       }
       const response = JSON.parse(request.responseText) as { statusUrl: string; resultUrl: string }
       progressBar.removeAttribute("value")
+      progress.classList.add("is-working")
       submit.textContent = "Importerer …"
       label.textContent = "ZIP-filen er uploadet. Serveren importerer nu filerne …"
       pollZipImport(progress, response.statusUrl, response.resultUrl)
     })
     request.addEventListener("error", () => {
+      progress.classList.remove("is-working")
       label.textContent = "ZIP-filen kunne ikke uploades. Genindlæs siden for at prøve igen."
     })
     request.send(data)

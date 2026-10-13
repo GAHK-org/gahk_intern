@@ -1830,19 +1830,27 @@
 
    /* --- Photo album ------------------------------------------------------------------------- */
    .album-heading { display:flex; align-items:end; justify-content:space-between; gap:16px; margin-bottom:28px; }
-   .album-heading h1 { margin:0; font-family:Georgia, serif; font-size:32px; color:var(--ink); }
+   .album-heading > div:first-child { min-width:0; }
+   .album-heading h1 { margin:0; font-family:Georgia, serif; font-size:32px; color:var(--ink); overflow-wrap:anywhere; }
    .album-eyebrow { margin:0 0 5px; color:var(--brass); font-size:12px; font-weight:700; letter-spacing:0; text-transform:uppercase; }
    .album-folders { display:grid; gap:28px; }
    .album-folder { border-top:1px solid var(--border); padding-top:16px; }
    .album-folder h2 { display:flex; align-items:center; gap:8px; margin:0 0 12px; font-size:16px; }
    .album-folder h2 svg, .album-subtitle svg { width:19px; height:19px; color:var(--brass); fill:none; stroke:currentColor; }
-   .album-folder-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:10px; }
-   .album-card { display:grid; grid-template-columns:30px 1fr; gap:2px 10px; min-height:82px; padding:14px;
-      border:1px solid var(--border); border-radius:8px; color:inherit; text-decoration:none; background:var(--surface); }
-   .album-card:hover { border-color:var(--brass); background:var(--surface-2); }
-   .album-card svg { grid-row:span 2; width:28px; height:28px; fill:none; stroke:var(--brass); }
-   .album-card-name { align-self:end; font-weight:650; }
-   .album-card-count { align-self:start; color:var(--muted); font-size:12px; }
+   .album-folder-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 150px), 1fr)); gap:14px; }
+   /* Cover on top, name below: every card in a row is the same height whatever the album is called.
+      `min-width:0` lets a grid item shrink below its longest word, and the name is clamped to two
+      lines (full name in the title attribute), so a long name can neither widen nor stretch a row. */
+   .album-card { display:flex; flex-direction:column; min-width:0; overflow:hidden; border:1px solid var(--border); border-radius:10px;
+      color:inherit; text-decoration:none; background:var(--surface); box-shadow:var(--shadow-sm); transition:border-color .15s, box-shadow .15s, transform .15s; }
+   .album-card:hover { border-color:var(--brass); box-shadow:var(--shadow); transform:translateY(-1px); }
+   .album-card-cover { display:block; width:100%; aspect-ratio:4 / 3; object-fit:cover; background:var(--sunken); }
+   .album-card-placeholder { display:grid; place-items:center; width:100%; aspect-ratio:4 / 3; background:var(--sunken); }
+   .album-card-placeholder svg { width:34px; height:34px; fill:none; stroke:var(--faint); }
+   .album-card-body { display:grid; gap:2px; min-width:0; padding:10px 12px 12px; }
+   .album-card-name { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; line-clamp:2; overflow:hidden;
+      overflow-wrap:anywhere; font-weight:650; line-height:1.3; }
+   .album-card-count { color:var(--muted); font-size:12px; }
    .album-empty { margin:24px 0; color:var(--muted); }
    .album-back { color:var(--brass); font-size:13px; text-decoration:none; }
    .album-back:hover { text-decoration:underline; }
@@ -1865,6 +1873,10 @@
    .album-upload-progress progress { display:block; width:100%; height:12px; accent-color:var(--brass); }.album-upload-progress p { margin:6px 0 0; color:var(--muted); font-size:13px; }
    .album-import-result { margin-top:24px; }.album-import-result ul { margin:8px 0; padding-left:20px; }.album-import-skipped { color:var(--neg); }
    .album-import-progress { margin-top:16px; }.album-import-progress progress { display:block; width:100%; height:12px; accent-color:var(--brass); }.album-import-progress p { margin:6px 0 0; color:var(--muted); font-size:13px; }
+   .album-import-progress.is-working p { display:flex; align-items:center; gap:8px; }
+   .album-import-progress.is-working p::before { content:""; flex:none; width:14px; height:14px; box-sizing:border-box; border:2px solid var(--border); border-top-color:var(--brass); border-radius:50%; animation:album-spin .8s linear infinite; }
+   @keyframes album-spin { to { rotate:360deg; } }
+   @media (prefers-reduced-motion:reduce) { .album-import-progress.is-working p::before { animation-duration:2.4s; } }
    .album-import-form.is-submitted { opacity:.72; }.album-import-form.is-submitted input:disabled { background:var(--sunken); color:var(--muted); cursor:not-allowed; }.album-import-form .btn:disabled { background:var(--faint); color:#fff; cursor:not-allowed; opacity:1; }
    .album-media-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(138px, 1fr)); gap:8px; }
    .album-media-item { min-width:0; }.album-media-tile { position:relative; width:100%; min-width:0; padding:0; overflow:hidden; border:0; border-radius:7px; background:var(--surface-2); color:var(--ink); text-align:left; cursor:pointer; }
@@ -1889,7 +1901,7 @@
    .album-viewer aside { padding:28px 20px; overflow:auto; color:#f6f3ea; background:#26332d; }.album-viewer h2 { margin:0 0 18px; color:#fffdf7; font-family:Georgia, serif; font-size:22px; }.album-viewer dl { margin:0 0 24px; }.album-viewer dt { margin-top:10px; color:#d2ddd4; font-size:12px; }.album-viewer dd { margin:2px 0 0; color:#fffdf7; }
    .album-viewer-mobile-date, .album-viewer-menu, .album-viewer-menu-button { display:none; }.album-viewer-close, .album-viewer-arrow { position:absolute; display:grid; place-items:center; width:38px; height:38px; border:0; border-radius:50%; background:rgb(0 0 0 / .64); color:#fff; font-size:24px; cursor:pointer; }.album-viewer-close { top:-12px; right:-12px; }.album-viewer-arrow { top:calc(50% - 19px); }.album-viewer-previous { left:-48px; }.album-viewer-next { right:-48px; }
    /* Album tree: breadcrumbs, sub-album cards, the "this album / everything below" switch. */
-   .album-breadcrumbs { display:flex; flex-wrap:wrap; gap:4px; margin-bottom:4px; }
+   .album-breadcrumbs { display:flex; flex-wrap:wrap; gap:4px; min-width:0; margin-bottom:4px; overflow-wrap:anywhere; }
    .album-breadcrumbs .album-back + .album-back::before { content:"/"; margin-right:4px; color:var(--muted); }
    .album-actions { flex-wrap:wrap; justify-content:flex-end; }
    .album-actions .btn-link, .album-actions .btn-link-danger { font-size:13px; }.album-actions summary.btn-link { cursor:pointer; }
@@ -1904,12 +1916,7 @@
    .album-lock-note { color:var(--muted); font-size:13px; }
    .album-download-notice p { margin:0; }
    .album-children { margin-bottom:24px; }.album-children h2 { margin:0 0 10px; font-size:16px; }
-   .album-card.has-cover { grid-template-columns:56px 1fr; padding:10px; }
-   .album-card-cover { grid-row:span 2; width:56px; height:56px; border-radius:6px; object-fit:cover; background:var(--surface-2); }
-   .album-new-card { grid-template-columns:1fr auto; align-content:center; border:1px dashed var(--border); }
-   .album-new-card label { grid-column:span 2; color:var(--muted); font-size:12px; }
-   .album-new-card input { min-width:0; }.album-new-card button { border:0; background:none; padding:0 0 0 6px; color:var(--brass); cursor:pointer; font:inherit; }
-   .album-new-card:hover { background:var(--surface); }
+   .album-create-sub input { min-width:0; }
    .album-scope { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 18px; }
    .album-scope a { padding:5px 11px; border:1px solid var(--border); border-radius:999px; color:var(--muted); font-size:13px; text-decoration:none; }
    .album-scope a[aria-current] { border-color:var(--brass); color:var(--ink); background:var(--surface-2); }
@@ -1955,7 +1962,7 @@
    .album-viewer dd a, .album-viewer-menu dd a { color:#f3d58f; }
    .album-upload-notes { margin:8px 0 0; padding-left:20px; color:var(--neg); font-size:13px; }.album-upload-notes:empty { display:none; }
    .album-form-error { color:var(--neg); font-size:13px; }
-   @media (max-width:720px) { .album-heading { align-items:start; flex-direction:column; }.album-upload-dialog { width:calc(100vw - 24px); }.album-upload > input { min-height:38px; }.album-media-grid { grid-template-columns:repeat(auto-fill, minmax(110px, 1fr)); }.album-viewer { width:100vw; height:100dvh; max-height:none; margin:0; border-radius:0; background:#111; }.album-viewer[open] { grid-template-columns:1fr; grid-template-rows:minmax(0, 1fr) auto; overflow:hidden; }.album-viewer-stage { height:auto; padding:58px 16px 16px; touch-action:pan-y; }.album-viewer-stage img { max-height:none; }.album-viewer aside { padding:12px 62px 14px 16px; overflow:visible; background:#111; }.album-viewer aside .album-eyebrow, .album-viewer aside dl, .album-viewer aside > .btn, .album-viewer aside form, .album-viewer-arrow { display:none; }.album-viewer h2 { margin:0; font-size:17px; }.album-viewer-mobile-date { display:block; margin:3px 0 0; color:#d2ddd4; font-size:13px; }.album-viewer-close { top:10px; right:10px; z-index:2; }.album-viewer-menu-button { position:absolute; z-index:2; top:10px; right:56px; display:grid; place-items:center; width:38px; height:38px; padding:0; border:0; border-radius:50%; background:rgb(0 0 0 / .64); color:#fff; font-size:25px; line-height:1; cursor:pointer; }.album-viewer-menu { position:absolute; z-index:3; top:56px; right:10px; display:block; width:min(300px, calc(100vw - 20px)); max-height:calc(100dvh - 130px); padding:16px; overflow:auto; box-sizing:border-box; border-radius:6px; color:#fffdf7; background:#26332d; box-shadow:0 12px 32px rgb(0 0 0 / .42); }.album-viewer-menu[hidden] { display:none; }.album-viewer-menu dl { margin:0 0 18px; }.album-viewer-menu dt { margin-top:10px; color:#d2ddd4; font-size:12px; }.album-viewer-menu dd { margin:2px 0 0; }.album-viewer-menu form { margin-top:12px; } }
+   @media (max-width:720px) { .album-heading { align-items:start; flex-direction:column; }.album-actions { position:relative; align-self:stretch; }.album-menu { position:static; }.album-menu-panel { left:0; right:0; width:auto; max-width:none; }.album-upload-dialog { width:calc(100vw - 24px); }.album-upload > input { min-height:38px; }.album-media-grid { grid-template-columns:repeat(auto-fill, minmax(110px, 1fr)); }.album-viewer { width:100vw; height:100dvh; max-height:none; margin:0; border-radius:0; background:#111; }.album-viewer[open] { grid-template-columns:1fr; grid-template-rows:minmax(0, 1fr) auto; overflow:hidden; }.album-viewer-stage { height:auto; padding:58px 16px 16px; touch-action:pan-y; }.album-viewer-stage img { max-height:none; }.album-viewer aside { padding:12px 62px 14px 16px; overflow:visible; background:#111; }.album-viewer aside .album-eyebrow, .album-viewer aside dl, .album-viewer aside > .btn, .album-viewer aside form, .album-viewer-arrow { display:none; }.album-viewer h2 { margin:0; font-size:17px; }.album-viewer-mobile-date { display:block; margin:3px 0 0; color:#d2ddd4; font-size:13px; }.album-viewer-close { top:10px; right:10px; z-index:2; }.album-viewer-menu-button { position:absolute; z-index:2; top:10px; right:56px; display:grid; place-items:center; width:38px; height:38px; padding:0; border:0; border-radius:50%; background:rgb(0 0 0 / .64); color:#fff; font-size:25px; line-height:1; cursor:pointer; }.album-viewer-menu { position:absolute; z-index:3; top:56px; right:10px; display:block; width:min(300px, calc(100vw - 20px)); max-height:calc(100dvh - 130px); padding:16px; overflow:auto; box-sizing:border-box; border-radius:6px; color:#fffdf7; background:#26332d; box-shadow:0 12px 32px rgb(0 0 0 / .42); }.album-viewer-menu[hidden] { display:none; }.album-viewer-menu dl { margin:0 0 18px; }.album-viewer-menu dt { margin-top:10px; color:#d2ddd4; font-size:12px; }.album-viewer-menu dd { margin:2px 0 0; }.album-viewer-menu form { margin-top:12px; } }
 
   /* The checkbox sits on the picture rather than beside it. Hidden until there is a reason to show
      it - a selection in progress, a hover, or keyboard focus - so an ordinary browse is pictures
