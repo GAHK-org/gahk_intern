@@ -465,3 +465,10 @@ ANIMATED_IMAGE_MAX_MB = int(os.environ.get("ANIMATED_IMAGE_MAX_MB", "5"))
 # each feature caps its own uploads, so an ops change for one cannot silently change another.
 PHOTO_ALBUM_IMAGE_MAX_MB = int(os.environ.get("PHOTO_ALBUM_IMAGE_MAX_MB", "50"))
 PHOTO_ALBUM_VIDEO_MAX_MB = int(os.environ.get("PHOTO_ALBUM_VIDEO_MAX_MB", "1000"))
+
+# A local copy of the album's thumbnails and HD images (photo_album.cache), so the grid does not
+# bounce every tile off S3. Empty turns it off; production sets it to a volume so a redeploy starts
+# warm. The two budgets are separate so one HD-heavy evening cannot push every thumbnail out.
+PHOTO_ALBUM_CACHE_DIR = os.environ.get("PHOTO_ALBUM_CACHE_DIR", "")
+PHOTO_ALBUM_CACHE_THUMBNAIL_MB = int(os.environ.get("PHOTO_ALBUM_CACHE_THUMBNAIL_MB", "2048"))
+PHOTO_ALBUM_CACHE_HD_MB = int(os.environ.get("PHOTO_ALBUM_CACHE_HD_MB", "3072"))

@@ -8,7 +8,7 @@ from django.utils import timezone
 from residents.models import Role
 from residents.permissions import current_resident, request_has_role
 
-from .models import Album, Media, MediaStatus
+from .models import MANUAL_MAX_ALBUM_DEPTH, Album, Media, MediaStatus
 
 
 def is_photo_group_member(request: HttpRequest) -> bool:
@@ -36,8 +36,32 @@ def can_create_album(request: HttpRequest) -> bool:
     return is_photo_group_member(request)
 
 
+def is_administrator(request: HttpRequest) -> bool:
+    return request_has_role(request, Role.ADMINISTRATOR)
+
+
 def can_upload(request: HttpRequest, album: Album) -> bool:
     return not album.is_locked()
+
+
+def can_rename_album(request: HttpRequest, album: Album) -> bool:
+    """Same lock policy as the media in it: a locked album keeps its name, roots and sub-albums alike."""
+    return can_create_album(request) and not album.is_locked()
+
+
+def can_create_sub_album(request: HttpRequest, album: Album) -> bool:
+    """By hand, sub-albums go directly under a root album; deeper trees only arrive by ZIP import."""
+    return can_create_album(request) and album.depth < MANUAL_MAX_ALBUM_DEPTH and not album.is_locked()
+
+
+def can_view_album_bin(request: HttpRequest) -> bool:
+    """One album's bin (its whole subtree): Fotogruppen, and administrators through it."""
+    return can_manage_media(request)
+
+
+def can_view_all_bins(request: HttpRequest) -> bool:
+    """Every album's bin in one list — administrators only."""
+    return is_administrator(request)
 
 
 def can_manage_media(request: HttpRequest) -> bool:
@@ -45,6 +69,7 @@ def can_manage_media(request: HttpRequest) -> bool:
 
 
 def can_lock_album(request: HttpRequest, album: Album) -> bool:
+    """Not when it is already closed — by its own lock, or by one an ancestor holds."""
     return can_manage_media(request) and not album.is_locked()
 
 
@@ -52,9 +77,21 @@ def can_unlock_album(request: HttpRequest, album: Album) -> bool:
     return can_manage_media(request) and album.can_be_unlocked()
 
 
-def visible_media(request: HttpRequest, album: Album) -> QuerySet[Media]:
+def visible_media(
+    request: HttpRequest, album: Album | None = None, *, subtree: bool = False
+) -> QuerySet[Media]:
+    """The live media this request may see: in `album`, in its whole subtree, or (no album) anywhere.
+
+    Approved items for everyone, plus the reader's own pending uploads; Fotogruppen sees all pending.
+    """
     resident = current_resident(request)
-    visible = album.media.filter(deleted_at__isnull=True)
+    if album is None:
+        scope = Media.objects.all()
+    elif subtree:
+        scope = album.subtree_media()
+    else:
+        scope = album.media.all()
+    visible = scope.filter(deleted_at__isnull=True)
     if is_photo_group_member(request):
         return visible
     return visible.filter(status=MediaStatus.APPROVED) | visible.filter(

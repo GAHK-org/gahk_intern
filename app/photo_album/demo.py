@@ -14,6 +14,11 @@ from .services import upload_media
 
 ALBUMS = [
     ("2026", "Sommerfest", 6),
+    # A "/" makes a sub-album, so the demo has a tree to browse — one level deeper than can be made
+    # by hand, as a ZIP import would.
+    ("2026", "Sommerfest/Fredag", 4),
+    ("2026", "Sommerfest/Lørdag", 4),
+    ("2026", "Sommerfest/Lørdag/Natten", 3),
     ("2026", "Hyttetur", 6),
     ("2026", "Forårstur", 6),
     ("2025", "Julefrokost", 6),
@@ -48,12 +53,21 @@ LIFECYCLE_MEDIA = [
 ]
 
 
+def _album(folder: str, path: str) -> Album:
+    parent: Album | None = None
+    for name in path.split("/"):
+        parent, _ = Album.objects.get_or_create(folder=folder, name=name, parent=parent)
+    assert parent is not None  # noqa: S101 — a path has at least one name
+    return parent
+
+
 def seed(residents: list[Resident], _now: datetime, _rng: random.Random) -> int:
     if not residents:
         return 0
     made = 0
-    for album_index, (folder, album_name, count) in enumerate(ALBUMS):
-        album, _ = Album.objects.get_or_create(folder=folder, name=album_name)
+    for album_index, (folder, album_path, count) in enumerate(ALBUMS):
+        album = _album(folder, album_path)
+        album_name = album.name
         for image_index in range(count):
             filename = f"{slugify(album_name)}-{slugify(CAPTIONS[image_index % len(CAPTIONS)])}-{image_index + 1}.jpg"
             title = filename
@@ -77,7 +91,7 @@ def seed(residents: list[Resident], _now: datetime, _rng: random.Random) -> int:
             media.save(update_fields=["added_at"])
             made += 1
     for media_index, (folder, album_name, caption, upload_age, bin_age) in enumerate(LIFECYCLE_MEDIA):
-        album, _ = Album.objects.get_or_create(folder=folder, name=album_name)
+        album = _album(folder, album_name)
         filename = f"{slugify(caption)}.jpg"
         title = filename
         if album.media.filter(title=title).exists():
