@@ -52,7 +52,7 @@
       <div class="notice-author">
         <div class="notice-avatar" aria-hidden="true">
           {% if notice.author.profile_picture %}
-            <img src="{{ notice.author.profile_picture.url }}" alt="" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:50%;display:block">
+            <img src="{{ notice.author.avatar_url }}" alt="" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:50%;display:block">
           {% else %}
             {{ notice.author.first_name|slice:":1" }}{{ notice.author.last_name|slice:":1" }}
           {% endif %}

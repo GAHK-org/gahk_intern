@@ -12,7 +12,7 @@
       <div style="display:flex;align-items:center;gap:1.25rem">
         <div style="position:relative;flex-shrink:0">
           {% if user.profile_picture %}
-            <img id="pp-preview" src="{{ user.profile_picture.url }}" alt=""
+            <img id="pp-preview" src="{{ user.avatar_url }}" alt=""
                  style="width:80px;height:80px;border-radius:50%;object-fit:cover;display:block">
           {% else %}
             <span id="pp-preview" class="avatar"

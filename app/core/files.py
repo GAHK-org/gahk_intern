@@ -61,10 +61,17 @@ def delete_attached_files(instance: models.Model) -> None:
         if file:
             targets.append((file.storage, file.name))
 
+    delete_files_after_commit(targets, f"{instance._meta.label}:{instance.pk}")
+
+
+def delete_files_after_commit(targets: list[tuple[Storage, str]], label: str) -> None:
+    """Delete each (storage, name) after the current transaction commits, logging any failure.
+
+    The half of delete_attached_files that does not care where the names came from, for a model that
+    replaces a file it owns while the row lives on (residents.models.Resident.profile_thumbnail).
+    """
     if not targets:
         return
-
-    label = f"{instance._meta.label}:{instance.pk}"
 
     def _purge() -> None:
         for storage, name in targets:

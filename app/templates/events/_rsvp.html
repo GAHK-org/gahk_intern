@@ -84,7 +84,7 @@
       {% for r in seated %}
         <li>
           {% if r.resident.profile_picture %}
-            <img class="rsvp-avatar rsvp-avatar-img" src="{{ r.resident.profile_picture.url }}"
+            <img class="rsvp-avatar rsvp-avatar-img" src="{{ r.resident.avatar_url }}"
                  alt="" loading="lazy" aria-hidden="true">
           {% else %}
             <span class="rsvp-avatar" aria-hidden="true">
