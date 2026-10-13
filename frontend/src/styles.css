@@ -2128,10 +2128,27 @@
   .notif-views { display:flex; gap:8px; margin:0 0 14px; }
   .notif-views .chip { text-decoration:none; }
   .notif-section { margin-bottom:16px; }
-  .notif-table td, .notif-table th { vertical-align:top; }
-  .notif-table td:not(:first-child), .notif-table th:not(:first-child) { text-align:center; width:90px; }
-  .notif-table input[type=checkbox] { width:18px; height:18px; }
+  /* Fixed layout + fixed check columns, so the columns line up from one group's card to the next
+     whatever the length of the category names. The outer cells pad to the card's own 18px. */
+  .notif-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:14px; }
+  .notif-table .notif-col { width:92px; }
+  .notif-table th, .notif-table td { padding:11px 10px; vertical-align:middle; }
+  .notif-table th:first-child, .notif-table td:first-child { padding-left:18px; }
+  .notif-table th:last-child, .notif-table td:last-child { padding-right:18px; }
+  .notif-table td:not(:first-child), .notif-table th:not(:first-child) { text-align:center; }
+  .notif-table thead th { font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; background:var(--surface-2); border-bottom:1px solid var(--border); }
+  .notif-table tbody tr + tr { border-top:1px solid var(--border); }
+  .notif-table strong { font-weight:600; }
+  .notif-desc { font-size:13px; color:var(--muted); margin-top:2px; }
+  .notif-table input[type=checkbox] { width:18px; height:18px; vertical-align:middle; }
+  .notif-table input[type=checkbox]:disabled { opacity:.55; cursor:not-allowed; }
   .notif-table tr:target { background:var(--warn-bg); }
+  .notif-admin-table { width:100%; border-collapse:collapse; font-size:14px; }
+  @media (max-width:640px) {
+    .notif-table .notif-col { width:64px; }
+    .notif-table th, .notif-table td { padding:10px 6px; }
+    .notif-table thead th { font-size:11px; letter-spacing:0; }
+  }
   .notif-check { display:flex; align-items:center; gap:8px; font-weight:600; margin-bottom:10px; }
   .notif-select { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
   .notif-save { position:sticky; bottom:12px; display:flex; justify-content:flex-end; }

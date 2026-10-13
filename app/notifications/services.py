@@ -103,7 +103,7 @@ def _decisions(ids: list[int], category: categories.Category, importance: Import
             and (setting is None or importance >= setting.vibrate_min_importance)
         )
         out[rid] = Decision(
-            in_app=category.in_app and (pref is None or pref.in_app),
+            in_app=category.in_app and (pref is None or pref.in_app or not category.in_app_optional),
             push=pref is None or pref.push,
             vibrate=bool(vibrate),
         )

@@ -31,7 +31,7 @@
       <div class="card-pad">
         <p>{{ w.total }} notifikation(er) · {{ w.seen }} set · {{ w.pushed }} sendt som push</p>
         <div class="grid2">
-          <table class="table">
+          <table class="zebra notif-admin-table">
             <thead><tr><th>Kategori</th><th>Antal</th><th>Set</th><th>Push</th></tr></thead>
             <tbody>
               {% for row in w.by_category %}
@@ -39,7 +39,7 @@
               {% empty %}<tr><td colspan="4" class="muted">Ingen.</td></tr>{% endfor %}
             </tbody>
           </table>
-          <table class="table">
+          <table class="zebra notif-admin-table">
             <thead><tr><th>Vigtighed</th><th>Antal</th><th>Set</th></tr></thead>
             <tbody>
               {% for row in w.by_importance %}
@@ -54,7 +54,7 @@
 
   <section class="card-flat notif-section">
     <div class="card-head"><h2>Push-levering pr. dag</h2></div>
-    <table class="table">
+    <table class="zebra notif-admin-table">
       <thead><tr><th>Dato</th><th>Leveret</th><th>Fejlet</th><th>Fjernet (enhed væk)</th></tr></thead>
       <tbody>
         {% for day in delivery_days %}
@@ -66,7 +66,7 @@
 
   <section class="card-flat notif-section">
     <div class="card-head"><h2>Aktive push-abonnementer</h2></div>
-    <table class="table">
+    <table class="zebra notif-admin-table">
       <thead><tr><th>Beboer</th><th>Enhed</th><th>Oprettet</th><th>Sidst leveret</th><th>Fejl i træk</th><th></th></tr></thead>
       <tbody>
         {% for entry in users %}

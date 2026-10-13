@@ -37,17 +37,20 @@
     {% for group in groups %}
       <section class="card-flat notif-section" id="{% if group.key == 'chat' %}chat-rum{% else %}gruppe-{{ group.key }}{% endif %}">
         <div class="card-head"><h2>{{ group.name }}</h2></div>
-        <table class="table notif-table">
+        <table class="notif-table">
+          <colgroup><col><col class="notif-col"><col class="notif-col"><col class="notif-col"></colgroup>
           <thead><tr><th>Kategori</th><th>I appen</th><th>Push</th><th>Vibration</th></tr></thead>
           <tbody>
             {% for row in group.rows %}
               <tr{% if row.anchor %} id="{{ row.anchor }}"{% endif %}>
                 <td>
                   <strong>{{ row.category.name }}</strong>
-                  {% if row.category.description %}<div class="muted">{{ row.category.description }}</div>{% endif %}
+                  {% if row.category.description %}<div class="notif-desc">{{ row.category.description }}</div>{% endif %}
                 </td>
                 <td>
-                  {% if row.category.in_app %}
+                  {% if row.category.in_app and not row.category.in_app_optional %}
+                    <input type="checkbox" checked disabled title="Vises altid i appen" aria-label="{{ row.category.name }}: altid i appen">
+                  {% elif row.category.in_app %}
                     <input type="checkbox" name="{{ row.category.key }}__in_app" aria-label="{{ row.category.name }}: i appen"{% if row.in_app %} checked{% endif %}>
                   {% else %}
                     <span class="muted" title="Kun som push">—</span>

@@ -681,10 +681,11 @@ def test_index_by_category_groups_in_display_order(
     assert response.context["view"] == "kategori"
     groups = [(name, sorted(r.title for r in rows)) for name, rows in response.context["groups"]]
     # A category retired since the row was written counts as general rather than erroring.
+    # Generelt (and system) come last: the feature groups are what people scan for.
     assert groups == [
-        ("Generelt", ["retired"]),
         ("Opslagstavlen", ["post", "reply"]),
         ("Begivenheder", ["event"]),
+        ("Generelt", ["retired"]),
     ]
 
 
@@ -830,7 +831,7 @@ def _all_on() -> dict[str, str]:
     """The POST of the settings form with every box ticked — the defaults."""
     data = {"vibrate": "on", "vibrate_min_importance": str(int(Importance.LAV))}
     for category in categories.CATEGORIES:
-        if category.in_app:
+        if category.in_app and category.in_app_optional:
             data[f"{category.key}__in_app"] = "on"
         data[f"{category.key}__push"] = "on"
         data[f"{category.key}__vibrate"] = "on"
@@ -849,8 +850,50 @@ def test_preferences_page_renders_every_category_and_room_anchor(
     html = response.content.decode()
     for category in categories.CATEGORIES:
         assert f'name="{category.key}__push"' in html
-        assert (f'name="{category.key}__in_app"' in html) is category.in_app
+        optional = category.in_app and category.in_app_optional
+        assert (f'name="{category.key}__in_app"' in html) is optional
     assert 'id="rum-tv-rezz"' in html
+
+
+def test_system_and_general_come_last_on_the_settings_page(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    client.force_login(make_resident(email="a@gahk.dk"))
+
+    groups = [g["key"] for g in client.get(reverse("notifications:preferences")).context["groups"]]
+
+    assert groups[-2:] == ["system", "general"]
+
+
+@pytest.mark.parametrize("key", [categories.SYSTEM, categories.GENERAL])
+def test_system_and_general_cannot_be_turned_off_in_app(
+    client: Client, make_resident: Callable[..., Resident], key: str
+) -> None:
+    """The box is drawn ticked and disabled; a hand-made POST without it is stored as on anyway."""
+    a = make_resident(email="a@gahk.dk")
+    client.force_login(a)
+    data = {k: v for k, v in _all_on().items() if k != f"{key}__push"}
+    data.pop(f"{key}__in_app", None)
+
+    client.post(reverse("notifications:preferences"), data)
+
+    pref = NotificationPreference.objects.get(resident=a, category=key)
+    assert pref.in_app is True
+    assert pref.push is False
+
+
+@pytest.mark.parametrize("key", [categories.SYSTEM, categories.GENERAL])
+def test_an_old_in_app_off_row_for_system_or_general_is_ignored(
+    pushes: Recorded, two: tuple[Resident, Resident], key: str
+) -> None:
+    """A preference row saved before in-app was locked must not hide the house's own messages."""
+    a, _b = two
+    prefer(a, key, in_app=False)
+
+    services.notify([a.pk], category=key, title="t", url=TARGET)
+
+    assert Notification.objects.get(recipient=a).in_app is True
+    assert services.unseen_count(a.pk) == 1
 
 
 def test_saving_the_defaults_stores_nothing(client: Client, make_resident: Callable[..., Resident]) -> None:

@@ -139,6 +139,7 @@ The request listed "Events" and "Posts" as single categories; they were split so
 
 ### Settings page (`/intern/notifikationer/indstillinger`)
 - A table per group; each category row has in-app / push / vibration checkboxes (push-only rooms show "—" for in-app). Everything is on by default.
+- System and Generelt are listed last, and their in-app box is always on (drawn ticked and disabled; the server ignores an old or hand-made "off"). Push and vibration for them can still be turned off.
 - Each chat room shows a 🔔/🔕 link in its header pointing at `…/indstillinger#rum-<slug>`; the target row is highlighted.
 - Vibration: global on/off, per category, and "vibrate for importance X and above". **Vibration is implemented as a silent push** (`silent: true` in the service worker) — browsers do not let a page choose "sound but no vibration", so "no vibration" means no sound either. The notification is still shown.
 - The old per-room mute (`ChannelMute`) was migrated into room preferences with push off, then the table was dropped.
