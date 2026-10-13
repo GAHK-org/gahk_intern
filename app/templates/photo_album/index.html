@@ -15,7 +15,7 @@
 	{% else %}
 		{% comment %}A random handful from the whole archive, so the way into the timeline looks like what it holds.{% endcomment %}
 		<a class="album-timeline-card" href="{% url 'photo_album:timeline' %}">
-			<span class="album-timeline-mosaic" aria-hidden="true">{% for item in mosaic %}<img src="{{ item.thumbnail.url }}" alt="" loading="lazy">{% endfor %}</span>
+			<span class="album-timeline-mosaic" aria-hidden="true">{% for item in mosaic %}<span><img src="{{ item.thumbnail.url }}" alt="" loading="lazy"></span>{% endfor %}</span>
 			<span class="album-timeline-label">
 				<span class="album-eyebrow">Alle billeder på ét sted</span>
 				<strong>Tidslinje</strong>

@@ -1835,15 +1835,17 @@
    .album-eyebrow { margin:0 0 5px; color:var(--brass); font-size:12px; font-weight:700; letter-spacing:0; text-transform:uppercase; }
    .album-folders { display:grid; gap:28px; }
    /* The index's way into the timeline: a mosaic of random pictures (one large, six small) under a
-      dark band with the title. With few or no pictures the empty cells show the dark ground. The
-      pictures sit edge to edge and stay put on hover: zooming them closed any seam and made it jump. */
+      dark band with the title. With few or no pictures the empty cells show the dark ground. On hover
+      each picture zooms inside its own cell, so the seams stay; the card itself stays put, as lifting
+      it and deepening its shadow made the whole thing jump. */
    .album-timeline-card { position:relative; display:block; margin-bottom:32px; overflow:hidden; border-radius:var(--radius);
-      color:#fffdf7; text-decoration:none; background:var(--ink); box-shadow:var(--shadow); transition:box-shadow .15s, transform .15s; }
-   .album-timeline-card:hover { box-shadow:0 14px 34px rgb(0 0 0 / .22); transform:translateY(-1px); }
+      color:#fffdf7; text-decoration:none; background:var(--ink); box-shadow:var(--shadow); }
    .album-timeline-card:focus-visible { outline:3px solid var(--brass); outline-offset:3px; }
-   .album-timeline-mosaic { display:grid; grid-template-columns:repeat(5, 1fr); grid-template-rows:repeat(2, 120px); }
-   .album-timeline-mosaic img { display:block; width:100%; height:100%; min-width:0; object-fit:cover; }
-   .album-timeline-mosaic img:first-child { grid-row:span 2; grid-column:span 2; }
+   .album-timeline-mosaic { display:grid; grid-template-columns:repeat(5, 1fr); grid-template-rows:repeat(2, 120px); gap:3px; }
+   .album-timeline-mosaic > span { min-width:0; overflow:hidden; }
+   .album-timeline-mosaic > span:first-child { grid-row:span 2; grid-column:span 2; }
+   .album-timeline-mosaic img { display:block; width:100%; height:100%; object-fit:cover; transition:transform .4s; }
+   .album-timeline-card:hover .album-timeline-mosaic img { transform:scale(1.05); }
    .album-timeline-label { position:absolute; inset:auto 0 0 0; display:grid; gap:4px; padding:56px 22px 18px;
       background:linear-gradient(to top, rgb(14 20 16 / .92) 0%, rgb(14 20 16 / .72) 55%, transparent); }
    .album-timeline-label .album-eyebrow { margin:0; color:#e2c27a; }
@@ -1854,11 +1856,11 @@
    .album-timeline-card:hover .album-timeline-go { background:#c49a3f; }
    @media (max-width:720px) {
      .album-timeline-mosaic { grid-template-columns:repeat(3, 1fr); grid-template-rows:repeat(2, 92px); }
-     .album-timeline-mosaic img:nth-child(n+4) { display:none; }
+     .album-timeline-mosaic > span:nth-child(n+4) { display:none; }
      .album-timeline-label { padding:40px 16px 14px; }
      .album-timeline-label strong { font-size:24px; }
    }
-   @media (prefers-reduced-motion:reduce) { .album-timeline-card { transition:none; } }
+   @media (prefers-reduced-motion:reduce) { .album-timeline-mosaic img { transition:none; } }
    .album-folder { border-top:1px solid var(--border); padding-top:16px; }
    .album-folder h2 { display:flex; align-items:center; gap:8px; margin:0 0 12px; font-size:16px; }
    .album-folder h2 svg, .album-subtitle svg { width:19px; height:19px; color:var(--brass); fill:none; stroke:currentColor; }
