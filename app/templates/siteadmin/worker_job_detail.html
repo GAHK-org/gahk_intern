@@ -55,6 +55,6 @@
       {% if job_log.omitted %}<p class="muted mt-2">… og {{ job_log.omitted }} linje{{ job_log.omitted|pluralize:"r" }} mere, som ikke blev gemt.</p>{% endif %}
     </div>
   {% else %}
-    <div class="card"><p class="muted">Jobbet har ikke logget noget{% if not job.finished_at %} endnu{% endif %}. Logge fra vellykkede jobs gemmes i 30 dage, andre indtil de slettes.</p></div>
+    <div class="card"><p class="muted">Jobbet har ikke logget noget{% if not job.finished_at %} endnu{% endif %}. Logge fra vellykkede jobs gemmes i 30 dage. Andre gemmes, til der er over 1000 af samme job med samme status; så slettes de ældste ud over de 1000, når de er over 60 dage gamle.</p></div>
   {% endif %}
 {% endblock %}
