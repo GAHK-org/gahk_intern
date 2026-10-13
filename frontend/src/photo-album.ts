@@ -1,5 +1,5 @@
-const gallery = document.querySelector<HTMLElement>("[data-album-gallery]")
-const dialog = document.querySelector<HTMLDialogElement>("[data-album-viewer]")
+import { csrfToken } from "./htmx-csrf"
+
 const uploadInput = document.querySelector<HTMLInputElement>("[data-album-upload-input]")
 const uploadSelection = document.querySelector<HTMLElement>("[data-album-upload-selection]")
 const uploadCount = document.querySelector<HTMLElement>("[data-album-upload-count]")
@@ -10,6 +10,7 @@ const uploadProgress = document.querySelector<HTMLElement>("[data-album-upload-p
 const uploadProgressBar = document.querySelector<HTMLProgressElement>("[data-album-upload-progress-bar]")
 const uploadProgressLabel = document.querySelector<HTMLElement>("[data-album-upload-progress-label]")
 const uploadSubmit = document.querySelector<HTMLButtonElement>("[data-album-upload-submit]")
+const uploadNotes = document.querySelector<HTMLUListElement>("[data-album-upload-notes]")
 const zipImportForm = document.querySelector<HTMLFormElement>("[data-album-zip-import]")
 const zipImportJob = document.querySelector<HTMLElement>("[data-album-import-job]")
 
@@ -39,13 +40,18 @@ const pollZipImport = (root: HTMLElement, statusUrl: string, resultUrl: string):
   const label = root.querySelector<HTMLElement>("[data-album-import-progress-label]")!
   window.setTimeout(() => {
     void fetch(statusUrl, { headers: { Accept: "application/json" }, credentials: "same-origin" })
-      .then((response) => response.json() as Promise<{ state: string; error: string }>)
+      .then((response) => response.json() as Promise<{ state: string; error: string; errors?: string[] }>)
       .then((job) => {
         if (job.state === "ready") {
           window.location.assign(resultUrl)
           return
         }
         if (job.state === "failed") {
+          // The result page lists every reason the archive was refused, not just the summary.
+          if (job.errors?.length) {
+            window.location.assign(resultUrl)
+            return
+          }
           label.textContent = `Importen mislykkedes: ${job.error || "ukendt fejl"}`
           return
         }
@@ -122,9 +128,20 @@ if (uploadInput && uploadSelection && uploadCount && uploadFiles) {
   })
 }
 
+interface UploadResult {
+  uploaded: number
+  skipped: string[]
+  warnings: string[]
+}
+
 if (uploadDialog && uploadForm && uploadInput && uploadProgress && uploadProgressBar && uploadProgressLabel && uploadSubmit) {
   const openUpload = document.querySelector<HTMLButtonElement>("[data-album-upload-open]")
-  const closeUpload = (): void => uploadDialog.close()
+  let finished = false
+  const closeUpload = (): void => {
+    uploadDialog.close()
+    // Whatever went up is in the album now; show it.
+    if (finished) window.location.reload()
+  }
 
   openUpload?.addEventListener("click", () => uploadDialog.showModal())
   uploadDialog.querySelectorAll<HTMLElement>("[data-album-upload-close]").forEach((button) => button.addEventListener("click", closeUpload))
@@ -136,15 +153,22 @@ if (uploadDialog && uploadForm && uploadInput && uploadProgress && uploadProgres
     const files = Array.from(uploadInput.files ?? [])
     if (!files.length) return
     event.preventDefault()
+    if (finished) {
+      window.location.reload()
+      return
+    }
 
     const totalBytes = files.reduce((sum, file) => sum + file.size, 0)
     let completedBytes = 0
     let fileIndex = 0
+    let uploaded = 0
+    const notes: string[] = []
     const formData = new FormData(uploadForm)
     const title = formData.get("title")?.toString() ?? ""
-    const csrfToken = formData.get("csrfmiddlewaretoken")?.toString() ?? ""
+    const csrf = formData.get("csrfmiddlewaretoken")?.toString() ?? ""
     uploadSubmit.disabled = true
     uploadProgress.hidden = false
+    uploadNotes?.replaceChildren()
 
     const setProgress = (loadedBytes: number): void => {
       const percent = totalBytes ? Math.round(((completedBytes + loadedBytes) / totalBytes) * 100) : 100
@@ -152,16 +176,35 @@ if (uploadDialog && uploadForm && uploadInput && uploadProgress && uploadProgres
       uploadProgressLabel.textContent = `Uploader fil ${fileIndex + 1} af ${files.length}: ${percent}%`
     }
 
+    const finish = (): void => {
+      if (!notes.length) {
+        window.location.reload()
+        return
+      }
+      // Skipped duplicates and "also in another album" are worth reading before the page reloads.
+      finished = true
+      uploadProgressLabel.textContent = `${uploaded} af ${files.length} filer er uploadet.`
+      uploadNotes?.replaceChildren(...notes.map((note) => {
+        const item = document.createElement("li")
+        item.textContent = note
+        return item
+      }))
+      uploadSubmit.disabled = false
+      uploadSubmit.textContent = "Færdig"
+    }
+
     const uploadNext = (): void => {
       const file = files[fileIndex]
       if (!file) {
-        window.location.reload()
+        finish()
         return
       }
       const data = new FormData()
       data.append("uploads", file)
       data.append("title", title)
-      data.append("csrfmiddlewaretoken", csrfToken)
+      // The camera's own clock is not in every file; the file's date is the next best thing.
+      data.append("last_modified", String(file.lastModified))
+      data.append("csrfmiddlewaretoken", csrf)
       const request = new XMLHttpRequest()
       request.open("POST", uploadForm.action)
       request.setRequestHeader("Accept", "application/json")
@@ -170,6 +213,13 @@ if (uploadDialog && uploadForm && uploadInput && uploadProgress && uploadProgres
       })
       request.addEventListener("load", () => {
         if (request.status >= 200 && request.status < 300) {
+          try {
+            const result = JSON.parse(request.responseText) as UploadResult
+            uploaded += result.uploaded
+            notes.push(...result.skipped, ...result.warnings)
+          } catch {
+            uploaded += 1
+          }
           completedBytes += file.size
           fileIndex += 1
           setProgress(0)
@@ -177,7 +227,14 @@ if (uploadDialog && uploadForm && uploadInput && uploadProgress && uploadProgres
           return
         }
         uploadSubmit.disabled = false
-        uploadProgressLabel.textContent = `Kunne ikke uploade ${file.name}. Prøv igen.`
+        let reason = ""
+        try {
+          const body = JSON.parse(request.responseText) as { errors?: Record<string, { message: string }[]> }
+          reason = Object.values(body.errors ?? {}).flat().map((error) => error.message).join(" ")
+        } catch {
+          // Not JSON — a proxy error page, most likely. The generic message below covers it.
+        }
+        uploadProgressLabel.textContent = `Kunne ikke uploade ${file.name}. ${reason || "Prøv igen."}`
       })
       request.addEventListener("error", () => {
         uploadSubmit.disabled = false
@@ -191,15 +248,256 @@ if (uploadDialog && uploadForm && uploadInput && uploadProgress && uploadProgres
   })
 }
 
+// --- Paging ----------------------------------------------------------------------------------
+//
+// The grid starts as one page around wherever the reader arrived (the top, a year, a deep-linked
+// photo). A sentinel at either end says where the next page in that direction comes from; walking
+// into it fetches that page as a fragment of tiles (photo_album/_media_tiles.html). Pages far
+// behind the reader are dropped again, so a long scroll through the timeline does not keep
+// thousands of images decoded.
+
+const MAX_TILES = 480
+const tileSelector = "article.album-media-item"
+
+const pageUrl = (direction: "before" | "after", pk: string): string => {
+  const url = new URL(window.location.href)
+  for (const key of ["after", "before", "media", "year"]) url.searchParams.delete(key)
+  url.searchParams.set(direction, pk)
+  return `${url.pathname}?${url.searchParams.toString()}`
+}
+
+const sentinel = (direction: "before" | "after", url: string): HTMLElement => {
+  const element = document.createElement("div")
+  element.className = "album-page-sentinel"
+  element.setAttribute("aria-hidden", "true")
+  element.dataset[direction === "before" ? "pageBefore" : "pageAfter"] = url
+  return element
+}
+
+/** Keep `anchor` exactly where it is on screen while `change` adds or removes things above it. */
+const holdPosition = (anchor: Element | null, change: () => void): void => {
+  const before = anchor?.getBoundingClientRect().top
+  change()
+  if (anchor && before !== undefined && anchor.isConnected) {
+    window.scrollBy(0, anchor.getBoundingClientRect().top - before)
+  }
+}
+
+const setupPaging = (gallery: HTMLElement, onTiles: (tiles: HTMLElement[]) => void, canUnload: () => boolean): {
+  loadAfter: () => Promise<boolean>
+} => {
+  const loading = new Set<string>()
+
+  const tiles = (): HTMLElement[] => Array.from(gallery.querySelectorAll<HTMLElement>(tileSelector))
+
+  const fetchPage = async (url: string): Promise<DocumentFragment | null> => {
+    const response = await fetch(url, { credentials: "same-origin" })
+    if (!response.ok) return null
+    const template = document.createElement("template")
+    template.innerHTML = await response.text()
+    return template.content
+  }
+
+  const unload = (from: "top" | "bottom"): void => {
+    if (!canUnload()) return
+    const all = tiles()
+    const excess = all.length - MAX_TILES
+    if (excess <= 0) return
+    if (from === "top") {
+      const doomed = all.slice(0, excess)
+      const firstKept = all[excess]
+      holdPosition(firstKept, () => {
+        gallery.querySelector("[data-page-before]")?.remove()
+        doomed.forEach((tile) => tile.remove())
+        gallery.prepend(sentinel("before", pageUrl("before", firstKept.dataset.mediaId ?? "")))
+      })
+      observeSentinels()
+    } else {
+      const lastKept = all[all.length - excess - 1]
+      gallery.querySelector("[data-page-after]")?.remove()
+      all.slice(all.length - excess).forEach((tile) => tile.remove())
+      gallery.append(sentinel("after", pageUrl("after", lastKept.dataset.mediaId ?? "")))
+      observeSentinels()
+    }
+  }
+
+  const load = async (element: HTMLElement): Promise<boolean> => {
+    const before = element.dataset.pageBefore
+    const url = before ?? element.dataset.pageAfter
+    if (!url || loading.has(url)) return false
+    loading.add(url)
+    element.classList.add("is-loading")
+    try {
+      const fragment = await fetchPage(url)
+      if (!fragment || !element.isConnected) return false
+      const added = Array.from(fragment.querySelectorAll<HTMLElement>(tileSelector))
+      if (before) {
+        holdPosition(gallery.querySelector(tileSelector), () => element.replaceWith(fragment))
+        onTiles(added)
+        unload("bottom")
+      } else {
+        element.replaceWith(fragment)
+        onTiles(added)
+        unload("top")
+      }
+      observeSentinels()
+      return added.length > 0
+    } catch {
+      element.classList.remove("is-loading")
+      return false
+    } finally {
+      loading.delete(url)
+    }
+  }
+
+  const observer = new IntersectionObserver((records) => {
+    for (const record of records) {
+      if (record.isIntersecting) void load(record.target as HTMLElement)
+    }
+  }, { rootMargin: "1200px 0px" })
+
+  const observeSentinels = (): void => {
+    observer.disconnect()
+    gallery.querySelectorAll<HTMLElement>(".album-page-sentinel").forEach((element) => observer.observe(element))
+  }
+  observeSentinels()
+
+  return {
+    loadAfter: async () => {
+      const element = gallery.querySelector<HTMLElement>("[data-page-after]")
+      return element ? load(element) : false
+    },
+  }
+}
+
+// --- Selection -------------------------------------------------------------------------------
+
+const setupSelection = (gallery: HTMLElement): { isSelecting: () => boolean; prepare: (tiles: HTMLElement[]) => void } => {
+  const toggle = document.querySelector<HTMLButtonElement>("[data-album-select-toggle]")
+  const form = document.querySelector<HTMLFormElement>("[data-album-selection]")
+  const count = form?.querySelector<HTMLElement>("[data-album-selection-count]")
+  const chosen = new Set<string>()
+  let selecting = false
+
+  const refresh = (): void => {
+    if (count) count.textContent = `${chosen.size} valgt`
+    form?.querySelectorAll<HTMLButtonElement>("button[type=submit]").forEach((button) => {
+      button.disabled = chosen.size === 0
+    })
+  }
+
+  const prepare = (tiles: HTMLElement[]): void => {
+    for (const tile of tiles) {
+      const label = tile.querySelector<HTMLElement>(".album-select")
+      const box = tile.querySelector<HTMLInputElement>("[data-album-select]")
+      if (label) label.hidden = !selecting
+      if (box) box.checked = chosen.has(box.value)
+      tile.classList.toggle("is-selected", Boolean(box?.checked))
+    }
+  }
+
+  const setSelecting = (value: boolean): void => {
+    selecting = value
+    if (!value) chosen.clear()
+    gallery.classList.toggle("is-selecting", value)
+    if (form) form.hidden = !value
+    toggle?.setAttribute("aria-pressed", String(value))
+    prepare(Array.from(gallery.querySelectorAll<HTMLElement>(tileSelector)))
+    refresh()
+  }
+
+  toggle?.addEventListener("click", () => setSelecting(!selecting))
+  form?.querySelector("[data-album-selection-cancel]")?.addEventListener("click", () => setSelecting(false))
+
+  gallery.addEventListener("change", (event) => {
+    const box = event.target as HTMLInputElement
+    if (!box.matches("[data-album-select]")) return
+    if (box.checked) chosen.add(box.value)
+    else chosen.delete(box.value)
+    box.closest(tileSelector)?.classList.toggle("is-selected", box.checked)
+    refresh()
+  })
+
+  form?.addEventListener("submit", (event) => {
+    const submitter = (event as SubmitEvent).submitter as HTMLButtonElement | null
+    if (submitter?.value === "delete" && !window.confirm(`Fjern ${chosen.size} medier?`)) {
+      event.preventDefault()
+      return
+    }
+    form.querySelectorAll("input[name=media]").forEach((input) => input.remove())
+    for (const pk of chosen) {
+      const input = document.createElement("input")
+      input.type = "hidden"
+      input.name = "media"
+      input.value = pk
+      form.append(input)
+    }
+  })
+
+  return { isSelecting: () => selecting, prepare }
+}
+
+// --- Year highlighting on the timeline ---------------------------------------------------------
+
+const setupYears = (gallery: HTMLElement): void => {
+  const years = document.querySelector<HTMLElement>("[data-album-years]")
+  if (!years) return
+  let scheduled = false
+  const update = (): void => {
+    scheduled = false
+    // The first row clear of the sticky year bar, not one scrolled up behind it.
+    const below = years.getBoundingClientRect().bottom + 20
+    const visible = Array.from(gallery.querySelectorAll<HTMLElement>(tileSelector)).find(
+      (tile) => tile.getBoundingClientRect().bottom > below,
+    )
+    const year = visible?.dataset.year
+    if (!year) return
+    years.querySelectorAll<HTMLAnchorElement>("a").forEach((link) => {
+      if (link.dataset.yearLink === year) link.setAttribute("aria-current", "true")
+      else link.removeAttribute("aria-current")
+    })
+    years.querySelector<HTMLElement>(`[data-year-link="${year}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" })
+  }
+  window.addEventListener("scroll", () => {
+    if (scheduled) return
+    scheduled = true
+    window.requestAnimationFrame(update)
+  }, { passive: true })
+}
+
+// --- The viewer ------------------------------------------------------------------------------
+
+interface MediaDetail {
+  kind: "image" | "video"
+  title: string
+  filename: string
+  full: string
+  album: string
+  albumUrl: string
+  link: string
+  downloadUrl: string
+  deleteUrl: string
+  viewUrl: string
+  mapUrl: string
+  uploadedBy: string
+  uploadedAt: string
+  capturedAt: string
+  metadata: Record<string, string>
+  uniqueViews: number
+  totalViews: number
+}
+
+const gallery = document.querySelector<HTMLElement>("[data-album-gallery]")
+const dialog = document.querySelector<HTMLDialogElement>("[data-album-viewer]")
+
 if (gallery && dialog) {
-  const entries = Array.from(
-    gallery.querySelectorAll<HTMLButtonElement>(".album-media-tile[data-detail-url]"),
-  )
   const image = dialog.querySelector<HTMLImageElement>("[data-gallery-image]")!
   const video = dialog.querySelector<HTMLVideoElement>("[data-gallery-video]")!
   const title = dialog.querySelector<HTMLElement>("[data-gallery-title]")!
   const metadata = dialog.querySelector<HTMLDListElement>("[data-gallery-metadata]")!
   const menuMetadata = dialog.querySelector<HTMLDListElement>("[data-gallery-menu-metadata]")!
+  const views = dialog.querySelector<HTMLElement>("[data-gallery-views]")
+  const menuViews = dialog.querySelector<HTMLElement>("[data-gallery-menu-views]")
   const mobileDate = dialog.querySelector<HTMLElement>("[data-gallery-mobile-date]")!
   const download = dialog.querySelector<HTMLAnchorElement>("[data-gallery-download]")!
   const menuDownload = dialog.querySelector<HTMLAnchorElement>("[data-gallery-menu-download]")!
@@ -210,11 +508,21 @@ if (gallery && dialog) {
   const stage = dialog.querySelector<HTMLElement>(".album-viewer-stage")!
   const previous = dialog.querySelector<HTMLButtonElement>("[data-gallery-previous]")!
   const next = dialog.querySelector<HTMLButtonElement>("[data-gallery-next]")!
-  let current = 0
+  // The bin shows binned items through the same viewer; looking at those is not a view.
+  const countsViews = !gallery.hasAttribute("data-album-no-views")
+  let current: HTMLButtonElement | undefined
   let touchStart: { x: number; y: number } | undefined
   let zoomScale = 1
   let pinchStartDistance = 0
   let pinchStartScale = 1
+
+  const selection = setupSelection(gallery)
+  const paging = setupPaging(gallery, selection.prepare, () => !dialog.open)
+  setupYears(gallery)
+
+  // Read fresh every time: the grid gains and loses pages as the reader scrolls.
+  const entries = (): HTMLButtonElement[] =>
+    Array.from(gallery.querySelectorAll<HTMLButtonElement>(".album-media-tile[data-detail-url]"))
 
   const touchDistance = (touches: TouchList): number =>
     Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY)
@@ -229,19 +537,6 @@ if (gallery && dialog) {
     const transform = zoomScale === 1 ? "" : `scale(${zoomScale})`
     image.style.transform = transform
     video.style.transform = transform
-  }
-
-  interface MediaDetail {
-    kind: "image" | "video"
-    title: string
-    full: string
-    album: string
-    downloadUrl: string
-    deleteUrl: string
-    uploadedBy: string
-    uploadedAt: string
-    capturedAt: string
-    metadata: Record<string, string>
   }
 
   // One entry per item, kept for as long as the page lives. An album is browsed by paging through
@@ -262,60 +557,126 @@ if (gallery && dialog) {
     return pending
   }
 
-  const renderMetadata = (detail: MediaDetail): void => {
-    const values = {
-      ...(detail.album ? { Album: detail.album } : {}),
-      ...(detail.capturedAt ? { "Optaget": detail.capturedAt } : {}),
-      "Uploadet af": detail.uploadedBy,
-      Uploadet: detail.uploadedAt,
-      ...detail.metadata,
+  const definition = (term: string, value: string, href = ""): HTMLElement[] => {
+    const dt = document.createElement("dt")
+    dt.textContent = term
+    const dd = document.createElement("dd")
+    if (href) {
+      const link = document.createElement("a")
+      link.href = href
+      link.textContent = value
+      if (href.startsWith("http")) {
+        link.target = "_blank"
+        link.rel = "noopener"
+      }
+      dd.append(link)
+    } else {
+      dd.textContent = value
     }
-    const metadataEntries = Object.entries(values).flatMap(([key, value]) => {
-      const term = document.createElement("dt")
-      term.textContent = key
-      const definition = document.createElement("dd")
-      definition.textContent = value
-      return [term, definition]
-    })
-    metadata.replaceChildren(...metadataEntries)
-    menuMetadata.replaceChildren(...metadataEntries.map((node) => node.cloneNode(true)))
+    return [dt, dd]
   }
 
-  const show = (index: number): void => {
-    if (index < 0 || index >= entries.length) return
-    current = index
+  const renderMetadata = (detail: MediaDetail): void => {
+    const { Sted: location, ...rest } = detail.metadata
+    const nodes = [
+      ...(detail.album ? definition("Album", detail.album, detail.link) : []),
+      ...(detail.filename ? definition("Filnavn", detail.filename) : []),
+      ...(detail.capturedAt ? definition("Optaget", detail.capturedAt) : []),
+      ...(location ? definition("Sted", location, detail.mapUrl) : []),
+      ...definition("Uploadet af", detail.uploadedBy),
+      ...definition("Uploadet", detail.uploadedAt),
+      ...Object.entries(rest).flatMap(([key, value]) => definition(key, String(value))),
+    ]
+    metadata.replaceChildren(...nodes)
+    menuMetadata.replaceChildren(...nodes.map((node) => node.cloneNode(true)))
+  }
+
+  const renderViews = (unique: number, total: number): void => {
+    const text = total
+      ? `Set ${total} ${total === 1 ? "gang" : "gange"} af ${unique} ${unique === 1 ? "person" : "personer"}`
+      : "Ikke set endnu"
+    if (views) views.textContent = text
+    if (menuViews) menuViews.textContent = text
+  }
+
+  // Reported once the full-size file has actually arrived, so a thumbnail flicked past is not a view.
+  const reportView = (entry: HTMLButtonElement, detail: MediaDetail): void => {
+    if (!countsViews || !detail.viewUrl || current !== entry) return
+    void fetch(detail.viewUrl, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { Accept: "application/json", "X-CSRFToken": csrfToken() },
+    })
+      .then((response) => (response.ok ? (response.json() as Promise<{ uniqueViews: number; totalViews: number }>) : null))
+      .then((counts) => {
+        if (!counts) return
+        detail.uniqueViews = counts.uniqueViews
+        detail.totalViews = counts.totalViews
+        if (current === entry) renderViews(counts.uniqueViews, counts.totalViews)
+      })
+      .catch(() => undefined)
+  }
+
+  const mediaIdOf = (entry: HTMLElement): string => entry.closest<HTMLElement>(tileSelector)?.dataset.mediaId ?? ""
+
+  const setAddress = (pk: string): void => {
+    const url = new URL(window.location.href)
+    if (pk) url.searchParams.set("media", pk)
+    else url.searchParams.delete("media")
+    window.history.replaceState(window.history.state, "", url)
+  }
+
+  const updateArrows = (): void => {
+    const all = entries()
+    const index = current ? all.indexOf(current) : -1
+    previous.disabled = index <= 0
+    next.disabled = index === -1 || (index === all.length - 1 && !gallery.querySelector("[data-page-after]"))
+  }
+
+  const show = (entry: HTMLButtonElement): void => {
+    current = entry
     resetZoom()
-    const entry = entries[current]
+    entry.scrollIntoView({ block: "nearest" })
 
     // The thumbnail is already decoded in the grid, so showing it stretched is instant and the
     // viewer never opens on a blank stage. The real image replaces it when the fetch lands.
     const thumbnail = entry.querySelector("img")
     image.hidden = false
     video.hidden = true
-    video.src = ""
+    video.removeAttribute("src")
+    image.onload = null
+    video.onloadeddata = null
     image.src = thumbnail?.src ?? ""
     image.alt = thumbnail?.alt ?? ""
     title.textContent = thumbnail?.alt ?? ""
     mobileDate.textContent = ""
     metadata.replaceChildren()
     menuMetadata.replaceChildren()
+    if (views) views.textContent = ""
+    if (menuViews) menuViews.textContent = ""
     deleteForm.hidden = true
     menuDeleteForm.hidden = true
     menu.hidden = true
     menuButton.setAttribute("aria-expanded", "false")
-    previous.disabled = current === 0
-    next.disabled = current === entries.length - 1
+    updateArrows()
+    // The address bar always holds a link to what is on screen, ready to be shared.
+    const pk = mediaIdOf(entry)
+    if (pk) setAddress(pk)
 
     void detailFor(entry).then((detail) => {
       // Paged on while this was in flight: the answer is about a different photograph now.
-      if (!detail || entries[current] !== entry) return
+      if (!detail || current !== entry) return
       const isVideo = detail.kind === "video"
       image.hidden = isVideo
       video.hidden = !isVideo
       if (isVideo) {
-        image.src = ""
+        image.removeAttribute("src")
+        video.onloadeddata = () => reportView(entry, detail)
         video.src = detail.full
       } else if (detail.full) {
+        image.onload = () => {
+          if (image.src.endsWith(detail.full)) reportView(entry, detail)
+        }
         image.src = detail.full
       }
       image.alt = detail.title
@@ -328,15 +689,55 @@ if (gallery && dialog) {
       menuDeleteForm.hidden = !detail.deleteUrl
       menuDeleteForm.action = detail.deleteUrl
       renderMetadata(detail)
+      renderViews(detail.uniqueViews, detail.totalViews)
       // Warm the neighbours, so paging with the arrows or a swipe does not wait on the network.
-      for (const neighbour of [entries[current - 1], entries[current + 1]]) {
+      const all = entries()
+      const index = all.indexOf(entry)
+      for (const neighbour of [all[index - 1], all[index + 1]]) {
         if (neighbour) void detailFor(neighbour)
       }
     })
   }
 
-  entries.forEach((entry, index) => entry.addEventListener("click", () => { dialog.showModal(); show(index) }))
+  const step = async (direction: -1 | 1): Promise<void> => {
+    if (!current) return
+    let all = entries()
+    let index = all.indexOf(current) + direction
+    if (index >= all.length && direction === 1) {
+      // At the last loaded tile: fetch the next page and carry on into it.
+      const from = current
+      if (!(await paging.loadAfter()) || current !== from) return
+      all = entries()
+      index = all.indexOf(from) + 1
+    }
+    if (all[index]) show(all[index])
+  }
+
+  const open = (entry: HTMLButtonElement): void => {
+    if (!dialog.open) dialog.showModal()
+    show(entry)
+  }
+
+  gallery.addEventListener("click", (event) => {
+    const entry = (event.target as Element).closest<HTMLButtonElement>(".album-media-tile[data-detail-url]")
+    if (!entry) return
+    if (selection.isSelecting()) {
+      // In selection mode a tap on the picture ticks it, as in every phone gallery.
+      const box = entry.closest(tileSelector)?.querySelector<HTMLInputElement>("[data-album-select]")
+      if (box) {
+        box.checked = !box.checked
+        box.dispatchEvent(new Event("change", { bubbles: true }))
+      }
+      return
+    }
+    open(entry)
+  })
   dialog.querySelector("[data-gallery-close]")?.addEventListener("click", () => dialog.close())
+  dialog.addEventListener("close", () => {
+    current = undefined
+    video.pause()
+    setAddress("")
+  })
   menuButton.addEventListener("click", () => {
     menu.hidden = !menu.hidden
     menuButton.setAttribute("aria-expanded", String(!menu.hidden))
@@ -344,8 +745,8 @@ if (gallery && dialog) {
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog) dialog.close()
   })
-  previous.addEventListener("click", () => show(current - 1))
-  next.addEventListener("click", () => show(current + 1))
+  previous.addEventListener("click", () => void step(-1))
+  next.addEventListener("click", () => void step(1))
   stage.addEventListener("touchstart", (event) => {
     if (!window.matchMedia("(max-width: 720px)").matches) return
     if (event.touches.length === 2) {
@@ -372,14 +773,26 @@ if (gallery && dialog) {
     const verticalDistance = touch.clientY - touchStart.y
     touchStart = undefined
     if (Math.abs(horizontalDistance) < 48 || Math.abs(horizontalDistance) <= Math.abs(verticalDistance)) return
-    show(horizontalDistance < 0 ? current + 1 : current - 1)
+    void step(horizontalDistance < 0 ? 1 : -1)
   }, { passive: true })
   stage.addEventListener("touchend", () => {
     if (pinchStartDistance > 0) pinchStartDistance = 0
   }, { passive: true })
   document.addEventListener("keydown", (event) => {
     if (!dialog.open) return
-    if (event.key === "ArrowLeft") show(current - 1)
-    if (event.key === "ArrowRight") show(current + 1)
+    if (event.key === "ArrowLeft") void step(-1)
+    if (event.key === "ArrowRight") void step(1)
   })
+
+  // A shared link (`?media=<pk>`): the page was rendered around that item, so open it.
+  const linked = new URL(window.location.href).searchParams.get("media")
+  if (linked) {
+    const entry = gallery.querySelector<HTMLButtonElement>(
+      `${tileSelector}[data-media-id="${CSS.escape(linked)}"] .album-media-tile[data-detail-url]`,
+    )
+    if (entry) {
+      entry.scrollIntoView({ block: "center" })
+      open(entry)
+    }
+  }
 }

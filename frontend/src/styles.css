@@ -1286,7 +1286,7 @@
   .rsvp-sub { margin: 4px 0 0; font-size: 12px; font-weight: 700; letter-spacing: .04em;
     text-transform: uppercase; color: var(--muted); }
   .rsvp-queue .rsvp-name { font-weight: 500; }
-  .rsvp-avatar-quiet { background: transparent; color: var(--muted); border: 1px solid var(--line);
+  .rsvp-avatar-quiet { background: transparent; color: var(--muted); border: 1px solid var(--border);
     font-size: 12px; }
 
   /* The guest list. A <details> so the closed state costs one line rather than sixty, and so it
@@ -1757,10 +1757,10 @@
   .breadcrumb [aria-hidden] { color:var(--muted); }
   .breadcrumb [aria-current] { color:var(--muted); }
 
-  .arkiv-list { list-style:none; margin:0; padding:0; border:1px solid var(--line); border-radius:10px;
-    overflow:hidden; background:var(--card); }
+  .arkiv-list { list-style:none; margin:0; padding:0; border:1px solid var(--border); border-radius:10px;
+    overflow:hidden; background:var(--surface); }
   .arkiv-list li { display:flex; align-items:center; gap:10px; padding:10px 14px;
-    border-bottom:1px solid var(--line); }
+    border-bottom:1px solid var(--border); }
   .arkiv-list li:last-child { border-bottom:0; }
   .arkiv-list li > a { display:flex; align-items:center; gap:10px; flex:1 1 auto; min-width:0;
     color:inherit; text-decoration:none; }
@@ -1833,12 +1833,12 @@
    .album-heading h1 { margin:0; font-family:Georgia, serif; font-size:32px; color:var(--ink); }
    .album-eyebrow { margin:0 0 5px; color:var(--brass); font-size:12px; font-weight:700; letter-spacing:0; text-transform:uppercase; }
    .album-folders { display:grid; gap:28px; }
-   .album-folder { border-top:1px solid var(--line); padding-top:16px; }
+   .album-folder { border-top:1px solid var(--border); padding-top:16px; }
    .album-folder h2 { display:flex; align-items:center; gap:8px; margin:0 0 12px; font-size:16px; }
    .album-folder h2 svg, .album-subtitle svg { width:19px; height:19px; color:var(--brass); fill:none; stroke:currentColor; }
    .album-folder-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:10px; }
    .album-card { display:grid; grid-template-columns:30px 1fr; gap:2px 10px; min-height:82px; padding:14px;
-      border:1px solid var(--line); border-radius:8px; color:inherit; text-decoration:none; background:var(--card); }
+      border:1px solid var(--border); border-radius:8px; color:inherit; text-decoration:none; background:var(--surface); }
    .album-card:hover { border-color:var(--brass); background:var(--surface-2); }
    .album-card svg { grid-row:span 2; width:28px; height:28px; fill:none; stroke:var(--brass); }
    .album-card-name { align-self:end; font-weight:650; }
@@ -1860,7 +1860,7 @@
    .album-file-picker input { position:absolute; inline-size:1px; block-size:1px; opacity:0; }
    .album-file-picker span { color:var(--brass); font-weight:650; }.album-file-picker small { color:var(--muted); }
    .album-upload > input { flex:1 1 180px; min-width:0; }
-   .album-upload-selection { padding:10px 12px; border:1px solid var(--line); border-radius:6px; background:var(--surface-2); }
+   .album-upload-selection { padding:10px 12px; border:1px solid var(--border); border-radius:6px; background:var(--surface-2); }
    .album-upload-selection p { margin:0 0 5px; font-size:13px; font-weight:650; }.album-upload-selection ul { max-height:132px; margin:0; padding-left:20px; overflow:auto; color:var(--muted); font-size:13px; }
    .album-upload-progress progress { display:block; width:100%; height:12px; accent-color:var(--brass); }.album-upload-progress p { margin:6px 0 0; color:var(--muted); font-size:13px; }
    .album-import-result { margin-top:24px; }.album-import-result ul { margin:8px 0; padding-left:20px; }.album-import-skipped { color:var(--neg); }
@@ -1874,20 +1874,76 @@
    .album-media-tile:hover img, .album-media-tile:hover video, .album-media-tile:focus-visible img, .album-media-tile:focus-visible video { filter:brightness(.84); }
    /* A video whose derivatives are still being built out of band (photo_album DerivativeState):
       same footprint as a real tile so the grid does not reflow when the thumbnail appears. */
-   .album-media-placeholder { display:flex; aspect-ratio:1; flex-direction:column; align-items:center; justify-content:center; gap:4px; padding:10px; border:1px dashed var(--line); background:var(--surface-2); color:var(--muted); text-align:center; cursor:default; }
+   .album-media-placeholder { display:flex; aspect-ratio:1; flex-direction:column; align-items:center; justify-content:center; gap:4px; padding:10px; border:1px dashed var(--border); background:var(--surface-2); color:var(--muted); text-align:center; cursor:default; }
    .album-media-placeholder strong { position:static; background:none; color:var(--ink); font-size:12px; }
    .album-media-placeholder[data-kind="failed"] strong { color:var(--neg); }
    .album-media-placeholder-title { overflow:hidden; max-width:100%; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
    .album-media-placeholder small { font-size:11px; }
    .album-media-origin { margin:5px 4px 0; overflow:hidden; color:var(--muted); text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
    .album-media-controls { min-height:22px; padding:3px 4px; justify-content:center; }.album-media-controls button { border:0; background:none; padding:0; color:var(--brass); cursor:pointer; font:inherit; font-size:12px; }.album-media-controls .btn-link-danger { color:var(--neg); }
-   .album-viewer { display:none; width:min(1120px, calc(100vw - 32px)); height:min(760px, calc(100vh - 32px)); max-width:none; max-height:none; margin:auto; padding:0; border:0; border-radius:8px; color:var(--ink); background:var(--card); }
+   .album-viewer { display:none; width:min(1120px, calc(100vw - 32px)); height:min(760px, calc(100vh - 32px)); max-width:none; max-height:none; margin:auto; padding:0; border:0; border-radius:8px; color:var(--ink); background:var(--surface); }
    .album-viewer::backdrop { background:rgb(5 12 9 / .88); }
    .album-viewer[open] { display:grid; grid-template-columns:minmax(0, 1fr) 260px; grid-template-rows:minmax(0, 1fr); overflow:visible; }
    .album-viewer-stage { min-width:0; min-height:0; display:grid; place-items:center; overflow:hidden; padding:24px; box-sizing:border-box; background:#111; }
    .album-viewer-stage img, .album-viewer-stage video { display:block; width:100%; height:100%; min-width:0; min-height:0; max-width:100%; max-height:100%; object-fit:contain; transform-origin:center; }
    .album-viewer aside { padding:28px 20px; overflow:auto; color:#f6f3ea; background:#26332d; }.album-viewer h2 { margin:0 0 18px; color:#fffdf7; font-family:Georgia, serif; font-size:22px; }.album-viewer dl { margin:0 0 24px; }.album-viewer dt { margin-top:10px; color:#d2ddd4; font-size:12px; }.album-viewer dd { margin:2px 0 0; color:#fffdf7; }
    .album-viewer-mobile-date, .album-viewer-menu, .album-viewer-menu-button { display:none; }.album-viewer-close, .album-viewer-arrow { position:absolute; display:grid; place-items:center; width:38px; height:38px; border:0; border-radius:50%; background:rgb(0 0 0 / .64); color:#fff; font-size:24px; cursor:pointer; }.album-viewer-close { top:-12px; right:-12px; }.album-viewer-arrow { top:calc(50% - 19px); }.album-viewer-previous { left:-48px; }.album-viewer-next { right:-48px; }
+   /* Album tree: breadcrumbs, sub-album cards, the "this album / everything below" switch. */
+   .album-breadcrumbs { display:flex; flex-wrap:wrap; gap:4px; margin-bottom:4px; }
+   .album-breadcrumbs .album-back + .album-back::before { content:"/"; margin-right:4px; color:var(--muted); }
+   .album-actions { flex-wrap:wrap; justify-content:flex-end; }
+   .album-actions .btn-link, .album-actions .btn-link-danger { font-size:13px; }.album-actions summary.btn-link { cursor:pointer; }
+   .album-menu { position:relative; }.album-menu > summary { list-style:none; }.album-menu > summary::-webkit-details-marker { display:none; }
+   .album-menu > summary::after { content:" ▾"; font-size:11px; }
+   .album-menu-panel { position:absolute; z-index:20; top:calc(100% + 6px); right:0; display:grid !important; gap:8px; width:max-content; min-width:200px; max-width:min(320px, calc(100vw - 32px)); padding:12px; border:1px solid var(--border); border-radius:8px; background:var(--surface); box-shadow:0 12px 28px rgb(0 0 0 / .16); }
+   .album-menu-panel p, .album-menu-panel label { margin:0; color:var(--muted); font-size:13px; }
+   .album-menu-panel .btn-link { justify-self:start; }
+   .album-lock-status { justify-content:flex-start; margin:-14px 0 20px; }.album-lock-status a { color:inherit; }
+   .album-lock-note { color:var(--muted); font-size:13px; }
+   .album-download-notice p { margin:0; }
+   .album-children { margin-bottom:24px; }.album-children h2 { margin:0 0 10px; font-size:16px; }
+   .album-card.has-cover { grid-template-columns:56px 1fr; padding:10px; }
+   .album-card-cover { grid-row:span 2; width:56px; height:56px; border-radius:6px; object-fit:cover; background:var(--surface-2); }
+   .album-new-card { grid-template-columns:1fr auto; align-content:center; border:1px dashed var(--border); }
+   .album-new-card label { grid-column:span 2; color:var(--muted); font-size:12px; }
+   .album-new-card input { min-width:0; }.album-new-card button { border:0; background:none; padding:0 0 0 6px; color:var(--brass); cursor:pointer; font:inherit; }
+   .album-new-card:hover { background:var(--surface); }
+   .album-scope { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 18px; }
+   .album-scope a { padding:5px 11px; border:1px solid var(--border); border-radius:999px; color:var(--muted); font-size:13px; text-decoration:none; }
+   .album-scope a[aria-current] { border-color:var(--brass); color:var(--ink); background:var(--surface-2); }
+   /* Paging: sentinels are where the next page arrives. overflow-anchor is off because the script
+      keeps the reader's place itself, and the browser doing it as well would move them twice. */
+   .album-media-grid { overflow-anchor:none; }
+   .album-page-sentinel { grid-column:1 / -1; height:1px; }
+   .album-page-sentinel.is-loading { height:48px; background:linear-gradient(90deg, transparent, var(--surface-2), transparent); background-size:200% 100%; animation:album-loading 1.2s linear infinite; }
+   @keyframes album-loading { from { background-position:200% 0; } to { background-position:-200% 0; } }
+   /* Selection mode */
+   .album-media-item { position:relative; }
+   .album-select { position:absolute; z-index:2; top:6px; right:6px; display:grid; place-items:center; width:26px; height:26px; border-radius:50%; background:rgb(255 255 255 / .9); box-shadow:0 1px 4px rgb(0 0 0 / .3); cursor:pointer; }
+   .album-select input { width:16px; height:16px; margin:0; accent-color:var(--brass); cursor:pointer; }
+   .album-media-grid.is-selecting .album-video-mark { display:none; }
+   .album-media-item.is-selected .album-media-tile { outline:3px solid var(--brass); outline-offset:-3px; }
+   .album-media-item.is-selected .album-media-tile img { filter:brightness(.8); }
+   .album-selection-bar { position:sticky; z-index:15; top:8px; display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; margin:0 0 14px; padding:10px 14px; border:1px solid var(--border); border-radius:8px; background:var(--surface); box-shadow:0 8px 20px rgb(0 0 0 / .1); }
+   .album-selection-bar[hidden] { display:none; }
+   .album-selection-bar button { border:0; background:none; padding:0; color:var(--brass); cursor:pointer; font:inherit; }
+   .album-selection-bar button.btn-link-danger { color:var(--neg); }
+   .album-selection-bar button:disabled { color:var(--muted); cursor:not-allowed; }
+   .album-selection-count { font-weight:650; }
+   .album-selection-download { display:flex; align-items:center; gap:8px; }.album-selection-download select { min-height:30px; }
+   /* Timeline */
+   .album-timeline-years { position:sticky; z-index:14; top:0; display:flex; gap:6px; margin:0 0 16px; padding:8px 0; overflow-x:auto; background:var(--surface); scrollbar-width:none; }
+   .album-timeline-years a { flex:none; padding:4px 10px; border-radius:999px; color:var(--muted); font-size:13px; text-decoration:none; }
+   .album-timeline-years a[aria-current] { color:#fff; background:var(--brass); }
+   /* Downloads, import results, viewer extras */
+   .album-download-list { display:grid; gap:10px; margin:0; padding:0; list-style:none; }
+   .album-download-list li { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; }
+   .album-import-tree { margin:8px 0; padding:0; list-style:none; }
+   .album-import-tree li { padding-left:calc(var(--depth, 0) * 18px); }
+   .album-viewer-views { margin:0 0 16px; color:#d2ddd4; font-size:13px; }.album-viewer-views:empty { display:none; }
+   .album-viewer dd a, .album-viewer-menu dd a { color:#f3d58f; }
+   .album-upload-notes { margin:8px 0 0; padding-left:20px; color:var(--neg); font-size:13px; }.album-upload-notes:empty { display:none; }
+   .album-form-error { color:var(--neg); font-size:13px; }
    @media (max-width:720px) { .album-heading { align-items:start; flex-direction:column; }.album-upload-dialog { width:calc(100vw - 24px); }.album-upload > input { min-height:38px; }.album-media-grid { grid-template-columns:repeat(auto-fill, minmax(110px, 1fr)); }.album-viewer { width:100vw; height:100dvh; max-height:none; margin:0; border-radius:0; background:#111; }.album-viewer[open] { grid-template-columns:1fr; grid-template-rows:minmax(0, 1fr) auto; overflow:hidden; }.album-viewer-stage { height:auto; padding:58px 16px 16px; touch-action:pan-y; }.album-viewer-stage img { max-height:none; }.album-viewer aside { padding:12px 62px 14px 16px; overflow:visible; background:#111; }.album-viewer aside .album-eyebrow, .album-viewer aside dl, .album-viewer aside > .btn, .album-viewer aside form, .album-viewer-arrow { display:none; }.album-viewer h2 { margin:0; font-size:17px; }.album-viewer-mobile-date { display:block; margin:3px 0 0; color:#d2ddd4; font-size:13px; }.album-viewer-close { top:10px; right:10px; z-index:2; }.album-viewer-menu-button { position:absolute; z-index:2; top:10px; right:56px; display:grid; place-items:center; width:38px; height:38px; padding:0; border:0; border-radius:50%; background:rgb(0 0 0 / .64); color:#fff; font-size:25px; line-height:1; cursor:pointer; }.album-viewer-menu { position:absolute; z-index:3; top:56px; right:10px; display:block; width:min(300px, calc(100vw - 20px)); max-height:calc(100dvh - 130px); padding:16px; overflow:auto; box-sizing:border-box; border-radius:6px; color:#fffdf7; background:#26332d; box-shadow:0 12px 32px rgb(0 0 0 / .42); }.album-viewer-menu[hidden] { display:none; }.album-viewer-menu dl { margin:0 0 18px; }.album-viewer-menu dt { margin-top:10px; color:#d2ddd4; font-size:12px; }.album-viewer-menu dd { margin:2px 0 0; }.album-viewer-menu form { margin-top:12px; } }
 
   /* The checkbox sits on the picture rather than beside it. Hidden until there is a reason to show
