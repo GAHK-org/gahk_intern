@@ -127,7 +127,9 @@ def download_album(request: HttpRequest, pk: int) -> HttpResponseBase:
     if in_flight is not None:
         messages.info(request, "Din download er allerede ved at blive klargjort.")
         return redirect("photo_album:detail", pk=album.pk)
-    download = AlbumDownload.objects.create(album=album, requested_by=resident, media_ids=media_ids)
+    download = AlbumDownload.objects.create(
+        album=album, name=album.name, requested_by=resident, media_ids=media_ids
+    )
     from .tasks import build_album_download
 
     def enqueue() -> None:
