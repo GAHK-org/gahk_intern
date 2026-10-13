@@ -12,7 +12,7 @@ directory passes it the least recently served files go first. A key whose row is
 served again (serve_media looks the row up before it asks here), and simply ages out.
 
 Off unless PHOTO_ALBUM_CACHE_DIR is set; production points it at a volume (docker-compose.prod.yml)
-so a redeploy starts warm. Every failure here falls back to the redirect rather than failing the
+so a redeploy starts warm, and the dev servers set it too (docker-compose.yml, Taskfile.yml). Every failure here falls back to the redirect rather than failing the
 request: the cache is an optimisation, never the only way to a picture.
 """
 

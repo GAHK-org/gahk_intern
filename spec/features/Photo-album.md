@@ -23,7 +23,7 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 ### Local cache
 
 - When `PHOTO_ALBUM_CACHE_DIR` is set, thumbnails and image high-definition variants are copied to local disk on first request and served from there afterwards (`Cache-Control: private, max-age=86400`), after the same visibility check as any other request. Originals and video high-definition variants are never cached; they redirect to object storage, which supports range requests.
-- The cache is bounded (`PHOTO_ALBUM_CACHE_THUMBNAIL_MB`, default 2048; `PHOTO_ALBUM_CACHE_HD_MB`, default 3072) and evicts least-recently-used files in the background. A failed copy falls back to the storage redirect. In production it lives on the `photo-album-cache` volume so it survives redeploys.
+- The cache is bounded (`PHOTO_ALBUM_CACHE_THUMBNAIL_MB`, default 2048; `PHOTO_ALBUM_CACHE_HD_MB`, default 3072) and evicts least-recently-used files in the background. A failed copy falls back to the storage redirect. In production it lives on the `photo-album-cache` volume so it survives redeploys. Local development has it on too (`task dev`: the same volume on `web`; `task dev:local`/`debug`: `app/cache/`), so it serves pictures as production does; the test suite leaves it off.
 
 ## Accepted files
 
