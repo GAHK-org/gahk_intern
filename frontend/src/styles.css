@@ -1981,6 +1981,29 @@
    .album-timeline-years { position:sticky; z-index:14; top:0; display:flex; gap:6px; margin:0 0 16px; padding:8px 0; overflow-x:auto; background:var(--surface); scrollbar-width:none; }
    .album-timeline-years a { flex:none; padding:4px 10px; border-radius:999px; color:var(--muted); font-size:13px; text-decoration:none; }
    .album-timeline-years a[aria-current] { color:#fff; background:var(--brass); }
+   .album-month-ruler { grid-column:1 / -1; display:flex; align-items:center; gap:12px; margin:22px 0 2px; color:var(--ink); font-family:Georgia, serif; font-size:19px; }
+   .album-month-ruler::after { content:""; flex:1; height:2px; border-radius:1px; background:linear-gradient(to right, var(--brass), var(--border) 60%); }
+   .album-month-ruler:first-child, .album-page-sentinel + .album-month-ruler { margin-top:0; }
+   /* The time rail (photo-album.ts, timeRail) sits in a lane kept free beside the timeline; on a
+      phone there is no room for a lane, so it shrinks to a line and a dot at the screen's edge. */
+   .album-timeline { padding-right:64px; }
+   .album-time-rail { position:fixed; z-index:15; top:72px; bottom:36px; right:24px; width:3px; border-radius:2px; background:var(--border); }
+   .album-time-rail a { position:absolute; right:12px; translate:0 -50%; padding:1px 6px; border-radius:999px; color:var(--muted); background:var(--surface); font-size:11px; font-weight:600; text-decoration:none; }
+   .album-time-rail a::after { content:""; position:absolute; top:50%; right:-12px; width:9px; height:1px; background:var(--faint); }
+   .album-time-rail a:hover { color:var(--ink); }
+   .album-time-rail-thumb { position:absolute; left:50%; display:none; width:15px; height:15px; box-sizing:border-box; translate:-50% -50%;
+      border:3px solid var(--surface); border-radius:50%; background:var(--brass); box-shadow:0 1px 5px rgb(0 0 0 / .3); transition:top .25s ease; }
+   .album-time-rail.is-placed .album-time-rail-thumb { display:block; }
+   .album-time-rail-thumb span { position:absolute; top:50%; right:24px; translate:0 -50%; padding:5px 12px; border-radius:999px; color:#fffdf7; background:var(--ink);
+      font-size:13px; font-weight:700; white-space:nowrap; box-shadow:var(--shadow); opacity:0; transition:opacity .2s; pointer-events:none; }
+   .album-time-rail.is-scrolling .album-time-rail-thumb span, .album-time-rail:hover .album-time-rail-thumb span { opacity:1; }
+   @media (max-width:720px) {
+     .album-timeline { padding-right:0; }
+     .album-time-rail { right:3px; top:24px; bottom:24px; background:rgb(0 0 0 / .12); }
+     .album-time-rail a { display:none; }
+     .album-time-rail-thumb { width:13px; height:13px; border-width:2px; }
+     .album-month-ruler { margin-top:16px; font-size:17px; }
+   }
    /* Tags: chips linking to the timeline filtered on them; an album's inherited ones are dashed. */
    .album-tags, .album-tag-filter { display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; margin:0 0 20px; }
    .album-heading + .album-tags { margin-top:-14px; }
