@@ -4,21 +4,21 @@
 <section class="album-index">
 	<header class="album-heading">
 		<div><p class="album-eyebrow">GAHKs fælles minder</p><h1>Fotoalbum</h1></div>
-		{% if can_create %}<div class="album-actions"><a class="btn" href="{% url 'photo_album:create_album' %}">Opret album</a><a class="btn btn-secondary" href="{% url 'photo_album:import_zip' %}">Importer</a></div>{% endif %}
+		<div class="album-actions">
+			<a class="btn-link" href="{% url 'photo_album:timeline' %}">Tidslinje</a>
+			<a class="btn-link" href="{% url 'photo_album:downloads' %}">Mine downloads</a>
+			{% if can_view_all_bins %}<a class="btn-link" href="{% url 'photo_album:bin' %}">Papirkurv</a>{% endif %}
+			{% if can_create %}<a class="btn" href="{% url 'photo_album:create_album' %}">Opret album</a><a class="btn btn-secondary" href="{% url 'photo_album:import_zip' %}">Importer</a>{% endif %}
+		</div>
 	</header>
+	{% if folder %}<p><a class="album-back" href="{% url 'photo_album:index' %}">Alle mapper</a></p>{% endif %}
 	{% regroup albums by folder as folders %}
 	<div class="album-folders">
 		{% for folder in folders %}
 			<section class="album-folder" aria-labelledby="folder-{{ forloop.counter }}">
-				<h2 id="folder-{{ forloop.counter }}"><svg aria-hidden="true"><use href="#i-folder"></use></svg>{{ folder.grouper }}</h2>
+				<h2 id="folder-{{ forloop.counter }}"><svg aria-hidden="true"><use href="#i-folder"></use></svg><a href="{% url 'photo_album:index' %}?folder={{ folder.grouper|urlencode }}">{{ folder.grouper }}</a></h2>
 				<div class="album-folder-grid">
-					{% for album in folder.list %}
-						<a class="album-card" href="{% url 'photo_album:detail' album.pk %}">
-							<svg aria-hidden="true"><use href="#i-photo"></use></svg>
-							<span class="album-card-name">{{ album.name }}</span>
-							<span class="album-card-count">{{ album.media_count }} medier</span>
-						</a>
-					{% endfor %}
+					{% for album in folder.list %}{% include "photo_album/_album_card.html" %}{% endfor %}
 				</div>
 			</section>
 		{% empty %}

@@ -3,7 +3,7 @@ import zipfile
 from django import forms
 from django.core.exceptions import ValidationError
 
-from .models import Album
+from .models import Album, DownloadVariant, validate_album_name
 from .uploads import validate_media_upload
 
 
@@ -11,6 +11,19 @@ class AlbumForm(forms.ModelForm):
     class Meta:
         model = Album
         fields = ["folder", "name"]
+
+
+class AlbumNameForm(forms.Form):
+    """Naming a sub-album, or renaming any album — the folder comes from the tree, not the form."""
+
+    name = forms.CharField(max_length=140, label="Navn", validators=[validate_album_name])
+
+
+class DownloadForm(forms.Form):
+    variant = forms.ChoiceField(choices=DownloadVariant.choices, required=False)
+
+    def clean_variant(self) -> str:
+        return self.cleaned_data["variant"] or DownloadVariant.ORIGINAL
 
 
 class MultipleFileInput(forms.ClearableFileInput):

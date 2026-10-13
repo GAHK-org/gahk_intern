@@ -12,7 +12,8 @@
 		<section class="album-import-progress" data-album-import-progress hidden aria-live="polite"><progress value="0" max="100" data-album-import-progress-bar></progress><p data-album-import-progress-label></p></section>
 	</form>
 	{% if job %}<section class="album-import-progress card"{% if job.state == 'queued' or job.state == 'building' %} data-album-import-job data-status-url="{% url 'photo_album:import_zip_status' job.token %}" data-result-url="{% url 'photo_album:import_zip' %}?job={{ job.token }}"{% endif %} aria-live="polite"><progress{% if job.state == 'ready' or job.state == 'failed' %} value="100"{% endif %} data-album-import-progress-bar></progress><p data-album-import-progress-label>{% if job.state == 'failed' %}Importen mislykkedes: {{ job.error }}{% elif job.state == 'ready' %}Importen er klar.{% else %}ZIP-filen er uploadet. Serveren importerer nu filerne …{% endif %}</p></section>{% endif %}
-	{% if albums %}<section class="album-import-result"><h2>Oprettede albummer</h2><ul>{% for album in albums %}<li><a href="{% url 'photo_album:detail' album.pk %}">{{ album.name }}</a></li>{% endfor %}</ul></section>{% endif %}
-	{% if skipped %}<section class="album-import-result album-import-skipped"><h2>Ikke tilføjede filer</h2><ul>{% for item in skipped %}<li>{{ item }}</li>{% endfor %}</ul></section>{% endif %}
+	{% if errors %}<section class="album-import-result album-import-skipped"><h2>Derfor blev ZIP-filen afvist</h2><p>Ret disse fejl og importer filen igen. Intet fra den er gemt.</p><ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></section>{% endif %}
+	{% if albums %}<section class="album-import-result"><h2>Oprettede albummer</h2><ul class="album-import-tree">{% for album in albums %}<li style="--depth: {{ album.depth }}"><a href="{% url 'photo_album:detail' album.pk %}">{{ album.name }}</a></li>{% endfor %}</ul></section>{% endif %}
+	{% if skipped %}<section class="album-import-result album-import-skipped"><h2>Sprunget over</h2><ul>{% for item in skipped %}<li>{{ item }}</li>{% endfor %}</ul></section>{% endif %}
 </section>
 {% endblock %}
