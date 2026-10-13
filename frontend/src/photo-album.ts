@@ -451,10 +451,22 @@ const setupSelection = (gallery: HTMLElement): { isSelecting: () => boolean; pre
 
 // --- Year highlighting on the timeline ---------------------------------------------------------
 
+/** Scroll the year strip sideways so `link` is in view — and nothing else. NOT scrollIntoView: that
+ * scrolls every ancestor, the page included, and for an element inside the sticky year bar Chromium
+ * aims at where the bar sits when it is not stuck. Called on every scroll frame, it dragged the page
+ * straight back there, so the timeline could not be scrolled at all. */
+const revealInStrip = (strip: HTMLElement, link: HTMLElement): void => {
+  const bounds = strip.getBoundingClientRect()
+  const box = link.getBoundingClientRect()
+  if (box.left < bounds.left) strip.scrollLeft -= bounds.left - box.left
+  else if (box.right > bounds.right) strip.scrollLeft += box.right - bounds.right
+}
+
 const setupYears = (gallery: HTMLElement): void => {
   const years = document.querySelector<HTMLElement>("[data-album-years]")
   if (!years) return
   let scheduled = false
+  let shown = ""
   const update = (): void => {
     scheduled = false
     // The first row clear of the sticky year bar, not one scrolled up behind it.
@@ -463,12 +475,14 @@ const setupYears = (gallery: HTMLElement): void => {
       (tile) => tile.getBoundingClientRect().bottom > below,
     )
     const year = visible?.dataset.year
-    if (!year) return
+    if (!year || year === shown) return
+    shown = year
     years.querySelectorAll<HTMLAnchorElement>("a").forEach((link) => {
       if (link.dataset.yearLink === year) link.setAttribute("aria-current", "true")
       else link.removeAttribute("aria-current")
     })
-    years.querySelector<HTMLElement>(`[data-year-link="${year}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" })
+    const link = years.querySelector<HTMLElement>(`[data-year-link="${year}"]`)
+    if (link) revealInStrip(years, link)
   }
   window.addEventListener("scroll", () => {
     if (scheduled) return
