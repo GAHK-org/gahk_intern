@@ -53,6 +53,34 @@ def test_password_reset_is_case_insensitive(make_resident: Callable) -> None:
 
 
 @pytest.mark.django_db
+def test_reset_reaches_a_resident_who_never_set_a_password() -> None:
+    """A newly created resident has no usable password until they follow the welcome link, which is a
+    reset token and expires after 2h. Django's stock PasswordResetForm skips such accounts, so the
+    "glemt kodeord" fallback the welcome mail points at sent nothing at all — and the view redirects
+    to "done" regardless, so the lockout was silent. ResidentPasswordResetForm must reach them."""
+    r = Resident(email="ny@gahk.dk", first_name="Ny", last_name="Beboer")
+    r.set_unusable_password()  # exactly what the alumneliste's add_new does
+    r.save()
+    mail.outbox = []
+    resp = Client().post("/intern/admin/password-reset", {"email": "ny@gahk.dk"})
+    assert resp.status_code == 302
+    assert len(mail.outbox) == 1
+    assert mail.outbox[0].to == ["ny@gahk.dk"]
+
+
+@pytest.mark.django_db
+def test_reset_still_ignores_deactivated_residents() -> None:
+    """Widening the form to unusable passwords must not also let a moved-out resident back in:
+    is_active stays the gate."""
+    r = Resident(email="ude@gahk.dk", first_name="Ude", last_name="Flyttet", is_active=False)
+    r.set_unusable_password()
+    r.save()
+    mail.outbox = []
+    assert Client().post("/intern/admin/password-reset", {"email": "ude@gahk.dk"}).status_code == 302
+    assert mail.outbox == []  # no link for a deactivated account
+
+
+@pytest.mark.django_db
 def test_monthly_role_is_time_bound(make_resident: Callable) -> None:
     r = make_resident(roles=[Role.AK])
     y, m = active_period()
@@ -510,6 +538,39 @@ def test_is_staff_synced_with_roles(make_resident: Callable) -> None:
 
 
 @pytest.mark.django_db
+def test_administrator_has_full_admin_permissions_while_in_role(make_resident: Callable) -> None:
+    """Netvaerksgruppen (= `administrator`) gets superuser-equivalent admin rights, but only for the
+    active period — the role is never mirrored into `is_superuser`, which would outlive it.
+
+    Approval (the two-person rule) is covered in test_admin_access; here it is granted outright so
+    this test stays about the *period* half of the condition."""
+    from residents.models import AdminAccessGrant, RoleAssignment, active_period
+
+    y, m = active_period()
+    admin = make_resident(email="netvaerk@gahk.dk", roles=[Role.ADMINISTRATOR])
+    AdminAccessGrant.objects.filter(resident=admin).update(status=AdminAccessGrant.Status.APPROVED)
+    admin = Resident.objects.get(pk=admin.pk)
+    assert admin.is_superuser is False  # the flag is never set
+    assert admin.has_perm("residents.delete_resident") is True
+    assert admin.has_module_perms("oelkaelder") is True
+
+    other = make_resident(email="ak2@gahk.dk", roles=[Role.AK])
+    assert other.has_perm("residents.delete_resident") is False
+    assert other.has_module_perms("oelkaelder") is False
+
+    RoleAssignment.objects.filter(resident=admin, role=Role.ADMINISTRATOR).delete()
+    admin = Resident.objects.get(pk=admin.pk)  # fresh instance: real_roles memoises per instance
+    assert admin.has_perm("residents.delete_resident") is False
+
+    # Held last month only -> expired, even though is_staff (any period) is still True.
+    prev = (y - 1, 12) if m == 1 else (y, m - 1)
+    RoleAssignment.objects.create(resident=admin, role=Role.ADMINISTRATOR, year=prev[0], month=prev[1])
+    admin = Resident.objects.get(pk=admin.pk)
+    assert admin.is_staff is True
+    assert admin.has_perm("residents.delete_resident") is False
+
+
+@pytest.mark.django_db
 def test_dashboard_shows_shared_calendar_credentials(
     make_resident: Callable, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -544,12 +605,17 @@ def test_media_files_are_served_in_prod() -> None:
     from django.conf import settings
     from django.test import override_settings
 
-    Path(settings.MEDIA_ROOT).mkdir(parents=True, exist_ok=True)
-    f = Path(settings.MEDIA_ROOT) / "__test_serve.txt"
+    # Under the cms/ prefix on purpose. This test is about ROUTING — WhiteNoise serves only static,
+    # and DEBUG-only serving would 404 these in prod — so it uses the one prefix that is still
+    # readable without a session (core.media.PUBLIC_PREFIXES), keeping the anonymous client, which
+    # is the stronger statement about the route. The gate itself is covered in
+    # tests/test_media_storage.py, including that every other prefix now requires a login.
+    f = Path(settings.MEDIA_ROOT) / "cms" / "__test_serve.txt"
+    f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text("hello-media")
     try:
         with override_settings(DEBUG=False):  # prod-like: must still serve /media/
-            r = Client().get("/media/__test_serve.txt")
+            r = Client().get("/media/cms/__test_serve.txt")
         assert r.status_code == 200
         assert b"".join(r.streaming_content) == b"hello-media"
     finally:
@@ -653,12 +719,17 @@ def test_frontpage_counter_hashes_and_dedups() -> None:
 
 @pytest.mark.django_db
 def test_events_news_page_and_forside_teaser() -> None:
-    from datetime import date, timedelta
+    from datetime import timedelta
 
     from cms.models import Event, NewsItem
 
-    Event.objects.create(title="Mathildefest", starts_on=date.today() + timedelta(days=14))
-    Event.objects.create(title="Gammel skovtur", starts_on=date.today() - timedelta(days=400))
+    # localdate(), not date.today(): the views split upcoming from past on `timezone.localdate()`,
+    # and a test that builds its data on the system clock instead is asking a different question
+    # than the code answers. They agree in Europe/Copenhagen, so this has never been a live bug —
+    # but it is the difference between a fixture that tracks the code's clock and one that drifts.
+    today = timezone.localdate()
+    Event.objects.create(title="Mathildefest", starts_on=today + timedelta(days=14))
+    Event.objects.create(title="Gammel skovtur", starts_on=today - timedelta(days=400))
     NewsItem.objects.create(title="Åbent hus", body="<p>Kom forbi</p>", published_at=timezone.now())
     c = Client()
 

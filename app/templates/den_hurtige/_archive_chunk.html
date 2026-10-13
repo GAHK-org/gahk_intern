@@ -1,0 +1,90 @@
+{% comment %}
+  One chunk of the archive, oldest message first, ending in the sentinel that fetches the chunk
+  BEFORE it. Rendered by views.archive for htmx, and by archive.html for the no-JS page.
+
+  PREPENDED, NEVER APPENDED. The sentinel sits at the TOP of the feed's scroll region and replaces
+  itself with this (hx-swap="outerHTML"), so what lands here goes above everything already on
+  screen: first the next sentinel, then this chunk's messages, then the messages that were there
+  before. That ordering is what keeps the whole column reading downwards into the live feed.
+
+  It also means the reader's scroll position has to be corrected for the height that just arrived
+  above the viewport, or the conversation jumps under their thumb. frontend/src/feed.ts does that
+  on htmx:afterSwap — Safari has no scroll anchoring, so it cannot be left to the browser.
+
+  Self-contained on purpose: this is inserted into a live page, so anything it needs must be in
+  here. Nothing outside it is re-rendered.
+{% endcomment %}
+{% comment %}
+  `paged` is set by the standalone page, which walks the chunks with plain links below the messages
+  instead. Without it the sentinel would fire there too and the page would have two ways of asking
+  for the same chunk — one of them invisible.
+{% endcomment %}
+{% if older_than and not paged %}
+  {% comment %}
+    The next sentinel, carrying the cursor to the chunk before this one. `revealed` fires when it
+    scrolls into view, which — sitting at the very top of what has been loaded — means "the reader
+    has got to the top and is still going". outerHTML, so it is consumed by the chunk it fetches
+    and the scroll simply ends when a chunk comes back without one.
+
+    NO hx-target, deliberately. hx-target inherits in htmx, and the feed above declares none for
+    exactly this reason (see feed.html); left alone it defaults to itself, which is what a
+    self-replacing sentinel wants.
+
+    NOT `revealed`, WHICH DOES NOT WORK HERE. htmx implements `revealed` with a scroll listener on
+    the window plus a "is it in the viewport" test, and scroll events do not reach the window from
+    an inner overflow container — #js-feed is the thing that scrolls, not the document. The symptom
+    is the worst kind: it fires once on load (the initial check) and then never again, so the
+    archive looks like it works and simply stops after one chunk. `intersect` uses an
+    IntersectionObserver instead, and `root:#js-feed` points it at the box that actually moves.
+
+    `once` because this element is consumed by the swap anyway; it stops a second observation
+    firing a duplicate request while the first is still in flight.
+  {% endcomment %}
+  <div class="archive-more"
+       hx-get="{% url 'den_hurtige:archive' %}?kanal={{ channel.slug }}&amp;inden={{ older_than|urlencode }}"
+       hx-trigger="intersect once root:#js-feed"
+       hx-swap="outerHTML">
+    <span class="muted">Henter ældre beskeder…</span>
+    {% comment %}
+      Without JavaScript the sentinel never fires, so the archive would stop at its first chunk with
+      nothing to press. The standalone page is the paged version of the same thing.
+    {% endcomment %}
+    <noscript>
+      <a href="{% url 'den_hurtige:archive' %}?kanal={{ channel.slug }}&amp;inden={{ older_than|urlencode }}">Ældre beskeder</a>
+    </noscript>
+  </div>
+{% elif not older_than and days %}
+  {% comment %}
+    The far end. Rendered instead of a sentinel so the scroll stops with something that says why,
+    rather than simply running out — and so nothing is left on the page still asking for more. It
+    shows on the paged page too, where it is the same statement: there is nothing before this.
+  {% endcomment %}
+  <p class="archive-start muted">Her begynder {{ channel.name }}.</p>
+{% endif %}
+
+{% for day in days %}
+  {% comment %}
+    EACH DAY IS WRAPPED, AND THE WRAPPER IS WHAT MAKES THE STICKY HEADING STOP.
+
+    A `position:sticky` element stays stuck until its CONTAINING BLOCK has scrolled past. With the
+    headings as flat siblings of everything else in #js-feed, that containing block was the entire
+    scroll region — so the last date chip unstuck at nothing, rode the whole way down and ended up
+    hovering over the LIVE messages at the bottom of the feed, labelling today's conversation with
+    a date from the archive. Giving each day its own box confines the chip to its own messages,
+    which is all "sticky" was ever meant to mean here.
+
+    A plain <section> with no styling of its own: the messages inside must keep behaving exactly as
+    they do in the live feed, since they are drawn by the same partial.
+  {% endcomment %}
+  <section class="archive-dayblock">
+    {% comment %}
+      The label is built server-side (views._archive_label) because "i dag" and "i går" are not
+      something a date filter can produce.
+    {% endcomment %}
+    <h3 class="archive-day">{{ day.label }}</h3>
+    {% for post in day.posts %}
+      {# The "N svar" link inside opens the ordinary thread panel, read-only. See _message.html. #}
+      {% include "den_hurtige/_message.html" with post=post archived=1 %}
+    {% endfor %}
+  </section>
+{% endfor %}

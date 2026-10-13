@@ -27,7 +27,7 @@ than accidental.** They divide like this, and each model's docstring says so:
 Announce on opslagstavlen; sign up here. Doing both is fine.
 
 **What it is not:** Den Hurtige (minutes to hours, hard-deleted on expiry) or opslagstavlen (weeks
-to years, ~2-year retention). The dividing question is whether the thing has *state* — a list that
+to forever — the board is the kollegium's archive). The dividing question is whether the thing has *state* — a list that
 fills up, a deadline that closes it, an audience that may be a subset of the house. A noticeboard
 post with a date column cannot express "fuldt".
 

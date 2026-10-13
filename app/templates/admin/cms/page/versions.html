@@ -1,0 +1,100 @@
+{% extends "admin/base_site.html" %}
+{% comment %}
+A page's change history, with a diff and a restore button per version.
+
+Every value below is rendered ESCAPED — no |safe anywhere. Showing the body HTML *as text* is the
+entire point of a diff, and this project sanitizes that HTML on the way in precisely so nobody has
+to trust it. Styling uses admin's own classes plus inline colours: Django admin does not load the
+project's Vite bundle, so there is no Tailwind here.
+{% endcomment %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block breadcrumbs %}
+  <div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">Forside</a>
+    &rsaquo; <a href="{% url 'admin:app_list' app_label='cms' %}">CMS</a>
+    &rsaquo; <a href="{% url 'admin:cms_page_changelist' %}">Sider</a>
+    &rsaquo; <a href="{% url 'admin:cms_page_change' cms_page.pk %}">{{ cms_page.header }}</a>
+    &rsaquo; Historik
+  </div>
+{% endblock %}
+
+{% block content %}
+  {# No <h1> here: admin's base_site already renders `title` as the heading. #}
+  <p class="help">
+    Der tages en kopi, hver gang siden gemmes. “Gendan” sætter indholdet tilbage til den valgte
+    version og gemmer samtidig en kopi af det nuværende indhold, så du også kan fortryde en
+    gendannelse. Der bliver aldrig slettet noget i historikken.
+  </p>
+
+  {% if not entries %}
+    <div class="module" style="padding:12px 14px">
+      <p>Der er ingen gemte versioner endnu. Den første kopi tages, næste gang siden gemmes.</p>
+    </div>
+  {% endif %}
+
+  {% for entry in entries %}
+    <div class="module" style="margin-bottom:18px">
+      <h2 style="display:flex;flex-wrap:wrap;gap:8px;align-items:baseline">
+        <span>{{ entry.version.created_at|date:"j. F Y \k\l. H:i" }}</span>
+        <span style="font-weight:400">
+          — {% if entry.version.created_by %}{{ entry.version.created_by.get_full_name|default:entry.version.created_by }}{% else %}(ukendt){% endif %}
+        </span>
+        {% if entry.is_current %}
+          <span style="font-weight:600;color:#2b6b2b">· nuværende version</span>
+        {% endif %}
+      </h2>
+
+      <div style="padding:10px 14px">
+        {% if entry.version.note %}
+          <p class="help" style="margin-top:0">{{ entry.version.note }}</p>
+        {% endif %}
+
+        {% if entry.is_oldest %}
+          <p class="help">Ældste gemte version — der er ikke noget tidligere at sammenligne med.</p>
+        {% elif not entry.changes and not entry.body_diff %}
+          <p class="help">Gemt uden ændringer i indholdet.</p>
+        {% endif %}
+
+        {% if entry.changes %}
+          <table style="margin-bottom:10px">
+            <thead>
+              <tr><th>Felt</th><th>Før</th><th>Efter</th></tr>
+            </thead>
+            <tbody>
+              {% for change in entry.changes %}
+                <tr>
+                  <th scope="row">{{ change.label }}</th>
+                  <td><code style="color:#ba2121">{{ change.before }}</code></td>
+                  <td><code style="color:#2b6b2b">{{ change.after }}</code></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+
+        {% if entry.body_diff %}
+          <details>
+            <summary style="cursor:pointer">Vis ændringer i indholdet</summary>
+            <pre style="overflow-x:auto;margin:8px 0 0;padding:8px;background:#f8f8f8;border:1px solid #ddd;line-height:1.5">{% for kind, text in entry.body_diff %}{% if kind == "add" %}<span style="background:#e3f7e3;color:#1c5c1c;display:block">+ {{ text }}</span>{% elif kind == "del" %}<span style="background:#fde9e9;color:#8c1c1c;display:block">- {{ text }}</span>{% elif kind == "sep" %}<span style="color:#888;display:block">{{ text }}</span>{% else %}<span style="color:#555;display:block">  {{ text }}</span>{% endif %}{% endfor %}</pre>
+          </details>
+        {% endif %}
+
+        {% if not entry.is_current %}
+          <form method="post"
+                action="{% url 'admin:cms_page_restore' cms_page.pk entry.version.pk %}"
+                style="margin-top:12px">
+            {% csrf_token %}
+            <button type="submit" class="default"
+                    onclick="return confirm('Gendan siden til denne version? Det nuværende indhold gemmes som en ny version, så du kan fortryde.')">
+              Gendan denne version
+            </button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+  {% endfor %}
+
+  <p><a href="{% url 'admin:cms_page_change' cms_page.pk %}">&laquo; Tilbage til siden</a></p>
+{% endblock %}

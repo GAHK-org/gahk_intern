@@ -137,14 +137,22 @@ def test_an_oversized_image_is_refused(
 # --- lifecycle and the background picker ----------------------------------------------------------
 
 
-def test_the_file_is_deleted_with_the_row(client: Client, editor: Resident, media_tmp: Path) -> None:
+def test_the_file_is_deleted_with_the_row(
+    client: Client,
+    editor: Resident,
+    media_tmp: Path,
+    django_capture_on_commit_callbacks: Callable,
+) -> None:
     """Django has not removed FileField files on delete since 1.3, and an orphan here is invisible:
     nothing lists it and nothing cleans it up."""
     image = CmsImage.objects.create(file=png())
     stored = media_tmp / image.file.name
     assert stored.is_file()
 
-    image.delete()
+    # The file delete is deferred to commit (core.files) so a rolled-back transaction cannot
+    # leave the row alive with its bytes gone.
+    with django_capture_on_commit_callbacks(execute=True):
+        image.delete()
 
     assert not stored.exists()
 

@@ -25,6 +25,9 @@ class Role(models.TextChoices):
     OELKAELDER = "oelkaelder", "Ølkælderen"
     REGNSKAB = "regnskab", "Regnskab"
     PR = "pr", "PR"  # frontpage/CMS content editors (F-006)
+    REPPER = "repper", "Reppergruppen"  # repair-crew: manages the Reparationer board
+    VICEVAERT = "vicevaert", "Viceværterne"  # triages Reparationer before handing it to Repper
+    FOTO = "foto", "Fotogruppen"  # curates the photo album: approves, bins, locks (photo_album.access)
     ADMINISTRATOR = "administrator", "Administrator"
     # NOTE: legacy `editpage` is intentionally omitted — there is no runtime CMS editing (F-006/F-007).
 
@@ -40,6 +43,9 @@ WORKGROUP_ROLE = {
     "Ølkælderen": Role.OELKAELDER,
     "Regnskabsgruppen": Role.REGNSKAB,  # legacy intern_alumne_workgroup name (id 23)
     "PR-gruppen": Role.PR,  # grants CMS/frontpage editing
+    "Repperne": Role.REPPER,  # manages the Reparationer board (reparationer.views.MANAGE_ROLES)
+    "Vicevært": Role.VICEVAERT,  # triages Reparationer before handing it to Repperne
+    "Fotogruppen": Role.FOTO,  # curates the photo album (photo_album.access)
 }
 WORKGROUP_ROLE_VALUES = frozenset(WORKGROUP_ROLE.values())
 
@@ -76,6 +82,10 @@ class ResidentManager(BaseUserManager["Resident"]):
         extra.setdefault("is_superuser", True)
         extra.setdefault("is_active", True)
         return self.create_user(email, password, **extra)
+
+
+# Attribute `_has_admin_role` memoises its grant lookup under, on the request's user instance.
+_ADMIN_GRANT_MEMO = "_gahk_admin_grant"
 
 
 class Resident(AbstractBaseUser, PermissionsMixin):
@@ -125,6 +135,30 @@ class Resident(AbstractBaseUser, PermissionsMixin):
         year, month = period or active_period()
         return self.role_assignments.filter(role=role, year=year, month=month).exists()
 
+    def has_perm(self, perm: str, obj: models.Model | None = None) -> bool:
+        """Netvaerksgruppen (spelled `administrator`) gets every Django admin permission, for exactly
+        as long as they hold the role AND a second administrator has accepted the grant. Derived per
+        request rather than stored in `is_superuser`: role holding expires with the monthly period,
+        and nothing fires on that rollover."""
+        return super().has_perm(perm, obj) or self._has_admin_role()
+
+    def has_module_perms(self, app_label: str) -> bool:
+        return super().has_module_perms(app_label) or self._has_admin_role()
+
+    def _has_admin_role(self) -> bool:
+        from .permissions import has_active_role  # imported here: permissions imports this module
+
+        if not (self.is_active and has_active_role(self, Role.ADMINISTRATOR)):
+            return False
+        # Memoised per instance, like real_roles: the admin index asks once per registered model.
+        approved = getattr(self, _ADMIN_GRANT_MEMO, None)
+        if approved is None:
+            approved = AdminAccessGrant.objects.filter(
+                resident_id=self.pk, status=AdminAccessGrant.Status.APPROVED
+            ).exists()
+            setattr(self, _ADMIN_GRANT_MEMO, approved)
+        return approved
+
 
 class Residency(models.Model):
     """One row per resident per month (legacy intern_alumne_liste): which room + chore groups."""
@@ -165,6 +199,40 @@ class RoleAssignment(models.Model):
         return f"{self.resident.full_name} = {self.get_role_display()} ({self.year}-{self.month:02d})"
 
 
+class AdminAccessGrant(models.Model):
+    """One resident's accepted (or pending) Django-admin access — the two-person rule on `administrator`.
+
+    Holding the role is necessary but not sufficient: a *second* administrator must accept before
+    `Resident._has_admin_role` returns True. Both doors that mint the role (the role editor and the
+    monthly list roll-forward) are reachable by the group itself, so without this Netvaerksgruppen
+    decides its own membership. Opened and closed by residents.signals, decided in residents.admin_access.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Afventer godkendelse"
+        APPROVED = "approved", "Godkendt"
+        DENIED = "denied", "Afvist"
+
+    resident = models.OneToOneField(Resident, on_delete=models.CASCADE, related_name="admin_access")
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+    # Who granted the role, when known. The role editor stamps it; the monthly roll-forward and the
+    # ETL leave it NULL, and a NULL only means the "granter may not approve" rule has nobody to bar.
+    requested_by = models.ForeignKey(
+        Resident, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    decided_by = models.ForeignKey(
+        Resident, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.resident.full_name} — {self.get_status_display()}"
+
+
 def active_period() -> tuple[int, int]:
     """The (year, month) currently *in effect*: the most recent published residency list that has
     already started. A list indstilling is preparing for a future month does NOT become active until
@@ -190,6 +258,26 @@ def active_period() -> tuple[int, int]:
     if latest:
         return latest["year"], latest["month"]
     return today.year, today.month
+
+
+def embedsgruppe_of(resident: "Resident", period: tuple[int, int] | None = None) -> str:
+    """The Workgroup name `resident` holds in `period` (the active month by default), or "".
+
+    Read at the moment something is written, never when it is displayed: opslagstavle.models stamps
+    it onto a post and onto a comment as they are created. Embedsgrupper rotate monthly (F-010), so
+    resolving a byline against today's list would relabel every post on the board each time the
+    månedsliste is saved, and a two-year archive would spend most of its life wrong.
+
+    "" for someone with no residency that month, or one with no group — an alumnus whose posts stay
+    on the board is the ordinary case, and the template renders no pill rather than an empty one.
+    """
+    year, month = period or active_period()
+    name = (
+        Residency.objects.filter(resident=resident, year=year, month=month)
+        .values_list("workgroup__name", flat=True)
+        .first()
+    )
+    return name or ""
 
 
 def next_period(period: tuple[int, int] | None = None) -> tuple[int, int]:

@@ -91,15 +91,57 @@ the post.
 
 ## Retention
 
-`manage.py purge_notices`, nightly at 03:40 (DEPLOY.md §4b). Posts older than 2 × 365 days are
-hard-deleted **unless pinned** — a pin is Inspektionen deciding the kollegium keeps that one, which
-makes it the retention override. Comments, reactions and image rows cascade; image *files* go via the
-`post_delete` receiver on `NoticeImage`. The same command sweeps uploads that were never referenced
-by a saved post, after a day's grace.
+**There is none. Opslag are kept indefinitely.** Nothing removes a post but its author or a
+moderator (`administrator` / `inspektion`).
 
-The window was **shortened from five years to two after user testing**: a board people actually read
-does not need half a decade of history, and a shorter window is closer to the point of leaving
-Facebook. `opslagstavle.models.RETENTION_DAYS` is the single knob.
+`manage.py purge_notices`, nightly at 03:40 (DEPLOY.md §4b), still runs and still matters, but it
+now has exactly one job: sweeping uploads that were never referenced by a saved post, after a day's
+grace. The composer uploads an image *before* the post exists, so `notice_id IS NULL` is the
+abandoned-draft set; without the sweep every opened-then-closed composer leaves a file in the bucket
+forever, unreachable from any page. The command keeps its name deliberately — it is what §4b and the
+Coolify task run, and renaming it would trade an imprecise name for a live cron that fails until
+somebody edits a web UI.
+
+Deleting a post still takes its comments, reactions and image rows by CASCADE, and the image *files*
+via the `post_delete` receiver on `NoticeImage`. That property is load-bearing for any bulk removal
+and has its own test, now that the retention purge no longer exercises it.
+
+### Why the window went, having twice been argued for
+
+This reverses a decision this document previously recorded, so the reasoning belongs here rather
+than in a commit message.
+
+The window was five years, then **two after user testing**, on the grounds that "a board people
+actually read does not need half a decade of history, and a shorter window is closer to the point of
+leaving Facebook". That argument is about what a *reader* wants near the top of a board — and
+pagination and the category filter already answer it. An opslag from 2029 costs a reader nothing if
+they never page back to it.
+
+What the window did cost was the archive: værelsesrunden results, practical notices, who announced
+what, the record of dorm life the board exists to hold. That is the other half of leaving Facebook,
+and a two-year window quietly threw it away — on a schedule nobody would notice, because a post
+vanishing two years later has no reader present to miss it.
+
+**The storage argument for this change is not the real one.** Media moved to object storage
+(DEPLOY.md §4c), which removes a constraint that was never the reason for the window in the first
+place; `Notice` rows are text, and the images were always the bulk. What actually changed is the
+judgement about which half of the board matters.
+
+### What is now unbounded, and what that costs
+
+- **Rows.** At this kollegium's posting rate, a few hundred per two years. A decade is low thousands
+  of rows of text. The `(category, -created_at)` composite index carries the list query and is the
+  reason the board still paginates cheaply; it is now load-bearing rather than a nicety.
+- **Pinning is now only about prominence.** `pinned_at` used to answer three questions, one of them
+  "is it exempt from the purge" — `pinned_at__isnull=True` was literally the purge filter. That
+  question is gone. `MAX_PINNED` still caps the pinned set, because an unbounded pin list fills the
+  top of the board.
+- **Personal data.** Opslag carry a resident's name and their embedsgruppe at the time of writing,
+  and now carry them for as long as the board exists — including for people who moved out years ago.
+  That is a deliberate choice for a house record, and it is the part most worth revisiting if anyone
+  ever asks: F-001 expires applicant data after a year for exactly this reason, and a resident
+  asking for their posts to be removed is now a moderator action rather than something that happens
+  on its own. Worth deciding a policy for before somebody asks, rather than after.
 
 ## Notifications
 

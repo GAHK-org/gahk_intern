@@ -2,14 +2,14 @@
 `faciliteter/vaerelse`) for SEO. Django's own admin is moved to /django-admin/ so the legacy public-site
 admin can keep /admin later (F-002)."""
 
-from django.conf import settings
 from django.contrib import admin
 from django.urls import include, path, re_path
 from django.views.generic import RedirectView, TemplateView
-from django.views.static import serve
 
 from cms import views as cms_views
+from core.media import serve_media
 from events import views as events_views
+from photo_album.views import serve_media as serve_photo_album_media
 
 urlpatterns = [
     path("django-admin/", admin.site.urls),
@@ -26,11 +26,27 @@ urlpatterns = [
     # LoginRequiredMiddleware, a feed underneath it dies SILENTLY. Calendar clients do not report a
     # failed refresh; they just stop updating, which is the worst failure this feature can have.
     path("kalender/<str:token>.ics", events_views.calendar_feed, name="events_feed"),
-    # User-uploaded media (room-inspection photos, relocated legacy images). Served by Django in EVERY
-    # environment: WhiteNoise handles only *static*, and DEBUG-only serving would 404 these in prod.
-    # Low volume for this app; the serve view is path-traversal-safe. Files are public by URL (as the
-    # legacy /public/ images were).
-    re_path(r"^media/(?P<path>.*)$", serve, {"document_root": settings.MEDIA_ROOT}),
+    # User-uploaded media. Routed through Django in EVERY environment, and the URL space is fixed
+    # forever: MEDIA_URL is a prefix of content stored in the database (opslag Markdown bodies,
+    # cms.Page.background_image), so /media/ cannot move without a data migration — core/storage.py
+    # has the full argument and core.checks refuses to start the process if it ever does.
+    #
+    # core.media.serve_media resolves the path against whatever STORAGES["default"] is: a 302 to a
+    # presigned URL when the bytes live in object storage, a streamed FileResponse when they are on
+    # local disk (dev, CI, and prod before the migration). WhiteNoise handles only *static*, and
+    # DEBUG-only serving would 404 these in prod, so this route is unconditional.
+    #
+    # It is also where uploads are gated. /media/ used to be public by URL, as the legacy /public/
+    # images were; now only core.media.PUBLIC_PREFIXES ("cms/", the images the logged-out front page
+    # embeds) is anonymous and everything else needs a session. Note ølkælder is NOT public-site
+    # content despite the name — it lives under /intern/oelkaelder/.
+    re_path(r"^media/(?P<path>.*)$", serve_media, name="media"),
+    # photo_album's own media route (photo_album.storage.PhotoAlbumS3Storage.url() points here) —
+    # a presigned bucket URL is a bearer token good for an hour with no further check, and
+    # photo_album.access has a rule one can't enforce (a pending upload is visible only to its
+    # uploader and Fotogruppen), so this re-checks that rule on every request instead of handing the
+    # signed URL out once at render time. See photo_album.views.serve_media.
+    re_path(r"^fotoalbum-media/(?P<path>.*)$", serve_photo_album_media, name="photo_album_media"),
     # PWA service worker for Den Hurtige. Must be served from the ROOT path: a service worker's
     # default scope is its own directory, so only a root-scoped worker covers /intern/. Served via
     # TemplateView because static/ would put it under /static/ and cap its scope there.

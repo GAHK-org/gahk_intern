@@ -19,7 +19,7 @@ from core.clock import current_datetime
 from core.uploads import check_image_upload
 from residents.models import Residency, Resident, active_period
 
-from .models import MIN_INVITEES, Event, Visibility
+from .models import MIN_INVITEES, Event, EventComment, Visibility
 
 
 def invitable_residents(exclude: Resident | None = None) -> object:
@@ -241,3 +241,25 @@ class EventForm(forms.ModelForm):
                 f"Der er allerede {taken} tilmeldte. Antallet kan ikke sættes under {taken}."
             )
         return capacity
+
+
+class EventCommentForm(forms.ModelForm):
+    """One comment.
+
+    Strips the body but does not reject an empty one: a comment may be a photo on its own, and the
+    photo is validated outside this form (see views.create_comment) so a refused file can be
+    dropped with a warning instead of failing the submission. "Neither text nor picture" is the
+    view's call. A textarea full of spaces is still `is_valid()` to Django and an empty bubble to a
+    reader, which is what the strip is for.
+    """
+
+    class Meta:
+        model = EventComment
+        fields = ["body"]
+        labels = {"body": "Kommentar"}
+        widgets = {
+            "body": forms.Textarea(attrs={"rows": 3, "placeholder": "Skriv en kommentar…"}),
+        }
+
+    def clean_body(self) -> str:
+        return (self.cleaned_data.get("body") or "").strip()

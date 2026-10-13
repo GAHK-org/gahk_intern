@@ -46,6 +46,7 @@ erDiagram
         bool wants_den_hurtige
         bool wants_opslagstavle
         bool wants_begivenheder
+        bool wants_reparationer
     }
 
     residents_Resident {
@@ -88,6 +89,16 @@ erDiagram
         string role
         int year
         int month
+    }
+
+    residents_AdminAccessGrant {
+        int id PK
+        int resident_id FK
+        string status
+        int requested_by_id FK
+        int decided_by_id FK
+        datetime decided_at
+        datetime created_at
     }
 
     admissions_Application {
@@ -147,6 +158,26 @@ erDiagram
         string caption
         datetime uploaded_at
         int uploaded_by_id FK
+    }
+
+    cms_PageRedirect {
+        int id PK
+        string old_path
+        int page_id FK
+        datetime created_at
+        int created_by_id FK
+    }
+
+    cms_PageVersion {
+        int id PK
+        int page_id FK
+        string slug
+        string header
+        text body
+        string background_image
+        datetime created_at
+        int created_by_id FK
+        string note
     }
 
     ak_AkEntry {
@@ -339,6 +370,7 @@ erDiagram
         string channel
         datetime created_at
         datetime expires_at
+        datetime deleted_at
     }
 
     den_hurtige_QuickComment {
@@ -368,6 +400,7 @@ erDiagram
 
     opslagstavle_Notice {
         int id PK
+        string author_embedsgruppe
         int author_id FK
         string category
         text body
@@ -380,9 +413,11 @@ erDiagram
 
     opslagstavle_NoticeComment {
         int id PK
+        string author_embedsgruppe
         int notice_id FK
         int author_id FK
         text body
+        string image
         datetime created_at
     }
 
@@ -440,6 +475,15 @@ erDiagram
         datetime created_at
     }
 
+    events_EventComment {
+        int id PK
+        int event_id FK
+        int author_id FK
+        text body
+        string image
+        datetime created_at
+    }
+
     events_CalendarFeedToken {
         int id PK
         int resident_id FK
@@ -449,6 +493,116 @@ erDiagram
         datetime last_used_at
     }
 
+    reparationer_RepairTask {
+        int id PK
+        string title
+        text description
+        string location
+        string status
+        string responsible
+        int reported_by_id FK
+        datetime created_at
+        datetime updated_at
+        datetime archived_at
+    }
+
+    reparationer_RepairComment {
+        int id PK
+        int task_id FK
+        int author_id FK
+        text body
+        datetime created_at
+    }
+
+    arkiv_ArchiveFolder {
+        int id PK
+        int parent_id FK
+        string name
+        int workgroup_id FK
+        int effective_workgroup_id FK
+        int created_by_id FK
+        datetime created_at
+        datetime locked_at
+        datetime unlocked_until
+        datetime deleted_at
+    }
+
+    arkiv_ArchiveFile {
+        int id PK
+        int folder_id FK
+        string name
+        string sha256
+        string size
+        string content_type
+        int uploaded_by_id FK
+        datetime uploaded_at
+        datetime deleted_at
+        int deleted_by_id FK
+        bool has_thumbnail
+        bool has_preview
+    }
+
+    photo_album_Album {
+        int id PK
+        string folder
+        string name
+        datetime created_at
+        datetime manually_locked_at
+        datetime unlocked_at
+    }
+
+    photo_album_Media {
+        int id PK
+        int album_id FK
+        string title
+        string original
+        string high_definition
+        string thumbnail
+        string content_type
+        string derivative_state
+        int derivative_attempts
+        datetime derivative_started_at
+        json metadata
+        int requested_by_id FK
+        datetime added_at
+        datetime captured_at
+        string status
+        int approved_by_id FK
+        datetime approved_at
+        datetime deleted_at
+        int deleted_by_id FK
+    }
+
+    photo_album_AlbumDownload {
+        int id PK
+        int album_id FK
+        int requested_by_id FK
+        json media_ids
+        string token
+        string task_id
+        string state
+        string archive_key
+        string error
+        datetime created_at
+        datetime completed_at
+    }
+
+    photo_album_AlbumImport {
+        int id PK
+        int requested_by_id FK
+        string folder
+        string archive_name
+        string archive
+        string token
+        string task_id
+        string state
+        json album_ids
+        json skipped
+        string error
+        datetime created_at
+        datetime completed_at
+    }
+
     core_PushSubscription }o--|| residents_Resident : "user"
     residents_Resident }o--|o residents_Resident : "sponsor"
     residents_Residency }o--|| residents_Resident : "resident"
@@ -456,9 +610,16 @@ erDiagram
     residents_Residency }o--|o core_Workgroup : "workgroup"
     residents_Residency }o--|o core_Cleaning : "cleaning"
     residents_RoleAssignment }o--|| residents_Resident : "resident"
+    residents_AdminAccessGrant ||--|| residents_Resident : "resident"
+    residents_AdminAccessGrant }o--|o residents_Resident : "requested_by"
+    residents_AdminAccessGrant }o--|o residents_Resident : "decided_by"
     admissions_Application }o--|o residents_Resident : "received_by"
     admissions_Application }o--|o residents_Resident : "discarded_by"
     cms_CmsImage }o--|o residents_Resident : "uploaded_by"
+    cms_PageRedirect }o--|| cms_Page : "page"
+    cms_PageRedirect }o--|o residents_Resident : "created_by"
+    cms_PageVersion }o--|o cms_Page : "page"
+    cms_PageVersion }o--|o residents_Resident : "created_by"
     ak_AkEntry }o--|| residents_Resident : "resident"
     ak_AkEntry }o--|o residents_Resident : "created_by"
     ak_AkMonthlyCharge }o--|o residents_Resident : "updated_by"
@@ -501,7 +662,26 @@ erDiagram
     events_EventInvite }o--|o residents_Resident : "invited_by"
     events_Rsvp }o--|| events_Event : "event"
     events_Rsvp }o--|| residents_Resident : "resident"
+    events_EventComment }o--|| events_Event : "event"
+    events_EventComment }o--|| residents_Resident : "author"
     events_CalendarFeedToken ||--|| residents_Resident : "resident"
+    reparationer_RepairTask }o--|| residents_Resident : "reported_by"
+    reparationer_RepairComment }o--|| reparationer_RepairTask : "task"
+    reparationer_RepairComment }o--|| residents_Resident : "author"
+    arkiv_ArchiveFolder }o--|o arkiv_ArchiveFolder : "parent"
+    arkiv_ArchiveFolder }o--|o core_Workgroup : "workgroup"
+    arkiv_ArchiveFolder }o--|o core_Workgroup : "effective_workgroup"
+    arkiv_ArchiveFolder }o--|o residents_Resident : "created_by"
+    arkiv_ArchiveFile }o--|| arkiv_ArchiveFolder : "folder"
+    arkiv_ArchiveFile }o--|o residents_Resident : "uploaded_by"
+    arkiv_ArchiveFile }o--|o residents_Resident : "deleted_by"
+    photo_album_Media }o--|| photo_album_Album : "album"
+    photo_album_Media }o--|| residents_Resident : "requested_by"
+    photo_album_Media }o--|o residents_Resident : "approved_by"
+    photo_album_Media }o--|o residents_Resident : "deleted_by"
+    photo_album_AlbumDownload }o--|| photo_album_Album : "album"
+    photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
+    photo_album_AlbumImport }o--|| residents_Resident : "requested_by"
 ```
 
 ## admissions
@@ -573,6 +753,51 @@ erDiagram
     ak_AkMonthlyCharge }o--|o residents_Resident : "updated_by"
 ```
 
+## arkiv
+
+```mermaid
+erDiagram
+    arkiv_ArchiveFolder {
+        int id PK
+        int parent_id FK
+        string name
+        int workgroup_id FK
+        int effective_workgroup_id FK
+        int created_by_id FK
+        datetime created_at
+        datetime locked_at
+        datetime unlocked_until
+        datetime deleted_at
+    }
+
+    arkiv_ArchiveFile {
+        int id PK
+        int folder_id FK
+        string name
+        string sha256
+        string size
+        string content_type
+        int uploaded_by_id FK
+        datetime uploaded_at
+        datetime deleted_at
+        int deleted_by_id FK
+        bool has_thumbnail
+        bool has_preview
+    }
+
+    core_Workgroup { }
+
+    residents_Resident { }
+
+    arkiv_ArchiveFolder }o--|o arkiv_ArchiveFolder : "parent"
+    arkiv_ArchiveFolder }o--|o core_Workgroup : "workgroup"
+    arkiv_ArchiveFolder }o--|o core_Workgroup : "effective_workgroup"
+    arkiv_ArchiveFolder }o--|o residents_Resident : "created_by"
+    arkiv_ArchiveFile }o--|| arkiv_ArchiveFolder : "folder"
+    arkiv_ArchiveFile }o--|o residents_Resident : "uploaded_by"
+    arkiv_ArchiveFile }o--|o residents_Resident : "deleted_by"
+```
+
 ## cms
 
 ```mermaid
@@ -615,9 +840,33 @@ erDiagram
         int uploaded_by_id FK
     }
 
+    cms_PageRedirect {
+        int id PK
+        string old_path
+        int page_id FK
+        datetime created_at
+        int created_by_id FK
+    }
+
+    cms_PageVersion {
+        int id PK
+        int page_id FK
+        string slug
+        string header
+        text body
+        string background_image
+        datetime created_at
+        int created_by_id FK
+        string note
+    }
+
     residents_Resident { }
 
     cms_CmsImage }o--|o residents_Resident : "uploaded_by"
+    cms_PageRedirect }o--|| cms_Page : "page"
+    cms_PageRedirect }o--|o residents_Resident : "created_by"
+    cms_PageVersion }o--|o cms_Page : "page"
+    cms_PageVersion }o--|o residents_Resident : "created_by"
 ```
 
 ## core
@@ -663,6 +912,7 @@ erDiagram
         bool wants_den_hurtige
         bool wants_opslagstavle
         bool wants_begivenheder
+        bool wants_reparationer
     }
 
     residents_Resident { }
@@ -682,6 +932,7 @@ erDiagram
         string channel
         datetime created_at
         datetime expires_at
+        datetime deleted_at
     }
 
     den_hurtige_QuickComment {
@@ -760,6 +1011,15 @@ erDiagram
         datetime created_at
     }
 
+    events_EventComment {
+        int id PK
+        int event_id FK
+        int author_id FK
+        text body
+        string image
+        datetime created_at
+    }
+
     events_CalendarFeedToken {
         int id PK
         int resident_id FK
@@ -778,6 +1038,8 @@ erDiagram
     events_EventInvite }o--|o residents_Resident : "invited_by"
     events_Rsvp }o--|| events_Event : "event"
     events_Rsvp }o--|| residents_Resident : "resident"
+    events_EventComment }o--|| events_Event : "event"
+    events_EventComment }o--|| residents_Resident : "author"
     events_CalendarFeedToken ||--|| residents_Resident : "resident"
 ```
 
@@ -884,6 +1146,7 @@ erDiagram
 erDiagram
     opslagstavle_Notice {
         int id PK
+        string author_embedsgruppe
         int author_id FK
         string category
         text body
@@ -896,9 +1159,11 @@ erDiagram
 
     opslagstavle_NoticeComment {
         int id PK
+        string author_embedsgruppe
         int notice_id FK
         int author_id FK
         text body
+        string image
         datetime created_at
     }
 
@@ -932,6 +1197,114 @@ erDiagram
     opslagstavle_NoticeReaction }o--|| residents_Resident : "author"
     opslagstavle_NoticeImage }o--|o opslagstavle_Notice : "notice"
     opslagstavle_NoticeImage }o--|o residents_Resident : "uploaded_by"
+```
+
+## photo_album
+
+```mermaid
+erDiagram
+    photo_album_Album {
+        int id PK
+        string folder
+        string name
+        datetime created_at
+        datetime manually_locked_at
+        datetime unlocked_at
+    }
+
+    photo_album_Media {
+        int id PK
+        int album_id FK
+        string title
+        string original
+        string high_definition
+        string thumbnail
+        string content_type
+        string derivative_state
+        int derivative_attempts
+        datetime derivative_started_at
+        json metadata
+        int requested_by_id FK
+        datetime added_at
+        datetime captured_at
+        string status
+        int approved_by_id FK
+        datetime approved_at
+        datetime deleted_at
+        int deleted_by_id FK
+    }
+
+    photo_album_AlbumDownload {
+        int id PK
+        int album_id FK
+        int requested_by_id FK
+        json media_ids
+        string token
+        string task_id
+        string state
+        string archive_key
+        string error
+        datetime created_at
+        datetime completed_at
+    }
+
+    photo_album_AlbumImport {
+        int id PK
+        int requested_by_id FK
+        string folder
+        string archive_name
+        string archive
+        string token
+        string task_id
+        string state
+        json album_ids
+        json skipped
+        string error
+        datetime created_at
+        datetime completed_at
+    }
+
+    residents_Resident { }
+
+    photo_album_Media }o--|| photo_album_Album : "album"
+    photo_album_Media }o--|| residents_Resident : "requested_by"
+    photo_album_Media }o--|o residents_Resident : "approved_by"
+    photo_album_Media }o--|o residents_Resident : "deleted_by"
+    photo_album_AlbumDownload }o--|| photo_album_Album : "album"
+    photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
+    photo_album_AlbumImport }o--|| residents_Resident : "requested_by"
+```
+
+## reparationer
+
+```mermaid
+erDiagram
+    reparationer_RepairTask {
+        int id PK
+        string title
+        text description
+        string location
+        string status
+        string responsible
+        int reported_by_id FK
+        datetime created_at
+        datetime updated_at
+        datetime archived_at
+    }
+
+    reparationer_RepairComment {
+        int id PK
+        int task_id FK
+        int author_id FK
+        text body
+        datetime created_at
+    }
+
+    residents_Resident { }
+
+    reparationer_RepairTask }o--|| residents_Resident : "reported_by"
+    reparationer_RepairComment }o--|| reparationer_RepairTask : "task"
+    reparationer_RepairComment }o--|| residents_Resident : "author"
 ```
 
 ## residents
@@ -980,6 +1353,16 @@ erDiagram
         int month
     }
 
+    residents_AdminAccessGrant {
+        int id PK
+        int resident_id FK
+        string status
+        int requested_by_id FK
+        int decided_by_id FK
+        datetime decided_at
+        datetime created_at
+    }
+
     core_Cleaning { }
 
     core_Room { }
@@ -992,6 +1375,9 @@ erDiagram
     residents_Residency }o--|o core_Workgroup : "workgroup"
     residents_Residency }o--|o core_Cleaning : "cleaning"
     residents_RoleAssignment }o--|| residents_Resident : "resident"
+    residents_AdminAccessGrant ||--|| residents_Resident : "resident"
+    residents_AdminAccessGrant }o--|o residents_Resident : "requested_by"
+    residents_AdminAccessGrant }o--|o residents_Resident : "decided_by"
 ```
 
 ## rooms

@@ -10,7 +10,10 @@
         <span class="avatar" style="width:64px;height:64px;font-size:1.5rem">{{ subject.first_name|slice:":1" }}{{ subject.last_name|slice:":1" }}</span>
       {% endif %}
       <div>
-        <h1 style="margin:0">{{ subject.full_name }}</h1>
+        <h1 style="margin:0">
+          {{ subject.full_name }}
+          {% for emoji, label in badges %}<span title="{{ label }}">{{ emoji }}</span>{% endfor %}
+        </h1>
         {% if subject.study %}<p class="muted" style="margin:.25rem 0 0">{{ subject.study }}</p>{% endif %}
       </div>
     </div>

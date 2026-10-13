@@ -28,17 +28,31 @@ can put on a page.
 """
 
 import re
+from urllib.parse import unquote
 
 import nh3
 from django.conf import settings
 from django.utils.safestring import SafeString, mark_safe
 from markdown_it import MarkdownIt
+from markdown_it.token import Token
+
+from .links import shorten, title_for
 
 # The "default" preset — NOT "commonmark" or "gfm-like", both of which set html=True to be
 # spec-compliant. `default` gives tables and strikethrough, which the værelsesrunde results post
 # needs, and leaves raw HTML off. The explicit dict is belt-and-braces: it survives someone
 # changing the preset name without re-reading this comment.
-_MD = MarkdownIt("default", {"html": False, "linkify": False, "typographer": False})
+#
+# LINKIFY IS ON, and it is the reason `markdown-it-py[linkify]` is pinned with its extra: without
+# linkify-it-py installed, `linkify: True` raises at import. It turns a bare pasted URL into a
+# link, which is how people actually write one — `[tekst](url)` is a thing you have to know, and a
+# board where the obvious way to share something produces dead text is a board people work around.
+# It changes nothing about safety: linkify only ever produces an `a` with an `href`, both of which
+# were already in the allowlist below, and nh3 still cleans the result.
+#
+# typographer stays off. It is the half of the same option pair that rewrites quotes and dashes,
+# and a post is not the place to be second-guessing what somebody typed.
+_MD = MarkdownIt("default", {"html": False, "linkify": True, "typographer": False})
 
 ALLOWED_TAGS = {
     "p",
@@ -105,6 +119,41 @@ _ANY_IMG = re.compile(r"<img[^>]*>")
 # match here is one markdown-it generated from a leading '#'.
 _H1_OPEN = re.compile(r"<h1(\s[^>]*)?>")
 _H1_CLOSE = re.compile(r"</h1>")
+
+
+def _shorten_autolinks(state: object) -> None:
+    """markdown-it core rule: show a bare URL shortened, and keep the whole of it in `title`.
+
+    Applies ONLY to links the author did not write the text of — `markup` is "linkify" for a bare
+    URL and "autolink" for `<https://…>`, and is empty for `[tekst](url)`. That distinction is the
+    whole rule: rewriting the text of a link somebody chose the words for would be vandalism, while
+    a bare URL has no words to lose. See core.links.shorten for what is cut and why.
+
+    A rule on the token stream rather than a regex over the rendered HTML, because the tokens
+    already know which links were written and which were found — recovering that from `<a href=…>`
+    afterwards would mean comparing the text against the href and guessing.
+    """
+    for token in state.tokens:  # type: ignore[attr-defined]
+        if token.type != "inline":
+            continue
+        children: list[Token] = token.children or []
+        for index, child in enumerate(children):
+            if child.type != "link_open" or child.markup not in ("linkify", "autolink"):
+                continue
+            href = child.attrGet("href")
+            if not isinstance(href, str):
+                continue
+            # A tooltip only where one recovers something — see core.links.title_for.
+            title = title_for(href)
+            if title:
+                child.attrSet("title", title)
+            # linkify and autolink both emit exactly link_open, one text token, link_close.
+            following = children[index + 1] if index + 1 < len(children) else None
+            if following is not None and following.type == "text":
+                following.content = shorten(href)
+
+
+_MD.core.ruler.push("shorten_autolinks", _shorten_autolinks)
 
 
 def _local_images_only(tag: str, attr: str, value: str) -> str | None:
@@ -206,6 +255,18 @@ def extract_image_names(source: str) -> set[str]:
 
     Returns FileField `name` values (the MEDIA_URL prefix stripped), so callers can match with an
     indexed `file__in=` lookup instead of a `LIKE '%…%'` scan.
+
+    UNQUOTED, because a `name` is what Django stores and a URL is percent-encoded. Storage.url()
+    runs the name through `filepath_to_uri`, and `get_valid_filename` — which is what decides the
+    stored name — only replaces spaces and strips punctuation: `æøå` are Unicode word characters, so
+    they survive into the name and are then encoded in the URL. On a Danish kollegium that is not an
+    edge case, it is the default screenshot filename ("Skærmbillede 2026-09-04.png" is stored as
+    `Skærmbillede_2026-09-04.png` and serves as `Sk%C3%A6rmbillede_2026-09-04.png`).
+
+    Without the unquote the returned name matches no row, so sync_images never claims the image, the
+    row keeps `notice_id IS NULL`, and purge_notices deletes the file a day later while the post that
+    embeds it is still on the board — a broken image the author cannot fix by re-uploading, because
+    the replacement is orphaned the same way. See tests/test_markdown.py for the round trip.
     """
     prefix = settings.MEDIA_URL
-    return {src[len(prefix) :] for src in _image_srcs(source) if src.startswith(prefix)}
+    return {unquote(src[len(prefix) :]) for src in _image_srcs(source) if src.startswith(prefix)}

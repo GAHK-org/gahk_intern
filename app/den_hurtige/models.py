@@ -1,27 +1,68 @@
 """Den Hurtige - short-lived urgent messages, replacing the kollegium's Messenger group.
 
-Posts are deliberately ephemeral: they are relevant for the next 30-120 minutes and are then
-*hard-deleted* (see QuickPostQuerySet.purge_expired), which is the whole point of the feature — a
-thread that cannot accumulate off-topic history. Purging happens lazily on every feed load plus via
-`manage.py purge_quick_posts` on a schedule (DEPLOY.md §4b), so a quiet week still drains the table.
+Posts leave the feed on a timer and are then ARCHIVED, never deleted. That is a reversal: they used
+to be hard-deleted, on the argument that a thread which cannot accumulate off-topic history is the
+whole point of the feature. The feed still gets that — a message is gone from it within hours — but
+the house lost things it wanted back (who borrowed the drill, what time we agreed on), and "it is
+deleted, sorry" was the wrong answer to a question people kept asking. So the countdown on every
+bubble now means "leaves the feed", not "is destroyed".
+
+ARCHIVED IS A TIMESTAMP, NOT A FLAG. `expires_at <= now` IS the archive; there is no second field to
+write, no sweep to run, and therefore no window in which a message is expired-but-not-yet-archived
+for something to get wrong. `active()` and `archived()` are the two halves of one comparison and
+partition the table between them. Nothing has to happen on a schedule for a message to archive,
+which is why the cron job that used to drain this table is gone (DEPLOY.md §4b).
+
+What archiving COSTS, so it is not a surprise later: the table and its images now grow without
+bound. That is the deliberate choice — the archive is a record — but it is the reason
+QuickPost.image has no derivative pipeline and the reason Meta.indexes gained a third entry.
+
+THE CLOCK IS core.clock, NOT django.utils.timezone. Every comparison below reads
+`current_datetime()`, which is the real clock in production and the DEV-ONLY simulated one under
+DEBUG (core/clock.py). This used to call `timezone.now()` directly, and the consequence was that
+advancing the dev clock a month — the obvious way to see what the archive looks like with history
+in it — moved every other feature's sense of "now" and left this one in the present. The rule is
+the same one begivenheder follows: a feature that decides anything from the date asks core.clock.
+
+`created_at` is the exception, and deliberately: it is `auto_now_add`, so a message written while
+the clock is advanced is stamped with the real instant. The alternative is worse than the oddity —
+the simulated clock has a resolution of one DAY, so every message posted under it would share a
+timestamp to the microsecond, and a chat log whose messages cannot be ordered is not a log.
+
+An archived post is READ-ONLY, and that is enforced in views.py rather than here: no reply, no
+reaction, no deletion (den_hurtige.views._post_or_404 resolves writes against `active()` alone).
+A model-level guard was considered and rejected — the admin must still be able to remove something
+genuinely unlawful, and a save() override that silently refused would make that impossible to do.
+
+Deleting a message is two acts, split by DELETE_GRACE: inside five minutes the row is destroyed,
+after it the message becomes a tombstone (`deleted_at` set, text and image wiped, replies kept). The
+split exists because a message nobody has read yet is a slip, and one that has been answered is part
+of a conversation that stops making sense without it. Moderators follow the same rule; the Django
+admin is the only place a row is destroyed outright. Archived messages cannot be deleted at all.
 
 Posts are filed into a *channel* (`QuickPost.channel`). The channels themselves are constants in
 den_hurtige.channels, not rows here — see that module for why. Nothing in this file knows which
-channels exist, and nothing that expires may become channel-aware: `active()`, `expired()` and
-`purge_expired()` all stay deliberately channel-agnostic, so a post in a channel nobody has opened
-for a week still dies on time.
+channels exist, and neither half of the partition may become channel-aware: `active()` and
+`archived()` stay channel-agnostic, so a post in a channel nobody has opened for a week still
+leaves the feed on time.
 """
 
 from datetime import datetime, timedelta
 from typing import Any
 
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
 from django.utils import timezone
 
+from core.clock import current_datetime
 from core.files import delete_attached_files
+
+# Compared against `created_at`, which is auto_now_add and so always the REAL clock -- hence
+# timezone.now() rather than core.clock in within_delete_grace. Coincides with views.GROUPING_WINDOW
+# and is deliberately not shared with it; the two measure unrelated things.
+DELETE_GRACE = timedelta(minutes=5)
 
 # How long a post stays visible unless the author picks otherwise. Two døgn, raised from one after
 # the feature had been live a while: a day sounds generous and is not, because the thing people
@@ -77,26 +118,32 @@ QUICK_EMOJI = [
 
 
 def get_default_expiration() -> datetime:
-    """Default expiration time is 60 minutes from creation."""
-    return timezone.now() + timedelta(minutes=DEFAULT_DURATION_MINUTES)
+    """When a post archives if the composer sends no duration: DEFAULT_DURATION_MINUTES from now."""
+    return current_datetime() + timedelta(minutes=DEFAULT_DURATION_MINUTES)
 
 
 class QuickPostQuerySet(models.QuerySet["QuickPost"]):
-    """Custom QuerySet to handle filtering and permanent deletion of expired posts."""
+    """The live feed and the archive, which are one comparison read in both directions.
+
+    They are written as a strict partition -- `> now` and `<= now` on the same column, evaluated
+    against the same clock -- so no message can be in both or in neither. That matters more than it
+    looks: the archive is now the only copy, so a post that fell out of `active()` without falling
+    into `archived()` would not be hidden, it would be LOST to every reader.
+    """
 
     def active(self) -> "QuickPostQuerySet":
-        """Returns posts that have not yet expired."""
-        return self.filter(expires_at__gt=timezone.now())
+        """On the feed: posts whose timer has not run out."""
+        return self.filter(expires_at__gt=current_datetime())
 
-    def expired(self) -> "QuickPostQuerySet":
-        """Returns posts that have reached or passed their expiration time."""
-        return self.filter(expires_at__lte=timezone.now())
+    def archived(self) -> "QuickPostQuerySet":
+        """In the archive: posts whose timer has run out.
 
-    def purge_expired(self) -> int:
-        """Permanently deletes all expired posts. Returns the number of *posts* removed (the
-        `delete()` total also counts cascaded comments, which is not what callers report)."""
-        _total, per_model = self.expired().delete()
-        return per_model.get("den_hurtige.QuickPost", 0)
+        There is no `purge_expired()` any more, and nothing replaced it. Archiving is this filter
+        reading the other way -- it happens at the moment the clock passes `expires_at`, with no
+        row written and no job to run. Removed rather than renamed, so a caller that still wanted
+        the old destructive behaviour fails at import instead of silently getting the new one.
+        """
+        return self.filter(expires_at__lte=current_datetime())
 
 
 class QuickPost(models.Model):
@@ -122,9 +169,21 @@ class QuickPost(models.Model):
     channel = models.CharField(max_length=32, default=DEFAULT_CHANNEL_SLUG)
 
     created_at = models.DateTimeField(auto_now_add=True)
+    # Named for what it still is -- the moment the timer runs out -- rather than renamed to
+    # `archived_at` when the meaning of that moment changed. A rename would have been a migration
+    # plus an edit to every caller, to say the same thing about the same instant; what changed is
+    # what HAPPENS at it, and that is in views.py and in the docstring above, not in a column name.
     expires_at = models.DateTimeField(
         default=get_default_expiration,
-        help_text="Hvornår opslaget udløber og slettes permanent.",
+        help_text="Hvornår beskeden forlader feedet og lægges i arkivet.",
+    )
+
+    # Deliberately NOT part of active()/archived(): a tombstone stays on the feed and then in the
+    # archive, holding the place of the message that was there.
+    deleted_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Sat hvis beskeden er slettet. Selve teksten og billedet er så væk for altid.",
     )
 
     objects = QuickPostQuerySet.as_manager()
@@ -133,33 +192,96 @@ class QuickPost(models.Model):
         ordering = ["-created_at"]
         verbose_name = "Hurtigt opslag"
         verbose_name_plural = "Hurtige opslag"
-        # active() and purge_expired() both filter on expires_at and run on every feed load.
-        # The composite serves the feed itself, which is always one channel's live posts; the lone
-        # expires_at index stays because purge_expired() sweeps every channel at once and would
-        # otherwise have to scan the composite's leading column.
+        # Three indexes for three questions, and the third is the one archiving added.
+        #
+        # (channel, expires_at) serves the FEED: one channel's live posts, on every page load and
+        # every 5s poll. The lone expires_at index is what is left of the purge, which swept every
+        # channel at once; it still serves any cross-channel question about the clock.
+        #
+        # (channel, -created_at) serves the ARCHIVE, and it is not optional. That query filters on
+        # expires_at and orders by created_at DESCENDING, so neither index above can answer it
+        # without sorting the result -- and unlike the feed, whose working set is a few hours wide,
+        # the archive is every message the channel has ever held and only ever grows. Leading with
+        # `channel` and descending on `created_at` lets the paging read the index in order and stop
+        # at the page size; expires_at is left as a residual filter, which costs almost nothing
+        # because all but the newest handful of rows match it.
         indexes = [
             models.Index(fields=["expires_at"]),
             models.Index(fields=["channel", "expires_at"]),
+            models.Index(fields=["channel", "-created_at"], name="dh_archive_page_idx"),
         ]
 
     def __str__(self) -> str:
         return f"Opslag af {self.author} kl. {self.created_at:%H:%M}"
 
     @property
-    def is_expired(self) -> bool:
-        return timezone.now() >= self.expires_at
+    def is_archived(self) -> bool:
+        """Off the feed and read-only. Was `is_expired`, and renamed rather than aliased: the two
+        would have meant the same thing while reading as different states, and every caller of it
+        is asking whether the message may still be written to."""
+        return current_datetime() >= self.expires_at
+
+    @property
+    def is_deleted(self) -> bool:
+        """A tombstone: the message is gone, its place in the conversation is not.
+
+        A stored fact, unlike `is_archived` -- which is why templates read this directly but must be
+        handed `archived` by the view (_message.html says why).
+        """
+        return self.deleted_at is not None
+
+    @property
+    def within_delete_grace(self) -> bool:
+        """Still young enough to be taken back without leaving a tombstone. See DELETE_GRACE."""
+        return timezone.now() - self.created_at < DELETE_GRACE
+
+    def soft_delete(self) -> bool:
+        """Turn this message into a tombstone: destroy what it said, keep where it said it.
+
+        Returns False if the row was hard-deleted or already tombstoned by a concurrent request, so
+        the caller can report that instead of claiming a success that did not happen.
+
+        The replies are left alone on purpose (see the module docstring), which is also why this
+        cannot be a delete() override -- the cascade would take them. The reactions go with the
+        content they were applied to.
+
+        A CONDITIONAL UPDATE RATHER THAN save(update_fields=...), because there is no transaction
+        around the request (no ATOMIC_REQUESTS) and two deletions can therefore overlap: `save` on a
+        row that has just been hard-deleted raises "Save with update_fields did not affect any
+        rows", which is a 500 on the one gesture people double-tap. The filter makes the tombstone a
+        claim -- exactly one caller can win it -- and the rowcount says whether this one did.
+        """
+        with transaction.atomic():
+            claimed = QuickPost.objects.filter(pk=self.pk, deleted_at__isnull=True).update(
+                content="", image="", deleted_at=timezone.now()
+            )
+            if not claimed:
+                return False
+            # Reads `self.image`, which the UPDATE above cleared in the database but not in memory.
+            # The atomic block is what makes this safe: core.files defers the storage delete to
+            # commit, so without one it would unlink the photograph before the row was written.
+            delete_attached_files(self)
+            self.reactions.all().delete()
+        self.refresh_from_db()
+        return True
 
     @property
     def minutes_left(self) -> int:
         """Whole minutes until expiry, floored at 0 — the primitive expires_label is built from."""
-        return max(0, int((self.expires_at - timezone.now()).total_seconds() // 60))
+        return max(0, int((self.expires_at - current_datetime()).total_seconds() // 60))
 
     @property
     def expires_label(self) -> str:
-        """Time left, humanised: "1 døgn", "12 timer", "1 time", "45 min", "udløbet"."""
-        minutes = round((self.expires_at - timezone.now()).total_seconds() / 60)
+        """Time left on the feed, humanised: "1 døgn", "12 timer", "1 time", "45 min", "arkiveret".
+
+        The zero case reads "arkiveret" rather than "udløbet" because that is now where the message
+        goes, and this label is the only place the feed ever explains the countdown. A bubble
+        rendered at exactly the crossing -- the poll caught it between two ticks -- would otherwise
+        announce that it had been deleted, which is the thing this feature stopped doing.
+        """
+        minutes = round((self.expires_at - current_datetime()).total_seconds() / 60)
         if minutes <= 0:
-            return "udløbet"
+            return "arkiveret"
         if minutes < 60:
             return f"{minutes} min"
         hours = minutes // 60
@@ -179,13 +301,23 @@ class QuickPost(models.Model):
 
 
 class QuickComment(models.Model):
-    """A comment on a QuickPost. Deleted with its post when the post expires."""
+    """A reply to a QuickPost. Archived with its post, and read-only from that moment on.
+
+    There is no `expires_at` here and there never was: a reply's lifetime is its post's. What
+    changed with archiving is only what that means at the end of it -- the whole thread is kept and
+    rendered read-only, rather than cascaded away. The CASCADE below therefore now fires only on a
+    real deletion (an admin removing something, or an author deleting a message that is still live).
+
+    It also outlives its message being deleted: soft_delete never touches this table, so what an
+    author takes back is their own words and only those.
+    """
 
     post = models.ForeignKey(QuickPost, on_delete=models.CASCADE, related_name="comments")
     author = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="quick_comments"
     )
-    content = models.TextField()
+    # Blank when the reply IS the photo.
+    content = models.TextField(blank=True)
 
     # Same FileField-not-ImageField call as QuickPost.image: ImageField needs Pillow, which is not a
     # dependency. The view validates content type and size.
@@ -216,12 +348,16 @@ class QuickComment(models.Model):
 @receiver(post_delete, sender=QuickPost)
 @receiver(post_delete, sender=QuickComment)
 def _delete_image_file(sender: type[models.Model], instance: models.Model, **kwargs: Any) -> None:  # noqa: ANN401
-    """Remove an attached file from storage when its message or reply goes.
+    """Remove an attached file from storage when its message or reply is genuinely deleted.
 
-    Without this the *text* expires on schedule while the *photo* stays on disk forever — the
-    opposite of what the feature promises, and an unbounded pile of orphaned uploads. The reasons
-    this is a signal rather than a `delete()` override (bulk purges and cascades never call it) are
-    documented in core.files, which also does the work.
+    STILL NEEDED, AND FOR LESS THAN IT USED TO BE. Archiving removed the case this was written for
+    -- the nightly purge that dropped expired rows in bulk and left their photographs on disk
+    forever -- so what is left is the narrow one: an author deleting a live message, a moderator
+    removing something, an admin cleaning up. Those are ordinary deletes and would leak the same
+    way, because Django has not deleted FileField files on row delete since 1.3.
+
+    It stays a signal rather than a `delete()` override for the reason core.files documents: a
+    cascade never calls Model.delete(), so a reply's image would outlive the message it hung off.
     """
     delete_attached_files(instance)
 

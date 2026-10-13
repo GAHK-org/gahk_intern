@@ -4,7 +4,7 @@ from django.contrib.auth import views as auth_views
 from django.urls import include, path
 
 from . import views, views_regnskab
-from .forms import EmailAuthenticationForm
+from .forms import EmailAuthenticationForm, ResidentPasswordResetForm
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
@@ -20,6 +20,9 @@ urlpatterns = [
     path("den-hurtige/", include("den_hurtige.urls")),
     path("opslagstavle/", include("opslagstavle.urls")),
     path("begivenheder/", include("events.urls")),
+    path("reparationer/", include("reparationer.urls")),
+    path("arkiv/", include("arkiv.urls")),
+    path("fotoalbum/", include("photo_album.urls")),
     path("ak/", include("ak.urls")),
     path("oelkaelder/", include("oelkaelder.urls")),
     path("statistik/", include("stats.urls")),
@@ -53,6 +56,7 @@ urlpatterns = [
     path(
         "admin/password-reset",
         auth_views.PasswordResetView.as_view(
+            form_class=ResidentPasswordResetForm,  # also reaches residents who never set a password
             template_name="registration/password_reset_form.html",
             email_template_name="registration/password_reset_email.html",
             subject_template_name="registration/password_reset_subject.txt",

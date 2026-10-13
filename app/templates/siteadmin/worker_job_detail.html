@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Worker-job detalje - GAHK{% endblock %}
+{% block content %}
+  <div class="flex items-center justify-between mb-6">
+    <div><a class="muted" href="{% url 'siteadmin:worker_jobs' %}">Worker-job</a><h1>Jobdetaljer</h1></div>
+    <a class="btn" href="{% url 'siteadmin:home' %}">Administration</a>
+  </div>
+  <div class="card overflow-x-auto">
+    <dl class="grid gap-4 text-sm">
+      <div><dt class="muted">Opgave</dt><dd class="font-mono break-all">{{ job.task }}</dd></div>
+      <div><dt class="muted">Job-ID</dt><dd class="font-mono break-all">{{ job.id }}</dd></div>
+      <div><dt class="muted">Status</dt><dd>{{ job.status|default:"Venter i kø" }}</dd></div>
+      <div><dt class="muted">Kø</dt><dd>{{ job.queue|default:"-" }}</dd></div>
+      <div><dt class="muted">Sendt</dt><dd>{{ job.submitted_at|date:"Y-m-d H:i:s"|default:"-" }}</dd></div>
+      <div><dt class="muted">Afsluttet</dt><dd>{{ job.finished_at|date:"Y-m-d H:i:s"|default:"-" }}</dd></div>
+      <div><dt class="muted">Forløbet tid</dt><dd>{{ job.runtime|default:"Afventer afslutning" }}</dd></div>
+      <div><dt class="muted">Worker</dt><dd class="font-mono break-all">{{ job.worker|default:"-" }}</dd></div>
+      <div><dt class="muted">Forsøg</dt><dd>{{ job.retries|default:0 }}</dd></div>
+      <div><dt class="muted">Kør efter</dt><dd>{{ job.eta|default:"Nu" }}</dd></div>
+      <div><dt class="muted">Udløber</dt><dd>{{ job.expires|default:"-" }}</dd></div>
+      <div><dt class="muted">Oprindelse</dt><dd class="font-mono break-all">{{ job.origin|default:"-" }}</dd></div>
+      <div><dt class="muted">Rodjob</dt><dd class="font-mono break-all">{{ job.root_id|default:"-" }}</dd></div>
+      <div><dt class="muted">Forældrejob</dt><dd class="font-mono break-all">{{ job.parent_id|default:"-" }}</dd></div>
+      <div><dt class="muted">Argumenter</dt><dd class="font-mono break-all">{{ job.arguments|default:"-" }}</dd></div>
+      <div><dt class="muted">Nøgleordsargumenter</dt><dd class="font-mono break-all">{{ job.keyword_arguments|default:"-" }}</dd></div>
+    </dl>
+  </div>
+  {% if job.result is not None %}<h2 class="mt-8">Resultat</h2><pre class="card overflow-x-auto text-sm">{{ job.result }}</pre>{% endif %}
+  {% if job.traceback %}<h2 class="mt-8">Undtagelse og traceback</h2><pre class="card overflow-x-auto text-sm">{{ job.traceback }}</pre>{% endif %}
+  <h2 class="mt-8">Worker-log</h2>
+  <div class="card"><p class="muted">Worker-logge gemmes ikke i databasen. Se worker-containerens log for dette job-ID.</p></div>
+{% endblock %}

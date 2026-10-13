@@ -65,6 +65,22 @@ class DevClock(models.Model):
 
     simulated_date = models.DateField(null=True, blank=True)  # None = use the real clock
 
+    def save(self, *args: object, **kwargs: object) -> None:
+        """Save, then drop core.clock's memo of this row.
+
+        core.clock caches the simulated date for the length of a request, because Den Hurtige reads
+        the clock per message and the row was otherwise a query per read. That cache has to be
+        invalidated by the write as well as by the next request, or `dev_clock_set` — which saves
+        and then renders — would answer from the value it has just replaced.
+
+        An override rather than a post_save receiver so it sits on the model it belongs to; the
+        cost is that a queryset `.update()` slips past it, which is true of a signal as well.
+        """
+        super().save(*args, **kwargs)  # type: ignore[arg-type]
+        from .clock import clear_cache
+
+        clear_cache()
+
     @classmethod
     def get(cls) -> "DevClock":
         return cls.objects.get_or_create(pk=1)[0]
@@ -118,6 +134,7 @@ class PushSubscription(models.Model):
     # like push breaking. Nobody has ever consented to event notifications, and consent granted by
     # migration is not consent.
     wants_begivenheder = models.BooleanField(default=False, verbose_name="Begivenheder")
+    wants_reparationer = models.BooleanField(default=False, verbose_name="Reparationer")
 
     class Meta:
         verbose_name = "Push-abonnement"
@@ -139,4 +156,5 @@ TOPIC_FIELDS = {
     "den_hurtige": "wants_den_hurtige",
     "opslagstavle": "wants_opslagstavle",
     "begivenheder": "wants_begivenheder",
+    "reparationer": "wants_reparationer",
 }

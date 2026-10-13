@@ -26,19 +26,7 @@
       data-subscribed is rendered server-side because the browser cannot answer it: a device has one
       push endpoint shared by every topic, so getSubscription() only says "subscribed to something".
     {% endcomment %}
-    <div class="push-bar" data-push data-topic="begivenheder"
-         data-vapid-key="{{ vapid_public_key }}"
-         data-url="{% url 'events:save_subscription' %}"
-         data-subscribed="{% if push_subscribed %}1{% else %}0{% endif %}"
-         data-on-label="Slå notifikationer til"
-         data-off-label="Slå fra på denne enhed"
-         data-off-label-short="Slå fra på enheden"
-         data-success-text="Du får nu besked når der sker noget nyt."
-         data-off-text="Notifikationer er slået fra på denne enhed.">
-      {% csrf_token %}
-      <button type="button" data-push-button hidden></button>
-      <span class="muted" data-push-message hidden></span>
-    </div>
+    {% include "core/_push_bar.html" with topic="begivenheder" url_name="events:save_subscription" success_text="Du får nu besked når der sker noget nyt." %}
   {% endif %}
 
   <div class="event-list">

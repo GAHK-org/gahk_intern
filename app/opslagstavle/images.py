@@ -10,7 +10,7 @@ The fix is to turn the textual reference back into a real FK at save time, by pa
 Everything good follows from that:
 
   * Deleting a post deletes its images, as a *database* property (CASCADE + the post_delete receiver
-    on NoticeImage) — including under the retention command's bulk delete.
+    on NoticeImage) — including under a *bulk* queryset delete, which never calls Model.delete().
   * Editing a post to remove an image releases that row, and the nightly sweep collects it after a
     day's grace (so removing and immediately re-adding an image cannot lose the file).
   * An upload nobody ever referenced is `notice_id IS NULL` — one exact, indexed query.

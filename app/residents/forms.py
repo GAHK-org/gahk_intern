@@ -1,5 +1,8 @@
+import unicodedata
+from collections.abc import Iterator
+
 from django import forms
-from django.contrib.auth.forms import AuthenticationForm
+from django.contrib.auth.forms import AuthenticationForm, PasswordResetForm
 from django.core.files.uploadedfile import UploadedFile
 
 from core.uploads import check_image_upload
@@ -109,3 +112,31 @@ class ProfileEditForm(forms.ModelForm):
             if error:
                 raise forms.ValidationError(error)
         return upload
+
+
+class ResidentPasswordResetForm(PasswordResetForm):
+    """Glemt-kodeord that also works for a resident who has never set one (F-014).
+
+    Django's own `get_users` skips accounts without a usable password. New residents are created
+    with exactly that (`set_unusable_password()` in the alumneliste's `add_new`) and rely on the
+    welcome mail's link — which is a reset token, so it dies after PASSWORD_RESET_TIMEOUT (2h). Miss
+    that window and the fallback the welcome mail itself points at silently sent nothing:
+    PasswordResetView redirects to the "done" page either way, so the resident saw "vi har sendt et
+    link", no mail arrived, and only a shell (`manage.py changepassword`) could let them in.
+
+    Dropping the filter is safe here: the token still goes to the address on the account, and an
+    account that cannot be logged into has nothing to protect. Django's reason for the filter is
+    accounts authenticated by other means (LDAP/SSO), which GAHK has none of.
+    """
+
+    def get_users(self, email: str) -> Iterator[Resident]:
+        field = Resident.get_email_field_name()
+        candidates = Resident._default_manager.filter(**{f"{field}__iexact": email, "is_active": True})
+        return (
+            u
+            for u in candidates
+            # Case-insensitive identifier compare, per Django (UTR 36 §2.11.2(B)(2)) — the DB's
+            # iexact is not Unicode-aware enough on its own.
+            if unicodedata.normalize("NFKC", email).casefold()
+            == unicodedata.normalize("NFKC", getattr(u, field)).casefold()
+        )

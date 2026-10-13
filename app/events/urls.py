@@ -21,10 +21,14 @@ urlpatterns = [
     path("kalender", views.calendar, name="calendar"),
     path("kalender/abonnement", views.feed_settings, name="feed_settings"),
     path("kalender/nyt-link", views.rotate_token, name="rotate_token"),
+    # Keyed on the COMMENT's pk, not the event's, so it belongs with the fixed segments up here
+    # rather than nested under <int:pk> (mirrors reparationer/urls.py).
+    path("kommentar/<int:pk>/slet", views.delete_comment, name="delete_comment"),
     path("<int:pk>", views.detail, name="detail"),
     path("<int:pk>/rediger", views.edit, name="edit"),
     path("<int:pk>/slet", views.delete, name="delete"),
     path("<int:pk>/aflys", views.cancel, name="cancel"),
     path("<int:pk>/svar", views.answer, name="answer"),
+    path("<int:pk>/kommentar", views.create_comment, name="create_comment"),
     path("<int:pk>/ics", views.event_ics, name="event_ics"),
 ]

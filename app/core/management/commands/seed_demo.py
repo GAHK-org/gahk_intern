@@ -23,8 +23,10 @@ import argparse
 import random
 import unicodedata
 from datetime import timedelta
+from io import BytesIO
 
 from django.conf import settings
+from django.core.files.base import ContentFile
 from django.core.management.base import BaseCommand, CommandError
 from django.db import models, transaction
 from django.utils import timezone
@@ -32,12 +34,16 @@ from django.utils import timezone
 from admissions.models import Application
 from ak.models import AkEntry, AkMonthlyCharge
 from ak.services import apply_monthly_charge
+from arkiv.demo import seed as seed_arkiv
+from arkiv.models import ArchiveFile, ArchiveFolder
 
 # CmsEvent, never Event: the internal events app has one of the same name, and both are seeded
 # here. See events.models on the three-way collision.
 from cms.models import Event as CmsEvent
 from cms.models import NewsItem, Page, PylonEvent
 from core.models import Cleaning, Room, Workgroup
+from den_hurtige.demo import seed as seed_den_hurtige
+from den_hurtige.models import QuickComment, QuickPost, QuickReaction
 from events.demo import seed as seed_events
 from events.models import CalendarFeedToken, Event, EventInvite, Rsvp
 from oelkaelder.models import (
@@ -50,6 +56,8 @@ from oelkaelder.models import (
 )
 from opslagstavle.demo import seed as seed_opslagstavle
 from opslagstavle.models import Notice, NoticeComment, NoticeReaction
+from photo_album.demo import seed as seed_photo_album
+from photo_album.models import Album, Media
 from residents.models import WORKGROUP_ROLE, Residency, Resident, Role, RoleAssignment
 from rooms.models import (
     KvotientApplication,
@@ -126,7 +134,16 @@ WIPE_ORDER: list[type[models.Model]] = [
     PylonEvent,
     DailyVisitCount,
     VisitTally,
+    QuickReaction,
+    QuickComment,
+    QuickPost,
+    Media,
+    Album,
     Resident,
+    # Before Workgroup: ArchiveFolder references it with PROTECT (a SET_NULL would silently turn a
+    # gated folder into a world-readable one), so the archive has to go first or --fresh cannot run.
+    ArchiveFile,
+    ArchiveFolder,
     Room,
     Workgroup,
     Cleaning,
@@ -146,7 +163,7 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--fresh", action="store_true", help="Delete existing demo data first.")
-        parser.add_argument("--residents", type=int, default=40, help="How many residents to create.")
+        parser.add_argument("--residents", type=int, default=61, help="How many residents to create.")
         parser.add_argument("--force", action="store_true", help="Allow running when DEBUG is off.")
 
     def handle(self, *args, **opts) -> None:  # noqa: ANN002, ANN003
@@ -169,10 +186,11 @@ class Command(BaseCommand):
             if opts["fresh"]:
                 self._wipe()
             rooms = self._seed_rooms()
-            workgroups, cleanings = self._seed_lookups()
+            workgroups, cleanings = self._seed_lookups(opts["residents"])
             residents = self._seed_residents(opts["residents"])
             self._seed_residencies(residents, rooms, workgroups, cleanings)
             self._seed_roles(residents)
+            self._seed_profile_pictures(residents)
             self._seed_ak(residents)
             self._seed_oelkaelder(residents)
             self._seed_admissions(residents)
@@ -182,6 +200,9 @@ class Command(BaseCommand):
             self._seed_stats()
             seed_opslagstavle(residents, self.now, self.rng)
             seed_events(residents, self.now, self.rng)
+            seed_arkiv(residents, self.now, self.rng)
+            seed_photo_album(residents, self.now, self.rng)
+            seed_den_hurtige(residents, self.now, self.rng)
 
         self._report(residents)
 
@@ -197,11 +218,24 @@ class Command(BaseCommand):
             Room.objects.update_or_create(legacy_index=r["legacy_index"], defaults=r)
         return list(Room.objects.all())
 
-    def _seed_lookups(self) -> tuple[list[Workgroup], list[Cleaning]]:
+    def _seed_lookups(self, total_residents: int) -> tuple[list[Workgroup], list[Cleaning]]:
+        # Henter og sorterer ALLE grupper (både faste og ekstra) for at sikre determinisme
+        all_names = sorted(list(WORKGROUP_ROLE.keys()) + EXTRA_WORKGROUPS)
+
+        # Matematisk fordeling så summen af 'size' bliver eksakt lig 'total_residents' (61)
+        base_size = total_residents // len(all_names)
+        remainder = total_residents % len(all_names)
+
         workgroups = []
-        for name in list(WORKGROUP_ROLE.keys()) + EXTRA_WORKGROUPS:
+        for i, name in enumerate(all_names):
+            target_size = base_size + (1 if i < remainder else 0)
+
             wg, _ = Workgroup.objects.get_or_create(name=name)
+            if wg.size != target_size:
+                wg.size = target_size
+                wg.save(update_fields=["size"])
             workgroups.append(wg)
+
         cleanings = [Cleaning.objects.get_or_create(name=n)[0] for n in CLEANING_GROUPS]
         return workgroups, cleanings
 
@@ -288,21 +322,50 @@ class Command(BaseCommand):
         workgroups: list[Workgroup],
         cleanings: list[Cleaning],
     ) -> None:
+        fixed_groups = {
+            "ak@gahk.dk": "AK-gruppen",
+            "oel@gahk.dk": "Ølkælderen",
+            "regnskab@gahk.dk": "Regnskabsgruppen",
+        }
+        workgroups_by_name = {workgroup.name: workgroup for workgroup in workgroups}
+
         for y, m in self._iter_recent_months(3):
-            # Give each resident a distinct room this month (rooms outnumber residents).
+            wg_counts = {wg.name: 0 for wg in workgroups}
+
             chosen_rooms = self.rng.sample(rooms, k=min(len(residents), len(rooms)))
             for resident, room in zip(residents, chosen_rooms, strict=False):
+                target_wg_name = fixed_groups.get(resident.email)
+                wg = None
+
+                # 1. Prøv faste roller først
+                if target_wg_name and target_wg_name in workgroups_by_name:
+                    preferred_wg = workgroups_by_name[target_wg_name]
+                    if preferred_wg.size == 0 or wg_counts[preferred_wg.name] < preferred_wg.size:
+                        wg = preferred_wg
+
+                # 2. Fyld op i grupper, der mangler folk
+                if not wg:
+                    strict_wgs = [w for w in workgroups if w.size > 0 and wg_counts[w.name] < w.size]
+                    if strict_wgs:
+                        wg = self.rng.choice(strict_wgs)
+                    else:
+                        available_wgs = [w for w in workgroups if w.size == 0 or wg_counts[w.name] < w.size]
+                        wg = self.rng.choice(available_wgs or workgroups)
+
+                wg_counts[wg.name] += 1
+
                 Residency.objects.update_or_create(
                     resident=resident,
                     year=y,
                     month=m,
                     defaults={
                         "room": room,
-                        "workgroup": self.rng.choice(workgroups),
+                        "workgroup": wg,
                         "cleaning": self.rng.choice(cleanings),
                     },
                 )
-        # Make one resident a "leaver" (present last month, gone this month) so the regnskab page has data.
+
+        # Sletter den sidst tilføjede beboer i nuværende måned, så næste måned præcis mangler 1 fordeling
         if residents:
             Residency.objects.filter(resident=residents[-1], year=self.year, month=self.month).delete()
 
@@ -339,6 +402,27 @@ class Command(BaseCommand):
                 assigned.add(r.pk)
 
         Resident.objects.filter(pk__in=assigned).update(is_staff=True)
+
+    def _seed_profile_pictures(self, residents: list[Resident]) -> None:
+        for index, resident in enumerate(residents[:8]):
+            if resident.profile_picture:
+                continue
+            resident.profile_picture.save(
+                f"{_ascii_slug(resident.full_name)}.jpg",
+                ContentFile(self._profile_image(resident.full_name, index)),
+                save=True,
+            )
+
+    def _profile_image(self, name: str, index: int) -> bytes:
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError:
+            return name.encode()
+        image = Image.new("RGB", (480, 480), ["#315b8d", "#1f6c64", "#8a4e70", "#517544"][index % 4])
+        ImageDraw.Draw(image).text((36, 36), name, fill="white")
+        output = BytesIO()
+        image.save(output, format="JPEG", quality=82)
+        return output.getvalue()
 
     # ------------------------------------------------------------------ AK
     def _seed_ak(self, residents: list[Resident]) -> None:
@@ -458,6 +542,21 @@ class Command(BaseCommand):
             header="Ansøgning",
             body="<p>Sådan søger du en plads på kollegiet.</p>",
             menu_category=2,
+        )
+        # A sub-page, so the section sidebar (cms.views._section_nav) and the CMS overview's
+        # reachability badge are both exercised in dev — with only top-level slugs, neither ever
+        # renders, and the bug that made a renamed page vanish was invisible locally.
+        Page.objects.create(
+            slug="faciliteter",
+            header="Faciliteter",
+            body="<p>Kollegiets faciliteter.</p>",
+            menu_category=1,
+        )
+        Page.objects.create(
+            slug="faciliteter/kokken",
+            header="Køkkenet",
+            body="<p>Fælleskøkkenet på hver gang.</p>",
+            menu_category=1,
         )
         for _ in range(6):
             NewsItem.objects.create(

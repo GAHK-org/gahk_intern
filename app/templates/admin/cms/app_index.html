@@ -1,0 +1,36 @@
+{% extends "admin/app_index.html" %}
+{% comment %}
+First template override in this project. Django resolves admin/<app_label>/app_index.html ahead of
+admin/app_index.html, and settings.TEMPLATES puts BASE_DIR/templates before APP_DIRS, so this wins
+over django.contrib.admin's own copy. A wrong path here fails SILENTLY (you just get the stock
+page), which is why a test asserts one of these strings is present.
+{% endcomment %}
+
+{% block content %}
+  <div class="module aligned" style="padding:12px 14px;margin-bottom:18px">
+    <h2>Sådan redigerer du sitet</h2>
+
+    <p class="help"><strong>Tilføj en underside:</strong> opret siden, vælg en
+      <em>Placering</em> (fx “Faciliteter”) og skriv den sidste del af adressen. En side uden
+      placering ligger øverst og vises <em>kun</em>, hvis den i forvejen står i menuen — den vil
+      ellers stå som “Ikke i nogen menu” på listen.</p>
+
+    <p class="help"><strong>Skift en adresse:</strong> ret felterne under <em>Adresse</em>. Den
+      gamle adresse sender automatisk videre til den nye, så links, bogmærker og Google bliver ved
+      at virke. Links, du selv har skrevet ind i <em>andre</em> siders indhold, skal rettes i
+      hånden.</p>
+
+    <p class="help"><strong>“Ikke i nogen menu”</strong> betyder, at siden kan åbnes, men at intet
+      på sitet linker til den. Læg den under en sektion, der står i menuen, hvis den skal kunne
+      findes.</p>
+
+    <p class="help"><strong>Fortrudt?</strong> Hver gang en side gemmes, tages der en kopi. Åbn
+      siden og klik <em>Se og gendan tidligere versioner</em> for at se, hvad der blev ændret — og
+      for at sætte det tilbage. Intet bliver slettet undervejs.</p>
+
+    <p class="help"><strong>Billeder</strong> uploades under <em>Billeder</em> og indsættes med
+      knappen over indholdsfeltet. Du behøver ikke skrive stier selv.</p>
+  </div>
+
+  {{ block.super }}
+{% endblock %}

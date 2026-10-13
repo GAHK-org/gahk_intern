@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Reparationer - GAHK Intern{% endblock %}
+{% block content_width %}max-w-6xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Værktøjer</p>
+      <h1>Reparationer</h1>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-secondary" href="{% url 'reparationer:archive_list' %}">Arkiv</a>
+      <a class="btn" href="{% url 'reparationer:create' %}">Meld en reparation</a>
+    </div>
+  </div>
+
+  {% comment %}
+    Plain GET, not htmx: the result is bookmarkable/shareable ("se sagen om det utætte vandhane"),
+    back/forward works, and the board underneath needs no partial-swap machinery — same reasoning as
+    opslagstavle's category filter.
+  {% endcomment %}
+  <form method="get" class="board-search mb-4" role="search">
+    <input type="search" name="q" value="{{ query }}" placeholder="Søg i reparationer…" aria-label="Søg reparationer">
+    <button type="submit" class="btn btn-secondary">Søg</button>
+    {% if query %}<a href="{% url 'reparationer:board' %}" class="btn btn-secondary">Ryd</a>{% endif %}
+  </form>
+  {% if query %}
+    <p class="muted mb-4">
+      {% if result_count %}{{ result_count }} resultat{{ result_count|pluralize:"er" }}{% else %}Ingen resultater{% endif %}
+      for "{{ query }}".
+    </p>
+  {% endif %}
+
+  {% comment %}
+    Plain links, not a <select>: bookmarkable/shareable, composes with the search box's own query
+    string via {% querystring %}, and back/forward works — same reasoning as opslagstavle's category
+    filter.
+  {% endcomment %}
+  <nav class="board-filters" aria-label="Filtrér efter sted">
+    <a class="chip{% if not location_type %} is-active{% endif %}" href="{% querystring sted=None %}">Alle</a>
+    {% for value, label in location_types %}
+      <a class="chip{% if location_type == value %} is-active{% endif %}" href="{% querystring sted=value %}">{{ label }}</a>
+    {% endfor %}
+  </nav>
+
+  {% if push_configured %}
+    {% comment %} Slim opt-in bar, driven by frontend/src/push.ts — mirrors opslagstavle/board.html. {% endcomment %}
+    {% include "core/_push_bar.html" with topic="reparationer" url_name="reparationer:save_subscription" on_label="Få besked om reparationer" success_text="Du får nu besked om nye og overdragede reparationer." off_text="Beskeder om reparationer er slået fra på denne enhed." %}
+  {% endif %}
+
+  {% comment %}
+    Still no button controls here — handoff and delete live on the detail page (templates/
+    reparationer/detail.html), so the overview stays a scannable list of what exists rather than a
+    wall of buttons. The one thing the board itself does is MOVE a card: drag it to another column,
+    wired up by frontend/src/reparationer.ts and posted to the same set_status view the detail
+    page's buttons use.
+
+    The drag is an enhancement, never the only way through: without JavaScript (or on a browser
+    where the pointer events misbehave) every card is still a link to its detail page, where the
+    "→ status" buttons do the same job. That is also why the count and the empty-state text are
+    server-rendered — the script keeps them honest after a move, but they are correct before it
+    ever runs.
+
+    data-manager-only marks the two columns a Vicevært may not move a ticket into (views.
+    MANAGER_ONLY_STATUSES): the script refuses the drop up front rather than letting them carry a
+    card somewhere the server will only hand back.
+  {% endcomment %}
+  <div class="kanban" data-kanban
+       data-can-move="{% if can_move %}1{% else %}0{% endif %}"
+       data-can-manage="{% if can_manage %}1{% else %}0{% endif %}">
+    {% comment %} Read by the script for the POST; not inside a <form>, nothing ever submits it. {% endcomment %}
+    <div hidden>{% csrf_token %}</div>
+    {% for status, label, tasks in columns %}
+      <div class="kanban-col" data-status="{{ status }}"
+           {% if status in manager_only_statuses %}data-manager-only{% endif %}>
+        <div class="kanban-col-head">
+          <span>{{ label }}</span>
+          <span class="chip chip-quiet" data-count>{{ tasks|length }}</span>
+        </div>
+        <div class="kanban-col-body" data-drop>
+          {% for task in tasks %}
+            <div class="kanban-card" data-task-id="{{ task.pk }}"
+                 data-move-url="{% url 'reparationer:set_status' task.pk %}">
+              <h3><a href="{% url 'reparationer:detail' task.pk %}">{{ task.title }}</a></h3>
+              {% if task.location %}<p class="muted">{{ task.location }}</p>{% endif %}
+              {% if task.description %}<p>{{ task.description|linebreaksbr }}</p>{% endif %}
+              <p class="chip chip-quiet">Ansvarlig: {{ task.get_responsible_display }}</p>
+              <p class="muted">
+                Meldt af {{ task.reported_by.first_name }} · {{ task.created_at|date:"j. M" }}
+                {% if task.comment_count %}· <a href="{% url 'reparationer:detail' task.pk %}">{{ task.comment_count }} note{{ task.comment_count|pluralize:"r" }}</a>{% endif %}
+              </p>
+            </div>
+          {% endfor %}
+          {% comment %}
+            Always rendered, hidden while the column has cards: a drag can empty a column without a
+            page load, and the script only has to flip `hidden` rather than mint markup.
+          {% endcomment %}
+          <p class="muted kanban-empty" data-empty {% if tasks %}hidden{% endif %}>Ingen sager her.</p>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+  {% comment %} Where a refused or failed drop says so; aria-live so it is not a silent snap-back. {% endcomment %}
+  <p class="kanban-note muted mt-2" data-kanban-message role="status" aria-live="polite" hidden></p>
+{% endblock %}

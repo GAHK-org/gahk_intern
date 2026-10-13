@@ -1,4 +1,4 @@
-# ny_ny_intern
+# gahk_intern
 [![CI](https://github.com/GAHK-org/gahk_intern/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/GAHK-org/gahk_intern/actions/workflows/ci.yml)
 
 
@@ -6,10 +6,17 @@
 
 ```sh
 task install     # opret virtualenv + installer afhængigheder
-task db:up       # start Postgres + MariaDB i Docker
-task seed        # fyld databasen med realistisk falsk demo-data
-task dev         # kør udviklingsserveren
+task seed        # starter Postgres+MinIO, fylder databasen med realistisk falsk demo-data
+task dev         # hele appen i Docker (Postgres+MinIO+Django, hot-reload) → http://127.0.0.1:8800
 ```
+
+`task dev` kører Django i en container (`task dev:down` for at stoppe, `task dev:logs` for logs).
+Foretrækker du at køre Django direkte på systemet i stedet: `task dev:local` — samme
+Postgres+MinIO-containere, bare uden web-containeren. Begge starter automatisk Postgres + MinIO i
+Docker og peger som standard appen på dem; brug `app/.env` (kopiér `app/.env.example`) for at
+tilpasse databasen eller andre indstillinger. MinIO
+erstatter lokalt Hetzner Object Storage til uploads; `task minio:console` viser login til dets
+webgrænseflade. `task db:up` starter derudover MariaDB, som kun bruges til ETL fra det gamle site.
 
 `task seed` genererer deterministisk demo-data (beboere, værelser, AK, ølkælder,
 ansøgninger, opslagstavlen m.m.), så nye udviklere ser en udfyldt side med det samme. Kommandoen

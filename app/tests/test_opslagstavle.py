@@ -2,7 +2,7 @@
 
 The renderer itself is tested in test_markdown.py (pure, no DB) and the shared push transport in
 test_push.py. What is here is the feature: who may do what, how the list orders and paginates, the
-image claim/release lifecycle, retention, and the notification *policy*.
+image claim/release lifecycle, the orphan-upload sweep, and the notification *policy*.
 
 Several tests assert the **absence** of things Den Hurtige does — the 20-second poll, the zoom
 lockdown, a purge on page load. Those look like omissions and are decisions; without a test they get
@@ -20,19 +20,18 @@ from django.test import Client
 from django.utils import timezone
 
 from core import push
-from core.models import PushSubscription
+from core.models import PushSubscription, Room, Workgroup
 from den_hurtige import access as den_hurtige_access
 from opslagstavle import access
 from opslagstavle.models import (
     MAX_PINNED,
-    RETENTION_DAYS,
     Category,
     Notice,
     NoticeComment,
     NoticeImage,
     NoticeReaction,
 )
-from residents.models import Resident, Role
+from residents.models import Residency, Resident, Role, active_period
 
 BOARD = "/intern/opslagstavle/"
 pytestmark = pytest.mark.django_db
@@ -104,6 +103,20 @@ def make_notice(author: Resident, **kwargs: object) -> Notice:
         author=author,
         body=kwargs.pop("body", "Noget **indhold**."),  # type: ignore[arg-type]
         **kwargs,
+    )
+
+
+def give_embedsgruppe(resident: Resident, name: str, room_number: int) -> None:
+    """Put `resident` in the `name` embedsgruppe for the active month — the pill's only source."""
+    year, month = active_period()
+    Residency.objects.create(
+        resident=resident,
+        room=Room.objects.create(
+            legacy_index=room_number, number=room_number, floor="stuen", side="mod gaden"
+        ),
+        workgroup=Workgroup.objects.get_or_create(name=name)[0],
+        year=year,
+        month=month,
     )
 
 
@@ -685,6 +698,325 @@ def test_the_board_costs_no_extra_query_per_reaction(
     assert len(after.captured_queries) == len(before.captured_queries)
 
 
+def test_a_byline_shows_the_authors_embedsgruppe(client: Client, beboer: Resident) -> None:
+    """On the card and, on the detail page, on a comment too — both bylines name a person, so both
+    answer "who is that"."""
+    give_embedsgruppe(beboer, "Repperne", room_number=201)
+    notice = make_notice(beboer)
+    client.force_login(beboer)
+
+    assert "Repperne" in client.get(BOARD).content.decode()
+
+    NoticeComment.objects.create(notice=notice, author=beboer, body="Enig.")
+    page = client.get(f"{BOARD}{notice.pk}").content.decode()
+
+    assert page.count("Repperne") == 2  # the post's byline and the comment's
+
+
+def test_a_byline_keeps_the_embedsgruppe_the_author_had_when_they_posted(
+    client: Client, beboer: Resident
+) -> None:
+    """The point of storing it rather than looking it up. Embedsgrupper rotate monthly, so on a
+    board that keeps two years of posts a live lookup would relabel the whole archive every time
+    indstilling saves a månedsliste — and a post about the kitchen written by that month's
+    Køkkengruppen would end up attributed to whichever group its author moved on to."""
+    give_embedsgruppe(beboer, "Køkkengruppen", room_number=204)
+    make_notice(beboer)
+
+    Residency.objects.filter(resident=beboer).update(
+        workgroup=Workgroup.objects.get_or_create(name="Repperne")[0]
+    )
+    client.force_login(beboer)
+    page = client.get(BOARD).content.decode()
+
+    assert "Køkkengruppen" in page
+    assert "Repperne" not in page
+
+
+def test_editing_a_post_does_not_restamp_its_embedsgruppe(client: Client, beboer: Resident) -> None:
+    """`save()` stamps on the way in only — the same reasoning as edited_at not being auto_now.
+    Fixing a typo must not silently reattribute a post to the author's current group."""
+    give_embedsgruppe(beboer, "Køkkengruppen", room_number=205)
+    notice = make_notice(beboer)
+    Residency.objects.filter(resident=beboer).update(
+        workgroup=Workgroup.objects.get_or_create(name="Repperne")[0]
+    )
+    client.force_login(beboer)
+
+    client.post(f"{BOARD}{notice.pk}/rediger", {"category": Category.NYT, "body": "Rettet."})
+
+    notice.refresh_from_db()
+    assert notice.body == "Rettet."
+    assert notice.author_embedsgruppe == "Køkkengruppen"
+
+
+def test_a_byline_shows_no_pill_when_the_author_has_no_embedsgruppe(
+    client: Client, beboer: Resident, other: Resident
+) -> None:
+    """An alumnus has no residency, and their posts stay on the board for years. An empty pill
+    beside their name would read as a group whose name failed to load."""
+    give_embedsgruppe(beboer, "Repperne", room_number=202)
+    make_notice(other)
+    client.force_login(beboer)
+
+    page = client.get(BOARD).content.decode()
+
+    assert "Ann Anden" in page
+    assert "chip-embedsgruppe" not in page
+
+
+def test_the_board_looks_up_no_embedsgruppe_at_all(
+    client: Client, beboer: Resident, make_resident: Callable
+) -> None:
+    """The snapshot is a column on a row the board already fetched, so rendering a page of pills
+    costs nothing. A lookup here would be an N+1 across every post on the page."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    give_embedsgruppe(beboer, "Repperne", room_number=203)
+    make_notice(beboer)
+    for i in range(5):
+        author = make_resident(email=f"a{i}@gahk.dk", first_name=f"A{i}", last_name="Author")
+        give_embedsgruppe(author, "Viceværterne", room_number=210 + i)
+        make_notice(author)
+    client.force_login(beboer)
+
+    with CaptureQueriesContext(connection) as captured:
+        page = client.get(BOARD).content.decode()
+
+    assert page.count("chip-embedsgruppe") == 6  # one pill per post, all six rendered
+    assert [q["sql"] for q in captured.captured_queries if "core_workgroup" in q["sql"]] == []
+
+
+def test_the_backfill_reads_the_month_each_post_was_actually_written_in(
+    beboer: Resident,
+) -> None:
+    """The migration's backfill is not a guess: a post carries created_at, and Residency stores one
+    row per (resident, month), so the group its author was in that month is on record. A resident
+    who has since moved to another group must not have their old posts relabelled — which is the
+    whole reason the field exists, and would be undetectable if the backfill got it wrong."""
+    import importlib
+
+    from django.apps import apps as real_apps
+
+    backfill = importlib.import_module(
+        "opslagstavle.migrations.0004_author_embedsgruppe"
+    ).backfill_embedsgruppe
+
+    year, month = active_period()
+    then = (year - 1, month)
+    give_embedsgruppe(beboer, "Repperne", room_number=206)  # their group now
+    Residency.objects.create(
+        resident=beboer,
+        room=Room.objects.create(legacy_index=207, number=207, floor="stuen", side="mod gaden"),
+        workgroup=Workgroup.objects.get_or_create(name="Køkkengruppen")[0],
+        year=then[0],
+        month=then[1],
+    )
+    old = make_notice(beboer)
+    recent = make_notice(beboer)
+    # Backdate one post into `then`, and clear both snapshots so the backfill has work to do —
+    # exactly the state the migration finds on a board that predates the field.
+    Notice.objects.filter(pk=old.pk).update(
+        # day=1, not today's day: replacing only the year raises on 29 February, since `then[0]`
+        # is the year before and three years in four has no such date. Periods are whole calendar
+        # months, so any day in the month resolves to the same one.
+        created_at=timezone.now().replace(year=then[0], day=1),
+        author_embedsgruppe="",
+    )
+    Notice.objects.filter(pk=recent.pk).update(author_embedsgruppe="")
+
+    backfill(real_apps, None)
+
+    assert Notice.objects.get(pk=old.pk).author_embedsgruppe == "Køkkengruppen"
+    assert Notice.objects.get(pk=recent.pk).author_embedsgruppe == "Repperne"
+
+
+# --- photos on comments ---------------------------------------------------------------------------
+#
+# One optional picture per comment, and a picture on its own is a whole comment. Distinct from the
+# post body's images: those are referenced from Markdown and need NoticeImage plus an orphan sweep
+# (see the "images" section above), while this is a FileField on the comment row that goes with it.
+
+
+def test_a_comment_can_carry_a_photo(client: Client, beboer: Resident, media_tmp: Path) -> None:
+    notice = make_notice(beboer)
+    client.force_login(beboer)
+
+    client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "Sådan ser den ud", "image": png()})
+
+    comment = NoticeComment.objects.get()
+    assert comment.body == "Sådan ser den ud"
+    assert comment.image, "the file must be attached, not merely accepted"
+    assert comment.image.name.startswith("opslag/kommentarer/")
+
+
+def test_a_photo_on_its_own_is_a_whole_comment(client: Client, beboer: Resident, media_tmp: Path) -> None:
+    """ "Her, se" is an answer, which is why `body` is blank-able."""
+    notice = make_notice(beboer)
+    client.force_login(beboer)
+
+    client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "", "image": png()})
+
+    comment = NoticeComment.objects.get()
+    assert comment.body == ""
+    assert comment.image
+
+
+def test_neither_text_nor_photo_is_refused(client: Client, beboer: Resident) -> None:
+    notice = make_notice(beboer)
+    client.force_login(beboer)
+
+    response = client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "   "}, follow=True)
+
+    assert not NoticeComment.objects.exists()
+    assert "Skriv en kommentar, eller vedhæft et billede." in response.content.decode()
+
+
+def test_a_refused_photo_does_not_throw_away_the_text_beside_it(
+    client: Client, beboer: Resident, media_tmp: Path
+) -> None:
+    """An SVG is refused by core.uploads: served from our own /media/ it executes script as us.
+    Losing a typed comment to that would be the worse outcome, so the comment saves and a warning
+    explains the missing picture."""
+    notice = make_notice(beboer)
+    client.force_login(beboer)
+    bad = SimpleUploadedFile(
+        "evil.svg", b"<svg xmlns='http://www.w3.org/2000/svg'/>", content_type="image/svg+xml"
+    )
+
+    response = client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "God idé", "image": bad}, follow=True)
+
+    comment = NoticeComment.objects.get()
+    assert comment.body == "God idé"
+    assert not comment.image, "the SVG must not be stored"
+    assert "Billedet blev ikke gemt" in response.content.decode()
+
+
+def test_a_refused_photo_with_no_text_reports_both_halves(
+    client: Client, beboer: Resident, media_tmp: Path
+) -> None:
+    """core.uploads.attached_image returns None for "nothing attached" and "attached but refused"
+    alike, so this falls into the empty branch — the right landing place, since there is genuinely
+    nothing to save. Alone it would explain only half, so both messages arrive together."""
+    notice = make_notice(beboer)
+    client.force_login(beboer)
+    bad = SimpleUploadedFile("evil.svg", b"<svg/>", content_type="image/svg+xml")
+
+    response = client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "", "image": bad}, follow=True)
+    body = response.content.decode()
+
+    assert not NoticeComment.objects.exists()
+    assert "Billedet blev ikke gemt" in body
+    assert "Skriv en kommentar, eller vedhæft et billede." in body
+
+
+def test_an_oversized_comment_photo_is_refused(
+    client: Client, beboer: Resident, media_tmp: Path, settings: object
+) -> None:
+    """The board's own NOTICE_IMAGE_MAX_MB, so a comment photo and a post photo share one ceiling."""
+    settings.NOTICE_IMAGE_MAX_MB = 1  # type: ignore[attr-defined]
+    notice = make_notice(beboer)
+    client.force_login(beboer)
+    huge = SimpleUploadedFile(
+        "stor.png", b"\x89PNG\r\n\x1a\n" + b"x" * (2 * 1024 * 1024), content_type="image/png"
+    )
+
+    response = client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "Se her", "image": huge}, follow=True)
+
+    assert not NoticeComment.objects.get().image
+    assert "for stort" in response.content.decode()
+
+
+def test_the_comment_photo_is_rendered_on_the_detail_page(
+    client: Client, beboer: Resident, media_tmp: Path
+) -> None:
+    notice = make_notice(beboer)
+    client.force_login(beboer)
+    client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "", "image": png()})
+
+    body = client.get(f"{BOARD}{notice.pk}").content.decode()
+
+    assert NoticeComment.objects.get().image.url in body
+    assert 'enctype="multipart/form-data"' in body, "without it request.FILES is silently empty"
+
+
+def test_deleting_a_comment_deletes_its_photo(
+    beboer: Resident, media_tmp: Path, django_capture_on_commit_callbacks: Callable
+) -> None:
+    """WRAPPED BECAUSE THE PURGE IS DEFERRED, and the deferral is the feature:
+    core.files.delete_attached_files runs on `transaction.on_commit`, so a rolled-back delete cannot
+    destroy the file. A test never commits, so without this the callback never fires."""
+    from django.core.files.base import ContentFile
+
+    notice = make_notice(beboer)
+    comment = NoticeComment.objects.create(notice=notice, author=beboer, body="Se her")
+    comment.image.save("billede.png", ContentFile(b"pngbytes"), save=True)
+    path = media_tmp / comment.image.name
+    assert path.is_file()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        comment.delete()
+
+    assert not path.is_file()
+
+
+def test_deleting_the_post_takes_its_comments_photos_too(
+    beboer: Resident, media_tmp: Path, django_capture_on_commit_callbacks: Callable
+) -> None:
+    """CASCADE removes the comment rows, and a bulk queryset delete never calls Model.delete() —
+    the post_delete SIGNAL is what carries the files out, which is exactly why the receiver is
+    wired to the signal rather than overriding delete()."""
+    from django.core.files.base import ContentFile
+
+    notice = make_notice(beboer)
+    comment = NoticeComment.objects.create(notice=notice, author=beboer, body="Se her")
+    comment.image.save("billede.png", ContentFile(b"pngbytes"), save=True)
+    path = media_tmp / comment.image.name
+    assert path.is_file()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        notice.delete()
+
+    assert not NoticeComment.objects.exists()
+    assert not path.is_file()
+
+
+def test_a_photo_only_comment_notifies_with_a_body_rather_than_a_blank(
+    client: Client, beboer: Resident, other: Resident, pushes: list, media_tmp: Path
+) -> None:
+    """push.preview("") is "", and a notification with an empty body reads on a lock screen as
+    though it failed to load."""
+    notice = make_notice(beboer)
+    subscribe(beboer, "https://push.example/author")
+    client.force_login(other)
+
+    client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "", "image": png()})
+
+    assert len(pushes) == 1
+    assert "Billede" in pushes[0][1]["body"]
+
+
+def test_the_comment_form_carries_the_attachment_note_hooks(client: Client, beboer: Resident) -> None:
+    """The hooks frontend/src/feed.ts finds the note by. The BEHAVIOUR (thumbnail, filename, the
+    remove button) is JavaScript and this project has no JS test runner, so what is asserted here is
+    the contract between the template and that module: the note exists, it starts hidden, and it
+    carries the three data attributes the handler queries. Rename one of those without the other and
+    the paperclip silently stops giving any feedback at all - which is the state this replaced.
+    """
+    notice = make_notice(beboer)
+    client.force_login(beboer)
+
+    body = client.get(f"{BOARD}{notice.pk}").content.decode()
+
+    assert "data-file-note" in body
+    assert "data-file-note-thumb" in body
+    assert "data-file-note-name" in body
+    assert "data-file-note-clear" in body
+    # Hidden until something is picked, or every comment box would carry an empty grey strip.
+    assert '<div class="file-note" data-file-note hidden>' in body
+
+
 # --- images ---------------------------------------------------------------------------------------
 
 
@@ -804,7 +1136,10 @@ def test_an_image_someone_else_uploaded_cannot_be_claimed(
 
 
 def test_deleting_a_post_deletes_its_image_and_the_file(
-    client: Client, beboer: Resident, media_tmp: Path
+    client: Client,
+    beboer: Resident,
+    media_tmp: Path,
+    django_capture_on_commit_callbacks: Callable,
 ) -> None:
     client.force_login(beboer)
     url = json.loads(client.post(BOARD + "billede", {"file": png()}).content)["url"]
@@ -813,7 +1148,8 @@ def test_deleting_a_post_deletes_its_image_and_the_file(
     stored = media_tmp / NoticeImage.objects.get().file.name
     assert stored.is_file()
 
-    client.post(f"{BOARD}{notice.pk}/slet")
+    with django_capture_on_commit_callbacks(execute=True):
+        client.post(f"{BOARD}{notice.pk}/slet")
 
     assert not NoticeImage.objects.exists()
     assert not stored.exists(), "the image outlived its post"
@@ -833,7 +1169,7 @@ def test_an_image_in_a_code_fence_is_not_claimed(client: Client, beboer: Residen
     assert NoticeImage.objects.get().notice_id is None
 
 
-# --- retention ------------------------------------------------------------------------------------
+# --- no retention, and the orphan-upload sweep ------------------------------------------------------------------------------------
 
 
 def _age(notice: Notice, days: int) -> Notice:
@@ -843,43 +1179,29 @@ def _age(notice: Notice, days: int) -> Notice:
     return notice
 
 
-def test_purge_deletes_posts_past_the_retention_window(beboer: Resident) -> None:
+def test_purge_never_deletes_a_post_however_old(beboer: Resident) -> None:
+    """THE POLICY, and the regression test for it: opslagstavlen keeps its archive.
+
+    There used to be a two-year window here (five before user testing shortened it). The board is
+    the kollegium's record of værelsesrunden results, practical notices and who announced what, and
+    a window quietly threw that half away — which was the half worth having when it replaced a
+    Facebook group. Nothing but the author or a moderator removes a post now.
+    """
     from django.core.management import call_command
 
-    _age(make_notice(beboer, body="Gammelt"), RETENTION_DAYS + 1)
+    _age(make_notice(beboer, body="Fra dengang"), 365 * 12)
+    _age(make_notice(beboer, body="Sidste år"), 400)
     make_notice(beboer, body="Nyt")
 
     call_command("purge_notices")
 
-    assert [n.body for n in Notice.objects.all()] == ["Nyt"]
-
-
-def test_purge_keeps_a_pinned_post_however_old(beboer: Resident, inspektion: Resident) -> None:
-    """A pin is Inspektionen saying the kollegium keeps this, which makes it the retention override."""
-    from django.core.management import call_command
-
-    old = _age(make_notice(beboer, body="Fastgjort og gammelt"), RETENTION_DAYS * 2)
-    Notice.objects.filter(pk=old.pk).update(pinned_at=timezone.now(), pinned_by=inspektion)
-
-    call_command("purge_notices")
-
-    assert Notice.objects.filter(pk=old.pk).exists()
-
-
-def test_purge_keeps_a_post_one_day_short_of_the_window(beboer: Resident) -> None:
-    from django.core.management import call_command
-
-    _age(make_notice(beboer), RETENTION_DAYS - 1)
-
-    call_command("purge_notices")
-
-    assert Notice.objects.exists()
+    assert Notice.objects.count() == 3
 
 
 def test_purge_dry_run_deletes_nothing(beboer: Resident, media_tmp: Path) -> None:
     from django.core.management import call_command
 
-    _age(make_notice(beboer), RETENTION_DAYS + 1)
+    _age(make_notice(beboer), 365 * 5)
     NoticeImage.objects.create(file=png(), uploaded_by=beboer)
     NoticeImage.objects.update(uploaded_at=timezone.now() - timedelta(days=7))
 
@@ -889,30 +1211,44 @@ def test_purge_dry_run_deletes_nothing(beboer: Resident, media_tmp: Path) -> Non
     assert NoticeImage.objects.exists()
 
 
-def test_purge_erases_the_files_of_the_posts_it_deletes(beboer: Resident, media_tmp: Path) -> None:
+def test_a_bulk_delete_still_erases_the_image_files(
+    beboer: Resident, media_tmp: Path, django_capture_on_commit_callbacks: Callable
+) -> None:
     """A bulk queryset delete never calls Model.delete() but DOES fire post_delete — which is exactly
-    why NoticeImage cleans up in a receiver, and why this works at all."""
+    why NoticeImage cleans up in a receiver.
+
+    The retention purge used to be the caller that proved this, and it is gone; the property is not.
+    Any bulk removal (a moderator clearing a spam run, a future feature, a shell) must still take the
+    files with it, and against object storage a leaked file is one nothing on any page can reach.
+    """
     from django.core.management import call_command
 
-    notice = _age(make_notice(beboer), RETENTION_DAYS + 1)
+    notice = make_notice(beboer)
     image = NoticeImage.objects.create(notice=notice, file=png(), uploaded_by=beboer)
     stored = media_tmp / image.file.name
     assert stored.is_file()
 
-    call_command("purge_notices")
+    with django_capture_on_commit_callbacks(execute=True):
+        Notice.objects.filter(pk=notice.pk).delete()
 
     assert not stored.exists()
+    call_command("purge_notices")  # and the sweep finds nothing left to do
 
 
-def test_purge_sweeps_an_old_unclaimed_upload(beboer: Resident, media_tmp: Path) -> None:
-    """The abandoned-draft case: the composer was opened, pictures added, the tab closed."""
+def test_purge_sweeps_an_old_unclaimed_upload(
+    beboer: Resident, media_tmp: Path, django_capture_on_commit_callbacks: Callable
+) -> None:
+    """The abandoned-draft case, and now the command's ONLY job: the composer was opened, pictures
+    added, the tab closed. Without this every abandoned draft leaves a file in the bucket forever,
+    unreachable from any page and noticed by nobody."""
     from django.core.management import call_command
 
     image = NoticeImage.objects.create(file=png(), uploaded_by=beboer)
     NoticeImage.objects.update(uploaded_at=timezone.now() - timedelta(days=7))
     stored = media_tmp / image.file.name
 
-    call_command("purge_notices")
+    with django_capture_on_commit_callbacks(execute=True):
+        call_command("purge_notices")
 
     assert not NoticeImage.objects.exists()
     assert not stored.exists()
@@ -929,22 +1265,36 @@ def test_purge_keeps_a_freshly_uploaded_unclaimed_image(beboer: Resident, media_
     assert NoticeImage.objects.exists()
 
 
+def test_purge_keeps_an_image_its_post_still_uses(beboer: Resident, media_tmp: Path) -> None:
+    """Claimed images are not orphans, however old the post gets — which is the whole board now."""
+    from django.core.management import call_command
+
+    notice = _age(make_notice(beboer), 365 * 6)
+    NoticeImage.objects.create(notice=notice, file=png(), uploaded_by=beboer)
+    NoticeImage.objects.update(uploaded_at=timezone.now() - timedelta(days=365 * 6))
+
+    call_command("purge_notices")
+
+    assert NoticeImage.objects.exists()
+
+
 def test_purge_is_idempotent(beboer: Resident) -> None:
     from django.core.management import call_command
 
-    _age(make_notice(beboer), RETENTION_DAYS + 1)
+    NoticeImage.objects.create(file=png(), uploaded_by=beboer)
+    NoticeImage.objects.update(uploaded_at=timezone.now() - timedelta(days=7))
 
     call_command("purge_notices")
     call_command("purge_notices")
 
-    assert not Notice.objects.exists()
+    assert not NoticeImage.objects.exists()
 
 
-def test_opening_the_board_purges_nothing(client: Client, beboer: Resident) -> None:
+def test_opening_the_board_deletes_nothing(client: Client, beboer: Resident) -> None:
     """Deliberately unlike Den Hurtige, which purges on every feed load. Its promise is "gone in 30
-    minutes", so a missed cron is visibly wrong within the hour; here the tolerance is months, and a
-    DELETE on every request would run for years finding nothing."""
-    old = _age(make_notice(beboer), RETENTION_DAYS + 1)
+    minutes", so a missed cron is visibly wrong within the hour; here nothing a reader can see is
+    affected at all, and the posts are now kept regardless."""
+    old = _age(make_notice(beboer), 365 * 4)
     client.force_login(beboer)
 
     client.get(BOARD)
@@ -1254,6 +1604,81 @@ def test_no_reader_panel_on_the_board_when_nobody_has_reacted(client: Client, be
     assert "who-picker" not in client.get(BOARD).content.decode()
 
 
+def test_the_board_panels_are_one_per_emoji(client: Client, beboer: Resident) -> None:
+    """The board used to render a single 👥 panel listing everyone, grouped by emoji. It is now one
+    panel per emoji, opened from the pill — the same widget Den Hurtige has, so the same control no
+    longer answers a different question depending on which page you are on."""
+    notice = make_notice(beboer)
+    mette = Resident.objects.create(email="m@gahk.dk", first_name="Mette", last_name="Hansen")
+    anders = Resident.objects.create(email="a@gahk.dk", first_name="Anders", last_name="Bo")
+    NoticeReaction.objects.create(notice=notice, author=beboer, emoji="👍")
+    NoticeReaction.objects.create(notice=notice, author=mette, emoji="👍")
+    NoticeReaction.objects.create(notice=notice, author=anders, emoji="🎉")
+    client.force_login(beboer)
+
+    body = client.get(BOARD).content.decode()
+
+    assert body.count('class="who-row"') == 3  # one per reaction, not one per emoji
+    assert body.count('class="pop who-picker"') == 2  # one panel per emoji, not one for the notice
+
+    # Slice on the panel ids, not the bare keys — the pills reference the same keys in data-who.
+    thumb = body[body.index(f'id="who-{notice.pk}-1"') : body.index(f'id="who-{notice.pk}-2"')]
+    assert "Mette Hansen" in thumb
+    assert "Anders Bo" not in thumb  # he used the other emoji
+
+    # The 👥 pill is gone: the pills themselves are now the way in.
+    assert "reaction-who" not in body
+
+
+def test_holding_a_board_reaction_pill_is_what_opens_the_reader_panel(
+    client: Client, beboer: Resident
+) -> None:
+    """Each pill points at its own panel by id, which is what frontend/src/feed.ts binds the hold,
+    hover, right-click and Shift+Enter gestures to. That module is delegated from `document` and
+    keys on `.reaction[data-who]`, so it covers this page without knowing anything about it —
+    but only if the markup carries the hook."""
+    notice = make_notice(beboer)
+    NoticeReaction.objects.create(notice=notice, author=beboer, emoji="👍")
+    client.force_login(beboer)
+
+    body = client.get(BOARD).content.decode()
+
+    assert f'data-who="who-{notice.pk}-1"' in body
+    assert f'id="who-{notice.pk}-1"' in body
+    assert 'aria-haspopup="dialog"' in body
+    # Tapping a pill must still be the toggle, never the panel.
+    assert f'hx-post="{BOARD}{notice.pk}/reaktion"' in body
+
+
+def test_the_add_reaction_button_spells_itself_out_on_an_untouched_notice(
+    client: Client, beboer: Resident
+) -> None:
+    """On a notice with no reactions the picker is the only thing in the row, where a bare glyph
+    reads as an empty slot rather than the button that fills it. CSS keys off `.is-empty`."""
+    notice = make_notice(beboer)
+    client.force_login(beboer)
+
+    body = client.get(BOARD).content.decode()
+
+    assert 'class="reactions is-empty"' in body
+    assert "Reagér" in body
+
+    NoticeReaction.objects.create(notice=notice, author=beboer, emoji="👍")
+    assert 'class="reactions is-empty"' not in client.get(BOARD).content.decode()
+
+
+def test_the_toggled_row_still_carries_the_reader_panel(client: Client, beboer: Resident) -> None:
+    """The toggle re-renders only this partial, so the panels and their data-who hooks have to come
+    back with it — otherwise reacting would silently strip the gestures until the next full load."""
+    notice = make_notice(beboer)
+    client.force_login(beboer)
+
+    body = client.post(f"{BOARD}{notice.pk}/reaktion", {"emoji": "👍"}).content.decode()
+
+    assert f'data-who="who-{notice.pk}-1"' in body
+    assert f'id="who-{notice.pk}-1"' in body
+
+
 def test_toggling_a_reaction_returns_the_row_as_it_now_is(client: Client, beboer: Resident) -> None:
     """Regression: the toggle renders the row from a queryset read AFTER the write. Fetching the
     notice with the reactions prefetch instead built that cache before apply_toggle ran, so the tap
@@ -1501,8 +1926,12 @@ def events_open(monkeypatch: pytest.MonkeyPatch) -> None:
     """Lift begivenheder's own rollout gate.
 
     It is behind one too, and both the chip and the form field are gated on the reader being able to
-    open the feature. These tests are about the link, not about either gate — the two that ARE about
-    the gate are at the end of this section and deliberately do not use this.
+    open the feature. These tests are about the link, not about either gate.
+
+    Redundant against the shipped value now that begivenheder is open to everyone, and kept for the
+    same reason den_hurtige's equivalent is: it states what these tests need instead of inheriting
+    it, so re-gating that feature cannot silently change what this section is testing. The two
+    tests that ARE about the gate sit at the end of this section and set it themselves.
     """
     from events import access as events_access
 
@@ -1634,9 +2063,22 @@ def test_no_event_chip_while_begivenheder_is_behind_its_own_gate(
     assert f"/intern/begivenheder/{event.pk}" not in body
 
 
-def test_the_event_field_is_absent_while_begivenheder_is_gated(client: Client, beboer: Resident) -> None:
+def test_the_event_field_is_absent_while_begivenheder_is_gated(
+    client: Client, beboer: Resident, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Removed from the form, not disabled — so a POST naming an event is ignored rather than merely
-    unrendered. The events gate is on by default, hence no `events_open` here."""
+    unrendered.
+
+    THE GATE IS APPLIED HERE rather than taken for granted. This test used to say "the events gate
+    is on by default, hence no `events_open` here", and it passed only because begivenheder's
+    shipped ACCESS_ROLES happened to be a role tuple. It broke the day that feature opened to the
+    whole house — which is precisely the day the assertion still has to hold, because re-gating
+    begivenheder later must take this form field with it. A test that depends on a rollout value
+    is testing the value, not the behaviour.
+    """
+    from events import access as events_access
+
+    monkeypatch.setattr(events_access, "ACCESS_ROLES", (Role.ADMINISTRATOR,))
     event = _event(beboer)
     client.force_login(beboer)
 

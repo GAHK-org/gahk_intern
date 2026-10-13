@@ -8,9 +8,9 @@ Two of these posts exist for a reason beyond looking realistic:
   * one is **pinned**, so the pinned-first layout, the 📌 marker and the pin cap are all visible on a
     fresh checkout rather than only after someone thinks to pin something;
   * one carries **three images**, so the feed's collapse-to-a-thumbnail behaviour is visible too;
-  * one is **six years old**, so `manage.py purge_notices --dry-run` reports a real number locally.
-    Without it that command prints zeros until the retention window has actually elapsed, and nobody
-    can tell whether it works or is broken.
+  * one is **years old**, because the board has no retention: the demo should show that a genuinely
+    old opslag is still sitting there, still rendering and still paginating, rather than that
+    something is about to remove it.
 
 No *uploaded* images: this project has no Pillow, and `_seed_room_conditions` sets no photos for the
 same reason. The multi-image post references files already in `static/legacy/` instead.
@@ -21,7 +21,7 @@ from datetime import datetime, timedelta
 
 from residents.models import Resident, Role
 
-from .models import RETENTION_DAYS, Category, Notice, NoticeComment, NoticeReaction
+from .models import Category, Notice, NoticeComment, NoticeReaction
 
 VAERELSESRUNDE_BODY = """Runden er afsluttet. Fordelingen blev:
 
@@ -87,9 +87,10 @@ POSTS = [
 COMMENTS = ["Godt initiativ!", "Jeg er med.", "Kan man tage en gæst med?", "Tak for info."]
 EMOJI = ["👍", "🎉", "❤️", "👀"]
 
-# Comfortably past RETENTION_DAYS, so the purge command has something to report. Derived rather
-# than hardcoded, so shortening the retention window cannot silently make this post recent again.
-STALE_AGE_DAYS = RETENTION_DAYS + 365
+# One deliberately ancient post. It used to exist so `purge_notices --dry-run` had something to
+# report; nothing deletes posts any more, so it now demonstrates the opposite — that the board keeps
+# its archive, and that a three-year-old opslag still renders and still paginates correctly.
+STALE_AGE_DAYS = 365 * 3
 
 
 def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:

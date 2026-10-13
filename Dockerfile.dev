@@ -1,0 +1,20 @@
+# Dev-only image for `docker compose --profile docker up web` (hot-reload). NOT used in production —
+# see Dockerfile for that. Installs dependencies (incl. the dev group) once at build time; app/ is
+# bind-mounted at runtime (docker-compose.yml) so host edits reach Django's autoreloader without a
+# rebuild. No frontend build/collectstatic step: DEBUG=1 serves STATICFILES_DIRS directly, so the
+# same `app/static/dist` a host-run `task frontend:build`/`frontend:watch` produces is picked up
+# through the bind mount.
+FROM python:3.13-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
+COPY --from=ghcr.io/astral-sh/uv:0.8 /uv /uvx /bin/
+# /src, NOT /app: the bind mount replaces /app wholesale, and a .venv installed under it would be
+# shadowed by the host's app/ directory (which has no .venv) the moment the container starts.
+WORKDIR /src
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --python /usr/local/bin/python
+ENV PATH="/src/.venv/bin:$PATH"
+WORKDIR /src/app
+EXPOSE 8000
+CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+

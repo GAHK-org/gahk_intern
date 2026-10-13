@@ -206,6 +206,33 @@ def _clash_rooms(year: int, month: int) -> list[int]:
     return sorted(n for n, c in counts.items() if c > 1)
 
 
+BADGE_OLDEST = ("🧓", "Ældste beboer")
+BADGE_YOUNGEST = ("👶", "Yngste beboer")
+BADGE_LONGEST = ("👑", "Boet her længst")
+
+
+def _period_badges(year: int, month: int) -> dict[int, list[tuple[str, str]]]:
+    """Leaderboard ornaments for a period's alumneliste: the oldest and youngest resident (by
+    birthday) and whoever has lived at the dorm the longest (by move_in_date). Keyed by resident id;
+    a resident can hold more than one badge."""
+    residents = Resident.objects.filter(residencies__year=year, residencies__month=month)
+    badges: dict[int, list[tuple[str, str]]] = {}
+
+    def _add(resident_id: int | None, badge: tuple[str, str]) -> None:
+        if resident_id is not None:
+            badges.setdefault(resident_id, []).append(badge)
+
+    by_birthday = list(residents.exclude(birthday=None).order_by("birthday").values_list("id", flat=True))
+    if by_birthday:
+        _add(by_birthday[0], BADGE_OLDEST)
+        _add(by_birthday[-1], BADGE_YOUNGEST)
+    longest = (
+        residents.exclude(move_in_date=None).order_by("move_in_date").values_list("id", flat=True).first()
+    )
+    _add(longest, BADGE_LONGEST)
+    return badges
+
+
 @login_required
 def directory(request: HttpRequest) -> HttpResponse:
     """Full directory page (login-required). Legacy `json()` was campus-IP gated; with real auth the
@@ -219,6 +246,7 @@ def directory(request: HttpRequest) -> HttpResponse:
         "alumneliste/directory.html",
         {
             "rows": _directory_rows(year, month, q, sort, direction),
+            "badges": _period_badges(year, month),
             "periods": _period_options((year, month)),
             "period_value": f"{year}-{month}",
             "period_label": f"{DA_MONTHS[month].capitalize()} {year}",
@@ -243,6 +271,7 @@ def directory_rows(request: HttpRequest) -> HttpResponse:
         "alumneliste/_directory_table.html",
         {
             "rows": _directory_rows(year, month, q, sort, direction),
+            "badges": _period_badges(year, month),
             "period_value": f"{year}-{month}",
             "q": q,
             "sort": sort,
@@ -452,6 +481,8 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
     workgroups = list(Workgroup.objects.order_by("name"))
     cleanings = list(Cleaning.objects.order_by("name"))
 
+    next_rows = None  # Sporer om vi skal hente fra databasen eller bruge brugerens kladde
+
     if request.method == "POST":
         action = request.POST.get("action")
         admins = set(
@@ -478,8 +509,9 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                     )
                     _sync_month_roles(res.resident_id, res.workgroup, ny, nm, res.resident_id in admins)
             messages.success(request, f"Listen er kopieret til {ny}-{nm:02d}.")
+            return redirect(f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}")
 
-        elif action == "save":  # edit room/workgroup/cleaning + remove people
+        if action == "save":  # edit room/workgroup/cleaning + remove people
             removed: set[int] = set()
             intended: dict[int, tuple[Room, Workgroup | None, Cleaning | None]] = {}
             me = current_resident(request).pk
@@ -534,6 +566,27 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                 for e in errors:
                     messages.error(request, e)
                 messages.error(request, "Ingen ændringer gemt.")
+
+                # FEJL-TILSTAND: Vi overskriver listemodellerne med brugerens rettelser
+                # (lokalt i hukommelsen), så viewet tegner kladden i stedet for databasen.
+                db_rows = list(
+                    Residency.objects.filter(year=ny, month=nm)
+                    .select_related("resident", "room", "workgroup", "cleaning")
+                    .order_by("room__number")
+                )
+
+                next_rows = []
+                for res in db_rows:
+                    if res.resident_id in removed:
+                        continue
+
+                    if res.resident_id in intended:
+                        i_room, i_wg, i_cl = intended[res.resident_id]
+                        res.room = i_room
+                        res.workgroup = i_wg
+                        res.cleaning = i_cl
+
+                    next_rows.append(res)
             else:
                 with transaction.atomic():
                     RoleAssignment.objects.filter(resident_id__in=removed, year=ny, month=nm).delete()
@@ -544,6 +597,9 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                         )
                         _sync_month_roles(rid, wg, ny, nm, rid in admins)
                 messages.success(request, "Ændringer gemt.")
+                return redirect(
+                    f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}"
+                )
 
         elif action == "add_existing":  # add a resident already in the system
             room = _pick(room_by_id, request.POST.get("room", ""))
@@ -566,6 +622,7 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                 )
                 _sync_month_roles(resident.id, wg, ny, nm, resident.id in admins)
                 messages.success(request, f"{resident.full_name} tilføjet til {ny}-{nm:02d}.")
+            return redirect(f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}")
 
         elif action == "add_new":  # create a new resident and add them
             email = (request.POST.get("email") or "").strip().lower()
@@ -606,14 +663,18 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                         "Velkomstmailen kunne ikke sendes — bed dem bruge “glemt kodeord”, "
                         "og tjek serverloggen.",
                     )
+            return redirect(f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}")
 
-        return redirect(f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}")
+    # Hvis next_rows stadig er None, betyder det at det er en GET request ELLER
+    # en action (som "save") slog fejl og allerede populerede listen lokalt.
+    # I så fald henter vi den friske tilstand fra databasen.
+    if next_rows is None:
+        next_rows = list(
+            Residency.objects.filter(year=ny, month=nm)
+            .select_related("resident", "room", "workgroup", "cleaning")
+            .order_by("room__number")
+        )
 
-    next_rows = list(
-        Residency.objects.filter(year=ny, month=nm)
-        .select_related("resident", "room", "workgroup", "cleaning")
-        .order_by("room__number")
-    )
     in_next = {r.resident_id for r in next_rows}
     available = (
         Resident.objects.filter(is_active=True).exclude(id__in=in_next).order_by("first_name", "last_name")
@@ -653,10 +714,12 @@ def profile(request: HttpRequest, pk: int) -> HttpResponse:
         .first()
     )
     recent_notices = resident.notices.select_related("author").order_by("-created_at")[:10]
+    # Only shown when the resident is on the currently active alumneliste (same leaderboard as there).
+    badges = _period_badges(year, month).get(resident.pk, []) if residency else []
     return render(
         request,
         "residents/profile.html",
-        {"subject": resident, "residency": residency, "recent_notices": recent_notices},
+        {"subject": resident, "residency": residency, "recent_notices": recent_notices, "badges": badges},
     )
 
 

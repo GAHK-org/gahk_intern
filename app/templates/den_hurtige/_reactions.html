@@ -17,14 +17,31 @@
   one per emoji, opened by holding the pill (touch), hovering it (mouse), right-clicking it, or
   Shift+Enter (keyboard). See the `who` block in frontend/src/feed.ts for the gestures.
 
-  Note this file has DIVERGED from app/templates/opslagstavle/_reactions.html, which still has the
-  👥 pill and no gestures. That is deliberate, not an oversight waiting to be tidied: the
-  noticeboard is read on a desktop, at full width, and is not competing for room the way a
-  one-handed chat row is. The shared `.reaction*` CSS in frontend/src/styles.css still serves both,
-  so `.reaction-who` must stay in the stylesheet even though nothing here uses it any more.
+  opslagstavle/_reactions.html is now the same widget again. It kept the 👥 pill and no gestures for
+  a while, on the argument that the noticeboard has room to spare — but that argument was about
+  layout, and what it cost was one control answering a different question per page. Change the
+  interaction here and change it there; the shared `.reaction*` CSS in frontend/src/styles.css
+  serves both.
 {% endcomment %}
-<div class="reactions{% if not reactions %} is-empty{% endif %}" id="reactions-{{ post.pk }}">
+{% comment %}
+  `archived` turns this row read-only: the pills stop being buttons and the picker is not rendered
+  at all. Both halves are needed and neither is cosmetic — a disabled-looking pill that still
+  carried hx-post would still write on a keyboard Enter, and a picker with nothing behind it invites
+  a tap that answers with the row unchanged and no explanation.
+
+  The pills become <span>s rather than disabled <button>s so the counts stay selectable and stay in
+  the accessibility tree as the text they are; a disabled button is announced as a control you
+  cannot use, which is a worse answer than "this is a number". The reader panels below survive
+  intact — who reacted is a fact about the archive and is exactly what somebody reading it back
+  wants.
+{% endcomment %}
+<div class="reactions{% if not reactions %} is-empty{% endif %}{% if archived %} is-archived{% endif %}" id="reactions-{{ post.pk }}">
   {% for r in reactions %}
+    {% if archived %}
+      <span class="reaction is-static{% if r.mine %} is-mine{% endif %}"
+            data-who="who-{{ post.pk }}-{{ forloop.counter }}"
+            aria-label="{{ r.emoji }} {{ r.count }}">{{ r.emoji }} <span class="n">{{ r.count }}</span></span>
+    {% else %}
     {% comment %}
       Tap toggles the reaction; hold/hover/right-click opens who. Those must not be the same
       gesture — a tap that both changed your reaction and opened a panel would be neither.
@@ -44,6 +61,7 @@
             hx-target="#reactions-{{ post.pk }}" hx-swap="outerHTML"
             aria-pressed="{% if r.mine %}true{% else %}false{% endif %}"
             aria-label="{{ r.emoji }} {{ r.count }}">{{ r.emoji }} <span class="n">{{ r.count }}</span></button>
+    {% endif %}
   {% endfor %}
 
   {% comment %}
@@ -90,6 +108,7 @@
     above), where this is the sole thing in the row and a bare glyph read as an empty slot rather
     than the button that fills it.
   {% endcomment %}
+  {% if not archived %}
   <details class="pop emoji-picker" id="picker-{{ post.pk }}">
     <summary class="reaction reaction-add" title="Tilføj reaktion" aria-label="Tilføj reaktion">☺<span aria-hidden="true">+</span><span class="add-label"> Reagér</span></summary>
     <div class="pop-backdrop"></div>
@@ -113,4 +132,5 @@
       </form>
     </div>
   </details>
+  {% endif %}
 </div>

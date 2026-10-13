@@ -31,7 +31,7 @@ from django.utils import timezone
 
 from residents.models import Resident
 
-from .models import RETENTION_AFTER_END, Answer, Event, EventInvite, Rsvp, Visibility
+from .models import RETENTION_AFTER_END, Answer, Event, EventComment, EventInvite, Rsvp, Visibility
 
 FAELLESSPISNING = """Vi laver **grøn karry** til hele huset.
 
@@ -175,9 +175,31 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
         )
     )
 
+    _seed_the_thread(events[0], residents)
     _link_the_announcement(events[0])
 
     return len(events)
+
+
+def _seed_the_thread(event: Event, residents: list[Resident]) -> None:
+    """A few comments on the fællesspisning, so the thread renders on a fresh checkout.
+
+    On the FIRST event specifically -- the plain open one the list view is mostly made of -- rather
+    than spread across all of them: one populated thread shows the feature, and a comment on every
+    event would make an empty thread look like a bug rather than the normal state.
+
+    Written straight through the ORM with an explicit created_at, because `auto_now_add` ignores
+    whatever is passed to create() -- the same reason the events above set their dates with
+    `Event.objects.filter(...).update(...)` where they need a past one. Here the order is what
+    matters and insertion order gives it, so a plain create is enough.
+    """
+    thread = [
+        (residents[2], "Skal man tage noget med, eller er alt dækket?"),
+        (event.organiser, "Bare dig selv — vi har købt ind. Tag gerne en flaske vin hvis du vil."),
+        (residents[3], "Jeg kommer et kvarter senere, jeg har vagt til 18."),
+    ]
+    for author, body in thread:
+        EventComment.objects.create(event=event, author=author, body=body)
 
 
 def _link_the_announcement(event: Event) -> None:
