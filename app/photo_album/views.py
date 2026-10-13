@@ -1,4 +1,5 @@
 import logging
+import mimetypes
 import posixpath
 from collections import defaultdict
 from collections.abc import Iterable
@@ -38,7 +39,7 @@ from core.media import REDIRECT_CACHE_CONTROL
 from residents.models import Resident
 from residents.permissions import current_resident
 
-from . import access, services
+from . import access, cache, services
 from .forms import AlbumForm, AlbumNameForm, DownloadForm, MediaUploadForm, ZipAlbumImportForm
 from .models import (
     Album,
@@ -58,6 +59,9 @@ logger = logging.getLogger(__name__)
 # Tiles per page of the album grid and the timeline. Pages are loaded in both directions as the
 # reader scrolls, and the frontend drops pages far off screen again, so this only sets the step.
 PAGE_SIZE = 60
+# A cached derivative's key never changes meaning (photo_album.cache), so the browser may keep it a
+# while; `private` because it was served past an access check, like core.media's redirects.
+CACHED_FILE_CACHE_CONTROL = "private, max-age=86400"
 
 
 def album_folder_options() -> list[str]:
@@ -1023,6 +1027,20 @@ def serve_media(request: HttpRequest, path: str) -> HttpResponseBase:
         raise Http404("no such photo-album media")
     if not _is_visible(request, media):
         raise PermissionDenied
+
+    cached = cache.cached_file(media, key)
+    if cached is not None:
+        try:
+            body = cached.read_bytes()
+        except OSError:
+            pass  # evicted between the two lines; the bucket still has it
+        else:
+            response = HttpResponse(
+                body, content_type=mimetypes.guess_type(key)[0] or "application/octet-stream"
+            )
+            response.headers["Cache-Control"] = CACHED_FILE_CACHE_CONTROL
+            response.headers["Vary"] = "Cookie"
+            return response
 
     storage = media.original.storage
     signer = getattr(storage, "signed_url", None)
