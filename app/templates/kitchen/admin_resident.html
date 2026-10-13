@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% load ui_extras %}
+{% block title %}{{ resident.full_name }} - Køkkenvagter{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Køkkenvagter · Administration</p>
+      <h1>{{ resident.full_name }}</h1>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-secondary" href="{% url 'kitchen:admin' %}">‹ Til oversigten</a>
+    </div>
+  </div>
+  <p>Saldo: <strong class="{{ balance|sign_class }}">{{ balance }}</strong></p>
+
+  <form method="post" class="card max-w-md">
+    {% csrf_token %}
+    <h2>Manuel postering</h2>
+    <label>Beløb (fx 2 eller -3)</label>
+    <input type="number" name="amount" required>
+    <label>Begrundelse</label>
+    <input type="text" name="message" maxlength="255" required>
+    <p class="mt-3"><button type="submit">Bogfør</button></p>
+  </form>
+
+  <h2>Posteringer</h2>
+  {% include "kitchen/_ledger.html" %}
+{% endblock %}

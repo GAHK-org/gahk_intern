@@ -1,0 +1,18 @@
+{% load ui_extras %}
+<table cellpadding="6" style="width:100%; border-collapse:collapse">
+  <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec">
+    <th>Dato</th><th>Saldo før</th><th>Beløb</th><th>Saldo efter</th><th>Type</th><th>Tekst</th>
+  </tr></thead>
+  <tbody>
+  {% for e in entries %}
+    <tr style="border-bottom:1px solid #f0f1f4">
+      <td>{{ e.created_at|date:"Y-m-d H:i" }}</td>
+      <td>{{ e.balance_before }}</td>
+      <td class="{{ e.amount|sign_class }}">{{ e.amount }}</td>
+      <td>{{ e.balance_after }}</td>
+      <td>{{ e.get_kind_display }}</td>
+      <td>{{ e.message }}{% if e.created_by %} <span class="muted">({{ e.created_by.full_name }})</span>{% endif %}</td>
+    </tr>
+  {% empty %}<tr><td colspan="6" class="muted">Ingen posteringer endnu.</td></tr>{% endfor %}
+  </tbody>
+</table>

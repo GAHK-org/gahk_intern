@@ -76,10 +76,13 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
         vaerelser.append(("/intern/soegvaerelse/admin", "Værelsesudbud", "offer"))
     grupper: list[NavItem] = [
         ("/intern/ak/", "AK-krydser", "check"),
+        ("/intern/koekkenvagter/", "Køkkenvagter", "clock"),
         ("/intern/oelkaelder/min-saldo", "Ølkælder", "beer"),
     ]
     if "ak" in roles:
         grupper.append(("/intern/ak/admin", "AK-oversigt", "check"))
+    if "kokkengruppe" in roles:
+        grupper.append(("/intern/koekkenvagter/admin", "Køkken-admin", "clock"))
     if "oelkaelder" in roles:
         # Salgsoverblik / Personoversigt are sub-pages reached from Ølkælder-admin, not separate nav items.
         grupper.append(("/intern/oelkaelder/admin", "Ølkælder-admin", "beer"))
@@ -122,7 +125,6 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
         (settings.WIKI_URL, "Wiki", "book"),
         (settings.FEEDBACK_URL, "Fejl & ønsker", "bug"),
     ]
-    # kokkengruppe: no dedicated screen today (documented gap; no menu item).
     sections: list[NavSection] = [
         ("Oversigt", oversigt),
         ("Værelser", vaerelser),

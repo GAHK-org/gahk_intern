@@ -47,6 +47,7 @@ erDiagram
         bool wants_opslagstavle
         bool wants_begivenheder
         bool wants_reparationer
+        bool wants_koekkenvagter
     }
 
     residents_Resident {
@@ -603,6 +604,59 @@ erDiagram
         datetime completed_at
     }
 
+    kitchen_KitchenShift {
+        int id PK
+        string kind
+        date date
+        datetime starts_at
+        datetime ends_at
+        int spots
+        int points_per_spot
+        int bonus_points
+        string description
+        bool is_disabled
+        string disabled_reason
+        datetime completed_at
+        int created_by_id FK
+        datetime updated_at
+    }
+
+    kitchen_KitchenAssignment {
+        int id PK
+        int shift_id FK
+        int resident_id FK
+        int spots
+        bool for_sale
+        int sale_bonus
+        datetime put_for_sale_at
+        datetime self_enrolled_at
+        int awarded_points
+        bool is_absent
+        datetime created_at
+        datetime updated_at
+    }
+
+    kitchen_KitchenPointEntry {
+        int id PK
+        int resident_id FK
+        string kind
+        int balance_before
+        int amount
+        int balance_after
+        string message
+        int shift_id FK
+        int year
+        int month
+        datetime created_at
+        int created_by_id FK
+    }
+
+    kitchen_KitchenMonthlyState {
+        int id PK
+        int year
+        int month
+    }
+
     core_PushSubscription }o--|| residents_Resident : "user"
     residents_Resident }o--|o residents_Resident : "sponsor"
     residents_Residency }o--|| residents_Resident : "resident"
@@ -682,6 +736,12 @@ erDiagram
     photo_album_AlbumDownload }o--|| photo_album_Album : "album"
     photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
     photo_album_AlbumImport }o--|| residents_Resident : "requested_by"
+    kitchen_KitchenShift }o--|o residents_Resident : "created_by"
+    kitchen_KitchenAssignment }o--|| kitchen_KitchenShift : "shift"
+    kitchen_KitchenAssignment }o--|| residents_Resident : "resident"
+    kitchen_KitchenPointEntry }o--|| residents_Resident : "resident"
+    kitchen_KitchenPointEntry }o--|o kitchen_KitchenShift : "shift"
+    kitchen_KitchenPointEntry }o--|o residents_Resident : "created_by"
 ```
 
 ## admissions
@@ -913,6 +973,7 @@ erDiagram
         bool wants_opslagstavle
         bool wants_begivenheder
         bool wants_reparationer
+        bool wants_koekkenvagter
     }
 
     residents_Resident { }
@@ -1041,6 +1102,73 @@ erDiagram
     events_EventComment }o--|| events_Event : "event"
     events_EventComment }o--|| residents_Resident : "author"
     events_CalendarFeedToken ||--|| residents_Resident : "resident"
+```
+
+## kitchen
+
+```mermaid
+erDiagram
+    kitchen_KitchenShift {
+        int id PK
+        string kind
+        date date
+        datetime starts_at
+        datetime ends_at
+        int spots
+        int points_per_spot
+        int bonus_points
+        string description
+        bool is_disabled
+        string disabled_reason
+        datetime completed_at
+        int created_by_id FK
+        datetime updated_at
+    }
+
+    kitchen_KitchenAssignment {
+        int id PK
+        int shift_id FK
+        int resident_id FK
+        int spots
+        bool for_sale
+        int sale_bonus
+        datetime put_for_sale_at
+        datetime self_enrolled_at
+        int awarded_points
+        bool is_absent
+        datetime created_at
+        datetime updated_at
+    }
+
+    kitchen_KitchenPointEntry {
+        int id PK
+        int resident_id FK
+        string kind
+        int balance_before
+        int amount
+        int balance_after
+        string message
+        int shift_id FK
+        int year
+        int month
+        datetime created_at
+        int created_by_id FK
+    }
+
+    kitchen_KitchenMonthlyState {
+        int id PK
+        int year
+        int month
+    }
+
+    residents_Resident { }
+
+    kitchen_KitchenShift }o--|o residents_Resident : "created_by"
+    kitchen_KitchenAssignment }o--|| kitchen_KitchenShift : "shift"
+    kitchen_KitchenAssignment }o--|| residents_Resident : "resident"
+    kitchen_KitchenPointEntry }o--|| residents_Resident : "resident"
+    kitchen_KitchenPointEntry }o--|o kitchen_KitchenShift : "shift"
+    kitchen_KitchenPointEntry }o--|o residents_Resident : "created_by"
 ```
 
 ## oelkaelder
