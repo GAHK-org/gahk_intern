@@ -542,6 +542,14 @@ def build_derivatives(media: Media) -> bool:
             if media.derivative_attempts >= MAX_DERIVATIVE_ATTEMPTS
             else DerivativeState.PENDING
         )
+        logger.warning(
+            "Could not decode media %s (%s), attempt %d of %d%s.",
+            media.pk,
+            filename,
+            media.derivative_attempts,
+            MAX_DERIVATIVE_ATTEMPTS,
+            "; marked as failed" if media.derivative_state == DerivativeState.FAILED else "",
+        )
         media.save(update_fields=["derivative_state", "derivative_attempts"])
         return False
     previous = [name for name in (media.high_definition.name, media.thumbnail.name) if name]

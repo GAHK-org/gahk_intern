@@ -23,3 +23,6 @@ class CoreConfig(AppConfig):
         register(check_media_url)
         register(check_media_storage_url)
         register(check_media_storage_prefix)
+
+        # Connects the Celery signals that keep each task's log for the worker-jobs page.
+        from . import worker_logs  # noqa: F401

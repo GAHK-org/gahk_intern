@@ -158,3 +158,24 @@ TOPIC_FIELDS = {
     "begivenheder": "wants_begivenheder",
     "reparationer": "wants_reparationer",
 }
+
+
+class WorkerJobLog(models.Model):
+    """What one Celery task logged while it ran — see core/worker_logs.py. Shown on the worker-jobs
+    admin page and purged after WORKER_JOB_LOG_RETENTION by core.tasks.purge_worker_job_logs."""
+
+    task_id = models.CharField(max_length=255, unique=True)
+    task_name = models.CharField(max_length=255, blank=True)
+    state = models.CharField(max_length=20, blank=True)
+    started_at = models.DateTimeField()
+    finished_at = models.DateTimeField(null=True, blank=True)
+    # [{"at": ISO time, "level": "INFO", "logger": "photo_album.tasks", "message": "…"}, …]
+    lines = models.JSONField(default=list)
+    # Lines past core.worker_logs.MAX_LINES, counted but not kept.
+    omitted = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        indexes = [models.Index(fields=["finished_at"])]
+
+    def __str__(self) -> str:
+        return f"{self.task_name} {self.task_id}"

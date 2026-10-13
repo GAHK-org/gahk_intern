@@ -18,7 +18,7 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 - Binary files use the photo album's own storage (the S3 media bucket in production). Keys are `photo-album/<album-id>/<media-uuid>/<variant>/<filename>`; the per-item UUID directory lets one album hold any number of files with the same name.
 - A file keeps its exact original filename (`Media.filename`), which is the name it gets back in every download. The name in the storage key is cosmetic.
 - Derivative keys are immutable: a rebuild writes new keys rather than overwriting existing ones.
-- Each original's SHA-256 is stored for duplicate detection. Rows uploaded before hashing existed are filled in by a nightly job (02:40) that reads originals for at most 20 minutes per night; `manage.py backfill_photo_album_hashes` does the same in one go.
+- Each original's SHA-256 is stored for duplicate detection. The hash only finds candidates: a file counts as a duplicate only if its name matches and its bytes are identical, compared byte for byte, so a hash collision can never drop a file. Rows uploaded before hashing existed are filled in by a nightly job (02:40) that reads originals for at most 20 minutes per night; `manage.py backfill_photo_album_hashes` does the same in one go.
 
 ### Local cache
 
@@ -99,6 +99,7 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 - The root album is named after the ZIP file. While a level holds exactly one folder and no files, the import descends into it, and the album is named after the folder it stops in. Folders below become sub-albums.
 - macOS metadata (`__MACOSX/`, `._*`, `.DS_Store`, `.AppleDouble`) of at most 4 KB, `Thumbs.db` and `desktop.ini` are skipped and listed. A larger file that looks like macOS metadata fails the import.
 - Exact duplicates (same folder, same name, same bytes) within the archive are skipped and listed. Imported media is approved immediately and keeps the ZIP entry's modification time as `file_modified_at`.
+- The import job logs what it did — the archive and folder, every skipped file, the result, or every reason it was refused. Administrators see the log on the job's page under `/admin/worker-jobs` for 7 days.
 
 ### System import and the Dropbox script
 

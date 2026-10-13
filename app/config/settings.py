@@ -149,6 +149,10 @@ CELERY_TASK_REJECT_ON_WORKER_LOST = True
 # `retries` NULL in celery_taskmeta — which are four of the columns the siteadmin worker-jobs page
 # selects and displays, so "Worker", "Kø" and "Forsøg" were permanently blank there.
 CELERY_RESULT_EXTENDED = True
+# A management command run from a task (`purge_photo_album`, …) prints its summary to stdout, which
+# the worker redirects into logging — at WARNING by default, so every routine "Removed 0 item(s)"
+# showed up as a warning in the job's stored log (core/worker_logs.py) and the worker's own output.
+CELERY_WORKER_REDIRECT_STDOUTS_LEVEL = "INFO"
 # The default ceiling for a scheduled job: generous for a sweep, and short enough that a wedged one
 # does not hold a worker slot all night. The two photo-album jobs legitimately run longer and set
 # their own limits at the task — see photo_album/tasks.py::MEDIA_TASK_TIME_LIMIT.
@@ -203,6 +207,10 @@ CELERY_BEAT_SCHEDULE = {
     "fail-stalled-photo-album-downloads": {
         "task": "photo_album.tasks.fail_stalled_downloads",
         "schedule": crontab(minute=5),
+    },
+    "purge-worker-job-logs": {
+        "task": "core.tasks.purge_worker_job_logs",
+        "schedule": crontab(minute=40, hour=4),
     },
     # 04:50, after every other sweep: the rows it deletes are the messages those sweeps were
     # delivered on, so running it last keeps one night's work visible in the table while that work
@@ -433,6 +441,11 @@ LOGGING = {
             "level": os.environ.get("CORE_LOG_LEVEL", "INFO"),
             "propagate": False,
         },
+        # INFO, so the lines a photo-album job logs (an import's left-out files, a ZIP's size) reach
+        # the job's stored log (core/worker_logs.py) even where the root logger is at WARNING. No
+        # handler of its own: it propagates to the worker's, and in the web process nothing prints
+        # below WARNING.
+        "photo_album": {"level": os.environ.get("PHOTO_ALBUM_LOG_LEVEL", "INFO")},
     },
 }
 
