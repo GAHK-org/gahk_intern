@@ -50,7 +50,7 @@ class BroadcastForm(forms.Form):
 
     def clean_url(self) -> str:
         url = str(self.cleaned_data["url"]).strip()
-        if not url.startswith("/") or url.startswith("//"):
+        if not services.is_site_path(url):
             raise forms.ValidationError("Linket skal være en side på sitet og starte med /.")
         return url
 
