@@ -109,8 +109,10 @@ def test_on_this_day_spreads_over_earlier_years(album: Album, make_resident: Cal
 
 @pytest.mark.django_db
 def test_dashboard_links_each_picture_to_its_album(
-    client: Client, album: Album, make_resident: Callable[..., Resident]
+    client: Client, album: Album, make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Pinned: on any other day the picture below is not "on this day".
+    monkeypatch.setattr("photo_album.templatetags.photo_album_extras.current_date", lambda: DAY)
     resident = make_resident()
     item = _image(album, resident, captured_at=datetime(2024, 10, 13, 10, tzinfo=UTC))
     client.force_login(resident)
