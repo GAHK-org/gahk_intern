@@ -36,7 +36,7 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 - `captured_at` is derived from EXIF `DateTimeOriginal`, falling back to `DateTimeDigitized`, or from a video's container metadata. Both standard and nested EXIF IFD layouts, including HEIC/HEIF uploads, are supported.
 - `file_modified_at` is the file's own last-modified time as reported by the browser or the ZIP entry.
 - Media is ordered newest first by `sort_at`: `captured_at`, else `file_modified_at`, else upload time.
-- The viewer displays the capture date as `Optaget`, the location when available, the album path, the uploader, upload time, and view counts.
+- The viewer displays the capture date as `Optaget`, the location when available, the album path, the uploader, upload time, and view counts. The album path links to the album: clicking it closes the viewer and opens the album (on that album already, it only closes the viewer).
 
 ## Access and upload workflow
 
@@ -80,6 +80,7 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 - Album cards are a uniform grid (two per row on a phone) with the cover on top; a long name wraps onto two lines and is cut off with an ellipsis, with the full name as a tooltip. Long album titles and breadcrumbs wrap instead of overflowing.
 - An album's actions — download, select, bin, rename, lock, delete and `Nyt underalbum` — sit in one row in the album header; download, rename and `Nyt underalbum` open as small dropdowns.
 - The timeline (`Tidslinje`) shows everything the reader may see across all albums, newest first, with a jump to any year.
+- The album index leads with a large card into the timeline: a mosaic of seven random photos (three on mobile) drawn from what every resident may see, redrawn every ten minutes. A folder page shows a plain `Tidslinje` link instead.
 - The timeline can be filtered on tags (`?tag=<name>`, repeatable). The filter shows media tagged directly or through an album in its lineage. Several tags combine with AND, so an item must carry all of them. Active filters show as chips that remove the filter when clicked. The tag input searches as you type, and paging and year jumps keep the filter. Any signed-in resident can filter; visibility rules apply as usual.
 - Grids load 60 items at a time and scroll infinitely in both directions, paged by `(sort_at, pk)` so pages do not shift as uploads arrive.
 - `?media=<pk>` on an album page is a deep link: the grid opens at that item, the viewer opens on it, and the address follows the viewer as the reader browses.

@@ -984,7 +984,6 @@ def media_detail(request: HttpRequest, pk: int) -> JsonResponse:
     media = _viewable_media(request, pk)
     can_delete = access.can_delete(media, request)
     can_tag = access.can_tag(request)
-    album_url = reverse("photo_album:detail", args=[media.album_id])
     return JsonResponse(
         {
             "kind": "video" if media.content_type.startswith("video/") else "image",
@@ -992,8 +991,7 @@ def media_detail(request: HttpRequest, pk: int) -> JsonResponse:
             "filename": media.display_name,
             "full": media.high_definition.url if media.has_derivatives else "",
             "album": " / ".join(media.album.display_path()),
-            "albumUrl": album_url,
-            "link": f"{album_url}?media={media.pk}",
+            "albumUrl": reverse("photo_album:detail", args=[media.album_id]),
             "downloadUrl": reverse("photo_album:download_original", args=[media.pk]),
             "deleteUrl": reverse("photo_album:delete", args=[media.pk]) if can_delete else "",
             "viewUrl": reverse("photo_album:record_view", args=[media.pk]),

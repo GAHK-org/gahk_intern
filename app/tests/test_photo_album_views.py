@@ -564,10 +564,8 @@ def test_viewer_details_include_album_path_link_counts_and_map(
 
     payload = client.get(reverse("photo_album:media_detail", args=[media.pk])).json()
 
-    album_url = reverse("photo_album:detail", args=[child.pk])
     assert payload["album"] == "Sommerfest / Fredag"
-    assert payload["albumUrl"] == album_url
-    assert payload["link"] == f"{album_url}?media={media.pk}"
+    assert payload["albumUrl"] == reverse("photo_album:detail", args=[child.pk])
     assert payload["filename"] == "IMG_0001.JPG"
     assert payload["mapUrl"].startswith("https://www.openstreetmap.org/?mlat=55.676100&mlon=12.568300")
     assert (payload["uniqueViews"], payload["totalViews"]) == (0, 0)
