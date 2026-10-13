@@ -19,7 +19,7 @@ from django.core.files.base import ContentFile, File
 from django.db import IntegrityError, transaction
 from django.db.models import F, QuerySet
 from django.utils import timezone
-from PIL import ExifTags, Image, ImageOps
+from PIL import ExifTags, Image, ImageOps, ImageSequence
 
 from residents.models import Resident
 
@@ -84,6 +84,40 @@ def _same_bytes(stored: Any, uploaded_file: Any) -> bool:  # noqa: ANN401
         return False
     finally:
         uploaded_file.seek(0)
+
+
+@dataclass
+class HashBackfill:
+    hashed: int = 0
+    unreadable: list[str] = field(default_factory=list)
+    remaining: int = 0
+
+
+def backfill_hashes(*, limit: int = 0, until: datetime | None = None) -> HashBackfill:
+    """Hash originals stored before hashes were, so duplicate detection also knows about them.
+
+    Every upload is hashed when it is stored, so this only ever has the rows from before that to do
+    — once they are done, a run is one indexed query that finds nothing. Stops after `limit` items
+    or at `until`, whichever comes first, and reports how many are left for the next run.
+    """
+    result = HashBackfill()
+    missing = Media.objects.filter(sha256="").exclude(original="").order_by("pk")
+    for media in (missing[:limit] if limit else missing).iterator():
+        if until is not None and timezone.now() >= until:
+            break
+        digest = hashlib.sha256()
+        try:
+            with media.original.open("rb") as original:
+                while chunk := original.read(1024 * 1024):
+                    digest.update(chunk)
+        except OSError as exc:
+            result.unreadable.append(f"{media.pk} ({media.original.name}): {exc}")
+            logger.warning("Could not read media %s (%s) to hash it: %s", media.pk, media.original.name, exc)
+            continue
+        Media.objects.filter(pk=media.pk).update(sha256=digest.hexdigest())
+        result.hashed += 1
+    result.remaining = missing.count()
+    return result
 
 
 def find_duplicate(album: Album, filename: str, sha256: str, uploaded_file: Any) -> Media | None:  # noqa: ANN401
@@ -386,13 +420,18 @@ def _plan_import(zip_archive: zipfile.ZipFile, archive_name: str, folder: str, w
     return plan
 
 
-def import_zip_album(*, archive: File, folder: str, resident: Resident) -> tuple[list[Album], list[str]]:
+def import_zip_album(
+    *, archive: File, folder: str, resident: Resident, lock: bool = False
+) -> tuple[list[Album], list[str]]:
     """Import a ZIP as one album tree — completely, or not at all.
 
     Pass one reads the whole archive and collects every reason to refuse it, so the resident gets the
     full list at once rather than one problem per attempt. Only an archive with none is imported, in
     one transaction; should storing fail half-way anyway, the files already written are deleted again
     so a refused import leaves nothing behind. Archive paths are never extracted as paths.
+
+    With `lock`, the new album is locked in the same transaction, once its last file is stored —
+    so it is never visible unlocked. The Dropbox import uses it for albums that are history.
 
     Returns the albums (root first) and the log of files deliberately left out. Raises
     ValidationError carrying every error when the import is refused.
@@ -406,10 +445,10 @@ def import_zip_album(*, archive: File, folder: str, resident: Resident) -> tuple
             raise ValidationError("ZIP-filen kunne ikke læses.") from exc
         if plan.errors:
             raise ValidationError(plan.errors)
-        return _store_import(plan, folder, resident), plan.skipped
+        return _store_import(plan, folder, resident, lock=lock), plan.skipped
 
 
-def _store_import(plan: _ImportPlan, folder: str, resident: Resident) -> list[Album]:
+def _store_import(plan: _ImportPlan, folder: str, resident: Resident, *, lock: bool = False) -> list[Album]:
     """Pass two: create the albums and store the files, all or nothing."""
     written: list[str] = []
     albums: dict[tuple[str, ...], Album] = {}
@@ -438,6 +477,9 @@ def _store_import(plan: _ImportPlan, folder: str, resident: Resident) -> list[Al
                     )
                 if outcome.media is not None and outcome.media.original.name:
                     written.append(outcome.media.original.name)
+            if lock:
+                root.manually_locked_at = timezone.now()
+                root.save(update_fields=["manually_locked_at"])
     except Exception:
         from .storage import get_photo_album_storage
 
@@ -537,10 +579,19 @@ THUMBNAIL_SIZE = 320
 
 
 def image_variants(uploaded_file: File, filename: str) -> Variants | None:
-    """Build the viewer and grid JPEGs for one image, or None if it cannot be decoded."""
+    """Build the viewer and grid JPEGs for one image, or None if it cannot be decoded.
+
+    An animated GIF keeps its animation in the viewer: its high-definition variant is a GIF, not a
+    JPEG of the first frame. The grid thumbnail is still a JPEG of the first frame.
+    """
     try:
         uploaded_file.seek(0)
         with Image.open(uploaded_file) as source:
+            if source.format == "GIF" and getattr(source, "is_animated", False):
+                high_definition = _animated_gif_variant(source, uploaded_file, filename, HIGH_DEFINITION_SIZE)
+                source.seek(0)
+                first_frame = source.convert("RGB")
+                return Variants(high_definition, _jpeg_variant(first_frame, filename, THUMBNAIL_SIZE))
             # The colour profile only means something for an RGB source. A CMYK or greyscale profile
             # attached to the RGB JPEG we write would make browsers render it in nonsense colours.
             icc_profile = source.info.get("icc_profile") if source.mode in {"RGB", "RGBA", "RGBX"} else None
@@ -569,6 +620,31 @@ def _jpeg_variant(
         options["icc_profile"] = icc_profile
     variant.save(output, **options)
     return ContentFile(output.getvalue(), name=f"{Path(filename).stem}.jpg")
+
+
+def _animated_gif_variant(
+    source: Image.Image, uploaded_file: File, filename: str, maximum_dimension: int
+) -> ContentFile:
+    """The GIF itself when it already fits, otherwise every frame scaled down with its timing kept."""
+    name = f"{Path(filename).stem}.gif"
+    if max(source.size) <= maximum_dimension:
+        uploaded_file.seek(0)
+        return ContentFile(uploaded_file.read(), name=name)
+    scale = maximum_dimension / max(source.size)
+    size = (max(1, round(source.width * scale)), max(1, round(source.height * scale)))
+    frames: list[Image.Image] = []
+    durations: list[int] = []
+    for frame in ImageSequence.Iterator(source):
+        # Pillow hands every frame after the first already composited onto the ones before it, so
+        # each scaled frame is a whole picture and is written back with "restore to background".
+        durations.append(int(frame.info.get("duration", 100)))
+        frames.append(frame.convert("RGBA").resize(size, Image.Resampling.LANCZOS))
+    options: dict[str, Any] = {"duration": durations, "disposal": 2}
+    if "loop" in source.info:  # no loop count means "play once", and must stay that way
+        options["loop"] = source.info["loop"]
+    output = BytesIO()
+    frames[0].save(output, format="GIF", save_all=True, append_images=frames[1:], **options)
+    return ContentFile(output.getvalue(), name=name)
 
 
 def video_variants(uploaded_file: File, filename: str) -> Variants | None:

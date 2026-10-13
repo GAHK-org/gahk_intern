@@ -217,6 +217,13 @@ CELERY_BEAT_SCHEDULE = {
         # pass for broker messages lost while unavailable or work stranded by a killed worker.
         "schedule": crontab(minute=0, hour=2),
     },
+    # 02:40, after the derivative recovery pass at 02:00. Only rows stored before hashing existed
+    # need it; each run reads originals for at most HASH_BACKFILL_BUDGET and leaves the rest for
+    # the next night, so the deploy needs no manual step and the box is never held for long.
+    "backfill-photo-album-hashes": {
+        "task": "photo_album.tasks.backfill_media_hashes",
+        "schedule": crontab(minute=40, hour=2),
+    },
     "remind-rsvp-deadlines": {
         "task": "events.tasks.remind_rsvp_deadlines",
         "schedule": crontab(minute=0, hour=17),

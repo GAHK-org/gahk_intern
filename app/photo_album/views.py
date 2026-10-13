@@ -549,12 +549,14 @@ def _queue_download(
 @login_required
 @require_POST
 def download_album(request: HttpRequest, pk: int) -> HttpResponseBase:
-    """Queue a ZIP of everything in this album and its sub-albums the resident may see."""
+    """Queue a ZIP of everything in this album the resident may see — with its sub-albums, unless
+    the resident chose to leave them out."""
     album = get_object_or_404(Album, pk=pk)
     form = DownloadForm(request.POST)
     if not form.is_valid():
         return HttpResponseBadRequest("unknown variant")
-    media_ids = list(access.visible_media(request, album, subtree=True).values_list("pk", flat=True))
+    subtree = form.cleaned_data["sub_albums"]
+    media_ids = list(access.visible_media(request, album, subtree=subtree).values_list("pk", flat=True))
     if not media_ids:
         messages.error(request, "Albummet har ingen medier, du kan hente.")
         return redirect("photo_album:detail", pk=album.pk)
@@ -721,13 +723,14 @@ def import_zip(request: HttpRequest) -> HttpResponse:
     )
 
 
-def _queue_import(form: ZipAlbumImportForm, resident: Resident) -> AlbumImport:
+def _queue_import(form: ZipAlbumImportForm, resident: Resident, *, lock: bool = False) -> AlbumImport:
     archive = form.cleaned_data["archive"]
     album_import = AlbumImport.objects.create(
         requested_by=resident,
         folder=form.cleaned_data["folder"],
         archive_name=archive.name,
         archive=archive,
+        lock_when_done=lock,
     )
     from .tasks import process_album_import
 
@@ -748,7 +751,9 @@ def system_import_zip(request: HttpRequest) -> JsonResponse:
     form = ZipAlbumImportForm(request.POST, request.FILES)
     if not form.is_valid():
         return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
-    album_import = _queue_import(form, resident)
+    # Everything the import script brings in is an archive of years gone by: lock it on arrival, so
+    # it is not edited by accident. Fotogruppen can unlock an album that does need a change.
+    album_import = _queue_import(form, resident, lock=True)
     return JsonResponse(
         {
             "statusUrl": reverse("photo_album:import_zip_status", args=[album_import.token]),
@@ -803,6 +808,7 @@ def import_zip_status(request: HttpRequest, token: str) -> JsonResponse:
             "error": album_import.error,
             "errors": album_import.errors,
             "skipped": album_import.skipped,
+            "locked": bool(albums) and albums[0].is_locked(),
             "albums": [
                 {
                     "id": album.pk,

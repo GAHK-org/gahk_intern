@@ -14,11 +14,11 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 
 ## Storage
 
-- Each media item has three independently stored variants: the unmodified original upload, a compressed high-definition version (images at most 1600 px, video as viewer-sized MP4), and a thumbnail (320 px JPEG). Image high-definition variants are JPEG.
+- Each media item has three independently stored variants: the unmodified original upload, a compressed high-definition version (images at most 1600 px, video as viewer-sized MP4), and a thumbnail (320 px JPEG). Image high-definition variants are JPEG, except an animated GIF, whose high-definition variant stays an animated GIF (the file itself when it fits within 1600 px, otherwise every frame scaled down with its timing and loop count kept). Its thumbnail is a JPEG of the first frame.
 - Binary files use the photo album's own storage (the S3 media bucket in production). Keys are `photo-album/<album-id>/<media-uuid>/<variant>/<filename>`; the per-item UUID directory lets one album hold any number of files with the same name.
 - A file keeps its exact original filename (`Media.filename`), which is the name it gets back in every download. The name in the storage key is cosmetic.
 - Derivative keys are immutable: a rebuild writes new keys rather than overwriting existing ones.
-- Each original's SHA-256 is stored for duplicate detection. Rows uploaded before hashing existed are filled in by `manage.py backfill_photo_album_hashes`.
+- Each original's SHA-256 is stored for duplicate detection. Rows uploaded before hashing existed are filled in by a nightly job (02:40) that reads originals for at most 20 minutes per night; `manage.py backfill_photo_album_hashes` does the same in one go.
 
 ### Local cache
 
@@ -87,8 +87,9 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 
 ## Downloads
 
-- Any signed-in resident can request a ZIP of an album, including its sub-albums, or of a selection, as originals or as compressed HD. ZIPs are built in the background, privately for the requester, and listed under `Mine downloads`, where they remain for 7 days. Requesting the same files and variant again while a build is pending or ready reuses it.
-- The ZIP mirrors the album tree: sub-albums become folders below the downloaded album; a timeline selection is placed under its folder (year) and full album path. Files keep their original names. Files that would collide in one folder (ignoring case) are numbered `name_01.ext`, `name_02.ext`, … and listed in `OMDØBTE_FILER.txt`.
+- Any signed-in resident can request a ZIP of an album or of a selection, as originals or as compressed HD. ZIPs are built in the background, privately for the requester, and listed under `Mine downloads`, where they remain for 7 days. Requesting the same files and variant again while a build is pending or ready reuses it.
+- An album with sub-albums offers a choice in the download menu: `Med underalbummer` (the default) or `Kun dette album`.
+- The ZIP mirrors the album tree: sub-albums become folders below the downloaded album; a timeline selection is placed under its folder (year) and full album path. Files keep their original names. Files that would collide in one folder (ignoring case) are numbered `name_01.ext`, `name_02.ext`, … and listed in `_OMDØBTE_FILER.txt` (the underscore sorts it first in most file browsers).
 - A build that a worker abandons is marked failed after one hour.
 
 ## ZIP import
@@ -103,6 +104,7 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 
 - With `PHOTO_ALBUM_IMPORT_TOKEN` set, `importer-zip/system` accepts imports authenticated by that bearer token, and `importer-zip/system/albummer?folder=<folder>` lists the folder's root albums and returns the import rules (accepted extensions, size limits, maximum sub-album levels, macOS metadata size limit).
 - `scripts/import_dropbox_photo_albums.py` imports `<Dropbox root>/<year or Andet>/<album folder>` from Dropbox, one album per ZIP. It checks the server first. Using the server's rules, it checks each album against its Dropbox listing before downloading, and skips albums already on the server. Each ZIP is verified before it is sent, and the script waits for the server's result.
+- Every album imported through the system endpoint is locked as soon as it is imported (in the same transaction), so the archive is not edited by accident. Fotogruppen can unlock it within the usual six months; the script reports `Imported and locked`.
 - Progress is kept in `<work-dir>/state.json` and everything is logged to `<work-dir>/import.log`. A rerun skips albums already imported, resumes waiting for albums sent on an earlier run, and skips earlier failures unless `--retry-failed` is given. Transient Dropbox and server errors are retried; every failure is reported with all its reasons. `--dry-run`, `--confirm`, `--year`/`--year-range` and `--stop-on-error` control a run.
 
 ## Dashboard

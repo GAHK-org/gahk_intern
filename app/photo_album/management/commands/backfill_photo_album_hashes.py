@@ -1,15 +1,15 @@
 import argparse
-import hashlib
 
 from django.core.management.base import BaseCommand
 
-from photo_album.models import Media
+from photo_album.services import backfill_hashes
 
 
 class Command(BaseCommand):
     help = (
         "Compute the SHA-256 of originals uploaded before hashes were stored, so duplicate detection "
-        "also knows about them. Reads every such original back from storage; safe to stop and rerun."
+        "also knows about them. Reads every such original back from storage; safe to stop and rerun. "
+        "The nightly `backfill-photo-album-hashes` job does the same in portions."
     )
 
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
@@ -21,21 +21,10 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args: object, **opts: object) -> None:
-        limit = int(str(opts["limit"]))
-        missing = Media.objects.filter(sha256="").exclude(original="").order_by("pk")
-        if limit:
-            missing = missing[:limit]
-        hashed = failed = 0
-        for media in missing.iterator():
-            digest = hashlib.sha256()
-            try:
-                with media.original.open("rb") as original:
-                    while chunk := original.read(1024 * 1024):
-                        digest.update(chunk)
-            except OSError as exc:
-                failed += 1
-                self.stderr.write(f"Kunne ikke læse medie {media.pk} ({media.original.name}): {exc}")
-                continue
-            Media.objects.filter(pk=media.pk).update(sha256=digest.hexdigest())
-            hashed += 1
-        self.stdout.write(f"Hashed {hashed} media item(s); {failed} could not be read.")
+        result = backfill_hashes(limit=int(str(opts["limit"])))
+        for line in result.unreadable:
+            self.stderr.write(f"Kunne ikke læse medie {line}")
+        self.stdout.write(
+            f"Hashed {result.hashed} media item(s); {len(result.unreadable)} could not be read; "
+            f"{result.remaining} still without a hash."
+        )

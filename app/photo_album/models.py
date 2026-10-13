@@ -431,7 +431,7 @@ class Media(models.Model):
     # every download. The storage key only carries a sanitised copy of it.
     filename = models.CharField(max_length=255, blank=True)
     # SHA-256 of the original, for duplicate detection on upload and import. Blank on rows uploaded
-    # before it existed until `manage.py backfill_photo_album_hashes` has been run.
+    # before it existed until the nightly `tasks.backfill_media_hashes` has reached them.
     sha256 = models.CharField(max_length=64, blank=True, db_index=True)
     original = models.FileField(
         upload_to=album_original_path, storage=get_photo_album_storage, max_length=500
@@ -593,6 +593,8 @@ class AlbumImport(models.Model):
     # Every reason the import was refused. An import is all or nothing, so these are collected in a
     # first pass over the whole archive and shown together, rather than one per attempt.
     errors = models.JSONField(default=list)
+    # Lock the new album as soon as it is imported — set for the Dropbox import's archive albums.
+    lock_when_done = models.BooleanField(default=False)
     error = models.CharField(max_length=255, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
