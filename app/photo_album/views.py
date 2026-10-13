@@ -761,6 +761,7 @@ def import_zip(request: HttpRequest) -> HttpResponse:
             "skipped": job.skipped if job and job.state == AlbumImportState.READY else [],
             "errors": job.errors if job and job.state == AlbumImportState.FAILED else [],
             "folder_options": album_folder_options(),
+            "max_sub_album_levels": MAX_ALBUM_DEPTH,
         },
     )
 

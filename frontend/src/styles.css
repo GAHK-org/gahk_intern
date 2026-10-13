@@ -1898,6 +1898,7 @@
    .album-upload-selection { padding:10px 12px; border:1px solid var(--border); border-radius:6px; background:var(--surface-2); }
    .album-upload-selection p { margin:0 0 5px; font-size:13px; font-weight:650; }.album-upload-selection ul { max-height:132px; margin:0; padding-left:20px; overflow:auto; color:var(--muted); font-size:13px; }
    .album-upload-progress progress { display:block; width:100%; height:12px; accent-color:var(--brass); }.album-upload-progress p { margin:6px 0 0; color:var(--muted); font-size:13px; }
+   .album-import-help { max-width:680px; margin:0 0 18px; color:var(--muted); }.album-import-help p { margin:0 0 8px; }.album-import-help strong { color:var(--ink); }
    .album-import-result { margin-top:24px; }.album-import-result ul { margin:8px 0; padding-left:20px; }.album-import-skipped { color:var(--neg); }
    .album-import-progress { margin-top:16px; }.album-import-progress progress { display:block; width:100%; height:12px; accent-color:var(--brass); }.album-import-progress p { margin:6px 0 0; color:var(--muted); font-size:13px; }
    .album-import-progress.is-working p { display:flex; align-items:center; gap:8px; }
