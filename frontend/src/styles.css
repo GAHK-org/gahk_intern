@@ -1829,6 +1829,10 @@
   .arkiv-grid .ni { width:40px; height:40px; margin:24px auto; display:block; color:var(--muted); }
 
    /* --- Photo album ------------------------------------------------------------------------- */
+   /* .main's overflow:auto makes it the sticky elements' scroller, and as the window does the
+      scrolling they never stuck. On album pages it clips instead, so the year bar and the selection
+      bar stay below the 60 px top bar as intended. */
+   .main:has([data-album-page]) { overflow:clip; }
    .album-heading { display:flex; align-items:end; justify-content:space-between; gap:16px; margin-bottom:28px; }
    .album-heading > div:first-child { min-width:0; }
    .album-heading h1 { margin:0; font-family:Georgia, serif; font-size:32px; color:var(--ink); overflow-wrap:anywhere; }
@@ -1970,7 +1974,7 @@
    .album-media-grid.is-selecting .album-video-mark { display:none; }
    .album-media-item.is-selected .album-media-tile { outline:3px solid var(--brass); outline-offset:-3px; }
    .album-media-item.is-selected .album-media-tile img { filter:brightness(.8); }
-   .album-selection-bar { position:sticky; z-index:15; top:8px; display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; margin:0 0 14px; padding:10px 14px; border:1px solid var(--border); border-radius:8px; background:var(--surface); box-shadow:0 8px 20px rgb(0 0 0 / .1); }
+   .album-selection-bar { position:sticky; z-index:15; top:68px; display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; margin:0 0 14px; padding:10px 14px; border:1px solid var(--border); border-radius:8px; background:var(--surface); box-shadow:0 8px 20px rgb(0 0 0 / .1); }
    .album-selection-bar[hidden] { display:none; }
    .album-selection-bar button { border:0; background:none; padding:0; color:var(--brass); cursor:pointer; font:inherit; }
    .album-selection-bar button.btn-link-danger { color:var(--neg); }
@@ -1978,7 +1982,7 @@
    .album-selection-count { font-weight:650; }
    .album-selection-download { display:flex; align-items:center; gap:8px; }.album-selection-download select { min-height:30px; }
    /* Timeline */
-   .album-timeline-years { position:sticky; z-index:14; top:0; display:flex; gap:6px; margin:0 0 16px; padding:8px 0; overflow-x:auto; background:var(--surface); scrollbar-width:none; }
+   .album-timeline-years { position:sticky; z-index:14; top:60px; display:flex; gap:6px; margin:0 0 16px; padding:8px 0; overflow-x:auto; background:var(--surface); scrollbar-width:none; }
    .album-timeline-years a { flex:none; padding:4px 10px; border-radius:999px; color:var(--muted); font-size:13px; text-decoration:none; }
    .album-timeline-years a[aria-current] { color:#fff; background:var(--brass); }
    .album-month-ruler { grid-column:1 / -1; display:flex; align-items:center; gap:12px; margin:22px 0 2px; color:var(--ink); font-family:Georgia, serif; font-size:19px; }

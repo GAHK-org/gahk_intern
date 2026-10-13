@@ -540,8 +540,9 @@ const setupTimePosition = (gallery: HTMLElement): void => {
   let quiet: number | undefined
   const update = (): void => {
     scheduled = false
-    // The first row clear of the sticky year bar, not one scrolled up behind it.
-    const below = years.getBoundingClientRect().bottom + 20
+    // The first row clear of the sticky year bar, not one scrolled up behind it. Should the bar not
+    // be stuck, it has scrolled away, and the rows are measured from the top of the window instead.
+    const below = Math.max(years.getBoundingClientRect().bottom, 0) + 20
     const visible = Array.from(gallery.querySelectorAll<HTMLElement>(tileSelector)).find(
       (tile) => tile.getBoundingClientRect().bottom > below,
     )
