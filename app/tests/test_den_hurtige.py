@@ -1411,7 +1411,7 @@ def test_the_reply_form_accepts_files(client: Client, make_resident: Callable[..
         "multipart/form-data" in form
     )
     assert 'type="file"' in form
-    assert 'accept="image/*"' in form
+    assert 'accept="image/*,.heic,.heif"' in form
 
 
 # --- zoom lockdown -------------------------------------------------------------------------------

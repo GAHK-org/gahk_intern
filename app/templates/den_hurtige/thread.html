@@ -42,7 +42,7 @@
       <label class="reply-attach" for="id_reply_image_{{ post.pk }}" title="Vedhæft billede">
         <span aria-hidden="true">📎</span>
         <span class="sr-only">Vedhæft billede til svar</span>
-        <input type="file" id="id_reply_image_{{ post.pk }}" name="image" accept="image/*">
+        <input type="file" id="id_reply_image_{{ post.pk }}" name="image" accept="image/*,.heic,.heif">
       </label>
       {% comment %}
         Feedback that the photo attached, and the only way to take it back off. A hidden file input
