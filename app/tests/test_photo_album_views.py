@@ -722,8 +722,8 @@ def test_import_page_explains_that_folders_become_sub_albums(
 ) -> None:
     client.force_login(make_resident(roles=(Role.ADMINISTRATOR,)))
     page = client.get(reverse("photo_album:import_zip")).content.decode()
-    assert "Mapper i ZIP-filen bliver til underalbummer" in page
-    assert f"op til {MAX_ALBUM_DEPTH} niveauer ned" in page
+    assert "mapper i ZIP-filen bliver til underalbummer" in page
+    assert f"op til {MAX_ALBUM_DEPTH} niveauer" in page
 
 
 @pytest.mark.django_db

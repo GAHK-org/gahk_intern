@@ -4,10 +4,7 @@
 <section class="album-import">
 	<a class="album-back" href="{% url 'photo_album:index' %}">Fotoalbum</a>
 	<h1>Importer album</h1>
-	<div class="album-import-help">
-		<p>Albummet får navn efter ZIP-filen. <strong>Mapper i ZIP-filen bliver til underalbummer</strong> med mappernes navne, op til {{ max_sub_album_levels }} niveauer ned, og hver fil havner i albummet for den mappe, den ligger i.</p>
-		<p>Fx bliver <em>Sommerfest.zip</em> med mapperne <em>Fredag</em> og <em>Lørdag</em> til albummet Sommerfest med underalbummerne Fredag og Lørdag. Ligger alt i én enkelt mappe, bliver den selve albummet og giver det sit navn.</p>
-	</div>
+	<p class="album-import-help">Albummet får ZIP-filens navn, og <strong>mapper i ZIP-filen bliver til underalbummer</strong> (op til {{ max_sub_album_levels }} niveauer).</p>
 	<form method="post" action="{% url 'photo_album:import_zip' %}" enctype="multipart/form-data" class="card album-import-form" data-album-zip-import>{% csrf_token %}
 		<p data-album-folder-selector data-current-value="{{ zip_form.folder.value|default:'Andet' }}"><label for="folder-choice">Vælg mappe</label><select id="folder-choice" data-album-folder-choice>{% for folder in folder_options %}<option value="{{ folder }}">{{ folder }}</option>{% endfor %}<option value="__new__">Ny mappe...</option></select><label for="id_folder">Eller skriv en ny mappe</label><input id="id_folder" name="folder" type="text" maxlength="10" required value="{{ zip_form.folder.value|default:'Andet' }}" data-album-folder-input></p>
 		{% for error in zip_form.folder.errors %}<p>{{ error }}</p>{% endfor %}
