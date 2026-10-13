@@ -9,7 +9,7 @@ joined with " - " into the fifth.
 The Media side: a uuid for the new storage-key scheme (existing keys keep working — see
 `views.serve_media`), the original filename recovered from the storage key, and `sort_at`. The
 SHA-256 of existing originals needs every file read back from storage, which is no job for a
-migration — that is `manage.py backfill_photo_album_hashes`.
+migration — that is the nightly `backfill_media_hashes` job (or `manage.py backfill_photo_album_hashes`).
 """
 
 import re

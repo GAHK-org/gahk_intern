@@ -149,6 +149,10 @@ CELERY_TASK_REJECT_ON_WORKER_LOST = True
 # `retries` NULL in celery_taskmeta — which are four of the columns the siteadmin worker-jobs page
 # selects and displays, so "Worker", "Kø" and "Forsøg" were permanently blank there.
 CELERY_RESULT_EXTENDED = True
+# A management command run from a task (`purge_photo_album`, …) prints its summary to stdout, which
+# the worker redirects into logging — at WARNING by default, so every routine "Removed 0 item(s)"
+# showed up as a warning in the job's stored log (core/worker_logs.py) and the worker's own output.
+CELERY_WORKER_REDIRECT_STDOUTS_LEVEL = "INFO"
 # The default ceiling for a scheduled job: generous for a sweep, and short enough that a wedged one
 # does not hold a worker slot all night. The two photo-album jobs legitimately run longer and set
 # their own limits at the task — see photo_album/tasks.py::MEDIA_TASK_TIME_LIMIT.
@@ -163,6 +167,9 @@ CELERY_TASK_TIME_LIMIT = 900
 # System resident. Leave blank to disable token-authenticated imports.
 PHOTO_ALBUM_IMPORT_TOKEN = os.environ.get("PHOTO_ALBUM_IMPORT_TOKEN", "")
 PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL = os.environ.get("PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL", "system@gahk.dk")
+# `manage.py delete_photo_album` refuses anything created or uploaded on or after this date
+# (YYYY-MM-DD). Blank means the command's own default, 2026-10-01; a date in the future is refused.
+PHOTO_ALBUM_DELETE_PROTECTED_FROM = os.environ.get("PHOTO_ALBUM_DELETE_PROTECTED_FROM", "")
 CELERY_BEAT_SCHEDULE = {
     "purge-expired-applications": {
         "task": "admissions.tasks.purge_expired_applications",
@@ -204,6 +211,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "photo_album.tasks.fail_stalled_downloads",
         "schedule": crontab(minute=5),
     },
+    "purge-worker-job-logs": {
+        "task": "core.tasks.purge_worker_job_logs",
+        "schedule": crontab(minute=40, hour=4),
+    },
     # 04:50, after every other sweep: the rows it deletes are the messages those sweeps were
     # delivered on, so running it last keeps one night's work visible in the table while that work
     # is still happening.
@@ -216,6 +227,13 @@ CELERY_BEAT_SCHEDULE = {
         # Uploads enqueue their own derivative build on commit. This is only the nightly recovery
         # pass for broker messages lost while unavailable or work stranded by a killed worker.
         "schedule": crontab(minute=0, hour=2),
+    },
+    # 02:40, after the derivative recovery pass at 02:00. Only rows stored before hashing existed
+    # need it; each run reads originals for at most HASH_BACKFILL_BUDGET and leaves the rest for
+    # the next night, so the deploy needs no manual step and the box is never held for long.
+    "backfill-photo-album-hashes": {
+        "task": "photo_album.tasks.backfill_media_hashes",
+        "schedule": crontab(minute=40, hour=2),
     },
     "remind-rsvp-deadlines": {
         "task": "events.tasks.remind_rsvp_deadlines",
@@ -426,6 +444,11 @@ LOGGING = {
             "level": os.environ.get("CORE_LOG_LEVEL", "INFO"),
             "propagate": False,
         },
+        # INFO, so the lines a photo-album job logs (an import's left-out files, a ZIP's size) reach
+        # the job's stored log (core/worker_logs.py) even where the root logger is at WARNING. No
+        # handler of its own: it propagates to the worker's, and in the web process nothing prints
+        # below WARNING.
+        "photo_album": {"level": os.environ.get("PHOTO_ALBUM_LOG_LEVEL", "INFO")},
     },
 }
 

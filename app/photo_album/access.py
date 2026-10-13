@@ -68,6 +68,11 @@ def can_manage_media(request: HttpRequest) -> bool:
     return is_photo_group_member(request)
 
 
+def can_tag(request: HttpRequest) -> bool:
+    """Adding and removing tags, on albums and media alike. Locks do not apply (services.add_tag)."""
+    return is_photo_group_member(request)
+
+
 def can_lock_album(request: HttpRequest, album: Album) -> bool:
     """Not when it is already closed — by its own lock, or by one an ancestor holds."""
     return can_manage_media(request) and not album.is_locked()

@@ -30,7 +30,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.formats import date_format
-from django.utils.http import url_has_allowed_host_and_scheme
+from django.utils.http import url_has_allowed_host_and_scheme, urlencode
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
@@ -52,6 +52,7 @@ from .models import (
     DownloadVariant,
     Media,
     MediaStatus,
+    Tag,
 )
 from .storage import PhotoAlbumS3Storage, get_photo_album_storage
 from .uploads import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
@@ -274,8 +275,14 @@ def _negated(folder: str) -> tuple[int, str]:
 
 @login_required
 def timeline(request: HttpRequest) -> HttpResponse:
-    """Everything the reader may see, newest first, across every album."""
+    """Everything the reader may see, newest first, across every album — or only what carries every
+    `?tag=` given, on the item itself or on an album above it.
+    """
     visible = access.visible_media(request)
+    names = list(dict.fromkeys(name for name in request.GET.getlist("tag") if name))
+    for name in names:
+        tag = Tag.objects.filter(name__iexact=name).first()
+        visible = services.tagged_media(visible, tag) if tag else visible.none()
     media_page, fragment = _page(request, visible)
     context = {"can_manage": access.can_manage_media(request)}
     if fragment:
@@ -289,9 +296,38 @@ def timeline(request: HttpRequest) -> HttpResponse:
             "years": years,
             "year": _int_param(request, "year"),
             "variants": DownloadVariant.choices,
+            "tags": [
+                {"name": name, "remove_url": _timeline_url([other for other in names if other != name])}
+                for name in names
+            ],
+            "tag_query": urlencode([("tag", name) for name in names]),
             **context,
         },
     )
+
+
+def _timeline_url(tags: Iterable[str]) -> str:
+    query = urlencode([("tag", name) for name in tags])
+    return f"{reverse('photo_album:timeline')}?{query}" if query else reverse("photo_album:timeline")
+
+
+def _tag_entries(own: Iterable[Tag], lineage: Iterable[Album]) -> list[dict[str, object]]:
+    """Tags as the album page and the viewer show them: the item's own, then those it gets from the
+    albums in `lineage` (root first), each linking to the timeline filtered on it.
+    """
+    entries: dict[str, dict[str, object]] = {}
+    for tag in sorted(own, key=lambda tag: tag.name.lower()):
+        entries[tag.name.lower()] = {"name": tag.name, "inherited": False, "from": ""}
+    albums = {album.pk: album for album in lineage}
+    rows = Album.tags.through.objects.filter(album_id__in=albums).select_related("tag")
+    order = list(albums)
+    for row in sorted(rows, key=lambda row: (order.index(row.album_id), row.tag.name.lower())):
+        entries.setdefault(
+            row.tag.name.lower(), {"name": row.tag.name, "inherited": True, "from": albums[row.album_id].name}
+        )
+    for entry in entries.values():
+        entry["url"] = _timeline_url([str(entry["name"])])
+    return list(entries.values())
 
 
 @login_required
@@ -301,6 +337,7 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
     visible = access.visible_media(request, album, subtree=include_sub_albums)
     media_page, fragment = _page(request, visible)
     can_manage = access.can_manage_media(request)
+    can_tag = access.can_tag(request)
     context = {"can_manage": can_manage, "album": album}
     if fragment:
         return _tiles_response(request, media_page, **context)
@@ -313,6 +350,9 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
         "photo_album/detail.html",
         {
             **context,
+            "album_tags": _tag_entries(album.tags.all(), album.ancestors()),
+            "album_tag_url": reverse("photo_album:album_tags", args=[album.pk]) if can_tag else "",
+            "can_tag": can_tag,
             "page": media_page,
             "children": children,
             "ancestors": album.ancestors(),
@@ -549,12 +589,14 @@ def _queue_download(
 @login_required
 @require_POST
 def download_album(request: HttpRequest, pk: int) -> HttpResponseBase:
-    """Queue a ZIP of everything in this album and its sub-albums the resident may see."""
+    """Queue a ZIP of everything in this album the resident may see — with its sub-albums, unless
+    the resident chose to leave them out."""
     album = get_object_or_404(Album, pk=pk)
     form = DownloadForm(request.POST)
     if not form.is_valid():
         return HttpResponseBadRequest("unknown variant")
-    media_ids = list(access.visible_media(request, album, subtree=True).values_list("pk", flat=True))
+    subtree = form.cleaned_data["sub_albums"]
+    media_ids = list(access.visible_media(request, album, subtree=subtree).values_list("pk", flat=True))
     if not media_ids:
         messages.error(request, "Albummet har ingen medier, du kan hente.")
         return redirect("photo_album:detail", pk=album.pk)
@@ -721,13 +763,14 @@ def import_zip(request: HttpRequest) -> HttpResponse:
     )
 
 
-def _queue_import(form: ZipAlbumImportForm, resident: Resident) -> AlbumImport:
+def _queue_import(form: ZipAlbumImportForm, resident: Resident, *, lock: bool = False) -> AlbumImport:
     archive = form.cleaned_data["archive"]
     album_import = AlbumImport.objects.create(
         requested_by=resident,
         folder=form.cleaned_data["folder"],
         archive_name=archive.name,
         archive=archive,
+        lock_when_done=lock,
     )
     from .tasks import process_album_import
 
@@ -748,7 +791,9 @@ def system_import_zip(request: HttpRequest) -> JsonResponse:
     form = ZipAlbumImportForm(request.POST, request.FILES)
     if not form.is_valid():
         return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
-    album_import = _queue_import(form, resident)
+    # Everything the import script brings in is an archive of years gone by: lock it on arrival, so
+    # it is not edited by accident. Fotogruppen can unlock an album that does need a change.
+    album_import = _queue_import(form, resident, lock=True)
     return JsonResponse(
         {
             "statusUrl": reverse("photo_album:import_zip_status", args=[album_import.token]),
@@ -803,6 +848,7 @@ def import_zip_status(request: HttpRequest, token: str) -> JsonResponse:
             "error": album_import.error,
             "errors": album_import.errors,
             "skipped": album_import.skipped,
+            "locked": bool(albums) and albums[0].is_locked(),
             "albums": [
                 {
                     "id": album.pk,
@@ -934,6 +980,7 @@ def media_detail(request: HttpRequest, pk: int) -> JsonResponse:
     """
     media = _viewable_media(request, pk)
     can_delete = access.can_delete(media, request)
+    can_tag = access.can_tag(request)
     album_url = reverse("photo_album:detail", args=[media.album_id])
     return JsonResponse(
         {
@@ -952,6 +999,8 @@ def media_detail(request: HttpRequest, pk: int) -> JsonResponse:
             "uploadedAt": _formatted(media.added_at),
             "capturedAt": _formatted(media.captured_at),
             "metadata": media.metadata,
+            "tags": _tag_entries(media.tags.all(), media.album.lineage()),
+            "tagUrl": reverse("photo_album:media_tags", args=[media.pk]) if can_tag else "",
             **_view_counts(media),
         }
     )
@@ -967,6 +1016,56 @@ def record_view(request: HttpRequest, pk: int) -> JsonResponse:
     media = _viewable_media(request, pk)
     counted = services.record_view(media, current_resident(request))
     return JsonResponse({"counted": counted, **_view_counts(media)})
+
+
+# --- Tags ---------------------------------------------------------------------------------------
+
+
+@login_required
+@require_GET
+def tag_search(request: HttpRequest) -> JsonResponse:
+    """The tags in use matching `?q=`, for the dropdown under every tag field."""
+    return JsonResponse({"tags": services.search_tags(request.GET.get("q", ""))})
+
+
+def _change_tags(request: HttpRequest, target: Album | Media) -> str | None:
+    """Add or remove the tag POSTed as `name`; an error message for the reader, or None."""
+    if not access.can_tag(request):
+        raise PermissionDenied
+    name = request.POST.get("name", "")
+    if request.POST.get("action") == "remove":
+        services.remove_tag(target, name)
+        return None
+    try:
+        services.add_tag(target, name)
+    except ValidationError as exc:
+        return " ".join(exc.messages)
+    return None
+
+
+@login_required
+@require_POST
+def album_tags(request: HttpRequest, pk: int) -> JsonResponse:
+    album = get_object_or_404(Album, pk=pk)
+    error = _change_tags(request, album)
+    return JsonResponse(
+        {"tags": _tag_entries(album.tags.all(), album.ancestors()), **({"error": error} if error else {})},
+        status=400 if error else 200,
+    )
+
+
+@login_required
+@require_POST
+def media_tags(request: HttpRequest, pk: int) -> JsonResponse:
+    media = _viewable_media(request, pk)
+    error = _change_tags(request, media)
+    return JsonResponse(
+        {
+            "tags": _tag_entries(media.tags.all(), media.album.lineage()),
+            **({"error": error} if error else {}),
+        },
+        status=400 if error else 200,
+    )
 
 
 def _formatted(value: datetime | None) -> str:

@@ -8,10 +8,11 @@
 			<h1>{{ album.name }}</h1>
 		</div>
 		<div class="album-actions">
-			{% if has_subtree_media %}<details class="album-menu"><summary class="btn-link">Download</summary><form class="album-menu-panel" method="post" action="{% url 'photo_album:download_album' album.pk %}">{% csrf_token %}<p>Hele albummet{% if children %} med underalbummer{% endif %} som ZIP:</p>{% for value, label in variants %}<button class="btn-link" type="submit" name="variant" value="{{ value }}">{{ label }}</button>{% endfor %}</form></details>{% endif %}
+			{% if has_subtree_media %}<details class="album-menu"><summary class="btn-link">Download</summary><form class="album-menu-panel" method="post" action="{% url 'photo_album:download_album' album.pk %}">{% csrf_token %}<p>Hele albummet som ZIP:</p>{% if children %}<fieldset class="album-menu-choice"><legend class="sr-only">Underalbummer</legend><label><input type="radio" name="sub_albums" value="1" checked> Med underalbummer</label><label><input type="radio" name="sub_albums" value="0"> Kun dette album</label></fieldset>{% endif %}{% for value, label in variants %}<button class="btn-link" type="submit" name="variant" value="{{ value }}">{{ label }}</button>{% endfor %}</form></details>{% endif %}
+			{% if can_create_sub_album %}<details class="album-menu"><summary class="btn-link">Nyt underalbum</summary><form class="album-menu-panel album-create-sub" method="post" action="{% url 'photo_album:create_sub_album' album.pk %}">{% csrf_token %}<label for="sub-album-name">Navn på underalbummet</label><input id="sub-album-name" type="text" name="name" maxlength="140" required><button class="btn" type="submit">Opret</button></form></details>{% endif %}
 			{% if page.items %}<button class="btn-link" type="button" data-album-select-toggle>Vælg</button>{% endif %}
 			{% if can_view_bin %}<a class="btn-link" href="{% url 'photo_album:album_bin' album.pk %}">Papirkurv</a>{% endif %}
-			{% if can_rename %}<details class="album-menu"><summary class="btn-link">Omdøb</summary><form class="album-menu-panel" method="post" action="{% url 'photo_album:rename_album' album.pk %}">{% csrf_token %}<label for="album-rename">Nyt navn</label><input id="album-rename" name="name" value="{{ album.name }}" maxlength="140" required><button class="btn" type="submit">Gem</button></form></details>{% endif %}
+			{% if can_rename %}<details class="album-menu"><summary class="btn-link">Omdøb</summary><form class="album-menu-panel" method="post" action="{% url 'photo_album:rename_album' album.pk %}">{% csrf_token %}<label for="album-rename">Nyt navn</label><input id="album-rename" type="text" name="name" value="{{ album.name }}" maxlength="140" required><button class="btn" type="submit">Gem</button></form></details>{% endif %}
 			{% if can_lock %}<form method="post" action="{% url 'photo_album:lock_album' album.pk %}" onsubmit="return confirm('Når albummet er låst, kan der ikke uploades, slettes eller omdøbes i det eller dets underalbummer. Lås albummet?');">{% csrf_token %}<button class="btn-link" type="submit">Lås album</button></form>{% endif %}
 			{% if can_delete_album %}<form method="post" action="{% url 'photo_album:delete_album' album.pk %}">{% csrf_token %}<button class="btn-link-danger" type="submit">Slet album</button></form>{% endif %}
 		</div>
@@ -20,13 +21,13 @@
 		{% if locked_by.pk == album.pk %}<span class="album-locked">Albummet er låst</span>{% else %}<span class="album-locked">Låst, fordi <a href="{% url 'photo_album:detail' locked_by.pk %}">{{ locked_by.name }}</a> er låst</span>{% endif %}
 		{% if can_unlock %}<form method="post" action="{% url 'photo_album:unlock_album' album.pk %}">{% csrf_token %}<button class="btn-link" type="submit">Lås op</button></form>{% elif can_manage and locked_by.pk == album.pk %}<span class="album-lock-note">Albummet har været låst i mere end 6 måneder og kan ikke låses op.</span>{% endif %}
 	</div>{% endif %}
+	{% if album_tags or can_tag %}{% include "photo_album/_tags.html" with tags=album_tags tag_url=album_tag_url editable=can_tag prefix="album" %}{% endif %}
 	{% if download_job %}<section class="card mb-4 album-download-notice">{% if download_job.state == 'ready' %}<a class="btn" href="{% url 'photo_album:download_album_archive' download_job.token %}">Hent {{ download_job.filename }}</a><p class="muted mt-2">Downloadet udløber {{ download_job.expires_at|date:"j. F Y kl. H:i" }}.</p>{% elif download_job.state == 'failed' %}<p>Download kunne ikke klargøres.</p>{% else %}<p>Download klargøres … Du finder den under <a href="{% url 'photo_album:downloads' %}">Mine downloads</a>, når den er klar.</p>{% endif %}</section>{% endif %}
 
-	{% if children or can_create_sub_album %}<section class="album-children" aria-labelledby="album-children-title">
+	{% if children %}<section class="album-children" aria-labelledby="album-children-title">
 		<h2 id="album-children-title">Underalbummer</h2>
 		<div class="album-folder-grid">
 			{% for child in children %}{% include "photo_album/_album_card.html" with album=child %}{% endfor %}
-			{% if can_create_sub_album %}<form class="album-card album-new-card" method="post" action="{% url 'photo_album:create_sub_album' album.pk %}">{% csrf_token %}<label for="sub-album-name">Nyt underalbum</label><input id="sub-album-name" name="name" maxlength="140" required placeholder="Navn"><button class="btn-link" type="submit">Opret</button></form>{% endif %}
 		</div>
 	</section>{% endif %}
 	{% if children %}<nav class="album-scope" aria-label="Vis medier">

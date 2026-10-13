@@ -11,7 +11,8 @@
 One album at a time: list it in Dropbox, check it against the server's own import rules, download it
 as a ZIP, send it to the system import endpoint, wait for the result, delete the ZIP. Sub-folders
 become sub-albums (up to the server's depth limit). The server imports an archive completely or
-not at all, so a failed album leaves nothing half-imported behind.
+not at all, so a failed album leaves nothing half-imported behind, and locks every album it imports
+this way (Fotogruppen can unlock one that needs a change).
 
 Setup:
     export PHOTO_ALBUM_IMPORT_URL=https://<host>/intern/fotoalbum/importer-zip/system
@@ -666,7 +667,8 @@ def wait_for_import(
             )
             albums = job.get("albums", [])
             out.ok(
-                f"  ✓ Imported: {albums[0]['path'] if albums else entry.get('album')}"
+                f"  ✓ Imported{' and locked' if job.get('locked') else ''}:"
+                f" {albums[0]['path'] if albums else entry.get('album')}"
                 + (f" (+{len(albums) - 1} sub-album(s))" if len(albums) > 1 else "")
             )
             for line in job.get("skipped", []):

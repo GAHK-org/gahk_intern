@@ -3,6 +3,7 @@ than the shared default media one — its bucket path is "photo-album/…", not 
 """
 
 import calendar
+import re
 import unicodedata
 from collections.abc import Iterable
 from datetime import datetime, timedelta
@@ -148,6 +149,60 @@ def validate_folder(value: str) -> None:
         raise ValidationError("Mappen skal være et årstal eller Andet.")
 
 
+TAG_MAX_LENGTH = 30
+# Letters (æ, ø and å included), digits, dot, dash and underscore — no spaces, nothing else.
+TAG_PATTERN = re.compile(r"[\w.-]+")
+
+
+def validate_tag_name(value: str) -> None:
+    if not value:
+        raise ValidationError("Et tag skal have et navn.")
+    if len(value) > TAG_MAX_LENGTH:
+        raise ValidationError(f"Et tag må højst være {TAG_MAX_LENGTH} tegn.")
+    if not TAG_PATTERN.fullmatch(value):
+        raise ValidationError(
+            "Et tag må kun indeholde bogstaver, tal, punktum, bindestreg og understregning."
+        )
+
+
+class Tag(models.Model):
+    """A label on albums and media. An album's tags apply to everything in its subtree.
+
+    Names are unique ignoring case, and the first spelling sticks: adding "fest" where "Fest" exists
+    reuses "Fest" (services.tag_named). A tag nothing carries any more is left in place — it is
+    simply never offered or listed (services.tags_in_use) — so removing one never races an add.
+    """
+
+    name = models.CharField(max_length=TAG_MAX_LENGTH, validators=[validate_tag_name])
+
+    class Meta:
+        ordering = [Lower("name")]
+        constraints = [
+            models.UniqueConstraint(
+                Lower("name"), name="uniq_tag_name", violation_error_message="Det tag findes allerede."
+            )
+        ]
+
+    def __str__(self) -> str:
+        return self.name
+
+    def save(
+        self,
+        *,
+        force_insert: bool | tuple[ModelBase, ...] = False,
+        force_update: bool = False,
+        using: str | None = None,
+        update_fields: Iterable[str] | None = None,
+    ) -> None:
+        self.name = normalize_name(self.name)
+        super().save(
+            force_insert=force_insert,
+            force_update=force_update,
+            using=using,
+            update_fields=update_fields,
+        )
+
+
 class Album(models.Model):
     """One node of an album tree. A root album sits in a folder; a sub-album has a parent.
 
@@ -172,6 +227,8 @@ class Album(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     manually_locked_at = models.DateTimeField(null=True, blank=True)
     unlocked_at = models.DateTimeField(null=True, blank=True)
+    # Applies to the whole subtree, but stored only here: the media under it are found by path.
+    tags = models.ManyToManyField(Tag, blank=True, related_name="albums")
 
     class Meta:
         ordering = ["-folder", "name"]
@@ -431,7 +488,7 @@ class Media(models.Model):
     # every download. The storage key only carries a sanitised copy of it.
     filename = models.CharField(max_length=255, blank=True)
     # SHA-256 of the original, for duplicate detection on upload and import. Blank on rows uploaded
-    # before it existed until `manage.py backfill_photo_album_hashes` has been run.
+    # before it existed until the nightly `tasks.backfill_media_hashes` has reached them.
     sha256 = models.CharField(max_length=64, blank=True, db_index=True)
     original = models.FileField(
         upload_to=album_original_path, storage=get_photo_album_storage, max_length=500
@@ -487,6 +544,7 @@ class Media(models.Model):
         on_delete=models.SET_NULL,
         related_name="media_deletions",
     )
+    tags = models.ManyToManyField(Tag, blank=True, related_name="media")
 
     class Meta:
         ordering = ["added_at", "pk"]
@@ -593,6 +651,8 @@ class AlbumImport(models.Model):
     # Every reason the import was refused. An import is all or nothing, so these are collected in a
     # first pass over the whole archive and shown together, rather than one per attempt.
     errors = models.JSONField(default=list)
+    # Lock the new album as soon as it is imported — set for the Dropbox import's archive albums.
+    lock_when_done = models.BooleanField(default=False)
     error = models.CharField(max_length=255, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)

@@ -4,6 +4,7 @@ from celery import shared_task
 from django.conf import settings
 from django.core.mail import send_mail
 from django.db import connection
+from django.utils import timezone
 
 from residents.models import Resident, active_period
 
@@ -22,6 +23,10 @@ from residents.models import Resident, active_period
 # taken) and short enough to keep the table small; it exists only so an operator looking into a
 # failure this morning still has the rows in front of them.
 BROKER_MESSAGE_RETENTION = datetime.timedelta(days=1)
+
+# How long a task's log (core/worker_logs.py) is kept. Longer than the result backend keeps the job
+# itself — a week, so the log of a weekend's Dropbox import is still there on Monday.
+WORKER_JOB_LOG_RETENTION = datetime.timedelta(days=7)
 
 
 @shared_task
@@ -72,3 +77,13 @@ def purge_delivered_broker_messages() -> int:
             [cutoff],
         )
         return cursor.rowcount
+
+
+@shared_task
+def purge_worker_job_logs() -> int:
+    """Delete stored task logs older than WORKER_JOB_LOG_RETENTION."""
+    from .models import WorkerJobLog
+
+    cutoff = timezone.now() - WORKER_JOB_LOG_RETENTION
+    deleted, _ = WorkerJobLog.objects.filter(started_at__lt=cutoff).delete()
+    return deleted

@@ -49,6 +49,17 @@ erDiagram
         bool wants_reparationer
     }
 
+    core_WorkerJobLog {
+        int id PK
+        string task_id
+        string task_name
+        string state
+        datetime started_at
+        datetime finished_at
+        json lines
+        int omitted
+    }
+
     residents_Resident {
         int id PK
         string password
@@ -542,6 +553,11 @@ erDiagram
         bool has_preview
     }
 
+    photo_album_Tag {
+        int id PK
+        string name
+    }
+
     photo_album_Album {
         int id PK
         string folder
@@ -609,6 +625,7 @@ erDiagram
         json album_ids
         json skipped
         json errors
+        bool lock_when_done
         string error
         datetime created_at
         datetime completed_at
@@ -703,10 +720,12 @@ erDiagram
     arkiv_ArchiveFile }o--|o residents_Resident : "uploaded_by"
     arkiv_ArchiveFile }o--|o residents_Resident : "deleted_by"
     photo_album_Album }o--|o photo_album_Album : "parent"
+    photo_album_Album }o--o{ photo_album_Tag : "tags"
     photo_album_Media }o--|| photo_album_Album : "album"
     photo_album_Media }o--|| residents_Resident : "requested_by"
     photo_album_Media }o--|o residents_Resident : "approved_by"
     photo_album_Media }o--|o residents_Resident : "deleted_by"
+    photo_album_Media }o--o{ photo_album_Tag : "tags"
     photo_album_AlbumDownload }o--|o photo_album_Album : "album"
     photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
     photo_album_AlbumImport }o--|| residents_Resident : "requested_by"
@@ -944,6 +963,17 @@ erDiagram
         bool wants_opslagstavle
         bool wants_begivenheder
         bool wants_reparationer
+    }
+
+    core_WorkerJobLog {
+        int id PK
+        string task_id
+        string task_name
+        string state
+        datetime started_at
+        datetime finished_at
+        json lines
+        int omitted
     }
 
     residents_Resident { }
@@ -1234,6 +1264,11 @@ erDiagram
 
 ```mermaid
 erDiagram
+    photo_album_Tag {
+        int id PK
+        string name
+    }
+
     photo_album_Album {
         int id PK
         string folder
@@ -1301,6 +1336,7 @@ erDiagram
         json album_ids
         json skipped
         json errors
+        bool lock_when_done
         string error
         datetime created_at
         datetime completed_at
@@ -1325,10 +1361,12 @@ erDiagram
     residents_Resident { }
 
     photo_album_Album }o--|o photo_album_Album : "parent"
+    photo_album_Album }o--o{ photo_album_Tag : "tags"
     photo_album_Media }o--|| photo_album_Album : "album"
     photo_album_Media }o--|| residents_Resident : "requested_by"
     photo_album_Media }o--|o residents_Resident : "approved_by"
     photo_album_Media }o--|o residents_Resident : "deleted_by"
+    photo_album_Media }o--o{ photo_album_Tag : "tags"
     photo_album_AlbumDownload }o--|o photo_album_Album : "album"
     photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
     photo_album_AlbumImport }o--|| residents_Resident : "requested_by"

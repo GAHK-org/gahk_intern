@@ -129,7 +129,7 @@ def test_token_import_uses_system_resident() -> None:
     csrf_client = Client(enforce_csrf_checks=True)
     response = csrf_client.post(
         reverse("photo_album:system_import_zip"),
-        {"folder": "2026", "archive": _zip_upload(("one.jpg", jpeg_bytes()))},
+        {"folder": "2026", "archive": _zip_upload(("one.jpg", jpeg_bytes()), ("sub/two.jpg", jpeg_bytes()))},
         HTTP_AUTHORIZATION="Bearer migration-token",
         HTTP_ACCEPT="application/json",
     )
@@ -138,7 +138,15 @@ def test_token_import_uses_system_resident() -> None:
     album_import = AlbumImport.objects.get()
     assert album_import.requested_by.full_name == "System"
     assert process_album_import(album_import.pk)
-    assert Media.objects.get().requested_by.full_name == "System"
+    assert {media.requested_by.full_name for media in Media.objects.all()} == {"System"}
+
+    # The Dropbox archive is history: it arrives locked, sub-albums included.
+    root = Album.objects.get(parent__isnull=True)
+    assert root.manually_locked_at is not None
+    assert all(album.is_locked() for album in Album.objects.all())
+    status = csrf_client.get(response.json()["statusUrl"], HTTP_AUTHORIZATION="Bearer migration-token").json()
+    assert status["state"] == "ready"
+    assert status["locked"] is True
 
 
 @pytest.mark.django_db
@@ -163,6 +171,7 @@ def test_zip_import_builds_an_album_tree_named_after_the_zip_and_its_folders(
     root = Album.objects.get(name="foo")
     assert album_import.album_ids[0] == root.pk
     assert root.subtree_media().count() == 4
+    assert not root.is_locked()  # only the system import locks what it brings in
 
 
 @pytest.mark.django_db
@@ -535,6 +544,70 @@ def test_image_upload_generates_compressed_derivatives(make_resident: Callable[.
         assert max(high_definition.size) == 1600
     with Image.open(media.thumbnail) as thumbnail:
         assert max(thumbnail.size) == 320
+
+
+def _animated_gif(size: tuple[int, int], loop: int | None = 0) -> bytes:
+    from PIL import Image
+
+    frames = [Image.new("RGB", size, colour) for colour in ("red", "green", "blue")]
+    output = BytesIO()
+    options: dict[str, object] = {"duration": [100, 200, 300]}
+    if loop is not None:
+        options["loop"] = loop
+    frames[0].save(output, format="GIF", save_all=True, append_images=frames[1:], **options)
+    return output.getvalue()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(("size", "loop"), [((200, 100), 0), ((2400, 1200), 0), ((2400, 1200), None)])
+def test_an_animated_gif_stays_animated_in_high_definition(
+    make_resident: Callable[..., Resident], size: tuple[int, int], loop: int | None
+) -> None:
+    from PIL import Image
+
+    content = _animated_gif(size, loop)
+    media = upload_media(
+        album=Album.objects.create(folder="2026", name="Fest"),
+        uploaded_file=SimpleUploadedFile("dance.gif", content, content_type="image/gif"),
+        resident=make_resident(),
+        approved=True,
+    )
+    assert build_derivatives(media)
+
+    assert media.high_definition.name.endswith(".gif")
+    assert media.thumbnail.name.endswith(".jpg")
+    with Image.open(media.high_definition) as high_definition:
+        assert high_definition.format == "GIF"
+        assert high_definition.n_frames == 3
+        assert max(high_definition.size) == min(max(size), 1600)
+        assert high_definition.info.get("loop") == loop
+        durations = []
+        for index in range(3):
+            high_definition.seek(index)
+            durations.append(high_definition.info["duration"])
+        assert durations == [100, 200, 300]
+    if max(size) <= 1600:
+        with media.high_definition.open("rb") as stored:
+            assert stored.read() == content
+    with Image.open(media.thumbnail) as thumbnail:
+        assert thumbnail.format == "JPEG"
+        assert max(thumbnail.size) <= 320
+
+
+@pytest.mark.django_db
+def test_a_still_gif_gets_jpeg_derivatives(make_resident: Callable[..., Resident]) -> None:
+    from PIL import Image
+
+    source = BytesIO()
+    Image.new("RGB", (200, 100), "red").save(source, format="GIF")
+    media = upload_media(
+        album=Album.objects.create(folder="2026", name="Fest"),
+        uploaded_file=SimpleUploadedFile("still.gif", source.getvalue(), content_type="image/gif"),
+        resident=make_resident(),
+        approved=True,
+    )
+    assert build_derivatives(media)
+    assert media.high_definition.name.endswith(".jpg")
 
 
 @pytest.mark.django_db
@@ -1438,8 +1511,9 @@ def test_album_detail_query_count_does_not_grow_with_the_number_of_photos(
     url = reverse("photo_album:detail", args=[album.pk])
     client.get(url)  # warm any per-process caches so the count below is the steady state
 
-    # One more than before the album tree: the page now lists the album's sub-albums.
-    with django_assert_num_queries(9):  # type: ignore[operator]
+    # One more than before the album tree: the page now lists the album's sub-albums. One more again
+    # for the album's tags (a root album has no ancestors to inherit any from, so no query for those).
+    with django_assert_num_queries(10):  # type: ignore[operator]
         client.get(url)
 
 
@@ -2000,6 +2074,7 @@ def test_archive_mirrors_the_album_tree_and_numbers_clashing_names(
     with get_photo_album_storage().open(download.archive_key) as stored, zipfile.ZipFile(stored) as archive:
         notice = archive.read(RENAMED_NOTICE_NAME).decode()
     assert "IMG_1.JPG  ->  IMG_1_01.JPG" in notice
+    assert RENAMED_NOTICE_NAME.startswith("_")
 
 
 @pytest.mark.django_db
@@ -2018,3 +2093,31 @@ def test_backfill_hashes_fills_in_rows_stored_before_hashing(make_resident: Call
 
     media.refresh_from_db()
     assert media.sha256 == hashlib.sha256(content).hexdigest()
+
+
+@pytest.mark.django_db
+def test_nightly_hash_backfill_stops_at_its_budget(
+    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hashlib
+    from datetime import timedelta
+
+    from photo_album import tasks
+
+    album = Album.objects.create(folder="2026", name="Fest")
+    resident = make_resident()
+    contents = [jpeg_bytes((index, 0, 0)) for index in range(3)]
+    ids = [
+        upload_media(album=album, uploaded_file=image_upload(f"{index}.jpg", content), resident=resident).pk
+        for index, content in enumerate(contents)
+    ]
+    Media.objects.update(sha256="")
+
+    monkeypatch.setattr(tasks, "HASH_BACKFILL_BUDGET", timedelta(0))
+    assert tasks.backfill_media_hashes.run() == 0
+
+    monkeypatch.setattr(tasks, "HASH_BACKFILL_BUDGET", timedelta(minutes=20))
+    assert tasks.backfill_media_hashes.run() == 3
+    hashes = dict(Media.objects.values_list("pk", "sha256"))
+    assert [hashes[pk] for pk in ids] == [hashlib.sha256(content).hexdigest() for content in contents]
+    assert tasks.backfill_media_hashes.run() == 0

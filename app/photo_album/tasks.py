@@ -1,6 +1,8 @@
 import io
+import logging
 import posixpath
 from collections.abc import Buffer, Iterator
+from datetime import timedelta
 from pathlib import Path
 
 from celery import shared_task
@@ -24,8 +26,10 @@ from .models import (
     DownloadVariant,
     Media,
 )
-from .services import build_derivatives, import_zip_album, pending_derivatives
+from .services import backfill_hashes, build_derivatives, import_zip_album, pending_derivatives
 from .storage import PhotoAlbumS3Storage, get_photo_album_storage
+
+logger = logging.getLogger(__name__)
 
 # The two jobs here that legitimately outrun the global CELERY_TASK_TIME_LIMIT of fifteen minutes:
 # an H.264 encode of a phone clip, and a whole-album ZIP streamed into object storage. Under the
@@ -86,6 +90,25 @@ def process_pending_media(limit: int = 10) -> int:
     return dispatched
 
 
+# How long one night's hash backfill may read originals for. Old rows are hashed in portions, so
+# the first nights after a deploy never hold the worker for long; once every row has its hash, a
+# run is one indexed query that finds nothing.
+HASH_BACKFILL_BUDGET = timedelta(minutes=20)
+
+
+@shared_task(time_limit=MEDIA_TASK_TIME_LIMIT, soft_time_limit=MEDIA_TASK_SOFT_TIME_LIMIT)
+def backfill_media_hashes() -> int:
+    """Nightly: hash originals stored before hashes were. Returns how many were hashed."""
+    result = backfill_hashes(until=timezone.now() + HASH_BACKFILL_BUDGET)
+    logger.info(
+        "Hashed %d media item(s); %d could not be read; %d still without a hash.",
+        result.hashed,
+        len(result.unreadable),
+        result.remaining,
+    )
+    return result.hashed
+
+
 @shared_task
 def purge_expired_media() -> None:
     """Permanently remove photo-album media past its retention period."""
@@ -121,7 +144,8 @@ class _ZipReader(io.RawIOBase):
         return size
 
 
-RENAMED_NOTICE_NAME = "OMDØBTE_FILER.txt"
+# The leading underscore sorts it first in most file browsers, ahead of the folders and pictures.
+RENAMED_NOTICE_NAME = "_OMDØBTE_FILER.txt"
 
 
 def archive_entries(download: AlbumDownload) -> tuple[list[tuple[str, Media, File]], list[tuple[str, str]]]:
@@ -132,7 +156,7 @@ def archive_entries(download: AlbumDownload) -> tuple[list[tuple[str, Media, Fil
     original names. Several items in one album may share a name — two phones' IMG_0001.JPG — and so
     may an original and its HD copy's new extension; every member of such a group, compared without
     case as Windows and macOS would, is numbered `IMG_0001_01.JPG`, `IMG_0001_02.JPG`, … and listed
-    in OMDØBTE_FILER.txt.
+    in _OMDØBTE_FILER.txt.
     """
     media_items = list(
         Media.objects.filter(pk__in=download.media_ids, deleted_at__isnull=True)
@@ -205,6 +229,7 @@ def _archive(download: AlbumDownload) -> ZipStream:
             "",
         ]
         archive.add("\r\n".join(lines).encode("utf-8"), arcname=RENAMED_NOTICE_NAME)
+        logger.info("%d file(s) renamed to avoid a clash; listed in %s.", len(renamed), RENAMED_NOTICE_NAME)
     return archive
 
 
@@ -218,6 +243,13 @@ def build_album_download(download_id: int) -> bool:
     download.state = AlbumDownloadState.BUILDING
     download.save(update_fields=["state"])
     key = f"photo-album-zips/{download.token}.zip"
+    logger.info(
+        "Building %s (%s) with %d item(s) for %s.",
+        download.filename,
+        download.variant,
+        len(download.media_ids),
+        download.requested_by,
+    )
     try:
         archive = _archive(download)
         storage = get_photo_album_storage()
@@ -273,22 +305,43 @@ def process_album_import(import_id: int) -> bool:
         return False
     album_import.state = AlbumImportState.BUILDING
     album_import.save(update_fields=["state"])
+    logger.info(
+        "Importing %s into folder %s for %s%s.",
+        album_import.archive_name,
+        album_import.folder,
+        album_import.requested_by,
+        " (locked when done)" if album_import.lock_when_done else "",
+    )
     try:
         with album_import.archive.open("rb") as archive:
             albums, skipped = import_zip_album(
                 archive=File(archive, name=album_import.archive_name),
                 folder=album_import.folder,
                 resident=album_import.requested_by,
+                lock=album_import.lock_when_done,
             )
         album_import.state = AlbumImportState.READY
         album_import.album_ids = [album.pk for album in albums]
         album_import.skipped = skipped
         album_import.completed_at = timezone.now()
         album_import.save(update_fields=["state", "album_ids", "skipped", "completed_at"])
+        for line in skipped:
+            logger.info("Left out: %s", line)
+        media_count = sum(album.media.count() for album in albums)
+        logger.info(
+            "Imported %d media item(s) into %d album(s): %s. %d file(s) left out.",
+            media_count,
+            len(albums),
+            ", ".join(album.name for album in albums),
+            len(skipped),
+        )
         return True
     except ValidationError as exc:
         # Refused, not crashed: the archive had problems the resident can fix, and nothing of it
         # was stored. Every reason is kept so the status page can list them all at once.
+        for message in exc.messages:
+            logger.warning("Refused: %s", message)
+        logger.warning("The ZIP was refused (%d reason(s)); nothing was imported.", len(exc.messages))
         album_import.state = AlbumImportState.FAILED
         album_import.errors = exc.messages
         album_import.error = "ZIP-filen blev afvist. Intet er importeret."
