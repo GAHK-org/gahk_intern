@@ -1090,7 +1090,11 @@ def retry_invalid(server: Server, options: Options, album_dir: Path) -> int:
     files = {path.relative_to(invalid_dir).parts: path for path in waiting(album_dir)}
     out.heading(f"{year}/{album} ← {invalid_dir}")
     if not files:
-        out.ok("  Nothing waiting there.")
+        out.ok(f"  Nothing waiting in {invalid_dir}.")
+        out.info(
+            "  An album the server refused as a whole is sent again from Dropbox with"
+            f" --retry-failed --year {year}."
+        )
         return 0
 
     existing, rules = server.albums(year)
