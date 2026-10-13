@@ -5,13 +5,25 @@
 	<header class="album-heading">
 		<div><p class="album-eyebrow">GAHKs fælles minder</p><h1>Fotoalbum</h1></div>
 		<div class="album-actions">
-			<a class="btn-link" href="{% url 'photo_album:timeline' %}">Tidslinje</a>
+			{% if folder %}<a class="btn-link" href="{% url 'photo_album:timeline' %}">Tidslinje</a>{% endif %}
 			<a class="btn-link" href="{% url 'photo_album:downloads' %}">Mine downloads</a>
 			{% if can_view_all_bins %}<a class="btn-link" href="{% url 'photo_album:bin' %}">Papirkurv</a>{% endif %}
 			{% if can_create %}<a class="btn" href="{% url 'photo_album:create_album' %}">Opret album</a><a class="btn btn-secondary" href="{% url 'photo_album:import_zip' %}">Importer</a>{% endif %}
 		</div>
 	</header>
-	{% if folder %}<p><a class="album-back" href="{% url 'photo_album:index' %}">Alle mapper</a></p>{% endif %}
+	{% if folder %}<p><a class="album-back" href="{% url 'photo_album:index' %}">Alle mapper</a></p>
+	{% else %}
+		{% comment %}A random handful from the whole archive, so the way into the timeline looks like what it holds.{% endcomment %}
+		<a class="album-timeline-card" href="{% url 'photo_album:timeline' %}">
+			<span class="album-timeline-mosaic" aria-hidden="true">{% for item in mosaic %}<img src="{{ item.thumbnail.url }}" alt="" loading="lazy">{% endfor %}</span>
+			<span class="album-timeline-label">
+				<span class="album-eyebrow">Alle billeder på ét sted</span>
+				<strong>Tidslinje</strong>
+				<span>Hele arkivet, nyeste først — på tværs af alle albummer.</span>
+				<span class="album-timeline-go">Se tidslinjen →</span>
+			</span>
+		</a>
+	{% endif %}
 	{% regroup albums by folder as folders %}
 	<div class="album-folders">
 		{% for folder in folders %}
