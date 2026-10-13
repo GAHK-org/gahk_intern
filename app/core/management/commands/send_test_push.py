@@ -6,11 +6,10 @@ useless when you are trying to find out why nothing arrives. This command does t
 prints the configuration state, every endpoint it tries, and the full push-service response.
 
     manage.py send_test_push anton@gahk.dk
-    manage.py send_test_push anton@gahk.dk --topic opslagstavle
 
 Lives in core, with the transport it exercises: it tests the keys, the subscription and the service
-worker, none of which belong to a single feature. `--topic` selects which consent column has to be
-set, so "I turned notifications on but nothing arrives" can be traced to the right one.
+worker, none of which belong to a single feature. It ignores the resident's notification settings on
+purpose — it tests the device, and "I turned it off for this category" is not what is being asked.
 
 It separates the two halves of "no notification": if this delivers, the keys, the subscription and
 the service worker are all fine and the problem is in the posting flow; if it fails, the reason is
@@ -23,7 +22,7 @@ from django.core.management.base import BaseCommand, CommandError, CommandParser
 from pywebpush import WebPushException
 
 from core import push
-from core.models import TOPIC_FIELDS, PushSubscription
+from core.models import PushSubscription
 from residents.models import Resident
 
 
@@ -32,16 +31,9 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser: CommandParser) -> None:
         parser.add_argument("email", help="Email of the resident to notify.")
-        parser.add_argument(
-            "--topic",
-            default="den_hurtige",
-            choices=sorted(TOPIC_FIELDS),
-            help="Which notification topic to test (default: den_hurtige).",
-        )
 
     def handle(self, *args: object, **opts: object) -> None:
         email = str(opts["email"])
-        topic = str(opts["topic"])
 
         if not push.is_configured():
             raise CommandError(
@@ -54,32 +46,19 @@ class Command(BaseCommand):
         except Resident.DoesNotExist as exc:
             raise CommandError(f"No resident with email {email!r}.") from exc
 
-        # Scoped to the topic, so "no devices" distinguishes "never subscribed at all" from
-        # "subscribed to the other feature only" — the failure this split introduced.
-        subscriptions = list(push.subscribers(topic).filter(user=resident))
-        total = push.subscribers(topic).count()
-        self.stdout.write(
-            f"{resident.full_name}: {len(subscriptions)} device(s) on {topic!r} — {total} in total."
-        )
+        subscriptions = list(PushSubscription.objects.filter(user=resident))
+        total = PushSubscription.objects.count()
+        self.stdout.write(f"{resident.full_name}: {len(subscriptions)} device(s) — {total} in total.")
         if not subscriptions:
-            any_device = PushSubscription.objects.filter(user=resident).count()
-            extra = f" They do have {any_device} device(s) subscribed to another topic." if any_device else ""
             raise CommandError(
-                f"This resident has no devices subscribed to {topic!r}.{extra} Open the feature's "
-                "page as them and press 'Slå notifikationer til' first."
+                "This resident has no subscribed devices. Open /intern/notifikationer/indstillinger "
+                "as them and press 'Slå notifikationer til' first."
             )
 
-        # Deep-links somewhere real for the topic under test: this is a delivery test, and a
-        # notification that opens nothing when tapped only half-tests it. Imported here rather than
-        # at module scope so core keeps no import-time dependency on the features it serves.
-        from den_hurtige import channels
-        from opslagstavle.services import BOARD_URL
-
-        topic_urls = {"den_hurtige": channels.DEFAULT.url, "opslagstavle": BOARD_URL}
+        # Deep-links somewhere real: this is a delivery test, and a notification that opens nothing
+        # when tapped only half-tests it.
         payload = push._payload(
-            "Test fra GAHK",
-            "Hvis du kan se denne, virker push.",
-            topic_urls.get(topic, "/intern/"),
+            "Test fra GAHK", "Hvis du kan se denne, virker push.", "/intern/notifikationer/"
         )
         body = json.dumps(payload)
 

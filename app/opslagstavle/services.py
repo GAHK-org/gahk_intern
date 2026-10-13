@@ -1,16 +1,17 @@
-"""Who gets notified about what on opslagstavlen — the policy half of push.
+"""Who gets notified about what on opslagstavlen — the policy half of its notifications.
 
-The transport (pywebpush, the background thread, dead-endpoint cleanup, the VAPID keys) is
-core.push, shared with Den Hurtige. What is here is this feature's audience and wording, and they
-differ from a chat's in one important way:
+The machinery (rows, preferences, push delivery, grouping) is the notifications app. What is here is
+this feature's audience and wording, and they differ from a chat's in one important way:
 
-  * a **new post** goes to everyone who opted in — that is the point of leaving Facebook;
-  * a **comment** goes to the post's author only. A board thread with twenty replies must not be
-    twenty dorm-wide pushes, and there is deliberately no "underret alle" checkbox: that exists on
-    Den Hurtige because a chat has a single shared audience, and a noticeboard does not;
-  * a **reaction** notifies nobody, for the reason NoticeReaction's sibling docstring gives — a feed
-    where every 👍 buzzes a hundred phones is the noise this replaces, and it stops people reacting
-    at all.
+  * a **new post** goes to everyone who can read the board (`posts.new`) — that is the point of
+    leaving Facebook;
+  * a **comment** goes to the post's author only (`posts.replies`), grouped per post: "Anders og
+    Bente svarede". A board thread with twenty replies must not be twenty dorm-wide pushes, and
+    there is deliberately no "underret alle" checkbox: that exists on Den Hurtige because a chat has
+    a single shared audience, and a noticeboard does not;
+  * a **reaction** goes to the post's author only (`posts.likes`), grouped the same way and at low
+    importance — never to the board, where every 👍 buzzing a hundred phones is the noise this
+    replaces.
 
 The notification links to the individual post, not the board: `?page=4` is not a stable address for
 a thing, and a tap should land on what it is about.
@@ -20,6 +21,7 @@ from typing import TYPE_CHECKING
 
 from core import push
 from core.markdown import plain_text
+from notifications import categories, services
 
 from . import access
 
@@ -28,9 +30,6 @@ if TYPE_CHECKING:
 
     from .models import Notice, NoticeComment
 
-# The topic name this feature subscribes and notifies under (core.models.TOPIC_FIELDS).
-TOPIC = "opslagstavle"
-
 BOARD_URL = "/intern/opslagstavle/"
 
 
@@ -38,43 +37,53 @@ def notice_url(notice: "Notice") -> str:
     return f"{BOARD_URL}{notice.pk}"
 
 
-def is_subscribed(resident: "Resident") -> bool:
-    """Whether any of this resident's devices wants board notifications — the initial state of the
-    subscribe toggle. Per *resident*, because the page is rendered before JS has read this browser's
-    endpoint; push.ts corrects the button once it can compare the actual endpoint."""
-    return push.subscribers(TOPIC).filter(user=resident).exists()
-
-
 def notify_new_notice(notice: "Notice") -> None:
-    """Announce a new post to every board subscriber except its author.
+    """Announce a new post to everyone who can open the board, except its author.
 
     The body is `plain_text`, not the raw Markdown: a lock screen showing `**Vigtigt**` and
     `[link](https://…)` is the difference between a notification people read and one they dismiss.
+    The author is the title, matching Den Hurtige and the card itself.
     """
     # Narrowed to people who can open the board: while the rollout gate is on, notifying a resident
     # who would get a 403 on tapping is worse than not notifying them.
-    push.send(
-        access.allowed_subscribers(push.subscribers(TOPIC, exclude_user_id=notice.author_id)),
-        # The author is the head, matching Den Hurtige and the card itself. It used to be the title,
-        # with the author crammed into the front of the body; with no title left, repeating the name
-        # in both lines would waste the one line a lock screen actually gives you.
-        head=notice.author.full_name,
+    services.notify(
+        access.allowed_residents(services.everyone()),
+        category=categories.POSTS_NEW,
+        title=notice.author.full_name,
         body=push.preview(plain_text(notice.body)),
         url=notice_url(notice),
+        exclude=notice.author_id,
     )
 
 
 def notify_new_comment(comment: "NoticeComment") -> None:
     """Tell the post's author someone replied — and nobody else."""
-    if comment.author_id == comment.notice.author_id:
-        return  # commenting on your own post: the only recipient would be yourself
-    recipients = access.allowed_subscribers(push.subscribers(TOPIC).filter(user_id=comment.notice.author_id))
-    push.send(
-        recipients,
-        head=f"{comment.author.full_name} svarede",
-        # `or "📷 Billede"`: a photo-only comment has no text, and push.preview("") is "" —
-        # which on a lock screen reads as a notification that failed to load. Same fallback as
-        # den_hurtige.services uses for a photo-only reply.
+    notice = comment.notice
+    if not access.allowed_residents(services.everyone()).filter(pk=notice.author_id).exists():
+        return  # the author can no longer open the board (rollout gate, or moved out)
+    services.notify_grouped(
+        notice.author_id,
+        category=categories.POSTS_REPLIES,
+        group_key=f"posts.replies:{notice.pk}",
+        actor=comment.author,
+        verb="svarede",
+        # `or "📷 Billede"`: a photo-only comment has no text, and push.preview("") is "" — which on
+        # a lock screen reads as a notification that failed to load.
         body=push.preview(comment.body) or "📷 Billede",
-        url=notice_url(comment.notice),
+        url=notice_url(notice),
+    )
+
+
+def notify_reaction(notice: "Notice", reactor: "Resident", emoji: str) -> None:
+    """Somebody reacted to `notice`. Called on a NEW reaction only (core.reactions.apply_toggle)."""
+    if not access.allowed_residents(services.everyone()).filter(pk=notice.author_id).exists():
+        return
+    services.notify_grouped(
+        notice.author_id,
+        category=categories.POSTS_LIKES,
+        group_key=f"posts.likes:{notice.pk}",
+        actor=reactor,
+        verb="reagerede på dit opslag",
+        body=f"{emoji} {push.preview(plain_text(notice.body))}".strip(),
+        url=notice_url(notice),
     )

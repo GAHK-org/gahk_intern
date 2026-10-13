@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Notifikationer - Admin - GAHK{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <div class="eyebrow"><a href="{% url 'siteadmin:home' %}">Administration</a></div>
+      <h1>Notifikationer</h1>
+    </div>
+  </div>
+
+  <div class="glance">
+    <span class="g"><span class="gk">Push-enheder</span> <b>{{ devices }}</b></span>
+    <span class="g"><span class="gk">Beboere med push</span> <b>{{ device_users }}</b></span>
+  </div>
+
+  <section class="card-flat notif-section">
+    <div class="card-head"><h2>Send en besked til alle</h2></div>
+    <div class="card-pad">
+      <form method="post" class="notif-broadcast">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <p class="muted">Kritisk tilsidesætter beboernes indstillinger og kommer altid igennem — brug den sparsomt.</p>
+        <button type="submit" class="btn">Send</button>
+      </form>
+    </div>
+  </section>
+
+  {% for w in windows %}
+    <section class="card-flat notif-section">
+      <div class="card-head"><h2>Seneste {{ w.days }} dage</h2></div>
+      <div class="card-pad">
+        <p>{{ w.total }} notifikation(er) · {{ w.seen }} set · {{ w.pushed }} sendt som push</p>
+        <div class="grid2">
+          <table class="table">
+            <thead><tr><th>Kategori</th><th>Antal</th><th>Set</th><th>Push</th></tr></thead>
+            <tbody>
+              {% for row in w.by_category %}
+                <tr><td>{{ row.name }}</td><td>{{ row.total }}</td><td>{{ row.seen }}</td><td>{{ row.pushed }}</td></tr>
+              {% empty %}<tr><td colspan="4" class="muted">Ingen.</td></tr>{% endfor %}
+            </tbody>
+          </table>
+          <table class="table">
+            <thead><tr><th>Vigtighed</th><th>Antal</th><th>Set</th></tr></thead>
+            <tbody>
+              {% for row in w.by_importance %}
+                <tr><td>{{ row.label }}</td><td>{{ row.total }}</td><td>{{ row.seen }}</td></tr>
+              {% empty %}<tr><td colspan="3" class="muted">Ingen.</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  {% endfor %}
+
+  <section class="card-flat notif-section">
+    <div class="card-head"><h2>Push-levering pr. dag</h2></div>
+    <table class="table">
+      <thead><tr><th>Dato</th><th>Leveret</th><th>Fejlet</th><th>Fjernet (enhed væk)</th></tr></thead>
+      <tbody>
+        {% for day in delivery_days %}
+          <tr><td>{{ day.date }}</td><td>{{ day.delivered }}</td><td>{{ day.failed }}</td><td>{{ day.removed }}</td></tr>
+        {% empty %}<tr><td colspan="4" class="muted">Ingen push sendt endnu.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card-flat notif-section">
+    <div class="card-head"><h2>Aktive push-abonnementer</h2></div>
+    <table class="table">
+      <thead><tr><th>Beboer</th><th>Enhed</th><th>Oprettet</th><th>Sidst leveret</th><th>Fejl i træk</th><th></th></tr></thead>
+      <tbody>
+        {% for entry in users %}
+          {% for device in entry.devices %}
+            <tr>
+              <td>{% if forloop.first %}<a href="{% url 'resident_profile' entry.user.pk %}">{{ entry.user.full_name }}</a>{% endif %}</td>
+              <td class="muted" title="{{ device.user_agent }}">{{ device.user_agent|truncatechars:60|default:"—" }}</td>
+              <td>{{ device.created_at|date:"j. M Y" }}</td>
+              <td>{% if device.last_success_at %}{{ device.last_success_at|date:"j. M Y H:i" }}{% else %}<span class="muted">aldrig</span>{% endif %}</td>
+              <td>{{ device.failure_count }}</td>
+              <td>
+                <form method="post" action="{% url 'siteadmin:notification_device_cancel' device.pk %}"
+                      onsubmit="return confirm('Annullér dette push-abonnement?')">
+                  {% csrf_token %}<button type="submit" class="btn-secondary">Annullér</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        {% empty %}<tr><td colspan="6" class="muted">Ingen enheder er tilmeldt.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

@@ -96,7 +96,10 @@ BY_SLUG: dict[str, Channel] = {c.slug: c for c in CHANNELS}
 
 # URL segments under /intern/den-hurtige/ that are views, not channels. `<slug:channel>/` is
 # matched last, so these already win — but a channel named after one would be unreachable with no
-# error anywhere, so checks.py rejects the collision instead (E008).
+# error anywhere, so checks.py rejects the collision instead (E008). "abonner" and "lyd" are no
+# longer routes (push and per-room muting moved to the notifications app) but stay reserved: an
+# installed PWA or a stale tab may still POST to them, and that must 404/405 rather than land in a
+# channel that happens to share the name.
 RESERVED_SLUGS = frozenset({"opslag", "opret", "abonner", "lyd", "arkiv"})
 
 

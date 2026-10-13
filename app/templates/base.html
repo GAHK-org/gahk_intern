@@ -50,6 +50,7 @@
         <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5.6 5l-6.4 6.4 2.6 2.6 6.4-6.4a4 4 0 0 0 5-5.6l-2.8 2.8-2.2-2.2z"/></symbol>
         {# Speech bubble: what a swipe-right on a Den Hurtige message reveals (see .msg-hint). #}
         <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-8 8H9l-5 3 1.2-4.2A8 8 0 1 1 21 12z"/></symbol>
+        <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></symbol>
       </g>
       {% comment %}
         Dannebrog, flown for a birthday — which is the only thing it marks (see .cal-birthday).
@@ -105,6 +106,7 @@
           <span class="hidden sm:inline">Forsiden</span>
         </a>
         {% if user.is_authenticated %}
+          {% include "notifications/_bell.html" %}
           <a href="{% url 'resident_profile' user.pk %}" class="topuser" title="Min profil">
             {% if user.profile_picture %}
               <img src="{{ user.profile_picture.url }}" alt="{{ user.first_name }}" class="avatar" style="border-radius:50%;object-fit:cover">

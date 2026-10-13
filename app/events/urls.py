@@ -17,7 +17,6 @@ urlpatterns = [
     path("", views.index, name="index"),
     path("opret", views.create, name="create"),
     # Before <int:pk>, so these fixed segments are never read as an event id.
-    path("abonner", views.save_subscription, name="save_subscription"),
     path("kalender", views.calendar, name="calendar"),
     path("kalender/abonnement", views.feed_settings, name="feed_settings"),
     path("kalender/nyt-link", views.rotate_token, name="rotate_token"),

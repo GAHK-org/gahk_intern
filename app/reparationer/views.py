@@ -24,7 +24,6 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from core import push
 from residents.models import Role
 from residents.permissions import current_resident, request_has_role, role_required
 
@@ -127,7 +126,6 @@ def board(request: HttpRequest) -> HttpResponse:
         (status, label, [t for t in tasks if t.status == status])
         for status, label in RepairTask.Status.choices
     ]
-    resident = current_resident(request)
     return render(
         request,
         "reparationer/board.html",
@@ -137,9 +135,6 @@ def board(request: HttpRequest) -> HttpResponse:
             "location_type": location_type,
             "location_types": LOCATION_TYPES,
             "result_count": sum(len(items) for _, _, items in columns) if query else None,
-            "push_configured": push.is_configured(),
-            "vapid_public_key": push.vapid_public_key(),
-            "push_subscribed": services.is_subscribed(resident),
             # Dragging a card is the board's only move control (see board.html). Both flags are read
             # by frontend/src/reparationer.ts, which wires up nothing at all without can_move.
             "can_move": request_has_role(request, *MOVE_ROLES),
@@ -271,14 +266,6 @@ def unarchive(request: HttpRequest, pk: int) -> HttpResponseRedirect:
         task.save(update_fields=["archived_at"])
         messages.success(request, "Reparationen er genåbnet fra arkivet.")
     return redirect("reparationer:detail", pk=task.pk)
-
-
-@require_POST
-@login_required
-def save_subscription(request: HttpRequest) -> HttpResponse:
-    """Store (or drop) this browser's opt-in to Reparationer push notifications. No role gate beyond
-    login: every resident may open the board, mirrors opslagstavle.views.save_subscription."""
-    return push.handle_subscription_request(request, services.TOPIC)
 
 
 @login_required
