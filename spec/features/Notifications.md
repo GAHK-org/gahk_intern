@@ -1,166 +1,250 @@
-# Feature: notifications
+# Feature: Notifikationer — in-app and push notifications
 
-Notifications may be sent for many reasons.
-Currently, subscription to push notifications is scattered around the app.
+## What it is, and what it replaces
 
-Notifications should include both in-app notifications, as well as push notifications.
-**Some notifications are push only, whilst other might be both.**
+Notifications are sent for many reasons: a reply to your chat message, a new post on the board, an
+event you said ja to being moved, a repair handed to your group, a message from the administrators.
+Before this feature every part of the app had its own push subscription (`…/abonner`, with a
+`wants_<feature>` column per topic) and its own idea of what to send; nothing was kept, so a push
+that was swiped away was gone.
 
-## In-app notifications
-Include a notifications page and a notification dropdown in the nav bar.
+Now there is one `notifications` app that owns all of it:
 
-The dropdown should show the 10 most recent notifications.
+- **In-app notifications** — a row per recipient, listed in a dropdown in the top bar and on a
+  notifications page, with seen/unseen state.
+- **Push notifications** — one subscription per device, used for every category.
+- **Personal settings** — per category: in-app, push and vibration.
 
-The page should show all active notifications.
-For the page, add both a chronologic view and a view grouped by category.
+Some notifications are both in-app and push; some are **push only** (see Categories).
 
-### Seen/unseen
-If a user has clicked a notification (in-app or push), mark the notification as seen.
-Add a visual cue to indicate if a notification is seen or not.
-
+Features decide **who** is told and **with what wording**; they call
+`notifications.services.notify(...)` or `notify_grouped(...)` and never deal with delivery.
+`core.push` is the transport only (VAPID/pywebpush, device bookkeeping, daily delivery counters).
 
 ## Categories
-Current categories include (but not limited to):
 
-- System
-- General
-- Events
-- Chat (den hurtige)
-    * Likes
-    * Replies
-- Posts
-    * Replies
-    * Likes
+| Group | Key | Default importance | In-app |
+|---|---|---|---|
+| Den Hurtige | `chat.room.<slug>` — one per room: Den Hurtige, TV-Rezz, G. A. Sportsmann, GAHKroom, M.H.G.A | Normal | **no — push only** |
+| Den Hurtige | `chat.replies` — replies to your message | Normal | yes |
+| Den Hurtige | `chat.likes` — reactions to your message | Lav | yes |
+| Opslagstavlen | `posts.new` | Normal | yes |
+| Opslagstavlen | `posts.replies` — comments on your post | Normal | yes |
+| Opslagstavlen | `posts.likes` — reactions to your post | Lav | yes |
+| Begivenheder | `events.new` | Normal | yes |
+| Begivenheder | `events.changes` — moved or cancelled, for events you said ja to | Høj | yes |
+| Begivenheder | `events.personal` — RSVP deadline reminders, moved up from the venteliste | Høj | yes |
+| Begivenheder | `events.comments` — comments on events you host | Normal | yes |
+| Reparationer | `repairs` — new and handed-over tasks for your group | Normal | yes |
+| System | `system` — messages from the administrators about the site | Normal | **always** |
+| Generelt | `general` — announcements to the whole kollegium | Normal | **always** |
 
+Groups are shown in this order everywhere (settings page, the by-category view). System and Generelt
+come last: they are rare, and the toggles people come to the settings page for are the feature ones.
 
-## Grouping
+The room categories are generated from the Den Hurtige channel registry, so adding a channel adds
+its toggle. A new message in a room is **push only**: putting every chat message in the in-app list
+would bury the notifications that are about *you*. Replies and reactions to your own messages are
+in-app *and* push.
 
-For notifications and push notifications, some are grouped, i.e., you will only see the most recent.
-For instance, if you get a notification for "user-A" liked your message, then "user-B" likes the same message too, the initial notification will be replaced with "user-A and user-B liked your message". If more users like it, it might end up saying "x users liked your message".
-
-
-## Settings page
-
-Include a personal settings page for each user, where they can manage they may manage their notification settings.
-These settings apply for the user, not the device.
-
-On the settings page, users may toggle if they want to receive notifications for different categories.
-
-Enable separate toggle for each chat room (den hurtige, tv-rezz, sportsman, gahkroom and m.h.g.a).
-Add an indicator directly in each chat room, that indicates if the room is toggled on. Clicking the indicator takes the user to this section of the settings page.
-
-For each category, the user may toggle for in-app notifications and push notifications separately.
-
-By default, everything is enabled.
-
-
-Include setting for vibration.
-- On/off in general
-- By category
-- By importance level. E.g., don't vibrate for lowest importance level
-
-
-
-## Prompt for subscription to push notifications
-Subscription to push notifications should be once per device, i.e., not for each different part of the app that sends notifications. A single point per device.
-
-Prompt the user to subscribe at the dashboard, at the chat (den hurtige) and in the settings page.
-
-
-## TTL
-When notifications are created, they should have a TTL.
-For time limited messages in the chat, set the TTL to the message expiration time.
-
-For other notifications, make the default TTL 7 days.
-
+System and Generelt can **not** be turned off in-app (`Category.in_app_optional = False`): the list
+is where somebody who has push off still sees what the house itself says. Push and vibration for
+them can be turned off like any other category.
 
 ## Importance
 
-Add 4 levels of importance to notifications.
-In the dropdown and on the notifications page, show the most important first, and with visual cues that they are important (color/icons etc...).
+Four levels: **Lav**, **Normal**, **Høj**, **Kritisk**. Each category has a default; a call may raise
+it. "Someone reacted to your message" is the typical Lav.
 
-Allow the most important notification level to overrule notification settings. That is, a user will still receive a notification, even though the category is disabled.
+- In the dropdown and on the page, the most important come first and are marked: Høj and Kritisk get
+  a coloured left border and a level label, Kritisk also a tinted background.
+- **Kritisk overrides every preference** — in-app (where the category has an in-app row), push and
+  vibration — so a resident gets it even with the category turned off. The push uses `requireInteraction`, so it stays on screen until
+  dismissed.
+- No feature sends Kritisk on its own; administrators can, via the broadcast form on the admin page.
 
-Example of lowest importance is "user liked your message".
+## Who is told what
 
+The base audience, `services.everyone()`, is residents with a residency or role assignment in the
+active period, plus anyone who owns a push device, plus superusers. Each feature narrows it by its
+own access gate (rollout gate, channel roles, invite list), so nobody is notified about something
+they would get a 403 on opening. Acting on your own content never notifies you.
 
-## Admin page
+- **Den Hurtige**
+  - A new message → the room's category, to everyone who may read the room, except the author.
+  - A reply → grouped `chat.replies` to the message's author. If the replier ticks "underret alle",
+    the room is notified too (except the replier and the author, who already got the reply).
+  - A reaction → grouped `chat.likes` to the message's author only, and **only when a reaction is
+    created** — changing or removing an emoji never notifies.
+- **Opslagstavlen**
+  - A new post → `posts.new` to everyone who can open the board, except the author. The body is
+    the post as plain text, not Markdown.
+  - Comments and reactions → grouped to the post's author only. There is no "underret alle": a
+    noticeboard has no single shared audience the way a chat room does.
+- **Begivenheder**
+  - New → `events.new` to the event's audience (the invite list for invite-only events), except the
+    organiser.
+  - Moved or renamed → `events.changes` to those who said ja, except the organiser. Cancelled → the
+    same, titled "Aflyst: …".
+  - Comments → grouped `events.comments` to each host (organiser and co-organisers).
+  - RSVP deadline reminders and promotion from the venteliste → `events.personal`.
+- **Reparationer** → `repairs` to current holders of the responsible role (Viceværterne for a new
+  report or one sent back, Reppergruppen for one handed over), plus administrators and superusers.
+  The reporter is not told about their own new report.
 
-On the admin page, admins should be able to view active push subscriptions for each user.
-Enable admin to cancel a subscription.
+## In-app notifications
 
-Show statistics and metrics for notifications.
+### The dropdown
 
+A button with an unseen-count badge in the top bar opens a dropdown (loaded with htmx on click) with
+the **10** most important, then most recent, active in-app notifications, and a link to the page.
 
+### The notifications page — `/intern/notifikationer/`
 
----
+Lists all active in-app notifications, in two views:
 
-## As built (feature/notification-settings)
+- `?visning=kronologisk` (default) — one list;
+- `?visning=kategori` — one section per group, in the group order above. A row whose category has
+  since been retired is listed under Generelt rather than erroring.
 
-This section records what was implemented and where it deliberately differs from, or makes concrete, the request above.
+Both are ordered **importance first, then most recently updated**. `updated_at`, not `created_at`: a
+grouped notification that gains another like is news again, so it moves back up and becomes unseen.
 
-### Architecture
-- New Django app `notifications` owns the rows, preferences, grouping and fan-out. `core.push` is transport only (VAPID/pywebpush, device bookkeeping, daily delivery counters).
-- Features call `notifications.services.notify(...)` / `notify_grouped(...)`; they decide **who** and **what wording**, never how it is delivered.
-- `Notification` rows: recipient, category, importance, title, body, url, batch (uuid shared by one fan-out), group_key, actors, `in_app`, `pushed`, created/updated/expires/seen timestamps.
-- `NotificationPreference` (per resident × category: in_app / push / vibrate) only stores rows that differ from the all-on default. `NotificationSettings` holds the global vibration switch and the minimum importance that vibrates.
+### Seen / unseen
 
-### Categories (keys)
-| Group | Key | Default importance | In-app |
-|---|---|---|---|
-| System | `system` | Normal | yes |
-| Generelt | `general` | Normal | yes |
-| Chat | `chat.room.<slug>` — one per room (Den Hurtige, TV-Rezz, G. A. Sportsmann, GAHKroom, M.H.G.A) | Normal | **no — push only** |
-| Chat | `chat.replies` (replies to your message) | Normal | yes |
-| Chat | `chat.likes` (reactions to your message) | Lav | yes |
-| Opslag | `posts.new`, `posts.replies`, `posts.likes` (Lav) | Normal | yes |
-| Begivenheder | `events.new`, `events.changes` (Høj), `events.personal` (Høj — deadline reminders, moved off the waiting list), `events.comments` | | yes |
-| Reparationer | `repairs` (new / handed-over tasks for your group) | Normal | yes |
+A notification is marked seen when it is clicked — in the app or as a push.
 
-The request listed "Events" and "Posts" as single categories; they were split so a resident can, e.g., keep cancellations but drop new-event announcements. Reparationer was added because it already sent pushes.
+- Unseen items have a dot and a highlighted background.
+- Clicking an item goes through `/intern/notifikationer/<pk>/`, which marks it seen and redirects
+  to its target.
+- A push names its fan-out (`batch`), not a row, because one payload is shared by every recipient.
+  Tapping it goes through `/intern/notifikationer/aabn/<batch>/`, which finds the tapping resident's
+  own row in that batch, marks it seen and redirects — this works for push-only rows too.
+- "Markér alle som set" on the page marks everything seen.
+- Redirect targets must be paths on this site (`services.is_site_path`, Django's
+  `url_has_allowed_host_and_scheme`), so a stored or broadcast link can never become an open
+  redirect.
 
-**Push-only:** new messages in a chat room. Putting every chat message in the in-app list would bury the notifications that are about *you*; replies and reactions to your own messages are in-app *and* push.
+## Grouping
 
-### Who is told what
-- **Chat:** a new message → the room's category, to everyone who may read the room, except the author; TTL = the message's expiry. A reply → grouped `chat.replies` to the message's author; if the replier ticks "underret alle", the room is notified too. A reaction → grouped `chat.likes` to the author only, and **only when a reaction is created** — changing or removing an emoji never notifies.
-- **Opslagstavle:** a new post → `posts.new` to everyone who can open the board; comments and reactions → grouped to the post's author only.
-- **Begivenheder:** new → audience (invite list for invite-only events) except organiser; changes → RSVP "ja" except organiser; cancellation → RSVP "ja" except organiser; comments → grouped to each host; deadline reminders → `events.personal` with TTL = the RSVP deadline.
-- **Reparationer:** current role holders + administrators + superusers; the reporter is not told about their own task.
-- The base audience (`everyone()`) is residents with a residency or role in the active period, plus anyone who owns a push device, plus superusers — always narrowed by the feature's own access gate.
+Some notifications are grouped: you only see the latest state. If Anders likes your message and then
+Bente does too, the first notification is replaced by "Anders og Bente reagerede på din besked"; from
+three people on it reads "3 personer reagerede på din besked".
 
-### Ordering, seen/unseen
-- Lists are ordered **importance first, then most recently updated** (a grouped notification that gains a new like moves back to the top and becomes unseen again).
-- Unseen items have a dot and a highlighted background; importance Høj/Kritisk get a coloured left border and a level label, Kritisk also a tinted background.
-- Clicking an in-app item goes through `/intern/notifikationer/<pk>/`, which marks it seen and redirects. Tapping a push goes through `/intern/notifikationer/aabn/<batch>/`, which finds the tapping resident's row in that fan-out and does the same. "Markér alle som set" is on the page.
+- One row per (recipient, `group_key`), e.g. `chat.likes:<post pk>`, rewritten in place, marked
+  unseen again and moved to the top.
+- The newest actor is named first; the same person acting twice counts once. The 50 most recent
+  actors are kept, so the count stops at 50.
+- The push carries `tag = group_key`, so the phone replaces the earlier push instead of stacking a
+  new one.
 
-### Grouping
-- One row per (recipient, `group_key`), e.g. `chat.likes:<post pk>`, rewritten in place. Titles: "Anders reagerede…", "Anders og Bente reagerede…", from three actors "3 personer reagerede…" (the 50 most recent actors are kept, so the count stops at 50). The newest actor is named first; an actor repeating does not count twice; acting on your own content never notifies.
-- The push carries `tag = group_key`, so the phone replaces the earlier push instead of stacking.
+Grouped: replies and reactions on Den Hurtige and Opslagstavlen, and comments on events.
 
-### Settings page (`/intern/notifikationer/indstillinger`)
-- A table per group; each category row has in-app / push / vibration checkboxes (push-only rooms show "—" for in-app). Everything is on by default.
-- System and Generelt are listed last, and their in-app box is always on (drawn ticked and disabled; the server ignores an old or hand-made "off"). Push and vibration for them can still be turned off.
-- Each chat room shows a 🔔/🔕 link in its header pointing at `…/indstillinger#rum-<slug>`; the target row is highlighted.
-- Vibration: global on/off, per category, and "vibrate for importance X and above". **Vibration is implemented as a silent push** (`silent: true` in the service worker) — browsers do not let a page choose "sound but no vibration", so "no vibration" means no sound either. The notification is still shown.
-- The old per-room mute (`ChannelMute`) was migrated into room preferences with push off, then the table was dropped.
+## Settings page — `/intern/notifikationer/indstillinger`
 
-### Importance
-Four levels: Lav, Normal, Høj, Kritisk. **Kritisk overrides every preference** (in-app, push and vibration) and uses `requireInteraction`, so it stays on screen until dismissed. No feature sends Kritisk on its own; administrators can, via the broadcast form.
+Personal settings for each resident. **They apply to the resident, not the device**: what you get
+told is chosen once, and every device you have subscribed follows it.
 
-### Push subscription
-- One `PushSubscription` per device (browser), used for every category — the per-feature topic columns (`wants_*`) were dropped, so existing devices now get everything per the defaults.
-- The device widget is shown on the dashboard and in Den Hurtige (only while this device is not subscribed) and on the settings page (always, with an unsubscribe button). It asks the server for the device's state: *subscribed for you* / *subscribed for another resident* (a shared browser — subscribing takes it over) / *not subscribed*.
-- Endpoint: `POST /intern/notifikationer/enhed`. The per-feature `…/abonner` endpoints and the Den Hurtige `lyd/<slug>` mute endpoint were removed.
+- A card per group, each with a table: category, **I appen**, **Push**, **Vibration**. Push-only
+  rooms show "—" for in-app; System and Generelt show their in-app box ticked and disabled.
+- **By default, everything is enabled.** Preferences are stored as exceptions: a category set back
+  to all-on has its row deleted.
+- **A toggle per chat room.** Each room shows an indicator in its header — 🔔 "Lyd til" when the
+  room's push is on, 🔕 "Lyd fra" when it is off — that links to `…/indstillinger#rum-<slug>`, where that room's row is
+  highlighted.
+- **Vibration**
+  - on/off in general;
+  - per category;
+  - by importance: "vibrate only for importance X and above".
 
-### TTL and retention
-- Default TTL 7 days; chat messages use the message's expiry; deadline reminders the deadline. The TTL is used both as the push TTL and as `expires_at` for the in-app row — expired rows disappear from the lists immediately.
-- Rows are deleted 30 days after expiry by a Celery beat task (03:30), so the admin statistics can still count them.
+  Vibration is implemented as a **silent push** (`silent: true` in the service worker): browsers do
+  not let a page choose "sound but no vibration", so "no vibration" means no sound either. The
+  notification is still shown.
+- The page also shows this device's push subscription (see below).
 
-### Navigation
-- A bell with an unseen-count badge in the top bar opens a dropdown (htmx, loaded on click) with the 10 most important/recent visible notifications.
-- `/intern/notifikationer/` has two views: `?visning=kronologisk` (default) and `?visning=kategori`. The sidebar has a "Notifikationer" entry.
+## Push subscription
 
-### Admin page (`/admin/notifikationer`, administrators only)
-- Devices grouped per user (user agent, created, last success, failures) with a "Annullér" button that deletes the subscription.
-- Statistics for the last 7 and 30 days: total / seen / pushed, by category and by importance; plus push deliveries per day (delivered / failed / removed devices).
-- A broadcast form (category Generelt or System, any importance, title, body, link) that sends to everyone.
+**One subscription per device**, not one per part of the app. A `PushSubscription` (one browser on
+one device) receives every category the resident has push on for.
+
+The resident is prompted to subscribe in three places:
+
+- the **dashboard** and **Den Hurtige** — a prompt shown only while this device is not subscribed;
+- the **settings page** — always shown, with the current state and an unsubscribe button.
+
+The widget asks the server for the device's state, because the browser can only say that *some*
+subscription exists: *subscribed for you*, *subscribed for another resident* (a shared browser —
+subscribing takes it over), or *not subscribed*. Endpoint: `POST /intern/notifikationer/enhed`
+(subscribe / unsubscribe / status). Unsubscribing is scoped to the resident, so one person cannot
+remove another's phone by replaying its endpoint.
+
+A device that the push service reports as gone (404/410) is deleted; other failures are counted
+(`failure_count`), and a success resets the count and stamps `last_success_at`.
+
+## TTL and retention
+
+Every notification has a TTL, used both as the push's TTL and as the in-app row's `expires_at`:
+
+- **default: 7 days**;
+- a Den Hurtige message, and replies and reactions to it: the **message's own expiry**;
+- an RSVP deadline reminder: the deadline.
+
+Expiry is a comparison, not a sweep, so a row leaves the lists the moment its TTL runs out. The rows
+themselves are deleted **30 days after expiry** by a nightly Celery beat task (03:30), so the admin
+statistics still have a month to count them.
+
+## Admin page — `/admin/notifikationer`
+
+Administrators only.
+
+- **Devices** — active push subscriptions grouped per resident (device, created, last delivered,
+  failures in a row), with **Annullér** to cancel (delete) a subscription.
+- **Statistics** for the last 7 and 30 days: notifications sent, seen and pushed — by category and by
+  importance — plus push deliveries per day (delivered, failed, devices removed).
+- **Broadcast** — send a System or Generelt notification, at any importance, with a title, body and
+  on-site link, to everyone.
+
+## Routes
+
+`/intern/notifikationer/` (page), `seneste` (dropdown), `set` (mark all seen, POST),
+`indstillinger` (settings), `enhed` (device subscription, POST), `<pk>/` (open an item),
+`aabn/<uuid>/` (open a push). Namespaced `notifications:`. Admin: `siteadmin:notifications` and
+`siteadmin:notification_device_cancel`. The sidebar has a **Notifikationer** entry.
+
+## Data model
+
+- `Notification` — recipient, category, importance, title, body, url, `batch` (uuid shared by one
+  fan-out), `group_key`, `actors` (JSON, for grouped titles), `in_app`, `pushed`, `created_at`,
+  `updated_at`, `expires_at`, `seen_at`. A row is written for a recipient who gets it in-app or by
+  push; one who would get neither gets no row.
+- `NotificationPreference` — resident × category: `in_app`, `push`, `vibrate`. Exists only when
+  different from all-on.
+- `NotificationSettings` — per resident: `vibrate` and `vibrate_min_importance`.
+- `core.PushSubscription` — user, endpoint, keys, user agent, `created_at`, `last_success_at`,
+  `failure_count`. No topic columns.
+- `core.PushDeliveryDay` — per day: delivered, failed, removed.
+
+One fan-out is at most two push deliveries — the residents whose push vibrates and those whose push
+is silent — sent from a single background thread, however many recipients there are.
+
+## Migration from per-feature subscriptions
+
+- The per-feature topic columns (`wants_den_hurtige`, `wants_opslagstavle`, `wants_begivenheder`,
+  `wants_reparationer`) were dropped. Existing devices now get every category, per the all-on
+  default.
+- Den Hurtige's per-room mute (`ChannelMute`) was copied into room preferences with push off, then
+  the table was dropped.
+- The per-feature `…/abonner` endpoints and Den Hurtige's `lyd/<slug>` mute endpoint are gone; their
+  slugs stay reserved in the channel registry.
+
+## Decisions
+
+- **Events and posts are several categories, not one each.** A resident should be able to keep
+  cancellations while dropping new-event announcements, or keep comments on their own post while
+  dropping every new post.
+- **Reparationer is its own category.** It was not in the original list, but it sends pushes too,
+  and they matter only to the role holders.
+- **Room messages are push only.** See Categories.
+- **Reactions notify on create only.** Changing your emoji, or removing it, is not news to anyone.
+- **Silent instead of "no vibration".** The web platform has no vibration-only switch.
+- **System and Generelt are always in-app.** See Categories.
