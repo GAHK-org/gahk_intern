@@ -1,0 +1,11 @@
+# Installed to /etc/systemd/system/ — see DEPLOY.md §4a. `systemctl enable --now gahk-autodeploy.timer`
+[Unit]
+Description=Check GHCR for a new GAHK image every 3 minutes
+
+[Timer]
+OnCalendar=*:0/3
+# A run still in progress (a slow pull) simply delays the next one; systemd never starts two.
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
