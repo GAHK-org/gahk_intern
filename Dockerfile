@@ -25,4 +25,4 @@ EXPOSE 8000
 # migrate is run as a release/deploy step (see DEPLOY.md), not here.
 # One process; scaling means --workers or more of these (DEPLOY.md §4). No lifespan: Channels'
 # router has no handler for it, and uvicorn would log that on every start.
-CMD ["uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--lifespan", "off"]
+CMD ["uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--lifespan", "off", "--timeout-keep-alive", "120"]
