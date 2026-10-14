@@ -96,7 +96,7 @@ def on_this_day(day: date) -> list[Media]:
     by_year: dict[int, list[int]] = defaultdict(list)
     for pk, year in candidates:
         by_year[year].append(pk)
-    shuffle = random.Random(day.toordinal())  # noqa: S311 — picking photos, not secrets
+    shuffle = random.Random(day.toordinal())  # noqa: S311 — picking photos, not secrets  # nosec B311
     for pks in by_year.values():
         shuffle.shuffle(pks)
     years = sorted(by_year, reverse=True)

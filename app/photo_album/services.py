@@ -202,7 +202,7 @@ def upload_media(
         file_modified_at=file_modified_at,
     )
     media = outcome.media or outcome.duplicate
-    assert media is not None  # noqa: S101 — store_upload always returns one of the two
+    assert media is not None  # noqa: S101 — store_upload always returns one of the two  # nosec B101
     return media
 
 

@@ -100,7 +100,7 @@ def _album(folder: str, path: str) -> Album:
     parent: Album | None = None
     for name in path.split("/"):
         parent, _ = Album.objects.get_or_create(folder=folder, name=name, parent=parent)
-    assert parent is not None  # noqa: S101 — a path has at least one name
+    assert parent is not None  # noqa: S101 — a path has at least one name  # nosec B101
     return parent
 
 
