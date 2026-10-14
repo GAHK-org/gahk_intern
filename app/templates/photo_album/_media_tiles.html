@@ -1,0 +1,22 @@
+{% comment %}One page of tiles. Rendered into the album page and the timeline, and on its own as the
+fragment the frontend fetches when the reader scrolls towards either end: a sentinel at the top or
+the bottom says where the next page in that direction comes from (views._page).{% endcomment %}
+{% if page.newer_url %}<div class="album-page-sentinel" data-page-before="{{ page.newer_url }}" aria-hidden="true"></div>{% endif %}
+{% for item in page.items %}
+	<article class="album-media-item" data-media-id="{{ item.pk }}" data-year="{{ item.sort_at|date:'Y' }}" data-month="{{ item.sort_at|date:'Y-m' }}" data-month-label="{{ item.sort_at|date:'F Y'|capfirst }}">
+	{% comment %}The tile carries an id and nothing else. Everything the viewer needs — the HD
+	url, the uploader, the timestamps, the EXIF blob, whether this reader may delete it — is
+	fetched from photo_album:media_detail when the item is actually opened. Rendering it into
+	every tile meant a 300-photo album shipped all of it 300 times to show one.{% endcomment %}
+	<label class="album-select" hidden><input type="checkbox" value="{{ item.pk }}" data-album-select aria-label="Vælg {{ item.title }}"></label>
+	{% if item.has_derivatives %}<button type="button" class="album-media-tile" data-detail-url="{% url 'photo_album:media_detail' item.pk %}">
+		<img src="{{ item.thumbnail.url }}" alt="{{ item.title }}" loading="lazy">{% if item.content_type|slice:':6' == 'video/' %}<span class="album-video-mark">Video</span>{% endif %}
+		{% if item.status == 'pending' %}<strong>Afventer godkendelse</strong>{% endif %}
+	</button>{% else %}<div class="album-media-tile album-media-placeholder" data-kind="{{ item.derivative_state }}">
+		<span class="album-media-placeholder-title">{{ item.title }}</span>
+		{% if item.derivative_state == 'failed' %}<strong>Videoen kunne ikke behandles</strong><a class="btn-link" href="{% url 'photo_album:download_original' item.pk %}">Download original</a>{% else %}{% if item.status == 'pending' %}<strong>Afventer godkendelse</strong>{% else %}<strong>Mediet behandles &hellip;</strong>{% endif %}<small>Det vises her, når det er klar.</small>{% endif %}
+	</div>{% endif %}
+	{% if can_manage and item.status == 'pending' %}<div class="album-media-controls"><form method="post" action="{% url 'photo_album:approve' item.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{{ request.path }}"><button type="submit">Godkend</button></form><form method="post" action="{% url 'photo_album:reject' item.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{{ request.path }}"><button class="btn-link-danger" type="submit">Afvis</button></form></div>{% endif %}
+	</article>
+{% endfor %}
+{% if page.older_url %}<div class="album-page-sentinel" data-page-after="{{ page.older_url }}" aria-hidden="true"></div>{% endif %}

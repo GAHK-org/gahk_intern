@@ -18,7 +18,7 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-insecure-change-me")
 DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
 ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 
-# Behind Coolify/Traefik, TLS is terminated at the proxy and plain HTTP is forwarded to Daphne.
+# Behind Coolify/Traefik, TLS is terminated at the proxy and plain HTTP is forwarded to uvicorn.
 # Trust the forwarded-proto header so request.is_secure(), CSRF, and secure cookies see HTTPS —
 # without this, every form POST (login included) fails CSRF in prod.
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
@@ -34,7 +34,6 @@ CSRF_COOKIE_SECURE = not DEBUG
 SITE_URL = os.environ.get("SITE_URL", "http://localhost:8000" if DEBUG else "https://gahk.dk")
 
 INSTALLED_APPS = [
-    "daphne",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -149,6 +148,14 @@ CELERY_TASK_REJECT_ON_WORKER_LOST = True
 # `retries` NULL in celery_taskmeta — which are four of the columns the siteadmin worker-jobs page
 # selects and displays, so "Worker", "Kø" and "Forsøg" were permanently blank there.
 CELERY_RESULT_EXTENDED = True
+# Never expire results by age: Celery's own cleanup would delete failed jobs along with the rest.
+# core.tasks.purge_worker_job_results deletes successful ones after a month, and others only from
+# piles of more than 1000 of one task and status, once 60 days old.
+CELERY_RESULT_EXPIRES = None
+# A management command run from a task (`purge_photo_album`, …) prints its summary to stdout, which
+# the worker redirects into logging — at WARNING by default, so every routine "Removed 0 item(s)"
+# showed up as a warning in the job's stored log (core/worker_logs.py) and the worker's own output.
+CELERY_WORKER_REDIRECT_STDOUTS_LEVEL = "INFO"
 # The default ceiling for a scheduled job: generous for a sweep, and short enough that a wedged one
 # does not hold a worker slot all night. The two photo-album jobs legitimately run longer and set
 # their own limits at the task — see photo_album/tasks.py::MEDIA_TASK_TIME_LIMIT.
@@ -163,6 +170,9 @@ CELERY_TASK_TIME_LIMIT = 900
 # System resident. Leave blank to disable token-authenticated imports.
 PHOTO_ALBUM_IMPORT_TOKEN = os.environ.get("PHOTO_ALBUM_IMPORT_TOKEN", "")
 PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL = os.environ.get("PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL", "system@gahk.dk")
+# `manage.py delete_photo_album` refuses anything created or uploaded on or after this date
+# (YYYY-MM-DD). Blank means the command's own default, 2026-10-01; a date in the future is refused.
+PHOTO_ALBUM_DELETE_PROTECTED_FROM = os.environ.get("PHOTO_ALBUM_DELETE_PROTECTED_FROM", "")
 CELERY_BEAT_SCHEDULE = {
     "purge-expired-applications": {
         "task": "admissions.tasks.purge_expired_applications",
@@ -204,6 +214,14 @@ CELERY_BEAT_SCHEDULE = {
         "task": "photo_album.tasks.fail_stalled_downloads",
         "schedule": crontab(minute=5),
     },
+    "purge-worker-job-logs": {
+        "task": "core.tasks.purge_worker_job_logs",
+        "schedule": crontab(minute=40, hour=4),
+    },
+    "purge-worker-job-results": {
+        "task": "core.tasks.purge_worker_job_results",
+        "schedule": crontab(minute=45, hour=4),
+    },
     # 04:50, after every other sweep: the rows it deletes are the messages those sweeps were
     # delivered on, so running it last keeps one night's work visible in the table while that work
     # is still happening.
@@ -216,6 +234,13 @@ CELERY_BEAT_SCHEDULE = {
         # Uploads enqueue their own derivative build on commit. This is only the nightly recovery
         # pass for broker messages lost while unavailable or work stranded by a killed worker.
         "schedule": crontab(minute=0, hour=2),
+    },
+    # 02:40, after the derivative recovery pass at 02:00. Only rows stored before hashing existed
+    # need it; each run reads originals for at most HASH_BACKFILL_BUDGET and leaves the rest for
+    # the next night, so the deploy needs no manual step and the box is never held for long.
+    "backfill-photo-album-hashes": {
+        "task": "photo_album.tasks.backfill_media_hashes",
+        "schedule": crontab(minute=40, hour=2),
     },
     "remind-rsvp-deadlines": {
         "task": "events.tasks.remind_rsvp_deadlines",
@@ -426,6 +451,11 @@ LOGGING = {
             "level": os.environ.get("CORE_LOG_LEVEL", "INFO"),
             "propagate": False,
         },
+        # INFO, so the lines a photo-album job logs (an import's left-out files, a ZIP's size) reach
+        # the job's stored log (core/worker_logs.py) even where the root logger is at WARNING. No
+        # handler of its own: it propagates to the worker's, and in the web process nothing prints
+        # below WARNING.
+        "photo_album": {"level": os.environ.get("PHOTO_ALBUM_LOG_LEVEL", "INFO")},
     },
 }
 
@@ -465,3 +495,10 @@ ANIMATED_IMAGE_MAX_MB = int(os.environ.get("ANIMATED_IMAGE_MAX_MB", "5"))
 # each feature caps its own uploads, so an ops change for one cannot silently change another.
 PHOTO_ALBUM_IMAGE_MAX_MB = int(os.environ.get("PHOTO_ALBUM_IMAGE_MAX_MB", "50"))
 PHOTO_ALBUM_VIDEO_MAX_MB = int(os.environ.get("PHOTO_ALBUM_VIDEO_MAX_MB", "1000"))
+
+# A local copy of the album's thumbnails and HD images (photo_album.cache), so the grid does not
+# bounce every tile off S3. Empty turns it off; production sets it to a volume so a redeploy starts
+# warm. The two budgets are separate so one HD-heavy evening cannot push every thumbnail out.
+PHOTO_ALBUM_CACHE_DIR = os.environ.get("PHOTO_ALBUM_CACHE_DIR", "")
+PHOTO_ALBUM_CACHE_THUMBNAIL_MB = int(os.environ.get("PHOTO_ALBUM_CACHE_THUMBNAIL_MB", "2048"))
+PHOTO_ALBUM_CACHE_HD_MB = int(os.environ.get("PHOTO_ALBUM_CACHE_HD_MB", "3072"))

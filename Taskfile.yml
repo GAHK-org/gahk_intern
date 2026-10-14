@@ -19,11 +19,17 @@ vars:
   # see docker-compose.yml). 8000/8001/8080 are often taken by VS Code; override with:
   #   task dev:local DEV_ADDR=127.0.0.1:9000
   DEV_ADDR: '127.0.0.1:8800'
+  # uvicorn, as in production (Dockerfile), at DEV_ADDR. No lifespan: Channels' router has none.
+  SERVE: 'uvicorn config.asgi:application --host {{splitList ":" .DEV_ADDR | first}} --port {{splitList ":" .DEV_ADDR | last}} --lifespan off'
   # Where debugpy listens for the IDE. Override the same way as DEV_ADDR if 5678 is taken.
   DEBUG_ADDR: '127.0.0.1:5678'
   # `task debug` blocks until the IDE attaches, so a breakpoint in startup code or in the first
   # request cannot be missed. To start serving immediately and attach whenever: task debug DEBUG_WAIT=
   DEBUG_WAIT: '--wait-for-client'
+  # The photo album's local copy of thumbnails and HD images (photo_album.cache), so the dev servers
+  # serve them the way production does instead of redirecting to S3. Set per server task rather than
+  # in `env:` below so the tests keep exercising the redirect path. Gitignored; delete it to empty it.
+  PHOTO_ALBUM_CACHE_DIR: '{{.ROOT_DIR}}/app/cache'
 
 env:
   DJANGO_DEBUG: '1'
@@ -45,21 +51,25 @@ tasks:
   dev:local:
     desc: Start Postgres+S3, Celery worker + Beat, then run Django directly on the host (http://127.0.0.1:8800)
     dir: '{{.APP}}'
+    env:
+      PHOTO_ALBUM_CACHE_DIR: '{{.PHOTO_ALBUM_CACHE_DIR}}'
     cmds:
       - task: services:up
       - task: frontend:build
       - '{{.PY}} manage.py migrate'
-      - '{{.PY}} manage.py runserver {{.DEV_ADDR}}'
+      - '{{.PY}} -m {{.SERVE}} --reload'
 
   debug:
     desc: 'Like dev:local, but under debugpy, waiting for the IDE to attach ("Attach to task debug")'
     dir: '{{.APP}}'
     env:
+      PHOTO_ALBUM_CACHE_DIR: '{{.PHOTO_ALBUM_CACHE_DIR}}'
       # So a breakpoint() left in the code stops in the IDE rather than dropping this terminal into
       # pdb, which fights the attached debugger for stdin. task debug:pdb is the other way round.
       PYTHONBREAKPOINT: debugpy.breakpoint
     cmds:
       - task: services:up
+      - '{{.PY}} manage.py check'
       # debugpy prints NOTHING while it waits, so without this line the task looks like it hung.
       # It has not: the server does not start until the IDE connects. Said out loud because the
       # silence is the single most confusing thing about this task.
@@ -70,20 +80,21 @@ tasks:
           printf '  VS Code: Run and Debug -> "Attach to task debug" (F5).\n'
           printf '  Start serving straight away instead:  task debug DEBUG_WAIT=\n\n'
         silent: true
-      # --noreload is REQUIRED, not a preference: the reloader runs the server in a child process,
-      # so the debugger would attach to the parent and never see a breakpoint. --nothreading keeps
-      # the whole server stopped while you are paused, instead of other requests running on past
-      # you; drop it if you are debugging something that needs concurrent requests.
-      - '{{.PY}} -m debugpy --listen {{.DEBUG_ADDR}} {{.DEBUG_WAIT}} manage.py runserver --nothreading --noreload {{.DEV_ADDR}}'
+      # No --reload, and that is REQUIRED, not a preference: the reloader runs the server in a child
+      # process, so the debugger would attach to the parent and never see a breakpoint. Each request
+      # runs on its own thread, so others carry on while you are paused in one.
+      - '{{.PY}} -m debugpy --listen {{.DEBUG_ADDR}} {{.DEBUG_WAIT}} -m {{.SERVE}}'
 
   debug:pdb:
     desc: Like debug, but breakpoint() drops into pdb in this terminal instead of the IDE
     dir: '{{.APP}}'
     env:
+      PHOTO_ALBUM_CACHE_DIR: '{{.PHOTO_ALBUM_CACHE_DIR}}'
       PYTHONBREAKPOINT: pdb.set_trace
     cmds:
       - task: services:up
-      - '{{.PY}} manage.py runserver --nothreading --noreload {{.DEV_ADDR}}'
+      - '{{.PY}} manage.py check'
+      - '{{.PY}} -m {{.SERVE}}'
 
   migrate:
     desc: Apply database migrations
@@ -210,7 +221,7 @@ tasks:
   dev:
     desc: Run the whole app in Docker with hot-reload and Celery worker + Beat -> http://127.0.0.1:8800
     # Foreground, attached to the web and background-process output (not postgres/s3's). Ctrl-C
-    # stops them, same as dev:local's runserver. `dev:logs`/`dev:down` manage a detached start.
+    # stops them, same as dev:local's server. `dev:logs`/`dev:down` manage a detached start.
     deps: [frontend:build]
     cmds: ['docker compose --profile docker up --build --attach web --attach worker --attach beat web worker beat']
 

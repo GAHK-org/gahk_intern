@@ -91,8 +91,8 @@ services:
       "
 
   # Optional: the Django app itself, hot-reloading (opt-in — see the `services:` comment above).
-  # ./app is bind-mounted over the image's copy, so edits on the host are picked up by Django's
-  # autoreloader without a rebuild; only changing pyproject.toml/uv.lock needs one.
+  # ./app is bind-mounted over the image's copy, so edits on the host are picked up by uvicorn's
+  # --reload without a rebuild; only changing pyproject.toml/uv.lock needs one.
   web:
     build:
       context: .
@@ -118,14 +118,23 @@ services:
       # dev servers need this — botocore's default checksum framing is mis-stored/rejected by them).
       AWS_REQUEST_CHECKSUM_CALCULATION: when_required
       AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+      # As in production (docker-compose.prod.yml): thumbnails and HD images are served from a
+      # local copy rather than redirected to the bucket. Only `web` serves them, so only it has one.
+      PHOTO_ALBUM_CACHE_DIR: /app/cache
     volumes:
       - "./app:/src/app"
+      - photo-album-cache:/app/cache
     ports:
       - "8800:8000"
     depends_on:
       postgres: {condition: service_healthy}
       s3-init: {condition: service_completed_successfully}
-    command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+    # The production server (Dockerfile), reloading, after the system checks runserver used to run.
+    # Static files come from WhiteNoise, which finds them in the app directories while DEBUG is on.
+    command:
+      - sh
+      - -c
+      - python manage.py check && exec uvicorn config.asgi:application --host 0.0.0.0 --port 8000 --lifespan off --reload
 
   worker:
     build:
@@ -168,3 +177,4 @@ volumes:
   pgdata:
   mariadbdata:
   s3data:
+  photo-album-cache:

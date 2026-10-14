@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Tidslinje | Fotoalbum{% endblock %}
+{% block content %}
+<section class="album-detail album-timeline" data-album-page>
+	<header class="album-heading">
+		<div><a class="album-back" href="{% url 'photo_album:index' %}">Fotoalbum</a><h1>Tidslinje</h1></div>
+		<div class="album-actions">{% if page.items %}<button class="btn-link" type="button" data-album-select-toggle>Vælg</button>{% endif %}</div>
+	</header>
+	<form class="album-tag-filter" method="get" action="{% url 'photo_album:timeline' %}" data-tag-filter data-tag-search-url="{% url 'photo_album:tag_search' %}">
+		{% for tag in tags %}<input type="hidden" name="tag" value="{{ tag.name }}"><a class="album-tag is-active" href="{{ tag.remove_url }}" aria-label="Fjern filteret {{ tag.name }}" data-tag-name="{{ tag.name }}">{{ tag.name }} <span aria-hidden="true">&times;</span></a>{% endfor %}
+		<div class="album-tag-add">
+			<input type="text" id="timeline-tag-input" name="tag" maxlength="30" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="{% if tags %}Og tag …{% else %}Filtrér på tag{% endif %}" aria-label="Filtrér på tag" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="timeline-tag-options" data-tag-input>
+			<ul class="album-tag-options" id="timeline-tag-options" role="listbox" aria-label="Tags" data-tag-options hidden></ul>
+		</div>
+	</form>
+	{% if years %}<nav class="album-timeline-years" aria-label="Spring til år" data-album-years>
+		<a href="{% url 'photo_album:timeline' %}{% if tag_query %}?{{ tag_query }}{% endif %}"{% if not year %} aria-current="page"{% endif %}>Nyeste</a>
+		{% for each in years %}<a href="{% url 'photo_album:timeline' %}?{% if tag_query %}{{ tag_query }}&amp;{% endif %}year={{ each }}" data-year-link="{{ each }}"{% if each == year %} aria-current="page"{% endif %}>{{ each }}</a>{% endfor %}
+	</nav>{% endif %}
+	{% include "photo_album/_selection_bar.html" %}
+	<div class="album-media-grid" data-album-gallery data-album-months>{% include "photo_album/_media_tiles.html" %}</div>
+	{% if not page.items %}<p class="album-empty">{% if tags %}Ingen medier har {% if tags|length == 1 %}det tag{% else %}alle de tags{% endif %}.{% else %}Der er ingen medier endnu.{% endif %}</p>{% endif %}
+</section>
+{% include "photo_album/_viewer.html" %}
+{% endblock %}

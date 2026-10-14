@@ -1,6 +1,6 @@
 # Deployment runbook
 
-Target stack (scope §4): **Django 5.2 + Daphne/ASGI** behind **nginx/Traefik**, **PostgreSQL**, **WhiteNoise**
+Target stack (scope §4): **Django 5.2 + uvicorn/ASGI** behind **nginx/Traefik**, **PostgreSQL**, **WhiteNoise**
 for static, on **Hetzner** with **Coolify** (git-push deploys + Let's Encrypt TLS) or **Kamal**. MediaWiki
 stays a separate **PHP + MariaDB** app on the same box. No SPA/API — one monolith.
 
@@ -97,11 +97,15 @@ Fresh repo (do **not** import the legacy history — it contains plaintext secre
 3. Run **Postgres** (managed, or the `postgres` service in `docker-compose.prod.yml`) and **MariaDB** (for
    MediaWiki). Mount the **`media` volume** for uploads — still required, and still the rollback,
    even after the object-storage migration in §4c.
-4. `web` runs `migrate` on start then Daphne; Coolify/Traefik terminates TLS and proxies HTTP and WebSocket traffic to :8000.
+   The **`photo-album-cache` volume** (`/app/cache`, `PHOTO_ALBUM_CACHE_DIR`) holds local copies of
+   photo-album thumbnails and HD images, at most ~5 GB (`PHOTO_ALBUM_CACHE_THUMBNAIL_MB`,
+   `PHOTO_ALBUM_CACHE_HD_MB`). It is only a cache: losing it costs a cold start, nothing else.
+4. `web` runs `migrate` on start then uvicorn; Coolify/Traefik terminates TLS and proxies HTTP and WebSocket traffic to :8000.
 5. `Scaleway` is the fallback if you prefer a first-party managed Postgres.
 
-**Daphne is ONE process, where gunicorn was three, and this is a deliberate trade rather than an
-oversight.** Daphne has no worker model at all — there is no `--workers` to set. What changed:
+**uvicorn runs as ONE process, where gunicorn was three, and this is a deliberate trade rather than
+an oversight.** (It replaced Daphne, also one process, which read every request body into memory
+before the app saw any of it — one large photo-album upload took the server down.) What changed:
 
 * Concurrency is *not* lost. Django wraps every request in its own `ThreadSensitiveContext`, so a
   synchronous view still runs on its own thread and several are served at once. Requests that are
@@ -113,16 +117,17 @@ oversight.** Daphne has no worker model at all — there is no `--workers` to se
   chain still run through a thread hop. **The ASGI switch does not make HTTP faster** — it is here
   to make WebSockets possible, and the process count is what it costs.
 
-**If that ceases to be an acceptable trade**, the answer is more Daphne processes behind Traefik,
-not a bigger one: run the `web` service at several replicas and let Coolify load-balance them. Do
-that before raising `-t` above 60 (§4c), not after — a longer timeout on a single process is the
-combination that hurts.
+**If that ceases to be an acceptable trade**, the answer is more processes, not a bigger one:
+`--workers 3` on the uvicorn command, or the `web` service at several replicas that Coolify
+load-balances. There is no request timeout (Daphne's `-t 60` went with Daphne): a long request
+holds its thread for as long as it takes, which is why long work belongs in Celery.
 
 ### 4b. Scheduled tasks (Celery Beat → worker)
 
 Celery Beat stores schedules in PostgreSQL and publishes work to the Celery worker. The schedules
 are declared in `config/settings.py`, using the `Europe/Copenhagen` timezone. The worker-job admin
-page at `/admin/worker-jobs` shows active schedules and recent execution history. Every task is
+page at `/admin/worker-jobs` shows active schedules and recent execution history, and each job's
+page shows what the job logged (INFO and up — see `core/worker_logs.py`; kept as the purge tasks below say). Every task is
 idempotent, so a retry or an overlapping run is harmless.
 
 | Celery task | Schedule | Why |
@@ -134,8 +139,11 @@ idempotent, so a retry or an overlapping run is harmless.
 | `ak.tasks.apply_monthly_assessment` | Day 1, 04:10 | Books the monthly AK deduction. |
 | `photo_album.tasks.purge_expired_downloads` | Daily 04:20 | Removes album ZIPs and their rows seven days after they were built. |
 | `photo_album.tasks.purge_expired_media` | Daily 04:30 | Removes expired pending and binned photo-album media. **04:30, not 04:10** — it collided with the AK assessment on the 1st of every month. |
+| `core.tasks.purge_worker_job_logs` | Daily 04:40 | Deletes the stored per-job logs (`core.WorkerJobLog`, shown on `/admin/worker-jobs`) of successful jobs after 30 days. Logs of other jobs (failed, revoked, unfinished) are kept, except that per task and state only the newest 1000 are safe: older ones beyond them go once 60 days old. |
+| `core.tasks.purge_worker_job_results` | Daily 04:45 | Deletes successful jobs from the result backend (`celery_taskmeta`) after 30 days. Replaces Celery's own `celery.backend_cleanup` (off: `CELERY_RESULT_EXPIRES = None`), which deleted failed jobs after a day too. Other jobs (failed, revoked, unfinished) are kept, except that per task name and status only the newest 1000 are safe: older ones beyond them go once 60 days old. |
 | `core.tasks.purge_delivered_broker_messages` | Daily 04:50 | Deletes acknowledged rows from `kombu_message`. The SQLAlchemy transport never removes a message it has delivered — it only flips `visible` — so without this the broker table is pure accumulation. Runs last, so one night's sweeps stay visible while they are still running. |
 | `photo_album.tasks.process_pending_media` | Daily 02:00 | Recovery sweep for derivative builds whose queued task was lost. |
+| `photo_album.tasks.backfill_media_hashes` | Daily 02:40 | Hashes originals stored before SHA-256 hashing existed, for at most 20 minutes a night, so duplicate detection knows them too. Replaces the manual `backfill_photo_album_hashes` deploy step; once every row is hashed it finds nothing to do. |
 | `photo_album.tasks.fail_stalled_downloads` | Hourly, :05 | Closes out ZIP builds no worker came back to. A worker killed outright runs no handler, so its row stays `BUILDING` — never collected, and the album page keeps reloading itself every five seconds waiting for it. |
 | `events.tasks.remind_rsvp_deadlines` | Daily 17:00 | Sends due RSVP reminders. |
 | `oelkaelder.tasks.send_monthly_statements` | Day 1, 06:10 | Mails every active ølkælder account its previous calendar month. **Sends real mail to residents** — the only task here that does. |
@@ -389,19 +397,15 @@ writing the archive back, all inside `fsn1` — plus the temporary file it is as
 recipient's connection is no longer involved at all: they are redirected, and Hetzner serves them.
 
 That is a real change in what the numbers mean. They used to be at the mercy of a resident's hotel
-wifi, which is unmeasurable; they are now bounded by our own internal bandwidth against Daphne's
-`-t 60`, which is. So raising them is a reasonable conversation — measure a large build first, and
-if the timeout needs to go up as well, raise it in the same change:
-
-```
-CMD ["daphne", "--bind", "0.0.0.0", "--port", "8000", "-t", "300", "config.asgi:application"]
-```
+wifi, which is unmeasurable; they are now bounded by our own internal bandwidth, which is
+measurable. So raising them is a reasonable conversation — measure a large build first. There is no
+request timeout to raise with them since uvicorn replaced Daphne and its `-t 60`.
 
 **But understand what that now costs, because it is not what it used to cost.** Under gunicorn a
-long request tied up one of three worker *processes* and the other two carried on. Daphne is a
+long request tied up one of three worker *processes* and the other two carried on. uvicorn is a
 single process: a long request holds a thread in it, and every other request in the building is
-sharing that one interpreter. Raising the timeout without raising the process count is therefore a
-worse trade than it was, not a comparable one — see §4 on scaling Daphne.
+sharing that one interpreter. Raising the caps without raising the process count is therefore a
+worse trade than it was, not a comparable one — see §4 on scaling.
 
 #### `/media/` is no longer public
 
@@ -536,6 +540,12 @@ python manage.py relocate_media   # copy referenced legacy images into MEDIA_ROO
 ```
 Encoding: connection charset is utf8mb3 — check per-table charsets, watch latin1→utf8 mojibake (02-schema-etl §1.4/A2).
 **Carve out the `wiki*`-prefixed tables** — they belong to MediaWiki (MariaDB), not the Postgres ETL.
+
+To start a photo-album import over (a botched Dropbox folder, say), `python manage.py
+delete_photo_album --album <id>` or `--folder <yyyy|Andet>` deletes the tree, its media and its
+stored files, locks or not. It asks for a typed confirmation code and refuses anything from
+2026-10-01 on (`PHOTO_ALBUM_DELETE_PROTECTED_FROM` moves that date, never into the future), so
+albums in real use are never at risk. Run it with `docker exec -it` — it needs a terminal.
 
 ## 6. MediaWiki workstream (keep, don't rewrite — scope §3) **[you]**
 - It currently **shares the `gahk_dk` DB** (user `gahk_dk`, table prefix `wiki`; `LocalSettings.php`).

@@ -9,9 +9,15 @@ services:
     restart: unless-stopped
     command: >-
       sh -c "python manage.py migrate --noinput &&
-             daphne --bind 0.0.0.0 --port 8000 -t 60 config.asgi:application"
+             uvicorn config.asgi:application --host 0.0.0.0 --port 8000 --lifespan off"
+    environment:
+      PHOTO_ALBUM_CACHE_DIR: /app/cache
     volumes:
       - media:/app/media       # uploaded files (room-inspection photos, relocated legacy images)
+      # Local copies of photo-album thumbnails/HD images (photo_album.cache, ~5 GB at most). Only
+      # a cache — deleting the volume costs a cold start, nothing else — but keeping it across
+      # deploys means the grid does not refetch everything from S3 after each one.
+      - photo-album-cache:/app/cache
     expose:
       - "8000"                 # reached by Coolify/Traefik over the internal network (not host-published)
 
@@ -44,3 +50,4 @@ services:
 
 volumes:
   media:
+  photo-album-cache:

@@ -1,9 +1,12 @@
 import io
+import logging
 import posixpath
 from collections.abc import Buffer, Iterator
+from datetime import timedelta
 from pathlib import Path
 
 from celery import shared_task
+from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile, File
 from django.core.management import call_command
 from django.db.models import Q, QuerySet
@@ -14,15 +17,19 @@ from .models import (
     ALBUM_DOWNLOAD_RETENTION,
     ALBUM_DOWNLOAD_STALE_AFTER,
     DERIVATIVE_CLAIM_TTL,
+    Album,
     AlbumDownload,
     AlbumDownloadState,
     AlbumImport,
     AlbumImportState,
     DerivativeState,
+    DownloadVariant,
     Media,
 )
-from .services import build_derivatives, import_zip_album, pending_derivatives
+from .services import backfill_hashes, build_derivatives, import_zip_album, pending_derivatives
 from .storage import PhotoAlbumS3Storage, get_photo_album_storage
+
+logger = logging.getLogger(__name__)
 
 # The two jobs here that legitimately outrun the global CELERY_TASK_TIME_LIMIT of fifteen minutes:
 # an H.264 encode of a phone clip, and a whole-album ZIP streamed into object storage. Under the
@@ -83,15 +90,34 @@ def process_pending_media(limit: int = 10) -> int:
     return dispatched
 
 
+# How long one night's hash backfill may read originals for. Old rows are hashed in portions, so
+# the first nights after a deploy never hold the worker for long; once every row has its hash, a
+# run is one indexed query that finds nothing.
+HASH_BACKFILL_BUDGET = timedelta(minutes=20)
+
+
+@shared_task(time_limit=MEDIA_TASK_TIME_LIMIT, soft_time_limit=MEDIA_TASK_SOFT_TIME_LIMIT)
+def backfill_media_hashes() -> int:
+    """Nightly: hash originals stored before hashes were. Returns how many were hashed."""
+    result = backfill_hashes(until=timezone.now() + HASH_BACKFILL_BUDGET)
+    logger.info(
+        "Hashed %d media item(s); %d could not be read; %d still without a hash.",
+        result.hashed,
+        len(result.unreadable),
+        result.remaining,
+    )
+    return result.hashed
+
+
 @shared_task
 def purge_expired_media() -> None:
     """Permanently remove photo-album media past its retention period."""
     call_command("purge_photo_album")
 
 
-def _original_chunks(media: Media) -> Iterator[bytes]:
-    with media.original.open("rb") as original:
-        while chunk := original.read(1024 * 1024):
+def _chunks(file_field: File) -> Iterator[bytes]:
+    with file_field.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
             yield chunk
 
 
@@ -118,20 +144,92 @@ class _ZipReader(io.RawIOBase):
         return size
 
 
+# The leading underscore sorts it first in most file browsers, ahead of the folders and pictures.
+RENAMED_NOTICE_NAME = "_OMDØBTE_FILER.txt"
+
+
+def archive_entries(download: AlbumDownload) -> tuple[list[tuple[str, Media, File]], list[tuple[str, str]]]:
+    """Where each file goes in the ZIP, and which files had to be renamed to get there.
+
+    The folders mirror the album tree: below the downloaded album when there is one, or from the
+    folder (year) down for a selection, which can span any number of albums. Files keep their
+    original names. Several items in one album may share a name — two phones' IMG_0001.JPG — and so
+    may an original and its HD copy's new extension; every member of such a group, compared without
+    case as Windows and macOS would, is numbered `IMG_0001_01.JPG`, `IMG_0001_02.JPG`, … and listed
+    in _OMDØBTE_FILER.txt.
+    """
+    media_items = list(
+        Media.objects.filter(pk__in=download.media_ids, deleted_at__isnull=True)
+        .select_related("album")
+        .order_by("sort_at", "pk")
+    )
+    album_ids = {
+        int(part) for media in media_items for part in media.album.path.strip("/").split("/") if part
+    }
+    names = dict(Album.objects.filter(pk__in=album_ids).values_list("pk", "name"))
+    base_ids: list[int] = []
+    if download.album is not None:
+        base_ids = [int(part) for part in download.album.path.strip("/").split("/") if part]
+
+    planned: list[tuple[str, str, Media, File]] = []  # (folder path, file name, media, file)
+    for media in media_items:
+        ids = [int(part) for part in media.album.path.strip("/").split("/") if part]
+        if base_ids and ids[: len(base_ids)] == base_ids:
+            folders = [names.get(pk, str(pk)) for pk in ids[len(base_ids) :]]
+        else:
+            folders = [media.album.folder, *(names.get(pk, str(pk)) for pk in ids)]
+        filename = media.display_name or f"media-{media.pk}"
+        source: File = media.original
+        if (
+            download.variant == DownloadVariant.HIGH_DEFINITION
+            and media.has_derivatives
+            and media.high_definition
+        ):
+            source = media.high_definition
+            filename = f"{Path(filename).stem}{Path(media.high_definition.name or '').suffix or '.jpg'}"
+        planned.append(("/".join(folders), filename, media, source))
+
+    groups: dict[str, list[int]] = {}
+    for index, (folder, filename, _, _) in enumerate(planned):
+        groups.setdefault(posixpath.join(folder, filename).lower(), []).append(index)
+    used = {path for path, members in groups.items() if len(members) == 1}
+    renamed: list[tuple[str, str]] = []
+    final_names: dict[int, str] = {}
+    for members in groups.values():
+        if len(members) == 1:
+            folder, filename, _, _ = planned[members[0]]
+            final_names[members[0]] = posixpath.join(folder, filename)
+            continue
+        number = 0
+        for index in members:
+            folder, filename, _, _ = planned[index]
+            stem, suffix = posixpath.splitext(filename)
+            while True:
+                number += 1
+                candidate = posixpath.join(folder, f"{stem}_{number:02d}{suffix}")
+                if candidate.lower() not in used:
+                    break
+            used.add(candidate.lower())
+            final_names[index] = candidate
+            renamed.append((posixpath.join(folder, filename), candidate))
+    entries = [(final_names[index], media, source) for index, (_, _, media, source) in enumerate(planned)]
+    return entries, renamed
+
+
 def _archive(download: AlbumDownload) -> ZipStream:
     archive = ZipStream(compress_type=ZIP_STORED)
-    names: set[str] = set()
-    media_items = Media.objects.filter(pk__in=download.media_ids, deleted_at__isnull=True).only(
-        "pk", "original"
-    )
-    for media in media_items.order_by("pk"):
-        original_name = Path(media.original.name or f"media-{media.pk}").name
-        filename = original_name
-        if filename in names:
-            stem, suffix = posixpath.splitext(original_name)
-            filename = f"{stem}-{media.pk}{suffix}"
-        names.add(filename)
-        archive.add(_original_chunks(media), arcname=filename)
+    entries, renamed = archive_entries(download)
+    for arcname, _, source in entries:
+        archive.add(_chunks(source), arcname=arcname)
+    if renamed:
+        lines = [
+            "Nogle filer havde samme navn i samme mappe og er derfor blevet nummereret:",
+            "",
+            *(f"{original}  ->  {new}" for original, new in renamed),
+            "",
+        ]
+        archive.add("\r\n".join(lines).encode("utf-8"), arcname=RENAMED_NOTICE_NAME)
+        logger.info("%d file(s) renamed to avoid a clash; listed in %s.", len(renamed), RENAMED_NOTICE_NAME)
     return archive
 
 
@@ -145,6 +243,13 @@ def build_album_download(download_id: int) -> bool:
     download.state = AlbumDownloadState.BUILDING
     download.save(update_fields=["state"])
     key = f"photo-album-zips/{download.token}.zip"
+    logger.info(
+        "Building %s (%s) with %d item(s) for %s.",
+        download.filename,
+        download.variant,
+        len(download.media_ids),
+        download.requested_by,
+    )
     try:
         archive = _archive(download)
         storage = get_photo_album_storage()
@@ -200,19 +305,53 @@ def process_album_import(import_id: int) -> bool:
         return False
     album_import.state = AlbumImportState.BUILDING
     album_import.save(update_fields=["state"])
+    logger.info(
+        "Importing %s into folder %s for %s%s%s.",
+        album_import.archive_name,
+        album_import.folder,
+        album_import.requested_by,
+        " (locked when done)" if album_import.lock_when_done else "",
+        " (merged into an album of the same name)" if album_import.merge_into_existing else "",
+    )
     try:
         with album_import.archive.open("rb") as archive:
-            albums, skipped = import_zip_album(
+            result = import_zip_album(
                 archive=File(archive, name=album_import.archive_name),
                 folder=album_import.folder,
                 resident=album_import.requested_by,
+                lock=album_import.lock_when_done,
+                merge=album_import.merge_into_existing,
+                root_name=album_import.album_name,
             )
         album_import.state = AlbumImportState.READY
-        album_import.album_ids = [album.pk for album in albums]
-        album_import.skipped = skipped
+        album_import.album_ids = [album.pk for album in result.albums]
+        album_import.skipped = result.skipped
+        album_import.merged = result.merged
         album_import.completed_at = timezone.now()
-        album_import.save(update_fields=["state", "album_ids", "skipped", "completed_at"])
+        album_import.save(update_fields=["state", "album_ids", "skipped", "merged", "completed_at"])
+        for line in result.skipped:
+            logger.info("Left out: %s", line)
+        logger.info(
+            "%s %d media item(s) into %d album(s): %s. %d file(s) left out.",
+            "Merged" if result.merged else "Imported",
+            result.added,
+            len(result.albums),
+            ", ".join(album.name for album in result.albums),
+            len(result.skipped),
+        )
         return True
+    except ValidationError as exc:
+        # Refused, not crashed: the archive had problems the resident can fix, and nothing of it
+        # was stored. Every reason is kept so the status page can list them all at once.
+        for message in exc.messages:
+            logger.warning("Refused: %s", message)
+        logger.warning("The ZIP was refused (%d reason(s)); nothing was imported.", len(exc.messages))
+        album_import.state = AlbumImportState.FAILED
+        album_import.errors = exc.messages
+        album_import.error = "ZIP-filen blev afvist. Intet er importeret."
+        album_import.completed_at = timezone.now()
+        album_import.save(update_fields=["state", "errors", "error", "completed_at"])
+        return False
     except Exception as exc:
         album_import.state = AlbumImportState.FAILED
         album_import.error = str(exc)[:255]
@@ -222,6 +361,7 @@ def process_album_import(import_id: int) -> bool:
     finally:
         if album_import.archive:
             album_import.archive.delete(save=False)
+            album_import.save(update_fields=["archive"])
 
 
 @shared_task
