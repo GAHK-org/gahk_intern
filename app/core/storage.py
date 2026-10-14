@@ -89,7 +89,7 @@ class PublicEndpointS3Storage(S3Storage):
 
     Also shares ONE boto3 session between threads. django-storages keeps a resource per thread (boto3
     resources are not thread-safe) and builds each from a brand-new session, which reloads botocore's
-    JSON service models: ~80 ms of CPU, holding the GIL. Under daphne every request runs in a thread
+    JSON service models: ~80 ms of CPU, holding the GIL. Under ASGI every request runs in a thread
     of its own, so every /media/ and /photo-album/ redirect paid that — an album page's thumbnails
     queued behind each other at ~0.5 s apiece. A shared session caches the models, so a thread's
     resource costs ~2 ms. The session itself is not thread-safe either, hence the lock around

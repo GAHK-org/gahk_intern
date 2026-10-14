@@ -91,8 +91,8 @@ services:
       "
 
   # Optional: the Django app itself, hot-reloading (opt-in — see the `services:` comment above).
-  # ./app is bind-mounted over the image's copy, so edits on the host are picked up by Django's
-  # autoreloader without a rebuild; only changing pyproject.toml/uv.lock needs one.
+  # ./app is bind-mounted over the image's copy, so edits on the host are picked up by uvicorn's
+  # --reload without a rebuild; only changing pyproject.toml/uv.lock needs one.
   web:
     build:
       context: .
@@ -129,7 +129,12 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       s3-init: {condition: service_completed_successfully}
-    command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+    # The production server (Dockerfile), reloading, after the system checks runserver used to run.
+    # Static files come from WhiteNoise, which finds them in the app directories while DEBUG is on.
+    command:
+      - sh
+      - -c
+      - python manage.py check && exec uvicorn config.asgi:application --host 0.0.0.0 --port 8000 --lifespan off --reload
 
   worker:
     build:

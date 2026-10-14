@@ -153,7 +153,7 @@ def test_the_storage_check_accepts_our_own_backend(settings: object) -> None:
 
 # --- boto3 sessions -------------------------------------------------------------------------------
 #
-# Under daphne every request runs in a thread of its own. A fresh boto3 session per thread reloads
+# Under ASGI every request runs in a thread of its own. A fresh boto3 session per thread reloads
 # botocore's service models (~80 ms of GIL-holding CPU), which made every redirect queue behind the
 # others — see core.storage.PublicEndpointS3Storage.
 

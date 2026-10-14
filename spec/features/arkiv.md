@@ -104,8 +104,8 @@ would be a broken file in a listing with nothing to explain it.
 This is the one place direct-to-bucket earns its complexity, and it is the opposite of what media
 does: opslag images are capped at 5 MB and already downscaled, so posting them through Django costs
 nothing. Arkiv holds the 2 GB video from sommerfest, uploaded from a phone, against a single
-Daphne process with a 60-second timeout (`-t 60`). That cannot go through the app at all — less
-than ever, now that there is one process rather than three.
+app process, for as long as the phone's connection takes. That cannot go through the app at all —
+less than ever, now that there is one process rather than three.
 
 **The `HEAD` is the real check.** The size, the content type and the hash were all the client's word
 until then; the row records what the bucket actually has. The policy's `content-length-range` is

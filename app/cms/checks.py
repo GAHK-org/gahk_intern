@@ -9,7 +9,7 @@ between an editor and that dead end, and it is a hand-maintained copy of the URL
 kind of duplication that silently rots as urls.py grows.
 
 Pure Python, no database access, deliberately: `manage.py check` runs during `migrate`, in CI before
-any database exists, and inside `runserver`. Every other check in this project (core.checks,
+any database exists, and before every dev server. Every other check in this project (core.checks,
 den_hurtige.checks) holds that line, and a query here would turn an unmigrated database into a
 startup failure. Reachability — which does need the database — is covered by a test and by an
 in-flow warning when an editor saves, not by a check.
