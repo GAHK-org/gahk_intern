@@ -19,6 +19,8 @@ vars:
   # see docker-compose.yml). 8000/8001/8080 are often taken by VS Code; override with:
   #   task dev:local DEV_ADDR=127.0.0.1:9000
   DEV_ADDR: '127.0.0.1:8800'
+  # uvicorn, as in production (Dockerfile), at DEV_ADDR. No lifespan: Channels' router has none.
+  SERVE: 'uvicorn config.asgi:application --host {{splitList ":" .DEV_ADDR | first}} --port {{splitList ":" .DEV_ADDR | last}} --lifespan off'
   # Where debugpy listens for the IDE. Override the same way as DEV_ADDR if 5678 is taken.
   DEBUG_ADDR: '127.0.0.1:5678'
   # `task debug` blocks until the IDE attaches, so a breakpoint in startup code or in the first
@@ -55,7 +57,7 @@ tasks:
       - task: services:up
       - task: frontend:build
       - '{{.PY}} manage.py migrate'
-      - '{{.PY}} manage.py runserver {{.DEV_ADDR}}'
+      - '{{.PY}} -m {{.SERVE}} --reload'
 
   debug:
     desc: 'Like dev:local, but under debugpy, waiting for the IDE to attach ("Attach to task debug")'
@@ -67,6 +69,7 @@ tasks:
       PYTHONBREAKPOINT: debugpy.breakpoint
     cmds:
       - task: services:up
+      - '{{.PY}} manage.py check'
       # debugpy prints NOTHING while it waits, so without this line the task looks like it hung.
       # It has not: the server does not start until the IDE connects. Said out loud because the
       # silence is the single most confusing thing about this task.
@@ -77,11 +80,10 @@ tasks:
           printf '  VS Code: Run and Debug -> "Attach to task debug" (F5).\n'
           printf '  Start serving straight away instead:  task debug DEBUG_WAIT=\n\n'
         silent: true
-      # --noreload is REQUIRED, not a preference: the reloader runs the server in a child process,
-      # so the debugger would attach to the parent and never see a breakpoint. --nothreading keeps
-      # the whole server stopped while you are paused, instead of other requests running on past
-      # you; drop it if you are debugging something that needs concurrent requests.
-      - '{{.PY}} -m debugpy --listen {{.DEBUG_ADDR}} {{.DEBUG_WAIT}} manage.py runserver --nothreading --noreload {{.DEV_ADDR}}'
+      # No --reload, and that is REQUIRED, not a preference: the reloader runs the server in a child
+      # process, so the debugger would attach to the parent and never see a breakpoint. Each request
+      # runs on its own thread, so others carry on while you are paused in one.
+      - '{{.PY}} -m debugpy --listen {{.DEBUG_ADDR}} {{.DEBUG_WAIT}} -m {{.SERVE}}'
 
   debug:pdb:
     desc: Like debug, but breakpoint() drops into pdb in this terminal instead of the IDE
@@ -91,7 +93,8 @@ tasks:
       PYTHONBREAKPOINT: pdb.set_trace
     cmds:
       - task: services:up
-      - '{{.PY}} manage.py runserver --nothreading --noreload {{.DEV_ADDR}}'
+      - '{{.PY}} manage.py check'
+      - '{{.PY}} -m {{.SERVE}}'
 
   migrate:
     desc: Apply database migrations
@@ -218,7 +221,7 @@ tasks:
   dev:
     desc: Run the whole app in Docker with hot-reload and Celery worker + Beat -> http://127.0.0.1:8800
     # Foreground, attached to the web and background-process output (not postgres/s3's). Ctrl-C
-    # stops them, same as dev:local's runserver. `dev:logs`/`dev:down` manage a detached start.
+    # stops them, same as dev:local's server. `dev:logs`/`dev:down` manage a detached start.
     deps: [frontend:build]
     cmds: ['docker compose --profile docker up --build --attach web --attach worker --attach beat web worker beat']
 
