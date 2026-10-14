@@ -47,14 +47,6 @@ erDiagram
         int failure_count
     }
 
-    core_PushDeliveryDay {
-        int id PK
-        date date
-        int delivered
-        int failed
-        int removed
-    }
-
     core_WorkerJobLog {
         int id PK
         string task_id
@@ -64,6 +56,14 @@ erDiagram
         datetime finished_at
         json lines
         int omitted
+    }
+
+    core_PushDeliveryDay {
+        int id PK
+        date date
+        int delivered
+        int failed
+        int removed
     }
 
     residents_Resident {
@@ -1002,14 +1002,6 @@ erDiagram
         int failure_count
     }
 
-    core_PushDeliveryDay {
-        int id PK
-        date date
-        int delivered
-        int failed
-        int removed
-    }
-
     core_WorkerJobLog {
         int id PK
         string task_id
@@ -1019,6 +1011,14 @@ erDiagram
         datetime finished_at
         json lines
         int omitted
+    }
+
+    core_PushDeliveryDay {
+        int id PK
+        date date
+        int delivered
+        int failed
+        int removed
     }
 
     residents_Resident { }
