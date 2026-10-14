@@ -13,11 +13,15 @@ on:
 # a PAT or App token, which is a long-lived credential for a link somebody clicks a few times a
 # year. So the job prints the compare link instead, and `pull-requests: write` is gone with it.
 #
-# It also stops when the merge carries nothing. Every dev -> main pull request leaves main holding a
-# merge commit dev lacks, so main always reads as "unmerged" even though the files are identical —
-# which produced a branch and a 0-file pull request after each release. The tree comparison below is
-# the honest test of whether there is anything to carry back; the topology catches up by itself the
-# next time there is.
+# It syncs whenever main has a commit dev lacks, even one that changes no file. Every dev -> main
+# pull request leaves exactly that behind: the merge commit GitHub makes on main. main's ruleset
+# requires the branch to be up to date before merging, so until dev holds that commit the next
+# dev -> main pull request is blocked. (An earlier version skipped a merge with identical trees,
+# expecting the history to catch up by itself; it never does, and the next release stalled.)
+#
+# Merge the pull request with "Create a merge commit". A squash copies the files but not main's
+# commit, so dev would still be behind. dev's ruleset has to allow merge commits for this, next to
+# the squash merges feature branches use.
 permissions:
   contents: write
 
@@ -34,43 +38,51 @@ jobs:
           ref: dev
           fetch-depth: 0
 
-      - name: Merge main into dev
+      # The question is "does dev contain main?", not "do the files differ?": see the comment above.
+      - name: Is dev behind main?
+        id: behind
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin main dev
-          git merge --no-edit origin/main
-
-      # `git diff --quiet` exits 0 when the trees match, i.e. the merge changed no file.
-      - name: Does the merge carry anything?
-        id: carries
-        run: |
-          if git diff --quiet origin/dev HEAD; then
+          if git merge-base --is-ancestor origin/main origin/dev; then
             echo "result=false" >> "$GITHUB_OUTPUT"
-            echo "\`main\` brings no file changes to \`dev\` — nothing to sync." >> "$GITHUB_STEP_SUMMARY"
+            echo "\`dev\` already contains \`main\` — nothing to sync." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "result=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Merge main into dev
+        if: steps.behind.outputs.result == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git merge --no-ff --no-edit origin/main
+
       - name: Push synchronization branch
         id: branch
-        if: steps.carries.outputs.result == 'true'
+        if: steps.behind.outputs.result == 'true'
         run: |
           branch="automation/sync-main-${GITHUB_SHA}"
           git push origin "HEAD:refs/heads/${branch}"
           echo "name=${branch}" >> "$GITHUB_OUTPUT"
 
       - name: Link the pull request to open
-        if: steps.carries.outputs.result == 'true'
+        if: steps.behind.outputs.result == 'true'
         env:
           BRANCH: ${{ steps.branch.outputs.name }}
         run: |
           url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/dev...${BRANCH}?expand=1"
+          if git diff --quiet origin/dev HEAD; then
+            carries="It changes no files: it only brings back the merge commit main got from the last release, which main's up-to-date rule needs dev to hold."
+          else
+            carries="It carries changes made on main that dev does not have yet."
+          fi
           {
             echo "### Sync main into dev"
             echo
-            echo "Branch \`${BRANCH}\` holds the merge of \`main\` into \`dev\`."
+            echo "Branch \`${BRANCH}\` holds the merge of \`main\` into \`dev\`. ${carries}"
             echo "Actions may not open the pull request here, so open it by hand:"
             echo
             echo "[Open the pull request](${url})"
+            echo
+            echo "Merge it with **Create a merge commit**. A squash leaves dev behind main."
           } >> "$GITHUB_STEP_SUMMARY"
