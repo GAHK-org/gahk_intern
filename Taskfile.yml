@@ -151,6 +151,11 @@ tasks:
     dir: '{{.APP}}'
     cmds: ['uv run ruff check .', 'uv run ruff format --check .']
 
+  fix:
+    desc: Auto-fix lint issues and format the code with ruff (the writing counterpart of `lint`)
+    dir: '{{.APP}}'
+    cmds: ['uv run ruff check --fix .', 'uv run ruff format .']
+
   typecheck:
     desc: Static type-check with mypy (+ django-stubs). Runs from the repo root (config in pyproject.toml).
     cmds: ['uv run mypy app']

@@ -32,8 +32,8 @@ dependencies = [
     "imageio-ffmpeg>=0.6", # bundled FFmpeg binary for photo-album video derivatives
     "pillow-heif>=1.1",
     "zipstream-ng>=1.8", # stream photo-album ZIP downloads without temporary archive files
-    "celery>=5.5,<5.6", # background work and scheduled jobs
-    "django-celery-beat>=2.8,<2.9", # PostgreSQL-backed schedules and last-run state
+    "celery>=5.5,<5.7", # background work and scheduled jobs
+    "django-celery-beat>=2.8,<2.10", # PostgreSQL-backed schedules and last-run state
     "sqlalchemy>=2.0", # PostgreSQL-backed Celery broker and task-result backend
 ]
 
