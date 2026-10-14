@@ -15,6 +15,9 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --python /usr/local/bin/python
 ENV PATH="/src/.venv/bin:$PATH"
 WORKDIR /src/app
+# A host edit reaches the container through the bind mount without a file event, so --reload has to
+# poll for it, as runserver did. Without this a change is never picked up.
+ENV WATCHFILES_FORCE_POLLING=true
 EXPOSE 8000
 CMD ["sh", "-c", "python manage.py check && exec uvicorn config.asgi:application --host 0.0.0.0 --port 8000 --lifespan off --reload"]
 
