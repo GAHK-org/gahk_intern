@@ -10,6 +10,7 @@
       <div><dt class="muted">Opgave</dt><dd class="font-mono break-all">{{ job.task }}</dd></div>
       <div><dt class="muted">Job-ID</dt><dd class="font-mono break-all">{{ job.id }}</dd></div>
       <div><dt class="muted">Status</dt><dd>{{ job.status|default:"Venter i kø" }}</dd></div>
+      {% if job.task_context %}<div><dt class="muted">Behandlet</dt><dd>{{ job.task_context }}</dd></div>{% endif %}
       <div><dt class="muted">Kø</dt><dd>{{ job.queue|default:"-" }}</dd></div>
       <div><dt class="muted">Sendt</dt><dd>{{ job.submitted_at|date:"Y-m-d H:i:s"|default:"-" }}</dd></div>
       <div><dt class="muted">Afsluttet</dt><dd>{{ job.finished_at|date:"Y-m-d H:i:s"|default:"-" }}</dd></div>
@@ -25,6 +26,19 @@
       <div><dt class="muted">Nøgleordsargumenter</dt><dd class="font-mono break-all">{{ job.keyword_arguments|default:"-" }}</dd></div>
     </dl>
   </div>
+  {% if job.children %}
+    <h2 class="mt-8">Underopgaver ({{ job.children|length }})</h2>
+    <div class="card overflow-x-auto">
+      <table class="w-full border-collapse text-sm">
+        <thead><tr class="border-b border-gray-200 text-left"><th class="p-2">Opgave</th><th class="p-2">Status</th><th class="p-2">Afsluttet</th><th class="p-2">Varighed</th></tr></thead>
+        <tbody>
+          {% for child in job.children %}
+            <tr class="border-b border-gray-100"><td class="p-2"><a class="font-mono break-all" href="{% url 'siteadmin:worker_job_detail' child.id %}">{{ child.task }}</a>{% if child.task_context %}<div class="muted text-xs break-all">{{ child.task_context }}</div>{% endif %}</td><td class="p-2">{{ child.status }}</td><td class="p-2">{{ child.finished_at|date:"Y-m-d H:i:s"|default:"-" }}</td><td class="p-2">{{ child.runtime|default:"-" }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
   {% if job.result is not None %}<h2 class="mt-8">Resultat</h2><pre class="card overflow-x-auto text-sm">{{ job.result }}</pre>{% endif %}
   {% if job.traceback %}<h2 class="mt-8">Undtagelse og traceback</h2><pre class="card overflow-x-auto text-sm">{{ job.traceback }}</pre>{% endif %}
   <h2 class="mt-8">Worker-log</h2>

@@ -113,6 +113,24 @@
     {% endif %}
   {% endif %}
 
+  {% comment %}
+    The date and time sit on a line ABOVE the bubble rather than inside it, small and grey, so the
+    bubble holds nothing but the message. It is indented past the avatar column to line up with the
+    bubble (and right-aligned on your own messages); see .msg-clock in styles.css.
+
+    The countdown rides with it. It is to leaving the FEED, not to being deleted — which is why it
+    reads "arkiveres om" rather than the old "udløber om". It is dropped in the archive, where it
+    would count down to a moment that has already passed, and on a tombstone, where it would count
+    down on behalf of something nobody can read.
+  {% endcomment %}
+  <div class="msg-clock">
+    <span class="msg-meta msg-time">{{ post.created_at|date:"j. M Y, H:i" }}</span>
+    {% if not archived and not post.is_deleted %}
+      <span class="msg-meta msg-expiry" title="Arkiveres om {{ post.expires_label }}"
+            aria-label="Arkiveres om {{ post.expires_label }}"><span aria-hidden="true">⏱</span> {{ post.expires_label }}</span>
+    {% endif %}
+  </div>
+
   <div class="msg-line">
     {% comment %}
       Always rendered, filled only at the end of a run: the empty box keeps every bubble in a run
@@ -132,24 +150,11 @@
     <div class="msg-bubble">
       {% if bare or not post.grouped %}<span class="msg-name">{{ post.author.full_name }}</span>{% endif %}
       {% comment %}
-        Text and clock on ONE line, the way WhatsApp and Messenger both do it: the time trails the
-        last line of the message inside the bubble, and takes a line of its own only when the text
-        leaves it no room.
-
-        It began as a header line ABOVE the text, which is what made a continuation look broken --
-        a "14:32 / 45 min" with no name over it. Moving it into the action row below fixed that, and
-        that is where it went first; but that row is collapsed on mid-run messages (see styles.css)
-        to stop it wedging itself between the bubbles of a run, and that took each message's own
-        clock with it. In a feed where every message deletes itself on its own schedule -- two
-        messages a minute apart can carry "2 timer" and "2 doegn" -- that is not decoration. In the
-        bubble, nothing can collapse it.
-
-        Two spans, not one. The expiry used to be glued to the timestamp in a single span, which
-        meant it could not be shrunk, truncated or hidden independently of the clock time. Split,
-        each carries its own rules and the expiry can drop out on the narrowest screens without
-        taking the time with it; the separator is a ::before on .msg-expiry, so it disappears along
-        with it. The glyph replaces the words "udloeber om", which at 11.5px was most of the width
-        of every message -- the full sentence survives in the title for anyone who hovers.
+        The clock is NOT in here: it sits on its own line above the bubble (.msg-clock, above), so
+        each message states when it was sent -- date included -- without the bubble carrying it, and
+        nothing about a mid-run message can collapse it. The expiry is a separate span from the
+        time, so each carries its own rules; the separator is a ::before on .msg-expiry, so it
+        disappears along with it.
       {% endcomment %}
       <div class="msg-line-text">
         {% if post.is_deleted %}
@@ -167,23 +172,6 @@
         {% endcomment %}
         <span class="msg-text">{{ post.content|links }}</span>
         {% endif %}
-        <span class="msg-clock">
-          <span class="msg-meta msg-time">{{ post.created_at|date:"H:i" }}</span>
-          {% comment %}
-            The countdown is to leaving the FEED, not to being deleted — which is why it reads
-            "arkiveres om" rather than the old "udløber om". In the archive it is dropped outright:
-            it would count down to a moment that has already passed, and the date is on the day
-            heading above (_archive_chunk.html) where it is said once instead of on every bubble.
-          {% endcomment %}
-          {% comment %}
-            Dropped on a tombstone too. The countdown is still true there — it archives on its
-            original timer — but it counts down on behalf of something nobody can read.
-          {% endcomment %}
-          {% if not archived and not post.is_deleted %}
-            <span class="msg-meta msg-expiry" title="Arkiveres om {{ post.expires_label }}"
-                  aria-label="Arkiveres om {{ post.expires_label }}"><span aria-hidden="true">⏱</span> {{ post.expires_label }}</span>
-          {% endif %}
-        </span>
       </div>
       {% comment %}
         No is_deleted guard: soft_delete empties the field, so there is nothing for this to be true

@@ -58,7 +58,7 @@ def decode_month_number(mn: int | None) -> tuple[int, int] | None:
     return year, month
 
 
-def epoch_to_dt(ts: int | None) -> None | datetime.datetime:
+def epoch_to_dt(ts: int | None) -> datetime.datetime | None:
     """Legacy int epoch -> aware datetime (Europe/Copenhagen). None/0/garbage -> None."""
     if not ts:
         return None

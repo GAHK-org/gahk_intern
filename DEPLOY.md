@@ -10,14 +10,14 @@ stays a separate **PHP + MariaDB** app on the same box. No SPA/API — one monol
 Prereqs: [`uv`](https://docs.astral.sh/uv/) (Python deps) + [`go-task`](https://taskfile.dev) + Node + Docker.
 ```
 task install      # uv sync → ./.venv from pyproject.toml + uv.lock
-task dev          # the whole app in Docker (Postgres+MinIO+hot-reload Django) → http://127.0.0.1:8800
+task dev          # the whole app in Docker (Postgres+S3+hot-reload Django) → http://127.0.0.1:8800
 task test         # pytest
 task lint         # ruff check + format --check
 task build        # prod asset build + collectstatic
 docker build -t gahk .   # full production image
 ```
 Copy `app/.env.example` to `app/.env` first — its defaults point `DATABASE_URL` at the Postgres
-container and `S3_*` at the MinIO container (`task services:up`), both started automatically by
+container and `S3_*` at the local S3 (SeaweedFS) container (`task services:up`), both started automatically by
 `task dev`/`task dev:local`/`task seed`. SQLite is available only with an explicit `DATABASE_URL`,
 such as the one set by `task test:sqlite`; media always uses the configured object storage backend.
 
@@ -25,13 +25,13 @@ such as the one set by `task test:sqlite`; media always uses the configured obje
 
 **Running Django directly on the host** instead of in a container:
 ```
-task dev:local     # same Postgres+MinIO containers, but Django runs on the host (task debug for pdb)
+task dev:local     # same Postgres+S3 containers, but Django runs on the host (task debug for pdb)
 ```
 `./app` is bind-mounted into the `dev` container, so `dev` and `dev:local` are interchangeable at
-any time against the same Postgres/MinIO containers — pick whichever is convenient.
+any time against the same Postgres/S3 containers — pick whichever is convenient.
 ```
 task dev:logs      # follow the dockerized app's output
-task dev:down      # stop the app container (Postgres/MinIO keep running — `task services:down`)
+task dev:down      # stop the app container (Postgres/S3 keep running — `task services:down`)
 ```
 
 

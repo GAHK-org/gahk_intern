@@ -78,9 +78,9 @@ class PublicEndpointS3Storage(S3Storage):
     A presigned URL is signed against a specific Host, and SigV4 signs that header — so the request
     that follows the URL must hit the exact same host it was signed for, or the bucket 403s it.
     Locally that pulls apart from the endpoint THIS PROCESS must use: `task dev`'s dockerized `web`
-    service reaches MinIO over the compose network at http://minio:9000, which is not a host the
+    service reaches SeaweedFS over the compose network at http://s3:8333, which is not a host the
     browser on the developer's machine can resolve at all. settings.S3_PUBLIC_ENDPOINT_URL is the
-    host the browser CAN reach (http://localhost:9000, MinIO's published port) and is used only for
+    host the browser CAN reach (http://localhost:9000, the published port) and is used only for
     presigning; every other operation — upload, HEAD, list, delete — keeps using `self.connection` /
     S3_ENDPOINT_URL, which this process itself resolves fine.
 
@@ -160,7 +160,7 @@ class MediaS3Storage(PublicEndpointS3Storage):
         """A short-lived presigned GET, against the endpoint a browser can actually follow it to.
 
         NOT `super().url(name, expire=expire)` any more: that presigns against `self.connection`,
-        which under `task dev` is signed for http://minio:9000 — unreachable from the browser this
+        which under `task dev` is signed for http://s3:8333 — unreachable from the browser this
         redirect is sent to. `public_connection` (see PublicEndpointS3Storage) is signed for
         S3_PUBLIC_ENDPOINT_URL instead, and is identical to `self.connection` everywhere else.
 

@@ -448,7 +448,7 @@ def _media_for_key(key: str) -> Media | None:
 
 
 def serve_media(request: HttpRequest, path: str) -> HttpResponseBase:
-    """/fotoalbum-media/<path> — the only way a browser ever reaches a photo-album object.
+    """/photo-album/<path> — the only way a browser ever reaches a photo-album object.
 
     This is what `photo_album.storage.PhotoAlbumS3Storage.url()` points at instead of a bare
     presigned URL: a presigned URL is a bearer token, good for an hour with no further check, and
