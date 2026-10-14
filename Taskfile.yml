@@ -24,6 +24,10 @@ vars:
   # `task debug` blocks until the IDE attaches, so a breakpoint in startup code or in the first
   # request cannot be missed. To start serving immediately and attach whenever: task debug DEBUG_WAIT=
   DEBUG_WAIT: '--wait-for-client'
+  # The photo album's local copy of thumbnails and HD images (photo_album.cache), so the dev servers
+  # serve them the way production does instead of redirecting to S3. Set per server task rather than
+  # in `env:` below so the tests keep exercising the redirect path. Gitignored; delete it to empty it.
+  PHOTO_ALBUM_CACHE_DIR: '{{.ROOT_DIR}}/app/cache'
 
 env:
   DJANGO_DEBUG: '1'
@@ -45,6 +49,8 @@ tasks:
   dev:local:
     desc: Start Postgres+S3, Celery worker + Beat, then run Django directly on the host (http://127.0.0.1:8800)
     dir: '{{.APP}}'
+    env:
+      PHOTO_ALBUM_CACHE_DIR: '{{.PHOTO_ALBUM_CACHE_DIR}}'
     cmds:
       - task: services:up
       - task: frontend:build
@@ -55,6 +61,7 @@ tasks:
     desc: 'Like dev:local, but under debugpy, waiting for the IDE to attach ("Attach to task debug")'
     dir: '{{.APP}}'
     env:
+      PHOTO_ALBUM_CACHE_DIR: '{{.PHOTO_ALBUM_CACHE_DIR}}'
       # So a breakpoint() left in the code stops in the IDE rather than dropping this terminal into
       # pdb, which fights the attached debugger for stdin. task debug:pdb is the other way round.
       PYTHONBREAKPOINT: debugpy.breakpoint
@@ -80,6 +87,7 @@ tasks:
     desc: Like debug, but breakpoint() drops into pdb in this terminal instead of the IDE
     dir: '{{.APP}}'
     env:
+      PHOTO_ALBUM_CACHE_DIR: '{{.PHOTO_ALBUM_CACHE_DIR}}'
       PYTHONBREAKPOINT: pdb.set_trace
     cmds:
       - task: services:up
