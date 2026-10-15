@@ -7,8 +7,9 @@
 set -euo pipefail
 
 # Which branches may open a pull request into main and into dev (bash regexes on the head branch).
+# Dependabot opens version updates against dev and security updates against main.
 INTO_MAIN='^(dev|hotfix/.+|dependabot/.+)$'
-INTO_DEV='^((feature|fix|copilot)/.+|automation/sync-main-[0-9a-f]+)$'
+INTO_DEV='^((feature|fix|copilot|dependabot)/.+|automation/sync-main-[0-9a-f]+)$'
 
 # `git commit-tree` below needs an identity; the trial merges it makes are never pushed.
 export GIT_AUTHOR_NAME=branch-policy GIT_AUTHOR_EMAIL=branch-policy@localhost
@@ -44,7 +45,7 @@ judge_flow() {  # base head sha cross_repository
       return
     fi
   elif ! [[ $head =~ $INTO_DEV ]]; then
-    post "$sha" branch-flow failure "Only feature/**, fix/**, copilot/** and sync branches may merge into dev"
+    post "$sha" branch-flow failure "Only feature/**, fix/**, copilot/**, dependabot/** and sync branches may merge into dev"
     return
   fi
   post "$sha" branch-flow success "$head may merge into $base"
@@ -69,7 +70,7 @@ judge_sync() {  # base head sha
     post "$sha" in-sync failure "Conflicts with dev - merge dev into the branch first"
     return
   fi
-  merged=$(git commit-tree "$tree" -p origin/dev -p "$sha" -m "trial merge")
+  merged=$(git commit-tree "$tree" -p origin/dev -p "$sha" -m "trial merge" 2>/dev/null)
   if has_all_of "$merged" origin/main; then
     post "$sha" in-sync success "dev will have every change on main"
   else
