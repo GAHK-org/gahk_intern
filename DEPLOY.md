@@ -1,7 +1,7 @@
 # Deployment runbook
 
 Target stack (scope §4): **Django 5.2 + uvicorn/ASGI** behind **nginx/Traefik**, **PostgreSQL**, **WhiteNoise**
-for static, on **Hetzner** with **Coolify** (git-push deploys + Let's Encrypt TLS) or **Kamal**. MediaWiki
+for static, on **Hetzner** with **Coolify** (deploys of the CI-built image, §4a, + Let's Encrypt TLS) or **Kamal**. MediaWiki
 stays a separate **PHP + MariaDB** app on the same box. No SPA/API — one monolith.
 
 > Items marked **[you]** need your accounts/credentials (GitHub, Hetzner, Punktum dk) — I can't do them from here.
@@ -88,12 +88,12 @@ turns "glemt kodeord" into a 500 for the resident.
 ## 3. CI (GitHub Actions — `.github/workflows/ci.yml`) **[you: create the repo]**
 Fresh repo (do **not** import the legacy history — it contains plaintext secrets, scope §5). Jobs:
 `lint` (ruff + bandit), `test` (pytest against a Postgres service), `security` (pip-audit), `build`
-(`docker build`). Add **Dependabot**. mypy is optional (code is currently untyped) — add later with django-stubs.
+(the production image; on `main` also pushed to GHCR) and `publish` (moves `:main`, §4a). Add **Dependabot**. mypy is optional (code is currently untyped) — add later with django-stubs.
 
 ## 4. Hosting (Hetzner) **[you]**
 1. Provision a Hetzner CX/CPX VM (EU/GDPR-aligned, DK-close).
-2. Install **Coolify** (recommended): git-push deploys, TLS, env management. Point it at the repo; it builds
-   the `Dockerfile` and runs it. (Alternative: **Kamal** — `kamal setup`/`deploy` using the same Dockerfile.)
+2. Install **Coolify** (recommended): deploys, TLS, env management. Point it at the repo for
+   `docker-compose.prod.yml`; it runs the image CI built rather than building one (§4a). (Alternative: **Kamal** — `kamal setup`/`deploy` using the same Dockerfile.)
 3. Run **Postgres** (managed, or the `postgres` service in `docker-compose.prod.yml`) and **MariaDB** (for
    MediaWiki). Mount the **`media` volume** for uploads — still required, and still the rollback,
    even after the object-storage migration in §4c.
@@ -125,6 +125,57 @@ before the app saw any of it — one large photo-album upload took the server do
 `--workers 3` on the uvicorn command, or the `web` service at several replicas that Coolify
 load-balances. There is no request timeout (Daphne's `-t 60` went with Daphne): a long request
 holds its thread for as long as it takes, which is why long work belongs in Celery.
+
+### 4a. Deploys: CI builds the image, the server pulls it
+
+Coolify does not build anything. The flow is:
+
+1. Every push to `main` runs CI (`.github/workflows/ci.yml`). `build` pushes the image to
+   `ghcr.io/gahk-org/gahk_intern:sha-<commit>`; once lint, typecheck, migrations, test and build have
+   passed, `publish` points **`:main`** at it — a retag, so production runs the tested bytes.
+   `security` does not gate it: a fresh advisory should not freeze deploys, least of all the fix.
+2. On the server, `gahk-autodeploy.timer` runs `deploy/autodeploy/gahk-autodeploy.sh` every three
+   minutes. It pulls `:main`; when the image differs from the last one it deployed, it calls the
+   **local** Coolify API to redeploy the app, and Coolify's `docker compose up` recreates `web`,
+   `worker` and `beat` on the new image (the migration gate in `docker-compose.prod.yml` still applies).
+
+**Why pull, not a webhook from CI:** a webhook means a Coolify token in GitHub's secrets, i.e. a
+credential for the server held by GitHub. This way GitHub holds nothing for the server; the Coolify
+token never leaves it, and the only thing the server trusts GitHub for is the image.
+
+**The cost:** up to ~3 minutes between a green `main` and the deploy starting. And it relies on the
+pull and the deploy happening on the **same host** (one Hetzner box) — the script's pull is what
+gives Coolify the new image. If the app ever moves to a separate Coolify server, install the timer
+there.
+
+#### Setting it up **[you]**
+
+1. **GHCR access.** After the first `publish`, the package appears under the org's Packages. Either
+   make it public (Package settings → Change visibility; the repo is public already), or keep it
+   private and, on the server as root, `docker login ghcr.io` with a classic token holding only
+   `read:packages`.
+2. **Coolify.** In the app's settings, turn **Auto Deploy off** — a push to `main` would otherwise
+   deploy straight away, before CI has published the image. Enable the API (Settings → Advanced) and
+   create a token with only the **deploy** permission. Note the app's UUID (last segment of its URL).
+3. **The timer**, on the server as root:
+   ```sh
+   install -m 755 deploy/autodeploy/gahk-autodeploy.sh /usr/local/bin/gahk-autodeploy
+   install -m 644 deploy/autodeploy/gahk-autodeploy.{service,timer} /etc/systemd/system/
+   install -m 600 deploy/autodeploy/gahk-autodeploy.env.example /etc/gahk-autodeploy.env
+   $EDITOR /etc/gahk-autodeploy.env          # COOLIFY_TOKEN, COOLIFY_APP_UUID
+   systemctl daemon-reload && systemctl enable --now gahk-autodeploy.timer
+   ```
+   The first run deploys once (it has no record of a previous image). Watch it with
+   `journalctl -u gahk-autodeploy -f`; `systemctl list-timers gahk-autodeploy` shows the next run.
+
+**Rolling back:** set `IMAGE_TAG=sha-<good commit>` in the app's Coolify environment and redeploy.
+While it is set, new `:main` images still trigger deploys, but they redeploy the pinned one; remove
+the variable (and redeploy) once a fix is on `main`. Reverting on `main` also works, it just waits
+for CI.
+
+**A deploy that fails is not retried** by the timer — it records the image once Coolify has accepted
+the request, so a broken migration is not re-run every three minutes. Fix forward, or redeploy from
+Coolify by hand.
 
 ### 4b. Scheduled tasks (Celery Beat → worker)
 
