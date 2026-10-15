@@ -216,7 +216,7 @@ class AdminAccessGrant(models.Model):
     resident = models.OneToOneField(Resident, on_delete=models.CASCADE, related_name="admin_access")
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
     # Who granted the role, when known. The role editor stamps it; the monthly roll-forward and the
-    # ETL leave it NULL, and a NULL only means the "granter may not approve" rule has nobody to bar.
+    # legacy import leave it NULL, and a NULL only means the "granter may not approve" rule has nobody to bar.
     requested_by = models.ForeignKey(
         Resident, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )

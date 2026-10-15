@@ -1,9 +1,8 @@
 # Feature: Opslagstavlen — the kollegium's noticeboard
 
-**Unnumbered on purpose.** `F-001`–`F-015` were the legacy-parity specs, one per PHP controller of
-the old app (since removed; the IDs live on in code comments). Opslagstavlen is greenfield, so giving
-it an `F-016` would make every existing `F-0NN` citation in the code ambiguous.
-Den Hurtige — the other greenfield feature — has no
+**Unnumbered on purpose.** `F-001`–`F-014` cover the features carried over from the old PHP site,
+one per former controller. Opslagstavlen is greenfield, so giving it an `F-016` would make every
+existing `F-0NN` citation in the code ambiguous. Den Hurtige — the other greenfield feature — has no
 spec file at all and documents itself through module docstrings; this file exists because the
 *rejected alternatives* below are worth writing down somewhere, and a docstring is the wrong place
 for "here is what we decided not to do".

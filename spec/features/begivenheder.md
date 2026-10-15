@@ -1,8 +1,8 @@
 # Feature: Begivenheder — events and tilmelding
 
-**Unnumbered on purpose.** `F-001`–`F-015` were the legacy-parity specs, one per PHP controller of
-the old app (since removed; the IDs live on in code comments). Begivenheder is greenfield, so an
-`F-016` would make every existing `F-0NN` citation in the code ambiguous. Same reasoning as `opslagstavle.md`, and this file exists
+**Unnumbered on purpose.** `F-001`–`F-014` cover the features carried over from the old PHP site,
+one per former controller. Begivenheder is greenfield, so an `F-016` would make every existing
+`F-0NN` citation in the code ambiguous. Same reasoning as `opslagstavle.md`, and this file exists
 for the same reason: the **rejected alternatives** at the end are worth writing down somewhere, and
 a module docstring is the wrong place for "here is what we decided not to do".
 
