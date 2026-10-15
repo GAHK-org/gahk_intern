@@ -2,8 +2,8 @@
 
 Consolidates the legacy `intern_alumne` (directory + login principal) and `gahk_admin_user`
 (role flags) into one user model with **time-bound** roles (decided 2026-06): a resident's active
-privileges come from the *current month's* assignments, not a static table — see
-02-schema-etl.md §5 / 99-index.md F-010. Network-closed / MAC fields are dropped (feature retired).
+privileges come from the *current month's* assignments, not a static table.
+Network-closed / MAC fields are dropped (feature retired).
 """
 
 from typing import Any
@@ -24,12 +24,12 @@ class Role(models.TextChoices):
     AK = "ak", "AK"
     OELKAELDER = "oelkaelder", "Ølkælderen"
     REGNSKAB = "regnskab", "Regnskab"
-    PR = "pr", "PR"  # frontpage/CMS content editors (F-006)
+    PR = "pr", "PR"  # frontpage/CMS content editors
     REPPER = "repper", "Reppergruppen"  # repair-crew: manages the Reparationer board
     VICEVAERT = "vicevaert", "Viceværterne"  # triages Reparationer before handing it to Repper
     FOTO = "foto", "Fotogruppen"  # curates the photo album: approves, bins, locks (photo_album.access)
     ADMINISTRATOR = "administrator", "Administrator"
-    # NOTE: legacy `editpage` is intentionally omitted — there is no runtime CMS editing (F-006/F-007).
+    # NOTE: legacy `editpage` is intentionally omitted — there is no runtime CMS editing.
 
 
 # Embedsgrupper (workgroups) are the monthly office groups every resident belongs to; the ones below
@@ -99,7 +99,7 @@ class Resident(AbstractBaseUser, PermissionsMixin):
     move_in_date = models.DateField(null=True, blank=True)
     move_out_date = models.DateField(null=True, blank=True)
     study = models.CharField(max_length=255, blank=True)
-    # lineage: fylgje = fadder/sponsor (an older resident who introduces a newcomer) — F-011
+    # lineage: fylgje = fadder/sponsor (an older resident who introduces a newcomer); drives the stamtræ
     sponsor = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="proteges"
     )
@@ -216,7 +216,7 @@ class AdminAccessGrant(models.Model):
     resident = models.OneToOneField(Resident, on_delete=models.CASCADE, related_name="admin_access")
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
     # Who granted the role, when known. The role editor stamps it; the monthly roll-forward and the
-    # ETL leave it NULL, and a NULL only means the "granter may not approve" rule has nobody to bar.
+    # legacy import leave it NULL, and a NULL only means the "granter may not approve" rule has nobody to bar.
     requested_by = models.ForeignKey(
         Resident, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
@@ -238,7 +238,7 @@ def active_period() -> tuple[int, int]:
     already started. A list indstilling is preparing for a future month does NOT become active until
     that month arrives. Falls back to the calendar month when no (past-or-current) list exists.
 
-    Per F-010: the newest monthly list governs — but future-dated lists are held back so next month's
+    The newest monthly list governs — but future-dated lists are held back so next month's
     roster can be edited ahead of time without changing who has access now.
 
     Reads the date via core.clock.current_date so a developer can fast-forward the month locally
@@ -264,7 +264,7 @@ def embedsgruppe_of(resident: "Resident", period: tuple[int, int] | None = None)
     """The Workgroup name `resident` holds in `period` (the active month by default), or "".
 
     Read at the moment something is written, never when it is displayed: opslagstavle.models stamps
-    it onto a post and onto a comment as they are created. Embedsgrupper rotate monthly (F-010), so
+    it onto a post and onto a comment as they are created. Embedsgrupper rotate monthly, so
     resolving a byline against today's list would relabel every post on the board each time the
     månedsliste is saved, and a two-year archive would spend most of its life wrong.
 

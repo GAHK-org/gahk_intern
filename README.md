@@ -16,7 +16,7 @@ Postgres+S3-containere, bare uden web-containeren. Begge starter automatisk Post
 Docker og peger som standard appen på dem; brug `app/.env` (kopiér `app/.env.example`) for at
 tilpasse databasen eller andre indstillinger. SeaweedFS
 erstatter lokalt Hetzner Object Storage til uploads; `task s3:console` viser adressen på dets
-filbrowser. `task db:up` starter derudover MariaDB, som kun bruges til ETL fra det gamle site.
+filbrowser.
 
 `task seed` genererer deterministisk demo-data (beboere, værelser, AK, ølkælder,
 ansøgninger, opslagstavlen m.m.), så nye udviklere ser en udfyldt side med det samme. Kommandoen

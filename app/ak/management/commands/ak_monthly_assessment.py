@@ -1,4 +1,4 @@
-"""Monthly AK assessment (F-009): charge every current resident the configured krydser for the active
+"""Monthly AK assessment: charge every current resident the configured krydser for the active
 month. The amount and whether a month is charged is set by AK officers per calendar month via the AK
 schedule (`AkMonthlyCharge`, same amount every year); this command just applies the active period
 through the same idempotent service. If that calendar month has no schedule row yet, a default (active,

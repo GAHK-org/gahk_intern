@@ -29,7 +29,7 @@
       </nav>
       {% endif %}
 
-      {# Trusted, code/fixture-managed CMS content (F-006): rendered as-is, media URLs rewritten to static. #}
+      {# Trusted, code/fixture-managed CMS content: rendered as-is, media URLs rewritten to static. #}
       <article class="prose-gahk rounded-xl bg-white/95 backdrop-blur p-6 sm:p-8 shadow-xl">
         {{ page.body|body_media|safe }}
       </article>

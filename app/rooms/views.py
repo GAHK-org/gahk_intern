@@ -1,13 +1,13 @@
-"""Rooms views: vaerelsestjek (F-005 condition inspection). soegvaerelse (F-004) added separately.
+"""Rooms views: vaerelsestjek (room condition inspection). soegvaerelse added separately.
 
-F-005 fixes: ORM (no SQLi), CSRF, and the unflag-old + create-new write is atomic. (Per-criterion image
+Legacy fixes: ORM (no SQLi), CSRF, and the unflag-old + create-new write is atomic. (Per-criterion image
 *upload* is a later refinement — see model note; legacy image path references are shown read-only.)
 
 Superseded reports are kept (`is_current=False`) and surfaced by the "vis tidligere rapport" dropdown
 on `besvar`; submitting always writes a NEW current report, so viewing an old one never mutates it.
 The legacy equivalents of these screens are worth knowing about: its per-criterion lock rendered every
-field `disabled` until JS re-enabled them (so nothing posted without JS — F-005 calls this a bug, and
-the port inverts it), and its AK overview filled cells positionally from a delimited blob, putting
+field `disabled` until JS re-enabled them (so nothing posted without JS — a bug, which
+the port inverts), and its AK overview filled cells positionally from a delimited blob, putting
 every score under the wrong heading.
 
 Access: inspecting a room is open to **every logged-in resident**, not just the inspektion role — room

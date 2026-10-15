@@ -1,11 +1,11 @@
-"""Admissions views (F-001).
+"""Admissions views.
 
 Public: tour (rundvisning) and sublet (fremleje) forms. Neither notifies the committee anymore — both
 just send the applicant an auto-reply and appear in the list view. (The committee asked us to stop the
-per-request rundvisning mail; F-011.)
+per-request rundvisning mail.)
 Admin (role `indstilling`): list (searchable + sortable across all applications) / detail /
-mark-received. Mark-received is POST-only (the legacy GET was CSRF-able). All fixes from F-001
-(mass-assignment, SQLi, auth, CSRF) are structural here.
+mark-received. Mark-received is POST-only (the legacy GET was CSRF-able). The legacy flaws
+(mass-assignment, SQLi, auth, CSRF) are fixed structurally here.
 """
 
 import csv
@@ -133,7 +133,7 @@ def success(request: HttpRequest) -> HttpResponse:
 
 def _send_auto_reply(app: Application) -> None:
     """Send the applicant a "we got it" auto-reply. Best-effort; a mail failure must not lose the saved
-    application. The committee is no longer emailed per application (F-011) — they review the list view.
+    application. The committee is no longer emailed per application — they review the list view.
     Not sent with fail_silently: SMTP errors — e.g. one.com refusing a DEFAULT_FROM_EMAIL the SMTP
     account is not an alias of — must reach the log instead of vanishing."""
     try:
@@ -314,7 +314,7 @@ def show_application(request: HttpRequest, pk: int) -> HttpResponse:
 def export_applications(request: HttpRequest) -> HttpResponse:
     """Export the applications as CSV or Excel (?format=csv|xlsx). Honours the same filters as the list
     (search, sort, kasserede, afventende) plus an optional ?from=&to= date range, so Indstillingen can
-    pull the contact details for, e.g., everyone who applied in a given period (F-011)."""
+    pull the contact details for, e.g., everyone who applied in a given period."""
     f = _list_filters(request)
     rows = _admission_queryset(
         f["query"],

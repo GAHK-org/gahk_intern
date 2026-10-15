@@ -1,4 +1,4 @@
-"""Public-site admin (F-002), mounted at /admin/ (legacy URL). Django's own admin is at /django-admin/."""
+"""Public-site admin, mounted at /admin/ (legacy URL). Django's own admin is at /django-admin/."""
 
 from django.urls import path
 

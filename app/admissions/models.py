@@ -1,6 +1,6 @@
 """Admission applications — tour (rundvisning) and sublet (fremleje). Legacy `gahk_ansoegninger`.
 
-Clean reimplementation of F-001: explicit fields (no mass-assignment), `gender` as male/female/other
+Clean reimplementation: explicit fields (no mass-assignment), `gender` as male/female/other
 (legacy stored only a `female` bool), a single `submitted_at` instead of day/month/year/timestamp, and a
 real `received_by`/`received_at`. 1-year retention is enforced by a scheduled purge (see management cmd).
 """
@@ -63,11 +63,3 @@ class Application(models.Model):
 
     def __str__(self) -> str:
         return f"{self.get_type_display()}: {self.full_name}"
-
-    @property
-    def is_received(self) -> bool:
-        return self.received_by_id is not None
-
-    @property
-    def is_discarded(self) -> bool:
-        return self.discarded_by_id is not None

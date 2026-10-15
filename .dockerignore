@@ -1,6 +1,5 @@
-legacy_site/
-gahk_dk.sql
-schema.sql
+*.sql
+*.dump
 *.md
 .git/
 .venv/

@@ -1,4 +1,4 @@
-"""Internal members area + auth, under /intern/. F-013/F-014."""
+"""Internal members area + auth, under /intern/."""
 
 from django.contrib.auth import views as auth_views
 from django.urls import include, path
@@ -52,7 +52,7 @@ urlpatterns = [
         ),
         name="password_change_done",
     ),
-    # Password reset (F-014) — links expire after 2h (PASSWORD_RESET_TIMEOUT)
+    # Password reset — links expire after 2h (PASSWORD_RESET_TIMEOUT)
     path(
         "admin/password-reset",
         auth_views.PasswordResetView.as_view(

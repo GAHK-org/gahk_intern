@@ -1,8 +1,7 @@
-"""Enforce the 1-year retention policy on applications (F-001).
+"""Enforce the 1-year retention policy on applications.
 
-Deletes applications older than 1 year. Run on a schedule (cron / scheduled task). NOT run by the ETL,
-so the migrated history (and the stats charts) stay intact until you choose to enforce retention.
-Use --dry-run to preview.
+Deletes applications older than 1 year. Run on a schedule (cron / scheduled task). Use --dry-run to
+preview.
 """
 
 import argparse
@@ -15,7 +14,7 @@ from admissions.models import Application
 
 
 class Command(BaseCommand):
-    help = "Delete applications older than 1 year (retention policy, F-001)."
+    help = "Delete applications older than 1 year (retention policy)."
 
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--dry-run", action="store_true")

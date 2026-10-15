@@ -1,6 +1,6 @@
 """The till kiosk (`shop`) reproduces the legacy Angular till natively — server-rendered DOM + ES5,
 no Tailwind/Alpine bundle, so it runs on the physical till's iPad (iOS 10.3). Purchases post a `basket`
-JSON + repeated `shopper` fields and are priced server-side (F-003)."""
+JSON + repeated `shopper` fields and are priced server-side."""
 
 import json
 from collections.abc import Callable

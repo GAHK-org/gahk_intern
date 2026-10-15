@@ -46,7 +46,7 @@ from typing import Any
 
 from django.conf import settings
 
-from .models import ARCHIVE_PREFIX, object_key, preview_key, thumbnail_key
+from .models import object_key, preview_key, thumbnail_key
 from .storage import S3ArchiveStore, get_store
 
 # What a resident may put in the archive in one go. Generous on purpose - the point of this feature
@@ -180,8 +180,3 @@ def valid_hash(value: str) -> bool:
     can steer.
     """
     return len(value) == 64 and all(c in "0123456789abcdef" for c in value.lower())
-
-
-def upload_prefix() -> str:
-    """Exposed so a template or a test can name the prefix without importing the model."""
-    return ARCHIVE_PREFIX

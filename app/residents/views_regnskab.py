@@ -1,4 +1,4 @@
-"""Regnskab (accounting) settlement view (F-010 role family).
+"""Regnskab (accounting) settlement view.
 
 The accounting embedsgruppe settles a moved-out resident's housing deposit. For that they need to see
 what the resident still owes the dorm: AK labour (krydser; negative = behind) and their ølkælder

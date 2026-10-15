@@ -1,12 +1,10 @@
-# Local dev + ETL services (02-schema-etl.md §8).
-#   - postgres  : the app's own database. `task db:up` starts this (+ mariadb); point DATABASE_URL
-#                 at it (see app/.env.example) instead of the SQLite fallback.
+# Local dev services.
+#   - postgres  : the app's own database. `task db:up` starts this alone; app/.env.example
+#                 points DATABASE_URL at it.
 #   - s3        : SeaweedFS (Apache 2.0), S3-compatible object storage standing in for Hetzner Object
 #                 Storage in dev — the S3_* settings point at it (core/storage.py). Its S3 API is
 #                 published on :9000; the filer's file browser (bucket contents) is on :8888.
 #   - s3-init   : one-shot job that creates the dev bucket; runs once and exits, harmless to re-run.
-#   - mariadb   : staging copy of the legacy dump (gahk_dk.sql auto-loaded on first init), ETL only.
-#   - pgloader  : one-shot MySQL->Postgres bulk lift (run via `docker compose run --rm pgloader ...`)
 #   - web       : optional — the Django app itself, hot-reloading. Opt in with the "docker" profile:
 #                 `task dev` / `docker compose --profile docker up -d web`. Running `task dev:local`
 #                 instead (directly on the host, against the same postgres/s3) remains fully
@@ -25,33 +23,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-
-  mariadb:
-    image: mariadb:11
-    environment:
-      MARIADB_DATABASE: gahk_dk
-      MARIADB_ROOT_PASSWORD: root
-      MARIADB_USER: gahk
-      MARIADB_PASSWORD: gahk
-    ports: ["3306:3306"]
-    command: ["--max-allowed-packet=256M"]
-    volumes:
-      - "mariadbdata:/var/lib/mysql"
-      - "./gahk_dk.sql:/docker-entrypoint-initdb.d/01-gahk_dk.sql:ro"
-    healthcheck:
-      test: ["CMD-SHELL", "healthcheck.sh --connect --innodb_initialized"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 300s
-
-  pgloader:
-    image: dimitri/pgloader:latest
-    profiles: ["etl"]
-    depends_on:
-      postgres: {condition: service_healthy}
-      mariadb: {condition: service_healthy}
-    entrypoint: ["sleep", "infinity"]   # kept idle; run pgloader manually inside it
 
   s3:
     image: chrislusf/seaweedfs:latest
@@ -175,6 +146,5 @@ services:
 
 volumes:
   pgdata:
-  mariadbdata:
   s3data:
   photo-album-cache:

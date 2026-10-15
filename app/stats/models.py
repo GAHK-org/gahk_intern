@@ -1,4 +1,4 @@
-"""Visit/admission statistics (F-012) + the front-page visit counter (F-002/F-011/F-013).
+"""Visit/admission statistics + the front-page visit counter.
 
 Decisions: the visit counter applies to the **front page only**; visitor IPs are stored as an
 **HMAC-SHA256** hash (keyed by VISIT_COUNTER_HMAC_KEY) rather than raw, and counts are kept

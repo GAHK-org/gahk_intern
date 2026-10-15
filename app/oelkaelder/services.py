@@ -1,4 +1,4 @@
-"""Ølkælder money operations (F-003).
+"""Ølkælder money operations.
 
 The purchase path is the security-critical one. Fixes vs legacy:
   * **server-side pricing** — line prices are recomputed from the Product, never trusted from the client
@@ -215,7 +215,7 @@ def record_deposit(shopper: Shopper, amount_ore: int) -> None:
 
 @transaction.atomic
 def record_adjustment(shopper: Shopper, amount_ore: int, reason: str, actor: str) -> Adjustment:
-    """A manual signed correction to one shopper's balance (F-003). Negative = a charge that increases
+    """A manual signed correction to one shopper's balance. Negative = a charge that increases
     their debt; positive = a credit.
 
     This is the repair tool for the ølkælder data the 2026-08 migration could not reconstruct: sales
@@ -260,7 +260,7 @@ def void_adjustment(adjustment_id: int, actor: str) -> bool:
 
 @transaction.atomic
 def void_purchase(txn_id: int, actor: str) -> bool:
-    """Soft-delete a mistaken sale (F-003, legacy `deleteTransaction`). Returns False if it was already
+    """Soft-delete a mistaken sale (legacy `deleteTransaction`). Returns False if it was already
     voided, so a double-submit cannot write a second log line.
 
     No compensating ledger write is needed: balances are *derived*, and Shopper.balance_ore filters
