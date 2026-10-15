@@ -1,0 +1,54 @@
+name: Branch policy
+
+# Posts two commit statuses on every open pull request into main and dev, for the rulesets to require:
+#
+#   branch-flow  Which branches may merge where. Into main: dev, hotfix/** and dependabot/**, and a
+#                hotfix must be branched from main, not carry unreleased work from dev. Into dev:
+#                feature/**, fix/**, copilot/** and the sync branches sync-main-to-dev.yml pushes.
+#   in-sync      Into main: the branch already has every change on main, so the CI that ran on it is CI
+#                on the files that land. Into dev: dev will have every change on main once it is merged,
+#                so only the sync pull request can merge while main is ahead and dev cannot drift.
+#
+# in-sync replaces the rulesets' "Require branches to be up to date before merging". That box compares
+# commits, and every release leaves main holding a merge commit dev lacks, so it demanded a sync pull
+# request into dev before each release even when the files were identical — and its "Update branch"
+# button cannot help, since pushes to dev need a pull request. in-sync compares files instead.
+#
+# Statuses rather than job results, because a push to main must re-judge pull requests whose own
+# commits did not change. Every run judges every open pull request against the current main and dev,
+# and runs queue one at a time (a queued run gives way to a newer one), so the last run to finish
+# always saw the latest state. A push to main marks in-sync pending first, which blocks merging for
+# the few seconds until the run has judged it.
+#
+# pull_request_target runs this file and the script as they are on the base branch, never as the pull
+# request has them, so a pull request cannot loosen its own check. That trigger is safe here because
+# the script only reads the pull request's commits with git; it never checks out or runs them.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, edited]
+    branches: [main, dev]
+  push:
+    branches: [main, dev]
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+concurrency:
+  group: branch-policy
+  cancel-in-progress: false
+
+jobs:
+  judge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Judge the open pull requests
+        run: bash .github/scripts/branch-policy.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
