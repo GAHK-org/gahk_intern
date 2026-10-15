@@ -111,6 +111,10 @@ before the app saw any of it — one large photo-album upload took the server do
   synchronous view still runs on its own thread and several are served at once. Requests that are
   waiting on Postgres or on object storage — which is nearly all of them here — release the GIL and
   are unaffected.
+* Each of those threads borrows a database connection from a pool of at most **20** and returns it
+  when the request ends (`DATABASES` in `config/settings.py`). Persistent connections
+  (`CONN_MAX_AGE`) must stay off under ASGI: every request's thread opened one that was never
+  closed, until Postgres ran out of connections and every page returned 500 until a redeploy.
 * What is lost is *parallelism* for CPU-bound work. Three processes meant three interpreters;
   rendering the album grid, signing media URLs and building the Excel export now contend for one.
 * WhiteNoise is not async (6.12 has no `async_capable`), so static serving and the whole middleware
