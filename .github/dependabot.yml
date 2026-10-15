@@ -1,8 +1,12 @@
 version: 2
+# Version updates go to dev and ship with the next release, like any other change. Security updates
+# ignore target-branch and always open against main (the default branch); they are hotfixes, and
+# sync-main-to-dev.yml carries them back to dev.
 updates:
   # Python dependencies (pyproject.toml + uv.lock).
   - package-ecosystem: "uv"
     directory: "/"
+    target-branch: "dev"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
@@ -18,6 +22,7 @@ updates:
   # GitHub Actions used by the workflows in .github/workflows/.
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "dev"
     schedule:
       interval: "weekly"
     labels: ["dependencies", "ci"]
@@ -28,6 +33,7 @@ updates:
   # Base image in the Dockerfile.
   - package-ecosystem: "docker"
     directory: "/"
+    target-branch: "dev"
     schedule:
       interval: "weekly"
     labels: ["dependencies", "infra"]
