@@ -1045,38 +1045,6 @@ def test_vaerelsestjek_overview_renders_all_five_floor_plans(make_resident: Call
     assert "Stuen" in html and "4. sal" in html  # per-floor headings
 
 
-def test_relocate_media_splits_multi_image_paths() -> None:
-    """RoomConditionScore.image is a ';'-separated list; relocate_media treated the whole blob as one
-    filename, so multi-image rows silently missed (copied 40 vs the real 5709). It must split the same
-    way image_urls does, strip a leading slash, and skip URLs."""
-    from core.management.commands.relocate_media import legacy_image_segments
-
-    field = "public/image/a.jpg;/public/image/b.jpg;https://ex.com/c.jpg;"
-    assert legacy_image_segments(field) == ["public/image/a.jpg", "public/image/b.jpg"]
-    assert legacy_image_segments("") == []
-    assert legacy_image_segments(None) == []
-    assert legacy_image_segments("/public/image/x.jpg") == ["public/image/x.jpg"]  # leading slash
-
-
-@pytest.mark.django_db
-def test_relocate_media_segments_match_image_urls(make_resident: Callable) -> None:
-    """The paths relocate_media copies to must be exactly the paths image_urls asks the browser for,
-    or files land where nothing looks for them."""
-    from core.management.commands.relocate_media import legacy_image_segments
-    from core.models import Room
-    from rooms.models import RoomCondition, RoomConditionScore, RoomCriterion
-
-    rm = Room.objects.create(legacy_index=97, number=97, floor="stuen", side="mod gaden")
-    crit = RoomCriterion.objects.create(code="floor", name="Gulve", options=5)
-    cond = RoomCondition.objects.create(room=rm, recorded_at=timezone.now(), is_current=True)
-    s = RoomConditionScore.objects.create(
-        condition=cond, criterion=crit, image="public/image/a.jpg;/public/image/b.jpg"
-    )
-
-    assert s.image_urls == ["/media/public/image/a.jpg", "/media/public/image/b.jpg"]
-    assert ["/media/" + seg for seg in legacy_image_segments(s.image)] == s.image_urls
-
-
 @pytest.mark.django_db
 def test_room_clash_warning_is_indstilling_only(make_resident: Callable) -> None:
     """A room clash is flagged on the alumneliste, but only to indstilling (who can fix it) — not to

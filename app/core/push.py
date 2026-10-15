@@ -191,25 +191,6 @@ def send(
         _dispatch(subscriptions, payload)
 
 
-def notify(
-    topic: str,
-    head: str,
-    body: str,
-    url: str,
-    exclude_user_id: int | None = None,
-    *,
-    background: bool = True,
-) -> None:
-    """Queue a push to everyone opted in to `topic`. The common case, on top of `send`."""
-    send(
-        subscribers(topic, exclude_user_id=exclude_user_id),
-        head,
-        body,
-        url,
-        background=background,
-    )
-
-
 def handle_subscription_request(request: HttpRequest, topic: str) -> HttpResponse:
     """Store (or drop) this browser's opt-in to `topic`. Shared by every feature's subscribe view.
 

@@ -351,10 +351,6 @@ class Album(models.Model):
     # --- The tree -----------------------------------------------------------------------------
 
     @property
-    def is_root(self) -> bool:
-        return self.parent_id is None
-
-    @property
     def ancestor_ids(self) -> list[int]:
         """Root first, excluding this album — read straight out of `path`, no query."""
         ids = [int(part) for part in self.path.strip("/").split("/") if part]
@@ -576,10 +572,6 @@ class Media(models.Model):
         return self.filename or Path(self.original.name or "").name
 
     @property
-    def is_in_bin(self) -> bool:
-        return self.deleted_at is not None
-
-    @property
     def has_derivatives(self) -> bool:
         """Whether the grid and the viewer have something to show for this item yet."""
         return self.derivative_state == DerivativeState.READY and bool(self.thumbnail)
@@ -690,11 +682,6 @@ class MediaView(models.Model):
 
 
 MEDIA_VIEW_DEDUPE_WINDOW = timedelta(minutes=10)
-
-# How many pictures the dashboard shows each day, and how long a picture rests before it may be
-# picked again.
-FEATURED_PER_DAY = 3
-FEATURED_COOLDOWN = timedelta(days=365)
 
 
 class FeaturedMedia(models.Model):

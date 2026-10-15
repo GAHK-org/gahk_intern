@@ -5,8 +5,7 @@ version: '3'
 #   task dev:local -> the same thing, but Django runs directly on the host instead of in a container
 #   task debug     -> dev:local's server under debugpy, waiting for your IDE to attach (port 5678)
 #   task debug:pdb -> the same server, but breakpoint() drops into pdb in this terminal instead
-# Postgres + SeaweedFS (S3) are used either way (see app/.env.example). `task db:up` additionally starts
-# MariaDB, needed only for the legacy ETL. `dev:local`/`debug` use the project virtualenv at ./.venv
+# Postgres + SeaweedFS (S3) are used either way (see app/.env.example). `dev:local`/`debug` use the project virtualenv at ./.venv
 # and the Django project in ./app; `dev` builds and runs Dockerfile.dev instead — see docker-compose.yml.
 
 # Dependencies are managed by uv (pyproject.toml + uv.lock). `uv run` auto-syncs the ./.venv and runs
@@ -19,7 +18,7 @@ vars:
   # see docker-compose.yml). 8000/8001/8080 are often taken by VS Code; override with:
   #   task dev:local DEV_ADDR=127.0.0.1:9000
   DEV_ADDR: '127.0.0.1:8800'
-  # uvicorn, as in production (Dockerfile), at DEV_ADDR. No lifespan: Channels' router has none.
+  # uvicorn, as in production (Dockerfile), at DEV_ADDR. No lifespan: Django's ASGI handler has none.
   SERVE: 'uvicorn config.asgi:application --host {{splitList ":" .DEV_ADDR | first}} --port {{splitList ":" .DEV_ADDR | last}} --lifespan off'
   # Where debugpy listens for the IDE. Override the same way as DEV_ADDR if 5678 is taken.
   DEBUG_ADDR: '127.0.0.1:5678'
@@ -34,7 +33,7 @@ vars:
 env:
   DJANGO_DEBUG: '1'
   # Windows consoles default to cp1252, which cannot encode the non-ASCII characters our management
-  # commands print (etl_verify's "clean ≤ legacy" notes, the ølkælder summaries). Without this the
+  # commands print (the ølkælder summaries, for one). Without this the
   # command dies with UnicodeEncodeError *after* doing its work, which reads like a data failure.
   PYTHONIOENCODING: 'utf-8'
 
@@ -134,7 +133,7 @@ tasks:
     dir: '{{.APP}}'
     cmds: ['{{.PY}} -m pytest {{.CLI_ARGS}}']
 
-  # `task test` reads app/.env, which is tuned for real dev/ETL and so diverges from CI in two ways
+  # `task test` reads app/.env, which is tuned for real dev and so diverges from CI in two ways
   # that break the suite when run from the host:
   #   - DATABASE_URL points at the *in-Docker* Postgres hostname (only resolvable inside the network)
   #   - TURNSTILE_SECRET_KEY is set, so the admissions form tests hit real Cloudflare verification
@@ -175,14 +174,9 @@ tasks:
     desc: Install the prek git pre-commit hooks (ruff + mypy run on commit)
     cmds: ['uv run prek install']
 
-  etl:verify:
-    desc: Diff legacy MariaDB counts vs migrated Postgres counts
-    dir: '{{.APP}}'
-    cmds: ['{{.PY}} manage.py etl_verify']
-
   db:up:
-    desc: Start the Postgres + MariaDB containers (ETL; use `services:up` for everyday dev)
-    cmds: ['docker compose up -d postgres mariadb']
+    desc: Start the Postgres container alone (use `services:up` for everyday dev)
+    cmds: ['docker compose up -d postgres']
 
   db:down:
     desc: Stop the database containers
@@ -192,12 +186,8 @@ tasks:
     desc: psql shell on the target Postgres
     cmds: ['docker compose exec postgres psql -U gahk -d gahk']
 
-  db:mysql:
-    desc: mysql shell on the legacy MariaDB staging DB
-    cmds: ['docker compose exec mariadb mariadb -ugahk -pgahk gahk_dk']
-
   services:up:
-     desc: Start Postgres, S3, Celery worker, and Beat (use `db:up` for MariaDB ETL too)
+     desc: Start Postgres, S3, Celery worker, and Beat
      cmds: ['docker compose --profile docker up -d postgres s3 s3-init worker beat']
 
   services:down:
@@ -236,21 +226,6 @@ tasks:
   dev:logs:
     desc: Follow logs from the Docker app and Celery processes
     cmds: ['docker compose logs -f web worker beat']
-
-  etl:
-    desc: 'Run the full legacy->clean data migration (needs task db:up + dump loaded)'
-    dir: '{{.APP}}'
-    cmds:
-      - '{{.PY}} manage.py seed_rooms'
-      - '{{.PY}} manage.py etl_residents'
-      - '{{.PY}} manage.py etl_admissions'
-      - '{{.PY}} manage.py etl_cms'
-      - '{{.PY}} manage.py etl_ak'
-      - '{{.PY}} manage.py etl_rooms'
-      - '{{.PY}} manage.py etl_oelkaelder'
-      - '{{.PY}} manage.py etl_stats'
-      - '{{.PY}} manage.py reset_sequences'
-      - '{{.PY}} manage.py sync_cms_media'
 
   frontend:install:
     desc: Install frontend dependencies (npm)

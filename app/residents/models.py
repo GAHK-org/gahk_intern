@@ -2,8 +2,8 @@
 
 Consolidates the legacy `intern_alumne` (directory + login principal) and `gahk_admin_user`
 (role flags) into one user model with **time-bound** roles (decided 2026-06): a resident's active
-privileges come from the *current month's* assignments, not a static table — see
-02-schema-etl.md §5 / 99-index.md F-010. Network-closed / MAC fields are dropped (feature retired).
+privileges come from the *current month's* assignments, not a static table (F-010).
+Network-closed / MAC fields are dropped (feature retired).
 """
 
 from typing import Any

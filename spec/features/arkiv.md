@@ -20,7 +20,7 @@ Arkiv makes that the access rule, so joining Regnskabsgruppen in the månedslist
 and leaving it takes them away — with nobody administering anything.
 
 **It is not a wiki.** Prose that people edit together belongs in MediaWiki, which is kept and not
-rewritten (scope §3). Arkiv holds *files*: things with bytes, a name, and an owner.
+rewritten. Arkiv holds *files*: things with bytes, a name, and an owner.
 
 ## Access
 

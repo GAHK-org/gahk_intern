@@ -3,8 +3,8 @@ form, the model field, the redirect table, the system check and the tests.
 
 The rewrite inherited a contradiction that cost a live page: `Page.slug` was a `SlugField`, whose
 validator forbids `/`, while the routing contract *requires* it. `config.urls` matches the whole
-multi-segment path as one lookup key, and `etl_cms` seeds `faciliteter/kokken` and eight siblings
-through `update_or_create`, which skips validators. So the database held addresses the edit form
+multi-segment path as one lookup key, and the legacy import seeded `faciliteter/kokken` and eight
+siblings through `update_or_create`, which skips validators. So the database held addresses the edit form
 could never accept back: an editor who changed `faciliteter/kokken` to `faciliteter-kokken` could
 not type the old value again, and the page fell out of its section sidebar (the only thing that
 links a sub-page — see cms.nav) and became unreachable.

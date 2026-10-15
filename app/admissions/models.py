@@ -63,11 +63,3 @@ class Application(models.Model):
 
     def __str__(self) -> str:
         return f"{self.get_type_display()}: {self.full_name}"
-
-    @property
-    def is_received(self) -> bool:
-        return self.received_by_id is not None
-
-    @property
-    def is_discarded(self) -> bool:
-        return self.discarded_by_id is not None

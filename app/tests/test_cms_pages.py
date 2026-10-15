@@ -401,13 +401,31 @@ def test_a_page_in_no_menu_is_detected() -> None:
     assert not is_reachable(page), "this is exactly the state nobody could see before"
 
 
+# The production pages and their addresses, as imported from the old site (page id -> slug).
+PRODUCTION_SLUGS = {
+    1: "velkommen",
+    2: "faciliteter",
+    3: "kollegielivet",
+    4: "legater",
+    21: "kontakt",
+    22: "vision",
+    10: "faciliteter/vaerelse",
+    11: "faciliteter/faellesomraade",
+    12: "faciliteter/kokken",
+    18: "legater/modtagne",
+    14: "kollegielivet/historie",
+    15: "kollegielivet/aaretsgang",
+    20: "kollegielivet/alumnerne",
+    16: "kollegielivet/selvstyre",
+    17: "kollegielivet/bestyrelse",
+}
+
+
 def test_every_production_address_is_reachable() -> None:
     """Guards the whole legacy route map, so this cannot regress silently for the real site."""
-    from cms.management.commands.etl_cms import SLUG_BY_PAGE_ID
-
-    for page_id, slug in SLUG_BY_PAGE_ID.items():
+    for page_id, slug in PRODUCTION_SLUGS.items():
         Page.objects.create(id=page_id, header=slug, body="")
-        Page.objects.filter(id=page_id).update(slug=slug)  # bypass validators, as the ETL does
+        Page.objects.filter(id=page_id).update(slug=slug)  # bypass validators, as the import did
 
     for page in Page.objects.all():
         assert is_reachable(page), f"/{page.slug} is not linked from anywhere"

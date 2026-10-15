@@ -1,7 +1,4 @@
-"""Django settings for the GAHK rewrite (config project).
-
-Schema/decisions: see ../02-schema-etl.md. Target DB is PostgreSQL (via DATABASE_URL).
-"""
+"""Django settings for the GAHK rewrite (config project). Target DB is PostgreSQL (via DATABASE_URL)."""
 
 import os
 from pathlib import Path
@@ -113,11 +110,11 @@ if os.environ.get("DATABASE_POOL") == "1":
     DATABASES["default"]["CONN_MAX_AGE"] = 0  # the pool refuses to run alongside persistent connections
     DATABASES["default"].setdefault("OPTIONS", {})["pool"] = {"min_size": 2, "max_size": 20}
 
-# --- Auth (01-infrastructure.md A4/A5; 02-schema-etl.md §1.6) ---
+# --- Auth ---
 AUTH_USER_MODEL = "residents.Resident"
 
 # First hasher = default for new/upgraded passwords. The legacy hasher (last) only verifies the old
-# unsalted sha256 hashes, then Django re-hashes on next login (upgrade-on-login, scope §5).
+# unsalted sha256 hashes, then Django re-hashes on next login (upgrade-on-login).
 PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.PBKDF2PasswordHasher",
     "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",

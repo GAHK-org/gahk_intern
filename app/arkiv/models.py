@@ -199,10 +199,6 @@ class ArchiveFolder(models.Model):
             update_fields=update_fields,
         )
 
-    @property
-    def is_root(self) -> bool:
-        return self.parent_id is None
-
     def resolved_workgroup_id(self) -> int | None:
         """What `effective_workgroup` should be: this folder's own, else its parent's resolved one."""
         if self.workgroup_id is not None:

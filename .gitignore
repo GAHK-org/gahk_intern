@@ -1,6 +1,3 @@
-legacy_site/*
-gahk_dk.sql
-
 # Python / Django
 .venv/
 __pycache__/
@@ -25,8 +22,6 @@ frontend/node_modules/
 *.sql
 # pg_dump custom-format output (gahk-clean.dump) — the whole clean DB, real resident data.
 *.dump
-
-CUTOVER.md
 
 # ---------------------------------------------------------------------------
 # Secrets and data. Added 2026-08-04 after a production database dump reached a

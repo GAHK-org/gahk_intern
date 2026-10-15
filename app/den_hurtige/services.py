@@ -33,8 +33,6 @@ if TYPE_CHECKING:
 # The topic name this feature subscribes and notifies under (core.push.TOPIC_FIELDS).
 TOPIC = "den_hurtige"
 
-FEED_URL = "/intern/den-hurtige/"
-
 
 def is_configured() -> bool:
     """Re-exported so the feed view and its tests keep one import. See core.push."""

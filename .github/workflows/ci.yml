@@ -19,7 +19,7 @@ jobs:
         with: { enable-cache: true }
       - run: uv run ruff check .
       - run: uv run ruff format --check .
-      - run: uv run bandit -q -r . -x ./tests,./core/management  # skip tests + one-off ETL scripts
+      - run: uv run bandit -q -r . -x ./tests
 
   typecheck:
     runs-on: ubuntu-latest

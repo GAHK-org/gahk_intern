@@ -1,7 +1,7 @@
 """Public application forms (F-001).
 
 Explicit fields (kills the legacy mass-assignment), server-side validation, a honeypot for spam.
-(reCAPTCHA/Turnstile to be wired with keys — see TODO in views.) gender is male/female/other.
+(Turnstile is verified in views.) gender is male/female/other.
 """
 
 from typing import Literal

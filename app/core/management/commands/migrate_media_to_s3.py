@@ -36,7 +36,7 @@ PHOTO_ALBUM_PREFIX = "photo-album/"
 
 
 def _md5(path: Path) -> str:
-    digest = hashlib.md5()  # noqa: S324 — matching S3's ETag, not authenticating anything
+    digest = hashlib.md5(usedforsecurity=False)  # matching S3's ETag, not authenticating anything
     with path.open("rb") as fh:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             digest.update(chunk)

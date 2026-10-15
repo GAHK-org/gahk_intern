@@ -300,7 +300,7 @@ class PageAdmin(ContentEditorAdmin):
                 "fields": ("body",),
                 "description": "Rå HTML — vises som den er. Brug knappen over feltet til at uploade "
                 "og indsætte billeder. Gamle stier (/public/… eller /static/legacy/…) virker "
-                "fortsat; de ligger under static/legacy/ (kør sync_cms_media efter behov).",
+                "fortsat; de ligger under static/legacy/.",
             },
         ),
     )

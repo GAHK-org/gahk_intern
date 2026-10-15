@@ -61,7 +61,3 @@ ci:
 docs:
   - changed-files:
       - any-glob-to-any-file: ["**/*.md"]
-
-legacy:
-  - changed-files:
-      - any-glob-to-any-file: ["legacy_site/**"]

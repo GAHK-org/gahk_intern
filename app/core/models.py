@@ -1,4 +1,4 @@
-"""Shared lookups (02-schema-etl.md §4).
+"""Shared lookups.
 
 Room is seeded from the hard-coded room map in legacy `intern/delt.php` (there is no rooms table);
 Workgroup/Cleaning come from `intern_alumne_workgroup` / `intern_alumne_cleaning`.
