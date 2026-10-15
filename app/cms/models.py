@@ -1,4 +1,4 @@
-"""CMS content (F-006/07/08). Migrated from the legacy site and rendered read-only on the public
+"""CMS content. Migrated from the legacy site and rendered read-only on the public
 side; edited at runtime only through the role-gated Django admin (see cms.admin), whose every HTML
 field is sanitized on save. HTML bodies are also sanitized on import, as defence-in-depth.
 
@@ -73,7 +73,7 @@ class Page(models.Model):  # gahk_page
         return reverse("page", kwargs={"url_path": self.slug}) if self.slug else ""
 
 
-class NewsItem(models.Model):  # gahk_news — archive-only (live site shows the Facebook feed, F-007)
+class NewsItem(models.Model):  # gahk_news — archive-only (live site shows the Facebook feed)
     title = models.CharField(max_length=255)
     body = models.TextField(blank=True)
     published_at = models.DateTimeField()

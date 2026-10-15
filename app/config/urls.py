@@ -1,6 +1,6 @@
 """Root URLconf. Preserves the legacy public URLs (`/`, Danish slugs incl. multi-segment ones like
 `faciliteter/vaerelse`) for SEO. Django's own admin is moved to /django-admin/ so the legacy public-site
-admin can keep /admin later (F-002)."""
+admin can keep /admin later."""
 
 from django.contrib import admin
 from django.urls import include, path, re_path
@@ -16,7 +16,7 @@ urlpatterns = [
     path("intern/", include("residents.urls")),
     re_path(r"^nyintern/(?P<rest>.*)$", RedirectView.as_view(url="/intern/%(rest)s", permanent=True)),
     path("optagelse/", include("admissions.urls")),
-    path("admin/", include("residents.urls_admin")),  # legacy public-site admin (F-002)
+    path("admin/", include("residents.urls_admin")),  # legacy public-site admin
     path("", cms_views.home, name="home"),
     path("begivenheder/", cms_views.events_news, name="events_news"),
     # The subscribable calendar feed, mounted at the ROOT rather than under /intern/ and carrying no

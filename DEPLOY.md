@@ -34,7 +34,7 @@ task dev:down      # stop the app container (Postgres/S3 keep running — `task 
 
 
 ## 2. Secrets / environment (prod → `app/.env.prod`, never committed)
-All are read from the environment (F-013); rotate everything at cutover (the legacy secrets are compromised).
+All are read from the environment; rotate everything at cutover (the legacy secrets are compromised).
 ```
 DJANGO_SECRET_KEY=<64+ random chars>
 DJANGO_DEBUG=0
@@ -555,7 +555,7 @@ so keep those keys somewhere outside Hetzner or you can read that backup only by
 is in it.
 
 Note also that a 30-day backup retention means applicant data deleted by `purge_applications`
-survives up to 30 days longer than F-001's one-year policy implies. Normal and defensible; written
+survives up to 30 days longer than the applications' one-year policy implies. Normal and defensible; written
 down here so it is a decision rather than a discovery.
 
 #### Verifying a backup, and rehearsing a restore

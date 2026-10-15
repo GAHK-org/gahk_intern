@@ -1641,7 +1641,7 @@
   .md-tabs > input[type="radio"]:nth-of-type(2):checked ~ .md-panel-preview { @apply block; }
   .md-panel-preview { min-height: 8rem; }
 
-  /* Horizontal, side-scrollable lineage chart (stamtræ, F-011): each node's children fan out to the
+  /* Horizontal, side-scrollable lineage chart (stamtræ): each node's children fan out to the
      right; connectors are pure-CSS pseudo-elements so there is no JS/CDN dependency. */
   .lineage { width: max-content; }
   .lineage ul { display: flex; flex-direction: column; justify-content: center; }

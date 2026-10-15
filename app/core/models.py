@@ -25,7 +25,7 @@ class Room(models.Model):
 
     @property
     def plan_image(self) -> str:
-        """Static path of this floor's plan drawing, for the værelsestjek room picker (F-005).
+        """Static path of this floor's plan drawing, for the værelsestjek room picker.
 
         The five legacy PNGs were copied to app/static/legacy/image/intern/ and renamed to drop the
         spaces in "1. sal.png" — a filename with a space under CompressedManifestStaticFilesStorage
@@ -56,7 +56,7 @@ class Cleaning(models.Model):  # intern_alumne_cleaning
 
 
 class DevClock(models.Model):
-    """DEV-ONLY simulated "today", for local testing of month rollover (F-004 room rounds).
+    """DEV-ONLY simulated "today", for local testing of month rollover (room rounds).
 
     Single row (pk=1). `core.clock.current_date()` honours `simulated_date` ONLY when settings.DEBUG,
     so this is inert in production — the row is never read there. The table ships (a migration creates

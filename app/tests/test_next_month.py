@@ -1,4 +1,4 @@
-"""Indstilling's monthly task: prepare next month's alumneliste (F-010).
+"""Indstilling's monthly task: prepare next month's alumneliste.
 
 Flow mirrors the legacy list management: copy the current list forward, edit each resident's room /
 embedsgruppe (workgroup) / cleaning, and add or remove people. A privileged embedsgruppe grants the
@@ -474,7 +474,7 @@ def test_removing_yourself_from_next_month_is_still_allowed(make_resident: Calla
 @pytest.mark.django_db
 def test_fylgje_can_be_set_when_the_resident_is_created(make_resident: Callable) -> None:
     """Recording it here is the point: a follow-up trip through the edit form is the step that gets
-    skipped, and the stamtræ (F-011) ends up with holes."""
+    skipped, and the stamtræ ends up with holes."""
     ind = make_resident(email="ind@gahk.dk", roles=("indstilling",))
     fylgje = make_resident(email="gammel@gahk.dk", first_name="Gammel", last_name="Beboer")
     room = Room.objects.create(legacy_index=405, number=405, floor="4", side="mod gaden")

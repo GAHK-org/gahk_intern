@@ -1,4 +1,4 @@
-"""AK monthly-charge reconciliation (F-009).
+"""AK monthly-charge reconciliation.
 
 The AK calendar (per-month `AkMonthlyCharge` config) is the source of truth for the monthly kryds
 deduction. `apply_monthly_charge` makes the append-only `AkEntry` ledger match it for one period:

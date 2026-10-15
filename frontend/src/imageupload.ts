@@ -1,5 +1,5 @@
 // Downscale/recompress image uploads in the browser before the form submits, so room-inspection
-// photos (F-005) stay small — big phone photos become ~a few hundred KB instead of multiple MB.
+// photos stay small — big phone photos become ~a few hundred KB instead of multiple MB.
 // No-op on pages without an image file input. Server keeps a hard size cap as a backstop.
 //
 // ANIMATIONS ARE THE EXCEPTION AND GO UP UNTOUCHED — see isAnimatedUpload. Everything below works

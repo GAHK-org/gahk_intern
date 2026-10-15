@@ -1,4 +1,4 @@
-"""Public application forms (F-001).
+"""Public application forms.
 
 Explicit fields (kills the legacy mass-assignment), server-side validation, a honeypot for spam.
 (Turnstile is verified in views.) gender is male/female/other.

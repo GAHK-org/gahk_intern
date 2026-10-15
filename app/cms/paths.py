@@ -13,7 +13,7 @@ Hence a validator that permits exactly the shape the router resolves, and nothin
 
   * two levels at most, matching the legacy routes.php map (`faciliteter/kokken`, never `a/b/c`);
   * lowercase ASCII words separated by `-`/`_`, so an address is typable and stable across the
-    /301s F-006 promises — this one rule also rejects uppercase, spaces, `.`, `..` and `køkken`;
+    /301s the CMS promises — this one rule also rejects uppercase, spaces, `.`, `..` and `køkken`;
   * no leading/trailing `/` and no `//`, which are the mistakes a hand-typed path actually makes;
   * a first segment that is not already mounted in the URLconf. A fixed pattern is matched before
     the catch-all, so a page addressed `intern` would simply never open, with nothing reporting it

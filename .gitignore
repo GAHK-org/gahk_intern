@@ -56,7 +56,7 @@ id_rsa*
 id_ed25519*
 acme.json
 
-# MEDIA_ROOT — resident-uploaded files, not source. Room-inspection photos (F-005) show the inside
+# MEDIA_ROOT — resident-uploaded files, not source. Room-inspection photos show the inside
 # of named people's rooms, and Den Hurtige attachments are whatever someone photographed just now.
 # In production these live on the server's volume; in dev they are a by-product of testing.
 # NB: this stops NEW files being picked up. The legacy room photos already committed under

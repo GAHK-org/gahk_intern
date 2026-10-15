@@ -1,4 +1,4 @@
-"""AK views (F-009). Members see their own balance/log; AK officers (role `ak`) see everyone and can
+"""AK views. Members see their own balance/log; AK officers (role `ak`) see everyone and can
 add/adjust crosses for anyone. Balance is the SUM of ledger entries."""
 
 from django.contrib import messages

@@ -1,4 +1,4 @@
-"""Authorization helpers built on the **monthly** role model (F-010).
+"""Authorization helpers built on the **monthly** role model.
 
 A resident's privileges come from their RoleAssignments in the *active* period (the newest published
 month). Superusers bypass. Replaces the legacy scattered/inverted per-controller session checks.

@@ -1,4 +1,4 @@
-"""Statistics (F-012) — members-only (the legacy JSON feeders were unauthenticated). The "this year"
+"""Statistics — members-only (the legacy JSON feeders were unauthenticated). The "this year"
 figures are correctly year-scoped (legacy bug used all-time)."""
 
 from django.contrib.auth.decorators import login_required
