@@ -3,9 +3,13 @@
 # here) in the same Coolify project — set DATABASE_URL to the managed Postgres resource's *internal*
 # URL. Env vars (DATABASE_URL, DJANGO_SECRET_KEY, ALLOWED_HOSTS, CSRF_TRUSTED_ORIGINS, SMTP_*, …) are
 # injected by Coolify's env manager, so there is no committed env_file. MediaWiki is its own app.
+#
+# The image is not built here: CI builds it and moves `:main` once the checks pass, and a timer on the
+# server pulls it and asks Coolify to redeploy (DEPLOY.md §4a). All three services run the same one.
+# IMAGE_TAG is for rolling back: set it to `sha-<commit>` in Coolify and redeploy; unset to follow main.
 services:
   web:
-    build: .
+    image: ghcr.io/gahk-org/gahk_intern:${IMAGE_TAG:-main}
     restart: unless-stopped
     command: >-
       sh -c "python manage.py migrate --noinput &&
@@ -31,7 +35,7 @@ services:
   # unreachable, so one loop covers both. Neither service runs `migrate` itself: three containers
   # migrating the same database concurrently is its own failure.
   worker:
-    build: .
+    image: ghcr.io/gahk-org/gahk_intern:${IMAGE_TAG:-main}
     restart: unless-stopped
     depends_on:
       - web
@@ -40,7 +44,7 @@ services:
              celery -A config worker --loglevel=INFO --concurrency=2"
 
   beat:
-    build: .
+    image: ghcr.io/gahk-org/gahk_intern:${IMAGE_TAG:-main}
     restart: unless-stopped
     depends_on:
       - web
