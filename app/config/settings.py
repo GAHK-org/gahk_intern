@@ -100,6 +100,19 @@ if not DATABASE_URL:
 
 DATABASES = {"default": dj_database_url.config(default=DATABASE_URL, conn_max_age=600)}
 
+# Under ASGI (config/asgi.py sets DATABASE_POOL) Django runs each request on a thread of its own, and
+# a persistent connection opened there is never closed: the request ends, its thread goes, and the
+# connection stays open until the process exits. In production that filled Postgres's 100
+# connections — a photo album's thumbnails are a request each, so browsing albums got there fast —
+# and from then on every page was a 500 until the next redeploy. Django's advice for ASGI is a pool
+# instead of persistent connections: a request borrows a connection and hands it back when it ends,
+# and max_size bounds what the process holds however many requests run at once (a request beyond it
+# waits for one, up to the pool's 30-second timeout).
+# Celery, manage.py and the tests are not ASGI and keep conn_max_age: their threads live on.
+if os.environ.get("DATABASE_POOL") == "1":
+    DATABASES["default"]["CONN_MAX_AGE"] = 0  # the pool refuses to run alongside persistent connections
+    DATABASES["default"].setdefault("OPTIONS", {})["pool"] = {"min_size": 2, "max_size": 20}
+
 # --- Auth (01-infrastructure.md A4/A5; 02-schema-etl.md §1.6) ---
 AUTH_USER_MODEL = "residents.Resident"
 
