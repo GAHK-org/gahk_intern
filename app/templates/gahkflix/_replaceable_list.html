@@ -1,0 +1,15 @@
+{% comment %} Published videos that can still get a new version of their file (`videos`). {% endcomment %}
+{% load gahkflix %}
+<div class="flix-list">
+  {% for video in videos %}
+    {% picture_url video "thumbnail" as thumb %}
+    <div class="flix-list-item">
+      <span class="flix-card-img">{% if thumb %}<img src="{{ thumb }}" alt="">{% else %}<span class="flix-card-blank">{{ video.title|slice:":1"|upper }}</span>{% endif %}</span>
+      <div>
+        <h3><a href="{% url 'gahkflix:detail' video.pk %}">{{ video.title }}</a></h3>
+        <p>{{ video.file.original_name }} · uploadet {{ video.created_at|date:"j. F Y" }} · kan få en ny version indtil {{ video.revision_window_ends|date:"j. F \k\l. H.i" }}</p>
+      </div>
+      <a class="flix-btn flix-btn-small flix-btn-quiet" href="{% url 'gahkflix:edit' video.pk %}#ny-version">Upload ny version</a>
+    </div>
+  {% endfor %}
+</div>
