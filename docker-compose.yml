@@ -172,7 +172,8 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       s3-init: {condition: service_completed_successfully}
-    command: ["celery", "-A", "config", "worker", "--loglevel=INFO", "--concurrency=2"]
+    # Every queue in one worker locally; production splits them over two (docker-compose.prod.yml).
+    command: ["celery", "-A", "config", "worker", "-Q", "celery,thumbnails,media", "--loglevel=INFO", "--concurrency=2"]
 
   beat:
     build:
