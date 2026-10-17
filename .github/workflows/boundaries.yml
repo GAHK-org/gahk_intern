@@ -8,11 +8,12 @@ name: Domain boundaries
 #   relations  manage.py check --tag domain_boundaries: a ForeignKey into another domain must not
 #              give that domain a reverse accessor onto this one's table (core/boundaries.py) — the
 #              ORM's way past every import check.
-#   raw SQL    ruff TID251 (app/ruff.toml): importing django.db.connection outside the allow-listed
-#              operator files. Runs in CI's existing `lint` job rather than here.
+#   raw-sql    ruff TID251 (app/ruff.toml): importing django.db.connection or RawSQL outside the
+#              allow-listed operator files. CI's `lint` job runs it too, as part of all of ruff; it is
+#              repeated here so this workflow alone answers "did this PR cross a boundary".
 #
-# To make a red one block merging, add "tach" and "relations" to the required status checks of the
-# main and dev rulesets.
+# To make a red one block merging, add "tach", "relations" and "raw-sql" to the required status
+# checks of the main and dev rulesets.
 
 on:
   pull_request:
@@ -48,3 +49,14 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with: { enable-cache: true }
       - run: uv run python manage.py check --tag domain_boundaries --fail-level ERROR
+
+  raw-sql:
+    name: raw-sql
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: app } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with: { enable-cache: true }
+      # Only the banned-api rule, with ruff.toml's per-file allow-list. The rest of ruff is `lint`'s job.
+      - run: uv run ruff check --select TID251 .

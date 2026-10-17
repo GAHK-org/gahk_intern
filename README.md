@@ -56,7 +56,7 @@ Hver Django-app ejer sine egne data og regler. Andre apps må kun bruge dens `ap
 forespørgsler og events med id'er og DTO'er), aldrig dens modeller eller services.
 
 ```sh
-task boundaries        # tach check + Django-tjekket for ORM-relationer på tværs af domæner
+task boundaries        # tach check + ORM-relationer på tværs af domæner + rå SQL
 task boundaries:graph  # tegn afhængighedsgrafen (Mermaid)
 ```
 

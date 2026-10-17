@@ -146,7 +146,7 @@ paths that involve no import at all.
 | Function-local (lazy) imports | **CI** — Tach sees them like any other import | |
 | Annotation-only imports under `TYPE_CHECKING` | Allowed on purpose (`ignore_type_checking_imports`) | |
 | A cross-domain FK must not leave a reverse accessor (`resident.ak_entries`, `event.notices`) | **CI** — Django system check `core.E010`/`E011`, against a shrinking baseline | `core/boundaries.py` |
-| No raw SQL outside operator code | **CI**, partially: ruff bans importing `django.db.connection(s)` and `RawSQL` outside an allow-list | `app/ruff.toml` |
+| No raw SQL outside operator code | **CI**, partially: ruff bans importing `django.db.connection(s)` and `RawSQL` outside an allow-list (the workflow's `raw-sql` job, and `lint`) | `app/ruff.toml` |
 | `.raw()` / `.extra()` on a manager | **Review only.** No import to catch | |
 | Following a **forward** FK into another domain (`notice.event.title`) | **Review only.** The owning side needs the FK; the accessor comes with it. Read `event_id` and ask the other domain's `api` | |
 | `__` lookups across domains (`Notice.objects.filter(event__visibility=…)`) | **Review only.** It compiles to a join, with no import | |
