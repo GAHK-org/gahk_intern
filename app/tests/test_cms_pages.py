@@ -628,3 +628,59 @@ def test_the_change_log_is_scoped_to_cms(editor_client: Client) -> None:
     assert "Vision" in html
     for model in PageVersion.objects.values_list("page__header", flat=True):
         assert model is None or model == "Vision"
+
+
+# ---- headings are sanitised too (stored XSS) -------------------------------------------------------------
+#
+# The header and news title are rendered with inline formatting allowed, which used to mean `|safe`
+# straight from the database: only the body went through clean_html, so any content editor could put
+# a <script> in a page title.
+
+XSS_HEADER = 'Om <em>os</em> &amp; mere<script>alert(1)</script><img src=x onerror="alert(2)">'
+
+
+def test_page_heading_keeps_inline_formatting_but_drops_script() -> None:
+    Page.objects.create(header=XSS_HEADER, slug="om-os", body="<p>x</p>")
+    html = Client().get("/om-os").content.decode()
+    assert "<script>alert(1)" not in html and "onerror" not in html
+    assert "Om <em>os</em> &amp; mere" in html  # the legacy formatting still renders
+    assert "<title>Om os &amp; mere - G. A. Hagemanns Kollegium</title>" in html  # plain text there
+
+
+def test_section_title_cannot_break_out_of_the_aria_label() -> None:
+    Page.objects.create(header='Fac" onmouseover="alert(1)', slug="faciliteter", body="<p>x</p>")
+    Page.objects.create(header="Køkken<script>alert(3)</script>", slug="faciliteter/kokken", body="<p>y</p>")
+    html = Client().get("/faciliteter/kokken").content.decode()
+    assert 'aria-label="Fac&quot; onmouseover=&quot;alert(1)"' in html
+    assert "<script>alert(3)" not in html and ">Køkken</a>" in html  # sidebar link header
+
+
+def test_news_title_is_sanitised_on_both_pages() -> None:
+    from django.utils import timezone
+
+    from cms.models import NewsItem
+
+    NewsItem.objects.create(title=XSS_HEADER, body="<p>b</p>", published_at=timezone.now())
+    for url in ("/", "/begivenheder/"):
+        html = Client().get(url).content.decode()
+        assert "<script>alert(1)" not in html and "onerror" not in html, url
+        assert "Om <em>os</em> &amp; mere" in html, url
+
+
+def test_admin_forms_clean_the_headings_on_save() -> None:
+    from cms.admin import NewsItemAdminForm, PageAdminForm
+
+    page_form = PageAdminForm(data={"header": XSS_HEADER, "body": "<p>x</p>", "path_segment": "om-os"})
+    assert page_form.is_valid(), page_form.errors
+    assert page_form.cleaned_data["header"] == "Om <em>os</em> &amp; mere"
+
+    news_form = NewsItemAdminForm(
+        data={
+            "title": XSS_HEADER,
+            "body": "<p>x</p>",
+            "published_at_0": "2026-01-01",
+            "published_at_1": "12:00",
+        }
+    )
+    news_form.is_valid()
+    assert news_form.cleaned_data["title"] == "Om <em>os</em> &amp; mere"

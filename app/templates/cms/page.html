@@ -1,6 +1,6 @@
 {% extends "public_base.html" %}
 {% load cms_extras %}
-{% block title %}{{ page.header|safe }} - G. A. Hagemanns Kollegium{% endblock %}
+{% block title %}{{ page.header|heading_text }} - G. A. Hagemanns Kollegium{% endblock %}
 
 {# This page paints the hero image across the whole content region; drop the default top band. #}
 {% block hero %}{% endblock %}
@@ -11,18 +11,18 @@
   <div class="absolute inset-0 bg-black/60"></div>
 
   <div class="relative w-full max-w-5xl mx-auto px-4 py-10 sm:py-14">
-    <h1 class="font-display text-3xl sm:text-4xl text-white text-center drop-shadow-lg mb-8">{{ page.header|safe }}</h1>
+    <h1 class="font-display text-3xl sm:text-4xl text-white text-center drop-shadow-lg mb-8">{{ page.header|heading_html }}</h1>
 
     <div class="grid gap-6 items-start {% if section_links %}md:grid-cols-[16rem_1fr]{% else %}max-w-3xl mx-auto{% endif %}">
       {% if section_links %}
-      <nav aria-label="{{ section_title|safe }}" class="rounded-xl bg-white/95 backdrop-blur p-4 shadow-xl md:sticky md:top-4">
-        <h2 class="font-display text-lg text-emerald-800 mb-3 px-1">{{ section_title|safe }}</h2>
+      <nav aria-label="{{ section_title|heading_text }}" class="rounded-xl bg-white/95 backdrop-blur p-4 shadow-xl md:sticky md:top-4">
+        <h2 class="font-display text-lg text-emerald-800 mb-3 px-1">{{ section_title|heading_html }}</h2>
         <ul class="space-y-1">
           {% for l in section_links %}
           <li>
             <a href="{{ l.url }}"
                class="block rounded-lg px-3 py-2 text-sm no-underline transition-colors {% if l.current %}bg-emerald-700 text-white font-medium{% else %}text-gray-700 hover:bg-emerald-50 hover:text-emerald-800{% endif %}"
-               {% if l.current %}aria-current="page"{% endif %}>{{ l.header|safe }}</a>
+               {% if l.current %}aria-current="page"{% endif %}>{{ l.header|heading_html }}</a>
           </li>
           {% endfor %}
         </ul>

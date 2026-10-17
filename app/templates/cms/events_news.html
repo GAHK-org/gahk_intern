@@ -33,7 +33,7 @@
       <div class="space-y-6">
         {% for n in news %}
           <article class="border-b border-gray-100 pb-5 last:border-0">
-            <h3 class="font-display text-lg text-emerald-800">{{ n.title|safe }}</h3>
+            <h3 class="font-display text-lg text-emerald-800">{{ n.title|heading_html }}</h3>
             <div class="text-xs text-gray-400 mb-2">{{ n.published_at|date:"j. F Y" }}</div>
             <div class="prose-gahk">{{ n.body|body_media|safe }}</div>
           </article>

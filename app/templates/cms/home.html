@@ -38,7 +38,7 @@
         <h2 class="font-display text-xl text-emerald-900 mb-3">Seneste nyt</h2>
         <ul class="space-y-2 list-none p-0 m-0">
           {% for n in latest_news %}
-            <li><span class="text-gray-400 text-sm">{{ n.published_at|date:"j. M Y" }}</span> — {{ n.title|safe }}</li>
+            <li><span class="text-gray-400 text-sm">{{ n.published_at|date:"j. M Y" }}</span> — {{ n.title|heading_html }}</li>
           {% endfor %}
         </ul>
       </div>

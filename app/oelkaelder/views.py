@@ -21,6 +21,7 @@ from django.views.decorators.http import require_POST
 
 from core.exports import csv_or_xlsx_response
 from core.uploads import attached_image
+from core.net import client_ip
 from residents.models import Resident
 from residents.permissions import current_resident, role_required
 
@@ -54,18 +55,9 @@ class _Entry(TypedDict):
     amount_ore: int
 
 
-def _client_ip(request: HttpRequest) -> str:
-    """The till's real IP. Behind Coolify/Traefik, REMOTE_ADDR is the proxy, so trust the last hop of
-    X-Forwarded-For (the IP Traefik observed — the rightmost entry is the one it appended, not a value
-    a client could spoof). Safe only because the app server is reachable *only* via the proxy."""
-    xff = request.META.get("HTTP_X_FORWARDED_FOR", "")
-    if xff:
-        return xff.split(",")[-1].strip()
-    return request.META.get("REMOTE_ADDR", "")
-
-
 def _is_kiosk(request: HttpRequest) -> bool:
-    return settings.DEBUG or _client_ip(request) in settings.OELKAELDER_KIOSK_IPS
+    # The till's real IP — see core.net for why only the last X-Forwarded-For hop is trusted.
+    return settings.DEBUG or client_ip(request) in settings.OELKAELDER_KIOSK_IPS
 
 
 def shop(request: HttpRequest) -> HttpResponse:

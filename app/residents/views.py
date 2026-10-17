@@ -1,5 +1,3 @@
-import csv
-import io
 import logging
 import os
 from datetime import date
@@ -19,6 +17,7 @@ from django.utils.encoding import force_bytes
 from django.utils.http import url_has_allowed_host_and_scheme, urlsafe_base64_encode
 
 from core.danish import MONTHS
+from core.exports import csv_or_xlsx_response
 from core.models import Cleaning, Room, Workgroup
 
 from .forms import ProfileEditForm, ResidentEditForm
@@ -309,34 +308,11 @@ def directory_export(request: HttpRequest) -> HttpResponse:
     sort, direction = _parse_sort(request)
     rows = _directory_rows(year, month, request.GET.get("q", ""), sort, direction)
     headers = [label for label, _ in DIRECTORY_COLUMNS]
-    fname = f"alumneliste-{year}-{month:02d}"
-
-    if request.GET.get("format") == "xlsx":
-        from openpyxl import Workbook
-
-        wb = Workbook()
-        ws = wb.active
-        ws.title = f"{year}-{month:02d}"
-        ws.append(headers)
-        for r in rows:
-            ws.append([fn(r) for _, fn in DIRECTORY_COLUMNS])
-        buf = io.BytesIO()
-        wb.save(buf)
-        resp = HttpResponse(
-            buf.getvalue(),
-            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-        resp["Content-Disposition"] = f'attachment; filename="{fname}.xlsx"'
-        return resp
-
-    # CSV — UTF-8 with BOM so Excel opens Danish characters correctly.
-    resp = HttpResponse(content_type="text/csv; charset=utf-8")
-    resp["Content-Disposition"] = f'attachment; filename="{fname}.csv"'
-    resp.write("﻿")  # UTF-8 BOM
-    writer = csv.writer(resp)
-    writer.writerow(headers)
-    for r in rows:
-        writer.writerow([fn(r) for _, fn in DIRECTORY_COLUMNS])
+    fmt = "xlsx" if request.GET.get("format") == "xlsx" else "csv"
+    data = [[fn(r) for _, fn in DIRECTORY_COLUMNS] for r in rows]
+    resp = csv_or_xlsx_response(fmt, f"{year}-{month:02d}", headers, data, f"alumneliste-{year}-{month:02d}")
+    if resp is None:  # unreachable: fmt is always csv or xlsx here, but the helper's type says Optional
+        raise AssertionError(fmt)
     return resp
 
 
