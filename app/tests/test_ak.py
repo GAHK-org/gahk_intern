@@ -231,3 +231,92 @@ def test_management_command_applies_active_period(make_resident: Callable) -> No
     assert _monthly(r, y, m).delta == -2
     call_command("ak_monthly_assessment")  # idempotent
     assert AkEntry.objects.filter(resident=r, kind=AkEntry.Kind.MONTHLY, year=y, month=m).count() == 1
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("delta", ["0", "abc", "2,5", ""])
+def test_officer_add_entry_rejects_zero_or_non_numeric_out_loud(make_resident: Callable, delta: str) -> None:
+    """add_entry used to drop these silently and redirect as if saved, so the officer believed the
+    resident had been credited."""
+    officer = make_resident(email="add-off@gahk.dk", roles=[Role.AK])
+    r = make_resident(email="add-r@gahk.dk")
+    c = Client()
+    c.force_login(officer)
+
+    resp = c.post(f"/intern/ak/log/{r.pk}/add", {"delta": delta, "reason": "x"}, follow=True)
+
+    assert [m.level_tag for m in resp.context["messages"]] == ["error"]
+    assert not AkEntry.objects.filter(resident=r).exists()
+
+
+@pytest.mark.django_db
+def test_officer_add_entry_confirms_success(make_resident: Callable) -> None:
+    officer = make_resident(email="add-off2@gahk.dk", roles=[Role.AK])
+    r = make_resident(email="add-r2@gahk.dk")
+    c = Client()
+    c.force_login(officer)
+
+    resp = c.post(f"/intern/ak/log/{r.pk}/add", {"delta": "+2", "reason": "Havearbejde"}, follow=True)
+
+    assert [m.level_tag for m in resp.context["messages"]] == ["success"]
+    assert AkEntry.balance_for(r) == 2
+
+
+@pytest.mark.django_db
+def test_missing_schedule_row_means_the_same_on_page_load_as_in_the_command(make_resident: Callable) -> None:
+    """The command created a default (on, 2) row for a month with none; the page-load backstop instead
+    took "missing" as "off" and deleted every charge for the period. Both now create the default."""
+    y, m = active_period()
+    member = make_resident(email="missing-row@gahk.dk")
+    _place(member, y, m)
+    AkMonthlyCharge.objects.filter(month=m).delete()
+
+    ensure_active_month_applied()
+
+    charge = AkMonthlyCharge.objects.get(month=m)
+    assert (charge.active, charge.krydser) == (True, 2)
+    assert _monthly(member, y, m).delta == -2
+
+
+@pytest.mark.django_db
+def test_saving_the_schedule_keeps_created_by_on_unchanged_charges(make_resident: Callable) -> None:
+    """Re-saving the schedule stamped the saving officer as `created_by` on every charge of the active
+    period, including ones the scheduled run booked and the officer never changed."""
+    y, m = active_period()
+    _set_schedule(m, active=True, krydser=2)
+    officer = make_resident(email="keep-off@gahk.dk", roles=[Role.AK])
+    member = make_resident(email="keep-m@gahk.dk")
+    _place(member, y, m)
+    apply_monthly_charge(y, m)  # the scheduled run: no officer
+    assert _monthly(member, y, m).created_by is None
+
+    payload = {f"active_{mo}": "1" for mo in range(1, 13)}
+    payload.update({f"krydser_{mo}": "2" for mo in range(1, 13)})
+    c = Client()
+    c.force_login(officer)
+    c.post("/intern/ak/admin/gem-maaneder", payload)
+
+    assert _monthly(member, y, m).created_by is None  # amount unchanged → row untouched
+
+    payload[f"krydser_{m}"] = "3"
+    c.post("/intern/ak/admin/gem-maaneder", payload)
+
+    entry = _monthly(member, y, m)
+    assert entry.delta == -3
+    assert entry.created_by == officer  # the officer did change this one
+
+
+@pytest.mark.django_db
+def test_officer_delete_asks_for_confirmation(make_resident: Callable) -> None:
+    officer = make_resident(email="del-off@gahk.dk", roles=[Role.AK])
+    r = make_resident(email="del-r@gahk.dk")
+    AkEntry.objects.create(resident=r, delta=3, kind=AkEntry.Kind.LABOUR, reason="Maling")
+    c = Client()
+    c.force_login(officer)
+
+    html = c.get(f"/intern/ak/log/{r.pk}").content.decode()
+
+    form = html.split('action="/intern/ak/log/')[1].split(">")[0]  # the add form comes first
+    delete_form = html.split("/delete/")[1].split(">")[0]
+    assert "confirm(" not in form
+    assert "onsubmit=\"return confirm('Slet +3 kryds" in delete_form

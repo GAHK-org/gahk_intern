@@ -68,3 +68,29 @@ def test_the_statement_reports_the_balance_at_the_end_of_its_own_month(
     body = mail.outbox[0].body
     assert "100,00 kr" in body  # the 10.000 øre deposited inside the month
     assert "600,00 kr" not in body  # not the 60.000 øre the shopper holds today
+
+
+@pytest.mark.django_db
+def test_one_failed_send_does_not_stop_the_run(
+    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """send_mail raised straight out of the loop, so one bad address aborted the run and everyone
+    after it went without a statement. Now it is logged per recipient and the run carries on."""
+    from oelkaelder import tasks
+
+    bad = Shopper.objects.create(resident=make_resident(email="bad@gahk.dk"))
+    Shopper.objects.create(resident=make_resident(email="good@gahk.dk"))
+    real_send_mail = tasks.send_mail
+
+    def flaky_send_mail(subject: str, body: str, sender: str, recipients: list[str]) -> int:
+        if recipients == ["bad@gahk.dk"]:
+            raise OSError("550 mailbox unavailable")
+        return real_send_mail(subject, body, sender, recipients)
+
+    monkeypatch.setattr(tasks, "send_mail", flaky_send_mail)
+
+    assert send_monthly_statements.run() == 1
+
+    assert [m.to for m in mail.outbox] == [["good@gahk.dk"]]
+    assert f"shopper#{bad.pk}" in caplog.text
+    assert "1 failed" in caplog.text
