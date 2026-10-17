@@ -375,6 +375,17 @@ def test_the_history_page_shows_what_changed(editor_client: Client) -> None:
     assert "Overskrift" in html, "the changed short field should be listed"
 
 
+def test_the_history_page_does_not_promise_to_keep_everything(editor_client: Client) -> None:
+    """It used to say nothing is ever deleted, while snapshot_page trims beyond the cap."""
+    from cms.services import VERSIONS_PER_PAGE_CAP
+
+    page = Page.objects.create(header="Vision", slug="vision", body="<p>a</p>")
+    html = editor_client.get(f"/django-admin/cms/page/{page.id}/versioner/").content.decode()
+
+    assert "aldrig slettet" not in html
+    assert f"seneste {VERSIONS_PER_PAGE_CAP} versioner" in html
+
+
 def test_the_history_page_escapes_the_body(editor_client: Client) -> None:
     """The diff shows body HTML *as text*; rendering it would execute stored markup in the admin."""
     page = Page.objects.create(header="Vision", slug="vision", body="<p>a</p>")
@@ -684,3 +695,28 @@ def test_admin_forms_clean_the_headings_on_save() -> None:
     )
     news_form.is_valid()
     assert news_form.cleaned_data["title"] == "Om <em>os</em> &amp; mere"
+
+
+# ------------------------------------------------------------------ background image
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        ("/media/cms/2026/gang.jpg", "url('/media/cms/2026/gang.jpg')"),
+        ("https://example.org/gang.jpg", "url('https://example.org/gang.jpg')"),
+        ("/public/image/upload/images/gang.jpg", "url('/static/legacy/image/upload/images/gang.jpg')"),
+    ],
+)
+def test_a_page_background_renders_at_its_real_url(stored: str, expected: str) -> None:
+    """A background picked from the image library is a /media/cms/… URL and must stay one.
+
+    legacy_img used to prefix `legacy/` onto everything not starting /public/, so a library pick
+    rendered as /static/legacy/media/cms/…, a 404. Only the legacy /public/ paths are rewritten.
+    """
+    Page.objects.create(header="Gangen", slug="gangen", body="<p>x</p>", background_image=stored)
+
+    html = Client().get("/gangen").content.decode()
+
+    assert expected in html
+    assert "/static/legacy/media/" not in html

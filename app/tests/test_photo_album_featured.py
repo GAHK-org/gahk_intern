@@ -149,6 +149,23 @@ def test_dashboard_links_each_picture_to_its_album(
 
 
 @pytest.mark.django_db
+def test_dashboard_strip_follows_the_album_rollout_gate(
+    client: Client, album: Album, make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-gating the album (photo_album.access.roles_allowed) must hide its photos from the
+    dashboard as well, not only the sidebar link — the strip used to render for everyone."""
+    monkeypatch.setattr("photo_album.templatetags.photo_album_extras.current_date", lambda: DAY)
+    resident = make_resident()
+    _image(album, resident, captured_at=datetime(2024, 10, 13, 10, tzinfo=UTC))
+    client.force_login(resident)
+    assert "Dagens billeder" in client.get("/intern/").content.decode()
+
+    monkeypatch.setattr("photo_album.access.roles_allowed", lambda _roles: False)
+
+    assert "Dagens billeder" not in client.get("/intern/").content.decode()
+
+
+@pytest.mark.django_db
 def test_dashboard_has_no_strip_without_photos(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
