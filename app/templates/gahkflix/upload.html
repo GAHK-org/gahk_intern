@@ -3,17 +3,10 @@
 {% block content %}
   <div class="flix-page flix-page-narrow">
     <h1 class="flix-page-title">Upload en video</h1>
-    {% if drafts or replaceable %}
+    {% if recent %}
       <section class="flix-panel">
-        <h2>Dine videoer, der kan få en ny version</h2>
-        {% if drafts %}
-          <h3 class="flix-subhead">Ikke udgivet</h3>
-          {% include "gahkflix/_draft_list.html" %}
-        {% endif %}
-        {% if replaceable %}
-          <h3 class="flix-subhead">Udgivet for nylig</h3>
-          {% include "gahkflix/_replaceable_list.html" with videos=replaceable %}
-        {% endif %}
+        <h2>Dine seneste videoer</h2>
+        {% include "gahkflix/_recent_list.html" %}
       </section>
     {% endif %}
     {% if pending %}
