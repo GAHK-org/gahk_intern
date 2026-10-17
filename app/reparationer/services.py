@@ -23,11 +23,11 @@ from typing import TYPE_CHECKING
 from django.db.models import Q, QuerySet
 
 from core import push
-from residents.models import Role, RoleAssignment, active_period
+from residents.api import Role, resident_ids_with_roles
 
 if TYPE_CHECKING:
     from core.models import PushSubscription
-    from residents.models import Resident
+    from residents.api import Resident
 
     from .models import RepairTask
 
@@ -49,10 +49,7 @@ def _subscribers_with_role(role: str) -> "QuerySet[PushSubscription]":
     """Devices opted in to the Reparationer topic, owned by someone currently holding `role` for the
     active period. administrator counts too — it implies every role (residents.permissions.real_roles),
     and a superuser may hold the role with no RoleAssignment row at all."""
-    year, month = active_period()
-    resident_ids = RoleAssignment.objects.filter(
-        year=year, month=month, role__in=[role, Role.ADMINISTRATOR]
-    ).values_list("resident_id", flat=True)
+    resident_ids = resident_ids_with_roles([role, Role.ADMINISTRATOR])
     return push.subscribers(TOPIC).filter(Q(user_id__in=resident_ids) | Q(user__is_superuser=True))
 
 

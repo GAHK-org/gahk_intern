@@ -54,6 +54,7 @@ from oelkaelder.models import (
     Transaction,
     TransactionItem,
 )
+from opslagstavle.demo import link_announcement
 from opslagstavle.demo import seed as seed_opslagstavle
 from opslagstavle.models import Notice, NoticeComment, NoticeReaction
 from photo_album.demo import seed as seed_photo_album
@@ -204,6 +205,7 @@ class Command(BaseCommand):
             self._seed_stats()
             seed_opslagstavle(residents, self.now, self.rng)
             seed_events(residents, self.now, self.rng)
+            link_announcement()  # board post -> event, once both exist
             seed_arkiv(residents, self.now, self.rng)
             seed_photo_album(residents, self.now, self.rng)
             seed_den_hurtige(residents, self.now, self.rng)

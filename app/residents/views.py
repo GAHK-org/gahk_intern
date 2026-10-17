@@ -18,9 +18,11 @@ from django.urls import reverse
 from django.utils.encoding import force_bytes
 from django.utils.http import url_has_allowed_host_and_scheme, urlsafe_base64_encode
 
+from core import domain_events
 from core.danish import MONTHS
 from core.models import Cleaning, Room, Workgroup
 
+from .api import MemberAreaVisited, parse_period, period_options
 from .forms import ProfileEditForm, ResidentEditForm
 from .models import (
     WORKGROUP_ROLE,
@@ -42,12 +44,10 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     """Internal landing page (F-013). Shows the member's active-month roles and the shared
     WiFi/calendar info — now gated by authentication (not campus IP) with secrets read from env.
     Uses effective roles so the preview override is reflected here too."""
-    # Backstop for the ak_monthly_assessment cron job (DEPLOY.md §4b): books this month's AK
-    # deduction if the schedule missed it. Cheap and idempotent; see ak.services.
-    from ak.services import ensure_active_month_applied
-
-    ensure_active_month_applied()
     year, month = active_period()
+    # AK books this month's deduction off this if its cron missed it (ak.handlers). Published rather
+    # than called, so identity does not depend on AK: see core.domain_events.
+    domain_events.publish(MemberAreaVisited(resident_id=current_resident(request).pk, year=year, month=month))
     roles = sorted(effective_roles(request))
     return render(
         request,
@@ -172,27 +172,6 @@ def _directory_rows(
     return qs
 
 
-def _parse_period(request: HttpRequest) -> tuple[int, int]:
-    """The (year, month) chosen via ?period=YYYY-M, or the active period as default."""
-    try:
-        ys, ms = (request.GET.get("period") or "").split("-")
-        y, m = int(ys), int(ms)
-        if 1 <= m <= 12:
-            return y, m
-    except ValueError:
-        pass
-    return active_period()
-
-
-def _period_options(selected: tuple[int, int]) -> list[dict[str, str | bool]]:
-    """All months that have a published list, newest first, for the history picker."""
-    periods = Residency.objects.values_list("year", "month").distinct().order_by("-year", "-month")
-    return [
-        {"value": f"{y}-{m}", "label": f"{DA_MONTHS[m].capitalize()} {y}", "selected": (y, m) == selected}
-        for y, m in periods
-    ]
-
-
 def _clash_rooms(year: int, month: int) -> list[int]:
     """Room numbers occupied by more than one resident in (year, month). Should always be empty —
     end_round evicts the departing occupant and the next-month editor blocks a clashing save — but if
@@ -238,7 +217,7 @@ def directory(request: HttpRequest) -> HttpResponse:
     """Full directory page (login-required). Legacy `json()` was campus-IP gated; with real auth the
     members-only login is the control (F-010). HTMX powers the live search and column sorting; the
     period picker shows any past month's list (the legacy "oldLists"). Default order is by name."""
-    year, month = _parse_period(request)
+    year, month = parse_period(request)
     sort, direction = _parse_sort(request)
     q = request.GET.get("q", "")
     return render(
@@ -247,7 +226,7 @@ def directory(request: HttpRequest) -> HttpResponse:
         {
             "rows": _directory_rows(year, month, q, sort, direction),
             "badges": _period_badges(year, month),
-            "periods": _period_options((year, month)),
+            "periods": period_options((year, month)),
             "period_value": f"{year}-{month}",
             "period_label": f"{DA_MONTHS[month].capitalize()} {year}",
             "q": q,
@@ -263,7 +242,7 @@ def directory(request: HttpRequest) -> HttpResponse:
 @login_required
 def directory_rows(request: HttpRequest) -> HttpResponse:
     """HTMX fragment: the sortable table (headers + rows) for the selected period/query/sort."""
-    year, month = _parse_period(request)
+    year, month = parse_period(request)
     sort, direction = _parse_sort(request)
     q = request.GET.get("q", "")
     return render(
@@ -329,7 +308,7 @@ DIRECTORY_COLUMNS = [
 @login_required
 def directory_export(request: HttpRequest) -> HttpResponse:
     """Export the selected month's alumneliste as CSV or Excel (?format=csv|xlsx), in the shown order."""
-    year, month = _parse_period(request)
+    year, month = parse_period(request)
     sort, direction = _parse_sort(request)
     rows = _directory_rows(year, month, request.GET.get("q", ""), sort, direction)
     headers = [label for label, _ in DIRECTORY_COLUMNS]

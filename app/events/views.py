@@ -27,11 +27,9 @@ from core import push
 from core.clock import current_date, current_datetime
 from core.danish import MONTHS, WEEKDAYS_SHORT
 from core.uploads import attached_image
-from residents import birthdays as birthdays_mod
-from residents.models import Resident
-from residents.permissions import current_resident
+from residents.api import Birthday, Resident, birthdays_in_span, current_resident
 
-from . import access, icalendar, services
+from . import access, api, icalendar, services
 from .forms import EventCommentForm, EventForm
 from .models import Answer, CalendarFeedToken, Event, EventComment, Rsvp
 
@@ -115,7 +113,7 @@ def _month_grid(
     first: datetime.date,
     by_day: dict[datetime.date, list[Event]],
     chosen: datetime.date | None = None,
-    birthdays: dict[datetime.date, list[birthdays_mod.Birthday]] | None = None,
+    birthdays: dict[datetime.date, list[Birthday]] | None = None,
 ) -> list[list[dict[str, object]]]:
     """The month as whole Monday-to-Sunday weeks, padded into the neighbouring months.
 
@@ -243,11 +241,9 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
             "can_edit": access.can_edit(event, resident),
             "can_delete": access.can_delete(event, resident),
             "can_cancel": access.can_cancel(event, resident),
-            # The other half of Notice.event: the posts announcing this thing. Gated on the READER's
-            # access to opslagstavlen, which is still a role trial — linking somebody to a board
-            # that will 403 them is worse than not mentioning it. Imported lazily so the two apps
-            # stay acyclic at import time (opslagstavle.forms reaches the other way).
-            "notices": _related_notices(request, event),
+            # The other half of Notice.event: the posts announcing this thing, and whatever else
+            # another domain registers. Each section is gated on the READER by its own domain.
+            "mention_sections": _mention_sections(request, event),
             "comments": _comments(request, event),
             "comment_form": EventCommentForm(),
         }
@@ -281,12 +277,11 @@ def _comment_anchor(event_pk: int) -> str:
     return f"{reverse('events:detail', args=[event_pk])}#kommentarer"
 
 
-def _related_notices(request: HttpRequest, event: Event) -> list:
-    from opslagstavle.access import request_allowed as board_allowed
-
-    if not board_allowed(request):
-        return []
-    return list(event.notices.select_related("author").order_by("-created_at")[:5])
+def _mention_sections(request: HttpRequest, event: Event) -> list[api.MentionSection]:
+    """Other domains' content about this event — opslagstavlen's posts, today. Each provider applies
+    its own gate for this reader (see api.register_mention_provider); this module does not know
+    which domains are listening, which is why it no longer imports opslagstavle."""
+    return api.mentions_of(request, event.pk)
 
 
 def _visible_comment(request: HttpRequest, pk: int) -> EventComment:
@@ -544,7 +539,7 @@ def calendar(request: HttpRequest) -> HttpResponse:
     # an Event. Queried over the GRID's span for the same reason the events are: the cell for
     # 1 September is drawn on the August page, and a name that appears only when you click through
     # to the next month is a name the calendar failed to tell you about.
-    birthdays = birthdays_mod.in_span(grid_first, grid_last)
+    birthdays = birthdays_in_span(grid_first, grid_last)
 
     chosen = _requested_day(request, (grid_first, grid_last))
 

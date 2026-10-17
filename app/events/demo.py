@@ -29,7 +29,7 @@ from datetime import datetime, timedelta
 
 from django.utils import timezone
 
-from residents.models import Resident
+from residents.api import Resident
 
 from .models import RETENTION_AFTER_END, Answer, Event, EventComment, EventInvite, Rsvp, Visibility
 
@@ -176,7 +176,6 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
     )
 
     _seed_the_thread(events[0], residents)
-    _link_the_announcement(events[0])
 
     return len(events)
 
@@ -200,23 +199,6 @@ def _seed_the_thread(event: Event, residents: list[Resident]) -> None:
     ]
     for author, body in thread:
         EventComment.objects.create(event=event, author=author, body=body)
-
-
-def _link_the_announcement(event: Event) -> None:
-    """Point opslagstavlen's fællesspisning post at the fællesspisning event.
-
-    Done here rather than in opslagstavle.demo because the events do not exist yet when that
-    one runs — seed_demo seeds the board first — and because this is the join between the two
-    features rather than something either of them owns alone.
-
-    Worth having in the fixture at all: the chip is the only visible sign that the two features
-    know about each other, and nobody looking at a fresh checkout would think to create it.
-    """
-    from opslagstavle.models import Category, Notice
-
-    announcement = Notice.objects.filter(category=Category.BEGIVENHED, event__isnull=True).first()
-    if announcement is not None:
-        Notice.objects.filter(pk=announcement.pk).update(event=event)
 
 
 def _answer(event: Event, resident: Resident, answer: str, when: datetime) -> None:

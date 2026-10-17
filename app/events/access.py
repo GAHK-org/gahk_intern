@@ -32,8 +32,7 @@ from django.db.models import Q, QuerySet
 from django.http import HttpRequest
 
 from core.rollout import Gate
-from residents.models import Resident
-from residents.permissions import View, current_resident
+from residents.api import Resident, View, current_resident
 
 from .models import Event, EventComment, EventInvite, EventQuerySet, Visibility
 

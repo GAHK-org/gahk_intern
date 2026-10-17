@@ -24,7 +24,7 @@ from core.markdown import plain_text
 from . import access
 
 if TYPE_CHECKING:
-    from residents.models import Resident
+    from residents.api import Resident
 
     from .models import Notice, NoticeComment
 

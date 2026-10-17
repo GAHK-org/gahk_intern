@@ -13,7 +13,7 @@ ETL run had already clobbered. ETL and seeding are deliberate developer operatio
 database; a resident clicking "gem" is not, and that is the one this protects.
 """
 
-from residents.models import Resident
+from residents.api import Resident
 
 from .models import Page, PageRedirect, PageVersion
 

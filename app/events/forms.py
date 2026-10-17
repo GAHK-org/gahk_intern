@@ -17,7 +17,7 @@ from django.conf import settings
 
 from core.clock import current_datetime
 from core.uploads import check_image_upload
-from residents.models import Residency, Resident, active_period
+from residents.api import Resident, roster_resident_ids
 
 from .models import MIN_INVITEES, Event, EventComment, Visibility
 
@@ -32,9 +32,7 @@ def invitable_residents(exclude: Resident | None = None) -> object:
     The organiser is dropped because they are implicitly part of their own event; leaving them in
     would let somebody satisfy the four-person minimum by inviting themselves.
     """
-    year, month = active_period()
-    living_here = Residency.objects.filter(year=year, month=month).values("resident_id")
-    qs = Resident.objects.filter(pk__in=living_here).order_by("first_name", "last_name")
+    qs = Resident.objects.filter(pk__in=roster_resident_ids()).order_by("first_name", "last_name")
     return qs.exclude(pk=exclude.pk) if exclude else qs
 
 

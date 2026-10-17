@@ -50,6 +50,20 @@ runner) via `.pre-commit-config.yaml`. Derefter kører **ruff** (check + format)
 ved hvert commit. Kør manuelt på alt med `uv run prek run --all-files`. De samme tjek håndhæves i CI
 (`.github/workflows/ci.yml`): `lint`, `typecheck`, `test`, `security` og `build`.
 
+## Domænegrænser
+
+Hver Django-app ejer sine egne data og regler. Andre apps må kun bruge dens `api.py` (kommandoer,
+forespørgsler og events med id'er og DTO'er), aldrig dens modeller eller services.
+
+```sh
+task boundaries        # tach check + ORM-relationer på tværs af domæner + rå SQL
+task boundaries:graph  # tegn afhængighedsgrafen (Mermaid)
+```
+
+Reglerne, hvad der håndhæves automatisk, og hvad der kun fanges i review, står i
+[docs/domain-boundaries.md](docs/domain-boundaries.md). CI tjekker dem på hver PR
+(`.github/workflows/boundaries.yml`).
+
 ## Branches og pull requests
 
 Ingen kan pushe direkte til `main` eller `dev`; alt går gennem pull requests. `dev` samler det

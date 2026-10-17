@@ -26,7 +26,7 @@ from core.models import PushSubscription
 from . import channels
 
 if TYPE_CHECKING:
-    from residents.models import Resident
+    from residents.api import Resident
 
     from .models import QuickComment, QuickPost
 

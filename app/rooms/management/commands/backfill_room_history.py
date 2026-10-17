@@ -24,7 +24,7 @@ from django.utils import timezone
 
 from core.etl import fetch_all, resident_id_remap
 from core.models import Room
-from residents.models import Resident
+from residents.api import Resident
 from rooms.models import RoomCondition, RoomConditionScore, RoomCriterion
 
 from .etl_rooms import parse_kv

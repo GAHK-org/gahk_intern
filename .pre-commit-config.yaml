@@ -31,6 +31,14 @@ repos:
         pass_filenames: false
         always_run: true
 
+      # Domain boundaries (tach.toml). Static and whole-project, a fraction of a second.
+      - id: tach
+        name: tach check (domain boundaries)
+        entry: uv run tach check
+        language: system
+        pass_filenames: false
+        types: [python]
+
       - id: generate-erd
         name: Generate Mermaid ERD (docs/erd.md)
         entry: uv run python scripts/generate_erd.py
