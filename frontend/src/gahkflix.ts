@@ -575,6 +575,135 @@ function initTagEditor(): void {
   render();
 }
 
+// --- Season and episode numbers ------------------------------------------------------------------
+//
+// Digits only, and a dropdown under each field of what the series already has: its seasons, and the
+// episodes of the season chosen, each titled. Free numbers — the next one, and any gaps — can be
+// picked; taken ones are shown but cannot. Typing any number is still allowed: an earlier season or
+// episode is as good as the next.
+
+type EpisodeNumber = { season: number | null; episode: number | null; title: string };
+type NumberOption = { value: number; label: string; tag: string; taken: boolean };
+
+function numberOptions(
+  kind: "season" | "episode",
+  rows: EpisodeNumber[],
+  season: number | null,
+): NumberOption[] {
+  if (kind === "season") {
+    const counts = new Map<number, number>();
+    for (const row of rows) if (row.season) counts.set(row.season, (counts.get(row.season) ?? 0) + 1);
+    const seasons = [...counts.keys()].sort((a, b) => a - b);
+    const next = (seasons.at(-1) ?? 0) + 1;
+    return [
+      ...seasons.map((value) => ({
+        value,
+        label: `Sæson ${value}`,
+        tag: `${counts.get(value)} afsnit`,
+        taken: false,
+      })),
+      { value: next, label: `Sæson ${next}`, tag: seasons.length ? "ny" : "første", taken: false },
+    ];
+  }
+  const episodes = new Map<number, string>();
+  for (const row of rows) if (row.episode && row.season === season) episodes.set(row.episode, row.title);
+  const highest = Math.max(0, ...episodes.keys());
+  const options: NumberOption[] = [];
+  for (let value = 1; value <= highest + 1; value++) {
+    const title = episodes.get(value);
+    if (title !== undefined) options.push({ value, label: `Afsnit ${value} · ${title}`, tag: "findes", taken: true });
+    else options.push({ value, label: `Afsnit ${value}`, tag: value > highest ? "næste" : "ledigt", taken: false });
+  }
+  return options;
+}
+
+function initNumberPickers(): void {
+  const row = document.querySelector<HTMLElement>("[data-flix-numbers]");
+  const numbers = jsonConfig<Record<string, EpisodeNumber[]>>("flix-episode-numbers");
+  if (!row || !numbers) return;
+  const series = document.getElementById(row.dataset.series ?? "") as HTMLSelectElement | null;
+  const inputs = {
+    season: row.querySelector<HTMLInputElement>('[data-flix-number="season"]')!,
+    episode: row.querySelector<HTMLInputElement>('[data-flix-number="episode"]')!,
+  };
+
+  for (const kind of ["season", "episode"] as const) {
+    const input = inputs[kind];
+    const list = row.querySelector<HTMLUListElement>(`[data-numbers-for="${kind}"]`)!;
+    input.addEventListener("input", () => {
+      const digits = input.value.replace(/\D+/g, "").slice(0, input.maxLength > 0 ? input.maxLength : 3);
+      if (digits !== input.value) input.value = digits;
+    });
+    const show = () => {
+      list.replaceChildren();
+      const rows = numbers[series?.value ?? ""] ?? [];
+      if (!series?.value) {
+        const item = document.createElement("li");
+        item.className = "flix-number-taken";
+        item.textContent = "Vælg en serie først";
+        list.append(item);
+      } else {
+        const season = inputs.season.value ? Number(inputs.season.value) : null;
+        for (const option of numberOptions(kind, rows, season)) {
+          const item = document.createElement("li");
+          item.setAttribute("role", "option");
+          item.setAttribute("aria-disabled", String(option.taken));
+          if (option.taken) item.className = "flix-number-taken";
+          item.textContent = option.label;
+          const tag = document.createElement("span");
+          tag.className = "flix-number-tag";
+          tag.textContent = option.tag;
+          item.append(tag);
+          if (!option.taken) {
+            item.addEventListener("mousedown", (event) => {
+              event.preventDefault(); // keep the focus, so the list does not close before the click
+              input.value = String(option.value);
+              list.hidden = true;
+            });
+          }
+          list.append(item);
+        }
+      }
+      list.hidden = false;
+    };
+    input.addEventListener("focus", show);
+    input.addEventListener("click", show);
+    input.addEventListener("blur", () => window.setTimeout(() => (list.hidden = true), 120));
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") list.hidden = true;
+    });
+  }
+}
+
+// --- Picking a frame yourself ---------------------------------------------------------------------
+
+function formatTime(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds - minutes * 60;
+  return `${minutes}:${rest.toFixed(2).padStart(5, "0").replace(".", ",")}`;
+}
+
+function initScrubber(): void {
+  for (const root of document.querySelectorAll<HTMLElement>("[data-flix-scrub]")) {
+    const video = root.querySelector("video")!;
+    const time = root.querySelector<HTMLOutputElement>("[data-flix-scrub-time]")!;
+    const at = root.querySelector<HTMLInputElement>("[data-flix-scrub-at]")!;
+    const update = () => {
+      time.value = formatTime(video.currentTime);
+      at.value = video.currentTime.toFixed(3);
+    };
+    for (const name of ["timeupdate", "seeked", "loadedmetadata"]) video.addEventListener(name, update);
+    for (const button of root.querySelectorAll<HTMLButtonElement>("[data-step]")) {
+      button.addEventListener("click", () => {
+        video.pause();
+        const limit = Number.isFinite(video.duration) ? video.duration : Infinity;
+        video.currentTime = Math.min(limit, Math.max(0, video.currentTime + Number(button.dataset.step)));
+      });
+    }
+    update();
+  }
+}
+
 // --- The player -----------------------------------------------------------------------------------
 //
 // THE INTRO STARTS IN THE CLICK. A browser lets a page play sound only from inside the click (or tap)
@@ -971,6 +1100,8 @@ if (body.classList.contains("flix")) {
   initProcessing();
   initCastEditor();
   initTagEditor();
+  initNumberPickers();
+  initScrubber();
   initPlayPage();
   initPlayLinks();
 }

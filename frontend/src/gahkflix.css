@@ -300,7 +300,20 @@ body.flix-play, body.flix-player-open { overflow: hidden; background: #000; }
 .flix-frame-tools button:hover { border-color: #fff; color: #fff; }
 .flix-frame-tools button[aria-pressed="true"] { background: var(--flix-red); border-color: var(--flix-red); color: #fff; }
 .flix-frame-time { position: absolute; top: 6px; right: 6px; padding: 1px 6px; border-radius: 3px; background: rgba(0,0,0,.7); font-size: 11px; }
-.flix-chosen { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+.flix-chosen { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 4px; }
+.flix-subhead { margin: 18px 0 10px !important; font-size: 14px; font-weight: 700; color: #ddd; }
+/* Between what is chosen now and what can be chosen instead: a ruler with its own label. */
+.flix-divider { display: flex; align-items: center; gap: 12px; margin: 22px 0 6px; color: var(--flix-faint); font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.flix-divider::before, .flix-divider::after { content: ""; flex: 1 1 auto; border-top: 1px solid #444; }
+.flix-scrub { border-radius: 6px; overflow: hidden; background: #000; border: 1px solid #333; }
+.flix-scrub video { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #000; }
+.flix-scrub-tools { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px; background: #181818; }
+.flix-scrub-tools button { border: 1px solid #555; border-radius: 4px; padding: 5px 10px; background: #262626; color: #ddd; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.flix-scrub-tools button:hover { border-color: #fff; color: #fff; }
+.flix-scrub-tools output { min-width: 84px; text-align: center; font-variant-numeric: tabular-nums; font-size: 14px; }
+.flix-number-taken { color: var(--flix-faint); cursor: default !important; }
+.flix-number-taken:hover { background: transparent !important; }
+.flix-suggest li .flix-number-tag { float: right; color: var(--flix-faint); font-size: 12px; }
 .flix-chosen figure { margin: 0; }
 .flix-chosen figcaption { font-size: 13px; font-weight: 700; color: #ddd; margin-bottom: 6px; }
 .flix-chosen .flix-card-img { border: 1px dashed #555; }

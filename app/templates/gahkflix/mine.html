@@ -10,24 +10,7 @@
 
     {% if drafts %}
       <h2 class="flix-section-title" style="margin-top:4px">Kladder</h2>
-      <div class="flix-list">
-        {% for video in drafts %}
-          {% picture_url video "thumbnail" as thumb %}
-          <div class="flix-list-item">
-            <span class="flix-card-img">{% if thumb %}<img src="{{ thumb }}" alt="">{% else %}<span class="flix-card-blank">{{ video.title|slice:":1"|upper }}</span>{% endif %}</span>
-            <div>
-              <h3><a href="{% url 'gahkflix:edit' video.pk %}">{{ video.title }}</a></h3>
-              {% with latest=video.latest_file %}
-                {% if latest.is_pending %}<p><span class="flix-state">Behandles · {{ latest.progress }} %</span></p>
-                {% elif latest.state == "failed" %}<p><span class="flix-state is-failed">Mislykkedes</span> {{ latest.error }}</p>
-                {% else %}<p><span class="flix-state is-draft">Ikke udgivet</span>{% if not video.has_pictures %} Mangler miniature eller banner.{% endif %}</p>{% endif %}
-              {% endwith %}
-              <p>Uploadet {{ video.created_at|date:"j. F Y" }}. Slettes {{ video.draft_deleted_on|date:"j. F Y" }}, hvis den ikke er udgivet inden.</p>
-            </div>
-            <a class="flix-btn flix-btn-small flix-btn-quiet" href="{% url 'gahkflix:edit' video.pk %}">Gør færdig</a>
-          </div>
-        {% endfor %}
-      </div>
+      {% include "gahkflix/_draft_list.html" %}
     {% endif %}
 
     <h2 class="flix-section-title">Udgivet</h2>

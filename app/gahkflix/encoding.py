@@ -237,14 +237,20 @@ def frame_times(duration: float | None, count: int, rng: random.Random) -> list[
     return [round(start + step * index + rng.random() * step, 3) for index in range(count)]
 
 
-def extract_frame(source: Path, at: float, target: Path) -> bool:
-    """One frame at `at` seconds as a JPEG at most FRAME_MAX_WIDTH wide. False if there is none."""
+def extract_frame(source: Path | str, at: float, target: Path) -> bool:
+    """One frame at `at` seconds as a JPEG at most FRAME_MAX_WIDTH wide. False if there is none.
+
+    `source` may be a signed URL as well as a path: ffmpeg then seeks in it with range requests and
+    reads only what it needs, so a frame from a long film costs no download of it.
+    """
+    network = str(source).startswith(("http://", "https://"))
     result = subprocess.run(  # noqa: S603  # nosec B603
         [
             ffmpeg_exe(),
             "-hide_banner",
             "-nostdin",
             "-y",
+            *(["-rw_timeout", "30000000"] if network else []),
             "-ss",
             f"{at:.3f}",
             "-i",

@@ -11,6 +11,9 @@ from .models import Series, Video, normalize_name
 
 MAX_CREDITS = 100
 MAX_TAGS = 20
+# Digits only, and a number keypad on a phone. Text rather than type="number", which still lets
+# "e", "+", "-" and "." in; gahkflix.ts strips anything else as it is typed.
+NUMBER_ATTRS = {"inputmode": "numeric", "pattern": "[0-9]*", "autocomplete": "off"}
 
 
 class VideoDetailsForm(forms.Form):
@@ -26,8 +29,20 @@ class VideoDetailsForm(forms.Form):
     series = forms.ModelChoiceField(
         queryset=Series.objects.all(), required=False, label="Serie", empty_label="Ingen serie"
     )
-    season = forms.IntegerField(min_value=1, max_value=99, required=False, label="Sæson")
-    episode = forms.IntegerField(min_value=1, max_value=999, required=False, label="Afsnit")
+    season = forms.IntegerField(
+        min_value=1,
+        max_value=99,
+        required=False,
+        label="Sæson",
+        widget=forms.TextInput(attrs={**NUMBER_ATTRS, "maxlength": 2, "data-flix-number": "season"}),
+    )
+    episode = forms.IntegerField(
+        min_value=1,
+        max_value=999,
+        required=False,
+        label="Afsnit",
+        widget=forms.TextInput(attrs={**NUMBER_ATTRS, "maxlength": 3, "data-flix-number": "episode"}),
+    )
     cast = forms.CharField(required=False, widget=forms.HiddenInput)
     tags = forms.CharField(required=False, widget=forms.HiddenInput)
 

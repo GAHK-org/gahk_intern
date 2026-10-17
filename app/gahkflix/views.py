@@ -335,20 +335,25 @@ def _roles_by_video(credits: QuerySet[CastMember]) -> dict[int, str]:
     return {credit.video_id: credit.role for credit in credits if credit.role}
 
 
+def _with_latest_file(videos: QuerySet[Video]) -> list[Video]:
+    """The videos, each with `latest_file`: its newest upload, which says whether it is processing."""
+    rows: list[Video] = list(
+        videos.select_related("file", "series").prefetch_related(Prefetch("files", to_attr="all_files"))
+    )
+    for video in rows:
+        files = getattr(video, "all_files", [])
+        video.latest_file = files[0] if files else None  # type: ignore[attr-defined]
+    return rows
+
+
 @access.access_required
 def mine(request: HttpRequest) -> HttpResponse:
     resident = current_resident(request)
-    videos = (
-        Video.objects.filter(uploaded_by=resident)
-        .select_related("file", "series")
-        .prefetch_related(Prefetch("files", to_attr="all_files"))
-        .order_by("-created_at")
-    )
+    videos = _with_latest_file(Video.objects.filter(uploaded_by=resident).order_by("-created_at"))
     drafts: list[Video] = []
     live: list[Video] = []
     binned: list[Video] = []
     for video in videos:
-        video.latest_file = video.all_files[0] if video.all_files else None  # type: ignore[attr-defined]
         (binned if video.is_binned else drafts if video.is_draft else live).append(video)
     requests = ChangeRequest.objects.filter(requested_by=resident).select_related("video", "series")[:20]
     return _render(
@@ -576,6 +581,10 @@ def upload(request: HttpRequest) -> HttpResponse:
             "max_gb": max_upload_bytes() / 1024**3,
             "pending": services.pending_upload(current_resident(request)),
             "upload_config": _upload_config(),
+            # Shown first, so a video already on its way is finished rather than uploaded again.
+            "drafts": _with_latest_file(
+                Video.objects.drafts().filter(uploaded_by=current_resident(request)).order_by("-created_at")
+            ),
         },
     )
 
@@ -666,6 +675,29 @@ def status(request: HttpRequest, pk: int) -> JsonResponse:
 # --- Editing ------------------------------------------------------------------------------------
 
 
+def _episode_numbers(request: HttpRequest, video: Video) -> dict[str, list[dict[str, Any]]]:
+    """Every series' seasons and episodes as numbers, for the pickers on the edit page — so the next
+    free number is plain to see. A draft the reader may not see is listed as taken, untitled."""
+    resident = current_resident(request)
+    administrator = access.is_administrator(request)
+    rows = (
+        Video.objects.filter(series__isnull=False, deleted_at__isnull=True)
+        .exclude(pk=video.pk)
+        .values("series_id", "season", "episode", "title", "published_at", "uploaded_by_id")
+    )
+    numbers: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        visible = row["published_at"] is not None or administrator or row["uploaded_by_id"] == resident.pk
+        numbers.setdefault(str(row["series_id"]), []).append(
+            {
+                "season": row["season"],
+                "episode": row["episode"],
+                "title": row["title"] if visible else "Kladde",
+            }
+        )
+    return numbers
+
+
 def _editable(request: HttpRequest, pk: int) -> Video:
     video = _visible_video(request, pk)
     if not access.can_edit(request, video):
@@ -728,6 +760,7 @@ def edit(request: HttpRequest, pk: int) -> HttpResponse:
                 "revision": max(0, (video.revision_window_ends - now).days),
             },
             "processing": latest is not None and latest.is_pending,
+            "episode_numbers": _episode_numbers(request, video),
             "upload_config": _upload_config(video),
             "max_gb": max_upload_bytes() / 1024**3,
         },
@@ -737,7 +770,7 @@ def edit(request: HttpRequest, pk: int) -> HttpResponse:
 @access.access_required
 @require_POST
 def choose_picture(request: HttpRequest, pk: int) -> HttpResponse:
-    """Use a frame, or an uploaded picture, as the thumbnail or the banner."""
+    """Use a frame, a moment picked in the player, or an uploaded picture as the thumbnail or the banner."""
     video = _editable(request, pk)
     kind = request.POST.get("kind", "")
     if kind not in PICTURES:
@@ -749,6 +782,9 @@ def choose_picture(request: HttpRequest, pk: int) -> HttpResponse:
                 VideoFrame, pk=int(frame_id) if frame_id.isdecimal() else 0, video=video
             )
             data = services.picture_from_frame(frame, kind)
+        elif (at := request.POST.get("at", "")) and at.replace(".", "", 1).isdecimal():
+            # A moment the uploader picked in the player themselves.
+            data = services.picture_at(video, float(at), kind)
         elif kind == "thumbnail" and (upload_file := request.FILES.get("picture")) is not None:
             data = services.picture_from_upload(upload_file)
         else:
@@ -855,14 +891,9 @@ def drafts(request: HttpRequest) -> HttpResponse:
     """Every unpublished draft, for the administrators: who has one lying, and when it goes."""
     if not access.is_administrator(request):
         raise PermissionDenied
-    videos = list(
-        Video.objects.drafts()
-        .select_related("uploaded_by")
-        .prefetch_related(Prefetch("files", to_attr="all_files"))
-        .order_by("created_at", "pk")
+    videos = _with_latest_file(
+        Video.objects.drafts().select_related("uploaded_by").order_by("created_at", "pk")
     )
-    for video in videos:
-        video.latest_file = video.all_files[0] if video.all_files else None  # type: ignore[attr-defined]
     return _render(request, "gahkflix/drafts.html", {"videos": videos})
 
 

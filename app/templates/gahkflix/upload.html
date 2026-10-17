@@ -3,6 +3,13 @@
 {% block content %}
   <div class="flix-page flix-page-narrow">
     <h1 class="flix-page-title">Upload en video</h1>
+    {% if drafts %}
+      <section class="flix-panel">
+        <h2>Dine videoer, der ikke er udgivet</h2>
+        <p>Er det en af dem, du vil uploade? Så gør den færdig i stedet for at uploade den igen.</p>
+        {% include "gahkflix/_draft_list.html" %}
+      </section>
+    {% endif %}
     {% if pending %}
       <div class="flix-panel">
         <h2>Du har allerede en video, der behandles</h2>
