@@ -218,6 +218,19 @@ def test_opening_the_gate_lets_every_resident_in(open_gate: None, plain: Residen
     assert client_for(plain).get(reverse("gahkflix:home")).status_code == 200
 
 
+def test_every_resident_is_let_in_with_debug_on(settings: Any, plain: Resident, admin: Resident) -> None:  # noqa: ANN401
+    """So a non-administrator's GAHKFlix can be tried locally while it is still under test."""
+    settings.DEBUG = True
+    client = client_for(plain)
+    assert client.get(reverse("gahkflix:home")).status_code == 200
+    assert "/intern/gahkflix/" in [
+        url for _s, items in client.get("/intern/").context["nav_intern"] for url, *_ in items
+    ]
+    # Inside, a resident is still a resident: none of the administrators' pages.
+    assert client.get(reverse("gahkflix:drafts")).status_code == 403
+    assert plain in access.audience(Resident.objects.all())
+
+
 # --- Uploading and processing -------------------------------------------------------------------
 
 
@@ -417,9 +430,50 @@ def test_files_are_served_after_the_access_check(admin: Resident) -> None:
     stream = client.get(reverse("gahkflix:stream", args=[video.pk, "hd"]))
     assert stream.status_code == 200 and stream["Content-Type"] == "video/mp4"
     assert client.get(reverse("gahkflix:stream", args=[video.pk, "fullhd"])).status_code == 404
-    original = client.get(reverse("gahkflix:original", args=[video.pk]))
-    assert original.status_code == 200 and "revy.mp4" in original["Content-Disposition"]
     assert client.get(reverse("gahkflix:picture", args=[video.pk, "banner"])).status_code == 200
+
+
+def test_download_in_hd_full_hd_or_the_original(admin: Resident) -> None:
+    video = make_video(admin, title='Revy: "Den store"')
+    client = client_for(admin)
+
+    def download(variant: str) -> Any:  # noqa: ANN401
+        return client.get(reverse("gahkflix:download", args=[video.pk, variant]))
+
+    original = download("original")
+    assert original.status_code == 200 and 'filename="revy.mp4"' in original["Content-Disposition"]
+    hd = download("hd")
+    assert hd.status_code == 200 and hd["Content-Type"] == "video/mp4"
+    assert 'filename="Revy Den store (HD).mp4"' in hd["Content-Disposition"]
+    assert download("fullhd").status_code == 404  # this one has no Full HD rendition
+    VideoFile.objects.filter(pk=video.file_id).update(full_hd=video.file.hd.name)  # type: ignore[union-attr]
+    assert "(Full HD).mp4" in download("fullhd")["Content-Disposition"]
+    assert download("4k").status_code == 404
+    page = client.get(reverse("gahkflix:detail", args=[video.pk])).content.decode()
+    for variant in ("hd", "fullhd", "original"):
+        assert reverse("gahkflix:download", args=[video.pk, variant]) in page
+
+
+def test_the_player_config_for_the_overlay(admin: Resident) -> None:
+    series = Series.objects.create(title="Gangen", created_by=admin)
+    first = make_video(admin, title="En", series=series, season=1, episode=1)
+    second = make_video(admin, title="To", series=series, season=1, episode=2)
+    services.save_position(first, admin, 120.0)
+    client = client_for(admin)
+
+    config = client.get(reverse("gahkflix:play", args=[first.pk]), {"format": "json"}).json()
+
+    assert config["title"] == "Gangen · S1:A1" and config["subtitle"] == "En"
+    assert config["streams"] == {"hd": reverse("gahkflix:stream", args=[first.pk, "hd"])}
+    assert config["startAt"] == 120.0
+    assert config["next"] == {"url": reverse("gahkflix:play", args=[second.pk]), "title": "To"}
+    assert (
+        client.get(reverse("gahkflix:play", args=[first.pk]), {"format": "json", "t": "0"}).json()["startAt"]
+        == 0
+    )
+    draft = make_video(admin, published=False)
+    VideoFile.objects.filter(video=draft).delete()
+    assert client.get(reverse("gahkflix:play", args=[draft.pk]), {"format": "json"}).status_code == 409
 
 
 # --- Editing ------------------------------------------------------------------------------------
@@ -778,7 +832,7 @@ def test_resume_where_you_stopped(admin: Resident) -> None:
     assert services.resume_position(video, admin) == 120.5
     assert services.continue_watching(admin) == [video]
     page = client.get(reverse("gahkflix:play", args=[video.pk]))
-    assert page.context["start_at"] == 120.5
+    assert page.context["player"]["startAt"] == 120.5
     client.post(
         reverse("gahkflix:position", args=[video.pk]), {"position": 598}, content_type="application/json"
     )

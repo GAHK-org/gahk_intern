@@ -576,19 +576,35 @@ function initTagEditor(): void {
 }
 
 // --- The player -----------------------------------------------------------------------------------
+//
+// THE INTRO STARTS IN THE CLICK. A browser lets a page play sound only from inside the click (or tap)
+// that asked for it; a page loaded by following a link has none of that, so on its own the play page
+// has to wait for a second click. So "Afspil" (anything marked data-flix-play) opens the player OVER
+// the page it was clicked on: the intro starts there and then, the film's details are fetched while
+// it plays, and the address becomes the play page's so Back closes the player again. The play page
+// itself is still there for a link opened directly, with a play button if the browser says no.
+//
+// ONE <video> for the intro and the film, and for the next episode after it: a phone that unlocked
+// the element with a tap lets that element go on playing, where a fresh one would need another tap.
 
-type PlayerConfig = {
+type FilmConfig = {
+  title: string;
+  subtitle: string;
   streams: Record<string, string>;
+  qualityLabels: Record<string, string>;
+  startAt: number;
   viewUrl: string;
   positionUrl: string;
-  nextUrl: string;
+  playUrl: string;
   backUrl: string;
+  next: { url: string; title: string } | null;
 };
 
 const QUALITY_KEY = "gahkflix-quality";
 // A view counts once this much of the film has actually played (or half of a very short one).
 const VIEW_AFTER_SECONDS = 5;
 const SAVE_EVERY_MS = 15000;
+const NEXT_COUNTDOWN_SECONDS = 8;
 
 function storedQuality(): string | null {
   try {
@@ -598,170 +614,348 @@ function storedQuality(): string | null {
   }
 }
 
-function initPlayer(): void {
-  const root = document.querySelector<HTMLElement>("[data-flix-player]");
-  const config = jsonConfig<PlayerConfig>("flix-player-config");
-  const video = root?.querySelector<HTMLVideoElement>("video");
-  if (!root || !config || !video) return;
-  const skip = root.querySelector<HTMLButtonElement>("[data-flix-skip]")!;
-  const start = root.querySelector<HTMLButtonElement>("[data-flix-start]")!;
-  const errorBox = root.querySelector<HTMLElement>("[data-flix-error]")!;
-  const next = root.querySelector<HTMLAnchorElement>("[data-flix-next]");
-  const qualityBar = root.querySelector<HTMLElement>("[data-flix-quality]");
-  const qualities = Object.keys(config.streams);
-  const narrow = window.matchMedia("(max-width: 900px)").matches;
-  let quality = storedQuality() ?? "";
-  if (!qualities.includes(quality)) quality = narrow && qualities.includes("hd") ? "hd" : qualities[0];
+function jsonUrl(url: string): string {
+  const target = new URL(url, window.location.href);
+  target.searchParams.set("format", "json");
+  return target.toString();
+}
 
-  let phase: "intro" | "film" = "intro";
-  let watched = 0;
-  let lastTime: number | null = null;
-  let counted = false;
-  let retries = 0;
-  let lastSaved = 0;
-  let filmTime = Number(video.dataset.start || 0);
+async function fetchFilm(url: string): Promise<FilmConfig> {
+  const response = await fetch(jsonUrl(url), { credentials: "same-origin", headers: { Accept: "application/json" } });
+  if (!response.ok) throw new Error(await errorOf(response, "Videoen kunne ikke hentes."));
+  return (await response.json()) as FilmConfig;
+}
 
-  const tryPlay = () => video.play().catch(() => (start.hidden = false));
-  start.addEventListener("click", () => {
-    start.hidden = true;
-    void video.play();
-  });
+class Player {
+  private video: HTMLVideoElement;
+  private skip: HTMLButtonElement;
+  private start: HTMLButtonElement;
+  private errorBox: HTMLElement;
+  private next: HTMLAnchorElement;
+  private back: HTMLAnchorElement;
+  private qualityBar: HTMLElement;
+  private film: FilmConfig | null = null;
+  private phase: "intro" | "film" = "intro";
+  private filmWanted = false;
+  private quality = "";
+  private filmTime = 0;
+  private watched = 0;
+  private lastTime: number | null = null;
+  private counted = false;
+  private retries = 0;
+  private lastSaved = 0;
+  private countdown = 0;
+  private idleTimer = 0;
+  private closed = false;
+  private listeners = new AbortController();
 
-  const markQuality = () => {
-    for (const button of qualityBar?.querySelectorAll<HTMLButtonElement>("[data-quality]") ?? []) {
-      button.setAttribute("aria-pressed", String(button.dataset.quality === quality));
+  constructor(
+    private root: HTMLElement,
+    private overlay: boolean,
+  ) {
+    this.video = root.querySelector("video")!;
+    this.skip = root.querySelector("[data-flix-skip]")!;
+    this.start = root.querySelector("[data-flix-start]")!;
+    this.errorBox = root.querySelector("[data-flix-error]")!;
+    this.next = root.querySelector("[data-flix-next]")!;
+    this.back = root.querySelector("[data-flix-back]")!;
+    this.qualityBar = root.querySelector("[data-flix-quality]")!;
+    this.bind();
+  }
+
+  /** The intro. Called straight from the click, so the browser lets it play with sound. */
+  playIntro(): void {
+    this.phase = "intro";
+    this.filmWanted = false;
+    this.video.controls = false;
+    this.qualityBar.hidden = true;
+    this.next.hidden = true;
+    this.errorBox.hidden = true;
+    window.clearTimeout(this.countdown);
+    const intro = body.dataset.flixIntro;
+    if (!intro) {
+      this.startFilm();
+      return;
     }
-  };
+    this.skip.hidden = false;
+    this.video.src = intro;
+    this.tryPlay();
+  }
 
-  const load = (at: number, play: boolean) => {
-    video.src = config.streams[quality];
-    video.addEventListener(
+  /** The film to play after the intro; it starts at once if the intro is already over. */
+  setFilm(film: FilmConfig): void {
+    this.film = film;
+    this.filmTime = film.startAt || 0;
+    this.watched = 0;
+    this.lastTime = null;
+    this.counted = false;
+    this.retries = 0;
+    this.root.querySelector("[data-flix-title]")!.textContent = film.title;
+    this.root.querySelector("[data-flix-subtitle]")!.textContent = film.subtitle;
+    document.title = `${film.subtitle || film.title} – GAHKFlix`;
+    if (!this.overlay) this.back.href = film.backUrl;
+    const qualities = Object.keys(film.streams);
+    this.quality = storedQuality() ?? "";
+    if (!qualities.includes(this.quality)) {
+      const narrow = window.matchMedia("(max-width: 900px)").matches;
+      this.quality = narrow && qualities.includes("hd") ? "hd" : qualities[0];
+    }
+    this.qualityBar.replaceChildren(
+      ...(qualities.length > 1 ? qualities : []).map((quality) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.quality = quality;
+        button.textContent = film.qualityLabels[quality] ?? quality;
+        return button;
+      }),
+    );
+    this.next.href = film.next?.url ?? "#";
+    this.next.textContent = "Næste afsnit ▸";
+    if (this.filmWanted) this.startFilm();
+  }
+
+  private tryPlay(): void {
+    this.video.play().catch(() => (this.start.hidden = false));
+  }
+
+  private startFilm(): void {
+    this.filmWanted = true;
+    if (!this.film || this.phase === "film" || this.closed) return;
+    this.phase = "film";
+    this.skip.hidden = true;
+    this.qualityBar.hidden = this.qualityBar.childElementCount === 0;
+    this.video.controls = true;
+    this.load(this.filmTime, true);
+  }
+
+  private load(at: number, play: boolean): void {
+    if (!this.film) return;
+    this.video.src = this.film.streams[this.quality];
+    this.video.addEventListener(
       "loadedmetadata",
       () => {
-        if (at > 1 && (!video.duration || at < video.duration - 2)) video.currentTime = at;
+        if (at > 1 && (!this.video.duration || at < this.video.duration - 2)) this.video.currentTime = at;
       },
       { once: true },
     );
-    markQuality();
-    if (play) tryPlay();
-  };
-
-  const startFilm = () => {
-    if (phase === "film") return;
-    phase = "film";
-    skip.hidden = true;
-    if (qualityBar) qualityBar.hidden = false;
-    video.controls = true;
-    load(filmTime, true);
-  };
-
-  const savePosition = (keepalive = false) => {
-    if (phase !== "film" || !video.duration) return;
-    lastSaved = Date.now();
-    void postJSON(config.positionUrl, { position: video.currentTime }, keepalive).catch(() => undefined);
-  };
-
-  // The intro, unless it cannot be had — a missing file must never stand between anyone and the film.
-  video.controls = false;
-  video.src = video.dataset.intro ?? "";
-  skip.hidden = false;
-  skip.addEventListener("click", startFilm);
-  tryPlay();
-
-  video.addEventListener("ended", () => {
-    if (phase === "intro") {
-      startFilm();
-      return;
+    for (const button of this.qualityBar.querySelectorAll<HTMLButtonElement>("[data-quality]")) {
+      button.setAttribute("aria-pressed", String(button.dataset.quality === this.quality));
     }
-    savePosition();
-    if (next && config.nextUrl) {
-      let seconds = 8;
-      next.hidden = false;
+    if (play) this.tryPlay();
+  }
+
+  private savePosition(keepalive = false): void {
+    if (this.phase !== "film" || !this.film || !this.video.duration) return;
+    this.lastSaved = Date.now();
+    void postJSON(this.film.positionUrl, { position: this.video.currentTime }, keepalive).catch(() => undefined);
+  }
+
+  /** The next episode, in the same element, after the intro again. */
+  private async playNext(): Promise<void> {
+    const next = this.film?.next;
+    if (!next) return;
+    this.savePosition();
+    this.playIntro();
+    try {
+      const film = await fetchFilm(next.url);
+      history.replaceState(history.state, "", next.url);
+      this.setFilm(film);
+    } catch {
+      window.location.href = next.url;
+    }
+  }
+
+  /** Away from the player: back where "Afspil" was clicked, or to the video's page. */
+  leave(): void {
+    if (this.overlay) history.back();
+    else window.location.href = this.film?.backUrl ?? this.back.href;
+  }
+
+  close(): void {
+    this.savePosition(true);
+    this.closed = true;
+    window.clearTimeout(this.countdown);
+    window.clearTimeout(this.idleTimer);
+    this.listeners.abort();
+    this.video.pause();
+    this.video.removeAttribute("src");
+    this.video.load();
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    this.root.remove();
+    body.classList.remove("flix-player-open");
+  }
+
+  private bind(): void {
+    const { video } = this;
+    const signal = this.listeners.signal;
+    this.start.addEventListener("click", () => {
+      this.start.hidden = true;
+      void video.play();
+    });
+    this.skip.addEventListener("click", () => this.startFilm());
+    this.back.addEventListener("click", (event) => {
+      event.preventDefault();
+      this.leave();
+    });
+    this.next.addEventListener("click", (event) => {
+      event.preventDefault();
+      void this.playNext();
+    });
+
+    video.addEventListener("ended", () => {
+      if (this.phase === "intro") {
+        this.startFilm();
+        return;
+      }
+      this.savePosition();
+      if (!this.film?.next) return;
+      let seconds = NEXT_COUNTDOWN_SECONDS;
+      this.next.hidden = false;
       const tick = () => {
-        next.textContent = `Næste afsnit om ${seconds} …`;
-        if (seconds-- <= 0) window.location.href = config.nextUrl;
-        else window.setTimeout(tick, 1000);
+        this.next.textContent = `Næste afsnit om ${seconds} …`;
+        if (seconds-- <= 0) void this.playNext();
+        else this.countdown = window.setTimeout(tick, 1000);
       };
       tick();
-    }
-  });
+    });
 
-  video.addEventListener("error", () => {
-    if (phase === "intro") {
-      startFilm();
-      return;
-    }
-    // Most likely the signed URL ran out during a long film: ask for a fresh one, where we were.
-    if (retries++ < 3) {
-      load(filmTime, true);
-      return;
-    }
-    errorBox.textContent = "Videoen kunne ikke afspilles. Prøv at genindlæse siden.";
-    errorBox.hidden = false;
-  });
+    video.addEventListener("error", () => {
+      if (this.closed) return;
+      if (this.phase === "intro") {
+        // A missing intro must never stand between anyone and the film.
+        this.startFilm();
+        return;
+      }
+      // Most likely the signed URL ran out during a long film: ask for a fresh one, where we were.
+      if (this.retries++ < 3) {
+        this.load(this.filmTime, true);
+        return;
+      }
+      this.errorBox.textContent = "Videoen kunne ikke afspilles. Prøv at genindlæse siden.";
+      this.errorBox.hidden = false;
+    });
 
-  video.addEventListener("seeking", () => (lastTime = null));
-  video.addEventListener("timeupdate", () => {
-    if (phase !== "film") return;
-    const now = video.currentTime;
-    filmTime = now;
-    if (lastTime !== null) {
-      const step = now - lastTime;
-      if (step > 0 && step < 1.5) watched += step;
-    }
-    lastTime = now;
-    if (!counted && (watched >= VIEW_AFTER_SECONDS || (video.duration > 0 && watched >= video.duration / 2))) {
-      counted = true;
-      void postJSON(config.viewUrl, {}).catch(() => (counted = false));
-    }
-    if (Date.now() - lastSaved > SAVE_EVERY_MS && !video.paused) savePosition();
-    if (next && config.nextUrl && video.duration && video.duration - now < 20) next.hidden = false;
-  });
-  video.addEventListener("pause", () => savePosition());
-  window.addEventListener("pagehide", () => savePosition(true));
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") savePosition(true);
-  });
+    video.addEventListener("seeking", () => (this.lastTime = null));
+    video.addEventListener("timeupdate", () => {
+      if (this.phase !== "film" || !this.film) return;
+      const now = video.currentTime;
+      this.filmTime = now;
+      if (this.lastTime !== null) {
+        const step = now - this.lastTime;
+        if (step > 0 && step < 1.5) this.watched += step;
+      }
+      this.lastTime = now;
+      if (
+        !this.counted &&
+        (this.watched >= VIEW_AFTER_SECONDS || (video.duration > 0 && this.watched >= video.duration / 2))
+      ) {
+        this.counted = true;
+        void postJSON(this.film.viewUrl, {}).catch(() => (this.counted = false));
+      }
+      if (Date.now() - this.lastSaved > SAVE_EVERY_MS && !video.paused) this.savePosition();
+      if (this.film.next && video.duration && video.duration - now < 20) this.next.hidden = false;
+    });
+    video.addEventListener("pause", () => this.savePosition());
+    window.addEventListener("pagehide", () => this.savePosition(true), { signal });
+    document.addEventListener(
+      "visibilitychange",
+      () => {
+        if (document.visibilityState === "hidden") this.savePosition(true);
+      },
+      { signal },
+    );
 
-  qualityBar?.addEventListener("click", (event) => {
-    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-quality]");
-    if (!button || button.dataset.quality === quality || phase !== "film") return;
-    quality = button.dataset.quality!;
-    try {
-      window.localStorage.setItem(QUALITY_KEY, quality);
-    } catch {
-      // Private mode: the choice just is not remembered.
-    }
-    load(video.currentTime, !video.paused);
+    this.qualityBar.addEventListener("click", (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-quality]");
+      if (!button || button.dataset.quality === this.quality || this.phase !== "film") return;
+      this.quality = button.dataset.quality!;
+      try {
+        window.localStorage.setItem(QUALITY_KEY, this.quality);
+      } catch {
+        // Private mode: the choice just is not remembered.
+      }
+      this.load(video.currentTime, !video.paused);
+    });
+
+    // The title bar and the quality switch fade out while the film plays undisturbed.
+    const wake = () => {
+      this.root.classList.remove("is-idle");
+      window.clearTimeout(this.idleTimer);
+      this.idleTimer = window.setTimeout(() => {
+        if (!video.paused) this.root.classList.add("is-idle");
+      }, 3000);
+    };
+    for (const name of ["mousemove", "touchstart", "keydown"]) this.root.addEventListener(name, wake, { passive: true });
+    video.addEventListener("pause", wake);
+    wake();
+
+    document.addEventListener(
+      "keydown",
+      (event) => {
+        if ((event.target as HTMLElement).closest("input, textarea, select, button")) return;
+        if (event.key === " " || event.key === "k") {
+          event.preventDefault();
+          if (video.paused) void video.play();
+          else video.pause();
+        } else if (event.key === "f") {
+          if (document.fullscreenElement) void document.exitFullscreen();
+          else void this.root.requestFullscreen?.().catch(() => undefined);
+        } else if (this.phase === "film" && (event.key === "ArrowRight" || event.key === "ArrowLeft")) {
+          if (event.target === video) return; // the native controls already do it
+          video.currentTime = Math.max(0, video.currentTime + (event.key === "ArrowRight" ? 10 : -10));
+        } else if (event.key === "Escape" && !document.fullscreenElement) {
+          this.leave();
+        }
+      },
+      { signal },
+    );
+  }
+}
+
+/** The play page, opened directly. */
+function initPlayPage(): void {
+  const root = document.querySelector<HTMLElement>("main [data-flix-player]");
+  const film = jsonConfig<FilmConfig>("flix-player-config");
+  if (!root || !film) return;
+  const player = new Player(root, false);
+  player.setFilm(film);
+  player.playIntro();
+}
+
+let overlayPlayer: Player | null = null;
+
+/** "Afspil" anywhere in GAHKFlix: the player opens over the page, the intro inside the click. */
+function initPlayLinks(): void {
+  const template = document.getElementById("flix-player-template") as HTMLTemplateElement | null;
+  if (!template) return;
+  document.addEventListener("click", (event) => {
+    const link = (event.target as HTMLElement).closest<HTMLAnchorElement>("a[data-flix-play]");
+    if (!link || event.defaultPrevented || event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; // a new tab: let it go
+    event.preventDefault();
+    overlayPlayer?.close();
+    const root = template.content.firstElementChild!.cloneNode(true) as HTMLElement;
+    body.append(root);
+    body.classList.add("flix-player-open");
+    const player = new Player(root, true);
+    overlayPlayer = player;
+    player.playIntro();
+    history.pushState({ flixPlayer: true }, "", link.href);
+    fetchFilm(link.href)
+      .then((film) => {
+        if (overlayPlayer === player) player.setFilm(film);
+      })
+      .catch(() => {
+        window.location.href = link.href;
+      });
   });
-
-  // The title bar and the quality switch fade out while the film plays undisturbed.
-  let idleTimer = 0;
-  const wake = () => {
-    root.classList.remove("is-idle");
-    window.clearTimeout(idleTimer);
-    idleTimer = window.setTimeout(() => {
-      if (!video.paused) root.classList.add("is-idle");
-    }, 3000);
-  };
-  for (const name of ["mousemove", "touchstart", "keydown"]) root.addEventListener(name, wake, { passive: true });
-  video.addEventListener("pause", wake);
-  wake();
-
-  document.addEventListener("keydown", (event) => {
-    if ((event.target as HTMLElement).closest("input, textarea, select, button")) return;
-    if (event.key === " " || event.key === "k") {
-      event.preventDefault();
-      if (video.paused) void video.play();
-      else video.pause();
-    } else if (event.key === "f") {
-      if (document.fullscreenElement) void document.exitFullscreen();
-      else void root.requestFullscreen?.().catch(() => undefined);
-    } else if (phase === "film" && (event.key === "ArrowRight" || event.key === "ArrowLeft")) {
-      if (event.target === video) return; // the native controls already do it
-      video.currentTime = Math.max(0, video.currentTime + (event.key === "ArrowRight" ? 10 : -10));
-    } else if (event.key === "Escape" && !document.fullscreenElement) {
-      window.location.href = config.backUrl;
+  window.addEventListener("popstate", () => {
+    if (overlayPlayer && !history.state?.flixPlayer) {
+      overlayPlayer.close();
+      overlayPlayer = null;
+    } else if (!overlayPlayer && history.state?.flixPlayer) {
+      // Forward again into a player that was closed: load it as a page.
+      window.location.reload();
     }
   });
 }
@@ -777,5 +971,6 @@ if (body.classList.contains("flix")) {
   initProcessing();
   initCastEditor();
   initTagEditor();
-  initPlayer();
+  initPlayPage();
+  initPlayLinks();
 }

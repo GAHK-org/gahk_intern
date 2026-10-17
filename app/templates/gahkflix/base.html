@@ -14,7 +14,7 @@
   GAHKFlix is a page of its own: none of the intern site's chrome (the sidebar, the top bar) is drawn
   here. The way back is the "Intern" link in this header.
 {% endcomment %}
-<body class="flix {% block body_class %}{% endblock %}">
+<body class="flix {% block body_class %}{% endblock %}" data-flix-intro="{% static 'gahkflix/intro.mp4' %}">
   {% block header %}
     <header class="flix-header" data-flix-header>
       <a class="flix-logo" href="{% url 'gahkflix:home' %}" aria-label="GAHKFlix – forsiden">GAHKFLIX</a>
@@ -55,6 +55,7 @@
   {% endif %}
 
   <main class="flix-main">{% block content %}{% endblock %}</main>
+  <template id="flix-player-template">{% include "gahkflix/_player.html" %}</template>
 
   {% block footer %}
     <footer class="flix-footer">
