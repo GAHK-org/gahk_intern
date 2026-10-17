@@ -3394,3 +3394,18 @@ def test_a_post_with_a_valid_duration_still_goes_straight_through(
 
     assert response.status_code == 302
     assert QuickPost.objects.get().minutes_left <= 60
+
+
+def test_the_authors_name_links_to_their_profile(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    from django.urls import reverse
+
+    author = make_resident(email="a@gahk.dk")
+    reader = make_resident(email="b@gahk.dk")
+    QuickPost.objects.create(author=author, content="Kaffe")
+    client.force_login(reader)
+
+    body = client.get(FEED_URL).content.decode()
+
+    assert f'href="{reverse("resident_profile", args=[author.pk])}">{author.full_name}</a>' in body

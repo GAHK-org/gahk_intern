@@ -139,16 +139,19 @@
     {% endcomment %}
     <div class="msg-avatar" aria-hidden="true">
       {% if bare or post.group_end %}
+        {# tabindex -1: the name below is the keyboard-reachable link to the same profile. #}
+        <a class="author-link" href="{% url 'resident_profile' post.author_id %}" tabindex="-1">
         {% if post.author.profile_picture %}
           <img src="{{ post.author.profile_picture.url }}" alt="" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:50%;display:block">
         {% else %}
           {{ post.author.first_name|slice:":1" }}{{ post.author.last_name|slice:":1" }}
         {% endif %}
+        </a>
       {% endif %}
     </div>
 
     <div class="msg-bubble">
-      {% if bare or not post.grouped %}<span class="msg-name">{{ post.author.full_name }}</span>{% endif %}
+      {% if bare or not post.grouped %}<span class="msg-name"><a class="author-link" href="{% url 'resident_profile' post.author_id %}">{{ post.author.full_name }}</a></span>{% endif %}
       {% comment %}
         The clock is NOT in here: it sits on its own line above the bubble (.msg-clock, above), so
         each message states when it was sent -- date included -- without the bubble carrying it, and

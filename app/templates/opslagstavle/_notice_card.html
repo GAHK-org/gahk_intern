@@ -13,8 +13,8 @@
   In the list the whole card is tappable: the TIMESTAMP is the post's permalink, stretched over the
   card with a CSS pseudo-element (.is-clickable below), so it stays one real link — keyboard
   reachable, right-clickable, no JavaScript. It used to be the title link; the timestamp is what
-  every social feed uses for the same job, and the author's name would have read as a link to a
-  profile that does not exist. Controls that must stay clickable are raised above it.
+  every social feed uses for the same job. The author's name and avatar link to their profile.
+  Controls that must stay clickable are raised above it.
 {% endcomment %}
 <article class="notice-card card-flat{% if notice.pinned_at %} is-pinned{% endif %}{% if not full %} is-clickable{% endif %}" id="opslag-{{ notice.pk }}">
   <div class="notice-head">
@@ -51,11 +51,13 @@
       </div>
       <div class="notice-author">
         <div class="notice-avatar" aria-hidden="true">
+          <a class="author-link" href="{% url 'resident_profile' notice.author_id %}" tabindex="-1">
           {% if notice.author.profile_picture %}
             <img src="{{ notice.author.profile_picture.url }}" alt="" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:50%;display:block">
           {% else %}
             {{ notice.author.first_name|slice:":1" }}{{ notice.author.last_name|slice:":1" }}
           {% endif %}
+          </a>
         </div>
         <div class="notice-byline">
           {% comment %}
@@ -66,7 +68,7 @@
             predating the field), rather than rendered as a blank pill.
           {% endcomment %}
           <span class="notice-nameline">
-            <span class="notice-name">{{ notice.author.full_name }}</span>
+            <a class="notice-name author-link" href="{% url 'resident_profile' notice.author_id %}">{{ notice.author.full_name }}</a>
             {% if notice.author_embedsgruppe %}
               <span class="chip chip-embedsgruppe">{{ notice.author_embedsgruppe }}</span>
             {% endif %}

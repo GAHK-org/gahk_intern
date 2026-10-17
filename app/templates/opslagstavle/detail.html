@@ -29,7 +29,7 @@
           comment, and since the ✕ is invisible until hover, what a reader saw was a blank gap.
         {% endcomment %}
         <div class="reply-head">
-          <span class="reply-name">{{ comment.author.full_name }}</span>
+          <a class="reply-name author-link" href="{% url 'resident_profile' comment.author_id %}">{{ comment.author.full_name }}</a>
           {% if comment.author_embedsgruppe %}
             <span class="chip chip-embedsgruppe">{{ comment.author_embedsgruppe }}</span>
           {% endif %}
