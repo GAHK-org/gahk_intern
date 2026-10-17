@@ -1,0 +1,25 @@
+{% extends "gahkflix/base.html" %}
+{% load gahkflix %}
+{% block title %}Papirkurv – GAHKFlix{% endblock %}
+{% block content %}
+  <div class="flix-page flix-page-narrow" style="max-width:1000px">
+    <h1 class="flix-page-title">Papirkurv</h1>
+    <p class="muted" style="margin-top:-8px">Slettede videoer ligger her i 30 dage, før de og alle deres filer slettes for altid.</p>
+    <div class="flix-list">
+      {% for video in videos %}
+        {% picture_url video "thumbnail" as thumb %}
+        <div class="flix-list-item">
+          <span class="flix-card-img">{% if thumb %}<img src="{{ thumb }}" alt="">{% endif %}</span>
+          <div>
+            <h3><a href="{% url 'gahkflix:detail' video.pk %}">{{ video.title }}</a></h3>
+            <p>Uploadet af {{ video.uploaded_by.full_name }} · slettet {{ video.deleted_at|date:"j. F Y" }}{% if video.deleted_by %} af {{ video.deleted_by.full_name }}{% endif %}</p>
+            <p>Slettes helt {{ video.purge_at|date:"j. F Y" }}.</p>
+          </div>
+          <form method="post" action="{% url 'gahkflix:restore' video.pk %}">{% csrf_token %}<button class="flix-btn flix-btn-small flix-btn-quiet" type="submit">Gendan</button></form>
+        </div>
+      {% empty %}
+        <p class="flix-empty">Papirkurven er tom.</p>
+      {% endfor %}
+    </div>
+  </div>
+{% endblock %}

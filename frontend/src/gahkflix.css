@@ -1,0 +1,338 @@
+/* GAHKFlix: a dark, full-page area of its own (templates/gahkflix/base.html), scoped under body.flix.
+   Kept out of styles.css on purpose: nothing here applies to the rest of the site, and nothing of the
+   site's own chrome (sidebar, top bar) is on these pages. */
+
+body.flix {
+  --flix-bg: #141414;
+  --flix-surface: #1f1f1f;
+  --flix-surface-2: #2a2a2a;
+  --flix-line: #3a3a3a;
+  --flix-ink: #e5e5e5;
+  --flix-muted: #a3a3a3;
+  --flix-faint: #737373;
+  --flix-red: #e50914;
+  --flix-red-dark: #b20710;
+  --flix-gutter: 4vw;
+  margin: 0;
+  min-height: 100vh;
+  background: var(--flix-bg);
+  color: var(--flix-ink);
+  font-family: "Helvetica Neue", Helvetica, "Ubuntu", system-ui, "Segoe UI", Roboto, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+@media (max-width: 640px) { body.flix { --flix-gutter: 16px; } }
+
+.flix a { color: inherit; }
+.flix h1, .flix h2, .flix h3 { margin: 0; letter-spacing: 0; }
+.flix :focus-visible { outline: 2px solid #fff; outline-offset: 2px; border-radius: 4px; }
+.flix .muted { color: var(--flix-muted); }
+.flix [hidden] { display: none !important; }
+
+/* --- Header ------------------------------------------------------------------------------------ */
+.flix-header {
+  position: fixed; inset: 0 0 auto 0; z-index: 50; height: 68px;
+  display: flex; align-items: center; gap: 28px; padding: 0 var(--flix-gutter);
+  background: linear-gradient(180deg, rgba(0,0,0,.78) 10%, rgba(0,0,0,0));
+  transition: background-color .35s;
+}
+.flix-header.is-solid { background-color: var(--flix-bg); }
+.flix-logo {
+  font-family: "Bebas Neue", Impact, Haettenschweiler, "Arial Narrow Bold", "Arial Black", sans-serif;
+  font-size: 32px; line-height: 1; letter-spacing: .02em; color: var(--flix-red) !important; text-decoration: none;
+  text-shadow: 0 2px 10px rgba(0,0,0,.45); white-space: nowrap;
+}
+.flix-nav { display: flex; gap: 20px; font-size: 14px; }
+.flix-nav a { color: #e5e5e5; text-decoration: none; white-space: nowrap; transition: color .3s; }
+.flix-nav a:hover { color: #b3b3b3; }
+.flix-nav a.is-active { color: #fff; font-weight: 700; }
+.flix-badge { display: inline-block; min-width: 18px; margin-left: 5px; padding: 0 5px; border-radius: 9px; background: var(--flix-red); color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+.flix-tools { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+.flix-search { display: flex; align-items: center; gap: 6px; border: 1px solid transparent; padding: 4px 8px; transition: border-color .2s, background .2s; }
+.flix-search:focus-within, .flix-search.has-query { border-color: #fff; background: rgba(0,0,0,.75); }
+.flix-search svg { width: 20px; height: 20px; flex: none; }
+.flix-search input { width: 0; border: 0; padding: 0; background: transparent; color: #fff; font-size: 14px; transition: width .3s; }
+.flix-search:focus-within input, .flix-search.has-query input { width: 210px; outline: none; }
+.flix-search input:focus { outline: none; }
+.flix-pill { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 4px; font-size: 13px; font-weight: 700; text-decoration: none; white-space: nowrap; }
+.flix-pill-red { background: var(--flix-red); color: #fff !important; }
+.flix-pill-red:hover { background: var(--flix-red-dark); }
+.flix-pill-ghost { border: 1px solid rgba(255,255,255,.4); color: #e5e5e5 !important; }
+.flix-pill-ghost:hover { border-color: #fff; color: #fff !important; }
+.flix-test { font-size: 11px; font-weight: 700; color: #f5c518; border: 1px solid #f5c51888; border-radius: 3px; padding: 1px 5px; white-space: nowrap; }
+.flix-menu { display: none; margin-left: auto; background: none; border: 0; color: #fff; font-size: 26px; padding: 4px; cursor: pointer; }
+
+@media (max-width: 900px) {
+  .flix-header { height: 56px; gap: 12px; flex-wrap: wrap; }
+  .flix-logo { font-size: 26px; }
+  .flix-menu { display: block; }
+  .flix-nav, .flix-tools { display: none; }
+  .flix-header.is-open { height: auto; background: var(--flix-bg); padding-bottom: 14px; }
+  .flix-header.is-open .flix-nav { display: flex; flex-direction: column; gap: 14px; width: 100%; order: 3; font-size: 16px; padding-top: 6px; }
+  .flix-header.is-open .flix-tools { display: flex; flex-wrap: wrap; width: 100%; order: 4; margin: 6px 0 0; }
+  .flix-header.is-open .flix-search { flex: 1 1 100%; border-color: #fff; }
+  .flix-header.is-open .flix-search input { width: 100%; }
+}
+
+/* --- Page frame -------------------------------------------------------------------------------- */
+.flix-main { min-height: 70vh; }
+.flix-page { padding: 100px var(--flix-gutter) 40px; }
+.flix-page-narrow { max-width: 860px; margin: 0 auto; }
+.flix-page-title { font-size: clamp(24px, 3vw, 38px); font-weight: 700; margin-bottom: 18px; }
+.flix-section-title { font-size: clamp(17px, 1.5vw, 22px); font-weight: 700; margin: 28px 0 12px; }
+.flix-footer { padding: 40px var(--flix-gutter); color: var(--flix-faint); font-size: 13px; }
+.flix-footer a { color: var(--flix-muted); }
+.flix-messages { position: fixed; top: 76px; left: 50%; transform: translateX(-50%); z-index: 60; display: grid; gap: 8px; width: min(560px, calc(100vw - 32px)); }
+.flix-message { margin: 0; padding: 12px 16px; border-radius: 4px; background: #2f2f2f; border-left: 4px solid #46d369; box-shadow: 0 8px 24px rgba(0,0,0,.5); font-size: 14px; animation: flix-fade 6s forwards; }
+.flix-message.is-error { border-left-color: var(--flix-red); animation: none; }
+.flix-message.is-warning, .flix-message.is-info { border-left-color: #f5c518; }
+@keyframes flix-fade { 0%, 85% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
+
+/* --- Buttons ----------------------------------------------------------------------------------- */
+.flix-btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; border: 0; border-radius: 4px; padding: 10px 22px; font: inherit; font-size: clamp(14px, 1.2vw, 18px); font-weight: 700; line-height: 1.2; cursor: pointer; text-decoration: none; white-space: nowrap; transition: background .15s, opacity .15s; }
+.flix-btn svg { width: 1.3em; height: 1.3em; flex: none; }
+.flix-btn-play { background: #fff; color: #000 !important; }
+.flix-btn-play:hover { background: rgba(255,255,255,.75); }
+.flix-btn-info { background: rgba(109,109,110,.7); color: #fff !important; }
+.flix-btn-info:hover { background: rgba(109,109,110,.4); }
+.flix-btn-red { background: var(--flix-red); color: #fff !important; }
+.flix-btn-red:hover { background: var(--flix-red-dark); }
+.flix-btn-small { padding: 7px 14px; font-size: 14px; }
+.flix-btn-quiet { background: transparent; color: var(--flix-ink) !important; border: 1px solid var(--flix-line); }
+.flix-btn-quiet:hover { border-color: #fff; }
+.flix-btn[disabled], .flix-btn.is-disabled { opacity: .45; pointer-events: none; }
+.flix-icon-btn { display: inline-grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; border: 2px solid rgba(255,255,255,.5); background: rgba(42,42,42,.6); color: #fff !important; cursor: pointer; }
+.flix-icon-btn:hover { border-color: #fff; }
+.flix-icon-btn svg { width: 20px; height: 20px; }
+
+/* --- Hero -------------------------------------------------------------------------------------- */
+.flix-hero { position: relative; min-height: min(56.25vw, 88vh); display: flex; align-items: flex-end; padding: 120px var(--flix-gutter) min(13vw, 160px); isolation: isolate; }
+.flix-hero-img { position: absolute; inset: 0; z-index: -2; background: #000 center 20% / cover no-repeat; }
+.flix-hero::before { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(77deg, rgba(0,0,0,.82) 0%, rgba(0,0,0,.35) 45%, rgba(0,0,0,0) 70%), linear-gradient(0deg, var(--flix-bg) 0%, rgba(20,20,20,0) 32%); }
+.flix-hero-body { max-width: min(640px, 92vw); }
+.flix-hero-kicker { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px; font-weight: 700; letter-spacing: .25em; color: #ddd; text-transform: uppercase; }
+.flix-hero-kicker b { color: var(--flix-red); font-family: "Bebas Neue", Impact, "Arial Narrow Bold", sans-serif; font-size: 22px; letter-spacing: .02em; }
+.flix-hero-title { font-size: clamp(30px, 5.2vw, 72px); font-weight: 800; line-height: 1.02; text-shadow: 2px 2px 8px rgba(0,0,0,.45); text-wrap: balance; }
+.flix-hero-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; font-size: 15px; color: #d2d2d2; }
+.flix-hero-meta .flix-match { color: #46d369; font-weight: 700; }
+.flix-hero-desc { margin: 14px 0 0; font-size: clamp(14px, 1.25vw, 19px); line-height: 1.45; text-shadow: 2px 2px 4px rgba(0,0,0,.45); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.flix-hero-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+.flix-hero-empty { padding: 160px var(--flix-gutter) 80px; text-align: center; }
+.flix-hero-empty h1 { font-size: clamp(28px, 4vw, 52px); font-weight: 800; }
+.flix-hero-empty p { color: var(--flix-muted); font-size: 18px; margin: 12px 0 24px; }
+.flix-tag-line { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+
+/* --- Rows of cards ----------------------------------------------------------------------------- */
+.flix-rows { position: relative; z-index: 2; margin-top: max(-9vw, -110px); padding-bottom: 20px; }
+.flix-rows.is-plain { margin-top: 0; padding-top: 90px; }
+.flix-row { position: relative; margin: 0 0 2.6vw; }
+.flix-row-title { display: flex; align-items: baseline; gap: 12px; padding: 0 var(--flix-gutter); font-size: clamp(16px, 1.45vw, 22px); font-weight: 700; }
+.flix-row-title a { text-decoration: none; }
+.flix-row-title .flix-more { font-size: 13px; font-weight: 600; color: #54b9c5; opacity: 0; transition: opacity .3s; }
+.flix-row:hover .flix-more { opacity: 1; }
+.flix-slider {
+  --n: 2.3; --gap: 8px;
+  display: flex; gap: var(--gap); overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity;
+  scroll-padding-inline: var(--flix-gutter); padding: 14px var(--flix-gutter) 20px; scrollbar-width: none;
+}
+.flix-slider::-webkit-scrollbar { display: none; }
+.flix-slider > * { flex: 0 0 calc((100vw - 2 * var(--flix-gutter) - (var(--n) - 1) * var(--gap)) / var(--n)); scroll-snap-align: start; }
+@media (min-width: 600px) { .flix-slider { --n: 3.3; } }
+@media (min-width: 900px) { .flix-slider { --n: 4.2; } }
+@media (min-width: 1300px) { .flix-slider { --n: 5.2; } }
+@media (min-width: 1700px) { .flix-slider { --n: 6.2; } }
+.flix-slider.is-ranked { --n: 1.6; --gap: 6px; }
+@media (min-width: 600px) { .flix-slider.is-ranked { --n: 2.4; } }
+@media (min-width: 900px) { .flix-slider.is-ranked { --n: 3.3; } }
+@media (min-width: 1300px) { .flix-slider.is-ranked { --n: 4.2; } }
+.flix-arrow { position: absolute; z-index: 4; top: 46px; bottom: 20px; width: calc(var(--flix-gutter) - 4px); border: 0; background: rgba(20,20,20,.55); color: #fff; font-size: 34px; cursor: pointer; opacity: 0; transition: opacity .2s, background .2s; }
+.flix-arrow:hover { background: rgba(20,20,20,.8); }
+.flix-arrow.is-prev { left: 0; border-radius: 0 4px 4px 0; }
+.flix-arrow.is-next { right: 0; border-radius: 4px 0 0 4px; }
+@media (hover: hover) and (min-width: 900px) { .flix-row:hover .flix-arrow:not([hidden]) { opacity: 1; } }
+
+.flix-card { position: relative; display: block; text-decoration: none; border-radius: 4px; transition: transform .25s ease, box-shadow .25s ease; }
+.flix-card-img { position: relative; display: block; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 4px; background: var(--flix-surface-2); }
+.flix-card-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.flix-card-blank { display: grid; place-items: center; height: 100%; font-size: 42px; font-weight: 800; color: var(--flix-faint); background: linear-gradient(135deg, #2b2b2b, #1a1a1a); }
+.flix-card-label { position: absolute; inset: auto 0 0 0; padding: 26px 10px 8px; background: linear-gradient(0deg, rgba(0,0,0,.88), rgba(0,0,0,0)); }
+.flix-card-title { display: block; font-size: clamp(13px, 1vw, 16px); font-weight: 700; line-height: 1.2; text-shadow: 0 1px 3px rgba(0,0,0,.8); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flix-card-meta { display: block; margin-top: 2px; font-size: 12px; color: #c9c9c9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flix-card-badge { position: absolute; top: 8px; left: 8px; padding: 2px 6px; border-radius: 3px; background: var(--flix-red); color: #fff; font-size: 11px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.flix-progress { position: absolute; left: 10px; right: 10px; bottom: 4px; height: 3px; border-radius: 2px; background: rgba(255,255,255,.3); overflow: hidden; }
+.flix-progress span { display: block; height: 100%; background: var(--flix-red); }
+.flix-card.has-progress .flix-card-label { padding-bottom: 14px; }
+@media (hover: hover) {
+  .flix-card:hover { transform: scale(1.07); z-index: 3; box-shadow: 0 10px 28px rgba(0,0,0,.65); }
+}
+
+.flix-ranked { display: flex; align-items: flex-end; text-decoration: none; }
+.flix-rank { flex: 0 0 auto; margin-right: -0.12em; font-family: "Bebas Neue", Impact, "Arial Black", sans-serif; font-size: clamp(90px, 10vw, 170px); line-height: .78; color: var(--flix-bg); -webkit-text-stroke: 3px #595959; letter-spacing: -.05em; user-select: none; }
+.flix-ranked .flix-card { flex: 1 1 auto; min-width: 0; }
+
+.flix-grid { display: grid; gap: 22px 10px; grid-template-columns: repeat(auto-fill, minmax(min(240px, 44vw), 1fr)); }
+.flix-grid .flix-card-role { display: block; margin-top: 6px; font-size: 13px; color: var(--flix-muted); }
+
+/* --- Detail page ------------------------------------------------------------------------------- */
+.flix-detail .flix-hero { min-height: min(52vw, 82vh); padding-bottom: 40px; }
+.flix-facts { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 28px 48px; padding: 18px var(--flix-gutter) 10px; }
+@media (max-width: 800px) { .flix-facts { grid-template-columns: 1fr; } }
+.flix-facts p { margin: 0 0 10px; line-height: 1.55; }
+.flix-description { font-size: 16px; white-space: pre-line; }
+.flix-kv { font-size: 14px; color: var(--flix-muted); margin: 0 0 10px; line-height: 1.6; }
+.flix-kv b { color: var(--flix-faint); font-weight: 400; }
+.flix-kv a { color: var(--flix-ink); text-decoration: none; }
+.flix-kv a:hover { text-decoration: underline; }
+.flix-chip { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--flix-line); color: var(--flix-ink); font-size: 13px; text-decoration: none; background: rgba(255,255,255,.04); }
+a.flix-chip:hover { border-color: #fff; }
+.flix-state { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 3px; font-size: 12px; font-weight: 700; background: #333; color: #ddd; }
+.flix-state.is-draft { background: #4a3a00; color: #f5c518; }
+.flix-state.is-failed { background: #4a0f12; color: #ff8a8f; }
+.flix-state.is-binned { background: #3a3a3a; color: #bbb; }
+.flix-banner-note { margin: 0 var(--flix-gutter) 16px; padding: 12px 16px; border-radius: 4px; background: #2b2410; border: 1px solid #5b4a10; color: #f1dc8f; font-size: 14px; }
+
+.flix-episodes { padding: 8px var(--flix-gutter) 0; max-width: 1100px; }
+.flix-season-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 26px 0 8px; }
+.flix-season-head select { width: auto; }
+.flix-episode { display: grid; grid-template-columns: 34px minmax(120px, 210px) 1fr auto; align-items: center; gap: 18px; padding: 16px; border-bottom: 1px solid #404040; border-radius: 4px; text-decoration: none; }
+.flix-episode:hover, .flix-episode.is-current { background: #333; }
+.flix-episode-no { font-size: 22px; color: #d2d2d2; text-align: center; }
+.flix-episode .flix-card-img { width: 100%; }
+.flix-episode h3 { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+.flix-episode p { margin: 0; font-size: 14px; color: var(--flix-muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.flix-episode-len { color: var(--flix-ink); font-size: 14px; }
+@media (max-width: 640px) {
+  .flix-episode { grid-template-columns: 110px 1fr; gap: 10px 12px; padding: 12px 0; }
+  .flix-episode-no, .flix-episode-len { display: none; }
+}
+
+.flix-stats { padding: 14px 18px; border-radius: 6px; background: var(--flix-surface); border: 1px solid #2c2c2c; }
+.flix-stats-head { display: flex; flex-wrap: wrap; gap: 22px; margin-bottom: 14px; }
+.flix-stat { display: flex; flex-direction: column-reverse; }
+.flix-stat b { display: block; font-size: 26px; font-weight: 600; color: #fff; }
+.flix-stat span { font-size: 12px; color: var(--flix-muted); }
+.flix-chart { margin: 4px 0 0; }
+.flix-chart figcaption { font-size: 13px; color: var(--flix-muted); margin-bottom: 8px; }
+.flix-chart-plot { position: relative; padding-top: 14px; }
+/* The one tick: the peak, on a recessive hairline at the top of the plot. */
+.flix-chart-peak { position: absolute; top: 0; left: 0; font-size: 11px; color: var(--flix-faint); }
+.flix-chart-plot::before { content: ""; position: absolute; top: 14px; left: 0; right: 0; border-top: 1px solid #2f2f2f; }
+.flix-bars { position: relative; display: flex; align-items: stretch; gap: 2px; height: 90px; border-bottom: 1px solid #444; }
+/* The whole column is the hit target; the bar inside it is the mark. */
+.flix-bar { flex: 1 1 0; display: flex; align-items: flex-end; justify-content: center; cursor: default; }
+.flix-bar i { display: block; width: 100%; max-width: 24px; min-height: 2px; border-radius: 4px 4px 0 0; background: #e50914; }
+.flix-bar:hover i, .flix-bar:focus-visible i { background: #ff4d55; }
+.flix-bar:focus-visible { outline: 1px solid #fff; outline-offset: 1px; border-radius: 2px; }
+.flix-bars-axis { display: flex; justify-content: space-between; margin-top: 6px; font-size: 11px; color: var(--flix-faint); }
+.flix-tooltip { position: absolute; z-index: 5; bottom: calc(100% - 6px); transform: translateX(-50%); padding: 6px 10px; border-radius: 4px; background: #000; border: 1px solid #444; white-space: nowrap; pointer-events: none; box-shadow: 0 6px 18px rgba(0,0,0,.5); }
+.flix-tooltip b { display: block; font-size: 14px; color: #fff; }
+.flix-tooltip span { font-size: 12px; color: var(--flix-muted); }
+.flix-chart-table { margin-top: 10px; font-size: 13px; color: var(--flix-muted); }
+.flix-chart-table summary { cursor: pointer; }
+
+/* --- Player ------------------------------------------------------------------------------------ */
+body.flix-play { overflow: hidden; background: #000; }
+.flix-player { position: fixed; inset: 0; background: #000; }
+.flix-player video { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
+.flix-player-top { position: absolute; inset: 0 0 auto 0; display: flex; align-items: center; gap: 16px; padding: 18px 22px 40px; background: linear-gradient(180deg, rgba(0,0,0,.75), rgba(0,0,0,0)); transition: opacity .4s; pointer-events: none; }
+.flix-player-top > * { pointer-events: auto; }
+.flix-player-top h1 { font-size: clamp(15px, 1.6vw, 22px); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flix-player-top h1 small { color: var(--flix-muted); font-weight: 400; margin-left: 8px; }
+.flix-player.is-idle .flix-player-top, .flix-player.is-idle .flix-quality { opacity: 0; }
+.flix-player.is-idle { cursor: none; }
+.flix-back { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; color: #fff; text-decoration: none; font-size: 26px; flex: none; }
+.flix-back:hover { background: rgba(255,255,255,.15); }
+.flix-quality { position: absolute; top: 20px; right: 22px; display: flex; gap: 4px; padding: 3px; border-radius: 6px; background: rgba(0,0,0,.55); transition: opacity .4s; }
+.flix-quality button { border: 0; border-radius: 4px; padding: 6px 10px; background: transparent; color: #ccc; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.flix-quality button[aria-pressed="true"] { background: #fff; color: #000; }
+.flix-skip, .flix-next { position: absolute; right: 4vw; bottom: 12vh; border: 1px solid rgba(255,255,255,.7); border-radius: 4px; padding: 12px 22px; background: rgba(0,0,0,.6); color: #fff; font: inherit; font-size: 16px; font-weight: 700; cursor: pointer; text-decoration: none; }
+.flix-skip:hover, .flix-next:hover { background: #fff; color: #000; }
+.flix-start { position: absolute; inset: 0; display: grid; place-items: center; border: 0; background: rgba(0,0,0,.4); cursor: pointer; }
+.flix-start span { display: grid; place-items: center; width: 96px; height: 96px; border-radius: 50%; background: rgba(255,255,255,.92); color: #000; font-size: 40px; padding-left: 8px; }
+.flix-player-error { position: absolute; left: 50%; bottom: 18vh; transform: translateX(-50%); padding: 12px 18px; border-radius: 4px; background: rgba(40,0,0,.85); color: #fff; font-size: 15px; }
+
+/* --- Forms and panels -------------------------------------------------------------------------- */
+.flix-panel { background: var(--flix-surface); border: 1px solid #2c2c2c; border-radius: 8px; padding: 20px; margin: 0 0 18px; }
+.flix-panel h2 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+.flix-panel > p { color: var(--flix-muted); font-size: 14px; margin: 4px 0 12px; }
+.flix-form label { display: block; margin: 14px 0 6px; font-size: 14px; font-weight: 700; color: #ddd; }
+.flix-form .helptext, .flix-help { display: block; margin-top: 4px; font-size: 13px; color: var(--flix-faint); font-weight: 400; }
+.flix input[type=text], .flix input.flix-field, .flix input[type=number], .flix input[type=date], .flix input[type=file], .flix textarea, .flix select {
+  width: 100%; box-sizing: border-box; border: 1px solid #4d4d4d; border-radius: 4px; padding: 10px 12px; background: #333; color: #fff; font: inherit; font-size: 15px;
+}
+.flix input[type=file] { padding: 8px; }
+.flix input:focus, .flix textarea:focus, .flix select:focus { outline: 2px solid #fff; outline-offset: 0; border-color: #fff; }
+.flix .errorlist { list-style: none; margin: 6px 0 0; padding: 0; color: #ff8a8f; font-size: 14px; }
+.flix-form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0 14px; }
+.flix-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 18px; }
+.flix-two { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 0 22px; align-items: start; }
+@media (max-width: 960px) { .flix-two { grid-template-columns: 1fr; } }
+
+.flix-meter { height: 8px; border-radius: 4px; background: #3a3a3a; overflow: hidden; }
+.flix-meter span { display: block; height: 100%; width: 0; background: var(--flix-red); transition: width .4s; }
+.flix-dropzone { display: grid; place-items: center; gap: 10px; min-height: 220px; padding: 26px; border: 2px dashed #555; border-radius: 8px; text-align: center; cursor: pointer; transition: border-color .2s, background .2s; }
+.flix-dropzone:hover, .flix-dropzone.is-over { border-color: #fff; background: rgba(255,255,255,.04); }
+.flix-dropzone svg { width: 48px; height: 48px; color: var(--flix-muted); }
+.flix-dropzone strong { font-size: 18px; }
+.flix-upload-status { margin-top: 14px; font-size: 14px; color: #ddd; }
+.flix-upload-status.is-error { color: #ff8a8f; }
+
+.flix-frames { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(220px, 42vw), 1fr)); }
+.flix-frame { position: relative; border-radius: 6px; overflow: hidden; background: #000; border: 2px solid transparent; }
+.flix-frame.is-thumbnail, .flix-frame.is-banner { border-color: var(--flix-red); }
+.flix-frame img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; }
+.flix-frame-tools { display: flex; gap: 6px; padding: 8px; background: #181818; }
+.flix-frame-tools button { flex: 1 1 0; border: 1px solid #555; border-radius: 4px; padding: 6px 4px; background: #262626; color: #ddd; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.flix-frame-tools button:hover { border-color: #fff; color: #fff; }
+.flix-frame-tools button[aria-pressed="true"] { background: var(--flix-red); border-color: var(--flix-red); color: #fff; }
+.flix-frame-time { position: absolute; top: 6px; right: 6px; padding: 1px 6px; border-radius: 3px; background: rgba(0,0,0,.7); font-size: 11px; }
+.flix-chosen { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+.flix-chosen figure { margin: 0; }
+.flix-chosen figcaption { font-size: 13px; font-weight: 700; color: #ddd; margin-bottom: 6px; }
+.flix-chosen .flix-card-img { border: 1px dashed #555; }
+
+.flix-editor { border: 1px solid #4d4d4d; border-radius: 4px; background: #262626; padding: 8px; }
+.flix-editor-list { display: grid; gap: 6px; margin-bottom: 8px; }
+.flix-editor-list:empty { display: none; }
+.flix-credit { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto; gap: 6px; align-items: center; }
+.flix-credit-name { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 7px 10px; border-radius: 4px; background: #333; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flix-credit-name small { color: var(--flix-faint); }
+.flix-credit input { padding: 7px 10px !important; font-size: 14px !important; }
+.flix-x { border: 0; background: none; color: var(--flix-muted); font-size: 20px; cursor: pointer; padding: 0 6px; }
+.flix-x:hover { color: #fff; }
+.flix-chips-edit { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.flix-chips-edit:empty { display: none; }
+.flix-chips-edit .flix-chip button { border: 0; background: none; color: inherit; margin-left: 4px; cursor: pointer; font-size: 15px; line-height: 1; padding: 0; }
+.flix-suggest { position: relative; }
+.flix-suggest ul { position: absolute; z-index: 20; inset: calc(100% + 2px) 0 auto 0; margin: 0; padding: 4px; list-style: none; border: 1px solid #555; border-radius: 4px; background: #1c1c1c; box-shadow: 0 10px 24px rgba(0,0,0,.6); max-height: 260px; overflow: auto; }
+.flix-suggest li { padding: 8px 10px; border-radius: 3px; cursor: pointer; font-size: 14px; }
+.flix-suggest li[aria-selected="true"], .flix-suggest li:hover { background: #333; }
+.flix-suggest li small { color: var(--flix-faint); margin-left: 6px; }
+
+.flix-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.flix-table th, .flix-table td { padding: 10px 8px; border-bottom: 1px solid #333; text-align: left; vertical-align: top; }
+.flix-table th { color: var(--flix-faint); font-weight: 600; }
+.flix-table img { width: 200px; max-width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 4px; display: block; }
+.flix-list { display: grid; gap: 10px; }
+.flix-list-item { display: grid; grid-template-columns: 160px 1fr auto; gap: 16px; align-items: center; padding: 12px; border-radius: 6px; background: var(--flix-surface); border: 1px solid #2c2c2c; }
+.flix-list-item .flix-card-img { width: 100%; }
+.flix-list-item h3 { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+.flix-list-item h3 a { text-decoration: none; }
+.flix-list-item p { margin: 2px 0; font-size: 13px; color: var(--flix-muted); }
+@media (max-width: 640px) { .flix-list-item { grid-template-columns: 110px 1fr; } .flix-list-item > :last-child { grid-column: 1 / -1; } }
+
+.flix-timeline-years { position: sticky; top: 68px; z-index: 5; display: flex; gap: 6px; overflow-x: auto; padding: 10px 0; margin: 0 0 8px; background: var(--flix-bg); scrollbar-width: none; }
+.flix-timeline-years a { padding: 4px 12px; border-radius: 999px; border: 1px solid var(--flix-line); text-decoration: none; font-size: 14px; white-space: nowrap; }
+.flix-timeline-years a:hover { border-color: #fff; }
+.flix-year { scroll-margin-top: 130px; }
+.flix-year > h2 { font-size: clamp(28px, 4vw, 52px); font-weight: 800; color: #fff; margin: 34px 0 6px; }
+.flix-month { margin: 14px 0 22px; }
+.flix-month h3 { font-size: 15px; font-weight: 700; color: var(--flix-muted); text-transform: capitalize; margin-bottom: 10px; }
+
+.flix-people { display: flex; flex-wrap: wrap; gap: 8px; }
+.flix-person { display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px 4px 4px; border-radius: 999px; background: var(--flix-surface-2); text-decoration: none; font-size: 14px; }
+.flix-person img, .flix-person .flix-initials { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; }
+.flix-initials { display: grid; place-items: center; background: #444; font-size: 12px; font-weight: 700; }
+.flix-person-head { display: flex; align-items: center; gap: 18px; margin-bottom: 22px; }
+.flix-person-head img, .flix-person-head .flix-initials { width: 84px; height: 84px; font-size: 28px; border-radius: 50%; object-fit: cover; }
+.flix-empty { padding: 40px 0; color: var(--flix-muted); font-size: 16px; }

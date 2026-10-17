@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     "arkiv",
     "photo_album",
     "notifications",
+    "gahkflix",
 ]
 
 MIDDLEWARE = [
@@ -227,6 +228,8 @@ CELERY_TASK_ROUTES = {
     "photo_album.tasks.reencode_enlarged_video": {"queue": "media"},
     "photo_album.tasks.settle_media_dates": {"queue": "media"},
     "photo_album.tasks.measure_photo_album_storage": {"queue": "media"},
+    "gahkflix.tasks.process_video_file": {"queue": "media"},
+    "gahkflix.tasks.redraw_frames": {"queue": "media"},
 }
 
 # A local migration client uses this bearer token to submit album ZIP imports as the non-login
@@ -287,6 +290,16 @@ CELERY_BEAT_SCHEDULE = {
     "fail-stalled-photo-album-imports": {
         "task": "photo_album.tasks.fail_stalled_imports",
         "schedule": crontab(minute="10-59/15"),
+    },
+    # Sends again a GAHKFlix encode whose worker stopped reporting (gahkflix.tasks.recover_stalled).
+    "recover-stalled-gahkflix-encodes": {
+        "task": "gahkflix.tasks.recover_stalled",
+        "schedule": crontab(minute="13-59/15"),
+    },
+    # GAHKFlix's bin, abandoned drafts and expired requests, all after 30 days.
+    "gahkflix-housekeeping": {
+        "task": "gahkflix.tasks.housekeeping",
+        "schedule": crontab(minute=25, hour=4),
     },
     "purge-worker-job-logs": {
         "task": "core.tasks.purge_worker_job_logs",
@@ -556,6 +569,7 @@ LOGGING = {
         # handler of its own: it propagates to the worker's, and in the web process nothing prints
         # below WARNING.
         "photo_album": {"level": os.environ.get("PHOTO_ALBUM_LOG_LEVEL", "INFO")},
+        "gahkflix": {"level": os.environ.get("GAHKFLIX_LOG_LEVEL", "INFO")},
         # Why a login failed, and why a form was refused as stale (residents.auth). Django's own
         # CSRF warnings print only under DEBUG, so a 403 in production said nothing about why.
         "residents": {"handlers": ["console"], "level": os.environ.get("RESIDENTS_LOG_LEVEL", "INFO")},
@@ -632,3 +646,10 @@ MEDIA_CACHE_ATTACHMENTS_MB = int(os.environ.get("MEDIA_CACHE_ATTACHMENTS_MB", "2
 # every post forever and has no archive, so for caching purposes an opslag counts as archived this
 # many days after it was posted.
 NOTICE_IMAGE_CACHE_DAYS = int(os.environ.get("NOTICE_IMAGE_CACHE_DAYS", "30"))
+
+# GAHKFlix (gahkflix/). The largest film a resident may upload; it goes straight to the bucket, never
+# through the app server (gahkflix/uploads.py). A custom thumbnail is an ordinary picture.
+GAHKFLIX_MAX_UPLOAD_GB = float(os.environ.get("GAHKFLIX_MAX_UPLOAD_GB", "5"))
+GAHKFLIX_THUMBNAIL_MAX_MB = int(os.environ.get("GAHKFLIX_THUMBNAIL_MAX_MB", "15"))
+# Local copies of its thumbnails, banners and frames, in MEDIA_CACHE_DIR/gahkflix/ (gahkflix/cache.py).
+GAHKFLIX_CACHE_MB = int(os.environ.get("GAHKFLIX_CACHE_MB", "1024"))

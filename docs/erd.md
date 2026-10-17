@@ -716,6 +716,127 @@ erDiagram
         int vibrate_min_importance
     }
 
+    gahkflix_Tag {
+        int id PK
+        string name
+    }
+
+    gahkflix_Series {
+        int id PK
+        string title
+        text description
+        int created_by_id FK
+        datetime created_at
+    }
+
+    gahkflix_Video {
+        int id PK
+        string uuid
+        string title
+        text description
+        int uploaded_by_id FK
+        datetime created_at
+        datetime published_at
+        date recorded_on
+        bool recorded_on_manual
+        int series_id FK
+        int season
+        int episode
+        int file_id FK
+        string thumbnail
+        string banner
+        int thumbnail_frame_id FK
+        int banner_frame_id FK
+        datetime deleted_at
+        int deleted_by_id FK
+    }
+
+    gahkflix_VideoFile {
+        int id PK
+        string uuid
+        int video_id FK
+        int uploaded_by_id FK
+        datetime created_at
+        string original
+        string original_name
+        int size
+        string content_type
+        string fingerprint
+        string sha256
+        datetime file_modified_at
+        string state
+        int progress
+        string error
+        int attempts
+        datetime heartbeat_at
+        datetime completed_at
+        float duration
+        int width
+        int height
+        datetime recorded_at
+        string full_hd
+        string hd
+    }
+
+    gahkflix_VideoFrame {
+        int id PK
+        int video_id FK
+        string image
+        float at_seconds
+        int batch
+        datetime created_at
+    }
+
+    gahkflix_CastMember {
+        int id PK
+        int video_id FK
+        int resident_id FK
+        string name
+        string role
+        int position
+    }
+
+    gahkflix_Watch {
+        int id PK
+        int video_id FK
+        int resident_id FK
+        int views
+        datetime last_viewed_at
+        float position
+        datetime position_at
+        bool finished
+    }
+
+    gahkflix_ViewEvent {
+        int id PK
+        int video_id FK
+        int resident_id FK
+        datetime viewed_at
+    }
+
+    gahkflix_ChangeRequest {
+        int id PK
+        string kind
+        int video_id FK
+        int series_id FK
+        int requested_by_id FK
+        datetime created_at
+        json changes
+        text reason
+        string state
+        datetime decided_at
+        string note
+    }
+
+    gahkflix_ChangeVote {
+        int id PK
+        int request_id FK
+        int voter_id FK
+        bool approve
+        string comment
+        datetime created_at
+    }
+
     core_PushSubscription }o--|| residents_Resident : "user"
     residents_Resident }o--|o residents_Resident : "sponsor"
     residents_Residency }o--|| residents_Resident : "resident"
@@ -803,6 +924,28 @@ erDiagram
     notifications_Notification }o--|| residents_Resident : "recipient"
     notifications_NotificationPreference }o--|| residents_Resident : "resident"
     notifications_NotificationSettings ||--|| residents_Resident : "resident"
+    gahkflix_Series }o--|| residents_Resident : "created_by"
+    gahkflix_Video }o--|| residents_Resident : "uploaded_by"
+    gahkflix_Video }o--|o gahkflix_Series : "series"
+    gahkflix_Video ||--|o gahkflix_VideoFile : "file"
+    gahkflix_Video }o--|o gahkflix_VideoFrame : "thumbnail_frame"
+    gahkflix_Video }o--|o gahkflix_VideoFrame : "banner_frame"
+    gahkflix_Video }o--|o residents_Resident : "deleted_by"
+    gahkflix_Video }o--o{ gahkflix_Tag : "tags"
+    gahkflix_VideoFile }o--|| gahkflix_Video : "video"
+    gahkflix_VideoFile }o--|| residents_Resident : "uploaded_by"
+    gahkflix_VideoFrame }o--|| gahkflix_Video : "video"
+    gahkflix_CastMember }o--|| gahkflix_Video : "video"
+    gahkflix_CastMember }o--|o residents_Resident : "resident"
+    gahkflix_Watch }o--|| gahkflix_Video : "video"
+    gahkflix_Watch }o--|| residents_Resident : "resident"
+    gahkflix_ViewEvent }o--|| gahkflix_Video : "video"
+    gahkflix_ViewEvent }o--|| residents_Resident : "resident"
+    gahkflix_ChangeRequest }o--|o gahkflix_Video : "video"
+    gahkflix_ChangeRequest }o--|o gahkflix_Series : "series"
+    gahkflix_ChangeRequest }o--|| residents_Resident : "requested_by"
+    gahkflix_ChangeVote }o--|| gahkflix_ChangeRequest : "request"
+    gahkflix_ChangeVote }o--|| residents_Resident : "voter"
 ```
 
 ## admissions
@@ -1182,6 +1325,157 @@ erDiagram
     events_EventComment }o--|| events_Event : "event"
     events_EventComment }o--|| residents_Resident : "author"
     events_CalendarFeedToken ||--|| residents_Resident : "resident"
+```
+
+## gahkflix
+
+```mermaid
+erDiagram
+    gahkflix_Tag {
+        int id PK
+        string name
+    }
+
+    gahkflix_Series {
+        int id PK
+        string title
+        text description
+        int created_by_id FK
+        datetime created_at
+    }
+
+    gahkflix_Video {
+        int id PK
+        string uuid
+        string title
+        text description
+        int uploaded_by_id FK
+        datetime created_at
+        datetime published_at
+        date recorded_on
+        bool recorded_on_manual
+        int series_id FK
+        int season
+        int episode
+        int file_id FK
+        string thumbnail
+        string banner
+        int thumbnail_frame_id FK
+        int banner_frame_id FK
+        datetime deleted_at
+        int deleted_by_id FK
+    }
+
+    gahkflix_VideoFile {
+        int id PK
+        string uuid
+        int video_id FK
+        int uploaded_by_id FK
+        datetime created_at
+        string original
+        string original_name
+        int size
+        string content_type
+        string fingerprint
+        string sha256
+        datetime file_modified_at
+        string state
+        int progress
+        string error
+        int attempts
+        datetime heartbeat_at
+        datetime completed_at
+        float duration
+        int width
+        int height
+        datetime recorded_at
+        string full_hd
+        string hd
+    }
+
+    gahkflix_VideoFrame {
+        int id PK
+        int video_id FK
+        string image
+        float at_seconds
+        int batch
+        datetime created_at
+    }
+
+    gahkflix_CastMember {
+        int id PK
+        int video_id FK
+        int resident_id FK
+        string name
+        string role
+        int position
+    }
+
+    gahkflix_Watch {
+        int id PK
+        int video_id FK
+        int resident_id FK
+        int views
+        datetime last_viewed_at
+        float position
+        datetime position_at
+        bool finished
+    }
+
+    gahkflix_ViewEvent {
+        int id PK
+        int video_id FK
+        int resident_id FK
+        datetime viewed_at
+    }
+
+    gahkflix_ChangeRequest {
+        int id PK
+        string kind
+        int video_id FK
+        int series_id FK
+        int requested_by_id FK
+        datetime created_at
+        json changes
+        text reason
+        string state
+        datetime decided_at
+        string note
+    }
+
+    gahkflix_ChangeVote {
+        int id PK
+        int request_id FK
+        int voter_id FK
+        bool approve
+        string comment
+        datetime created_at
+    }
+
+    residents_Resident { }
+
+    gahkflix_Series }o--|| residents_Resident : "created_by"
+    gahkflix_Video }o--|| residents_Resident : "uploaded_by"
+    gahkflix_Video }o--|o gahkflix_Series : "series"
+    gahkflix_Video ||--|o gahkflix_VideoFile : "file"
+    gahkflix_Video }o--|o gahkflix_VideoFrame : "thumbnail_frame"
+    gahkflix_Video }o--|o gahkflix_VideoFrame : "banner_frame"
+    gahkflix_Video }o--|o residents_Resident : "deleted_by"
+    gahkflix_Video }o--o{ gahkflix_Tag : "tags"
+    gahkflix_VideoFile }o--|| gahkflix_Video : "video"
+    gahkflix_VideoFile }o--|| residents_Resident : "uploaded_by"
+    gahkflix_VideoFrame }o--|| gahkflix_Video : "video"
+    gahkflix_CastMember }o--|| gahkflix_Video : "video"
+    gahkflix_CastMember }o--|o residents_Resident : "resident"
+    gahkflix_Watch }o--|| gahkflix_Video : "video"
+    gahkflix_Watch }o--|| residents_Resident : "resident"
+    gahkflix_ViewEvent }o--|| gahkflix_Video : "video"
+    gahkflix_ViewEvent }o--|| residents_Resident : "resident"
+    gahkflix_ChangeRequest }o--|o gahkflix_Video : "video"
+    gahkflix_ChangeRequest }o--|o gahkflix_Series : "series"
+    gahkflix_ChangeRequest }o--|| residents_Resident : "requested_by"
+    gahkflix_ChangeVote }o--|| gahkflix_ChangeRequest : "request"
+    gahkflix_ChangeVote }o--|| residents_Resident : "voter"
 ```
 
 ## notifications
