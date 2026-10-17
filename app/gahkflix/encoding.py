@@ -240,8 +240,8 @@ def frame_times(duration: float | None, count: int, rng: random.Random) -> list[
 def extract_frame(source: Path | str, at: float, target: Path) -> bool:
     """One frame at `at` seconds as a JPEG at most FRAME_MAX_WIDTH wide. False if there is none.
 
-    `source` may be a signed URL as well as a path: ffmpeg then seeks in it with range requests and
-    reads only what it needs, so a frame from a long film costs no download of it.
+    `source` may be a URL (storage.loopback_url) as well as a path: ffmpeg then seeks in it with range
+    requests and reads only what it needs, so a frame from a long film costs no download of it.
     """
     network = str(source).startswith(("http://", "https://"))
     result = subprocess.run(  # noqa: S603  # nosec B603
@@ -265,9 +265,14 @@ def extract_frame(source: Path | str, at: float, target: Path) -> bool:
         ],
         check=False,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        errors="replace",
         timeout=120,
     )
+    if result.returncode != 0:
+        # What ffmpeg said, so a failure can be told apart from a moment with no frame in it.
+        logger.warning("ffmpeg could not cut a frame at %.3f s: %s", at, result.stderr.strip()[-300:])
     return result.returncode == 0 and target.exists() and target.stat().st_size > 0
 
 

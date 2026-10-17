@@ -337,6 +337,31 @@ def test_pick_a_moment_yourself(
     assert len(pictures) == 1  # the banner; nothing stored for the refused one
 
 
+def test_ffmpeg_reads_stored_files_over_the_loopback() -> None:
+    """The static ffmpeg cannot resolve host names, so it gets the file from this process, in ranges."""
+    import urllib.error
+    import urllib.request
+
+    from gahkflix.storage import loopback_url
+
+    key = get_video_storage().save("gahkflix/loopback/test.bin", ContentFile(bytes(range(256)) * 4))
+    with loopback_url(key) as url:
+        assert url.startswith("http://127.0.0.1:")
+        request = urllib.request.Request(url, headers={"Range": "bytes=10-19"})
+        with urllib.request.urlopen(request) as response:
+            assert response.status == 206 and response.headers["Content-Range"] == "bytes 10-19/1024"
+            assert response.read() == bytes(range(10, 20))
+        with urllib.request.urlopen(
+            urllib.request.Request(url, headers={"Range": "bytes=1020-"})
+        ) as response:
+            assert response.read() == bytes(range(252, 256))
+        with urllib.request.urlopen(url) as response:
+            assert response.status == 200 and len(response.read()) == 1024
+        with pytest.raises(urllib.error.HTTPError) as refused:
+            urllib.request.urlopen(urllib.request.Request(url, headers={"Range": "bytes=5000-"}))
+        assert refused.value.code == 416
+
+
 def test_season_and_episode_fields(admin: Resident, member: Resident) -> None:
     series = Series.objects.create(title="Gangen", created_by=admin)
     make_video(admin, title="Pilot", series=series, season=1, episode=1)
