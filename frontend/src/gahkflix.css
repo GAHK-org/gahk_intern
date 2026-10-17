@@ -293,7 +293,8 @@ body.flix-play, body.flix-player-open { overflow: hidden; background: #000; }
 .flix-frames { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(220px, 42vw), 1fr)); }
 .flix-frame { position: relative; border-radius: 6px; overflow: hidden; background: #000; border: 2px solid transparent; }
 .flix-frame.is-thumbnail, .flix-frame.is-banner { border-color: var(--flix-red); }
-.flix-frame img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; }
+/* Contain, not cover: a portrait frame is shown whole here, as its picture will show it. */
+.flix-frame img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #000; }
 .flix-frame-tools { display: flex; gap: 6px; padding: 8px; background: #181818; }
 .flix-frame-tools button { flex: 1 1 0; border: 1px solid #555; border-radius: 4px; padding: 6px 4px; background: #262626; color: #ddd; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
 .flix-frame-tools button:hover { border-color: #fff; color: #fff; }
