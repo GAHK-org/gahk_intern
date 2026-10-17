@@ -9,9 +9,8 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from residents.models import Resident, active_period, next_period
-from residents.permissions import current_resident, role_required
-from residents.views import DA_MONTHS
+from core.danish import MONTHS as DA_MONTHS
+from residents.api import Resident, active_period, current_resident, next_period, role_required
 
 from .models import AkEntry, AkMonthlyCharge
 from .services import charge_period, ensure_previous_month_charged

@@ -205,8 +205,23 @@ tasks:
     desc: Static type-check with mypy (+ django-stubs). Runs from the repo root (config in pyproject.toml).
     cmds: ['uv run mypy app']
 
+  boundaries:
+    desc: Check the domain boundaries, as CI does (tach.toml + core/boundaries.py; docs/domain-boundaries.md)
+    cmds:
+      - uv run tach check
+      - task: boundaries:relations
+
+  boundaries:relations:
+    desc: The ORM half of `boundaries` - cross-domain ForeignKeys may not leave reverse accessors
+    dir: '{{.APP}}'
+    cmds: ['{{.PY}} manage.py check --tag domain_boundaries --fail-level ERROR']
+
+  boundaries:graph:
+    desc: Draw the domain dependency graph as Mermaid (tach_module_graph.mmd)
+    cmds: ['uv run tach show --mermaid']
+
   hooks:
-    desc: Install the prek git pre-commit hooks (ruff + mypy run on commit)
+    desc: Install the prek git pre-commit hooks (ruff + mypy + tach run on commit)
     cmds: ['uv run prek install']
 
   db:up:

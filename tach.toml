@@ -1,0 +1,106 @@
+# Domain boundaries, checked by Tach (https://docs.gauge.sh) on every PR — see
+# .github/workflows/boundaries.yml and docs/domain-boundaries.md for the rules in prose.
+#
+#   uv run tach check           what CI runs
+#   uv run tach show --mermaid  draw the module graph
+#
+# The three rules this file encodes:
+#   1. LAYERS: imports point down the list below, never up.
+#   2. depends_on: a feature may import a SIBLING feature only if it is listed here. A new arrow
+#      between two features is a design decision, so it shows up in review as a diff to this file.
+#   3. INTERFACES: from another domain you may import its `api` module, and nothing else.
+#
+# Tests (app/tests/, */tests.py) are excluded: they test internals on purpose. Migrations too: they
+# reference other apps' migrations by design.
+
+source_roots = ["app"]
+exclude = ["app/tests/**", "**/tests.py", "**/migrations/**", "app/static/**", "app/staticfiles/**"]
+exact = true                          # a depends_on entry nobody uses is an error, so the graph stays true
+forbid_circular_dependencies = true
+ignore_type_checking_imports = true   # `if TYPE_CHECKING:` imports are annotations, not coupling
+
+layers = [
+    "composition",  # wires domains together: URLs, sidebar, site-admin console, seed/ETL commands
+    "features",     # one module per business domain
+    "platform",     # shared services that need to know who the user is (push, rollout gates)
+    "identity",     # residents: who somebody is, their room and roles this month
+    "kernel",       # core: framework-level helpers with no domain knowledge
+]
+
+[rules]
+unused_ignore_directives = "error"         # a `# tach-ignore` that suppresses nothing must go
+require_ignore_directive_reasons = "error" # `# tach-ignore(why) ...`, never a bare one
+
+# --- composition --------------------------------------------------------------------------------
+# May import anything from anyone (see the second [[interfaces]] block). Keep it thin: wiring and
+# operator tooling, never business rules.
+
+[[modules]]
+paths = [
+    "config",
+    "core.management",          # seed_demo, etl_verify, audit_media: deliberately cross-domain
+    "core.context_processors",  # the sidebar asks every feature's rollout gate
+    "residents.views_admin",    # site-admin console: worker jobs of every domain, roles, preview
+    "residents.urls_admin",
+]
+layer = "composition"
+
+# --- features -----------------------------------------------------------------------------------
+
+[[modules]]
+paths = [
+    "admissions", "ak", "arkiv", "cms", "den_hurtige", "events", "oelkaelder", "photo_album",
+    "reparationer", "rooms",
+]
+layer = "features"
+depends_on = []
+
+[[modules]]
+path = "opslagstavle"
+layer = "features"
+depends_on = ["events"]  # links a post to an event; events reaches back via a mention provider
+
+[[modules]]
+path = "stats"
+layer = "features"
+depends_on = ["admissions"]  # application counts for the statistics page
+
+[[modules]]
+path = "regnskab"
+layer = "features"
+depends_on = ["ak", "oelkaelder"]  # the settlement report: a read model over both balances
+
+# --- platform, identity, kernel -----------------------------------------------------------------
+
+[[modules]]
+paths = ["core.push", "core.rollout", "core.tasks"]
+layer = "platform"
+utility = true
+
+[[modules]]
+path = "residents"
+layer = "identity"
+
+[[modules]]
+path = "core"
+layer = "kernel"
+utility = true
+
+# --- interfaces ---------------------------------------------------------------------------------
+
+[[interfaces]]
+expose = ["api", "api\\..*"]
+from = [
+    "residents", "admissions", "ak", "arkiv", "cms", "den_hurtige", "events", "oelkaelder",
+    "opslagstavle", "photo_album", "regnskab", "reparationer", "rooms", "stats",
+]
+
+[[interfaces]]
+expose = [".*"]
+from = [
+    "residents", "admissions", "ak", "arkiv", "cms", "den_hurtige", "events", "oelkaelder",
+    "opslagstavle", "photo_album", "regnskab", "reparationer", "rooms", "stats",
+]
+visibility = [
+    "config", "core.management", "core.context_processors", "residents.views_admin", "residents.urls_admin",
+]

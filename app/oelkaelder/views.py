@@ -23,8 +23,7 @@ from django.views.decorators.http import require_POST
 from core.exports import csv_or_xlsx_response
 from core.net import client_ip
 from core.uploads import attached_image
-from residents.models import Resident
-from residents.permissions import current_resident, role_required
+from residents.api import Resident, current_resident, role_required
 
 from .forms import InterestPolicyForm, PurchasePolicyForm, WarningForm
 from .models import (

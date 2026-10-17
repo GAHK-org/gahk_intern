@@ -13,7 +13,7 @@ from django.db import models
 from django.db.models import Q, Sum
 from django.utils import timezone
 
-from residents.models import Resident
+from residents.api import Resident
 
 
 class AkEntry(models.Model):

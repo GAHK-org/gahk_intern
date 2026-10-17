@@ -29,7 +29,7 @@ from typing import Any
 from django.db import models
 from django.utils import timezone
 
-from residents.models import Resident
+from residents.api import Resident
 
 # How long a ticket may sit in Færdig before the nightly sweep archives it. Long enough that a
 # just-closed repair does not vanish from the board while still fresh, short enough that Færdig does

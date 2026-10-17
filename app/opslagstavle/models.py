@@ -31,7 +31,7 @@ from django.dispatch import receiver
 from django.utils import timezone
 
 from core.files import delete_attached_files
-from residents.models import Resident, embedsgruppe_of
+from residents.api import Resident, embedsgruppe_of
 
 # NO RETENTION. Opslag are kept indefinitely; nothing deletes a post but its author or a moderator.
 #
@@ -176,9 +176,14 @@ class Notice(AuthoredByResident):
     # features' docstrings have said all along, with no way to actually get from one to the other
     # until now.
     #
-    # A STRING REFERENCE, not an import. `events` is the newer app and its own docstring points back
-    # here; importing the model would make the dependency mutual at module level, and a
-    # ForeignKey("events.Event") costs nothing to avoid it.
+    # A STRING REFERENCE, not an import, and `related_name="+"`: a cross-domain relation, so Event
+    # gets NO reverse accessor. With one, `event.notices` would let begivenheder query this table
+    # without importing anything Tach could see (docs/domain-boundaries.md). The event page shows
+    # these posts through events.api's mention providers instead (see handlers.py). Code here reads
+    # `event_id` and asks events.api for an EventSummary; it does not follow `notice.event`.
+    #
+    # Why a real ForeignKey at all, then: one database, so the integrity is free — the link can never
+    # name an event that does not exist, and the SET_NULL below needs no event handler to stay true.
     #
     # SET_NULL, and that is the whole retention story in one keyword: an event is deleted a week
     # after it is held (events.models), a notice lives about two years. CASCADE would mean Tuesday's
@@ -195,7 +200,7 @@ class Notice(AuthoredByResident):
         null=True,
         blank=True,
         on_delete=models.SET_NULL,
-        related_name="notices",
+        related_name="+",
         verbose_name="Begivenhed",
     )
 

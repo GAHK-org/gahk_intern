@@ -42,7 +42,7 @@ from core.reactions import CREATED, apply_toggle, reaction_rows
 from core.uploads import attached_image
 from notifications.categories import chat_room_key
 from notifications.models import NotificationPreference
-from residents.permissions import current_resident, effective_roles
+from residents.api import current_resident, effective_roles
 
 from . import channels, live, services
 from .access import access_required, can_moderate, is_limited, request_allowed

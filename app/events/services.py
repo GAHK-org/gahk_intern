@@ -36,7 +36,7 @@ from core.clock import current_datetime
 from core.markdown import plain_text
 from notifications import categories
 from notifications import services as notifications
-from residents.models import Residency, Resident, active_period
+from residents.api import Resident, roster_resident_ids
 
 from . import access
 from .models import Answer, Event, EventComment, EventInvite, Rsvp, Visibility
@@ -373,8 +373,7 @@ def deadline_reminder_audience(event: Event) -> QuerySet[Resident]:
     if event.visibility == Visibility.KUN_INVITEREDE:
         eligible = set(event.invites.values_list("resident_id", flat=True))
     else:
-        year, month = active_period()
-        eligible = set(Residency.objects.filter(year=year, month=month).values_list("resident_id", flat=True))
+        eligible = set(roster_resident_ids())
 
     answered = set(event.rsvps.values_list("resident_id", flat=True))
     hosts = {event.organiser_id, *event.co_organisers.values_list("pk", flat=True)}
@@ -411,7 +410,7 @@ def send_deadline_reminder(event: Event, now: datetime.datetime | None = None) -
 def ensure_due_reminders_sent() -> None:
     """Backstop for the remind_rsvp_deadlines cron, called from the events list page.
 
-    The AK idiom (residents.views calls ensure_previous_month_charged the same way), and this feature
+    The AK idiom (ak.views and ak.handlers call ensure_previous_month_charged the same way), and this feature
     earns one where opslagstavlen's purge deliberately does not: a missed purge is wrong for nobody
     for months, while a missed reminder is UNRECOVERABLE — the deadline passes, the event is
     under-attended, and nobody ever learns why. DEPLOY.md draws exactly that line.

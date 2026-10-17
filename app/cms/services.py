@@ -12,7 +12,7 @@ the content immediately before any human edit is therefore always captured. Seed
 developer operation; a resident clicking "gem" is not, and that is the one this protects.
 """
 
-from residents.models import Resident
+from residents.api import Resident
 
 from .models import Page, PageRedirect, PageVersion
 

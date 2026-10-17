@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     "arkiv",
     "photo_album",
     "notifications",
+    "regnskab",
 ]
 
 MIDDLEWARE = [

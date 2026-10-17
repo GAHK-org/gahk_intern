@@ -25,7 +25,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from core.exports import csv_or_xlsx_response
-from residents.permissions import current_resident, role_required
+from residents.api import current_resident, role_required
 
 from .forms import FremlejeForm, RundvisningForm
 from .models import Application

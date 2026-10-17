@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 from django.db.models import Q, QuerySet
 
 from notifications import categories, services
-from residents.models import Resident, Role, RoleAssignment, active_period
+from residents.api import Resident, Role, resident_ids_with_roles
 
 if TYPE_CHECKING:
     from .models import RepairTask
@@ -39,10 +39,7 @@ def _residents_with_role(role: str) -> QuerySet[Resident]:
     """Residents currently holding `role` for the active period. administrator counts too — it
     implies every role (residents.permissions.real_roles), and a superuser may hold the role with no
     RoleAssignment row at all."""
-    year, month = active_period()
-    resident_ids = RoleAssignment.objects.filter(
-        year=year, month=month, role__in=[role, Role.ADMINISTRATOR]
-    ).values_list("resident_id", flat=True)
+    resident_ids = resident_ids_with_roles([role, Role.ADMINISTRATOR])
     return Resident.objects.filter(is_active=True).filter(Q(pk__in=resident_ids) | Q(is_superuser=True))
 
 

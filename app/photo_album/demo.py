@@ -7,7 +7,7 @@ from io import BytesIO
 from django.core.files.base import ContentFile
 from django.utils.text import slugify
 
-from residents.models import Resident
+from residents.api import Resident
 
 from .models import Album, Media
 from .services import add_tag, upload_media

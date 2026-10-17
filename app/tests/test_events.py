@@ -2626,15 +2626,17 @@ def board_open(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_the_event_page_lists_the_posts_about_it(client: Client, beboer: Resident, board_open: None) -> None:
     event = make_event(beboer)
-    _notice(beboer, event)
+    notice = _notice(beboer, event)
     client.force_login(beboer)
 
     response = client.get(f"{EVENTS}{event.pk}")
     body = response.content.decode()
 
     assert "Omtalt på opslagstavlen" in body
-    assert len(response.context["notices"]) == 1
-    assert f"/intern/opslagstavle/{response.context['notices'][0].pk}" in body
+    [section] = response.context["mention_sections"]
+    assert len(section.mentions) == 1
+    assert section.mentions[0].url == f"/intern/opslagstavle/{notice.pk}"
+    assert section.mentions[0].url in body
     # The excerpt, not just the byline: on an event with two or three posts about it, what the post
     # says is the only thing that lets a reader pick. And rendered, so no `**` reaches the page.
     assert "Vi spiser sammen." in body
@@ -2655,5 +2657,5 @@ def test_no_board_link_for_somebody_who_cannot_open_the_board(
 
     response = client.get(f"{EVENTS}{event.pk}")
 
-    assert response.context["notices"] == []
+    assert response.context["mention_sections"] == []
     assert "Omtalt på opslagstavlen" not in response.content.decode()

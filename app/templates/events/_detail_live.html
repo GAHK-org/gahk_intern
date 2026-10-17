@@ -107,15 +107,15 @@
 
   {% include "events/_rsvp.html" %}
 
-  {% if notices %}
+  {% for section in mention_sections %}
     {% comment %}
-      The posts that announced this. Only rendered for a reader who can actually open opslagstavlen
-      — it is still behind a role gate, and a link that 403s is worse than no link (see
-      views._related_notices).
+      Other domains' content about this event — today, the opslagstavle posts that announced it.
+      Each section comes from a provider that domain registered (events.api.register_mention_provider)
+      and has already applied ITS OWN gate for this reader: a link that 403s is worse than no link.
     {% endcomment %}
     <section class="event-notices">
-      <h2>Omtalt på opslagstavlen</h2>
-      {% for notice in notices %}
+      <h2>{{ section.heading }}</h2>
+      {% for mention in section.mentions %}
         {% comment %}
           An excerpt, not just a byline. "Frederik Formand · 24. maj" says a post exists; it does not
           say which one, and on an event with two or three of them that is the only thing the reader
@@ -125,17 +125,17 @@
           the board's own excerpts are (see _notice_card.html): truncating the source slices a
           construct in half and shows `**Hej` to the reader.
         {% endcomment %}
-        <a class="event-notice" href="{% url 'opslagstavle:detail' notice.pk %}">
+        <a class="event-notice" href="{{ mention.url }}">
           <span class="event-notice-body">
-            {{ notice.body|markdown_text_only|striptags|truncatewords:14 }}
+            {{ mention.excerpt_markdown|markdown_text_only|striptags|truncatewords:14 }}
           </span>
           <span class="event-notice-who muted">
-            {{ notice.author.full_name }} · {{ notice.created_at|date:"j. F" }}
+            {{ mention.author_name }} · {{ mention.created_at|date:"j. F" }}
           </span>
         </a>
       {% endfor %}
     </section>
-  {% endif %}
+  {% endfor %}
 
   {% comment %}
     The thread. Reuses opslagstavlen's comment markup and CSS wholesale — .notice-comments, .reply,

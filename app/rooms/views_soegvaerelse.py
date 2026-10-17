@@ -18,8 +18,21 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from core.models import Room
-from residents.models import Residency, Resident, RoleAssignment, active_period, next_period, prev_period
-from residents.permissions import current_resident, request_has_role, role_required
+from residents.api import (
+    Resident,
+    active_period,
+    carry_roster_forward,
+    current_resident,
+    months_on_roster,
+    next_period,
+    occupants,
+    place_on_roster,
+    prev_period,
+    remove_from_roster,
+    request_has_role,
+    role_required,
+    room_numbers_on_roster,
+)
 
 from .kvotient import compute_k, compute_k_parts, month_choices, month_index, month_label
 from .models import KvotientApplication, KvotientOrlov, KvotientPriority, RoomOffer
@@ -112,9 +125,7 @@ def computed_orlov_months(resident: Resident) -> int:
     if active < move_in:
         return 0
     present = {
-        month_index(y, m)
-        for y, m in resident.residencies.values_list("year", "month")
-        if move_in <= month_index(y, m) <= active
+        month_index(y, m) for y, m in months_on_roster(resident.pk) if move_in <= month_index(y, m) <= active
     }
     return (active - move_in + 1) - len(present)  # window length minus months actually on the list
 
@@ -414,21 +425,7 @@ def _carry_roster_forward(sy: int, sm: int, ty: int, tm: int) -> None:
     """Copy every resident on the (sy, sm) list who is not already on (ty, tm) forward — same room,
     embedsgruppe, rengøring and roles. Non-destructive: residents already on the target list (e.g. an
     already-copied next-month list) are left untouched."""
-    existing = set(Residency.objects.filter(year=ty, month=tm).values_list("resident_id", flat=True))
-    for r in Residency.objects.filter(year=sy, month=sm):
-        if r.resident_id in existing:
-            continue
-        Residency.objects.create(
-            resident_id=r.resident_id,
-            room_id=r.room_id,
-            workgroup_id=r.workgroup_id,
-            cleaning_id=r.cleaning_id,
-            year=ty,
-            month=tm,
-        )
-        for ra in RoleAssignment.objects.filter(resident_id=r.resident_id, year=sy, month=sm):
-            RoleAssignment.objects.get_or_create(resident_id=r.resident_id, role=ra.role, year=ty, month=tm)
-        existing.add(r.resident_id)
+    carry_roster_forward((sy, sm), (ty, tm))
 
 
 @require_POST
@@ -464,9 +461,7 @@ def end_round(request: HttpRequest) -> HttpResponseRedirect:
             target_month = month0 + 1
             sy, sm = prev_period((year, target_month))  # the roster that carries forward
             # Each resident's room BEFORE this run, so a move can be shown as "from -> to".
-            prev_rooms = dict(
-                Residency.objects.filter(year=sy, month=sm).values_list("resident_id", "room__number")
-            )
+            prev_rooms = room_numbers_on_roster((sy, sm))
             _carry_roster_forward(sy, sm, year, target_month)
             alloc = allocate_round(month)
             settled_rooms = set(alloc.winners)
@@ -476,9 +471,7 @@ def end_round(request: HttpRequest) -> HttpResponseRedirect:
             # keyed on (resident, year, month), so it MOVES the winner's carried-forward row into the
             # won room rather than duplicating it — the old room is vacated automatically.
             for room_id, app in alloc.winners.items():
-                Residency.objects.update_or_create(
-                    resident_id=app.resident_id, year=year, month=target_month, defaults={"room_id": room_id}
-                )
+                place_on_roster(app.resident_id, (year, target_month), room_id)
                 moves.append(
                     {
                         "name": app.resident.full_name,
@@ -492,18 +485,12 @@ def end_round(request: HttpRequest) -> HttpResponseRedirect:
             # and excluding every winner, means a relocating winner is never deleted regardless of
             # processing order (the bug the naive per-room eviction had). Their monthly roles go too.
             if alloc.winners:
-                leaver_rows = list(
-                    Residency.objects.filter(room_id__in=alloc.winners.keys(), year=year, month=target_month)
-                    .exclude(resident_id__in=winner_resident_ids)
-                    .select_related("resident", "room")
+                leaver_rows = occupants(
+                    alloc.winners.keys(), (year, target_month), excluding=winner_resident_ids
                 )
                 if leaver_rows:
-                    left += [{"name": lr.resident.full_name, "from": lr.room.number} for lr in leaver_rows]
-                    leavers = [lr.resident_id for lr in leaver_rows]
-                    Residency.objects.filter(resident_id__in=leavers, year=year, month=target_month).delete()
-                    RoleAssignment.objects.filter(
-                        resident_id__in=leavers, year=year, month=target_month
-                    ).delete()
+                    left += [{"name": lr.resident.full_name, "from": lr.room_number} for lr in leaver_rows]
+                    remove_from_roster([lr.resident.pk for lr in leaver_rows], (year, target_month))
                     evicted += len(leaver_rows)
             unresolved += len(alloc.contested)
             unresolved_rooms += [room_num[rid] for rid in alloc.contested]

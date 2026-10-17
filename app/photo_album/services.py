@@ -28,7 +28,7 @@ from django.db.models.functions import Lower
 from django.utils import timezone
 from PIL import ExifTags, Image, ImageFile, ImageOps, ImageSequence, IptcImagePlugin
 
-from residents.models import Resident
+from residents.api import Resident
 
 from .models import (
     MAX_ALBUM_DEPTH,

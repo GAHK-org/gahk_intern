@@ -32,7 +32,7 @@ from django.db.models import QuerySet
 from django.http import HttpRequest
 
 from core.rollout import Gate
-from residents.permissions import MODERATION_ROLES, View, request_has_role
+from residents.api import MODERATION_ROLES, View, request_has_role
 
 from .models import Notice, NoticeComment
 

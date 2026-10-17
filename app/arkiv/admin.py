@@ -16,8 +16,7 @@ from django.core.exceptions import ValidationError
 from django.http import HttpRequest
 from django.utils import timezone
 
-from residents.models import Role
-from residents.permissions import has_active_role
+from residents.api import Role, has_active_role
 
 from . import access
 from .models import ArchiveFile, ArchiveFolder

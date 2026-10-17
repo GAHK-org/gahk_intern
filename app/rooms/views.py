@@ -30,7 +30,7 @@ from django.utils import timezone
 from core.exports import csv_or_xlsx_response
 from core.models import Room
 from core.uploads import prepare_image_upload
-from residents.permissions import current_resident, role_required
+from residents.api import current_resident, role_required
 
 from .models import RoomCondition, RoomConditionScore, RoomCriterion
 

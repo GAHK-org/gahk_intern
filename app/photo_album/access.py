@@ -5,8 +5,7 @@ from django.db.models import QuerySet
 from django.http import HttpRequest
 from django.utils import timezone
 
-from residents.models import Role
-from residents.permissions import current_resident, request_has_role
+from residents.api import Role, current_resident, request_has_role
 
 from .models import MANUAL_MAX_ALBUM_DEPTH, Album, Media, MediaStatus
 

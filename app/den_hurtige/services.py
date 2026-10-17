@@ -29,7 +29,7 @@ from notifications import categories, services
 from . import access, channels
 
 if TYPE_CHECKING:
-    from residents.models import Resident
+    from residents.api import Resident
 
     from .models import QuickComment, QuickPost
 
