@@ -5,7 +5,7 @@
     <h1 class="flix-page-title">Godkendelser</h1>
     <p class="muted" style="margin-top:-8px">En ændring af en video, der er over 30 dage gammel, skal godkendes af én anden administrator. Sletning af en video, der er over 7 dage gammel, skal godkendes af to andre. Én afvisning lukker anmodningen, og ubehandlede anmodninger udløber efter 30 dage.</p>
     {% for change in open_requests %}
-      {% include "gahkflix/_request.html" %}
+      {% include "gahkflix/_request.html" with rows=change.rows can_vote=change.can_vote can_withdraw=False %}
     {% empty %}
       <p class="flix-empty">Ingen anmodninger venter.</p>
     {% endfor %}

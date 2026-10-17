@@ -730,7 +730,12 @@ def _close(change: ChangeRequest, state: str, note: str = "") -> None:
 def vote(change: ChangeRequest, voter: Resident, *, approve: bool, comment: str = "") -> ChangeRequest:
     """One administrator's vote. A rejection closes the request; enough approvals carry it out."""
     with transaction.atomic():
-        change = ChangeRequest.objects.select_for_update().select_related("video", "series").get(pk=change.pk)
+        # Only the request row is locked: video and series are nullable joins, which FOR UPDATE refuses.
+        change = (
+            ChangeRequest.objects.select_for_update(of=("self",))
+            .select_related("video", "series", "requested_by")
+            .get(pk=change.pk)
+        )
         if not change.is_open:
             raise ValidationError("Anmodningen er allerede afgjort.")
         if change.requested_by_id == voter.pk:
