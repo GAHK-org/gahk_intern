@@ -700,21 +700,21 @@ def test_cancelling_keeps_the_row_and_tells_the_people_coming(
     assert [p[0] for p in pushes] == [[other.pk]]
 
 
-def test_the_organiser_is_not_told_about_their_own_cancellation(
+def test_the_organiser_is_told_when_a_co_organiser_cancels(
     client: Client, beboer: Resident, other: Resident, pushes: list
 ) -> None:
-    """Saying ja to your own event is normal; being notified that you just cancelled it is noise —
-    the same rule as for a change."""
+    """Unlike a change, a cancellation does not exclude the organiser: a co-organiser can aflys too,
+    and services.cancel does not know who did it. An organiser who said ja must hear their own event
+    is off — the price is that one who cancels it themselves is told as well."""
     event = make_event(beboer)
+    event.co_organisers.add(other)
     services.set_answer(event.pk, beboer, Answer.JA)
-    services.set_answer(event.pk, other, Answer.JA)
     subscribe(beboer, "https://push.example/beboer")
-    subscribe(other, "https://push.example/other")
-    client.force_login(beboer)
+    client.force_login(other)
 
     client.post(f"{EVENTS}{event.pk}/aflys")
 
-    assert told(categories.EVENTS_CHANGES) == [(other.pk, f"Aflyst: {event.title}")]
+    assert told(categories.EVENTS_CHANGES) == [(beboer.pk, f"Aflyst: {event.title}")]
 
 
 def test_a_cancelled_event_takes_no_more_answers(beboer: Resident, other: Resident) -> None:
