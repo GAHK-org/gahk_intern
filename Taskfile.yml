@@ -210,11 +210,17 @@ tasks:
     cmds:
       - uv run tach check
       - task: boundaries:relations
+      - task: boundaries:raw-sql
 
   boundaries:relations:
     desc: The ORM half of `boundaries` - cross-domain ForeignKeys may not leave reverse accessors
     dir: '{{.APP}}'
     cmds: ['{{.PY}} manage.py check --tag domain_boundaries --fail-level ERROR']
+
+  boundaries:raw-sql:
+    desc: The raw-SQL half of `boundaries` - no django.db.connection outside the allow-list in ruff.toml
+    dir: '{{.APP}}'
+    cmds: ['uv run ruff check --select TID251 .']
 
   boundaries:graph:
     desc: Draw the domain dependency graph as Mermaid (tach_module_graph.mmd)
