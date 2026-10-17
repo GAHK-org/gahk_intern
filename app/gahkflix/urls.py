@@ -28,6 +28,7 @@ urlpatterns = [
     path("anmodning/<int:pk>/tilbagekald", views.request_withdraw, name="request_withdraw"),
     path("anmodning/<int:pk>/billede/<str:kind>", views.request_picture, name="request_picture"),
     path("papirkurv", views.bin, name="bin"),
+    path("kladder", views.drafts, name="drafts"),
     path("opslag/beboere", views.residents_lookup, name="residents_lookup"),
     path("opslag/tags", views.tags_lookup, name="tags_lookup"),
     path("v/<int:pk>", views.detail, name="detail"),

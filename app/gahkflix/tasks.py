@@ -96,10 +96,31 @@ def recover_stalled() -> int:
 
 @shared_task
 def housekeeping() -> str:
-    """Nightly: empty the bin and abandoned drafts after 30 days, and let old requests expire."""
+    """Nightly: empty the bin after 30 days and unpublished drafts after 90, let old requests expire,
+    and delete stored files nothing refers to."""
     binned, drafts = services.purge()
     expired = services.expire_requests()
+    sweep = services.sweep_orphans()
     logger.info(
-        "Purged %d binned video(s) and %d abandoned draft(s); %d request(s) expired.", binned, drafts, expired
+        "Purged %d binned video(s) and %d abandoned draft(s); %d request(s) expired; "
+        "%d unreferenced file(s) deleted of %d stored%s.",
+        binned,
+        drafts,
+        expired,
+        len(sweep.deleted),
+        sweep.stored,
+        " (sweep refused)" if sweep.refused else "",
     )
-    return f"{binned} binned, {drafts} drafts, {expired} requests"
+    return f"{binned} binned, {drafts} drafts, {expired} requests, {len(sweep.deleted)} orphans"
+
+
+@shared_task
+def weekly_draft_reminders() -> int:
+    """Mondays: remind uploaders of their unpublished drafts, and give the administrators an overview."""
+    return services.send_weekly_draft_reminders()
+
+
+@shared_task
+def warn_expiring_drafts() -> int:
+    """Daily: the day before a draft is deleted, warn its uploader and the administrators."""
+    return services.warn_expiring_drafts()

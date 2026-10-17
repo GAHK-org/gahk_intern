@@ -811,6 +811,22 @@ def restore(request: HttpRequest, pk: int) -> HttpResponse:
 
 
 @access.access_required
+def drafts(request: HttpRequest) -> HttpResponse:
+    """Every unpublished draft, for the administrators: who has one lying, and when it goes."""
+    if not access.is_administrator(request):
+        raise PermissionDenied
+    videos = list(
+        Video.objects.drafts()
+        .select_related("uploaded_by")
+        .prefetch_related(Prefetch("files", to_attr="all_files"))
+        .order_by("created_at", "pk")
+    )
+    for video in videos:
+        video.latest_file = video.all_files[0] if video.all_files else None  # type: ignore[attr-defined]
+    return _render(request, "gahkflix/drafts.html", {"videos": videos})
+
+
+@access.access_required
 def bin(request: HttpRequest) -> HttpResponse:
     if not access.is_administrator(request):
         raise PermissionDenied
