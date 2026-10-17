@@ -11,12 +11,12 @@
       <span class="flix-chart-peak" aria-hidden="true">{{ stats.peak }}</span>
       <div class="flix-bars">
         {% for day, n in stats.days %}
-          <span class="flix-bar" tabindex="0" data-label="{{ day|date:'j. M' }}" data-value="{{ n }} visning{{ n|pluralize:'er' }}" aria-label="{{ day|date:'j. F' }}: {{ n }} visning{{ n|pluralize:'er' }}">{% if n %}<i style="height:{% widthratio n stats.peak 100 %}%"></i>{% endif %}</span>
+          <span class="flix-bar" tabindex="0" data-label="{{ day|date:'j. b' }}" data-value="{{ n }} visning{{ n|pluralize:'er' }}" aria-label="{{ day|date:'j. F' }}: {{ n }} visning{{ n|pluralize:'er' }}">{% if n %}<i style="height:{% widthratio n stats.peak 100 %}%"></i>{% endif %}</span>
         {% endfor %}
       </div>
       <div class="flix-tooltip" role="tooltip" hidden><b></b><span></span></div>
     </div>
-    <div class="flix-bars-axis"><span>{{ stats.days.0.0|date:"j. M" }}</span><span>I dag</span></div>
+    <div class="flix-bars-axis"><span>{{ stats.days.0.0|date:"j. b" }}</span><span>I dag</span></div>
   </figure>
   <details class="flix-chart-table">
     <summary>Vis som tabel</summary>
