@@ -57,7 +57,7 @@ tasks:
       - task: services:up
       - task: frontend:build
       - '{{.PY}} manage.py migrate'
-      - '{{.PY}} -m {{.SERVE}} --reload'
+      - '{{.PY}} -m {{.SERVE}} --reload --reload-include "*.html"'
 
   debug:
     desc: 'Like dev:local, but under debugpy, waiting for the IDE to attach ("Attach to task debug")'
