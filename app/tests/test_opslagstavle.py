@@ -22,6 +22,8 @@ from django.utils import timezone
 from core import push
 from core.models import PushSubscription, Room, Workgroup
 from den_hurtige import access as den_hurtige_access
+from notifications import categories
+from notifications.models import Notification, NotificationPreference
 from opslagstavle import access
 from opslagstavle.models import (
     MAX_PINNED,
@@ -88,7 +90,7 @@ def pushes(monkeypatch: pytest.MonkeyPatch, settings: object) -> list[tuple[list
     settings.VAPID_PRIVATE_KEY = "test-private-key"  # type: ignore[attr-defined]
     recorded: list[tuple[list[int], dict]] = []
 
-    def fake_dispatch(subscriptions: object, payload: dict) -> int:
+    def fake_dispatch(subscriptions: object, payload: dict, ttl: int = 0) -> int:
         ids = sorted(subscriptions.values_list("user_id", flat=True))  # type: ignore[attr-defined]
         recorded.append((ids, payload))
         return len(ids)
@@ -153,9 +155,9 @@ def test_a_resident_who_cannot_open_den_hurtige_can_still_use_the_board(
     Both features now carry their own rollout gate, which makes this more load-bearing than when it
     was written, not less: two identically named ACCESS_ROLES constants are exactly the setup where
     one gate silently starts answering for the other. Den Hurtige's is re-applied here rather than
-    assumed, so the assertion holds whichever way either switch happens to be set. This is the
-    invariant behind the shared subscribe endpoint being @login_required with a per-topic check
-    inside.
+    assumed, so the assertion holds whichever way either switch happens to be set. It is also why
+    each feature narrows its notification audience with its OWN gate (access.allowed_residents)
+    rather than a shared one.
     """
     monkeypatch.setattr(den_hurtige_access, "ACCESS_ROLES", (Role.ADMINISTRATOR, Role.INSPEKTION))
     client.force_login(beboer)
@@ -995,6 +997,7 @@ def test_a_photo_only_comment_notifies_with_a_body_rather_than_a_blank(
 
     assert len(pushes) == 1
     assert "Billede" in pushes[0][1]["body"]
+    assert Notification.objects.get().body == "📷 Billede"
 
 
 def test_the_comment_form_carries_the_attachment_note_hooks(client: Client, beboer: Resident) -> None:
@@ -1305,43 +1308,64 @@ def test_opening_the_board_deletes_nothing(client: Client, beboer: Resident) -> 
 # --- notifications --------------------------------------------------------------------------------
 
 
-def subscribe(user: Resident, endpoint: str, **topics: bool) -> PushSubscription:
-    return PushSubscription.objects.create(
-        user=user,
-        endpoint=endpoint,
-        auth="a" * 22,
-        p256dh="p" * 87,
-        wants_den_hurtige=topics.get("den_hurtige", False),
-        wants_opslagstavle=topics.get("opslagstavle", True),
+def subscribe(user: Resident, endpoint: str) -> PushSubscription:
+    """One device. It is for everything now — there are no per-feature topics; what a resident
+    hears about is their NotificationPreference per category."""
+    return PushSubscription.objects.create(user=user, endpoint=endpoint, auth="a" * 22, p256dh="p" * 87)
+
+
+def make_living(resident: Resident, room_number: int = 101) -> Resident:
+    """Give `resident` a residency this month, which is what puts someone with no device in
+    notifications.services.everyone()."""
+    year, month = active_period()
+    Residency.objects.create(
+        resident=resident,
+        room=Room.objects.create(
+            legacy_index=room_number, number=room_number, floor="stuen", side="mod gaden"
+        ),
+        year=year,
+        month=month,
     )
+    return resident
 
 
-def test_a_new_post_notifies_board_subscribers_except_the_author(
-    client: Client, beboer: Resident, other: Resident, pushes: list
+def test_a_new_post_notifies_every_reader_except_the_author(
+    client: Client, beboer: Resident, other: Resident, make_resident: Callable[..., Resident], pushes: list
 ) -> None:
+    """A new post is for the whole board (`posts.new`) — that is the point of leaving Facebook. A
+    resident with no device still gets the in-app row; the author gets neither."""
     subscribe(beboer, "https://push.example/author")
     subscribe(other, "https://push.example/reader")
+    no_device = make_living(make_resident(email="tredje@gahk.dk"))
     client.force_login(beboer)
 
     client.post(BOARD + "opret", {"category": Category.NYT, "body": "Indhold"})
 
+    rows = Notification.objects.order_by("recipient_id")
+    assert [(n.recipient_id, n.category, n.pushed) for n in rows] == [
+        (other.pk, categories.POSTS_NEW, True),
+        (no_device.pk, categories.POSTS_NEW, False),
+    ]
     assert len(pushes) == 1
     recipients, payload = pushes[0]
     assert recipients == [other.pk]
     assert payload["head"] == beboer.full_name
 
 
-def test_a_den_hurtige_only_subscriber_gets_nothing_from_the_board(
+def test_a_reader_who_turned_board_pushes_off_still_sees_it_in_app(
     client: Client, beboer: Resident, other: Resident, pushes: list
 ) -> None:
-    """The point of splitting the topics: a device that wants urgent chat messages must not start
-    receiving noticeboard posts."""
-    subscribe(other, "https://push.example/chat", den_hurtige=True, opslagstavle=False)
+    """What the per-feature topic used to do is now a per-category preference: a device that wants
+    chat messages need not buzz for every noticeboard post. The post still reaches the bell."""
+    subscribe(other, "https://push.example/chat")
+    NotificationPreference.objects.create(resident=other, category=categories.POSTS_NEW, push=False)
     client.force_login(beboer)
 
     client.post(BOARD + "opret", {"category": Category.NYT, "body": "x"})
 
-    assert pushes == [] or pushes[0][0] == []
+    assert pushes == []
+    row = Notification.objects.get()
+    assert (row.recipient_id, row.in_app, row.pushed) == (other.pk, True, False)
 
 
 def test_the_notification_links_to_the_post_not_the_board(
@@ -1356,6 +1380,7 @@ def test_the_notification_links_to_the_post_not_the_board(
 
     notice = Notice.objects.get()
     assert pushes[0][1]["url"] == f"{BOARD}{notice.pk}"
+    assert Notification.objects.get().url == f"{BOARD}{notice.pk}"
 
 
 def test_the_notification_body_is_plain_text(
@@ -1370,6 +1395,7 @@ def test_the_notification_body_is_plain_text(
 
     assert "**" not in pushes[0][1]["body"]
     assert "meget vigtigt" in pushes[0][1]["body"]
+    assert Notification.objects.get().body == "meget vigtigt"
 
 
 def test_a_comment_notifies_only_the_post_author(
@@ -1387,6 +1413,31 @@ def test_a_comment_notifies_only_the_post_author(
 
     assert len(pushes) == 1
     assert pushes[0][0] == [beboer.pk]
+    assert pushes[0][1]["tag"] == f"posts.replies:{notice.pk}"
+    row = Notification.objects.get()
+    assert row.recipient_id == beboer.pk
+    assert row.category == categories.POSTS_REPLIES
+    assert row.group_key == f"posts.replies:{notice.pk}"
+    assert row.title == "Ann Anden svarede"
+    assert row.url == f"{BOARD}{notice.pk}"
+
+
+def test_replies_to_one_post_fold_into_one_notification(
+    client: Client, beboer: Resident, other: Resident, make_resident: Callable[..., Resident], pushes: list
+) -> None:
+    """Grouped per post: the author's bell says "Carl og Ann svarede", once — not one row per reply."""
+    third = make_resident(email="tredje@gahk.dk", first_name="Carl", last_name="Tredje")
+    subscribe(beboer, "https://push.example/author")
+    notice = make_notice(beboer)
+
+    client.force_login(other)
+    client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "Første"})
+    client.force_login(third)
+    client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "Anden"})
+
+    row = Notification.objects.get()
+    assert row.title == "Carl Tredje og Ann Anden svarede"
+    assert [a["id"] for a in row.actors] == [third.pk, other.pk]
 
 
 def test_commenting_on_your_own_post_notifies_nobody(client: Client, beboer: Resident, pushes: list) -> None:
@@ -1397,41 +1448,61 @@ def test_commenting_on_your_own_post_notifies_nobody(client: Client, beboer: Res
     client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "Tilføjelse"})
 
     assert pushes == []
+    assert not Notification.objects.exists()
 
 
-def test_reacting_notifies_nobody(client: Client, beboer: Resident, other: Resident, pushes: list) -> None:
-    """A board where every 👍 buzzes a hundred phones is exactly the noise this replaces — and it
-    would stop people reacting at all."""
+def test_a_reaction_tells_the_author_and_nobody_else(
+    client: Client, beboer: Resident, other: Resident, make_resident: Callable[..., Resident], pushes: list
+) -> None:
+    """A board where every 👍 buzzes a hundred phones is exactly the noise this replaces — so a
+    reaction goes to the post's author only, grouped per post, at low importance."""
+    bystander = make_resident(email="tredje@gahk.dk")
     subscribe(beboer, "https://push.example/author")
-    notice = make_notice(beboer)
+    subscribe(bystander, "https://push.example/bystander")
+    notice = make_notice(beboer, body="Saunaen er **repareret**.")
     client.force_login(other)
 
     client.post(f"{BOARD}{notice.pk}/reaktion", {"emoji": "👍"})
 
+    assert [ids for ids, _ in pushes] == [[beboer.pk]]
+    assert pushes[0][1]["tag"] == f"posts.likes:{notice.pk}"
+    row = Notification.objects.get()
+    assert row.recipient_id == beboer.pk
+    assert row.category == categories.POSTS_LIKES
+    assert row.importance == categories.Importance.LAV
+    assert row.group_key == f"posts.likes:{notice.pk}"
+    assert row.title == "Ann Anden reagerede på dit opslag"
+    assert row.body == "👍 Saunaen er repareret."
+
+
+def test_changing_or_clearing_a_reaction_notifies_nobody(
+    client: Client, beboer: Resident, other: Resident, pushes: list
+) -> None:
+    """Only a NEW reaction is news. Swapping 👍 for 🎉, or un-reacting, must not buzz the author's
+    phone a second time — nor bring the row back up as unseen."""
+    subscribe(beboer, "https://push.example/author")
+    notice = make_notice(beboer)
+    client.force_login(other)
+    client.post(f"{BOARD}{notice.pk}/reaktion", {"emoji": "👍"})
+    pushes.clear()
+    Notification.objects.update(seen_at=timezone.now())
+
+    client.post(f"{BOARD}{notice.pk}/reaktion", {"emoji": "🎉"})  # changed
+    client.post(f"{BOARD}{notice.pk}/reaktion", {"emoji": "🎉"})  # cleared
+
     assert pushes == []
+    assert Notification.objects.get().seen_at is not None
 
 
-def test_a_resident_can_subscribe_to_the_board_without_den_hurtige(client: Client, beboer: Resident) -> None:
-    """The board is open to everyone, so its subscribe endpoint must be too — even for a resident
-    whom Den Hurtige's rollout still excludes."""
+def test_reacting_to_your_own_post_notifies_nobody(client: Client, beboer: Resident, pushes: list) -> None:
+    subscribe(beboer, "https://push.example/author")
+    notice = make_notice(beboer)
     client.force_login(beboer)
-    body = json.dumps(
-        {
-            "status_type": "subscribe",
-            "topic": "opslagstavle",
-            "subscription": {
-                "endpoint": "https://fcm.googleapis.com/fcm/send/board",
-                "keys": {"auth": "a" * 22, "p256dh": "p" * 87},
-            },
-        }
-    )
 
-    response = client.post(BOARD + "abonner", data=body, content_type="application/json")
+    client.post(f"{BOARD}{notice.pk}/reaktion", {"emoji": "👍"})
 
-    assert response.status_code == 201
-    subscription = PushSubscription.objects.get()
-    assert subscription.wants_opslagstavle is True
-    assert subscription.wants_den_hurtige is False
+    assert pushes == []
+    assert not Notification.objects.exists()
 
 
 # --- preview --------------------------------------------------------------------------------------
@@ -1810,7 +1881,6 @@ def test_the_detail_page_never_marks_a_post_as_trimmed(client: Client, beboer: R
         "opret",
         "forhaandsvisning",
         "billede",
-        "abonner",
         "1",
         "1/rediger",
         "1/slet",
@@ -1892,7 +1962,26 @@ def test_a_gated_out_resident_is_not_notified(
 
     client.post(BOARD + "opret", {"category": Category.NYT, "body": "Indhold"})
 
-    assert pushes[-1][0] == []  # the beboer opted in, but cannot open the board
+    # the beboer has a device, so is in everyone() — but cannot open the board
+    assert pushes == []
+    assert not Notification.objects.filter(recipient=beboer).exists()
+
+
+def test_a_gated_out_author_is_not_told_about_replies_or_reactions(
+    client: Client, beboer: Resident, inspektion: Resident, pushes: list, rollout_limited: None
+) -> None:
+    """The same rule for the author's own notifications: a "svarede" that opens a 403 is no use.
+    The post predates the gate (or the author's role); the tester can still reply to it."""
+    subscribe(beboer, "https://push.example/beboer")
+    notice = make_notice(beboer)
+    client.force_login(inspektion)
+
+    client.post(f"{BOARD}{notice.pk}/kommentar", {"body": "Svar"})
+    client.post(f"{BOARD}{notice.pk}/reaktion", {"emoji": "👍"})
+
+    assert NoticeComment.objects.count() == 1  # the reply itself went through
+    assert pushes == []
+    assert not Notification.objects.exists()
 
 
 def test_the_trial_group_is_still_notified(
@@ -1910,6 +1999,7 @@ def test_the_trial_group_is_still_notified(
     client.post(BOARD + "opret", {"category": Category.NYT, "body": "Indhold"})
 
     assert pushes[-1][0] == [tester.pk]
+    assert list(Notification.objects.values_list("recipient_id", flat=True)) == [tester.pk]
 
 
 # --- linking a post to a begivenhed ------------------------------------------------------------------
@@ -2087,3 +2177,14 @@ def test_the_event_field_is_absent_while_begivenheder_is_gated(
     client.post(BOARD + "opret", {"category": Category.NYT, "body": "Indhold", "event": event.pk})
 
     assert Notice.objects.get().event_id is None
+
+
+def test_the_authors_name_links_to_their_profile(client: Client, beboer: Resident, other: Resident) -> None:
+    from django.urls import reverse
+
+    make_notice(other)
+    client.force_login(beboer)
+
+    body = client.get(BOARD).content.decode()
+
+    assert f'href="{reverse("resident_profile", args=[other.pk])}">{other.full_name}</a>' in body

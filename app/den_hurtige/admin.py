@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import ChannelMute, QuickComment, QuickPost
+from .models import QuickComment, QuickPost
 
 
 class QuickCommentInline(admin.TabularInline):
@@ -37,14 +37,4 @@ class QuickPostAdmin(admin.ModelAdmin):
 @admin.register(QuickComment)
 class QuickCommentAdmin(admin.ModelAdmin):
     list_display = ("author", "post", "created_at", "notify_everyone")
-    readonly_fields = ("created_at",)
-
-
-@admin.register(ChannelMute)
-class ChannelMuteAdmin(admin.ModelAdmin):
-    """Mostly a support tool: "why am I not getting notifications from i-byen?" is answered here."""
-
-    list_display = ("resident", "channel", "created_at")
-    list_filter = ("channel",)
-    search_fields = ("resident__first_name", "resident__last_name", "resident__email")
     readonly_fields = ("created_at",)

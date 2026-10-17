@@ -371,8 +371,10 @@ class QuickReaction(models.Model):
     you already used deletes the row instead of adding a second one, so a reaction cannot be
     double-counted and no separate "have I reacted?" bookkeeping is needed.
 
-    Deliberately never notified — a dorm-wide feed where every 👍 buzzes everyone's phone is
-    exactly the noise Den Hurtige exists to remove, and it would stop people reacting at all.
+    Never announced to the room — a dorm-wide feed where every 👍 buzzes everyone's phone is
+    exactly the noise Den Hurtige exists to remove. Only the message's author hears about it, as one
+    grouped, low-importance notification per message ("3 personer reagerede på din besked") that
+    they can turn off on the settings page (services.notify_reaction).
     """
 
     post = models.ForeignKey(QuickPost, on_delete=models.CASCADE, related_name="reactions")
@@ -398,31 +400,19 @@ class QuickReaction(models.Model):
         return f"{self.emoji} af {self.author}"
 
 
-class ChannelMute(models.Model):
-    """One resident silencing push from one channel.
+# --- which photos the local disk cache may serve (core.media.register_cacheable) -----------------
+#
+# A photo is served from the server's own disk for as long as its message is live, and by a
+# redirect to the bucket once it is archived. A live message is on everybody's feed and looked at
+# by most of the house within the hour; an archived one is opened now and then from the archive.
+# Both are one query through the (channel, expires_at)/expires_at indexes, which narrow to the few
+# live posts before the image name is compared.
 
-    A *mute*, not a subscription: the row's presence means "do not notify me here", so the default
-    for every channel is on. That direction is deliberate. With opt-in, a newly launched channel
-    notifies nobody until people find it and join — and a channel nobody hears from is a channel
-    nobody posts in, which is how a small kollegium's second feed dies in a week. Muting is also the
-    only half anyone actually asks for ("stop buzzing me about i-byen at 2am").
 
-    It is per resident, not per device: nobody wants to mute the same channel on their phone and
-    again on their laptop. PushSubscription stays the device table; this is the preference.
-    """
+def post_image_is_live(name: str) -> bool:
+    return QuickPost.objects.active().filter(image=name).exists()
 
-    resident = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="channel_mutes"
-    )
-    # A den_hurtige.channels slug. A mute for a channel that later disappears from the registry is
-    # harmless — nothing queries it — so retiring a channel needs no cleanup migration.
-    channel = models.CharField(max_length=32)
-    created_at = models.DateTimeField(auto_now_add=True)
 
-    class Meta:
-        verbose_name = "Kanal-mute"
-        verbose_name_plural = "Kanal-mutes"
-        constraints = [models.UniqueConstraint(fields=["resident", "channel"], name="uniq_channel_mute")]
-
-    def __str__(self) -> str:
-        return f"{self.resident} har slået {self.channel} fra"
+def comment_image_is_live(name: str) -> bool:
+    """A reply has no lifetime of its own (QuickComment), so its photo lives as long as its message."""
+    return QuickComment.objects.filter(image=name, post__in=QuickPost.objects.active()).exists()

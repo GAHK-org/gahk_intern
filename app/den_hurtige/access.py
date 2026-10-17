@@ -22,6 +22,7 @@ this feature's own policy plus the thin re-exports that keep every caller unchan
 
 from collections.abc import Collection
 
+from django.db.models import QuerySet
 from django.http import HttpRequest
 
 from core.rollout import Gate
@@ -73,3 +74,8 @@ def request_allowed(request: HttpRequest) -> bool:
 def access_required(view: View) -> View:
     """@login_required plus the rollout gate."""
     return _GATE.required(view)
+
+
+def allowed_residents(qs: QuerySet) -> QuerySet:
+    """Narrow a notification audience to residents who can actually open Den Hurtige."""
+    return _GATE.allowed_residents(qs)

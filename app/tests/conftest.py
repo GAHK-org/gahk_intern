@@ -38,6 +38,7 @@ def _isolate_from_dotenv(settings: object) -> None:
     # A developer's cache directory would otherwise collect test files and serve them across tests;
     # the cache tests (test_photo_album_cache.py) turn it on with their own tmp_path.
     settings.PHOTO_ALBUM_CACHE_DIR = ""  # type: ignore[attr-defined]
+    settings.MEDIA_CACHE_DIR = ""  # type: ignore[attr-defined]  # likewise; test_attachment_cache.py
 
 
 @pytest.fixture

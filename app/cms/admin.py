@@ -593,7 +593,7 @@ class CmsImageAdminForm(forms.ModelForm):
         # Validate only a *new* upload: re-saving an existing row hands back a FieldFile, which has
         # no content_type and would fail a check aimed at browser uploads.
         if upload and hasattr(upload, "content_type"):
-            validate_image_upload(upload, settings.CMS_IMAGE_MAX_MB)
+            return validate_image_upload(upload, settings.CMS_IMAGE_MAX_MB)
         return upload
 
 
@@ -677,7 +677,7 @@ class CmsImageAdmin(ContentEditorAdmin):
         if not upload:
             return JsonResponse({"error": "Vælg en fil."}, status=400)
         try:
-            validate_image_upload(upload, settings.CMS_IMAGE_MAX_MB)
+            upload = validate_image_upload(upload, settings.CMS_IMAGE_MAX_MB)
         except ValidationError as exc:
             return JsonResponse({"error": " ".join(exc.messages)}, status=400)
         image = CmsImage.objects.create(

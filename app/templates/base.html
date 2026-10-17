@@ -105,9 +105,10 @@
           <span class="hidden sm:inline">Forsiden</span>
         </a>
         {% if user.is_authenticated %}
+          {% include "notifications/_bell.html" %}
           <a href="{% url 'resident_profile' user.pk %}" class="topuser" title="Min profil">
             {% if user.profile_picture %}
-              <img src="{{ user.profile_picture.url }}" alt="{{ user.first_name }}" class="avatar" style="border-radius:50%;object-fit:cover">
+              <img src="{{ user.avatar_url }}" alt="{{ user.first_name }}" class="avatar" style="border-radius:50%;object-fit:cover">
             {% else %}
               <span class="avatar">{{ user.first_name|slice:":1" }}{{ user.last_name|slice:":1" }}</span>
             {% endif %}

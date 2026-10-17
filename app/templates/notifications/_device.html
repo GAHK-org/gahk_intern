@@ -1,0 +1,29 @@
+{% comment %}
+  This device's push subscription, driven by frontend/src/push.ts (found by `data-push`).
+
+  Caller supplies:
+    mode   "prompt" — dashboard and Den Hurtige: shown only while this device is not subscribed,
+           then gone. "full" — the settings page: always shown, says the state, can turn it off.
+
+  A device subscribes once, for everything; what it is told is the settings page's business. Starts
+  hidden so a prompt for an already-subscribed device never flashes on screen before push.ts has
+  asked the server.
+{% endcomment %}
+{% if push_configured %}
+  <div class="push-bar{% if mode == 'prompt' %} push-prompt{% endif %}" data-push data-mode="{{ mode|default:'full' }}"
+       data-vapid-key="{{ vapid_public_key }}"
+       data-url="{% url 'notifications:subscription' %}"
+       data-on-label="Slå notifikationer til"
+       data-off-label="Slå fra på denne enhed"
+       data-success-text="Denne enhed får nu notifikationer. Vælg hvilke under indstillinger."
+       data-on-text="Denne enhed får notifikationer."
+       data-off-text="Denne enhed får ikke notifikationer."
+       hidden>
+    {% csrf_token %}
+    {% if mode == 'prompt' %}<span class="push-prompt-text">Få besked på denne enhed?</span>{% endif %}
+    <button type="button" data-push-button hidden></button>
+    <span class="muted" data-push-message hidden></span>
+  </div>
+{% elif mode != 'prompt' %}
+  <p class="muted">Push-notifikationer er ikke sat op på serveren.</p>
+{% endif %}

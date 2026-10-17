@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Notifikationsindstillinger - GAHK{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <div class="eyebrow"><a href="{% url 'notifications:index' %}">Notifikationer</a></div>
+      <h1>Indstillinger</h1>
+    </div>
+  </div>
+
+  <section class="card-flat notif-section">
+    <div class="card-head"><h2>Denne enhed</h2></div>
+    <div class="card-pad">
+      <p class="muted">Push-notifikationer slås til én gang pr. enhed. Hvad du får besked om, vælger du herunder — det gælder alle dine enheder.</p>
+      {% include "notifications/_device.html" with mode="full" %}
+    </div>
+  </section>
+
+  <form method="post" class="notif-prefs">
+    {% csrf_token %}
+
+    <section class="card-flat notif-section">
+      <div class="card-head"><h2>Vibration</h2></div>
+      <div class="card-pad">
+        <label class="notif-check"><input type="checkbox" name="vibrate"{% if settings.vibrate %} checked{% endif %}> Vibrér ved push-notifikationer</label>
+        <label class="notif-select">Kun ved vigtighed
+          <select name="vibrate_min_importance">
+            {% for value, label in importance_choices %}
+              <option value="{{ value }}"{% if value == settings.vibrate_min_importance %} selected{% endif %}>{{ label }} og derover</option>
+            {% endfor %}
+          </select>
+        </label>
+        <p class="muted">Uden vibration kommer notifikationen lydløst. Kritiske beskeder fra administratorerne kommer altid igennem — også hvis du har slået kategorien fra.</p>
+      </div>
+    </section>
+
+    {% for group in groups %}
+      <section class="card-flat notif-section" id="{% if group.key == 'chat' %}chat-rum{% else %}gruppe-{{ group.key }}{% endif %}">
+        <div class="card-head"><h2>{{ group.name }}</h2></div>
+        <table class="notif-table">
+          <colgroup><col><col class="notif-col"><col class="notif-col"><col class="notif-col"></colgroup>
+          <thead><tr><th>Kategori</th><th>I appen</th><th>Push</th><th>Vibration</th></tr></thead>
+          <tbody>
+            {% for row in group.rows %}
+              <tr{% if row.anchor %} id="{{ row.anchor }}"{% endif %}>
+                <td>
+                  <strong>{{ row.category.name }}</strong>
+                  {% if row.category.description %}<div class="notif-desc">{{ row.category.description }}</div>{% endif %}
+                </td>
+                <td>
+                  {% if row.category.in_app and not row.category.in_app_optional %}
+                    <input type="checkbox" checked disabled title="Vises altid i appen" aria-label="{{ row.category.name }}: altid i appen">
+                  {% elif row.category.in_app %}
+                    <input type="checkbox" name="{{ row.category.key }}__in_app" aria-label="{{ row.category.name }}: i appen"{% if row.in_app %} checked{% endif %}>
+                  {% else %}
+                    <span class="muted" title="Kun som push">—</span>
+                  {% endif %}
+                </td>
+                <td><input type="checkbox" name="{{ row.category.key }}__push" aria-label="{{ row.category.name }}: push"{% if row.push %} checked{% endif %}></td>
+                <td><input type="checkbox" name="{{ row.category.key }}__vibrate" aria-label="{{ row.category.name }}: vibration"{% if row.vibrate %} checked{% endif %}></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+    {% endfor %}
+
+    <div class="notif-save"><button type="submit" class="btn">Gem indstillinger</button></div>
+  </form>
+{% endblock %}
