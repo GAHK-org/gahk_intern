@@ -16,7 +16,6 @@ urlpatterns = [
     # Before <int:pk>, so these fixed segments are never read as a post id.
     path("forhaandsvisning", views.preview, name="preview"),
     path("billede", views.upload_image, name="upload_image"),
-    path("abonner", views.save_subscription, name="save_subscription"),
     path("kommentar/<int:pk>/slet", views.delete_comment, name="delete_comment"),
     path("<int:pk>", views.detail, name="detail"),
     path("<int:pk>/rediger", views.edit, name="edit"),

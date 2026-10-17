@@ -11,7 +11,7 @@ opens the page — and double-notifying sixty people is not.
 Delivery is INLINE (`background=False`). core.push hands the fan-out to a daemon thread by default,
 which is right in a request and fatal here: handle() returns, the interpreter shuts down, and Python
 kills the thread mid-send. That would deliver to however many devices it happened to reach, a
-different number every night, with no error anywhere. See core.push.send.
+different number every night, with no error anywhere. See core.push.send_many.
 """
 
 from typing import Any

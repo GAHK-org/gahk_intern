@@ -1,0 +1,22 @@
+{% comment %}
+  One notification, as a link. Shared by the bell's dropdown and the notifications page.
+
+  The link goes through notifications:open, which marks it seen and then redirects to where it
+  points — "seen" means clicked, in-app or on the push, never merely listed.
+
+  Importance shows twice on purpose: as a coloured edge (notif-imp-N, readable at a glance in a
+  list) and, for Høj and Kritisk, as a word — colour alone says nothing to a colour-blind reader.
+{% endcomment %}
+<a href="{% url 'notifications:open' row.pk %}"
+   class="notif-item notif-imp-{{ row.importance }}{% if not row.is_seen %} is-unseen{% endif %}">
+  <svg class="notif-icon" aria-hidden="true"><use href="#i-{{ row.icon }}"></use></svg>
+  <span class="notif-text">
+    <span class="notif-title">
+      {% if row.importance >= 3 %}<span class="notif-level">{{ row.importance_level.label }}</span>{% endif %}
+      {{ row.title }}
+    </span>
+    {% if row.body %}<span class="notif-body">{{ row.body }}</span>{% endif %}
+    <span class="notif-time">{{ row.updated_at|timesince }} siden</span>
+  </span>
+  {% if not row.is_seen %}<span class="notif-dot" aria-label="Ny"></span>{% endif %}
+</a>

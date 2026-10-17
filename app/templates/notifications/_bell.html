@@ -1,0 +1,19 @@
+{% comment %}
+  The bell in the topbar (base.html). The badge is the unseen in-app count, computed per page by a
+  lazy callable (notifications.context_processors). The panel is NOT rendered with the page: it is
+  fetched by htmx when the bell is clicked, so a page that nobody opens the bell on costs one COUNT, not
+  ten rows. Every click re-fetches (closing too — cheap, and simpler than telling the two apart), so it is never stale.
+{% endcomment %}
+<div class="notif-bell" x-data="{ open: false }" @keydown.escape.window="open = false" @click.outside="open = false">
+  <button type="button" class="btn-top notif-bell-button" aria-label="Notifikationer" :aria-expanded="open"
+          @click="open = !open"
+          hx-get="{% url 'notifications:dropdown' %}" hx-target="#notif-panel" hx-trigger="click">
+    <svg aria-hidden="true"><use href="#i-inbox"></use></svg>
+    {% with unseen=notifications_unseen %}
+      {% if unseen %}<span class="notif-badge">{% if unseen > 99 %}99+{% else %}{{ unseen }}{% endif %}</span>{% endif %}
+    {% endwith %}
+  </button>
+  <div id="notif-panel" class="notif-panel" x-show="open" x-cloak>
+    <p class="muted notif-empty">Henter…</p>
+  </div>
+</div>

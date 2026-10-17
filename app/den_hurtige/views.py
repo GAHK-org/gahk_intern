@@ -26,7 +26,6 @@ from typing import NamedTuple
 
 from django.conf import settings
 from django.contrib import messages
-from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.files.uploadedfile import UploadedFile
 from django.db.models import Count, Prefetch, QuerySet
@@ -39,9 +38,10 @@ from django.utils.formats import date_format
 from django.views.decorators.http import require_POST
 
 from core.clock import current_date, current_datetime
-from core.push import handle_subscription_request
-from core.reactions import apply_toggle, reaction_rows
+from core.reactions import CREATED, apply_toggle, reaction_rows
 from core.uploads import attached_image
+from notifications.categories import chat_room_key
+from notifications.models import NotificationPreference
 from residents.permissions import current_resident, effective_roles
 
 from . import channels, services
@@ -51,7 +51,6 @@ from .forms import ReactionForm
 from .models import (
     DURATION_CHOICES,
     QUICK_EMOJI,
-    ChannelMute,
     QuickComment,
     QuickPost,
     QuickReaction,
@@ -255,8 +254,11 @@ def _channel_context(request: HttpRequest, channel: Channel) -> dict[str, object
             Tab(c, counts.get(c.slug, 0), c.slug == channel.slug)
             for c in channels.visible(effective_roles(request))
         ],
-        "muted": ChannelMute.objects.filter(
-            resident=current_resident(request), channel=channel.slug
+        # The room's bell links to its row on the notifications settings page; "muted" is whether
+        # this resident turned push for the room off there. A preference row exists only for a
+        # category somebody changed, so no row is "on".
+        "muted": NotificationPreference.objects.filter(
+            resident=current_resident(request), category=chat_room_key(channel.slug), push=False
         ).exists(),
     }
 
@@ -283,11 +285,6 @@ def feed(request: HttpRequest, channel: str | None = None) -> HttpResponse:
             # redirect so a rejected message is not retyped.
             "draft": request.session.pop(DRAFT_SESSION_KEY, ""),
             "max_content_chars": MAX_CONTENT_CHARS,
-            "push_configured": services.is_configured(),
-            "vapid_public_key": services.vapid_public_key(),
-            # Whether ANY of this resident's devices wants this topic. The browser cannot answer it
-            # (one endpoint serves every topic), so the toggle's initial state is rendered here.
-            "push_subscribed": services.is_subscribed(current_resident(request)),
             "quick_emoji": QUICK_EMOJI,
             "can_moderate": can_moderate(request),
             # Tells the testers the page is not live yet, so they do not assume silence means
@@ -767,7 +764,8 @@ def toggle_reaction(request: HttpRequest, pk: int) -> HttpResponse:
     """Set, change or clear this person's one emoji on a message, returning just its reaction row.
 
     Each resident has at most one reaction per message: a new emoji replaces theirs, and re-tapping
-    the current one clears it. Deliberately silent — no notification is sent (see QuickReaction).
+    the current one clears it. A NEW reaction tells the message's author (grouped, see
+    services.notify_reaction); changing or clearing one tells nobody.
 
     Renders only the partial so a tap never re-renders the feed, which would collapse open threads
     and fight the 20-second poll.
@@ -787,7 +785,9 @@ def toggle_reaction(request: HttpRequest, pk: int) -> HttpResponse:
     if form.is_valid():
         # Set / move / clear lives in core.reactions so Den Hurtige and opslagstavlen cannot drift
         # into different semantics for the same widget.
-        apply_toggle(QuickReaction.objects, author=resident, emoji=form.cleaned_data["emoji"], post=post)
+        emoji = form.cleaned_data["emoji"]
+        if apply_toggle(QuickReaction.objects, author=resident, emoji=emoji, post=post) == CREATED:
+            services.notify_reaction(post, resident, emoji)
     # An invalid emoji falls through to a plain re-render: the row is still correct, and a one-tap
     # control has nowhere useful to put a validation error.
     return _reaction_row(request, post, resident.pk)
@@ -857,46 +857,3 @@ def delete_post(request: HttpRequest, pk: int) -> HttpResponseRedirect:
         # a request arriving a moment earlier would have taken instead.
         messages.error(request, "Beskeden er allerede slettet.")
     return redirect(back)
-
-
-@require_POST
-@access_required
-def toggle_mute(request: HttpRequest, channel: str) -> HttpResponseRedirect:
-    """Silence, or un-silence, push from one channel for this resident.
-
-    A row exists only while the channel is muted, so the absence of a row is "notify me" — every
-    channel is on until someone turns it off (see ChannelMute for why that direction). Idempotent in
-    both directions: a double-tap on a slow connection cannot end up with two rows or an exception.
-    """
-    resolved = _channel_or_404(request, channel)
-    resident = current_resident(request)
-    removed, _per_model = ChannelMute.objects.filter(resident=resident, channel=resolved.slug).delete()
-    if removed:
-        messages.success(request, f"Du får igen notifikationer fra {resolved.name}.")
-    else:
-        # get_or_create, not create: two taps racing each other would otherwise hit the
-        # uniq_channel_mute constraint and 500 on what is meant to be a toggle.
-        ChannelMute.objects.get_or_create(resident=resident, channel=resolved.slug)
-        messages.success(request, f"Notifikationer fra {resolved.name} er slået fra.")
-    return redirect(resolved.url)
-
-
-@require_POST
-@login_required
-def save_subscription(request: HttpRequest) -> HttpResponse:
-    """Store (or drop) this browser's opt-in to Den Hurtige notifications.
-
-    @login_required rather than @access_required, with the access gate re-applied *inside*: the
-    endpoint is shared with opslagstavlen (which every resident may use), so gating the whole view
-    on ACCESS_ROLES would lock plain residents out of subscribing to the noticeboard.
-
-    That inner check is a no-op today — ACCESS_ROLES is None now that the trial is over — but it is
-    what makes re-gating the feature (access.py's documented one-line edit) actually re-gate it.
-    Without it, narrowing ACCESS_ROLES would still leave anyone able to register for its
-    notifications.
-
-    The per-topic upsert/teardown itself is core.push.handle_subscription_request.
-    """
-    if not request_allowed(request):
-        return HttpResponse(status=403)
-    return handle_subscription_request(request, services.TOPIC)

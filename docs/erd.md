@@ -43,10 +43,8 @@ erDiagram
         string p256dh
         string user_agent
         datetime created_at
-        bool wants_den_hurtige
-        bool wants_opslagstavle
-        bool wants_begivenheder
-        bool wants_reparationer
+        datetime last_success_at
+        int failure_count
     }
 
     core_WorkerJobLog {
@@ -58,6 +56,14 @@ erDiagram
         datetime finished_at
         json lines
         int omitted
+    }
+
+    core_PushDeliveryDay {
+        int id PK
+        date date
+        int delivered
+        int failed
+        int removed
     }
 
     residents_Resident {
@@ -402,13 +408,6 @@ erDiagram
         datetime created_at
     }
 
-    den_hurtige_ChannelMute {
-        int id PK
-        int resident_id FK
-        string channel
-        datetime created_at
-    }
-
     opslagstavle_Notice {
         int id PK
         string author_embedsgruppe
@@ -650,6 +649,41 @@ erDiagram
         int media_id FK
     }
 
+    notifications_Notification {
+        int id PK
+        int recipient_id FK
+        string category
+        int importance
+        string title
+        string body
+        string url
+        string group_key
+        json actors
+        string batch
+        bool in_app
+        bool pushed
+        datetime created_at
+        datetime updated_at
+        datetime expires_at
+        datetime seen_at
+    }
+
+    notifications_NotificationPreference {
+        int id PK
+        int resident_id FK
+        string category
+        bool in_app
+        bool push
+        bool vibrate
+    }
+
+    notifications_NotificationSettings {
+        int id PK
+        int resident_id FK
+        bool vibrate
+        int vibrate_min_importance
+    }
+
     core_PushSubscription }o--|| residents_Resident : "user"
     residents_Resident }o--|o residents_Resident : "sponsor"
     residents_Residency }o--|| residents_Resident : "resident"
@@ -692,7 +726,6 @@ erDiagram
     den_hurtige_QuickComment }o--|| residents_Resident : "author"
     den_hurtige_QuickReaction }o--|| den_hurtige_QuickPost : "post"
     den_hurtige_QuickReaction }o--|| residents_Resident : "author"
-    den_hurtige_ChannelMute }o--|| residents_Resident : "resident"
     opslagstavle_Notice }o--|| residents_Resident : "author"
     opslagstavle_Notice }o--|o residents_Resident : "pinned_by"
     opslagstavle_Notice }o--|o events_Event : "event"
@@ -735,6 +768,9 @@ erDiagram
     photo_album_MediaView }o--|| photo_album_Media : "media"
     photo_album_MediaView }o--|| residents_Resident : "resident"
     photo_album_FeaturedMedia }o--|| photo_album_Media : "media"
+    notifications_Notification }o--|| residents_Resident : "recipient"
+    notifications_NotificationPreference }o--|| residents_Resident : "resident"
+    notifications_NotificationSettings ||--|| residents_Resident : "resident"
 ```
 
 ## admissions
@@ -962,10 +998,8 @@ erDiagram
         string p256dh
         string user_agent
         datetime created_at
-        bool wants_den_hurtige
-        bool wants_opslagstavle
-        bool wants_begivenheder
-        bool wants_reparationer
+        datetime last_success_at
+        int failure_count
     }
 
     core_WorkerJobLog {
@@ -977,6 +1011,14 @@ erDiagram
         datetime finished_at
         json lines
         int omitted
+    }
+
+    core_PushDeliveryDay {
+        int id PK
+        date date
+        int delivered
+        int failed
+        int removed
     }
 
     residents_Resident { }
@@ -1017,13 +1059,6 @@ erDiagram
         datetime created_at
     }
 
-    den_hurtige_ChannelMute {
-        int id PK
-        int resident_id FK
-        string channel
-        datetime created_at
-    }
-
     residents_Resident { }
 
     den_hurtige_QuickPost }o--|| residents_Resident : "author"
@@ -1031,7 +1066,6 @@ erDiagram
     den_hurtige_QuickComment }o--|| residents_Resident : "author"
     den_hurtige_QuickReaction }o--|| den_hurtige_QuickPost : "post"
     den_hurtige_QuickReaction }o--|| residents_Resident : "author"
-    den_hurtige_ChannelMute }o--|| residents_Resident : "resident"
 ```
 
 ## events
@@ -1105,6 +1139,52 @@ erDiagram
     events_EventComment }o--|| events_Event : "event"
     events_EventComment }o--|| residents_Resident : "author"
     events_CalendarFeedToken ||--|| residents_Resident : "resident"
+```
+
+## notifications
+
+```mermaid
+erDiagram
+    notifications_Notification {
+        int id PK
+        int recipient_id FK
+        string category
+        int importance
+        string title
+        string body
+        string url
+        string group_key
+        json actors
+        string batch
+        bool in_app
+        bool pushed
+        datetime created_at
+        datetime updated_at
+        datetime expires_at
+        datetime seen_at
+    }
+
+    notifications_NotificationPreference {
+        int id PK
+        int resident_id FK
+        string category
+        bool in_app
+        bool push
+        bool vibrate
+    }
+
+    notifications_NotificationSettings {
+        int id PK
+        int resident_id FK
+        bool vibrate
+        int vibrate_min_importance
+    }
+
+    residents_Resident { }
+
+    notifications_Notification }o--|| residents_Resident : "recipient"
+    notifications_NotificationPreference }o--|| residents_Resident : "resident"
+    notifications_NotificationSettings ||--|| residents_Resident : "resident"
 ```
 
 ## oelkaelder

@@ -1,12 +1,19 @@
-// Web Push subscribe/unsubscribe. No-op on every page without a [data-push] element.
+// Web Push: this device's subscription. No-op on every page without a [data-push] element.
 //
-// Shared by Den Hurtige and opslagstavlen. A browser has exactly ONE push subscription per
-// service-worker registration, so the *browser* subscription is not per feature — consent is,
-// and the server tracks it per topic. Two consequences drive the code below:
-//   * the button's initial state cannot come from getSubscription(): that says whether this
-//     browser is subscribed at all, not whether it wants THIS topic. The page tells us instead.
-//   * opting out of one topic must NOT call subscription.unsubscribe(), or the other topic
-//     silently stops arriving. Only the server knows whether anything is left, so it says so.
+// A device subscribes ONCE, for everything. What it is then told is the resident's notification
+// settings (/intern/notifikationer/indstillinger), which are per person and live on the server.
+// It used to be one button per feature, each recording a per-topic consent on the device, which
+// made what a phone received depend on which pages its owner had happened to visit.
+//
+// Two modes, from data-mode:
+//   * "full" (the settings page): always visible, reports every state, and can turn push off.
+//   * "prompt" (dashboard, Den Hurtige): a call to action that is only shown while this device is
+//     NOT subscribed, and disappears once it is. Nothing to say otherwise, so it says nothing.
+//
+// The initial state cannot come from getSubscription() alone: that says the BROWSER holds a
+// subscription, not that the server still has it for this resident. An administrator may have
+// cancelled it, the push service may have reported it gone, or someone else may have logged in on
+// this browser since. So an existing subscription is checked with the server ("status") first.
 //
 // Written by hand rather than using django-webpush's {% webpush_button %}, which would not work
 // here: its webpush.js registers a SECOND service worker under /webpush/ (so the push handler in
@@ -73,27 +80,27 @@ function browserName(): string {
   return m ? m[0].toLowerCase() : "other";
 }
 
+type StatusType = "subscribe" | "unsubscribe" | "status";
+
 async function post(
   url: string,
   csrf: string,
-  statusType: "subscribe" | "unsubscribe",
-  topic: string,
+  statusType: StatusType,
   subscription: PushSubscription,
-): Promise<{ remaining_topics?: number }> {
+): Promise<{ state?: "mine" | "other" | "none" }> {
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
     credentials: "same-origin",
     body: JSON.stringify({
       status_type: statusType,
-      topic,
       subscription: subscription.toJSON(),
       browser: browserName(),
       user_agent: navigator.userAgent,
     }),
   });
   if (!response.ok) throw new ServerRejected(response.status);
-  // 201 (subscribe) has no body; 202 (unsubscribe) reports how many topics this device still wants.
+  // 201 (subscribe) and 202 (unsubscribe) have no body; status answers {"state": ...}.
   try {
     return await response.json();
   } catch {
@@ -162,101 +169,86 @@ async function init(root: HTMLElement): Promise<void> {
   const csrf = root.querySelector<HTMLInputElement>('input[name="csrfmiddlewaretoken"]')?.value ?? "";
   const saveUrl = root.dataset.url ?? "";
   const vapidKey = root.dataset.vapidKey ?? "";
-  const topic = root.dataset.topic ?? "den_hurtige";
-  // Whether the server has this device opted in to THIS topic. Rendered by the page, because the
-  // browser cannot know it: one endpoint serves every topic. Absent/empty => not subscribed.
-  const wantsTopic = root.dataset.subscribed === "1";
+  const prompt = root.dataset.mode === "prompt";
   // Danish copy lives in the template, so all user-facing text stays where the rest of it is.
   const onLabel = root.dataset.onLabel ?? "Slå notifikationer til";
-  const offLabel = root.dataset.offLabel ?? "Slå notifikationer fra";
-  // Narrow-screen wording for the same action. The full label sits next to a long channel name
-  // and the per-channel bell, and the three together overflowed a phone — which silently turned
-  // the chat header into two rows and took that height off the feed.
-  const offLabelShort = root.dataset.offLabelShort ?? offLabel;
-  const successText = root.dataset.successText ?? "Du får nu besked.";
-  // "på denne enhed" because that is what it means: consent is per topic, but a push subscription is
-  // per browser, so turning it off here does not touch your other devices.
-  const offText = root.dataset.offText ?? "Notifikationer er slået fra på denne enhed.";
+  const offLabel = root.dataset.offLabel ?? "Slå fra på denne enhed";
+  const successText = root.dataset.successText ?? "Denne enhed får nu notifikationer.";
+  const onText = root.dataset.onText ?? "Denne enhed får notifikationer.";
+  const offText = root.dataset.offText ?? "Denne enhed får ikke notifikationer.";
   if (!button || !message) return;
 
   const say = (text: string): void => {
     message.textContent = text;
     message.hidden = false;
   };
+  // A prompt that cannot help (no support, blocked, not configured) stays hidden: it sits on the
+  // dashboard and in the chat header, where an unactionable sentence is clutter. The settings page
+  // ("full") says why instead.
+  const unavailable = (text: string): void => {
+    if (prompt) {
+      root.hidden = true;
+      return;
+    }
+    root.hidden = false;
+    say(text);
+  };
 
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-    // On iOS this is the normal state in a browser tab: push only exists in the installed PWA.
-    say(
-      IOS
-        ? "Tilføj siden til hjemmeskærmen (Del → Føj til hjemmeskærm) for at kunne få notifikationer."
-        : "Din browser understøtter ikke notifikationer.",
-    );
+    // On iOS this is the normal state in a browser tab: push only exists in the installed PWA. That
+    // one IS actionable, so the prompt shows it too.
+    if (IOS) {
+      root.hidden = false;
+      say("Tilføj siden til hjemmeskærmen (Del → Føj til hjemmeskærm) for at kunne få notifikationer.");
+      return;
+    }
+    unavailable("Din browser understøtter ikke notifikationer.");
     return;
   }
   if (!vapidKey) {
-    say("Notifikationer er ikke sat op på serveren endnu.");
+    unavailable("Notifikationer er ikke sat op på serveren endnu.");
     return;
   }
   if (Notification.permission === "denied") {
-    say("Notifikationer er blokeret i browserens indstillinger for denne side.");
+    unavailable("Notifikationer er blokeret i browserens indstillinger for denne side.");
     return;
   }
 
   const brave = await isBrave();
   const registration = await navigator.serviceWorker.ready; // the root-scoped /sw.js from base.html
   let subscription = await registration.pushManager.getSubscription();
-  // The button reflects consent to this topic, not the existence of a browser subscription: a
-  // device subscribed to the other feature must still show "on" as an option here.
-  let enabled = wantsTopic && subscription !== null;
-
-  // Two different controls now live in this header, and they are not alternatives: this one is per
-  // *device* (does this browser receive push at all), while the bell next to it is per *channel*
-  // for the whole resident. Unsubscribed, this is the call to action and gets the prominent button.
-  // Subscribed, it steps back to a quiet link — the granular control people actually reach for is
-  // the channel bell, and two equally loud buttons side by side read as one control with a bug.
-  //
-  // It is demoted rather than removed, for two reasons. Channel mutes are per resident, so without
-  // this there is no way to keep push on your phone but off on a shared browser you logged into
-  // once. And turning notifications off in the OS/browser settings instead does NOT delete the
-  // server's subscription: the endpoint stays alive, so the server keeps encrypting and sending to
-  // it forever and never sees the 410 that would reap the row. This path calls unsubscribe() and
-  // deletes it.
-  const label = (cls: string, text: string): HTMLSpanElement => {
-    const span = document.createElement("span");
-    span.className = cls;
-    span.textContent = text;
-    return span;
-  };
+  let enabled = false;
+  if (subscription) {
+    try {
+      enabled = (await post(saveUrl, csrf, "status", subscription)).state === "mine";
+    } catch (err) {
+      console.error("push status:", err);
+    }
+  }
 
   const render = (): void => {
-    // Both wordings are rendered and CSS shows one (see .label-long/.label-short): the button text
-    // is set from JS, so a media query cannot reach it any other way, and matchMedia here would
-    // have to be re-run on every resize and orientation change.
-    button.textContent = "";
-    button.append(
-      label("label-long", enabled ? offLabel : onLabel),
-      label("label-short", enabled ? offLabelShort : onLabel),
-    );
-    // Styling hook for the "already on" state. Keyed on topic consent, not on the browser
-    // subscription: a device subscribed for the *other* feature must not look enabled here.
+    if (prompt && enabled) {
+      root.hidden = true;
+      return;
+    }
+    root.hidden = false;
+    button.textContent = enabled ? offLabel : onLabel;
     button.classList.toggle("is-quiet", enabled);
     button.disabled = false;
     button.hidden = false;
   };
+  if (!prompt) say(enabled ? onText : offText);
   render();
 
   button.addEventListener("click", async () => {
     button.disabled = true;
     try {
       if (enabled && subscription) {
-        const result = await post(saveUrl, csrf, "unsubscribe", topic, subscription);
-        // Release the BROWSER subscription only once no topic wants this device any more. Doing it
-        // unconditionally is how turning one feature off would silently kill the other, with a
-        // symptom ("notifications just stopped") invisible from the server.
-        if ((result.remaining_topics ?? 0) === 0) {
-          await subscription.unsubscribe();
-          subscription = null;
-        }
+        // Server first, then the browser: turning notifications off in the OS instead would leave
+        // the endpoint alive, and the server would keep encrypting and sending to it forever.
+        await post(saveUrl, csrf, "unsubscribe", subscription);
+        await subscription.unsubscribe();
+        subscription = null;
         enabled = false;
         say(offText);
       } else {
@@ -268,31 +260,35 @@ async function init(root: HTMLElement): Promise<void> {
           button.disabled = false;
           return;
         }
-        // Reuse the browser's existing subscription when it has one: it is shared with the other
-        // topic, and re-subscribing would hand us the same endpoint anyway.
+        // Reuse the browser's existing subscription when it has one ("other"/"none" above): the
+        // server upserts on the endpoint, so subscribing moves it to this resident.
         const fresh = subscription ?? (await subscribeTo(registration, vapidKey));
         try {
-          await post(saveUrl, csrf, "subscribe", topic, fresh);
+          await post(saveUrl, csrf, "subscribe", fresh);
         } catch (err) {
-          // Never leave the browser holding a subscription the server does not know about: it would
-          // make the button read "slå fra" while no notification could ever arrive. Only safe to
-          // release one we just created — an existing one may be serving the other topic.
+          // Never leave the browser holding a subscription the server does not know about: the
+          // button would read "on" while no notification could ever arrive.
           if (!subscription) await fresh.unsubscribe();
           throw err;
         }
         subscription = fresh;
         enabled = true;
         say(successText);
+        if (prompt) {
+          // Leave the confirmation on screen for a moment before the prompt goes away.
+          button.hidden = true;
+          window.setTimeout(render, 4000);
+          return;
+        }
       }
     } catch (err) {
-      console.error(`push (${topic}):`, err);
+      console.error("push:", err);
       say(explain(err, brave));
     }
     render();
   });
 }
 
-// One widget per page in practice, but selected as a list so a page could carry both toggles.
 for (const root of Array.from(document.querySelectorAll<HTMLElement>("[data-push]"))) {
   init(root).catch((err) => console.error("push init:", err));
 }
