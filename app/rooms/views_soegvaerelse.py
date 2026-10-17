@@ -24,6 +24,10 @@ from residents.permissions import current_resident, request_has_role, role_requi
 from .kvotient import compute_k, compute_k_parts, month_choices, month_index, month_label
 from .models import KvotientApplication, KvotientOrlov, KvotientPriority, RoomOffer
 
+# Upper bound for a submitted orlov. Generous (ten years) — it only exists so a typo or a crafted
+# value can't push K to nonsense; the real check is Indstillingen comparing it to the suggestion.
+MAX_ORLOV_MONTHS = 120
+
 
 class Allocation(NamedTuple):
     winners: dict[int, KvotientApplication]  # room_id -> winning application
@@ -115,9 +119,12 @@ def computed_orlov_months(resident: Resident) -> int:
 @login_required
 def soeg(request: HttpRequest) -> HttpResponse:
     resident = current_resident(request)
-    offers = RoomOffer.objects.select_related("room").order_by("month", "room__number")
-    offered_rooms = [o.room for o in offers]
     target = month_index(*next_period())  # the lottery always allocates the upcoming month
+    # Only this round's offers: an application always targets `target`, and allocate_round only
+    # counts priorities for rooms offered in the application's month, so a stale offer from another
+    # month could be picked but would never count.
+    offers = RoomOffer.objects.filter(month=target).select_related("room").order_by("room__number")
+    offered_rooms = [o.room for o in offers]
     today = timezone.localdate()
     existing = (
         KvotientApplication.objects.filter(resident=resident, move_month=target)
@@ -157,6 +164,7 @@ def soeg(request: HttpRequest) -> HttpResponse:
         "existing_done_year": done_year,
         "existing_orlov_months": orlov,
         "suggested_orlov": suggested_orlov,
+        "max_orlov_months": MAX_ORLOV_MONTHS,
         "priority_slots": slots,
         "target": target,
         "has_move_in": bool(resident.move_in_date),
@@ -168,10 +176,30 @@ def soeg(request: HttpRequest) -> HttpResponse:
         except (KeyError, ValueError):
             messages.error(request, "Udfyld måneder korrekt.")
             return render(request, "soegvaerelse/apply.html", ctx)
-        orlov_months = int(request.POST.get("orlov_months") or 0)
-        room_ids = [int(r) for r in request.POST.getlist("priority") if r]
+        # The live preview clamps orlov at 0, but a submitted value must be valid on its own: a
+        # negative orlov would inflate K (a = months lived MINUS orlov).
+        try:
+            orlov_months = int(request.POST.get("orlov_months") or 0)
+        except ValueError:
+            orlov_months = -1
+        if not 0 <= orlov_months <= MAX_ORLOV_MONTHS:
+            messages.error(request, f"Orlov skal være et helt antal måneder mellem 0 og {MAX_ORLOV_MONTHS}.")
+            return render(request, "soegvaerelse/apply.html", ctx)
+        # Priorities must be distinct rooms offered THIS round; anything else would be stored but never
+        # count (or 500 on the FK for a non-existent room).
+        offered_ids = {room.id for room in offered_rooms}
+        try:
+            room_ids = [int(r) for r in request.POST.getlist("priority") if r]
+        except ValueError:
+            room_ids = [0]  # not a room id → rejected as "not offered" below
         if not room_ids:
             messages.error(request, "Vælg mindst én prioritet.")
+            return render(request, "soegvaerelse/apply.html", ctx)
+        if not set(room_ids) <= offered_ids:
+            messages.error(request, "Vælg kun værelser, der er i udbud i denne runde.")
+            return render(request, "soegvaerelse/apply.html", ctx)
+        if len(set(room_ids)) != len(room_ids):
+            messages.error(request, "Det samme værelse kan kun vælges én gang.")
             return render(request, "soegvaerelse/apply.html", ctx)
         if not resident.move_in_date:
             messages.error(request, "Din indflytningsdato mangler - kontakt indstillingen.")
@@ -354,11 +382,19 @@ def close_offer(request: HttpRequest, offer_id: int) -> HttpResponseRedirect:
 def resolve_tie(request: HttpRequest, offer_id: int) -> HttpResponseRedirect:
     """Record indstillingen's manual resolution of a K-tie (the dorm coin flip): pin this offer's
     winner to the chosen application. allocate_round then treats the room as decided, which can cascade
-    to relieve other contests."""
+    to relieve other contests.
+
+    Only one of the applications actually tied for THIS room may be picked (which also means it listed
+    the room) — otherwise any application in the month could be pinned to a room it never asked for."""
     offer = get_object_or_404(RoomOffer, pk=offer_id)
     app = get_object_or_404(
         KvotientApplication, pk=request.POST.get("application") or 0, move_month=offer.month
     )
+    if offer.awarded_application_id != app.pk:  # re-posting the current resolution is a harmless no-op
+        tied = allocate_round(offer.month).contested.get(offer.room_id, [])
+        if app.pk not in {a.pk for a in tied}:
+            messages.error(request, "Ansøgningen er ikke blandt de K-lige ansøgere til dette værelse.")
+            return redirect("soegvaerelse:applicants", offer_id=offer.id)
     offer.awarded_application = app
     offer.save(update_fields=["awarded_application"])
     messages.success(request, f"{app.resident.full_name} valgt som vinder af {offer.room}.")

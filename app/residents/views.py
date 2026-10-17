@@ -206,6 +206,24 @@ def _clash_rooms(year: int, month: int) -> list[int]:
     return sorted(n for n, c in counts.items() if c > 1)
 
 
+def _directory_query(year: int, month: int, q: str, sort: str, direction: str) -> str:
+    """The alumneliste's view state as a query string, for links that must reproduce it: the ✎ edit
+    link's ?next= and the export buttons. Built here rather than from request.get_full_path, which
+    after an htmx search/sort is the bare /alumneliste/rows fragment URL."""
+    return urlencode({"period": f"{year}-{month}", "q": q, "sort": sort, "dir": direction})
+
+
+def _clash_editor_period(year: int, month: int) -> str | None:
+    """Which list-editor month (?period=) can fix a room clash in the viewed month: the editor only
+    edits the current and next month (see _target_period), so a past month has none."""
+    current = active_period()
+    if (year, month) == current:
+        return "current"
+    if (year, month) == next_period(current):
+        return "next"
+    return None
+
+
 BADGE_OLDEST = ("🧓", "Ældste beboer")
 BADGE_YOUNGEST = ("👶", "Yngste beboer")
 BADGE_LONGEST = ("👑", "Boet her længst")
@@ -241,6 +259,9 @@ def directory(request: HttpRequest) -> HttpResponse:
     year, month = _parse_period(request)
     sort, direction = _parse_sort(request)
     q = request.GET.get("q", "")
+    view_query = _directory_query(year, month, q, sort, direction)
+    # Only indstilling acts on (or sees) room conflicts; skip the query for everyone else.
+    clash_rooms = _clash_rooms(year, month) if "indstilling" in effective_roles(request) else []
     return render(
         request,
         "alumneliste/directory.html",
@@ -254,8 +275,10 @@ def directory(request: HttpRequest) -> HttpResponse:
             "sort": sort,
             "dir": direction,
             "headers": _sort_headers(sort, direction),
-            # Only indstilling acts on (or sees) room conflicts; skip the query for everyone else.
-            "clash_rooms": _clash_rooms(year, month) if "indstilling" in effective_roles(request) else [],
+            "view_query": view_query,
+            "edit_next": f"{reverse('directory')}?{view_query}",  # the ✎ link's return target
+            "clash_rooms": clash_rooms,
+            "clash_edit_period": _clash_editor_period(year, month) if clash_rooms else None,
         },
     )
 
@@ -266,6 +289,7 @@ def directory_rows(request: HttpRequest) -> HttpResponse:
     year, month = _parse_period(request)
     sort, direction = _parse_sort(request)
     q = request.GET.get("q", "")
+    view_query = _directory_query(year, month, q, sort, direction)
     return render(
         request,
         "alumneliste/_directory_table.html",
@@ -277,6 +301,9 @@ def directory_rows(request: HttpRequest) -> HttpResponse:
             "sort": sort,
             "dir": direction,
             "headers": _sort_headers(sort, direction),
+            "view_query": view_query,
+            "edit_next": f"{reverse('directory')}?{view_query}",  # the ✎ link's return target
+            "export_oob": True,  # refresh the export links outside the swapped table (see template)
         },
     )
 
@@ -367,7 +394,11 @@ def directory_export(request: HttpRequest) -> HttpResponse:
 # ---- Stamtræ: the fylgje lineage (F-011) ----
 def _fylgje_forest() -> list[dict[str, Resident | list]]:
     """Build the sponsor (fylgje) tree from resolved Resident.sponsor links. Residents with no (resolved)
-    sponsor are roots under "Hagemanns Ånd". Cycle-safe; siblings ordered by move-in then name."""
+    sponsor are roots under "Hagemanns Ånd". Cycle-safe; siblings ordered by move-in then name.
+
+    Anyone a root never reaches (a fylgje cycle A→B→A, which Resident.clean now refuses but older
+    data or a raw write could still hold) becomes an extra root, so nobody silently vanishes along
+    with their descendants."""
     residents = list(Resident.objects.select_related("sponsor").all())
     ids = {r.id for r in residents}
     children: dict[int | None, list[Resident]] = {}
@@ -377,12 +408,19 @@ def _fylgje_forest() -> list[dict[str, Resident | list]]:
     def _sorted(rs: list[Resident]) -> list[Resident]:
         return sorted(rs, key=lambda c: (c.move_in_date or date.min, c.first_name, c.last_name))
 
+    placed: set[int] = set()
+
     def _node(r: Resident, seen: set[int]) -> dict[str, Resident | list]:
         seen = seen | {r.id}
+        placed.add(r.id)
         kids = [_node(k, seen) for k in _sorted(children.get(r.id, [])) if k.id not in seen]
         return {"resident": r, "children": kids}
 
-    return [_node(r, set()) for r in _sorted(children.get(None, []))]
+    forest = [_node(r, set()) for r in _sorted(children.get(None, []))]
+    for r in _sorted(residents):  # cycle members: break the ring at the earliest mover-in
+        if r.id not in placed:
+            forest.append(_node(r, set()))
+    return forest
 
 
 @login_required
@@ -400,13 +438,18 @@ def _sync_month_roles(
     RoleAssignment.objects.filter(
         resident_id=resident_id, year=year, month=month, role__in=WORKGROUP_ROLE_VALUES
     ).delete()
-    role = WORKGROUP_ROLE.get(workgroup.name) if workgroup else None
+    role = _wg_role(workgroup)
     if role:
         RoleAssignment.objects.get_or_create(resident_id=resident_id, role=role, year=year, month=month)
     if is_admin:
         RoleAssignment.objects.get_or_create(
             resident_id=resident_id, role=Role.ADMINISTRATOR, year=year, month=month
         )
+
+
+def _wg_role(workgroup: Workgroup | None) -> str | None:
+    """The site role an embedsgruppe grants (None for an ordinary group or none)."""
+    return WORKGROUP_ROLE.get(workgroup.name) if workgroup else None
 
 
 def _pick[T](mapping: dict[int, T], raw: str | None) -> T | None:
@@ -541,6 +584,17 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
             removed: set[int] = set()
             intended: dict[int, tuple[Room, Workgroup | None, Cleaning | None]] = {}
             me = current_resident(request).pk
+            # Your indstilling role on the live list comes from your embedsgruppe, so moving yourself
+            # out of Indstillingen there locks you out exactly like removing yourself (below). Only
+            # when that role is all that grants access: an administrator keeps it via all-access.
+            my_access_is_my_group = (
+                editing_current
+                and me not in admins
+                and not request.user.is_superuser
+                and RoleAssignment.objects.filter(
+                    resident_id=me, year=cy, month=cm, role=Role.INDSTILLING
+                ).exists()
+            )
             for res in Residency.objects.filter(year=ny, month=nm):
                 rid = res.resident_id
                 if request.POST.get(f"remove_{rid}"):
@@ -553,9 +607,16 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                     removed.add(rid)
                     continue
                 room: Room | None = _pick(room_by_id, request.POST.get(f"room_{rid}", "")) or res.room
+                wg = _pick(wg_by_id, request.POST.get(f"workgroup_{rid}", ""))
+                if rid == me and my_access_is_my_group and _wg_role(wg) != Role.INDSTILLING:
+                    # Keep your current embedsgruppe (the rest of the row and the list still save).
+                    messages.error(
+                        request, "Du kan ikke flytte dig selv ud af Indstillingen i den nuværende måned."
+                    )
+                    wg = res.workgroup
                 intended[rid] = (
                     room or res.room,
-                    _pick(wg_by_id, request.POST.get(f"workgroup_{rid}", "")),
+                    wg,
                     _pick(cl_by_id, request.POST.get(f"cleaning_{rid}", "")),
                 )
             # No two residents may share a room in the same month.
@@ -662,7 +723,7 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
             if not (email and first and last and room):
                 messages.error(request, "Udfyld navn, e-mail og værelse for at tilføje en ny beboer.")
                 new_draft = _add_form_draft(request, "add_new")
-            elif Resident.objects.filter(email=email).exists():
+            elif Resident.objects.filter(email__iexact=email).exists():  # stored addresses may be mixed-case
                 messages.error(request, "Der findes allerede en beboer med den e-mail.")
                 new_draft = _add_form_draft(request, "add_new")
             elif _room_taken(room, ny, nm):

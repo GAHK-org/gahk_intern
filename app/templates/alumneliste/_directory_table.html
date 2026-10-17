@@ -3,7 +3,10 @@
   with the rows. The hidden sort/dir inputs live here (not in the outside search box) so that after a
   sort change the search input's hx-include picks up the new state. Header links carry the new sort/dir
   and hx-include the current q + period; each also has a plain href for a no-JS full-page fallback.
+  On an htmx swap (export_oob) the export buttons, which sit outside #dir-table, are refreshed out of
+  band so an export always matches the search + sort on screen.
 {% endcomment %}
+{% if export_oob %}{% include "alumneliste/_export_links.html" %}{% endif %}
 <input type="hidden" name="sort" value="{{ sort }}">
 <input type="hidden" name="dir" value="{{ dir }}">
 <table cellpadding="6" class="text-sm zebra" style="width:100%; border-collapse:collapse">
