@@ -5,8 +5,9 @@
 Fixes baked in: the K formula is preserved (decided correct); month integers are 0-indexed
 (decided); the multi-table application submit is wrapped in a transaction at the view layer; the
 cross-month cascade delete on closeOffer is scoped to the offer's month; the legacy delimited
-criteria/comment/image blobs are **normalized** into RoomConditionScore rows; only the current
-condition per room is kept; images are stored as files (FileField) with paths in the DB.
+criteria/comment/image blobs are **normalized** into RoomConditionScore rows; every report is kept
+as history (superseded ones get is_current=False, the latest is current); images are stored as
+files (FileField) with paths in the DB.
 """
 
 from django.db import models
@@ -117,7 +118,7 @@ class RoomCriterion(models.Model):  # intern_room_criteria
         return value is None or value in self.score_values
 
 
-class RoomCondition(models.Model):  # intern_room_condition (only the current state kept, decided)
+class RoomCondition(models.Model):  # intern_room_condition (full history; is_current marks the latest)
     room = models.ForeignKey("core.Room", on_delete=models.CASCADE, related_name="conditions")
     resident = models.ForeignKey(
         "residents.Resident", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"

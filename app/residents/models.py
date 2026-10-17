@@ -11,6 +11,7 @@ from typing import Any
 
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
@@ -243,6 +244,24 @@ class Resident(AbstractBaseUser, PermissionsMixin):
     @property
     def full_name(self) -> str:
         return f"{self.first_name} {self.last_name}".strip()
+
+    def clean(self) -> None:
+        """Reject a fylgje (sponsor) chain that loops back to this resident — not just a self-reference
+        but A→B→A too. The stamtræ hangs everyone off a root, so a cycle has no root and its members
+        (and their descendants) would drop out of the tree. Lives here, not only in the edit form, so
+        Django admin enforces it as well."""
+        super().clean()
+        if self.sponsor_id is None:
+            return
+        seen: set[int] = set()
+        cur: int | None = self.sponsor_id
+        while cur is not None and cur not in seen:  # `seen` stops on an older cycle not through us
+            if cur == self.pk:
+                raise ValidationError(
+                    {"sponsor": "Fylgje kan ikke gå i ring — beboeren ville blive sin egen fylgje."}
+                )
+            seen.add(cur)
+            cur = Resident.objects.filter(pk=cur).values_list("sponsor_id", flat=True).first()
 
     def has_role(self, role: str, period: tuple[int, int] | None = None) -> bool:
         year, month = period or active_period()
