@@ -203,7 +203,6 @@ idempotent, so a retry or an overlapping run is harmless.
 | `photo_album.tasks.fail_stalled_downloads` | Hourly, :05 | Closes out ZIP builds no worker came back to. A worker killed outright runs no handler, so its row stays `BUILDING` — never collected, and the album page keeps reloading itself every five seconds waiting for it. |
 | `events.tasks.remind_rsvp_deadlines` | Daily 17:00 | Sends due RSVP reminders. |
 | `oelkaelder.tasks.send_monthly_statements` | Day 1, 06:10 | Mails every active ølkælder account its previous calendar month. **Sends real mail to residents** — the only task here that does. |
-| `core.tasks.send_admin_dummy_notification` | Daily 08:00 and 16:00 | **Temporary, and deliberately still here.** Mails every administrator and superuser twice a day to prove Beat and the worker are alive in production. Delete this entry and `core.tasks.send_admin_dummy_notification` once that is confirmed — nothing else depends on it. |
 
 **Delete the matching Coolify Scheduled Tasks in the same deploy, not afterwards.** Coolify runs
 them *inside the already-running `web` container*, so nothing here can see them or turn them off,
