@@ -11,9 +11,6 @@
     {% if video.is_draft %}
       <p class="muted" style="margin:-8px 0 18px;font-size:14px">Kun du og administratorerne kan se kladden. Den slettes med alle sine filer {{ video.draft_deleted_on|date:"j. F Y" }}, hvis den ikke er udgivet inden.</p>
     {% endif %}
-    {% if can_upload_revision and not processing %}
-      <p class="flix-callout" style="margin:0 0 18px">Fejl i selve videoen? <a href="#ny-version">Upload en rettet version</a> i stedet for en ny video – titel, billeder, medvirkende og visninger bliver ved denne.</p>
-    {% endif %}
 
     {# --- Processing and publishing ------------------------------------------------------------ #}
     {% if processing %}
@@ -27,7 +24,7 @@
       <div class="flix-panel" style="border-color:#5c1a1e">
         <h2>{% if video.file %}Den nye version kunne ikke behandles{% else %}Videoen kunne ikke behandles{% endif %}</h2>
         <p>{{ latest_file.error }}</p>
-        {% if not video.file %}<p><a href="#ny-version">Upload filen igen som en ny version</a>, eller slet kladden.</p>{% endif %}
+        {% if not video.file %}<p>Upload filen igen nedenfor, eller slet kladden.</p>{% endif %}
       </div>
     {% endif %}
 

@@ -343,13 +343,6 @@ body.flix-play, body.flix-player-open { overflow: hidden; background: #000; }
 .flix-list { display: grid; gap: 10px; }
 .flix-list-item { display: grid; grid-template-columns: 160px 1fr auto; gap: 16px; align-items: center; padding: 12px; border-radius: 6px; background: var(--flix-surface); border: 1px solid #2c2c2c; }
 .flix-list-item .flix-card-img { width: 100%; }
-.flix-list-actions { display: flex; flex-direction: column; gap: 6px; }
-/* A point the reader must not miss: corrections go in as a new version, not as another upload. */
-.flix-callout { margin: 0 0 18px; padding: 14px 18px; border-radius: 6px; background: #1d2a3a; border: 1px solid #2f4a6b; color: #dbe7f5; font-size: 14px; line-height: 1.55; }
-.flix-callout h2 { font-size: 17px; font-weight: 700; margin: 0 0 6px; color: #fff; }
-.flix-callout p { margin: 0 0 6px; }
-.flix-callout p:last-child { margin-bottom: 0; }
-.flix-callout a { color: #fff; font-weight: 700; }
 .flix-list-item h3 { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
 .flix-list-item h3 a { text-decoration: none; }
 .flix-list-item p { margin: 2px 0; font-size: 13px; color: var(--flix-muted); }
