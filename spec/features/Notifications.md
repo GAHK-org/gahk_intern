@@ -71,6 +71,12 @@ System and Generelt can **not** be turned off in-app (`Category.in_app_optional 
 is where somebody who has push off still sees what the house itself says. Push and vibration for
 them can be turned off like any other category.
 
+GAHKFlix's `gahkflix.uploads`, `gahkflix.approvals` and `gahkflix.drafts` can **not** be turned off
+at all (`Category.optional = False`): they are about something the resident has to act on. They
+always arrive in-app and as a push, whatever was saved before; only their vibration can be changed.
+The settings page shows both boxes ticked and locked. `gahkflix.new` and `gahkflix.cast` can be
+turned off like any other category.
+
 ## Importance
 
 Four levels: **Lav**, **Normal**, **Høj**, **Kritisk**. Each category has a default; a call may raise
