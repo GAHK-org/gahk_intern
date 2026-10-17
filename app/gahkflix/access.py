@@ -1,6 +1,8 @@
 """Who may reach GAHKFlix, and who may do what to a video.
 
-STAGED ROLLOUT: limited to administrators and Fotogruppen while it is tried out.
+STAGED ROLLOUT: limited to administrators and Fotogruppen while it is tried out — except with DEBUG
+on, where every resident is let in, so a non-administrator's GAHKFlix can be tried locally (log in
+as one of seed_demo's residents).
 
     TO OPEN IT TO EVERY RESIDENT: set ACCESS_ROLES to None.
 
@@ -20,6 +22,7 @@ and delete as they like. The only other people who see a draft are the administr
 from collections.abc import Collection
 from datetime import datetime
 
+from django.conf import settings
 from django.db.models import Q, QuerySet
 from django.http import HttpRequest
 from django.utils import timezone
@@ -34,7 +37,13 @@ from .models import ChangeRequest, Series, Video
 # is matched on role assignments; for the views an administrator holds every role anyway.
 ACCESS_ROLES: tuple[str, ...] | None = (Role.ADMINISTRATOR, Role.FOTO)
 
-gate = Gate(lambda: ACCESS_ROLES)
+
+def _access_roles() -> tuple[str, ...] | None:
+    """ACCESS_ROLES, or nobody kept out at all in local development. Read on every call (core.rollout)."""
+    return None if settings.DEBUG else ACCESS_ROLES
+
+
+gate = Gate(_access_roles)
 access_required = gate.required
 
 ADMINISTRATOR_ROLES = (Role.ADMINISTRATOR, Role.FOTO)
@@ -56,9 +65,10 @@ def _with_roles(residents: QuerySet[Resident], roles: Collection[str]) -> QueryS
 
 def audience(residents: QuerySet[Resident]) -> QuerySet[Resident]:
     """`residents` narrowed to those who can open GAHKFlix — a notification must not lead to a 403."""
-    if ACCESS_ROLES is None:
+    roles = _access_roles()
+    if roles is None:
         return residents
-    return _with_roles(residents, ACCESS_ROLES)
+    return _with_roles(residents, roles)
 
 
 def administrators() -> QuerySet[Resident]:

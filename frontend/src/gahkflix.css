@@ -105,6 +105,17 @@ body.flix {
 .flix-icon-btn:hover { border-color: #fff; }
 .flix-icon-btn svg { width: 20px; height: 20px; }
 
+/* "Hent": HD, Full HD or the original, from a small menu under the button. */
+.flix-download { position: relative; }
+.flix-download > summary { list-style: none; }
+.flix-download > summary::-webkit-details-marker { display: none; }
+.flix-download[open] > summary { border-color: #fff; }
+.flix-download-menu { position: absolute; z-index: 20; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); min-width: 210px; padding: 6px; border-radius: 6px; background: #181818; border: 1px solid #3a3a3a; box-shadow: 0 12px 32px rgba(0,0,0,.6); }
+.flix-download-head { display: block; padding: 6px 10px 8px; font-size: 12px; font-weight: 700; color: var(--flix-faint); text-transform: uppercase; letter-spacing: .06em; }
+.flix-download-menu a { display: flex; justify-content: space-between; gap: 18px; padding: 9px 10px; border-radius: 4px; font-size: 15px; font-weight: 600; text-decoration: none; color: var(--flix-ink); }
+.flix-download-menu a:hover, .flix-download-menu a:focus-visible { background: #2f2f2f; }
+.flix-download-menu small { color: var(--flix-muted); font-weight: 400; font-size: 13px; }
+
 /* --- Hero -------------------------------------------------------------------------------------- */
 .flix-hero { position: relative; min-height: min(56.25vw, 88vh); display: flex; align-items: flex-end; padding: 120px var(--flix-gutter) min(13vw, 160px); isolation: isolate; }
 .flix-hero-img { position: absolute; inset: 0; z-index: -2; background: #000 center 20% / cover no-repeat; }
@@ -232,13 +243,14 @@ a.flix-chip:hover { border-color: #fff; }
 .flix-chart-table summary { cursor: pointer; }
 
 /* --- Player ------------------------------------------------------------------------------------ */
-body.flix-play { overflow: hidden; background: #000; }
-.flix-player { position: fixed; inset: 0; background: #000; }
+body.flix-play, body.flix-player-open { overflow: hidden; background: #000; }
+.flix-player { position: fixed; inset: 0; z-index: 100; background: #000; }
 .flix-player video { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
 .flix-player-top { position: absolute; inset: 0 0 auto 0; display: flex; align-items: center; gap: 16px; padding: 18px 22px 40px; background: linear-gradient(180deg, rgba(0,0,0,.75), rgba(0,0,0,0)); transition: opacity .4s; pointer-events: none; }
 .flix-player-top > * { pointer-events: auto; }
 .flix-player-top h1 { font-size: clamp(15px, 1.6vw, 22px); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .flix-player-top h1 small { color: var(--flix-muted); font-weight: 400; margin-left: 8px; }
+.flix-player-top h1 small:empty { display: none; }
 .flix-player.is-idle .flix-player-top, .flix-player.is-idle .flix-quality { opacity: 0; }
 .flix-player.is-idle { cursor: none; }
 .flix-back { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; color: #fff; text-decoration: none; font-size: 26px; flex: none; }

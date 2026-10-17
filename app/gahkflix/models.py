@@ -345,6 +345,9 @@ class VideoFile(models.Model):
     recorded_at = models.DateTimeField(null=True, blank=True)
     full_hd = models.FileField(upload_to=full_hd_path, storage=get_video_storage, max_length=500, blank=True)
     hd = models.FileField(upload_to=hd_path, storage=get_video_storage, max_length=500, blank=True)
+    # Their sizes in bytes, for the download menu.
+    full_hd_size = models.BigIntegerField(null=True, blank=True)
+    hd_size = models.BigIntegerField(null=True, blank=True)
 
     class Meta:
         ordering = ["-created_at", "-pk"]

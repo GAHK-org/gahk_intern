@@ -16,7 +16,7 @@
         </div>
         {% if hero.description %}<p class="flix-hero-desc">{{ hero.description }}</p>{% endif %}
         <div class="flix-hero-actions">
-          <a class="flix-btn flix-btn-play" href="{% url 'gahkflix:play' hero.pk %}"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l12-7.5z"/></svg>Afspil</a>
+          <a class="flix-btn flix-btn-play" href="{% url 'gahkflix:play' hero.pk %}" data-flix-play><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l12-7.5z"/></svg>Afspil</a>
           <a class="flix-btn flix-btn-info" href="{% url 'gahkflix:detail' hero.pk %}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M12 11v6M12 7.5v.5"/></svg>Mere info</a>
         </div>
       </div>

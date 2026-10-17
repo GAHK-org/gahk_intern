@@ -388,32 +388,55 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
     )
 
 
+QUALITY_LABELS = {"fullhd": "Full HD", "hd": "HD"}
+
+
+def _player_config(video: Video, start_at: float) -> dict[str, Any]:
+    """Everything the player needs for one film: the play page renders it, the overlay fetches it."""
+    assert video.file is not None  # noqa: S101  # nosec B101 — play() checks
+    following = services.next_episode(video)
+    play_url = reverse("gahkflix:play", args=[video.pk])
+    if video.series:
+        title = f"{video.series.title} · {video.episode_label}" if video.episode_label else video.series.title
+        subtitle = video.title
+    else:
+        title, subtitle = video.title, ""
+    return {
+        "title": title,
+        "subtitle": subtitle,
+        "streams": {q: reverse("gahkflix:stream", args=[video.pk, q]) for q in video.file.qualities},
+        "qualityLabels": QUALITY_LABELS,
+        "startAt": start_at,
+        "viewUrl": reverse("gahkflix:record_view", args=[video.pk]),
+        "positionUrl": reverse("gahkflix:position", args=[video.pk]),
+        "playUrl": play_url,
+        "backUrl": reverse("gahkflix:detail", args=[video.pk]),
+        "next": (
+            {"url": reverse("gahkflix:play", args=[following.pk]), "title": following.title}
+            if following
+            else None
+        ),
+    }
+
+
 @access.access_required
 def play(request: HttpRequest, pk: int) -> HttpResponse:
+    """The player. As a page for a link opened directly; as JSON (`?format=json`) for the player that
+    opens over the page the reader clicked "Afspil" on — which is what lets the intro start with
+    sound, because a browser only allows that inside the click that asked for it."""
     video = _visible_video(request, pk)
+    wants_json = request.GET.get("format") == "json"
     if video.file is None:
+        if wants_json:
+            return _error("Videoen er ikke færdigbehandlet endnu.", 409)
         messages.error(request, "Videoen er ikke færdigbehandlet endnu.")
         return redirect("gahkflix:detail", video.pk)
     start = request.GET.get("t", "")
     resume = services.resume_position(video, current_resident(request))
-    following = services.next_episode(video)
-    return _render(
-        request,
-        "gahkflix/play.html",
-        {
-            "video": video,
-            "qualities": video.file.qualities,
-            "start_at": float(start) if start.replace(".", "", 1).isdecimal() else resume,
-            "next_episode": following,
-            "player": {
-                "streams": {q: reverse("gahkflix:stream", args=[video.pk, q]) for q in video.file.qualities},
-                "viewUrl": reverse("gahkflix:record_view", args=[video.pk]),
-                "positionUrl": reverse("gahkflix:position", args=[video.pk]),
-                "nextUrl": reverse("gahkflix:play", args=[following.pk]) if following else "",
-                "backUrl": reverse("gahkflix:detail", args=[video.pk]),
-            },
-        },
-    )
+    config = _player_config(video, float(start) if start.replace(".", "", 1).isdecimal() else resume)
+    if wants_json:
+        return JsonResponse(config)
+    return _render(request, "gahkflix/play.html", {"video": video, "player": config})
 
 
 def _serve(
@@ -447,16 +470,31 @@ def stream(request: HttpRequest, pk: int, quality: str) -> HttpResponseBase:
     return _serve(key_of(getattr(video.file, field)), content_type="video/mp4", expire=STREAM_URL_TTL)
 
 
+# What "Hent" offers: variant -> (field on VideoFile, label).
+DOWNLOADS = {"hd": ("hd", "HD"), "fullhd": ("full_hd", "Full HD"), "original": ("original", "Original")}
+
+
+def _download_name(title: str, label: str) -> str:
+    """A title as a filename on any system: no separators or other characters Windows refuses."""
+    safe = "".join(c for c in title if c.isprintable() and c not in '<>:"/\\|?*').strip(" .")
+    return f"{safe or 'video'} ({label}).mp4"
+
+
 @access.access_required
-def download_original(request: HttpRequest, pk: int) -> HttpResponseBase:
+def download(request: HttpRequest, pk: int, variant: str) -> HttpResponseBase:
     video = _visible_video(request, pk)
-    if video.file is None:
-        raise Http404("not processed")
-    return _serve(
-        key_of(video.file.original),
-        content_type=video.file.content_type or "application/octet-stream",
-        attachment=video.file.original_name,
-    )
+    if video.file is None or variant not in DOWNLOADS:
+        raise Http404("no such download")
+    field_name, label = DOWNLOADS[variant]
+    field = getattr(video.file, field_name)
+    if not field:
+        raise Http404("no such rendition")
+    if variant == "original":
+        filename = video.file.original_name
+        content_type = video.file.content_type or "application/octet-stream"
+    else:
+        filename, content_type = _download_name(video.title, label), "video/mp4"
+    return _serve(key_of(field), content_type=content_type, attachment=filename)
 
 
 def _picture_response(key: str) -> HttpResponseBase:

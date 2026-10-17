@@ -8,7 +8,8 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 
 - While it is under test, only administrators and Fotogruppen can open GAHKFlix. The sidebar entry,
   every page, its notifications and the profile strip follow the same gate, and the header shows
-  `Under test`. Opening it to every resident is one setting.
+  `Under test`. Opening it to every resident is one setting. In local development (DEBUG) every
+  resident is let in, so the view of a non-administrator can be tried.
 - In GAHKFlix, "administrators" means the administrator role and Fotogruppen.
 
 ## Browsing
@@ -21,7 +22,8 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   the reader has watched.
 - A video's page has its banner, date, length, quality, views and unique viewers, description,
   credits (each linking to that person's cast page), tags, the series' episodes by season, `Mere som
-  denne` (videos sharing tags or cast) and `Hent original`.
+  denne` (videos sharing tags or cast) and `Hent`: HD, Full HD (when there is one) or the original,
+  each with its size.
 - Series pages list the published episodes by season and episode. The timeline lists every video by
   its date, grouped by year and month, with a jump to each year.
 - Search matches titles, descriptions, tags, credited names and roles, and series, every word
@@ -31,7 +33,9 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 
 ## Playing
 
-- A 4-second GAHKFlix intro plays before every film and can be skipped.
+- A 4-second GAHKFlix intro plays before every film and can be skipped. `Afspil` opens the player
+  over the page and starts the intro at once; the address becomes the player's, and Back closes it.
+  A link straight to the player may need a click on its play button first.
 - Every video has an HD rendition and, when the original is larger than HD, a Full HD one. Nothing is
   upscaled, and portrait video stays portrait. The player switches quality without losing its place,
   remembers the choice in the browser, and starts phones in HD.
@@ -111,6 +115,8 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 - The time windows run from the upload, but a draft is its uploader's own until published. Its
   deletion is counted in calendar days, so it has one date that every reminder can name.
 - Reminders go out in the morning, not with the nightly sweeps: they are read by people.
+- The player opens over the page rather than as a page of its own because a browser only lets a page
+  play sound from inside the click that asked for it, and a page load loses that click.
 - Duplicates are checked across all videos, not only the uploader's: one film should exist once.
 - Encodes run one at a time on the media worker. One that stops reporting is retried, at most three
   times, and then marked failed for the uploader to see.

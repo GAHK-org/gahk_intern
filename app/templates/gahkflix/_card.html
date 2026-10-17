@@ -1,5 +1,5 @@
 {% load gahkflix %}{% picture_url video "thumbnail" as thumb %}
-<a class="flix-card{% if video.progress %} has-progress{% endif %}" href="{% if resume %}{% url 'gahkflix:play' video.pk %}{% else %}{% url 'gahkflix:detail' video.pk %}{% endif %}" title="{{ video.title }}">
+<a class="flix-card{% if video.progress %} has-progress{% endif %}" href="{% if resume %}{% url 'gahkflix:play' video.pk %}{% else %}{% url 'gahkflix:detail' video.pk %}{% endif %}" title="{{ video.title }}"{% if resume %} data-flix-play{% endif %}>
   <span class="flix-card-img">
     {% if thumb %}<img src="{{ thumb }}" alt="" loading="lazy" decoding="async">{% else %}<span class="flix-card-blank" aria-hidden="true">{{ video.title|slice:":1"|upper }}</span>{% endif %}
     {% if fresh %}<span class="flix-card-badge">Ny</span>{% endif %}

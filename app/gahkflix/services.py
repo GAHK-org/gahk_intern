@@ -362,9 +362,11 @@ def process_file(video_file: VideoFile, rng: random.Random | None = None) -> boo
         ]
         with outputs["hd"].open("rb") as hd:
             video_file.hd.save(f"{stem or 'video'}-hd.mp4", File(hd), save=False)
+        video_file.hd_size = outputs["hd"].stat().st_size
         if "fullhd" in outputs:
             with outputs["fullhd"].open("rb") as full_hd:
                 video_file.full_hd.save(f"{stem or 'video'}-fullhd.mp4", File(full_hd), save=False)
+            video_file.full_hd_size = outputs["fullhd"].stat().st_size
         beat(0.95, force=True)
         frames = encoding.draw_frames(source, info.duration, work, FRAMES_PER_DRAW, rng or random.Random())  # noqa: S311  # nosec B311
         _store_frames(video, frames)
@@ -379,7 +381,7 @@ def process_file(video_file: VideoFile, rng: random.Random | None = None) -> boo
         video_file.save(
             update_fields=[
                 "state", "progress", "error", "completed_at", "duration", "width", "height",
-                "recorded_at", "hd", "full_hd",
+                "recorded_at", "hd", "full_hd", "hd_size", "full_hd_size",
             ]
         )  # fmt: skip
         video = Video.objects.select_for_update().get(pk=video.pk)

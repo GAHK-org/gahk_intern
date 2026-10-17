@@ -750,6 +750,8 @@ erDiagram
         datetime recorded_at
         string full_hd
         string hd
+        int full_hd_size
+        int hd_size
     }
 
     gahkflix_VideoFrame {
@@ -1355,6 +1357,8 @@ erDiagram
         datetime recorded_at
         string full_hd
         string hd
+        int full_hd_size
+        int hd_size
     }
 
     gahkflix_VideoFrame {
