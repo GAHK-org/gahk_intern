@@ -30,7 +30,14 @@ from .models import (
     Media,
 )
 from .progress import JobProgress
-from .services import backfill_hashes, build_derivatives, import_zip_album, pending_derivatives
+from .services import (
+    Progress,
+    backfill_hashes,
+    build_derivatives,
+    import_zip_album,
+    no_progress,
+    pending_derivatives,
+)
 from .storage import PhotoAlbumS3Storage, get_photo_album_storage
 
 logger = logging.getLogger(__name__)
@@ -54,6 +61,10 @@ MEDIA_TASK_SOFT_TIME_LIMIT = MEDIA_TASK_TIME_LIMIT - 300
 ZIP_TASK_TIME_LIMIT = 4 * 60 * 60
 ZIP_TASK_SOFT_TIME_LIMIT = ZIP_TASK_TIME_LIMIT - 300
 
+# How long a failed import's ZIP is kept. Not deleted when the sweep fails the job: that is a guess
+# about a worker, which may still be reading the file, or whose message may still be queued.
+FAILED_IMPORT_ARCHIVE_KEPT = timedelta(days=1)
+
 DOWNLOAD_INTERRUPTED = "Download blev afbrudt undervejs."
 IMPORT_INTERRUPTED = "Importen blev afbrudt undervejs. Intet er importeret."
 
@@ -67,6 +78,10 @@ def _claim_job(
 ) -> bool:
     """Move a QUEUED download or import to BUILDING for this task; False if there is nothing to do.
 
+    A row `fail_stalled_*` failed while this very message was still waiting in the queue is claimed
+    too: with one media slot a job can honestly wait longer than JOB_QUEUED_TOO_LONG. It is told
+    from a job that died while building by never having recorded progress — claiming sets it.
+
     One thing a redelivery can tell. A message handed out again because its worker was lost
     (CELERY_TASK_REJECT_ON_WORKER_LOST) finds its row BUILDING under its OWN task id: that is this
     very message's first run, and nobody is coming back to it. It is closed out as failed on the
@@ -74,8 +89,16 @@ def _claim_job(
     most likely just repeat whatever killed the worker.
     """
     now = timezone.now()
-    if rows.filter(state=states.QUEUED).update(
-        state=states.BUILDING, task_id=task_id or "", progress={}, progressed_at=now
+    waiting = Q(state=states.QUEUED)
+    if task_id:
+        waiting |= Q(state=states.FAILED, error=interrupted, task_id=task_id, progressed_at__isnull=True)
+    if rows.filter(waiting).update(
+        state=states.BUILDING,
+        task_id=task_id or "",
+        progress={},
+        progressed_at=now,
+        error="",
+        completed_at=None,
     ):
         return True
     if task_id and rows.filter(state=states.BUILDING, task_id=task_id).update(
@@ -271,11 +294,11 @@ def archive_entries(download: AlbumDownload) -> tuple[list[tuple[str, Media, Fil
     return entries, renamed
 
 
-def _archive(download: AlbumDownload, progress: JobProgress | None = None) -> ZipStream:
+def _archive(download: AlbumDownload, progress: Progress = no_progress) -> ZipStream:
     archive = ZipStream(compress_type=ZIP_STORED)
     entries, renamed = archive_entries(download)
     for index, (arcname, _, source) in enumerate(entries):
-        still_working = partial(progress, "zipping", index, len(entries)) if progress else lambda: None
+        still_working = partial(progress, "zipping", index, len(entries))
         archive.add(_chunks(source, still_working), arcname=arcname)
     if renamed:
         lines = [
@@ -364,12 +387,18 @@ def fail_stalled_imports() -> int:
     import's status until it is ready or failed, and a row left BUILDING kept it asking "still
     building" for good. Nothing of the import itself is left to clean up — it is stored in one
     transaction, which died with the worker.
+
+    The ZIPs go FAILED_IMPORT_ARCHIVE_KEPT later, not with the jobs failed here: a worker still
+    downloading one from the bucket would lose it, and a job still queued could not be revived.
     """
-    stalled = list(_stalled(AlbumImport.objects.all(), AlbumImportState).values_list("pk", flat=True))
-    failed = _stalled(AlbumImport.objects.filter(pk__in=stalled), AlbumImportState).update(
+    failed = _stalled(AlbumImport.objects.all(), AlbumImportState).update(
         state=AlbumImportState.FAILED, error=IMPORT_INTERRUPTED, completed_at=timezone.now()
     )
-    _discard_archives(AlbumImport.objects.filter(pk__in=stalled, state=AlbumImportState.FAILED))
+    _discard_archives(
+        AlbumImport.objects.filter(
+            state=AlbumImportState.FAILED, completed_at__lt=timezone.now() - FAILED_IMPORT_ARCHIVE_KEPT
+        )
+    )
     return failed
 
 
@@ -378,7 +407,8 @@ def process_album_import(self: Task, import_id: int) -> bool:
     """Unpack a stored ZIP outside the web request that received it."""
     rows = AlbumImport.objects.filter(pk=import_id)
     if not _claim_job(rows, AlbumImportState, self.request.id, interrupted=IMPORT_INTERRUPTED):
-        _discard_archives(rows.filter(state=AlbumImportState.FAILED))
+        # Only the one this message just failed as its own dead first run; nothing will run it now.
+        _discard_archives(rows.filter(state=AlbumImportState.FAILED, task_id=self.request.id or "-"))
         return False
     album_import = rows.get()
     logger.info(

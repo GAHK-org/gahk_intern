@@ -1,8 +1,10 @@
 """Background ZIP jobs: progress, telling a slow job from a dead one, and where jobs run."""
 
 import threading
+import zipfile
 from collections.abc import Callable
 from datetime import timedelta
+from io import BytesIO
 
 import pytest
 from django.conf import settings
@@ -14,6 +16,7 @@ from django.utils import timezone
 
 from photo_album import progress
 from photo_album.models import (
+    JOB_QUEUED_TOO_LONG,
     JOB_STALLED_AFTER,
     AlbumDownload,
     AlbumDownloadState,
@@ -24,24 +27,35 @@ from photo_album.progress import JobProgress
 from photo_album.storage import PhotoAlbumS3Storage, get_photo_album_storage
 from photo_album.tasks import (
     DOWNLOAD_INTERRUPTED,
+    FAILED_IMPORT_ARCHIVE_KEPT,
     IMPORT_INTERRUPTED,
     build_album_download,
+    fail_stalled_downloads,
     fail_stalled_imports,
     process_album_import,
 )
 from residents.models import Resident
 
+from .media_samples import jpeg_bytes
 
-def _import(resident: Resident, **fields: object) -> AlbumImport:
+
+def _import(resident: Resident, content: bytes = b"not read", **fields: object) -> AlbumImport:
     album_import = AlbumImport.objects.create(
         requested_by=resident, folder="2026", archive_name="fest.zip", **fields
     )
-    album_import.archive.save("fest.zip", ContentFile(b"not read"), save=True)
+    album_import.archive.save("fest.zip", ContentFile(content), save=True)
     return album_import
 
 
+def _zip_with_one_photo() -> bytes:
+    payload = BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr("one.jpg", jpeg_bytes())
+    return payload.getvalue()
+
+
 @pytest.mark.django_db
-def test_an_import_whose_worker_never_returned_is_failed_and_its_zip_deleted(
+def test_an_import_whose_worker_never_returned_is_failed_and_its_zip_deleted_a_day_later(
     make_resident: Callable[..., Resident],
 ) -> None:
     """The Dropbox script asks for the status until ready or failed, so a row left BUILDING by a
@@ -63,11 +77,78 @@ def test_an_import_whose_worker_never_returned_is_failed_and_its_zip_deleted(
     assert stalled.state == AlbumImportState.FAILED
     assert stalled.error == IMPORT_INTERRUPTED
     assert stalled.completed_at is not None
-    assert not stalled.archive
-    assert not get_photo_album_storage().exists(archive_key)
     # Three hours in, but it reported progress a moment ago: slow, not dead.
     assert working.state == AlbumImportState.BUILDING
     assert working.archive
+    # Failing it is a guess about a worker that may still be reading the ZIP, so it stays a while.
+    assert stalled.archive
+    assert get_photo_album_storage().exists(archive_key)
+
+    AlbumImport.objects.filter(pk=stalled.pk).update(
+        completed_at=timezone.now() - FAILED_IMPORT_ARCHIVE_KEPT - timedelta(minutes=1)
+    )
+    assert fail_stalled_imports.run() == 0
+
+    stalled.refresh_from_db()
+    assert not stalled.archive
+    assert not get_photo_album_storage().exists(archive_key)
+    assert AlbumImport.objects.get(pk=working.pk).archive
+
+
+@pytest.mark.django_db
+def test_a_download_failed_while_still_queued_is_built_when_its_message_arrives(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """With one media slot, a ZIP can honestly wait longer than JOB_QUEUED_TOO_LONG. The sweep
+    failed it, and the message that finally arrived found no QUEUED row: no ZIP, ever."""
+    download = AlbumDownload.objects.create(requested_by=make_resident(), media_ids=[], task_id="waited")
+    AlbumDownload.objects.filter(pk=download.pk).update(
+        created_at=timezone.now() - JOB_QUEUED_TOO_LONG - timedelta(minutes=1)
+    )
+    assert fail_stalled_downloads.run() == 1
+
+    assert build_album_download.apply(args=(download.pk,), task_id="waited").get() is True
+
+    download.refresh_from_db()
+    assert download.state == AlbumDownloadState.READY
+    assert download.error == ""
+
+
+@pytest.mark.django_db
+def test_an_import_failed_while_still_queued_is_imported_when_its_message_arrives(
+    make_resident: Callable[..., Resident],
+) -> None:
+    album_import = _import(make_resident(), _zip_with_one_photo(), task_id="waited")
+    AlbumImport.objects.filter(pk=album_import.pk).update(
+        created_at=timezone.now() - JOB_QUEUED_TOO_LONG - timedelta(minutes=1)
+    )
+    assert fail_stalled_imports.run() == 1
+
+    assert process_album_import.apply(args=(album_import.pk,), task_id="waited").get() is True
+
+    album_import.refresh_from_db()
+    assert album_import.state == AlbumImportState.READY
+    assert album_import.error == ""
+    assert len(album_import.album_ids) == 1
+
+
+@pytest.mark.django_db
+def test_a_job_that_died_while_building_is_not_revived(make_resident: Callable[..., Resident]) -> None:
+    """Only a job that never started is revived. One that recorded progress was running when its
+    worker died, and running it again would most likely just repeat whatever killed it."""
+    download = AlbumDownload.objects.create(
+        requested_by=make_resident(),
+        media_ids=[],
+        task_id="died",
+        state=AlbumDownloadState.FAILED,
+        error=DOWNLOAD_INTERRUPTED,
+        progressed_at=timezone.now() - timedelta(hours=1),
+    )
+
+    assert build_album_download.apply(args=(download.pk,), task_id="died").get() is False
+
+    download.refresh_from_db()
+    assert download.state == AlbumDownloadState.FAILED
 
 
 @pytest.mark.django_db

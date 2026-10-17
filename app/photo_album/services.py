@@ -397,7 +397,7 @@ def _existing_album(root: Album, folders: tuple[str, ...]) -> Album:
 Progress = Callable[[str, int, int], None]
 
 
-def _no_progress(step: str, done: int, total: int) -> None:
+def no_progress(step: str, done: int, total: int) -> None:
     pass
 
 
@@ -434,7 +434,7 @@ def _plan_import(
     *,
     merge: bool = False,
     root_name: str = "",
-    progress: Progress = _no_progress,
+    progress: Progress = no_progress,
 ) -> _ImportPlan:
     """Pass one: read, check and extract everything, collecting EVERY reason to refuse the import."""
     plan = _ImportPlan(root_name=normalize_name(root_name or Path(archive_name or "album.zip").stem))
@@ -568,7 +568,7 @@ def import_zip_album(
     lock: bool = False,
     merge: bool = False,
     root_name: str = "",
-    progress: Progress = _no_progress,
+    progress: Progress = no_progress,
 ) -> ZipImport:
     """Import a ZIP as one album tree — completely, or not at all.
 
@@ -595,7 +595,8 @@ def import_zip_album(
     Returns the albums (root first), the log of files deliberately left out and how many were
     stored. Raises ValidationError carrying every error when the import is refused.
     """
-    archive.seek(0)
+    archive.seek(0)  # an S3 file is downloaded here, which reports no progress of its own
+    progress("reading", 0, 0)
     with TemporaryDirectory(prefix="photo-album-import-") as directory:
         try:
             with zipfile.ZipFile(archive) as zip_archive:
@@ -624,7 +625,7 @@ def _store_import(
     resident: Resident,
     *,
     lock: bool = False,
-    progress: Progress = _no_progress,
+    progress: Progress = no_progress,
 ) -> tuple[list[Album], int]:
     """Pass two: create the albums and store the files, all or nothing."""
     written: list[str] = []
