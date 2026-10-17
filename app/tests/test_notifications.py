@@ -849,10 +849,25 @@ def test_preferences_page_renders_every_category_and_room_anchor(
     assert response.status_code == 200
     html = response.content.decode()
     for category in categories.CATEGORIES:
+        if category.group == "gahkflix":  # behind its rollout gate; see the next test
+            assert f'name="{category.key}__push"' not in html
+            continue
         assert f'name="{category.key}__push"' in html
         optional = category.in_app and category.in_app_optional
         assert (f'name="{category.key}__in_app"' in html) is optional
     assert 'id="rum-tv-rezz"' in html
+
+
+def test_gahkflix_settings_follow_its_rollout_gate(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    client.force_login(make_resident(email="foto@gahk.dk", roles=("foto",)))
+
+    html = client.get(reverse("notifications:preferences")).content.decode()
+
+    for category in categories.CATEGORIES:
+        if category.group == "gahkflix":
+            assert f'name="{category.key}__push"' in html
 
 
 def test_system_and_general_come_last_on_the_settings_page(

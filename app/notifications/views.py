@@ -16,6 +16,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from core import push
+from gahkflix import access as gahkflix_access
 from residents.permissions import current_resident
 
 from . import categories, services
@@ -142,6 +143,9 @@ def preferences(request: HttpRequest) -> HttpResponse:
 
     groups = []
     for key, name, leaves in categories.grouped():
+        # GAHKFlix is still behind its rollout gate; nobody outside it can get these.
+        if key == "gahkflix" and not gahkflix_access.request_allowed(request):
+            continue
         rows = []
         for category in leaves:
             pref = saved.get(category.key)
