@@ -11,6 +11,9 @@
     {% if video.is_draft %}
       <p class="muted" style="margin:-8px 0 18px;font-size:14px">Kun du og administratorerne kan se kladden. Den slettes med alle sine filer {{ video.draft_deleted_on|date:"j. F Y" }}, hvis den ikke er udgivet inden.</p>
     {% endif %}
+    {% if can_upload_revision and not processing %}
+      <p class="flix-callout" style="margin:0 0 18px">Fejl i selve videoen? <a href="#ny-version">Upload en rettet version</a> i stedet for en ny video – titel, billeder, medvirkende og visninger bliver ved denne.</p>
+    {% endif %}
 
     {# --- Processing and publishing ------------------------------------------------------------ #}
     {% if processing %}
@@ -24,7 +27,7 @@
       <div class="flix-panel" style="border-color:#5c1a1e">
         <h2>{% if video.file %}Den nye version kunne ikke behandles{% else %}Videoen kunne ikke behandles{% endif %}</h2>
         <p>{{ latest_file.error }}</p>
-        {% if not video.file %}<p>Upload filen igen nedenfor, eller slet kladden.</p>{% endif %}
+        {% if not video.file %}<p><a href="#ny-version">Upload filen igen som en ny version</a>, eller slet kladden.</p>{% endif %}
       </div>
     {% endif %}
 
@@ -162,10 +165,18 @@
 
         {# --- A new version --------------------------------------------------------------------- #}
         {% if can_upload_revision and not processing %}
-          <section>
+          <section id="ny-version">
             <h2 class="flix-section-title" style="margin-top:0">Ny version af filen</h2>
-            <p class="muted" style="font-size:14px;margin:0 0 10px">{% if video.is_published %}Muligt i {{ days_left.revision }} dag{{ days_left.revision|pluralize:"e" }} endnu. {% endif %}Den nuværende version afspilles, til den nye er færdig.</p>
+            <div class="flix-help" style="font-size:14px;margin:0 0 10px;color:#ccc">
+              <p style="margin:0 0 6px">Brug den her, når der er fejl i videoen – en forkert klipning, dårlig lyd, en scene, der mangler. Upload den rettede fil her, <strong>ikke</strong> som en ny video: titel, beskrivelse, billeder, medvirkende, visninger og link bliver ved denne, og den nuværende version afspilles, til den nye er færdig.</p>
+              <p style="margin:0">{% if video.is_published %}Muligt indtil {{ video.revision_window_ends|date:"j. F \k\l. H.i" }}.{% else %}Muligt, så længe videoen er en kladde. Når den er udgivet, kun indtil {{ video.revision_window_ends|date:"j. F \k\l. H.i" }}.{% endif %}</p>
+            </div>
             {% include "gahkflix/_uploader.html" %}
+          </section>
+        {% elif video.is_published and not processing %}
+          <section id="ny-version" class="flix-panel">
+            <h2>Ny version af filen</h2>
+            <p>Videofilen kan kun skiftes de første 7 dage efter upload, og de er gået ({{ video.revision_window_ends|date:"j. F Y" }}).</p>
           </section>
         {% endif %}
 

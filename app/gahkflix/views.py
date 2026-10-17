@@ -40,6 +40,7 @@ from residents.permissions import current_resident
 from . import access, cache, services
 from .forms import DeletionRequestForm, SeriesForm, VideoDetailsForm, VoteForm
 from .models import (
+    REVISION_WINDOW,
     CastMember,
     ChangeRequest,
     FileState,
@@ -574,17 +575,26 @@ def _upload_config(video: Video | None = None) -> dict[str, Any]:
 
 @access.access_required
 def upload(request: HttpRequest) -> HttpResponse:
+    resident = current_resident(request)
+    # Published recently enough to get a new version of the file still (models.REVISION_WINDOW).
+    replaceable = list(
+        Video.objects.published()
+        .filter(uploaded_by=resident, created_at__gt=timezone.now() - REVISION_WINDOW)
+        .select_related("file", "series")
+        .order_by("-created_at")
+    )
     return _render(
         request,
         "gahkflix/upload.html",
         {
             "max_gb": max_upload_bytes() / 1024**3,
-            "pending": services.pending_upload(current_resident(request)),
+            "pending": services.pending_upload(resident),
             "upload_config": _upload_config(),
-            # Shown first, so a video already on its way is finished rather than uploaded again.
+            # Shown first, so a video that needs a correction gets a new version rather than a twin.
             "drafts": _with_latest_file(
-                Video.objects.drafts().filter(uploaded_by=current_resident(request)).order_by("-created_at")
+                Video.objects.drafts().filter(uploaded_by=resident).order_by("-created_at")
             ),
+            "replaceable": replaceable,
         },
     )
 
@@ -755,10 +765,7 @@ def edit(request: HttpRequest, pk: int) -> HttpResponse:
             "can_upload_revision": access.can_upload_revision(request, video),
             "can_delete": access.can_delete_directly(request, video),
             "can_request_deletion": access.can_request_deletion(request, video),
-            "days_left": {
-                "edit": max(0, (video.edit_window_ends - now).days),
-                "revision": max(0, (video.revision_window_ends - now).days),
-            },
+            "days_left": {"edit": max(0, (video.edit_window_ends - now).days)},
             "processing": latest is not None and latest.is_pending,
             "episode_numbers": _episode_numbers(request, video),
             "upload_config": _upload_config(video),
