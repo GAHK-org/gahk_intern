@@ -260,12 +260,19 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
 @require_POST
 @login_required
 def delete_application(request: HttpRequest, pk: int) -> HttpResponseRedirect:
-    """A resident withdraws their own room application (F-004). Scoped to the owner via the lookup, so
-    one resident can't delete another's. Cascades priorities + orlov."""
-    app = get_object_or_404(KvotientApplication, pk=pk, resident=current_resident(request))
+    """A resident withdraws their own room application (F-004), or Indstillingen removes a wrong one.
+    Nobody else may delete another's. Cascades priorities + orlov."""
+    app = get_object_or_404(KvotientApplication, pk=pk)
+    if app.resident_id == current_resident(request).pk:
+        app.delete()
+        messages.success(request, "Din ansøgning er trukket tilbage.")
+        return redirect("soegvaerelse:my")
+    if not request_has_role(request, "indstilling"):
+        raise PermissionDenied
+    name = app.resident.full_name
     app.delete()
-    messages.success(request, "Din ansøgning er trukket tilbage.")
-    return redirect("soegvaerelse:my")
+    messages.success(request, f"Ansøgningen fra {name} er slettet.")
+    return redirect("soegvaerelse:admin")
 
 
 @role_required("indstilling")
