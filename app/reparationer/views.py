@@ -5,7 +5,7 @@ broken needs no role. Two crews then work the pipeline in sequence — see model
 `responsible`/`status` split — and each has a different ceiling:
 
   * Viceværterne (MOVE_ROLES minus MANAGE_ROLES) triage: they may move a ticket to any status
-    EXCEPT the two in MANAGER_ONLY_STATUSES, and hand `responsible` over to Reppergruppen (see
+    EXCEPT the two in MANAGER_ONLY_STATUSES, may not reopen one that is Færdig, and hand `responsible` over to Reppergruppen (see
     set_responsible).
   * Reppergruppen, Inspektionen and administrator (MANAGE_ROLES) have no ceiling: every status,
     including MANAGER_ONLY_STATUSES and closing a ticket, plus delete.
@@ -140,6 +140,7 @@ def board(request: HttpRequest) -> HttpResponse:
             "push_configured": push.is_configured(),
             "vapid_public_key": push.vapid_public_key(),
             "push_subscribed": services.is_subscribed(resident),
+            "push_eligible": services.can_be_notified(resident),
             # Dragging a card is the board's only move control (see board.html). Both flags are read
             # by frontend/src/reparationer.ts, which wires up nothing at all without can_move.
             "can_move": request_has_role(request, *MOVE_ROLES),
@@ -187,16 +188,28 @@ def create(request: HttpRequest) -> HttpResponse:
 def set_status(request: HttpRequest, pk: int) -> HttpResponse:
     task = get_object_or_404(RepairTask, pk=pk)
     status = request.POST.get("status")
-    if status in MANAGER_ONLY_STATUSES and not request_has_role(request, *MANAGE_ROLES):
+    is_manager = request_has_role(request, *MANAGE_ROLES)
+    if status in MANAGER_ONLY_STATUSES and not is_manager:
         # A Vicevært passed the view-level MOVE_ROLES gate but this status is manager-only — see
         # MANAGER_ONLY_STATUSES. Answered rather than ignored: the board lets them pick a card up
         # and carry it anywhere, so landing on a column that is not theirs is an ordinary slip, and
         # it deserves the card back plus a reason. The buttons on the detail page still never render
         # for them, so a form POST reaching here is a replayed request and gets the same refusal.
         return _move_response(request, task, "Kun Reppergruppen kan flytte en sag hertil.")
-    if status in RepairTask.Status.values:
+    if task.status == RepairTask.Status.FAERDIG and status != task.status and not is_manager:
+        # The other half of the Færdig ceiling: closing is Reppergruppen's call, so reopening is too.
+        # Without this a Vicevært could undo a close they could not have made.
+        return _move_response(request, task, "Kun Reppergruppen kan genåbne en færdig sag.")
+    if status in RepairTask.Status.values and status != task.status:
         task.status = status
-        task.save(update_fields=["status", "updated_at"])
+        fields = ["status", "updated_at"]
+        if task.archived_at is not None:
+            # Only a Færdig ticket is ever archived, so this is a move OUT of Færdig: it is being
+            # reopened, and belongs back on the board (the same thing unarchive does). Left archived
+            # it would be hidden from the board while no longer Færdig — gone from both places.
+            task.archived_at = None
+            fields.append("archived_at")
+        task.save(update_fields=fields)
     return _move_response(request, task)
 
 
@@ -264,11 +277,15 @@ def archive_now(request: HttpRequest, pk: int) -> HttpResponseRedirect:
 @role_required(*MANAGE_ROLES)
 def unarchive(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     """Bring an archived ticket back onto the board — it reappears in Færdig, exactly where the
-    archive found it, since archiving never touched `status`."""
+    archive found it, since archiving never touched `status`.
+
+    The archive clock restarts, though: `finished_at` is long past the cutoff by now, and left as it
+    was the nightly sweep would archive the ticket again before anyone had looked at it."""
     task = get_object_or_404(RepairTask, pk=pk)
     if task.archived_at is not None:
         task.archived_at = None
-        task.save(update_fields=["archived_at"])
+        task.finished_at = timezone.now()
+        task.save(update_fields=["archived_at", "finished_at"])
         messages.success(request, "Reparationen er genåbnet fra arkivet.")
     return redirect("reparationer:detail", pk=task.pk)
 
@@ -302,6 +319,9 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
             "manager_only_statuses": MANAGER_ONLY_STATUSES,
             "can_manage": can_manage,
             "can_move": request_has_role(request, *MOVE_ROLES),
+            # A Vicevært may neither close a ticket nor reopen one (set_status), so a Færdig ticket
+            # offers them no status buttons at all.
+            "status_locked": task.status == RepairTask.Status.FAERDIG and not can_manage,
             "can_handoff": request_has_role(request, *MOVE_ROLES),
             "other_responsible": (
                 RepairTask.Responsible.REPPER
