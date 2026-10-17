@@ -27,7 +27,7 @@
     {% if can_move %}
       <div class="kanban-move mt-3">
         {% for s_value, s_label in statuses %}
-          {% if s_value != task.status %}
+          {% if s_value != task.status and not status_locked %}
             {% if can_manage or s_value not in manager_only_statuses %}
               <form method="post" action="{% url 'reparationer:set_status' task.pk %}">
                 {% csrf_token %}

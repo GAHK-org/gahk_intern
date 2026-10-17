@@ -49,11 +49,11 @@ class RepairTaskQuerySet(models.QuerySet["RepairTask"]):
     def due_for_archive(self, now: Any = None) -> "RepairTaskQuerySet":  # noqa: ANN401 — a datetime
         """Finished, not yet archived, and past ARCHIVE_AFTER_DAYS since the move to Færdig.
 
-        `updated_at` is the proxy for "when it reached Færdig": the model has no separate timestamp
-        for the move, and every status change touches `updated_at` anyway (see views.set_status).
+        Counted from `finished_at`, not `updated_at`: a handoff or any other save on a finished
+        ticket touches `updated_at`, and used to restart the 30 days every time it happened.
         """
         cutoff = (now or timezone.now()) - timedelta(days=ARCHIVE_AFTER_DAYS)
-        return self.filter(status=RepairTask.Status.FAERDIG, archived_at__isnull=True, updated_at__lt=cutoff)
+        return self.filter(status=RepairTask.Status.FAERDIG, archived_at__isnull=True, finished_at__lt=cutoff)
 
 
 class RepairTask(models.Model):
@@ -80,6 +80,10 @@ class RepairTask(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     archived_at = models.DateTimeField(null=True, blank=True)
+    # When the ticket last entered Færdig — the archive clock (RepairTaskQuerySet.due_for_archive).
+    # Kept by save() rather than by the views, so a ticket closed through the Django admin or a shell
+    # gets one too.
+    finished_at = models.DateTimeField(null=True, blank=True, editable=False)
 
     objects = RepairTaskQuerySet.as_manager()
 
@@ -88,6 +92,22 @@ class RepairTask(models.Model):
 
     def __str__(self) -> str:
         return self.title
+
+    def save(self, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401 — Model.save's signature
+        """Stamp `finished_at` on the way into Færdig and clear it on the way out.
+
+        Only a status change moves it: re-saving a finished ticket keeps its original stamp, which
+        is the whole point (see due_for_archive).
+        """
+        if self.status == self.Status.FAERDIG:
+            if self.finished_at is None:
+                self.finished_at = timezone.now()
+        else:
+            self.finished_at = None
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None and "status" in update_fields:
+            kwargs["update_fields"] = {*update_fields, "finished_at"}
+        super().save(*args, **kwargs)
 
 
 class RepairComment(models.Model):

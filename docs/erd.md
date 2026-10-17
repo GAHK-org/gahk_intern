@@ -526,6 +526,7 @@ erDiagram
         datetime created_at
         datetime updated_at
         datetime archived_at
+        datetime finished_at
     }
 
     reparationer_RepairComment {
@@ -1515,6 +1516,7 @@ erDiagram
         datetime created_at
         datetime updated_at
         datetime archived_at
+        datetime finished_at
     }
 
     reparationer_RepairComment {

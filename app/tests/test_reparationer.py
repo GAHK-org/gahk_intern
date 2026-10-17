@@ -220,6 +220,28 @@ def test_a_vicevaert_cannot_move_a_ticket_into_a_manager_only_column(
     assert task.status == RepairTask.Status.I_GANG
 
 
+def test_a_vicevaert_cannot_move_a_ticket_out_of_faerdig(
+    client: Client, beboer: Resident, vicevaert: Resident
+) -> None:
+    """Closing is Reppergruppen's call, so reopening is too — the ceiling used to be one-way."""
+    task = make_task(beboer, status=RepairTask.Status.FAERDIG)
+    login(client, vicevaert)
+
+    assert "→ I gang" not in client.get(f"{BOARD}{task.pk}").content.decode()
+    client.post(f"{BOARD}{task.pk}/status", {"status": "i_gang"})
+
+    task.refresh_from_db()
+    assert task.status == RepairTask.Status.FAERDIG
+
+
+def test_a_manager_may_reopen_a_finished_ticket(client: Client, beboer: Resident, repper: Resident) -> None:
+    task = make_task(beboer, status=RepairTask.Status.FAERDIG)
+    login(client, repper)
+    client.post(f"{BOARD}{task.pk}/status", {"status": "i_gang"})
+    task.refresh_from_db()
+    assert task.status == RepairTask.Status.I_GANG
+
+
 @pytest.mark.parametrize("status", ["ak_projekt", "faerdig"])
 def test_a_manager_may_use_every_column(
     client: Client, beboer: Resident, repper: Resident, status: str
@@ -421,15 +443,79 @@ def test_the_nightly_sweep_archives_only_long_finished_tickets(client: Client, b
     old = make_task(beboer, title="Gammel", status=RepairTask.Status.FAERDIG)
     fresh = make_task(beboer, title="Frisk", status=RepairTask.Status.FAERDIG)
     open_one = make_task(beboer, title="Åben", status=RepairTask.Status.I_GANG)
-    # updated_at is auto_now, so age it behind the model's back rather than by saving.
+    # Both clocks are set by save(), so age them behind the model's back rather than by saving.
     stale = timezone.now() - timedelta(days=ARCHIVE_AFTER_DAYS + 1)
-    RepairTask.objects.filter(pk__in=[old.pk, open_one.pk]).update(updated_at=stale)
+    RepairTask.objects.filter(pk=old.pk).update(finished_at=stale, updated_at=stale)
+    RepairTask.objects.filter(pk=open_one.pk).update(updated_at=stale)
 
     call_command("archive_finished_repairs")
 
     assert RepairTask.objects.get(pk=old.pk).archived_at is not None
     assert RepairTask.objects.get(pk=fresh.pk).archived_at is None
     assert RepairTask.objects.get(pk=open_one.pk).archived_at is None  # still open, however old
+
+
+def test_the_archive_clock_runs_from_entering_faerdig_not_from_the_last_change(
+    client: Client, beboer: Resident, repper: Resident
+) -> None:
+    """A handoff on a finished ticket touches updated_at; it used to restart the 30 days."""
+    task = make_task(beboer, status=RepairTask.Status.I_GANG)
+    login(client, repper)
+    client.post(f"{BOARD}{task.pk}/status", {"status": "faerdig"})
+    task.refresh_from_db()
+    assert task.finished_at is not None
+    stale = timezone.now() - timedelta(days=ARCHIVE_AFTER_DAYS + 1)
+    RepairTask.objects.filter(pk=task.pk).update(finished_at=stale, updated_at=stale)
+
+    client.post(f"{BOARD}{task.pk}/ansvarlig", {"responsible": "repper"})  # a fresh updated_at
+    call_command("archive_finished_repairs")
+
+    task.refresh_from_db()
+    assert task.updated_at > stale, "the handoff did touch the ticket"
+    assert task.archived_at is not None, "but the clock still ran from the close"
+
+
+def test_leaving_faerdig_clears_the_archive_clock(beboer: Resident) -> None:
+    task = make_task(beboer, status=RepairTask.Status.FAERDIG)
+    assert task.finished_at is not None
+    task.status = RepairTask.Status.I_GANG
+    task.save(update_fields=["status", "updated_at"])
+    task.refresh_from_db()
+    assert task.finished_at is None
+
+
+def test_reopening_from_the_archive_restarts_the_clock(
+    client: Client, beboer: Resident, repper: Resident
+) -> None:
+    """Otherwise the next nightly sweep archives it straight back."""
+    task = make_task(beboer, status=RepairTask.Status.FAERDIG)
+    stale = timezone.now() - timedelta(days=ARCHIVE_AFTER_DAYS + 1)
+    RepairTask.objects.filter(pk=task.pk).update(finished_at=stale, archived_at=stale)
+    login(client, repper)
+
+    client.post(f"{BOARD}{task.pk}/genaabn")
+    call_command("archive_finished_repairs")
+
+    task.refresh_from_db()
+    assert task.archived_at is None
+
+
+def test_moving_an_archived_ticket_out_of_faerdig_reopens_it(
+    client: Client, beboer: Resident, repper: Resident
+) -> None:
+    """It used to stay archived — off the board — while no longer Færdig, so off the archive's
+    premise too. Moving it is reopening it, the same as the Genåbn button."""
+    task = make_task(beboer, status=RepairTask.Status.FAERDIG)
+    task.archived_at = timezone.now()
+    task.save(update_fields=["archived_at"])
+    login(client, repper)
+
+    client.post(f"{BOARD}{task.pk}/status", {"status": "i_gang"})
+
+    task.refresh_from_db()
+    assert task.status == RepairTask.Status.I_GANG
+    assert task.archived_at is None
+    assert "Utæt vandhane" in client.get(BOARD).content.decode(), "back on the board"
 
 
 def test_an_archived_ticket_leaves_the_board_but_stays_searchable(client: Client, beboer: Resident) -> None:
@@ -461,3 +547,4 @@ def test_the_two_crews_get_their_role_from_their_embedsgruppe() -> None:
     Spelling either differently silently grants nothing, which is exactly the bug this pins."""
     assert WORKGROUP_ROLE["Repperne"] == Role.REPPER
     assert WORKGROUP_ROLE["Vicevært"] == Role.VICEVAERT
+
