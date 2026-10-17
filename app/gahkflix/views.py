@@ -100,6 +100,7 @@ def _base_context(request: HttpRequest) -> dict[str, Any]:
         "open_requests": (
             ChangeRequest.objects.filter(state=ChangeRequest.State.OPEN)
             .exclude(requested_by=resident)
+            .exclude(votes__voter=resident)
             .count()
             if access.is_administrator(request)
             else 0

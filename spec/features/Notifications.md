@@ -36,6 +36,10 @@ Features decide **who** is told and **with what wording**; they call
 | Begivenheder | `events.personal` — RSVP deadline reminders, moved up from the venteliste | Høj | yes |
 | Begivenheder | `events.comments` — comments on events you host | Normal | yes |
 | Reparationer | `repairs` — new and handed-over tasks for your group | Normal | yes |
+| GAHKFlix | `gahkflix.new` — a video is published | Normal | yes |
+| GAHKFlix | `gahkflix.cast` — you are credited in a published video | Normal | yes |
+| GAHKFlix | `gahkflix.uploads` — your upload is processed or failed; your request was decided | Normal | yes |
+| GAHKFlix | `gahkflix.approvals` — a late edit or a deletion awaits an administrator | Høj | yes |
 | System | `system` — about the site itself: downtime, new features | Normal | **always** |
 | Generelt | `general` — **the catch-all**: everything without a category of its own, from a notice about your own application to an announcement to the whole kollegium | Normal | **always** |
 
@@ -106,6 +110,11 @@ they would get a 403 on opening. Acting on your own content never notifies you.
 - **Reparationer** → `repairs` to current holders of the responsible role (Viceværterne for a new
   report or one sent back, Reppergruppen for one handed over), plus administrators and superusers.
   The reporter is not told about their own new report.
+- **GAHKFlix** → `gahkflix.new` to everyone who can open GAHKFlix, except the uploader;
+  `gahkflix.cast` to residents newly credited in a published video; `gahkflix.uploads` to the
+  uploader and to whoever asked for a change; `gahkflix.approvals` to the administrators and
+  Fotogruppen, except the one asking. While GAHKFlix is behind its rollout gate, its group is hidden
+  on the settings page for residents outside it, and none of them are notified.
 
 ## In-app notifications
 
