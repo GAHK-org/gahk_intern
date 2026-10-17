@@ -38,7 +38,7 @@ class Command(BaseCommand):
 
     @transaction.atomic
     def handle(self, *args, **opts) -> None:  # noqa: ANN002, ANN003
-        from residents.models import Resident
+        from residents.api import Resident
 
         remap = resident_id_remap()
         resident_ids = set(Resident.objects.values_list("id", flat=True))

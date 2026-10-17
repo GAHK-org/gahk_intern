@@ -29,7 +29,7 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.templatetags.static import static
 from pywebpush import WebPushException, webpush
 
-from residents.permissions import current_resident
+from residents.api import current_resident
 
 from .forms import PushSubscriptionForm
 from .models import TOPIC_FIELDS, PushSubscription

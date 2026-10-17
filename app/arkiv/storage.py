@@ -26,6 +26,7 @@ from typing import BinaryIO, Protocol
 from django.conf import settings
 from django.core.files.storage import storages
 
+from core.downloads import content_disposition
 from core.storage import MediaS3Storage
 
 # Short. The URL is a redirect target, followed immediately by the browser that asked for it, so it
@@ -235,30 +236,3 @@ def get_store() -> ArchiveStore:
     if isinstance(storage, MediaS3Storage):
         return S3ArchiveStore(storage)
     return LocalArchiveStore(Path(settings.MEDIA_ROOT))
-
-
-def content_disposition(filename: str) -> str:
-    """`attachment` with the resident's filename, spelled both ways.
-
-    Both spellings, because neither alone is enough: the quoted `filename=` is all an old client
-    understands and cannot carry a non-ASCII byte, and `filename*=` is the RFC 5987 form that can.
-    Danish names have spaces and aeoeaa in them, so this is the normal case here, not the edge one.
-
-    Public because two callers build it - the presigned GET, where the object key is a bare hash
-    and the browser would otherwise save `9f86d081...` with no extension, and the zip response,
-    which has no presigned URL to put it on.
-    """
-    return f"attachment; filename=\"{_ascii_fallback(filename)}\"; filename*=UTF-8''{_rfc5987(filename)}"
-
-
-def _ascii_fallback(filename: str) -> str:
-    """A filename old clients can parse: ASCII, no quotes, never empty."""
-    cleaned = "".join(c if 32 <= ord(c) < 127 and c not in '"\\' else "_" for c in filename)
-    return cleaned or "download"
-
-
-def _rfc5987(filename: str) -> str:
-    """Percent-encoded UTF-8 for the `filename*` parameter, which is what modern browsers read."""
-    from urllib.parse import quote
-
-    return quote(filename, safe="")

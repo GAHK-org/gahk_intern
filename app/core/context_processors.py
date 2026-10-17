@@ -6,36 +6,12 @@ from django.conf import settings
 from django.http import HttpRequest
 
 from arkiv.access import roles_allowed as arkiv_allowed
+from cms.api import NAV_LEGACY, NAV_PUBLIC
 from den_hurtige.access import roles_allowed as den_hurtige_allowed
 from events.access import roles_allowed as events_allowed
 from opslagstavle.access import roles_allowed as opslagstavle_allowed
 from photo_album.access import roles_allowed as photo_album_allowed
-from residents.permissions import CMS_EDITOR_ROLES, can_preview, effective_roles
-
-# Public site nav, matching the legacy gahk.dk menu (labels + order)
-NAV_LEGACY = [
-    ("/", "Hjem"),
-    ("/kollegielivet/historie", "Historie"),
-    ("/vision", "Vision"),
-    ("/kollegielivet", "Kollegielivet"),
-    ("/faciliteter", "Faciliteter"),
-    ("/begivenheder/", "Begivenheder"),
-    ("/optagelse/", "Optagelse"),
-    ("/legater", "Legater"),
-    ("/kontakt", "Kontakt"),
-]
-
-NAV_PUBLIC = [
-    ("/", "Forside"),
-    ("/faciliteter", "Faciliteter"),
-    ("/kollegielivet", "Kollegielivet"),
-    ("/vision", "Vision"),
-    ("/legater", "Legater"),
-    ("/begivenheder/", "Begivenheder"),
-    ("/kontakt", "Kontakt"),
-    ("/optagelse/", "Optagelse"),
-]
-
+from residents.api import CMS_EDITOR_ROLES, can_preview, effective_roles
 
 NavItem = tuple[str, str, str]  # (url, label, icon-key from the base.html sprite)
 NavSection = tuple[str, list[NavItem]]

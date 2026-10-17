@@ -8,7 +8,7 @@ from django.db.models import F, Subquery, Window
 from django.db.models.functions import RowNumber
 from django.utils import timezone
 
-from residents.models import Resident, active_period
+from residents.api import Resident, resident_ids_with_roles
 
 # How long a delivered broker message is kept before being swept.
 #
@@ -45,13 +45,9 @@ _SUCCESS = "SUCCESS"
 @shared_task
 def send_admin_dummy_notification() -> int:
     """Send the temporary twice-daily worker notification to current administrators."""
-    year, month = active_period()
     recipients = set(
         Resident.objects.filter(
-            is_active=True,
-            role_assignments__role="administrator",
-            role_assignments__year=year,
-            role_assignments__month=month,
+            is_active=True, pk__in=resident_ids_with_roles(["administrator"])
         ).values_list("email", flat=True)
     )
     recipients.update(

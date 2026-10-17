@@ -10,7 +10,7 @@ import logging
 
 from django.db import transaction
 
-from residents.models import Residency, Resident, active_period
+from residents.api import Resident, active_period, roster_resident_ids
 
 from .models import AkAutoApply, AkEntry, AkMonthlyCharge
 
@@ -38,7 +38,7 @@ def apply_monthly_charge(year: int, month: int, *, officer: Resident | None = No
         removed = existing.delete()[0]
         return (0, removed)
 
-    member_ids = set(Residency.objects.filter(year=year, month=month).values_list("resident_id", flat=True))
+    member_ids = set(roster_resident_ids((year, month)))
 
     # Drop charges for anyone no longer on that month's list (e.g. removed from the alumneliste).
     removed = existing.exclude(resident_id__in=member_ids).delete()[0]

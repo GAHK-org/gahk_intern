@@ -29,7 +29,8 @@ from core.emoji import EMOJI_SHORTLIST
 from core.markdown import image_sources, render_markdown
 from core.reactions import apply_toggle, reaction_rows
 from core.uploads import attached_image, validate_image_upload
-from residents.permissions import current_resident
+from events import api as events_api
+from residents.api import current_resident
 
 from . import services
 from .access import access_required, can_delete, can_delete_comment, can_edit, can_moderate, is_limited
@@ -59,6 +60,8 @@ def _decorate(notices: list[Notice], request: HttpRequest) -> list[Notice]:
     # which is the invariant every view here already relies on behind @access_required.
     user_id = current_resident(request).pk
     moderator = can_moderate(request)
+    # The event chips, in one query for the whole page, as DTOs: this app never touches an Event.
+    events = events_api.event_summaries(n.event_id for n in notices)
     for notice in notices:
         notice.reaction_rows = reaction_rows(notice.reactions.all(), user_id)  # type: ignore[attr-defined]
         notice.can_edit = notice.author_id == user_id  # type: ignore[attr-defined]
@@ -67,6 +70,7 @@ def _decorate(notices: list[Notice], request: HttpRequest) -> list[Notice]:
         # inline, which otherwise pushes every other post below the fold. A single image is left
         # alone — it reads as part of the post rather than as a gallery. Computed here because a
         # template cannot call a function, and only used when `full` is unset.
+        notice.event_summary = events.get(notice.event_id) if notice.event_id else None  # type: ignore[attr-defined]
         images = image_sources(notice.body)
         notice.image_count = len(images)  # type: ignore[attr-defined]
         notice.thumbnail = images[0] if len(images) > 1 else ""  # type: ignore[attr-defined]
@@ -138,12 +142,10 @@ def events_allowed(request: HttpRequest) -> bool:
     ends up handing residents a link that 403s them. The two gates happen to hold the same roles
     today; they are separate globals and the whole point of them is that they move apart.
 
-    Imported inside the function so the two apps stay acyclic at import time — opslagstavle.forms
-    reaches into events the same way.
+    Through events.api, the only door into begivenheder — opslagstavle depends on events, never the
+    other way round (events reaches back through the mention provider in handlers.py).
     """
-    from events.access import request_allowed
-
-    return request_allowed(request)
+    return events_api.request_allowed(request)
 
 
 @access_required

@@ -42,7 +42,7 @@ from core.clock import current_date, current_datetime
 from core.push import handle_subscription_request
 from core.reactions import apply_toggle, reaction_rows
 from core.uploads import attached_image
-from residents.permissions import current_resident, effective_roles
+from residents.api import current_resident, effective_roles
 
 from . import channels, services
 from .access import access_required, can_moderate, is_limited, request_allowed

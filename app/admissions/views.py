@@ -26,7 +26,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from residents.permissions import current_resident, role_required
+from residents.api import current_resident, role_required
 
 from .forms import FremlejeForm, RundvisningForm
 from .models import Application

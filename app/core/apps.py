@@ -24,5 +24,11 @@ class CoreConfig(AppConfig):
         register(check_media_storage_url)
         register(check_media_storage_prefix)
 
+        # Cross-domain ForeignKeys must not hand the other domain a reverse accessor — the part of the
+        # domain boundaries Tach cannot see. Tagged so CI can run it on its own.
+        from .boundaries import check_cross_domain_relations
+
+        register(check_cross_domain_relations, "domain_boundaries")
+
         # Connects the Celery signals that keep each task's log for the worker-jobs page.
         from . import worker_logs  # noqa: F401

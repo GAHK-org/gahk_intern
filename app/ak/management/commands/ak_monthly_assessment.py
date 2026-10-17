@@ -8,7 +8,7 @@ from django.core.management.base import BaseCommand
 
 from ak.models import AkMonthlyCharge
 from ak.services import apply_monthly_charge
-from residents.models import active_period
+from residents.api import active_period
 
 
 class Command(BaseCommand):

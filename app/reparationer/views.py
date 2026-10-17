@@ -25,8 +25,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from core import push
-from residents.models import Role
-from residents.permissions import current_resident, request_has_role, role_required
+from residents.api import Role, current_resident, request_has_role, role_required
 
 from . import services
 from .forms import COMMON_AREAS, RepairCommentForm, RepairTaskForm

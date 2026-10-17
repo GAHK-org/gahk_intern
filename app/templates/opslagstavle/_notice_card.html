@@ -33,19 +33,19 @@
             * `events_allowed` — begivenheder has its own rollout gate, and while it is on, a chip
               linking into it would 403 whoever tapped it. The mirror of the event page's own check
               before it links back here (views.events_allowed).
-            * `visibility` — checked here as well as in the form's queryset, because an event that
+            * `is_open` — checked here as well as in the form's choices, because an event that
               was open when somebody linked it can be switched to "kun inviterede" afterwards, and
               this chip is on a board the whole house reads.
-            * `notice.event` at all — it is deleted a week after it is held while this post lives
+            * `notice.event_summary` at all — the event is deleted a week after it is held while this post lives
               for two years, so None is an ordinary state, not an error.
 
           A real link, and in the feed it sits under the card's stretched permalink, so it needs
           raising above it (see .notice-event in the stylesheet).
         {% endcomment %}
-        {% if events_allowed and notice.event and notice.event.visibility == "aabent" %}
-          <a class="chip chip-event notice-event" href="{% url 'events:detail' notice.event.pk %}">
+        {% if events_allowed and notice.event_summary and notice.event_summary.is_open %}
+          <a class="chip chip-event notice-event" href="{{ notice.event_summary.url }}">
             <svg class="ni" aria-hidden="true"><use href="#i-calendar"></use></svg>
-            {{ notice.event.title }} · {{ notice.event.starts_at|date:"j. M" }}
+            {{ notice.event_summary.title }} · {{ notice.event_summary.starts_at|date:"j. M" }}
           </a>
         {% endif %}
       </div>

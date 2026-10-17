@@ -31,7 +31,7 @@ from django.template.defaultfilters import filesizeformat
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from residents.permissions import current_resident
+from residents.api import current_resident
 
 from . import access, services, uploads
 from .models import ArchiveFile, ArchiveFolder, object_key, selection_key

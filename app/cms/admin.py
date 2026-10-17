@@ -46,8 +46,7 @@ from django.utils import timezone
 from django.utils.html import format_html
 
 from core.uploads import validate_image_upload
-from residents.models import Role
-from residents.permissions import CMS_EDITOR_ROLES, current_resident, has_active_role
+from residents.api import CMS_EDITOR_ROLES, Role, current_resident, has_active_role
 
 from .diff import line_diff
 from .models import CmsImage, Event, NewsItem, Page, PageRedirect, PageVersion
