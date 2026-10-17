@@ -120,6 +120,14 @@ def besvar(request: HttpRequest, room_id: int) -> HttpResponse:
 
     if request.method == "POST":
         with transaction.atomic():
+            # Photos can't be re-posted (a browser never pre-fills a file input) and the form has no
+            # remove control, so a resubmit carries the current report's pictures forward per
+            # criterion; a new upload replaces that criterion's picture. Without this, correcting one
+            # score dropped every photo from the current report. The old report keeps its own rows.
+            previous = {
+                s.criterion_id: s
+                for s in RoomConditionScore.objects.filter(condition__room=rm, condition__is_current=True)
+            }
             RoomCondition.objects.filter(room=rm, is_current=True).update(is_current=False)
             cond = RoomCondition.objects.create(
                 room=rm,
@@ -153,13 +161,20 @@ def besvar(request: HttpRequest, room_id: int) -> HttpResponse:
                         f"({crit.score_min}-{crit.score_max}) og blev ikke gemt.",
                     )
                     score = None
-                if score is not None or comment or photo:
+                prev = previous.get(crit.id)
+                # The same stored file is shared by both reports (nothing deletes room photos), so
+                # carrying it forward copies only the reference. A new photo also supersedes the
+                # read-only legacy image paths.
+                kept_photo = prev.photo.name if prev and not photo else ""
+                kept_image = prev.image if prev and not photo else ""
+                if score is not None or comment or photo or kept_photo or kept_image:
                     RoomConditionScore.objects.create(
                         condition=cond,
                         criterion=crit,
                         score=score,
                         comment=comment,
-                        photo=photo or "",
+                        photo=photo or kept_photo,
+                        image=kept_image,
                     )
         return redirect("vaerelsestjek:room", room_id=rm.number)
 

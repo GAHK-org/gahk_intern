@@ -7,7 +7,7 @@
   {% if clash_rooms and "indstilling" in effective_roles %}
     <p class="card border-red-400">⚠ Værelseskonflikt: to beboere deler samme værelse
       ({% for n in clash_rooms %}{{ n|stringformat:"03d" }}{% if not forloop.last %}, {% endif %}{% endfor %}).
-      Ret det under <a href="{% url 'next_month_list' %}">Rediger næste måned</a>.</p>
+      {% if clash_edit_period %}Ret det under <a href="{% url 'next_month_list' %}?period={{ clash_edit_period }}">{% if clash_edit_period == "current" %}Rediger nuværende måned{% else %}Rediger næste måned{% endif %}</a>.{% else %}Den måned kan ikke rettes i listeeditoren (kun nuværende og næste måned).{% endif %}</p>
   {% endif %}
 
   <div class="flex flex-wrap items-center gap-2 mb-3">
@@ -21,8 +21,7 @@
       <noscript><button type="submit" class="btn">Vis</button></noscript>
     </form>
     <span class="hidden sm:block flex-1"></span>
-    <a class="btn" href="{% url 'directory_export' %}?format=csv&period={{ period_value }}">Eksportér CSV</a>
-    <a class="btn" href="{% url 'directory_export' %}?format=xlsx&period={{ period_value }}">Eksportér Excel</a>
+    {% include "alumneliste/_export_links.html" %}
     {% if "indstilling" in effective_roles %}
       <a class="btn" href="{% url 'next_month_list' %}">Rediger næste måned ›</a>
     {% endif %}
