@@ -52,7 +52,7 @@ from .models import (
     original_key,
     picture_path,
 )
-from .storage import get_video_storage, s3_storage, signed_url
+from .storage import get_video_storage, loopback_url, s3_storage
 from .uploads import UploadTicket, check_file, content_type_for, valid_fingerprint
 
 logger = logging.getLogger(__name__)
@@ -436,7 +436,8 @@ def picture_from_frame(frame: VideoFrame, kind: str) -> bytes:
 def picture_at(video: Video, at: float, kind: str) -> bytes:
     """A thumbnail or banner from the exact moment `at` (seconds) the uploader picked themselves.
 
-    Cut from the best rendition there is, straight from storage. Raises ValidationError.
+    Cut from the best rendition there is, reading only the parts of it ffmpeg needs (loopback_url).
+    Raises ValidationError.
     """
     video_file = video.file
     if video_file is None:
@@ -445,8 +446,7 @@ def picture_at(video: Video, at: float, kind: str) -> bytes:
     if not 0 <= at <= duration:
         raise ValidationError("Tidspunktet ligger uden for videoen.")
     key = key_of(video_file.full_hd) or key_of(video_file.hd)
-    source = signed_url(key, expire=600) or get_video_storage().path(key)
-    with TemporaryDirectory(prefix="gahkflix-frame-") as directory:
+    with TemporaryDirectory(prefix="gahkflix-frame-") as directory, loopback_url(key) as source:
         target = Path(directory) / "frame.jpg"
         # The very last instant has no frame to cut; the one just before it does.
         if not encoding.extract_frame(source, min(at, max(duration - 0.1, 0)), target):
