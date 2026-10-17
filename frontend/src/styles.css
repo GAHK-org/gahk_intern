@@ -1157,11 +1157,9 @@
        screen and pushed the whole conversation off the bottom. */
     .app { grid-template-columns:1fr; grid-template-rows:auto auto 1fr;
       grid-template-areas:"brand" "top" "main"; }
-    /* A sticky grid item cannot leave its own row, so the top bar (and the burger) scrolled away.
-       As a flex column it sticks to the whole page; the brand row scrolls off so only one bar stays.
-       The chat page keeps the grid: its window never scrolls, so the bar is always in view there. */
-    body:not(.chat-page) .app { display:flex; flex-direction:column; }
-    body:not(.chat-page) .brandcell { position:static; }
+    /* Both rows stuck at top:0 and the brand row (z-index 31) covered the top bar, burger and all,
+       so on a phone the menu was only reachable from the top of the page. Only the top bar sticks. */
+    .brandcell { position:static; }
     html:not(:has(body.chat-page)) { scroll-padding-top:60px; }
     .hamburger { display:block; }
     .topsearch { display:none; }
