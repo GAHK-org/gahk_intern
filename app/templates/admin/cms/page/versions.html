@@ -22,10 +22,11 @@ project's Vite bundle, so there is no Tailwind here.
 
 {% block content %}
   {# No <h1> here: admin's base_site already renders `title` as the heading. #}
+  {# "100" is cms.services.VERSIONS_PER_PAGE_CAP — snapshot_page trims anything older. #}
   <p class="help">
     Der tages en kopi, hver gang siden gemmes. “Gendan” sætter indholdet tilbage til den valgte
     version og gemmer samtidig en kopi af det nuværende indhold, så du også kan fortryde en
-    gendannelse. Der bliver aldrig slettet noget i historikken.
+    gendannelse. Historikken gemmer de seneste 100 versioner af siden; ældre versioner slettes automatisk.
   </p>
 
   {% if not entries %}

@@ -12,9 +12,16 @@ register = template.Library()
 
 @register.filter
 def legacy_img(path: str) -> str:
-    """Map a stored legacy image path (/public/image/...) to its copied static asset URL."""
+    """Map a stored legacy image path (/public/image/...) to its copied static asset URL.
+
+    Only legacy paths are rewritten. A background picked from the image library is stored as its
+    /media/cms/… URL (cms.CmsImage), and an editor may paste an absolute http(s) URL; prefixing
+    `legacy/` onto those pointed the hero at /static/legacy/media/…, which does not exist.
+    """
     if not path:
         return ""
+    if path.startswith((settings.MEDIA_URL, "http://", "https://", "//")):
+        return path
     rel = path[len("/public/") :] if path.startswith("/public/") else path.lstrip("/")
     return static("legacy/" + rel)
 
