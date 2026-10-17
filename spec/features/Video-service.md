@@ -102,10 +102,9 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 - A new version of the file may be uploaded by the uploader or an administrator within 7 days of the
   upload (a draft at any time). The current version keeps playing until the new one is ready; the
   details, pictures and views stay, and new frames are offered.
-- It is the way to correct a video — a wrong cut, bad sound, a missing scene — and the site says so:
-  the upload page opens with it and lists the uploader's videos that can still get a new version,
-  each with its deadline, and the edit page points to it. Once the 7 days are over, the edit page
-  says why there is no new version.
+- It is the way to correct a video — a wrong cut, bad sound, a missing scene — and the edit page says
+  so where the new version is uploaded, with its deadline. Once the 7 days are over, it says why
+  there is no new version.
 
 ## Deleting and the bin
 
