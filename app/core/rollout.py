@@ -81,17 +81,18 @@ class Gate:
 
         return wrapped
 
-    def allowed_subscribers(self, qs: QuerySet) -> QuerySet:
-        """Narrow a push audience to devices whose owner can actually open the feature.
+    def allowed_residents(self, qs: QuerySet) -> QuerySet:
+        """Narrow a notification audience (a Resident queryset) to people who can open the feature.
 
-        Without this, gating the page would still notify every resident who had opted in before the
-        gate went on — and tapping that notification lands on a 403. A notification you are not
-        allowed to read is worse than no feature at all, so the audience is narrowed rather than the
-        page alone.
+        Without this, gating the page would still notify every resident — and tapping that
+        notification lands on a 403. A notification you are not allowed to read is worse than no
+        feature at all, so the audience is narrowed rather than the page alone.
 
-        Filtered in SQL rather than by calling real_roles() per subscription: this runs on every
-        post, and the role set lives in one RoleAssignment row per resident per month. Superusers
-        are matched separately because they hold every role without holding any assignment.
+        Addressed to people rather than devices (it used to filter PushSubscription rows): an in-app
+        notification has no device, so the audience is narrowed before anyone's devices are looked
+        up. Filtered in SQL rather than by calling real_roles() per resident: this runs on every
+        post. Superusers are matched separately because they hold every role without holding any
+        assignment.
         """
         access_roles = self._roles()
         if access_roles is None:
@@ -100,4 +101,4 @@ class Gate:
         allowed = RoleAssignment.objects.filter(role__in=access_roles, year=year, month=month).values(
             "resident_id"
         )
-        return qs.filter(Q(user_id__in=allowed) | Q(user__is_superuser=True))
+        return qs.filter(Q(pk__in=allowed) | Q(is_superuser=True))

@@ -1,12 +1,16 @@
 """ØK (role `oelkaelder`) manages the kiosk assortment/prices and corrects deposits (F-003)."""
 
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
 from django.urls import reverse
 
 from oelkaelder.models import Deposit, Product, Shopper, Warning
+
+from .media_samples import heic_bytes
 
 
 @pytest.mark.django_db
@@ -115,3 +119,30 @@ def test_admin_actions_are_oelkaelder_only(make_resident: Callable) -> None:
     assert c.post(reverse("oelkaelder:apply_interest")).status_code == 403
     assert c.get(reverse("oelkaelder:report_sales")).status_code == 403
     assert c.post(reverse("oelkaelder:add_shopper"), {"resident": plain.id}).status_code == 403
+
+
+@pytest.mark.django_db
+def test_a_product_image_goes_through_the_upload_policy(
+    make_resident: Callable, settings: object, tmp_path: Path
+) -> None:
+    """Product images are stored under oel/, which core.media serves WITHOUT a login (the kiosk
+    shows them). An SVG there would run script on our origin for anyone who opened its URL, so the
+    same policy as everywhere else applies: SVG is dropped with a warning, the product is still
+    created, and an iPhone's HEIC is stored as a JPEG."""
+    settings.MEDIA_ROOT = tmp_path  # type: ignore[attr-defined]
+    oek = make_resident(email="oek3@gahk.dk", roles=("oelkaelder",))
+    c = Client()
+    c.force_login(oek)
+
+    svg = SimpleUploadedFile("logo.svg", b"<svg onload=alert(1)>", content_type="image/svg+xml")
+    c.post(reverse("oelkaelder:product_create"), {"name": "Cola", "price_kr": "8", "image": svg})
+    product = Product.objects.get(name="Cola")
+    assert not product.image
+
+    photo = SimpleUploadedFile("IMG_0001.HEIC", heic_bytes(), content_type="image/heic")
+    c.post(
+        reverse("oelkaelder:product_update", args=[product.id]),
+        {"name": "Cola", "price_kr": "8", "image": photo},
+    )
+    product.refresh_from_db()
+    assert product.image.name.endswith(".jpg")

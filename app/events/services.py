@@ -34,14 +34,14 @@ from django.db.models import QuerySet
 from core import push
 from core.clock import current_datetime
 from core.markdown import plain_text
+from notifications import categories
+from notifications import services as notifications
 from residents.models import Residency, Resident, active_period
 
 from . import access
 from .models import Answer, Event, EventComment, EventInvite, Rsvp, Visibility
 
 logger = logging.getLogger(__name__)
-
-TOPIC = "begivenheder"
 
 # How long before the deadline the reminder goes out.
 REMINDER_LEAD = datetime.timedelta(hours=24)
@@ -235,26 +235,28 @@ def significant_change(before: tuple, after: Event) -> bool:
     return before != significant_fields(after)
 
 
-# --- push policy ----------------------------------------------------------------------------------
+# --- notification policy -------------------------------------------------------------------------
 #
-# Transport is core.push, shared with the two sibling features. What is here is this feature's
-# audience and wording, and it differs from a noticeboard's in one way worth stating: every message
-# below is about a COMMITMENT WITH A CLOCK ON IT. That is why a new event notifies the house and an
-# answer notifies nobody — the first is information you may need to act on before a deadline, the
-# second is sixty phones buzzing about somebody else's dinner plans.
+# The machinery is the notifications app, shared with the sibling features. What is here is this
+# feature's audience and wording, and it differs from a noticeboard's in one way worth stating: every
+# message below is about a COMMITMENT WITH A CLOCK ON IT. That is why a new event notifies the house
+# and an answer notifies nobody — the first is information you may need to act on before a deadline,
+# the second is sixty phones buzzing about somebody else's dinner plans.
+#
+# Four categories on the settings page: new events, changes and cancellations (high importance —
+# you planned around it), reminders and waitlist promotions (personal, high), and comments to hosts.
 
 
-def _audience(event: Event, exclude_user_id: int | None = None) -> QuerySet:
+def _audience(event: Event) -> QuerySet[Resident]:
     """Who may hear about this event at all.
 
     An invite-only event notifies ITS INVITEES AND NOBODY ELSE. Announcing a private event to the
     house is the leak, not a nicety — the invite list is literally the audience.
     """
-    subs = access.allowed_subscribers(push.subscribers(TOPIC, exclude_user_id=exclude_user_id))
+    residents = access.allowed_residents(notifications.everyone())
     if event.visibility == Visibility.KUN_INVITEREDE:
-        invited = event.invites.values("resident_id")
-        subs = subs.filter(user_id__in=invited)
-    return subs
+        residents = residents.filter(pk__in=event.invites.values("resident_id"))
+    return residents
 
 
 def _url(event: Event) -> str:
@@ -268,37 +270,43 @@ def _when(event: Event) -> str:
 
 def notify_new_event(event: Event) -> None:
     """A new event goes to everyone who may see it — that is the point of leaving Facebook."""
-    push.send(
-        _audience(event, exclude_user_id=event.organiser_id),
-        head=event.title,
+    notifications.notify(
+        _audience(event),
+        category=categories.EVENTS_NEW,
+        title=event.title,
         body=push.preview(f"{_when(event)} · {plain_text(event.description)}"),
         url=_url(event),
+        exclude=event.organiser_id,
     )
 
 
 def notify_changed(event: Event) -> None:
     """A moved or renamed event goes to everyone who said ja — they planned around the old one."""
     going = event.rsvps.filter(answer=Answer.JA).values("resident_id")
-    push.send(
-        _audience(event, exclude_user_id=event.organiser_id).filter(user_id__in=going),
-        head=f"Ændret: {event.title}",
+    notifications.notify(
+        _audience(event).filter(pk__in=going),
+        category=categories.EVENTS_CHANGES,
+        title=f"Ændret: {event.title}",
         body=push.preview(f"Nu {_when(event)}"),
         url=_url(event),
+        exclude=event.organiser_id,
     )
 
 
 def notify_cancelled(event: Event) -> None:
     going = event.rsvps.filter(answer=Answer.JA).values("resident_id")
-    push.send(
-        _audience(event).filter(user_id__in=going),
-        head=f"Aflyst: {event.title}",
+    notifications.notify(
+        _audience(event).filter(pk__in=going),
+        category=categories.EVENTS_CHANGES,
+        title=f"Aflyst: {event.title}",
         body=push.preview(f"{_when(event)} bliver ikke til noget."),
         url=_url(event),
     )
 
 
 def notify_new_comment(comment: EventComment) -> None:
-    """A comment tells THE HOSTS, and nobody else.
+    """A comment tells THE HOSTS, and nobody else — grouped per event, so a busy thread is one
+    notification ("Anders og Bente kommenterede") rather than a stack.
 
     The rule at the top of this block is that every notification here is about a commitment with a
     clock on it, which is why answering notifies nobody. A comment is not that, so the loud reading
@@ -315,36 +323,30 @@ def notify_new_comment(comment: EventComment) -> None:
 
     NOT ROUTED THROUGH `_audience`, and that is the one subtle thing here. `_audience` narrows a
     private event to its invite list -- and an organiser is not on their own guest list, so a host
-    filtered through it disappears exactly when the event is private. The notification would have
-    gone to nobody on the events where a question most needs answering, and no test of the open
-    case would have shown it. The narrowing is also unnecessary: this audience is hosts, and a host
-    can always see their own event (access.visible_to), so there is nothing for it to protect.
-    What is still needed is `allowed_subscribers` (the rollout gate -- a device whose owner cannot
-    open the feature must not be pushed to) and `subscribers(TOPIC)` for consent, so both stay.
-
-    Returns early on an empty audience rather than handing push.send a queryset that matches
-    nothing: send() does not check, so it would spawn a fan-out thread to deliver to no devices.
+    filtered through it disappears exactly when the event is private. The narrowing is also
+    unnecessary: a host can always see their own event (access.visible_to). What is still needed is
+    the rollout gate -- somebody who cannot open the feature must not be notified about it.
     """
-    hosts = {comment.event.organiser_id, *comment.event.co_organisers.values_list("pk", flat=True)}
+    event = comment.event
+    hosts = {event.organiser_id, *event.co_organisers.values_list("pk", flat=True)}
     hosts.discard(comment.author_id)
     if not hosts:
         return
-
-    audience = access.allowed_subscribers(push.subscribers(TOPIC, exclude_user_id=comment.author_id)).filter(
-        user_id__in=hosts
-    )
-    if not audience.exists():
-        return
-
-    push.send(
-        audience,
-        head=f"{comment.author.full_name} kommenterede",
-        # The title always carries the event, so a photo-only comment still has something to
-        # say; the glyph is what tells the reader there is a picture. push.preview("") is "",
-        # which on a lock screen reads as a notification that failed to load.
-        body=push.preview(f"{comment.event.title}: {comment.body or '📷 Billede'}"),
-        url=_url(comment.event),
-    )
+    # The title always carries the event, so a photo-only comment still has something to say; the
+    # glyph is what tells the reader there is a picture.
+    body = push.preview(f"{event.title}: {comment.body or '📷 Billede'}")
+    for host_id in access.allowed_residents(Resident.objects.filter(pk__in=hosts)).values_list(
+        "pk", flat=True
+    ):
+        notifications.notify_grouped(
+            host_id,
+            category=categories.EVENTS_COMMENTS,
+            group_key=f"events.comments:{event.pk}",
+            actor=comment.author,
+            verb="kommenterede",
+            body=body,
+            url=_url(event),
+        )
 
 
 def events_needing_reminder(now: datetime.datetime | None = None) -> list[Event]:
@@ -360,8 +362,8 @@ def events_needing_reminder(now: datetime.datetime | None = None) -> list[Event]
     )
 
 
-def deadline_reminder_audience(event: Event) -> QuerySet:
-    """Subscribed devices belonging to people the reminder is actionable for.
+def deadline_reminder_audience(event: Event) -> QuerySet[Resident]:
+    """The residents the reminder is actionable for.
 
     Everyone eligible, minus everyone who has already answered, minus the hosts — they know.
     "Eligible" is the invite list for a private event and this month's residents for an open one:
@@ -377,11 +379,11 @@ def deadline_reminder_audience(event: Event) -> QuerySet:
     answered = set(event.rsvps.values_list("resident_id", flat=True))
     hosts = {event.organiser_id, *event.co_organisers.values_list("pk", flat=True)}
     targets = eligible - answered - hosts
-    return access.allowed_subscribers(push.subscribers(TOPIC).filter(user_id__in=targets))
+    return access.allowed_residents(Resident.objects.filter(pk__in=targets, is_active=True))
 
 
 def send_deadline_reminder(event: Event, now: datetime.datetime | None = None) -> int:
-    """Claim the event, then send. Returns the number of devices targeted.
+    """Claim the event, then send. Returns the number of residents reached (in-app or push).
 
     CLAIMED FIRST, with a conditional UPDATE whose rowcount decides: exactly one runner can turn
     reminder_sent_at from NULL to a value, so a second run — or the lazy backstop firing at the same
@@ -393,17 +395,17 @@ def send_deadline_reminder(event: Event, now: datetime.datetime | None = None) -
     if not claimed:
         return 0
 
-    audience = deadline_reminder_audience(event)
-    count = audience.count()
-    push.send(
-        audience,
-        head=event.title,
+    return notifications.notify(
+        deadline_reminder_audience(event),
+        category=categories.EVENTS_PERSONAL,
+        title=event.title,
         body=f"Svarfrist {event.rsvp_deadline_at:%d.%m kl. %H.%M} — har du husket at svare?",
         url=_url(event),
+        # A reminder is moot once the deadline has passed; it should not arrive after it.
+        expires_at=event.rsvp_deadline_at,
         # Inline: a management command's daemon threads die at interpreter shutdown.
         background=False,
     )
-    return count
 
 
 def ensure_due_reminders_sent() -> None:
@@ -425,11 +427,11 @@ def ensure_due_reminders_sent() -> None:
 
 
 def notify_promoted(rsvp: Rsvp) -> None:
-    """A promotion is personal — exactly one person's devices. Nobody else needs to know a seat
-    moved."""
-    push.send(
-        push.subscribers(TOPIC).filter(user_id=rsvp.resident_id),
-        head=rsvp.event.title,
+    """A promotion is personal — exactly one person. Nobody else needs to know a seat moved."""
+    notifications.notify(
+        [rsvp.resident_id],
+        category=categories.EVENTS_PERSONAL,
+        title=rsvp.event.title,
         body="Du er rykket op fra ventelisten og har nu en plads.",
         url=_url(rsvp.event),
     )

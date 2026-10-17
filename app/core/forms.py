@@ -1,34 +1,32 @@
 """Validation for the untrusted push-subscription payload.
 
-The body is `frontend/src/push.ts`'s serialisation of the browser's own PushSubscription, plus the
-topic the button belongs to:
+The body is `frontend/src/push.ts`'s serialisation of the browser's own PushSubscription:
 
     {"status_type": "subscribe",
-     "topic": "opslagstavle",
      "subscription": {"endpoint": "...", "keys": {"auth": "...", "p256dh": "..."}},
      "user_agent": "..."}
 
 It is untrusted input on a login-gated endpoint, so every field is length-checked before it reaches
 the database — the columns are narrow and a crafted endpoint would otherwise raise DataError.
+
+A `topic` field from a cached copy of the old per-feature push.ts is ignored rather than rejected:
+a device now subscribes once for everything, which is what that build was asking for anyway.
 """
 
 from typing import Any
 
 from django import forms
 
-from .models import TOPIC_FIELDS
-
 
 class PushSubscriptionForm(forms.Form):
-    status_type = forms.ChoiceField(choices=[("subscribe", "subscribe"), ("unsubscribe", "unsubscribe")])
-    # Validated against the declared topics, so an unknown one is a 400 rather than a KeyError deep
-    # inside the fan-out. Not required: a payload from a cached copy of the old single-topic push.ts
-    # has no `topic`, and defaulting it to Den Hurtige is what that build meant.
-    topic = forms.ChoiceField(choices=[(t, t) for t in TOPIC_FIELDS], required=False)
+    status_type = forms.ChoiceField(
+        choices=[("subscribe", "subscribe"), ("unsubscribe", "unsubscribe"), ("status", "status")]
+    )
     # assume_scheme silences Django 6.0's URLField deprecation; push endpoints are always https.
     endpoint = forms.URLField(max_length=500, assume_scheme="https")
-    auth = forms.CharField(max_length=100)
-    p256dh = forms.CharField(max_length=100)
+    # Not required for `status` / `unsubscribe`, which only need the endpoint; subscribe checks them.
+    auth = forms.CharField(max_length=100, required=False)
+    p256dh = forms.CharField(max_length=100, required=False)
     user_agent = forms.CharField(max_length=500, required=False)
 
     @classmethod
@@ -43,7 +41,6 @@ class PushSubscriptionForm(forms.Form):
         return cls(
             {
                 "status_type": data.get("status_type"),
-                "topic": data.get("topic") or "den_hurtige",
                 "endpoint": subscription.get("endpoint"),
                 "auth": keys.get("auth"),
                 "p256dh": keys.get("p256dh"),
@@ -51,7 +48,8 @@ class PushSubscriptionForm(forms.Form):
             }
         )
 
-    def clean_topic(self) -> str:
-        """Empty means the caller is an old bundle that predates topics: treat it as Den Hurtige,
-        which is the only thing that build could have been subscribing to."""
-        return self.cleaned_data.get("topic") or "den_hurtige"
+    def clean(self) -> dict[str, Any]:
+        cleaned = super().clean() or {}
+        if cleaned.get("status_type") == "subscribe" and not (cleaned.get("auth") and cleaned.get("p256dh")):
+            raise forms.ValidationError("A subscription needs its encryption keys.")
+        return cleaned

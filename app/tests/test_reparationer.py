@@ -25,8 +25,10 @@ from django.utils import timezone
 
 from core import push
 from core.models import PushSubscription
+from notifications import categories
+from notifications.models import Notification
 from reparationer.models import ARCHIVE_AFTER_DAYS, RepairComment, RepairTask
-from residents.models import WORKGROUP_ROLE, Resident, Role
+from residents.models import WORKGROUP_ROLE, Resident, Role, RoleAssignment, active_period
 
 BOARD = "/intern/reparationer/"
 pytestmark = pytest.mark.django_db
@@ -55,7 +57,7 @@ def pushes(monkeypatch: pytest.MonkeyPatch, settings: object) -> list[tuple[list
     settings.VAPID_PRIVATE_KEY = "test-private-key"  # type: ignore[attr-defined]
     recorded: list[tuple[list[int], dict]] = []
 
-    def fake_dispatch(subscriptions: object, payload: dict) -> int:
+    def fake_dispatch(subscriptions: object, payload: dict, ttl: int = 0) -> int:
         ids = sorted(subscriptions.values_list("user_id", flat=True))  # type: ignore[attr-defined]
         recorded.append((ids, payload))
         return len(ids)
@@ -66,9 +68,13 @@ def pushes(monkeypatch: pytest.MonkeyPatch, settings: object) -> list[tuple[list
 
 
 def subscribe(user: Resident, endpoint: str) -> PushSubscription:
-    return PushSubscription.objects.create(
-        user=user, endpoint=endpoint, auth="a" * 22, p256dh="p" * 87, wants_reparationer=True
-    )
+    """One device, for everything — there is no per-feature opt-in any more."""
+    return PushSubscription.objects.create(user=user, endpoint=endpoint, auth="a" * 22, p256dh="p" * 87)
+
+
+def told(category: str = categories.REPAIRS) -> list[int]:
+    """Who has a notification row in `category`, by id — who was TOLD, device or not."""
+    return sorted(Notification.objects.filter(category=category).values_list("recipient_id", flat=True))
 
 
 def make_task(reporter: Resident, **kwargs: object) -> RepairTask:
@@ -114,6 +120,63 @@ def test_reporting_notifies_the_vicevaerter_but_not_the_reporter(
     recipients, payload = pushes[0]
     assert recipients == [vicevaert.id]
     assert "Ny reparation" in payload["head"]
+    task = RepairTask.objects.get()
+    assert told() == [vicevaert.id]
+    row = Notification.objects.get()
+    assert (row.title, row.body, row.url) == ("Ny reparation meldt ind", "Utæt vandhane", f"{BOARD}{task.pk}")
+
+
+def test_a_vicevaert_without_a_device_still_sees_a_new_repair_in_app(
+    client: Client, beboer: Resident, vicevaert: Resident, pushes: list
+) -> None:
+    """The audience is the role, not who pressed a subscribe button: the crew's bell shows the
+    ticket whether or not anyone's phone is set up for push."""
+    login(client, beboer)
+
+    client.post(f"{BOARD}opret", {"title": "Utæt vandhane", "location": "", "description": ""})
+
+    assert pushes == []
+    row = Notification.objects.get()
+    assert (row.recipient_id, row.in_app, row.pushed) == (vicevaert.id, True, False)
+
+
+def test_administrators_and_superusers_hear_about_every_repair(
+    client: Client, beboer: Resident, vicevaert: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """administrator implies every role (residents.permissions.real_roles), and a superuser may hold
+    it with no RoleAssignment at all — so both are part of either crew's audience."""
+    admin = make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,))
+    superuser = make_resident(email="super@gahk.dk", is_superuser=True)
+    login(client, beboer)
+
+    client.post(f"{BOARD}opret", {"title": "Utæt vandhane", "location": "", "description": ""})
+
+    assert told() == sorted([vicevaert.id, admin.id, superuser.id])
+
+
+def test_only_the_current_role_holders_are_told(
+    client: Client, beboer: Resident, vicevaert: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """Someone who was a Vicevært last year and rotated off must not keep getting paged."""
+    former = make_resident(email="former@gahk.dk")
+    year, month = active_period()
+    RoleAssignment.objects.create(resident=former, role=Role.VICEVAERT, year=year - 1, month=month)
+    login(client, beboer)
+
+    client.post(f"{BOARD}opret", {"title": "Utæt vandhane", "location": "", "description": ""})
+
+    assert told() == [vicevaert.id]
+
+
+def test_a_vicevaert_reporting_a_repair_is_not_told_about_it(
+    client: Client, vicevaert: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    colleague = make_resident(email="vice2@gahk.dk", roles=(Role.VICEVAERT,))
+    login(client, vicevaert)
+
+    client.post(f"{BOARD}opret", {"title": "Utæt vandhane", "location": "", "description": ""})
+
+    assert told() == [colleague.id]
 
 
 def test_the_board_lists_open_tickets_and_the_login_gate_holds(client: Client, beboer: Resident) -> None:
@@ -244,6 +307,8 @@ def test_a_vicevaert_hands_a_ticket_to_reppergruppen(
     task.refresh_from_db()
     assert task.responsible == RepairTask.Responsible.REPPER
     assert [ids for ids, _ in pushes] == [[repper.id]]
+    assert told() == [repper.id]  # not the Vicevært who handed it over
+    assert Notification.objects.get().title == "Reparation overdraget til Repper"
 
 
 def test_a_ticket_can_be_handed_back_to_the_vicevaerter(
@@ -261,6 +326,8 @@ def test_a_ticket_can_be_handed_back_to_the_vicevaerter(
     task.refresh_from_db()
     assert task.responsible == RepairTask.Responsible.VICEVAERT
     assert [ids for ids, _ in pushes] == [[vicevaert.id]]
+    assert told() == [vicevaert.id]
+    assert Notification.objects.get().title == "Reparation sendt tilbage til Viceværterne"
 
 
 def test_handing_a_ticket_where_it_already_is_changes_and_notifies_nothing(
@@ -275,6 +342,7 @@ def test_handing_a_ticket_where_it_already_is_changes_and_notifies_nothing(
     task.refresh_from_db()
     assert task.responsible == RepairTask.Responsible.REPPER
     assert pushes == []
+    assert not Notification.objects.exists()
 
 
 def test_an_unknown_responsible_leaves_the_ticket_alone(

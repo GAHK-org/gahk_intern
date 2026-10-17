@@ -2,10 +2,11 @@ import unicodedata
 from collections.abc import Iterator
 
 from django import forms
+from django.conf import settings
 from django.contrib.auth.forms import AuthenticationForm, PasswordResetForm
 from django.core.files.uploadedfile import UploadedFile
 
-from core.uploads import check_image_upload
+from core.uploads import validate_image_upload
 
 from .models import Resident
 
@@ -108,9 +109,7 @@ class ProfileEditForm(forms.ModelForm):
     def clean_profile_picture(self) -> object:
         upload = self.cleaned_data.get("profile_picture")
         if isinstance(upload, UploadedFile):
-            error = check_image_upload(upload, max_mb=5)
-            if error:
-                raise forms.ValidationError(error)
+            return validate_image_upload(upload, settings.PROFILE_PICTURE_MAX_MB)
         return upload
 
 

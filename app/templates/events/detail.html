@@ -217,7 +217,7 @@
       <label class="reply-attach" for="id_comment_image_{{ event.pk }}" title="Vedhæft billede">
         <span aria-hidden="true">📎</span>
         <span class="sr-only">Vedhæft billede til kommentaren</span>
-        <input type="file" id="id_comment_image_{{ event.pk }}" name="image" accept="image/*">
+        <input type="file" id="id_comment_image_{{ event.pk }}" name="image" accept="image/*,.heic,.heif">
       </label>
 
       {% for field in comment_form %}
