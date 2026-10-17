@@ -167,8 +167,9 @@ body.flix {
 }
 
 .flix-ranked { display: flex; align-items: flex-end; text-decoration: none; }
-.flix-rank { flex: 0 0 auto; margin-right: -0.12em; font-family: "Bebas Neue", Impact, "Arial Black", sans-serif; font-size: clamp(90px, 10vw, 170px); line-height: .78; color: var(--flix-bg); -webkit-text-stroke: 3px #595959; letter-spacing: -.05em; user-select: none; }
-.flix-ranked .flix-card { flex: 1 1 auto; min-width: 0; }
+/* A fixed share for the number, so "1" and "4" leave their cards the same width. */
+.flix-rank { flex: 0 0 36%; text-align: right; margin-right: -0.06em; font-family: "Bebas Neue", Impact, "Arial Black", sans-serif; font-size: clamp(90px, 10vw, 170px); line-height: .78; color: var(--flix-bg); -webkit-text-stroke: 3px #595959; letter-spacing: -.05em; user-select: none; }
+.flix-ranked .flix-card { flex: 0 0 64%; min-width: 0; }
 
 .flix-grid { display: grid; gap: 22px 10px; grid-template-columns: repeat(auto-fill, minmax(min(240px, 44vw), 1fr)); }
 .flix-grid .flix-card-role { display: block; margin-top: 6px; font-size: 13px; color: var(--flix-muted); }
@@ -193,7 +194,7 @@ a.flix-chip:hover { border-color: #fff; }
 
 .flix-episodes { padding: 8px var(--flix-gutter) 0; max-width: 1100px; }
 .flix-season-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 26px 0 8px; }
-.flix-season-head select { width: auto; }
+.flix .flix-season-head select { width: auto; min-width: 160px; }
 .flix-episode { display: grid; grid-template-columns: 34px minmax(120px, 210px) 1fr auto; align-items: center; gap: 18px; padding: 16px; border-bottom: 1px solid #404040; border-radius: 4px; text-decoration: none; }
 .flix-episode:hover, .flix-episode.is-current { background: #333; }
 .flix-episode-no { font-size: 22px; color: #d2d2d2; text-align: center; }
