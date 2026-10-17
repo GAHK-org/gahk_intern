@@ -48,7 +48,9 @@
                   {% if row.category.description %}<div class="notif-desc">{{ row.category.description }}</div>{% endif %}
                 </td>
                 <td>
-                  {% if row.category.in_app and not row.category.in_app_optional %}
+                  {% if row.category.in_app and not row.category.optional %}
+                    <input type="checkbox" checked disabled title="Kan ikke slås fra" aria-label="{{ row.category.name }}: altid i appen">
+                  {% elif row.category.in_app and not row.category.in_app_optional %}
                     <input type="checkbox" checked disabled title="Vises altid i appen" aria-label="{{ row.category.name }}: altid i appen">
                   {% elif row.category.in_app %}
                     <input type="checkbox" name="{{ row.category.key }}__in_app" aria-label="{{ row.category.name }}: i appen"{% if row.in_app %} checked{% endif %}>
@@ -56,7 +58,13 @@
                     <span class="muted" title="Kun som push">—</span>
                   {% endif %}
                 </td>
-                <td><input type="checkbox" name="{{ row.category.key }}__push" aria-label="{{ row.category.name }}: push"{% if row.push %} checked{% endif %}></td>
+                <td>
+                  {% if row.category.optional %}
+                    <input type="checkbox" name="{{ row.category.key }}__push" aria-label="{{ row.category.name }}: push"{% if row.push %} checked{% endif %}>
+                  {% else %}
+                    <input type="checkbox" checked disabled title="Kan ikke slås fra" aria-label="{{ row.category.name }}: altid push">
+                  {% endif %}
+                </td>
                 <td><input type="checkbox" name="{{ row.category.key }}__vibrate" aria-label="{{ row.category.name }}: vibration"{% if row.vibrate %} checked{% endif %}></td>
               </tr>
             {% endfor %}

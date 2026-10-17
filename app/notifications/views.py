@@ -118,9 +118,9 @@ def preferences(request: HttpRequest) -> HttpResponse:
         with transaction.atomic():
             for category in categories.CATEGORIES:
                 # A category without an optional in-app row is stored as on whatever is posted.
-                optional = category.in_app and category.in_app_optional
+                optional = category.in_app and category.in_app_optional and category.optional
                 in_app = (f"{category.key}__in_app" in request.POST) if optional else True
-                push_on = f"{category.key}__push" in request.POST
+                push_on = f"{category.key}__push" in request.POST or not category.optional
                 vibrate = f"{category.key}__vibrate" in request.POST
                 if in_app and push_on and vibrate:
                     NotificationPreference.objects.filter(resident=resident, category=category.key).delete()
@@ -152,8 +152,10 @@ def preferences(request: HttpRequest) -> HttpResponse:
             rows.append(
                 {
                     "category": category,
-                    "in_app": (pref.in_app if pref else True) or not category.in_app_optional,
-                    "push": pref.push if pref else True,
+                    "in_app": (pref.in_app if pref else True)
+                    or not category.in_app_optional
+                    or not category.optional,
+                    "push": (pref.push if pref else True) or not category.optional,
                     "vibrate": pref.vibrate if pref else True,
                     "anchor": (
                         "rum-" + category.key.removeprefix(categories.CHAT_ROOM_PREFIX)
