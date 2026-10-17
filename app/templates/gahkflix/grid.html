@@ -1,0 +1,23 @@
+{% extends "gahkflix/base.html" %}
+{% load gahkflix %}
+{% block title %}{{ title }} – GAHKFlix{% endblock %}
+{% block content %}
+  <div class="flix-page">
+    {% if person or external %}
+      <div class="flix-person-head">
+        {% if person.profile_picture %}<img src="{{ person.avatar_url }}" alt="">{% else %}<span class="flix-initials">{{ title|slice:":1"|upper }}</span>{% endif %}
+        <div>
+          <h1 class="flix-page-title" style="margin:0">{{ title }}</h1>
+          <p class="muted" style="margin:4px 0 0">Medvirker i {{ videos|length }} video{{ videos|length|pluralize:"er" }}{% if person %} · <a href="{% url 'resident_profile' person.pk %}">Profil</a>{% endif %}</p>
+        </div>
+      </div>
+    {% else %}
+      <h1 class="flix-page-title">{{ title }}</h1>
+    {% endif %}
+    {% if videos %}
+      <div class="flix-grid">{% for video in videos %}{% with role=roles|get_item:video.pk %}{% include "gahkflix/_card.html" %}{% endwith %}{% endfor %}</div>
+    {% else %}
+      <p class="flix-empty">Ingen videoer.</p>
+    {% endif %}
+  </div>
+{% endblock %}

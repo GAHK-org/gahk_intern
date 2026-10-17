@@ -46,6 +46,11 @@ from den_hurtige.demo import seed as seed_den_hurtige
 from den_hurtige.models import QuickComment, QuickPost, QuickReaction
 from events.demo import seed as seed_events
 from events.models import CalendarFeedToken, Event, EventInvite, Rsvp
+from gahkflix.demo import seed as seed_gahkflix
+from gahkflix.models import ChangeRequest as GahkflixRequest
+from gahkflix.models import Series as GahkflixSeries
+from gahkflix.models import Tag as GahkflixTag
+from gahkflix.models import Video as GahkflixVideo
 from oelkaelder.models import (
     Deposit,
     Product,
@@ -143,6 +148,11 @@ WIPE_ORDER: list[type[models.Model]] = [
     QuickPost,
     Media,
     Album,
+    # Before Resident: uploaders, series creators and requesters are all PROTECTed.
+    GahkflixRequest,
+    GahkflixVideo,
+    GahkflixSeries,
+    GahkflixTag,
     Resident,
     # Before Workgroup: ArchiveFolder references it with PROTECT (a SET_NULL would silently turn a
     # gated folder into a world-readable one), so the archive has to go first or --fresh cannot run.
@@ -206,6 +216,7 @@ class Command(BaseCommand):
             seed_events(residents, self.now, self.rng)
             seed_arkiv(residents, self.now, self.rng)
             seed_photo_album(residents, self.now, self.rng)
+            seed_gahkflix(residents, self.now, self.rng)
             seed_den_hurtige(residents, self.now, self.rng)
 
         self._report(residents)

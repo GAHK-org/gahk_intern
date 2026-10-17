@@ -102,9 +102,12 @@ def _decisions(ids: list[int], category: categories.Category, importance: Import
             and (setting is None or setting.vibrate)
             and (setting is None or importance >= setting.vibrate_min_importance)
         )
+        # A preference saved for a category that can no longer be turned off is ignored, not obeyed.
+        locked = not category.optional
         out[rid] = Decision(
-            in_app=category.in_app and (pref is None or pref.in_app or not category.in_app_optional),
-            push=pref is None or pref.push,
+            in_app=category.in_app
+            and (pref is None or pref.in_app or not category.in_app_optional or locked),
+            push=pref is None or pref.push or locked,
             vibrate=bool(vibrate),
         )
     return out

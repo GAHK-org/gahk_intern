@@ -849,10 +849,52 @@ def test_preferences_page_renders_every_category_and_room_anchor(
     assert response.status_code == 200
     html = response.content.decode()
     for category in categories.CATEGORIES:
+        if category.group == "gahkflix":  # behind its rollout gate; see the next test
+            assert f'name="{category.key}__push"' not in html
+            continue
         assert f'name="{category.key}__push"' in html
         optional = category.in_app and category.in_app_optional
         assert (f'name="{category.key}__in_app"' in html) is optional
     assert 'id="rum-tv-rezz"' in html
+
+
+def test_gahkflix_settings_follow_its_rollout_gate(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    client.force_login(make_resident(email="foto@gahk.dk", roles=("foto",)))
+
+    html = client.get(reverse("notifications:preferences")).content.decode()
+
+    for category in categories.CATEGORIES:
+        if category.group == "gahkflix":
+            # Only "new videos" and "credited" can be switched off; the rest are locked on.
+            assert (f'name="{category.key}__push"' in html) is category.optional
+    assert {c.key for c in categories.CATEGORIES if c.group == "gahkflix" and c.optional} == {
+        categories.GAHKFLIX_NEW,
+        categories.GAHKFLIX_CAST,
+    }
+
+
+def test_a_category_that_cannot_be_turned_off_ignores_settings(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    from notifications.models import Notification, NotificationPreference
+    from notifications.services import notify
+
+    resident = make_resident(email="foto@gahk.dk", roles=("foto",))
+    # Saved before the category was locked: off in the app and as a push.
+    NotificationPreference.objects.create(
+        resident=resident, category=categories.GAHKFLIX_UPLOADS, in_app=False, push=False, vibrate=False
+    )
+    notify([resident.pk], category=categories.GAHKFLIX_UPLOADS, title="Din video er klar", url="/intern/")
+    assert Notification.objects.get(recipient=resident).in_app
+
+    # Posting the settings page with everything unticked does not turn it off either.
+    client.force_login(resident)
+    client.post(reverse("notifications:preferences"), {})
+    pref = NotificationPreference.objects.get(resident=resident, category=categories.GAHKFLIX_UPLOADS)
+    assert pref.in_app and pref.push and not pref.vibrate
+    assert not NotificationPreference.objects.get(resident=resident, category=categories.GAHKFLIX_NEW).push
 
 
 def test_system_and_general_come_last_on_the_settings_page(

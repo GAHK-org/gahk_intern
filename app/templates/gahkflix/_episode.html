@@ -1,0 +1,13 @@
+{% load gahkflix %}{% picture_url episode "thumbnail" as thumb %}
+<a class="flix-episode{% if current and current.pk == episode.pk %} is-current{% endif %}" href="{% url 'gahkflix:detail' episode.pk %}">
+  <span class="flix-episode-no">{{ episode.episode|default:forloop.counter }}</span>
+  <span class="flix-card-img">
+    {% if thumb %}<img src="{{ thumb }}" alt="" loading="lazy">{% else %}<span class="flix-card-blank" aria-hidden="true">{{ episode.title|slice:":1"|upper }}</span>{% endif %}
+    {% if episode.progress %}<span class="flix-progress"><span style="width:{{ episode.progress|percent }}%"></span></span>{% endif %}
+  </span>
+  <span>
+    <h3>{{ episode.title }}</h3>
+    <p>{{ episode.description|default:"" }}</p>
+  </span>
+  <span class="flix-episode-len">{{ episode.file.duration|duration }}</span>
+</a>

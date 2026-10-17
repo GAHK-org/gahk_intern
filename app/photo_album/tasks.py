@@ -1,11 +1,13 @@
 import io
 import logging
 import posixpath
-from collections.abc import Buffer, Iterator
+from collections.abc import Buffer, Callable, Iterator
 from datetime import timedelta
+from functools import partial
 from pathlib import Path
+from typing import Any
 
-from celery import shared_task
+from celery import Task, shared_task
 from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile, File
 from django.core.management import call_command
@@ -15,8 +17,9 @@ from zipstream import ZIP_STORED, ZipStream
 
 from .models import (
     ALBUM_DOWNLOAD_RETENTION,
-    ALBUM_DOWNLOAD_STALE_AFTER,
     DERIVATIVE_CLAIM_TTL,
+    JOB_QUEUED_TOO_LONG,
+    JOB_STALLED_AFTER,
     Album,
     AlbumDownload,
     AlbumDownloadState,
@@ -26,6 +29,7 @@ from .models import (
     DownloadVariant,
     Media,
 )
+from .progress import JobProgress
 from .services import backfill_hashes, build_derivatives, import_zip_album, pending_derivatives
 from .storage import PhotoAlbumS3Storage, get_photo_album_storage
 
@@ -35,7 +39,7 @@ logger = logging.getLogger(__name__)
 # an H.264 encode of a phone clip, and a whole-album ZIP streamed into object storage. Under the
 # global limit both were SIGKILLed mid-work — a transcode left the media PENDING with its attempt
 # counter bumped, so three passes marked a perfectly good file FAILED, and a ZIP left its download
-# row wedged in BUILDING (see ALBUM_DOWNLOAD_STALE_AFTER).
+# row wedged in BUILDING (see JOB_STALLED_AFTER).
 #
 # The SOFT limit is the one that does the work. It raises SoftTimeLimitExceeded *inside* the task,
 # which both tasks already handle — `build_album_download` catches it in its `except Exception` and
@@ -43,6 +47,56 @@ logger = logging.getLogger(__name__)
 # task wedged somewhere uninterruptible, five minutes later.
 MEDIA_TASK_TIME_LIMIT = 60 * 60
 MEDIA_TASK_SOFT_TIME_LIMIT = MEDIA_TASK_TIME_LIMIT - 300
+
+# Album ZIPs, both ways, may take longer still: one Dropbox album can be a whole year. What
+# tells a slow one from a dead one is its progress (JOB_STALLED_AFTER), not its age, so the limit
+# here is only the ceiling for a job that keeps reporting yet never finishes.
+ZIP_TASK_TIME_LIMIT = 4 * 60 * 60
+ZIP_TASK_SOFT_TIME_LIMIT = ZIP_TASK_TIME_LIMIT - 300
+
+DOWNLOAD_INTERRUPTED = "Download blev afbrudt undervejs."
+IMPORT_INTERRUPTED = "Importen blev afbrudt undervejs. Intet er importeret."
+
+
+def _claim_job(
+    rows: "QuerySet[Any]",
+    states: type[AlbumDownloadState] | type[AlbumImportState],
+    task_id: str | None,
+    *,
+    interrupted: str,
+) -> bool:
+    """Move a QUEUED download or import to BUILDING for this task; False if there is nothing to do.
+
+    One thing a redelivery can tell. A message handed out again because its worker was lost
+    (CELERY_TASK_REJECT_ON_WORKER_LOST) finds its row BUILDING under its OWN task id: that is this
+    very message's first run, and nobody is coming back to it. It is closed out as failed on the
+    spot rather than by `fail_stalled_*` a quarter of an hour later — and not run again, which would
+    most likely just repeat whatever killed the worker.
+    """
+    now = timezone.now()
+    if rows.filter(state=states.QUEUED).update(
+        state=states.BUILDING, task_id=task_id or "", progress={}, progressed_at=now
+    ):
+        return True
+    if task_id and rows.filter(state=states.BUILDING, task_id=task_id).update(
+        state=states.FAILED, error=interrupted, completed_at=now
+    ):
+        logger.warning("The worker running this job was lost (killed, out of memory?); marked as failed.")
+    return False
+
+
+def _stalled(
+    rows: "QuerySet[Any]", states: type[AlbumDownloadState] | type[AlbumImportState]
+) -> "QuerySet[Any]":
+    """The jobs no worker is coming back to: no progress for JOB_STALLED_AFTER, or never started."""
+    now = timezone.now()
+    cutoff = now - JOB_STALLED_AFTER
+    return rows.filter(
+        Q(state=states.BUILDING, progressed_at__lt=cutoff)
+        # A row from before progress was recorded, or one claimed without it.
+        | Q(state=states.BUILDING, progressed_at__isnull=True, created_at__lt=cutoff)
+        | Q(state=states.QUEUED, created_at__lt=now - JOB_QUEUED_TOO_LONG)
+    )
 
 
 def _unclaimed(queryset: "QuerySet[Media]") -> "QuerySet[Media]":
@@ -115,9 +169,10 @@ def purge_expired_media() -> None:
     call_command("purge_photo_album")
 
 
-def _chunks(file_field: File) -> Iterator[bytes]:
+def _chunks(file_field: File, still_working: Callable[[], None] = lambda: None) -> Iterator[bytes]:
     with file_field.open("rb") as source:
         while chunk := source.read(1024 * 1024):
+            still_working()
             yield chunk
 
 
@@ -216,11 +271,12 @@ def archive_entries(download: AlbumDownload) -> tuple[list[tuple[str, Media, Fil
     return entries, renamed
 
 
-def _archive(download: AlbumDownload) -> ZipStream:
+def _archive(download: AlbumDownload, progress: JobProgress | None = None) -> ZipStream:
     archive = ZipStream(compress_type=ZIP_STORED)
     entries, renamed = archive_entries(download)
-    for arcname, _, source in entries:
-        archive.add(_chunks(source), arcname=arcname)
+    for index, (arcname, _, source) in enumerate(entries):
+        still_working = partial(progress, "zipping", index, len(entries)) if progress else lambda: None
+        archive.add(_chunks(source, still_working), arcname=arcname)
     if renamed:
         lines = [
             "Nogle filer havde samme navn i samme mappe og er derfor blevet nummereret:",
@@ -233,15 +289,13 @@ def _archive(download: AlbumDownload) -> ZipStream:
     return archive
 
 
-@shared_task(time_limit=MEDIA_TASK_TIME_LIMIT, soft_time_limit=MEDIA_TASK_SOFT_TIME_LIMIT)
-def build_album_download(download_id: int) -> bool:
+@shared_task(bind=True, time_limit=ZIP_TASK_TIME_LIMIT, soft_time_limit=ZIP_TASK_SOFT_TIME_LIMIT)
+def build_album_download(self: Task, download_id: int) -> bool:
     """Build an album ZIP into object storage, without occupying a web worker."""
-    try:
-        download = AlbumDownload.objects.get(pk=download_id, state=AlbumDownloadState.QUEUED)
-    except AlbumDownload.DoesNotExist:
+    rows = AlbumDownload.objects.filter(pk=download_id)
+    if not _claim_job(rows, AlbumDownloadState, self.request.id, interrupted=DOWNLOAD_INTERRUPTED):
         return False
-    download.state = AlbumDownloadState.BUILDING
-    download.save(update_fields=["state"])
+    download = rows.get()
     key = f"photo-album-zips/{download.token}.zip"
     logger.info(
         "Building %s (%s) with %d item(s) for %s.",
@@ -251,7 +305,7 @@ def build_album_download(download_id: int) -> bool:
         download.requested_by,
     )
     try:
-        archive = _archive(download)
+        archive = _archive(download, JobProgress(rows))
         storage = get_photo_album_storage()
         if isinstance(storage, PhotoAlbumS3Storage):
             storage.bucket.upload_fileobj(
@@ -265,10 +319,13 @@ def build_album_download(download_id: int) -> bool:
         download.completed_at = timezone.now()
         download.save(update_fields=["state", "error", "completed_at"])
         raise
+    # Unconditionally READY, even over a FAILED that `fail_stalled_downloads` wrote meanwhile: the
+    # ZIP is there, so that was the wrong guess.
     download.state = AlbumDownloadState.READY
     download.archive_key = key
+    download.error = ""
     download.completed_at = timezone.now()
-    download.save(update_fields=["state", "archive_key", "completed_at"])
+    download.save(update_fields=["state", "archive_key", "error", "completed_at"])
     return True
 
 
@@ -276,7 +333,7 @@ def build_album_download(download_id: int) -> bool:
 def fail_stalled_downloads() -> int:
     """Close out ZIP builds no worker is coming back to, so the page stops waiting on them.
 
-    A worker killed outright — hard time limit, OOM, a redeploy mid-build — runs no exception
+    A worker killed outright — OOM, hard time limit, a redeploy mid-build — runs no exception
     handler, so the row it was working on keeps `state = BUILDING` and `completed_at = NULL`. Two
     things then never happen: `purge_expired_downloads` filters on `completed_at`, so the row is
     never collected; and photo_album/detail.html keeps drawing the "Download klargøres …" branch,
@@ -285,26 +342,45 @@ def fail_stalled_downloads() -> int:
     Setting `completed_at` here is what hands the row back to `purge_expired_downloads`, so this
     ends the reload loop AND lets the row be collected on the ordinary seven-day schedule.
     """
-    cutoff = timezone.now() - ALBUM_DOWNLOAD_STALE_AFTER
-    return AlbumDownload.objects.filter(
-        state__in=(AlbumDownloadState.QUEUED, AlbumDownloadState.BUILDING),
-        created_at__lt=cutoff,
-    ).update(
+    return _stalled(AlbumDownload.objects.all(), AlbumDownloadState).update(
         state=AlbumDownloadState.FAILED,
-        error="Download blev afbrudt undervejs.",
+        error=DOWNLOAD_INTERRUPTED,
         completed_at=timezone.now(),
     )
 
 
-@shared_task(time_limit=MEDIA_TASK_TIME_LIMIT, soft_time_limit=MEDIA_TASK_SOFT_TIME_LIMIT)
-def process_album_import(import_id: int) -> bool:
+def _discard_archives(imports: "QuerySet[AlbumImport]") -> None:
+    """Delete the uploaded ZIPs of finished imports; the task's own `finally` never ran for these."""
+    for album_import in imports.exclude(archive=""):
+        album_import.archive.delete(save=False)
+        album_import.save(update_fields=["archive"])
+
+
+@shared_task
+def fail_stalled_imports() -> int:
+    """Close out ZIP imports no worker is coming back to, and delete the ZIPs they left behind.
+
+    The same hole as `fail_stalled_downloads`, from the other side: the Dropbox script asks for an
+    import's status until it is ready or failed, and a row left BUILDING kept it asking "still
+    building" for good. Nothing of the import itself is left to clean up — it is stored in one
+    transaction, which died with the worker.
+    """
+    stalled = list(_stalled(AlbumImport.objects.all(), AlbumImportState).values_list("pk", flat=True))
+    failed = _stalled(AlbumImport.objects.filter(pk__in=stalled), AlbumImportState).update(
+        state=AlbumImportState.FAILED, error=IMPORT_INTERRUPTED, completed_at=timezone.now()
+    )
+    _discard_archives(AlbumImport.objects.filter(pk__in=stalled, state=AlbumImportState.FAILED))
+    return failed
+
+
+@shared_task(bind=True, time_limit=ZIP_TASK_TIME_LIMIT, soft_time_limit=ZIP_TASK_SOFT_TIME_LIMIT)
+def process_album_import(self: Task, import_id: int) -> bool:
     """Unpack a stored ZIP outside the web request that received it."""
-    try:
-        album_import = AlbumImport.objects.get(pk=import_id, state=AlbumImportState.QUEUED)
-    except AlbumImport.DoesNotExist:
+    rows = AlbumImport.objects.filter(pk=import_id)
+    if not _claim_job(rows, AlbumImportState, self.request.id, interrupted=IMPORT_INTERRUPTED):
+        _discard_archives(rows.filter(state=AlbumImportState.FAILED))
         return False
-    album_import.state = AlbumImportState.BUILDING
-    album_import.save(update_fields=["state"])
+    album_import = rows.get()
     logger.info(
         "Importing %s into folder %s for %s%s%s.",
         album_import.archive_name,
@@ -322,13 +398,16 @@ def process_album_import(import_id: int) -> bool:
                 lock=album_import.lock_when_done,
                 merge=album_import.merge_into_existing,
                 root_name=album_import.album_name,
+                progress=JobProgress(rows),
             )
+        # READY even over a FAILED that `fail_stalled_imports` wrote meanwhile: the albums are in.
         album_import.state = AlbumImportState.READY
+        album_import.error = ""
         album_import.album_ids = [album.pk for album in result.albums]
         album_import.skipped = result.skipped
         album_import.merged = result.merged
         album_import.completed_at = timezone.now()
-        album_import.save(update_fields=["state", "album_ids", "skipped", "merged", "completed_at"])
+        album_import.save(update_fields=["state", "album_ids", "skipped", "merged", "error", "completed_at"])
         for line in result.skipped:
             logger.info("Left out: %s", line)
         logger.info(

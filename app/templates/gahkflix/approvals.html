@@ -1,0 +1,24 @@
+{% extends "gahkflix/base.html" %}
+{% block title %}Godkendelser – GAHKFlix{% endblock %}
+{% block content %}
+  <div class="flix-page flix-page-narrow" style="max-width:1000px">
+    <h1 class="flix-page-title">Godkendelser</h1>
+    <p class="muted" style="margin-top:-8px">En ændring af en video, der er over 30 dage gammel, skal godkendes af én anden administrator. Sletning af en video, der er over 7 dage gammel, skal godkendes af to andre. Én afvisning lukker anmodningen, og ubehandlede anmodninger udløber efter 30 dage.</p>
+    {% for change in open_requests %}
+      {% include "gahkflix/_request.html" with rows=change.rows can_vote=change.can_vote can_withdraw=False %}
+    {% empty %}
+      <p class="flix-empty">Ingen anmodninger venter.</p>
+    {% endfor %}
+    {% if recent %}
+      <h2 class="flix-section-title">Afgjort de sidste 30 dage</h2>
+      <table class="flix-table">
+        <thead><tr><th>Hvad</th><th>Fra</th><th>Status</th><th>Afgjort</th></tr></thead>
+        <tbody>
+          {% for change in recent %}
+            <tr><td><a href="{% url 'gahkflix:request' change.pk %}">{{ change.get_kind_display }}: {{ change.target }}</a></td><td>{{ change.requested_by.full_name }}</td><td>{{ change.get_state_display }}</td><td>{{ change.decided_at|date:"j. M Y" }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+{% endblock %}

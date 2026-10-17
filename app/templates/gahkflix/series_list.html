@@ -1,0 +1,19 @@
+{% extends "gahkflix/base.html" %}
+{% block title %}Serier – GAHKFlix{% endblock %}
+{% block content %}
+  <div class="flix-page">
+    <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px">
+      <h1 class="flix-page-title">Serier</h1>
+      <a class="flix-btn flix-btn-small flix-btn-quiet" href="{% url 'gahkflix:series_create' %}">+ Ny serie</a>
+    </div>
+    {% if series %}
+      <div class="flix-grid">{% for show in series %}{% include "gahkflix/_series_card.html" %}{% endfor %}</div>
+    {% else %}
+      <p class="flix-empty">Der er ingen serier med udgivne afsnit endnu.</p>
+    {% endif %}
+    {% if own_empty %}
+      <h2 class="flix-section-title">Dine serier uden udgivne afsnit</h2>
+      <div class="flix-people">{% for show in own_empty %}<a class="flix-chip" href="{% url 'gahkflix:series' show.pk %}">{{ show.title }}</a>{% endfor %}</div>
+    {% endif %}
+  </div>
+{% endblock %}

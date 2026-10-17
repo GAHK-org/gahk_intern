@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     "arkiv",
     "photo_album",
     "notifications",
+    "gahkflix",
 ]
 
 MIDDLEWARE = [
@@ -175,11 +176,29 @@ CELERY_WORKER_REDIRECT_STDOUTS_LEVEL = "INFO"
 # does not hold a worker slot all night. The two photo-album jobs legitimately run longer and set
 # their own limits at the task — see photo_album/tasks.py::MEDIA_TASK_TIME_LIMIT.
 #
-# Redelivery from the two settings above does NOT make the reapers redundant: `build_album_download`
-# and `process_album_import` both refuse to run unless their row is still QUEUED, and by the time a
-# worker is lost it is BUILDING — so the redelivered message returns False and the row stays wedged.
-# What rescues those is fail_stalled_downloads; what rescues a media row is its claim expiring.
+# Redelivery from the two settings above does NOT re-run a lost download or import: by then its row
+# is BUILDING under the message's own task id, which the task takes as its worker having died and
+# marks failed (photo_album.tasks._claim_job). Redelivery is not the whole safety net, either — a
+# worker container killed outright redelivers nothing — so fail_stalled_downloads and
+# fail_stalled_imports also sweep for jobs that stopped reporting progress. A media row is rescued
+# by its claim expiring.
 CELERY_TASK_TIME_LIMIT = 900
+# One message at a time per worker process. The default of four lets a process sit on three more
+# while it runs an hour-long encode — messages the other worker could have started, and that are
+# lost rather than redelivered if the container is killed with them in hand.
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+# Two queues, so a quick job never waits behind an encode: everything defaults to "celery", run by
+# `worker`; what reads or writes whole media files goes to "media", run by `worker-media` one job at
+# a time (docker-compose.prod.yml). One at a time is also what keeps the box out of the OOM killer:
+# an import, a ZIP build and an ffmpeg encode side by side is what ran it out of memory.
+CELERY_TASK_ROUTES = {
+    "photo_album.tasks.build_media_derivatives": {"queue": "media"},
+    "photo_album.tasks.build_album_download": {"queue": "media"},
+    "photo_album.tasks.process_album_import": {"queue": "media"},
+    "photo_album.tasks.backfill_media_hashes": {"queue": "media"},
+    "gahkflix.tasks.process_video_file": {"queue": "media"},
+    "gahkflix.tasks.redraw_frames": {"queue": "media"},
+}
 
 # A local migration client uses this bearer token to submit album ZIP imports as the non-login
 # System resident. Leave blank to disable token-authenticated imports.
@@ -228,12 +247,38 @@ CELERY_BEAT_SCHEDULE = {
         "task": "ak.tasks.apply_monthly_assessment",
         "schedule": crontab(minute=10, hour=4, day_of_month=1),
     },
-    # Hourly, and deliberately not daily: what it clears is a download the resident is still
-    # watching a spinner for, so the gap between "the worker died" and "the page says so" is the
-    # thing being minimised.
+    # Every quarter of an hour, matching JOB_STALLED_AFTER: what it clears is a download the
+    # resident is still watching a spinner for, so the gap between "the worker died" and "the page
+    # says so" is the thing being minimised. Off the hour, like everything else here.
     "fail-stalled-photo-album-downloads": {
         "task": "photo_album.tasks.fail_stalled_downloads",
-        "schedule": crontab(minute=5),
+        "schedule": crontab(minute="5-59/15"),
+    },
+    # The same for imports, which the import page and the Dropbox script are waiting on.
+    "fail-stalled-photo-album-imports": {
+        "task": "photo_album.tasks.fail_stalled_imports",
+        "schedule": crontab(minute="10-59/15"),
+    },
+    # Sends again a GAHKFlix encode whose worker stopped reporting (gahkflix.tasks.recover_stalled).
+    "recover-stalled-gahkflix-encodes": {
+        "task": "gahkflix.tasks.recover_stalled",
+        "schedule": crontab(minute="13-59/15"),
+    },
+    # GAHKFlix's bin and expired requests after 30 days, unpublished drafts after 90, and stored files
+    # nothing refers to (gahkflix.services.sweep_orphans).
+    "gahkflix-housekeeping": {
+        "task": "gahkflix.tasks.housekeeping",
+        "schedule": crontab(minute=25, hour=4),
+    },
+    # Reminders about unpublished drafts go out in the day, not with the night's sweeps: they are
+    # read by people, and a push at 04:25 wakes them.
+    "gahkflix-weekly-draft-reminders": {
+        "task": "gahkflix.tasks.weekly_draft_reminders",
+        "schedule": crontab(minute=5, hour=10, day_of_week=1),
+    },
+    "gahkflix-warn-expiring-drafts": {
+        "task": "gahkflix.tasks.warn_expiring_drafts",
+        "schedule": crontab(minute=15, hour=10),
     },
     "purge-worker-job-logs": {
         "task": "core.tasks.purge_worker_job_logs",
@@ -360,6 +405,12 @@ _MEDIA_S3_OPTIONS = {
     # so the grep for "backups" finds this comment.
     "location": "media",
     "object_parameters": {"CacheControl": "private, max-age=604800"},
+    # How much of a file opened for reading is held in memory before the rest goes to a temporary
+    # file. django-storages defaults it to 0, which Python's SpooledTemporaryFile reads as "never
+    # roll over" — so every `.open()` downloaded the WHOLE object into RAM: a video before its
+    # encode, an album ZIP before its import. A ZIP of several hundred MB had the import worker at
+    # 800 MB when the kernel's OOM killer took it.
+    "max_memory_size": 10 * 1024 * 1024,
 }
 
 # Photo-album originals/derivatives (photo_album.storage.PhotoAlbumS3Storage): same bucket and
@@ -477,6 +528,7 @@ LOGGING = {
         # handler of its own: it propagates to the worker's, and in the web process nothing prints
         # below WARNING.
         "photo_album": {"level": os.environ.get("PHOTO_ALBUM_LOG_LEVEL", "INFO")},
+        "gahkflix": {"level": os.environ.get("GAHKFLIX_LOG_LEVEL", "INFO")},
     },
 }
 
@@ -550,3 +602,10 @@ MEDIA_CACHE_ATTACHMENTS_MB = int(os.environ.get("MEDIA_CACHE_ATTACHMENTS_MB", "2
 # every post forever and has no archive, so for caching purposes an opslag counts as archived this
 # many days after it was posted.
 NOTICE_IMAGE_CACHE_DAYS = int(os.environ.get("NOTICE_IMAGE_CACHE_DAYS", "30"))
+
+# GAHKFlix (gahkflix/). The largest film a resident may upload; it goes straight to the bucket, never
+# through the app server (gahkflix/uploads.py). A custom thumbnail is an ordinary picture.
+GAHKFLIX_MAX_UPLOAD_GB = float(os.environ.get("GAHKFLIX_MAX_UPLOAD_GB", "5"))
+GAHKFLIX_THUMBNAIL_MAX_MB = int(os.environ.get("GAHKFLIX_THUMBNAIL_MAX_MB", "15"))
+# Local copies of its thumbnails, banners and frames, in MEDIA_CACHE_DIR/gahkflix/ (gahkflix/cache.py).
+GAHKFLIX_CACHE_MB = int(os.environ.get("GAHKFLIX_CACHE_MB", "1024"))
