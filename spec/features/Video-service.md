@@ -52,7 +52,9 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 
 - Any resident with access may upload: MP4, MOV, M4V, WebM, AVI, MKV, 3GP, MTS, MPEG, WMV or OGV, up
   to 5 GB. The file goes straight from the browser to object storage, with a progress bar.
-- Nobody can start an upload while one of theirs is still being processed.
+- Nobody can start an upload while one of theirs is still being processed. The upload page lists
+  the uploader's unpublished videos first, so one already on its way is finished rather than
+  uploaded again.
 - The same file cannot be uploaded twice, by anyone. Before anything is sent, a fingerprint of the
   file is compared with every video's; once it has arrived, its full checksum is, binned videos
   included. A duplicate is refused, naming the video it duplicates.
@@ -62,14 +64,17 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 - The date is read from the video's own metadata, else the file's last-modified time. It can be set
   by hand, and then stays as set.
 - The thumbnail and the banner are picked from 10 random frames spread over the video, with black and
-  flat frames redrawn; `Vis 10 nye billeder` draws another ten. The thumbnail may instead be the
-  uploader's own picture.
+  flat frames redrawn; `Vis 10 nye billeder` draws another ten. Or the uploader picks the moment
+  themselves in a player, a second or a frame at a time, and it is cut from the best rendition. The
+  thumbnail may also be the uploader's own picture. The edit page shows what is chosen now apart
+  from the options, under a ruler.
 - Thumbnails and banners are 16:9. A picture close to that shape (from 4:3 to cinema widescreen) is
   cropped to it; any other — a phone held upright, a square, a panorama — is shown whole on a
   blurred, darkened copy of itself, so nothing important is cut off. A draft can only be published with a title, a finished file,
   a thumbnail and a banner.
 - Publishing notifies everyone with access and the credited residents. The uploader is notified
-  when processing has finished or failed.
+  when processing has finished or failed. Only the notifications about new videos and about being
+  credited can be turned off; those about one's own uploads and requests, approvals and drafts cannot.
 - Only the uploader and administrators see a draft. A draft never published is deleted with its files
   90 days after the day it was uploaded; the edit page and `Mine videoer` show the date.
 - Every Monday, each uploader is reminded of their drafts more than a week old, and the administrators
@@ -80,6 +85,10 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 
 - Any resident may create a series and put their own videos in it. Titles are unique, ignoring case,
   and so is an episode number within a series' season.
+- Season and episode take digits only. Each has a dropdown of what the series already has — its
+  seasons with their number of episodes, the chosen season's episodes with their titles — and offers
+  the free numbers: the next one, and any gap. Taken numbers are shown but cannot be picked; an
+  earlier free number can, even when later ones exist.
 - A series' pictures are those of its first episode.
 - Its creator and administrators may edit it, under the same 30-day rule as videos. It can only be
   deleted when it holds no videos at all, drafts and binned ones included.

@@ -306,6 +306,64 @@ def test_custom_thumbnail_becomes_16_by_9(admin: Resident) -> None:
     assert video.thumbnail_frame is None
 
 
+def test_the_upload_page_shows_your_unpublished_videos(admin: Resident, member: Resident) -> None:
+    make_video(admin, title="Min halvfærdige revy", published=False)
+    make_video(admin, title="Allerede ude")
+    make_video(member, title="Andens kladde", published=False)
+    page = client_for(admin).get(reverse("gahkflix:upload")).content.decode()
+    assert "Dine videoer, der ikke er udgivet" in page
+    assert "Min halvfærdige revy" in page
+    assert "Allerede ude" not in page and "Andens kladde" not in page
+
+
+def test_pick_a_moment_yourself(
+    admin: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+) -> None:
+    client = client_for(admin)
+    with django_capture_on_commit_callbacks(execute=True):
+        upload(client, mp4_bytes())
+    video = Video.objects.get()
+    response = client.post(
+        reverse("gahkflix:choose_picture", args=[video.pk]), {"kind": "banner", "at": "0.5"}
+    )
+    assert response.status_code == 302
+    video.refresh_from_db()
+    assert video.banner and video.banner_frame is None
+    before = video.thumbnail.name
+    client.post(reverse("gahkflix:choose_picture", args=[video.pk]), {"kind": "thumbnail", "at": "99"})
+    video.refresh_from_db()
+    assert video.thumbnail.name == before  # outside the video: refused, nothing changed
+    _dirs, pictures = get_video_storage().listdir(f"gahkflix/{video.uuid}/pictures")
+    assert len(pictures) == 1  # the banner; nothing stored for the refused one
+
+
+def test_season_and_episode_fields(admin: Resident, member: Resident) -> None:
+    series = Series.objects.create(title="Gangen", created_by=admin)
+    make_video(admin, title="Pilot", series=series, season=1, episode=1)
+    make_video(member, title="Hemmelig", series=series, season=1, episode=2, published=False)
+    video = make_video(admin, title="Nyt afsnit", published=False)
+    response = client_for(admin).get(reverse("gahkflix:edit", args=[video.pk]))
+    page = response.content.decode()
+    assert 'inputmode="numeric"' in page and 'data-flix-number="episode"' in page
+    numbers = response.context["episode_numbers"][str(series.pk)]
+    # An administrator sees every title, drafts included; the video being edited is left out.
+    assert sorted((n["episode"], n["title"]) for n in numbers) == [(1, "Pilot"), (2, "Hemmelig")]
+
+
+def test_season_and_episode_titles_of_drafts_you_cannot_see(
+    open_gate: None, admin: Resident, plain: Resident
+) -> None:
+    series = Series.objects.create(title="Gangen", created_by=admin)
+    make_video(admin, title="Hemmelig", series=series, season=1, episode=2, published=False)
+    own = make_video(plain, title="Mit afsnit", published=False)
+    numbers = client_for(plain).get(reverse("gahkflix:edit", args=[own.pk])).context["episode_numbers"]
+    assert numbers[str(series.pk)] == [{"season": 1, "episode": 2, "title": "Kladde"}]
+    response = client_for(plain).post(
+        reverse("gahkflix:edit", args=[own.pk]), details(own, series=series.pk, season="1", episode="x")
+    )
+    assert response.status_code == 200 and not Video.objects.get(pk=own.pk).series
+
+
 def test_one_upload_at_a_time(admin: Resident) -> None:
     video = make_video(admin, published=False)
     VideoFile.objects.filter(video=video).update(state=FileState.PROCESSING)

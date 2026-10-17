@@ -61,10 +61,11 @@
         <label for="{{ form.description.id_for_label }}">Beskrivelse</label>{{ form.description }}{{ form.description.errors }}
         <label for="{{ form.recorded_on.id_for_label }}">Optaget</label>{{ form.recorded_on }}{{ form.recorded_on.errors }}
         <span class="flix-help">{% if video.recorded_on_manual %}Sat i hånden.{% elif video.recorded_on %}Læst fra videofilen. Ret den, hvis den er forkert.{% else %}Findes, når videoen er behandlet, hvis filen har en dato.{% endif %}</span>
-        <div class="flix-form-row">
+        {{ episode_numbers|json_script:"flix-episode-numbers" }}
+        <div class="flix-form-row" data-flix-numbers data-series="{{ form.series.id_for_label }}">
           <div><label for="{{ form.series.id_for_label }}">Serie</label>{{ form.series }}</div>
-          <div><label for="{{ form.season.id_for_label }}">Sæson</label>{{ form.season }}</div>
-          <div><label for="{{ form.episode.id_for_label }}">Afsnit</label>{{ form.episode }}</div>
+          <div><label for="{{ form.season.id_for_label }}">Sæson</label><div class="flix-suggest">{{ form.season }}<ul role="listbox" aria-label="Sæsoner i serien" data-numbers-for="season" hidden></ul></div></div>
+          <div><label for="{{ form.episode.id_for_label }}">Afsnit</label><div class="flix-suggest">{{ form.episode }}<ul role="listbox" aria-label="Afsnit i sæsonen" data-numbers-for="episode" hidden></ul></div></div>
         </div>
         {{ form.series.errors }}{{ form.season.errors }}{{ form.episode.errors }}
         <span class="flix-help"><a href="{% url 'gahkflix:series_create' %}?next={{ request.path|urlencode }}">Opret en ny serie</a></span>
@@ -101,10 +102,15 @@
         <section class="flix-panel" id="billeder">
           <h2>Miniature og banner</h2>
           <p>Miniaturen er videoens kort; banneret er det store billede øverst på videoens side. Begge skal vælges.</p>
+          <h3 class="flix-subhead">Valgt nu</h3>
           <div class="flix-chosen">
             <figure><figcaption>Miniature</figcaption><span class="flix-card-img">{% picture_url video "thumbnail" as thumb %}{% if thumb %}<img src="{{ thumb }}" alt="Nuværende miniature">{% else %}<span class="flix-card-blank">?</span>{% endif %}</span></figure>
             <figure><figcaption>Banner</figcaption><span class="flix-card-img">{% picture_url video "banner" as banner %}{% if banner %}<img src="{{ banner }}" alt="Nuværende banner">{% else %}<span class="flix-card-blank">?</span>{% endif %}</span></figure>
           </div>
+
+          <div class="flix-divider" role="separator"><span>Vælg et nyt billede</span></div>
+
+          <h3 class="flix-subhead">Billeder fra videoen</h3>
           {% if frames %}
             <div class="flix-frames">
               {% for frame in frames %}
@@ -125,11 +131,32 @@
           {% else %}
             <p class="flix-empty" style="padding:10px 0">Billederne er klar, når videoen er behandlet.</p>
           {% endif %}
+
+          {% if video.file %}
+            <h3 class="flix-subhead">Vælg selv et øjeblik</h3>
+            <div class="flix-scrub" data-flix-scrub>
+              <video src="{% url 'gahkflix:stream' video.pk 'hd' %}" preload="metadata" muted playsinline controls></video>
+              <div class="flix-scrub-tools" role="group" aria-label="Finjustér">
+                <button type="button" data-step="-1" aria-label="Et sekund tilbage">−1 s</button>
+                <button type="button" data-step="-0.04" aria-label="Et billede tilbage">‹</button>
+                <output data-flix-scrub-time>0:00,00</output>
+                <button type="button" data-step="0.04" aria-label="Et billede frem">›</button>
+                <button type="button" data-step="1" aria-label="Et sekund frem">+1 s</button>
+              </div>
+              <form method="post" action="{% url 'gahkflix:choose_picture' video.pk %}" class="flix-frame-tools">{% csrf_token %}
+                <input type="hidden" name="at" value="0" data-flix-scrub-at>
+                <button type="submit" name="kind" value="thumbnail">Brug som miniature</button>
+                <button type="submit" name="kind" value="banner">Brug som banner</button>
+              </form>
+            </div>
+            <span class="flix-help">Spol hen til det øjeblik, du vil bruge, og finjustér med pilene.</span>
+          {% endif %}
+
+          <h3 class="flix-subhead">Eget billede som miniature</h3>
           <form method="post" action="{% url 'gahkflix:choose_picture' video.pk %}" enctype="multipart/form-data" class="flix-form">{% csrf_token %}
             <input type="hidden" name="kind" value="thumbnail">
-            <label for="own-thumbnail">Eller brug dit eget billede som miniature</label>
-            <input id="own-thumbnail" type="file" name="picture" accept="image/*,.heic,.heif" data-flix-autosubmit>
-            <span class="flix-help">Det beskæres til 16:9.</span>
+            <input id="own-thumbnail" type="file" name="picture" accept="image/*,.heic,.heif" aria-label="Vælg dit eget billede" data-flix-autosubmit>
+            <span class="flix-help">Bliver til 16:9: tæt på den form beskæres det, ellers vises det helt på en sløret baggrund.</span>
           </form>
         </section>
 
