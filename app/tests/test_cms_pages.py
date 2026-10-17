@@ -6,11 +6,13 @@ because "/" was rejected as an illegal character. Several tests below are that i
 """
 
 from collections.abc import Callable
+from datetime import timedelta
 
 import pytest
 from django.core.exceptions import ValidationError
 from django.http import HttpResponse
 from django.test import Client
+from django.utils import timezone
 
 from cms.models import Page, PageRedirect, PageVersion
 from cms.nav import is_reachable
@@ -702,3 +704,20 @@ def test_a_page_background_renders_at_its_real_url(stored: str, expected: str) -
 
     assert expected in html
     assert "/static/legacy/media/" not in html
+
+
+def test_event_descriptions_get_the_same_legacy_image_rewrite_as_news() -> None:
+    """A legacy /public/ image in a front-page event's description must resolve like one in a news
+    body; without body_media it pointed at a path that no longer exists."""
+    from cms.models import Event
+
+    Event.objects.create(
+        title="Mathildefest",
+        description='<img src="/public/image/upload/images/fest.jpg">',
+        starts_on=timezone.localdate() + timedelta(days=7),
+    )
+
+    html = Client().get("/begivenheder/").content.decode()
+
+    assert "/static/legacy/image/upload/images/fest.jpg" in html
+    assert 'src="/public/image/' not in html

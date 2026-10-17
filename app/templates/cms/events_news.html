@@ -17,7 +17,7 @@
             </div>
             <div>
               <div class="font-semibold">{{ e.title }}</div>
-              {% if e.description %}<div class="text-sm text-gray-600 mt-1">{{ e.description|safe }}</div>{% endif %}
+              {% if e.description %}<div class="text-sm text-gray-600 mt-1">{{ e.description|body_media|safe }}</div>{% endif %}
             </div>
           </li>
         {% endfor %}
