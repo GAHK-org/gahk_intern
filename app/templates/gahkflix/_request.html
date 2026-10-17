@@ -1,4 +1,4 @@
-{% comment %} One request as a panel: what is asked, the votes so far, and the vote form. Needs `change`, `rows`. {% endcomment %}
+{% comment %} One request as a panel: what is asked, the votes so far and the vote form. Takes `change`, `rows`, `can_vote` and `can_withdraw`. {% endcomment %}
 <article class="flix-panel">
   <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px">
     <h2>{% if change.kind == "delete" %}Slet{% else %}Ændr{% endif %}
@@ -8,12 +8,11 @@
   </div>
   <p>Fra {{ change.requested_by.full_name }}, {{ change.created_at|date:"j. F Y H:i" }}{% if change.is_open %} · udløber {{ change.expires_at|date:"j. F" }}{% endif %}</p>
   {% if change.reason %}<p style="color:var(--flix-ink);white-space:pre-line">“{{ change.reason }}”</p>{% endif %}
-  {% with table=rows|default:change.rows %}
-    {% if table %}
+  {% if rows %}
       <table class="flix-table">
         <thead><tr><th></th><th>Nu</th><th>Foreslået</th></tr></thead>
         <tbody>
-          {% for row in table %}
+          {% for row in rows %}
             <tr><th>{{ row.label }}</th>
               {% if row.picture %}<td>{% if row.before %}<img src="{{ row.before }}" alt="Nu">{% endif %}</td><td><img src="{{ row.after }}" alt="Foreslået"></td>
               {% else %}<td style="white-space:pre-line">{{ row.before }}</td><td style="white-space:pre-line">{{ row.after }}</td>{% endif %}
@@ -21,8 +20,7 @@
           {% endfor %}
         </tbody>
       </table>
-    {% endif %}
-  {% endwith %}
+  {% endif %}
   {% with votes=change.votes.all %}
     {% if votes %}
       <ul style="list-style:none;margin:12px 0 0;padding:0;font-size:14px">
@@ -32,7 +30,7 @@
     {% if change.is_open and change.kind == "delete" %}<p style="margin-top:8px">{{ change.votes.count }} af {{ change.approvals_needed }} godkendelser.</p>{% endif %}
   {% endwith %}
   {% if change.note %}<p>{{ change.note }}</p>{% endif %}
-  {% if can_vote|default:change.can_vote %}
+  {% if can_vote %}
     <form method="post" action="{% url 'gahkflix:request_vote' change.pk %}" class="flix-form">{% csrf_token %}
       <input type="hidden" name="next" value="{{ request.get_full_path }}">
       <label for="comment-{{ change.pk }}">Kommentar (valgfri)</label>
