@@ -11,7 +11,6 @@ urlpatterns = [
     path("", views.board, name="board"),
     path("opret", views.create, name="create"),
     path("arkiv", views.archive_list, name="archive_list"),
-    path("abonner", views.save_subscription, name="save_subscription"),
     # Before <int:pk>, so this fixed segment is never read as a task id (mirrors opslagstavle/urls.py).
     path("kommentar/<int:pk>/slet", views.delete_comment, name="delete_comment"),
     path("<int:pk>", views.detail, name="detail"),

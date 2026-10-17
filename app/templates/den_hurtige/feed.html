@@ -75,31 +75,22 @@
       {% endif %}
       {% if limited_rollout %}<span class="chip chip-brass">Under test</span>{% endif %}
 
-      {% if push_configured %}
-        {% comment %}
-          Slim one-line bar rather than a card: during the trial it matters that people can turn
-          notifications on, but it must not push the messages below the fold. Driven by
-          frontend/src/push.ts, which is a no-op without a [data-push] element.
-
-          data-subscribed is rendered server-side because the browser cannot answer it: a device has
-          one push endpoint shared by every topic, so getSubscription() only says "subscribed to
-          something". Whether it wants *this* feature is a column on the server.
-        {% endcomment %}
-        {% include "core/_push_bar.html" with topic="den_hurtige" url_name="den_hurtige:save_subscription" success_text="Du får nu besked når nogen slår op." %}
-        {% comment %}
-          Per-channel mute. Separate from the subscribe button above, which is per *device* and
-          governs push at all; this is per resident and governs one channel. A plain form POST, not
-          htmx: it is pressed roughly twice a year and a full reload costs nothing.
-        {% endcomment %}
-        <form class="chat-mute" method="post" action="{% url 'den_hurtige:toggle_mute' channel.slug %}">
-          {% csrf_token %}
-          <button type="submit" class="btn-secondary"
-                  title="{% if muted %}Slå notifikationer fra {{ channel.name }} til igen{% else %}Slå notifikationer fra {{ channel.name }} fra{% endif %}">
-            {% if muted %}🔕 <span class="mute-label">Lyd fra</span>{% else %}🔔 <span class="mute-label">Lyd til</span>{% endif %}
-          </button>
-        </form>
-      {% endif %}
+      {% comment %}
+        This room's notification state, as a link to its row on the settings page — that is where
+        rooms are turned on and off now, next to every other notification choice. A plain link: it
+        is pressed roughly twice a year.
+      {% endcomment %}
+      <a class="chat-notif-link{% if muted %} is-off{% endif %}" href="{% url 'notifications:preferences' %}#rum-{{ channel.slug }}"
+         title="{% if muted %}Notifikationer fra {{ channel.name }} er slået fra{% else %}Du får notifikationer fra {{ channel.name }}{% endif %} — skift under indstillinger">
+        {% if muted %}🔕 <span class="mute-label">Lyd fra</span>{% else %}🔔 <span class="mute-label">Lyd til</span>{% endif %}
+      </a>
     </div>
+
+    {% comment %}
+      Asks this device to turn push on, once — gone for good after it has, and invisible where push
+      cannot work. See notifications/_device.html.
+    {% endcomment %}
+    {% include "notifications/_device.html" with mode="prompt" %}
 
     {% comment %}
       The message list. Polled so other residents' messages appear without a refresh.

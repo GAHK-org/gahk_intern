@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     "reparationer",
     "arkiv",
     "photo_album",
+    "notifications",
 ]
 
 MIDDLEWARE = [
@@ -84,6 +85,7 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "core.context_processors.navigation",
+                "notifications.context_processors.notifications",
             ],
         },
     },
@@ -206,6 +208,12 @@ CELERY_BEAT_SCHEDULE = {
     "purge-expired-applications": {
         "task": "admissions.tasks.purge_expired_applications",
         "schedule": crontab(minute=20, hour=3),
+    },
+    # Rows stop showing at their TTL by comparison (Notification.objects.active); this only frees
+    # the space, a month later, once the admin statistics are done counting them.
+    "purge-expired-notifications": {
+        "task": "notifications.tasks.purge_expired_notifications",
+        "schedule": crontab(minute=30, hour=3),
     },
     "purge-orphaned-notice-images": {
         "task": "opslagstavle.tasks.purge_orphaned_images",
