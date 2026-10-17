@@ -308,12 +308,20 @@ def test_custom_thumbnail_becomes_16_by_9(admin: Resident) -> None:
 
 def test_the_upload_page_shows_your_unpublished_videos(admin: Resident, member: Resident) -> None:
     make_video(admin, title="Min halvfærdige revy", published=False)
-    make_video(admin, title="Allerede ude")
+    make_video(admin, title="Allerede ude", days_old=30)
     make_video(member, title="Andens kladde", published=False)
     page = client_for(admin).get(reverse("gahkflix:upload")).content.decode()
-    assert "Dine videoer, der ikke er udgivet" in page
+    assert "Dine videoer, der kan få en ny version" in page
     assert "Min halvfærdige revy" in page
     assert "Allerede ude" not in page and "Andens kladde" not in page
+
+
+def test_the_upload_page_lists_videos_that_can_still_get_a_new_version(admin: Resident) -> None:
+    recent = make_video(admin, title="Revy, lige udgivet", days_old=2)
+    make_video(admin, title="Revy fra sidste måned", days_old=30)
+    page = client_for(admin).get(reverse("gahkflix:upload")).content.decode()
+    assert "Revy, lige udgivet" in page and f"{reverse('gahkflix:edit', args=[recent.pk])}#ny-version" in page
+    assert "Revy fra sidste måned" not in page  # past its seven days: no new version any more
 
 
 def test_the_new_version_section_says_it_is_for_corrections(admin: Resident) -> None:

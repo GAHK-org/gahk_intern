@@ -3,11 +3,17 @@
 {% block content %}
   <div class="flix-page flix-page-narrow">
     <h1 class="flix-page-title">Upload en video</h1>
-    {% if drafts %}
+    {% if drafts or replaceable %}
       <section class="flix-panel">
-        <h2>Dine videoer, der ikke er udgivet</h2>
-        <p>Er det en af dem, du vil uploade? Så gør den færdig i stedet for at uploade den igen.</p>
-        {% include "gahkflix/_draft_list.html" %}
+        <h2>Dine videoer, der kan få en ny version</h2>
+        {% if drafts %}
+          <h3 class="flix-subhead">Ikke udgivet</h3>
+          {% include "gahkflix/_draft_list.html" %}
+        {% endif %}
+        {% if replaceable %}
+          <h3 class="flix-subhead">Udgivet for nylig</h3>
+          {% include "gahkflix/_replaceable_list.html" with videos=replaceable %}
+        {% endif %}
       </section>
     {% endif %}
     {% if pending %}
@@ -19,7 +25,7 @@
       {% include "gahkflix/_uploader.html" %}
       <div class="flix-panel">
         <h2>Sådan foregår det</h2>
-        <ol class="muted" style="margin:8px 0 0;padding-left:20px;line-height:1.8">
+        <ol class="muted" style="margin:8px 0 0;padding-left:20px;line-height:1.8;list-style:decimal">
           <li>Videoen sendes direkte til lageret. Lad siden være åben, til den er sendt.</li>
           <li>Mens den behandles (HD og Full HD), kan du skrive titel, beskrivelse, medvirkende og tags.</li>
           <li>Vælg miniature og banner blandt 10 billeder fra videoen. Miniaturen kan også være dit eget billede.</li>

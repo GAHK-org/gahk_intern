@@ -52,9 +52,10 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 
 - Any resident with access may upload: MP4, MOV, M4V, WebM, AVI, MKV, 3GP, MTS, MPEG, WMV or OGV, up
   to 5 GB. The file goes straight from the browser to object storage, with a progress bar.
-- Nobody can start an upload while one of theirs is still being processed. The upload page lists
-  the uploader's unpublished videos first, so one already on its way is finished rather than
-  uploaded again.
+- Nobody can start an upload while one of theirs is still being processed. The upload page first
+  lists the uploader's videos that can still get a new version — unpublished ones, and those
+  uploaded within the last 7 days, each with its deadline — so one already uploaded is finished or
+  corrected rather than uploaded again.
 - The same file cannot be uploaded twice, by anyone. Before anything is sent, a fingerprint of the
   file is compared with every video's; once it has arrived, its full checksum is, binned videos
   included. A duplicate is refused, naming the video it duplicates.

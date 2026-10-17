@@ -14,7 +14,10 @@
           <p>{{ latest.original_name }} · uploadet {{ video.created_at|date:"j. F Y" }} · slettes {{ video.draft_deleted_on|date:"j. F Y" }}, hvis den ikke er udgivet inden.</p>
         {% endwith %}
       </div>
-      <a class="flix-btn flix-btn-small flix-btn-quiet" href="{% url 'gahkflix:edit' video.pk %}">Gør færdig</a>
+      <div class="flix-list-actions">
+        <a class="flix-btn flix-btn-small flix-btn-quiet" href="{% url 'gahkflix:edit' video.pk %}">Gør færdig</a>
+        <a class="flix-btn flix-btn-small flix-btn-quiet" href="{% url 'gahkflix:edit' video.pk %}#ny-version">Upload ny version</a>
+      </div>
     </div>
   {% endfor %}
 </div>
