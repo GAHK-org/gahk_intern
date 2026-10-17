@@ -129,6 +129,7 @@ def preferences(request: HttpRequest) -> HttpResponse:
                         category=category.key,
                         defaults={"in_app": in_app, "push": push_on, "vibrate": vibrate},
                     )
+            settings_row, _ = NotificationSettings.objects.get_or_create(resident=resident)
             settings_row.vibrate = "vibrate" in request.POST
             try:
                 level = Importance(int(request.POST.get("vibrate_min_importance", Importance.LAV)))

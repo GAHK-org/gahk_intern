@@ -299,7 +299,9 @@ def notify_grouped(
         row.title = grouped_title(actors, verb)[:200]
         row.body = body[:300]
         row.url = url
-        row.batch = uuid.uuid4()
+        if pushed:
+            # The banner on the device carries the batch; keep it valid until a new push replaces it.
+            row.batch = uuid.uuid4()
         row.in_app = decision.in_app
         row.pushed = row.pushed or pushed
         row.updated_at = now

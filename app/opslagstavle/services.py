@@ -59,7 +59,7 @@ def notify_new_notice(notice: "Notice") -> None:
 def notify_new_comment(comment: "NoticeComment") -> None:
     """Tell the post's author someone replied — and nobody else."""
     notice = comment.notice
-    if not access.allowed_residents(services.everyone()).filter(pk=notice.author_id).exists():
+    if not _author_can_open(notice):
         return  # the author can no longer open the board (rollout gate, or moved out)
     services.notify_grouped(
         notice.author_id,
@@ -76,7 +76,7 @@ def notify_new_comment(comment: "NoticeComment") -> None:
 
 def notify_reaction(notice: "Notice", reactor: "Resident", emoji: str) -> None:
     """Somebody reacted to `notice`. Called on a NEW reaction only (core.reactions.apply_toggle)."""
-    if not access.allowed_residents(services.everyone()).filter(pk=notice.author_id).exists():
+    if not _author_can_open(notice):
         return
     services.notify_grouped(
         notice.author_id,
