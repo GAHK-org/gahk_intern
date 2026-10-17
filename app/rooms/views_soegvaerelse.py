@@ -17,6 +17,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from ak.services import reconcile_after_list_edit
 from core.models import Room
 from residents.models import Residency, Resident, RoleAssignment, active_period, next_period, prev_period
 from residents.permissions import current_resident, request_has_role, role_required
@@ -453,6 +454,7 @@ def end_round(request: HttpRequest) -> HttpResponseRedirect:
                         resident_id__in=leavers, year=year, month=target_month
                     ).delete()
                     evicted += len(leaver_rows)
+            reconcile_after_list_edit(year, target_month)
             unresolved += len(alloc.contested)
             unresolved_rooms += [room_num[rid] for rid in alloc.contested]
             # Only clear rooms that were actually settled; leave contested rooms' offers AND their

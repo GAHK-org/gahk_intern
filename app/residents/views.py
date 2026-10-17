@@ -497,6 +497,9 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
     mistake in the live list can be fixed instead of waiting for the month to roll over. Editing the
     live list takes effect immediately — including role assignments — which is why the template says
     so plainly and why self-removal is refused below."""
+    # Editing the live list changes who owes this month's AK charge; see ak.services.
+    from ak.services import reconcile_after_list_edit
+
     cy, cm = active_period()
     ny, nm = _target_period(request, (cy, cm))
     editing_current = (ny, nm) == (cy, cm)
@@ -622,6 +625,7 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                             room=room, workgroup=wg, cleaning=cl
                         )
                         _sync_month_roles(rid, wg, ny, nm, rid in admins)
+                    reconcile_after_list_edit(ny, nm)
                 messages.success(request, "Ændringer gemt.")
                 return redirect(
                     f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}"
@@ -649,6 +653,7 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                     },
                 )
                 _sync_month_roles(resident.id, wg, ny, nm, resident.id in admins)
+                reconcile_after_list_edit(ny, nm)
                 messages.success(request, f"{resident.full_name} tilføjet til {ny}-{nm:02d}.")
                 return redirect(
                     f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}"
@@ -687,6 +692,7 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                         month=nm,
                     )
                     _sync_month_roles(r.id, wg, ny, nm, False)
+                    reconcile_after_list_edit(ny, nm)
                 sent = _send_welcome_email(request, r)
                 base = f"{first} {last} oprettet og tilføjet til {ny}-{nm:02d}."
                 messages.success(request, f"{base} Velkomstmail sendt." if sent else base)

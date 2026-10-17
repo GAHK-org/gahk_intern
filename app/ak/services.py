@@ -60,6 +60,13 @@ def apply_monthly_charge(year: int, month: int, *, officer: Resident | None = No
     return (written, removed)
 
 
+def reconcile_after_list_edit(year: int, month: int) -> None:
+    """Re-run the charge after (year, month)'s alumneliste changed. Only for the month in effect: a
+    future list is charged when it becomes active, and past months are settled."""
+    if (year, month) == active_period():
+        apply_monthly_charge(year, month)
+
+
 def ensure_active_month_applied() -> None:
     """Book the current month's AK deduction if the scheduled task has not already done it.
 

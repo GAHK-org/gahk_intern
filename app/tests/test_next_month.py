@@ -534,3 +534,66 @@ def test_the_create_form_offers_a_fylgje_picker(make_resident: Callable) -> None
 
     assert 'name="sponsor"' in html
     assert "Gammel Beboer" in html
+
+
+@pytest.mark.django_db
+def test_removing_someone_from_the_live_list_drops_their_ak_charge(
+    make_resident: Callable, groups: dict[str, Room | Workgroup | Cleaning]
+) -> None:
+    """The month's charge is booked when it starts, from the list copied forward. A resident who moved
+    out and is removed afterwards must not keep that month's −2."""
+    from ak.models import AkEntry
+    from ak.services import apply_monthly_charge
+
+    c, ind, target = _setup(make_resident, groups)
+    cy, cm = active_period()
+    apply_monthly_charge(cy, cm)
+    assert AkEntry.objects.filter(resident=target, kind=AkEntry.Kind.MONTHLY, year=cy, month=cm).exists()
+
+    c.post(
+        URL,
+        {
+            "period": "current",
+            "action": "save",
+            f"room_{ind.id}": groups["r1"].id,
+            f"room_{target.id}": groups["r2"].id,
+            f"remove_{target.id}": "1",
+        },
+    )
+
+    assert not AkEntry.objects.filter(resident=target, kind=AkEntry.Kind.MONTHLY, year=cy, month=cm).exists()
+    assert AkEntry.objects.filter(resident=ind, kind=AkEntry.Kind.MONTHLY, year=cy, month=cm).exists()
+
+
+@pytest.mark.django_db
+def test_adding_someone_to_the_live_list_charges_them(
+    make_resident: Callable, groups: dict[str, Room | Workgroup | Cleaning]
+) -> None:
+    from ak.models import AkEntry
+    from ak.services import apply_monthly_charge
+
+    c, _ind, _target = _setup(make_resident, groups)
+    cy, cm = active_period()
+    apply_monthly_charge(cy, cm)
+    late = make_resident(email="late@gahk.dk")
+
+    c.post(URL, {"period": "current", "action": "add_existing", "resident": late.id, "room": groups["r3"].id})
+
+    assert AkEntry.objects.filter(resident=late, kind=AkEntry.Kind.MONTHLY, year=cy, month=cm).exists()
+
+
+@pytest.mark.django_db
+def test_editing_next_month_books_no_ak_charge(
+    make_resident: Callable, groups: dict[str, Room | Workgroup | Cleaning]
+) -> None:
+    """Next month is charged when it becomes active, not while indstilling is still preparing it."""
+    from ak.models import AkEntry
+
+    c, _ind, _target = _setup(make_resident, groups)
+    ny, nm = next_period(active_period())
+    late = make_resident(email="late@gahk.dk")
+
+    c.post(URL, {"action": "add_existing", "resident": late.id, "room": groups["r3"].id})
+
+    assert Residency.objects.filter(resident=late, year=ny, month=nm).exists()
+    assert not AkEntry.objects.filter(kind=AkEntry.Kind.MONTHLY, year=ny, month=nm).exists()
