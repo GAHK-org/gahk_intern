@@ -37,6 +37,11 @@ def notice_url(notice: "Notice") -> str:
     return f"{BOARD_URL}{notice.pk}"
 
 
+def _author_can_open(notice: "Notice") -> bool:
+    """Whether the post's author can still open the board (rollout gate, or moved out)."""
+    return access.allowed_residents(services.everyone()).filter(pk=notice.author_id).exists()
+
+
 def notify_new_notice(notice: "Notice") -> None:
     """Announce a new post to everyone who can open the board, except its author.
 
