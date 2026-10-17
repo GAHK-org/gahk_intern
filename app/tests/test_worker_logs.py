@@ -285,3 +285,24 @@ def test_celerys_own_cleanup_which_deletes_failures_too_is_off() -> None:
 
     assert list(PeriodicTask.objects.values_list("name", flat=True)) == ["other"]
     assert celery_app.conf.result_expires is None, "Beat would install celery.backend_cleanup again"
+
+
+@pytest.mark.django_db
+def test_the_temporary_admin_test_email_is_removed_from_the_stored_schedule() -> None:
+    """The DatabaseScheduler never removes a row whose entry left CELERY_BEAT_SCHEDULE, so the
+    migration must, or Beat goes on queueing a task that no longer exists."""
+    from django.apps import apps
+    from django.conf import settings
+    from django_celery_beat.models import CrontabSchedule, PeriodicTask
+
+    migration = importlib.import_module("core.migrations.0013_remove_admin_dummy_notification")
+    crontab = CrontabSchedule.objects.create(minute="0", hour="8,16")
+    PeriodicTask.objects.create(
+        name="send-admin-dummy-notification", task="core.tasks.send_admin_dummy_notification", crontab=crontab
+    )
+    PeriodicTask.objects.create(name="other", task="core.tasks.purge_worker_job_logs", crontab=crontab)
+
+    migration.remove_admin_dummy_notification(apps, None)  # type: ignore[arg-type]
+
+    assert list(PeriodicTask.objects.values_list("name", flat=True)) == ["other"]
+    assert "send-admin-dummy-notification" not in settings.CELERY_BEAT_SCHEDULE

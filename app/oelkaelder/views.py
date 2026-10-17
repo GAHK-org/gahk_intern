@@ -4,6 +4,7 @@
 import json
 from collections.abc import Iterable
 from datetime import date, datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import TypedDict
 
 from django.conf import settings
@@ -20,6 +21,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from core.exports import csv_or_xlsx_response
+from core.net import client_ip
 from residents.models import Resident
 from residents.permissions import current_resident, role_required
 
@@ -43,6 +45,7 @@ from .services import (
     record_deposit,
     record_purchase,
     void_adjustment,
+    void_deposit,
     void_purchase,
 )
 
@@ -53,18 +56,9 @@ class _Entry(TypedDict):
     amount_ore: int
 
 
-def _client_ip(request: HttpRequest) -> str:
-    """The till's real IP. Behind Coolify/Traefik, REMOTE_ADDR is the proxy, so trust the last hop of
-    X-Forwarded-For (the IP Traefik observed — the rightmost entry is the one it appended, not a value
-    a client could spoof). Safe only because the app server is reachable *only* via the proxy."""
-    xff = request.META.get("HTTP_X_FORWARDED_FOR", "")
-    if xff:
-        return xff.split(",")[-1].strip()
-    return request.META.get("REMOTE_ADDR", "")
-
-
 def _is_kiosk(request: HttpRequest) -> bool:
-    return settings.DEBUG or _client_ip(request) in settings.OELKAELDER_KIOSK_IPS
+    # The till's real IP — see core.net for why only the last X-Forwarded-For hop is trusted.
+    return settings.DEBUG or client_ip(request) in settings.OELKAELDER_KIOSK_IPS
 
 
 def shop(request: HttpRequest) -> HttpResponse:
@@ -88,7 +82,6 @@ def shop(request: HttpRequest) -> HttpResponse:
             "products": products,
             "shopper_rows": rows,
             "block_limit_kr": policy.block_below_ore // 100,
-            "block_below_ore": policy.block_below_ore,
         },
     )
 
@@ -97,8 +90,10 @@ def shop(request: HttpRequest) -> HttpResponse:
 def purchase(request: HttpRequest) -> HttpResponseRedirect:
     if not _is_kiosk(request):
         raise PermissionDenied
-    shopper_ids = [int(x) for x in request.POST.getlist("shopper")]
     try:
+        # Inside the try: a malformed shopper id is bad input like a malformed basket, and must land
+        # on the till's normal error message rather than a 500.
+        shopper_ids = [int(x) for x in request.POST.getlist("shopper")]
         lines = json.loads(request.POST.get("basket", "[]"))
         if not isinstance(lines, list):
             raise ValueError("Ugyldig kurv.")
@@ -557,14 +552,31 @@ def person_history(request: HttpRequest) -> HttpResponse:
     )
 
 
+# No single ølkælder entry comes anywhere near this; it only exists to turn a typo (or "1e9") into a
+# form error instead of a balance nobody can pay back or an integer the database column cannot hold.
+MAX_AMOUNT_KR = Decimal(100_000)
+
+
+def _parse_kr(value: str) -> int:
+    """Parse a kroner amount typed by an officer ("12,50") into øre, sign preserved.
+
+    Decimal, not float: float() accepts "inf" and "nan", and round() on those raised OverflowError/
+    ValueError straight out of the view as a 500. Non-finite and absurd amounts are rejected here with
+    the same ValueError the callers already turn into a form message; callers check the sign."""
+    try:
+        kr = Decimal((value or "0").strip().replace(",", "."))
+    except InvalidOperation:
+        raise ValueError("Ugyldigt beløb.") from None
+    if not kr.is_finite() or abs(kr) > MAX_AMOUNT_KR:
+        raise ValueError("Ugyldigt beløb.")
+    return int((kr * 100).quantize(Decimal(1), ROUND_HALF_UP))
+
+
 def _signed_ore(amount_kr: str, direction: str) -> int:
     """Parse a positive kroner amount plus a direction into signed øre. The form asks for a direction
     rather than a minus sign because "-50" vs "50" in a free-text field is far too easy to get wrong
     when the mistake silently moves someone's money the wrong way."""
-    try:
-        ore = round(float((amount_kr or "0").replace(",", ".")) * 100)
-    except ValueError:
-        raise ValueError("Ugyldigt beløb.") from None
+    ore = _parse_kr(amount_kr)
     if ore <= 0:
         raise ValueError("Beløbet skal være positivt — vælg i stedet retning ovenfor.")
     return -ore if direction == "subtract" else ore
@@ -602,8 +614,7 @@ def void_adjustment_view(request: HttpRequest, pk: int) -> HttpResponseRedirect:
 def add_deposit(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     shopper = get_object_or_404(Shopper, pk=pk)
     try:
-        kr = float(request.POST.get("amount_kr", "0").replace(",", "."))
-        record_deposit(shopper, round(kr * 100))
+        record_deposit(shopper, _parse_kr(request.POST.get("amount_kr", "")))
         messages.success(request, f"Indbetaling registreret for {shopper.resident.full_name}.")
     except ValueError as e:
         messages.error(request, str(e))
@@ -612,18 +623,19 @@ def add_deposit(request: HttpRequest, pk: int) -> HttpResponseRedirect:
 
 @require_POST
 @role_required("oelkaelder")
-def void_deposit(request: HttpRequest, pk: int) -> HttpResponseRedirect:
+def void_deposit_view(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     """Soft-delete a mistaken deposit (is_valid=False) — the balance is derived, so it just drops out."""
-    deposit = get_object_or_404(Deposit, pk=pk, is_valid=True)
-    deposit.is_valid = False
-    deposit.save(update_fields=["is_valid"])
-    messages.success(request, "Indbetaling annulleret.")
+    get_object_or_404(Deposit, pk=pk)
+    if void_deposit(pk, current_resident(request).email):
+        messages.success(request, "Indbetaling annulleret.")
+    else:
+        messages.info(request, "Indbetalingen var allerede annulleret.")
     return redirect("oelkaelder:admin")
 
 
 # ---- product & price management (ØK role) ----
 def _kr_to_ore(value: str) -> int:
-    ore = round(float((value or "0").replace(",", ".")) * 100)
+    ore = _parse_kr(value)
     if ore <= 0:
         raise ValueError("Prisen skal være positiv.")
     return ore

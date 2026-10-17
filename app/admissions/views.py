@@ -8,8 +8,6 @@ mark-received. Mark-received is POST-only (the legacy GET was CSRF-able). All fi
 (mass-assignment, SQLi, auth, CSRF) are structural here.
 """
 
-import csv
-import io
 import json
 import logging
 import urllib.parse
@@ -26,6 +24,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from core.exports import csv_or_xlsx_response
 from residents.permissions import current_resident, role_required
 
 from .forms import FremlejeForm, RundvisningForm
@@ -41,11 +40,19 @@ def index(request: HttpRequest) -> HttpResponse:
     return render(request, "optagelse/landing.html")
 
 
+def turnstile_enabled() -> bool:
+    """Turnstile is on only when BOTH keys are set. Half a configuration counts as off: with only the
+    secret, the form renders no widget (it needs the site key), so no token is ever posted and every
+    application would be rejected as a failed captcha — the public form silently dead. The
+    admissions.W001 system check flags the half-configured state at startup."""
+    return bool(settings.TURNSTILE_SITE_KEY and settings.TURNSTILE_SECRET_KEY)
+
+
 def _verify_turnstile(request: HttpRequest) -> bool:
-    """Verify the Cloudflare Turnstile token. Skipped (returns True) when no secret is configured (dev)."""
-    secret = settings.TURNSTILE_SECRET_KEY
-    if not secret:
+    """Verify the Cloudflare Turnstile token. Skipped (returns True) when Turnstile is off (dev)."""
+    if not turnstile_enabled():
         return True
+    secret = settings.TURNSTILE_SECRET_KEY
     token = request.POST.get("cf-turnstile-response", "")
     if not token:
         return False
@@ -96,7 +103,7 @@ def _apply(
             "title": title,
             "show_criteria": show_criteria,
             "intro": intro,
-            "turnstile_site_key": settings.TURNSTILE_SITE_KEY,
+            "turnstile_site_key": settings.TURNSTILE_SITE_KEY if turnstile_enabled() else "",
         },
     )
 
@@ -327,34 +334,13 @@ def export_applications(request: HttpRequest) -> HttpResponse:
     )
     headers = [label for label, _ in ADMISSION_EXPORT_COLUMNS]
     span = f"{f['date_from'] or 'start'}_{f['date_to'] or 'nu'}"
-    fname = f"ansoegninger-{span}"
-
-    if request.GET.get("format") == "xlsx":
-        from openpyxl import Workbook
-
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Ansøgninger"
-        ws.append(headers)
-        for a in rows:
-            ws.append([fn(a) for _, fn in ADMISSION_EXPORT_COLUMNS])
-        buf = io.BytesIO()
-        wb.save(buf)
-        resp = HttpResponse(
-            buf.getvalue(),
-            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-        resp["Content-Disposition"] = f'attachment; filename="{fname}.xlsx"'
-        return resp
-
-    # CSV — UTF-8 with BOM so Excel opens Danish characters correctly.
-    resp = HttpResponse(content_type="text/csv; charset=utf-8")
-    resp["Content-Disposition"] = f'attachment; filename="{fname}.csv"'
-    resp.write("﻿")  # UTF-8 BOM
-    writer = csv.writer(resp)
-    writer.writerow(headers)
-    for a in rows:
-        writer.writerow([fn(a) for _, fn in ADMISSION_EXPORT_COLUMNS])
+    fmt = "xlsx" if request.GET.get("format") == "xlsx" else "csv"
+    data = [[fn(a) for _, fn in ADMISSION_EXPORT_COLUMNS] for a in rows]
+    # Through the shared helper, which neutralises formula cells: every column here is typed by an
+    # anonymous applicant on the public form.
+    resp = csv_or_xlsx_response(fmt, "Ansøgninger", headers, data, f"ansoegninger-{span}")
+    if resp is None:  # unreachable: fmt is always csv or xlsx here, but the helper's type says Optional
+        raise AssertionError(fmt)
     return resp
 
 

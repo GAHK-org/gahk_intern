@@ -684,3 +684,101 @@ def test_detail_shows_suggested_vs_submitted_orlov_to_indstilling(make_resident:
     owner_html = owner_c.get(reverse("soegvaerelse:detail", args=[app.id])).content.decode()
     assert "Orlov (kontrol)" not in owner_html
     assert "<strong>Orlov:</strong> 1 måned" in owner_html  # shown as a number of months, not a range
+
+
+def _apply_setup(make_resident: Callable, email: str) -> tuple[Client, Room, Room]:
+    """A resident with a move-in date, logged in, and two rooms offered for the target month."""
+    m = month_index(*next_period())
+    a = Room.objects.create(legacy_index=700, number=700, floor="7. sal", side="mod gaden")
+    b = Room.objects.create(legacy_index=701, number=701, floor="7. sal", side="mod gaden")
+    RoomOffer.objects.create(room=a, month=m)
+    RoomOffer.objects.create(room=b, month=m)
+    c = Client()
+    c.force_login(make_resident(email=email, move_in_date=date(2024, 8, 1)))
+    return c, a, b
+
+
+def _post_apply(c: Client, orlov: str, priorities: list[str]) -> str:
+    resp = c.post(
+        reverse("soegvaerelse:soeg"),
+        {"done_year": "2028", "done_month": "6", "orlov_months": orlov, "priority": priorities},
+        follow=True,
+    )
+    assert resp.status_code == 200  # a normal form error, never a 500
+    return resp.content.decode()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("orlov", ["-12", "abc", "121"])
+def test_submit_rejects_invalid_orlov(make_resident: Callable, orlov: str) -> None:
+    """The live preview clamps orlov at 0, but the submit used it raw: a negative orlov inflated K
+    (a = months lived MINUS orlov) and a non-number was a 500."""
+    c, a, _b = _apply_setup(make_resident, f"orlov{orlov}@gahk.dk")
+    html = _post_apply(c, orlov, [str(a.id)])
+    assert "Orlov skal være" in html
+    assert not KvotientApplication.objects.exists()
+
+
+@pytest.mark.django_db
+def test_submit_rejects_rooms_not_offered_this_round(make_resident: Callable) -> None:
+    """A room not on offer for the target month (stale offer, or an id that isn't a room at all) was
+    stored and silently ignored — or a 500 on the FK."""
+    c, a, _b = _apply_setup(make_resident, "stale@gahk.dk")
+    stale = Room.objects.create(legacy_index=702, number=702, floor="7. sal", side="mod gaden")
+    RoomOffer.objects.create(room=stale, month=month_index(*next_period()) - 1)  # last month's offer
+    for bad in (str(stale.id), "999999", "x"):
+        html = _post_apply(c, "0", [str(a.id), bad])
+        assert "kun værelser, der er i udbud" in html
+    assert not KvotientApplication.objects.exists()
+
+
+@pytest.mark.django_db
+def test_submit_rejects_the_same_room_twice(make_resident: Callable) -> None:
+    c, a, _b = _apply_setup(make_resident, "dupe@gahk.dk")
+    html = _post_apply(c, "0", [str(a.id), str(a.id)])
+    assert "kun vælges én gang" in html
+    assert not KvotientApplication.objects.exists()
+
+
+@pytest.mark.django_db
+def test_apply_form_lists_only_this_rounds_offers(make_resident: Callable) -> None:
+    """Applications always target next month, so an offer for another month can't be won — and
+    must not be pickable."""
+    c, a, _b = _apply_setup(make_resident, "list@gahk.dk")
+    stale = Room.objects.create(legacy_index=703, number=703, floor="7. sal", side="mod gaden")
+    RoomOffer.objects.create(room=stale, month=month_index(*next_period()) + 1)
+    html = c.get(reverse("soegvaerelse:soeg")).content.decode()
+    assert f'<option value="{a.id}"' in html
+    assert f'<option value="{stale.id}"' not in html
+
+
+@pytest.mark.django_db
+def test_resolve_tie_only_accepts_a_tied_application(make_resident: Callable) -> None:
+    """resolve_tie used to accept any application in the offer's month — even one that never listed
+    the room, or one that wasn't tied."""
+    m = month_index(*next_period())
+    room = Room.objects.create(legacy_index=704, number=704, floor="7. sal", side="mod gaden")
+    other = Room.objects.create(legacy_index=705, number=705, floor="7. sal", side="mod gaden")
+    offer = RoomOffer.objects.create(room=room, month=m)
+    RoomOffer.objects.create(room=other, month=m)
+    x = _application(make_resident(email="tx@gahk.dk"), m, k=7.0)
+    y = _application(make_resident(email="ty@gahk.dk"), m, k=7.0)
+    low = _application(make_resident(email="tlow@gahk.dk"), m, k=3.0)  # listed it, but not tied
+    elsewhere = _application(make_resident(email="tels@gahk.dk"), m, k=9.0)  # never listed it
+    for app in (x, y, low):
+        KvotientPriority.objects.create(application=app, room=room, priority=1, month=m)
+    KvotientPriority.objects.create(application=elsewhere, room=other, priority=1, month=m)
+    c = Client()
+    c.force_login(make_resident(email="tind@gahk.dk", roles=("indstilling",)))
+
+    for wrong in (low, elsewhere):
+        resp = c.post(
+            reverse("soegvaerelse:resolve_tie", args=[offer.id]), {"application": wrong.id}, follow=True
+        )
+        assert "ikke blandt de K-lige" in resp.content.decode()
+        offer.refresh_from_db()
+        assert offer.awarded_application_id is None
+
+    c.post(reverse("soegvaerelse:resolve_tie", args=[offer.id]), {"application": x.id})
+    offer.refresh_from_db()
+    assert offer.awarded_application_id == x.id

@@ -45,6 +45,24 @@ def is_subscribed(resident: "Resident") -> bool:
     return push.subscribers(TOPIC).filter(user=resident).exists()
 
 
+# Every role some notification above is addressed to (administrator rides along in each).
+NOTIFIED_ROLES = (Role.VICEVAERT, Role.REPPER, Role.ADMINISTRATOR)
+
+
+def can_be_notified(resident: "Resident") -> bool:
+    """Whether any notification could ever reach this resident — the gate on the opt-in bar.
+
+    The same test _subscribers_with_role applies at send time, so the board never offers a toggle
+    that would subscribe a device to silence: a beboer who opted in was simply never paged.
+    """
+    if resident.is_superuser:
+        return True
+    year, month = active_period()
+    return RoleAssignment.objects.filter(
+        resident=resident, year=year, month=month, role__in=NOTIFIED_ROLES
+    ).exists()
+
+
 def _subscribers_with_role(role: str) -> "QuerySet[PushSubscription]":
     """Devices opted in to the Reparationer topic, owned by someone currently holding `role` for the
     active period. administrator counts too — it implies every role (residents.permissions.real_roles),

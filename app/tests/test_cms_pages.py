@@ -6,11 +6,13 @@ because "/" was rejected as an illegal character. Several tests below are that i
 """
 
 from collections.abc import Callable
+from datetime import timedelta
 
 import pytest
 from django.core.exceptions import ValidationError
 from django.http import HttpResponse
 from django.test import Client
+from django.utils import timezone
 
 from cms.models import Page, PageRedirect, PageVersion
 from cms.nav import is_reachable
@@ -375,6 +377,17 @@ def test_the_history_page_shows_what_changed(editor_client: Client) -> None:
     assert "Overskrift" in html, "the changed short field should be listed"
 
 
+def test_the_history_page_does_not_promise_to_keep_everything(editor_client: Client) -> None:
+    """It used to say nothing is ever deleted, while snapshot_page trims beyond the cap."""
+    from cms.services import VERSIONS_PER_PAGE_CAP
+
+    page = Page.objects.create(header="Vision", slug="vision", body="<p>a</p>")
+    html = editor_client.get(f"/django-admin/cms/page/{page.id}/versioner/").content.decode()
+
+    assert "aldrig slettet" not in html
+    assert f"seneste {VERSIONS_PER_PAGE_CAP} versioner" in html
+
+
 def test_the_history_page_escapes_the_body(editor_client: Client) -> None:
     """The diff shows body HTML *as text*; rendering it would execute stored markup in the admin."""
     page = Page.objects.create(header="Vision", slug="vision", body="<p>a</p>")
@@ -610,3 +623,101 @@ def test_the_change_log_is_scoped_to_cms(editor_client: Client) -> None:
     assert "Vision" in html
     for model in PageVersion.objects.values_list("page__header", flat=True):
         assert model is None or model == "Vision"
+
+
+# ---- headings are sanitised too (stored XSS) -------------------------------------------------------------
+#
+# The header and news title are rendered with inline formatting allowed, which used to mean `|safe`
+# straight from the database: only the body went through clean_html, so any content editor could put
+# a <script> in a page title.
+
+XSS_HEADER = 'Om <em>os</em> &amp; mere<script>alert(1)</script><img src=x onerror="alert(2)">'
+
+
+def test_page_heading_keeps_inline_formatting_but_drops_script() -> None:
+    Page.objects.create(header=XSS_HEADER, slug="om-os", body="<p>x</p>")
+    html = Client().get("/om-os").content.decode()
+    assert "<script>alert(1)" not in html and "onerror" not in html
+    assert "Om <em>os</em> &amp; mere" in html  # the legacy formatting still renders
+    assert "<title>Om os &amp; mere - G. A. Hagemanns Kollegium</title>" in html  # plain text there
+
+
+def test_section_title_cannot_break_out_of_the_aria_label() -> None:
+    Page.objects.create(header='Fac" onmouseover="alert(1)', slug="faciliteter", body="<p>x</p>")
+    Page.objects.create(header="Køkken<script>alert(3)</script>", slug="faciliteter/kokken", body="<p>y</p>")
+    html = Client().get("/faciliteter/kokken").content.decode()
+    assert 'aria-label="Fac&quot; onmouseover=&quot;alert(1)"' in html
+    assert "<script>alert(3)" not in html and ">Køkken</a>" in html  # sidebar link header
+
+
+def test_news_title_is_sanitised_on_both_pages() -> None:
+    from django.utils import timezone
+
+    from cms.models import NewsItem
+
+    NewsItem.objects.create(title=XSS_HEADER, body="<p>b</p>", published_at=timezone.now())
+    for url in ("/", "/begivenheder/"):
+        html = Client().get(url).content.decode()
+        assert "<script>alert(1)" not in html and "onerror" not in html, url
+        assert "Om <em>os</em> &amp; mere" in html, url
+
+
+def test_admin_forms_clean_the_headings_on_save() -> None:
+    from cms.admin import NewsItemAdminForm, PageAdminForm
+
+    page_form = PageAdminForm(data={"header": XSS_HEADER, "body": "<p>x</p>", "path_segment": "om-os"})
+    assert page_form.is_valid(), page_form.errors
+    assert page_form.cleaned_data["header"] == "Om <em>os</em> &amp; mere"
+
+    news_form = NewsItemAdminForm(
+        data={
+            "title": XSS_HEADER,
+            "body": "<p>x</p>",
+            "published_at_0": "2026-01-01",
+            "published_at_1": "12:00",
+        }
+    )
+    news_form.is_valid()
+    assert news_form.cleaned_data["title"] == "Om <em>os</em> &amp; mere"
+
+
+# ------------------------------------------------------------------ background image
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        ("/media/cms/2026/gang.jpg", "url('/media/cms/2026/gang.jpg')"),
+        ("https://example.org/gang.jpg", "url('https://example.org/gang.jpg')"),
+        ("/public/image/upload/images/gang.jpg", "url('/static/legacy/image/upload/images/gang.jpg')"),
+    ],
+)
+def test_a_page_background_renders_at_its_real_url(stored: str, expected: str) -> None:
+    """A background picked from the image library is a /media/cms/… URL and must stay one.
+
+    legacy_img used to prefix `legacy/` onto everything not starting /public/, so a library pick
+    rendered as /static/legacy/media/cms/…, a 404. Only the legacy /public/ paths are rewritten.
+    """
+    Page.objects.create(header="Gangen", slug="gangen", body="<p>x</p>", background_image=stored)
+
+    html = Client().get("/gangen").content.decode()
+
+    assert expected in html
+    assert "/static/legacy/media/" not in html
+
+
+def test_event_descriptions_get_the_same_legacy_image_rewrite_as_news() -> None:
+    """A legacy /public/ image in a front-page event's description must resolve like one in a news
+    body; without body_media it pointed at a path that no longer exists."""
+    from cms.models import Event
+
+    Event.objects.create(
+        title="Mathildefest",
+        description='<img src="/public/image/upload/images/fest.jpg">',
+        starts_on=timezone.localdate() + timedelta(days=7),
+    )
+
+    html = Client().get("/begivenheder/").content.decode()
+
+    assert "/static/legacy/image/upload/images/fest.jpg" in html
+    assert 'src="/public/image/' not in html

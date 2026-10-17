@@ -3,6 +3,8 @@
 Schema/decisions: see ../02-schema-etl.md. Target DB is PostgreSQL (via DATABASE_URL).
 """
 
+import hashlib
+import hmac
 import os
 from pathlib import Path
 
@@ -263,10 +265,6 @@ CELERY_BEAT_SCHEDULE = {
         "task": "oelkaelder.tasks.send_monthly_statements",
         "schedule": crontab(minute=10, hour=6, day_of_month=1),
     },
-    "send-admin-dummy-notification": {
-        "task": "core.tasks.send_admin_dummy_notification",
-        "schedule": crontab(minute=0, hour="8,16"),
-    },
 }
 
 STATIC_URL = "static/"
@@ -405,9 +403,17 @@ OELKAELDER_BANK_REG = os.environ.get("OELKAELDER_BANK_REG", "9070")
 OELKAELDER_BANK_ACCOUNT = os.environ.get("OELKAELDER_BANK_ACCOUNT", "1642635456")
 
 # Front-page visit counter: server-side secret for HMAC-hashing visitor IPs (F-002/F-011).
-VISIT_COUNTER_HMAC_KEY = os.environ.get("VISIT_COUNTER_HMAC_KEY", "dev-hmac-key")
+# Unset, it is derived from SECRET_KEY rather than a fixed public string: the IPv4 space is small
+# enough to hash exhaustively, so a key anyone can read in this repo would make every stored hash
+# reversible to its IP. Derived (not SECRET_KEY itself) so the two secrets are not interchangeable,
+# and it is secret whenever SECRET_KEY is. Rotating SECRET_KEY then resets visitor dedup — harmless.
+VISIT_COUNTER_HMAC_KEY = (
+    os.environ.get("VISIT_COUNTER_HMAC_KEY")
+    or hmac.new(SECRET_KEY.encode(), b"gahk.stats.visit-counter-ip-hash", hashlib.sha256).hexdigest()
+)
 
-# Cloudflare Turnstile on the public application forms (F-001). Unset in dev → the check is skipped.
+# Cloudflare Turnstile on the public application forms (F-001). On only when BOTH are set (unset in
+# dev → the check is skipped); one without the other is off too, and admissions.W001 warns about it.
 TURNSTILE_SITE_KEY = os.environ.get("TURNSTILE_SITE_KEY", "")
 TURNSTILE_SECRET_KEY = os.environ.get("TURNSTILE_SECRET_KEY", "")
 

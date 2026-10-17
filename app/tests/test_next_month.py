@@ -534,3 +534,63 @@ def test_the_create_form_offers_a_fylgje_picker(make_resident: Callable) -> None
 
     assert 'name="sponsor"' in html
     assert "Gammel Beboer" in html
+
+
+@pytest.mark.django_db
+def test_add_new_catches_an_existing_mixed_case_email(make_resident: Callable) -> None:
+    """add_new lowercases the typed address but compared case-sensitively, so an existing
+    "Mixed@GAHK.dk" was missed and a duplicate account created."""
+    make_resident(email="Mixed.Case@GAHK.dk")
+    room = Room.objects.create(legacy_index=601, number=601, floor="6", side="mod gaden")
+    c = _login(make_resident(email="ind@gahk.dk", roles=("indstilling",)))
+    resp = c.post(
+        URL,
+        {
+            "action": "add_new",
+            "first_name": "Ny",
+            "last_name": "Dublet",
+            "email": "mixed.case@gahk.dk",
+            "room": room.id,
+        },
+    )
+    assert "Der findes allerede en beboer med den e-mail." in resp.content.decode()
+    assert Resident.objects.filter(email__iexact="mixed.case@gahk.dk").count() == 1
+
+
+@pytest.mark.django_db
+def test_you_cannot_move_yourself_out_of_indstillingen_on_the_live_list(
+    make_resident: Callable, groups: dict[str, Room | Workgroup | Cleaning]
+) -> None:
+    """Your live indstilling role comes from your embedsgruppe, so changing it on the current list
+    locked you out mid-edit — the same trap as removing yourself. Refused; the rest still saves."""
+    c, ind, target = _setup(make_resident, groups)
+    cy, cm = active_period()
+    resp = c.post(
+        URL,
+        {
+            "action": "save",
+            "period": "current",
+            f"room_{ind.id}": groups["r1"].id,
+            f"workgroup_{ind.id}": groups["plain"].id,  # would drop my own indstilling role
+            f"room_{target.id}": groups["r3"].id,
+            f"workgroup_{target.id}": groups["plain"].id,
+        },
+        follow=True,
+    )
+    assert "flytte dig selv ud af Indstillingen" in resp.content.decode()
+    assert Residency.objects.get(resident=ind, year=cy, month=cm).workgroup == groups["priv"]
+    assert RoleAssignment.objects.filter(resident=ind, year=cy, month=cm, role=Role.INDSTILLING).exists()
+    assert Residency.objects.get(resident=target, year=cy, month=cm).room == groups["r3"]  # still saved
+
+
+@pytest.mark.django_db
+def test_changing_your_own_embedsgruppe_next_month_is_still_allowed(
+    make_resident: Callable, groups: dict[str, Room | Workgroup | Cleaning]
+) -> None:
+    c, ind, _target = _setup(make_resident, groups)
+    c.post(URL, {"action": "copy"})
+    ny, nm = next_period(active_period())
+    c.post(
+        URL, {"action": "save", f"room_{ind.id}": groups["r1"].id, f"workgroup_{ind.id}": groups["plain"].id}
+    )
+    assert Residency.objects.get(resident=ind, year=ny, month=nm).workgroup == groups["plain"]

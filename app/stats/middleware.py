@@ -17,6 +17,8 @@ from django.db.models import F
 from django.http import HttpRequest, HttpResponse
 from django.utils import timezone
 
+from core.net import client_ip
+
 from .models import DailyVisitCount, VisitTally
 
 logger = logging.getLogger(__name__)
@@ -38,8 +40,9 @@ class FrontPageVisitCounterMiddleware:
         return response
 
     def _count(self, request: HttpRequest) -> None:
-        fwd = request.META.get("HTTP_X_FORWARDED_FOR", "")
-        ip = fwd.split(",")[0].strip() if fwd else request.META.get("REMOTE_ADDR", "")
+        # The last X-Forwarded-For hop, not the first: the first is whatever the client claimed, so
+        # one visitor could rotate it and count as many (core.net).
+        ip = client_ip(request)
         if not ip:
             return
         ip_hash = hmac.new(settings.VISIT_COUNTER_HMAC_KEY.encode(), ip.encode(), hashlib.sha256).hexdigest()

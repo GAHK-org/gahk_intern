@@ -1,14 +1,10 @@
 import datetime
 
 from celery import shared_task
-from django.conf import settings
-from django.core.mail import send_mail
 from django.db import connection
 from django.db.models import F, Subquery, Window
 from django.db.models.functions import RowNumber
 from django.utils import timezone
-
-from residents.models import Resident, active_period
 
 # How long a delivered broker message is kept before being swept.
 #
@@ -40,31 +36,6 @@ UNSUCCESSFUL_JOBS_KEPT = 1000
 # Celery's status for a job that succeeded, as stored in celery_taskmeta.status and copied into
 # WorkerJobLog.state.
 _SUCCESS = "SUCCESS"
-
-
-@shared_task
-def send_admin_dummy_notification() -> int:
-    """Send the temporary twice-daily worker notification to current administrators."""
-    year, month = active_period()
-    recipients = set(
-        Resident.objects.filter(
-            is_active=True,
-            role_assignments__role="administrator",
-            role_assignments__year=year,
-            role_assignments__month=month,
-        ).values_list("email", flat=True)
-    )
-    recipients.update(
-        Resident.objects.filter(is_active=True, is_superuser=True).values_list("email", flat=True)
-    )
-    if not recipients:
-        return 0
-    return send_mail(
-        "Celery-testnotifikation",
-        "Dette er den planlagte testnotifikation fra Celery-worker'en.",
-        settings.DEFAULT_FROM_EMAIL,
-        sorted(recipients),
-    )
 
 
 @shared_task

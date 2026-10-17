@@ -34,8 +34,8 @@
   </div>
 
   <div class="card">
-    <h2>Besøg pr. dag (seneste 30)</h2>
-    {% if charts.visits.data %}
+    <h2>Besøg pr. dag (seneste 30 dage)</h2>
+    {% if has_visits %}
       <div style="position:relative; height:300px"><canvas id="chart-visits"></canvas></div>
     {% else %}
       <p class="muted">Ingen besøgsdata endnu.</p>

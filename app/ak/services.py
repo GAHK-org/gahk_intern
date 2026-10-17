@@ -22,13 +22,22 @@ def _tag(year: int, month: int) -> str:
     return f"Månedlig vurdering {year}-{month:02d}"
 
 
+def ensure_schedule_row(month: int) -> AkMonthlyCharge:
+    """The schedule row for a calendar month, creating the historical default (active, 2 krydser) if it
+    is missing. Both the scheduled command and the page-load backstop go through this, so a missing
+    row means the same thing whichever of them reaches the month first — it used to be "charge 2" from
+    the command but "delete every charge for the period" from the backstop."""
+    return AkMonthlyCharge.objects.get_or_create(month=month, defaults={"active": True, "krydser": 2})[0]
+
+
 @transaction.atomic
 def apply_monthly_charge(year: int, month: int, *, officer: Resident | None = None) -> tuple[int, int]:
     """Reconcile the MONTHLY ledger for (year, month) against the calendar-month schedule and current
     membership. The amount comes from the `AkMonthlyCharge` row for that *calendar* month (same every
     year).
 
-    Returns (written, removed): how many MONTHLY entries were created/updated and how many were deleted.
+    Returns (written, removed): how many residents now carry the period's MONTHLY entry (created,
+    updated or already correct) and how many entries were deleted.
     If that month's schedule is missing or inactive, every MONTHLY entry for the period is removed.
     """
     charge = AkMonthlyCharge.objects.filter(month=month).first()
@@ -43,19 +52,24 @@ def apply_monthly_charge(year: int, month: int, *, officer: Resident | None = No
     # Drop charges for anyone no longer on that month's list (e.g. removed from the alumneliste).
     removed = existing.exclude(resident_id__in=member_ids).delete()[0]
 
+    # Only rows whose amount actually changes are rewritten. `created_by` records who booked *that*
+    # amount; re-saving the schedule used to stamp the saving officer on every charge of the period,
+    # including ones the scheduled run wrote and the officer never changed.
+    current = dict(existing.filter(resident_id__in=member_ids).values_list("resident_id", "delta"))
     written = 0
     for resident_id in member_ids:
-        AkEntry.objects.update_or_create(
-            resident_id=resident_id,
-            kind=AkEntry.Kind.MONTHLY,
-            year=year,
-            month=month,
-            defaults={
-                "delta": -charge.krydser,
-                "reason": _tag(year, month),
-                "created_by": officer,
-            },
-        )
+        if current.get(resident_id) != -charge.krydser:
+            AkEntry.objects.update_or_create(
+                resident_id=resident_id,
+                kind=AkEntry.Kind.MONTHLY,
+                year=year,
+                month=month,
+                defaults={
+                    "delta": -charge.krydser,
+                    "reason": _tag(year, month),
+                    "created_by": officer,
+                },
+            )
         written += 1
     return (written, removed)
 
@@ -75,6 +89,7 @@ def ensure_active_month_applied() -> None:
     if (state.year, state.month) == (year, month):
         return
     try:
+        ensure_schedule_row(month)
         apply_monthly_charge(year, month)
     except Exception:
         logger.exception("AK auto-apply failed for %s-%02d", year, month)

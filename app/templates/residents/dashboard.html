@@ -16,7 +16,7 @@
   <div class="glance">
     <span class="g"><span class="gk">Aktiv måned</span> <b>{{ period }}</b></span>
     <span class="g"><span class="gk">Dine roller</span>
-      {% for r in roles %}<span class="chip">{{ r }}</span>{% empty %}<span class="muted">Ingen særlige denne måned</span>{% endfor %}
+      {% for r in role_labels %}<span class="chip">{{ r }}</span>{% empty %}<span class="muted">Ingen særlige denne måned</span>{% endfor %}
     </span>
   </div>
 

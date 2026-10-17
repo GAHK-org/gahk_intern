@@ -6,7 +6,7 @@ import pytest
 from django.test import Client
 from django.urls import reverse
 
-from oelkaelder.models import Deposit, Product, Shopper, Warning
+from oelkaelder.models import Deposit, LogEntry, Product, Shopper, Warning
 
 
 @pytest.mark.django_db
@@ -115,3 +115,68 @@ def test_admin_actions_are_oelkaelder_only(make_resident: Callable) -> None:
     assert c.post(reverse("oelkaelder:apply_interest")).status_code == 403
     assert c.get(reverse("oelkaelder:report_sales")).status_code == 403
     assert c.post(reverse("oelkaelder:add_shopper"), {"resident": plain.id}).status_code == 403
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("amount", ["inf", "-inf", "nan", "sNaN", "1e9", "Infinity", "abc"])
+def test_non_finite_or_absurd_amounts_are_form_errors(make_resident: Callable, amount: str) -> None:
+    """float() accepted "inf"/"nan" and round() then raised OverflowError/ValueError as a 500. Every
+    officer money field must turn them into a normal error message and write nothing."""
+    oek = make_resident(email="oek3@gahk.dk", roles=("oelkaelder",))
+    shopper = Shopper.objects.create(resident=make_resident(email="buyer3@gahk.dk"))
+    product = Product.objects.create(name="Fadøl", price_ore=1000)
+    c = Client()
+    c.force_login(oek)
+
+    posts = [
+        (reverse("oelkaelder:deposit", args=[shopper.pk]), {"amount_kr": amount}),
+        (
+            reverse("oelkaelder:add_adjustment", args=[shopper.pk]),
+            {"amount_kr": amount, "direction": "add", "reason": "test"},
+        ),
+        (reverse("oelkaelder:product_create"), {"name": "Ny", "price_kr": amount}),
+        (reverse("oelkaelder:product_update", args=[product.pk]), {"name": "Fadøl", "price_kr": amount}),
+    ]
+    for url, data in posts:
+        resp = c.post(url, data, follow=True)
+        assert resp.status_code == 200, url
+        assert [m.level_tag for m in resp.context["messages"]] == ["error"], url
+
+    assert shopper.balance_ore == 0
+    product.refresh_from_db()
+    assert product.price_ore == 1000
+    assert not Product.objects.filter(name="Ny").exists()
+
+
+@pytest.mark.django_db
+def test_kroner_amounts_are_parsed_exactly(make_resident: Callable) -> None:
+    oek = make_resident(email="oek4@gahk.dk", roles=("oelkaelder",))
+    shopper = Shopper.objects.create(resident=make_resident(email="buyer4@gahk.dk"))
+    c = Client()
+    c.force_login(oek)
+
+    c.post(reverse("oelkaelder:deposit", args=[shopper.pk]), {"amount_kr": "0,29"})
+
+    assert shopper.balance_ore == 29  # float would have needed round() to avoid 28.999…
+
+
+@pytest.mark.django_db
+def test_voiding_a_deposit_is_logged_with_who_and_how_much(make_resident: Callable) -> None:
+    """Voiding a sale or an adjustment writes a LogEntry naming the officer; voiding a deposit wrote
+    nothing at all, so a vanished payment could not be traced."""
+    oek = make_resident(email="oek5@gahk.dk", roles=("oelkaelder",))
+    shopper = Shopper.objects.create(resident=make_resident(email="buyer5@gahk.dk"))
+    dep = Deposit.objects.create(shopper=shopper, amount_ore=5000)
+    c = Client()
+    c.force_login(oek)
+
+    first = c.post(reverse("oelkaelder:void_deposit", args=[dep.id]), follow=True)
+    assert [m.level_tag for m in first.context["messages"]] == ["success"]
+    resp = c.post(reverse("oelkaelder:void_deposit", args=[dep.id]), follow=True)  # double-submit
+
+    logs = list(LogEntry.objects.filter(message__contains=f"Indbetaling #{dep.id}"))
+    assert len(logs) == 1
+    assert "5000 øre" in logs[0].message
+    assert "oek5@gahk.dk" in logs[0].message
+    assert shopper.resident.full_name in logs[0].message
+    assert [m.level_tag for m in resp.context["messages"]] == ["info"]

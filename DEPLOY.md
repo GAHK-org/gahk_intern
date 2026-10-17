@@ -49,6 +49,7 @@ DEFAULT_FROM_EMAIL=autosvar@gahk.dk               # ⚠ must be an alias of SMTP
 OELKAELDER_FROM_EMAIL=bierkeller@gahk.dk          # ⚠ second sender, same requirement
 TURNSTILE_SITE_KEY=…  TURNSTILE_SECRET_KEY=…      # Cloudflare Turnstile [you]
 WIFI_PASSWORD=…  GOOGLE_CALENDAR_USER=…  GOOGLE_CALENDAR_PASSWORD=…
+GOOGLE_CALENDAR_EXTRA_IDS=<id>,<id>               # optional: more calendars in the dashboard embed
 INDSTILLING_EMAIL=indstillingen@gahk.dk           # recipient only, not a sender
 POSTGRES_PASSWORD=<pw>                            # for the compose postgres service
 OELKAELDER_KIOSK_IPS=<the till's server-observed source IP>   # confirm from access logs, NOT ipconfig
@@ -202,7 +203,6 @@ idempotent, so a retry or an overlapping run is harmless.
 | `photo_album.tasks.fail_stalled_downloads` | Hourly, :05 | Closes out ZIP builds no worker came back to. A worker killed outright runs no handler, so its row stays `BUILDING` — never collected, and the album page keeps reloading itself every five seconds waiting for it. |
 | `events.tasks.remind_rsvp_deadlines` | Daily 17:00 | Sends due RSVP reminders. |
 | `oelkaelder.tasks.send_monthly_statements` | Day 1, 06:10 | Mails every active ølkælder account its previous calendar month. **Sends real mail to residents** — the only task here that does. |
-| `core.tasks.send_admin_dummy_notification` | Daily 08:00 and 16:00 | **Temporary, and deliberately still here.** Mails every administrator and superuser twice a day to prove Beat and the worker are alive in production. Delete this entry and `core.tasks.send_admin_dummy_notification` once that is confirmed — nothing else depends on it. |
 
 **Delete the matching Coolify Scheduled Tasks in the same deploy, not afterwards.** Coolify runs
 them *inside the already-running `web` container*, so nothing here can see them or turn them off,

@@ -145,7 +145,7 @@ def test_past_jobs_maps_rows_without_parsing_the_payload(monkeypatch: pytest.Mon
                 None,
                 "celery",
                 submitted_at,
-                "core.tasks.send_admin_dummy_notification",
+                "oelkaelder.tasks.send_monthly_statements",
                 "(1,)",
                 "{}",
                 "parent-id",
@@ -160,7 +160,7 @@ def test_past_jobs_maps_rows_without_parsing_the_payload(monkeypatch: pytest.Mon
         "id": "task-id",
         "status": "SUCCESS",
         "finished_at": finished_at,
-        "task": "core.tasks.send_admin_dummy_notification",
+        "task": "oelkaelder.tasks.send_monthly_statements",
         "worker": "celery@test",
         "retries": 0,
         "queue": "celery",
@@ -279,7 +279,7 @@ def test_worker_jobs_shows_job_data_and_active_schedules(
         lambda *_, **__: [
             {
                 "id": "completed-task-id",
-                "task": "core.tasks.send_admin_dummy_notification",
+                "task": "oelkaelder.tasks.send_monthly_statements",
                 "status": "SUCCESS",
                 "finished_at": None,
                 "worker": "celery@test",
@@ -300,7 +300,7 @@ def test_worker_jobs_shows_job_data_and_active_schedules(
 
     assert response.status_code == 200
     assert "photo_album.tasks.build_media_derivatives" in response.content.decode()
-    assert "core.tasks.send_admin_dummy_notification" in response.content.decode()
+    assert "oelkaelder.tasks.send_monthly_statements" in response.content.decode()
     assert "(42,)" in response.content.decode()
     assert "Medie: sommer.jpg" in response.content.decode()
     assert "Seneste jobs (1 overordnede jobs)" in response.content.decode()

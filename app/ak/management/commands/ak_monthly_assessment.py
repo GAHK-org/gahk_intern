@@ -6,8 +6,7 @@ through the same idempotent service. If that calendar month has no schedule row 
 
 from django.core.management.base import BaseCommand
 
-from ak.models import AkMonthlyCharge
-from ak.services import apply_monthly_charge
+from ak.services import apply_monthly_charge, ensure_schedule_row
 from residents.models import active_period
 
 
@@ -16,7 +15,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **opts) -> None:  # noqa: ANN002, ANN003
         year, month = active_period()
-        AkMonthlyCharge.objects.get_or_create(month=month, defaults={"active": True, "krydser": 2})
+        ensure_schedule_row(month)
         written, removed = apply_monthly_charge(year, month)
         self.stdout.write(
             self.style.SUCCESS(

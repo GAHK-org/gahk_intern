@@ -25,7 +25,8 @@
         <td>{{ e.created_at|date:"Y-m-d" }}</td>
         <td class="{{ e.delta|sign_class }}">{{ e.delta }}</td>
         <td>{{ e.get_kind_display }}</td><td>{{ e.reason }}</td>
-        <td><form method="post" action="{% url 'ak:delete' resident.id e.id %}">{% csrf_token %}<button type="submit" style="background:#c00">Slet</button></form></td>
+        <td><form method="post" action="{% url 'ak:delete' resident.id e.id %}"
+                  onsubmit="return confirm('Slet {{ e.delta|stringformat:"+d"|escapejs }} kryds ({{ e.get_kind_display|escapejs }}, {{ e.created_at|date:"Y-m-d" }}) for {{ resident.full_name|escapejs }}? Det kan ikke fortrydes.');">{% csrf_token %}<button type="submit" style="background:#c00">Slet</button></form></td>
       </tr>
     {% empty %}<tr><td colspan="5" class="muted">Ingen krydser.</td></tr>{% endfor %}
     </tbody>
