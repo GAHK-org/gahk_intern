@@ -365,6 +365,8 @@ def mine(request: HttpRequest) -> HttpResponse:
 def detail(request: HttpRequest, pk: int) -> HttpResponse:
     video = _visible_video(request, pk)
     resident = current_resident(request)
+    if video.file is not None:
+        services.fill_rendition_sizes(video.file)
     counts = services.view_counts([video]).get(video.pk, (0, 0))
     seasons = services.episodes(video.series) if video.series_id and video.series else []
     for _season, episodes in seasons:
