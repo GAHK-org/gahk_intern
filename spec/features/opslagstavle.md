@@ -106,6 +106,12 @@ Deleting a post still takes its comments, reactions and image rows by CASCADE, a
 via the `post_delete` receiver on `NoticeImage`. That property is load-bearing for any bulk removal
 and has its own test, now that the retention purge no longer exercises it.
 
+Photos are served from a local disk copy (`core.media.register_cacheable`, the same mechanism as Den
+Hurtige's live messages) while they are being read: body images of a post younger than
+`NOTICE_IMAGE_CACHE_DAYS` (default 30) or currently pinned, unclaimed composer uploads of the same
+age, and comment photos by the comment's own age. Everything older goes back to a presigned redirect
+to the bucket. There is no archive here, so that age is the stand-in for one.
+
 ### Why the window went, having twice been argued for
 
 This reverses a decision this document previously recorded, so the reasoning belongs here rather

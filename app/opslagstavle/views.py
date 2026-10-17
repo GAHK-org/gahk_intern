@@ -359,7 +359,7 @@ def upload_image(request: HttpRequest) -> JsonResponse:
     if not upload:
         return JsonResponse({"error": "Vælg en fil."}, status=400)
     try:
-        validate_image_upload(upload, settings.NOTICE_IMAGE_MAX_MB)
+        upload = validate_image_upload(upload, settings.NOTICE_IMAGE_MAX_MB)
     except ValidationError as exc:
         return JsonResponse({"error": " ".join(exc.messages)}, status=400)
 

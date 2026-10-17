@@ -19,7 +19,7 @@ divergences from the sibling feature:
 """
 
 from collections.abc import Iterable
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
@@ -28,6 +28,7 @@ from django.db.models import F
 from django.db.models.base import ModelBase
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
+from django.utils import timezone
 
 from core.files import delete_attached_files
 from residents.models import Resident, embedsgruppe_of
@@ -346,3 +347,36 @@ def _delete_notice_files(sender: type[models.Model], instance: models.Model, **k
     cascade from Notice rather than directly. See core.files.
     """
     delete_attached_files(instance)
+
+
+# --- which photos the local disk cache may serve (core.media.register_cacheable) -----------------
+#
+# Opslagstavlen has no archive: a post stays up for years. What it does have is a fortnight or so in
+# which most of the house reads a new post, and a long tail afterwards. So for caching purposes a
+# photo counts as archived NOTICE_IMAGE_CACHE_DAYS after it was posted, and from then on is served
+# by a redirect to the bucket as before. A pinned post is the exception: it stays on top of the
+# board, and is read like a new one for as long as it is pinned.
+
+
+def _cache_cutoff() -> datetime:
+    return timezone.now() - timedelta(days=settings.NOTICE_IMAGE_CACHE_DAYS)
+
+
+def notice_image_is_live(name: str) -> bool:
+    """A photo in a post's body. Uploaded before the post is saved (NoticeImage), so an unclaimed one
+    is judged by its own upload time: it is the preview of a post being written right now."""
+    cutoff = _cache_cutoff()
+    return (
+        NoticeImage.objects.filter(file=name)
+        .filter(
+            models.Q(notice__created_at__gte=cutoff)
+            | models.Q(notice__pinned_at__isnull=False)
+            | models.Q(notice__isnull=True, uploaded_at__gte=cutoff)
+        )
+        .exists()
+    )
+
+
+def comment_image_is_live(name: str) -> bool:
+    """A comment's photo, by the comment's own age: a new comment on an old post is new to read."""
+    return NoticeComment.objects.filter(image=name, created_at__gte=_cache_cutoff()).exists()

@@ -82,6 +82,7 @@ erDiagram
         int sponsor_id FK
         string fylgje_raw
         string profile_picture
+        string profile_thumbnail
         text bio
         string facebook_link
         string instagram_handle
@@ -1521,6 +1522,7 @@ erDiagram
         int sponsor_id FK
         string fylgje_raw
         string profile_picture
+        string profile_thumbnail
         text bio
         string facebook_link
         string instagram_handle
