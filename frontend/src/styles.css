@@ -1157,6 +1157,12 @@
        screen and pushed the whole conversation off the bottom. */
     .app { grid-template-columns:1fr; grid-template-rows:auto auto 1fr;
       grid-template-areas:"brand" "top" "main"; }
+    /* A sticky grid item cannot leave its own row, so the top bar (and the burger) scrolled away.
+       As a flex column it sticks to the whole page; the brand row scrolls off so only one bar stays.
+       The chat page keeps the grid: its window never scrolls, so the bar is always in view there. */
+    body:not(.chat-page) .app { display:flex; flex-direction:column; }
+    body:not(.chat-page) .brandcell { position:static; }
+    html:not(:has(body.chat-page)) { scroll-padding-top:60px; }
     .hamburger { display:block; }
     .topsearch { display:none; }
     .sidebar { position:fixed; top:0; left:0; bottom:0; width:264px; z-index:50; box-shadow:var(--shadow); transform:translateX(-100%); transition:transform .2s ease; }
