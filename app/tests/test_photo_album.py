@@ -1981,7 +1981,9 @@ def test_process_pending_media_skips_held_rows_and_reports_what_it_dispatched(
     Media.objects.filter(pk=held.pk).update(derivative_started_at=timezone.now())
 
     dispatched: list[int] = []
-    monkeypatch.setattr(tasks.build_media_derivatives, "delay", dispatched.append)
+    monkeypatch.setattr(
+        tasks.build_media_derivatives, "apply_async", lambda args, **options: dispatched.append(args[0])
+    )
 
     assert tasks.process_pending_media.run() == 1
     assert dispatched == [free.pk]

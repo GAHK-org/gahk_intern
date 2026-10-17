@@ -179,9 +179,9 @@ def store_upload(
     media.original.save(filename, uploaded_file, save=False)
     media.derivative_state = DerivativeState.PENDING
     media.save()
-    from .tasks import build_media_derivatives
+    from .tasks import queue_derivatives
 
-    transaction.on_commit(lambda: build_media_derivatives.delay(media.pk))
+    transaction.on_commit(lambda: queue_derivatives(media))
     return UploadOutcome(media=media, also_in=also_in)
 
 

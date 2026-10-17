@@ -35,6 +35,7 @@ from .services import (
     backfill_hashes,
     build_derivatives,
     import_zip_album,
+    is_video_media,
     no_progress,
     pending_derivatives,
 )
@@ -149,6 +150,19 @@ def build_media_derivatives(media_id: int) -> bool:
     return build_derivatives(media)
 
 
+def queue_derivatives(media: Media) -> None:
+    """Queue `build_media_derivatives` for one item: a video's encode on "media", a photo on
+    "thumbnails".
+
+    A photo is half a second of Pillow and the uploader is waiting to see it, so it must not queue
+    behind encodes and ZIP jobs. Its own queue, rather than "celery", is what keeps the quick jobs
+    quick in turn: `worker` takes from "celery" and "thumbnails" by turns, so a mail sent during an
+    import of 400 photos waits for one thumbnail, not for all of them.
+    """
+    queue = "media" if is_video_media(media) else "thumbnails"
+    build_media_derivatives.apply_async((media.pk,), queue=queue)
+
+
 @shared_task
 def process_pending_media(limit: int = 10) -> int:
     """Backstop for messages lost while the broker is unavailable.
@@ -162,7 +176,7 @@ def process_pending_media(limit: int = 10) -> int:
     # reported whatever was still pending at that instant — racing the worker it had just started,
     # and surfacing that racy number as the task result on the siteadmin jobs page.
     for media in _unclaimed(pending_derivatives())[:limit]:
-        build_media_derivatives.delay(media.pk)
+        queue_derivatives(media)
         dispatched += 1
     return dispatched
 

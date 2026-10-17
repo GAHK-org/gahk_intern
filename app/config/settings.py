@@ -186,10 +186,14 @@ CELERY_TASK_TIME_LIMIT = 900
 # while it runs an hour-long encode — messages the other worker could have started, and that are
 # lost rather than redelivered if the container is killed with them in hand.
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
-# Two queues, so a quick job never waits behind an encode: everything defaults to "celery", run by
+# Two workers, so a quick job never waits behind an encode: everything defaults to "celery", run by
 # `worker`; what reads or writes whole media files goes to "media", run by `worker-media` one job at
 # a time (docker-compose.prod.yml). One at a time is also what keeps the box out of the OOM killer:
 # an import, a ZIP build and an ffmpeg encode side by side is what ran it out of memory.
+#
+# Photo thumbnails are the exception, chosen when they are queued (photo_album.tasks.
+# queue_derivatives): their own "thumbnails" queue, which `worker` takes from by turns with
+# "celery". The route below is only the fallback for a derivative queued any other way.
 CELERY_TASK_ROUTES = {
     "photo_album.tasks.build_media_derivatives": {"queue": "media"},
     "photo_album.tasks.build_album_download": {"queue": "media"},

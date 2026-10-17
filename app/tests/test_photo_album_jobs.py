@@ -5,6 +5,7 @@ import zipfile
 from collections.abc import Callable
 from datetime import timedelta
 from io import BytesIO
+from typing import Any
 
 import pytest
 from django.conf import settings
@@ -275,3 +276,33 @@ def test_heavy_jobs_are_routed_to_the_media_queue() -> None:
         assert route == {"queue": "media"}
     assert "photo_album.tasks.build_media_derivatives" in settings.CELERY_TASK_ROUTES
     assert "photo_album.tasks.process_album_import" in settings.CELERY_TASK_ROUTES
+
+
+@pytest.mark.django_db
+def test_a_photo_is_queued_for_the_quick_worker_and_a_video_for_the_media_worker(
+    make_resident: Callable[..., Resident],
+    monkeypatch: pytest.MonkeyPatch,
+    django_capture_on_commit_callbacks: Callable[..., Any],
+) -> None:
+    """A thumbnail is half a second of Pillow, and the uploader is waiting to see it: behind an
+    hour-long encode on the one media slot it could wait hours."""
+    from photo_album import tasks
+    from photo_album.models import Album, Media
+    from photo_album.services import upload_media
+
+    from .media_samples import image_upload, video_upload
+
+    queued: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        tasks.build_media_derivatives,
+        "apply_async",
+        lambda args, queue: queued.append((Media.objects.get(pk=args[0]).filename, queue)),
+    )
+    resident = make_resident()
+    album = Album.objects.create(folder="2026", name="Fest")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        upload_media(album=album, uploaded_file=image_upload("photo.jpg"), resident=resident)
+        upload_media(album=album, uploaded_file=video_upload("clip.mp4"), resident=resident)
+
+    assert queued == [("photo.jpg", "thumbnails"), ("clip.mp4", "media")]

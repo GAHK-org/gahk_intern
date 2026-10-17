@@ -186,7 +186,10 @@ Coolify by hand.
 or write whole media files — video encodes, album ZIP imports and downloads, the hash backfill — to
 the `media` queue, run by `worker-media`, one job at a time. Everything else (mail, the sweeps below)
 stays on the default `celery` queue, run by `worker`, so a quick job never waits behind an hour-long
-encode. One at a time on `media` is also a memory budget: an import, a ZIP build and an ffmpeg encode
+encode. Photo thumbnails are queued on `thumbnails`, which `worker` also takes, by turns with
+`celery` — the broker (kombu's SQLAlchemy transport) has no message priorities, but a worker on two
+queues takes one from each in rotation, so a mail sent during an import of 400 photos waits for one
+thumbnail rather than all 400. One at a time on `media` is also a memory budget: an import, a ZIP build and an ffmpeg encode
 side by side ran the box out of memory (October 2026). To give either more, raise its
 `--concurrency` in `docker-compose.prod.yml` — and watch `free -m` when you do.
 

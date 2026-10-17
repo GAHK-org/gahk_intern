@@ -34,8 +34,9 @@ services:
   # `migrate --check` exits non-zero while anything is unapplied AND while the database is
   # unreachable, so one loop covers both. Neither service runs `migrate` itself: three containers
   # migrating the same database concurrently is its own failure.
-  # Two workers on two queues (CELERY_TASK_ROUTES in config/settings.py). `worker` takes the default
-  # "celery" queue — mail, sweeps, everything quick — so none of it waits behind a video encode.
+  # Two workers (CELERY_TASK_ROUTES in config/settings.py). `worker` takes the default "celery"
+  # queue — mail, sweeps, everything quick — so none of it waits behind a video encode, and
+  # "thumbnails", photo derivatives, by turns with it: a mail waits for one thumbnail, not 400.
   # `worker-media` takes "media": encodes, album ZIP imports and downloads, the hash backfill — the
   # jobs that read whole files, one at a time, because two of them side by side with ffmpeg is what
   # ran this box out of memory.
@@ -46,7 +47,7 @@ services:
       - web
     command: >-
       sh -c "until python manage.py migrate --check; do echo 'waiting for migrations'; sleep 3; done;
-             celery -A config worker -Q celery -n default@%h --loglevel=INFO --concurrency=1"
+             celery -A config worker -Q celery,thumbnails -n default@%h --loglevel=INFO --concurrency=1"
 
   worker-media:
     image: ghcr.io/gahk-org/gahk_intern:${IMAGE_TAG:-main}
