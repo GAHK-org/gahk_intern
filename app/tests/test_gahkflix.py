@@ -449,9 +449,14 @@ def test_download_in_hd_full_hd_or_the_original(admin: Resident) -> None:
     VideoFile.objects.filter(pk=video.file_id).update(full_hd=video.file.hd.name)  # type: ignore[union-attr]
     assert "(Full HD).mp4" in download("fullhd")["Content-Disposition"]
     assert download("4k").status_code == 404
+    # Encoded before the sizes were recorded: the page asks the storage once, and keeps the answer.
+    VideoFile.objects.filter(pk=video.file_id).update(hd_size=None, full_hd_size=None)
     page = client.get(reverse("gahkflix:detail", args=[video.pk])).content.decode()
     for variant in ("hd", "fullhd", "original"):
         assert reverse("gahkflix:download", args=[video.pk, variant]) in page
+    video.file.refresh_from_db()  # type: ignore[union-attr]
+    assert (video.file.hd_size, video.file.full_hd_size) == (2, 2)  # type: ignore[union-attr]
+    assert page.count("2\xa0bytes") == 2 and "3\xa0bytes" in page  # HD, Full HD, and the original
 
 
 def test_the_player_config_for_the_overlay(admin: Resident) -> None:

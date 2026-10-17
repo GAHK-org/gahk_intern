@@ -1102,6 +1102,27 @@ def view_stats(video: Video, days: int = 30, now: datetime | None = None) -> Vie
     )
 
 
+def fill_rendition_sizes(video_file: VideoFile) -> None:
+    """Ask the storage for a rendition size the encode did not record — files encoded before the
+    sizes were — and keep it, so the download menu asks once."""
+    from .storage import stored_size
+
+    changed = []
+    for rendition, size_field in (("hd", "hd_size"), ("full_hd", "full_hd_size")):
+        key = key_of(getattr(video_file, rendition))
+        if key and getattr(video_file, size_field) is None:
+            try:
+                size = stored_size(key)
+            except Exception:  # the menu without a size beats a page that fails
+                logger.warning("Could not read the size of %s", key, exc_info=True)
+                continue
+            if size is not None:
+                setattr(video_file, size_field, size)
+                changed.append(size_field)
+    if changed:
+        video_file.save(update_fields=changed)
+
+
 def view_counts(videos: Iterable[Video]) -> dict[int, tuple[int, int]]:
     """(views, unique viewers) per video, in one query."""
     rows = (
