@@ -5,6 +5,8 @@
 #                 Storage in dev — the S3_* settings point at it (core/storage.py). Its S3 API is
 #                 published on :9000; the filer's file browser (bucket contents) is on :8888.
 #   - s3-init   : one-shot job that creates the dev bucket; runs once and exits, harmless to re-run.
+#   - storage-reset : one-shot job for `task reset` that empties the dev bucket and the photo album
+#                 cache. Profile "reset", so a plain `up` never starts it.
 #   - mariadb   : staging copy of the legacy dump (gahk_dk.sql auto-loaded on first init), ETL only.
 #   - pgloader  : one-shot MySQL->Postgres bulk lift (run via `docker compose run --rm pgloader ...`)
 #   - web       : optional — the Django app itself, hot-reloading. Opt in with the "docker" profile:
@@ -79,7 +81,7 @@ services:
     image: amazon/aws-cli:latest
     depends_on:
       s3: {condition: service_healthy}
-    environment:
+    environment: &aws-cli-env
       AWS_ACCESS_KEY_ID: gahkdev
       AWS_SECRET_ACCESS_KEY: gahkdevsecret
       AWS_DEFAULT_REGION: fsn1
@@ -88,6 +90,23 @@ services:
       sh -c "
       aws --endpoint-url http://s3:8333 s3api head-bucket --bucket gahk-s3 2>/dev/null ||
       aws --endpoint-url http://s3:8333 s3api create-bucket --bucket gahk-s3
+      "
+
+  # Empties the dev bucket and the photo album cache volume, then exits — the storage half of
+  # `task reset`. A service rather than `docker compose run -v`, because only a service's volumes
+  # resolve to this project's named volume; `run -v photo-album-cache:...` makes a new, empty one.
+  # Waits for s3-init so the bucket exists even right after s3data was deleted.
+  storage-reset:
+    image: amazon/aws-cli:latest
+    profiles: ["reset"]
+    depends_on:
+      s3-init: {condition: service_completed_successfully}
+    environment: *aws-cli-env
+    volumes: ["photo-album-cache:/cache"]
+    entrypoint: >
+      sh -c "
+      aws --endpoint-url http://s3:8333 s3 rm s3://gahk-s3 --recursive --only-show-errors &&
+      rm -rf /cache/* /cache/.[!.]*
       "
 
   # Optional: the Django app itself, hot-reloading (opt-in — see the `services:` comment above).
