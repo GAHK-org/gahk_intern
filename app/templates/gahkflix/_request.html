@@ -1,0 +1,51 @@
+{% comment %} One request as a panel: what is asked, the votes so far, and the vote form. Needs `change`, `rows`. {% endcomment %}
+<article class="flix-panel">
+  <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px">
+    <h2>{% if change.kind == "delete" %}Slet{% else %}Ændr{% endif %}
+      {% if change.video %}<a href="{% url 'gahkflix:detail' change.video_id %}">{{ change.video.title }}</a>{% else %}serien <a href="{% url 'gahkflix:series' change.series_id %}">{{ change.series.title }}</a>{% endif %}
+    </h2>
+    <span class="flix-state{% if change.state == 'rejected' or change.state == 'expired' %} is-failed{% endif %}">{{ change.get_state_display }}</span>
+  </div>
+  <p>Fra {{ change.requested_by.full_name }}, {{ change.created_at|date:"j. F Y H:i" }}{% if change.is_open %} · udløber {{ change.expires_at|date:"j. F" }}{% endif %}</p>
+  {% if change.reason %}<p style="color:var(--flix-ink);white-space:pre-line">“{{ change.reason }}”</p>{% endif %}
+  {% with table=rows|default:change.rows %}
+    {% if table %}
+      <table class="flix-table">
+        <thead><tr><th></th><th>Nu</th><th>Foreslået</th></tr></thead>
+        <tbody>
+          {% for row in table %}
+            <tr><th>{{ row.label }}</th>
+              {% if row.picture %}<td>{% if row.before %}<img src="{{ row.before }}" alt="Nu">{% endif %}</td><td><img src="{{ row.after }}" alt="Foreslået"></td>
+              {% else %}<td style="white-space:pre-line">{{ row.before }}</td><td style="white-space:pre-line">{{ row.after }}</td>{% endif %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  {% endwith %}
+  {% with votes=change.votes.all %}
+    {% if votes %}
+      <ul style="list-style:none;margin:12px 0 0;padding:0;font-size:14px">
+        {% for v in votes %}<li>{% if v.approve %}✅ Godkendt{% else %}❌ Afvist{% endif %} af {{ v.voter.full_name }}{% if v.comment %}: “{{ v.comment }}”{% endif %}</li>{% endfor %}
+      </ul>
+    {% endif %}
+    {% if change.is_open and change.kind == "delete" %}<p style="margin-top:8px">{{ change.votes.count }} af {{ change.approvals_needed }} godkendelser.</p>{% endif %}
+  {% endwith %}
+  {% if change.note %}<p>{{ change.note }}</p>{% endif %}
+  {% if can_vote|default:change.can_vote %}
+    <form method="post" action="{% url 'gahkflix:request_vote' change.pk %}" class="flix-form">{% csrf_token %}
+      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+      <label for="comment-{{ change.pk }}">Kommentar (valgfri)</label>
+      <input type="text" id="comment-{{ change.pk }}" name="comment" maxlength="255">
+      <div class="flix-actions">
+        <button class="flix-btn flix-btn-small flix-btn-red" type="submit" name="decision" value="approve">Godkend</button>
+        <button class="flix-btn flix-btn-small flix-btn-quiet" type="submit" name="decision" value="reject">Afvis</button>
+      </div>
+    </form>
+  {% endif %}
+  {% if can_withdraw %}
+    <form method="post" action="{% url 'gahkflix:request_withdraw' change.pk %}" class="flix-actions">{% csrf_token %}
+      <button class="flix-btn flix-btn-small flix-btn-quiet" type="submit">Træk anmodningen tilbage</button>
+    </form>
+  {% endif %}
+</article>

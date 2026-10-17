@@ -1,0 +1,25 @@
+{% extends "gahkflix/base.html" %}
+{% block title %}Upload – GAHKFlix{% endblock %}
+{% block content %}
+  <div class="flix-page flix-page-narrow">
+    <h1 class="flix-page-title">Upload en video</h1>
+    {% if pending %}
+      <div class="flix-panel">
+        <h2>Du har allerede en video, der behandles</h2>
+        <p><a href="{% url 'gahkflix:edit' pending.video_id %}">{{ pending.video.title }}</a> er {{ pending.progress }} % færdig. Du kan uploade den næste, når den er klar.</p>
+      </div>
+    {% else %}
+      {% include "gahkflix/_uploader.html" %}
+      <div class="flix-panel">
+        <h2>Sådan foregår det</h2>
+        <ol class="muted" style="margin:8px 0 0;padding-left:20px;line-height:1.8">
+          <li>Videoen sendes direkte til lageret. Lad siden være åben, til den er sendt.</li>
+          <li>Mens den behandles (HD og Full HD), kan du skrive titel, beskrivelse, medvirkende og tags.</li>
+          <li>Vælg miniature og banner blandt 10 billeder fra videoen. Miniaturen kan også være dit eget billede.</li>
+          <li>Udgiv den. Indtil da er den en kladde, som kun du og administratorerne kan se.</li>
+        </ol>
+        <p style="margin-top:12px">Den samme video kan ikke uploades to gange, og du kan kun have én video under behandling ad gangen.</p>
+      </div>
+    {% endif %}
+  </div>
+{% endblock %}

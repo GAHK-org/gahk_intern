@@ -1,0 +1,64 @@
+{% load static %}<!doctype html>
+<html lang="da">
+<head>
+  <meta charset="utf-8">
+  {% include "_csp_upgrade.html" %}
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#141414">
+  <title>{% block title %}GAHKFlix{% endblock %}</title>
+  <link rel="icon" href="{% static 'gahkflix/icon.svg' %}" type="image/svg+xml">
+  <link rel="stylesheet" href="{% static 'dist/app.css' %}">
+  <script src="{% static 'dist/app.js' %}" defer></script>
+</head>
+{% comment %}
+  GAHKFlix is a page of its own: none of the intern site's chrome (the sidebar, the top bar) is drawn
+  here. The way back is the "Intern" link in this header.
+{% endcomment %}
+<body class="flix {% block body_class %}{% endblock %}">
+  {% block header %}
+    <header class="flix-header" data-flix-header>
+      <a class="flix-logo" href="{% url 'gahkflix:home' %}" aria-label="GAHKFlix – forsiden">GAHKFLIX</a>
+      {% if limited_rollout %}<span class="flix-test" title="Kun administratorer og Fotogruppen kan se GAHKFlix endnu.">Under test</span>{% endif %}
+      <nav class="flix-nav" aria-label="GAHKFlix">
+        {% url 'gahkflix:home' as home_url %}{% url 'gahkflix:series_list' as series_url %}{% url 'gahkflix:timeline' as timeline_url %}{% url 'gahkflix:mine' as mine_url %}
+        <a href="{{ home_url }}"{% if request.path == home_url %} class="is-active"{% endif %}>Hjem</a>
+        <a href="{{ series_url }}"{% if request.path == series_url %} class="is-active"{% endif %}>Serier</a>
+        <a href="{{ timeline_url }}"{% if request.path == timeline_url %} class="is-active"{% endif %}>Tidslinje</a>
+        <a href="{{ mine_url }}"{% if request.path == mine_url %} class="is-active"{% endif %}>Mine videoer</a>
+        {% if is_administrator %}
+          {% url 'gahkflix:approvals' as approvals_url %}{% url 'gahkflix:bin' as bin_url %}
+          <a href="{{ approvals_url }}"{% if request.path == approvals_url %} class="is-active"{% endif %}>Godkendelser{% if open_requests %}<span class="flix-badge" title="{{ open_requests }} venter på dig">{{ open_requests }}</span>{% endif %}</a>
+          <a href="{{ bin_url }}"{% if request.path == bin_url %} class="is-active"{% endif %}>Papirkurv</a>
+        {% endif %}
+      </nav>
+      <div class="flix-tools">
+        <form class="flix-search{% if query %} has-query{% endif %}" action="{% url 'gahkflix:search' %}" method="get" role="search" data-flix-search>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input type="search" name="q" value="{{ query|default:'' }}" placeholder="Titler, personer, tags" aria-label="Søg på GAHKFlix" autocomplete="off">
+        </form>
+        {% if pending_upload %}
+          <a class="flix-pill flix-pill-ghost" href="{% url 'gahkflix:edit' pending_upload.video_id %}" title="Din video behandles">⏳ Behandles</a>
+        {% else %}
+          <a class="flix-pill flix-pill-red" href="{% url 'gahkflix:upload' %}">+ Upload</a>
+        {% endif %}
+        <a class="flix-pill flix-pill-ghost" href="/intern/" title="Tilbage til GAHK Intern">↩ Intern</a>
+      </div>
+      <button class="flix-menu" type="button" aria-label="Menu" aria-expanded="false" data-flix-menu>☰</button>
+    </header>
+  {% endblock %}
+
+  {% if messages %}
+    <div class="flix-messages" role="status">
+      {% for m in messages %}<p class="flix-message is-{{ m.tags }}">{{ m }}</p>{% endfor %}
+    </div>
+  {% endif %}
+
+  <main class="flix-main">{% block content %}{% endblock %}</main>
+
+  {% block footer %}
+    <footer class="flix-footer">
+      GAHKFlix · film fra G. A. Hagemanns Kollegium · <a href="/intern/">Tilbage til GAHK Intern</a>
+    </footer>
+  {% endblock %}
+</body>
+</html>

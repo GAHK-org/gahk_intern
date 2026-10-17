@@ -1,0 +1,48 @@
+{% extends "gahkflix/base.html" %}
+{% load gahkflix %}
+{% block title %}{{ series.title }} – GAHKFlix{% endblock %}
+{% block body_class %}flix-detail{% endblock %}
+{% block content %}
+  {% picture_url cover "banner" as banner %}
+  <section class="flix-hero">
+    <div class="flix-hero-img" style="background-image:url('{{ banner }}')" role="img" aria-label="{{ series.title }}"></div>
+    <div class="flix-hero-body">
+      <div class="flix-hero-kicker"><b>G</b>Serie</div>
+      <h1 class="flix-hero-title">{{ series.title }}</h1>
+      <div class="flix-hero-meta">
+        {% with count=seasons|length %}{% if count > 1 %}<span>{{ count }} sæsoner</span>{% endif %}{% endwith %}
+        <span>Oprettet af {{ series.created_by.full_name }}</span>
+      </div>
+      {% if series.description %}<p class="flix-hero-desc">{{ series.description }}</p>{% endif %}
+      <div class="flix-hero-actions">
+        {% if cover %}<a class="flix-btn flix-btn-play" href="{% url 'gahkflix:play' cover.pk %}"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l12-7.5z"/></svg>Afspil første afsnit</a>{% endif %}
+        {% if can_edit %}<a class="flix-btn flix-btn-info" href="{% url 'gahkflix:series_edit' series.pk %}">Rediger</a>{% endif %}
+      </div>
+    </div>
+  </section>
+  {% if open_edit %}<p class="flix-banner-note">Der venter et forslag til ændring af serien. <a href="{% url 'gahkflix:request' open_edit.pk %}">Se forslaget</a>.</p>{% endif %}
+  {% if seasons %}
+    <section class="flix-episodes" data-flix-seasons>
+      <div class="flix-season-head">
+        <h2 class="flix-section-title" style="margin:0">Afsnit</h2>
+        {% if seasons|length > 1 %}
+          <select aria-label="Vælg sæson" data-flix-season-select>
+            {% for season, episodes in seasons %}<option value="{{ forloop.counter0 }}">{% if season %}Sæson {{ season }}{% else %}Uden sæson{% endif %}</option>{% endfor %}
+          </select>
+        {% endif %}
+      </div>
+      {% for season, episodes in seasons %}
+        <div data-flix-season="{{ forloop.counter0 }}"{% if not forloop.first %} hidden{% endif %}>
+          {% for episode in episodes %}{% include "gahkflix/_episode.html" %}{% endfor %}
+        </div>
+      {% endfor %}
+    </section>
+  {% else %}
+    <p class="flix-empty" style="padding:20px var(--flix-gutter)">Serien har ingen udgivne afsnit endnu. Læg en video i den fra videoens redigeringsside.</p>
+  {% endif %}
+  {% if can_delete %}
+    <form method="post" action="{% url 'gahkflix:series_delete' series.pk %}" style="padding:20px var(--flix-gutter)" data-flix-confirm="Slet serien?">{% csrf_token %}
+      <button class="flix-btn flix-btn-small flix-btn-quiet" type="submit">Slet serien</button>
+    </form>
+  {% endif %}
+{% endblock %}

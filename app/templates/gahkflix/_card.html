@@ -1,0 +1,13 @@
+{% load gahkflix %}{% picture_url video "thumbnail" as thumb %}
+<a class="flix-card{% if video.progress %} has-progress{% endif %}" href="{% if resume %}{% url 'gahkflix:play' video.pk %}{% else %}{% url 'gahkflix:detail' video.pk %}{% endif %}" title="{{ video.title }}">
+  <span class="flix-card-img">
+    {% if thumb %}<img src="{{ thumb }}" alt="" loading="lazy" decoding="async">{% else %}<span class="flix-card-blank" aria-hidden="true">{{ video.title|slice:":1"|upper }}</span>{% endif %}
+    {% if fresh %}<span class="flix-card-badge">Ny</span>{% endif %}
+    <span class="flix-card-label">
+      <span class="flix-card-title">{{ video.title }}</span>
+      <span class="flix-card-meta">{% if video.series %}{{ video.series.title }}{% if video.episode_label %} · {{ video.episode_label }}{% endif %} · {% endif %}{{ video.display_date|date:"Y" }}{% if video.file.duration %} · {{ video.file.duration|duration }}{% endif %}</span>
+    </span>
+    {% if video.progress %}<span class="flix-progress" aria-label="{{ video.progress|percent }} % set"><span style="width:{{ video.progress|percent }}%"></span></span>{% endif %}
+  </span>
+  {% if role %}<span class="flix-card-role">{{ role }}</span>{% endif %}
+</a>

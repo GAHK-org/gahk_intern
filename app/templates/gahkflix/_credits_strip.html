@@ -1,0 +1,15 @@
+{% load gahkflix %}
+{% if videos %}
+  <div class="card-flat" style="margin-top:1rem">
+    <div class="card-head"><h2>Medvirker i</h2><a href="{% url 'gahkflix:cast' resident.pk %}" style="font-size:.85rem">Se alle på GAHKFlix</a></div>
+    <div class="card-pad" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:.75rem">
+      {% for video in videos %}
+        {% picture_url video "thumbnail" as thumb %}
+        <a href="{% url 'gahkflix:detail' video.pk %}" style="text-decoration:none;color:inherit">
+          <span style="display:block;aspect-ratio:16/9;border-radius:6px;overflow:hidden;background:#222">{% if thumb %}<img src="{{ thumb }}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block">{% endif %}</span>
+          <span style="display:block;margin-top:.3rem;font-size:.85rem;font-weight:600">{{ video.title }}</span>
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+{% endif %}
