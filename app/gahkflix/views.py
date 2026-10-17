@@ -40,7 +40,6 @@ from residents.permissions import current_resident
 from . import access, cache, services
 from .forms import DeletionRequestForm, SeriesForm, VideoDetailsForm, VoteForm
 from .models import (
-    REVISION_WINDOW,
     CastMember,
     ChangeRequest,
     FileState,
@@ -58,6 +57,8 @@ logger = logging.getLogger(__name__)
 # A picture's URL carries its key (?v=…), and a key never changes meaning, so the browser may keep it.
 PICTURE_CACHE_CONTROL = "private, max-age=604800"
 ROW_LENGTH = 20
+# How far back the upload page lists the uploader's published videos.
+RECENT_UPLOADS = timedelta(days=7)
 # Each picture kind: (what it is called in a label, "the new …" proposed, "the …" changed).
 PICTURES = {
     "thumbnail": ("Miniature", "Den nye miniature", "Miniaturen"),
@@ -576,11 +577,11 @@ def _upload_config(video: Video | None = None) -> dict[str, Any]:
 @access.access_required
 def upload(request: HttpRequest) -> HttpResponse:
     resident = current_resident(request)
-    # Published recently enough to get a new version of the file still (models.REVISION_WINDOW).
-    replaceable = list(
-        Video.objects.published()
-        .filter(uploaded_by=resident, created_at__gt=timezone.now() - REVISION_WINDOW)
-        .select_related("file", "series")
+    # Shown first, so a video already uploaded is not uploaded again: every unpublished one (still
+    # processing, or waiting to be finished), and those uploaded in the last week.
+    recent = _with_latest_file(
+        Video.objects.filter(uploaded_by=resident, deleted_at__isnull=True)
+        .filter(Q(published_at__isnull=True) | Q(created_at__gt=timezone.now() - RECENT_UPLOADS))
         .order_by("-created_at")
     )
     return _render(
@@ -590,11 +591,7 @@ def upload(request: HttpRequest) -> HttpResponse:
             "max_gb": max_upload_bytes() / 1024**3,
             "pending": services.pending_upload(resident),
             "upload_config": _upload_config(),
-            # Shown first, so a video that needs a correction gets a new version rather than a twin.
-            "drafts": _with_latest_file(
-                Video.objects.drafts().filter(uploaded_by=resident).order_by("-created_at")
-            ),
-            "replaceable": replaceable,
+            "recent": recent,
         },
     )
 
