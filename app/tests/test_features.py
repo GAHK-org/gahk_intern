@@ -515,9 +515,13 @@ def test_cms_admin_sanitizes_html_on_save(make_resident: Callable) -> None:
     admin = make_resident(email="admin@gahk.dk", roles=[Role.ADMINISTRATOR])
     c = Client()
     c.force_login(admin)
-    c.post(
+    # The address is posted as the form edits it (path_parent + path_segment); leaving it out
+    # silently saved the page with no address at all.
+    response = c.post(
         f"/django-admin/cms/page/{page.id}/change/",
         {
+            "path_parent": "",
+            "path_segment": "s",
             "slug": "s",
             "menu_category": "0",
             "header": "S",
@@ -525,7 +529,9 @@ def test_cms_admin_sanitizes_html_on_save(make_resident: Callable) -> None:
             "body": '<p>Hej</p><script>alert(1)</script><a href="javascript:evil()">x</a>',
         },
     )
+    assert response.status_code == 302
     page.refresh_from_db()
+    assert page.slug == "s"  # the save must not have cleared the page's address
     assert "<p>Hej</p>" in page.body  # safe markup kept
     assert "<script" not in page.body and "javascript:" not in page.body  # stripped
 

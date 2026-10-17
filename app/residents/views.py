@@ -55,6 +55,8 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         {
             "period": f"{year}-{month:02d}",
             "roles": roles,
+            # `roles` stays the raw codes for the `"ak" in roles` link checks; this is what is shown.
+            "role_labels": [dict(Role.choices).get(r, r) for r in roles],
             "wifi_password": os.environ.get("WIFI_PASSWORD", ""),
             "calendar_user": os.environ.get("GOOGLE_CALENDAR_USER", ""),
             "calendar_password": os.environ.get("GOOGLE_CALENDAR_PASSWORD", ""),
