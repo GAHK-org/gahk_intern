@@ -140,7 +140,7 @@
     <div class="msg-avatar" aria-hidden="true">
       {% if bare or post.group_end %}
         {% if post.author.profile_picture %}
-          <img src="{{ post.author.profile_picture.url }}" alt="" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:50%;display:block">
+          <img src="{{ post.author.avatar_url }}" alt="" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:50%;display:block">
         {% else %}
           {{ post.author.first_name|slice:":1" }}{{ post.author.last_name|slice:":1" }}
         {% endif %}

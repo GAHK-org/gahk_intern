@@ -509,6 +509,21 @@ EVENT_IMAGE_MAX_MB = int(os.environ.get("EVENT_IMAGE_MAX_MB", "5"))
 # same value to avoid a GIF being postable in one place and not the next.
 ANIMATED_IMAGE_MAX_MB = int(os.environ.get("ANIMATED_IMAGE_MAX_MB", "5"))
 
+# The ceiling for a HEIC/HEIF photo, and for the same kind of reason as the one above: the format
+# cannot go through the browser downscaler. Only Safari can decode HEIC, so from any other browser a
+# straight-from-the-camera iPhone photo arrives at full size. A 48-megapixel one is well past 5 MB.
+# core.uploads converts it to a downscaled JPEG before it is stored, so this only bounds what one
+# request may upload and decode, not what ends up in the bucket.
+HEIF_IMAGE_MAX_MB = int(os.environ.get("HEIF_IMAGE_MAX_MB", "25"))
+
+# Ølkælder product photos. They were not checked at all until HEIC support made the upload path
+# worth looking at, and oel/ is a PUBLIC media prefix (core.media.PUBLIC_PREFIXES), so an
+# unchecked SVG there would have been script served from our own origin to anyone.
+PRODUCT_IMAGE_MAX_MB = int(os.environ.get("PRODUCT_IMAGE_MAX_MB", "5"))
+
+# Profile pictures. Was a literal 5 in residents.forms.
+PROFILE_PICTURE_MAX_MB = int(os.environ.get("PROFILE_PICTURE_MAX_MB", "5"))
+
 # Photo album uploads. Two ceilings rather than one: the album deliberately keeps the ORIGINAL at
 # full resolution (unlike every other feature here, which downscales in the browser first), so a
 # modern phone photo legitimately arrives at 10-15 MB, and a clip from the same phone is an order of
@@ -523,3 +538,15 @@ PHOTO_ALBUM_VIDEO_MAX_MB = int(os.environ.get("PHOTO_ALBUM_VIDEO_MAX_MB", "1000"
 PHOTO_ALBUM_CACHE_DIR = os.environ.get("PHOTO_ALBUM_CACHE_DIR", "")
 PHOTO_ALBUM_CACHE_THUMBNAIL_MB = int(os.environ.get("PHOTO_ALBUM_CACHE_THUMBNAIL_MB", "2048"))
 PHOTO_ALBUM_CACHE_HD_MB = int(os.environ.get("PHOTO_ALBUM_CACHE_HD_MB", "3072"))
+
+# The same kind of local copy for Den Hurtige's and opslagstavlen's image attachments (core.media,
+# core.disk_cache). It defaults to the photo album's directory, so the production volume and the
+# dev setups already configured for that one work for this too; the copies go in a subdirectory of
+# their own. Empty turns it off.
+MEDIA_CACHE_DIR = os.environ.get("MEDIA_CACHE_DIR", PHOTO_ALBUM_CACHE_DIR)
+MEDIA_CACHE_ATTACHMENTS_MB = int(os.environ.get("MEDIA_CACHE_ATTACHMENTS_MB", "2048"))
+# Only images people are still looking at are copied; an ARCHIVED one is served by a redirect to
+# the bucket, as before. Den Hurtige archives a message itself, when it expires. Opslagstavlen keeps
+# every post forever and has no archive, so for caching purposes an opslag counts as archived this
+# many days after it was posted.
+NOTICE_IMAGE_CACHE_DAYS = int(os.environ.get("NOTICE_IMAGE_CACHE_DAYS", "30"))
