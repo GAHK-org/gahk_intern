@@ -9,7 +9,7 @@
 // second feature (opslagstavlen) now depends on it, and depending on a file named after the chat
 // feature is a trap: trimming feed.ts to the chat page would silently break CSRF elsewhere.
 
-function csrfToken(): string {
+export function csrfToken(): string {
   const cookie = document.cookie.split("; ").find((c) => c.startsWith("csrftoken="));
   if (cookie) return decodeURIComponent(cookie.slice("csrftoken=".length));
   // Fallback for CSRF_USE_SESSIONS or a missing cookie: any rendered {% csrf_token %} input.

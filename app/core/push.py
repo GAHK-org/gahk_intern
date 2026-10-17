@@ -8,8 +8,8 @@ every remaining recipient — while a 410 looked like a success to the caller. O
 here means one error path instead of two, and one table instead of its three.
 
 Delivery runs off the request thread: each subscription is a separate HTTPS round-trip to FCM/APNs
-(~0.3-1 s), and Daphne runs with `-t 60`, so a dorm-wide fan-out inline would kill the
-worker. `_run_in_background` fires after the transaction commits, so the thread never races the post
+(~0.3-1 s), so a dorm-wide fan-out inline would hold the poster's request for minutes, on a
+thread of the one app process. `_run_in_background` fires after the transaction commits, so the thread never races the post
 it is announcing.
 
 This module is *transport*. Who gets notified about what — and the wording — stays with each

@@ -1,0 +1,2 @@
+# Installed on the Linux server as-is (DEPLOY.md §4a): a CRLF checkout would break the shebang.
+deploy/** text eol=lf

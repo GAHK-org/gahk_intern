@@ -24,6 +24,7 @@ from django_celery_beat.models import PeriodicTask
 from kombu.exceptions import DecodeError
 
 from config.celery import app as celery_app
+from core.models import WorkerJobLog
 
 from . import admin_access
 from .models import AdminAccessGrant, Resident, Role, RoleAssignment, active_period
@@ -316,7 +317,6 @@ def _job_details(task_id: str) -> dict[str, object] | None:
         "root_id": headers.get("root_id"),
         "parent_id": headers.get("parent_id"),
         "origin": headers.get("origin"),
-        "logs_available": False,
     }
     if result_row is not None:
         status, finished_at, result, traceback, name, worker, retries, queue = result_row
@@ -508,9 +508,19 @@ def worker_jobs(request: HttpRequest) -> HttpResponse:
 @role_required("administrator")
 def worker_job_detail(request: HttpRequest, task_id: str) -> HttpResponse:
     job = _job_details(task_id)
+    job_log = WorkerJobLog.objects.filter(task_id=task_id).first()
     if job is None:
-        raise Http404("worker job not found")
-    return render(request, "siteadmin/worker_job_detail.html", {"job": job})
+        if job_log is None:
+            raise Http404("worker job not found")
+        # The result can be gone while its log is not — a result backend that expires results itself
+        # does not know about the log — and the log is still worth showing on its own.
+        job = {
+            "id": task_id,
+            "task": job_log.task_name,
+            "status": job_log.state,
+            "finished_at": job_log.finished_at,
+        }
+    return render(request, "siteadmin/worker_job_detail.html", {"job": job, "job_log": job_log})
 
 
 @role_required("administrator")

@@ -3,15 +3,25 @@
 # here) in the same Coolify project — set DATABASE_URL to the managed Postgres resource's *internal*
 # URL. Env vars (DATABASE_URL, DJANGO_SECRET_KEY, ALLOWED_HOSTS, CSRF_TRUSTED_ORIGINS, SMTP_*, …) are
 # injected by Coolify's env manager, so there is no committed env_file. MediaWiki is its own app.
+#
+# The image is not built here: CI builds it and moves `:main` once the checks pass, and a timer on the
+# server pulls it and asks Coolify to redeploy (DEPLOY.md §4a). All three services run the same one.
+# IMAGE_TAG is for rolling back: set it to `sha-<commit>` in Coolify and redeploy; unset to follow main.
 services:
   web:
-    build: .
+    image: ghcr.io/gahk-org/gahk_intern:${IMAGE_TAG:-main}
     restart: unless-stopped
     command: >-
       sh -c "python manage.py migrate --noinput &&
-             daphne --bind 0.0.0.0 --port 8000 -t 60 config.asgi:application"
+             uvicorn config.asgi:application --host 0.0.0.0 --port 8000 --lifespan off --timeout-keep-alive 120"
+    environment:
+      PHOTO_ALBUM_CACHE_DIR: /app/cache
     volumes:
       - media:/app/media       # uploaded files (room-inspection photos, relocated legacy images)
+      # Local copies of photo-album thumbnails/HD images (photo_album.cache, ~5 GB at most). Only
+      # a cache — deleting the volume costs a cold start, nothing else — but keeping it across
+      # deploys means the grid does not refetch everything from S3 after each one.
+      - photo-album-cache:/app/cache
     expose:
       - "8000"                 # reached by Coolify/Traefik over the internal network (not host-published)
     # Fails when the app stops answering (see docs/incidents/2026-10-08-web-hang.md). Sends the first
@@ -37,7 +47,7 @@ services:
   # unreachable, so one loop covers both. Neither service runs `migrate` itself: three containers
   # migrating the same database concurrently is its own failure.
   worker:
-    build: .
+    image: ghcr.io/gahk-org/gahk_intern:${IMAGE_TAG:-main}
     restart: unless-stopped
     depends_on:
       - web
@@ -46,7 +56,7 @@ services:
              celery -A config worker --loglevel=INFO --concurrency=2"
 
   beat:
-    build: .
+    image: ghcr.io/gahk-org/gahk_intern:${IMAGE_TAG:-main}
     restart: unless-stopped
     depends_on:
       - web
@@ -56,3 +66,4 @@ services:
 
 volumes:
   media:
+  photo-album-cache:

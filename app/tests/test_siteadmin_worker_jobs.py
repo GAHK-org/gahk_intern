@@ -387,7 +387,6 @@ def test_worker_job_detail_shows_result_metadata(
             ],
             "result": "download failed",
             "traceback": "Traceback (most recent call last):\\nExampleError",
-            "logs_available": False,
         },
     )
     client.force_login(administrator)
@@ -400,7 +399,7 @@ def test_worker_job_detail_shows_result_metadata(
     assert "Underopgaver (1)" in response.content.decode()
     assert reverse("siteadmin:worker_job_detail", args=["child-task-id"]) in response.content.decode()
     assert "ExampleError" in response.content.decode()
-    assert "Worker-logge gemmes ikke" in response.content.decode()
+    assert "Jobbet har ikke logget noget" in response.content.decode()
 
 
 @pytest.mark.django_db

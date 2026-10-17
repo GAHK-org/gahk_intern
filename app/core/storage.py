@@ -86,11 +86,54 @@ class PublicEndpointS3Storage(S3Storage):
 
     In every other environment (`task dev:local`, CI, production) the two settings are equal, so
     `public_connection` is just `self.connection` again and the second boto3 resource is never built.
+
+    Also shares ONE boto3 session between threads. django-storages keeps a resource per thread (boto3
+    resources are not thread-safe) and builds each from a brand-new session, which reloads botocore's
+    JSON service models: ~80 ms of CPU, holding the GIL. Under ASGI every request runs in a thread
+    of its own, so every /media/ and /photo-album/ redirect paid that — an album page's thumbnails
+    queued behind each other at ~0.5 s apiece. A shared session caches the models, so a thread's
+    resource costs ~2 ms. The session itself is not thread-safe either, hence the lock around
+    building one.
     """
 
     def __init__(self, **options: Any) -> None:  # noqa: ANN401 — passed straight to S3Storage.__init__
         super().__init__(**options)
         self._public_connections = threading.local()
+        self._session_lock = threading.Lock()
+        self._session: Any = None
+
+    def __getstate__(self) -> dict[str, Any]:
+        state = super().__getstate__()
+        for name in ("_public_connections", "_session_lock", "_session"):
+            state.pop(name, None)
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        super().__setstate__(state)
+        self._public_connections = threading.local()
+        self._session_lock = threading.Lock()
+        self._session = None
+
+    def _resource(self, endpoint_url: str | None) -> Any:  # noqa: ANN401 — a boto3 S3 ServiceResource
+        with self._session_lock:
+            if self._session is None:
+                self._session = self._create_session()
+            return self._session.resource(
+                "s3",
+                region_name=self.region_name,
+                use_ssl=self.use_ssl,
+                endpoint_url=endpoint_url,
+                config=self.client_config,
+                verify=self.verify,
+            )
+
+    @property
+    def connection(self) -> Any:  # noqa: ANN401 — a boto3 S3 ServiceResource
+        """S3Storage.connection — still one resource per thread, but built from the shared session."""
+        connection = getattr(self._connections, "connection", None)
+        if connection is None:
+            connection = self._connections.connection = self._resource(self.endpoint_url)
+        return connection
 
     @property
     def public_connection(self) -> Any:  # noqa: ANN401 — a boto3 S3 ServiceResource
@@ -99,16 +142,7 @@ class PublicEndpointS3Storage(S3Storage):
             return self.connection
         connection = getattr(self._public_connections, "connection", None)
         if connection is None:
-            session = self._create_session()
-            connection = session.resource(
-                "s3",
-                region_name=self.region_name,
-                use_ssl=self.use_ssl,
-                endpoint_url=public_endpoint,
-                config=self.client_config,
-                verify=self.verify,
-            )
-            self._public_connections.connection = connection
+            connection = self._public_connections.connection = self._resource(public_endpoint)
         return connection
 
 
