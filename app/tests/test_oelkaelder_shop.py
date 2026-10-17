@@ -102,3 +102,17 @@ def test_record_purchase_splits_evenly(make_resident: Callable) -> None:
 
     shares = sorted(s.share_ore for s in PurchaseShare.objects.filter(transaction=txn))
     assert shares == [500, 501]  # sums exactly to 1001
+
+
+@ON_TILL
+@pytest.mark.django_db
+def test_a_malformed_shopper_id_is_a_till_error_not_a_500(make_resident: Callable) -> None:
+    """The shopper ids were parsed before the try block, so a non-numeric one crashed the view."""
+    beer = Product.objects.create(name="Fadøl", price_ore=1000, active=True)
+    basket = json.dumps([{"product": beer.pk, "mode": "fixed", "qty": 1}])
+
+    resp = Client().post(reverse("oelkaelder:purchase"), {"shopper": ["abc"], "basket": basket}, follow=True)
+
+    assert resp.status_code == 200
+    assert [m.level_tag for m in resp.context["messages"]] == ["error"]
+    assert not PurchaseShare.objects.exists()

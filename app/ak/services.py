@@ -27,6 +27,14 @@ def _tag(year: int, month: int) -> str:
     return f"Månedlig vurdering {year}-{month:02d}"
 
 
+def ensure_schedule_row(month: int) -> AkMonthlyCharge:
+    """The schedule row for a calendar month, creating the historical default (active, 2 krydser) if it
+    is missing. `charge_previous_month` calls it, so the scheduled command and the page-load backstop
+    agree on what a missing row means whichever reaches the month first — it used to be "charge 2"
+    from the command but "delete every charge for the period" from the backstop."""
+    return AkMonthlyCharge.objects.get_or_create(month=month, defaults={"active": True, "krydser": 2})[0]
+
+
 @transaction.atomic
 def apply_monthly_charge(year: int, month: int) -> tuple[int, int]:
     """Reconcile the MONTHLY ledger for (year, month) against the calendar-month schedule and current
@@ -78,6 +86,7 @@ def charge_previous_month() -> tuple[int, int, int, int]:
     """Charge the month that just ended and record it as handled. Returns (year, month, written,
     removed). Used by the `ak_monthly_assessment` task and the lazy backstop below."""
     year, month = charge_period()
+    ensure_schedule_row(month)
     written, removed = apply_monthly_charge(year, month)
     state = AkAutoApply.get()
     state.year, state.month = year, month

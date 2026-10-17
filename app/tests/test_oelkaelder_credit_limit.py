@@ -196,3 +196,42 @@ def test_the_limit_is_not_editable_without_the_oelkaelder_role(
 
     assert response.status_code == 403
     assert PurchasePolicy.get().active is False
+
+
+# --- the till's colouring follows the same rule ------------------------------------------------------
+
+
+def _balance_div(html: str, shopper: Shopper) -> str:
+    row = html.split(f'data-rid="{shopper.resident_id}"')[1].split("</li>", maxsplit=1)[0]
+    return row.split('<div class="balance')[1].split(">")[0]
+
+
+@ON_TILL
+def test_the_till_does_not_paint_a_debtor_blocked_while_the_limit_is_off(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """The balance was styled `spaerret-balance` at `balance <= block_below_ore` whatever the policy
+    said, so with the limit off a debtor looked blocked although the server would sell to them."""
+    limit(active=False, kr=-100)
+    shopper = indebted(make_resident, "skyldner@gahk.dk", 15000)
+
+    cls = _balance_div(Client().get(reverse("oelkaelder:shop")).content.decode(), shopper)
+
+    assert "spaerret-balance" not in cls
+    assert "negativ" in cls
+
+
+@ON_TILL
+def test_the_till_paints_blocked_only_strictly_below_the_limit(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """The server blocks at `balance < limit`; the template used `<=`, so exactly -100 kr looked
+    blocked while the sale would go through."""
+    limit(active=True, kr=-100)
+    at_limit = indebted(make_resident, "praecis@gahk.dk", 10000)
+    below = indebted(make_resident, "under@gahk.dk", 10001)
+
+    html = Client().get(reverse("oelkaelder:shop")).content.decode()
+
+    assert "spaerret-balance" not in _balance_div(html, at_limit)
+    assert "spaerret-balance" in _balance_div(html, below)

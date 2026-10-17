@@ -63,12 +63,14 @@
       {% for s, balance, blocked in shopper_rows %}
         {% comment %}
           `blocked` comes from PurchasePolicy (off by default), not a hardcoded amount: the same
-          number also drives the interest threshold, and the two are separate policies.
+          number also drives the interest threshold, and the two are separate policies. The red
+          balance keys off `blocked` too, so it can never disagree with what the server will refuse
+          (only when the limit is on, and strictly below it).
         {% endcomment %}
         <li class="shopper {% if blocked %}inaktiv{% endif %}"
             data-id="{{ s.pk }}" data-rid="{{ s.resident_id }}" data-name="{{ s.resident.full_name }}">
           <div class="alumnumName">{{ s.resident.full_name }} <small>#{{ s.resident_id }}</small></div>
-          <div class="balance{% if balance <= block_below_ore %} spaerret-balance{% elif balance < 0 %} negativ{% endif %}">{{ balance|kr }}</div>
+          <div class="balance{% if blocked %} spaerret-balance{% elif balance < 0 %} negativ{% endif %}">{{ balance|kr }}</div>
           {% if blocked %}
             <div class="spaerret">Spærret &ndash; indbetal først</div>
           {% else %}
