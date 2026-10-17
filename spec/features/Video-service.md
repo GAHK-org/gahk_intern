@@ -62,8 +62,11 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   a thumbnail and a banner.
 - Publishing notifies everyone with access and the credited residents. The uploader is notified
   when processing has finished or failed.
-- Only the uploader and administrators see a draft. A draft never published is deleted 30 days after
-  the upload.
+- Only the uploader and administrators see a draft. A draft never published is deleted with its files
+  90 days after the day it was uploaded; the edit page and `Mine videoer` show the date.
+- Every Monday, each uploader is reminded of their drafts more than a week old, and the administrators
+  get an overview of all of them. The day before a draft is deleted, its uploader and the
+  administrators are warned. Administrators see every draft under `Kladder`.
 
 ## Series
 
@@ -94,6 +97,10 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   open proposals about it.
 - Administrators see the bin and can restore from it. A binned video is deleted with all its files 30
   days after it was binned.
+- A stored file no video, frame or open proposal refers to — an upload abandoned before it was saved,
+  or what a crashed encode left — is deleted once it is two days old. If that would be more than half
+  of everything stored, nothing is deleted and the error is logged: the database does not match the
+  storage.
 
 ## Decisions
 
@@ -101,7 +108,9 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 - Uploads bypass the app server: a multi-gigabyte film over dorm wifi cannot hold a web worker.
 - Two MP4 renditions and a quality switch rather than adaptive streaming: no extra player to ship,
   and nothing to break on a phone.
-- The time windows run from the upload, but a draft is its uploader's own until published.
+- The time windows run from the upload, but a draft is its uploader's own until published. Its
+  deletion is counted in calendar days, so it has one date that every reminder can name.
+- Reminders go out in the morning, not with the nightly sweeps: they are read by people.
 - Duplicates are checked across all videos, not only the uploader's: one film should exist once.
 - Encodes run one at a time on the media worker. One that stops reporting is retried, at most three
   times, and then marked failed for the uploader to see.

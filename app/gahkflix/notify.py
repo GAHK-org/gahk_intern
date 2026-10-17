@@ -1,10 +1,14 @@
 """What GAHKFlix tells people, through the notifications app. Wording and audiences only."""
 
 from collections.abc import Iterable
+from datetime import datetime, time, timedelta
 
 from django.urls import reverse
+from django.utils import timezone
+from django.utils.formats import date_format
 
 from notifications import categories
+from notifications.categories import Importance
 from notifications.services import everyone, notify
 from residents.models import Resident
 
@@ -94,4 +98,69 @@ def request_decided(change: ChangeRequest) -> None:
         title=f"Din anmodning om {what} af {change.target} er {verdict}",
         body=change.note,
         url=reverse("gahkflix:request", args=[change.pk]),
+    )
+
+
+def _day(video: Video) -> str:
+    return date_format(video.draft_deleted_on, "j. F")
+
+
+def _end_of(video: Video) -> datetime:
+    """A reminder about a draft means nothing once the draft is gone."""
+    return timezone.make_aware(datetime.combine(video.draft_deleted_on, time(6, 0)))
+
+
+def drafts_reminder(drafts: list[Video]) -> None:
+    """The weekly reminder to one uploader about their own unpublished drafts, first-deleted first."""
+    first = drafts[0]
+    if len(drafts) == 1:
+        title = f"{first.title} er ikke udgivet endnu"
+        url = _edit_url(first)
+    else:
+        title = f"Du har {len(drafts)} videoer, der ikke er udgivet"
+        url = reverse("gahkflix:mine")
+    notify(
+        [first.uploaded_by_id],
+        category=categories.GAHKFLIX_UPLOADS,
+        title=title,
+        body=f"Kladder slettes, hvis de ikke udgives. {first.title} slettes {_day(first)}.",
+        url=url,
+        expires_at=min(timezone.now() + timedelta(days=7), _end_of(first)),
+    )
+
+
+def drafts_overview(drafts: list[Video]) -> None:
+    """The weekly overview of every unpublished draft, for the administrators."""
+    first = drafts[0]
+    count = len(drafts)
+    notify(
+        access.administrators(),
+        category=categories.GAHKFLIX_DRAFTS,
+        title=f"{count} video{'er' if count != 1 else ''} på GAHKFlix er ikke udgivet",
+        body=f"Den første, {first.title} fra {first.uploaded_by.full_name}, slettes {_day(first)}.",
+        url=reverse("gahkflix:drafts"),
+        expires_at=min(timezone.now() + timedelta(days=7), _end_of(first)),
+    )
+
+
+def draft_expiring(video: Video) -> None:
+    """The day before a draft is deleted: its uploader, and the administrators."""
+    notify(
+        [video.uploaded_by_id],
+        category=categories.GAHKFLIX_UPLOADS,
+        title=f"{video.title} slettes i nat",
+        body="Kladden er ikke udgivet og slettes med alle sine filer. Udgiv den i dag, hvis den skal blive.",
+        url=_edit_url(video),
+        importance=Importance.HOEJ,
+        expires_at=_end_of(video),
+    )
+    notify(
+        access.administrators(),
+        category=categories.GAHKFLIX_DRAFTS,
+        title=f"Kladden {video.title} slettes i nat",
+        body=f"{video.uploaded_by.full_name} har ikke udgivet den.",
+        url=_edit_url(video),
+        importance=Importance.HOEJ,
+        exclude=video.uploaded_by_id,
+        expires_at=_end_of(video),
     )

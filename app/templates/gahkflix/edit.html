@@ -8,6 +8,9 @@
       {% if video.is_draft %}<span class="flix-state is-draft">Kladde</span>{% endif %}
       {% if video.is_published %}<a class="flix-btn flix-btn-small flix-btn-quiet" href="{% url 'gahkflix:detail' video.pk %}">Se videoen</a>{% endif %}
     </div>
+    {% if video.is_draft %}
+      <p class="muted" style="margin:-8px 0 18px;font-size:14px">Kun du og administratorerne kan se kladden. Den slettes med alle sine filer {{ video.draft_deleted_on|date:"j. F Y" }}, hvis den ikke er udgivet inden.</p>
+    {% endif %}
 
     {# --- Processing and publishing ------------------------------------------------------------ #}
     {% if processing %}

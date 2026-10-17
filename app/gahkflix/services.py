@@ -11,7 +11,7 @@ import random
 from collections import defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -30,7 +30,8 @@ from residents.models import Resident
 from . import encoding, notify
 from .models import (
     BIN_RETENTION,
-    DRAFT_TTL,
+    DRAFT_REMINDER_AFTER,
+    DRAFT_TTL_DAYS,
     FRAMES_PER_DRAW,
     REQUEST_TTL,
     TRENDING_WINDOW,
@@ -468,10 +469,15 @@ def set_picture(
     if kind not in PICTURE_KINDS:
         raise ValueError(kind)
     change = {kind: {"key": key, "frame": frame.pk if frame else None}}
-    if needs_approval:
-        return Outcome(proposal=propose(video, change, resident))
-    with transaction.atomic():
-        apply_changes(video, change, resident)
+    try:
+        if needs_approval:
+            return Outcome(proposal=propose(video, change, resident))
+        with transaction.atomic():
+            apply_changes(video, change, resident)
+    except Exception:
+        # Stored before anything referred to it, so nothing else will ever delete it.
+        get_video_storage().delete(key)
+        raise
     return Outcome(applied=True)
 
 
@@ -830,17 +836,26 @@ def delete_permanently(video: Video) -> None:
         _delete_keys(keys)
 
 
+def _start_of(day: date) -> datetime:
+    return timezone.make_aware(datetime.combine(day, time.min))
+
+
+def expired_drafts(today: date | None = None) -> QuerySet[Video]:
+    """Drafts whose deletion date (Video.draft_deleted_on) has come: uploaded DRAFT_TTL_DAYS or more
+    calendar days ago."""
+    today = today or timezone.localdate()
+    return Video.objects.drafts().filter(created_at__lt=_start_of(today - timedelta(days=DRAFT_TTL_DAYS - 1)))
+
+
 def purge(now: datetime | None = None) -> tuple[int, int]:
-    """The nightly sweep: binned videos after 30 days, and drafts never published after 30 days.
+    """The nightly sweep: binned videos after 30 days, and drafts never published by their deletion date.
 
     A draft whose file is still being processed is left for the next night.
     """
     moment = now or _now()
     binned = Video.objects.filter(deleted_at__lt=moment - BIN_RETENTION)
-    drafts = (
-        Video.objects.drafts()
-        .filter(created_at__lt=moment - DRAFT_TTL)
-        .exclude(files__state__in=(FileState.QUEUED, FileState.PROCESSING))
+    drafts = expired_drafts(timezone.localdate(moment)).exclude(
+        files__state__in=(FileState.QUEUED, FileState.PROCESSING)
     )
     counts = []
     for videos in (binned, drafts):
@@ -850,6 +865,122 @@ def purge(now: datetime | None = None) -> tuple[int, int]:
             count += 1
         counts.append(count)
     return counts[0], counts[1]
+
+
+# --- Reminders about drafts ---------------------------------------------------------------------
+
+
+def drafts_to_remind(now: datetime | None = None) -> list[Video]:
+    """Unpublished drafts more than a week old, the one to be deleted first first."""
+    moment = now or _now()
+    return list(
+        Video.objects.drafts()
+        .filter(created_at__lt=moment - DRAFT_REMINDER_AFTER)
+        .select_related("uploaded_by")
+        .order_by("created_at", "pk")
+    )
+
+
+def send_weekly_draft_reminders(now: datetime | None = None) -> int:
+    """Each uploader hears about their own unpublished drafts, the administrators about all of them."""
+    drafts = drafts_to_remind(now)
+    by_uploader: dict[int, list[Video]] = defaultdict(list)
+    for video in drafts:
+        by_uploader[video.uploaded_by_id].append(video)
+    for own in by_uploader.values():
+        notify.drafts_reminder(own)
+    if drafts:
+        notify.drafts_overview(drafts)
+    return len(drafts)
+
+
+def warn_expiring_drafts(now: datetime | None = None) -> int:
+    """The day before a draft is deleted, its uploader and the administrators are told — once."""
+    moment = now or _now()
+    tomorrow = timezone.localdate(moment) + timedelta(days=1)
+    expiring = expired_drafts(tomorrow).filter(draft_warned_at__isnull=True).select_related("uploaded_by")
+    count = 0
+    for video in expiring:
+        if Video.objects.filter(pk=video.pk, draft_warned_at__isnull=True).update(draft_warned_at=moment):
+            notify.draft_expiring(video)
+            count += 1
+    return count
+
+
+# --- Files nothing refers to --------------------------------------------------------------------
+
+# How old a file must be before the sweep may take it. An upload's token is good for a day, and a
+# file is stored before the row that refers to it is committed — an upload being saved, an encode
+# being finished — so anything younger may still be about to be claimed.
+ORPHAN_GRACE = timedelta(days=2)
+# More than this share of what is stored, unreferenced at once, is not abandoned uploads: it is a
+# database that does not belong to this bucket (a restore, a developer's laptop pointed at
+# production). The sweep then deletes nothing and says so.
+ORPHAN_SANITY_SHARE = 0.5
+ORPHAN_SANITY_MINIMUM = 20
+
+
+def referenced_keys() -> set[str]:
+    """Every stored file a GAHKFlix row refers to, including pictures proposed in open requests."""
+    keys: set[str] = set()
+    for fields in (
+        VideoFile.objects.values_list("original", "full_hd", "hd"),
+        Video.objects.values_list("thumbnail", "banner"),
+        VideoFrame.objects.values_list("image"),
+    ):
+        for row in fields:
+            keys.update(key for key in row if key)
+    for change in ChangeRequest.objects.filter(state=ChangeRequest.State.OPEN):
+        keys.update(_pending_pictures(change.changes))
+    return keys
+
+
+def _stored_files() -> list[tuple[str, datetime]]:
+    """(key, last modified) for everything under gahkflix/ in the storage."""
+    storage = s3_storage()
+    if storage is not None:
+        return [(obj.key, obj.last_modified) for obj in storage.bucket.objects.filter(Prefix="gahkflix/")]
+    root = Path(get_video_storage().path(""))
+    return [
+        (path.relative_to(root).as_posix(), datetime.fromtimestamp(path.stat().st_mtime, tz=UTC))
+        for path in (root / "gahkflix").rglob("*")
+        if path.is_file()
+    ]
+
+
+@dataclass
+class OrphanSweep:
+    stored: int
+    deleted: list[str]
+    refused: bool = False
+
+
+def sweep_orphans(now: datetime | None = None) -> OrphanSweep:
+    """Delete stored files no row refers to, once they are ORPHAN_GRACE old.
+
+    What leaves them: an upload that reached the bucket but whose tab was closed before it was
+    saved, and anything a crashed worker or a rolled-back transaction stored on its way.
+    """
+    cutoff = (now or _now()) - ORPHAN_GRACE
+    stored = _stored_files()
+    referenced = referenced_keys()
+    orphans = [key for key, modified in stored if key not in referenced and modified < cutoff]
+    if len(orphans) > ORPHAN_SANITY_MINIMUM and len(orphans) > len(stored) * ORPHAN_SANITY_SHARE:
+        logger.error(
+            "Refusing to delete %d of %d stored GAHKFlix files: that many unreferenced files means the "
+            "database does not match this bucket. Nothing was deleted.",
+            len(orphans),
+            len(stored),
+        )
+        return OrphanSweep(stored=len(stored), deleted=[], refused=True)
+    from . import cache
+
+    storage = get_video_storage()
+    for key in orphans:
+        storage.delete(key)
+        cache.discard(key)
+        logger.info("Deleted %s, which nothing refers to.", key)
+    return OrphanSweep(stored=len(stored), deleted=orphans)
 
 
 # --- Watching -----------------------------------------------------------------------------------

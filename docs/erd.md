@@ -749,6 +749,7 @@ erDiagram
         int banner_frame_id FK
         datetime deleted_at
         int deleted_by_id FK
+        datetime draft_warned_at
     }
 
     gahkflix_VideoFile {
@@ -1364,6 +1365,7 @@ erDiagram
         int banner_frame_id FK
         datetime deleted_at
         int deleted_by_id FK
+        datetime draft_warned_at
     }
 
     gahkflix_VideoFile {

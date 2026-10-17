@@ -121,6 +121,7 @@ GAHKFLIX_NEW = "gahkflix.new"
 GAHKFLIX_CAST = "gahkflix.cast"
 GAHKFLIX_UPLOADS = "gahkflix.uploads"
 GAHKFLIX_APPROVALS = "gahkflix.approvals"
+GAHKFLIX_DRAFTS = "gahkflix.drafts"
 
 # The prefix of a Den Hurtige room's category. One category per room, generated from the channel
 # registry below, so adding a channel gives it a settings toggle without touching this file.
@@ -192,7 +193,7 @@ def _build() -> tuple[Category, ...]:
             GAHKFLIX_UPLOADS,
             "Dine uploads og anmodninger",
             "gahkflix",
-            "Når din video er behandlet, og når en anmodning, du har sendt, er afgjort.",
+            "Når din video er behandlet, når en anmodning, du har sendt, er afgjort, og om kladder, du ikke har udgivet.",
         ),
         Category(
             GAHKFLIX_APPROVALS,
@@ -200,6 +201,12 @@ def _build() -> tuple[Category, ...]:
             "gahkflix",
             "Ændringer og sletninger, som en administrator skal godkende.",
             importance=Importance.HOEJ,
+        ),
+        Category(
+            GAHKFLIX_DRAFTS,
+            "Kladder, der ikke er udgivet",
+            "gahkflix",
+            "Ugentligt overblik over upublicerede kladder, og besked dagen før en slettes. Til administratorer.",
         ),
         Category(
             SYSTEM,

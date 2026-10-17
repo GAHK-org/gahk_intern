@@ -39,10 +39,14 @@ from .storage import get_video_storage
 REVISION_WINDOW = timedelta(days=7)
 DIRECT_DELETE_WINDOW = timedelta(days=7)
 EDIT_WINDOW = timedelta(days=30)
-# How long binned videos, open requests and never-published drafts are kept.
+# How long binned videos and open requests are kept.
 BIN_RETENTION = timedelta(days=30)
 REQUEST_TTL = timedelta(days=30)
-DRAFT_TTL = timedelta(days=30)
+# A draft never published is deleted this many days after the day it was uploaded. Counted in
+# calendar days, so its deletion date is one date anybody can be told (Video.draft_deleted_on).
+DRAFT_TTL_DAYS = 90
+# Drafts older than this are in the weekly reminders; nobody is nagged about one they just uploaded.
+DRAFT_REMINDER_AFTER = timedelta(days=7)
 # Approvals needed, from administrators other than the one who asked.
 DELETE_APPROVALS = 2
 EDIT_APPROVALS = 1
@@ -226,6 +230,9 @@ class Video(models.Model):
         on_delete=models.SET_NULL,
         related_name="gahkflix_deletions",
     )
+    # When the uploader and the administrators were warned, the day before, that this draft is
+    # about to be deleted — so the warning goes out once however often the job runs.
+    draft_warned_at = models.DateTimeField(null=True, blank=True)
 
     objects = VideoQuerySet.as_manager()
 
@@ -262,6 +269,11 @@ class Video(models.Model):
     @property
     def purge_at(self) -> datetime | None:
         return self.deleted_at + BIN_RETENTION if self.deleted_at else None
+
+    @property
+    def draft_deleted_on(self) -> date:
+        """The night a draft that is still unpublished is deleted (services.purge)."""
+        return timezone.localdate(self.created_at) + timedelta(days=DRAFT_TTL_DAYS)
 
     @property
     def display_date(self) -> date:

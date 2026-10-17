@@ -296,10 +296,21 @@ CELERY_BEAT_SCHEDULE = {
         "task": "gahkflix.tasks.recover_stalled",
         "schedule": crontab(minute="13-59/15"),
     },
-    # GAHKFlix's bin, abandoned drafts and expired requests, all after 30 days.
+    # GAHKFlix's bin and expired requests after 30 days, unpublished drafts after 90, and stored files
+    # nothing refers to (gahkflix.services.sweep_orphans).
     "gahkflix-housekeeping": {
         "task": "gahkflix.tasks.housekeeping",
         "schedule": crontab(minute=25, hour=4),
+    },
+    # Reminders about unpublished drafts go out in the day, not with the night's sweeps: they are
+    # read by people, and a push at 04:25 wakes them.
+    "gahkflix-weekly-draft-reminders": {
+        "task": "gahkflix.tasks.weekly_draft_reminders",
+        "schedule": crontab(minute=5, hour=10, day_of_week=1),
+    },
+    "gahkflix-warn-expiring-drafts": {
+        "task": "gahkflix.tasks.warn_expiring_drafts",
+        "schedule": crontab(minute=15, hour=10),
     },
     "purge-worker-job-logs": {
         "task": "core.tasks.purge_worker_job_logs",

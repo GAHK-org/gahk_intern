@@ -3,16 +3,18 @@ browsing and the pages. The encode tests run the real ffmpeg on a one-second cli
 
 import hashlib
 import json
+import os
 import secrets
 import subprocess
 from collections.abc import Callable, Iterator
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
 import imageio_ffmpeg
 import pytest
+from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
@@ -606,8 +608,8 @@ def test_the_nightly_sweep(
     Video.objects.filter(pk=binned.pk).update(deleted_at=timezone.now() - timedelta(days=31))
     recently_binned = make_video(admin, title="Ny")
     services.bin_video(recently_binned, admin)
-    abandoned = make_video(admin, title="Glemt kladde", published=False, days_old=31)
-    fresh_draft = make_video(admin, title="Kladde", published=False, days_old=2)
+    abandoned = make_video(admin, title="Glemt kladde", published=False, days_old=91)
+    fresh_draft = make_video(admin, title="Kladde", published=False, days_old=40)
     old = make_video(admin2, days_old=90)
     change = services.request_deletion(old, admin, "Dårlig lyd")
     ChangeRequest.objects.filter(pk=change.pk).update(created_at=timezone.now() - timedelta(days=31))
@@ -619,6 +621,118 @@ def test_the_nightly_sweep(
     change.refresh_from_db()
     assert change.state == ChangeRequest.State.EXPIRED
     assert notified(admin, categories.GAHKFLIX_UPLOADS)
+
+
+def test_a_draft_is_deleted_90_calendar_days_after_its_upload(admin: Resident) -> None:
+    video = make_video(admin, published=False)
+    today = timezone.localdate()
+    uploaded = timezone.make_aware(datetime.combine(today - timedelta(days=89), time(23, 59)))
+    Video.objects.filter(pk=video.pk).update(created_at=uploaded)
+    video.refresh_from_db()
+    assert video.draft_deleted_on == today + timedelta(days=1)
+    assert not services.expired_drafts(today).exists()
+    assert services.expired_drafts(today + timedelta(days=1)).get() == video
+    Video.objects.filter(pk=video.pk).update(created_at=uploaded - timedelta(days=1))  # 90 days ago
+    assert services.purge() == (0, 1)
+
+
+def test_weekly_reminders_about_unpublished_drafts(
+    admin: Resident, admin2: Resident, member: Resident, open_gate: None, plain: Resident
+) -> None:
+    make_video(plain, title="Første", published=False, days_old=20)
+    make_video(plain, title="Anden", published=False, days_old=10)
+    make_video(member, title="Eneste", published=False, days_old=8)
+    make_video(admin, title="Ny kladde", published=False, days_old=3)  # too fresh to nag about
+    make_video(admin, title="Udgivet", days_old=30)
+
+    assert services.send_weekly_draft_reminders() == 3
+
+    [own] = notified(plain, categories.GAHKFLIX_UPLOADS)
+    assert own.title == "Du har 2 videoer, der ikke er udgivet"
+    assert "Første" in own.body and own.url == reverse("gahkflix:mine")
+    [single] = notified(member, categories.GAHKFLIX_UPLOADS)
+    assert single.title == "Eneste er ikke udgivet endnu"
+    assert not notified(admin, categories.GAHKFLIX_UPLOADS)
+    for administrator in (admin, admin2, member):
+        [overview] = notified(administrator, categories.GAHKFLIX_DRAFTS)
+        assert overview.title == "3 videoer på GAHKFlix er ikke udgivet"
+        assert overview.url == reverse("gahkflix:drafts")
+    assert not notified(plain, categories.GAHKFLIX_DRAFTS)
+
+
+def test_a_last_warning_the_day_before_a_draft_is_deleted(
+    admin: Resident, admin2: Resident, member: Resident
+) -> None:
+    expiring = make_video(member, title="Sidste chance", published=False, days_old=89)
+    make_video(member, title="Masser af tid", published=False, days_old=60)
+
+    assert services.warn_expiring_drafts() == 1
+    assert services.warn_expiring_drafts() == 0  # once, however often the job runs
+
+    [mine] = notified(member, categories.GAHKFLIX_UPLOADS)
+    assert mine.title == "Sidste chance slettes i nat"
+    assert mine.url == reverse("gahkflix:edit", args=[expiring.pk])
+    for administrator in (admin, admin2):
+        [warning] = notified(administrator, categories.GAHKFLIX_DRAFTS)
+        assert warning.title == "Kladden Sidste chance slettes i nat"
+    assert not notified(member, categories.GAHKFLIX_DRAFTS)  # the uploader is told once, as uploader
+
+
+def test_the_drafts_page_is_for_administrators(admin: Resident, open_gate: None, plain: Resident) -> None:
+    make_video(plain, title="Halvfærdig", published=False, days_old=12)
+    page = client_for(admin).get(reverse("gahkflix:drafts"))
+    assert page.status_code == 200 and "Halvfærdig" in page.content.decode()
+    assert client_for(plain).get(reverse("gahkflix:drafts")).status_code == 403
+
+
+# --- Files nothing refers to --------------------------------------------------------------------
+
+
+def _store_aged(key: str, days: float) -> str:
+    storage = get_video_storage()
+    name = storage.save(key, ContentFile(b"x"))
+    moment = (timezone.now() - timedelta(days=days)).timestamp()
+    os.utime(storage.path(name), (moment, moment))
+    return name
+
+
+def test_files_nothing_refers_to_are_swept_after_two_days(admin: Resident, admin2: Resident) -> None:
+    video = make_video(admin, days_old=40)
+    abandoned = _store_aged("gahkflix/0b7d/0c1e/original/aflyst.mp4", days=3)
+    in_flight = _store_aged("gahkflix/0b7d/0c1f/original/undervejs.mp4", days=1)
+    frame = VideoFrame(video=video, at_seconds=1.0)
+    frame.image.save("frame.jpg", ContentFile(jpeg_bytes()), save=False)
+    frame.save()
+    proposed = services.store_picture(video, "banner", jpeg_bytes())
+    services.propose(video, {"banner": {"key": proposed, "frame": None}}, admin2)
+    keep = [video.thumbnail.name, video.banner.name, video.file.original.name, frame.image.name, proposed]  # type: ignore[union-attr]
+    storage = get_video_storage()
+    for name in keep:
+        os.utime(storage.path(name), (0, 0))  # old, but referenced
+
+    result = services.sweep_orphans()
+
+    assert result.deleted == [abandoned]
+    assert not storage.exists(abandoned)
+    assert storage.exists(in_flight)
+    assert all(storage.exists(name) for name in keep)
+
+
+def test_the_sweep_refuses_when_the_database_does_not_match_the_bucket(admin: Resident) -> None:
+    make_video(admin)
+    stray = [_store_aged(f"gahkflix/{index:04x}/original/fremmed.mp4", days=10) for index in range(25)]
+    result = services.sweep_orphans()
+    assert result.refused and result.deleted == []
+    assert all(get_video_storage().exists(name) for name in stray)
+
+
+def test_a_refused_picture_proposal_does_not_leave_its_file_behind(admin: Resident, admin2: Resident) -> None:
+    video = make_video(admin, days_old=40)
+    services.propose(video, {"title": "Andet navn"}, admin2)
+    key = services.store_picture(video, "thumbnail", jpeg_bytes())
+    with pytest.raises(ValidationError):
+        services.set_picture(video, "thumbnail", key, None, admin, needs_approval=True)
+    assert not get_video_storage().exists(key)
 
 
 # --- Watching -----------------------------------------------------------------------------------

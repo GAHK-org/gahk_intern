@@ -26,8 +26,9 @@
         <a href="{{ timeline_url }}"{% if request.path == timeline_url %} class="is-active"{% endif %}>Tidslinje</a>
         <a href="{{ mine_url }}"{% if request.path == mine_url %} class="is-active"{% endif %}>Mine videoer</a>
         {% if is_administrator %}
-          {% url 'gahkflix:approvals' as approvals_url %}{% url 'gahkflix:bin' as bin_url %}
+          {% url 'gahkflix:approvals' as approvals_url %}{% url 'gahkflix:bin' as bin_url %}{% url 'gahkflix:drafts' as drafts_url %}
           <a href="{{ approvals_url }}"{% if request.path == approvals_url %} class="is-active"{% endif %}>Godkendelser{% if open_requests %}<span class="flix-badge" title="{{ open_requests }} venter på dig">{{ open_requests }}</span>{% endif %}</a>
+          <a href="{{ drafts_url }}"{% if request.path == drafts_url %} class="is-active"{% endif %}>Kladder</a>
           <a href="{{ bin_url }}"{% if request.path == bin_url %} class="is-active"{% endif %}>Papirkurv</a>
         {% endif %}
       </nav>
