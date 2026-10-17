@@ -609,6 +609,8 @@ erDiagram
         string state
         string archive_key
         string error
+        json progress
+        datetime progressed_at
         datetime created_at
         datetime completed_at
     }
@@ -630,6 +632,8 @@ erDiagram
         string album_name
         bool merged
         string error
+        json progress
+        datetime progressed_at
         datetime created_at
         datetime completed_at
     }
@@ -1323,6 +1327,8 @@ erDiagram
         string state
         string archive_key
         string error
+        json progress
+        datetime progressed_at
         datetime created_at
         datetime completed_at
     }
@@ -1344,6 +1350,8 @@ erDiagram
         string album_name
         bool merged
         string error
+        json progress
+        datetime progressed_at
         datetime created_at
         datetime completed_at
     }
