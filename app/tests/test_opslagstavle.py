@@ -2177,3 +2177,14 @@ def test_the_event_field_is_absent_while_begivenheder_is_gated(
     client.post(BOARD + "opret", {"category": Category.NYT, "body": "Indhold", "event": event.pk})
 
     assert Notice.objects.get().event_id is None
+
+
+def test_the_authors_name_links_to_their_profile(client: Client, beboer: Resident, other: Resident) -> None:
+    from django.urls import reverse
+
+    make_notice(other)
+    client.force_login(beboer)
+
+    body = client.get(BOARD).content.decode()
+
+    assert f'href="{reverse("resident_profile", args=[other.pk])}">{other.full_name}</a>' in body
