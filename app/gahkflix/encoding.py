@@ -25,7 +25,7 @@ from pathlib import Path
 from tempfile import TemporaryFile
 
 from django.utils import timezone
-from PIL import Image, ImageOps, ImageStat
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps, ImageStat
 
 from photo_album.uploads import parse_video_creation_time
 
@@ -35,6 +35,10 @@ FULL_HD = (1920, 1080)
 HD = (1280, 720)
 THUMBNAIL_SIZE = (640, 360)
 BANNER_MAX_WIDTH = 1920
+# Pictures whose shape is in this range (4:3 up to cinema widescreen) are cropped to 16:9: they lose
+# a little at the edges. Anything narrower or wider — a phone held upright, a square, a panorama —
+# would lose most of itself, so it is shown whole on a blurred, enlarged copy of itself instead.
+CROP_ASPECTS = (1.3, 2.4)
 FRAME_MAX_WIDTH = 1920
 # A frame this flat (luminance standard deviation) is a fade, a black screen or a lens cap.
 BORING_FRAME_STDDEV = 8.0
@@ -297,25 +301,51 @@ def _jpeg(image: Image.Image) -> bytes:
     return output.getvalue()
 
 
-def _fit(image: Image.Image, aspect: tuple[int, int], max_width: int) -> Image.Image:
-    """Centre-cropped to `aspect`, then no wider than `max_width` — but never enlarged."""
-    width = min(image.width, round(image.height * aspect[0] / aspect[1]), max_width)
-    height = round(width * aspect[1] / aspect[0])
+def _crop(image: Image.Image, max_width: int) -> Image.Image:
+    """Centre-cropped to 16:9, then no wider than `max_width` — but never enlarged."""
+    width = min(image.width, round(image.height * 16 / 9), max_width)
+    height = round(width * 9 / 16)
     return ImageOps.fit(image, (max(width, 1), max(height, 1)), Image.Resampling.LANCZOS)
+
+
+def _blur_fill(image: Image.Image, max_width: int) -> Image.Image:
+    """The whole picture on a 16:9 canvas filled with a blurred, darkened copy of itself.
+
+    The picture itself is never enlarged, so the canvas is only as tall as it is (up to the size
+    asked for). The background is blurred small and then scaled up: cheaper than blurring the full
+    size, and the scaling smooths it further.
+    """
+    height = min(round(max_width * 9 / 16), image.height)
+    width = round(height * 16 / 9)
+    small = ImageOps.fit(image, (max(width // 8, 1), max(height // 8, 1)), Image.Resampling.BILINEAR)
+    background = small.filter(ImageFilter.GaussianBlur(4)).resize((width, height), Image.Resampling.BICUBIC)
+    background = ImageEnhance.Brightness(background).enhance(0.55)
+    picture = image.copy()
+    picture.thumbnail((width, height), Image.Resampling.LANCZOS)
+    background.paste(picture, ((width - picture.width) // 2, (height - picture.height) // 2))
+    return background
+
+
+def sixteen_nine(image: Image.Image, max_width: int) -> Image.Image:
+    """`image` as a 16:9 picture at most `max_width` wide: cropped if it is close to that shape, shown
+    whole on a blurred copy of itself if it is not (CROP_ASPECTS)."""
+    image = image.convert("RGB")
+    aspect = image.width / max(image.height, 1)
+    if CROP_ASPECTS[0] <= aspect <= CROP_ASPECTS[1]:
+        return _crop(image, max_width)
+    return _blur_fill(image, max_width)
 
 
 def thumbnail_jpeg(image_file: object) -> bytes:
     """A 16:9 card picture from any image (a frame, or a resident's own upload)."""
     with Image.open(image_file) as source:  # type: ignore[arg-type]
-        image = ImageOps.exif_transpose(source)
-        return _jpeg(_fit(image, (16, 9), THUMBNAIL_SIZE[0]))
+        return _jpeg(sixteen_nine(ImageOps.exif_transpose(source), THUMBNAIL_SIZE[0]))
 
 
 def banner_jpeg(image_file: object) -> bytes:
     """A 16:9 hero picture, up to Full HD wide."""
     with Image.open(image_file) as source:  # type: ignore[arg-type]
-        image = ImageOps.exif_transpose(source)
-        return _jpeg(_fit(image, (16, 9), BANNER_MAX_WIDTH))
+        return _jpeg(sixteen_nine(ImageOps.exif_transpose(source), BANNER_MAX_WIDTH))
 
 
 class Throttle:

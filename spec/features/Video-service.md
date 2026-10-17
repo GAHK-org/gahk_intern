@@ -37,7 +37,8 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   over the page and starts the intro at once; the address becomes the player's, and Back closes it.
   A link straight to the player may need a click on its play button first.
 - Every video has an HD rendition and, when the original is larger than HD, a Full HD one. Nothing is
-  upscaled, and portrait video stays portrait. The player switches quality without losing its place,
+  upscaled, cropped or stretched: a video keeps its own shape (portrait, 4:3, 15:9, …) and the player
+  shows it whole, with black bars where it does not fill the screen. The player switches quality without losing its place,
   remembers the choice in the browser, and starts phones in HD.
 - Playback resumes where the reader stopped, once they are 10 seconds in. Within the last 5% (at
   least 5 seconds) a video counts as watched and starts from the beginning next time.
@@ -62,7 +63,10 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   by hand, and then stays as set.
 - The thumbnail and the banner are picked from 10 random frames spread over the video, with black and
   flat frames redrawn; `Vis 10 nye billeder` draws another ten. The thumbnail may instead be the
-  uploader's own picture, cut to 16:9. A draft can only be published with a title, a finished file,
+  uploader's own picture.
+- Thumbnails and banners are 16:9. A picture close to that shape (from 4:3 to cinema widescreen) is
+  cropped to it; any other — a phone held upright, a square, a panorama — is shown whole on a
+  blurred, darkened copy of itself, so nothing important is cut off. A draft can only be published with a title, a finished file,
   a thumbnail and a banner.
 - Publishing notifies everyone with access and the credited residents. The uploader is notified
   when processing has finished or failed.

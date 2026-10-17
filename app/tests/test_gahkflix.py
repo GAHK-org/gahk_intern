@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterator
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import imageio_ffmpeg
 import pytest
@@ -38,6 +38,9 @@ from notifications.models import Notification
 from residents.models import Resident, Role
 
 from .media_samples import jpeg_bytes, mp4_bytes
+
+if TYPE_CHECKING:
+    from PIL import Image
 
 pytestmark = pytest.mark.django_db
 
@@ -285,13 +288,13 @@ def test_a_draft_is_published_once_it_has_pictures(
     assert not notified(admin, categories.GAHKFLIX_NEW)
 
 
-def test_custom_thumbnail_is_cut_to_16_by_9(admin: Resident) -> None:
+def test_custom_thumbnail_becomes_16_by_9(admin: Resident) -> None:
     video = make_video(admin, published=False)
     response = client_for(admin).post(
         reverse("gahkflix:choose_picture", args=[video.pk]),
         {
             "kind": "thumbnail",
-            "picture": SimpleUploadedFile("mig.jpg", jpeg_bytes(size=(400, 400)), "image/jpeg"),
+            "picture": SimpleUploadedFile("mig.jpg", jpeg_bytes(size=(800, 600)), "image/jpeg"),
         },
     )
     assert response.status_code == 302
@@ -299,7 +302,7 @@ def test_custom_thumbnail_is_cut_to_16_by_9(admin: Resident) -> None:
     from PIL import Image
 
     with video.thumbnail.open("rb") as stored, Image.open(stored) as image:
-        assert image.size == (400, 225)
+        assert image.size == (640, 360)  # 4:3, so cropped
     assert video.thumbnail_frame is None
 
 
@@ -1020,6 +1023,39 @@ def test_renditions_are_never_upscaled() -> None:
     assert [r.box for r in encoding.plan_renditions(1080, 1920)] == [(1080, 1920), (720, 1280)]
     assert [r.name for r in encoding.plan_renditions(1280, 720)] == ["hd"]
     assert [r.name for r in encoding.plan_renditions(640, 480)] == ["hd"]
+
+
+def _picture(size: tuple[int, int]) -> "Image.Image":
+    """Grey, with a red band across the top tenth: what a crop to 16:9 would cut off a portrait."""
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGB", size, (128, 128, 128))
+    ImageDraw.Draw(image).rectangle((0, 0, size[0], size[1] // 10), fill=(255, 0, 0))
+    return image
+
+
+def test_a_shape_close_to_16_by_9_is_cropped() -> None:
+    for size, expected in (
+        ((1800, 1080), (1800, 1012)),
+        ((1440, 1080), (1440, 810)),
+        ((2560, 1080), (1920, 1080)),
+    ):
+        picture = encoding.sixteen_nine(_picture(size), encoding.BANNER_MAX_WIDTH)
+        assert picture.size == expected, size
+
+
+def test_a_portrait_or_square_picture_is_kept_whole_on_a_blur() -> None:
+    banner = encoding.sixteen_nine(_picture((1080, 1920)), encoding.BANNER_MAX_WIDTH)
+    assert banner.size == (1920, 1080)
+    # The picture, scaled to the banner's height, sits in the middle with its red top intact ...
+    red, green, blue = banner.getpixel((960, 20))  # type: ignore[misc]
+    assert red > 200 and green < 60 and blue < 60
+    # ... beside a darkened blur of itself, not black bars.
+    left = banner.getpixel((40, 540))
+    assert left != (0, 0, 0) and left[0] < 128  # type: ignore[index]
+
+    small_square = encoding.sixteen_nine(_picture((300, 300)), encoding.THUMBNAIL_SIZE[0])
+    assert small_square.size == (533, 300)  # never enlarged: as tall as the picture itself
 
 
 def test_frame_times_are_spread_across_the_film() -> None:
