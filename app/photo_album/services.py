@@ -5,8 +5,10 @@ import hashlib
 import logging
 import subprocess  # nosec B404
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from functools import partial
 from io import BytesIO
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
@@ -391,7 +393,21 @@ def _existing_album(root: Album, folders: tuple[str, ...]) -> Album:
     return album
 
 
-def _extract(zip_archive: zipfile.ZipFile, member: zipfile.ZipInfo, target: Path, limit: int) -> str | None:
+# What an import reports its progress to: (step, done, total). See photo_album.progress.JobProgress.
+Progress = Callable[[str, int, int], None]
+
+
+def _no_progress(step: str, done: int, total: int) -> None:
+    pass
+
+
+def _extract(
+    zip_archive: zipfile.ZipFile,
+    member: zipfile.ZipInfo,
+    target: Path,
+    limit: int,
+    still_working: Callable[[], None] = lambda: None,
+) -> str | None:
     """Copy one member to disk, hashing it on the way. Returns the hash, or None if it is too big.
 
     The declared size in the ZIP header is checked first, but the stream is capped too: the header is
@@ -406,6 +422,7 @@ def _extract(zip_archive: zipfile.ZipFile, member: zipfile.ZipInfo, target: Path
                 return None
             digest.update(chunk)
             destination.write(chunk)
+            still_working()  # a multi-gigabyte video is one member, but not one moment
     return digest.hexdigest()
 
 
@@ -417,6 +434,7 @@ def _plan_import(
     *,
     merge: bool = False,
     root_name: str = "",
+    progress: Progress = _no_progress,
 ) -> _ImportPlan:
     """Pass one: read, check and extract everything, collecting EVERY reason to refuse the import."""
     plan = _ImportPlan(root_name=normalize_name(root_name or Path(archive_name or "album.zip").stem))
@@ -470,6 +488,7 @@ def _plan_import(
     folder_names: dict[tuple[str, ...], dict[str, str]] = {}  # parent folders -> lower(name) -> name
     seen: dict[tuple[tuple[str, ...], str], _ImportFile] = {}
     for index, (member, name, path) in enumerate(candidates):
+        progress("checking", index, len(candidates))
         folders = tuple(path.parts[len(prefix) : -1])
         if len(folders) > MAX_ALBUM_DEPTH:
             plan.errors.append(f"{name}: mapperne ligger dybere end {MAX_ALBUM_DEPTH + 1} niveauer.")
@@ -493,7 +512,13 @@ def _plan_import(
             continue
         target = workdir / f"{index}{Path(path.name).suffix.lower()}"
         try:
-            sha256 = _extract(zip_archive, member, target, maximum_bytes)
+            sha256 = _extract(
+                zip_archive,
+                member,
+                target,
+                maximum_bytes,
+                partial(progress, "checking", index, len(candidates)),
+            )
         except (OSError, RuntimeError, zipfile.BadZipFile, EOFError) as exc:
             plan.errors.append(f"{name}: kunne ikke læses ({exc}).")
             continue
@@ -543,6 +568,7 @@ def import_zip_album(
     lock: bool = False,
     merge: bool = False,
     root_name: str = "",
+    progress: Progress = _no_progress,
 ) -> ZipImport:
     """Import a ZIP as one album tree — completely, or not at all.
 
@@ -564,6 +590,8 @@ def import_zip_album(
     import does not descend through single folders. A retry of a few files from one sub-album would
     otherwise be named after that sub-album rather than merged into the album it belongs to.
 
+    `progress` is told how far each pass has got, as ("checking" | "storing", done, total).
+
     Returns the albums (root first), the log of files deliberately left out and how many were
     stored. Raises ValidationError carrying every error when the import is refused.
     """
@@ -578,19 +606,25 @@ def import_zip_album(
                     Path(directory),
                     merge=merge,
                     root_name=root_name,
+                    progress=progress,
                 )
         except zipfile.BadZipFile as exc:
             raise ValidationError("ZIP-filen kunne ikke læses.") from exc
         if plan.errors:
             raise ValidationError(plan.errors)
-        albums, added = _store_import(plan, folder, resident, lock=lock)
+        albums, added = _store_import(plan, folder, resident, lock=lock, progress=progress)
         return ZipImport(
             albums=albums, skipped=plan.skipped, added=added, merged=plan.existing_root is not None
         )
 
 
 def _store_import(
-    plan: _ImportPlan, folder: str, resident: Resident, *, lock: bool = False
+    plan: _ImportPlan,
+    folder: str,
+    resident: Resident,
+    *,
+    lock: bool = False,
+    progress: Progress = _no_progress,
 ) -> tuple[list[Album], int]:
     """Pass two: create the albums and store the files, all or nothing."""
     written: list[str] = []
@@ -603,7 +637,9 @@ def _store_import(
                 root = Album(folder=folder, name=plan.root_name)
                 root.save()
             albums[()] = root
-            for item in sorted(plan.files, key=lambda item: (len(item.folders), item.folders, item.member)):
+            files = sorted(plan.files, key=lambda item: (len(item.folders), item.folders, item.member))
+            for index, item in enumerate(files):
+                progress("storing", index, len(files))
                 for depth in range(1, len(item.folders) + 1):
                     key = tuple(name.lower() for name in item.folders[:depth])
                     if key not in albums:

@@ -1036,6 +1036,16 @@ def send(
     raise AssertionError("unreachable")
 
 
+PROGRESS_STEPS = {"checking": "checked", "storing": "stored"}
+
+
+def describe_progress(progress: dict[str, Any] | None) -> str:
+    """The server's progress as ' — stored 120 of 400 files', or '' while it reports none."""
+    if not progress or progress.get("step") not in PROGRESS_STEPS:
+        return ""
+    return f" — {PROGRESS_STEPS[progress['step']]} {progress['done']} of {progress['total']} files"
+
+
 def wait_for_job(server: Server, options: Options, status_url: str) -> dict[str, Any]:
     """Wait for the server to finish an import; returns its result, or raises if it was refused."""
     started = time.monotonic()
@@ -1049,6 +1059,7 @@ def wait_for_job(server: Server, options: Options, status_url: str) -> dict[str,
         elif time.monotonic() - last_report > 60:
             out.info(
                 f"    … still {job['state']} ({int(time.monotonic() - started) // 60} min)"
+                f"{describe_progress(job.get('progress'))}"
             )
             if (
                 job["state"] == "queued"
