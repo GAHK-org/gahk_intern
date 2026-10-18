@@ -42,6 +42,18 @@ from .models import Notification, NotificationPreference, NotificationSettings
 # The TTL of anything that does not bring its own. A Den Hurtige message brings its expiry.
 DEFAULT_TTL = datetime.timedelta(days=7)
 
+
+def _default_expiry(now: datetime.datetime) -> datetime.datetime:
+    """`now` plus DEFAULT_TTL as elapsed time: exactly seven times 24 hours.
+
+    `now` is local time (core.clock.current_datetime), and Python adds a timedelta to an aware
+    datetime on the wall clock. Across a change to or from summer time "+7 days" would then be an
+    hour more or less than seven days — longer than the TTL handed to the push service. In UTC there
+    is no such change.
+    """
+    return now.astimezone(datetime.UTC) + DEFAULT_TTL
+
+
 # How many actors a grouped row remembers. Only the first two are ever named; the rest are a count,
 # so keeping every liker of a popular post would grow the row for nothing.
 MAX_ACTORS = 50
@@ -171,7 +183,7 @@ def notify(
     cat = categories.get(category)
     level = Importance(importance or cat.importance)
     now = current_datetime()
-    expires_at = expires_at or now + DEFAULT_TTL
+    expires_at = expires_at or _default_expiry(now)
     if expires_at <= now:
         return 0
     ids = [rid for rid in _ids(recipients) if rid != exclude]
@@ -264,7 +276,7 @@ def notify_grouped(
     cat = categories.get(category)
     level = Importance(importance or cat.importance)
     now = current_datetime()
-    expires_at = expires_at or now + DEFAULT_TTL
+    expires_at = expires_at or _default_expiry(now)
     if expires_at <= now:
         return None
 

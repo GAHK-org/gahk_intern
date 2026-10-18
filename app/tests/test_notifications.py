@@ -448,6 +448,34 @@ def test_an_expired_row_leaves_the_lists_at_once(make_resident: Callable[..., Re
 
 
 @pytest.mark.parametrize(
+    "local_now",
+    [
+        datetime.datetime(2026, 10, 20, 12, 0),  # the week before winter time (25 October 2026)
+        datetime.datetime(2027, 3, 24, 12, 0),  # the week before summer time (28 March 2027)
+    ],
+)
+def test_the_ttl_is_seven_days_across_a_change_of_clock(
+    pushes: Recorded,
+    two: tuple[Resident, Resident],
+    monkeypatch: pytest.MonkeyPatch,
+    local_now: datetime.datetime,
+) -> None:
+    """Seven days of elapsed time, not seven days on the wall clock, which are an hour off across
+    a change to or from summer time. Pinned to such weeks, so it does not depend on today's date."""
+    a, b = two
+    now = timezone.make_aware(local_now)
+    monkeypatch.setattr(services, "current_datetime", lambda: now)
+
+    services.notify([a.pk], category=categories.GENERAL, title="t", url=TARGET)
+    services.notify_grouped(
+        b.pk, category=categories.POSTS_LIKES, group_key="g", actor=a, verb="reagerede", url=TARGET
+    )
+
+    for row in Notification.objects.all():
+        assert row.expires_at - now == datetime.timedelta(days=7)
+
+
+@pytest.mark.parametrize(
     ("names", "expected"),
     [
         (["Anders"], "Anders reagerede"),
