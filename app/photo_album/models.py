@@ -23,21 +23,29 @@ from .storage import get_photo_album_storage
 
 ALBUM_DOWNLOAD_RETENTION = timedelta(days=7)
 
-# How long a ZIP build may sit in QUEUED or BUILDING before it is presumed dead.
+# When a background ZIP job — a download being built, an import being unpacked — is presumed dead.
 #
 # The task marks BUILDING before the work and clears it on success or on a caught exception — but a
-# worker killed outright (time limit, OOM, redeploy) catches nothing, and the row then kept
+# worker killed outright (OOM, hard time limit, redeploy) catches nothing, and the row then kept
 # `completed_at` NULL forever. That is not merely untidy: `purge_expired_downloads` filters on
 # `completed_at`, so the row was never collected either, and photo_album/detail.html renders the
 # "Download klargøres …" branch with a five-second reload in it — so that resident's album page
-# reloaded itself every five seconds, indefinitely. `fail_stalled_downloads` closes it.
+# reloaded itself every five seconds, indefinitely. An import stuck the same way kept the Dropbox
+# script waiting on "building" for good. `fail_stalled_downloads` and `fail_stalled_imports` close
+# them.
 #
-# An hour, to sit safely outside MEDIA_TASK_TIME_LIMIT: a build still legitimately running must
-# never be declared dead underneath itself.
-ALBUM_DOWNLOAD_STALE_AFTER = timedelta(hours=1)
+# Measured from the job's last PROGRESS, not from when it started: a running job records how far it
+# has got (photo_album.progress.JobProgress) at least every PROGRESS_WRITE_INTERVAL while it works,
+# so a big album that honestly takes hours is never declared dead underneath itself, while a job
+# whose worker is gone is noticed a quarter of an hour later rather than at some fixed age.
+JOB_STALLED_AFTER = timedelta(minutes=15)
+# A QUEUED job has no progress to measure, and waiting is not a symptom: the media queue runs one
+# job at a time, so a ZIP can honestly queue behind a run of hour-long video encodes. Its message
+# is only lost if a worker was killed after taking it off the broker and before starting it.
+JOB_QUEUED_TOO_LONG = timedelta(hours=12)
 
-# How long one worker's claim on a media row keeps others off it. Same reasoning as the constant
-# above and deliberately the same hour: it has to outlast the longest honest transcode, because
+# How long one worker's claim on a media row keeps others off it. An hour, the transcode's time
+# limit (tasks.MEDIA_TASK_TIME_LIMIT): it has to outlast the longest honest transcode, because
 # expiring early is what would let a second worker in beside the first.
 DERIVATIVE_CLAIM_TTL = timedelta(hours=1)
 
@@ -616,6 +624,10 @@ class AlbumDownload(models.Model):
     )
     archive_key = models.CharField(max_length=255, blank=True)
     error = models.CharField(max_length=255, blank=True)
+    # How far the worker has got ({"step", "done", "total"}) and when it last moved on — what
+    # `fail_stalled_*` tells a slow job from a dead one by. See JOB_STALLED_AFTER.
+    progress = models.JSONField(default=dict, blank=True)
+    progressed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 
@@ -662,6 +674,10 @@ class AlbumImport(models.Model):
     # Whether it did: the archive was added to an album that already existed rather than creating it.
     merged = models.BooleanField(default=False)
     error = models.CharField(max_length=255, blank=True)
+    # How far the worker has got ({"step", "done", "total"}) and when it last moved on — what
+    # `fail_stalled_*` tells a slow job from a dead one by. See JOB_STALLED_AFTER.
+    progress = models.JSONField(default=dict, blank=True)
+    progressed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 

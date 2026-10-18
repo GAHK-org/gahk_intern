@@ -867,6 +867,8 @@ def import_zip_status(request: HttpRequest, token: str) -> JsonResponse:
             "skipped": album_import.skipped,
             "locked": bool(albums) and albums[0].is_locked(),
             "merged": album_import.merged,
+            # {"step": "reading" | "checking" | "storing", "done", "total"} while it runs; {} before.
+            "progress": album_import.progress if album_import.state == AlbumImportState.BUILDING else {},
             "albums": [
                 {
                     "id": album.pk,
