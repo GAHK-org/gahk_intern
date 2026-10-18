@@ -116,6 +116,8 @@
           <label>Fornavn</label><input type="text" name="first_name" value="{{ new_draft.first_name|default:"" }}">
           <label>Efternavn</label><input type="text" name="last_name" value="{{ new_draft.last_name|default:"" }}">
           <label>E-mail</label><input type="email" name="email" value="{{ new_draft.email|default:"" }}">
+          <label>Telefon <span class="muted">(valgfri)</span></label><input type="tel" name="phone" maxlength="40" value="{{ new_draft.phone|default:"" }}">
+          <label>Fødselsdag <span class="muted">(valgfri)</span></label><input type="date" name="birthday" value="{{ new_draft.birthday|default:"" }}">
           <label>Værelse</label>
           <select name="room"><option value="">— vælg —</option>{% for room in rooms %}<option value="{{ room.id }}" {% if new_draft.room == room.id %}selected{% endif %}>{{ room.number|stringformat:"03d" }}</option>{% endfor %}</select>
           <label>Embedsgruppe</label>
