@@ -8,6 +8,7 @@ Gated to indstilling (+ admin/superuser).
 """
 
 from collections.abc import Callable
+from datetime import date
 
 import pytest
 from django.core import mail
@@ -180,6 +181,50 @@ def test_add_new_resident(make_resident: Callable, groups: dict[str, Room | Work
     assert RoleAssignment.objects.filter(resident=r, role=Role.INDSTILLING, year=ny, month=nm).exists()
     # a welcome email is sent to the new resident
     assert any(m.to == ["nina@gahk.dk"] for m in mail.outbox)
+
+
+@pytest.mark.django_db
+def test_add_new_resident_with_phone_and_birthday(
+    make_resident: Callable, groups: dict[str, Room | Workgroup | Cleaning]
+) -> None:
+    c, _ind, _target = _setup(make_resident, groups)
+    c.post(
+        URL,
+        {
+            "action": "add_new",
+            "first_name": "Nina",
+            "last_name": "Ny",
+            "email": "nina@gahk.dk",
+            "phone": " 12 34 56 78 ",
+            "birthday": "2004-05-17",
+            "room": groups["r3"].id,
+        },
+    )
+    r = Resident.objects.get(email="nina@gahk.dk")
+    assert r.phone == "12 34 56 78"
+    assert r.birthday == date(2004, 5, 17)
+
+
+@pytest.mark.django_db
+def test_add_new_rejects_an_invalid_birthday_and_keeps_the_draft(
+    make_resident: Callable, groups: dict[str, Room | Workgroup | Cleaning]
+) -> None:
+    c, _ind, _target = _setup(make_resident, groups)
+    resp = c.post(
+        URL,
+        {
+            "action": "add_new",
+            "first_name": "Nina",
+            "last_name": "Ny",
+            "email": "nina@gahk.dk",
+            "phone": "12345678",
+            "birthday": "2999-01-01",
+            "room": groups["r3"].id,
+        },
+    )
+    assert not Resident.objects.filter(email="nina@gahk.dk").exists()
+    assert resp.context["new_draft"]["phone"] == "12345678"
+    assert resp.context["new_draft"]["birthday"] == "2999-01-01"
 
 
 @pytest.mark.django_db
