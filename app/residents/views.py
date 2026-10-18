@@ -42,11 +42,11 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     """Internal landing page (F-013). Shows the member's active-month roles and the shared
     WiFi/calendar info — now gated by authentication (not campus IP) with secrets read from env.
     Uses effective roles so the preview override is reflected here too."""
-    # Backstop for the ak_monthly_assessment cron job (DEPLOY.md §4b): books this month's AK
+    # Backstop for the ak_monthly_assessment cron job (DEPLOY.md §4b): charges last month's AK
     # deduction if the schedule missed it. Cheap and idempotent; see ak.services.
-    from ak.services import ensure_active_month_applied
+    from ak.services import ensure_previous_month_charged
 
-    ensure_active_month_applied()
+    ensure_previous_month_charged()
     year, month = active_period()
     roles = sorted(effective_roles(request))
     return render(

@@ -194,7 +194,7 @@ idempotent, so a retry or an overlapping run is harmless.
 | `opslagstavle.tasks.purge_orphaned_images` | Daily 03:40 | Removes unused compose-toolbar image uploads. |
 | `reparationer.tasks.archive_finished_repairs` | Daily 03:50 | Archives completed repairs after 30 days. |
 | `events.tasks.purge_expired_events` | Daily 04:00 | Enforces event retention. |
-| `ak.tasks.apply_monthly_assessment` | Day 1, 04:10 | Books the monthly AK deduction. |
+| `ak.tasks.apply_monthly_assessment` | Day 1, 04:10 | Books the AK deduction for the month that just ended, from that month's final alumneliste. A month is charged once it is over, not as it starts: the list in effect on the 1st is still the one copied forward, so charging then kept a −2 on residents removed later in the month. |
 | `photo_album.tasks.purge_expired_downloads` | Daily 04:20 | Removes album ZIPs and their rows seven days after they were built. |
 | `photo_album.tasks.purge_expired_media` | Daily 04:30 | Removes expired pending and binned photo-album media. **04:30, not 04:10** — it collided with the AK assessment on the 1st of every month. |
 | `core.tasks.purge_worker_job_logs` | Daily 04:40 | Deletes the stored per-job logs (`core.WorkerJobLog`, shown on `/admin/worker-jobs`) of successful jobs after 30 days. Logs of other jobs (failed, revoked, unfinished) are kept, except that per task and state only the newest 1000 are safe: older ones beyond them go once 60 days old. |
@@ -204,7 +204,7 @@ idempotent, so a retry or an overlapping run is harmless.
 | `photo_album.tasks.backfill_media_hashes` | Daily 02:40 | Hashes originals stored before SHA-256 hashing existed, for at most 20 minutes a night, so duplicate detection knows them too. Replaces the manual `backfill_photo_album_hashes` deploy step; once every row is hashed it finds nothing to do. |
 | `photo_album.tasks.fail_stalled_downloads` | Hourly, :05 | Closes out ZIP builds no worker came back to. A worker killed outright runs no handler, so its row stays `BUILDING` — never collected, and the album page keeps reloading itself every five seconds waiting for it. |
 | `events.tasks.remind_rsvp_deadlines` | Daily 17:00 | Sends due RSVP reminders. |
-| `oelkaelder.tasks.send_monthly_statements` | Day 1, 06:10 | Mails every active ølkælder account its previous calendar month. **Sends real mail to residents** — the only task here that does. |
+| `oelkaelder.tasks.send_monthly_statements` | Day 1, 06:10 | Mails every active ølkælder account its previous calendar month, like the AK charge above. **Sends real mail to residents** — the only task here that does. |
 | `core.tasks.send_admin_dummy_notification` | Daily 08:00 and 16:00 | **Temporary, and deliberately still here.** Mails every administrator and superuser twice a day to prove Beat and the worker are alive in production. Delete this entry and `core.tasks.send_admin_dummy_notification` once that is confirmed — nothing else depends on it. |
 
 **Delete the matching Coolify Scheduled Tasks in the same deploy, not afterwards.** Coolify runs
@@ -239,8 +239,8 @@ an immediate cost. Opslagstavlen now deletes no posts at all, and its sweep affe
 can see — a missed night leaves a few unreferenced files in the bucket. Putting that on every board
 request would be a bad trade. Don't "fix" the inconsistency.
 
-**These do not replace the lazy guards, and the lazy guards should stay.** `ensure_active_month_applied()`
-costs two indexed single-row queries on three pages (measured), and it is the only thing that makes a
+**These do not replace the lazy guards, and the lazy guards should stay.** `ensure_previous_month_charged()`
+costs one single-row query on three pages, and it is the only thing that makes a
 missed cron self-healing. Cron's failure mode is silence — a bad expression, a container restarted at
 the wrong minute, a task disabled during debugging — and a skipped `ak_monthly_assessment` means every
 resident's balance is quietly wrong until someone notices. The lazy check turns that into "runs a few
