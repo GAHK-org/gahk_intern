@@ -72,6 +72,8 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "stats.middleware.FrontPageVisitCounterMiddleware",
+    # DEBUG only: presigned URLs follow the host the page was opened on, so a phone on the LAN works.
+    "core.middleware.PresignForRequestHost",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -415,7 +417,8 @@ S3_ADDRESSING_STYLE = os.environ.get("S3_ADDRESSING_STYLE", "path" if DEBUG else
 # the wrong host is not cosmetic — SigV4 signs the Host header, so the bucket 403s a request whose
 # Host does not match the one it was signed for, and rewriting the URL string afterwards cannot fix
 # that either. `task dev:local` and production both leave this unset, since S3_ENDPOINT_URL there is
-# already reachable from wherever the browser runs.
+# already reachable from wherever the browser runs. In DEBUG, a page opened from another machine on
+# the network signs for that machine's view of this host instead (core.storage.presigning_endpoint).
 S3_PUBLIC_ENDPOINT_URL = os.environ.get("S3_PUBLIC_ENDPOINT_URL", "") or S3_ENDPOINT_URL
 
 # botocore >= 1.36 defaults to sending x-amz-checksum-crc32 with aws-chunked framing on every PUT,

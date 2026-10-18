@@ -50,8 +50,9 @@ what it replaces.
 """
 
 import threading
+from contextvars import ContextVar
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from django.conf import settings
 from django.utils.encoding import filepath_to_uri
@@ -70,6 +71,32 @@ from storages.utils import clean_name
 # database dump — in a bucket that, by design (see DEPLOY.md), also holds the backups. The prefix is
 # what makes one bucket safe to share.
 MEDIA_PREFIX = "media"
+
+
+# The host this request came in on — set by core.middleware.PresignForRequestHost, in DEBUG only.
+request_host: ContextVar[str] = ContextVar("request_host", default="")
+
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+
+
+def presigning_endpoint(configured: str) -> str:
+    """The endpoint to sign a browser's URL for: `configured`, except in local development when it
+    names the loopback and the page was opened from another machine.
+
+    `task dev` points S3_PUBLIC_ENDPOINT_URL at http://localhost:9000, which is right for a browser
+    on the developer's own machine. A phone on the same network, opening the site at the machine's
+    LAN address, would be sent to localhost — the phone itself — and every picture, stream and
+    upload would fail. So it gets the same scheme and port on the host it opened the page with: the
+    S3 port is published on every interface (docker-compose.yml). A presigned URL is only good for
+    the host it was signed for, which is why this has to happen at signing time.
+    """
+    host = request_host.get()
+    if not settings.DEBUG or not host or host in _LOOPBACK_HOSTS:
+        return configured
+    parts = urlsplit(configured)
+    if parts.hostname not in _LOOPBACK_HOSTS:
+        return configured
+    return urlunsplit(parts._replace(netloc=f"{host}:{parts.port}" if parts.port else host))
 
 
 class PublicEndpointS3Storage(S3Storage):
@@ -137,12 +164,14 @@ class PublicEndpointS3Storage(S3Storage):
 
     @property
     def public_connection(self) -> Any:  # noqa: ANN401 — a boto3 S3 ServiceResource
-        public_endpoint = settings.S3_PUBLIC_ENDPOINT_URL or self.endpoint_url
+        public_endpoint = presigning_endpoint(settings.S3_PUBLIC_ENDPOINT_URL or self.endpoint_url)
         if public_endpoint == self.endpoint_url:
             return self.connection
-        connection = getattr(self._public_connections, "connection", None)
+        # One per endpoint: in development the same thread may sign for localhost and a LAN address.
+        by_endpoint: dict[str, Any] = self._public_connections.__dict__.setdefault("by_endpoint", {})
+        connection = by_endpoint.get(public_endpoint)
         if connection is None:
-            connection = self._public_connections.connection = self._resource(public_endpoint)
+            connection = by_endpoint[public_endpoint] = self._resource(public_endpoint)
         return connection
 
 
