@@ -411,7 +411,7 @@ def send_deadline_reminder(event: Event, now: datetime.datetime | None = None) -
 def ensure_due_reminders_sent() -> None:
     """Backstop for the remind_rsvp_deadlines cron, called from the events list page.
 
-    The AK idiom (residents.views calls ensure_active_month_applied the same way), and this feature
+    The AK idiom (residents.views calls ensure_previous_month_charged the same way), and this feature
     earns one where opslagstavlen's purge deliberately does not: a missed purge is wrong for nobody
     for months, while a missed reminder is UNRECOVERABLE — the deadline passes, the event is
     under-attended, and nobody ever learns why. DEPLOY.md draws exactly that line.

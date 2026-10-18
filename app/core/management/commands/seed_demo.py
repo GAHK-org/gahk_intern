@@ -462,10 +462,11 @@ class Command(BaseCommand):
 
         # The 12-month schedule rows are created by the migration; make sure they exist (belt-and-braces
         # for a --fresh run) then apply the monthly deduction through the real service for the recent
-        # months, so demo MONTHLY entries respect alumneliste membership.
+        # months that are over (the current one is charged on the 1st of the next), so demo MONTHLY
+        # entries respect alumneliste membership.
         for month in range(1, 13):
             AkMonthlyCharge.objects.get_or_create(month=month, defaults={"active": True, "krydser": 2})
-        for y, m in self._iter_recent_months(3):
+        for y, m in self._iter_recent_months(3)[:-1]:
             apply_monthly_charge(y, m)
 
     # ----------------------------------------------------------- ølkælder
