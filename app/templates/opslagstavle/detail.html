@@ -29,7 +29,7 @@
           comment, and since the ✕ is invisible until hover, what a reader saw was a blank gap.
         {% endcomment %}
         <div class="reply-head">
-          <span class="reply-name">{{ comment.author.full_name }}</span>
+          <a class="reply-name author-link" href="{% url 'resident_profile' comment.author_id %}">{{ comment.author.full_name }}</a>
           {% if comment.author_embedsgruppe %}
             <span class="chip chip-embedsgruppe">{{ comment.author_embedsgruppe }}</span>
           {% endif %}
@@ -87,7 +87,7 @@
       <label class="reply-attach" for="id_comment_image_{{ notice.pk }}" title="Vedhæft billede">
         <span aria-hidden="true">📎</span>
         <span class="sr-only">Vedhæft billede til kommentaren</span>
-        <input type="file" id="id_comment_image_{{ notice.pk }}" name="image" accept="image/*">
+        <input type="file" id="id_comment_image_{{ notice.pk }}" name="image" accept="image/*,.heic,.heif">
       </label>
 
       {% for field in comment_form %}

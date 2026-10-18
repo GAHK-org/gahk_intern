@@ -80,9 +80,9 @@ def access_required(view: View) -> View:
     return _GATE.required(view)
 
 
-def allowed_subscribers(qs: QuerySet) -> QuerySet:
-    """Narrow a push audience to devices whose owner can actually open the feature."""
-    return _GATE.allowed_subscribers(qs)
+def allowed_residents(qs: QuerySet) -> QuerySet:
+    """Narrow a notification audience to residents who can actually open the feature."""
+    return _GATE.allowed_residents(qs)
 
 
 def visible_to(resident: Resident) -> EventQuerySet:

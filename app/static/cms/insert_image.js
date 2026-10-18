@@ -70,7 +70,7 @@
     picker.appendChild(el("option", { value: "", textContent: "— vælg billede —" }));
 
     var insert = el("button", { type: "button", textContent: "Indsæt billede" });
-    var file = el("input", { type: "file", accept: "image/jpeg,image/png,image/gif,image/webp" });
+    var file = el("input", { type: "file", accept: "image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif,.heic,.heif" });
     file.style.display = "none";
     var upload = el("button", { type: "button", textContent: "📎 Upload og indsæt" });
     var status = el("span");

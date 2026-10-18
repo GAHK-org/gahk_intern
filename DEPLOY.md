@@ -99,7 +99,10 @@ Fresh repo (do **not** import the legacy history — it contains plaintext secre
    even after the object-storage migration in §4c.
    The **`photo-album-cache` volume** (`/app/cache`, `PHOTO_ALBUM_CACHE_DIR`) holds local copies of
    photo-album thumbnails and HD images, at most ~5 GB (`PHOTO_ALBUM_CACHE_THUMBNAIL_MB`,
-   `PHOTO_ALBUM_CACHE_HD_MB`). It is only a cache: losing it costs a cold start, nothing else.
+   `PHOTO_ALBUM_CACHE_HD_MB`). It also holds, under `attachments/`, the photos on live Den Hurtige
+   messages and recent opslag (`MEDIA_CACHE_DIR`, defaulting to the same directory;
+   `MEDIA_CACHE_ATTACHMENTS_MB`, default 2 GB). It is only a cache: losing it costs a cold start,
+   nothing else.
 4. `web` runs `migrate` on start then uvicorn; Coolify/Traefik terminates TLS and proxies HTTP and WebSocket traffic to :8000.
 5. `Scaleway` is the fallback if you prefer a first-party managed Postgres.
 
@@ -137,7 +140,7 @@ Coolify does not build anything. The flow is:
 2. On the server, `gahk-autodeploy.timer` runs `deploy/autodeploy/gahk-autodeploy.sh` every three
    minutes. It pulls `:main`; when the image differs from the last one it deployed, it calls the
    **local** Coolify API to redeploy the app, and Coolify's `docker compose up` recreates `web`,
-   `worker` and `beat` on the new image (the migration gate in `docker-compose.prod.yml` still applies).
+   `worker`, `worker-media` and `beat` on the new image (the migration gate in `docker-compose.prod.yml` still applies).
 
 **Why pull, not a webhook from CI:** a webhook means a Coolify token in GitHub's secrets, i.e. a
 credential for the server held by GitHub. This way GitHub holds nothing for the server; the Coolify
@@ -179,6 +182,17 @@ Coolify by hand.
 
 ### 4b. Scheduled tasks (Celery Beat → worker)
 
+**Two workers, two queues.** `CELERY_TASK_ROUTES` in `config/settings.py` sends the jobs that read
+or write whole media files — video encodes, album ZIP imports and downloads, the hash backfill — to
+the `media` queue, run by `worker-media`, one job at a time. Everything else (mail, the sweeps below)
+stays on the default `celery` queue, run by `worker`, so a quick job never waits behind an hour-long
+encode. Photo thumbnails are queued on `thumbnails`, which `worker` also takes, by turns with
+`celery` — the broker (kombu's SQLAlchemy transport) has no message priorities, but a worker on two
+queues takes one from each in rotation, so a mail sent during an import of 400 photos waits for one
+thumbnail rather than all 400. One at a time on `media` is also a memory budget: an import, a ZIP build and an ffmpeg encode
+side by side ran the box out of memory (October 2026). To give either more, raise its
+`--concurrency` in `docker-compose.prod.yml` — and watch `free -m` when you do.
+
 Celery Beat stores schedules in PostgreSQL and publishes work to the Celery worker. The schedules
 are declared in `config/settings.py`, using the `Europe/Copenhagen` timezone. The worker-job admin
 page at `/admin/worker-jobs` shows active schedules and recent execution history, and each job's
@@ -191,7 +205,7 @@ idempotent, so a retry or an overlapping run is harmless.
 | `opslagstavle.tasks.purge_orphaned_images` | Daily 03:40 | Removes unused compose-toolbar image uploads. |
 | `reparationer.tasks.archive_finished_repairs` | Daily 03:50 | Archives completed repairs after 30 days. |
 | `events.tasks.purge_expired_events` | Daily 04:00 | Enforces event retention. |
-| `ak.tasks.apply_monthly_assessment` | Day 1, 04:10 | Books the monthly AK deduction. |
+| `ak.tasks.apply_monthly_assessment` | Day 1, 04:10 | Books the AK deduction for the month that just ended, from that month's final alumneliste. A month is charged once it is over, not as it starts: the list in effect on the 1st is still the one copied forward, so charging then kept a −2 on residents removed later in the month. |
 | `photo_album.tasks.purge_expired_downloads` | Daily 04:20 | Removes album ZIPs and their rows seven days after they were built. |
 | `photo_album.tasks.purge_expired_media` | Daily 04:30 | Removes expired pending and binned photo-album media. **04:30, not 04:10** — it collided with the AK assessment on the 1st of every month. |
 | `core.tasks.purge_worker_job_logs` | Daily 04:40 | Deletes the stored per-job logs (`core.WorkerJobLog`, shown on `/admin/worker-jobs`) of successful jobs after 30 days. Logs of other jobs (failed, revoked, unfinished) are kept, except that per task and state only the newest 1000 are safe: older ones beyond them go once 60 days old. |
@@ -199,9 +213,10 @@ idempotent, so a retry or an overlapping run is harmless.
 | `core.tasks.purge_delivered_broker_messages` | Daily 04:50 | Deletes acknowledged rows from `kombu_message`. The SQLAlchemy transport never removes a message it has delivered — it only flips `visible` — so without this the broker table is pure accumulation. Runs last, so one night's sweeps stay visible while they are still running. |
 | `photo_album.tasks.process_pending_media` | Daily 02:00 | Recovery sweep for derivative builds whose queued task was lost. |
 | `photo_album.tasks.backfill_media_hashes` | Daily 02:40 | Hashes originals stored before SHA-256 hashing existed, for at most 20 minutes a night, so duplicate detection knows them too. Replaces the manual `backfill_photo_album_hashes` deploy step; once every row is hashed it finds nothing to do. |
-| `photo_album.tasks.fail_stalled_downloads` | Hourly, :05 | Closes out ZIP builds no worker came back to. A worker killed outright runs no handler, so its row stays `BUILDING` — never collected, and the album page keeps reloading itself every five seconds waiting for it. |
+| `photo_album.tasks.fail_stalled_downloads` | Every 15 min, from :05 | Closes out ZIP builds no worker came back to. A worker killed outright runs no handler, so its row stays `BUILDING` — never collected, and the album page keeps reloading itself every five seconds waiting for it. A running build records its progress at least every 30 seconds, so "stalled" means no progress for 15 minutes, however long the build has run; a job still `QUEUED` after 12 hours counts too. |
+| `photo_album.tasks.fail_stalled_imports` | Every 15 min, from :10 | The same for ZIP imports, which otherwise kept the import page and the Dropbox script waiting on "building" for good. Also deletes the uploaded ZIP the dead job left in the bucket. |
 | `events.tasks.remind_rsvp_deadlines` | Daily 17:00 | Sends due RSVP reminders. |
-| `oelkaelder.tasks.send_monthly_statements` | Day 1, 06:10 | Mails every active ølkælder account its previous calendar month. **Sends real mail to residents** — the only task here that does. |
+| `oelkaelder.tasks.send_monthly_statements` | Day 1, 06:10 | Mails every active ølkælder account its previous calendar month, like the AK charge above. **Sends real mail to residents** — the only task here that does. |
 | `core.tasks.send_admin_dummy_notification` | Daily 08:00 and 16:00 | **Temporary, and deliberately still here.** Mails every administrator and superuser twice a day to prove Beat and the worker are alive in production. Delete this entry and `core.tasks.send_admin_dummy_notification` once that is confirmed — nothing else depends on it. |
 
 **Delete the matching Coolify Scheduled Tasks in the same deploy, not afterwards.** Coolify runs
@@ -236,8 +251,8 @@ an immediate cost. Opslagstavlen now deletes no posts at all, and its sweep affe
 can see — a missed night leaves a few unreferenced files in the bucket. Putting that on every board
 request would be a bad trade. Don't "fix" the inconsistency.
 
-**These do not replace the lazy guards, and the lazy guards should stay.** `ensure_active_month_applied()`
-costs two indexed single-row queries on three pages (measured), and it is the only thing that makes a
+**These do not replace the lazy guards, and the lazy guards should stay.** `ensure_previous_month_charged()`
+costs one single-row query on three pages, and it is the only thing that makes a
 missed cron self-healing. Cron's failure mode is silence — a bad expression, a container restarted at
 the wrong minute, a task disabled during debugging — and a skipped `ak_monthly_assessment` means every
 resident's balance is quietly wrong until someone notices. The lazy check turns that into "runs a few

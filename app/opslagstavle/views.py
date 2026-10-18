@@ -24,10 +24,9 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from core import push
 from core.emoji import EMOJI_SHORTLIST
 from core.markdown import image_sources, render_markdown
-from core.reactions import apply_toggle, reaction_rows
+from core.reactions import CREATED, apply_toggle, reaction_rows
 from core.uploads import attached_image, validate_image_upload
 from residents.permissions import current_resident
 
@@ -120,9 +119,6 @@ def board(request: HttpRequest) -> HttpResponse:
             "can_moderate": can_moderate(request),
             "events_allowed": events_allowed(request),
             "quick_emoji": EMOJI_SHORTLIST,
-            "push_configured": push.is_configured(),
-            "vapid_public_key": push.vapid_public_key(),
-            "push_subscribed": services.is_subscribed(current_resident(request)),
             # Tells the trial group the board is not live yet, so they do not read the quiet as
             # nobody caring. Disappears on its own when ACCESS_ROLES is set to None.
             "limited_rollout": is_limited(),
@@ -307,13 +303,16 @@ def toggle_reaction(request: HttpRequest, pk: int) -> HttpResponse:
     """Set, change or clear this person's one emoji, returning just the reaction row.
 
     Renders only the partial so a tap never re-renders the page — which would collapse the comment
-    form and lose anything half-typed in it. Deliberately silent: no notification, ever.
+    form and lose anything half-typed in it. A NEW reaction tells the post's author (grouped, see
+    services.notify_reaction); changing or clearing one tells nobody.
     """
     notice = get_object_or_404(Notice, pk=pk)
     resident = current_resident(request)
     form = ReactionForm(request.POST)
     if form.is_valid():
-        apply_toggle(NoticeReaction.objects, author=resident, emoji=form.cleaned_data["emoji"], notice=notice)
+        emoji = form.cleaned_data["emoji"]
+        if apply_toggle(NoticeReaction.objects, author=resident, emoji=emoji, notice=notice) == CREATED:
+            services.notify_reaction(notice, resident, emoji)
     # An invalid emoji falls through to a plain re-render: the row is still correct, and a one-tap
     # control has nowhere useful to put a validation error.
     # NOT prefetched, and NOT reactions_for(): a prefetch is evaluated when the item is fetched,
@@ -360,7 +359,7 @@ def upload_image(request: HttpRequest) -> JsonResponse:
     if not upload:
         return JsonResponse({"error": "Vælg en fil."}, status=400)
     try:
-        validate_image_upload(upload, settings.NOTICE_IMAGE_MAX_MB)
+        upload = validate_image_upload(upload, settings.NOTICE_IMAGE_MAX_MB)
     except ValidationError as exc:
         return JsonResponse({"error": " ".join(exc.messages)}, status=400)
 
@@ -371,14 +370,3 @@ def upload_image(request: HttpRequest) -> JsonResponse:
     )
     # notice stays NULL until a save claims it — see images.sync_images.
     return JsonResponse({"url": image.url, "alt": image.alt}, status=201)
-
-
-@require_POST
-@access_required
-def save_subscription(request: HttpRequest) -> HttpResponse:
-    """Store (or drop) this browser's opt-in to board notifications.
-
-    No role gate beyond login: every resident may use the board, which is exactly why the shared
-    endpoint could not stay behind Den Hurtige's rollout check.
-    """
-    return push.handle_subscription_request(request, services.TOPIC)

@@ -9,14 +9,16 @@
   {% comment %}
     Månedlig afskrivning: AK vælger for hver kalendermåned (januar-december) hvor mange krydser der
     trækkes, og om måneden overhovedet trækkes. Beløbet er det samme år efter år. Der trækkes kun fra
-    beboere på alumnelisten den pågældende måned. "Gem" bogfører den aktive måned ({{ active_month_label }})
-    med det samme — tidligere måneder røres ikke.
+    beboere på alumnelisten den pågældende måned. En måned trækkes først, når den er omme: natten til
+    d. 1. i næste måned, fra månedens endelige alumneliste. "Gem" bogfører intet — allerede trukne
+    måneder røres ikke.
   {% endcomment %}
   <section class="card mb-6">
     <h2 class="mt-0">Månedlig afskrivning</h2>
     <p class="muted text-sm mb-4">
       Vælg for hver måned hvor mange krydser der trækkes. Beløbet gælder hvert år. Der trækkes kun fra
-      beboere, der står på alumnelisten den måned. Gem for at bogføre den aktive måned.
+      beboere, der står på alumnelisten den måned. Måneden trækkes natten til d. 1. i næste måned, fra
+      den endelige alumneliste.
     </p>
     <form method="post" action="{% url 'ak:save_months' %}">
       {% csrf_token %}
@@ -35,7 +37,7 @@
           </div>
         {% endfor %}
       </div>
-      <p class="mt-4"><button type="submit" class="btn">Gem og bogfør denne måned</button></p>
+      <p class="mt-4"><button type="submit" class="btn">Gem</button></p>
     </form>
   </section>
 

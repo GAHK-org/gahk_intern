@@ -1203,10 +1203,14 @@ document.addEventListener("change", (event) => {
   // Only for something the browser will actually render. `accept="image/*"` steers the picker but
   // does not bind it, and a broken-image icon is worse feedback than none - the filename still
   // shows either way, and the server has the final say on what it will store (core.uploads).
+  // Shown on load rather than straight away: an image/ type is not a promise the browser can decode
+  // it, and a HEIC from an iPhone is exactly that case everywhere but Safari. The server converts it.
   const thumb = note.querySelector<HTMLImageElement>("[data-file-note-thumb]");
   if (thumb && file.type.startsWith("image/")) {
+    thumb.onload = () => {
+      thumb.hidden = false;
+    };
     thumb.src = URL.createObjectURL(file);
-    thumb.hidden = false;
   }
   note.hidden = false;
 });

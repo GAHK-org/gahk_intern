@@ -244,26 +244,19 @@
     background:var(--green-100); color:var(--green-700); }
   .channel-option.active .channel-count { background:var(--brass); color:#fff; }
 
-  .chat-mute { flex:none; }
-  /* The push button renders both wordings; one is hidden per breakpoint. Wide screens get the full
-     "Slå fra på denne enhed"; phones get the shorter one, and the per-channel bell drops to its
-     icon alone (its state is the icon, and the button keeps a title). Together that is what buys
-     the channel name enough room to sit on one line beside them. */
-  .label-short { display:none; }
+  /* On phones the room's notification link drops to its icon alone (its state is the icon, and the
+     link keeps a title), which is what buys the channel name room to sit on one line beside it. */
   /* Everything except the channel name keeps its natural width, so the name is the one thing
      that gives way when the row is tight. Includes the "Under test" chip for whenever the
      rollout gate is turned back on. */
   .chat-head .chip { flex:none; }
-  .chat-mute button { font-size:13px; padding:5px 12px; border-radius:999px; }
 
-  /* margin-left:auto groups the push controls on the right, so the picker and the "Under test"
-     chip stay together on the left instead of being spread apart by space-between. */
-  .push-bar { margin-left:auto; flex:none; display:flex; align-items:center; gap:8px; font-size:13px; }
+  /* This device's push subscription (notifications/_device.html, driven by frontend/src/push.ts). */
+  .push-bar { flex:none; display:flex; align-items:center; gap:8px; font-size:13px; }
   .push-bar button { font-size:13px; font-weight:600; padding:5px 12px; border-radius:999px;
     background:var(--surface); border:1px solid var(--border-strong); color:var(--ink); cursor:pointer; }
   .push-bar button:hover { background:var(--green-050); border-color:var(--green-100); color:var(--green-700); }
-  /* Already subscribed: this drops to a quiet link so the per-channel bell is the loud control.
-     See frontend/src/push.ts for why it is demoted rather than removed. */
+  /* Already subscribed (settings page): "turn off" is a quiet link, not a call to action. */
   .push-bar button.is-quiet { background:none; border-color:transparent; color:var(--muted);
     font-weight:500; text-decoration:underline; padding:5px 4px; }
   .push-bar button.is-quiet:hover { background:none; color:var(--ink); }
@@ -1046,12 +1039,10 @@
     .chat-page .brandcell { display:none; }
     .chat-head { margin:0 -18px; padding:5px 18px; }
     .chat-head { gap:6px; }
-    .label-long { display:none; }
-    .label-short { display:inline; }
     .mute-label { display:none; }
     .channel-picker > summary, .channel-single { font-size:16px; }
     .channel-menu { min-width:210px; }
-    .push-bar button, .chat-mute button { padding:3px 10px; font-size:12px; }
+    .push-bar button, .chat-notif-link { padding:3px 10px; font-size:12px; }
     /* Tighter bubbles: smaller avatar, less padding, tighter leading. The bubble cap goes UP, not
        down -- 80% of a 360px column is 288px, and the narrower the screen the more a low cap costs
        in wrapped lines for no gain in readability. */
@@ -1157,6 +1148,16 @@
        screen and pushed the whole conversation off the bottom. */
     .app { grid-template-columns:1fr; grid-template-rows:auto auto 1fr;
       grid-template-areas:"brand" "top" "main"; }
+    /* Both rows stuck at top:0 and the brand row (z-index 31) covered the top bar, burger and all,
+       so on a phone the menu was only reachable from the top of the page. Only the top bar sticks. */
+    .brandcell { position:static; }
+    html:not(:has(body.chat-page)) { scroll-padding-top:60px; }
+    /* Slid away while scrolling down, back on scroll-up (topbar.ts). The album's sticky bars sit
+       under it, so they move up into the space it leaves. */
+    .topbar { transition:transform .2s ease; }
+    .topbar-hidden .topbar { transform:translateY(-100%); }
+    .topbar-hidden .album-timeline-years { top:0; }
+    .topbar-hidden .album-selection-bar { top:8px; }
     .hamburger { display:block; }
     .topsearch { display:none; }
     .sidebar { position:fixed; top:0; left:0; bottom:0; width:264px; z-index:50; box-shadow:var(--shadow); transform:translateX(-100%); transition:transform .2s ease; }
@@ -1595,6 +1596,13 @@
     text-transform: uppercase; }
   .notice-byline { @apply flex flex-col; min-width: 0; }
   .notice-name { @apply font-semibold leading-snug; font-size: 15px; color: var(--ink); }
+  /* An author's name/avatar, linking to their profile in both feeds. Reads as a byline, not a link. */
+  .author-link { color: inherit; text-decoration: none; }
+  .author-link:hover { text-decoration: underline; }
+  .msg-avatar > .author-link, .notice-avatar > .author-link { display: grid; place-items: center;
+    width: 100%; height: 100%; border-radius: 50%; text-decoration: none; }
+  /* Comes before .notice-link in the markup, so it needs z-index to beat the stretched permalink. */
+  .notice-card.is-clickable .notice-author .author-link { position: relative; z-index: 1; }
   /* Name and embedsgruppe pill share the byline's first line; the timestamp keeps the second.
      Wrapping, not truncating: "Legat- og kunstgruppen" is wider than the gap beside a name on a
      phone, and a pill reading "Legat- og kuns..." names no group anyone recognises. min-width:0 so
@@ -2182,4 +2190,88 @@
     /* The metadata is the first thing to go: on a phone the name is the whole point. */
     .arkiv-meta { display:none; }
   }
+
+  /* ---- Notifications (app/notifications): the topbar bell, its dropdown, the list and settings ---- */
+  /* Alpine's x-cloak: hidden until Alpine has initialised, so the bell's panel never flashes open. */
+  [x-cloak] { display:none !important; }
+
+  .notif-bell { position:relative; }
+  .notif-bell-button { position:relative; padding:6px 9px; }
+  .notif-head-link svg { stroke:currentColor; fill:none; }
+  .notif-bell-button svg { width:18px; height:18px; stroke:currentColor; fill:none; }
+  .notif-badge { position:absolute; top:-6px; right:-6px; min-width:18px; height:18px; padding:0 5px;
+    border-radius:999px; background:var(--neg); color:#fff; font-size:11px; font-weight:700; line-height:18px;
+    text-align:center; border:2px solid var(--green); }
+  /* Anchored to the bell's right edge and clamped to the viewport, so on a phone it is near-full width
+     instead of hanging off the left side of the screen. */
+  .notif-panel { position:absolute; right:0; top:calc(100% + 8px); width:min(380px, calc(100vw - 24px));
+    max-height:min(70vh, 560px); overflow:auto; background:var(--surface); color:var(--ink);
+    border:1px solid var(--border); border-radius:12px; box-shadow:0 12px 32px rgba(0,0,0,.18); z-index:40; }
+  .notif-panel-head { display:flex; align-items:center; justify-content:space-between; gap:8px;
+    padding:10px 14px; border-bottom:1px solid var(--border); font-weight:700; font-size:14px; }
+  .notif-panel-head a { font-size:13px; font-weight:600; color:var(--muted); }
+  .notif-panel-foot { display:block; text-align:center; padding:10px; font-size:13px; font-weight:600;
+    border-top:1px solid var(--border); text-decoration:none; }
+  .notif-empty { padding:14px; font-size:14px; }
+
+  .notif-item { display:flex; align-items:flex-start; gap:10px; padding:11px 14px; text-decoration:none;
+    color:var(--ink); border-bottom:1px solid var(--border); border-left:3px solid transparent; }
+  .notif-item:last-child { border-bottom:none; }
+  .notif-item:hover { background:var(--surface-2); color:var(--ink); }
+  .notif-item > svg { width:18px; height:18px; flex:none; margin-top:2px; color:var(--muted); stroke:currentColor; fill:none; }
+  .notif-text { flex:1; min-width:0; font-size:14px; }
+  .notif-title { display:block; font-weight:500; }
+  .notif-body { display:block; color:var(--muted); font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .notif-time { display:block; color:var(--faint); font-size:12px; margin-top:2px; }
+  /* The left edge carries the importance level: nothing for low, brass for high, red for critical. */
+  .notif-imp-2 { border-left-color:var(--border); }
+  .notif-imp-3 { border-left-color:var(--brass); }
+  .notif-imp-4 { border-left-color:var(--neg); background:var(--neg-bg); }
+  .notif-item.is-unseen { background:var(--green-050); }
+  .notif-item.is-unseen .notif-title { font-weight:700; }
+  .notif-dot { width:8px; height:8px; border-radius:50%; background:var(--green); flex:none; margin-top:6px; }
+  .notif-level { display:inline-block; font-size:10.5px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--brass-ink); margin-right:6px; }
+  .notif-imp-4 .notif-level { color:var(--neg); }
+
+  .notif-views { display:flex; gap:8px; margin:0 0 14px; }
+  .notif-views .chip { text-decoration:none; }
+  .notif-section { margin-bottom:16px; }
+  /* Fixed layout + fixed check columns, so the columns line up from one group's card to the next
+     whatever the length of the category names. The outer cells pad to the card's own 18px. */
+  .notif-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:14px; }
+  .notif-table .notif-col { width:92px; }
+  .notif-table th, .notif-table td { padding:11px 10px; vertical-align:middle; }
+  .notif-table th:first-child, .notif-table td:first-child { padding-left:18px; }
+  .notif-table th:last-child, .notif-table td:last-child { padding-right:18px; }
+  .notif-table td:not(:first-child), .notif-table th:not(:first-child) { text-align:center; }
+  .notif-table thead th { font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; background:var(--surface-2); border-bottom:1px solid var(--border); }
+  .notif-table tbody tr + tr { border-top:1px solid var(--border); }
+  .notif-table strong { font-weight:600; }
+  .notif-desc { font-size:13px; color:var(--muted); margin-top:2px; }
+  .notif-table input[type=checkbox] { width:18px; height:18px; vertical-align:middle; }
+  .notif-table input[type=checkbox]:disabled { opacity:.55; cursor:not-allowed; }
+  .notif-table tr:target { background:var(--warn-bg); }
+  .notif-admin-table { width:100%; border-collapse:collapse; font-size:14px; }
+  @media (max-width:640px) {
+    .notif-table .notif-col { width:64px; }
+    .notif-table th, .notif-table td { padding:10px 6px; }
+    .notif-table thead th { font-size:11px; letter-spacing:0; }
+  }
+  .notif-check { display:flex; align-items:center; gap:8px; font-weight:600; margin-bottom:10px; }
+  .notif-select { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+  .notif-save { position:sticky; bottom:12px; display:flex; justify-content:flex-end; }
+  .notif-broadcast textarea, .notif-broadcast input[type=text], .notif-broadcast select { width:100%; max-width:560px; }
+
+  /* The device prompt on the dashboard and in Den Hurtige: a card-like strip, not the old right-
+     aligned header control (that was .push-bar inside the chat head). */
+  .push-prompt { margin:0 0 14px; padding:10px 14px; border:1px solid var(--green-100); border-radius:10px;
+    background:var(--green-050); justify-content:space-between; flex-wrap:wrap; }
+  .push-prompt-text { font-weight:600; }
+  /* The chat room's notification indicator: a link to the room's row on the settings page. */
+  .chat-notif-link { flex:none; margin-left:auto; display:inline-flex; align-items:center; gap:4px; font-size:13px; font-weight:600;
+    padding:5px 10px; border-radius:999px; border:1px solid var(--border-strong); background:var(--surface);
+    color:var(--ink); text-decoration:none; }
+  .chat-notif-link:hover { background:var(--green-050); color:var(--green-700); }
+  .chat-notif-link.is-off { color:var(--muted); }
 }
