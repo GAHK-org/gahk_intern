@@ -14,6 +14,7 @@ from django.db.models import Q, QuerySet
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import url_has_allowed_host_and_scheme, urlsafe_base64_encode
 
@@ -409,6 +410,8 @@ def _add_form_draft(request: HttpRequest, action: str) -> dict[str, object]:
         "first_name": (request.POST.get("first_name") or "").strip(),
         "last_name": (request.POST.get("last_name") or "").strip(),
         "email": (request.POST.get("email") or "").strip(),
+        "phone": (request.POST.get("phone") or "").strip(),
+        "birthday": (request.POST.get("birthday") or "").strip(),
     }
 
 
@@ -634,8 +637,17 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
             first = (request.POST.get("first_name") or "").strip()
             last = (request.POST.get("last_name") or "").strip()
             room = _pick(room_by_id, request.POST.get("room", ""))
+            phone = (request.POST.get("phone") or "").strip()[:40]
+            raw_birthday = (request.POST.get("birthday") or "").strip()
+            try:
+                birthday = date.fromisoformat(raw_birthday) if raw_birthday else None
+            except ValueError:
+                birthday = None
             if not (email and first and last and room):
                 messages.error(request, "Udfyld navn, e-mail og værelse for at tilføje en ny beboer.")
+                new_draft = _add_form_draft(request, "add_new")
+            elif raw_birthday and (birthday is None or birthday > timezone.localdate()):
+                messages.error(request, "Fødselsdagen er ikke en gyldig dato.")
                 new_draft = _add_form_draft(request, "add_new")
             elif Resident.objects.filter(email=email).exists():
                 messages.error(request, "Der findes allerede en beboer med den e-mail.")
@@ -650,7 +662,14 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                 # exactly the step that gets skipped, leaving holes in the stamtræ (F-011).
                 sponsor = _pick({r.id: r for r in Resident.objects.all()}, request.POST.get("sponsor", ""))
                 with transaction.atomic():
-                    r = Resident(email=email, first_name=first, last_name=last, sponsor=sponsor)
+                    r = Resident(
+                        email=email,
+                        first_name=first,
+                        last_name=last,
+                        phone=phone,
+                        birthday=birthday,
+                        sponsor=sponsor,
+                    )
                     r.set_unusable_password()  # they set one via the welcome/password-reset link (F-014)
                     r.save()
                     Residency.objects.create(

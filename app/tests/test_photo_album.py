@@ -1981,7 +1981,9 @@ def test_process_pending_media_skips_held_rows_and_reports_what_it_dispatched(
     Media.objects.filter(pk=held.pk).update(derivative_started_at=timezone.now())
 
     dispatched: list[int] = []
-    monkeypatch.setattr(tasks.build_media_derivatives, "delay", dispatched.append)
+    monkeypatch.setattr(
+        tasks.build_media_derivatives, "apply_async", lambda args, **options: dispatched.append(args[0])
+    )
 
     assert tasks.process_pending_media.run() == 1
     assert dispatched == [free.pk]
@@ -1993,30 +1995,55 @@ def test_a_download_whose_worker_never_returned_is_closed_out(
 ) -> None:
     """A worker killed outright runs no handler, so the row kept BUILDING and completed_at NULL —
     which `purge_expired_downloads` filters on, and which detail.html answers with a five-second
-    reload. The page reloaded itself forever and the row was never collected."""
-    from photo_album.models import ALBUM_DOWNLOAD_STALE_AFTER, AlbumDownload, AlbumDownloadState
+    reload. The page reloaded itself forever and the row was never collected.
+
+    Stalled means no PROGRESS for JOB_STALLED_AFTER, not an old row: a build that has run for hours
+    and is still reporting is left alone."""
+    from photo_album.models import JOB_QUEUED_TOO_LONG, JOB_STALLED_AFTER, AlbumDownload, AlbumDownloadState
     from photo_album.tasks import fail_stalled_downloads
 
     resident = make_resident()
     album = Album.objects.create(folder="2026", name="Fest")
-    stalled = AlbumDownload.objects.create(
-        album=album, requested_by=resident, media_ids=[], state=AlbumDownloadState.BUILDING
+    long_ago = timezone.now() - timedelta(hours=5)
+
+    def download(state: str, progressed_at: datetime | None, created_at: datetime) -> AlbumDownload:
+        row = AlbumDownload.objects.create(
+            album=album, requested_by=resident, media_ids=[], state=state, progressed_at=progressed_at
+        )
+        AlbumDownload.objects.filter(pk=row.pk).update(created_at=created_at)
+        return row
+
+    stalled = download(
+        AlbumDownloadState.BUILDING, timezone.now() - JOB_STALLED_AFTER - timedelta(minutes=1), long_ago
     )
-    fresh = AlbumDownload.objects.create(
-        album=album, requested_by=resident, media_ids=[], state=AlbumDownloadState.BUILDING
-    )
-    AlbumDownload.objects.filter(pk=stalled.pk).update(
-        created_at=timezone.now() - ALBUM_DOWNLOAD_STALE_AFTER - timedelta(minutes=1)
+    slow = download(AlbumDownloadState.BUILDING, timezone.now() - timedelta(minutes=1), long_ago)
+    from_before_progress = download(AlbumDownloadState.BUILDING, None, long_ago)
+    waiting = download(AlbumDownloadState.QUEUED, None, long_ago)
+    lost = download(
+        AlbumDownloadState.QUEUED, None, timezone.now() - JOB_QUEUED_TOO_LONG - timedelta(minutes=1)
     )
 
-    assert fail_stalled_downloads.run() == 1
+    assert fail_stalled_downloads.run() == 3
 
-    stalled.refresh_from_db()
-    fresh.refresh_from_db()
-    assert stalled.state == AlbumDownloadState.FAILED
+    states = {
+        name: AlbumDownload.objects.get(pk=row.pk).state
+        for name, row in {
+            "stalled": stalled,
+            "slow": slow,
+            "old": from_before_progress,
+            "waiting": waiting,
+            "lost": lost,
+        }.items()
+    }
+    assert states == {
+        "stalled": AlbumDownloadState.FAILED,
+        "slow": AlbumDownloadState.BUILDING,
+        "old": AlbumDownloadState.FAILED,
+        "waiting": AlbumDownloadState.QUEUED,
+        "lost": AlbumDownloadState.FAILED,
+    }
     # Set so `purge_expired_downloads`, which filters on it, can eventually collect the row.
-    assert stalled.completed_at is not None
-    assert fresh.state == AlbumDownloadState.BUILDING
+    assert AlbumDownload.objects.get(pk=stalled.pk).completed_at is not None
 
 
 @pytest.mark.django_db

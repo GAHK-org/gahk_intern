@@ -5,7 +5,7 @@
 # injected by Coolify's env manager, so there is no committed env_file. MediaWiki is its own app.
 #
 # The image is not built here: CI builds it and moves `:main` once the checks pass, and a timer on the
-# server pulls it and asks Coolify to redeploy (DEPLOY.md §4a). All three services run the same one.
+# server pulls it and asks Coolify to redeploy (DEPLOY.md §4a). All four services run the same one.
 # IMAGE_TAG is for rolling back: set it to `sha-<commit>` in Coolify and redeploy; unset to follow main.
 services:
   web:
@@ -25,7 +25,7 @@ services:
     expose:
       - "8000"                 # reached by Coolify/Traefik over the internal network (not host-published)
 
-  # `web` runs the migrations; these two WAIT for them rather than racing them. Without the gate,
+  # `web` runs the migrations; the workers and beat WAIT for them rather than racing them. Without the gate,
   # every deploy that adds a migration starts `beat` against a database with no
   # django_celery_beat_periodictask and `worker` against one with no photo_album_albumdownload, and
   # both crash-loop until `web` catches up — recoverable, thanks to `restart`, but it means a wall
@@ -34,6 +34,12 @@ services:
   # `migrate --check` exits non-zero while anything is unapplied AND while the database is
   # unreachable, so one loop covers both. Neither service runs `migrate` itself: three containers
   # migrating the same database concurrently is its own failure.
+  # Two workers (CELERY_TASK_ROUTES in config/settings.py). `worker` takes the default "celery"
+  # queue — mail, sweeps, everything quick — so none of it waits behind a video encode, and
+  # "thumbnails", photo derivatives, by turns with it: a mail waits for one thumbnail, not 400.
+  # `worker-media` takes "media": encodes, album ZIP imports and downloads, the hash backfill — the
+  # jobs that read whole files, one at a time, because two of them side by side with ffmpeg is what
+  # ran this box out of memory.
   worker:
     image: ghcr.io/gahk-org/gahk_intern:${IMAGE_TAG:-main}
     restart: unless-stopped
@@ -41,7 +47,16 @@ services:
       - web
     command: >-
       sh -c "until python manage.py migrate --check; do echo 'waiting for migrations'; sleep 3; done;
-             celery -A config worker --loglevel=INFO --concurrency=2"
+             celery -A config worker -Q celery,thumbnails -n default@%h --loglevel=INFO --concurrency=1"
+
+  worker-media:
+    image: ghcr.io/gahk-org/gahk_intern:${IMAGE_TAG:-main}
+    restart: unless-stopped
+    depends_on:
+      - web
+    command: >-
+      sh -c "until python manage.py migrate --check; do echo 'waiting for migrations'; sleep 3; done;
+             celery -A config worker -Q media -n media@%h --loglevel=INFO --concurrency=1"
 
   beat:
     image: ghcr.io/gahk-org/gahk_intern:${IMAGE_TAG:-main}
