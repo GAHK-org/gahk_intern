@@ -6,7 +6,11 @@ import "./htmx-csrf"; // X-CSRFToken on every htmx request (site-wide; must prec
 import "./charts"; // interactive charts on /intern/statistik/ (no-op elsewhere)
 import "./imageupload"; // downscale room-inspection photo uploads client-side (no-op elsewhere)
 import "./push"; // this device's push subscription widget, notifications/_device.html (no-op without one)
+import "./live"; // the page's WebSocket to its live topic, if it declares one (no-op elsewhere)
 import "./feed"; // Den Hurtige live-feed poll guard (no-op elsewhere)
+import "./live-region"; // elements that re-draw themselves on a live signal (no-op elsewhere)
+import "./bell"; // the top bar's notification bell, live (no-op without one)
+import "./opslagstavle-live"; // opslagstavlen's board: live cards and the "nye opslag" banner
 import "./opslagstavle"; // opslagstavlen Markdown toolbar + image upload (no-op elsewhere)
 import "./events"; // begivenheder guest-list picker (no-op elsewhere)
 import "./reparationer"; // reparationer kanban drag-and-drop (no-op elsewhere)

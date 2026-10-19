@@ -1,4 +1,5 @@
 import datetime
+import zoneinfo
 
 from celery import shared_task
 from django.conf import settings
@@ -74,16 +75,19 @@ def purge_delivered_broker_messages() -> int:
     Raw SQL because `kombu_message` is kombu's table, not a Django model — there is no manager to
     ask, and inventing one would claim ownership of a schema another library migrates.
 
-    A NAIVE cutoff on purpose: the column is `timestamp without time zone` holding UTC (verified
-    against the running database), so handing Postgres an aware datetime would compare against the
-    session timezone and sweep the wrong hour's rows.
+    A NAIVE cutoff on purpose, in settings.TIME_ZONE: the column is `timestamp without time zone`,
+    which kombu fills with the worker's `datetime.now()` when the worker takes the message — local
+    time, because Django's settings export TZ=TIME_ZONE into the process. (Celery's own `date_done`
+    is the one holding UTC.) An aware cutoff would be compared in the session timezone instead, and
+    a UTC one keeps every row an hour or two past its day.
 
     Guarded on the table existing rather than on the broker URL, so pointing CELERY_BROKER_URL at
     Redis or RabbitMQ makes this a no-op instead of an error — the table is simply not there.
     """
     if "kombu_message" not in connection.introspection.table_names():
         return 0
-    cutoff = datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - BROKER_MESSAGE_RETENTION
+    cutoff = timezone.localtime(timezone=zoneinfo.ZoneInfo(settings.TIME_ZONE)).replace(tzinfo=None)
+    cutoff -= BROKER_MESSAGE_RETENTION
     with connection.cursor() as cursor:
         cursor.execute(
             "DELETE FROM kombu_message WHERE visible = false AND timestamp < %s",

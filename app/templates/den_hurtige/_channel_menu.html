@@ -1,0 +1,24 @@
+{% comment %}
+  The channel picker's menu (feed.html), and its live-post counts. Its own file because those counts
+  are re-read on their own (views.channel_menu): when the picker opens, and on a live signal from
+  ANY channel listed — `data-live` names every one of them, so this page's socket hears the other
+  channels too, and frontend/src/live-region.ts morphs the answer in. The feed itself ignores
+  signals that are not for its own channel (feed.ts).
+
+  HELD WHILE THE PICKER IS CLOSED. `data-live-busy` makes live-region.ts hold a signal instead of
+  fetching: without it every message, reply or reaction in ANY channel had every open Den Hurtige
+  tab re-reading counts nobody could see. feed.ts lifts it when the picker opens, which serves at
+  most one held refresh (batched with the open's own), and puts it back when it closes.
+{% endcomment %}
+<nav class="channel-menu" id="js-channel-menu" aria-label="Kanaler"
+     data-live="{% for tab in tabs %}den-hurtige.{{ tab.channel.slug }}{% if not forloop.last %} {% endif %}{% endfor %}"
+     data-live-region data-live-busy data-live-url="{% url 'den_hurtige:channel_menu' %}?kanal={{ channel.slug }}">
+  {% for tab in tabs %}
+    <a class="channel-option{% if tab.current %} active{% endif %}" href="{{ tab.channel.url }}"
+       {% if tab.current %}aria-current="page"{% endif %}>
+      <svg class="ni" aria-hidden="true"><use href="#i-{{ tab.channel.icon }}"></use></svg>
+      <span class="channel-option-name">{{ tab.channel.name }}</span>
+      {% if tab.live %}<span class="channel-count">{{ tab.live }}</span>{% endif %}
+    </a>
+  {% endfor %}
+</nav>

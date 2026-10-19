@@ -60,6 +60,8 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # /healthz and /health, before anything checks the Host header — see core/health.py.
+    "core.health.HealthCheckMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -73,6 +75,25 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = "config.urls"
 ASGI_APPLICATION = "config.asgi.application"
+
+# Where live updates travel between the view that writes and the sockets that listen (core.live).
+# In-memory, which is exactly right while `web` is ONE uvicorn process (DEPLOY.md §4): the view and
+# every socket share that process, and there is nothing to run or to fail. It stops being right the
+# moment there are two — `--workers 3` or a second replica — because a signal sent in one process
+# never reaches sockets held by another. Pages then fall back to their slow poll and keep working,
+# just less live; the fix is a shared layer (channels_redis and a Redis service), not this setting.
+#
+# group_expiry is raised from Channels' default of one day, which silently drops a socket from its
+# topic 24 hours after it joined while the socket itself stays open. The page then believes it is
+# live, has switched its 5s poll off, and hears nothing: a Den Hurtige tab left open on a desktop
+# overnight would only update once a minute from then on. Membership is removed on disconnect
+# anyway, so the expiry only guards against leaks, and in one process a leak cannot outlive it.
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer",
+        "CONFIG": {"group_expiry": 60 * 60 * 24 * 365},
+    }
+}
 
 TEMPLATES = [
     {
@@ -194,11 +215,16 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 # Photo thumbnails are the exception, chosen when they are queued (photo_album.tasks.
 # queue_derivatives): their own "thumbnails" queue, which `worker` takes from by turns with
 # "celery". The route below is only the fallback for a derivative queued any other way.
+# The Celery processes /health expects a fresh heartbeat from (core/heartbeat.py): each worker's
+# node name before the "@" (the -n in docker-compose.prod.yml), and "beat".
+HEALTH_PROCESSES = [p for p in os.environ.get("HEALTH_PROCESSES", "default,media,beat").split(",") if p]
+
 CELERY_TASK_ROUTES = {
     "photo_album.tasks.build_media_derivatives": {"queue": "media"},
     "photo_album.tasks.build_album_download": {"queue": "media"},
     "photo_album.tasks.process_album_import": {"queue": "media"},
     "photo_album.tasks.backfill_media_hashes": {"queue": "media"},
+    "photo_album.tasks.settle_media_dates": {"queue": "media"},
 }
 
 # A local migration client uses this bearer token to submit album ZIP imports as the non-login
@@ -287,6 +313,12 @@ CELERY_BEAT_SCHEDULE = {
     "backfill-photo-album-hashes": {
         "task": "photo_album.tasks.backfill_media_hashes",
         "schedule": crontab(minute=40, hour=2),
+    },
+    # 03:05, once the hash backfill's twenty minutes are up. Reads originals stored before XMP and
+    # IPTC were read for at most DATE_REREAD_BUDGET, then settles every album's approximate dates.
+    "settle-photo-album-dates": {
+        "task": "photo_album.tasks.settle_media_dates",
+        "schedule": crontab(minute=5, hour=3),
     },
     "remind-rsvp-deadlines": {
         "task": "events.tasks.remind_rsvp_deadlines",

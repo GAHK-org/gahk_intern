@@ -1,3 +1,4 @@
+import { beginDirect, DirectUnavailable, type DirectUpload, refusal, sendToBucket, UploadRefused } from "./directupload"
 import { csrfToken } from "./htmx-csrf"
 
 const uploadInput = document.querySelector<HTMLInputElement>("[data-album-upload-input]")
@@ -81,36 +82,39 @@ if (zipImportForm) {
       control.disabled = disabled
     })
   }
-  zipImportForm.addEventListener("submit", (event) => {
-    if (!archive.files?.length) return
-    event.preventDefault()
-    const data = new FormData(zipImportForm)
+  const showPercent = (percent: number): void => {
+    if (percent < 100) {
+      progressBar.value = percent
+      label.textContent = `Uploader ZIP-fil: ${percent}%`
+      return
+    }
+    // Every byte is sent, but the server still stores the archive before it answers.
+    progressBar.removeAttribute("value")
+    progress.classList.add("is-working")
+    submit.textContent = "Behandler …"
+    label.textContent = "ZIP-filen er uploadet. Serveren behandler den …"
+  }
+  const failed = (reason = ""): void => {
+    progress.classList.remove("is-working")
+    label.textContent = `ZIP-filen kunne ikke uploades. ${reason || "Genindlæs siden for at prøve igen."}`
+  }
+  // The import itself: with the ZIP in it, or with the ticket of one already in the bucket.
+  const post = (data: FormData): void => {
     const request = new XMLHttpRequest()
-    setFormDisabled(true)
-    zipImportForm.classList.add("is-submitted")
-    submit.textContent = "Upload i gang …"
-    progress.hidden = false
-    label.textContent = "Uploader ZIP-fil: 0%"
     request.open("POST", zipImportForm.action)
     request.setRequestHeader("Accept", "application/json")
     request.upload.addEventListener("progress", (progressEvent) => {
-      if (!progressEvent.lengthComputable) return
-      const percent = Math.round((progressEvent.loaded / progressEvent.total) * 100)
-      if (percent < 100) {
-        progressBar.value = percent
-        label.textContent = `Uploader ZIP-fil: ${percent}%`
-        return
-      }
-      // Every byte is sent, but the server still stores the archive before it answers.
-      progressBar.removeAttribute("value")
-      progress.classList.add("is-working")
-      submit.textContent = "Behandler …"
-      label.textContent = "ZIP-filen er uploadet. Serveren behandler den …"
+      if (progressEvent.lengthComputable) showPercent(Math.round((progressEvent.loaded / progressEvent.total) * 100))
     })
     request.addEventListener("load", () => {
       if (request.status !== 202) {
-        progress.classList.remove("is-working")
-        label.textContent = "ZIP-filen kunne ikke uploades. Genindlæs siden for at prøve igen."
+        let reason = ""
+        try {
+          reason = refusal(JSON.parse(request.responseText))
+        } catch {
+          // Not JSON — a proxy error page, most likely.
+        }
+        failed(reason)
         return
       }
       const response = JSON.parse(request.responseText) as { statusUrl: string; resultUrl: string }
@@ -120,11 +124,48 @@ if (zipImportForm) {
       label.textContent = "ZIP-filen er uploadet. Serveren importerer nu filerne …"
       pollZipImport(progress, response.statusUrl, response.resultUrl)
     })
-    request.addEventListener("error", () => {
-      progress.classList.remove("is-working")
-      label.textContent = "ZIP-filen kunne ikke uploades. Genindlæs siden for at prøve igen."
-    })
+    request.addEventListener("error", () => failed())
     request.send(data)
+  }
+  // Straight to the bucket when the server has one: through the app, the proxy cuts any upload
+  // that takes more than a minute. False when it has none, or the bucket cannot be reached from here.
+  const sendDirect = async (file: File, fields: FormData): Promise<boolean> => {
+    const { directBeginUrl: beginUrl, directSignUrl: signUrl } = zipImportForm.dataset
+    if (!beginUrl || !signUrl) return false
+    let upload: DirectUpload | null = null
+    try {
+      upload = await beginDirect(beginUrl, { name: file.name, size: String(file.size) })
+    } catch (error) {
+      if (!(error instanceof UploadRefused)) return false
+      failed(error.message)
+      return true
+    }
+    if (!upload) return false
+    try {
+      await sendToBucket(file, upload, signUrl, (sent) => showPercent(Math.min(99, Math.round((sent / file.size) * 100))))
+      fields.append("ticket", upload.ticket)
+      post(fields)
+    } catch (error) {
+      if (error instanceof DirectUnavailable) return false
+      failed(error instanceof UploadRefused ? error.message : "")
+    }
+    return true
+  }
+  zipImportForm.addEventListener("submit", (event) => {
+    const file = archive.files?.[0]
+    if (!file) return
+    event.preventDefault()
+    const data = new FormData(zipImportForm) // before the form is disabled, which leaves its fields out
+    setFormDisabled(true)
+    zipImportForm.classList.add("is-submitted")
+    submit.textContent = "Upload i gang …"
+    progress.hidden = false
+    label.textContent = "Uploader ZIP-fil: 0%"
+    const fields = new FormData() // the form without its file, for an import of one already in the bucket
+    for (const [key, value] of data.entries()) if (key !== "archive") fields.append(key, value)
+    void sendDirect(file, fields).then((handled) => {
+      if (!handled) post(data)
+    })
   })
 }
 if (uploadInput && uploadSelection && uploadCount && uploadFiles) {
@@ -145,6 +186,13 @@ interface UploadResult {
   skipped: string[]
   warnings: string[]
 }
+
+// From this size a photo or video goes straight to the bucket. Below it, a file is sent with the
+// form as it always was: it is in well within the proxy's minute even on a slow line, and a phone's
+// photos need no extra round trips.
+const DIRECT_FROM_BYTES = 8 * 1024 * 1024
+// Once the bucket has not answered this browser, the rest of the upload goes with the form.
+let directBlocked = false
 
 if (uploadDialog && uploadForm && uploadInput && uploadProgress && uploadProgressBar && uploadProgressLabel && uploadSubmit) {
   const openUpload = document.querySelector<HTMLButtonElement>("[data-album-upload-open]")
@@ -205,12 +253,21 @@ if (uploadDialog && uploadForm && uploadInput && uploadProgress && uploadProgres
       uploadSubmit.textContent = "Færdig"
     }
 
-    const uploadNext = (): void => {
-      const file = files[fileIndex]
-      if (!file) {
-        finish()
-        return
-      }
+    // One file is in: on to the next. Or it was refused, and the queue stops there, as it always has.
+    const stored = (file: File, result: UploadResult | null): void => {
+      uploaded += result ? result.uploaded : 1
+      if (result) notes.push(...result.skipped, ...result.warnings)
+      completedBytes += file.size
+      fileIndex += 1
+      setProgress(0)
+      uploadNext()
+    }
+    const refused = (file: File, reason: string): void => {
+      uploadSubmit.disabled = false
+      uploadProgressLabel.textContent = `Kunne ikke uploade ${file.name}. ${reason || "Prøv igen."}`
+    }
+
+    const sendWithForm = (file: File): void => {
       const data = new FormData()
       data.append("uploads", file)
       data.append("title", title)
@@ -225,34 +282,77 @@ if (uploadDialog && uploadForm && uploadInput && uploadProgress && uploadProgres
       })
       request.addEventListener("load", () => {
         if (request.status >= 200 && request.status < 300) {
+          let result: UploadResult | null = null
           try {
-            const result = JSON.parse(request.responseText) as UploadResult
-            uploaded += result.uploaded
-            notes.push(...result.skipped, ...result.warnings)
+            result = JSON.parse(request.responseText) as UploadResult
           } catch {
-            uploaded += 1
+            // Stored, by the status; nothing to note.
           }
-          completedBytes += file.size
-          fileIndex += 1
-          setProgress(0)
-          uploadNext()
+          stored(file, result)
           return
         }
-        uploadSubmit.disabled = false
         let reason = ""
         try {
-          const body = JSON.parse(request.responseText) as { errors?: Record<string, { message: string }[]> }
-          reason = Object.values(body.errors ?? {}).flat().map((error) => error.message).join(" ")
+          reason = refusal(JSON.parse(request.responseText))
         } catch {
           // Not JSON — a proxy error page, most likely. The generic message below covers it.
         }
-        uploadProgressLabel.textContent = `Kunne ikke uploade ${file.name}. ${reason || "Prøv igen."}`
+        refused(file, reason)
       })
-      request.addEventListener("error", () => {
-        uploadSubmit.disabled = false
-        uploadProgressLabel.textContent = `Kunne ikke uploade ${file.name}. Kontrollér din forbindelse og prøv igen.`
-      })
+      request.addEventListener("error", () => refused(file, "Kontrollér din forbindelse og prøv igen."))
       request.send(data)
+    }
+
+    // A large file goes straight to the bucket in parts — through the app, the proxy cuts any upload
+    // that takes more than a minute — and is then checked and stored as the form would. False when the
+    // server has no bucket or this browser cannot reach it: the file is then sent with the form.
+    const sendDirect = async (file: File): Promise<boolean> => {
+      const { directBeginUrl: beginUrl, directSignUrl: signUrl, directCommitUrl: commitUrl } = uploadForm.dataset
+      if (!beginUrl || !signUrl || !commitUrl || directBlocked || file.size < DIRECT_FROM_BYTES) return false
+      let upload: DirectUpload | null
+      try {
+        upload = await beginDirect(beginUrl, { name: file.name, size: String(file.size), content_type: file.type })
+      } catch (error) {
+        if (!(error instanceof UploadRefused)) return false
+        refused(file, error.message)
+        return true
+      }
+      if (!upload) return false
+      try {
+        await sendToBucket(file, upload, signUrl, setProgress)
+        uploadProgressLabel.textContent = `Kontrollerer ${file.name} …`
+        const data = new FormData()
+        data.append("ticket", upload.ticket)
+        data.append("title", title)
+        data.append("last_modified", String(file.lastModified))
+        const response = await fetch(commitUrl, {
+          method: "POST",
+          body: data,
+          credentials: "same-origin",
+          headers: { Accept: "application/json", "X-CSRFToken": csrf },
+        })
+        const body: unknown = await response.json().catch(() => null)
+        if (response.ok) stored(file, body as UploadResult)
+        else refused(file, refusal(body))
+      } catch (error) {
+        if (error instanceof DirectUnavailable) {
+          directBlocked = true
+          return false
+        }
+        refused(file, error instanceof UploadRefused ? error.message : "Kontrollér din forbindelse og prøv igen.")
+      }
+      return true
+    }
+
+    const uploadNext = (): void => {
+      const file = files[fileIndex]
+      if (!file) {
+        finish()
+        return
+      }
+      void sendDirect(file).then((handled) => {
+        if (!handled) sendWithForm(file)
+      })
     }
 
     setProgress(0)
@@ -829,6 +929,9 @@ interface MediaDetail {
   uploadedBy: string
   uploadedAt: string
   capturedAt: string
+  // "ca. september 2004" and why, when the item has no date of its own to be placed by
+  approximateDate: string
+  approximateDateBasis: string
   metadata: Record<string, string>
   tags: TagEntry[]
   tagUrl: string
@@ -949,6 +1052,9 @@ if (gallery && dialog) {
       ...album,
       ...(detail.filename ? definition("Filnavn", detail.filename) : []),
       ...(detail.capturedAt ? definition("Optaget", detail.capturedAt) : []),
+      ...(detail.approximateDate
+        ? definition("Anslået dato", `${detail.approximateDate}, ${detail.approximateDateBasis}`)
+        : []),
       ...(location ? definition("Sted", location, detail.mapUrl) : []),
       ...definition("Uploadet af", detail.uploadedBy),
       ...definition("Uploadet", detail.uploadedAt),
@@ -1050,7 +1156,7 @@ if (gallery && dialog) {
       }
       image.alt = detail.title
       title.textContent = detail.title
-      mobileDate.textContent = detail.capturedAt || detail.uploadedAt
+      mobileDate.textContent = detail.capturedAt || detail.approximateDate || detail.uploadedAt
       download.href = detail.downloadUrl
       menuDownload.href = detail.downloadUrl
       deleteForm.hidden = !detail.deleteUrl

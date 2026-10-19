@@ -52,8 +52,12 @@ erDiagram
         string task_id
         string task_name
         string state
+        datetime sent_at
         datetime started_at
         datetime finished_at
+        string parent_id
+        text arguments
+        text keyword_arguments
         json lines
         int omitted
     }
@@ -577,9 +581,11 @@ erDiagram
         string title
         string filename
         string sha256
+        datetime hash_failed_at
         string original
         string high_definition
         string thumbnail
+        string sidecar
         string content_type
         string derivative_state
         int derivative_attempts
@@ -588,8 +594,10 @@ erDiagram
         int requested_by_id FK
         datetime added_at
         datetime captured_at
+        bool capture_date_checked
         datetime file_modified_at
         datetime sort_at
+        string date_source
         string status
         int approved_by_id FK
         datetime approved_at
@@ -1012,8 +1020,12 @@ erDiagram
         string task_id
         string task_name
         string state
+        datetime sent_at
         datetime started_at
         datetime finished_at
+        string parent_id
+        text arguments
+        text keyword_arguments
         json lines
         int omitted
     }
@@ -1376,9 +1388,11 @@ erDiagram
         string title
         string filename
         string sha256
+        datetime hash_failed_at
         string original
         string high_definition
         string thumbnail
+        string sidecar
         string content_type
         string derivative_state
         int derivative_attempts
@@ -1387,8 +1401,10 @@ erDiagram
         int requested_by_id FK
         datetime added_at
         datetime captured_at
+        bool capture_date_checked
         datetime file_modified_at
         datetime sort_at
+        string date_source
         string status
         int approved_by_id FK
         datetime approved_at
