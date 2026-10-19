@@ -1272,6 +1272,20 @@ def saved_sidecars(album_dir: Path, prefix: tuple[str, ...]) -> dict[str, Path]:
     return sidecars
 
 
+def against_capture(counts: dict[str, int]) -> str:
+    """How well sidecars agree with the capture dates of the photos that have both — what tells
+    whether a sidecar can be believed for the photos that have nothing else."""
+    near, day, far = (
+        counts.get(key, 0) for key in ("withinAMinute", "withinADay", "further")
+    )
+    if not near + day + far:
+        return "No photo with a capture date had a sidecar to compare."
+    return (
+        f"Against {near + day + far} capture date(s), the sidecar was within a minute for {near},"
+        f" within a day for {day}, and further off for {far}."
+    )
+
+
 def send_dates(
     server: Server, options: Options, state: State, selected: set[str]
 ) -> int:
@@ -1335,11 +1349,16 @@ def send_dates(
         results["albums"] += 1
         results["updated"] += result["updated"]
         results["redated"] += result["redated"]
+        # Absent from a server older than the comparison.
+        for closeness, count in result.get("againstCapture", {}).items():
+            results[closeness] = results.get(closeness, 0) + count
+        out.info(f"    {against_capture(result.get('againstCapture', {}))}")
     out.heading("Summary")
     out.info(
         f"  {results['albums']} album(s) sent: {results['updated']} item(s) dated by their sidecar,"
         f" {results['redated']} placed anew around them"
     )
+    out.info(f"  {against_capture(results)}")
     if results["failed"]:
         out.error(
             f"✗ {results['failed']} album(s) failed; see {options.work_dir / 'failures.log'}."

@@ -1272,6 +1272,11 @@ class SidecarDates:
     unmatched: list[str] = field(default_factory=list)  # no item of that name in the album there
     ambiguous: list[str] = field(default_factory=list)  # more than one
     redated: int = 0  # items placed elsewhere once the album tree was settled again
+    # How the sidecar's date compares with the capture date, for items that have one: the measure
+    # of whether a sidecar can be believed for the items that have nothing else.
+    against_capture: dict[str, int] = field(
+        default_factory=lambda: {"withinAMinute": 0, "withinADay": 0, "further": 0}
+    )
 
 
 def apply_sidecar_dates(*, archive: File, folder: str, root_name: str) -> SidecarDates:
@@ -1316,6 +1321,16 @@ def apply_sidecar_dates(*, archive: File, folder: str, root_name: str) -> Sideca
                     (result.ambiguous if matches else result.unmatched).append(described)
                     continue
                 media = matches[0]
+                if media.captured_at is not None:
+                    off = abs(moment - media.captured_at)
+                    closeness = (
+                        "withinAMinute"
+                        if off <= timedelta(minutes=1)
+                        else "withinADay"
+                        if off <= timedelta(days=1)
+                        else "further"
+                    )
+                    result.against_capture[closeness] += 1
                 if media.file_modified_at == moment:
                     result.unchanged += 1
                     continue

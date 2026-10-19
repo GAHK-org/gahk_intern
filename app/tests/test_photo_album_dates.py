@@ -476,9 +476,14 @@ def test_sidecars_sent_later_date_what_was_imported_without_them(
     reset = _item(evening, resident, "IMG_3.JPG", file_modified_at=dropbox)
     for _ in range(2):  # two of a name: which one a sidecar is for cannot be told
         _item(root, resident, "IMG_9.JPG")
+    # Photos with a capture date too: what the sidecar is measured against.
+    _item(root, resident, "IMG_5.JPG", captured_at=party + timedelta(seconds=2))
+    _item(root, resident, "IMG_6.JPG", captured_at=party - timedelta(days=10))
     settle_dates(root)
     sidecars = {
         ".AppleDouble/IMG_1.JPG": _appledouble(party),
+        ".AppleDouble/IMG_5.JPG": _appledouble(party),
+        ".AppleDouble/IMG_6.JPG": _appledouble(party),
         "aften/.AppleDouble/IMG_2.JPG": _appledouble(party + timedelta(hours=1)),
         "Aften/.AppleDouble/IMG_3.JPG": _appledouble(datetime(2001, 1, 5, tzinfo=UTC)),  # clock reset
         ".AppleDouble/IMG_9.JPG": _appledouble(party),
@@ -498,12 +503,13 @@ def test_sidecars_sent_later_date_what_was_imported_without_them(
     result = send()
 
     assert {key: result[key] for key in ("updated", "unchanged", "undated", "unmatched", "ambiguous")} == {
-        "updated": 2,
+        "updated": 4,
         "unchanged": 0,
         "undated": 1,
         "unmatched": ["IMG_404.JPG"],
         "ambiguous": ["IMG_9.JPG"],
     }
+    assert result["againstCapture"] == {"withinAMinute": 1, "withinADay": 0, "further": 1}
     assert _dates(first, second, reset) == [
         (party, DateSource.FILE),
         (party + timedelta(hours=1), DateSource.FILE),
