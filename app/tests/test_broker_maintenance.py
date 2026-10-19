@@ -5,16 +5,19 @@ kombu's SQLAlchemy transport never deletes a message it has delivered — taking
 message ever sent. `process_pending_media` contributes one recovery message each night.
 
 The table belongs to kombu, not to Django, so it does not exist in a fresh test database. These
-build it to the shape the running database actually has (verified against it: `timestamp` is
-`timestamp without time zone`, holding UTC) rather than mocking the query away, because the two
-things worth pinning — which rows are chosen, and that the cutoff is compared as naive UTC — are
-exactly what a mock would assume rather than test.
+build it to the shape the running database actually has (`timestamp` is `timestamp without time
+zone`, holding the worker's local wall-clock time from when it took the message) rather than mocking
+the query away, because the two things worth pinning — which rows are chosen, and that the cutoff is
+compared as naive local time — are exactly what a mock would assume rather than test.
 """
 
 import datetime
+import zoneinfo
 
 import pytest
+from django.conf import settings
 from django.db import connection
+from django.utils import timezone
 
 from core.tasks import BROKER_MESSAGE_RETENTION, purge_delivered_broker_messages
 
@@ -31,7 +34,9 @@ KOMBU_TABLE = """
 
 
 def _insert(visible: bool, age: datetime.timedelta) -> None:
-    stamp = datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - age
+    """A message taken `age` ago, stamped the way kombu stamps it: the worker's naive local time."""
+    local_now = timezone.localtime(timezone=zoneinfo.ZoneInfo(settings.TIME_ZONE)).replace(tzinfo=None)
+    stamp = local_now - age
     with connection.cursor() as cursor:
         cursor.execute(
             "INSERT INTO kombu_message (visible, timestamp, payload, version, queue_id)"
@@ -62,3 +67,14 @@ def test_only_delivered_messages_past_the_retention_window_are_swept() -> None:
     with connection.cursor() as cursor:
         cursor.execute("SELECT visible FROM kombu_message ORDER BY id")
         assert cursor.fetchall() == [(False,), (True,)]
+
+
+@pytest.mark.django_db
+def test_the_cutoff_is_read_in_the_workers_zone_not_utc() -> None:
+    """Copenhagen is one or two hours ahead of UTC. Compared against a UTC cutoff, a message taken
+    25 hours ago in local time looked only 23 or 24 hours old, and was kept a day too long."""
+    with connection.cursor() as cursor:
+        cursor.execute(KOMBU_TABLE)
+    _insert(visible=False, age=BROKER_MESSAGE_RETENTION + datetime.timedelta(minutes=30))
+
+    assert purge_delivered_broker_messages.run() == 1

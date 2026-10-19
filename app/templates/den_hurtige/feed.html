@@ -38,7 +38,11 @@
 {% block body_class %}no-zoom chat-page{% endblock %}
 
 {% block content %}
-  <div class="chat">
+  {% comment %}
+    data-live: this page listens to its channel's live topic (den_hurtige.live), and the polls
+    below hear from it. See #js-live.
+  {% endcomment %}
+  <div class="chat" data-live="den-hurtige.{{ channel.slug }}">
     <div class="chat-head">
       {% comment %}
         The channel picker doubles as the page title, so it costs no vertical space at all: a
@@ -59,16 +63,7 @@
             <span class="channel-name">{{ channel.name }}</span>
             <span class="caret" aria-hidden="true">▾</span>
           </summary>
-          <nav class="channel-menu" aria-label="Kanaler">
-            {% for tab in tabs %}
-              <a class="channel-option{% if tab.current %} active{% endif %}" href="{{ tab.channel.url }}"
-                 {% if tab.current %}aria-current="page"{% endif %}>
-                <svg class="ni" aria-hidden="true"><use href="#i-{{ tab.channel.icon }}"></use></svg>
-                <span class="channel-option-name">{{ tab.channel.name }}</span>
-                {% if tab.live %}<span class="channel-count">{{ tab.live }}</span>{% endif %}
-              </a>
-            {% endfor %}
-          </nav>
+          {% include "den_hurtige/_channel_menu.html" %}
         </details>
       {% else %}
         <span class="channel-single">{{ channel.name }}</span>
@@ -93,7 +88,7 @@
     {% include "notifications/_device.html" with mode="prompt" %}
 
     {% comment %}
-      The message list. Polled so other residents' messages appear without a refresh.
+      The message list. Kept current so other residents' messages appear without a refresh.
 
       MORPHED, not replaced: idiomorph patches the existing nodes rather than swapping the list out,
       so scroll position, open reply threads and a half-typed reply survive because they are simply
@@ -194,9 +189,31 @@
           </div>
         {% endif %}
 
+        {% comment %}
+          LIVE BY SIGNAL, POLLED ONLY AS A BACKSTOP. Three triggers, and they divide the work:
+
+            gahk-live    the channel's WebSocket said a message changed (frontend/src/feed.ts
+                         raises it). This is how a new message, reply count, reaction or deletion
+                         arrives — within a moment, not within five seconds.
+            every 5s     the old poll, now only while this channel is NOT live (the filter): a
+                         socket that dropped, a proxy that refuses the upgrade, or a socket that is
+                         open but whose server skipped this channel's topic. `data-live-on` is set
+                         on .chat by frontend/src/live.ts only once the server has said it joined
+                         the topic. Without it the page behaves exactly as it did before WebSockets.
+            every 60s    always. Some changes are not writes and so have no signal — a message
+                         archiving is the clock passing its expires_at, and the countdown on every
+                         bubble moves by itself — and the in-memory channel layer cannot hear a
+                         write made by another process (core.live). A minute is the countdown's own
+                         resolution.
+
+          hx-sync queues ONE follow-up request behind one in flight, so a burst of signals (three
+          people reacting at once) costs two fetches rather than three, and the last change is
+          never the one that gets dropped.
+        {% endcomment %}
         <div id="js-live"
              hx-get="{% url 'den_hurtige:feed_items' %}?kanal={{ channel.slug }}"
-             hx-trigger="every 5s"
+             hx-trigger="gahk-live, every 5s [!this.closest('[data-live-on]')], every 60s"
+             hx-sync="this:queue last"
              hx-ext="morph"
              hx-swap="morph:innerHTML">
           {% include "den_hurtige/_posts.html" %}

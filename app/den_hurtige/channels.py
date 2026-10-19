@@ -100,7 +100,7 @@ BY_SLUG: dict[str, Channel] = {c.slug: c for c in CHANNELS}
 # longer routes (push and per-room muting moved to the notifications app) but stay reserved: an
 # installed PWA or a stale tab may still POST to them, and that must 404/405 rather than land in a
 # channel that happens to share the name.
-RESERVED_SLUGS = frozenset({"opslag", "opret", "abonner", "lyd", "arkiv"})
+RESERVED_SLUGS = frozenset({"opslag", "opret", "abonner", "lyd", "arkiv", "kanaler"})
 
 
 def lookup(slug: str | None) -> Channel | None:

@@ -52,8 +52,12 @@ erDiagram
         string task_id
         string task_name
         string state
+        datetime sent_at
         datetime started_at
         datetime finished_at
+        string parent_id
+        text arguments
+        text keyword_arguments
         json lines
         int omitted
     }
@@ -577,6 +581,7 @@ erDiagram
         string title
         string filename
         string sha256
+        datetime hash_failed_at
         string original
         string high_definition
         string thumbnail
@@ -1012,8 +1017,12 @@ erDiagram
         string task_id
         string task_name
         string state
+        datetime sent_at
         datetime started_at
         datetime finished_at
+        string parent_id
+        text arguments
+        text keyword_arguments
         json lines
         int omitted
     }
@@ -1376,6 +1385,7 @@ erDiagram
         string title
         string filename
         string sha256
+        datetime hash_failed_at
         string original
         string high_definition
         string thumbnail

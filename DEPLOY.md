@@ -138,6 +138,23 @@ large video through the album page on a slow line still meets it. Raising it is 
 (the proxy's configuration, e.g. `--entrypoints.https.transport.respondingTimeouts.readTimeout=3600s`),
 not something this repository controls.
 
+**More processes also means a shared channel layer.** Den Hurtige, opslagstavlen, the repair board,
+event pages and the notification bell are live over WebSockets (`/ws/live/?t=<topic>`,
+`app/core/live.py`); every intern page holds one socket, for the bell if nothing else. The signal from
+a write to the open pages travels through Channels' **in-memory** layer (`CHANNEL_LAYERS` in
+`config/settings.py`), which only reaches sockets held by the same process. With two or more, a page
+hears about a change only when it happens to be connected to the process that handled the write.
+Nothing breaks — Den Hurtige falls back to a 60-second backstop poll, the rest to how they were
+before they were live — it just stops being live. Add a Redis service and switch the layer to
+`channels_redis` in the same change that adds workers.
+
+The same limit applies to Celery today: a worker is another process, so what it writes (event
+reminders, mærkedage, the nightly repair archiving, photo-album jobs) is not signalled, and shows on
+the next page load as before. A shared layer is also what would make those live.
+
+Traefik proxies the WebSocket upgrade with no configuration; a proxy that refused it would leave
+Den Hurtige on its old 5-second poll and every other page as it was before.
+
 ### 4a. Deploys: CI builds the image, the server pulls it
 
 Coolify does not build anything. The flow is:

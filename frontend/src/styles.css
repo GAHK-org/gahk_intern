@@ -1524,6 +1524,18 @@
      margins instead of into the ink, which is what "congested" was actually about. */
   .board-list { @apply flex flex-col gap-3; }
   .board-pinned { @apply mb-3; }
+  /* "N nye opslag — vis" (opslagstavle-live.ts). Sticky just under the 60px top bar, so it is seen
+     by somebody halfway down the page, which is where a reader usually is when a post arrives —
+     and it is a pill floating over the cards rather than a row pushing them down, because not
+     moving the cards is the whole reason a new post is announced instead of inserted. Its block
+     is zero-height for the same reason; the pill hangs below it. */
+  .board-new { position:sticky; top:68px; z-index:5; display:block; width:fit-content; height:0;
+    margin:0 auto; overflow:visible; text-decoration:none; }
+  .board-new[hidden] { display:none; }
+  .board-new > span { display:block; padding:6px 14px; border-radius:999px; background:var(--green);
+    color:#fff; font-size:.875rem; font-weight:600; box-shadow:0 6px 16px rgb(0 0 0 / .18);
+    white-space:nowrap; }
+  .topbar-hidden .board-new { top:8px; }
   .notice-card { @apply px-4; padding-block: 14px; }
   /* 15px, not the inherited 16. A card in a scanned list is not a page of prose: at 16px with
      leading-relaxed the excerpt was the loudest thing on the board and left the padding looking
@@ -2337,4 +2349,140 @@
     color:var(--ink); text-decoration:none; }
   .chat-notif-link:hover { background:var(--green-050); color:var(--green-700); }
   .chat-notif-link.is-off { color:var(--muted); }
+
+  /* --- worker-jobs dashboard (siteadmin/worker_jobs.html, _worker_jobs_live.html, worker_job_detail.html) --- */
+  /* A chip for a state that is neither good nor bad news: waiting in the queue, annulled. */
+  .chip-quiet { background:var(--sunken); color:var(--muted); border-color:var(--border); }
+
+  .jobs-section { margin-bottom:20px; }
+  .jobs-name { font-family:ui-monospace,Menlo,monospace; font-size:13px; font-weight:650; overflow-wrap:anywhere; }
+  a.jobs-name { color:var(--green-700); }
+  .jobs-app { margin-left:7px; font-size:11.5px; color:var(--faint); white-space:nowrap; }
+  .jobs-sub { font-size:12.5px; color:var(--muted); overflow-wrap:anywhere; }
+  .jobs-args, .jobs-mono { font-family:ui-monospace,Menlo,monospace; font-size:12px; overflow-wrap:anywhere; }
+  .jobs-args { color:var(--faint); }
+  .jobs-empty { margin:0; padding:14px 18px; color:var(--muted); font-size:13.5px; }
+
+  /* The tiles: label, number, one line of what it means. A tile with bad news gets a red edge as
+     well as its words — never the colour alone. */
+  .jobs-tiles { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:14px; margin-bottom:20px; }
+  .jobs-tile { display:block; padding:14px 16px; background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--radius); box-shadow:var(--shadow-sm); color:var(--ink); text-decoration:none; }
+  a.jobs-tile:hover { border-color:var(--green-100); background:var(--green-050); color:var(--ink); }
+  .jobs-tile.is-alert { border-color:#e7c7c3; box-shadow:inset 4px 0 0 var(--neg), var(--shadow-sm); }
+  .jobs-tile-k { display:block; font-size:11px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); }
+  .jobs-tile-v { display:block; margin-top:4px; font-size:30px; font-weight:700; line-height:1.15; font-variant-numeric:tabular-nums; }
+  .jobs-tile-s { display:block; margin-top:2px; font-size:12.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  .jobs-live { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:20px; align-items:start; margin-bottom:20px; }
+  .jobs-list { list-style:none; margin:0; padding:0; }
+  .jobs-list > li { padding:12px 18px; }
+  .jobs-list > li + li { border-top:1px solid var(--border); }
+  .jobs-row { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; }
+  .jobs-when { flex:none; text-align:right; font-size:12.5px; color:var(--muted); }
+  .jobs-when b { display:block; font-size:15px; color:var(--ink); }
+  /* A running job's share of its time limit. The track is a lighter step of the fill's own colour. */
+  .jobs-meter { height:4px; margin-top:8px; border-radius:2px; background:var(--green-100); overflow:hidden; }
+  .jobs-meter > span { display:block; height:100%; border-radius:2px; background:var(--green); }
+  .jobs-meter.is-near { background:var(--warn-bg); }
+  .jobs-meter.is-near > span { background:var(--brass); }
+  .jobs-stale { padding:11px 18px; border-bottom:1px solid var(--border); background:var(--neg-bg); font-size:13px; }
+  .jobs-stale a { font-weight:600; color:var(--neg); }
+
+  .jobs-group { padding:11px 18px; }
+  .jobs-group + .jobs-group { border-top:1px solid var(--border); }
+  .jobs-group-head { display:flex; align-items:center; flex-wrap:wrap; gap:4px 8px; }
+  .jobs-group-head .jobs-app { margin-left:0; }
+  .jobs-group-count { margin-left:auto; font-size:15px; }
+  .jobs-queued { list-style:none; margin:6px 0 0; padding:0; font-size:12.5px; }
+  .jobs-queued li { display:flex; align-items:baseline; gap:10px; padding:2px 0; overflow-wrap:anywhere; }
+  .jobs-queued .num { flex:none; color:var(--muted); }
+
+  /* The activity chart: a column an hour, failed at the baseline and succeeded on top, with the
+     2px surface gap between them and a rounded end on the top one. Colours checked with the
+     dataviz validator (deuteranopia ΔE 11 between the two, 3:1 against the card). */
+  .jobs-legend { display:flex; gap:16px; font-size:13px; color:var(--muted); }
+  .jobs-legend span { display:inline-flex; align-items:center; gap:6px; }
+  .jobs-legend b { color:var(--ink); }
+  .jobs-legend i { display:inline-block; width:10px; height:10px; border-radius:2px; }
+  .jobs-key-ok { background:#4FA06E; }
+  .jobs-key-fail { background:var(--neg); }
+  .jobs-chart { position:relative; height:150px; margin-top:12px; border-bottom:1px solid var(--border-strong); }
+  .jobs-gridline { position:absolute; left:0; right:0; border-top:1px solid var(--border); }
+  .jobs-gridline > span { position:absolute; left:0; bottom:2px; font-size:11px; color:var(--faint); }
+  .jobs-cols, .jobs-axis { display:grid; grid-template-columns:repeat(24, minmax(0, 1fr)); }
+  .jobs-cols { position:relative; height:100%; }
+  .jobs-col { position:relative; display:flex; flex-direction:column-reverse; align-items:center; gap:2px; height:100%; }
+  .jobs-col:hover { background:var(--sunken); }
+  .jobs-col > i { display:block; width:min(24px, 70%); min-height:3px; }
+  .jobs-col > i:last-child { border-radius:4px 4px 0 0; }
+  .jobs-col:hover::after { content:attr(data-tip); position:absolute; bottom:calc(100% + 6px); left:50%; transform:translateX(-50%);
+    z-index:5; padding:5px 9px; border-radius:6px; background:var(--ink); color:#fff; font-size:12px; white-space:nowrap; pointer-events:none; }
+  .jobs-col:nth-child(-n+4):hover::after { left:0; transform:none; }
+  .jobs-col:nth-last-child(-n+4):hover::after { left:auto; right:0; transform:none; }
+  .jobs-axis { margin-top:4px; font-size:11px; color:var(--faint); }
+  .jobs-axis span { text-align:center; }
+  .jobs-table-view { margin-top:12px; font-size:13px; }
+  .jobs-table-view summary { cursor:pointer; color:var(--muted); }
+  .jobs-table-view table { margin-top:8px; }
+
+  .jobs-table { width:100%; border-collapse:collapse; font-size:13.5px; }
+  .jobs-table thead th { padding:9px 14px; font-size:11.5px; font-weight:650; letter-spacing:.04em; text-transform:uppercase;
+    color:var(--muted); background:var(--surface-2); border-bottom:1px solid var(--border); white-space:nowrap; }
+  .jobs-table td { vertical-align:top; }
+  .jobs-table th:first-child, .jobs-table td:first-child { padding-left:18px; }
+  .jobs-table th:last-child, .jobs-table td:last-child { padding-right:18px; }
+  .jobs-table .num { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .jobs-table .jobs-time { white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .jobs-table tr.is-selected td { background:var(--green-050); }
+  .jobs-task-cell { min-width:270px; }
+  .jobs-fail-count { font-weight:700; color:var(--neg); }
+
+  .jobs-filters { display:flex; flex-wrap:wrap; align-items:flex-end; gap:10px 16px; padding:14px 18px; background:var(--surface-2); border-bottom:1px solid var(--border); }
+  .jobs-filters label { margin:0; font-size:12px; font-weight:650; color:var(--muted); }
+  .jobs-filters select { display:block; width:auto; min-width:150px; max-width:280px; margin-top:4px; padding:6px 8px; font-size:14px; font-weight:400; }
+  .jobs-filters .jobs-check { display:flex; align-items:center; gap:7px; padding-bottom:8px; font-size:14px; font-weight:500; color:var(--ink); }
+  .jobs-check input { width:16px; height:16px; }
+  .jobs-reset { padding-bottom:8px; font-size:13px; font-weight:600; }
+  .jobs-states { display:flex; flex-wrap:wrap; gap:6px; padding:12px 18px; border-bottom:1px solid var(--border); }
+  .jobs-states-inline { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; }
+  .jobs-pill { display:inline-flex; align-items:center; gap:6px; padding:4px 11px; border:1px solid var(--border-strong); border-radius:999px;
+    background:var(--surface); color:var(--ink); font-size:13px; font-weight:600; text-decoration:none; }
+  .jobs-pill b { font-weight:650; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .jobs-pill:hover { border-color:var(--green); color:var(--green-700); }
+  .jobs-pill.is-on { background:var(--green); border-color:var(--green); color:#fff; }
+  .jobs-pill.is-on b { color:#fff; }
+  .jobs-pager { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 18px; border-top:1px solid var(--border); font-size:14px; }
+
+  /* The job's page: sent → started → finished, with the wait and the run between them. */
+  .jobs-title { display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
+  .jobs-title .jobs-name { font-size:22px; }
+  .jobs-timeline { list-style:none; margin:0; padding:16px 18px; display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; }
+  .jobs-timeline > li:not(.jobs-timeline-gap) { padding-left:14px; border-left:3px solid var(--border-strong); }
+  .jobs-timeline > li.is-done { border-left-color:var(--green); }
+  .jobs-timeline b { display:block; font-weight:650; font-variant-numeric:tabular-nums; }
+  .jobs-timeline-k { display:block; font-size:11px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); }
+  .jobs-timeline-gap { flex:1 1 60px; min-width:60px; padding-bottom:4px; border-bottom:1px dashed var(--border-strong);
+    text-align:center; font-size:12.5px; color:var(--muted); }
+  .jobs-limit { padding-top:0; }
+  .jobs-facts { display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:14px 24px; margin:0; padding:16px 18px; font-size:13.5px; }
+  .jobs-facts dt { font-size:12px; color:var(--muted); }
+  .jobs-facts dd { margin:2px 0 0; }
+  .jobs-pre { margin:0; padding:14px 18px; overflow-x:auto; font-size:12.5px; line-height:1.5; }
+  .jobs-log td { padding:6px 14px; }
+  .jobs-log .jobs-message { white-space:pre-wrap; overflow-wrap:anywhere; }
+  .jobs-log tr.is-warning td { background:var(--warn-bg); }
+  .jobs-log tr.is-error td, .jobs-log tr.is-critical td { background:var(--neg-bg); }
+
+  @media (max-width:960px) {
+    .jobs-live { grid-template-columns:minmax(0, 1fr); }
+  }
+  @media (max-width:720px) {
+    .jobs-tiles { grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; }
+    .jobs-tile-v { font-size:24px; }
+    .jobs-tile-s { white-space:normal; }
+    .jobs-timeline { flex-direction:column; align-items:stretch; }
+    .jobs-timeline-gap { border-bottom:0; border-left:1px dashed var(--border-strong); margin-left:1px; padding:2px 0 2px 16px; text-align:left; }
+    .card-head:has(.jobs-legend) { flex-wrap:wrap; }
+  }
 }

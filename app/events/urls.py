@@ -25,6 +25,7 @@ urlpatterns = [
     path("kommentar/<int:pk>/slet", views.delete_comment, name="delete_comment"),
     path("<int:pk>", views.detail, name="detail"),
     path("<int:pk>/rediger", views.edit, name="edit"),
+    path("<int:pk>/indhold", views.live_detail, name="live_detail"),  # what a live signal re-reads
     path("<int:pk>/slet", views.delete, name="delete"),
     path("<int:pk>/aflys", views.cancel, name="cancel"),
     path("<int:pk>/svar", views.answer, name="answer"),

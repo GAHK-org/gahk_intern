@@ -76,6 +76,25 @@ MIDDLEWARE = [
 ROOT_URLCONF = "config.urls"
 ASGI_APPLICATION = "config.asgi.application"
 
+# Where live updates travel between the view that writes and the sockets that listen (core.live).
+# In-memory, which is exactly right while `web` is ONE uvicorn process (DEPLOY.md §4): the view and
+# every socket share that process, and there is nothing to run or to fail. It stops being right the
+# moment there are two — `--workers 3` or a second replica — because a signal sent in one process
+# never reaches sockets held by another. Pages then fall back to their slow poll and keep working,
+# just less live; the fix is a shared layer (channels_redis and a Redis service), not this setting.
+#
+# group_expiry is raised from Channels' default of one day, which silently drops a socket from its
+# topic 24 hours after it joined while the socket itself stays open. The page then believes it is
+# live, has switched its 5s poll off, and hears nothing: a Den Hurtige tab left open on a desktop
+# overnight would only update once a minute from then on. Membership is removed on disconnect
+# anyway, so the expiry only guards against leaks, and in one process a leak cannot outlive it.
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer",
+        "CONFIG": {"group_expiry": 60 * 60 * 24 * 365},
+    }
+}
+
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
