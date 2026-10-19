@@ -5,7 +5,9 @@
 # injected by Coolify's env manager, so there is no committed env_file. MediaWiki is its own app.
 #
 # The image is not built here: CI builds it and moves `:main` once the checks pass, and a timer on the
-# server pulls it and asks Coolify to redeploy (DEPLOY.md §4a). All four services run the same one.
+# server asks Coolify to redeploy when it moves (DEPLOY.md §4a). All four services run the same one.
+# Coolify pulls it before it stops the running containers (4.3.19 and later), so a redeploy by hand
+# gets the current `:main` too, and an unreachable registry fails the deploy with the old one still up.
 # IMAGE_TAG is for rolling back: set it to `sha-<commit>` in Coolify and redeploy; unset to follow main.
 services:
   web:
