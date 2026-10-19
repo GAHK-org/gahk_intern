@@ -2,13 +2,14 @@
 {% comment %}
   Everything on the detail page that a live update re-draws: the post and its comments. Rendered
   inside detail.html on first load and by views.live_detail when a signal names this post, and
-  morphed into #js-notice-live — so this one file is the page's body, not a copy of it.
+  morphed in by frontend/src/live-region.ts — so this one file is the page's body, not a copy of it.
 
   The comment form is in here too, so the page has one layout; it carries data-morph-skip so the
   morph never enters it.
 {% endcomment %}
-<div id="js-notice-live" data-live-notice="{{ notice.pk }}"
-     data-live-url="{% url 'opslagstavle:live_detail' notice.pk %}">
+<div id="js-notice-live" data-live="opslagstavle" data-live-region data-live-pk="{{ notice.pk }}"
+     data-live-url="{% url 'opslagstavle:live_detail' notice.pk %}"
+     data-live-gone="Opslaget er blevet slettet.">
   {% comment %}
     Same partial as the list, with full=True: one definition of what a post looks like. This page
     exists so a notification has something stable to link to — `?page=4` is not an address for a

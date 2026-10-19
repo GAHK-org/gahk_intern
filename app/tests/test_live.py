@@ -9,6 +9,7 @@ refusal, and a view's write arriving on a subscribed socket. Those are transacti
 consumer reads the database from a worker thread, which cannot see an uncommitted test transaction.
 """
 
+import datetime
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
@@ -21,6 +22,7 @@ from django.contrib.auth.models import AnonymousUser
 from django.contrib.sessions.backends.db import SessionStore
 from django.http import HttpRequest
 from django.test import Client
+from django.utils import timezone
 
 from config.routing import websocket_urlpatterns
 from core import live
@@ -29,8 +31,14 @@ from den_hurtige import access as dh_access
 from den_hurtige import channels
 from den_hurtige.channels import Channel
 from den_hurtige.models import QuickPost
+from events import access as events_access
+from events.models import Event, EventInvite, Visibility
+from notifications import categories
+from notifications import services as notification_services
+from notifications.models import Notification
 from opslagstavle import access as board_access
 from opslagstavle.models import Category, Notice, NoticeComment
+from reparationer.models import RepairTask
 from residents.models import Resident, Role
 
 FEED_URL = "/intern/den-hurtige/"
@@ -58,9 +66,20 @@ def signals(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, object
     waits for the commit is test_a_signal_waits_for_its_transaction's job.
     """
     sent: list[tuple[str, dict[str, object]]] = []
-    monkeypatch.setattr(live, "_send", lambda topic, data: sent.append((topic, data)))
+
+    def record(topic: str, data: dict[str, object]) -> None:
+        assert data.pop("topic") == topic, "a signal must name its own topic; the page filters on it"
+        sent.append((topic, data))
+
+    monkeypatch.setattr(live, "_send", record)
     monkeypatch.setattr(live, "transaction", SimpleNamespace(on_commit=lambda fn: fn()))
     return sent
+
+
+def features(sent: list[tuple[str, dict[str, object]]]) -> list[tuple[str, dict[str, object]]]:
+    """What a feature's own topics heard. A reply or a reaction also notifies somebody, and the
+    bell's signal for that is test_the_bell's business, not the feature's."""
+    return [(topic, data) for topic, data in sent if not topic.startswith("notifikationer.")]
 
 
 def as_request(user: Resident | AnonymousUser) -> HttpRequest:
@@ -164,7 +183,7 @@ def test_a_new_message_signals_its_channel(client: Client, beboer: Resident, sig
     client.post(FEED_URL + "opret", {"content": "Kaffe?", "duration": 60, "kanal": "tv-rezz"})
 
     post = QuickPost.objects.get()
-    assert signals == [("den-hurtige.tv-rezz", {"kind": "created", "pk": post.pk})]
+    assert features(signals) == [("den-hurtige.tv-rezz", {"kind": "created", "pk": post.pk})]
 
 
 def test_a_reply_a_reaction_and_a_tombstone_signal_their_message(
@@ -179,7 +198,7 @@ def test_a_reply_a_reaction_and_a_tombstone_signal_their_message(
     client.post(f"{FEED_URL}{post.pk}/slet")  # past the grace period: a tombstone, so "changed"
 
     changed = ("den-hurtige.generelt", {"kind": "changed", "pk": post.pk})
-    assert signals == [changed, changed, changed]
+    assert features(signals) == [changed, changed, changed]
 
 
 def test_a_message_deleted_outright_signals_the_pk_it_had(
@@ -194,7 +213,7 @@ def test_a_message_deleted_outright_signals_the_pk_it_had(
     client.post(f"{FEED_URL}{pk}/slet")
 
     assert not QuickPost.objects.exists()
-    assert signals == [("den-hurtige.generelt", {"kind": "deleted", "pk": pk})]
+    assert features(signals) == [("den-hurtige.generelt", {"kind": "deleted", "pk": pk})]
 
 
 def test_a_refused_write_signals_nothing(client: Client, beboer: Resident, signals: list) -> None:
@@ -202,7 +221,7 @@ def test_a_refused_write_signals_nothing(client: Client, beboer: Resident, signa
 
     client.post(FEED_URL + "opret", {"content": "Ingen varighed"})
 
-    assert signals == []
+    assert features(signals) == []
 
 
 # --- opslagstavlen: every write signals its notice ----------------------------------------------
@@ -215,7 +234,9 @@ def test_a_new_notice_signals_with_its_category(client: Client, beboer: Resident
     client.post(BOARD + "opret", {"category": Category.NYT, "body": "Hej"})
 
     notice = Notice.objects.get()
-    assert signals == [("opslagstavle", {"kind": "created", "pk": notice.pk, "category": Category.NYT})]
+    assert features(signals) == [
+        ("opslagstavle", {"kind": "created", "pk": notice.pk, "category": Category.NYT})
+    ]
 
 
 def test_notice_writes_each_signal_their_notice(
@@ -233,7 +254,7 @@ def test_notice_writes_each_signal_their_notice(
     client.post(f"{BOARD}{notice.pk}/fastgoer")
 
     changed = ("opslagstavle", {"kind": "changed", "pk": notice.pk})
-    assert signals == [changed] * 5
+    assert features(signals) == [changed] * 5
 
 
 def test_a_deleted_notice_signals_the_pk_it_had(client: Client, beboer: Resident, signals: list) -> None:
@@ -243,7 +264,7 @@ def test_a_deleted_notice_signals_the_pk_it_had(client: Client, beboer: Resident
 
     client.post(f"{BOARD}{pk}/slet")
 
-    assert signals == [("opslagstavle", {"kind": "deleted", "pk": pk})]
+    assert features(signals) == [("opslagstavle", {"kind": "deleted", "pk": pk})]
 
 
 # --- what a signal re-fetches -------------------------------------------------------------------
@@ -328,8 +349,9 @@ def test_the_feed_polls_fast_only_without_a_live_connection(client: Client, bebo
 # --- through a real socket ----------------------------------------------------------------------
 
 
-def _communicator(path: str, user: Resident | AnonymousUser) -> WebsocketCommunicator:
-    communicator = WebsocketCommunicator(URLRouter(websocket_urlpatterns), path)
+def _communicator(topics: list[str], user: Resident | AnonymousUser) -> WebsocketCommunicator:
+    query = "&".join(f"t={topic}" for topic in topics)
+    communicator = WebsocketCommunicator(URLRouter(websocket_urlpatterns), f"/ws/live/?{query}")
     communicator.scope["user"] = user
     communicator.scope["session"] = SessionStore()
     return communicator
@@ -341,7 +363,7 @@ def test_a_refused_socket_is_closed_with_the_refusal_code() -> None:
     retrying (live.ts). A rejected handshake would look like a network failure."""
 
     async def run() -> dict[str, Any]:
-        communicator = _communicator("/ws/live/den-hurtige.generelt/", AnonymousUser())
+        communicator = _communicator(["den-hurtige.generelt"], AnonymousUser())
         connected, _ = await communicator.connect()
         assert connected
         closed = await communicator.receive_output()
@@ -359,7 +381,7 @@ def test_a_new_message_reaches_a_listening_socket(make_resident: Callable[..., R
     client.force_login(author)
 
     async def run() -> dict[str, Any]:
-        communicator = _communicator("/ws/live/den-hurtige.generelt/", author)
+        communicator = _communicator(["den-hurtige.generelt"], author)
         connected, _ = await communicator.connect()
         assert connected
         await sync_to_async(client.post)(FEED_URL + "opret", {"content": "Kaffe?", "duration": 60})
@@ -369,4 +391,238 @@ def test_a_new_message_reaches_a_listening_socket(make_resident: Callable[..., R
 
     signal = async_to_sync(run)()
 
-    assert signal == {"kind": "created", "pk": QuickPost.objects.get().pk}
+    assert signal == {"topic": "den-hurtige.generelt", "kind": "created", "pk": QuickPost.objects.get().pk}
+
+
+@pytest.mark.django_db(transaction=True)
+def test_one_socket_joins_every_topic_it_may_and_skips_the_rest(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """A page asks for several topics on one socket. One it may not hear (somebody else's inbox) is
+    left out, while the others stay live — and nothing published there reaches this socket."""
+    me = make_resident(email="a@gahk.dk")
+    other = make_resident(email="b@gahk.dk")
+
+    async def run() -> tuple[dict[str, Any], bool]:
+        communicator = _communicator(["opslagstavle", f"notifikationer.{other.pk}"], me)
+        connected, _ = await communicator.connect()
+        assert connected
+        await sync_to_async(live._send)(f"notifikationer.{other.pk}", {"topic": "x"})
+        quiet = await communicator.receive_nothing(timeout=0.2)
+        await sync_to_async(live._send)("opslagstavle", {"topic": "opslagstavle", "kind": "changed", "pk": 1})
+        heard = await communicator.receive_json_from(timeout=5)
+        await communicator.disconnect()
+        return heard, quiet
+
+    heard, quiet = async_to_sync(run)()
+
+    assert quiet, "a signal for somebody else's inbox reached this socket"
+    assert heard == {"topic": "opslagstavle", "kind": "changed", "pk": 1}
+
+
+# --- the bell -----------------------------------------------------------------------------------
+
+
+def test_only_your_own_inbox_may_be_heard(beboer: Resident, make_resident: Callable[..., Resident]) -> None:
+    other = make_resident(email="anden@gahk.dk")
+
+    assert live.may_subscribe(as_request(beboer), f"notifikationer.{beboer.pk}")
+    assert not live.may_subscribe(as_request(beboer), f"notifikationer.{other.pk}")
+    assert not live.may_subscribe(as_request(beboer), "notifikationer")
+
+
+def test_the_bell_hears_a_notification_arrive_and_be_read(
+    beboer: Resident, make_resident: Callable[..., Resident], signals: list
+) -> None:
+    """Arriving and being read both move the badge — reading on the phone clears the laptop's."""
+    other = make_resident(email="anden@gahk.dk")
+
+    notification_services.notify([beboer.pk, other.pk], category=categories.GENERAL, title="Hej", url="/")
+    arrived = sorted(topic for topic, _ in signals)
+    signals.clear()
+    notification_services.mark_seen(Notification.objects.filter(recipient=beboer))
+
+    assert arrived == sorted([f"notifikationer.{beboer.pk}", f"notifikationer.{other.pk}"])
+    assert signals == [(f"notifikationer.{beboer.pk}", {"kind": "changed", "pk": None})]
+
+
+def test_marking_nothing_seen_signals_nothing(beboer: Resident, signals: list) -> None:
+    notification_services.mark_seen(Notification.objects.filter(recipient=beboer))
+
+    assert signals == []
+
+
+def test_the_bell_declares_its_topic_and_its_badge_can_be_reread(client: Client, beboer: Resident) -> None:
+    client.force_login(beboer)
+    page = client.get(BOARD).content.decode()
+    notification_services.notify([beboer.pk], category=categories.GENERAL, title="Hej", url="/")
+    badge = client.get("/intern/notifikationer/taeller").content.decode()
+
+    assert f'data-live="notifikationer.{beboer.pk}"' in page
+    assert 'id="js-notif-badge"' in badge
+    assert ">1<" in badge
+    assert "<html" not in badge
+    client.logout()
+    assert client.get("/intern/notifikationer/taeller").status_code == 204
+
+
+# --- the repair board ---------------------------------------------------------------------------
+
+REPAIRS = "/intern/reparationer/"
+
+
+def test_every_repair_write_signals_the_board(
+    client: Client, make_resident: Callable[..., Resident], signals: list
+) -> None:
+    client.force_login(make_resident(email="rep@gahk.dk", roles=(Role.REPPER,)))
+    client.post(REPAIRS + "opret", {"title": "Utæt vandhane", "location": "", "description": ""})
+    task = RepairTask.objects.get()
+    pk = task.pk
+    client.post(f"{REPAIRS}{pk}/status", {"status": RepairTask.Status.I_GANG})
+    client.post(f"{REPAIRS}{pk}/ansvarlig", {"responsible": RepairTask.Responsible.REPPER})
+    client.post(f"{REPAIRS}{pk}/kommentar", {"body": "Bestilt reservedel"})
+    client.post(f"{REPAIRS}{pk}/slet")
+
+    changed = ("reparationer", {"kind": "changed", "pk": pk})
+    assert features(signals) == [
+        ("reparationer", {"kind": "created", "pk": pk}),
+        changed,
+        changed,
+        changed,
+        ("reparationer", {"kind": "deleted", "pk": pk}),
+    ]
+
+
+def test_the_board_answers_htmx_with_the_board_alone(client: Client, beboer: Resident) -> None:
+    """What a live signal re-reads: the same view and filters, without the page or its messages."""
+    task = RepairTask.objects.create(reported_by=beboer, title="Utæt vandhane")
+    client.force_login(beboer)
+
+    page = client.get(REPAIRS).content.decode()
+    board = client.get(REPAIRS, HTTP_HX_REQUEST="true").content.decode()
+
+    assert 'data-live="reparationer" data-live-region' in page
+    assert f'id="kanban-task-{task.pk}"' in board, "without ids the morph cannot move a card"
+    assert 'id="js-kanban"' in board
+    assert "<html" not in board
+    assert live.may_subscribe(as_request(beboer), "reparationer")
+
+
+# --- an event page ------------------------------------------------------------------------------
+
+EVENTS = "/intern/begivenheder/"
+
+
+def make_event(organiser: Resident, **extra: object) -> Event:
+    starts = (timezone.now() + datetime.timedelta(days=3)).replace(second=0, microsecond=0)
+    return Event.objects.create(organiser=organiser, title="Fællesspisning", starts_at=starts, **extra)
+
+
+@pytest.fixture
+def _open_events(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(events_access, "ACCESS_ROLES", None)
+
+
+@pytest.mark.usefixtures("_open_events")
+def test_an_event_topic_is_heard_by_exactly_who_may_see_the_event(
+    beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """visible_to decides, as it does for the page: a private event's signals reach its invitees
+    and hosts, and nobody else learns that anything is happening on it."""
+    host = make_resident(email="host@gahk.dk")
+    open_event = make_event(host)
+    private = make_event(host, visibility=Visibility.KUN_INVITEREDE)
+
+    assert live.may_subscribe(as_request(beboer), f"begivenheder.{open_event.pk}")
+    assert not live.may_subscribe(as_request(beboer), f"begivenheder.{private.pk}")
+    assert live.may_subscribe(as_request(host), f"begivenheder.{private.pk}")
+    EventInvite.objects.create(event=private, resident=beboer)
+    assert live.may_subscribe(as_request(beboer), f"begivenheder.{private.pk}")
+    assert not live.may_subscribe(as_request(beboer), "begivenheder.999999")
+
+
+@pytest.mark.usefixtures("_open_events")
+def test_answering_and_commenting_signal_the_event(
+    client: Client, beboer: Resident, make_resident: Callable[..., Resident], signals: list
+) -> None:
+    event = make_event(make_resident(email="host@gahk.dk"))
+    client.force_login(beboer)
+
+    client.post(f"{EVENTS}{event.pk}/svar", {"svar": "ja"})
+    client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "Kan man tage børn med?"})
+
+    changed = (f"begivenheder.{event.pk}", {"kind": "changed", "pk": event.pk})
+    assert features(signals) == [changed, changed]
+
+
+@pytest.mark.usefixtures("_open_events")
+def test_cancelling_and_deleting_signal_the_event(client: Client, beboer: Resident, signals: list) -> None:
+    cancelled = make_event(beboer)
+    deleted = make_event(beboer)
+    pk = deleted.pk
+    client.force_login(beboer)
+
+    client.post(f"{EVENTS}{cancelled.pk}/aflys")
+    client.post(f"{EVENTS}{pk}/slet")
+
+    assert features(signals) == [
+        (f"begivenheder.{cancelled.pk}", {"kind": "changed", "pk": cancelled.pk}),
+        (f"begivenheder.{pk}", {"kind": "deleted", "pk": pk}),
+    ]
+
+
+@pytest.mark.usefixtures("_open_events")
+def test_the_event_page_is_one_live_region(client: Client, beboer: Resident) -> None:
+    event = make_event(beboer)
+    client.force_login(beboer)
+
+    page = client.get(f"{EVENTS}{event.pk}").content.decode()
+    region = client.get(f"{EVENTS}{event.pk}/indhold").content.decode()
+
+    assert f'data-live="begivenheder.{event.pk}" data-live-region' in page
+    assert 'id="js-event-live"' in region
+    assert f'id="rsvp-{event.pk}"' in region, "the answer panel is what moves most"
+    assert "<html" not in region
+    form = region.split('class="comment-form"')[0].rsplit("<form", 1)[1]
+    assert "data-morph-skip" in form, "a live re-draw would wipe a comment being written"
+    assert client.get(f"{EVENTS}999999/indhold").status_code == 404
+    client.logout()
+    assert client.get(f"{EVENTS}{event.pk}/indhold").status_code == 204
+
+
+# --- Den Hurtige's channel picker ---------------------------------------------------------------
+
+
+def test_the_channel_menu_listens_to_every_channel_it_lists(client: Client, beboer: Resident) -> None:
+    QuickPost.objects.create(author=beboer, content="Fodbold?", channel="sportsmann")
+    client.force_login(beboer)
+
+    page = client.get(FEED_URL).content.decode()
+    menu = client.get(FEED_URL + "kanaler", {"kanal": "generelt"}).content.decode()
+
+    every_channel = " ".join(f"den-hurtige.{c.slug}" for c in channels.CHANNELS)
+    assert f'data-live="{every_channel}"' in page
+    assert 'id="js-channel-menu"' in menu
+    assert '<span class="channel-count">1</span>' in menu
+    assert "<html" not in menu
+    assert client.get(FEED_URL + "kanaler", {"kanal": "findes-ikke"}).status_code == 204
+
+
+def test_the_channel_menu_leaves_out_a_channel_this_reader_may_not_open(
+    monkeypatch: pytest.MonkeyPatch, client: Client, beboer: Resident
+) -> None:
+    """Its topic would be refused anyway; it must not be asked for, nor its count shown."""
+    secret = Channel(slug="internt", name="Internt", icon="lock", description="", roles=(Role.INSPEKTION,))
+    monkeypatch.setattr(channels, "CHANNELS", (*channels.CHANNELS, secret))
+    monkeypatch.setattr(channels, "BY_SLUG", {c.slug: c for c in channels.CHANNELS})
+    client.force_login(beboer)
+
+    menu = client.get(FEED_URL + "kanaler", {"kanal": "generelt"}).content.decode()
+
+    assert "den-hurtige.internt" not in menu
+    assert "Internt" not in menu
+
+
+def test_kanaler_can_never_be_a_channel_slug() -> None:
+    """It is a fixed URL segment now; a channel by that name would be unreachable (checks.E008)."""
+    assert "kanaler" in channels.RESERVED_SLUGS

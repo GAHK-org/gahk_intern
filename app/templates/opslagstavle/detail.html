@@ -5,11 +5,5 @@
 {% block content %}
   <p class="muted mb-3"><a href="{% url 'opslagstavle:board' %}">‹ Opslagstavlen</a></p>
 
-  {% comment %}
-    data-live: this page listens to opslagstavlen's live topic and re-draws #js-notice-live when the
-    signal names this post (frontend/src/opslagstavle-live.ts).
-  {% endcomment %}
-  <div data-live="opslagstavle">
-    {% include "opslagstavle/_detail_live.html" %}
-  </div>
+  {% include "opslagstavle/_detail_live.html" %}
 {% endblock %}

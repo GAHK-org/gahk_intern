@@ -32,7 +32,8 @@
 // re-armed after each poll.
 
 import { Idiomorph } from "idiomorph/htmx";
-import { LIVE_EVENT, type LiveSignal } from "./live";
+import { LIVE_EVENT, concerns, topicsOf, type LiveSignal } from "./live";
+import { REFRESH_EVENT } from "./live-region";
 
 const FEED_ID = "js-feed";
 // The polled region, which is NO LONGER the scroller. #js-feed is the box that scrolls and holds
@@ -443,12 +444,17 @@ window.addEventListener("popstate", (event) => {
 // panel (feed.html, _thread.html), so the requests, the morph and the hx-sync queueing are exactly
 // the ones the polls already used — this only says WHEN.
 //
-// The live list re-fetches on every signal: a new message, a reply count, a reaction, a deletion
-// all show there. The panel only on a signal naming ITS message, or a resync after the socket was
-// down — any reply or reaction it missed in that gap was never going to be signalled again.
+// The live list re-fetches on every signal FOR ITS CHANNEL: a new message, a reply count, a
+// reaction, a deletion all show there. The page's socket also hears the other channels (for the
+// picker's counts, _channel_menu.html) and the bell, and none of that is the feed's business. The
+// panel only on a signal naming ITS message, or a resync after the socket was down — any reply or
+// reaction it missed in that gap was never going to be signalled again.
+
+const chatTopics = topicsOf(document.querySelector<HTMLElement>(".chat[data-live]") ?? document.createElement("div"));
 
 document.addEventListener(LIVE_EVENT, (event: Event) => {
   const signal = (event as CustomEvent<LiveSignal>).detail;
+  if (!chatTopics.length || !concerns(signal, chatTopics)) return;
   const htmx = (window as unknown as { htmx?: { trigger: (e: Element, n: string) => void } }).htmx;
   const live = document.getElementById(LIVE_ID);
   if (live) htmx?.trigger(live, "gahk-live");
@@ -456,6 +462,13 @@ document.addEventListener(LIVE_EVENT, (event: Event) => {
   if (panel?.hasAttribute("hx-get") && (signal.kind === "resync" || panel.dataset.threadPk === String(signal.pk))) {
     htmx?.trigger(panel, "gahk-live");
   }
+});
+
+// The picker's counts are live while it is open (a live region, _channel_menu.html), and re-read
+// the moment it opens, which covers what no signal announces: messages archiving off the clock.
+document.querySelector<HTMLDetailsElement>("details.channel-picker")?.addEventListener("toggle", (event) => {
+  const picker = event.currentTarget as HTMLDetailsElement;
+  if (picker.open) picker.querySelector(".channel-menu")?.dispatchEvent(new Event(REFRESH_EVENT, { bubbles: true }));
 });
 
 // ---- who reacted ------------------------------------------------------------------------------

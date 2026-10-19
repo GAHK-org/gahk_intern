@@ -5,6 +5,6 @@ from django.urls import URLPattern, path
 from core.consumers import LiveConsumer
 
 websocket_urlpatterns: list[URLPattern] = [
-    # One topic per socket; who may hear which topic is core.live's question, not the router's.
-    path("ws/live/<str:topic>/", LiveConsumer.as_asgi()),
+    # Topics in the query string (?t=…&t=…); who may hear which is core.live's question.
+    path("ws/live/", LiveConsumer.as_asgi()),
 ]

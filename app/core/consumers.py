@@ -1,6 +1,7 @@
-"""The one WebSocket consumer: a subscription to one live topic. See core.live for the design."""
+"""The one WebSocket consumer: a page's subscription to its live topics. See core.live."""
 
 from typing import Any
+from urllib.parse import parse_qs
 
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
@@ -13,34 +14,53 @@ from . import live
 # answer must not say whether the topic exists. The client stops reconnecting on it (live.ts).
 REFUSED = 4403
 
+# More than any page asks for (Den Hurtige: its channels plus the bell), and few enough that a
+# crafted URL cannot make one socket cost hundreds of authorization queries.
+MAX_TOPICS = 10
+
 
 class LiveConsumer(AsyncJsonWebsocketConsumer):
-    """Listens to one topic and forwards its signals to the browser. Never accepts input."""
+    """Listens to the topics in `?t=…&t=…` and forwards their signals. Never accepts input.
 
-    group: str | None = None
+    Each topic is authorized on its own and a refused one is simply not joined: a page asks only for
+    topics it rendered for this reader, so a refusal means the world changed since (a role ended, an
+    invitation was withdrawn) and the rest of the page should stay live. Only when NOTHING is allowed
+    is the socket closed with REFUSED.
+    """
+
+    groups: list[str]
 
     async def connect(self) -> None:
-        topic = self.scope["url_route"]["kwargs"]["topic"]
-        if not await database_sync_to_async(live.may_subscribe)(self._request(), topic):
+        self.groups = []
+        query = parse_qs(self.scope.get("query_string", b"").decode())
+        asked = list(dict.fromkeys(query.get("t", [])))[:MAX_TOPICS]
+        allowed = await database_sync_to_async(self._allowed)(asked)
+        if not allowed:
             # Accept-then-close rather than rejecting the handshake: a rejected handshake reaches
             # the browser as a bare 403 with no close code, indistinguishable from a network
             # failure, and the client would retry it forever.
             await self.accept()
             await self.close(code=REFUSED)
             return
-        self.group = live.group_name(topic)
-        await self.channel_layer.group_add(self.group, self.channel_name)
+        for topic in allowed:
+            group = live.group_name(topic)
+            await self.channel_layer.group_add(group, self.channel_name)
+            self.groups.append(group)
         await self.accept()
 
     async def disconnect(self, code: int) -> None:
-        if self.group is not None:
-            await self.channel_layer.group_discard(self.group, self.channel_name)
+        for group in self.groups:
+            await self.channel_layer.group_discard(group, self.channel_name)
 
     async def receive_json(self, content: Any, **kwargs: Any) -> None:  # noqa: ANN401
         """Ignored. Keep-alive is the server's WebSocket ping (uvicorn), not application traffic."""
 
     async def live_event(self, event: dict[str, Any]) -> None:
         await self.send_json(event["data"])
+
+    def _allowed(self, topics: list[str]) -> list[str]:
+        request = self._request()
+        return [topic for topic in topics if live.may_subscribe(request, topic)]
 
     def _request(self) -> HttpRequest:
         """The socket as residents.permissions sees a request: a user and a session.

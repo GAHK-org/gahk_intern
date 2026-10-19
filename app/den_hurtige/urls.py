@@ -25,6 +25,8 @@ urlpatterns = [
     # and a second path shape for the same choice is one more thing to keep in step. `?inden=`/`?id=`
     # carry the paging cursor; `?mere=1` asks for the next chunk rather than the whole panel.
     path("arkiv", views.archive, name="archive"),
+    # The channel picker's menu with its live counts, re-read on a live signal (partial, not a page).
+    path("kanaler", views.channel_menu, name="channel_menu"),
     path("opret", views.create_post, name="create_post"),
     path("<int:pk>/kommentar", views.create_comment, name="create_comment"),
     path("<int:pk>/traad", views.thread, name="thread"),

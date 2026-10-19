@@ -244,16 +244,20 @@ class Tab(NamedTuple):
     current: bool
 
 
-def _channel_context(request: HttpRequest, channel: Channel) -> dict[str, object]:
-    """The tab strip's data. Read by the page and by nothing else — the poll swaps only the message
-    list, so the counts refresh on navigation rather than every 20 seconds."""
+def _tabs(request: HttpRequest, channel: Channel) -> list[Tab]:
     counts = channel_counts()
+    return [
+        Tab(c, counts.get(c.slug, 0), c.slug == channel.slug)
+        for c in channels.visible(effective_roles(request))
+    ]
+
+
+def _channel_context(request: HttpRequest, channel: Channel) -> dict[str, object]:
+    """The tab strip's data. The poll swaps only the message list; the counts are kept current by
+    `channel_menu` instead, on a live signal from any channel and whenever the picker opens."""
     return {
         "channel": channel,
-        "tabs": [
-            Tab(c, counts.get(c.slug, 0), c.slug == channel.slug)
-            for c in channels.visible(effective_roles(request))
-        ],
+        "tabs": _tabs(request, channel),
         # The room's bell links to its row on the notifications settings page; "muted" is whether
         # this resident turned push for the room off there. A preference row exists only for a
         # category somebody changed, so no row is "on".
@@ -336,6 +340,24 @@ def feed_items(request: HttpRequest) -> HttpResponse:
             "quick_emoji": QUICK_EMOJI,
             "can_moderate": can_moderate(request),
         },
+    )
+
+
+def channel_menu(request: HttpRequest) -> HttpResponse:
+    """The channel picker's menu alone, with fresh live-post counts.
+
+    Re-read when the picker opens and on a live signal from any channel in it (den_hurtige.live), so
+    the counts are current whenever anyone can see them. One aggregate query (channel_counts), which
+    is why re-reading on every signal is affordable. Gated like feed_items, and for the same reason:
+    a 204, never a login page swapped into the menu.
+    """
+    if not request_allowed(request):
+        return HttpResponse(status=204)
+    channel = channels.lookup(request.GET.get("kanal"))
+    if channel is None or not channels.allowed(channel, effective_roles(request)):
+        return HttpResponse(status=204)
+    return render(
+        request, "den_hurtige/_channel_menu.html", {"channel": channel, "tabs": _tabs(request, channel)}
     )
 
 

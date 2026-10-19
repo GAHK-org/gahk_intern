@@ -1,8 +1,13 @@
-// The page's live connection: one WebSocket to the topic its template declares with `data-live`.
-// No-op on every page without one.
+// The page's live connection: ONE WebSocket for every topic the page declares with `data-live`
+// (space-separated where one element wants several). No-op on a page that declares none.
+//
+// Nearly every page declares at least one: the bell in the top bar listens to its resident's inbox.
+// Den Hurtige adds its channels, a board or an event page its own. They all share the one socket,
+// which is why every signal names its topic and every listener checks it.
 //
 // THIS FILE KNOWS NOTHING ABOUT ANY FEATURE. It turns server signals into a `gahk:live` event on
-// the document and leaves the page to decide what a signal means (feed.ts, opslagstavle-live.ts).
+// the document and leaves the page to decide what a signal means (feed.ts, live-region.ts, bell.ts,
+// opslagstavle-live.ts).
 // A signal is a kind and a primary key, never content — see app/core/live.py for why — so every
 // listener answers it the same way: by re-fetching through the ordinary HTTP views.
 //
@@ -15,9 +20,21 @@
 //     the page must catch up on everything it shows rather than wait for the next change.
 
 export interface LiveSignal {
+  /** null only on a resync, which concerns every topic at once. */
+  topic: string | null;
   kind: "created" | "changed" | "deleted" | "resync";
   pk: number | null;
   category?: string;
+}
+
+/** The topics an element listens to: its `data-live`, split on whitespace. */
+export function topicsOf(el: HTMLElement): string[] {
+  return (el.dataset.live ?? "").split(/\s+/).filter(Boolean);
+}
+
+/** Whether `signal` concerns an element listening to `topics`. A resync concerns everyone. */
+export function concerns(signal: LiveSignal, topics: string[]): boolean {
+  return signal.topic === null || topics.includes(signal.topic);
 }
 
 export const LIVE_EVENT = "gahk:live";
@@ -29,14 +46,17 @@ const RETRY_MIN_MS = 1000;
 const RETRY_MAX_MS = 30000;
 const CONNECTED_ATTR = "data-live-connected";
 
-const topic = document.querySelector<HTMLElement>("[data-live]")?.dataset.live;
+const topics = [
+  ...new Set(Array.from(document.querySelectorAll<HTMLElement>("[data-live]")).flatMap(topicsOf)),
+];
 
 function emit(signal: LiveSignal): void {
   document.dispatchEvent(new CustomEvent<LiveSignal>(LIVE_EVENT, { detail: signal }));
 }
 
-if (topic && "WebSocket" in window) {
-  const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/live/${encodeURIComponent(topic)}/`;
+if (topics.length && "WebSocket" in window) {
+  const query = new URLSearchParams(topics.map((t) => ["t", t]));
+  const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/live/?${query}`;
   let socket: WebSocket | null = null;
   let retryMs = RETRY_MIN_MS;
   let retryTimer: number | undefined;
@@ -54,7 +74,7 @@ if (topic && "WebSocket" in window) {
     ws.addEventListener("open", () => {
       retryMs = RETRY_MIN_MS;
       document.documentElement.setAttribute(CONNECTED_ATTR, "");
-      if (hadConnection) emit({ kind: "resync", pk: null });
+      if (hadConnection) emit({ topic: null, kind: "resync", pk: null });
       hadConnection = true;
     });
 

@@ -1,7 +1,7 @@
 """Live updates over WebSockets: "something on this page changed, come and look".
 
-THE SOCKET CARRIES SIGNALS, NEVER CONTENT. An event is a kind and a primary key — {"kind": "post",
-"pk": 41} — and the browser answers it by re-fetching through the ordinary HTTP views it already
+THE SOCKET CARRIES SIGNALS, NEVER CONTENT. An event is a topic, a kind and a primary key —
+{"topic": "opslagstavle", "kind": "changed", "pk": 41} — and the browser answers it by re-fetching through the ordinary HTTP views it already
 uses. That one decision is what keeps this module small:
 
   * Rendering stays per reader. A message carries "did *I* react?", a delete button only its author
@@ -17,6 +17,10 @@ uses. That one decision is what keeps this module small:
 TOPICS are strings like "den-hurtige.tv-rezz" or "opslagstavle". The part before the first dot names
 a feature, which registers who may subscribe (`register`, called from the feature's AppConfig.ready);
 the rest is the feature's own to interpret. A topic nobody registered refuses every subscriber.
+
+A page has ONE socket and may listen to several topics on it — every page has the bell's
+"notifikationer.<pk>", and Den Hurtige adds its channels — which is why each signal names its topic
+and every listener in the browser filters on it.
 
 THE CHANNEL LAYER IS IN-MEMORY (CHANNEL_LAYERS in config/settings.py), which is correct for exactly
 as long as `web` is one uvicorn process — see DEPLOY.md §4. A signal published by another process (a
@@ -89,7 +93,7 @@ def publish(topic: str, kind: Kind, pk: int | None, **extra: str | int) -> None:
     """
     if not valid_topic(topic):
         raise ValueError(f"Not a live topic: {topic!r}")
-    data: dict[str, object] = {"kind": kind, "pk": pk, **extra}
+    data: dict[str, object] = {"topic": topic, "kind": kind, "pk": pk, **extra}
     transaction.on_commit(lambda: _send(topic, data))
 
 

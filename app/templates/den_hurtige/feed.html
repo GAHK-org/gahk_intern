@@ -63,16 +63,7 @@
             <span class="channel-name">{{ channel.name }}</span>
             <span class="caret" aria-hidden="true">▾</span>
           </summary>
-          <nav class="channel-menu" aria-label="Kanaler">
-            {% for tab in tabs %}
-              <a class="channel-option{% if tab.current %} active{% endif %}" href="{{ tab.channel.url }}"
-                 {% if tab.current %}aria-current="page"{% endif %}>
-                <svg class="ni" aria-hidden="true"><use href="#i-{{ tab.channel.icon }}"></use></svg>
-                <span class="channel-option-name">{{ tab.channel.name }}</span>
-                {% if tab.live %}<span class="channel-count">{{ tab.live }}</span>{% endif %}
-              </a>
-            {% endfor %}
-          </nav>
+          {% include "den_hurtige/_channel_menu.html" %}
         </details>
       {% else %}
         <span class="channel-single">{{ channel.name }}</span>
