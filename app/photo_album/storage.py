@@ -128,6 +128,7 @@ def get_photo_album_storage() -> Storage:
 
 @receiver(setting_changed)
 def _reset_photo_album_storage(*, setting: str, **kwargs: object) -> None:
-    """Mirrors django.test.signals.storages_changed, which only knows about `default_storage`."""
-    if setting == "STORAGES":
+    """Mirrors django.test.signals.storages_changed, which only knows about `default_storage`. Also on
+    MEDIA_ROOT, which the local FileSystemStorage was built with."""
+    if setting in ("STORAGES", "MEDIA_ROOT"):
         photo_album_storage._wrapped = empty

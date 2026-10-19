@@ -2256,6 +2256,20 @@
     border-top:1px solid var(--border); text-decoration:none; }
   .notif-empty { padding:14px; font-size:14px; }
 
+  /* The avatar's account menu, beside the bell and styled like its panel. */
+  .user-menu { position:relative; }
+  .user-menu-button { background:transparent; border:0; border-radius:8px; padding:4px 6px; cursor:pointer; font:inherit; }
+  .user-menu-button:hover, .user-menu-button[aria-expanded="true"] { background:rgba(255,255,255,.12); }
+  .user-menu-caret { font-size:11px; opacity:.8; }
+  .user-menu-panel { position:absolute; right:0; top:calc(100% + 8px); min-width:220px; padding:6px 0;
+    background:var(--surface); color:var(--ink); border:1px solid var(--border); border-radius:12px;
+    box-shadow:0 12px 32px rgba(0,0,0,.18); z-index:40; }
+  .user-menu-panel a, .user-menu-panel button { display:block; width:100%; box-sizing:border-box; padding:9px 14px;
+    text-align:left; font-size:14px; font-weight:600; color:var(--ink); text-decoration:none; background:none;
+    border:0; cursor:pointer; font-family:inherit; }
+  .user-menu-panel a:hover, .user-menu-panel button:hover { background:var(--surface-2); }
+  .user-menu-panel form { margin:0; border-top:1px solid var(--border); margin-top:6px; padding-top:6px; }
+
   .notif-item { display:flex; align-items:flex-start; gap:10px; padding:11px 14px; text-decoration:none;
     color:var(--ink); border-bottom:1px solid var(--border); border-left:3px solid transparent; }
   .notif-item:last-child { border-bottom:none; }
