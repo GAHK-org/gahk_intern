@@ -16,8 +16,21 @@
     </form>
     <p class="muted" style="margin-top:.8rem"><a href="{% url 'password_reset' %}">Glemt kodeord?</a></p>
   </div>
-  {# A PWA reopened days later restores this page from memory, with a token too old to accept. #}
+  {% comment %}
+    This page's token goes stale while it sits unused, and a PWA resumed from the background shows
+    the same page again without loading it, so the form is then refused (CSRF). Load it afresh when
+    it comes back from the back-forward cache, or into view after minutes in the background.
+  {% endcomment %}
   <script>
-    window.addEventListener("pageshow", function (event) { if (event.persisted) window.location.reload(); });
+    (function () {
+      var STALE_AFTER_MS = 5 * 60 * 1000;
+      var hiddenAt = null;
+      window.addEventListener("pageshow", function (event) { if (event.persisted) window.location.reload(); });
+      document.addEventListener("visibilitychange", function () {
+        if (document.visibilityState === "hidden") { hiddenAt = Date.now(); return; }
+        if (hiddenAt !== null && Date.now() - hiddenAt > STALE_AFTER_MS) window.location.reload();
+        hiddenAt = null;
+      });
+    })();
   </script>
 {% endblock %}

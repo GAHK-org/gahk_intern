@@ -22,7 +22,8 @@ def test_the_email_field_is_an_email_field_phones_leave_alone() -> None:
     assert 'spellcheck="false"' in field
     assert 'autocapitalize="none"' in field
     assert "novalidate" in body  # the browser's own check must not block an address the server accepts
-    assert "event.persisted" in body  # a PWA's restored page reloads
+    assert "event.persisted" in body  # restored from the back-forward cache: reload
+    assert "visibilitychange" in body  # a PWA resumed after minutes in the background: reload
 
 
 @pytest.mark.django_db
