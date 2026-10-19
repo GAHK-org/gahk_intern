@@ -974,6 +974,7 @@ def system_sidecar_dates(request: HttpRequest) -> JsonResponse:
             "undated": result.undated,
             "unmatched": result.unmatched,
             "ambiguous": result.ambiguous,
+            "kept": result.kept,
             "redated": result.redated,
             "againstCapture": result.against_capture,
         }

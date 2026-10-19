@@ -438,6 +438,7 @@ class _ImportFile:
     sha256: str
     modified_at: datetime | None
     sidecar: bytes = b""  # its AppleDouble sidecar in the archive, if it had one
+    sidecar_member: str = ""  # and that sidecar's own name in the archive
 
 
 @dataclass
@@ -515,7 +516,9 @@ def _plan_import(
     plan = _ImportPlan(root_name=normalize_name(root_name or Path(archive_name or "album.zip").stem))
     maximum_bytes = max(settings.PHOTO_ALBUM_IMAGE_MAX_MB, settings.PHOTO_ALBUM_VIDEO_MAX_MB) * 1024 * 1024
     candidates: list[tuple[zipfile.ZipInfo, str, PurePosixPath]] = []
-    sidecars: dict[str, bytes] = {}  # member name -> its AppleDouble sidecar
+    # Member name -> its AppleDouble sidecar (the sidecar's own member name, and its bytes). Kept
+    # with that file; listed as skipped, below, only when the file is not imported.
+    sidecars: dict[str, tuple[str, bytes]] = {}
     for member in zip_archive.infolist():
         name = _member_name(member)
         if member.is_dir() or name.endswith("/"):
@@ -526,15 +529,17 @@ def _plan_import(
             continue
         if _is_macos_archive_metadata(path):
             if path.name in MACOS_METADATA_ANY_SIZE or member.file_size <= MACOS_METADATA_MAX_BYTES:
-                plan.skipped.append(f"{name}: macOS-metadata (ignoreret)")
                 described = _sidecar_target(path)
+                data = b""
                 if described is not None and member.file_size <= MACOS_METADATA_MAX_BYTES:
                     try:
                         data = zip_archive.read(member)
                     except (OSError, RuntimeError, zipfile.BadZipFile, EOFError):
-                        data = b""  # only a date lost; the file it describes is checked on its own
-                    if is_appledouble(data):
-                        sidecars[described] = data
+                        pass  # only a date lost; the file it describes is checked on its own
+                if described is not None and is_appledouble(data):
+                    sidecars[described] = (name, data)
+                else:
+                    plan.skipped.append(f"{name}: macOS-metadata (ignoreret)")
             else:
                 plan.errors.append(
                     f"{name}: ligner macOS-metadata, men er større end {MACOS_METADATA_MAX_BYTES // 1024} KB."
@@ -613,9 +618,9 @@ def _plan_import(
             if error := check_media_content(File(extracted, name=path.name)):
                 plan.errors.append(f"{name}: {error}")
                 continue
-        sidecar = sidecars.get(name, b"")
+        sidecar_member, sidecar = sidecars.get(name, ("", b""))
         modified_at = _file_time(appledouble_dates(sidecar), _zip_modified_at(member), folder)
-        item = _ImportFile(name, folders, path.name, target, sha256, modified_at, sidecar)
+        item = _ImportFile(name, folders, path.name, target, sha256, modified_at, sidecar, sidecar_member)
         key = (tuple(folder.lower() for folder in folders), path.name)
         earlier = seen.get(key)
         if (
@@ -628,6 +633,14 @@ def _plan_import(
         seen.setdefault(key, item)
         plan.files.append(item)
 
+    # A sidecar is kept with its file, so it is "skipped" only when its file is not imported: one
+    # that describes a folder, a duplicate in the archive, or nothing in it at all.
+    imported = {item.member for item in plan.files}
+    plan.skipped.extend(
+        f"{sidecar_member}: macOS-metadata (ignoreret)"
+        for described, (sidecar_member, _) in sidecars.items()
+        if described not in imported
+    )
     if not plan.files and not plan.errors:
         plan.errors.append("ZIP-filen indeholder ingen billeder eller videoer.")
     if plan.existing_root is not None:
@@ -752,6 +765,12 @@ def _store_import(
                     )
                 if outcome.duplicate is not None:
                     plan.skipped.append(f"{item.member}: findes allerede i albummet (ignoreret)")
+                    if item.sidecar and outcome.duplicate.sidecar:
+                        plan.skipped.append(f"{item.sidecar_member}: macOS-metadata (ignoreret)")
+                    elif item.sidecar:  # the file is there, but not its sidecar: keep it with it
+                        outcome.duplicate.sidecar.save(item.filename, ContentFile(item.sidecar), save=False)
+                        outcome.duplicate.save(update_fields=["sidecar"])
+                        written.append(outcome.duplicate.sidecar.name or "")
                 if outcome.media is not None:
                     added += 1
                     written.extend(
@@ -1294,6 +1313,9 @@ class SidecarDates:
     undated: int = 0  # sidecars with no date to believe for their album's year
     unmatched: list[str] = field(default_factory=list)  # no item of that name in the album there
     ambiguous: list[str] = field(default_factory=list)  # more than one
+    # The archive's names of the sidecars its item now has, whether stored now or before: what
+    # the script need not keep a copy of.
+    kept: list[str] = field(default_factory=list)
     redated: int = 0  # items placed elsewhere once the album tree was settled again
     # How the sidecar's date compares with the capture date, for items that have one: the measure
     # of whether a sidecar can be believed for the items that have nothing else.
@@ -1334,7 +1356,8 @@ def apply_sidecars(*, archive: File, folder: str, root_name: str) -> SidecarDate
     try:
         with zipfile.ZipFile(archive) as zip_archive:
             for member in zip_archive.infolist():
-                described = _sidecar_target(PurePosixPath(_member_name(member)))
+                name = _member_name(member)
+                described = _sidecar_target(PurePosixPath(name))
                 if member.is_dir() or described is None or member.file_size > MACOS_METADATA_MAX_BYTES:
                     continue
                 data = zip_archive.read(member)
@@ -1351,6 +1374,7 @@ def apply_sidecars(*, archive: File, folder: str, root_name: str) -> SidecarDate
                     media.sidecar.save(filename, ContentFile(data), save=False)
                     media.save(update_fields=["sidecar"])
                     result.stored += 1
+                result.kept.append(name)
                 moment = _file_time(appledouble_dates(data), None, folder)
                 if moment is None:
                     result.undated += 1
