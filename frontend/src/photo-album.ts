@@ -929,6 +929,9 @@ interface MediaDetail {
   uploadedBy: string
   uploadedAt: string
   capturedAt: string
+  // "ca. september 2004" and why, when the item has no date of its own to be placed by
+  approximateDate: string
+  approximateDateBasis: string
   metadata: Record<string, string>
   tags: TagEntry[]
   tagUrl: string
@@ -1049,6 +1052,9 @@ if (gallery && dialog) {
       ...album,
       ...(detail.filename ? definition("Filnavn", detail.filename) : []),
       ...(detail.capturedAt ? definition("Optaget", detail.capturedAt) : []),
+      ...(detail.approximateDate
+        ? definition("Anslået dato", `${detail.approximateDate}, ${detail.approximateDateBasis}`)
+        : []),
       ...(location ? definition("Sted", location, detail.mapUrl) : []),
       ...definition("Uploadet af", detail.uploadedBy),
       ...definition("Uploadet", detail.uploadedAt),
@@ -1150,7 +1156,7 @@ if (gallery && dialog) {
       }
       image.alt = detail.title
       title.textContent = detail.title
-      mobileDate.textContent = detail.capturedAt || detail.uploadedAt
+      mobileDate.textContent = detail.capturedAt || detail.approximateDate || detail.uploadedAt
       download.href = detail.downloadUrl
       menuDownload.href = detail.downloadUrl
       deleteForm.hidden = !detail.deleteUrl

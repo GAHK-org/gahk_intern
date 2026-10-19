@@ -151,3 +151,9 @@ class DirectUploadSignForm(forms.Form):
     key = forms.CharField(max_length=500)
     upload_id = forms.CharField(max_length=500, required=False)
     part_number = forms.IntegerField(min_value=1, required=False)
+
+
+class SystemSidecarDatesForm(ZipAlbumImportForm):
+    """The import script's sidecars for an album already imported, paths relative to `album`."""
+
+    album = forms.CharField(max_length=140, validators=[validate_album_name])

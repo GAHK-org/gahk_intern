@@ -38,6 +38,8 @@ from .services import (
     is_video_media,
     no_progress,
     pending_derivatives,
+    reread_capture_dates,
+    settle_all_dates,
 )
 from .storage import PhotoAlbumS3Storage, get_photo_album_storage
 
@@ -198,6 +200,33 @@ def backfill_media_hashes() -> int:
         result.remaining,
     )
     return result.hashed
+
+
+# How long one night may read originals again for a capture date, for the same reason.
+DATE_REREAD_BUDGET = timedelta(minutes=20)
+
+
+@shared_task(time_limit=MEDIA_TASK_TIME_LIMIT, soft_time_limit=MEDIA_TASK_SOFT_TIME_LIMIT)
+def settle_media_dates() -> int:
+    """Nightly: read originals stored before XMP and IPTC were read for a capture date, then give
+    every item without a believable date an approximate one (services.settle_dates). Returns how
+    many items were re-dated.
+
+    Every album is settled, not only those read tonight: that is what dates the items stored before
+    approximations existed. Once they are, it changes nothing, at two queries per album tree.
+    """
+    reread = reread_capture_dates(until=timezone.now() + DATE_REREAD_BUDGET)
+    changed = settle_all_dates()
+    logger.info(
+        "Read %d original(s) again and found %d capture date(s); %d could not be read; %d left. "
+        "%d item(s) re-dated.",
+        reread.checked,
+        reread.found,
+        len(reread.unreadable),
+        reread.remaining,
+        changed,
+    )
+    return changed
 
 
 @shared_task

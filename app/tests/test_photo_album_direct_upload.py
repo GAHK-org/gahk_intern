@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Callable, Iterator
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -14,7 +15,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from photo_album import direct_upload
-from photo_album.models import Album, AlbumImport, Media, MediaStatus
+from photo_album.models import Album, AlbumImport, DateSource, Media, MediaStatus
 from photo_album.services import upload_media
 from photo_album.storage import PhotoAlbumS3Storage
 from residents.models import Resident, Role
@@ -221,6 +222,36 @@ def test_a_large_photo_sent_to_the_bucket_is_checked_and_stored_where_it_landed(
     assert (media.original.name, media.filename, media.album) == (key, "IMG 1.JPG", album)
     assert key.split("/")[2] == str(media.uuid)
     assert media.status == MediaStatus.PENDING  # as any resident's upload
+
+
+@pytest.mark.django_db
+def test_a_photo_sent_to_the_bucket_is_dated_from_its_album_as_one_sent_with_the_form(
+    client: Client, bucket: Stubber, make_resident: Callable[..., Resident]
+) -> None:
+    resident = make_resident()
+    album = Album.objects.create(folder="2004", name="Fest")
+    taken = datetime(2004, 3, 1, 10, 0, tzinfo=UTC)
+    Media.objects.create(
+        album=album,
+        requested_by=resident,
+        title="IMG 1",
+        filename="IMG 1.JPG",
+        original="photo-album/x/IMG_1.JPG",
+        captured_at=taken,
+        status=MediaStatus.APPROVED,
+    )
+    client.force_login(resident)
+    content = jpeg_bytes()  # no date of its own, and the browser sends none
+    ticket, key = _begin_media(client, album, "IMG 2.JPG", len(content))
+
+    _arrived(bucket, key, content)
+    response = client.post(
+        reverse("photo_album:upload_commit", args=[album.pk]), {"ticket": ticket, "last_modified": ""}
+    )
+
+    assert response.status_code == 201
+    media = Media.objects.get(filename="IMG 2.JPG")
+    assert (media.sort_at, media.date_source) == (taken + timedelta(seconds=1), DateSource.NEIGHBOURS)
 
 
 @pytest.mark.django_db

@@ -54,6 +54,7 @@ from .forms import (
     MediaUploadBeginForm,
     MediaUploadCommitForm,
     MediaUploadForm,
+    SystemSidecarDatesForm,
     SystemZipImportForm,
     ZipAlbumImportForm,
 )
@@ -64,6 +65,7 @@ from .models import (
     AlbumDownloadState,
     AlbumImport,
     AlbumImportState,
+    DateSource,
     DerivativeState,
     DownloadVariant,
     Media,
@@ -944,6 +946,40 @@ def system_import_upload(request: HttpRequest) -> JsonResponse:
     return _begin_import_upload(request, browser=False)
 
 
+@csrf_exempt
+@require_POST
+def system_sidecar_dates(request: HttpRequest) -> JsonResponse:
+    """The import script's sidecars for an album it imported before the import read them
+    (services.apply_sidecars). A few hundred kilobytes, so answered at once, not queued."""
+    if _token_import_resident(request) is None:
+        raise PermissionDenied
+    form = SystemSidecarDatesForm(request.POST, request.FILES)
+    if not form.is_valid():
+        return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
+    try:
+        result = services.apply_sidecars(
+            archive=form.cleaned_data["archive"],
+            folder=form.cleaned_data["folder"],
+            root_name=form.cleaned_data["album"],
+        )
+    except ValidationError as exc:
+        return JsonResponse(
+            {"errors": {"album": [{"message": message} for message in exc.messages]}}, status=400
+        )
+    return JsonResponse(
+        {
+            "stored": result.stored,
+            "updated": result.updated,
+            "unchanged": result.unchanged,
+            "undated": result.undated,
+            "unmatched": result.unmatched,
+            "ambiguous": result.ambiguous,
+            "redated": result.redated,
+            "againstCapture": result.against_capture,
+        }
+    )
+
+
 @require_GET
 def system_albums(request: HttpRequest) -> JsonResponse:
     """The root albums of one folder, for the import script to tell what is already there.
@@ -1060,6 +1096,8 @@ def upload(request: HttpRequest, pk: int) -> HttpResponse:
             messages.error(request, str(exc))
             return redirect("photo_album:detail", album.pk)
         uploaded += _noted(outcome, uploaded_file.name, album, resident, skipped, warnings)
+    if uploaded:
+        services.settle_dates(album)
     if wants_json:
         return JsonResponse({"uploaded": uploaded, "skipped": skipped, "warnings": warnings}, status=201)
     for note in [*skipped, *warnings]:
@@ -1190,7 +1228,9 @@ def upload_commit(request: HttpRequest, pk: int) -> JsonResponse:
             direct_upload.delete(upload["key"])
             return _upload_errors(str(exc), status=409)
     stored = _noted(outcome, upload["name"], album, resident, skipped, warnings)
-    if not stored:
+    if stored:
+        services.settle_dates(album)  # as `upload` does
+    else:
         direct_upload.delete(upload["key"])
     return JsonResponse({"uploaded": int(stored), "skipped": skipped, "warnings": warnings}, status=201)
 
@@ -1261,6 +1301,7 @@ def media_detail(request: HttpRequest, pk: int) -> JsonResponse:
             "uploadedBy": media.requested_by.full_name,
             "uploadedAt": _formatted(media.added_at),
             "capturedAt": _formatted(media.captured_at),
+            **_approximate_date(media),
             "metadata": media.metadata,
             "tags": _tag_entries(media.tags.all(), media.album.lineage()),
             "tagUrl": reverse("photo_album:media_tags", args=[media.pk]) if can_tag else "",
@@ -1334,6 +1375,28 @@ def media_tags(request: HttpRequest, pk: int) -> JsonResponse:
 def _formatted(value: datetime | None) -> str:
     """The same wording the templates used to render, so the viewer reads identically."""
     return date_format(timezone.localtime(value), "j. F Y, H:i") if value else ""
+
+
+_APPROXIMATION_BASIS = {
+    DateSource.FILE: "ud fra filens dato",
+    DateSource.NEIGHBOURS: "ud fra de andre billeder i albummet",
+    DateSource.ALBUM_YEAR: "ud fra albummets årstal",
+    DateSource.ADDED: "ud fra hvornår det blev uploadet",
+}
+
+
+def _approximate_date(media: Media) -> dict[str, str]:
+    """`ca. september 2004` and why, for an item without a capture date; blank for one with.
+
+    To the month only, or the year: an approximation is never as exact as a day would claim.
+    """
+    if not media.date_is_approximate or media.sort_at is None:
+        return {"approximateDate": "", "approximateDateBasis": ""}
+    precision = "Y" if media.date_source == DateSource.ALBUM_YEAR else "F Y"
+    return {
+        "approximateDate": f"ca. {date_format(timezone.localtime(media.sort_at), precision)}",
+        "approximateDateBasis": _APPROXIMATION_BASIS[DateSource(media.date_source)],
+    }
 
 
 def _managed_media(request: HttpRequest, pk: int) -> Media:

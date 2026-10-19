@@ -1053,6 +1053,12 @@ def test_capture_time_reads_nested_exif_ifd(monkeypatch: pytest.MonkeyPatch) -> 
             return {36867: "2026:08:06 23:43:39"}
 
     class ImageFile:
+        def __enter__(self) -> "ImageFile":
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            pass
+
         def getexif(self) -> Exif:
             return Exif()
 

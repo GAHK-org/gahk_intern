@@ -224,6 +224,7 @@ CELERY_TASK_ROUTES = {
     "photo_album.tasks.build_album_download": {"queue": "media"},
     "photo_album.tasks.process_album_import": {"queue": "media"},
     "photo_album.tasks.backfill_media_hashes": {"queue": "media"},
+    "photo_album.tasks.settle_media_dates": {"queue": "media"},
 }
 
 # A local migration client uses this bearer token to submit album ZIP imports as the non-login
@@ -312,6 +313,12 @@ CELERY_BEAT_SCHEDULE = {
     "backfill-photo-album-hashes": {
         "task": "photo_album.tasks.backfill_media_hashes",
         "schedule": crontab(minute=40, hour=2),
+    },
+    # 03:05, once the hash backfill's twenty minutes are up. Reads originals stored before XMP and
+    # IPTC were read for at most DATE_REREAD_BUDGET, then settles every album's approximate dates.
+    "settle-photo-album-dates": {
+        "task": "photo_album.tasks.settle_media_dates",
+        "schedule": crontab(minute=5, hour=3),
     },
     "remind-rsvp-deadlines": {
         "task": "events.tasks.remind_rsvp_deadlines",

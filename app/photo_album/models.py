@@ -6,7 +6,7 @@ import calendar
 import re
 import unicodedata
 from collections.abc import Iterable
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -87,6 +87,10 @@ def album_thumbnail_path(instance: "Media", filename: str) -> str:
     return _media_key(instance, "thumbnail", filename)
 
 
+def album_sidecar_path(instance: "Media", filename: str) -> str:
+    return _media_key(instance, "sidecar", filename)
+
+
 def album_import_path(instance: "AlbumImport", filename: str) -> str:
     return f"photo-album-imports/{instance.token}/{Path(filename).name}"
 
@@ -110,6 +114,53 @@ class DerivativeState(models.TextChoices):
     READY = "ready", "Klar"
     PENDING = "pending", "Behandles"
     FAILED = "failed", "Mislykkedes"
+
+
+class DateSource(models.TextChoices):
+    """Where `Media.sort_at`, the date the grid and the timeline place an item at, comes from.
+
+    Only CAPTURED is when the photo was taken. Everything else is an approximation, and is shown
+    as one. A file time is when the file was last written, which is the moment of capture only if
+    every copy since kept it: the old server's sidecars hold capture times for some albums, but
+    for others the day they were copied, which can be days or months later.
+    """
+
+    CAPTURED = "captured", "Optaget"
+    FILE = "file", "Filens dato"
+    NEIGHBOURS = "neighbours", "Anslået ud fra albummet"
+    ALBUM_YEAR = "album_year", "Anslået ud fra albummets år"
+    ADDED = "added", "Uploadet"
+
+
+# The approximations only services.settle_dates can make, as they need the rest of the album.
+SETTLED_DATE_SOURCES = frozenset({DateSource.NEIGHBOURS, DateSource.ALBUM_YEAR})
+
+# How far outside its folder's year a date in an album is still believed: a New Year's Eve album
+# holds December's preparations and January's aftermath, and a film was often developed later.
+FOLDER_YEAR_SLACK_MONTHS = 6
+# A file time from before this is a camera or a file system that never had its clock set.
+EARLIEST_FILE_TIME = datetime(1990, 1, 1, tzinfo=UTC)
+
+
+def folder_year(folder: str) -> int | None:
+    return int(folder) if folder.isdecimal() else None
+
+
+def believable_date(moment: datetime, folder: str, *, file_time: bool) -> bool:
+    """Whether `moment` can be when a photo in `folder` was taken.
+
+    In a year folder it must fall in that year, give or take FOLDER_YEAR_SLACK_MONTHS — for 2004,
+    from 1 July 2003 up to 1 July 2005: the Dropbox archive stamps every file with the day it was
+    uploaded there in 2022, and an old camera with a flat battery starts again in 2001. Elsewhere
+    only a file time has a floor — a scanned print may honestly say 1975 in its metadata, but no
+    file was saved then.
+    """
+    year = folder_year(folder)
+    if year is not None:
+        start = timezone.make_aware(datetime(year - 1, 13 - FOLDER_YEAR_SLACK_MONTHS, 1))  # noqa: DTZ001
+        end = timezone.make_aware(datetime(year + 1, FOLDER_YEAR_SLACK_MONTHS + 1, 1))  # noqa: DTZ001
+        return start <= moment < end
+    return (not file_time or moment >= EARLIEST_FILE_TIME) and moment <= timezone.now() + timedelta(days=1)
 
 
 class AlbumDownloadState(models.TextChoices):
@@ -521,6 +572,12 @@ class Media(models.Model):
     thumbnail = models.FileField(
         upload_to=album_thumbnail_path, storage=get_photo_album_storage, max_length=500
     )
+    # The AppleDouble sidecar the file arrived with in a ZIP, as it was: the old file server's own
+    # record of the file (its dates above all, see services.appledouble_dates). Kept beside the
+    # original so it outlives the Dropbox archive and the import's work directory. Never served.
+    sidecar = models.FileField(
+        upload_to=album_sidecar_path, storage=get_photo_album_storage, max_length=500, blank=True
+    )
     content_type = models.CharField(max_length=100, blank=True)
     derivative_state = models.CharField(
         max_length=10, choices=DerivativeState.choices, default=DerivativeState.READY
@@ -543,12 +600,17 @@ class Media(models.Model):
     )
     added_at = models.DateTimeField(auto_now_add=True)
     captured_at = models.DateTimeField(null=True, blank=True)
-    # The file's own last-modified time, as the browser (File.lastModified) or the ZIP entry reports
-    # it — the best date there is for a photo whose EXIF was stripped by a messenger app.
+    # False on an image stored before the album looked in XMP and IPTC for `captured_at` too; the
+    # nightly `tasks.settle_media_dates` reads its original again.
+    capture_date_checked = models.BooleanField(default=True)
+    # The file's own last-modified time, as the browser (File.lastModified), an AppleDouble sidecar
+    # or the ZIP entry reports it — the best date there is for a photo whose EXIF was stripped.
     file_modified_at = models.DateTimeField(null=True, blank=True)
     # The date the timeline and the album grid order by: when it was taken, else when the file was
-    # last modified, else when it was uploaded. Kept in a column so both can page on an index.
+    # last modified if that is believable, else an approximation (see `date_source` and
+    # `services.settle_dates`). Kept in a column so both can page on an index.
     sort_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    date_source = models.CharField(max_length=12, choices=DateSource.choices, default=DateSource.ADDED)
     status = models.CharField(max_length=10, choices=MediaStatus.choices, default=MediaStatus.PENDING)
     approved_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -583,15 +645,41 @@ class Media(models.Model):
         using: str | None = None,
         update_fields: Iterable[str] | None = None,
     ) -> None:
-        self.sort_at = self.captured_at or self.file_modified_at or self.added_at or timezone.now()
-        if update_fields is not None and {"captured_at", "file_modified_at", "added_at"} & set(update_fields):
-            update_fields = {*update_fields, "sort_at"}
+        # Only when a date is being written: own_date may load the album, and approving or binning a
+        # selection saves each item with a few other fields only.
+        if update_fields is None or {"captured_at", "file_modified_at", "added_at"} & set(update_fields):
+            own = self.own_date()
+            if own is not None:
+                self.sort_at, self.date_source = own
+            elif self.date_source not in SETTLED_DATE_SOURCES or self.sort_at is None:
+                # Until services.settle_dates has looked at the album around it.
+                self.sort_at, self.date_source = self.added_at or timezone.now(), DateSource.ADDED
+            if update_fields is not None:
+                update_fields = {*update_fields, "sort_at", "date_source"}
         super().save(
             force_insert=force_insert,
             force_update=force_update,
             using=using,
             update_fields=update_fields,
         )
+
+    def own_date(self) -> tuple[datetime, DateSource] | None:
+        """The date the file itself gives: when it was taken, else its file time if believable.
+
+        A capture date is always taken at its word for the item itself, even outside the album's
+        year; `services.settle_dates` is stricter about the ones it approximates others from.
+        """
+        if self.captured_at is not None:
+            return self.captured_at, DateSource.CAPTURED
+        modified = self.file_modified_at
+        if modified is not None and believable_date(modified, self.album.folder, file_time=True):
+            return modified, DateSource.FILE
+        return None
+
+    @property
+    def date_is_approximate(self) -> bool:
+        """Anything but a capture date from the file's own metadata (see DateSource)."""
+        return self.date_source != DateSource.CAPTURED
 
     @property
     def display_name(self) -> str:
