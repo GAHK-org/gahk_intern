@@ -7,6 +7,8 @@ from io import BytesIO
 
 import pytest
 from celery import shared_task
+from celery.app.task import Context
+from celery.signals import before_task_publish
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
 from django.db.backends.utils import CursorWrapper
@@ -94,13 +96,59 @@ def test_a_refused_import_logs_every_reason(make_resident: Callable[..., Residen
 
 
 @pytest.mark.django_db
-def test_a_task_that_logs_nothing_stores_nothing_and_logging_outside_a_task_is_not_kept() -> None:
+def test_every_job_gets_a_record_and_logging_outside_a_task_is_not_kept() -> None:
     logger.info("not in a task")
-    _quiet.apply()
-    assert not WorkerJobLog.objects.exists()
+    quiet = _quiet.apply()
+
+    record = WorkerJobLog.objects.get(task_id=quiet.id)
+    assert (record.task_name, record.state, record.lines) == (_quiet.name, "SUCCESS", [])
+    assert record.started_at <= record.finished_at
 
     result = _chatty.apply(args=[1])
     assert [line["message"] for line in WorkerJobLog.objects.get(task_id=result.id).lines] == ["line 0"]
+    assert WorkerJobLog.objects.count() == 2
+
+
+def test_every_message_is_stamped_with_when_it_was_sent() -> None:
+    """Through the signal, so this also proves the handler is connected. A retry is republished
+    with the request's own headers, sent_at among them, and keeps the first send's time."""
+    fresh: dict[str, object] = {"id": "a"}
+    retried: dict[str, object] = {"id": "b", "sent_at": "2026-10-14T18:05:01+00:00"}
+
+    before = timezone.now()
+    before_task_publish.send(sender="some.task", headers=fresh)
+    before_task_publish.send(sender="some.task", headers=retried)
+
+    stamped = worker_logs.parse_sent_at(fresh["sent_at"])
+    assert stamped is not None and before <= stamped <= timezone.now()
+    assert retried["sent_at"] == "2026-10-14T18:05:01+00:00"
+
+
+@pytest.mark.django_db
+def test_a_jobs_record_keeps_what_its_message_said() -> None:
+    """In a worker, Celery spreads the message's headers over `task.request`: the sent time, the
+    parent and the arguments' reprs are all there when the task starts."""
+    task = type("FakeTask", (), {"name": "photo_album.tasks.build_media_derivatives"})()
+    task.request = Context(
+        sent_at="2026-10-14T18:05:01+00:00", parent_id="import-job", argsrepr="(42,)", kwargsrepr="{}"
+    )
+
+    worker_logs._start(task_id="child-job", task=task)
+    started = WorkerJobLog.objects.get(task_id="child-job")
+    worker_logs._finish(task_id="child-job", task=task, state="SUCCESS")
+
+    assert started.state == "STARTED", "the row exists while the job runs"
+    record = WorkerJobLog.objects.get(task_id="child-job")
+    assert record.sent_at == datetime(2026, 10, 14, 18, 5, 1, tzinfo=UTC)
+    assert (record.parent_id, record.arguments, record.keyword_arguments) == ("import-job", "(42,)", "{}")
+    assert (record.state, record.finished_at is not None) == ("SUCCESS", True)
+
+
+@pytest.mark.django_db
+def test_a_header_given_to_apply_is_read_too() -> None:
+    result = _quiet.apply(headers={"sent_at": "2026-10-14T18:05:01+00:00"})
+
+    assert WorkerJobLog.objects.get(task_id=result.id).sent_at == datetime(2026, 10, 14, 18, 5, 1, tzinfo=UTC)
 
 
 @pytest.mark.django_db
@@ -116,9 +164,9 @@ def test_a_long_log_keeps_its_first_lines_and_counts_the_rest(monkeypatch: pytes
 
 @pytest.mark.django_db
 def test_worker_job_page_shows_the_log_even_after_the_result_is_gone(
-    client: Client, make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+    client: Client, make_resident: Callable[..., Resident]
 ) -> None:
-    monkeypatch.setattr("residents.views_admin._job_details", lambda task_id: None)
+    # The test database has no celery_taskmeta at all: the result is as gone as it gets.
     WorkerJobLog.objects.create(
         task_id="task-id",
         task_name="photo_album.tasks.process_album_import",

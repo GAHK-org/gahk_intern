@@ -11,6 +11,8 @@ app_name = "siteadmin"
 urlpatterns = [
     path("", views_admin.home, name="home"),
     path("worker-jobs", views_admin.worker_jobs, name="worker_jobs"),
+    # Before the job page, whose <task_id> would take "live" too.
+    path("worker-jobs/live", views_admin.worker_jobs_live, name="worker_jobs_live"),
     path("worker-jobs/<str:task_id>", views_admin.worker_job_detail, name="worker_job_detail"),
     path("roles", views_admin.roles, name="roles"),
     path("notifikationer", notifications_admin.notifications, name="notifications"),
