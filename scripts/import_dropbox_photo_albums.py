@@ -374,7 +374,7 @@ class Server:
         return urljoin(self.endpoint, response.json()["statusUrl"])
 
     def send_dates(self, archive: bytes, folder: str, album: str) -> dict[str, Any]:
-        """Send an album's sidecars (photo_album.services.apply_sidecar_dates); returns what it did."""
+        """Send an album's sidecars (photo_album.services.apply_sidecars); returns what it did."""
         response = self._request(
             "POST",
             f"{self.endpoint}/datoer",
@@ -1330,7 +1330,8 @@ def send_dates(
             results["failed"] += 1
             continue
         out.ok(
-            f"  ✓ {result['updated']} item(s) dated by their sidecar, {result['unchanged']} had that date"
+            f"  ✓ {result.get('stored', 0)} sidecar(s) stored beside their item;"
+            f" {result['updated']} item(s) dated by their sidecar, {result['unchanged']} had that date"
             f" already, {result['undated']} sidecar(s) without a date for {year}; {result['redated']}"
             " item(s) placed anew around them"
         )

@@ -312,22 +312,47 @@ def test_an_import_takes_a_files_date_from_its_appledouble_sidecar(
     """The Dropbox archive: every entry stamped 2022, the old server's sidecars beside the files."""
     resident = make_resident()
     real = datetime(2004, 10, 24, 20, 3, tzinfo=UTC)
+    kept, reset = _appledouble(real, real + timedelta(days=6)), _appledouble(datetime(2001, 1, 5, tzinfo=UTC))
     archive = _zip(
         {
             "Fest/IMG_1.JPG": jpeg_bytes(),
-            "Fest/.AppleDouble/IMG_1.JPG": _appledouble(real, real + timedelta(days=6)),
+            "Fest/.AppleDouble/IMG_1.JPG": kept,
             "Fest/IMG_2.JPG": jpeg_bytes(),
-            "Fest/.AppleDouble/IMG_2.JPG": _appledouble(datetime(2001, 1, 5, tzinfo=UTC)),  # clock reset
+            "Fest/.AppleDouble/IMG_2.JPG": reset,  # a camera whose clock had reset
+            "Fest/IMG_3.JPG": jpeg_bytes(),  # none
             "Fest/.AppleDouble/.Parent": _appledouble(real),
         }
     )
 
     result = import_zip_album(archive=archive, folder="2004", resident=resident)
 
-    first, second = Media.objects.filter(album__in=result.albums).order_by("filename")
+    first, second, third = Media.objects.filter(album__in=result.albums).order_by("filename")
     assert (first.file_modified_at, first.sort_at, first.date_source) == (real, real, DateSource.FILE)
     assert second.file_modified_at == local(2022, 3, 1, 12)  # the entry's, and not believed
     assert (second.sort_at, second.date_source) == (real + timedelta(seconds=1), DateSource.NEIGHBOURS)
+    # Every sidecar is kept beside its original, believed or not.
+    assert [_stored(media.sidecar) for media in (first, second, third)] == [kept, reset, None]
+    assert first.sidecar.name == f"photo-album/{first.album_id}/{first.uuid}/sidecar/IMG_1.JPG"
+
+
+def _stored(field: object) -> bytes | None:
+    if not field:
+        return None
+    with field.open("rb") as handle:  # type: ignore[attr-defined]
+        return handle.read()  # type: ignore[no-any-return]
+
+
+@pytest.mark.django_db
+def test_deleting_an_item_deletes_its_sidecar(make_resident: Callable[..., Resident]) -> None:
+    resident = make_resident()
+    album = Album.objects.create(folder="2004", name="Fest")
+    media = upload_media(album=album, uploaded_file=_upload("IMG_1.JPG", jpeg_bytes()), resident=resident)
+    media.sidecar.save("IMG_1.JPG", ContentFile(_appledouble(local(2004, 5, 1))))
+    storage, name = media.sidecar.storage, media.sidecar.name
+
+    services.permanently_delete(media)
+
+    assert not storage.exists(name)
 
 
 @pytest.mark.django_db
@@ -502,7 +527,10 @@ def test_sidecars_sent_later_date_what_was_imported_without_them(
 
     result = send()
 
-    assert {key: result[key] for key in ("updated", "unchanged", "undated", "unmatched", "ambiguous")} == {
+    assert {
+        key: result[key] for key in ("stored", "updated", "unchanged", "undated", "unmatched", "ambiguous")
+    } == {
+        "stored": 5,  # every item matched, the one whose date is not believed too
         "updated": 4,
         "unchanged": 0,
         "undated": 1,
@@ -516,7 +544,9 @@ def test_sidecars_sent_later_date_what_was_imported_without_them(
         (party + timedelta(hours=1, seconds=1), DateSource.NEIGHBOURS),  # settled around them
     ]
     assert Album.objects.get(pk=root.pk).is_locked()
-    assert send()["updated"] == 0  # sending again changes nothing
+    assert _stored(Media.objects.get(pk=reset.pk).sidecar) == sidecars["Aften/.AppleDouble/IMG_3.JPG"]
+    again = send()
+    assert (again["stored"], again["updated"]) == (0, 0)  # sending again changes nothing
 
 
 @pytest.mark.django_db

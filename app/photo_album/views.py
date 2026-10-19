@@ -831,14 +831,14 @@ def system_import_zip(request: HttpRequest) -> JsonResponse:
 @require_POST
 def system_sidecar_dates(request: HttpRequest) -> JsonResponse:
     """The import script's sidecars for an album it imported before the import read them
-    (services.apply_sidecar_dates). A few hundred kilobytes, so answered at once, not queued."""
+    (services.apply_sidecars). A few hundred kilobytes, so answered at once, not queued."""
     if _token_import_resident(request) is None:
         raise PermissionDenied
     form = SystemSidecarDatesForm(request.POST, request.FILES)
     if not form.is_valid():
         return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
     try:
-        result = services.apply_sidecar_dates(
+        result = services.apply_sidecars(
             archive=form.cleaned_data["archive"],
             folder=form.cleaned_data["folder"],
             root_name=form.cleaned_data["album"],
@@ -849,6 +849,7 @@ def system_sidecar_dates(request: HttpRequest) -> JsonResponse:
         )
     return JsonResponse(
         {
+            "stored": result.stored,
             "updated": result.updated,
             "unchanged": result.unchanged,
             "undated": result.undated,

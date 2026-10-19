@@ -585,6 +585,7 @@ erDiagram
         string original
         string high_definition
         string thumbnail
+        string sidecar
         string content_type
         string derivative_state
         int derivative_attempts
@@ -1391,6 +1392,7 @@ erDiagram
         string original
         string high_definition
         string thumbnail
+        string sidecar
         string content_type
         string derivative_state
         int derivative_attempts

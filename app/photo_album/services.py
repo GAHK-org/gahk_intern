@@ -154,11 +154,13 @@ def store_upload(
     approved: bool = False,
     file_modified_at: datetime | None = None,
     sha256: str | None = None,
+    sidecar: bytes = b"",
 ) -> UploadOutcome:
     """Store an original and queue its derivatives after the database transaction commits.
 
     The file keeps its exact name in `Media.filename`; its storage key only has to be unique, which
-    the uuid directory in it takes care of (see models._media_key).
+    the uuid directory in it takes care of (see models._media_key). `sidecar` is the AppleDouble
+    sidecar a ZIP brought it with, stored beside it as it was.
     """
     if album.is_locked():
         raise ValueError("Albummet er låst.")
@@ -188,6 +190,8 @@ def store_upload(
         file_modified_at=file_modified_at,
     )
     media.original.save(filename, uploaded_file, save=False)
+    if sidecar:
+        media.sidecar.save(filename, ContentFile(sidecar), save=False)
     media.derivative_state = DerivativeState.PENDING
     media.save()
     from .tasks import queue_derivatives
@@ -373,6 +377,10 @@ _APPLEDOUBLE_EPOCH = datetime(2000, 1, 1, tzinfo=UTC)
 _APPLEDOUBLE_NO_DATE = -0x80000000
 
 
+def is_appledouble(data: bytes) -> bool:
+    return len(data) >= 26 and struct.unpack_from(">II", data) == (_APPLEDOUBLE_MAGIC, _APPLEDOUBLE_VERSION)
+
+
 def appledouble_dates(data: bytes) -> list[datetime]:
     """The creation and modification times an AppleDouble sidecar keeps for its file, if any.
 
@@ -380,7 +388,7 @@ def appledouble_dates(data: bytes) -> list[datetime]:
     `.AppleDouble/<name>` beside it. The Dropbox archive kept those sidecars, while stamping every
     file in it with the day it was uploaded there, in 2022 — so the sidecar has the real date.
     """
-    if len(data) < 26 or struct.unpack_from(">II", data) != (_APPLEDOUBLE_MAGIC, _APPLEDOUBLE_VERSION):
+    if not is_appledouble(data):
         return []
     (entries,) = struct.unpack_from(">H", data, 24)
     for index in range(entries):
@@ -421,6 +429,7 @@ class _ImportFile:
     path: Path
     sha256: str
     modified_at: datetime | None
+    sidecar: bytes = b""  # its AppleDouble sidecar in the archive, if it had one
 
 
 @dataclass
@@ -498,7 +507,7 @@ def _plan_import(
     plan = _ImportPlan(root_name=normalize_name(root_name or Path(archive_name or "album.zip").stem))
     maximum_bytes = max(settings.PHOTO_ALBUM_IMAGE_MAX_MB, settings.PHOTO_ALBUM_VIDEO_MAX_MB) * 1024 * 1024
     candidates: list[tuple[zipfile.ZipInfo, str, PurePosixPath]] = []
-    sidecar_dates: dict[str, list[datetime]] = {}  # member name -> the dates its sidecar keeps
+    sidecars: dict[str, bytes] = {}  # member name -> its AppleDouble sidecar
     for member in zip_archive.infolist():
         name = _member_name(member)
         if member.is_dir() or name.endswith("/"):
@@ -513,9 +522,11 @@ def _plan_import(
                 described = _sidecar_target(path)
                 if described is not None and member.file_size <= MACOS_METADATA_MAX_BYTES:
                     try:
-                        sidecar_dates[described] = appledouble_dates(zip_archive.read(member))
+                        data = zip_archive.read(member)
                     except (OSError, RuntimeError, zipfile.BadZipFile, EOFError):
-                        pass  # only a date lost; the file it describes is checked on its own
+                        data = b""  # only a date lost; the file it describes is checked on its own
+                    if is_appledouble(data):
+                        sidecars[described] = data
             else:
                 plan.errors.append(
                     f"{name}: ligner macOS-metadata, men er større end {MACOS_METADATA_MAX_BYTES // 1024} KB."
@@ -594,8 +605,9 @@ def _plan_import(
             if error := check_media_content(File(extracted, name=path.name)):
                 plan.errors.append(f"{name}: {error}")
                 continue
-        modified_at = _file_time(sidecar_dates.get(name, []), _zip_modified_at(member), folder)
-        item = _ImportFile(name, folders, path.name, target, sha256, modified_at)
+        sidecar = sidecars.get(name, b"")
+        modified_at = _file_time(appledouble_dates(sidecar), _zip_modified_at(member), folder)
+        item = _ImportFile(name, folders, path.name, target, sha256, modified_at, sidecar)
         key = (tuple(folder.lower() for folder in folders), path.name)
         earlier = seen.get(key)
         if (
@@ -728,13 +740,15 @@ def _store_import(
                         approved=True,
                         file_modified_at=item.modified_at,
                         sha256=item.sha256,
+                        sidecar=item.sidecar,
                     )
                 if outcome.duplicate is not None:
                     plan.skipped.append(f"{item.member}: findes allerede i albummet (ignoreret)")
                 if outcome.media is not None:
                     added += 1
-                    if outcome.media.original.name:
-                        written.append(outcome.media.original.name)
+                    written.extend(
+                        name for name in (outcome.media.original.name, outcome.media.sidecar.name) if name
+                    )
             settle_dates(root)
             if lock:
                 root.manually_locked_at = timezone.now()
@@ -1264,8 +1278,9 @@ def settle_all_dates() -> int:
 
 @dataclass
 class SidecarDates:
-    """What apply_sidecar_dates did, sidecar by sidecar."""
+    """What apply_sidecars did, sidecar by sidecar."""
 
+    stored: int = 0  # sidecars kept beside an item that had none
     updated: int = 0  # items given the date their sidecar keeps
     unchanged: int = 0  # items that had it already
     undated: int = 0  # sidecars with no date to believe for their album's year
@@ -1279,14 +1294,18 @@ class SidecarDates:
     )
 
 
-def apply_sidecar_dates(*, archive: File, folder: str, root_name: str) -> SidecarDates:
-    """Give media already stored the file dates in their AppleDouble sidecars, as an import now does.
+def apply_sidecars(*, archive: File, folder: str, root_name: str) -> SidecarDates:
+    """Give media already stored their AppleDouble sidecars, and the dates in them, as an import
+    now does.
 
     For the Dropbox archive, most of which was imported before sidecars were read. The import
     script keeps every album's sidecars in its work directory and sends them here as a ZIP, its
     paths relative to the root album `root_name` in `folder`. Each sidecar goes to the item of
     its name in the album at its path, albums found by name ignoring case, as a merging import
     finds them. Locks do not apply: a date is no more the album's content than a tag is.
+
+    Not one transaction: each item is stored on its own, as stored objects cannot be rolled back,
+    and sending the same sidecars again changes nothing.
 
     Raises ValidationError when there is no such album or the ZIP cannot be read.
     """
@@ -1305,14 +1324,13 @@ def apply_sidecar_dates(*, archive: File, folder: str, root_name: str) -> Sideca
         return albums[folders]
 
     try:
-        with zipfile.ZipFile(archive) as zip_archive, transaction.atomic():
+        with zipfile.ZipFile(archive) as zip_archive:
             for member in zip_archive.infolist():
                 described = _sidecar_target(PurePosixPath(_member_name(member)))
                 if member.is_dir() or described is None or member.file_size > MACOS_METADATA_MAX_BYTES:
                     continue
-                moment = _file_time(appledouble_dates(zip_archive.read(member)), None, folder)
-                if moment is None:
-                    result.undated += 1
+                data = zip_archive.read(member)
+                if not is_appledouble(data):
                     continue
                 *folders, filename = PurePosixPath(described).parts
                 album = album_at(tuple(folders))
@@ -1321,6 +1339,14 @@ def apply_sidecar_dates(*, archive: File, folder: str, root_name: str) -> Sideca
                     (result.ambiguous if matches else result.unmatched).append(described)
                     continue
                 media = matches[0]
+                if not media.sidecar:
+                    media.sidecar.save(filename, ContentFile(data), save=False)
+                    media.save(update_fields=["sidecar"])
+                    result.stored += 1
+                moment = _file_time(appledouble_dates(data), None, folder)
+                if moment is None:
+                    result.undated += 1
+                    continue
                 if media.captured_at is not None:
                     off = abs(moment - media.captured_at)
                     closeness = (
@@ -1478,7 +1504,7 @@ def purge_expired(now: datetime | None = None) -> int:
 
 
 def _delete_files(media: Media) -> None:
-    for file_field in (media.original, media.high_definition, media.thumbnail):
+    for file_field in (media.original, media.high_definition, media.thumbnail, media.sidecar):
         if file_field:
             file_field.delete(save=False)
 

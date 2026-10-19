@@ -87,6 +87,10 @@ def album_thumbnail_path(instance: "Media", filename: str) -> str:
     return _media_key(instance, "thumbnail", filename)
 
 
+def album_sidecar_path(instance: "Media", filename: str) -> str:
+    return _media_key(instance, "sidecar", filename)
+
+
 def album_import_path(instance: "AlbumImport", filename: str) -> str:
     return f"photo-album-imports/{instance.token}/{Path(filename).name}"
 
@@ -567,6 +571,12 @@ class Media(models.Model):
     )
     thumbnail = models.FileField(
         upload_to=album_thumbnail_path, storage=get_photo_album_storage, max_length=500
+    )
+    # The AppleDouble sidecar the file arrived with in a ZIP, as it was: the old file server's own
+    # record of the file (its dates above all, see services.appledouble_dates). Kept beside the
+    # original so it outlives the Dropbox archive and the import's work directory. Never served.
+    sidecar = models.FileField(
+        upload_to=album_sidecar_path, storage=get_photo_album_storage, max_length=500, blank=True
     )
     content_type = models.CharField(max_length=100, blank=True)
     derivative_state = models.CharField(
