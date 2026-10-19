@@ -66,7 +66,7 @@ def check_heartbeats() -> dict[str, dict[str, Any]]:
     names = settings.HEALTH_PROCESSES
     seen = dict(ServiceHeartbeat.objects.filter(name__in=names).values_list("name", "beat_at"))
     now = timezone.now()
-    results = {}
+    results: dict[str, dict[str, Any]] = {}
     for name in names:
         if name not in seen:
             results[name] = {"ok": False, "age_seconds": None}
