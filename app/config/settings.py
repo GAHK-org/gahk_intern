@@ -218,10 +218,13 @@ HEALTHCHECK_PING_URL = os.environ.get("HEALTHCHECK_PING_URL", "")
 HEALTH_ALERT_EMAILS = [e.strip() for e in os.environ.get("HEALTH_ALERT_EMAILS", "").split(",") if e.strip()]
 
 CELERY_BEAT_SCHEDULE = {
-    # Proves beat schedules and the default worker runs what it schedules (core.health).
+    # Proves beat schedules and the default worker runs what it schedules (core.health). Expires so
+    # the beats that queued up behind a long job are dropped, not run in a burst after it.
+    # `expire_seconds`, not Celery's `expires`: django-celery-beat's scheduler drops that key.
     "heartbeat": {
         "task": "core.tasks.heartbeat",
         "schedule": 60.0,
+        "options": {"expire_seconds": 50},
     },
     # Alerts on the status checks: the dead man's switch ping, and e-mails on a change (core.alerts).
     "check-health": {
