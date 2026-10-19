@@ -15,7 +15,7 @@ import logging
 
 from django.db import transaction
 
-from residents.models import Residency, Resident, prev_period
+from residents.models import Residency, prev_period
 
 from .models import AkAutoApply, AkEntry, AkMonthlyCharge
 
@@ -28,7 +28,7 @@ def _tag(year: int, month: int) -> str:
 
 
 @transaction.atomic
-def apply_monthly_charge(year: int, month: int, *, officer: Resident | None = None) -> tuple[int, int]:
+def apply_monthly_charge(year: int, month: int) -> tuple[int, int]:
     """Reconcile the MONTHLY ledger for (year, month) against the calendar-month schedule and current
     membership. The amount comes from the `AkMonthlyCharge` row for that *calendar* month (same every
     year).
@@ -58,7 +58,6 @@ def apply_monthly_charge(year: int, month: int, *, officer: Resident | None = No
             defaults={
                 "delta": -charge.krydser,
                 "reason": _tag(year, month),
-                "created_by": officer,
             },
         )
         written += 1

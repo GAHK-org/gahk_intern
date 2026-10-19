@@ -6,8 +6,8 @@ matters: get either wrong and Django starts, pages render, and nothing is logged
   E001-E006  the VAPID key pair (Web Push)
   E007-E009  the media URL/prefix invariants (see the second block, and core/storage.py)
 
-VAPID lives in core because the keys are shared by every feature that pushes (Den Hurtige and
-opslagstavlen), not owned by whichever one shipped first. The check IDs moved with it:
+VAPID lives in core because the keys are shared by every notification that is pushed (all of them go
+through notifications.services), not owned by whichever feature shipped first. The check IDs moved with it:
 `den_hurtige.E00x` became `core.E00x`. The channel registry's own checks stayed behind in
 den_hurtige.checks, because a channel is that feature's concept and nothing else's — they are
 `den_hurtige.E007`-`E010`, so they do not collide with `core.E007`/`core.E008` below despite the

@@ -50,7 +50,7 @@ WIFI_PASSWORD=…  GOOGLE_CALENDAR_USER=…  GOOGLE_CALENDAR_PASSWORD=…
 INDSTILLING_EMAIL=indstillingen@gahk.dk           # recipient only, not a sender
 POSTGRES_PASSWORD=<pw>                            # for the compose postgres service
 OELKAELDER_KIOSK_IPS=<the till's server-observed source IP>   # confirm from access logs, NOT ipconfig
-VAPID_PUBLIC_KEY=…  VAPID_PRIVATE_KEY=…           # Web Push for Den Hurtige — see below
+VAPID_PUBLIC_KEY=…  VAPID_PRIVATE_KEY=…           # Web Push for notifications — see below
 VAPID_ADMIN_EMAIL=autosvar@gahk.dk                # real address: push services report failures here
 S3_BUCKET=…  S3_LOCATION=fsn1  S3_ACCESS_KEY=…  S3_SECRET_KEY=…   # media object storage — see §4c
 AWS_REQUEST_CHECKSUM_CALCULATION=when_required    # ⚠ required with the above — see §4c
@@ -58,11 +58,10 @@ AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
 ```
 Store real values in Coolify's secret manager / a vault — not in git.
 
-**Web Push (Den Hurtige).** The two VAPID values are the *raw base64url* key pair, not PEM files —
+**Web Push (notifications).** The two VAPID values are the *raw base64url* key pair, not PEM files —
 `VAPID_PUBLIC_KEY` is handed to the browser as `applicationServerKey`, which must be the 65-byte
-uncompressed EC point. `app/.env.example` carries the generate/convert one-liner. Leave them unset
-and the feature degrades cleanly: the feed still works, the subscribe button just reports that push
-is not configured. **Rotating the pair invalidates every existing subscription**, so every resident
+uncompressed EC point. Leave them unset and notifications degrade to in-app only: no push prompt is
+shown, and the notification settings page says push is not set up on the server. **Rotating the pair invalidates every existing subscription**, so every resident
 would have to press the button again — settle on one pair before residents start subscribing.
 Push also requires HTTPS, which Traefik already terminates; on iOS the site must be added to the
 home screen before notifications are available at all.
@@ -234,6 +233,7 @@ idempotent, so a retry or an overlapping run is harmless.
 | Celery task | Schedule | Why |
 | --- | --- | --- |
 | `admissions.tasks.purge_expired_applications` | Daily 03:20 | Enforces the one-year application retention policy. |
+| `notifications.tasks.purge_expired_notifications` | Daily 03:30 | Deletes notifications 30 days after their TTL ran out; they already stop showing at the TTL, the month is for the admin statistics. |
 | `opslagstavle.tasks.purge_orphaned_images` | Daily 03:40 | Removes unused compose-toolbar image uploads. |
 | `reparationer.tasks.archive_finished_repairs` | Daily 03:50 | Archives completed repairs after 30 days. |
 | `events.tasks.purge_expired_events` | Daily 04:00 | Enforces event retention. |
@@ -278,11 +278,9 @@ eyeball on the first real run is simply that unused-image count.
 the reason given below; `purge_notices` does not.
 
 **`purge_notices` is the deliberate exception to the lazy-guard rule below, and should stay that
-way.** Den Hurtige purges on every feed load because its promise is "gone in 30 minutes": a message
-that should have vanished is visibly wrong to a reader within the hour, so cron failing silently has
-an immediate cost. Opslagstavlen now deletes no posts at all, and its sweep affects nothing a reader
-can see — a missed night leaves a few unreferenced files in the bucket. Putting that on every board
-request would be a bad trade. Don't "fix" the inconsistency.
+way.** Opslagstavlen deletes no posts, and its sweep affects nothing a reader can see — a missed
+night leaves a few unreferenced files in the bucket. Putting that on every board request would be a
+bad trade. Don't "fix" the inconsistency.
 
 **These do not replace the lazy guards, and the lazy guards should stay.** `ensure_previous_month_charged()`
 costs one single-row query on three pages, and it is the only thing that makes a
@@ -570,7 +568,7 @@ second authority deleting backups on its own schedule, and if the two ever disag
 silently. What the bucket SHOULD clean up is what versioning leaves behind when Coolify prunes - see
 below.
 
-Offsets matter: §4b already runs tasks at 03:20, 03:40, 03:50 and 04:00, so backups sit in the
+Offsets matter: §4b already runs tasks at 03:05, 03:20, 03:30, 03:40, 03:50 and 04:00, so backups sit in the
 02:00-02:40 window and never overlap a purge on this small box. Coolify evaluates cron on the **host
 clock (UTC)** while Django's `TIME_ZONE` is `Europe/Copenhagen`.
 

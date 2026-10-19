@@ -495,10 +495,10 @@ FEEDBACK_URL = os.environ.get("FEEDBACK_URL", "https://github.com/GAHK-org/gahk_
 # before upload, so this is mainly a backstop against oversized/crafted uploads.
 ROOM_PHOTO_MAX_MB = int(os.environ.get("ROOM_PHOTO_MAX_MB", "5"))
 
-# Web Push for Den Hurtige (the PWA that replaces the Messenger group). The two keys are the RAW
+# Web Push for every notification (notifications.services → core.push). The two keys are the RAW
 # base64url VAPID pair, NOT the .pem files: VAPID_PUBLIC_KEY is handed to the browser as
-# `applicationServerKey`, which must be the 65-byte uncompressed EC point. app/.env.example shows how
-# to derive both from an existing PEM. Unset in dev → the subscribe button reports push unavailable.
+# `applicationServerKey`, which must be the 65-byte uncompressed EC point. Unset in dev →
+# notifications are in-app only and the settings page says push is not set up.
 VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")
 VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
 # Must be a real, monitored address: push services contact it about delivery problems, and some
