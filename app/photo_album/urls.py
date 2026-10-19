@@ -11,6 +11,7 @@ urlpatterns = [
     path("papirkurv", views.bin, name="bin"),
     path("opret", views.create_album, name="create_album"),
     path("importer-zip", views.import_zip, name="import_zip"),
+    path("importer-zip/upload", views.import_zip_upload, name="import_zip_upload"),
     path("importer-zip/system", views.system_import_zip, name="system_import_zip"),
     path("importer-zip/system/albummer", views.system_albums, name="system_albums"),
     path("importer-zip/system/upload", views.system_import_upload, name="system_import_upload"),
@@ -28,6 +29,8 @@ urlpatterns = [
     path("<int:pk>/laas", views.lock_album, name="lock_album"),
     path("<int:pk>/laas-op", views.unlock_album, name="unlock_album"),
     path("<int:pk>/upload", views.upload, name="upload"),
+    path("<int:pk>/upload/start", views.upload_begin, name="upload_begin"),
+    path("<int:pk>/upload/gem", views.upload_commit, name="upload_commit"),
     path("<int:pk>/tags", views.album_tags, name="album_tags"),
     # Everything the viewer needs about one item, fetched when it is opened rather than rendered
     # into every tile of the grid. See views.media_detail.

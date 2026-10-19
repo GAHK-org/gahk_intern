@@ -5,7 +5,10 @@ from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from secrets import compare_digest
+from tempfile import NamedTemporaryFile
+from types import SimpleNamespace
 from uuid import UUID
 
 from django.conf import settings
@@ -13,6 +16,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import redirect_to_login
 from django.core.exceptions import PermissionDenied, SuspiciousOperation, ValidationError
+from django.core.files.base import File
 from django.db import transaction
 from django.db.models import Count, Max, Q, QuerySet, Sum
 from django.db.models.functions import Coalesce
@@ -43,10 +47,12 @@ from . import access, cache, direct_upload, featured, services
 from .forms import (
     AlbumForm,
     AlbumNameForm,
+    DirectZipImportForm,
     DownloadForm,
+    ImportUploadForm,
+    MediaUploadBeginForm,
+    MediaUploadCommitForm,
     MediaUploadForm,
-    SystemDirectImportForm,
-    SystemImportUploadForm,
     SystemZipImportForm,
     ZipAlbumImportForm,
 )
@@ -62,9 +68,16 @@ from .models import (
     Media,
     MediaStatus,
     Tag,
+    normalize_name,
 )
 from .storage import PhotoAlbumS3Storage, get_photo_album_storage
-from .uploads import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
+from .uploads import (
+    IMAGE_EXTENSIONS,
+    VIDEO_EXTENSIONS,
+    check_media_content,
+    check_media_upload,
+    content_type_for,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -741,9 +754,19 @@ def import_zip(request: HttpRequest) -> HttpResponse:
         return redirect_to_login(request.get_full_path())
     if not access.can_create_album(request):
         raise PermissionDenied
-    form = ZipAlbumImportForm(request.POST or None, request.FILES or None)
+    # With a ticket, the archive is already in the bucket (import_zip_upload), not in the request.
+    direct = request.method == "POST" and "ticket" in request.POST
+    form = (
+        DirectZipImportForm(request.POST)
+        if direct
+        else ZipAlbumImportForm(request.POST or None, request.FILES or None)
+    )
     if request.method == "POST" and form.is_valid():
-        album_import = _queue_import(form, resident)
+        try:
+            stored = _finished_import_upload(form) if isinstance(form, DirectZipImportForm) else None
+        except ValidationError as exc:
+            return JsonResponse({"errors": {"archive": [{"message": m} for m in exc.messages]}}, status=400)
+        album_import = _queue_import(form, resident, stored=stored)
         result_url = f"{reverse('photo_album:import_zip')}?job={album_import.token}"
         if _wants_json(request):
             return JsonResponse(
@@ -775,16 +798,42 @@ def import_zip(request: HttpRequest) -> HttpResponse:
     )
 
 
+@login_required
+@require_POST
+def import_zip_upload(request: HttpRequest) -> JsonResponse:
+    """Where the import page is to send its ZIP: straight to the bucket in parts, past the proxy
+    that cuts an upload after a minute (photo_album.direct_upload); `{"direct": false}` without one."""
+    if not access.can_create_album(request):
+        raise PermissionDenied
+    return _begin_import_upload(request)
+
+
+def _begin_import_upload(request: HttpRequest) -> JsonResponse:
+    form = ImportUploadForm(request.POST)
+    if not form.is_valid():
+        return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
+    upload = direct_upload.begin_import(form.cleaned_data["name"], form.cleaned_data["size"])
+    return JsonResponse({"direct": False} if upload is None else {"direct": True, **upload})
+
+
+def _finished_import_upload(form: DirectZipImportForm) -> tuple[str, str]:
+    """(key, name) of the archive a DirectZipImportForm's ticket sent to the bucket."""
+    upload = direct_upload.finish(
+        form.cleaned_data["ticket"], form.cleaned_data["parts"], purpose=direct_upload.IMPORT
+    )
+    return upload["key"], upload["name"]
+
+
 def _queue_import(
-    form: ZipAlbumImportForm | SystemDirectImportForm,
+    form: ZipAlbumImportForm | DirectZipImportForm,
     resident: Resident,
     *,
     stored: tuple[str, str] | None = None,
     lock: bool = False,
     merge: bool = False,
 ) -> AlbumImport:
-    """Queue the import of the form's archive, or with `stored`, (key, name), of one the import
-    script already sent to the bucket (photo_album.direct_upload)."""
+    """Queue the import of the form's archive, or with `stored`, (key, name), of one already sent
+    to the bucket (photo_album.direct_upload)."""
     archive, archive_name = stored or (form.cleaned_data["archive"], form.cleaned_data["archive"].name)
     album_import = AlbumImport.objects.create(
         requested_by=resident,
@@ -813,17 +862,13 @@ def system_import_zip(request: HttpRequest) -> JsonResponse:
         raise PermissionDenied
     # With a ticket, the archive is already in the bucket (system_import_upload), not in the request.
     direct = "ticket" in request.POST
-    form = (
-        SystemDirectImportForm(request.POST) if direct else SystemZipImportForm(request.POST, request.FILES)
-    )
+    form = DirectZipImportForm(request.POST) if direct else SystemZipImportForm(request.POST, request.FILES)
     if not form.is_valid():
         return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
-    stored = None
-    if direct:
-        try:
-            stored = direct_upload.finish(form.cleaned_data["ticket"], form.cleaned_data["parts"])
-        except ValidationError as exc:
-            return JsonResponse({"errors": {"archive": [{"message": m} for m in exc.messages]}}, status=400)
+    try:
+        stored = _finished_import_upload(form) if isinstance(form, DirectZipImportForm) else None
+    except ValidationError as exc:
+        return JsonResponse({"errors": {"archive": [{"message": m} for m in exc.messages]}}, status=400)
     # Everything the import script brings in is an archive of years gone by: lock it on arrival, so
     # it is not edited by accident. Fotogruppen can unlock an album that does need a change.
     # An album that already exists is added to rather than refused, so the script can send the files
@@ -845,11 +890,7 @@ def system_import_upload(request: HttpRequest) -> JsonResponse:
     (photo_album.direct_upload), or — `{"direct": false}`, without a bucket — with the import itself."""
     if _token_import_resident(request) is None:
         raise PermissionDenied
-    form = SystemImportUploadForm(request.POST)
-    if not form.is_valid():
-        return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
-    upload = direct_upload.begin(form.cleaned_data["name"], form.cleaned_data["size"])
-    return JsonResponse({"direct": False} if upload is None else {"direct": True, **upload})
+    return _begin_import_upload(request)
 
 
 @require_GET
@@ -967,20 +1008,137 @@ def upload(request: HttpRequest, pk: int) -> HttpResponse:
                 return JsonResponse({"errors": {"uploads": [{"message": str(exc)}]}}, status=409)
             messages.error(request, str(exc))
             return redirect("photo_album:detail", album.pk)
-        name = uploaded_file.name
-        if outcome.media is None:
-            logger.info("Skipped duplicate upload %r to album %s by resident %s", name, album.pk, resident.pk)
-            skipped.append(f"{name} findes allerede i albummet og blev ikke uploadet igen.")
-            continue
-        uploaded += 1
-        if outcome.also_in:
-            paths = _album_paths(outcome.also_in)
-            warnings.append(f"{name} findes også i {', '.join(sorted(paths.values()))}.")
+        uploaded += _noted(outcome, uploaded_file.name, album, resident, skipped, warnings)
     if wants_json:
         return JsonResponse({"uploaded": uploaded, "skipped": skipped, "warnings": warnings}, status=201)
     for note in [*skipped, *warnings]:
         messages.warning(request, note)
     return redirect("photo_album:detail", album.pk)
+
+
+def _noted(
+    outcome: services.UploadOutcome,
+    name: str,
+    album: Album,
+    resident: Resident,
+    skipped: list[str],
+    warnings: list[str],
+) -> bool:
+    """Note what the resident should read about one stored upload; returns whether it was stored."""
+    if outcome.media is None:
+        logger.info("Skipped duplicate upload %r to album %s by resident %s", name, album.pk, resident.pk)
+        skipped.append(f"{name} findes allerede i albummet og blev ikke uploadet igen.")
+        return False
+    if outcome.also_in:
+        paths = _album_paths(outcome.also_in)
+        warnings.append(f"{name} findes også i {', '.join(sorted(paths.values()))}.")
+    return True
+
+
+def _upload_errors(*messages_: str, status: int = 400) -> JsonResponse:
+    """The shape `upload` answers a refused file with, which the upload dialog reads."""
+    return JsonResponse(
+        {"errors": {"uploads": [{"message": message} for message in messages_]}}, status=status
+    )
+
+
+class _Downloaded(File):
+    """A file sent straight to the bucket and read back to a local file to be checked, which
+    ffmpeg can open where it lies (uploads.local_copy) instead of copying it once more."""
+
+    content_type = ""
+
+    def temporary_file_path(self) -> str:
+        return str(getattr(self.file, "name", ""))
+
+
+@login_required
+@require_POST
+def upload_begin(request: HttpRequest, pk: int) -> JsonResponse:
+    """Where the upload dialog is to send a large photo or video: straight to the bucket, in parts.
+
+    It is checked by name, type and size before a byte is sent, as the upload form would; the bytes
+    are checked in upload_commit. `{"direct": false}` without a bucket, and the file goes to
+    `upload` as before. The key is the original's own, so committing stores nothing a second time.
+    """
+    album = get_object_or_404(Album, pk=pk)
+    if not access.can_upload(request, album):
+        raise PermissionDenied
+    form = MediaUploadBeginForm(request.POST)
+    if not form.is_valid():
+        return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
+    name, size = normalize_name(Path(form.cleaned_data["name"]).name), form.cleaned_data["size"]
+    if error := check_media_upload(
+        SimpleNamespace(name=name, size=size, content_type=form.cleaned_data["content_type"])
+    ):
+        return _upload_errors(error)
+    if not direct_upload.available():
+        return JsonResponse({"direct": False})
+    media = Media(album=album)
+    key = Media._meta.get_field("original").generate_filename(media, name)
+    upload = direct_upload.begin(
+        key,
+        size,
+        purpose=direct_upload.MEDIA,
+        content_type=content_type_for(name) or "application/octet-stream",
+        album=album.pk,
+        uuid=str(media.uuid),
+        name=name,
+    )
+    return JsonResponse({"direct": True, **(upload or {})})
+
+
+@login_required
+@require_POST
+def upload_commit(request: HttpRequest, pk: int) -> JsonResponse:
+    """A photo or video sent by upload_begin's parts: checked and stored as `upload` would have.
+
+    Read back from the bucket into a local file — inside Hetzner, so quickly — and through exactly
+    the checks, the hashing and the duplicate test an upload through the form gets. A file that
+    fails any of them is refused as loudly, and removed from the bucket again.
+    """
+    album = get_object_or_404(Album, pk=pk)
+    if not access.can_upload(request, album):
+        raise PermissionDenied
+    form = MediaUploadCommitForm(request.POST)
+    if not form.is_valid():
+        return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
+    try:
+        upload = direct_upload.finish(
+            form.cleaned_data["ticket"], form.cleaned_data["parts"], purpose=direct_upload.MEDIA
+        )
+    except ValidationError as exc:
+        return _upload_errors(*exc.messages)
+    if upload["album"] != album.pk:
+        direct_upload.delete(upload["key"])
+        return _upload_errors("Filen blev sendt til et andet album.")
+    resident = current_resident(request)
+    skipped: list[str] = []
+    warnings: list[str] = []
+    with NamedTemporaryFile(prefix="photo-album-", suffix=Path(upload["name"]).suffix) as local:
+        direct_upload.read_into(upload["key"], local)
+        received = _Downloaded(local, name=upload["name"])
+        received.content_type = content_type_for(upload["name"])
+        if error := check_media_upload(received) or check_media_content(received):
+            direct_upload.delete(upload["key"])
+            return _upload_errors(error)
+        try:
+            outcome = services.store_upload(
+                album=album,
+                uploaded_file=received,
+                resident=resident,
+                title=form.cleaned_data["title"],
+                approved=access.can_manage_media(request),
+                file_modified_at=_file_modified_at(form.cleaned_data["last_modified"] or None),
+                stored=(upload["key"], UUID(upload["uuid"])),
+            )
+        except ValueError as exc:  # locked since it was begun
+            direct_upload.delete(upload["key"])
+            return _upload_errors(str(exc), status=409)
+    stored = _noted(outcome, upload["name"], album, resident, skipped, warnings)
+    if not stored:
+        direct_upload.delete(upload["key"])
+    return JsonResponse({"uploaded": int(stored), "skipped": skipped, "warnings": warnings}, status=201)
 
 
 # --- One item -----------------------------------------------------------------------------------

@@ -132,11 +132,12 @@ request holds its thread for as long as it takes, which is why long work belongs
 **But the proxy has one: Coolify's Traefik drops a request whose body takes more than 60 seconds to
 arrive** (Traefik v3's default `readTimeout`). Measured on 2026-10-19: a body dribbled in at 16 KB/s
 got a 502 after 61 s. That is what stopped the Dropbox album "Bornholm med GAHK - April 06" (3.2 GB)
-twelve times while every album under 540 MB went through. The import script now sends archives
-straight to the bucket (`photo_album/direct_upload.py`), as Arkiv does, but a resident uploading a
-large video through the album page on a slow line still meets it. Raising it is a Coolify setting
-(the proxy's configuration, e.g. `--entrypoints.https.transport.respondingTimeouts.readTimeout=3600s`),
-not something this repository controls.
+twelve times while every album under 540 MB went through. The import script, the import page and
+the album upload (for files of 8 MB or more) now send straight to the bucket in parts
+(`photo_album/direct_upload.py`), as Arkiv does — which in the browser needs the bucket's CORS rule
+(§4c). Every other form still meets the minute. Raising it is a Coolify setting (the proxy's
+configuration, e.g. `--entrypoints.https.transport.respondingTimeouts.readTimeout=3600s`), not
+something this repository controls.
 
 ### 4a. Deploys: CI builds the image, the server pulls it
 
@@ -369,12 +370,16 @@ only one of which is a FileField; `tests/test_audit_media.py` has one test per s
 FileField whose legacy rows hold the old site's absolute URL ("legacy imageurl"). Those images are
 broken on the live site today, independently of any of this, and are a separate fix.
 
-#### The bucket needs a CORS rule once Arkiv can upload
+#### The bucket needs a CORS rule for uploads from the browser
 
 Arkiv sends files **straight from the browser to Hetzner** (`arkiv/uploads.py`) — a 2 GB video
-cannot go through the app server. That POST is cross-origin, from
+cannot go through the app server. So does the photo album, for a ZIP on the import page and for
+any photo or video of 8 MB or more (`photo_album/direct_upload.py`): the proxy cuts an upload that
+takes more than a minute (§4). Those requests are cross-origin, from
 `https://gahk.dk` to `https://<bucket>.<loc>.your-objectstorage.com`, so the bucket has to say the
-origin is allowed or the browser refuses to send it.
+origin is allowed or the browser refuses to send them. Without the rule the photo album falls back
+to posting the file through the app as before, which works for anything that goes in within the
+minute; Arkiv has no such fallback.
 
 **Nothing in dev or CI can catch a missing rule**, because the local path never leaves the app: the
 symptom is uploads failing in production only, with a CORS error in the browser console and nothing
@@ -386,7 +391,7 @@ from django.core.files.storage import storages
 s = storages['default']; c = s.connection.meta.client
 c.put_bucket_cors(Bucket=s.bucket_name, CORSConfiguration={'CORSRules': [
   {'AllowedOrigins': ['https://gahk.dk', 'https://www.gahk.dk'],
-   'AllowedMethods': ['POST'],
+   'AllowedMethods': ['POST', 'PUT'],
    'AllowedHeaders': ['*'],
    'ExposeHeaders': ['ETag'],
    'MaxAgeSeconds': 3600},
@@ -394,10 +399,12 @@ c.put_bucket_cors(Bucket=s.bucket_name, CORSConfiguration={'CORSRules': [
 print(c.get_bucket_cors(Bucket=s.bucket_name)['CORSRules'])"
 ```
 
-`POST` only, and only those origins. **Reading needs no CORS** — a download is a top-level
-navigation to a redirect, not a `fetch`, so this became necessary the day upload landed and not
-before. Widening `AllowedMethods` to `GET`/`PUT` or `AllowedOrigins` to `*` would let any page on
-the internet script requests against the bucket with a stolen presigned URL; there is no reason to.
+`POST` for Arkiv's presigned policy; `PUT` for the photo album's parts, each its own presigned
+`upload_part` URL — a multipart upload has no POST form. `ETag` must be exposed: the browser reads
+each part's ETag and sends them to complete the upload. Only those origins. **Reading needs no
+CORS** — a download is a top-level navigation to a redirect, not a `fetch`. Widening
+`AllowedMethods` to `GET` or `AllowedOrigins` to `*` would let any page on the internet script
+requests against the bucket with a stolen presigned URL; there is no reason to.
 
 #### `arkiv-zip/` needs a lifecycle rule
 
