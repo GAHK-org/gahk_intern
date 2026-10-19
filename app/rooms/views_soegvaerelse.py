@@ -28,6 +28,8 @@ from .notifications import notify_application_deleted
 # Upper bound for a submitted orlov. Generous (ten years) — it only exists so a typo or a crafted
 # value can't push K to nonsense; the real check is Indstillingen comparing it to the suggestion.
 MAX_ORLOV_MONTHS = 120
+# The apply form offers this many priority slots; the server holds a crafted request to it too.
+MAX_PRIORITIES = 5
 
 
 class Allocation(NamedTuple):
@@ -134,16 +136,16 @@ def soeg(request: HttpRequest) -> HttpResponse:
     )
     # Prefill values for editing an existing application. done_studying_month is an absolute index;
     # split it back to (year, month) for the dropdowns. priority_slots is the saved rooms in rank
-    # order, padded to the five selects the template renders (None = leave that slot blank).
+    # order, padded to the MAX_PRIORITIES selects the template renders (None = leave that slot blank).
     done_year = done_month = orlov = None
-    slots: list[int | None] = [None] * 5
+    slots: list[int | None] = [None] * MAX_PRIORITIES
     if existing:
         done_year, done0 = divmod(existing.done_studying_month, 12)
         done_month = done0 + 1
         first_orlov = next(iter(existing.orlov_periods.all()), None)
         orlov = first_orlov.number_of_months if first_orlov else 0
         room_ids = [p.room_id for p in existing.priorities.all()]
-        slots = [room_ids[i] if i < len(room_ids) else None for i in range(5)]
+        slots = [room_ids[i] if i < len(room_ids) else None for i in range(MAX_PRIORITIES)]
     # Auto-orlov: months missing from the alumneliste since move-in. Pre-fills the field for a new
     # application (editable), and is shown as the suggestion so an edited value can be reset to it.
     suggested_orlov = computed_orlov_months(resident)
@@ -201,6 +203,9 @@ def soeg(request: HttpRequest) -> HttpResponse:
             return render(request, "soegvaerelse/apply.html", ctx)
         if len(set(room_ids)) != len(room_ids):
             messages.error(request, "Det samme værelse kan kun vælges én gang.")
+            return render(request, "soegvaerelse/apply.html", ctx)
+        if len(room_ids) > MAX_PRIORITIES:
+            messages.error(request, f"Du kan højst vælge {MAX_PRIORITIES} prioriteter.")
             return render(request, "soegvaerelse/apply.html", ctx)
         if not resident.move_in_date:
             messages.error(request, "Din indflytningsdato mangler - kontakt indstillingen.")

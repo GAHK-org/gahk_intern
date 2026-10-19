@@ -779,6 +779,22 @@ def test_submit_rejects_the_same_room_twice(make_resident: Callable) -> None:
 
 
 @pytest.mark.django_db
+def test_submit_rejects_more_than_five_priorities(make_resident: Callable) -> None:
+    """The form renders five slots; a crafted request could store any number."""
+    c, a, b = _apply_setup(make_resident, "many@gahk.dk")
+    m = month_index(*next_period())
+    extra = [
+        Room.objects.create(legacy_index=710 + i, number=710 + i, floor="7. sal", side="mod gaden")
+        for i in range(4)
+    ]
+    for room in extra:
+        RoomOffer.objects.create(room=room, month=m)
+    html = _post_apply(c, "0", [str(r.id) for r in (a, b, *extra)])
+    assert "højst vælge 5 prioriteter" in html
+    assert not KvotientApplication.objects.exists()
+
+
+@pytest.mark.django_db
 def test_apply_form_lists_only_this_rounds_offers(make_resident: Callable) -> None:
     """Applications always target next month, so an offer for another month can't be won — and
     must not be pickable."""

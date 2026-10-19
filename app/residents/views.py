@@ -371,9 +371,24 @@ def _fylgje_forest() -> list[dict[str, Resident | list]]:
         kids = [_node(k, seen) for k in _sorted(children.get(r.id, [])) if k.id not in seen]
         return {"resident": r, "children": kids}
 
+    by_id = {r.id: r for r in residents}
+
+    def _on_a_loop(r: Resident) -> bool:
+        # Start a ring only from one of its own members. Starting from a loop member's descendant
+        # (who can sort first by moving in earlier) made that descendant a root AND left it under
+        # the loop as well, shown twice.
+        seen: set[int] = set()
+        sponsor_id = r.sponsor_id
+        while sponsor_id in by_id and sponsor_id not in seen:
+            if sponsor_id == r.id:
+                return True
+            seen.add(sponsor_id)
+            sponsor_id = by_id[sponsor_id].sponsor_id
+        return False
+
     forest = [_node(r, set()) for r in _sorted(children.get(None, []))]
     for r in _sorted(residents):  # cycle members: break the ring at the earliest mover-in
-        if r.id not in placed:
+        if r.id not in placed and _on_a_loop(r):
             forest.append(_node(r, set()))
     return forest
 
@@ -559,10 +574,12 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                         # Removing yourself from the *live* list revokes your own indstilling role
                         # on the next request — you would be locked out of the page mid-edit with
                         # no way back. Removing yourself from next month is fine and still allowed.
+                        # The row then saves like any other: skipping it left you out of your
+                        # groups' head counts below, failing the save with a wrong size error.
                         messages.error(request, "Du kan ikke fjerne dig selv fra den nuværende måned.")
+                    else:
+                        removed.add(rid)
                         continue
-                    removed.add(rid)
-                    continue
                 room: Room | None = _pick(room_by_id, request.POST.get(f"room_{rid}", "")) or res.room
                 wg = _pick(wg_by_id, request.POST.get(f"workgroup_{rid}", ""))
                 if rid == me and my_access_is_my_group and _wg_role(wg) != Role.INDSTILLING:

@@ -58,3 +58,24 @@ def test_edit_form_rejects_a_fylgje_cycle(make_resident: Callable) -> None:
     assert "gå i ring" in resp.content.decode()
     a.refresh_from_db()
     assert a.sponsor_id is None
+
+
+@pytest.mark.django_db
+def test_a_loops_descendant_who_moved_in_first_is_shown_once(make_resident: Callable) -> None:
+    """The extra-root pass started from whoever sorted first among the unplaced. A loop member's
+    protégé who moved in before the whole loop became a root, and appeared under the loop too."""
+    from datetime import date
+
+    from residents.views import _fylgje_forest
+
+    a = make_resident(email="once-a@gahk.dk", move_in_date=date(2010, 1, 1))
+    b = make_resident(email="once-b@gahk.dk", move_in_date=date(2011, 1, 1), sponsor=a)
+    early = make_resident(email="once-e@gahk.dk", move_in_date=date(2000, 1, 1), sponsor=b)
+    Resident.objects.filter(pk=a.pk).update(sponsor=b)  # a ↔ b, as old data could hold
+
+    def ids(nodes: list) -> list[int]:
+        return [i for n in nodes for i in (n["resident"].id, *ids(n["children"]))]
+
+    shown = ids(_fylgje_forest())
+    assert shown.count(early.id) == 1
+    assert {a.id, b.id, early.id} <= set(shown)

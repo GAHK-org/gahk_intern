@@ -499,6 +499,37 @@ def test_you_cannot_remove_yourself_from_the_live_list(make_resident: Callable) 
 
 
 @pytest.mark.django_db
+def test_a_refused_self_removal_still_counts_you_in_your_groups(make_resident: Callable) -> None:
+    """The refused row was skipped entirely, so a fixed-size embedsgruppe came up one short and the
+    whole save failed with a wrong "skal have N medlemmer" error instead of saving the rest."""
+    cy, cm = active_period()
+    wg = Workgroup.objects.create(name="Indstillingen", size=1)
+    ind = make_resident(email="ind@gahk.dk", roles=("indstilling",))
+    room = Room.objects.create(legacy_index=405, number=405, floor="4", side="mod gaden")
+    other = Room.objects.create(legacy_index=406, number=406, floor="4", side="mod gaden")
+    Residency.objects.create(resident=ind, room=room, workgroup=wg, year=cy, month=cm)
+
+    c = Client()
+    c.force_login(ind)
+    resp = c.post(
+        URL,
+        {
+            "period": "current",
+            "action": "save",
+            f"remove_{ind.id}": "1",
+            f"room_{ind.id}": other.id,
+            f"workgroup_{ind.id}": wg.id,
+        },
+        follow=True,
+    )
+
+    html = resp.content.decode()
+    assert "fjerne dig selv" in html
+    assert "skal have" not in html
+    assert Residency.objects.get(resident=ind, year=cy, month=cm).room == other  # the rest saved
+
+
+@pytest.mark.django_db
 def test_removing_yourself_from_next_month_is_still_allowed(make_resident: Callable) -> None:
     """Recording your own move-out is normal; the guard is only about the list in effect."""
     ny, nm = next_period(active_period())

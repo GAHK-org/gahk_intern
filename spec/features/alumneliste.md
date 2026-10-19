@@ -31,7 +31,7 @@ The monthly list of who lives in which room and belongs to which embedsgruppe an
 - A save is all-or-nothing. It is refused, with nothing saved and the edits kept on screen, if:
   - two residents share a room, or
   - an embedsgruppe or rengøring with a fixed size does not have exactly that many members (size 0 means no limit).
-- On the month in effect you cannot remove yourself, nor move yourself out of the embedsgruppe that gives you Indstilling access (an administrator can); either change is refused with a message. Next month has no such limit.
+- On the month in effect you cannot remove yourself, nor move yourself out of the embedsgruppe that gives you Indstilling access (an administrator can); either change is refused with a message, and the rest of the list still saves. Next month has no such limit.
 - Removing a resident also removes their roles for that month.
 
 ## Adding residents
