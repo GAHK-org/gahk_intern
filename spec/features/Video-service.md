@@ -75,7 +75,8 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   a thumbnail and a banner.
 - Publishing notifies everyone with access and the credited residents. The uploader is notified
   when processing has finished or failed. Only the notifications about new videos and about being
-  credited can be turned off; those about one's own uploads and requests, approvals and drafts cannot.
+  credited can be turned off; those about one's own uploads and requests, approvals and drafts always
+  appear in the app, and only their push can be switched off.
 - Only the uploader and administrators see a draft. A draft never published is deleted with its files
   90 days after the day it was uploaded; the edit page and `Mine videoer` show the date.
 - Every Monday, each uploader is reminded of their drafts more than a week old, and the administrators

@@ -72,10 +72,9 @@ is where somebody who has push off still sees what the house itself says. Push a
 them can be turned off like any other category.
 
 GAHKFlix's `gahkflix.uploads`, `gahkflix.approvals` and `gahkflix.drafts` can **not** be turned off
-at all (`Category.optional = False`): they are about something the resident has to act on. They
-always arrive in-app and as a push, whatever was saved before; only their vibration can be changed.
-The settings page shows both boxes ticked and locked. `gahkflix.new` and `gahkflix.cast` can be
-turned off like any other category.
+in-app either (`in_app_optional = False`), like System and Generelt: they are about something the
+resident has to act on. Their push and vibration can be turned off. `gahkflix.new` and
+`gahkflix.cast` can be turned off like any other category.
 
 ## Importance
 

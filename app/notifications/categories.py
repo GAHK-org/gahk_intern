@@ -78,10 +78,6 @@ class Category:
     # Whether the resident may turn the in-app row off. False for what the house itself says (system
     # and general): those are few, and the list is where somebody who has push off still sees them.
     in_app_optional: bool = True
-    # Whether the resident may turn it off at all. False for what they have to act on — their own
-    # upload failing, a draft about to be deleted, a request awaiting their approval: it always
-    # arrives in-app (where the category has a row) and as a push. Vibration stays theirs to choose.
-    optional: bool = True
 
 
 # Display order. System and general last: they are rare and cannot be turned off in-app, so the
@@ -198,7 +194,7 @@ def _build() -> tuple[Category, ...]:
             "Dine uploads og anmodninger",
             "gahkflix",
             "Når din video er behandlet, når en anmodning, du har sendt, er afgjort, og om kladder, du ikke har udgivet.",
-            optional=False,
+            in_app_optional=False,
         ),
         Category(
             GAHKFLIX_APPROVALS,
@@ -206,14 +202,14 @@ def _build() -> tuple[Category, ...]:
             "gahkflix",
             "Ændringer og sletninger, som en administrator skal godkende.",
             importance=Importance.HOEJ,
-            optional=False,
+            in_app_optional=False,
         ),
         Category(
             GAHKFLIX_DRAFTS,
             "Kladder, der ikke er udgivet",
             "gahkflix",
             "Ugentligt overblik over upublicerede kladder, og besked dagen før en slettes. Til administratorer.",
-            optional=False,
+            in_app_optional=False,
         ),
         Category(
             SYSTEM,
