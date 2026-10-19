@@ -1,7 +1,9 @@
 """/healthz and /health (core/health.py), and the heartbeats /health reads (core/heartbeat.py)."""
 
 import threading
+import time
 from datetime import timedelta
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -99,8 +101,14 @@ def test_health_fails_when_the_database_is_unreachable(bucket: mock.Mock) -> Non
     assert all(checks[name] == {"ok": False, "age_seconds": None} for name in PROCESSES)
 
 
+@pytest.fixture
+def heartbeat_dir(tmp_path: Path) -> Path:
+    with mock.patch.object(heartbeat, "HEARTBEAT_DIR", tmp_path):
+        yield tmp_path
+
+
 @pytest.mark.django_db
-def test_the_heartbeat_thread_writes_a_row_and_stops() -> None:
+def test_the_heartbeat_thread_writes_a_row_and_stops(heartbeat_dir: Path) -> None:
     stop = threading.Event()
     stop.set()  # one beat, then return instead of waiting HEARTBEAT_INTERVAL
 
@@ -114,6 +122,23 @@ def test_the_heartbeat_thread_writes_a_row_and_stops() -> None:
     row = ServiceHeartbeat.objects.get(name="media")
     assert row.hostname == "media@3f2a"
     assert timezone.now() - row.beat_at < timedelta(seconds=5)
+    # What worker-media's Docker healthcheck reads.
+    assert time.time() - (heartbeat_dir / "heartbeat-media").stat().st_mtime < 5
+
+
+def test_a_failed_heartbeat_leaves_the_file_alone(heartbeat_dir: Path) -> None:
+    stop = threading.Event()
+    stop.set()
+
+    with (
+        mock.patch.object(heartbeat, "record", side_effect=Exception("connection refused")),
+        mock.patch.object(heartbeat.connection, "close"),
+        mock.patch.object(heartbeat, "close_old_connections"),
+    ):
+        heartbeat._run("media", "media@3f2a", stop)
+
+    # The healthcheck must go stale with the row, not stay green on a database the worker can't reach.
+    assert not (heartbeat_dir / "heartbeat-media").exists()
 
 
 def test_a_worker_beats_under_its_node_name() -> None:
