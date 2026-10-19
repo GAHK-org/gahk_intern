@@ -72,6 +72,15 @@ erDiagram
         datetime beat_at
     }
 
+    core_HealthCheckState {
+        int id PK
+        string name
+        int failing_runs
+        bool alerted
+        string detail
+        datetime changed_at
+    }
+
     residents_Resident {
         int id PK
         string password
@@ -1036,6 +1045,15 @@ erDiagram
         int id PK
         string name
         datetime beat_at
+    }
+
+    core_HealthCheckState {
+        int id PK
+        string name
+        int failing_runs
+        bool alerted
+        string detail
+        datetime changed_at
     }
 
     residents_Resident { }

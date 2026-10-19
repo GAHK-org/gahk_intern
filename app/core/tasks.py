@@ -172,3 +172,11 @@ def heartbeat() -> None:
     from .health import record_heartbeat
 
     record_heartbeat("beat")
+
+
+@shared_task(ignore_result=True)
+def check_health() -> int:
+    """Every five minutes from beat: alert on the status checks (core.alerts)."""
+    from .alerts import run
+
+    return run()

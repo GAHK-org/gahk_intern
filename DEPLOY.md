@@ -601,6 +601,47 @@ holds no binary data now that media is in the bucket. Cross-check the applied mi
 branch — every project migration should be present (Django's own built-ins add ~18 beyond the files
 under `app/*/migrations/`).
 
+### 4e. Monitoring and alerts **[you]**
+
+The server cannot tell anyone it has died, so alerting is split in two. Nothing here needs a second
+machine.
+
+* **Outside: a dead man's switch.** Every five minutes beat schedules `core.tasks.check_health`, which
+  pings `HEALTHCHECK_PING_URL`. The service behind it alerts when the pings *stop* (the server, beat or
+  the default worker gone) and when one says `/fail`. The server only makes outgoing requests; a ping
+  carries at most the names of failing checks.
+* **Inside: e-mail and a notification.** The same task runs the checks on `/admin/status`. When one has
+  failed two runs in a row (about ten minutes) the administrators get an e-mail and a system
+  notification, and again when it recovers. One flaky run tells nobody.
+
+Optional on top: an **uptime monitor** polling `https://gahk.dk/healthz` from outside, which also
+notices when the public site stops answering even though the server is up (Traefik, DNS, TLS). The
+endpoint is safe to expose: it answers `ok` or `db unavailable`, nothing else.
+
+#### Accounts to create
+
+| Service | Needed? | Free plan | Used for |
+|---|---|---|---|
+| [Healthchecks.io](https://healthchecks.io) | **Yes** | 20 checks | The dead man's switch |
+| [UptimeRobot](https://uptimerobot.com) (or Better Stack) | Optional | 50 monitors, 5-minute checks | Outside check of `/healthz` |
+| Coolify notifications | Optional | (in Coolify) | Failed deployments; e-mail needs no account, Discord/Telegram need theirs |
+
+The in-app e-mails use the site's existing SMTP settings and need no account.
+
+#### Setting it up
+
+1. **Healthchecks.io:** create a check named "GAHK intern" with period **5 minutes** and grace
+   **10 minutes**. Under Integrations, add your e-mail (and the phone app or Telegram if you want
+   pushes). Copy the ping URL (`https://hc-ping.com/<uuid>`).
+2. **Coolify environment:** set `HEALTHCHECK_PING_URL` to that URL, and `DB_SIZE_LIMIT_GB` to roughly the
+   space Postgres can use. `HEALTH_ALERT_EMAILS` is optional: without it the e-mails go to this month's
+   administrators. Redeploy.
+3. **Check it:** within ten minutes the check on Healthchecks.io turns green. `/admin/status` shows what
+   the pings report.
+4. **Optional, UptimeRobot:** a keyword monitor on `https://gahk.dk/healthz` for the keyword `ok`, every
+   5 minutes, with your e-mail as alert contact.
+5. **Optional, Coolify:** Settings → Notifications, switch on e-mail for failed deployments.
+
 ## 5. Data migration to prod
 ```
 mysqldump the live gahk_dk  →  load into the MariaDB staging container

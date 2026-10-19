@@ -212,12 +212,21 @@ PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL = os.environ.get("PHOTO_ALBUM_SYSTEM_IMPORT_EMAI
 PHOTO_ALBUM_DELETE_PROTECTED_FROM = os.environ.get("PHOTO_ALBUM_DELETE_PROTECTED_FROM", "")
 # Space set aside for the database, in GB; the admin status page fails above 70% of it (core.health).
 DB_SIZE_LIMIT_GB = float(os.environ.get("DB_SIZE_LIMIT_GB") or 0) or None
+# The dead man's switch core.alerts pings every five minutes (e.g. a Healthchecks.io check URL).
+HEALTHCHECK_PING_URL = os.environ.get("HEALTHCHECK_PING_URL", "")
+# Who gets the e-mail when a status check starts failing; unset = this month's administrators.
+HEALTH_ALERT_EMAILS = [e.strip() for e in os.environ.get("HEALTH_ALERT_EMAILS", "").split(",") if e.strip()]
 
 CELERY_BEAT_SCHEDULE = {
     # Proves beat schedules and the default worker runs what it schedules (core.health).
     "heartbeat": {
         "task": "core.tasks.heartbeat",
         "schedule": 60.0,
+    },
+    # Alerts on the status checks: the dead man's switch ping, and e-mails on a change (core.alerts).
+    "check-health": {
+        "task": "core.tasks.check_health",
+        "schedule": 300.0,
     },
     "purge-expired-applications": {
         "task": "admissions.tasks.purge_expired_applications",

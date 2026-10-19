@@ -193,3 +193,22 @@ class ServiceHeartbeat(models.Model):
 
     def __str__(self) -> str:
         return f"{self.name} {self.beat_at:%Y-%m-%d %H:%M:%S}"
+
+
+class HealthCheckState(models.Model):
+    """Where each status check (core.health) stood at the last run of core.tasks.check_health, so
+    core.alerts tells the administrators when one STARTS failing and when it recovers, not on every
+    run in between."""
+
+    name = models.CharField(max_length=60, unique=True)
+    failing_runs = models.PositiveIntegerField(default=0)  # consecutive runs it has failed
+    alerted = models.BooleanField(default=False)  # the administrators have been told it is failing
+    detail = models.CharField(max_length=300, blank=True)
+    changed_at = models.DateTimeField()
+
+    class Meta:
+        verbose_name = "Driftstjek-status"
+        verbose_name_plural = "Driftstjek-status"
+
+    def __str__(self) -> str:
+        return f"{self.name}: {'fejler' if self.alerted else 'ok'}"

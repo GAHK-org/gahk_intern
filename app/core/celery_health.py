@@ -9,19 +9,20 @@ from typing import Any
 
 from celery import bootsteps
 
-HEARTBEAT_TASK = "core.tasks.heartbeat"
+# Beat's two frequent tasks, which would otherwise fill the worker log with "received"/"succeeded".
+QUIET_TASKS = frozenset({"core.tasks.heartbeat", "core.tasks.check_health"})
 # Where Celery logs "Task … received" and "Task … succeeded" for every task.
 TASK_LIFECYCLE_LOGGERS = ("celery.worker.strategy", "celery.app.trace")
 
 
 class QuietHeartbeat(logging.Filter):
-    """Drops the received/succeeded INFO lines of the once-a-minute heartbeat task: 2,880 lines a
-    day saying nothing. A failure is logged above INFO and still shows."""
+    """Drops the received/succeeded INFO lines of beat's frequent tasks (QUIET_TASKS): thousands of
+    lines a day saying nothing. A failure is logged above INFO and still shows."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         data = getattr(record, "data", None)
-        is_heartbeat = isinstance(data, dict) and data.get("name") == HEARTBEAT_TASK
-        return not (is_heartbeat and record.levelno == logging.INFO)
+        quiet = isinstance(data, dict) and data.get("name") in QUIET_TASKS
+        return not (quiet and record.levelno == logging.INFO)
 
 
 def quiet_heartbeat_logs() -> None:
