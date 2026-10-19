@@ -52,8 +52,12 @@ erDiagram
         string task_id
         string task_name
         string state
+        datetime sent_at
         datetime started_at
         datetime finished_at
+        string parent_id
+        text arguments
+        text keyword_arguments
         json lines
         int omitted
     }
@@ -1013,8 +1017,12 @@ erDiagram
         string task_id
         string task_name
         string state
+        datetime sent_at
         datetime started_at
         datetime finished_at
+        string parent_id
+        text arguments
+        text keyword_arguments
         json lines
         int omitted
     }

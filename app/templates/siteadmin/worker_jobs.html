@@ -1,72 +1,212 @@
 {% extends "base.html" %}
-{% block title %}Worker-job - GAHK{% endblock %}
+{% load ui_extras %}
+{% block title %}Worker-jobs - Admin - GAHK{% endblock %}
+{% block content_width %}max-w-6xl{% endblock %}
 {% block content %}
-  <div class="flex items-center justify-between mb-6">
-    <h1>Worker-job</h1>
-    <a class="btn" href="{% url 'siteadmin:home' %}">Administration</a>
+  <div class="page-head">
+    <div>
+      <div class="eyebrow"><a href="{% url 'siteadmin:home' %}">Administration</a></div>
+      <h1>Worker-jobs</h1>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-secondary" href="#historik">Historik</a>
+      <a class="btn btn-secondary" href="#planlagt">Planlagte opgaver</a>
+    </div>
   </div>
 
-  <h2>Jobs i kø ({{ queued_jobs|length }})</h2>
-  <div class="card overflow-x-auto">
-    <table class="w-full border-collapse text-sm">
-      <thead><tr class="border-b border-gray-200 text-left"><th class="p-2">Opgave</th><th class="p-2">Kø</th><th class="p-2">Modtaget</th><th class="p-2">Kør efter</th></tr></thead>
-      <tbody>
-        {% for job in queued_jobs %}
-          <tr class="border-b border-gray-100"><td class="p-2 font-mono break-all">{% if job.id %}<a href="{% url 'siteadmin:worker_job_detail' job.id %}">{{ job.task }}</a>{% else %}{{ job.task }}{% endif %}</td><td class="p-2">{{ job.queue }}</td><td class="p-2">{{ job.timestamp|date:"Y-m-d H:i:s" }}</td><td class="p-2">{{ job.eta|default:"Nu" }}</td></tr>
-        {% empty %}<tr><td class="p-2 muted" colspan="4">Ingen jobs venter i køen.</td></tr>{% endfor %}
-      </tbody>
-    </table>
+  {% comment %}
+    The tiles, what runs and the queue refresh every 10 seconds while the tab is in view; the rest
+    of the page stays as it was loaded, so the history does not move under somebody reading it.
+  {% endcomment %}
+  <div id="jobs-live"
+       hx-get="{% url 'siteadmin:worker_jobs_live' %}"
+       hx-trigger="every 10s [document.visibilityState === 'visible']"
+       hx-ext="morph"
+       hx-swap="morph:innerHTML">
+    {% include "siteadmin/_worker_jobs_live.html" %}
   </div>
 
-  <div class="mt-8 flex flex-wrap items-end justify-between gap-3">
-    <h2>Seneste jobs ({{ past_jobs.paginator.count }} {% if include_children %}jobs{% else %}overordnede jobs{% endif %})</h2>
-    <form method="get" class="flex flex-wrap items-end gap-2">
-      {% if include_children %}<input type="hidden" name="children" value="1">{% endif %}
-      <label class="text-sm">Status
-        <select name="status" class="block"><option value="">Alle</option>{% for status in job_statuses %}<option value="{{ status }}"{% if selected_status == status %} selected{% endif %}>{{ status }}</option>{% endfor %}</select>
-      </label>
-      <label class="text-sm">Sortering
-        <select name="sort" class="block">
-          <option value="finished_desc"{% if selected_sort == "finished_desc" %} selected{% endif %}>Afsluttet, nyeste først</option>
-          <option value="finished_asc"{% if selected_sort == "finished_asc" %} selected{% endif %}>Afsluttet, ældste først</option>
-          <option value="started_desc"{% if selected_sort == "started_desc" %} selected{% endif %}>Startet, nyeste først</option>
-          <option value="started_asc"{% if selected_sort == "started_asc" %} selected{% endif %}>Startet, ældste først</option>
-          <option value="status_asc"{% if selected_sort == "status_asc" %} selected{% endif %}>Status, A-Å</option>
-          <option value="status_desc"{% if selected_sort == "status_desc" %} selected{% endif %}>Status, Å-A</option>
+  <section class="card-flat jobs-section">
+    <div class="card-head">
+      <h2>Afsluttede jobs pr. time, seneste døgn</h2>
+      <div class="jobs-legend">
+        <span><i class="jobs-key-ok"></i>Gennemført <b class="num">{{ activity.succeeded }}</b></span>
+        <span><i class="jobs-key-fail"></i>Fejlet <b class="num">{{ activity.failed }}</b></span>
+      </div>
+    </div>
+    <div class="card-pad">
+      <div class="jobs-chart" role="img"
+           aria-label="Afsluttede jobs pr. time de seneste {{ activity.buckets|length }} timer: {{ activity.succeeded }} gennemført, {{ activity.failed }} fejlet. Tallene står i tabellen under diagrammet.">
+        <span class="jobs-gridline" style="bottom:100%"><span>{{ activity.scale }}</span></span>
+        <div class="jobs-cols">
+          {% for bucket in activity.buckets %}
+            <div class="jobs-col" data-tip="{{ bucket.span }} · {{ bucket.succeeded }} gennemført · {{ bucket.failed }} fejlet">
+              {% if bucket.failed %}<i class="jobs-key-fail" style="height:{{ bucket.failed_height|stringformat:'.2f' }}%"></i>{% endif %}
+              {% if bucket.succeeded %}<i class="jobs-key-ok" style="height:{{ bucket.succeeded_height|stringformat:'.2f' }}%"></i>{% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="jobs-axis" aria-hidden="true">
+        {% for bucket in activity.buckets %}<span>{{ bucket.label }}</span>{% endfor %}
+      </div>
+      <details class="jobs-table-view">
+        <summary>Vis tallene</summary>
+        <table class="zebra jobs-table">
+          <thead><tr><th>Time</th><th class="num">Gennemført</th><th class="num">Fejlet</th></tr></thead>
+          <tbody>
+            {% for bucket in activity.buckets %}
+              <tr><td>{{ bucket.hour|date:"j. b" }}, {{ bucket.span }}</td><td class="num">{{ bucket.succeeded }}</td><td class="num">{{ bucket.failed }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </details>
+    </div>
+  </section>
+
+  <section class="card-flat jobs-section">
+    <div class="card-head">
+      <h2>Opgavetyper ({{ task_types|length }})</h2>
+      <span class="muted text-sm">alt gemt: vellykkede jobs i 30 dage, andre længere</span>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="zebra jobs-table">
+        <thead>
+          <tr>
+            <th>Opgave</th><th class="num">I kø</th><th class="num">Kører</th><th class="num">Gennemført</th>
+            <th class="num">Fejlet</th><th class="num">Øvrige</th><th>Seneste</th><th class="num">Gns. køretid</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for type in task_types %}
+            <tr{% if filters.task == type.task %} class="is-selected"{% endif %}>
+              <td class="jobs-task-cell">
+                <a class="jobs-name" href="{% querystring type=type.task status=None page=None children=1 %}#historik" title="Historikken for {{ type.task }}">{{ type.name }}</a><span class="jobs-app">{{ type.app }}</span>
+              </td>
+              <td class="num">{{ type.queued|default:"–" }}</td>
+              <td class="num">{{ type.running|default:"–" }}</td>
+              <td class="num">{{ type.succeeded|default:"–" }}</td>
+              <td class="num">{% if type.failed %}<a class="jobs-fail-count" href="{% querystring type=type.task status='FAILURE' page=None children=1 %}#historik">{{ type.failed }}</a>{% else %}–{% endif %}</td>
+              <td class="num">{{ type.other|default:"–" }}</td>
+              <td>{% if type.last_at %}<span class="chip {{ type.last_state_class }}">{{ type.last_state_label }}</span> <span class="jobs-sub" title="{{ type.last_at|date:'j. b Y H:i:s' }}">for {{ type.last_at|ago:now }} siden</span>{% else %}<span class="muted">kun i kø</span>{% endif %}</td>
+              <td class="num">{{ type.average|default:"–" }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="8" class="muted">Ingen jobs er kørt endnu.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card-flat jobs-section" id="historik">
+    <div class="card-head">
+      <h2>Historik</h2>
+      <span class="muted text-sm">{{ page.paginator.count }} job{{ page.paginator.count|pluralize:"s" }}{% if not filters.include_children %}, uden underopgaver{% endif %}</span>
+    </div>
+    <form method="get" action="#historik" class="jobs-filters">
+      {% if filters.status %}<input type="hidden" name="status" value="{{ filters.status }}">{% endif %}
+      <label>Opgavetype
+        <select name="type" onchange="this.form.requestSubmit()">
+          <option value="">Alle typer</option>
+          {% for type in task_types %}<option value="{{ type.task }}"{% if filters.task == type.task %} selected{% endif %}>{{ type.name }} ({{ type.total }})</option>{% endfor %}
+          {% if filters.task and filters.task not in type_names %}<option value="{{ filters.task }}" selected>{{ filters.task }}</option>{% endif %}
         </select>
       </label>
-      <button type="submit" class="btn">Vis</button>
+      <label>Periode
+        <select name="period" onchange="this.form.requestSubmit()">
+          {% for key, label in periods %}<option value="{{ key }}"{% if filters.period == key %} selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Sortering
+        <select name="sort" onchange="this.form.requestSubmit()">
+          {% for key, label in sorts %}<option value="{{ key }}"{% if filters.sort == key %} selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="jobs-check"><input type="checkbox" name="children" value="1"{% if filters.include_children %} checked{% endif %} onchange="this.form.requestSubmit()"> Vis underopgaver</label>
+      <noscript><button type="submit" class="btn btn-secondary">Vis</button></noscript>
+      {% if filters.task or filters.status or filters.period or filters.include_children or filters.sort != "newest" %}
+        <a class="jobs-reset" href="?#historik">Nulstil filtre</a>
+      {% endif %}
     </form>
-  </div>
-  {% if include_children %}
-    <a class="btn" href="{% querystring children=None page=None %}">Vis kun overordnede jobs</a>
-  {% else %}
-    <a class="btn" href="{% querystring children=1 page=None %}">Vis også underopgaver</a>
-  {% endif %}
-  <div class="card overflow-x-auto">
-    <table class="w-full border-collapse text-sm">
-      <thead><tr class="border-b border-gray-200 text-left"><th class="p-2">Opgave</th><th class="p-2">Status</th><th class="p-2">Sendt</th><th class="p-2">Afsluttet</th><th class="p-2">Varighed</th><th class="p-2">Kø</th><th class="p-2">Worker</th><th class="p-2">Forsøg</th></tr></thead>
-      <tbody>
-        {% for job in jobs %}
-          <tr class="border-b border-gray-100">
-            <td class="p-2"><div class="font-mono break-all">{% if job.id %}<a href="{% url 'siteadmin:worker_job_detail' job.id %}">{{ job.task }}</a>{% else %}{{ job.task }}{% endif %}</div><div class="muted text-xs font-mono">{{ job.id }}</div>{% if job.task_context %}<div class="muted text-xs break-all">{{ job.task_context }}</div>{% endif %}{% if job.arguments or job.keyword_arguments %}<div class="muted text-xs font-mono break-all">{{ job.arguments }}{% if job.keyword_arguments %} {{ job.keyword_arguments }}{% endif %}</div>{% endif %}</td>
-            <td class="p-2">{{ job.status }}</td><td class="p-2">{{ job.submitted_at|date:"Y-m-d H:i:s"|default:"-" }}</td><td class="p-2">{{ job.finished_at|date:"Y-m-d H:i:s" }}</td><td class="p-2">{{ job.runtime|default:"-" }}</td><td class="p-2">{{ job.queue|default:"-" }}</td><td class="p-2">{{ job.worker|default:"-" }}</td><td class="p-2">{{ job.retries|default:0 }}</td>
-          </tr>
-        {% empty %}<tr><td class="p-2 muted" colspan="8">Ingen afsluttede jobs endnu.</td></tr>{% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% if past_jobs.paginator.num_pages > 1 %}<p class="muted mt-4 flex items-center gap-3">{% if past_jobs.has_previous %}<a href="{% querystring page=past_jobs.previous_page_number %}">‹ forrige</a>{% endif %}<span>Side {{ past_jobs.number }} / {{ past_jobs.paginator.num_pages }}</span>{% if past_jobs.has_next %}<a href="{% querystring page=past_jobs.next_page_number %}">næste ›</a>{% endif %}</p>{% endif %}
+    <nav class="jobs-states" aria-label="Status">
+      <a class="jobs-pill{% if not filters.status %} is-on{% endif %}" href="{% querystring status=None page=None %}#historik">Alle <b>{{ history_total }}</b></a>
+      {% for status, label, count in status_counts %}
+        <a class="jobs-pill{% if filters.status == status %} is-on{% endif %}" href="{% querystring status=status page=None %}#historik">{{ label }} <b>{{ count }}</b></a>
+      {% endfor %}
+    </nav>
+    <div class="overflow-x-auto">
+      <table class="zebra jobs-table">
+        <thead>
+          <tr><th>Opgave</th><th>Status</th><th>Sendt</th><th class="num">Ventetid</th><th class="num">Køretid</th><th>Afsluttet</th><th>Worker</th></tr>
+        </thead>
+        <tbody>
+          {% for job in jobs %}
+            <tr>
+              <td class="jobs-task-cell">
+                <a class="jobs-name" href="{% url 'siteadmin:worker_job_detail' job.id %}">{{ job.name }}</a><span class="jobs-app">{{ job.app }}</span>
+                {% if job.task_context %}<div class="jobs-sub">{{ job.task_context }}</div>{% endif %}
+                {% if job.arguments or job.keyword_arguments %}<div class="jobs-args">{{ job.arguments }}{% if job.keyword_arguments and job.keyword_arguments != "{}" %} {{ job.keyword_arguments }}{% endif %}</div>{% endif %}
+                {% if job.parent_id %}<div class="jobs-sub">underopgave af <a href="{% url 'siteadmin:worker_job_detail' job.parent_id %}">{{ job.parent_id|truncatechars:13 }}</a></div>{% endif %}
+              </td>
+              <td>
+                <span class="chip {{ job.state_class }}">{{ job.state_label }}</span>
+                {% if job.over_time_limit %}<div class="jobs-sub">over tidsgrænsen</div>{% endif %}
+                {% if job.retries %}<div class="jobs-sub">{{ job.retries }} genforsøg</div>{% endif %}
+              </td>
+              <td class="jobs-time">{{ job.sent_at|date:"j. b H:i:s"|default:"–" }}</td>
+              <td class="num">{{ job.waited|default:"–" }}</td>
+              <td class="num">{% if job.status == "STARTED" %}{{ job.running_for }} …{% else %}{{ job.ran|default:"–" }}{% endif %}</td>
+              <td class="jobs-time">{{ job.finished_at|date:"j. b H:i:s"|default:"–" }}</td>
+              <td class="jobs-sub" title="{{ job.worker }}">{{ job.worker_name|default:"–" }}{% if job.queue %}<div>{{ job.queue }}</div>{% endif %}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="7" class="muted">{% if history_total %}Ingen jobs med den status.{% else %}Ingen jobs matcher filtrene.{% endif %}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if page.paginator.num_pages > 1 %}
+      <nav class="jobs-pager" aria-label="Sider">
+        {% if page.has_previous %}<a href="{% querystring page=page.previous_page_number %}#historik">‹ Forrige</a>{% else %}<span></span>{% endif %}
+        <span class="muted">Side {{ page.number }} af {{ page.paginator.num_pages }}</span>
+        {% if page.has_next %}<a href="{% querystring page=page.next_page_number %}#historik">Næste ›</a>{% else %}<span></span>{% endif %}
+      </nav>
+    {% endif %}
+  </section>
 
-  <h2 class="mt-8">Aktive planlagte opgaver ({{ schedules|length }})</h2>
-  <div class="card overflow-x-auto">
-    <table class="w-full border-collapse text-sm">
-      <thead><tr class="border-b border-gray-200 text-left"><th class="p-2">Navn</th><th class="p-2">Opgave</th><th class="p-2">Plan</th><th class="p-2">Sidst kørt</th><th class="p-2">Antal kørsler</th></tr></thead>
-      <tbody>
-        {% for schedule in schedules %}
-          <tr class="border-b border-gray-100"><td class="p-2">{{ schedule.name }}</td><td class="p-2 font-mono break-all">{{ schedule.task }}</td><td class="p-2">{{ schedule.schedule }}</td><td class="p-2">{{ schedule.last_run_at|date:"Y-m-d H:i:s"|default:"Aldrig" }}</td><td class="p-2">{{ schedule.total_run_count }}</td></tr>
-        {% empty %}<tr><td class="p-2 muted" colspan="5">Ingen aktive planlagte opgaver.</td></tr>{% endfor %}
-      </tbody>
-    </table>
-  </div>
+  <section class="card-flat jobs-section" id="planlagt">
+    <div class="card-head">
+      <h2>Planlagte opgaver ({{ schedules|length }})</h2>
+      <span class="muted text-sm">sendes af Beat</span>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="zebra jobs-table">
+        <thead>
+          <tr><th>Navn</th><th>Plan</th><th>Sidst sendt</th><th>Næste gang</th><th>Seneste udfald</th><th class="num">Antal</th></tr>
+        </thead>
+        <tbody>
+          {% for schedule in schedules %}
+            <tr>
+              <td>
+                {{ schedule.title }}
+                <div><a class="jobs-name" href="{% querystring type=schedule.task status=None page=None children=1 %}#historik">{{ schedule.name }}</a><span class="jobs-app">{{ schedule.app }}</span></div>
+              </td>
+              <td>{{ schedule.plan }}</td>
+              <td class="jobs-time">{{ schedule.last_run_at|date:"j. b H:i"|default:"Aldrig" }}</td>
+              <td class="jobs-time">
+                {% if schedule.overdue %}<span class="chip chip-neg">Forsinket</span> <span class="jobs-sub">skulle være sendt {{ schedule.next_run_at|date:"j. b H:i" }} — kører Beat?</span>
+                {% elif schedule.next_run_at %}{{ schedule.next_run_at|date:"j. b H:i" }} <span class="jobs-sub">om {{ schedule.next_run_at|ahead:now }}</span>
+                {% else %}–{% endif %}
+              </td>
+              <td>{% if schedule.last and schedule.last.last_at %}<span class="chip {{ schedule.last.last_state_class }}">{{ schedule.last.last_state_label }}</span>{% else %}<span class="muted">–</span>{% endif %}</td>
+              <td class="num">{{ schedule.total_run_count }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="6" class="muted">Ingen aktive planlagte opgaver.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
 {% endblock %}
