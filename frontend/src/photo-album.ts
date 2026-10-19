@@ -1,4 +1,4 @@
-import { beginDirect, DirectUnavailable, type DirectUpload, refusal, sendParts, UploadRefused } from "./directupload"
+import { beginDirect, DirectUnavailable, type DirectUpload, refusal, sendToBucket, UploadRefused } from "./directupload"
 import { csrfToken } from "./htmx-csrf"
 
 const uploadInput = document.querySelector<HTMLInputElement>("[data-album-upload-input]")
@@ -130,10 +130,11 @@ if (zipImportForm) {
   // Straight to the bucket when the server has one: through the app, the proxy cuts any upload
   // that takes more than a minute. False when it has none, or the bucket cannot be reached from here.
   const sendDirect = async (file: File, fields: FormData): Promise<boolean> => {
-    const beginUrl = zipImportForm.dataset.directBeginUrl
+    const { directBeginUrl: beginUrl, directSignUrl: signUrl } = zipImportForm.dataset
+    if (!beginUrl || !signUrl) return false
     let upload: DirectUpload | null = null
     try {
-      upload = beginUrl ? await beginDirect(beginUrl, { name: file.name, size: String(file.size) }) : null
+      upload = await beginDirect(beginUrl, { name: file.name, size: String(file.size) })
     } catch (error) {
       if (!(error instanceof UploadRefused)) return false
       failed(error.message)
@@ -141,13 +142,12 @@ if (zipImportForm) {
     }
     if (!upload) return false
     try {
-      const etags = await sendParts(file, upload, (sent) => showPercent(Math.min(99, Math.round((sent / file.size) * 100))))
+      await sendToBucket(file, upload, signUrl, (sent) => showPercent(Math.min(99, Math.round((sent / file.size) * 100))))
       fields.append("ticket", upload.ticket)
-      fields.append("parts", JSON.stringify(etags))
       post(fields)
     } catch (error) {
       if (error instanceof DirectUnavailable) return false
-      failed()
+      failed(error instanceof UploadRefused ? error.message : "")
     }
     return true
   }
@@ -307,8 +307,8 @@ if (uploadDialog && uploadForm && uploadInput && uploadProgress && uploadProgres
     // that takes more than a minute — and is then checked and stored as the form would. False when the
     // server has no bucket or this browser cannot reach it: the file is then sent with the form.
     const sendDirect = async (file: File): Promise<boolean> => {
-      const { directBeginUrl: beginUrl, directCommitUrl: commitUrl } = uploadForm.dataset
-      if (!beginUrl || !commitUrl || directBlocked || file.size < DIRECT_FROM_BYTES) return false
+      const { directBeginUrl: beginUrl, directSignUrl: signUrl, directCommitUrl: commitUrl } = uploadForm.dataset
+      if (!beginUrl || !signUrl || !commitUrl || directBlocked || file.size < DIRECT_FROM_BYTES) return false
       let upload: DirectUpload | null
       try {
         upload = await beginDirect(beginUrl, { name: file.name, size: String(file.size), content_type: file.type })
@@ -319,11 +319,10 @@ if (uploadDialog && uploadForm && uploadInput && uploadProgress && uploadProgres
       }
       if (!upload) return false
       try {
-        const etags = await sendParts(file, upload, setProgress)
+        await sendToBucket(file, upload, signUrl, setProgress)
         uploadProgressLabel.textContent = `Kontrollerer ${file.name} …`
         const data = new FormData()
         data.append("ticket", upload.ticket)
-        data.append("parts", JSON.stringify(etags))
         data.append("title", title)
         data.append("last_modified", String(file.lastModified))
         const response = await fetch(commitUrl, {
@@ -340,7 +339,7 @@ if (uploadDialog && uploadForm && uploadInput && uploadProgress && uploadProgres
           directBlocked = true
           return false
         }
-        refused(file, "Kontrollér din forbindelse og prøv igen.")
+        refused(file, error instanceof UploadRefused ? error.message : "Kontrollér din forbindelse og prøv igen.")
       }
       return true
     }

@@ -7,20 +7,26 @@ dorm wifi meets the same minute. Even with the proxy out of the way, one uvicorn
 receive the gigabytes, spool them to disk twice and copy them to the bucket before answering.
 Arkiv went direct for the same reason (arkiv/uploads.py).
 
-So the client — the import script, or the browser for a ZIP import or a large photo or video —
-asks for an upload, sends the file to the bucket as a multipart upload (parts of PART_SIZE, each to
-a presigned URL and each tried again on its own), and then submits it with the ticket it was given.
-Only then is the upload completed and checked, and handled as if the file had arrived with the
-request: a ZIP is queued for import, a photo or video is checked and stored like any upload.
+So the file goes to the bucket as an S3 multipart upload, in parts of PART_SIZE, each tried again
+on its own; then it is submitted with the ticket the upload was given, and handled as if it had
+arrived with the request: a ZIP is queued for import, a photo or video is checked and stored like
+any upload. There are two ways to drive the upload:
 
-**The ticket is signed**, so the key and the upload it names are the server's own: the client picks
-neither. It also names what the upload is for, so an import's ticket cannot be spent on an album
-upload or the other way round. The size announced is checked against what the bucket holds once
-completed.
+  * The import script asks `begin`: the server starts the multipart upload and presigns every
+    part, the script PUTs them, and `finish` completes the upload from their ETags.
+  * The browser uses Uppy (@uppy/aws-s3), which drives the upload itself — create, the parts,
+    complete, or abort when cancelled — and asks `sign` for each of those requests in turn. The
+    ticket comes from `ticket`, and `finish` then only checks what arrived.
 
-A browser needs the bucket's CORS rule to allow PUT from the site (DEPLOY.md 4c). An upload
-abandoned halfway is aborted by the bucket's lifecycle rule (`abort-incomplete-uploads`). Without a
-bucket — dev, CI — there is no direct upload, and the file is sent with the request as before.
+**The ticket is signed**, so the key it names is the server's own: the client picks it no more
+than it picks anything else. It names what the upload is for, so an import's ticket cannot be spent
+on an album upload or the other way round; a browser's also names who it was given to, and `sign`
+signs nothing else, for nobody else. The size announced is checked against what the bucket holds.
+
+A browser needs the bucket's CORS rule to allow POST, PUT and DELETE from the site and to expose
+ETag (DEPLOY.md 4c). An upload abandoned halfway is aborted by the bucket's lifecycle rule
+(`abort-incomplete-uploads`). Without a bucket — dev, CI — there is no direct upload, and the file
+is sent with the request as before.
 """
 
 import math
@@ -38,12 +44,16 @@ from .storage import PhotoAlbumS3Storage, get_photo_album_storage
 # only that part; large enough that a 5 GB file is under a hundred of them.
 PART_SIZE = 64 * 1024 * 1024
 MAX_PARTS = 10_000  # S3's own limit
-# How long the part URLs and the ticket stay good: a whole album sent over a slow line.
+# How long a ticket, and the import script's part URLs, stay good: a whole album over a slow line.
 TTL = 24 * 60 * 60
+# How long one URL `sign` gives the browser stays good: it asks again for every request.
+SIGNED_TTL = 60 * 60
 _SALT = "photo_album.direct_upload"
 
 IMPORT = "import"
 MEDIA = "media"
+
+_UNKNOWN = "Uploaden er ukendt eller for gammel. Send filen igen."
 
 
 def _storage() -> PhotoAlbumS3Storage | None:
@@ -55,10 +65,23 @@ def available() -> bool:
     return _storage() is not None
 
 
+def _part_size(size: int) -> int:
+    return max(PART_SIZE, math.ceil(size / MAX_PARTS))
+
+
+def _parts(size: int) -> int:
+    return max(1, math.ceil(size / _part_size(size)))
+
+
+def import_key(name: str) -> str:
+    """Where an archive to import goes: imports keep their archive under here until they are done."""
+    return f"photo-album-imports/{uuid4()}/{Path(name).name}"
+
+
 def begin(
     key: str, size: int, *, purpose: str, content_type: str = "application/octet-stream", **extra: str | int
 ) -> dict[str, Any] | None:
-    """Start a multipart upload of `size` bytes to `key`; None without a bucket.
+    """For the import script: start a multipart upload of `size` bytes to `key`; None without a bucket.
 
     Returns the ticket to submit it with, the part size, and one presigned URL per part. `extra` is
     signed into the ticket with the key, for what the upload is submitted to.
@@ -66,7 +89,6 @@ def begin(
     storage = _storage()
     if storage is None:
         return None
-    part_size = max(PART_SIZE, math.ceil(size / MAX_PARTS))
     bucket, object_key = storage.bucket_name, storage._normalize_name(key)
     upload_id = storage.connection.meta.client.create_multipart_upload(
         Bucket=bucket, Key=object_key, ContentType=content_type
@@ -78,50 +100,110 @@ def begin(
             Params={"Bucket": bucket, "Key": object_key, "UploadId": upload_id, "PartNumber": number},
             ExpiresIn=TTL,
         )
-        for number in range(1, max(1, math.ceil(size / part_size)) + 1)
+        for number in range(1, _parts(size) + 1)
     ]
     ticket = signing.dumps(
         {**extra, "key": key, "upload": upload_id, "size": size, "purpose": purpose}, salt=_SALT
     )
-    return {"ticket": ticket, "partSize": part_size, "urls": urls}
+    return {"ticket": ticket, "partSize": _part_size(size), "urls": urls}
 
 
-def begin_import(name: str, size: int) -> dict[str, Any] | None:
-    """An upload for a ZIP to import, where imports keep their archive until they are done."""
-    return begin(
-        f"photo-album-imports/{uuid4()}/{Path(name).name}",
-        size,
-        purpose=IMPORT,
-        content_type="application/zip",
-        name=name,
-    )
+def ticket(
+    key: str, size: int, *, purpose: str, owner: int, content_type: str, **extra: str | int
+) -> dict[str, Any] | None:
+    """For the browser: a ticket for an upload of `size` bytes to `key` by resident `owner`, which
+    Uppy then drives itself through `sign`; None without a bucket. Nothing is started in the bucket
+    until Uppy asks."""
+    if _storage() is None:
+        return None
+    data = {
+        **extra,
+        "key": key,
+        "size": size,
+        "purpose": purpose,
+        "owner": owner,
+        "contentType": content_type,
+    }
+    return {"ticket": signing.dumps(data, salt=_SALT), "partSize": _part_size(size)}
 
 
-def finish(ticket: str, etags: list[str], *, purpose: str) -> dict[str, Any]:
-    """Complete the upload a ticket names, from its parts' ETags in order; returns what was signed
-    into the ticket (`key`, `size` and the extras `begin` was given).
-
-    Raises ValidationError for a ticket this server did not sign for `purpose` (or one past TTL),
-    for parts the bucket does not take, and for an object of another size than was announced.
-    """
+def _load(ticket: str, *, purpose: str | None = None) -> dict[str, Any]:
     try:
         upload = signing.loads(ticket, salt=_SALT, max_age=TTL)
     except signing.BadSignature as exc:
-        raise ValidationError("Uploaden er ukendt eller for gammel. Send filen igen.") from exc
-    if upload.get("purpose") != purpose:
-        raise ValidationError("Uploaden er ukendt eller for gammel. Send filen igen.")
+        raise ValidationError(_UNKNOWN) from exc
+    if purpose is not None and upload.get("purpose") != purpose:
+        raise ValidationError(_UNKNOWN)
+    return dict(upload)
+
+
+def sign(
+    ticket: str, *, owner: int, method: str, key: str, upload_id: str = "", part_number: int | None = None
+) -> dict[str, Any]:
+    """A presigned URL for one of Uppy's requests for the upload a ticket names (@uppy/aws-s3's
+    `signRequest`): start it, send a part, complete it, or abort it.
+
+    Raises ValidationError for anything else — another resident's ticket, another key, a part past
+    what the announced size needs, a single PUT or a DELETE of the object itself.
+    """
+    upload = _load(ticket)
+    storage = _storage()
+    if storage is None or upload.get("owner") != owner:
+        raise ValidationError(_UNKNOWN)
+    starting = method == "POST" and not upload_id
+    if not starting and key != upload["key"]:
+        raise ValidationError("Uploaden hører til en anden fil.")
+    params: dict[str, Any] = {"Bucket": storage.bucket_name, "Key": storage._normalize_name(upload["key"])}
+    headers: dict[str, str] = {}
+    if starting:
+        operation = "create_multipart_upload"
+        params["ContentType"] = headers["Content-Type"] = upload["contentType"]
+    elif method == "PUT" and upload_id and part_number is not None:
+        if not 1 <= part_number <= _parts(upload["size"]):
+            raise ValidationError("Filen er større end anmeldt.")
+        operation = "upload_part"
+        params.update(UploadId=upload_id, PartNumber=part_number)
+    elif method == "POST":
+        operation = "complete_multipart_upload"
+        params["UploadId"] = upload_id
+    elif method == "DELETE" and upload_id:
+        operation = "abort_multipart_upload"
+        params["UploadId"] = upload_id
+    else:
+        raise ValidationError("Den forespørgsel underskrives ikke.")
+    url = storage.public_connection.meta.client.generate_presigned_url(
+        operation, Params=params, ExpiresIn=SIGNED_TTL
+    )
+    return {"url": url, "key": upload["key"], **({"headers": headers} if headers else {})}
+
+
+def finish(ticket: str, etags: list[str] | None, *, purpose: str, owner: int | None = None) -> dict[str, Any]:
+    """Make sure the upload a ticket names is in the bucket, whole; returns what was signed into the
+    ticket (`key`, `size` and the extras it was given).
+
+    The import script's upload is completed here from its parts' ETags, in order; Uppy completes
+    its own (etags None). Raises ValidationError for a ticket this server did not sign for
+    `purpose` (or `owner`), past TTL, for parts the bucket does not take, and for an object of
+    another size than was announced.
+    """
+    upload = _load(ticket, purpose=purpose)
+    if "owner" in upload and upload["owner"] != owner:
+        raise ValidationError(_UNKNOWN)
     storage = _storage()
     if storage is None:
         raise ValidationError("Serveren tager ikke imod uploads direkte til lageret.")
     client = storage.connection.meta.client
     bucket, object_key = storage.bucket_name, storage._normalize_name(upload["key"])
     try:
-        client.complete_multipart_upload(
-            Bucket=bucket,
-            Key=object_key,
-            UploadId=upload["upload"],
-            MultipartUpload={"Parts": [{"ETag": etag, "PartNumber": n} for n, etag in enumerate(etags, 1)]},
-        )
+        if "upload" in upload:
+            client.complete_multipart_upload(
+                Bucket=bucket,
+                Key=object_key,
+                UploadId=upload["upload"],
+                MultipartUpload={
+                    "Parts": [{"ETag": etag, "PartNumber": n} for n, etag in enumerate(etags or [], 1)]
+                },
+            )
         stored = client.head_object(Bucket=bucket, Key=object_key)["ContentLength"]
     except (BotoCoreError, ClientError) as exc:
         raise ValidationError(f"Uploaden kunne ikke afsluttes ({exc}). Send filen igen.") from exc
@@ -130,7 +212,7 @@ def finish(ticket: str, etags: list[str], *, purpose: str) -> dict[str, Any]:
         raise ValidationError(
             f"Lageret fik {stored} bytes, men filen var på {upload['size']}. Send filen igen."
         )
-    return dict(upload)
+    return upload
 
 
 def read_into(key: str, target: IO[bytes]) -> None:

@@ -391,7 +391,7 @@ from django.core.files.storage import storages
 s = storages['default']; c = s.connection.meta.client
 c.put_bucket_cors(Bucket=s.bucket_name, CORSConfiguration={'CORSRules': [
   {'AllowedOrigins': ['https://gahk.dk', 'https://www.gahk.dk'],
-   'AllowedMethods': ['POST', 'PUT'],
+   'AllowedMethods': ['POST', 'PUT', 'DELETE'],
    'AllowedHeaders': ['*'],
    'ExposeHeaders': ['ETag'],
    'MaxAgeSeconds': 3600},
@@ -399,9 +399,11 @@ c.put_bucket_cors(Bucket=s.bucket_name, CORSConfiguration={'CORSRules': [
 print(c.get_bucket_cors(Bucket=s.bucket_name)['CORSRules'])"
 ```
 
-`POST` for Arkiv's presigned policy; `PUT` for the photo album's parts, each its own presigned
-`upload_part` URL — a multipart upload has no POST form. `ETag` must be exposed: the browser reads
-each part's ETag and sends them to complete the upload. Only those origins. **Reading needs no
+`POST` for Arkiv's presigned policy and for the photo album's multipart uploads, which Uppy
+(`@uppy/aws-s3`) starts and completes itself; `PUT` for their parts; `DELETE` to abort one that
+failed or was cancelled. The server signs each of those requests for the one key it chose
+(`photo_album/direct_upload.py`). `ETag` must be exposed: Uppy reads each part's ETag to complete
+the upload. Only those origins. **Reading needs no
 CORS** — a download is a top-level navigation to a redirect, not a `fetch`. Widening
 `AllowedMethods` to `GET` or `AllowedOrigins` to `*` would let any page on the internet script
 requests against the bucket with a stolen presigned URL; there is no reason to.

@@ -12,6 +12,7 @@ urlpatterns = [
     path("opret", views.create_album, name="create_album"),
     path("importer-zip", views.import_zip, name="import_zip"),
     path("importer-zip/upload", views.import_zip_upload, name="import_zip_upload"),
+    path("upload/underskriv", views.direct_upload_sign, name="direct_upload_sign"),
     path("importer-zip/system", views.system_import_zip, name="system_import_zip"),
     path("importer-zip/system/albummer", views.system_albums, name="system_albums"),
     path("importer-zip/system/upload", views.system_import_upload, name="system_import_upload"),

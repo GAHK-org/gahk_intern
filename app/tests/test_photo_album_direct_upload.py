@@ -127,12 +127,35 @@ def test_an_upload_is_only_imported_as_the_server_set_it_up(client: Client, buck
     assert not AlbumImport.objects.exists()
 
 
-# --- From the browser ---------------------------------------------------------------------------
+# --- From the browser, with Uppy -------------------------------------------------------------------
 
 
-def _complete(bucket: Stubber, key: str, content: bytes) -> None:
-    """The bucket's side of committing `content`, sent to `key`: complete it, then read it back."""
-    bucket.add_response("complete_multipart_upload", {}, None)
+def _sign(
+    client: Client, ticket: str, method: str, key: str, upload_id: str = "", part: str = ""
+) -> HttpResponse:
+    return client.post(  # type: ignore[return-value]
+        reverse("photo_album:direct_upload_sign"),
+        {"ticket": ticket, "method": method, "key": key, "upload_id": upload_id, "part_number": part},
+    )
+
+
+def _begin_media(
+    client: Client, album: Album, name: str, size: int, content_type: str = "image/jpeg"
+) -> tuple[str, str]:
+    """The ticket for an album upload, and the key the server chose for it (from Uppy's first request)."""
+    response = client.post(
+        reverse("photo_album:upload_begin", args=[album.pk]),
+        {"name": name, "size": size, "content_type": content_type},
+    )
+    assert response.status_code == 200, response.content
+    ticket = response.json()["ticket"]
+    started = _sign(client, ticket, "POST", "whatever-uppy-made-up")
+    assert started.status_code == 200, started.content
+    return ticket, started.json()["key"]
+
+
+def _arrived(bucket: Stubber, key: str, content: bytes) -> None:
+    """The bucket's side of a commit: the object Uppy completed is there, and is read back."""
     bucket.add_response("head_object", {"ContentLength": len(content)}, {"Bucket": "test-bucket", "Key": key})
     bucket.add_response(
         "get_object",
@@ -141,25 +164,42 @@ def _complete(bucket: Stubber, key: str, content: bytes) -> None:
     )
 
 
-def _begin_media(client: Client, bucket: Stubber, album: Album, name: str, size: int) -> dict[str, object]:
-    bucket.add_response("create_multipart_upload", {"UploadId": "upload-2"}, None)
-    response = client.post(
-        reverse("photo_album:upload_begin", args=[album.pk]),
-        {"name": name, "size": size, "content_type": "image/jpeg"},
-    )
-    assert response.status_code == 200, response.content
-    return response.json()
-
-
-def _key(upload: dict[str, object]) -> str:
-    return unquote(urlparse(upload["urls"][0]).path).lstrip("/")  # type: ignore[index]
-
-
-def _commit(client: Client, album: Album, upload: dict[str, object]) -> HttpResponse:
+def _commit(client: Client, album: Album, ticket: str) -> HttpResponse:
     return client.post(  # type: ignore[return-value]
         reverse("photo_album:upload_commit", args=[album.pk]),
-        {"ticket": upload["ticket"], "parts": '["\\"a\\""]', "title": "", "last_modified": "1083700000000"},
+        {"ticket": ticket, "title": "", "last_modified": "1083700000000"},
     )
+
+
+@pytest.mark.django_db
+def test_the_signer_signs_uppys_requests_for_the_ticket_and_nothing_else(
+    client: Client, bucket: Stubber, make_resident: Callable[..., Resident]
+) -> None:
+    resident = make_resident()
+    album = Album.objects.create(folder="2004", name="Fest")
+    client.force_login(resident)
+    ticket, key = _begin_media(client, album, "MVI 1.MOV", 100 * MB, "video/quicktime")  # two parts
+
+    assert key.startswith(f"photo-album/{album.pk}/") and key.endswith("/original/MVI_1.MOV")
+    started = _sign(client, ticket, "POST", "anything").json()
+    assert "uploads" in parse_qs(urlparse(started["url"]).query, keep_blank_values=True)
+    assert started["headers"] == {"Content-Type": "video/quicktime"}
+    part = urlparse(_sign(client, ticket, "PUT", key, "upload-1", "2").json()["url"])
+    assert (parse_qs(part.query)["partNumber"], parse_qs(part.query)["uploadId"]) == (["2"], ["upload-1"])
+    assert unquote(part.path).lstrip("/") == key
+    assert "uploadId" in _sign(client, ticket, "POST", key, "upload-1").json()["url"]  # complete
+    assert "uploadId" in _sign(client, ticket, "DELETE", key, "upload-1").json()["url"]  # abort
+
+    refused = [
+        _sign(client, ticket, "PUT", key, "upload-1", "3"),  # more than 100 MB needs
+        _sign(client, ticket, "PUT", f"photo-album/{album.pk}/other/original/x.jpg", "upload-1", "1"),
+        _sign(client, ticket, "PUT", key),  # a single PUT of the object
+        _sign(client, ticket, "DELETE", key),  # the object itself
+        _sign(client, "forged", "POST", key),
+    ]
+    assert [response.status_code for response in refused] == [400] * 5
+    client.force_login(make_resident(email="other@gahk.dk"))
+    assert _sign(client, ticket, "PUT", key, "upload-1", "1").status_code == 400  # not their ticket
 
 
 @pytest.mark.django_db
@@ -170,12 +210,10 @@ def test_a_large_photo_sent_to_the_bucket_is_checked_and_stored_where_it_landed(
     album = Album.objects.create(folder="2004", name="Fest")
     client.force_login(resident)
     content = jpeg_bytes()
-    upload = _begin_media(client, bucket, album, "IMG 1.JPG", len(content))
-    key = _key(upload)
-    assert key.startswith(f"photo-album/{album.pk}/") and key.endswith("/original/IMG_1.JPG")
+    ticket, key = _begin_media(client, album, "IMG 1.JPG", len(content))
 
-    _complete(bucket, key, content)
-    response = _commit(client, album, upload)
+    _arrived(bucket, key, content)
+    response = _commit(client, album, ticket)
 
     assert response.status_code == 201
     assert response.json() == {"uploaded": 1, "skipped": [], "warnings": []}
@@ -202,20 +240,20 @@ def test_a_file_sent_to_the_bucket_is_refused_as_loudly_as_one_sent_with_the_for
     )
 
     # By content once it is in: removed from the bucket again.
-    upload = _begin_media(client, bucket, album, "broken.jpg", 12)
-    _complete(bucket, _key(upload), b"not a jpeg!!")
-    bucket.add_response("delete_object", {}, {"Bucket": "test-bucket", "Key": _key(upload)})
-    broken = _commit(client, album, upload)
+    ticket, key = _begin_media(client, album, "broken.jpg", 12)
+    _arrived(bucket, key, b"not a jpeg!!")
+    bucket.add_response("delete_object", {}, {"Bucket": "test-bucket", "Key": key})
+    broken = _commit(client, album, ticket)
     assert broken.status_code == 400
     assert "Billedet kunne ikke læses" in broken.json()["errors"]["uploads"][0]["message"]
 
-    # A ticket for one album is no good in another.
-    elsewhere = Album.objects.create(folder="2004", name="Andet album")
-    upload = _begin_media(client, bucket, album, "IMG_2.JPG", 12)
-    bucket.add_response("complete_multipart_upload", {}, None)
+    # A ticket for one album is no good in another, nor for somebody else.
+    ticket, key = _begin_media(client, album, "IMG_2.JPG", 12)
     bucket.add_response("head_object", {"ContentLength": 12}, None)
     bucket.add_response("delete_object", {}, None)
-    assert _commit(client, elsewhere, upload).status_code == 400
+    assert _commit(client, Album.objects.create(folder="2004", name="Andet album"), ticket).status_code == 400
+    client.force_login(make_resident(email="other@gahk.dk"))
+    assert _commit(client, album, ticket).status_code == 400
 
     assert not Media.objects.exists()
 
@@ -229,11 +267,11 @@ def test_a_duplicate_sent_to_the_bucket_is_skipped_and_removed(
     client.force_login(resident)
     content = jpeg_bytes()
     upload_media(album=album, uploaded_file=image_upload("IMG_1.JPG", content), resident=resident)
-    upload = _begin_media(client, bucket, album, "IMG_1.JPG", len(content))
-    _complete(bucket, _key(upload), content)
-    bucket.add_response("delete_object", {}, {"Bucket": "test-bucket", "Key": _key(upload)})
+    ticket, key = _begin_media(client, album, "IMG_1.JPG", len(content))
+    _arrived(bucket, key, content)
+    bucket.add_response("delete_object", {}, {"Bucket": "test-bucket", "Key": key})
 
-    response = _commit(client, album, upload)
+    response = _commit(client, album, ticket)
 
     assert response.json()["uploaded"] == 0
     assert "findes allerede" in response.json()["skipped"][0]
@@ -260,36 +298,29 @@ def test_the_import_page_imports_a_zip_sent_to_the_bucket(
 ) -> None:
     resident = make_resident(roles=(Role.FOTO,))
     client.force_login(resident)
-    bucket.add_response("create_multipart_upload", {"UploadId": "upload-3"}, None)
     upload = client.post(
         reverse("photo_album:import_zip_upload"), {"name": "Fest.zip", "size": 70 * MB}
     ).json()
-    assert len(upload["urls"]) == 2
-    bucket.add_response("complete_multipart_upload", {}, None)
-    bucket.add_response("head_object", {"ContentLength": 70 * MB}, None)
+    assert (upload["direct"], upload["partSize"]) == (True, 64 * MB)
+    key = _sign(client, upload["ticket"], "POST", "x").json()["key"]
+    bucket.add_response("head_object", {"ContentLength": 70 * MB}, {"Bucket": "test-bucket", "Key": key})
 
     response = client.post(
         reverse("photo_album:import_zip"),
-        {"folder": "2026", "ticket": upload["ticket"], "parts": '["a", "b"]'},
+        {"folder": "2026", "ticket": upload["ticket"]},
         HTTP_ACCEPT="application/json",
     )
 
     assert response.status_code == 202
     album_import = AlbumImport.objects.get()
-    assert album_import.archive_name == "Fest.zip" and album_import.archive.name.startswith(
-        "photo-album-imports/"
-    )
+    assert (album_import.archive_name, album_import.archive.name) == ("Fest.zip", key)
+    assert key.startswith("photo-album-imports/")
     assert not album_import.lock_when_done  # a resident's import, not the Dropbox archive
     # An album upload's ticket cannot start an import.
+    album_ticket, _ = _begin_media(client, Album.objects.create(folder="2026", name="X"), "a.jpg", 9)
     forged = client.post(
         reverse("photo_album:import_zip"),
-        {
-            "folder": "2026",
-            "ticket": _begin_media(client, bucket, Album.objects.create(folder="2026", name="X"), "a.jpg", 9)[
-                "ticket"
-            ],
-            "parts": '["a"]',
-        },
+        {"folder": "2026", "ticket": album_ticket},
         HTTP_ACCEPT="application/json",
     )
     assert forged.status_code == 400

@@ -117,10 +117,13 @@ class DirectZipImportForm(forms.Form):
     folder = forms.CharField(max_length=10, label="Mappe", validators=[validate_folder])
     album = forms.CharField(max_length=140, required=False, validators=[validate_album_name])
     ticket = forms.CharField()
-    parts = forms.JSONField()
+    # The import script's parts, which the server completes the upload from; a browser's Uppy
+    # completes its own and sends none.
+    parts = forms.JSONField(required=False)
 
     def clean_parts(self) -> list[str]:
-        return _clean_parts(self.cleaned_data["parts"])
+        parts = self.cleaned_data["parts"]
+        return _clean_parts(parts) if parts else []
 
 
 class MediaUploadBeginForm(forms.Form):
@@ -133,12 +136,18 @@ class MediaUploadBeginForm(forms.Form):
 
 
 class MediaUploadCommitForm(forms.Form):
-    """The photo or video sent, and what the upload form sends with every file."""
+    """The photo or video sent, by its ticket, and what the upload form sends with every file."""
 
     ticket = forms.CharField()
-    parts = forms.JSONField()
     title = forms.CharField(max_length=255, required=False)
     last_modified = forms.CharField(required=False)
 
-    def clean_parts(self) -> list[str]:
-        return _clean_parts(self.cleaned_data["parts"])
+
+class DirectUploadSignForm(forms.Form):
+    """One request Uppy wants signed (@uppy/aws-s3's PresignableRequest), and the ticket it is for."""
+
+    ticket = forms.CharField()
+    method = forms.ChoiceField(choices=[(method, method) for method in ("POST", "PUT", "DELETE")])
+    key = forms.CharField(max_length=500)
+    upload_id = forms.CharField(max_length=500, required=False)
+    part_number = forms.IntegerField(min_value=1, required=False)

@@ -47,6 +47,7 @@ from . import access, cache, direct_upload, featured, services
 from .forms import (
     AlbumForm,
     AlbumNameForm,
+    DirectUploadSignForm,
     DirectZipImportForm,
     DownloadForm,
     ImportUploadForm,
@@ -763,7 +764,11 @@ def import_zip(request: HttpRequest) -> HttpResponse:
     )
     if request.method == "POST" and form.is_valid():
         try:
-            stored = _finished_import_upload(form) if isinstance(form, DirectZipImportForm) else None
+            stored = (
+                _finished_import_upload(form, current_resident(request).pk)
+                if isinstance(form, DirectZipImportForm)
+                else None
+            )
         except ValidationError as exc:
             return JsonResponse({"errors": {"archive": [{"message": m} for m in exc.messages]}}, status=400)
         album_import = _queue_import(form, resident, stored=stored)
@@ -805,23 +810,63 @@ def import_zip_upload(request: HttpRequest) -> JsonResponse:
     that cuts an upload after a minute (photo_album.direct_upload); `{"direct": false}` without one."""
     if not access.can_create_album(request):
         raise PermissionDenied
-    return _begin_import_upload(request)
+    return _begin_import_upload(request, browser=True)
 
 
-def _begin_import_upload(request: HttpRequest) -> JsonResponse:
+def _begin_import_upload(request: HttpRequest, *, browser: bool) -> JsonResponse:
+    """The import script's upload is set up here and its parts presigned; a browser's is driven by
+    Uppy through direct_upload_sign, so it only gets its ticket."""
     form = ImportUploadForm(request.POST)
     if not form.is_valid():
         return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
-    upload = direct_upload.begin_import(form.cleaned_data["name"], form.cleaned_data["size"])
+    name, size = form.cleaned_data["name"], form.cleaned_data["size"]
+    key, purpose, content_type = direct_upload.import_key(name), direct_upload.IMPORT, "application/zip"
+    upload = (
+        direct_upload.ticket(
+            key,
+            size,
+            purpose=purpose,
+            owner=current_resident(request).pk,
+            content_type=content_type,
+            name=name,
+        )
+        if browser
+        else direct_upload.begin(key, size, purpose=purpose, content_type=content_type, name=name)
+    )
     return JsonResponse({"direct": False} if upload is None else {"direct": True, **upload})
 
 
-def _finished_import_upload(form: DirectZipImportForm) -> tuple[str, str]:
+def _finished_import_upload(form: DirectZipImportForm, owner: int | None) -> tuple[str, str]:
     """(key, name) of the archive a DirectZipImportForm's ticket sent to the bucket."""
     upload = direct_upload.finish(
-        form.cleaned_data["ticket"], form.cleaned_data["parts"], purpose=direct_upload.IMPORT
+        form.cleaned_data["ticket"],
+        form.cleaned_data["parts"] or None,
+        purpose=direct_upload.IMPORT,
+        owner=owner,
     )
     return upload["key"], upload["name"]
+
+
+@login_required
+@require_POST
+def direct_upload_sign(request: HttpRequest) -> JsonResponse:
+    """Uppy's signer (@uppy/aws-s3 `signRequest`): a presigned URL for one request of an upload this
+    resident was given a ticket for. See photo_album.direct_upload.sign for what it will sign."""
+    form = DirectUploadSignForm(request.POST)
+    if not form.is_valid():
+        return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
+    try:
+        signed = direct_upload.sign(
+            form.cleaned_data["ticket"],
+            owner=current_resident(request).pk,
+            method=form.cleaned_data["method"],
+            key=form.cleaned_data["key"],
+            upload_id=form.cleaned_data["upload_id"],
+            part_number=form.cleaned_data["part_number"],
+        )
+    except ValidationError as exc:
+        return _upload_errors(*exc.messages)
+    return JsonResponse(signed)
 
 
 def _queue_import(
@@ -866,7 +911,7 @@ def system_import_zip(request: HttpRequest) -> JsonResponse:
     if not form.is_valid():
         return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
     try:
-        stored = _finished_import_upload(form) if isinstance(form, DirectZipImportForm) else None
+        stored = _finished_import_upload(form, None) if isinstance(form, DirectZipImportForm) else None
     except ValidationError as exc:
         return JsonResponse({"errors": {"archive": [{"message": m} for m in exc.messages]}}, status=400)
     # Everything the import script brings in is an archive of years gone by: lock it on arrival, so
@@ -890,7 +935,7 @@ def system_import_upload(request: HttpRequest) -> JsonResponse:
     (photo_album.direct_upload), or — `{"direct": false}`, without a bucket — with the import itself."""
     if _token_import_resident(request) is None:
         raise PermissionDenied
-    return _begin_import_upload(request)
+    return _begin_import_upload(request, browser=False)
 
 
 @require_GET
@@ -1055,7 +1100,8 @@ class _Downloaded(File):
 @login_required
 @require_POST
 def upload_begin(request: HttpRequest, pk: int) -> JsonResponse:
-    """Where the upload dialog is to send a large photo or video: straight to the bucket, in parts.
+    """Where the upload dialog is to send a large photo or video: straight to the bucket, in parts,
+    by Uppy through direct_upload_sign.
 
     It is checked by name, type and size before a byte is sent, as the upload form would; the bytes
     are checked in upload_commit. `{"direct": false}` without a bucket, and the file goes to
@@ -1076,10 +1122,11 @@ def upload_begin(request: HttpRequest, pk: int) -> JsonResponse:
         return JsonResponse({"direct": False})
     media = Media(album=album)
     key = Media._meta.get_field("original").generate_filename(media, name)
-    upload = direct_upload.begin(
+    upload = direct_upload.ticket(
         key,
         size,
         purpose=direct_upload.MEDIA,
+        owner=current_resident(request).pk,
         content_type=content_type_for(name) or "application/octet-stream",
         album=album.pk,
         uuid=str(media.uuid),
@@ -1091,7 +1138,8 @@ def upload_begin(request: HttpRequest, pk: int) -> JsonResponse:
 @login_required
 @require_POST
 def upload_commit(request: HttpRequest, pk: int) -> JsonResponse:
-    """A photo or video sent by upload_begin's parts: checked and stored as `upload` would have.
+    """A photo or video Uppy sent to the bucket for upload_begin: checked and stored as `upload`
+    would have.
 
     Read back from the bucket into a local file — inside Hetzner, so quickly — and through exactly
     the checks, the hashing and the duplicate test an upload through the form gets. A file that
@@ -1105,7 +1153,7 @@ def upload_commit(request: HttpRequest, pk: int) -> JsonResponse:
         return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
     try:
         upload = direct_upload.finish(
-            form.cleaned_data["ticket"], form.cleaned_data["parts"], purpose=direct_upload.MEDIA
+            form.cleaned_data["ticket"], None, purpose=direct_upload.MEDIA, owner=current_resident(request).pk
         )
     except ValidationError as exc:
         return _upload_errors(*exc.messages)
