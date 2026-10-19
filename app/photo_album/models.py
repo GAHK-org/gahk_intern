@@ -115,7 +115,10 @@ class DerivativeState(models.TextChoices):
 class DateSource(models.TextChoices):
     """Where `Media.sort_at`, the date the grid and the timeline place an item at, comes from.
 
-    The first two are the file's own; the last three are what is left when it has none to believe.
+    Only CAPTURED is when the photo was taken. Everything else is an approximation, and is shown
+    as one. A file time is when the file was last written, which is the moment of capture only if
+    every copy since kept it: the old server's sidecars hold capture times for some albums, but
+    for others the day they were copied, which can be days or months later.
     """
 
     CAPTURED = "captured", "Optaget"
@@ -125,11 +128,12 @@ class DateSource(models.TextChoices):
     ADDED = "added", "Uploadet"
 
 
-APPROXIMATE_DATE_SOURCES = frozenset({DateSource.NEIGHBOURS, DateSource.ALBUM_YEAR})
+# The approximations only services.settle_dates can make, as they need the rest of the album.
+SETTLED_DATE_SOURCES = frozenset({DateSource.NEIGHBOURS, DateSource.ALBUM_YEAR})
 
-# How far outside its folder's year a date in an album is still believed: a New Year's Eve party
-# runs into January, and a December film was often developed in the new year.
-FOLDER_YEAR_SLACK = timedelta(days=31)
+# How far outside its folder's year a date in an album is still believed: a New Year's Eve album
+# holds December's preparations and January's aftermath, and a film was often developed later.
+FOLDER_YEAR_SLACK_MONTHS = 6
 # A file time from before this is a camera or a file system that never had its clock set.
 EARLIEST_FILE_TIME = datetime(1990, 1, 1, tzinfo=UTC)
 
@@ -141,15 +145,16 @@ def folder_year(folder: str) -> int | None:
 def believable_date(moment: datetime, folder: str, *, file_time: bool) -> bool:
     """Whether `moment` can be when a photo in `folder` was taken.
 
-    In a year folder it must fall in that year (give or take FOLDER_YEAR_SLACK): the Dropbox archive
-    stamps every file with the day it was uploaded there in 2022, and an old camera with a flat
-    battery starts again in 2001. Elsewhere only a file time has a floor — a scanned print may
-    honestly say 1975 in its metadata, but no file was saved then.
+    In a year folder it must fall in that year, give or take FOLDER_YEAR_SLACK_MONTHS — for 2004,
+    from 1 July 2003 up to 1 July 2005: the Dropbox archive stamps every file with the day it was
+    uploaded there in 2022, and an old camera with a flat battery starts again in 2001. Elsewhere
+    only a file time has a floor — a scanned print may honestly say 1975 in its metadata, but no
+    file was saved then.
     """
     year = folder_year(folder)
     if year is not None:
-        start = timezone.make_aware(datetime(year, 1, 1)) - FOLDER_YEAR_SLACK  # noqa: DTZ001
-        end = timezone.make_aware(datetime(year + 1, 1, 1)) + FOLDER_YEAR_SLACK  # noqa: DTZ001
+        start = timezone.make_aware(datetime(year - 1, 13 - FOLDER_YEAR_SLACK_MONTHS, 1))  # noqa: DTZ001
+        end = timezone.make_aware(datetime(year + 1, FOLDER_YEAR_SLACK_MONTHS + 1, 1))  # noqa: DTZ001
         return start <= moment < end
     return (not file_time or moment >= EARLIEST_FILE_TIME) and moment <= timezone.now() + timedelta(days=1)
 
@@ -636,7 +641,7 @@ class Media(models.Model):
             own = self.own_date()
             if own is not None:
                 self.sort_at, self.date_source = own
-            elif self.date_source not in APPROXIMATE_DATE_SOURCES or self.sort_at is None:
+            elif self.date_source not in SETTLED_DATE_SOURCES or self.sort_at is None:
                 # Until services.settle_dates has looked at the album around it.
                 self.sort_at, self.date_source = self.added_at or timezone.now(), DateSource.ADDED
             if update_fields is not None:
@@ -663,7 +668,8 @@ class Media(models.Model):
 
     @property
     def date_is_approximate(self) -> bool:
-        return self.date_source in APPROXIMATE_DATE_SOURCES
+        """Anything but a capture date from the file's own metadata (see DateSource)."""
+        return self.date_source != DateSource.CAPTURED
 
     @property
     def display_name(self) -> str:

@@ -11,9 +11,10 @@ import pytest
 from django.core.files.base import ContentFile, File
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
-from django.test import Client
+from django.test import Client, override_settings
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.formats import date_format
 from PIL import ExifTags, Image
 
 from photo_album import services
@@ -143,8 +144,13 @@ def test_an_appledouble_sidecar_gives_its_files_dates() -> None:
     ("moment", "folder", "file_time", "believed"),
     [
         (local(2004, 6, 1), "2004", True, True),
-        (local(2003, 12, 15), "2004", True, True),  # a December film, developed in the new year
-        (local(2005, 1, 1, 1), "2004", True, True),  # New Year's Eve ran over
+        (local(2003, 12, 15), "2004", True, True),  # preparing for New Year's Eve
+        (local(2005, 1, 1, 1), "2004", True, True),  # and the morning after
+        (local(2003, 7, 1), "2004", True, True),  # six months either side of the year
+        (local(2005, 6, 30, 23, 59), "2004", True, True),
+        (local(2003, 6, 30, 23, 59), "2004", True, False),
+        (local(2005, 7, 1), "2004", True, False),
+        (local(2003, 7, 27, 19, 5), "2002", True, False),  # when the 2002 albums went onto the server
         (local(2022, 3, 1), "2004", True, False),  # the day the archive went into Dropbox
         (local(2001, 1, 5), "2004", False, False),  # a camera whose clock had reset
         (local(1975, 6, 1), "Andet", False, True),  # a scanned print says when it was taken
@@ -411,27 +417,111 @@ def test_the_nightly_job_reads_old_originals_again_and_settles_every_album(
 def test_the_viewer_and_the_grid_say_a_date_is_approximate(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
+    """Only a capture date is exact. A file time is when the file was last written, which for the
+    archive is as often when it was copied as when it was taken."""
     resident = make_resident()
     album = Album.objects.create(folder="2004", name="Fest")
     dated = _item(album, resident, "IMG_1.JPG", captured_at=local(2004, 3, 1, 10))
     near = _item(album, resident, "IMG_2.JPG")
+    filed = _item(album, resident, "IMG_0.JPG", file_modified_at=local(2004, 9, 18))
     elsewhere = Album.objects.create(folder="2004", name="Scannet")
     yearly = _item(elsewhere, resident, "scan.jpg")
-    settle_dates(album)
-    settle_dates(elsewhere)
+    uploaded = _item(Album.objects.create(folder="Andet", name="Diverse"), resident, "meme.png")
+    for each in Album.objects.all():
+        settle_dates(each)
     client.force_login(resident)
 
-    def detail(media: Media) -> dict[str, object]:
-        return client.get(reverse("photo_album:media_detail", args=[media.pk])).json()
+    def detail(media: Media) -> tuple[object, object]:
+        data = client.get(reverse("photo_album:media_detail", args=[media.pk])).json()
+        return data["approximateDate"], data["approximateDateBasis"]
 
-    assert (detail(dated)["approximateDate"], detail(dated)["approximateDateBasis"]) == ("", "")
-    assert detail(near)["approximateDate"] == "ca. marts 2004"
-    assert detail(near)["approximateDateBasis"] == "ud fra de andre billeder i albummet"
-    assert detail(yearly)["approximateDate"] == "ca. 2004"
-    assert detail(yearly)["approximateDateBasis"] == "ud fra albummets årstal"
+    month = date_format(timezone.localtime(Media.objects.get(pk=uploaded.pk).added_at), "F Y")
+    assert detail(dated) == ("", "")
+    assert detail(near) == ("ca. marts 2004", "ud fra de andre billeder i albummet")
+    assert detail(filed) == ("ca. september 2004", "ud fra filens dato")
+    assert detail(yearly) == ("ca. 2004", "ud fra albummets årstal")
+    assert detail(uploaded) == (f"ca. {month}", "ud fra hvornår det blev uploadet")
 
     grid = client.get(reverse("photo_album:detail", args=[album.pk])).content.decode()
-    assert grid.count('class="album-date-mark"') == 1
+    assert grid.count('class="album-date-mark"') == 2
     assert 'data-month-label="Marts 2004"' in grid
     yearly_grid = client.get(reverse("photo_album:detail", args=[elsewhere.pk])).content.decode()
     assert 'data-month="2004" data-month-label="2004 · ukendt måned"' in yearly_grid
+
+
+# --- Sidecars for what is already stored --------------------------------------------------------
+
+
+def _sidecars(members: dict[str, bytes]) -> SimpleUploadedFile:
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, data in members.items():
+            archive.writestr(name, data)
+    return SimpleUploadedFile("datoer.zip", buffer.getvalue(), content_type="application/zip")
+
+
+@pytest.mark.django_db
+@override_settings(PHOTO_ALBUM_IMPORT_TOKEN="secret")
+def test_sidecars_sent_later_date_what_was_imported_without_them(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """Most of the Dropbox archive was imported before the server read sidecars; the import script
+    sends the ones it saved, paths relative to the root album, and they date what is there."""
+    resident = make_resident()
+    root = Album.objects.create(folder="2004", name="Lizzys kandidatfest", manually_locked_at=timezone.now())
+    evening = Album.objects.create(folder="2004", name="Aften", parent=root)
+    dropbox, party = local(2022, 3, 1, 12), datetime(2004, 8, 21, 20, 12, tzinfo=UTC)
+    first = _item(root, resident, "IMG_1.JPG", file_modified_at=dropbox)
+    second = _item(evening, resident, "IMG_2.JPG", file_modified_at=dropbox)
+    reset = _item(evening, resident, "IMG_3.JPG", file_modified_at=dropbox)
+    for _ in range(2):  # two of a name: which one a sidecar is for cannot be told
+        _item(root, resident, "IMG_9.JPG")
+    settle_dates(root)
+    sidecars = {
+        ".AppleDouble/IMG_1.JPG": _appledouble(party),
+        "aften/.AppleDouble/IMG_2.JPG": _appledouble(party + timedelta(hours=1)),
+        "Aften/.AppleDouble/IMG_3.JPG": _appledouble(datetime(2001, 1, 5, tzinfo=UTC)),  # clock reset
+        ".AppleDouble/IMG_9.JPG": _appledouble(party),
+        ".AppleDouble/IMG_404.JPG": _appledouble(party),
+        ".AppleDouble/.Parent": _appledouble(party),
+    }
+
+    def send() -> dict[str, object]:
+        response = client.post(
+            reverse("photo_album:system_sidecar_dates"),
+            {"folder": "2004", "album": "lizzys KANDIDATFEST", "archive": _sidecars(sidecars)},
+            HTTP_AUTHORIZATION="Bearer secret",
+        )
+        assert response.status_code == 200
+        return response.json()
+
+    result = send()
+
+    assert {key: result[key] for key in ("updated", "unchanged", "undated", "unmatched", "ambiguous")} == {
+        "updated": 2,
+        "unchanged": 0,
+        "undated": 1,
+        "unmatched": ["IMG_404.JPG"],
+        "ambiguous": ["IMG_9.JPG"],
+    }
+    assert _dates(first, second, reset) == [
+        (party, DateSource.FILE),
+        (party + timedelta(hours=1), DateSource.FILE),
+        (party + timedelta(hours=1, seconds=1), DateSource.NEIGHBOURS),  # settled around them
+    ]
+    assert Album.objects.get(pk=root.pk).is_locked()
+    assert send()["updated"] == 0  # sending again changes nothing
+
+
+@pytest.mark.django_db
+@override_settings(PHOTO_ALBUM_IMPORT_TOKEN="secret")
+def test_sidecar_dates_need_the_token_and_an_album(client: Client) -> None:
+    url = reverse("photo_album:system_sidecar_dates")
+    form = {"folder": "2004", "album": "Findes ikke"}
+
+    assert client.post(url, {**form, "archive": _sidecars({})}).status_code == 403
+    response = client.post(url, {**form, "archive": _sidecars({})}, HTTP_AUTHORIZATION="Bearer secret")
+    assert response.status_code == 400
+    assert response.json()["errors"]["album"] == [
+        {"message": 'Der findes intet album med navnet "Findes ikke" i 2004.'}
+    ]

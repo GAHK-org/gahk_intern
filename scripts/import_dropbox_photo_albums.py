@@ -26,6 +26,11 @@ server adds them to it rather than refusing an album that already exists, storin
 not have (the same name with other content is a different photo and is kept). The album has to be
 unlocked on the site first. Sent files move on to retried/; what is still invalid stays.
 
+--send-dates sends the AppleDouble sidecars saved in each imported album's metadata/ folder (the old
+file server's record of every file's own dates) to the server, which dates the album's photos by
+them as an import now does itself. For albums imported before the server read sidecars. It needs no
+Dropbox access, works on locked albums, and is safe to run again.
+
 Setup:
     export PHOTO_ALBUM_IMPORT_URL=https://<host>/intern/fotoalbum/importer-zip/system
     export PHOTO_ALBUM_IMPORT_TOKEN=<the server's PHOTO_ALBUM_IMPORT_TOKEN>
@@ -39,6 +44,7 @@ Usage:
     uv run scripts/import_dropbox_photo_albums.py --year 2019 --confirm
     uv run scripts/import_dropbox_photo_albums.py --retry-failed --year 2019  # send failed albums again
     uv run scripts/import_dropbox_photo_albums.py --retry-invalid .dropbox-photo-album-import/2019/Sommerfest
+    uv run scripts/import_dropbox_photo_albums.py --send-dates --year-range 2001-2006
 
 Resuming: progress is saved in <work-dir>/state.json after every step, so stopping (Ctrl-C, a lost
 connection, a reboot) is safe — run the same command again and it continues where it stopped. An
@@ -50,6 +56,7 @@ with all its reasons — to <work-dir>/failures.log.
 """
 
 import argparse
+import io
 import json
 import os
 import re
@@ -365,6 +372,25 @@ class Server:
             )
         response.raise_for_status()
         return urljoin(self.endpoint, response.json()["statusUrl"])
+
+    def send_dates(self, archive: bytes, folder: str, album: str) -> dict[str, Any]:
+        """Send an album's sidecars (photo_album.services.apply_sidecar_dates); returns what it did."""
+        response = self._request(
+            "POST",
+            f"{self.endpoint}/datoer",
+            what=f"send the dates for {folder}/{album}",
+            data={"folder": folder, "album": album},
+            files={"archive": ("datoer.zip", archive, "application/zip")},
+            timeout=(30, 300),
+        )
+        if response.status_code == 404:
+            raise Fatal(
+                f"{self.endpoint}/datoer does not exist. Is the server running a version that reads sidecars?"
+            )
+        if response.status_code == 400:
+            raise AlbumFailed("The server refused the dates.", form_errors(response))
+        response.raise_for_status()
+        return response.json()
 
     def status(self, url: str) -> dict[str, Any]:
         response = self._request(
@@ -1223,6 +1249,105 @@ def retry_invalid(server: Server, options: Options, album_dir: Path) -> int:
     return 0
 
 
+# --- Dates for albums already imported ----------------------------------------------------------
+
+
+def saved_sidecars(album_dir: Path, prefix: tuple[str, ...]) -> dict[str, Path]:
+    """The AppleDouble sidecars in an album's metadata/ folder, by their path in the server's album.
+
+    Saved at their paths below the Dropbox folder; made relative to the album the server descended
+    to, the way an import's paths are. One outside it describes nothing in the album.
+    """
+    metadata = album_dir / "metadata"
+    sidecars: dict[str, Path] = {}
+    for file in sorted(metadata.rglob("*")):
+        path = file.relative_to(metadata).parts
+        if not file.is_file() or path[: len(prefix)] != prefix:
+            continue
+        appledouble = (
+            len(path) >= 2 and path[-2] == ".AppleDouble" and path[-1] != ".Parent"
+        )
+        if appledouble or path[-1].startswith("._"):
+            sidecars[shown(below(path, prefix))] = file
+    return sidecars
+
+
+def send_dates(
+    server: Server, options: Options, state: State, selected: set[str]
+) -> int:
+    """--send-dates: every imported album's saved sidecars to the server, which dates its photos by
+    them. The server skipped sidecars when most of the archive was imported; it reads them on
+    import now, and this gives the albums imported before that the same dates."""
+    results: dict[str, int] = {"albums": 0, "updated": 0, "redated": 0, "failed": 0}
+    for album_path, entry in sorted(state.albums.items()):
+        year, folder_name = PurePosixPath(album_path).parts[-2:]
+        if entry.get("status") != "imported" or (selected and year not in selected):
+            continue
+        album_dir = options.work_dir / year / folder_name
+        try:
+            manifest = json.loads(
+                (album_dir / "album.json").read_text(encoding="utf-8")
+            )
+            album, prefix = manifest["album"], tuple(manifest["prefix"])
+        except (OSError, ValueError, KeyError) as exc:
+            out.warn(f"{year}/{folder_name}: no readable album.json ({exc}) — skipped.")
+            continue
+        out.heading(f"{year}/{album}")
+        sidecars = saved_sidecars(album_dir, prefix)
+        if not sidecars:
+            out.info("  No sidecars saved for it.")
+            continue
+        out.info(f"  {len(sidecars)} sidecar(s) from {album_dir / 'metadata'}")
+        if options.dry_run:
+            continue
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as zip_file:
+            for name, file in sidecars.items():
+                zip_file.write(file, name)
+        try:
+            result = server.send_dates(archive.getvalue(), year, album)
+        except (AlbumFailed, requests.RequestException, ValueError) as error:
+            failure = (
+                error
+                if isinstance(error, AlbumFailed)
+                else AlbumFailed(f"Unexpected answer: {error}")
+            )
+            out.failure(f"{album_path} (dates)", failure.summary, failure.details)
+            results["failed"] += 1
+            continue
+        out.ok(
+            f"  ✓ {result['updated']} item(s) dated by their sidecar, {result['unchanged']} had that date"
+            f" already, {result['undated']} sidecar(s) without a date for {year}; {result['redated']}"
+            " item(s) placed anew around them"
+        )
+        for names, why in (
+            (result["unmatched"], "describe no item on the server"),
+            (
+                result["ambiguous"],
+                "describe a name more than one item has (left alone)",
+            ),
+        ):
+            if names:
+                more = f" … and {len(names) - 5} more" if len(names) > 5 else ""
+                out.warn(
+                    f"    {len(names)} sidecar(s) {why}: {', '.join(names[:5])}{more}"
+                )
+        results["albums"] += 1
+        results["updated"] += result["updated"]
+        results["redated"] += result["redated"]
+    out.heading("Summary")
+    out.info(
+        f"  {results['albums']} album(s) sent: {results['updated']} item(s) dated by their sidecar,"
+        f" {results['redated']} placed anew around them"
+    )
+    if results["failed"]:
+        out.error(
+            f"✗ {results['failed']} album(s) failed; see {options.work_dir / 'failures.log'}."
+        )
+        return 1
+    return 0
+
+
 # --- Helpers ------------------------------------------------------------------------------------
 
 
@@ -1346,6 +1471,11 @@ def main() -> int:
         metavar="ALBUM_DIR",
         help="send the fixed files in <work-dir>/<year>/<album>/invalid to their album, and nothing else",
     )
+    parser.add_argument(
+        "--send-dates",
+        action="store_true",
+        help="send the sidecars saved for albums already imported, so the server dates their photos by them",
+    )
     args = parser.parse_args()
 
     if not args.endpoint:
@@ -1359,6 +1489,10 @@ def main() -> int:
     ):
         die(f"Not a year: {', '.join(invalid)}")
 
+    if args.send_dates and args.retry_invalid:
+        die(
+            "--send-dates and --retry-invalid are two different runs; pass one of them."
+        )
     if args.retry_invalid:
         album_dir = args.retry_invalid
         if album_dir.name == "invalid":
@@ -1391,6 +1525,17 @@ def main() -> int:
             out.failure(f"{album_dir} (retry)", str(exc), [])
             return 2
     state = State(args.work_dir / "state.json")
+    if args.send_dates:
+        try:
+            return send_dates(server, options, state, selected)
+        except KeyboardInterrupt:
+            out.error(
+                "\n✗ Stopped. Run the same command again; sending an album twice changes nothing."
+            )
+            return 130
+        except Fatal as exc:
+            out.failure("sending dates", str(exc), [])
+            return 2
     client = dropbox_client()
     results: dict[str, list[str]] = {}
     kept_out: list[tuple[Path, int]] = []

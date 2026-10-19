@@ -88,3 +88,9 @@ class SystemZipImportForm(ZipAlbumImportForm):
     to it, rather than the album being named after the ZIP and the folders it descends through."""
 
     album = forms.CharField(max_length=140, required=False, validators=[validate_album_name])
+
+
+class SystemSidecarDatesForm(ZipAlbumImportForm):
+    """The import script's sidecars for an album already imported, paths relative to `album`."""
+
+    album = forms.CharField(max_length=140, validators=[validate_album_name])

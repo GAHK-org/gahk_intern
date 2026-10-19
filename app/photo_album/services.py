@@ -1263,6 +1263,72 @@ def settle_all_dates() -> int:
 
 
 @dataclass
+class SidecarDates:
+    """What apply_sidecar_dates did, sidecar by sidecar."""
+
+    updated: int = 0  # items given the date their sidecar keeps
+    unchanged: int = 0  # items that had it already
+    undated: int = 0  # sidecars with no date to believe for their album's year
+    unmatched: list[str] = field(default_factory=list)  # no item of that name in the album there
+    ambiguous: list[str] = field(default_factory=list)  # more than one
+    redated: int = 0  # items placed elsewhere once the album tree was settled again
+
+
+def apply_sidecar_dates(*, archive: File, folder: str, root_name: str) -> SidecarDates:
+    """Give media already stored the file dates in their AppleDouble sidecars, as an import now does.
+
+    For the Dropbox archive, most of which was imported before sidecars were read. The import
+    script keeps every album's sidecars in its work directory and sends them here as a ZIP, its
+    paths relative to the root album `root_name` in `folder`. Each sidecar goes to the item of
+    its name in the album at its path, albums found by name ignoring case, as a merging import
+    finds them. Locks do not apply: a date is no more the album's content than a tag is.
+
+    Raises ValidationError when there is no such album or the ZIP cannot be read.
+    """
+    root = Album.objects.filter(
+        folder=folder, parent__isnull=True, name__iexact=normalize_name(root_name)
+    ).first()
+    if root is None:
+        raise ValidationError(f'Der findes intet album med navnet "{root_name}" i {folder}.')
+    result = SidecarDates()
+    albums: dict[tuple[str, ...], Album | None] = {(): root}
+
+    def album_at(folders: tuple[str, ...]) -> Album | None:
+        if folders not in albums:
+            parent = album_at(folders[:-1])
+            albums[folders] = parent.children.filter(name__iexact=folders[-1]).first() if parent else None
+        return albums[folders]
+
+    try:
+        with zipfile.ZipFile(archive) as zip_archive, transaction.atomic():
+            for member in zip_archive.infolist():
+                described = _sidecar_target(PurePosixPath(_member_name(member)))
+                if member.is_dir() or described is None or member.file_size > MACOS_METADATA_MAX_BYTES:
+                    continue
+                moment = _file_time(appledouble_dates(zip_archive.read(member)), None, folder)
+                if moment is None:
+                    result.undated += 1
+                    continue
+                *folders, filename = PurePosixPath(described).parts
+                album = album_at(tuple(folders))
+                matches = list(album.media.filter(filename=filename)[:2]) if album else []
+                if len(matches) != 1:
+                    (result.ambiguous if matches else result.unmatched).append(described)
+                    continue
+                media = matches[0]
+                if media.file_modified_at == moment:
+                    result.unchanged += 1
+                    continue
+                media.file_modified_at = moment
+                media.save(update_fields=["file_modified_at"])
+                result.updated += 1
+            result.redated = settle_dates(root)
+    except (zipfile.BadZipFile, OSError, EOFError, RuntimeError) as exc:
+        raise ValidationError("ZIP-filen kunne ikke læses.") from exc
+    return result
+
+
+@dataclass
 class CaptureDateReread:
     checked: int = 0
     found: int = 0
