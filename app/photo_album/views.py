@@ -39,12 +39,14 @@ from core.media import REDIRECT_CACHE_CONTROL
 from residents.models import Resident
 from residents.permissions import current_resident
 
-from . import access, cache, featured, services
+from . import access, cache, direct_upload, featured, services
 from .forms import (
     AlbumForm,
     AlbumNameForm,
     DownloadForm,
     MediaUploadForm,
+    SystemDirectImportForm,
+    SystemImportUploadForm,
     SystemSidecarDatesForm,
     SystemZipImportForm,
     ZipAlbumImportForm,
@@ -782,13 +784,20 @@ def import_zip(request: HttpRequest) -> HttpResponse:
 
 
 def _queue_import(
-    form: ZipAlbumImportForm, resident: Resident, *, lock: bool = False, merge: bool = False
+    form: ZipAlbumImportForm | SystemDirectImportForm,
+    resident: Resident,
+    *,
+    stored: tuple[str, str] | None = None,
+    lock: bool = False,
+    merge: bool = False,
 ) -> AlbumImport:
-    archive = form.cleaned_data["archive"]
+    """Queue the import of the form's archive, or with `stored`, (key, name), of one the import
+    script already sent to the bucket (photo_album.direct_upload)."""
+    archive, archive_name = stored or (form.cleaned_data["archive"], form.cleaned_data["archive"].name)
     album_import = AlbumImport.objects.create(
         requested_by=resident,
         folder=form.cleaned_data["folder"],
-        archive_name=archive.name,
+        archive_name=archive_name,
         archive=archive,
         lock_when_done=lock,
         merge_into_existing=merge,
@@ -810,14 +819,24 @@ def system_import_zip(request: HttpRequest) -> JsonResponse:
     resident = _token_import_resident(request)
     if resident is None:
         raise PermissionDenied
-    form = SystemZipImportForm(request.POST, request.FILES)
+    # With a ticket, the archive is already in the bucket (system_import_upload), not in the request.
+    direct = "ticket" in request.POST
+    form = (
+        SystemDirectImportForm(request.POST) if direct else SystemZipImportForm(request.POST, request.FILES)
+    )
     if not form.is_valid():
         return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
+    stored = None
+    if direct:
+        try:
+            stored = direct_upload.finish(form.cleaned_data["ticket"], form.cleaned_data["parts"])
+        except ValidationError as exc:
+            return JsonResponse({"errors": {"archive": [{"message": m} for m in exc.messages]}}, status=400)
     # Everything the import script brings in is an archive of years gone by: lock it on arrival, so
     # it is not edited by accident. Fotogruppen can unlock an album that does need a change.
     # An album that already exists is added to rather than refused, so the script can send the files
     # an earlier attempt left out — once it has been unlocked; a locked album is still refused.
-    album_import = _queue_import(form, resident, lock=True, merge=True)
+    album_import = _queue_import(form, resident, stored=stored, lock=True, merge=True)
     return JsonResponse(
         {
             "statusUrl": reverse("photo_album:import_zip_status", args=[album_import.token]),
@@ -825,6 +844,20 @@ def system_import_zip(request: HttpRequest) -> JsonResponse:
         },
         status=202,
     )
+
+
+@csrf_exempt
+@require_POST
+def system_import_upload(request: HttpRequest) -> JsonResponse:
+    """Where the import script is to send an archive of `size` bytes: straight to the bucket in parts
+    (photo_album.direct_upload), or — `{"direct": false}`, without a bucket — with the import itself."""
+    if _token_import_resident(request) is None:
+        raise PermissionDenied
+    form = SystemImportUploadForm(request.POST)
+    if not form.is_valid():
+        return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
+    upload = direct_upload.begin(form.cleaned_data["name"], form.cleaned_data["size"])
+    return JsonResponse({"direct": False} if upload is None else {"direct": True, **upload})
 
 
 @csrf_exempt

@@ -3,7 +3,7 @@ import zipfile
 from django import forms
 from django.core.exceptions import ValidationError
 
-from .models import Album, DownloadVariant, validate_album_name
+from .models import Album, DownloadVariant, validate_album_name, validate_folder
 from .uploads import validate_media_upload
 
 
@@ -88,6 +88,35 @@ class SystemZipImportForm(ZipAlbumImportForm):
     to it, rather than the album being named after the ZIP and the folders it descends through."""
 
     album = forms.CharField(max_length=140, required=False, validators=[validate_album_name])
+
+
+class SystemImportUploadForm(forms.Form):
+    """The import script asking to send an archive straight to the bucket (photo_album.direct_upload)."""
+
+    name = forms.CharField(max_length=200)
+    size = forms.IntegerField(min_value=1)
+
+    def clean_name(self) -> str:
+        name = str(self.cleaned_data["name"])
+        if not name.lower().endswith(".zip"):
+            raise ValidationError("Vælg en ZIP-fil.")
+        return name
+
+
+class SystemDirectImportForm(forms.Form):
+    """SystemZipImportForm for an archive already in the bucket: the upload's ticket and the ETags
+    of its parts, in order, instead of the file."""
+
+    folder = forms.CharField(max_length=10, label="Mappe", validators=[validate_folder])
+    album = forms.CharField(max_length=140, required=False, validators=[validate_album_name])
+    ticket = forms.CharField()
+    parts = forms.JSONField()
+
+    def clean_parts(self) -> list[str]:
+        parts = self.cleaned_data["parts"]
+        if not isinstance(parts, list) or not parts or not all(isinstance(etag, str) for etag in parts):
+            raise ValidationError("Delene skal være en liste af ETags.")
+        return parts
 
 
 class SystemSidecarDatesForm(ZipAlbumImportForm):
