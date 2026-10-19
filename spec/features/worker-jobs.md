@@ -1,11 +1,11 @@
-# Feature: Worker-jobs — the background jobs dashboard
+# Worker-jobs
 
-Administrators' overview of everything the background workers do: what waits, what runs, what
-ran and how it went, and what is scheduled next. Under Administration → Worker-jobs.
+The administrators' dashboard of everything the background workers do: what waits, what runs, what ran and how it went, and what is scheduled next.
 
 ## Who
 
-- Administrators only (the effective role, so a preview as another role loses access).
+- Administrators only (the effective role, so a preview as another role loses access), from the
+  site-admin front page.
 
 ## The top of the page (refreshes every 10 seconds while the tab is in view)
 
@@ -58,5 +58,7 @@ ran and how it went, and what is scheduled next. Under Administration → Worker
   swept after a day, and Celery's own result row has none of them.
 - **Only the top refreshes itself.** The history stays as loaded, so it does not move under somebody
   reading it.
+- **Unsuccessful jobs are kept much longer than successful ones**, because those are the ones
+  somebody may need to investigate.
 - **Sub-jobs are hidden by default.** A photo import queues one job per picture; shown, they bury
   the jobs anybody started.

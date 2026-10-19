@@ -1,12 +1,12 @@
 # Administration
 
-The area where Netværksgruppen (the administrator role) assigns roles, approves Django-admin access, previews the site as other roles and watches background jobs.
+The area where Netværksgruppen (the administrator role) assigns roles, approves Django-admin access, previews the site as other roles, and oversees notifications and background jobs.
 
 ## Access
 - The administration area (`/admin/`) is open only to residents who hold the administrator role in the active month, and to superusers.
 - The administrator role includes every other role on the site.
 - Roles belong to a month. A resident's access comes from the roles they hold in the active month, which is the newest monthly resident list that has already started. Access changes when a new month's list takes effect, without anyone logging in again.
-- The front page links to roles, admin access, role preview, worker jobs, applications, statistics and Django admin. It also lists any administrators who are waiting for approval.
+- The front page links to roles, admin access, role preview, notifications, worker jobs, applications, statistics and Django admin. It also lists any administrators who are waiting for approval.
 
 ## Roles
 - The roles screen lists every resident on the active month's list, with that month's roles.
@@ -30,13 +30,9 @@ The area where Netværksgruppen (the administrator role) assigns roles, approves
 - The preview switcher stays available while previewing, so an administrator previewing as "beboer" can always switch back.
 - The preview only affects the members area. Django admin and site-content editing keep the administrator's real access.
 
-## Worker jobs
-- The worker-jobs page shows jobs waiting in the queue, a history of finished jobs and the active schedules.
-- The history is shown 25 per page. It can be filtered by status, sorted by start time, finish time or status, and can include or hide sub-jobs.
-- Each job has a detail page with its arguments, timing, runtime, worker, retries, result or error, sub-jobs and anything it logged.
-- Photo-album jobs show which photo or ZIP import they concern.
-- Successful jobs and their logs are kept for 30 days. Failed and other unsuccessful jobs are kept much longer: for each task and status, the newest 1000 are always kept, and older ones are deleted after 60 days.
-- Delivered queue messages are cleared after a day.
+## Notifications and worker jobs
+- The notifications page (push devices, statistics and broadcasts to the house) is described in notifications.md.
+- The worker-jobs dashboard (queue, running jobs, history, schedules and each job's page) is described in worker-jobs.md.
 - A test email is sent to administrators at 08:00 and 16:00. This is a temporary check that the background worker is running.
 
 ## Development
@@ -47,4 +43,3 @@ The area where Netværksgruppen (the administrator role) assigns roles, approves
 - The approval request opens whenever the administrator role is created, by any route. The role editor, the monthly list and the søg-værelse roll-forward all create roles, and a check that only one of them applied would not protect anything.
 - An administrator is approved once, not every month. Approving the same people twelve times a year would teach the group to click accept without reading.
 - The person who grants the role cannot approve it. Otherwise one administrator could grant and accept in two clicks. A majority of the group can still admit a newcomer between them.
-- Unsuccessful jobs are kept much longer than successful ones, because those are the ones somebody may need to investigate.

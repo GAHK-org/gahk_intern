@@ -12,17 +12,17 @@ The bookkeeping of the labour every resident owes the house, counted in krydser.
 - The balance also appears in Regnskab.
 
 ## Monthly charge
-- Every month, each resident on that month's alumneliste is charged the scheduled number of krydser (2 by default).
-- Residents not on the alumneliste are never charged; if someone is removed from the list, their charge for that month is removed.
-- The month only starts once its alumneliste exists and the month has begun; a list prepared for next month does not count yet.
+- A month is charged once it is over: each resident on that month's final alumneliste is charged the scheduled number of krydser (2 by default).
+- Residents not on the month's list are never charged, so someone removed from it before the month ends is not charged for it.
+- The month charged is the calendar month that just ended, whether or not the next month's list has been published.
 - Each resident is charged at most once per month, however often the charge is applied.
-- The charge is booked at 04:10 on the 1st; if that is missed (or the list is published later), it is booked on the first internal page load (dashboard or AK pages) after the month starts.
+- The charge is booked at 04:10 on the 1st of the next month; if that is missed, it is booked on the first dashboard or AK page load after.
 
 ## Schedule
 - AK-oversigt shows a 12-month schedule (januar–december): whether each month is charged and how many krydser.
 - The schedule is the same every year.
 - A charged month costs at least 1 kryds.
-- Saving the schedule re-books the current month at once (adding, updating or removing charges); earlier months are never changed.
+- Saving the schedule books nothing. The month in progress is charged with the schedule as it stands when the month ends; months already charged are never changed.
 
 ## Registering work
 - A resident registers their own work with a whole number of krydser (at least 1) and a required description; it counts immediately, with no approval step.
@@ -35,7 +35,8 @@ The bookkeeping of the labour every resident owes the house, counted in krydser.
 
 ## Decisions
 - The balance is a ledger of entries rather than a stored total, so it is always consistent and charges, work and adjustments are all just entries.
+- A month is charged after it ends, from its final list. Charging it as it began used the list copied forward from the month before, so a resident who moved out and was removed later kept a charge for a month they did not live here.
 - Each monthly charge is tied to its month, not to when it was written, so re-running a month can never charge twice.
 - The schedule is per calendar month and repeats yearly, so officers set it once.
 - A missed scheduled run would leave every balance wrong, so the first page load of a new month books it as a backstop.
-- Saving the schedule only re-books the current month, so settled balances stay as they are.
+- Saving the schedule changes no charges, so settled balances stay as they are.

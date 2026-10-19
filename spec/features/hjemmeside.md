@@ -40,7 +40,7 @@ The public website: the front page, the content pages, and news and front-page e
 
 ## Editing and images
 - Page bodies, news bodies and event descriptions are HTML; unsafe markup is stripped on every save and again on restore.
-- Editors can upload an image from the body editor and insert it, with its description as alt text. Images must be real raster images up to 5 MB; SVG and disguised files are refused.
+- Editors can upload an image from the body editor and insert it, with its description as alt text. Images must be real raster images up to 5 MB (a HEIC photo up to 25 MB, stored as JPEG); SVG and disguised files are refused.
 - The image library shows where each image is used. Deleting an image deletes its file.
 - A page's background is chosen from the image library; an existing old background is kept as an option.
 - Image links in content migrated from the old site keep working.

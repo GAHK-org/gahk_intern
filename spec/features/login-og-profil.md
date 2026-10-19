@@ -9,6 +9,7 @@ How residents get into the members area, manage their password and edit their ow
 - Deactivated residents cannot log in.
 - Residents migrated from the old site log in with their old password, which is upgraded to modern hashing on their first login. Nobody is forced to reset.
 - Roles are not fixed when someone logs in. They are checked on every page against the active month (see Administration).
+- Log ud is in the account menu under the avatar in the top bar, beside Min profil, Notifikationsindstillinger and Skift kodeord.
 - Logging out ends the session, including any role preview, and returns to the login page.
 
 ## Password change and reset
@@ -24,12 +25,12 @@ How residents get into the members area, manage their password and edit their ow
 - If the welcome mail cannot be sent, the resident is still created. Indstillingen is warned and asked to point the resident to "glemt kodeord".
 
 ## Profiles
-- Any logged-in resident can view any resident's profile page. It shows:
-  - picture, study, bio, Facebook and Instagram links;
+- Any logged-in resident can view any resident's profile page, reached from the alumneliste and from authors' names and avatars in Den Hurtige and on opslagstavlen. It shows:
+  - picture (which opens full size), study, bio, Facebook and Instagram links;
   - room, embedsgruppe and cleaning group for the active month;
   - fylgje, birthday, move-in date, phone and email;
   - badges, and their 10 most recent posts on the notice board.
-- Residents can edit their own profile picture (an image of at most 5 MB, which can also be removed), a bio of at most 500 characters, a Facebook link and an Instagram username.
+- Residents can edit their own profile picture (an image of at most 5 MB, or a HEIC photo of up to 25 MB that is stored as JPEG; it can also be removed), a bio of at most 500 characters, a Facebook link and an Instagram username.
 - Residents cannot change their own name, email, phone or other details. Only Indstillingen can edit those.
 
 ## Decisions

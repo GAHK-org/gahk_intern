@@ -19,6 +19,7 @@ A kanban board where residents report things that are broken and the Viceværter
 - A filter shows all tickets, only common areas, or only rooms.
 - Those allowed to move tickets drag a card to another column (on a phone: press and hold, then drag). A refused move, e.g. a Vicevært dropping on a manager-only column, puts the card back with the reason ("Kun Reppergruppen kan flytte en sag hertil.").
 - Everyone else sees the board read-only.
+- The board updates live as tickets are reported, moved, handed over, noted on or deleted, keeping the search and filter; it waits while a card is being dragged. Tickets archived by the nightly job leave on the next update or page load.
 
 ## A ticket
 - The ticket page shows everything on the card plus its notes, and carries the move buttons (only the columns the viewer may use), the handoff button to the other crew, and the manager actions.
@@ -33,10 +34,10 @@ A kanban board where residents report things that are broken and the Viceværter
 - The archive is a searchable list, newest archived first; archived tickets still open normally.
 
 ## Notifications
-- Residents opt in per device on the board ("Få besked om reparationer").
+Sent through Notifications, under the Reparationer category (see notifications.md).
 - A new report notifies the current Viceværter (not the reporter).
 - A handoff to Reppergruppen notifies the current Reppere; a handoff back notifies the current Viceværter. The crew letting go is never notified.
-- Only this month's holders of the role (and administrators) are notified, whoever subscribed in the past.
+- Only this month's holders of the role, administrators and superusers are notified.
 - Column changes and notes send no notifications.
 
 ## Decisions

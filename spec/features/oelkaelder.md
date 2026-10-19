@@ -55,6 +55,7 @@ The beer cellar's till and every resident's tab, sold on credit and settled by b
 ## Products
 - The Ølkælder role creates and edits products: name, price, image, shown on the till or not, featured or not.
 - Prices must be positive.
+- Product images follow the site-wide image rules (no SVG, at most 5 MB, HEIC stored as JPEG); a refused image is dropped with a warning and the product is still saved.
 
 ## Monthly statement
 - On the 1st of each month at 06:10, every active account holder who is still a resident is emailed last month's deposits, purchases, adjustments and the balance at the end of that month.

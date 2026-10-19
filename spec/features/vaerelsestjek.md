@@ -16,7 +16,7 @@ Condition reports for each room, usually made when someone moves in or out, with
 - Each criterion uses one of three scales: 1–5, 0–2 or 0–1. A blank score is allowed.
 - The form is pre-filled with the current report's scores and comments. Each row stays locked until "Opdater" is clicked. Without JavaScript every row is simply editable.
 - A score outside its scale is dropped for that criterion only, with a warning. The rest of the report is still saved.
-- Photos must be JPEG, PNG, GIF or WebP and at most 5 MB by default; GIFs fall under the site-wide animation limit instead. The browser shrinks large photos before upload. A rejected photo gets a warning and is skipped, and the rest of the report is saved.
+- Photos must be JPEG, PNG, GIF, WebP or HEIC and at most 5 MB by default; GIFs fall under the site-wide animation limit instead, and a HEIC photo may be up to 25 MB and is stored as JPEG. The browser shrinks large photos before upload. A rejected photo gets a warning and is skipped, and the rest of the report is saved.
 - Criteria left with no score, comment or photo are not stored.
 - Saving always creates a new report that becomes the room's current one, recorded with who made it and when.
 

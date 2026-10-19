@@ -5,7 +5,7 @@ The room-application round: residents apply for rooms Indstillingen puts up for 
 ## Access
 - Every resident can see their own kvotient, apply, edit their application, see their own applications (Mine ansøgninger) and withdraw them.
 - An application's detail page is visible to its owner and to Indstillingen.
-- The Indstilling role manages the round (Værelsesudbud): creates and closes offers, sees applicants, settles ties and ends the round. Administrators can do the same.
+- The Indstilling role manages the round (Værelsesudbud): creates and closes offers, sees applicants, deletes a wrong application, settles ties and ends the round. Administrators can do the same.
 
 ## The round
 - A round always targets next month, i.e. the month after the alumneliste currently in effect; neither offers nor applications let anyone pick the month.
@@ -25,7 +25,8 @@ The room-application round: residents apply for rooms Indstillingen puts up for 
 - An application holds up to five ranked priorities chosen from the rooms on offer; at least one is required.
 - A resident has one application per round. Submitting again replaces the priorities and recalculates K, but keeps the original submission time. The form opens pre-filled with the existing application.
 - K is fixed at submission, using the resident's own study-end and orlov figures.
-- Withdrawing an application deletes it.
+- Withdrawing an application deletes it, and notifies nobody.
+- Indstillingen can delete any single application from its detail page, with an optional reason of up to 200 characters. The applicant is notified ("Din værelsesansøgning er slettet", with the month and the reason, under Generelt at importance Høj, linking to Mine ansøgninger).
 
 ## Allocation
 - Indstillingen sees a live projection: for each offered room, the resident who would currently win it, or a tie.
@@ -51,4 +52,5 @@ The room-application round: residents apply for rooms Indstillingen puts up for 
 - Tied residents are held back rather than moved down to their next choice, so the coin flip decides their first choice and the algorithm never quietly gives one of them a worse room.
 - Ending a round copies the whole list forward before placing winners. Otherwise every resident outside the round would disappear from the list when the new month started.
 - Leavers are removed only after every winner has been placed. Rooms change hands like musical chairs, and a winner who moves out of a room that someone else won must not be deleted.
+- An applicant is told when Indstillingen deletes their application, so they do not first find out when the round ends without them.
 - Suggested orlov counts months missing from the alumneliste. The list goes back further than any current resident's move-in, so a gap always means a real absence, not missing data.

@@ -36,7 +36,7 @@ The monthly list of who lives in which room and belongs to which embedsgruppe an
 
 ## Adding residents
 - Add an existing resident to the month with a room, an embedsgruppe and a rengøring. This is refused if the room is already taken that month.
-- Create a new resident with first name, last name, email, room, embedsgruppe, rengøring and fylgje (optional). This is refused if the email already exists or the room is taken.
+- Create a new resident with first name, last name, email, room, embedsgruppe and rengøring, and optionally phone, birthday and fylgje. This is refused if the email already exists, the room is taken, or the birthday is not a valid date or lies in the future.
 - A new resident has no password. They get a welcome email with a link to set one, and a pointer to "glemt kodeord" in case the link has expired.
 - If the welcome email fails, the resident is still created and the editor is told to have them use "glemt kodeord".
 - A refused add keeps what was typed.
