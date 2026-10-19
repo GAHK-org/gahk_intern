@@ -24,14 +24,10 @@ services:
       - photo-album-cache:/app/cache
     expose:
       - "8000"                 # reached by Coolify/Traefik over the internal network (not host-published)
-    # Fails when the app stops answering (see docs/incidents/2026-10-08-web-hang.md). Sends the first
-    # allowed host as Host so ALLOWED_HOSTS accepts it. start_period covers `migrate` on boot.
+    # Fails when the app stops answering or loses its database (core/health.py). Python, not curl:
+    # the slim image has neither curl nor wget. start_period covers `migrate` on boot.
     healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - "import os, urllib.request as u; h = os.environ.get('DJANGO_ALLOWED_HOSTS', 'localhost').split(',')[0]; u.urlopen(u.Request('http://127.0.0.1:8000/healthz', headers={'Host': h}), timeout=8)"
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/healthz', timeout=8)"]
       interval: 30s
       timeout: 10s
       retries: 3

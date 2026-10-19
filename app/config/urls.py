@@ -7,13 +7,11 @@ from django.urls import include, path, re_path
 from django.views.generic import RedirectView, TemplateView
 
 from cms import views as cms_views
-from core import views as core_views
 from core.media import serve_media
 from events import views as events_views
 from photo_album.views import serve_media as serve_photo_album_media
 
 urlpatterns = [
-    path("healthz", core_views.healthz, name="healthz"),
     path("django-admin/", admin.site.urls),
     path("intern/", include("residents.urls")),
     re_path(r"^nyintern/(?P<rest>.*)$", RedirectView.as_view(url="/intern/%(rest)s", permanent=True)),
