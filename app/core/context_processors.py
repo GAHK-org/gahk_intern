@@ -48,6 +48,7 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     oversigt: list[NavItem] = [
         ("/intern/", "Dashboard", "dashboard"),
         (f"/intern/beboer/{user_pk}/profil", "Min profil", "users"),
+        ("/intern/notifikationer/", "Notifikationer", "inbox"),
     ]
     # EVERY ONE OF THESE GATES IS NOW OPEN — all four features shipped their staged rollout and
     # their ACCESS_ROLES are None, so every call below answers True for every logged-in resident.

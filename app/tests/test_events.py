@@ -1,7 +1,8 @@
 """Begivenheder: events, answers, seats, the deadline, and what gets deleted when.
 
-What is tested elsewhere: the Markdown renderer in test_markdown.py, push transport and per-topic
-consent in test_push.py, image validation in test_uploads.py. What is here is this feature's own
+What is tested elsewhere: the Markdown renderer in test_markdown.py, push transport in test_push.py,
+image validation in test_uploads.py. Preferences, grouping and the rest of the notification machinery
+belong to the notifications app; what is here is who THIS feature tells, under which category. What is here is this feature's own
 behaviour — and, as much as anything, the things that are deliberately ABSENT, because those are
 the ones a later change removes without noticing.
 
@@ -39,6 +40,8 @@ from events.models import (
     Rsvp,
     Visibility,
 )
+from notifications import categories
+from notifications.models import Notification
 from residents.models import Resident, Role
 
 EVENTS = "/intern/begivenheder/"
@@ -105,7 +108,7 @@ def pushes(monkeypatch: pytest.MonkeyPatch, settings: object) -> list:
     settings.VAPID_ADMIN_EMAIL = "drift@gahk.dk"  # type: ignore[attr-defined]
     sent: list = []
 
-    def record(subscriptions: object, payload: dict) -> int:
+    def record(subscriptions: object, payload: dict, ttl: int = 0) -> int:
         sent.append((sorted(s.user_id for s in subscriptions), payload))  # type: ignore[union-attr]
         return len(sent)
 
@@ -120,9 +123,14 @@ def media_tmp(settings: object, tmp_path: Path) -> None:
 
 
 def subscribe(resident: Resident, endpoint: str) -> PushSubscription:
-    return PushSubscription.objects.create(
-        user=resident, endpoint=endpoint, auth="a", p256dh="p", wants_begivenheder=True
-    )
+    """A device. There is no per-feature opt-in any more — one subscription carries everything, and
+    owning one is also what puts a resident in notifications.services.everyone()."""
+    return PushSubscription.objects.create(user=resident, endpoint=endpoint, auth="a", p256dh="p")
+
+
+def told(category: str) -> list[tuple[int, str]]:
+    """(recipient, title) for every Notification row in `category`, sorted — who was told, and what."""
+    return sorted(Notification.objects.filter(category=category).values_list("recipient_id", "title"))
 
 
 def make_event(organiser: Resident, **extra: object) -> Event:
@@ -153,7 +161,6 @@ GATED_GET_ROUTES = ("", "opret", "kalender", "kalender/abonnement", "1", "1/redi
     [
         "",
         "opret",
-        "abonner",
         "kalender",
         "kalender/abonnement",
         "kalender/nyt-link",
@@ -191,7 +198,6 @@ def test_the_route_table_covers_every_url_pattern() -> None:
     covered = {
         "index",
         "create",
-        "save_subscription",
         "calendar",
         "feed_settings",
         "rotate_token",
@@ -327,13 +333,19 @@ def test_a_co_organiser_can_edit(client: Client, beboer: Resident, other: Reside
 
 
 def test_moving_the_start_bumps_sequence_and_notifies(
-    client: Client, beboer: Resident, other: Resident, pushes: list
+    client: Client, beboer: Resident, other: Resident, third: Resident, pushes: list
 ) -> None:
     """One predicate drives both, so a calendar client and a phone cannot disagree about whether
-    something changed. See services.significant_change."""
+    something changed. See services.significant_change.
+
+    Told: the people who said ja, because they planned around the old time. Not somebody who said
+    nej, and not the organiser who made the change — even though they said ja to their own event."""
     event = make_event(beboer)
+    services.set_answer(event.pk, beboer, Answer.JA)
     services.set_answer(event.pk, other, Answer.JA)
-    subscribe(other, "https://push.example/other")
+    services.set_answer(event.pk, third, Answer.NEJ)
+    for who in (beboer, other, third):
+        subscribe(who, f"https://push.example/{who.pk}")
     client.force_login(beboer)
     pushes.clear()
 
@@ -345,6 +357,7 @@ def test_moving_the_start_bumps_sequence_and_notifies(
 
     event.refresh_from_db()
     assert event.sequence == 1
+    assert told(categories.EVENTS_CHANGES) == [(other.pk, f"Ændret: {event.title}")]
     assert [p[0] for p in pushes] == [[other.pk]]
 
 
@@ -370,6 +383,7 @@ def test_editing_only_the_description_notifies_nobody(
 
     event.refresh_from_db()
     assert event.sequence == 0
+    assert not Notification.objects.exists()
     assert pushes == []
 
 
@@ -420,6 +434,7 @@ def test_answering_notifies_nobody(client: Client, beboer: Resident, other: Resi
 
     client.post(f"{EVENTS}{event.pk}/svar", {"svar": "ja"})
 
+    assert not Notification.objects.exists()
     assert pushes == []
 
 
@@ -476,6 +491,7 @@ def test_withdrawing_promotes_the_next_in_line(
 def test_a_promotion_notifies_exactly_the_promoted_person(
     beboer: Resident, other: Resident, third: Resident, pushes: list
 ) -> None:
+    """Personal, and high importance: a seat you were waiting for is a seat you now have to use."""
     event = make_event(beboer, capacity=1)
     services.set_answer(event.pk, beboer, Answer.JA)
     services.set_answer(event.pk, other, Answer.JA)
@@ -485,6 +501,8 @@ def test_a_promotion_notifies_exactly_the_promoted_person(
 
     services.set_answer(event.pk, beboer, Answer.NEJ)
 
+    assert told(categories.EVENTS_PERSONAL) == [(other.pk, event.title)]
+    assert Notification.objects.get().url == f"{EVENTS}{event.pk}"
     assert [p[0] for p in pushes] == [[other.pk]]
 
 
@@ -677,7 +695,26 @@ def test_cancelling_keeps_the_row_and_tells_the_people_coming(
     event.refresh_from_db()
     assert event.cancelled_at is not None
     assert event.sequence == 1
+    # The same category as a change: "a thing I said ja to is not happening as planned".
+    assert told(categories.EVENTS_CHANGES) == [(other.pk, f"Aflyst: {event.title}")]
     assert [p[0] for p in pushes] == [[other.pk]]
+
+
+def test_the_organiser_is_told_when_a_co_organiser_cancels(
+    client: Client, beboer: Resident, other: Resident, pushes: list
+) -> None:
+    """Unlike a change, a cancellation does not exclude the organiser: a co-organiser can aflys too,
+    and services.cancel does not know who did it. An organiser who said ja must hear their own event
+    is off — the price is that one who cancels it themselves is told as well."""
+    event = make_event(beboer)
+    event.co_organisers.add(other)
+    services.set_answer(event.pk, beboer, Answer.JA)
+    subscribe(beboer, "https://push.example/beboer")
+    client.force_login(other)
+
+    client.post(f"{EVENTS}{event.pk}/aflys")
+
+    assert told(categories.EVENTS_CHANGES) == [(beboer.pk, f"Aflyst: {event.title}")]
 
 
 def test_a_cancelled_event_takes_no_more_answers(beboer: Resident, other: Resident) -> None:
@@ -797,6 +834,7 @@ def test_a_new_event_notifies_everyone_but_the_organiser(
         {"title": "Fest", "starts_at": when, "visibility": Visibility.AABENT},
     )
 
+    assert told(categories.EVENTS_NEW) == [(other.pk, "Fest")]
     assert [p[0] for p in pushes] == [[other.pk]]
 
 
@@ -813,7 +851,27 @@ def test_the_notification_links_to_the_event_not_the_list(
     )
 
     event = Event.objects.get()
+    assert Notification.objects.get().url == f"{EVENTS}{event.pk}"
     assert pushes[0][1]["url"] == f"{EVENTS}{event.pk}"
+    # A tap goes through the open link, which marks the row seen and then redirects to `url`.
+    assert str(pushes[0][1]["open"]).startswith("/intern/notifikationer/aabn/")
+
+
+def test_a_resident_without_a_phone_still_hears_about_a_new_event(
+    client: Client, beboer: Resident, other: Resident, pushes: list
+) -> None:
+    """Push used to be the only channel, so a resident who never pressed a subscribe button never
+    heard about anything. Living here is enough now: the row lands in the bell, and nothing is
+    pushed because there is no device to push to."""
+    _residency(other)
+    client.force_login(beboer)
+    when = timezone.localtime(timezone.now() + datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M")
+
+    client.post(EVENTS + "opret", {"title": "Fest", "starts_at": when, "visibility": Visibility.AABENT})
+
+    row = Notification.objects.get()
+    assert (row.recipient_id, row.in_app, row.pushed) == (other.pk, True, False)
+    assert pushes == []
 
 
 # --- visibility: kun inviterede -------------------------------------------------------------------
@@ -1113,10 +1171,32 @@ def test_a_comment_notifies_the_hosts_and_nobody_else(
 
     client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "Skal man tage noget med?"})
 
-    assert len(pushes) == 1
-    assert pushes[0][0] == sorted([beboer.pk, helper.pk])
-    assert pushes[0][1]["head"] == f"{other.full_name} kommenterede"
-    assert pushes[0][1]["url"] == f"{EVENTS}{event.pk}"
+    title = f"{other.full_name} kommenterede"
+    assert told(categories.EVENTS_COMMENTS) == [(beboer.pk, title), (helper.pk, title)]
+    row = Notification.objects.get(recipient=beboer)
+    assert row.group_key == f"events.comments:{event.pk}"
+    assert row.url == f"{EVENTS}{event.pk}"
+    assert row.actors == [{"id": other.pk, "name": other.full_name}]
+    # Grouped rows are pushed one recipient at a time, tagged so the next one replaces this banner.
+    assert sorted(p[0] for p in pushes) == [[beboer.pk], [helper.pk]]
+    assert {p[1]["tag"] for p in pushes} == {f"events.comments:{event.pk}"}
+    assert {p[1]["head"] for p in pushes} == {title}
+
+
+def test_a_busy_thread_is_one_notification_per_host(
+    client: Client, beboer: Resident, other: Resident, third: Resident, pushes: list
+) -> None:
+    """Grouped per event: the second commenter rewrites the host's row ("Anders og Mette
+    kommenterede", newest first) rather than stacking another one under it."""
+    event = make_event(beboer)
+    for who in (other, third):
+        client.force_login(who)
+        client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "Jeg kommer"})
+
+    row = Notification.objects.get()
+    assert row.recipient_id == beboer.pk
+    assert row.title == f"{third.full_name} og {other.full_name} kommenterede"
+    assert [a["id"] for a in row.actors] == [third.pk, other.pk]
 
 
 def test_a_host_commenting_on_their_own_event_notifies_nobody(
@@ -1130,23 +1210,24 @@ def test_a_host_commenting_on_their_own_event_notifies_nobody(
 
     client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "Tag selv drikkevarer med"})
 
+    assert not Notification.objects.exists()
     assert pushes == []
 
 
-def test_a_comment_on_a_private_event_cannot_notify_past_the_invite_list(
-    client: Client, beboer: Resident, other: Resident, pushes: list
+def test_a_comment_on_a_private_event_reaches_its_host_and_nobody_else(
+    client: Client, beboer: Resident, other: Resident, third: Resident, pushes: list
 ) -> None:
-    """_audience narrows to the invite list first, so a private event's thread has the same
-    guarantee notify_new_event has."""
+    """The organiser is not on their own guest list, so routing hosts through `_audience` would drop
+    them exactly when the event is private. They are told; the commenter and an outsider are not."""
     event = make_private(beboer, [other])
-    subscribe(beboer, "https://push.example/a")
-    subscribe(other, "https://push.example/b")
+    for who in (beboer, other, third):
+        subscribe(who, f"https://push.example/{who.pk}")
     client.force_login(other)
 
     client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "Jeg kommer"})
 
-    assert len(pushes) == 1
-    assert pushes[0][0] == [beboer.pk]
+    assert told(categories.EVENTS_COMMENTS) == [(beboer.pk, f"{other.full_name} kommenterede")]
+    assert [p[0] for p in pushes] == [[beboer.pk]]
 
 
 def test_rendering_a_thread_costs_no_query_per_comment(
@@ -1329,6 +1410,7 @@ def test_a_photo_only_comment_notifies_with_a_body_rather_than_a_blank(
 
     client.post(f"{EVENTS}{event.pk}/kommentar", {"body": "", "image": photo})
 
+    assert "Billede" in Notification.objects.get(recipient=beboer).body
     assert len(pushes) == 1
     assert pushes[0][1]["body"].strip() not in ("", event.title + ": ")
     assert "Billede" in pushes[0][1]["body"]
@@ -1431,6 +1513,7 @@ def test_a_private_event_notifies_only_its_invitees(
     event = make_private(beboer, [other], title="Hemmelig fest")
     services.notify_new_event(event)
 
+    assert told(categories.EVENTS_NEW) == [(other.pk, "Hemmelig fest")]
     assert [p[0] for p in pushes] == [[other.pk]]
 
 
@@ -2270,10 +2353,36 @@ def test_the_reminder_goes_only_to_people_who_have_not_answered(
     services.set_answer(event.pk, other, Answer.JA)
     pushes.clear()
 
-    services.send_deadline_reminder(event)
+    reached = services.send_deadline_reminder(event)
 
     # beboer is the organiser and other has answered, so only third is left.
+    assert reached == 1
+    assert told(categories.EVENTS_PERSONAL) == [(third.pk, event.title)]
     assert [p[0] for p in pushes] == [[third.pk]]
+
+
+def test_the_reminder_is_personal_and_expires_at_the_deadline(
+    beboer: Resident, other: Resident, third: Resident, pushes: list
+) -> None:
+    """A reminder is moot once the deadline has passed, so it leaves the bell then and the push
+    service is told to drop it rather than deliver it late. The count is everyone REACHED, in-app
+    or push — third has no phone and still counts."""
+    deadline = (timezone.now() + datetime.timedelta(hours=2)).replace(microsecond=0)
+    event = make_event(beboer, rsvp_deadline_at=deadline)
+    for who in (other, third):
+        _residency(who)
+    subscribe(other, "https://push.example/other")
+    pushes.clear()
+
+    reached = services.send_deadline_reminder(event)
+
+    assert reached == 2
+    rows = Notification.objects.order_by("recipient_id")
+    assert [r.recipient_id for r in rows] == sorted([other.pk, third.pk])
+    assert {r.category for r in rows} == {categories.EVENTS_PERSONAL}
+    assert {r.expires_at for r in rows} == {deadline}
+    assert {r.url for r in rows} == {f"{EVENTS}{event.pk}"}
+    assert [p[0] for p in pushes] == [[other.pk]]
 
 
 def test_running_the_reminder_twice_sends_one_reminder(
@@ -2287,9 +2396,10 @@ def test_running_the_reminder_twice_sends_one_reminder(
     subscribe(other, "https://push.example/other")
     pushes.clear()
 
-    services.send_deadline_reminder(event)
-    services.send_deadline_reminder(event)
+    assert services.send_deadline_reminder(event) == 1
+    assert services.send_deadline_reminder(event) == 0
 
+    assert Notification.objects.count() == 1
     assert len(pushes) == 1
 
 
@@ -2326,6 +2436,7 @@ def test_a_private_events_reminder_stays_with_its_invitees(
 
     services.send_deadline_reminder(event)
 
+    assert told(categories.EVENTS_PERSONAL) == [(other.pk, event.title)]
     assert [p[0] for p in pushes] == [[other.pk]]
 
 
@@ -2345,6 +2456,7 @@ def test_the_lazy_backstop_sends_a_missed_reminder_on_page_load(
 
     event.refresh_from_db()
     assert event.reminder_sent_at is not None
+    assert told(categories.EVENTS_PERSONAL) == [(other.pk, event.title)]
     assert [p[0] for p in pushes] == [[other.pk]]
 
 
@@ -2363,9 +2475,16 @@ def test_the_backstop_never_breaks_the_page(
     assert client.get(EVENTS).status_code == 200
 
 
-def test_the_command_delivers_inline(beboer: Resident, other: Resident, pushes: list) -> None:
+def test_the_command_delivers_inline(
+    beboer: Resident, other: Resident, pushes: list, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """core.push defers to a daemon thread by default, and a management command's daemon threads are
-    killed at interpreter shutdown — mid-fan-out, silently, a different number every night."""
+    killed at interpreter shutdown — mid-fan-out, silently, a different number every night.
+
+    The background path is replaced by one that never runs, so a push recorded here can only have
+    been sent inline."""
+    from io import StringIO
+
     from django.core.management import call_command
 
     event = make_event(beboer, rsvp_deadline_at=timezone.now() + datetime.timedelta(hours=2))
@@ -2373,12 +2492,17 @@ def test_the_command_delivers_inline(beboer: Resident, other: Resident, pushes: 
         _residency(who)
     subscribe(other, "https://push.example/other")
     pushes.clear()
+    deferred: list = []
+    monkeypatch.setattr(push, "_run_in_background", deferred.append)
+    out = StringIO()
 
-    call_command("remind_rsvp_deadlines")
+    call_command("remind_rsvp_deadlines", stdout=out)
 
     event.refresh_from_db()
     assert event.reminder_sent_at is not None
+    assert deferred == []
     assert [p[0] for p in pushes] == [[other.pk]]
+    assert "påmindelse sendt til 1 beboer(e)" in out.getvalue()
 
 
 def test_the_command_dry_run_changes_nothing(beboer: Resident, pushes: list) -> None:
@@ -2391,6 +2515,7 @@ def test_the_command_dry_run_changes_nothing(beboer: Resident, pushes: list) -> 
 
     event.refresh_from_db()
     assert event.reminder_sent_at is None
+    assert not Notification.objects.exists()
     assert pushes == []
 
 

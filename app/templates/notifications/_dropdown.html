@@ -1,0 +1,18 @@
+{% comment %}
+  The bell's panel, fetched by htmx into #notif-panel the first time the bell opens
+  (notifications/_bell.html). The ten most recent active in-app notifications, most important first.
+{% endcomment %}
+<div class="notif-panel-head">
+  <strong>Notifikationer</strong>
+  <a href="{% url 'notifications:preferences' %}" class="muted">Indstillinger</a>
+</div>
+<div class="notif-list">
+  {% for row in rows %}
+    {% include "notifications/_item.html" %}
+  {% empty %}
+    <p class="muted notif-empty">Ingen notifikationer.</p>
+  {% endfor %}
+</div>
+<div class="notif-panel-foot">
+  <a href="{% url 'notifications:index' %}">Se alle</a>
+</div>

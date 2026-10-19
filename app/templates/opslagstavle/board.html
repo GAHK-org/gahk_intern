@@ -20,16 +20,6 @@
     </div>
   </div>
 
-  {% if push_configured %}
-    {% comment %}
-      Slim one-line bar, driven by frontend/src/push.ts (a no-op without a [data-push] element).
-      data-subscribed is rendered here because the browser cannot answer it: a device has ONE push
-      endpoint shared by every topic, so getSubscription() only says "subscribed to something".
-      Whether it wants *this* feature is a column on the server.
-    {% endcomment %}
-    {% include "core/_push_bar.html" with topic="opslagstavle" url_name="opslagstavle:save_subscription" on_label="Få besked om nye opslag" success_text="Du får nu besked når nogen slår op på tavlen." off_text="Beskeder om opslag er slået fra på denne enhed." %}
-  {% endif %}
-
   {% comment %}
     Category filter as plain links, not htmx: the result is bookmarkable and shareable ("se
     resultatet af værelsesrunden"), back/forward works, and it composes with the pager for free via

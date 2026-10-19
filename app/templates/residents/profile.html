@@ -4,8 +4,12 @@
   <div class="page-head">
     <div style="display:flex; align-items:center; gap:1.25rem">
       {% if subject.profile_picture %}
-        <img src="{{ subject.profile_picture.url }}" alt="{{ subject.full_name }}"
-             class="avatar avatar-lg" style="width:64px;height:64px;border-radius:50%;object-fit:cover">
+        {# The thumbnail everywhere; the original only here, on request, in the shared viewer (#177). #}
+        <a href="{{ subject.profile_picture.url }}" target="_blank" rel="noopener"
+           data-viewer data-name="{{ subject.full_name }}" style="flex-shrink:0">
+          <img src="{{ subject.avatar_url }}" alt="{{ subject.full_name }}"
+               class="avatar avatar-lg" style="width:64px;height:64px;border-radius:50%;object-fit:cover">
+        </a>
       {% else %}
         <span class="avatar" style="width:64px;height:64px;font-size:1.5rem">{{ subject.first_name|slice:":1" }}{{ subject.last_name|slice:":1" }}</span>
       {% endif %}

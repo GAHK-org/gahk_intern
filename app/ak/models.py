@@ -67,8 +67,9 @@ class AkMonthlyCharge(models.Model):
 
     AK officers set, for each month of the year (januar…december), how many krydser are subtracted and
     whether that month is charged at all. The amount is the same every year (keyed on `month`, not a
-    specific period). When a month becomes the active period, its schedule is applied to that month's
-    alumneliste (see `ak.services.apply_monthly_charge`). There are always 12 rows (seeded 1..12).
+    specific period). When a month is over, its schedule is applied to that month's final alumneliste
+    on the 1st of the next (see `ak.services.apply_monthly_charge`). There are always 12 rows (seeded
+    1..12).
     """
 
     month = models.PositiveSmallIntegerField(unique=True)  # 1..12 (calendar month, any year)
@@ -92,13 +93,14 @@ class AkMonthlyCharge(models.Model):
 
 
 class AkAutoApply(models.Model):
-    """Singleton (pk=1) marker of the last (year, month) the monthly deduction was auto-applied.
+    """Singleton (pk=1) marker of the last (year, month) the monthly deduction was charged for.
 
-    A scheduled task books the month on the 1st (DEPLOY.md §4b), and the same deduction is applied
-    lazily on the first internal page load of a new month (see `ak.services.ensure_active_month_applied`)
-    as a backstop — cron fails silently, and a skipped month leaves every balance wrong. This row
-    records which period has been handled, so whichever runs first wins, the hot path is a single
-    cheap lookup, and the reconciliation itself happens exactly once.
+    A scheduled task charges the month that just ended on the night of the 1st (DEPLOY.md §4b), and
+    the same deduction is applied lazily on the first internal page load of a new month (see
+    `ak.services.ensure_previous_month_charged`) as a backstop — cron fails silently, and a skipped
+    month leaves every balance wrong. This row records which period has been handled, so whichever
+    runs first wins, the hot path is a single cheap lookup, and the reconciliation itself happens
+    exactly once.
     """
 
     year = models.PositiveSmallIntegerField(null=True, blank=True)
