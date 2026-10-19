@@ -607,6 +607,18 @@ holds no binary data now that media is in the bucket. Cross-check the applied mi
 branch — every project migration should be present (Django's own built-ins add ~18 beyond the files
 under `app/*/migrations/`).
 
+### 4e. Health checks
+Two endpoints, both in `app/core/health.py`:
+
+- **`/healthz`** — liveness only; `web`'s Docker healthcheck in `docker-compose.prod.yml` uses it,
+  and Coolify shows that status. It checks nothing beyond the process answering, because Traefik
+  drops an unhealthy container from routing: a dead worker must not take the site down with it.
+- **`/health`** — for an external uptime monitor (point it at `https://gahk.dk/health` and alert on
+  anything but 200). It returns 503 if the database or the S3 bucket is unreachable, or if any of
+  `default`, `media` and `beat` has not sent a heartbeat for 2 minutes. The JSON body names the
+  failing check; the reason is in `web`'s log. Renaming a worker's `-n` in the compose file means
+  updating `HEALTH_PROCESSES` to match.
+
 ## 5. Data migration to prod
 ```
 mysqldump the live gahk_dk  →  load into the MariaDB staging container

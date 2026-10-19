@@ -26,6 +26,15 @@ services:
       - photo-album-cache:/app/cache
     expose:
       - "8000"                 # reached by Coolify/Traefik over the internal network (not host-published)
+    # Liveness only (core/health.py): an unhealthy container gets no traffic from Traefik, so this
+    # must not fail just because a worker is down — /health is the full check, for uptime monitors.
+    # Python, not curl: the slim image has no curl. start_period covers the migrate before uvicorn.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
 
   # `web` runs the migrations; the workers and beat WAIT for them rather than racing them. Without the gate,
   # every deploy that adds a migration starts `beat` against a database with no
