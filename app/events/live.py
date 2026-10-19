@@ -13,7 +13,7 @@ an edit or a cancellation changes the facts, a comment changes the thread.
 from django.http import HttpRequest
 
 from core import live
-from residents.models import Resident
+from residents.api import Resident
 
 from . import access
 

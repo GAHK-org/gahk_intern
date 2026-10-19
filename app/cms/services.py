@@ -2,18 +2,17 @@
 keep a restorable copy of what the page used to say.
 
 Both are called **explicitly** from cms.admin rather than hung off a `post_save` signal, and that is
-a decision worth not undoing. A signal would also fire for `etl_cms` (fifteen `update_or_create`s
-per run), `seed_demo`, `sync_cms_media` and every `save()` typed into a shell — producing a pile of
-author-less snapshots and doubling ETL write volume, with no way to tell a real edit from an import.
+a decision worth not undoing. A signal would also fire for `seed_demo` and every `save()` typed
+into a shell — producing a pile of author-less snapshots, with no way to tell a real edit from an
+import.
 
-The cost of choosing explicit calls is that an ETL or shell overwrite leaves no version of its own.
+The cost of choosing explicit calls is that a seed or shell overwrite leaves no version of its own.
 That is acceptable, because the admin always snapshots the *pre-edit database state* before saving:
-the content immediately before any human edit is therefore always captured, including content an
-ETL run had already clobbered. ETL and seeding are deliberate developer operations against a legacy
-database; a resident clicking "gem" is not, and that is the one this protects.
+the content immediately before any human edit is therefore always captured. Seeding is a deliberate
+developer operation; a resident clicking "gem" is not, and that is the one this protects.
 """
 
-from residents.models import Resident
+from residents.api import Resident
 
 from .models import Page, PageRedirect, PageVersion
 

@@ -4,7 +4,7 @@ This is the question nobody could answer when an editor renamed /faciliteter/kok
 /faciliteter-kokken. The page still resolved; it had simply stopped being *linked*, because there is
 no navigation table anywhere in this project:
 
-  * the public menus are hard-coded tuple lists (core.context_processors.NAV_PUBLIC / NAV_LEGACY),
+  * the public menus are hard-coded tuple lists (cms.api.NAV_PUBLIC / NAV_LEGACY),
     and they only ever list top-level entries;
   * a sub-page appears solely in the section sidebar that cms.views._section_nav builds from the
     slug prefix, and that sidebar is suppressed unless the section holds at least two pages;
@@ -21,8 +21,7 @@ from typing import Literal
 
 from django.db.models import Q
 
-from core.context_processors import NAV_LEGACY, NAV_PUBLIC
-
+from .api import NAV_LEGACY, NAV_PUBLIC
 from .models import Page
 
 # The page id cms.views.home renders at `/`. Hard-coded there, so it is hard-coded here too rather

@@ -17,3 +17,5 @@ class OpslagstavleConfig(AppConfig):
         # Photos on recent and pinned opslag come from the server's disk, older ones from the bucket.
         register_cacheable("opslag/", notice_image_is_live)
         register_cacheable("opslag/kommentarer/", comment_image_is_live)
+
+        from . import handlers  # noqa: F401 — registers this app's hooks into other domains

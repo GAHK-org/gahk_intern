@@ -11,7 +11,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from core.clock import current_date
-from residents.models import Resident
+from residents.api import Resident
 
 from . import access, maerkedage
 

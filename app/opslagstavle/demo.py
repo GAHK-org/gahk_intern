@@ -19,7 +19,7 @@ same reason. The multi-image post references files already in `static/legacy/` i
 import random
 from datetime import datetime, timedelta
 
-from residents.models import Resident, Role
+from residents.api import Resident, Role
 
 from .models import Category, Notice, NoticeComment, NoticeReaction
 
@@ -124,3 +124,22 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
             NoticeReaction.objects.create(notice=notice, author=resident, emoji=rng.choice(EMOJI))
 
     return len(created) + 1
+
+
+def link_announcement() -> None:
+    """Point the fællesspisning post at the fællesspisning event.
+
+    A separate step, called by seed_demo after BOTH features are seeded: the board is seeded first,
+    so the event does not exist yet when `seed` runs. It used to live in events.demo, which meant
+    begivenheder writing opslagstavlen's table; the link is this app's data, so this app writes it,
+    and it finds the event the only way it may — through events.api.
+
+    Worth having in the fixture at all: the chip is the only visible sign that the two features know
+    about each other, and nobody looking at a fresh checkout would think to create it.
+    """
+    from events.api import linkable_events
+
+    event = next((e for e in linkable_events() if e.title == "Fællesspisning"), None)
+    announcement = Notice.objects.filter(category=Category.BEGIVENHED, event__isnull=True).first()
+    if event is not None and announcement is not None:
+        Notice.objects.filter(pk=announcement.pk).update(event_id=event.id)

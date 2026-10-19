@@ -16,7 +16,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from core import push
-from residents.permissions import current_resident
+from residents.api import current_resident
 
 from . import categories, services
 from .categories import IMPORTANCE_CHOICES, Importance
@@ -58,7 +58,7 @@ def index(request: HttpRequest) -> HttpResponse:
             "view": view,
             "views": VIEWS,
             "unseen": sum(1 for row in rows if not row.is_seen),
-            "category_names": {c.key: c.name for c in categories.CATEGORIES},
+            "category_names": {c.key: c.name for c in categories.all_categories()},
         },
     )
 
@@ -126,7 +126,7 @@ def preferences(request: HttpRequest) -> HttpResponse:
 
     if request.method == "POST":
         with transaction.atomic():
-            for category in categories.CATEGORIES:
+            for category in categories.all_categories():
                 # A category without an optional in-app row is stored as on whatever is posted.
                 optional = category.in_app and category.in_app_optional
                 in_app = (f"{category.key}__in_app" in request.POST) if optional else True
@@ -162,11 +162,7 @@ def preferences(request: HttpRequest) -> HttpResponse:
                     "in_app": (pref.in_app if pref else True) or not category.in_app_optional,
                     "push": pref.push if pref else True,
                     "vibrate": pref.vibrate if pref else True,
-                    "anchor": (
-                        "rum-" + category.key.removeprefix(categories.CHAT_ROOM_PREFIX)
-                        if category.key.startswith(categories.CHAT_ROOM_PREFIX)
-                        else ""
-                    ),
+                    "anchor": category.anchor,
                 }
             )
         groups.append({"key": key, "name": name, "rows": rows})
@@ -177,8 +173,6 @@ def preferences(request: HttpRequest) -> HttpResponse:
             "groups": groups,
             "settings": settings_row,
             "importance_choices": IMPORTANCE_CHOICES,
-            "push_configured": push.is_configured(),
-            "vapid_public_key": push.vapid_public_key(),
         },
     )
 

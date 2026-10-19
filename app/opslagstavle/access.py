@@ -32,7 +32,7 @@ from django.db.models import QuerySet
 from django.http import HttpRequest
 
 from core.rollout import Gate
-from residents.permissions import MODERATION_ROLES, View, request_has_role
+from residents.api import MODERATION_ROLES, View, request_has_role
 
 from .models import Notice, NoticeComment
 
@@ -82,12 +82,6 @@ def can_moderate(request: HttpRequest) -> bool:
     everything else; administrator is included because it implies every role.
     """
     return request.user.is_authenticated and request_has_role(request, *MODERATION_ROLES)
-
-
-def can_pin(request: HttpRequest) -> bool:
-    """Same set as moderation. A separate name because they are separate powers conceptually, and
-    splitting them later should not mean finding every call site."""
-    return can_moderate(request)
 
 
 def can_edit(request: HttpRequest, notice: Notice) -> bool:

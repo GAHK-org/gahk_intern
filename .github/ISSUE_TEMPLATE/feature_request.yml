@@ -15,7 +15,7 @@ body:
     id: proposal
     attributes:
       label: Proposed solution
-      description: What would you like to happen? Link a spec/feature ID (e.g. F-013) if one exists.
+      description: What would you like to happen? Link the spec in spec/features/ if one exists.
     validations:
       required: true
 

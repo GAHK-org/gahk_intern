@@ -6,7 +6,8 @@ Django's per-model permission bits are not used (role-holders have `is_staff` bu
 without these overrides they'd see nothing).
 
 `Page.body` etc. are rendered with `|safe`, but every editable field is run through `clean_html` on
-save (see the *AdminForm classes), so a content editor cannot inject scripts/dangerous HTML.
+save (see the *AdminForm classes), so a content editor cannot inject scripts/dangerous HTML. The
+one-line headings (`Page.header`, `NewsItem.title`) get the tighter `clean_inline_html`.
 
 Most of what follows exists because of one incident: an editor opened /faciliteter/kokken, changed
 the address to `faciliteter-kokken`, saved — and the page vanished from the site with no way back,
@@ -46,14 +47,13 @@ from django.utils import timezone
 from django.utils.html import format_html
 
 from core.uploads import validate_image_upload
-from residents.models import Role
-from residents.permissions import CMS_EDITOR_ROLES, current_resident, has_active_role
+from residents.api import CMS_EDITOR_ROLES, Role, current_resident, has_active_role
 
 from .diff import line_diff
 from .models import CmsImage, Event, NewsItem, Page, PageRedirect, PageVersion
 from .nav import PROBLEM_STATUSES, STATUS_LABELS, is_reachable, statuses
 from .paths import join_path, normalize_segment, split_path, validate_page_path
-from .sanitize import clean_html
+from .sanitize import clean_html, clean_inline_html
 from .services import record_slug_change, snapshot_page
 
 
@@ -190,6 +190,9 @@ class PageAdminForm(BodyEditorMixin, forms.ModelForm):
         cleaned["slug"] = composed or None
         return cleaned
 
+    def clean_header(self) -> str | None:
+        return clean_inline_html(self.cleaned_data.get("header", ""))
+
     def clean_body(self) -> str | None:
         return clean_html(self.cleaned_data.get("body", ""))
 
@@ -198,6 +201,9 @@ class NewsItemAdminForm(BodyEditorMixin, forms.ModelForm):
     class Meta:
         model = NewsItem
         fields = ["title", "body", "published_at"]
+
+    def clean_title(self) -> str | None:
+        return clean_inline_html(self.cleaned_data.get("title", ""))
 
     def clean_body(self) -> str | None:
         return clean_html(self.cleaned_data.get("body", ""))
@@ -300,7 +306,7 @@ class PageAdmin(ContentEditorAdmin):
                 "fields": ("body",),
                 "description": "Rå HTML — vises som den er. Brug knappen over feltet til at uploade "
                 "og indsætte billeder. Gamle stier (/public/… eller /static/legacy/…) virker "
-                "fortsat; de ligger under static/legacy/ (kør sync_cms_media efter behov).",
+                "fortsat; de ligger under static/legacy/.",
             },
         ),
     )
@@ -495,7 +501,7 @@ class PageAdmin(ContentEditorAdmin):
             snapshot_page(page_obj, author, note="Før gendannelse")
 
             old_slug = page_obj.slug
-            page_obj.header = version.header
+            page_obj.header = clean_inline_html(version.header) or ""
             # Through the sanitizer again: a snapshot taken before the allowlist was tightened must
             # not become a way back in for markup that is no longer permitted.
             # `or ""`: clean_html passes falsy input straight back, and body is a non-null column.

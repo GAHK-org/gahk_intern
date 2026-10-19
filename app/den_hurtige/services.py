@@ -24,16 +24,14 @@ from django.db.models import QuerySet
 
 from core import push
 from core.rollout import Gate
-from notifications import categories, services
+from notifications import api as notifications
 
 from . import access, channels
 
 if TYPE_CHECKING:
-    from residents.models import Resident
+    from residents.api import Resident
 
     from .models import QuickComment, QuickPost
-
-FEED_URL = "/intern/den-hurtige/"
 
 
 def _channel(slug: str) -> channels.Channel:
@@ -54,7 +52,7 @@ def _audience(slug: str) -> "QuerySet[Resident]":
     """Everyone who can open this room: the feature's rollout gate, then the room's own roles. The
     resident's own toggle for the room is the notifications app's business, not this one's."""
     channel = _channel(slug)
-    return Gate(lambda: channel.roles).allowed_residents(access.allowed_residents(services.everyone()))
+    return Gate(lambda: channel.roles).allowed_residents(access.allowed_residents(notifications.everyone()))
 
 
 def notify_new_post(post: "QuickPost") -> None:
@@ -64,9 +62,9 @@ def notify_new_post(post: "QuickPost") -> None:
     notification with the app it came from, so titling with the person is what makes a lock screen
     readable at a glance.
     """
-    services.notify(
+    notifications.notify(
         _audience(post.channel),
-        category=categories.chat_room_key(_channel(post.channel).slug),
+        category=channels.notification_category(_channel(post.channel).slug),
         title=post.author.full_name,
         body=push.preview(post.content) or "📷 Billede",
         url=_channel(post.channel).url,
@@ -82,9 +80,9 @@ def notify_new_comment(comment: "QuickComment") -> None:
     post = comment.post
     body = push.preview(comment.content) or "📷 Billede"
     if comment.author_id != post.author_id:
-        services.notify_grouped(
+        notifications.notify_grouped(
             post.author_id,
-            category=categories.CHAT_REPLIES,
+            category=notifications.CHAT_REPLIES,
             group_key=f"chat.replies:{post.pk}",
             actor=comment.author,
             verb="svarede",
@@ -93,9 +91,9 @@ def notify_new_comment(comment: "QuickComment") -> None:
             expires_at=post.expires_at,
         )
     if comment.notify_everyone:
-        services.notify(
+        notifications.notify(
             _audience(post.channel).exclude(pk=post.author_id),
-            category=categories.chat_room_key(_channel(post.channel).slug),
+            category=channels.notification_category(_channel(post.channel).slug),
             title=f"{comment.author.full_name} svarede",
             body=body,
             url=_thread_url(post),
@@ -108,9 +106,9 @@ def notify_reaction(post: "QuickPost", reactor: "Resident", emoji: str) -> None:
     """Somebody reacted to `post`. Grouped per post, so ten reactions are one notification that
     says "10 personer reagerede" rather than ten buzzes. Called on a NEW reaction only (see
     core.reactions.apply_toggle)."""
-    services.notify_grouped(
+    notifications.notify_grouped(
         post.author_id,
-        category=categories.CHAT_LIKES,
+        category=notifications.CHAT_LIKES,
         group_key=f"chat.likes:{post.pk}",
         actor=reactor,
         verb="reagerede på din besked",

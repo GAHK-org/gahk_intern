@@ -29,7 +29,7 @@ def test_session_cookie_domain_supports_site_hosts(
     assert configured["SESSION_COOKIE_DOMAIN"] == domain
 
 
-# ---------------------------------------------------------------- auth (F-014)
+# ---------------------------------------------------------------- auth
 @pytest.mark.django_db
 def test_legacy_sha256_upgrades_on_login(make_resident: Callable) -> None:
     make_resident(email="a@gahk.dk", password="hemmelig", legacy=True)
@@ -102,7 +102,7 @@ def test_monthly_role_is_time_bound(make_resident: Callable) -> None:
     assert r.has_role(Role.INDSTILLING, (y, m)) is False
 
 
-# ---------------------------------------------------------------- admissions (F-001)
+# ---------------------------------------------------------------- admissions
 def _rundvisning_data(motivation: str) -> dict[str, str]:
     return {
         "full_name": "Ny",
@@ -152,7 +152,7 @@ def test_rundvisning_rejects_501_character_motivation() -> None:
 @pytest.mark.django_db
 def test_rundvisning_emails_applicant_only() -> None:
     """The committee is no longer notified per rundvisning request; only the applicant auto-reply
-    goes out (F-011)."""
+    goes out."""
     mail.outbox = []
     Client().post(
         "/optagelse/send_rundvisning",
@@ -210,7 +210,7 @@ def test_mark_received_is_post_only_and_role_gated(make_resident: Callable) -> N
 
 @pytest.mark.django_db
 def test_applications_search_spans_all_pages(make_resident: Callable) -> None:
-    """Search filters the whole queryset before pagination, so a match on page 2 is found (F-011)."""
+    """Search filters the whole queryset before pagination, so a match on page 2 is found."""
     # Created first so that under the default newest-first order it's buried past page 1 (50/page).
     Application.objects.create(
         type="rundvisning",
@@ -239,7 +239,7 @@ def test_applications_search_spans_all_pages(make_resident: Callable) -> None:
 
 @pytest.mark.django_db
 def test_applications_sortable_by_uddannelse(make_resident: Callable) -> None:
-    """Columns can be sorted; e.g. by uddannelse asc/desc (F-011). Junk sort falls back safely."""
+    """Columns can be sorted; e.g. by uddannelse asc/desc. Junk sort falls back safely."""
     Application.objects.create(
         type="rundvisning",
         full_name="Aaron",
@@ -271,7 +271,7 @@ def test_applications_sortable_by_uddannelse(make_resident: Callable) -> None:
 @pytest.mark.django_db
 def test_discarded_application_hidden_from_list_and_search_with_toggle(make_resident: Callable) -> None:
     """Indstillingen can discard an application; it then drops out of the list and search unless the
-    show-discarded toggle is on, and can be un-discarded (F-011)."""
+    show-discarded toggle is on, and can be un-discarded."""
     app = Application.objects.create(
         type="rundvisning",
         full_name="Spam Bot",
@@ -312,7 +312,7 @@ def test_discarded_application_hidden_from_list_and_search_with_toggle(make_resi
 @pytest.mark.django_db
 def test_applications_pending_filter(make_resident: Callable) -> None:
     """The 'kun afventende' filter shows only not-yet-received applications, and composes with search
-    and the discarded filter (F-011)."""
+    and the discarded filter."""
     ind = make_resident(email="ind-p@gahk.dk", roles=[Role.INDSTILLING])
     waiting = Application.objects.create(
         type="rundvisning", full_name="Waiting Wanda", email="w@x.dk", submitted_at=timezone.now()
@@ -338,7 +338,7 @@ def test_applications_pending_filter(make_resident: Callable) -> None:
 @pytest.mark.django_db
 def test_applications_export_honours_filters_and_date_range(make_resident: Callable) -> None:
     """CSV/Excel export mirrors the list filters (search, kun afventende) plus a from/to date range,
-    and emits the contact columns (F-011)."""
+    and emits the contact columns."""
     ind = make_resident(email="ind-x@gahk.dk", roles=[Role.INDSTILLING])
 
     def app(**kw: object) -> Application:
@@ -404,7 +404,7 @@ def test_discard_is_role_gated(make_resident: Callable) -> None:
     assert app.discarded_by_id is None
 
 
-# ---------------------------------------------------------------- ølkælder money (F-003)
+# ---------------------------------------------------------------- ølkælder money
 @pytest.mark.django_db
 def test_purchase_split_is_exact_and_atomic(make_resident: Callable) -> None:
     from oelkaelder.models import Product, Shopper
@@ -515,9 +515,13 @@ def test_cms_admin_sanitizes_html_on_save(make_resident: Callable) -> None:
     admin = make_resident(email="admin@gahk.dk", roles=[Role.ADMINISTRATOR])
     c = Client()
     c.force_login(admin)
-    c.post(
+    # The address is posted as the form edits it (path_parent + path_segment); leaving it out
+    # silently saved the page with no address at all.
+    response = c.post(
         f"/django-admin/cms/page/{page.id}/change/",
         {
+            "path_parent": "",
+            "path_segment": "s",
             "slug": "s",
             "menu_category": "0",
             "header": "S",
@@ -525,7 +529,9 @@ def test_cms_admin_sanitizes_html_on_save(make_resident: Callable) -> None:
             "body": '<p>Hej</p><script>alert(1)</script><a href="javascript:evil()">x</a>',
         },
     )
+    assert response.status_code == 302
     page.refresh_from_db()
+    assert page.slug == "s"  # the save must not have cleared the page's address
     assert "<p>Hej</p>" in page.body  # safe markup kept
     assert "<script" not in page.body and "javascript:" not in page.body  # stripped
 
@@ -713,7 +719,7 @@ def test_body_media_rewrites_relative_and_absolute_legacy_urls() -> None:
     assert "gahk.dk/public" not in out and 'src="/public' not in out  # no http/relative leftovers
 
 
-# ---------------------------------------------------------------- visit counter (F-002/F-011)
+# ---------------------------------------------------------------- visit counter
 @pytest.mark.django_db
 def test_frontpage_counter_hashes_and_dedups() -> None:
     from stats.models import DailyVisitCount, VisitTally
@@ -812,7 +818,7 @@ def test_slashless_legacy_urls_redirect_instead_of_404() -> None:
 @pytest.mark.django_db
 def test_vaerelsestjek_is_open_to_every_resident(make_resident: Callable) -> None:
     """Room checks are done by whoever is around, so seeing and writing them is not gated on the
-    inspektion embedsgruppe (F-005). akoverview stays AK-only — it is the AK group's own screen."""
+    inspektion embedsgruppe. akoverview stays AK-only — it is the AK group's own screen."""
     from core.models import Room
     from rooms.models import RoomCondition, RoomCriterion
 
@@ -1042,38 +1048,6 @@ def test_vaerelsestjek_overview_renders_all_five_floor_plans(make_resident: Call
     assert "Stuen" in html and "4. sal" in html  # per-floor headings
 
 
-def test_relocate_media_splits_multi_image_paths() -> None:
-    """RoomConditionScore.image is a ';'-separated list; relocate_media treated the whole blob as one
-    filename, so multi-image rows silently missed (copied 40 vs the real 5709). It must split the same
-    way image_urls does, strip a leading slash, and skip URLs."""
-    from core.management.commands.relocate_media import legacy_image_segments
-
-    field = "public/image/a.jpg;/public/image/b.jpg;https://ex.com/c.jpg;"
-    assert legacy_image_segments(field) == ["public/image/a.jpg", "public/image/b.jpg"]
-    assert legacy_image_segments("") == []
-    assert legacy_image_segments(None) == []
-    assert legacy_image_segments("/public/image/x.jpg") == ["public/image/x.jpg"]  # leading slash
-
-
-@pytest.mark.django_db
-def test_relocate_media_segments_match_image_urls(make_resident: Callable) -> None:
-    """The paths relocate_media copies to must be exactly the paths image_urls asks the browser for,
-    or files land where nothing looks for them."""
-    from core.management.commands.relocate_media import legacy_image_segments
-    from core.models import Room
-    from rooms.models import RoomCondition, RoomConditionScore, RoomCriterion
-
-    rm = Room.objects.create(legacy_index=97, number=97, floor="stuen", side="mod gaden")
-    crit = RoomCriterion.objects.create(code="floor", name="Gulve", options=5)
-    cond = RoomCondition.objects.create(room=rm, recorded_at=timezone.now(), is_current=True)
-    s = RoomConditionScore.objects.create(
-        condition=cond, criterion=crit, image="public/image/a.jpg;/public/image/b.jpg"
-    )
-
-    assert s.image_urls == ["/media/public/image/a.jpg", "/media/public/image/b.jpg"]
-    assert ["/media/" + seg for seg in legacy_image_segments(s.image)] == s.image_urls
-
-
 @pytest.mark.django_db
 def test_room_clash_warning_is_indstilling_only(make_resident: Callable) -> None:
     """A room clash is flagged on the alumneliste, but only to indstilling (who can fix it) — not to
@@ -1117,7 +1091,7 @@ def test_cms_admin_link_in_sidebar_for_editor_roles(make_resident: Callable) -> 
 
 @pytest.mark.django_db
 def test_alumneliste_default_sort_is_alphabetical_and_sortable(make_resident: Callable) -> None:
-    """Default order is by name (not room number), and columns can be sorted asc/desc (F-010)."""
+    """Default order is by name (not room number), and columns can be sorted asc/desc."""
     from core.models import Room
     from residents.models import Residency, active_period
 

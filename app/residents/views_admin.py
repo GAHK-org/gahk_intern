@@ -1,4 +1,4 @@
-"""Public-site admin (F-002) — administrator-gated. The legacy privilege-escalation and open
+"""Public-site admin — administrator-gated. The legacy privilege-escalation and open
 mass-mailer are structurally gone; this provides the legitimate admin screens, chiefly assigning the
 monthly embedsgruppe roles."""
 
@@ -1129,19 +1129,30 @@ def worker_job_detail(request: HttpRequest, task_id: str) -> HttpResponse:
 def roles(request: HttpRequest) -> HttpResponse:
     year, month = active_period()
     if request.method == "POST":
-        rid = request.POST.get("resident")
+        raw_rid = request.POST.get("resident") or ""
         role = request.POST.get("role")
         action = request.POST.get("action")
-        if rid and role in Role.values:
+        # The id must be one of the residents this screen lists — someone living here in the active
+        # month — not any row in the table: otherwise a hand-edited POST could hand a role (even
+        # `administrator`) to a moved-out or never-resident account. isdigit() also turns a junk id
+        # into a refusal instead of a 500.
+        rid = int(raw_rid) if raw_rid.isdigit() else 0
+        listed = Resident.objects.filter(id=rid, residencies__year=year, residencies__month=month).exists()
+        if not listed:
+            messages.error(request, "Beboeren bor ikke på kollegiet i den viste måned.")
+        elif role in Role.values:
             if action == "add":
                 RoleAssignment.objects.get_or_create(resident_id=rid, role=role, year=year, month=month)
                 Resident.objects.filter(id=rid).update(is_staff=True)
                 # Stamp the granter so they cannot also be the approver (residents.admin_access).
                 # The grant itself is opened by the signal, which covers the other three doors.
+                # A refused grant is reopened here too: granting the role again is a new request.
                 if role == Role.ADMINISTRATOR:
+                    granter = current_resident(request)
                     AdminAccessGrant.objects.filter(
                         resident_id=rid, status=AdminAccessGrant.Status.PENDING, requested_by=None
-                    ).update(requested_by=current_resident(request))
+                    ).update(requested_by=granter)
+                    admin_access.reopen_denied(rid, granter)
             elif action == "remove":
                 RoleAssignment.objects.filter(resident_id=rid, role=role, year=year, month=month).delete()
         return redirect("siteadmin:roles")
@@ -1189,7 +1200,7 @@ def preview_set(request: HttpRequest) -> HttpResponseRedirect:
     return redirect("dashboard")
 
 
-# ---- DEV-ONLY simulated clock: fast-forward the month locally to test round rollover (F-004).
+# ---- DEV-ONLY simulated clock: fast-forward the month locally to test round rollover.
 # Hard-gated on settings.DEBUG — 404 in prod, so it can never be reached there. ----
 @require_POST
 @login_required

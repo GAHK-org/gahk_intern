@@ -26,7 +26,7 @@ from django.db.models import QuerySet
 from django.http import HttpRequest
 
 from core.rollout import Gate
-from residents.permissions import MODERATION_ROLES, View, effective_roles
+from residents.api import MODERATION_ROLES, View, effective_roles
 
 # None = every logged-in resident. A tuple = only those roles (administrator implies every role, so
 # administrators and superusers are always in).

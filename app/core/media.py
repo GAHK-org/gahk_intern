@@ -90,12 +90,11 @@ REDIRECT_CACHE_CONTROL = f"private, max-age={REDIRECT_MAX_AGE}"
 # Everything else needs a session, and was checked one prefix at a time:
 #   profile_pictures/  base.html avatar, residents' profile pages, alumneliste
 #   roomimages/        værelsestjek
-#   public/            relocate_media copies ONLY Product.image and RoomConditionScore.image legacy
-#                      paths here, and they land in DIFFERENT subtrees — image/intern/oel/ for the
+#   public/            ONLY Product.image and RoomConditionScore.image legacy paths were relocated
+#                      here, and they live in DIFFERENT subtrees — image/intern/oel/ for the
 #                      ølkælder (public, below) and image/intern/roomimages/ for værelsestjek (NOT).
 #                      That split is why the public entry is the long path and not a bare "public/".
-#                      Legacy CMS images are a different command (sync_cms_media) and land in
-#                      static/legacy/, not here.
+#                      Legacy CMS images live in static/legacy/, not here.
 #   opslag/            opslagstavlen        quick_posts/, quick_comments/  Den Hurtige
 #                      (opslag/kommentarer/ is a comment's attached photo — same prefix, so it
 #                      inherits the same "not public" answer without a second check)
@@ -108,7 +107,7 @@ PUBLIC_PREFIXES = (
     "cms/",
     # The till, which has no session. Product photos only — see above.
     "oel/",  # Product.image uploads
-    "public/image/intern/oel/",  # the same photos, legacy paths relocate_media kept
+    "public/image/intern/oel/",  # the same photos, at their relocated legacy paths
 )
 
 

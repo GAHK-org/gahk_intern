@@ -1,4 +1,4 @@
-"""Residents can log their own AK labour: positive krydser + required description (F-009)."""
+"""Residents can log their own AK labour: positive krydser + required description."""
 
 from collections.abc import Callable
 

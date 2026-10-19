@@ -40,8 +40,7 @@ from django.http import HttpRequest
 from django.utils import timezone
 
 from core.rollout import Gate
-from residents.models import Residency, Resident, Role, active_period
-from residents.permissions import View, current_resident, request_has_role
+from residents.api import Resident, Role, View, current_resident, request_has_role, workgroup_ids_of
 
 from .models import ArchiveFile, ArchiveFolder
 
@@ -98,12 +97,7 @@ def current_workgroup_ids(resident: Resident) -> list[int]:
     empty set rather than None, which would silently match nothing in some places and everything in
     others.
     """
-    year, month = active_period()
-    return list(
-        Residency.objects.filter(resident=resident, year=year, month=month, workgroup__isnull=False)
-        .values_list("workgroup_id", flat=True)
-        .distinct()
-    )
+    return workgroup_ids_of(resident.pk)
 
 
 def visible_folders(resident: Resident) -> QuerySet[ArchiveFolder]:

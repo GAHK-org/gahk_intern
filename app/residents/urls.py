@@ -1,14 +1,14 @@
-"""Internal members area + auth, under /intern/. F-013/F-014."""
+"""Internal members area + auth, under /intern/."""
 
 from django.contrib.auth import views as auth_views
 from django.urls import include, path
 
-from . import views, views_regnskab
+from . import views
 from .forms import EmailAuthenticationForm, ResidentPasswordResetForm
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
-    path("regnskab/", views_regnskab.overview, name="regnskab"),
+    path("regnskab/", include("regnskab.urls")),
     path("alumneliste/", views.directory, name="directory"),
     path("alumneliste/rows", views.directory_rows, name="directory_rows"),
     path("alumneliste/eksport", views.directory_export, name="directory_export"),
@@ -53,7 +53,7 @@ urlpatterns = [
         ),
         name="password_change_done",
     ),
-    # Password reset (F-014) — links expire after 2h (PASSWORD_RESET_TIMEOUT)
+    # Password reset — links expire after 2h (PASSWORD_RESET_TIMEOUT)
     path(
         "admin/password-reset",
         auth_views.PasswordResetView.as_view(

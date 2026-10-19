@@ -332,7 +332,8 @@ class QuickComment(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
 
-    # Determines notification scope: everyone subscribed, or only the original poster.
+    # Determines notification scope: the room's whole audience (as each resident's room setting
+    # allows), or only the original poster.
     notify_everyone = models.BooleanField(
         default=False,
         help_text="Sand: push til alle abonnenter. Falsk: kun til opslagets forfatter.",

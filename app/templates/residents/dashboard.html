@@ -18,38 +18,13 @@
   <div class="glance">
     <span class="g"><span class="gk">Aktiv måned</span> <b>{{ period }}</b></span>
     <span class="g"><span class="gk">Dine roller</span>
-      {% for r in roles %}<span class="chip">{{ r }}</span>{% empty %}<span class="muted">Ingen særlige denne måned</span>{% endfor %}
+      {% for r in role_labels %}<span class="chip">{{ r }}</span>{% empty %}<span class="muted">Ingen særlige denne måned</span>{% endfor %}
     </span>
   </div>
 
   <div class="grid2">
-    <div class="card-flat">
-      <div class="card-head"><h2>Begivenheder på GAHK</h2>{% if agenda is not None %}<a href="{% url 'events:calendar' %}">Åbn kalenderen →</a>{% endif %}</div>
-      <div class="card-pad">
-        {% if agenda is None %}
-          <p class="muted">Begivenheder er ikke åbnet for dig endnu.</p>
-        {% else %}
-          <ul class="agenda">
-            {% for item in agenda %}
-              <li>
-                {% if item.url %}<a class="agenda-row" href="{{ item.url }}">{% else %}<div class="agenda-row{% if item.maerkedag %} is-maerkedag{% endif %}">{% endif %}
-                  <span class="agenda-date"><span class="agenda-day">{{ item.day|date:"j" }}</span><span class="agenda-mon">{{ item.day|date:"M" }}</span></span>
-                  <span class="agenda-body">
-                    <span class="agenda-title{% if item.cancelled %} is-cancelled{% endif %}">
-                      {% if item.maerkedag %}<svg class="cal-flag" aria-hidden="true"><use href="#i-dannebrog"></use></svg>{% endif %}{{ item.title }}
-                    </span>
-                    <span class="agenda-meta">{% if item.time %}{{ item.day|date:"l" }} kl. {{ item.time }}{% if item.note %} · {% endif %}{% endif %}{{ item.note }}</span>
-                  </span>
-                  {% if item.cancelled %}<span class="chip chip-neg">Aflyst</span>{% elif item.maerkedag %}<span class="chip chip-brass">Mærkedag</span>{% endif %}
-                {% if item.url %}</a>{% else %}</div>{% endif %}
-              </li>
-            {% empty %}
-              <li class="muted">Ingen kommende begivenheder. <a href="{% url 'events:create' %}">Opret en →</a></li>
-            {% endfor %}
-          </ul>
-        {% endif %}
-      </div>
-    </div>
+    {# Features' cards, such as begivenheder's calendar: residents.api.register_dashboard_card #}
+    {% for card in dashboard_cards %}{{ card }}{% endfor %}
 
     <div class="card-flat">
       <div class="card-head"><h2>Genveje</h2></div>

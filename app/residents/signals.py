@@ -6,8 +6,8 @@ admin — keeps admin access correct. Superusers are left untouched (they must s
 
 The `administrator` role additionally opens an AdminAccessGrant that a *second* administrator has to
 accept (residents.admin_access). It is opened here rather than in the role editor on purpose: the
-monthly list, the soeg-vaerelse roll-forward and the ETL all mint role rows too, and a gate that only
-one of four doors respects is not a gate.
+monthly list and the soeg-vaerelse roll-forward mint role rows too, and a gate that only one of
+three doors respects is not a gate.
 """
 
 from django.db import transaction

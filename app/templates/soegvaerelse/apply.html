@@ -37,7 +37,7 @@
       </select>
     </div>
     <label>Orlov (antal måneder)</label>
-    <input type="number" name="orlov_months" value="{{ existing_orlov_months|default:0 }}" min="0"
+    <input type="number" name="orlov_months" value="{{ existing_orlov_months|default:0 }}" min="0" max="{{ max_orlov_months }}"
            hx-get="{% url 'soegvaerelse:kvotient' %}" hx-target="#kv-result" hx-trigger="change, keyup changed delay:400ms" hx-include="closest form">
     {% if has_move_in %}
       <p class="muted text-sm mt-1">

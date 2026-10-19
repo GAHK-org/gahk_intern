@@ -1,8 +1,7 @@
-"""Django settings for the GAHK rewrite (config project).
+"""Django settings for the GAHK rewrite (config project). Target DB is PostgreSQL (via DATABASE_URL)."""
 
-Schema/decisions: see ../02-schema-etl.md. Target DB is PostgreSQL (via DATABASE_URL).
-"""
-
+import hashlib
+import hmac
 import os
 from pathlib import Path
 
@@ -57,6 +56,7 @@ INSTALLED_APPS = [
     "arkiv",
     "photo_album",
     "notifications",
+    "regnskab",
 ]
 
 MIDDLEWARE = [
@@ -136,11 +136,11 @@ if os.environ.get("DATABASE_POOL") == "1":
     DATABASES["default"]["CONN_MAX_AGE"] = 0  # the pool refuses to run alongside persistent connections
     DATABASES["default"].setdefault("OPTIONS", {})["pool"] = {"min_size": 2, "max_size": 20}
 
-# --- Auth (01-infrastructure.md A4/A5; 02-schema-etl.md §1.6) ---
+# --- Auth ---
 AUTH_USER_MODEL = "residents.Resident"
 
 # First hasher = default for new/upgraded passwords. The legacy hasher (last) only verifies the old
-# unsalted sha256 hashes, then Django re-hashes on next login (upgrade-on-login, scope §5).
+# unsalted sha256 hashes, then Django re-hashes on next login (upgrade-on-login).
 PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.PBKDF2PasswordHasher",
     "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
@@ -155,7 +155,7 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
-# Password-reset links expire after 2 hours (F-014 decision, 2026-06).
+# Password-reset links expire after 2 hours (decided 2026-06).
 PASSWORD_RESET_TIMEOUT = 7200
 
 LANGUAGE_CODE = "da"
@@ -328,10 +328,6 @@ CELERY_BEAT_SCHEDULE = {
         "task": "oelkaelder.tasks.send_monthly_statements",
         "schedule": crontab(minute=10, hour=6, day_of_month=1),
     },
-    "send-admin-dummy-notification": {
-        "task": "core.tasks.send_admin_dummy_notification",
-        "schedule": crontab(minute=0, hour="8,16"),
-    },
 }
 
 STATIC_URL = "static/"
@@ -448,7 +444,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
-# Secrets (WiFi/calendar/SMTP) come from the environment (.env / vault), never source. (F-013)
+# Secrets (WiFi/calendar/SMTP) come from the environment (.env / vault), never source.
 LOGIN_URL = "/intern/admin/login"
 LOGIN_REDIRECT_URL = "/intern/"
 LOGOUT_REDIRECT_URL = "/intern/admin/login"
@@ -475,14 +471,22 @@ INDSTILLING_EMAIL = os.environ.get("INDSTILLING_EMAIL", "indstillingen@gahk.dk")
 OELKAELDER_BANK_REG = os.environ.get("OELKAELDER_BANK_REG", "9070")
 OELKAELDER_BANK_ACCOUNT = os.environ.get("OELKAELDER_BANK_ACCOUNT", "1642635456")
 
-# Front-page visit counter: server-side secret for HMAC-hashing visitor IPs (F-002/F-011).
-VISIT_COUNTER_HMAC_KEY = os.environ.get("VISIT_COUNTER_HMAC_KEY", "dev-hmac-key")
+# Front-page visit counter: server-side secret for HMAC-hashing visitor IPs.
+# Unset, it is derived from SECRET_KEY rather than a fixed public string: the IPv4 space is small
+# enough to hash exhaustively, so a key anyone can read in this repo would make every stored hash
+# reversible to its IP. Derived (not SECRET_KEY itself) so the two secrets are not interchangeable,
+# and it is secret whenever SECRET_KEY is. Rotating SECRET_KEY then resets visitor dedup — harmless.
+VISIT_COUNTER_HMAC_KEY = (
+    os.environ.get("VISIT_COUNTER_HMAC_KEY")
+    or hmac.new(SECRET_KEY.encode(), b"gahk.stats.visit-counter-ip-hash", hashlib.sha256).hexdigest()
+)
 
-# Cloudflare Turnstile on the public application forms (F-001). Unset in dev → the check is skipped.
+# Cloudflare Turnstile on the public application forms. On only when BOTH are set (unset in
+# dev → the check is skipped); one without the other is off too, and admissions.W001 warns about it.
 TURNSTILE_SITE_KEY = os.environ.get("TURNSTILE_SITE_KEY", "")
 TURNSTILE_SECRET_KEY = os.environ.get("TURNSTILE_SECRET_KEY", "")
 
-# Ølkælder till is an open kiosk on the GAHK LAN (F-003): purchases allowed without per-user login,
+# Ølkælder till is an open kiosk on the GAHK LAN: purchases allowed without per-user login,
 # but only from these source IPs (as seen by the server). In DEBUG the gate is open for testing.
 OELKAELDER_KIOSK_IPS = [ip for ip in os.environ.get("OELKAELDER_KIOSK_IPS", "").split(",") if ip]
 
@@ -494,14 +498,14 @@ WIKI_URL = os.environ.get("WIKI_URL", "/wiki/")
 # override FEEDBACK_URL if the repo moves or a different tracker is used.
 FEEDBACK_URL = os.environ.get("FEEDBACK_URL", "https://github.com/GAHK-org/gahk_intern/issues/new/choose")
 
-# Room-inspection photo uploads (F-005): server-side hard cap. Images are also downscaled client-side
+# Room-inspection photo uploads: server-side hard cap. Images are also downscaled client-side
 # before upload, so this is mainly a backstop against oversized/crafted uploads.
 ROOM_PHOTO_MAX_MB = int(os.environ.get("ROOM_PHOTO_MAX_MB", "5"))
 
-# Web Push for Den Hurtige (the PWA that replaces the Messenger group). The two keys are the RAW
+# Web Push for every notification (notifications.services → core.push). The two keys are the RAW
 # base64url VAPID pair, NOT the .pem files: VAPID_PUBLIC_KEY is handed to the browser as
-# `applicationServerKey`, which must be the 65-byte uncompressed EC point. app/.env.example shows how
-# to derive both from an existing PEM. Unset in dev → the subscribe button reports push unavailable.
+# `applicationServerKey`, which must be the 65-byte uncompressed EC point. Unset in dev →
+# notifications are in-app only and the settings page says push is not set up.
 VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")
 VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
 # Must be a real, monitored address: push services contact it about delivery problems, and some

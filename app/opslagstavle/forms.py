@@ -10,41 +10,31 @@ field-by-field rendering in the template) exists for.
 from django import forms
 
 from core.emoji import is_emoji, is_only_one_emoji, normalize_emoji
+from events.api import linkable_events
 
 from .models import MAX_BODY_CHARS, Notice, NoticeComment
 
 
-def linkable_events() -> object:
-    """The events a post may point at: upcoming, not cancelled, and OPEN TO EVERY RESIDENT.
-
-    The visibility filter is the load-bearing one. Opslagstavlen is readable by the whole house, so
-    a chip reading "Fødselsdag i 104 · 5. september" on a post about a private party would announce
-    the party to sixty people who were not invited — the one thing `kun inviterede` exists to
-    prevent. Restricting the CHOICES is also what validates the POST; see NoticeForm.__init__.
-
-    Cancelled events are dropped because linking to one is never what somebody means to do. An event
-    cancelled *after* it was linked keeps its chip, which is right — the post is how people find out
-    it is off.
-
-    Imported inside the function, not at module scope: `events` is a younger app that already points
-    back at this one in prose, and a deferred import keeps the dependency one-directional at import
-    time as well as on paper.
-    """
-    from events.models import Event, Visibility
-
-    return Event.objects.upcoming().filter(visibility=Visibility.AABENT, cancelled_at__isnull=True)
-
-
 class NoticeForm(forms.ModelForm):
+    # Not a ModelChoiceField over events.Event: that would mean importing another domain's model.
+    # The choices come from events.api.linkable_events() instead — upcoming, not cancelled and OPEN
+    # TO EVERY RESIDENT, the filter that keeps a private party's name off a board the whole house
+    # reads — and a ChoiceField validates the POST against its choices exactly as the queryset did.
+    # Saved by hand onto `event_id` in save(), which is why it is not in Meta.fields.
+    event = forms.TypedChoiceField(
+        label="Handler om",
+        required=False,
+        coerce=int,
+        empty_value=None,
+        help_text="Valgfrit. Knytter opslaget til en begivenhed, så folk kan gå direkte til tilmeldingen.",
+    )
+
     class Meta:
         model = Notice
         # Explicit, which kills mass-assignment: pinned_at/pinned_by/author/edited_at are set by the
         # views that are allowed to set them, never by whatever arrives in the POST body.
-        fields = ["category", "body", "event"]
-        labels = {"category": "Kategori", "body": "Indhold", "event": "Handler om"}
-        help_texts = {
-            "event": "Valgfrit. Knytter opslaget til en begivenhed, så folk kan gå direkte til tilmeldingen.",
-        }
+        fields = ["category", "body"]
+        labels = {"category": "Kategori", "body": "Indhold"}
         widgets = {
             "body": forms.Textarea(
                 attrs={
@@ -58,14 +48,14 @@ class NoticeForm(forms.ModelForm):
     def __init__(self, *args: object, events_allowed: bool = True, **kwargs: object) -> None:
         """Bind the event choices HERE, never at class level.
 
-        Two reasons, and the first is the ordinary one: the queryset depends on "now", so a
+        Two reasons, and the first is the ordinary one: the choices depend on "now", so a
         class-level definition would be evaluated at import and offer whichever events were upcoming
         when the process started.
 
         The second is the security one. The choices are the ONLY events a POST can name — a
-        ModelChoiceField validates the submitted id against this queryset — so restricting it here
-        is also what stops somebody posting the id of a private event they were not invited to and
-        having its title rendered on a board the whole house reads.
+        ChoiceField validates the submitted id against them — so restricting them here is also
+        what stops somebody posting the id of a private event they were not invited to and having
+        its title rendered on a board the whole house reads.
 
         `events_allowed=False` REMOVES the field rather than disabling it. Begivenheder has its own
         rollout gate, and offering somebody a list of events they cannot open is at best confusing;
@@ -76,8 +66,19 @@ class NoticeForm(forms.ModelForm):
         if not events_allowed:
             del self.fields["event"]
             return
-        self.fields["event"].queryset = linkable_events()  # type: ignore[attr-defined]
-        self.fields["event"].empty_label = "Ingen"  # type: ignore[attr-defined]
+        field: forms.TypedChoiceField = self.fields["event"]  # type: ignore[assignment]
+        field.choices = [("", "Ingen"), *((e.id, e.choice_label) for e in linkable_events())]
+        if self.instance.pk and not self.is_bound:
+            self.initial["event"] = self.instance.event_id
+
+    def save(self, commit: bool = True) -> Notice:
+        notice = super().save(commit=False)
+        if "event" in self.fields:
+            notice.event_id = self.cleaned_data.get("event")
+        if commit:
+            notice.save()
+            self.save_m2m()
+        return notice
 
     def clean_body(self) -> str:
         """Cap the body server-side as well as via maxlength.

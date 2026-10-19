@@ -103,6 +103,18 @@ BY_SLUG: dict[str, Channel] = {c.slug: c for c in CHANNELS}
 RESERVED_SLUGS = frozenset({"opslag", "opret", "abonner", "lyd", "arkiv", "kanaler"})
 
 
+# A room's notification category is "chat.room.<slug>": one per channel, each its own toggle on the
+# notifications settings page (registered by handlers.py). The key is stored on notification and
+# preference rows — the ChannelMute rows were carried over under it — so changing it is a data
+# migration, not an edit.
+NOTIFICATION_CATEGORY_PREFIX = "chat.room."
+
+
+def notification_category(slug: str) -> str:
+    """The notification category of the channel with this slug."""
+    return f"{NOTIFICATION_CATEGORY_PREFIX}{slug}"
+
+
 def lookup(slug: str | None) -> Channel | None:
     """The channel for a slug, or None if there is no such channel.
 

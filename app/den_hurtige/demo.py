@@ -6,7 +6,7 @@ from io import BytesIO
 
 from django.core.files.base import ContentFile
 
-from residents.models import Resident
+from residents.api import Resident
 
 from .models import DEFAULT_CHANNEL_SLUG, QuickComment, QuickPost, QuickReaction
 

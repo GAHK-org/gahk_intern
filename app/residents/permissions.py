@@ -1,8 +1,7 @@
-"""Authorization helpers built on the **monthly** role model (F-010).
+"""Authorization helpers built on the **monthly** role model.
 
 A resident's privileges come from their RoleAssignments in the *active* period (the newest published
-month). Superusers bypass. Replaces the legacy scattered/inverted per-controller session checks
-(01-infrastructure.md A5).
+month). Superusers bypass. Replaces the legacy scattered/inverted per-controller session checks.
 
 Role preview ("view site as role"): a real superuser / administrator may set a session override so the
 whole internal site renders as if they held a chosen role (or none). The distinction between *real*
@@ -93,7 +92,7 @@ def real_roles(user: AnyUser) -> set[str]:
     Resolving once per request is also the semantics you want from an authorization check: a request
     cannot end up half-authorized because someone edited roles while it was being handled. Nothing
     changes the current user's roles mid-request today (the role editor redirects, and the monthly
-    sync writes *next* month), but if that ever changes, call `forget_real_roles` after the write.
+    sync writes *next* month), but if that ever changes, drop the memo attribute after the write.
     """
     if not isinstance(user, Resident):
         return set()
@@ -102,13 +101,6 @@ def real_roles(user: AnyUser) -> set[str]:
         cached = _load_real_roles(user)
         setattr(user, _REAL_ROLES_MEMO, cached)
     return set(cached)  # a copy: a caller mutating the result must not poison the memo
-
-
-def forget_real_roles(user: AnyUser) -> None:
-    """Drop the memo so the next `real_roles` re-reads the DB. Needed only by code that changes the
-    *current* user's roles and must observe the change within the same request."""
-    if hasattr(user, _REAL_ROLES_MEMO):
-        delattr(user, _REAL_ROLES_MEMO)
 
 
 def can_preview(user: AnyUser) -> bool:

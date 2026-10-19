@@ -16,7 +16,7 @@ Postgres+S3-containere, bare uden web-containeren. Begge starter automatisk Post
 Docker og peger som standard appen på dem; brug `app/.env` (kopiér `app/.env.example`) for at
 tilpasse databasen eller andre indstillinger. SeaweedFS
 erstatter lokalt Hetzner Object Storage til uploads; `task s3:console` viser adressen på dets
-filbrowser. `task db:up` starter derudover MariaDB, som kun bruges til ETL fra det gamle site.
+filbrowser.
 
 `task seed` genererer deterministisk demo-data (beboere, værelser, AK, ølkælder,
 ansøgninger, opslagstavlen m.m.), så nye udviklere ser en udfyldt side med det samme. Kommandoen
@@ -49,6 +49,20 @@ task hooks        # installér prek git pre-commit hooks (kør én gang)
 runner) via `.pre-commit-config.yaml`. Derefter kører **ruff** (check + format) og **mypy** automatisk
 ved hvert commit. Kør manuelt på alt med `uv run prek run --all-files`. De samme tjek håndhæves i CI
 (`.github/workflows/ci.yml`): `lint`, `typecheck`, `test`, `security` og `build`.
+
+## Domænegrænser
+
+Hver Django-app ejer sine egne data og regler. Andre apps må kun bruge dens `api.py` (kommandoer,
+forespørgsler og events med id'er og DTO'er), aldrig dens modeller eller services.
+
+```sh
+task boundaries        # tach check + ORM-relationer på tværs af domæner + rå SQL
+task boundaries:graph  # tegn afhængighedsgrafen (Mermaid)
+```
+
+Reglerne, hvad der håndhæves automatisk, og hvad der kun fanges i review, står i
+[docs/domain-boundaries.md](docs/domain-boundaries.md). CI tjekker dem på hver PR
+(`.github/workflows/boundaries.yml`).
 
 ## Branches og pull requests
 

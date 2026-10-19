@@ -1,4 +1,4 @@
-"""CMS content (F-006/07/08). Migrated from the legacy site and rendered read-only on the public
+"""CMS content. Migrated from the legacy site and rendered read-only on the public
 side; edited at runtime only through the role-gated Django admin (see cms.admin), whose every HTML
 field is sanitized on save. HTML bodies are also sanitized on import, as defence-in-depth.
 
@@ -30,9 +30,8 @@ from .paths import validate_page_path
 
 class Page(models.Model):  # gahk_page
     # Legacy menuCat. Nothing reads it — the public menus are hard-coded lists in
-    # core.context_processors and sub-pages are found by slug prefix (cms.nav) — but the ETL writes
-    # it on every run and the values are the only surviving record of the legacy menu grouping, so
-    # the column stays. `editable=False` keeps it out of every ModelForm: it is an unlabelled number
+    # core.context_processors and sub-pages are found by slug prefix (cms.nav) — but the imported
+    # values are the only surviving record of the legacy menu grouping, so the column stays. `editable=False` keeps it out of every ModelForm: it is an unlabelled number
     # whose only effect on an editor is to invite a wrong guess.
     menu_category = models.PositiveSmallIntegerField(default=0, editable=False)
     # A path, not a slug: multi-segment by design (`faciliteter/kokken`), seeded from the legacy
@@ -74,7 +73,7 @@ class Page(models.Model):  # gahk_page
         return reverse("page", kwargs={"url_path": self.slug}) if self.slug else ""
 
 
-class NewsItem(models.Model):  # gahk_news — archive-only (live site shows the Facebook feed, F-007)
+class NewsItem(models.Model):  # gahk_news — archive-only (live site shows the Facebook feed)
     title = models.CharField(max_length=255)
     body = models.TextField(blank=True)
     published_at = models.DateTimeField()

@@ -22,7 +22,7 @@ from collections.abc import Callable
 from datetime import datetime
 from io import BytesIO
 
-from residents.models import Resident
+from residents.api import Resident
 
 from .models import ArchiveFile, ArchiveFolder, object_key, preview_key, thumbnail_key
 from .services import ensure_root_folders, sha256_of

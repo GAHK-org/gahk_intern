@@ -1,19 +1,20 @@
 """Rooms — two sub-domains:
-  * kvotient  : the room-application lottery (F-004) — intern_kvotient_*_nyintern
-  * condition : move-in/out condition inspection (F-005) — intern_room_condition / _criteria
+  * kvotient  : the room-application lottery — intern_kvotient_*_nyintern
+  * condition : move-in/out condition inspection — intern_room_condition / _criteria
 
 Fixes baked in: the K formula is preserved (decided correct); month integers are 0-indexed
 (decided); the multi-table application submit is wrapped in a transaction at the view layer; the
 cross-month cascade delete on closeOffer is scoped to the offer's month; the legacy delimited
-criteria/comment/image blobs are **normalized** into RoomConditionScore rows; only the current
-condition per room is kept; images are stored as files (FileField) with paths in the DB.
+criteria/comment/image blobs are **normalized** into RoomConditionScore rows; every report is kept
+as history (superseded ones get is_current=False, the latest is current); images are stored as
+files (FileField) with paths in the DB.
 """
 
 from django.db import models
 from django.utils import timezone
 
 
-# ----------------------------------------------------------------------------- kvotient (F-004)
+# ----------------------------------------------------------------------------- kvotient
 class KvotientApplication(models.Model):  # intern_kvotient_nyintern
     resident = models.ForeignKey(
         "residents.Resident", on_delete=models.CASCADE, related_name="kvotient_applications"
@@ -62,7 +63,7 @@ class KvotientOrlov(models.Model):  # intern_kvotient_orlov_nyintern (leave-of-a
 class RoomOffer(models.Model):  # intern_kvotient_offer_nyintern (a room offered in a given month)
     room = models.ForeignKey("core.Room", on_delete=models.PROTECT, related_name="offers")
     month = models.IntegerField()  # the month this room is offered for
-    # Manual tie resolution (F-004): when equal-K applicants contest this room, indstilling picks the
+    # Manual tie resolution: when equal-K applicants contest this room, indstilling picks the
     # winner (coin flip in the dorm) and it is recorded here; allocate_round then treats the room as
     # decided. Ephemeral — the offer (and this pointer) is deleted when the round ends.
     awarded_application = models.ForeignKey(
@@ -76,11 +77,11 @@ class RoomOffer(models.Model):  # intern_kvotient_offer_nyintern (a room offered
         return f"Tilbud: {self.room} ({self.month})"
 
 
-# --------------------------------------------------------------------------- condition (F-005)
+# --------------------------------------------------------------------------- condition
 class RoomCriterion(models.Model):  # intern_room_criteria
     code = models.CharField(max_length=50, unique=True)  # legacy varchar id
     name = models.CharField(max_length=50)
-    description = models.TextField(blank=True)  # the score legend shown under the field (F-005)
+    description = models.TextField(blank=True)  # the score legend shown under the field
     options = models.PositiveSmallIntegerField()  # scale *shape* selector — see score_values
 
     def __str__(self) -> str:
@@ -117,7 +118,7 @@ class RoomCriterion(models.Model):  # intern_room_criteria
         return value is None or value in self.score_values
 
 
-class RoomCondition(models.Model):  # intern_room_condition (only the current state kept, decided)
+class RoomCondition(models.Model):  # intern_room_condition (full history; is_current marks the latest)
     room = models.ForeignKey("core.Room", on_delete=models.CASCADE, related_name="conditions")
     resident = models.ForeignKey(
         "residents.Resident", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
@@ -134,7 +135,7 @@ class RoomCondition(models.Model):  # intern_room_condition (only the current st
 
 
 class RoomConditionScore(models.Model):
-    """Normalized from the legacy delimited criteria/comment/image blobs (F-005)."""
+    """Normalized from the legacy delimited criteria/comment/image blobs."""
 
     condition = models.ForeignKey(RoomCondition, on_delete=models.CASCADE, related_name="scores")
     criterion = models.ForeignKey(RoomCriterion, on_delete=models.PROTECT, related_name="+")
@@ -142,7 +143,7 @@ class RoomConditionScore(models.Model):
     comment = models.TextField(blank=True)
     # Legacy image path(s) as a raw string, kept read-only from the migration.
     image = models.TextField(blank=True)
-    # New uploads (F-005 refinement): a real file under MEDIA_ROOT. FileField → no Pillow dependency.
+    # New uploads: a real file under MEDIA_ROOT. FileField → no Pillow dependency.
     photo = models.FileField(upload_to="roomimages/%Y/", max_length=255, blank=True)
 
     class Meta:

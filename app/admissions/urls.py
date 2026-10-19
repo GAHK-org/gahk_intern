@@ -1,4 +1,4 @@
-"""Admissions URLs under /optagelse/ — legacy paths preserved (F-001)."""
+"""Admissions URLs under /optagelse/ — legacy paths preserved."""
 
 from django.urls import path
 

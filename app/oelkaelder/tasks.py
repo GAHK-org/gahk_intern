@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime, time, timedelta
 
 from celery import shared_task
@@ -8,6 +9,8 @@ from django.utils import timezone
 from django.utils.formats import date_format
 
 from .models import Shopper
+
+logger = logging.getLogger(__name__)
 
 
 def _previous_month(reference: date | None = None) -> tuple[date, date]:
@@ -50,11 +53,16 @@ def _balance_at(shopper: Shopper, upper: datetime) -> int:
 
 @shared_task
 def send_monthly_statements() -> int:
-    """Email every active ølkælder account holder their prior calendar-month ledger summary."""
+    """Email every active ølkælder account holder their prior calendar-month ledger summary.
+
+    A failed send is logged and skipped, not raised: one bad address used to abort the run and leave
+    every shopper after it in the loop without a statement. The failures are summarised in the job log
+    at the end so they are visible without reading each traceback. Returns the number sent."""
     start, end = _previous_month()
     lower = timezone.make_aware(datetime.combine(start, time.min))
     upper = timezone.make_aware(datetime.combine(end, time.min))
     sent = 0
+    failed: list[int] = []
     for shopper in Shopper.objects.filter(active=True, resident__is_active=True).select_related("resident"):
         deposits = shopper.deposits.filter(is_valid=True, created_at__gte=lower, created_at__lt=upper)
         purchases = shopper.purchase_shares.filter(
@@ -75,10 +83,21 @@ def send_monthly_statements() -> int:
                 f"Saldo ved månedens udgang: {_kr(_balance_at(shopper, upper))} kr",
             ]
         )
-        sent += send_mail(
-            f"Ølkælderoversigt for {_month_name(start)}",
-            body,
-            settings.OELKAELDER_FROM_EMAIL,
-            [shopper.resident.email],
+        try:
+            sent += send_mail(
+                f"Ølkælderoversigt for {_month_name(start)}",
+                body,
+                settings.OELKAELDER_FROM_EMAIL,
+                [shopper.resident.email],
+            )
+        except Exception:
+            logger.exception("Failed to send ølkælder statement to shopper#%s", shopper.pk)
+            failed.append(shopper.pk)
+    if failed:
+        logger.warning(
+            "Ølkælder statements: %d sent, %d failed (shopper ids: %s).",
+            sent,
+            len(failed),
+            ", ".join(map(str, failed)),
         )
     return sent

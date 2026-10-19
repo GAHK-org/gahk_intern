@@ -32,8 +32,7 @@ from django.db.models import Q, QuerySet
 from django.http import HttpRequest
 
 from core.rollout import Gate
-from residents.models import Resident
-from residents.permissions import View, current_resident
+from residents.api import Resident, View
 
 from .models import Event, EventComment, EventInvite, EventQuerySet, Visibility
 
@@ -174,8 +173,3 @@ def can_delete_comment(comment: EventComment, resident: Resident, *, host: bool 
     if comment.author_id == resident.pk:
         return True
     return is_host(comment.event, resident) if host is None else host
-
-
-def request_host(request: HttpRequest, event: Event) -> bool:
-    """`is_host` for a request, using the *effective* resident."""
-    return is_host(event, current_resident(request))

@@ -30,8 +30,8 @@
         {% comment %}
           Locked by default, but only when JS runs: the inputs are never `disabled`, because disabled
           fields do not POST — the trap the legacy worked around by re-enabling everything on save.
-          Without JS the row is simply editable and the form still works. F-005 records the legacy
-          disabled-until-JS pattern as a bug, so this is the same speed bump the other way up.
+          Without JS the row is simply editable and the form still works. The legacy
+          disabled-until-JS pattern was a bug, so this is the same speed bump the other way up.
         {% endcomment %}
         <tr x-data="{ locked: true }">
           <td class="p-2 align-top">{{ crit.name }}</td>
@@ -52,7 +52,8 @@
       {% endfor %}
       </tbody>
     </table>
-    <p class="muted mt-2">Store billeder skaleres automatisk ned før upload.</p>
+    <p class="muted mt-2">Store billeder skaleres automatisk ned før upload. Billeder fra den nuværende
+      rapport beholdes — et nyt billede erstatter kriteriets gamle.</p>
     <p class="mt-4"><button type="submit" class="btn">Gem tilstandsrapport</button></p>
   </form>
 {% endblock %}

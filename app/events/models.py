@@ -251,11 +251,6 @@ class Event(models.Model):
         return f"{self.title} ({self.starts_at:%d.%m.%Y})"
 
     @property
-    def effective_end(self) -> datetime.datetime:
-        """When this is over, for retention and for "er den forbi?"."""
-        return self.ends_at or self.starts_at
-
-    @property
     def is_cancelled(self) -> bool:
         return self.cancelled_at is not None
 
@@ -379,8 +374,8 @@ class EventComment(models.Model):
         multi-year archive on every månedsliste. This lives a week past its event, and groups
         rotate monthly, so the snapshot would be protecting an archive that does not exist —
         the same call reparationer.RepairComment already made. Importing that abstract base would
-        also make events depend on opslagstavle at import time, which views.py goes out of its way
-        to avoid (see _related_notices).
+        also make events depend on opslagstavle, which tach.toml forbids — opslagstavle depends
+        on events, never the reverse (see api.register_mention_provider).
       * **No reactions.** A reaction is a cheap way to say "seen" on a board post. Here the answer
         panel is the way to say anything that matters, and a second, weaker signal beside it just
         raises "does a 👍 count as tilmeldt?".

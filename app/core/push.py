@@ -30,7 +30,7 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.templatetags.static import static
 from pywebpush import WebPushException, webpush
 
-from residents.permissions import current_resident
+from residents.api import current_resident
 
 from .clock import current_datetime
 from .forms import PushSubscriptionForm

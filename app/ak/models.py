@@ -1,4 +1,4 @@
-"""AK — Aktivitetskrydser (F-009).
+"""AK — Aktivitetskrydser.
 
 Each month every resident is assessed -2 krydser (the cost of the 2 hours of dorm labour they owe);
 doing labour adds krydser back. The running balance may go negative (= behind/in debt); the goal is to
@@ -13,7 +13,7 @@ from django.db import models
 from django.db.models import Q, Sum
 from django.utils import timezone
 
-from residents.models import Resident
+from residents.api import Resident
 
 
 class AkEntry(models.Model):
@@ -63,7 +63,7 @@ class AkEntry(models.Model):
 
 
 class AkMonthlyCharge(models.Model):
-    """Per-calendar-month schedule for the AK monthly kryds deduction (F-009).
+    """Per-calendar-month schedule for the AK monthly kryds deduction.
 
     AK officers set, for each month of the year (januar…december), how many krydser are subtracted and
     whether that month is charged at all. The amount is the same every year (keyed on `month`, not a

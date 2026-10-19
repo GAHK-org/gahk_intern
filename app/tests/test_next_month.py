@@ -1,4 +1,4 @@
-"""Indstilling's monthly task: prepare next month's alumneliste (F-010).
+"""Indstilling's monthly task: prepare next month's alumneliste.
 
 Flow mirrors the legacy list management: copy the current list forward, edit each resident's room /
 embedsgruppe (workgroup) / cleaning, and add or remove people. A privileged embedsgruppe grants the
@@ -499,6 +499,37 @@ def test_you_cannot_remove_yourself_from_the_live_list(make_resident: Callable) 
 
 
 @pytest.mark.django_db
+def test_a_refused_self_removal_still_counts_you_in_your_groups(make_resident: Callable) -> None:
+    """The refused row was skipped entirely, so a fixed-size embedsgruppe came up one short and the
+    whole save failed with a wrong "skal have N medlemmer" error instead of saving the rest."""
+    cy, cm = active_period()
+    wg = Workgroup.objects.create(name="Indstillingen", size=1)
+    ind = make_resident(email="ind@gahk.dk", roles=("indstilling",))
+    room = Room.objects.create(legacy_index=405, number=405, floor="4", side="mod gaden")
+    other = Room.objects.create(legacy_index=406, number=406, floor="4", side="mod gaden")
+    Residency.objects.create(resident=ind, room=room, workgroup=wg, year=cy, month=cm)
+
+    c = Client()
+    c.force_login(ind)
+    resp = c.post(
+        URL,
+        {
+            "period": "current",
+            "action": "save",
+            f"remove_{ind.id}": "1",
+            f"room_{ind.id}": other.id,
+            f"workgroup_{ind.id}": wg.id,
+        },
+        follow=True,
+    )
+
+    html = resp.content.decode()
+    assert "fjerne dig selv" in html
+    assert "skal have" not in html
+    assert Residency.objects.get(resident=ind, year=cy, month=cm).room == other  # the rest saved
+
+
+@pytest.mark.django_db
 def test_removing_yourself_from_next_month_is_still_allowed(make_resident: Callable) -> None:
     """Recording your own move-out is normal; the guard is only about the list in effect."""
     ny, nm = next_period(active_period())
@@ -519,7 +550,7 @@ def test_removing_yourself_from_next_month_is_still_allowed(make_resident: Calla
 @pytest.mark.django_db
 def test_fylgje_can_be_set_when_the_resident_is_created(make_resident: Callable) -> None:
     """Recording it here is the point: a follow-up trip through the edit form is the step that gets
-    skipped, and the stamtræ (F-011) ends up with holes."""
+    skipped, and the stamtræ ends up with holes."""
     ind = make_resident(email="ind@gahk.dk", roles=("indstilling",))
     fylgje = make_resident(email="gammel@gahk.dk", first_name="Gammel", last_name="Beboer")
     room = Room.objects.create(legacy_index=405, number=405, floor="4", side="mod gaden")
@@ -579,3 +610,63 @@ def test_the_create_form_offers_a_fylgje_picker(make_resident: Callable) -> None
 
     assert 'name="sponsor"' in html
     assert "Gammel Beboer" in html
+
+
+@pytest.mark.django_db
+def test_add_new_catches_an_existing_mixed_case_email(make_resident: Callable) -> None:
+    """add_new lowercases the typed address but compared case-sensitively, so an existing
+    "Mixed@GAHK.dk" was missed and a duplicate account created."""
+    make_resident(email="Mixed.Case@GAHK.dk")
+    room = Room.objects.create(legacy_index=601, number=601, floor="6", side="mod gaden")
+    c = _login(make_resident(email="ind@gahk.dk", roles=("indstilling",)))
+    resp = c.post(
+        URL,
+        {
+            "action": "add_new",
+            "first_name": "Ny",
+            "last_name": "Dublet",
+            "email": "mixed.case@gahk.dk",
+            "room": room.id,
+        },
+    )
+    assert "Der findes allerede en beboer med den e-mail." in resp.content.decode()
+    assert Resident.objects.filter(email__iexact="mixed.case@gahk.dk").count() == 1
+
+
+@pytest.mark.django_db
+def test_you_cannot_move_yourself_out_of_indstillingen_on_the_live_list(
+    make_resident: Callable, groups: dict[str, Room | Workgroup | Cleaning]
+) -> None:
+    """Your live indstilling role comes from your embedsgruppe, so changing it on the current list
+    locked you out mid-edit — the same trap as removing yourself. Refused; the rest still saves."""
+    c, ind, target = _setup(make_resident, groups)
+    cy, cm = active_period()
+    resp = c.post(
+        URL,
+        {
+            "action": "save",
+            "period": "current",
+            f"room_{ind.id}": groups["r1"].id,
+            f"workgroup_{ind.id}": groups["plain"].id,  # would drop my own indstilling role
+            f"room_{target.id}": groups["r3"].id,
+            f"workgroup_{target.id}": groups["plain"].id,
+        },
+        follow=True,
+    )
+    assert "flytte dig selv ud af Indstillingen" in resp.content.decode()
+    assert Residency.objects.get(resident=ind, year=cy, month=cm).workgroup == groups["priv"]
+    assert RoleAssignment.objects.filter(resident=ind, year=cy, month=cm, role=Role.INDSTILLING).exists()
+    assert Residency.objects.get(resident=target, year=cy, month=cm).room == groups["r3"]  # still saved
+
+
+@pytest.mark.django_db
+def test_changing_your_own_embedsgruppe_next_month_is_still_allowed(
+    make_resident: Callable, groups: dict[str, Room | Workgroup | Cleaning]
+) -> None:
+    c, ind, _target = _setup(make_resident, groups)
+    c.post(URL, {"action": "copy"})
+    ny, nm = next_period(active_period())
+    c.post(
+        URL, {"action": "save", f"room_{ind.id}": groups["r1"].id, f"workgroup_{ind.id}": groups["plain"].id}
+    )
+    assert Residency.objects.get(resident=ind, year=ny, month=nm).workgroup == groups["plain"]

@@ -33,7 +33,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from core import push
 from core.clock import current_datetime
 from core.models import PushSubscription
-from residents.models import Residency, Resident, RoleAssignment, active_period
+from residents.api import Resident, resident_ids_with_any_role, roster_resident_ids
 
 from . import categories, live
 from .categories import Importance
@@ -76,12 +76,12 @@ def everyone() -> QuerySet[Resident]:
     nobody who was being notified before stops being notified because the residency list is a month
     behind. Features narrow this further with their rollout gate (access.allowed_residents).
     """
-    year, month = active_period()
-    living = Residency.objects.filter(year=year, month=month).values("resident_id")
-    roles = RoleAssignment.objects.filter(year=year, month=month).values("resident_id")
     devices = PushSubscription.objects.values("user_id")
     return Resident.objects.filter(is_active=True).filter(
-        Q(pk__in=living) | Q(pk__in=roles) | Q(pk__in=devices) | Q(is_superuser=True)
+        Q(pk__in=roster_resident_ids())
+        | Q(pk__in=resident_ids_with_any_role())
+        | Q(pk__in=devices)
+        | Q(is_superuser=True)
     )
 
 

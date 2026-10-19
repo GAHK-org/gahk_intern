@@ -1,0 +1,62 @@
+name: Domain boundaries
+
+# Fails a pull request that reaches into another domain's internals. The rules, and what each check
+# can and cannot see, are in docs/domain-boundaries.md. Three checks, because there are three ways in:
+#
+#   imports    tach check: a domain imports another only through its `api` module, sibling features
+#              only along the arrows declared in tach.toml, and never up a layer or round a cycle.
+#   relations  manage.py check --tag domain_boundaries: a ForeignKey into another domain must not
+#              give that domain a reverse accessor onto this one's table (core/boundaries.py) — the
+#              ORM's way past every import check.
+#   raw-sql    ruff TID251 (app/ruff.toml): importing django.db.connection or RawSQL outside the
+#              allow-listed operator files. CI's `lint` job runs it too, as part of all of ruff; it is
+#              repeated here so this workflow alone answers "did this PR cross a boundary".
+#
+# To make a red one block merging, add "tach", "relations" and "raw-sql" to the required status
+# checks of the main and dev rulesets.
+
+on:
+  pull_request:
+  push:
+    branches: [main, dev]
+
+env:
+  UV_PYTHON: "3.13"
+
+jobs:
+  tach:
+    name: tach
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with: { enable-cache: true }
+      # Static: parses the source, imports nothing, needs no database or settings.
+      - run: uv run tach check
+
+  relations:
+    name: relations
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: app } }
+    env:
+      # Builds the model registry, which needs settings but not a database connection. DEBUG only so
+      # settings accepts the absent DATABASE_URL; the tag limits the run to the one check.
+      DJANGO_DEBUG: "1"
+      DJANGO_SECRET_KEY: ci-secret
+      VISIT_COUNTER_HMAC_KEY: ci
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with: { enable-cache: true }
+      - run: uv run python manage.py check --tag domain_boundaries --fail-level ERROR
+
+  raw-sql:
+    name: raw-sql
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: app } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with: { enable-cache: true }
+      # Only the banned-api rule, with ruff.toml's per-file allow-list. The rest of ruff is `lint`'s job.
+      - run: uv run ruff check --select TID251 .

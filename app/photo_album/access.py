@@ -5,8 +5,7 @@ from django.db.models import QuerySet
 from django.http import HttpRequest
 from django.utils import timezone
 
-from residents.models import Role
-from residents.permissions import current_resident, request_has_role
+from residents.api import Role, current_resident, request_has_role
 
 from .models import MANUAL_MAX_ALBUM_DEPTH, Album, Media, MediaStatus
 
@@ -117,7 +116,7 @@ def _is_deletable(media: Media) -> bool:
     """Neither route applies to an item that is already gone or whose album has closed.
 
     The lock is a property of the ALBUM, not of the reader, and no role gets past it: once an album
-    locks, its media cannot be deleted by anyone (spec/features/Photo-album.md). That is why it sits
+    locks, its media cannot be deleted by anyone (spec/features/photo-album.md). That is why it sits
     here rather than in either of the role checks below.
     """
     return media.deleted_at is None and not media.album.is_locked()
@@ -149,7 +148,7 @@ def can_curate_delete(media: Media, request: HttpRequest) -> bool:
 def can_permanently_delete(media: Media, request: HttpRequest) -> bool:
     """The hour runs from the UPLOAD, not from the binning. Deliberate — do not "fix" it.
 
-    spec/features/Photo-album.md reads "a binned item may be permanently deleted manually only while
+    spec/features/photo-album.md reads "a binned item may be permanently deleted manually only while
     it is less than one hour old", where "it" is the item: manual purge exists to undo a mistake
     somebody just made, not to give managers a way to erase the album's history on demand.
 
