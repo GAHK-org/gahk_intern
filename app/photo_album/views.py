@@ -714,13 +714,19 @@ def selection(request: HttpRequest) -> HttpResponse:
     if action == "delete":
         done = 0
         items = list(Media.objects.filter(pk__in=ids).select_related("album"))
+        # One Album instance per album, so its lock is worked out once rather than once per item
+        # (each select_related copy has its own cache). Every item still gets its own checks.
+        albums = {media.album_id: media.album for media in items}
         for media in items:
+            media.album = albums[media.album_id]
             if access.can_withdraw(media, request):
                 services.permanently_delete(media)
             elif access.can_curate_delete(media, request):
                 services.delete(media, resident)
             else:
                 continue
+            for album in albums.values():
+                album.media_removed(media)
             done += 1
         messages.success(request, f"{done} medier er fjernet.")
         if skipped := len(ids) - done:
@@ -1164,16 +1170,18 @@ def serve_media(request: HttpRequest, path: str) -> HttpResponseBase:
     cached = cache.cached_file(media, key)
     if cached is not None:
         try:
-            body = cached.read_bytes()
+            local = cached.open("rb")
         except OSError:
             pass  # evicted between the two lines; the bucket still has it
         else:
-            response = HttpResponse(
-                body, content_type=mimetypes.guess_type(key)[0] or "application/octet-stream"
+            # Streamed rather than read into memory first: an animated GIF's HD copy can run to
+            # many megabytes. Once it is open, an eviction no longer matters — the handle keeps it.
+            copy = FileResponse(
+                local, content_type=mimetypes.guess_type(key)[0] or "application/octet-stream"
             )
-            response.headers["Cache-Control"] = CACHED_FILE_CACHE_CONTROL
-            response.headers["Vary"] = "Cookie"
-            return response
+            copy.headers["Cache-Control"] = CACHED_FILE_CACHE_CONTROL
+            copy.headers["Vary"] = "Cookie"
+            return copy
 
     storage = media.original.storage
     signer = getattr(storage, "signed_url", None)
