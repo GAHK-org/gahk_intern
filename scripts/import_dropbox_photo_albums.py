@@ -9,7 +9,8 @@
 """Import the photo archive in Dropbox (/GAHK billeder/<year>/<album>) into the photo album.
 
 One album at a time: list it in Dropbox, check it against the server's own import rules, download it
-as a ZIP, send it to the system import endpoint, wait for the result, delete the ZIP. Sub-folders
+as a ZIP, send it straight to the server's bucket in parts and start the import, wait for the
+result, delete the ZIP. Sub-folders
 become sub-albums (up to the server's depth limit). The server imports an archive completely or
 not at all, so a failed album leaves nothing half-imported behind, and locks every album it imports
 this way (Fotogruppen can unlock one that needs a change).
@@ -264,6 +265,8 @@ class Server:
         self.session.headers.update(
             {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         )
+        # For the presigned part URLs (photo_album.direct_upload), which must not carry the token.
+        self.bucket = requests.Session()
 
     def _request(
         self,
@@ -344,19 +347,42 @@ class Server:
         The server adds it to an album of the same name if there is one, storing only files that
         album does not already have. With `album`, the ZIP's paths are relative to that album.
 
-        Sent again if the connection fails: the server only takes an import on once the whole
-        upload is in, and answers it at once, so a connection lost on the way means it has none.
+        Straight to the server's bucket, in parts, when it has one (photo_album.direct_upload):
+        through the app, the proxy in front of it cuts any upload that takes more than a minute,
+        which stopped the 3.2 GB "Bornholm med GAHK - April 06" twelve times. Then the import is
+        started with the upload's ticket, a request of a few hundred bytes.
+
+        Without a bucket the ZIP goes with the request, as before, and is sent again if the
+        connection fails: the server only takes an import on once the whole upload is in, and
+        answers it at once, so a connection lost on the way means it has none.
         """
-        with archive.open("rb") as handle:
+        upload = self._begin_upload(archive)
+        if upload is not None:
+            out.info(f"    straight to the bucket, in {len(upload['urls'])} part(s)")
+            etags = self._send_parts(archive, upload)
             response = self._request(
                 "POST",
                 self.endpoint,
-                what=f"send {archive.name}",
-                rewind=lambda: handle.seek(0),
-                data={"folder": folder, "album": album},
-                files={"archive": (archive.name, handle, "application/zip")},
-                timeout=(30, None),
+                what=f"start the import of {archive.name}",
+                data={
+                    "folder": folder,
+                    "album": album,
+                    "ticket": upload["ticket"],
+                    "parts": json.dumps(etags),
+                },
+                timeout=(30, 300),
             )
+        else:
+            with archive.open("rb") as handle:
+                response = self._request(
+                    "POST",
+                    self.endpoint,
+                    what=f"send {archive.name}",
+                    rewind=lambda: handle.seek(0),
+                    data={"folder": folder, "album": album},
+                    files={"archive": (archive.name, handle, "application/zip")},
+                    timeout=(30, None),
+                )
         if response.status_code == 400:
             raise AlbumFailed("The server refused the upload.", form_errors(response))
         if response.status_code == 413:
@@ -365,6 +391,90 @@ class Server:
             )
         response.raise_for_status()
         return urljoin(self.endpoint, response.json()["statusUrl"])
+
+    def _begin_upload(self, archive: Path) -> dict[str, Any] | None:
+        """The bucket upload the server sets up for `archive`: a ticket, the part size and a URL
+        per part. None to send the ZIP with the import instead — a server without a bucket says so,
+        and one older than direct uploads has no such address."""
+        response = self._request(
+            "POST",
+            f"{self.endpoint}/upload",
+            what=f"ask where to send {archive.name}",
+            data={"name": archive.name, "size": archive.stat().st_size},
+            timeout=60,
+        )
+        if response.status_code == 404:
+            return None
+        if response.status_code == 400:
+            raise AlbumFailed("The server refused the upload.", form_errors(response))
+        response.raise_for_status()
+        upload = response.json()
+        return upload if upload.get("direct") else None
+
+    def _send_parts(self, archive: Path, upload: dict[str, Any]) -> list[str]:
+        """Send `archive` to the upload's part URLs, a part at a time; returns their ETags in order."""
+        size, part_size, urls = (
+            archive.stat().st_size,
+            int(upload["partSize"]),
+            upload["urls"],
+        )
+        etags: list[str] = []
+        reported = 0
+        with archive.open("rb") as handle:
+            for number, url in enumerate(urls, 1):
+                handle.seek((number - 1) * part_size)
+                etags.append(
+                    self._send_part(
+                        url, handle.read(part_size), f"part {number} of {len(urls)}"
+                    )
+                )
+                sent = min(number * part_size, size)
+                if sent - reported >= size / 10 or number == len(urls):
+                    out.info(f"    … {human_size(sent)} of {human_size(size)} sent")
+                    reported = sent
+        return etags
+
+    def _send_part(self, url: str, data: bytes, what: str) -> str:
+        """PUT one part to its presigned URL; returns the bucket's ETag for it.
+
+        Tried again on its own, as `_request` tries a request: a busy bucket RETRIES times before
+        the album fails, an unreachable one UNREACHABLE_RETRIES times before the run stops. The URL
+        is the credential, so none of the session's headers go with it.
+        """
+        busy = unreachable = 0
+        while True:
+            try:
+                response = self.bucket.put(url, data=data, timeout=(30, 300))
+            except (requests.ConnectionError, requests.Timeout) as exc:
+                unreachable += 1
+                if unreachable > UNREACHABLE_RETRIES:
+                    raise Fatal(
+                        f"The bucket did not answer {UNREACHABLE_RETRIES + 1} times in a row while"
+                        f" sending {what} ({exc.__class__.__name__}). Giving up."
+                    ) from exc
+                out.warn(
+                    f"    … {what}: no answer ({exc.__class__.__name__}); trying again in"
+                    f" {UNREACHABLE_WAIT}s ({unreachable}/{UNREACHABLE_RETRIES})"
+                )
+                time.sleep(UNREACHABLE_WAIT)
+                continue
+            if response.ok and response.headers.get("ETag"):
+                return response.headers["ETag"]
+            if not _transient(response):
+                raise AlbumFailed(
+                    f"The bucket refused {what}: HTTP {response.status_code}.",
+                    [response.text[:500]],
+                )
+            busy += 1
+            if busy == RETRIES:
+                raise AlbumFailed(
+                    f"Could not send {what}: HTTP {response.status_code}."
+                )
+            wait = 2**busy
+            out.warn(
+                f"    … {what}: HTTP {response.status_code}; retrying in {wait}s ({busy}/{RETRIES - 1})"
+            )
+            time.sleep(wait)
 
     def status(self, url: str) -> dict[str, Any]:
         response = self._request(

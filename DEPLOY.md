@@ -126,8 +126,17 @@ before the app saw any of it — one large photo-album upload took the server do
 
 **If that ceases to be an acceptable trade**, the answer is more processes, not a bigger one:
 `--workers 3` on the uvicorn command, or the `web` service at several replicas that Coolify
-load-balances. There is no request timeout (Daphne's `-t 60` went with Daphne): a long request
-holds its thread for as long as it takes, which is why long work belongs in Celery.
+load-balances. There is no request timeout in the app (Daphne's `-t 60` went with Daphne): a long
+request holds its thread for as long as it takes, which is why long work belongs in Celery.
+
+**But the proxy has one: Coolify's Traefik drops a request whose body takes more than 60 seconds to
+arrive** (Traefik v3's default `readTimeout`). Measured on 2026-10-19: a body dribbled in at 16 KB/s
+got a 502 after 61 s. That is what stopped the Dropbox album "Bornholm med GAHK - April 06" (3.2 GB)
+twelve times while every album under 540 MB went through. The import script now sends archives
+straight to the bucket (`photo_album/direct_upload.py`), as Arkiv does, but a resident uploading a
+large video through the album page on a slow line still meets it. Raising it is a Coolify setting
+(the proxy's configuration, e.g. `--entrypoints.https.transport.respondingTimeouts.readTimeout=3600s`),
+not something this repository controls.
 
 ### 4a. Deploys: CI builds the image, the server pulls it
 
@@ -419,7 +428,7 @@ than a snippet somebody pastes into a shell.
 
 | ID | Prefix | What it does |
 | --- | --- | --- |
-| `abort-incomplete-uploads` | (all) | aborts stalled multipart uploads after 7 days |
+| `abort-incomplete-uploads` | (all) | aborts stalled multipart uploads after 7 days — including an import archive the Dropbox script stopped sending halfway |
 | `expire-noncurrent-arkiv` | `arkiv/` | purged originals actually go, 30 days later |
 | `expire-noncurrent-arkiv-thumb` | `arkiv-thumb/` | derived, so 1 day |
 | `expire-noncurrent-arkiv-preview` | `arkiv-preview/` | derived, so 1 day |
