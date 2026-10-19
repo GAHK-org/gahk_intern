@@ -18,7 +18,7 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-insecure-change-me")
 DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
 ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 
-# Behind Coolify/Traefik, TLS is terminated at the proxy and plain HTTP is forwarded to Daphne.
+# Behind Coolify/Traefik, TLS is terminated at the proxy and plain HTTP is forwarded to uvicorn.
 # Trust the forwarded-proto header so request.is_secure(), CSRF, and secure cookies see HTTPS —
 # without this, every form POST (login included) fails CSRF in prod.
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
@@ -34,7 +34,6 @@ CSRF_COOKIE_SECURE = not DEBUG
 SITE_URL = os.environ.get("SITE_URL", "http://localhost:8000" if DEBUG else "https://gahk.dk")
 
 INSTALLED_APPS = [
-    "daphne",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -57,6 +56,7 @@ INSTALLED_APPS = [
     "reparationer",
     "arkiv",
     "photo_album",
+    "notifications",
 ]
 
 MIDDLEWARE = [
@@ -85,6 +85,7 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "core.context_processors.navigation",
+                "notifications.context_processors.notifications",
             ],
         },
     },
@@ -100,6 +101,19 @@ if not DATABASE_URL:
         raise ImproperlyConfigured("DATABASE_URL must be configured outside development.")
 
 DATABASES = {"default": dj_database_url.config(default=DATABASE_URL, conn_max_age=600)}
+
+# Under ASGI (config/asgi.py sets DATABASE_POOL) Django runs each request on a thread of its own, and
+# a persistent connection opened there is never closed: the request ends, its thread goes, and the
+# connection stays open until the process exits. In production that filled Postgres's 100
+# connections — a photo album's thumbnails are a request each, so browsing albums got there fast —
+# and from then on every page was a 500 until the next redeploy. Django's advice for ASGI is a pool
+# instead of persistent connections: a request borrows a connection and hands it back when it ends,
+# and max_size bounds what the process holds however many requests run at once (a request beyond it
+# waits for one, up to the pool's 30-second timeout).
+# Celery, manage.py and the tests are not ASGI and keep conn_max_age: their threads live on.
+if os.environ.get("DATABASE_POOL") == "1":
+    DATABASES["default"]["CONN_MAX_AGE"] = 0  # the pool refuses to run alongside persistent connections
+    DATABASES["default"].setdefault("OPTIONS", {})["pool"] = {"min_size": 2, "max_size": 20}
 
 # --- Auth (01-infrastructure.md A4/A5; 02-schema-etl.md §1.6) ---
 AUTH_USER_MODEL = "residents.Resident"
@@ -149,24 +163,61 @@ CELERY_TASK_REJECT_ON_WORKER_LOST = True
 # `retries` NULL in celery_taskmeta — which are four of the columns the siteadmin worker-jobs page
 # selects and displays, so "Worker", "Kø" and "Forsøg" were permanently blank there.
 CELERY_RESULT_EXTENDED = True
+# Never expire results by age: Celery's own cleanup would delete failed jobs along with the rest.
+# core.tasks.purge_worker_job_results deletes successful ones after a month, and others only from
+# piles of more than 1000 of one task and status, once 60 days old.
+CELERY_RESULT_EXPIRES = None
+# A management command run from a task (`purge_photo_album`, …) prints its summary to stdout, which
+# the worker redirects into logging — at WARNING by default, so every routine "Removed 0 item(s)"
+# showed up as a warning in the job's stored log (core/worker_logs.py) and the worker's own output.
+CELERY_WORKER_REDIRECT_STDOUTS_LEVEL = "INFO"
 # The default ceiling for a scheduled job: generous for a sweep, and short enough that a wedged one
 # does not hold a worker slot all night. The two photo-album jobs legitimately run longer and set
 # their own limits at the task — see photo_album/tasks.py::MEDIA_TASK_TIME_LIMIT.
 #
-# Redelivery from the two settings above does NOT make the reapers redundant: `build_album_download`
-# and `process_album_import` both refuse to run unless their row is still QUEUED, and by the time a
-# worker is lost it is BUILDING — so the redelivered message returns False and the row stays wedged.
-# What rescues those is fail_stalled_downloads; what rescues a media row is its claim expiring.
+# Redelivery from the two settings above does NOT re-run a lost download or import: by then its row
+# is BUILDING under the message's own task id, which the task takes as its worker having died and
+# marks failed (photo_album.tasks._claim_job). Redelivery is not the whole safety net, either — a
+# worker container killed outright redelivers nothing — so fail_stalled_downloads and
+# fail_stalled_imports also sweep for jobs that stopped reporting progress. A media row is rescued
+# by its claim expiring.
 CELERY_TASK_TIME_LIMIT = 900
+# One message at a time per worker process. The default of four lets a process sit on three more
+# while it runs an hour-long encode — messages the other worker could have started, and that are
+# lost rather than redelivered if the container is killed with them in hand.
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+# Two workers, so a quick job never waits behind an encode: everything defaults to "celery", run by
+# `worker`; what reads or writes whole media files goes to "media", run by `worker-media` one job at
+# a time (docker-compose.prod.yml). One at a time is also what keeps the box out of the OOM killer:
+# an import, a ZIP build and an ffmpeg encode side by side is what ran it out of memory.
+#
+# Photo thumbnails are the exception, chosen when they are queued (photo_album.tasks.
+# queue_derivatives): their own "thumbnails" queue, which `worker` takes from by turns with
+# "celery". The route below is only the fallback for a derivative queued any other way.
+CELERY_TASK_ROUTES = {
+    "photo_album.tasks.build_media_derivatives": {"queue": "media"},
+    "photo_album.tasks.build_album_download": {"queue": "media"},
+    "photo_album.tasks.process_album_import": {"queue": "media"},
+    "photo_album.tasks.backfill_media_hashes": {"queue": "media"},
+}
 
 # A local migration client uses this bearer token to submit album ZIP imports as the non-login
 # System resident. Leave blank to disable token-authenticated imports.
 PHOTO_ALBUM_IMPORT_TOKEN = os.environ.get("PHOTO_ALBUM_IMPORT_TOKEN", "")
 PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL = os.environ.get("PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL", "system@gahk.dk")
+# `manage.py delete_photo_album` refuses anything created or uploaded on or after this date
+# (YYYY-MM-DD). Blank means the command's own default, 2026-10-01; a date in the future is refused.
+PHOTO_ALBUM_DELETE_PROTECTED_FROM = os.environ.get("PHOTO_ALBUM_DELETE_PROTECTED_FROM", "")
 CELERY_BEAT_SCHEDULE = {
     "purge-expired-applications": {
         "task": "admissions.tasks.purge_expired_applications",
         "schedule": crontab(minute=20, hour=3),
+    },
+    # Rows stop showing at their TTL by comparison (Notification.objects.active); this only frees
+    # the space, a month later, once the admin statistics are done counting them.
+    "purge-expired-notifications": {
+        "task": "notifications.tasks.purge_expired_notifications",
+        "schedule": crontab(minute=30, hour=3),
     },
     "purge-orphaned-notice-images": {
         "task": "opslagstavle.tasks.purge_orphaned_images",
@@ -197,12 +248,25 @@ CELERY_BEAT_SCHEDULE = {
         "task": "ak.tasks.apply_monthly_assessment",
         "schedule": crontab(minute=10, hour=4, day_of_month=1),
     },
-    # Hourly, and deliberately not daily: what it clears is a download the resident is still
-    # watching a spinner for, so the gap between "the worker died" and "the page says so" is the
-    # thing being minimised.
+    # Every quarter of an hour, matching JOB_STALLED_AFTER: what it clears is a download the
+    # resident is still watching a spinner for, so the gap between "the worker died" and "the page
+    # says so" is the thing being minimised. Off the hour, like everything else here.
     "fail-stalled-photo-album-downloads": {
         "task": "photo_album.tasks.fail_stalled_downloads",
-        "schedule": crontab(minute=5),
+        "schedule": crontab(minute="5-59/15"),
+    },
+    # The same for imports, which the import page and the Dropbox script are waiting on.
+    "fail-stalled-photo-album-imports": {
+        "task": "photo_album.tasks.fail_stalled_imports",
+        "schedule": crontab(minute="10-59/15"),
+    },
+    "purge-worker-job-logs": {
+        "task": "core.tasks.purge_worker_job_logs",
+        "schedule": crontab(minute=40, hour=4),
+    },
+    "purge-worker-job-results": {
+        "task": "core.tasks.purge_worker_job_results",
+        "schedule": crontab(minute=45, hour=4),
     },
     # 04:50, after every other sweep: the rows it deletes are the messages those sweeps were
     # delivered on, so running it last keeps one night's work visible in the table while that work
@@ -216,6 +280,13 @@ CELERY_BEAT_SCHEDULE = {
         # Uploads enqueue their own derivative build on commit. This is only the nightly recovery
         # pass for broker messages lost while unavailable or work stranded by a killed worker.
         "schedule": crontab(minute=0, hour=2),
+    },
+    # 02:40, after the derivative recovery pass at 02:00. Only rows stored before hashing existed
+    # need it; each run reads originals for at most HASH_BACKFILL_BUDGET and leaves the rest for
+    # the next night, so the deploy needs no manual step and the box is never held for long.
+    "backfill-photo-album-hashes": {
+        "task": "photo_album.tasks.backfill_media_hashes",
+        "schedule": crontab(minute=40, hour=2),
     },
     "remind-rsvp-deadlines": {
         "task": "events.tasks.remind_rsvp_deadlines",
@@ -314,6 +385,12 @@ _MEDIA_S3_OPTIONS = {
     # so the grep for "backups" finds this comment.
     "location": "media",
     "object_parameters": {"CacheControl": "private, max-age=604800"},
+    # How much of a file opened for reading is held in memory before the rest goes to a temporary
+    # file. django-storages defaults it to 0, which Python's SpooledTemporaryFile reads as "never
+    # roll over" — so every `.open()` downloaded the WHOLE object into RAM: a video before its
+    # encode, an album ZIP before its import. A ZIP of several hundred MB had the import worker at
+    # 800 MB when the kernel's OOM killer took it.
+    "max_memory_size": 10 * 1024 * 1024,
 }
 
 # Photo-album originals/derivatives (photo_album.storage.PhotoAlbumS3Storage): same bucket and
@@ -426,6 +503,11 @@ LOGGING = {
             "level": os.environ.get("CORE_LOG_LEVEL", "INFO"),
             "propagate": False,
         },
+        # INFO, so the lines a photo-album job logs (an import's left-out files, a ZIP's size) reach
+        # the job's stored log (core/worker_logs.py) even where the root logger is at WARNING. No
+        # handler of its own: it propagates to the worker's, and in the web process nothing prints
+        # below WARNING.
+        "photo_album": {"level": os.environ.get("PHOTO_ALBUM_LOG_LEVEL", "INFO")},
     },
 }
 
@@ -458,6 +540,21 @@ EVENT_IMAGE_MAX_MB = int(os.environ.get("EVENT_IMAGE_MAX_MB", "5"))
 # same value to avoid a GIF being postable in one place and not the next.
 ANIMATED_IMAGE_MAX_MB = int(os.environ.get("ANIMATED_IMAGE_MAX_MB", "5"))
 
+# The ceiling for a HEIC/HEIF photo, and for the same kind of reason as the one above: the format
+# cannot go through the browser downscaler. Only Safari can decode HEIC, so from any other browser a
+# straight-from-the-camera iPhone photo arrives at full size. A 48-megapixel one is well past 5 MB.
+# core.uploads converts it to a downscaled JPEG before it is stored, so this only bounds what one
+# request may upload and decode, not what ends up in the bucket.
+HEIF_IMAGE_MAX_MB = int(os.environ.get("HEIF_IMAGE_MAX_MB", "25"))
+
+# Ølkælder product photos. They were not checked at all until HEIC support made the upload path
+# worth looking at, and oel/ is a PUBLIC media prefix (core.media.PUBLIC_PREFIXES), so an
+# unchecked SVG there would have been script served from our own origin to anyone.
+PRODUCT_IMAGE_MAX_MB = int(os.environ.get("PRODUCT_IMAGE_MAX_MB", "5"))
+
+# Profile pictures. Was a literal 5 in residents.forms.
+PROFILE_PICTURE_MAX_MB = int(os.environ.get("PROFILE_PICTURE_MAX_MB", "5"))
+
 # Photo album uploads. Two ceilings rather than one: the album deliberately keeps the ORIGINAL at
 # full resolution (unlike every other feature here, which downscales in the browser first), so a
 # modern phone photo legitimately arrives at 10-15 MB, and a clip from the same phone is an order of
@@ -465,3 +562,22 @@ ANIMATED_IMAGE_MAX_MB = int(os.environ.get("ANIMATED_IMAGE_MAX_MB", "5"))
 # each feature caps its own uploads, so an ops change for one cannot silently change another.
 PHOTO_ALBUM_IMAGE_MAX_MB = int(os.environ.get("PHOTO_ALBUM_IMAGE_MAX_MB", "50"))
 PHOTO_ALBUM_VIDEO_MAX_MB = int(os.environ.get("PHOTO_ALBUM_VIDEO_MAX_MB", "1000"))
+
+# A local copy of the album's thumbnails and HD images (photo_album.cache), so the grid does not
+# bounce every tile off S3. Empty turns it off; production sets it to a volume so a redeploy starts
+# warm. The two budgets are separate so one HD-heavy evening cannot push every thumbnail out.
+PHOTO_ALBUM_CACHE_DIR = os.environ.get("PHOTO_ALBUM_CACHE_DIR", "")
+PHOTO_ALBUM_CACHE_THUMBNAIL_MB = int(os.environ.get("PHOTO_ALBUM_CACHE_THUMBNAIL_MB", "2048"))
+PHOTO_ALBUM_CACHE_HD_MB = int(os.environ.get("PHOTO_ALBUM_CACHE_HD_MB", "3072"))
+
+# The same kind of local copy for Den Hurtige's and opslagstavlen's image attachments (core.media,
+# core.disk_cache). It defaults to the photo album's directory, so the production volume and the
+# dev setups already configured for that one work for this too; the copies go in a subdirectory of
+# their own. Empty turns it off.
+MEDIA_CACHE_DIR = os.environ.get("MEDIA_CACHE_DIR", PHOTO_ALBUM_CACHE_DIR)
+MEDIA_CACHE_ATTACHMENTS_MB = int(os.environ.get("MEDIA_CACHE_ATTACHMENTS_MB", "2048"))
+# Only images people are still looking at are copied; an ARCHIVED one is served by a redirect to
+# the bucket, as before. Den Hurtige archives a message itself, when it expires. Opslagstavlen keeps
+# every post forever and has no archive, so for caching purposes an opslag counts as archived this
+# many days after it was posted.
+NOTICE_IMAGE_CACHE_DAYS = int(os.environ.get("NOTICE_IMAGE_CACHE_DAYS", "30"))

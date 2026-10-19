@@ -16,7 +16,7 @@ overlapping numbers.
 A wrong VAPID key pair has no server-side symptom whatsoever: Django starts, the feed renders, the
 subscribe button appears, and the only evidence is the browser refusing to subscribe — as a generic
 `AbortError` from the push service, which is indistinguishable from being offline. Every mistake
-that is cheap to detect is therefore detected here, so `manage.py check` (which `runserver` and the
+that is cheap to detect is therefore detected here, so `manage.py check` (which the dev servers and the
 deploy both run) reports it in one line instead.
 
 Checked, in order of how easy each is to get wrong:

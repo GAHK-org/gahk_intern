@@ -19,10 +19,21 @@ by URL, exactly as the legacy /public/ images were, so anyone who guessed
 resident's photograph. PUBLIC_PREFIXES is what that decision collapsed to; its derivation is
 recorded there, because "which of these is the front page allowed to need" is the question a future
 reader will actually have.
+
+A THIRD BRANCH, IN FRONT OF BOTH, for image attachments people are still looking at. Den Hurtige's
+feed and a fresh opslag are read by most of the house within hours, and each of those reads was a
+302 to the bucket. A prefix registered with `register_cacheable` is served from a local disk copy
+(core.disk_cache) while its owner says the file is live, and goes back to the redirect once it is
+archived: an old file is read rarely enough that a copy on this disk would only take room from the
+live ones. See register_cacheable.
 """
 
+import mimetypes
 import posixpath
+from collections.abc import Callable
+from pathlib import Path
 
+from django.conf import settings
 from django.contrib.auth.views import redirect_to_login
 from django.core.exceptions import SuspiciousOperation
 from django.core.files.storage import storages
@@ -30,12 +41,15 @@ from django.http import (
     FileResponse,
     Http404,
     HttpRequest,
+    HttpResponse,
     HttpResponseNotModified,
     HttpResponseRedirect,
 )
 from django.http.response import HttpResponseBase
 from django.utils.http import http_date
 from django.views.static import was_modified_since
+
+from core.disk_cache import cached_copy, discard
 
 # How long the browser may reuse the redirect, and how long the signature it points at stays valid.
 #
@@ -98,6 +112,61 @@ PUBLIC_PREFIXES = (
 )
 
 
+# --- the local copy of live attachments ------------------------------------------------------------
+
+# The attachment cache's subdirectory of MEDIA_CACHE_DIR. That defaults to the photo album's cache
+# directory, whose own copies live in "thumbnail/" and "high-definition/", so the three never meet.
+ATTACHMENTS = "attachments"
+
+# What a cached copy may be kept for by the browser. A day, like the photo album's: the key never
+# changes meaning (the bucket refuses to overwrite), and `private` because it was served past the
+# login check above.
+CACHED_COPY_CACHE_CONTROL = "private, max-age=86400"
+
+_cacheable: list[tuple[str, Callable[[str], bool]]] = []
+
+
+def register_cacheable(prefix: str, is_live: Callable[[str], bool]) -> None:
+    """Serve files under `prefix` from the local disk copy while `is_live(name)` says so.
+
+    Called from the owning app's AppConfig.ready(), so this module never imports a feature's models.
+    `is_live` gets the storage name and answers whether the file still belongs to something people
+    are reading; it is asked on every request, so it should be one indexed query. False, or a name
+    no row claims, means the redirect to the bucket, exactly as for an unregistered prefix.
+
+    The longest matching prefix wins, so "opslag/kommentarer/" can have a rule of its own beside
+    "opslag/".
+    """
+    _cacheable.append((prefix, is_live))
+    _cacheable.sort(key=lambda entry: len(entry[0]), reverse=True)
+
+
+def _attachment_directory() -> Path | None:
+    configured = getattr(settings, "MEDIA_CACHE_DIR", "")
+    return Path(configured) / ATTACHMENTS if configured else None
+
+
+def _cached_attachment(name: str) -> Path | None:
+    directory = _attachment_directory()
+    if directory is None:
+        return None
+    is_live = next((rule for prefix, rule in _cacheable if name.startswith(prefix)), None)
+    if is_live is None or not is_live(name):
+        return None
+    return cached_copy(
+        directory, name, storages["default"], settings.MEDIA_CACHE_ATTACHMENTS_MB * 1024 * 1024
+    )
+
+
+def discard_cached_attachment(name: str) -> None:
+    """Drop the local copy of `name`, if any. core.files calls this for every file it deletes, so a
+    deleted photo is gone from this disk as well as from the bucket."""
+    directory = _attachment_directory()
+    if directory is None or not any(name.startswith(prefix) for prefix, _rule in _cacheable):
+        return
+    discard(directory, name)
+
+
 def _clean(path: str) -> str | None:
     """The storage name a request is really asking for, or None if it is not asking honestly.
 
@@ -134,6 +203,20 @@ def serve_media(request: HttpRequest, path: str) -> HttpResponseBase:
         # Cache-Control, so the anonymous redirect is never stored and replayed to a logged-in
         # resident — the reason the authenticated branch below sets Vary: Cookie as well.
         return redirect_to_login(request.get_full_path())
+
+    cached = _cached_attachment(name)
+    if cached is not None:
+        try:
+            body = cached.read_bytes()
+        except OSError:
+            pass  # evicted between the two lines; the bucket still has it
+        else:
+            copy = HttpResponse(
+                body, content_type=mimetypes.guess_type(name)[0] or "application/octet-stream"
+            )
+            copy.headers["Cache-Control"] = CACHED_COPY_CACHE_CONTROL
+            copy.headers["Vary"] = "Cookie"
+            return copy
 
     path = name
     storage = storages["default"]

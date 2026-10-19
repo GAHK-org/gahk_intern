@@ -43,10 +43,27 @@ erDiagram
         string p256dh
         string user_agent
         datetime created_at
-        bool wants_den_hurtige
-        bool wants_opslagstavle
-        bool wants_begivenheder
-        bool wants_reparationer
+        datetime last_success_at
+        int failure_count
+    }
+
+    core_WorkerJobLog {
+        int id PK
+        string task_id
+        string task_name
+        string state
+        datetime started_at
+        datetime finished_at
+        json lines
+        int omitted
+    }
+
+    core_PushDeliveryDay {
+        int id PK
+        date date
+        int delivered
+        int failed
+        int removed
     }
 
     residents_Resident {
@@ -65,6 +82,7 @@ erDiagram
         int sponsor_id FK
         string fylgje_raw
         string profile_picture
+        string profile_thumbnail
         text bio
         string facebook_link
         string instagram_handle
@@ -391,13 +409,6 @@ erDiagram
         datetime created_at
     }
 
-    den_hurtige_ChannelMute {
-        int id PK
-        int resident_id FK
-        string channel
-        datetime created_at
-    }
-
     opslagstavle_Notice {
         int id PK
         string author_embedsgruppe
@@ -542,10 +553,18 @@ erDiagram
         bool has_preview
     }
 
+    photo_album_Tag {
+        int id PK
+        string name
+    }
+
     photo_album_Album {
         int id PK
         string folder
         string name
+        int parent_id FK
+        string path
+        int depth
         datetime created_at
         datetime manually_locked_at
         datetime unlocked_at
@@ -554,7 +573,10 @@ erDiagram
     photo_album_Media {
         int id PK
         int album_id FK
+        string uuid
         string title
+        string filename
+        string sha256
         string original
         string high_definition
         string thumbnail
@@ -566,6 +588,8 @@ erDiagram
         int requested_by_id FK
         datetime added_at
         datetime captured_at
+        datetime file_modified_at
+        datetime sort_at
         string status
         int approved_by_id FK
         datetime approved_at
@@ -577,12 +601,16 @@ erDiagram
         int id PK
         int album_id FK
         int requested_by_id FK
+        string name
+        string variant
         json media_ids
         string token
         string task_id
         string state
         string archive_key
         string error
+        json progress
+        datetime progressed_at
         datetime created_at
         datetime completed_at
     }
@@ -598,9 +626,67 @@ erDiagram
         string state
         json album_ids
         json skipped
+        json errors
+        bool lock_when_done
+        bool merge_into_existing
+        string album_name
+        bool merged
         string error
+        json progress
+        datetime progressed_at
         datetime created_at
         datetime completed_at
+    }
+
+    photo_album_MediaView {
+        int id PK
+        int media_id FK
+        int resident_id FK
+        int count
+        datetime first_viewed_at
+        datetime last_viewed_at
+    }
+
+    photo_album_FeaturedMedia {
+        int id PK
+        date date
+        int position
+        int media_id FK
+    }
+
+    notifications_Notification {
+        int id PK
+        int recipient_id FK
+        string category
+        int importance
+        string title
+        string body
+        string url
+        string group_key
+        json actors
+        string batch
+        bool in_app
+        bool pushed
+        datetime created_at
+        datetime updated_at
+        datetime expires_at
+        datetime seen_at
+    }
+
+    notifications_NotificationPreference {
+        int id PK
+        int resident_id FK
+        string category
+        bool in_app
+        bool push
+        bool vibrate
+    }
+
+    notifications_NotificationSettings {
+        int id PK
+        int resident_id FK
+        bool vibrate
+        int vibrate_min_importance
     }
 
     core_PushSubscription }o--|| residents_Resident : "user"
@@ -645,7 +731,6 @@ erDiagram
     den_hurtige_QuickComment }o--|| residents_Resident : "author"
     den_hurtige_QuickReaction }o--|| den_hurtige_QuickPost : "post"
     den_hurtige_QuickReaction }o--|| residents_Resident : "author"
-    den_hurtige_ChannelMute }o--|| residents_Resident : "resident"
     opslagstavle_Notice }o--|| residents_Resident : "author"
     opslagstavle_Notice }o--|o residents_Resident : "pinned_by"
     opslagstavle_Notice }o--|o events_Event : "event"
@@ -675,13 +760,22 @@ erDiagram
     arkiv_ArchiveFile }o--|| arkiv_ArchiveFolder : "folder"
     arkiv_ArchiveFile }o--|o residents_Resident : "uploaded_by"
     arkiv_ArchiveFile }o--|o residents_Resident : "deleted_by"
+    photo_album_Album }o--|o photo_album_Album : "parent"
+    photo_album_Album }o--o{ photo_album_Tag : "tags"
     photo_album_Media }o--|| photo_album_Album : "album"
     photo_album_Media }o--|| residents_Resident : "requested_by"
     photo_album_Media }o--|o residents_Resident : "approved_by"
     photo_album_Media }o--|o residents_Resident : "deleted_by"
-    photo_album_AlbumDownload }o--|| photo_album_Album : "album"
+    photo_album_Media }o--o{ photo_album_Tag : "tags"
+    photo_album_AlbumDownload }o--|o photo_album_Album : "album"
     photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
     photo_album_AlbumImport }o--|| residents_Resident : "requested_by"
+    photo_album_MediaView }o--|| photo_album_Media : "media"
+    photo_album_MediaView }o--|| residents_Resident : "resident"
+    photo_album_FeaturedMedia }o--|| photo_album_Media : "media"
+    notifications_Notification }o--|| residents_Resident : "recipient"
+    notifications_NotificationPreference }o--|| residents_Resident : "resident"
+    notifications_NotificationSettings ||--|| residents_Resident : "resident"
 ```
 
 ## admissions
@@ -909,10 +1003,27 @@ erDiagram
         string p256dh
         string user_agent
         datetime created_at
-        bool wants_den_hurtige
-        bool wants_opslagstavle
-        bool wants_begivenheder
-        bool wants_reparationer
+        datetime last_success_at
+        int failure_count
+    }
+
+    core_WorkerJobLog {
+        int id PK
+        string task_id
+        string task_name
+        string state
+        datetime started_at
+        datetime finished_at
+        json lines
+        int omitted
+    }
+
+    core_PushDeliveryDay {
+        int id PK
+        date date
+        int delivered
+        int failed
+        int removed
     }
 
     residents_Resident { }
@@ -953,13 +1064,6 @@ erDiagram
         datetime created_at
     }
 
-    den_hurtige_ChannelMute {
-        int id PK
-        int resident_id FK
-        string channel
-        datetime created_at
-    }
-
     residents_Resident { }
 
     den_hurtige_QuickPost }o--|| residents_Resident : "author"
@@ -967,7 +1071,6 @@ erDiagram
     den_hurtige_QuickComment }o--|| residents_Resident : "author"
     den_hurtige_QuickReaction }o--|| den_hurtige_QuickPost : "post"
     den_hurtige_QuickReaction }o--|| residents_Resident : "author"
-    den_hurtige_ChannelMute }o--|| residents_Resident : "resident"
 ```
 
 ## events
@@ -1041,6 +1144,52 @@ erDiagram
     events_EventComment }o--|| events_Event : "event"
     events_EventComment }o--|| residents_Resident : "author"
     events_CalendarFeedToken ||--|| residents_Resident : "resident"
+```
+
+## notifications
+
+```mermaid
+erDiagram
+    notifications_Notification {
+        int id PK
+        int recipient_id FK
+        string category
+        int importance
+        string title
+        string body
+        string url
+        string group_key
+        json actors
+        string batch
+        bool in_app
+        bool pushed
+        datetime created_at
+        datetime updated_at
+        datetime expires_at
+        datetime seen_at
+    }
+
+    notifications_NotificationPreference {
+        int id PK
+        int resident_id FK
+        string category
+        bool in_app
+        bool push
+        bool vibrate
+    }
+
+    notifications_NotificationSettings {
+        int id PK
+        int resident_id FK
+        bool vibrate
+        int vibrate_min_importance
+    }
+
+    residents_Resident { }
+
+    notifications_Notification }o--|| residents_Resident : "recipient"
+    notifications_NotificationPreference }o--|| residents_Resident : "resident"
+    notifications_NotificationSettings ||--|| residents_Resident : "resident"
 ```
 
 ## oelkaelder
@@ -1203,10 +1352,18 @@ erDiagram
 
 ```mermaid
 erDiagram
+    photo_album_Tag {
+        int id PK
+        string name
+    }
+
     photo_album_Album {
         int id PK
         string folder
         string name
+        int parent_id FK
+        string path
+        int depth
         datetime created_at
         datetime manually_locked_at
         datetime unlocked_at
@@ -1215,7 +1372,10 @@ erDiagram
     photo_album_Media {
         int id PK
         int album_id FK
+        string uuid
         string title
+        string filename
+        string sha256
         string original
         string high_definition
         string thumbnail
@@ -1227,6 +1387,8 @@ erDiagram
         int requested_by_id FK
         datetime added_at
         datetime captured_at
+        datetime file_modified_at
+        datetime sort_at
         string status
         int approved_by_id FK
         datetime approved_at
@@ -1238,12 +1400,16 @@ erDiagram
         int id PK
         int album_id FK
         int requested_by_id FK
+        string name
+        string variant
         json media_ids
         string token
         string task_id
         string state
         string archive_key
         string error
+        json progress
+        datetime progressed_at
         datetime created_at
         datetime completed_at
     }
@@ -1259,20 +1425,49 @@ erDiagram
         string state
         json album_ids
         json skipped
+        json errors
+        bool lock_when_done
+        bool merge_into_existing
+        string album_name
+        bool merged
         string error
+        json progress
+        datetime progressed_at
         datetime created_at
         datetime completed_at
     }
 
+    photo_album_MediaView {
+        int id PK
+        int media_id FK
+        int resident_id FK
+        int count
+        datetime first_viewed_at
+        datetime last_viewed_at
+    }
+
+    photo_album_FeaturedMedia {
+        int id PK
+        date date
+        int position
+        int media_id FK
+    }
+
     residents_Resident { }
 
+    photo_album_Album }o--|o photo_album_Album : "parent"
+    photo_album_Album }o--o{ photo_album_Tag : "tags"
     photo_album_Media }o--|| photo_album_Album : "album"
     photo_album_Media }o--|| residents_Resident : "requested_by"
     photo_album_Media }o--|o residents_Resident : "approved_by"
     photo_album_Media }o--|o residents_Resident : "deleted_by"
-    photo_album_AlbumDownload }o--|| photo_album_Album : "album"
+    photo_album_Media }o--o{ photo_album_Tag : "tags"
+    photo_album_AlbumDownload }o--|o photo_album_Album : "album"
     photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
     photo_album_AlbumImport }o--|| residents_Resident : "requested_by"
+    photo_album_MediaView }o--|| photo_album_Media : "media"
+    photo_album_MediaView }o--|| residents_Resident : "resident"
+    photo_album_FeaturedMedia }o--|| photo_album_Media : "media"
 ```
 
 ## reparationer
@@ -1327,6 +1522,7 @@ erDiagram
         int sponsor_id FK
         string fylgje_raw
         string profile_picture
+        string profile_thumbnail
         text bio
         string facebook_link
         string instagram_handle

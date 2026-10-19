@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Mine downloads | Fotoalbum{% endblock %}
+{% block content %}
+<section class="album-detail album-downloads">
+	<header class="album-heading"><div><a class="album-back" href="{% url 'photo_album:index' %}">Fotoalbum</a><h1>Mine downloads</h1><p class="album-subtitle">En færdig download kan hentes i syv dage.</p></div></header>
+	{% if downloads %}<ul class="album-download-list">
+		{% for job in downloads %}<li class="card">
+			<div><strong>{{ job.filename }}</strong><span class="muted"> · {{ job.get_variant_display }} · {{ job.media_ids|length }} filer · bestilt {{ job.created_at|date:"j. F Y H:i" }}</span>{% if job.album %}<br><a class="album-back" href="{% url 'photo_album:detail' job.album.pk %}">Til albummet</a>{% endif %}</div>
+			<div>{% if job.state == 'ready' %}<a class="btn" href="{% url 'photo_album:download_album_archive' job.token %}">Hent</a><span class="muted"> Udløber {{ job.expires_at|date:"j. F Y kl. H:i" }}</span>{% elif job.state == 'failed' %}<span class="album-locked">Kunne ikke klargøres</span>{% else %}<span>Klargøres …</span>{% endif %}</div>
+		</li>{% endfor %}
+	</ul>{% else %}<p class="album-empty">Du har ingen downloads. Vælg Download i et album, eller vælg medier og hent dem samlet.</p>{% endif %}
+	{% if in_flight %}<script>window.setTimeout(function () { window.location.reload(); }, 5000);</script>{% endif %}
+</section>
+{% endblock %}

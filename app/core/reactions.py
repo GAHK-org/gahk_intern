@@ -80,7 +80,12 @@ def reaction_rows(reactions: Iterable[_Reaction], user_id: int) -> list[dict[str
     return [{"emoji": e, "count": counts[e], "mine": e in mine, "people": people[e]} for e in order]
 
 
-def apply_toggle(manager: Any, *, author: Any, emoji: str, **owner: Any) -> None:  # noqa: ANN401
+CREATED = "created"
+CHANGED = "changed"
+DELETED = "deleted"
+
+
+def apply_toggle(manager: Any, *, author: Any, emoji: str, **owner: Any) -> str:  # noqa: ANN401
     """Set, change or clear this person's one reaction on one item.
 
     `manager` is the reaction model's default manager and `owner` is the field identifying the item
@@ -88,12 +93,17 @@ def apply_toggle(manager: Any, *, author: Any, emoji: str, **owner: Any) -> None
 
     Three branches, and the unique constraint is what makes them safe: no row yet → create; same
     emoji → delete (re-tapping clears); different emoji → move it, rather than stacking a second.
+
+    Returns which branch ran, so the caller notifies the item's author on CREATED only: swapping 👍
+    for ❤️ is not news, and un-reacting must not buzz anyone's phone.
     """
     existing = manager.filter(author=author, **owner).first()
     if existing is None:
         manager.create(author=author, emoji=emoji, **owner)
-    elif existing.emoji == emoji:
+        return CREATED
+    if existing.emoji == emoji:
         existing.delete()
-    else:
-        existing.emoji = emoji
-        existing.save(update_fields=["emoji"])
+        return DELETED
+    existing.emoji = emoji
+    existing.save(update_fields=["emoji"])
+    return CHANGED

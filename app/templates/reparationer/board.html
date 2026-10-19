@@ -43,11 +43,6 @@
     {% endfor %}
   </nav>
 
-  {% if push_configured %}
-    {% comment %} Slim opt-in bar, driven by frontend/src/push.ts — mirrors opslagstavle/board.html. {% endcomment %}
-    {% include "core/_push_bar.html" with topic="reparationer" url_name="reparationer:save_subscription" on_label="Få besked om reparationer" success_text="Du får nu besked om nye og overdragede reparationer." off_text="Beskeder om reparationer er slået fra på denne enhed." %}
-  {% endif %}
-
   {% comment %}
     Still no button controls here — handoff and delete live on the detail page (templates/
     reparationer/detail.html), so the overview stays a scannable list of what exists rather than a

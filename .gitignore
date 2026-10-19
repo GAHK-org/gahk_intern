@@ -17,6 +17,8 @@ app/.env
 # The Beat scheduler now stores its state in PostgreSQL through django-celery-beat.
 app/celerybeat-schedule*
 app/staticfiles/
+# photo_album.cache, when PHOTO_ALBUM_CACHE_DIR points inside the app for local testing.
+app/cache/
 app/static/dist/
 frontend/node_modules/
 

@@ -1,10 +1,10 @@
 """Shared rules for image uploads across every feature that accepts one.
 
-One policy, three entry points. Callers keep their own *reaction* to a bad file — that is the part
+One policy, several entry points. Callers keep their own *reaction* to a bad file — that is the part
 that legitimately differs (the CMS admin refuses the form, the opslagstavle's upload endpoint
 answers 400 to a fetch) — but what counts as an acceptable image is decided here, once.
 
-The third entry point, `attached_image`, is the whole reaction as well as the check, because three
+One entry point, `attached_image`, is the whole reaction as well as the check, because three
 features had independently written the same one: an OPTIONAL photo beside a text field, where a bad
 file must warn and be dropped rather than fail the submission. See its docstring.
 
@@ -19,20 +19,42 @@ which only ever sees the page HTML. The CMS-editor roles are trusted, but the sa
 precisely so a compromised editor account cannot inject script, and allowing SVG would hand that
 back. Værelsestjek is open to every resident, so there it was not even a compromised-account
 question. Raster only; export vectors to PNG.
+
+**HEIC/HEIF is accepted, and is never stored as HEIC.** It is what an iPhone saves by default, and
+only Safari can decode it. In Chrome on any other phone or PC, frontend/src/imageupload.ts cannot
+redraw it, so it arrives untouched, and nothing but Safari could show it if we stored it. So
+`validate_image_upload` and `attached_image` hand back a JPEG in its place (core.images). That is
+why both RETURN the file to store rather than just passing judgement on it, and why a caller has to
+store what they return rather than what it gave them.
 """
 
+from pathlib import PurePath
 from typing import Any
 
 from django.conf import settings
 from django.contrib import messages
 from django.core.exceptions import ValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
 
-ALLOWED_CONTENT_TYPES = frozenset({"image/jpeg", "image/png", "image/gif", "image/webp"})
-ALLOWED_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp"})
-EXTENSION_HELP = "JPEG, PNG, GIF eller WebP"
+from core.images import jpeg_copy
+
+HEIF_CONTENT_TYPES = frozenset({"image/heic", "image/heif", "image/heic-sequence", "image/heif-sequence"})
+HEIF_EXTENSIONS = frozenset({".heic", ".heif"})
+# What a browser sends for a HEIC it has no type for: Chrome on Windows without Microsoft's HEIF
+# extension, among others. Accepted ONLY together with a HEIC extension. The file is decoded before
+# it is stored, so the extension is not taken on trust; a file that is not really HEIC fails there.
+UNTYPED_CONTENT_TYPES = frozenset({"", "application/octet-stream"})
+
+ALLOWED_CONTENT_TYPES = frozenset({"image/jpeg", "image/png", "image/gif", "image/webp", *HEIF_CONTENT_TYPES})
+ALLOWED_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp", *HEIF_EXTENSIONS})
+EXTENSION_HELP = "JPEG, PNG, GIF, WebP eller HEIC"
 
 GIF_CONTENT_TYPE = "image/gif"
 GIF_EXTENSION = ".gif"
+
+
+def _is_heif(content_type: str, name: str) -> bool:
+    return content_type in HEIF_CONTENT_TYPES or name.endswith(tuple(HEIF_EXTENSIONS))
 
 
 def _size_ceiling(content_type: str, name: str, max_mb: int) -> int:
@@ -60,6 +82,10 @@ def _size_ceiling(content_type: str, name: str, max_mb: int) -> int:
     """
     if content_type == GIF_CONTENT_TYPE or name.endswith(GIF_EXTENSION):
         return settings.ANIMATED_IMAGE_MAX_MB
+    # HEIC has the same problem for a different reason: no browser but Safari can downscale it, so
+    # it arrives at full camera size, and is downscaled here instead (see the module docstring).
+    if _is_heif(content_type, name):
+        return settings.HEIF_IMAGE_MAX_MB
     return max_mb
 
 
@@ -76,7 +102,8 @@ def check_image_upload(upload: Any, max_mb: int) -> str | None:  # noqa: ANN401 
     content_type = (getattr(upload, "content_type", "") or "").lower()
     name = (getattr(upload, "name", "") or "").lower()
 
-    if content_type not in ALLOWED_CONTENT_TYPES:
+    untyped_heif = content_type in UNTYPED_CONTENT_TYPES and name.endswith(tuple(HEIF_EXTENSIONS))
+    if content_type not in ALLOWED_CONTENT_TYPES and not untyped_heif:
         return f"Filen er ikke et billede (tilladt: {EXTENSION_HELP})."
     if not any(name.endswith(ext) for ext in ALLOWED_EXTENSIONS):
         return f"Filendelsen passer ikke til et billede (tilladt: {EXTENSION_HELP})."
@@ -89,11 +116,34 @@ def check_image_upload(upload: Any, max_mb: int) -> str | None:  # noqa: ANN401 
     return None
 
 
-def validate_image_upload(upload: Any, max_mb: int) -> None:  # noqa: ANN401 — an UploadedFile
-    """check_image_upload as a ValidationError — for ModelForms and JSON endpoints."""
-    message = check_image_upload(upload, max_mb)
+def prepare_image_upload(upload: Any, max_mb: int) -> tuple[Any, str | None]:  # noqa: ANN401 — an UploadedFile
+    """(the file to store, None), or (None, a Danish error message).
+
+    The file to store is `upload` itself, except for a HEIC, which becomes a JPEG of the same name.
+    For a caller whose reaction fits neither entry point below: værelsestjek warns per criterion.
+    """
+    error = check_image_upload(upload, max_mb)
+    if error is not None:
+        return None, error
+    content_type = (getattr(upload, "content_type", "") or "").lower()
+    name = getattr(upload, "name", "") or "billede"
+    if not _is_heif(content_type, name.lower()):
+        return upload, None
+    converted = jpeg_copy(upload)
+    if converted is None:
+        return None, "Billedet kunne ikke læses. Prøv at gemme det som JPEG og vælg det igen."
+    return SimpleUploadedFile(f"{PurePath(name).stem}.jpg", converted, content_type="image/jpeg"), None
+
+
+def validate_image_upload(upload: Any, max_mb: int) -> Any:  # noqa: ANN401 — an UploadedFile
+    """The file to store in place of `upload`, or a ValidationError. For forms and JSON endpoints.
+
+    Store the RETURN VALUE, not `upload`: for a HEIC they are different files (module docstring).
+    """
+    prepared, message = prepare_image_upload(upload, max_mb)
     if message is not None:
         raise ValidationError(message)
+    return prepared
 
 
 def attached_image(request: Any, max_mb: int) -> Any | None:  # noqa: ANN401 — HttpRequest/UploadedFile
@@ -125,8 +175,8 @@ def attached_image(request: Any, max_mb: int) -> Any | None:  # noqa: ANN401 —
     upload = request.FILES.get("image")
     if not upload:
         return None
-    error = check_image_upload(upload, max_mb)
+    prepared, error = prepare_image_upload(upload, max_mb)
     if error is not None:
         messages.warning(request, f"{error} Billedet blev ikke gemt.")
         return None
-    return upload
+    return prepared

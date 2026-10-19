@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load photo_album_extras %}
 {% block title %}Intern - GAHK{% endblock %}
 {% block content %}
   <div class="page-head">
@@ -11,6 +12,8 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21V9l9-6 9 6v12"/></svg>Søg værelse</a>
     </div>
   </div>
+
+  {% include "notifications/_device.html" with mode="prompt" %}
 
   <div class="glance">
     <span class="g"><span class="gk">Aktiv måned</span> <b>{{ period }}</b></span>
@@ -49,4 +52,6 @@
       </div>
     </div>
   </div>
+
+  {% photo_album_strip %}
 {% endblock %}

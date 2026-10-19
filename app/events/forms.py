@@ -16,7 +16,7 @@ from django import forms
 from django.conf import settings
 
 from core.clock import current_datetime
-from core.uploads import check_image_upload
+from core.uploads import validate_image_upload
 from residents.models import Residency, Resident, active_period
 
 from .models import MIN_INVITEES, Event, EventComment, Visibility
@@ -98,6 +98,9 @@ class EventForm(forms.ModelForm):
             "starts_at": LocalDateTimeInput(),
             "ends_at": LocalDateTimeInput(),
             "rsvp_deadline_at": LocalDateTimeInput(),
+            # The accept attribute is what frontend/src/imageupload.ts looks for, so without it a
+            # phone photo went up at full size and was refused by the 5 MB cap.
+            "image": forms.ClearableFileInput(attrs={"accept": "image/*,.heic,.heif"}),
             # Radios, not a <select>: two options that change what the rest of the form means are
             # worth showing both of at once, and a phone renders a two-item select as a wheel.
             "visibility": forms.RadioSelect,
@@ -186,9 +189,7 @@ class EventForm(forms.ModelForm):
         """One image policy for the whole site, in Danish. See core.uploads."""
         upload = self.cleaned_data.get("image")
         if upload and hasattr(upload, "content_type"):
-            problem = check_image_upload(upload, settings.EVENT_IMAGE_MAX_MB)
-            if problem:
-                raise forms.ValidationError(problem)
+            return validate_image_upload(upload, settings.EVENT_IMAGE_MAX_MB)
         return upload
 
     def clean_ends_at(self) -> datetime.datetime | None:

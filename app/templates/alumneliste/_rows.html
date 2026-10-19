@@ -4,7 +4,7 @@
     <td class="whitespace-nowrap">
       <a href="{% url 'resident_profile' r.resident_id %}" class="no-underline" style="display:inline-flex;align-items:center;gap:.5rem">
         {% if r.resident.profile_picture %}
-          <img src="{{ r.resident.profile_picture.url }}" alt="{{ r.resident.full_name }}"
+          <img src="{{ r.resident.avatar_url }}" alt="{{ r.resident.full_name }}"
                style="width:28px;height:28px;border-radius:50%;object-fit:cover;flex-shrink:0">
         {% else %}
           <span class="avatar" style="width:28px;height:28px;font-size:.7rem;flex-shrink:0">{{ r.resident.first_name|slice:":1" }}{{ r.resident.last_name|slice:":1" }}</span>
