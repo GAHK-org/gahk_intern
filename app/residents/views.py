@@ -3,7 +3,6 @@ import io
 import logging
 import os
 from datetime import date
-from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib import messages
@@ -46,6 +45,8 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     # Backstop for the ak_monthly_assessment cron job (DEPLOY.md §4b): charges last month's AK
     # deduction if the schedule missed it. Cheap and idempotent; see ak.services.
     from ak.services import ensure_previous_month_charged
+    from events import access as events_access
+    from events.agenda import agenda
 
     ensure_previous_month_charged()
     year, month = active_period()
@@ -59,36 +60,10 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             "wifi_password": os.environ.get("WIFI_PASSWORD", ""),
             "calendar_user": os.environ.get("GOOGLE_CALENDAR_USER", ""),
             "calendar_password": os.environ.get("GOOGLE_CALENDAR_PASSWORD", ""),
-            "calendar_embed_url": _calendar_embed_url(),
+            # The kollegium's own calendar; empty for anyone the events rollout gate keeps out.
+            "agenda": agenda(current_resident(request)) if events_access.request_allowed(request) else None,
         },
     )
-
-
-def _calendar_embed_url() -> str:
-    """Build the shared Google Calendar agenda embed shown on the dashboard (restored from the
-    legacy /intern dashboard). The calendar IDs are public embed IDs, not secrets, but come from
-    env so the source stays deployment-agnostic. Returns "" when no calendar is configured."""
-    calendar_user = os.environ.get("GOOGLE_CALENDAR_USER", "").strip()
-    if not calendar_user:
-        return ""
-    calendar_ids = [calendar_user]
-    extra_ids = os.environ.get("GOOGLE_CALENDAR_EXTRA_IDS", "")
-    calendar_ids += [c.strip() for c in extra_ids.split(",") if c.strip()]
-    params = [
-        ("mode", "AGENDA"),
-        ("ctz", "Europe/Copenhagen"),
-        ("wkst", "2"),
-        ("bgcolor", "#ffffff"),
-        ("showTitle", "0"),
-        ("showNav", "0"),
-        ("showDate", "0"),
-        ("showPrint", "0"),
-        ("showTabs", "0"),
-        ("showCalendars", "0"),
-        ("showTz", "0"),
-    ]
-    params += [("src", cid) for cid in calendar_ids]
-    return "https://calendar.google.com/calendar/embed?" + urlencode(params)
 
 
 # ---- Alumneliste: the resident directory (F-010) ----

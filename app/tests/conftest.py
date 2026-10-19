@@ -1,13 +1,55 @@
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from pathlib import Path
 
 import pytest
 
 from residents.models import Resident, RoleAssignment, active_period
 
 
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Every transactional test starts from the database's seeded contents (serialized rollback).
+
+    A `transaction=True` test ends by flushing every table, which also deletes the rows data
+    migrations seed (the 12 AK schedule months, Fotogruppen, the ølkælder warnings). Serialized
+    rollback reloads them at the start of the next transactional test; it also makes pytest-django
+    snapshot them at setup, which `_restore_seed_data_after_the_run` puts back at the end.
+    """
+    for item in items:
+        marker = item.get_closest_marker("django_db")
+        if marker and marker.kwargs.get("transaction") and not marker.kwargs.get("serialized_rollback"):
+            item.add_marker(
+                pytest.mark.django_db(*marker.args, **marker.kwargs, serialized_rollback=True), append=False
+            )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _restore_seed_data_after_the_run(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Leave the test database as the run found it, for the next `--reuse-db` run.
+
+    pytest-django runs transactional tests last, and the last one ends with a flush, so the kept
+    database would otherwise start the next run without its seeded rows. A database already
+    flushed by a run from before this fixture needs one run with `--create-db`.
+    """
+    transactional = any(
+        (marker := item.get_closest_marker("django_db")) and marker.kwargs.get("transaction")
+        for item in request.session.items
+    )
+    if not transactional:
+        yield
+        return
+    request.getfixturevalue("django_db_setup")
+    yield
+    from django.db import connection
+
+    contents = getattr(connection, "_test_serialized_contents", None)
+    if contents:
+        with request.getfixturevalue("django_db_blocker").unblock():
+            connection.creation.deserialize_db_from_string(contents)
+
+
 @pytest.fixture(autouse=True)
-def _isolate_from_dotenv(settings: object) -> None:
+def _isolate_from_dotenv(settings: object, tmp_path: Path) -> None:
     """Neutralise the developer's app/.env for the whole suite.
 
     config/settings.py calls `load_dotenv(BASE_DIR / ".env")`, so anything a developer puts there to
@@ -33,6 +75,9 @@ def _isolate_from_dotenv(settings: object) -> None:
         **settings.STORAGES,  # type: ignore[attr-defined]
         "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     }
+    # Files a test saves go to its own directory, never the developer's app/media: that is the dev
+    # data, and the Docker dev container leaves root-owned folders in it that tests cannot write to.
+    settings.MEDIA_ROOT = tmp_path / "media"  # type: ignore[attr-defined]
     settings.TURNSTILE_SECRET_KEY = ""  # type: ignore[attr-defined]
     settings.S3_PUBLIC_ENDPOINT_URL = ""  # type: ignore[attr-defined]
     # A developer's cache directory would otherwise collect test files and serve them across tests;
