@@ -12,9 +12,8 @@ IMAGE="${IMAGE:-ghcr.io/gahk-org/gahk_intern:main}"
 COOLIFY_URL="${COOLIFY_URL:-http://localhost:8000}"
 STATE_FILE="${STATE_FILE:-/var/lib/gahk-autodeploy/deployed-image}"
 
-# Pulled here rather than left to the deploy: Coolify's `docker compose up` then finds the new image
-# under :main on this host and recreates the containers. A pull with nothing new is one manifest
-# request to GHCR.
+# Pulled to see whether :main has moved; a pull with nothing new is one manifest request to GHCR.
+# The deploy checks again (`pull_policy: always` in docker-compose.prod.yml) and finds it up to date.
 docker pull --quiet "$IMAGE" >/dev/null
 current=$(docker image inspect --format '{{.Id}}' "$IMAGE")
 deployed=$(cat "$STATE_FILE" 2>/dev/null || true)

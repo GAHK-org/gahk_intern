@@ -141,15 +141,17 @@ Coolify does not build anything. The flow is:
    minutes. It pulls `:main`; when the image differs from the last one it deployed, it calls the
    **local** Coolify API to redeploy the app, and Coolify's `docker compose up` recreates `web`,
    `worker`, `worker-media` and `beat` on the new image (the migration gate in `docker-compose.prod.yml` still applies).
+3. Every deploy checks GHCR for the current `:main` itself (`pull_policy: always` in
+   `docker-compose.prod.yml`): one manifest request, and layers download only when `:main` has
+   moved. So a redeploy from Coolify by hand also runs the newest published image. Without it,
+   compose reuses whatever `:main` the host already has, and "Redeploy" (with or without the build
+   cache, which only matters for builds) restarts the old version.
 
 **Why pull, not a webhook from CI:** a webhook means a Coolify token in GitHub's secrets, i.e. a
 credential for the server held by GitHub. This way GitHub holds nothing for the server; the Coolify
 token never leaves it, and the only thing the server trusts GitHub for is the image.
 
-**The cost:** up to ~3 minutes between a green `main` and the deploy starting. And it relies on the
-pull and the deploy happening on the **same host** (one Hetzner box) — the script's pull is what
-gives Coolify the new image. If the app ever moves to a separate Coolify server, install the timer
-there.
+**The cost:** up to ~3 minutes between a green `main` and the deploy starting.
 
 #### Setting it up **[you]**
 

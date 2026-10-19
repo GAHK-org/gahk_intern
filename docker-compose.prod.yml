@@ -5,11 +5,15 @@
 # injected by Coolify's env manager, so there is no committed env_file. MediaWiki is its own app.
 #
 # The image is not built here: CI builds it and moves `:main` once the checks pass, and a timer on the
-# server pulls it and asks Coolify to redeploy (DEPLOY.md §4a). All four services run the same one.
+# server asks Coolify to redeploy when it moves (DEPLOY.md §4a). All four services run the same one.
+# `pull_policy: always` makes every deploy ask GHCR where `:main` points now — one manifest request,
+# and layers download only when it has moved — so a redeploy from Coolify by hand runs the current
+# image too. Without it, compose reuses whatever `:main` this host pulled last.
 # IMAGE_TAG is for rolling back: set it to `sha-<commit>` in Coolify and redeploy; unset to follow main.
 services:
   web:
     image: ghcr.io/gahk-org/gahk_intern:${IMAGE_TAG:-main}
+    pull_policy: always
     restart: unless-stopped
     command: >-
       sh -c "python manage.py migrate --noinput &&
@@ -42,6 +46,7 @@ services:
   # ran this box out of memory.
   worker:
     image: ghcr.io/gahk-org/gahk_intern:${IMAGE_TAG:-main}
+    pull_policy: always
     restart: unless-stopped
     depends_on:
       - web
@@ -51,6 +56,7 @@ services:
 
   worker-media:
     image: ghcr.io/gahk-org/gahk_intern:${IMAGE_TAG:-main}
+    pull_policy: always
     restart: unless-stopped
     depends_on:
       - web
@@ -60,6 +66,7 @@ services:
 
   beat:
     image: ghcr.io/gahk-org/gahk_intern:${IMAGE_TAG:-main}
+    pull_policy: always
     restart: unless-stopped
     depends_on:
       - web
