@@ -60,10 +60,10 @@
            hx-get="{% url 'den_hurtige:thread' post.pk %}"
            {% comment %}
              The same three triggers as the feed's #js-live, for the same reasons (see feed.html):
-             a signal naming this message, the 5s poll only while there is no live connection,
+             a signal naming this message, the 5s poll only while the channel is not live,
              and a 60s backstop.
            {% endcomment %}
-           hx-trigger="gahk-live, every 5s [!document.documentElement.hasAttribute('data-live-connected')], every 60s"
+           hx-trigger="gahk-live, every 5s [!this.closest('[data-live-on]')], every 60s"
            hx-sync="this:queue last"
            hx-ext="morph"
            {% comment %}

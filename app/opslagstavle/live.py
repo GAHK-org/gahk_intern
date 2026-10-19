@@ -4,7 +4,13 @@ A signal names a NOTICE; comments and reactions are reported as their notice hav
 the notice's card is the unit the board redraws (frontend/src/opslagstavle-live.ts).
 
 "created" carries the category, so a board filtered to one category can ignore posts it would not
-show. It is the one signal the board does NOT act on by redrawing: a new post is announced with an
+show.
+
+A pin, an unpin or a change of category MOVES a card — out of the pinned strip, off a filtered
+board — so morphing it where it stands would leave it in the wrong place. The board does not learn
+that from the signal but from the card it re-fetches (`is-pinned`, `data-category`), which also
+covers a change it only hears about on a resync; when the card no longer belongs where it is, the
+banner says the board has changed instead. It is the one signal the board does NOT act on by redrawing: a new post is announced with an
 "N nye opslag" banner instead of being inserted, because inserting it shifts every post below by a
 card's height under somebody who is reading — and on page 2 and beyond, it would not even belong on
 the page they are looking at.

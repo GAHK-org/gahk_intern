@@ -66,8 +66,12 @@ function toBottom(el: HTMLElement): void {
 }
 
 // Attributes the CLIENT owns, which the server never sends and morphing would therefore strip:
-//   open   a picker or reader panel the reader opened; losing it closes it under their thumb
-const CLIENT_OWNED_ATTRS = new Set(["open"]);
+//   open            a picker or reader panel the reader opened; losing it closes it under their thumb
+//   data-live-busy  live-region.ts's hold. The server renders the channel menu held (it starts
+//                   closed); a refresh of the OPEN menu would otherwise put the hold back on it and
+//                   freeze it, and a refresh mid-drag would take the kanban's off.
+//   data-live-on    live.ts's "this element's topic was joined", which the polls filter on
+const CLIENT_OWNED_ATTRS = new Set(["open", "data-live-busy", "data-live-on"]);
 
 // NOT idiomorph's ignoreActiveValue, which this used to set. That option leaves the focused
 // element's CHILDREN alone, not just its value — right for a <textarea>, whose children ARE its
@@ -480,11 +484,16 @@ document.addEventListener(LIVE_EVENT, (event: Event) => {
   }
 });
 
-// The picker's counts are live while it is open (a live region, _channel_menu.html), and re-read
-// the moment it opens, which covers what no signal announces: messages archiving off the clock.
+// The picker's counts are live while it is open (a live region, _channel_menu.html) and held while
+// it is closed, so a signal from any channel costs a fetch only in the tabs where somebody can see
+// the counts. Opening re-reads them as well, which covers what no signal announces: messages
+// archiving off the clock. A signal held while closed and the open's own refresh are one fetch.
 document.querySelector<HTMLDetailsElement>("details.channel-picker")?.addEventListener("toggle", (event) => {
   const picker = event.currentTarget as HTMLDetailsElement;
-  if (picker.open) picker.querySelector(".channel-menu")?.dispatchEvent(new Event(REFRESH_EVENT, { bubbles: true }));
+  const menu = picker.querySelector<HTMLElement>(".channel-menu");
+  if (!menu) return;
+  menu.toggleAttribute("data-live-busy", !picker.open);
+  if (picker.open) menu.dispatchEvent(new Event(REFRESH_EVENT, { bubbles: true }));
 });
 
 // ---- who reacted ------------------------------------------------------------------------------

@@ -29,7 +29,7 @@ Celery worker, `manage.py shell`, a second uvicorn worker) reaches nobody; see D
 
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Literal
 
 from asgiref.sync import async_to_sync
@@ -80,28 +80,49 @@ def may_subscribe(request: HttpRequest, topic: str) -> bool:
 Kind = Literal["created", "changed", "deleted"]
 
 
-def publish(topic: str, kind: Kind, pk: int | None, **extra: str | int) -> None:
-    """Tell everyone watching `topic` that the object `pk` was created, changed or deleted.
+def publish(topic: str, kind: Kind, pk: int | None, **extra: str | int | bool) -> None:
+    """Tell everyone watching `topic` that the object `pk` was created, changed or deleted."""
+    publish_many([topic], kind, pk, **extra)
+
+
+def publish_many(topics: Iterable[str], kind: Kind, pk: int | None, **extra: str | int | bool) -> None:
+    """The same signal on several topics — every recipient's inbox for one notification — in ONE
+    hand-over to the channel layer rather than one per topic, each of which is a synchronous round
+    trip on the request thread of whoever caused it.
 
     Sent AFTER COMMIT, because the browser's first move on hearing it is to read the change back —
     and a signal that outran its own transaction would fetch the old state and then sit there
     looking current. Outside a transaction (no ATOMIC_REQUESTS here) on_commit runs immediately.
 
-    NEVER RAISES. The write that called this has already happened; a channel layer that is down
-    must not turn it into a 500 the author retries, posting twice. The signal is lost, and the
-    backstop poll catches up.
+    NEVER RAISES — not for a layer that is down, and not for a topic that cannot be one either. The
+    write that called this has already happened, and a 500 now only makes the author retry it,
+    posting twice. A malformed topic is a programming error, so it is logged loudly; the tests are
+    where it gets caught (test_live: every channel slug must make a valid topic), not production.
     """
-    if not valid_topic(topic):
-        raise ValueError(f"Not a live topic: {topic!r}")
-    data: dict[str, object] = {"topic": topic, "kind": kind, "pk": pk, **extra}
-    transaction.on_commit(lambda: _send(topic, data))
+    batch: list[tuple[str, dict[str, object]]] = []
+    for topic in dict.fromkeys(topics):
+        if not valid_topic(topic):
+            logger.error("Not a live topic, signal dropped: %r", topic)
+            continue
+        batch.append((topic, {"topic": topic, "kind": kind, "pk": pk, **extra}))
+    if batch:
+        transaction.on_commit(lambda: _send(batch))
 
 
-def _send(topic: str, data: dict[str, object]) -> None:
+def _send(batch: list[tuple[str, dict[str, object]]]) -> None:
     layer = get_channel_layer()
     if layer is None:
         return
+
+    async def send_all() -> None:
+        for topic, data in batch:
+            # One topic failing must not take the rest of the batch down with it.
+            try:
+                await layer.group_send(group_name(topic), {"type": EVENT_TYPE, "data": data})
+            except Exception:
+                logger.exception("Could not publish a live update to %s", topic)
+
     try:
-        async_to_sync(layer.group_send)(group_name(topic), {"type": EVENT_TYPE, "data": data})
+        async_to_sync(send_all)()
     except Exception:
-        logger.exception("Could not publish a live update to %s", topic)
+        logger.exception("Could not publish live updates")

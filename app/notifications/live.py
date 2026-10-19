@@ -31,8 +31,8 @@ def may_listen(request: HttpRequest, rest: str) -> bool:
 
 
 def inbox_changed(resident_ids: Iterable[int]) -> None:
-    for resident_id in set(resident_ids):
-        live.publish(topic(resident_id), "changed", None)
+    """One batch for every inbox, not one send each: a house-wide notification reaches ~100."""
+    live.publish_many((topic(resident_id) for resident_id in resident_ids), "changed", None)
 
 
 def register() -> None:

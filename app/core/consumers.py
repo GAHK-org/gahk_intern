@@ -26,6 +26,12 @@ class LiveConsumer(AsyncJsonWebsocketConsumer):
     topics it rendered for this reader, so a refusal means the world changed since (a role ended, an
     invitation was withdrawn) and the rest of the page should stay live. Only when NOTHING is allowed
     is the socket closed with REFUSED.
+
+    THE FIRST MESSAGE SAYS WHICH TOPICS WERE JOINED, {"kind": "subscribed", "topics": [...]}, and
+    that is what makes skipping safe. An open socket is not the same as a live page: if the topic
+    skipped is the page's own (Den Hurtige's channel, past the cap or after a role ended), the page
+    must keep its fallback poll rather than switch it off and wait a minute per update. live.ts marks
+    each element whose topics were all joined, and the polls key off that, not off the socket.
     """
 
     groups: list[str]
@@ -47,6 +53,7 @@ class LiveConsumer(AsyncJsonWebsocketConsumer):
             await self.channel_layer.group_add(group, self.channel_name)
             self.groups.append(group)
         await self.accept()
+        await self.send_json({"kind": "subscribed", "topics": allowed})
 
     async def disconnect(self, code: int) -> None:
         for group in self.groups:

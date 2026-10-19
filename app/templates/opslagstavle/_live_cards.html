@@ -6,3 +6,10 @@
 {% for notice in notices %}
   {% include "opslagstavle/_notice_card.html" %}
 {% endfor %}
+{% comment %}
+  Only when asked with ?siden= (a board catching up after a reconnect): the posts created since,
+  newest first. Read by opslagstavle-live.ts into the "N nye opslag" banner; never shown.
+{% endcomment %}
+{% if new_since is not None %}
+  <template id="js-board-new-since" data-pks="{{ new_since|join:',' }}"></template>
+{% endif %}

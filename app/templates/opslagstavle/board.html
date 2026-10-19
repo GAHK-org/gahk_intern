@@ -42,7 +42,7 @@
     card down under somebody reading, and on page 2 it would not even belong here. The banner links
     to page 1 of the same filter; `data-category` lets it ignore posts this filter would not show.
   {% endcomment %}
-  <div data-live="opslagstavle" data-live-board data-category="{{ selected_category }}"
+  <div data-live="opslagstavle" data-live-board data-category="{{ selected_category }}" data-newest="{{ newest_pk }}"
        data-live-url="{% url 'opslagstavle:live_cards' %}">
     <a class="board-new" id="js-board-new" href="{% querystring page=None %}" aria-live="polite" hidden><span></span></a>
 

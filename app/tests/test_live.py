@@ -68,9 +68,10 @@ def signals(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, object
     """
     sent: list[tuple[str, dict[str, object]]] = []
 
-    def record(topic: str, data: dict[str, object]) -> None:
-        assert data.pop("topic") == topic, "a signal must name its own topic; the page filters on it"
-        sent.append((topic, data))
+    def record(batch: list[tuple[str, dict[str, object]]]) -> None:
+        for topic, data in batch:
+            assert data.pop("topic") == topic, "a signal must name its own topic; the page filters on it"
+            sent.append((topic, data))
 
     monkeypatch.setattr(live, "_send", record)
     monkeypatch.setattr(live, "transaction", SimpleNamespace(on_commit=lambda fn: fn()))
@@ -147,7 +148,7 @@ def test_a_signal_waits_for_its_transaction(
     """A page re-fetches the moment it hears a signal. Sent before the commit, it would read the
     old state back and then sit there looking current."""
     sent: list[str] = []
-    monkeypatch.setattr(live, "_send", lambda topic, data: sent.append(topic))
+    monkeypatch.setattr(live, "_send", lambda batch: sent.extend(topic for topic, _ in batch))
 
     with django_capture_on_commit_callbacks(execute=False) as callbacks:
         live.publish("opslagstavle", "changed", 1)
@@ -167,12 +168,44 @@ def test_a_failing_channel_layer_does_not_fail_the_write(monkeypatch: pytest.Mon
 
     monkeypatch.setattr(live, "get_channel_layer", Broken)
 
-    live._send("opslagstavle", {"kind": "changed", "pk": 1})  # does not raise
+    live._send([("opslagstavle", {"kind": "changed", "pk": 1})])  # does not raise
 
 
-def test_a_topic_that_cannot_be_a_group_cannot_be_published() -> None:
-    with pytest.raises(ValueError):
-        live.publish("ikke et emne", "changed", 1)
+def test_a_topic_that_cannot_be_a_group_is_dropped_not_raised(
+    signals: list, caplog: pytest.LogCaptureFixture
+) -> None:
+    """publish runs AFTER the caller's write: raising here would 500 a message that was already
+    saved, and the author would post it again. It is a programming error, so it is logged loudly —
+    and caught by the next test, not in production."""
+    live.publish_many(["ikke et emne", "opslagstavle"], "changed", 1)
+
+    assert signals == [("opslagstavle", {"kind": "changed", "pk": 1})], "the good topic still goes"
+    assert "ikke et emne" in caplog.text
+
+
+def test_every_channel_slug_makes_a_valid_topic() -> None:
+    """Where a bad topic is meant to be caught: a channel whose slug cannot be a topic (an æ, an
+    uppercase letter, an underscore) would have its signals dropped with only a log line to say so."""
+    bad = [c.slug for c in channels.CHANNELS if not live.valid_topic(f"den-hurtige.{c.slug}")]
+    assert bad == []
+
+
+def test_one_notification_signals_every_inbox_in_one_hand_over(
+    monkeypatch: pytest.MonkeyPatch, beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    """A house-wide notification reaches ~100 inboxes. One synchronous round trip to the channel
+    layer for each, one after another on the author's request, is what this batches away."""
+    others = [make_resident(email=f"r{i}@gahk.dk") for i in range(3)]
+    batches: list[list[str]] = []
+    monkeypatch.setattr(live, "_send", lambda batch: batches.append([topic for topic, _ in batch]))
+    monkeypatch.setattr(live, "transaction", SimpleNamespace(on_commit=lambda fn: fn()))
+
+    notification_services.notify(
+        [beboer.pk, *(o.pk for o in others)], category=categories.GENERAL, title="Hej", url="/"
+    )
+
+    assert len(batches) == 1
+    assert sorted(batches[0]) == sorted(f"notifikationer.{r.pk}" for r in [beboer, *others])
 
 
 # --- Den Hurtige: every write signals its message -----------------------------------------------
@@ -342,7 +375,7 @@ def test_the_feed_polls_fast_only_without_a_live_connection(client: Client, bebo
     feed = client.get(FEED_URL).content.decode()
     panel = client.get(f"{FEED_URL}{post.pk}/traad", HTTP_HX_REQUEST="true").content.decode()
 
-    trigger = "gahk-live, every 5s [!document.documentElement.hasAttribute('data-live-connected')], every 60s"
+    trigger = "gahk-live, every 5s [!this.closest('[data-live-on]')], every 60s"
     assert f'hx-trigger="{trigger}"' in feed
     assert f'hx-trigger="{trigger}"' in panel
 
@@ -418,6 +451,7 @@ def test_a_new_message_reaches_a_listening_socket(make_resident: Callable[..., R
         communicator = Socket(["den-hurtige.generelt"], author)
         connected, _ = await communicator.connect()
         assert connected
+        assert (await communicator.receive_json_from())["kind"] == "subscribed"
         await sync_to_async(client.post)(FEED_URL + "opret", {"content": "Kaffe?", "duration": 60})
         signal = await communicator.receive_json_from(timeout=5)
         await communicator.disconnect()
@@ -433,23 +467,31 @@ def test_one_socket_joins_every_topic_it_may_and_skips_the_rest(
     make_resident: Callable[..., Resident],
 ) -> None:
     """A page asks for several topics on one socket. One it may not hear (somebody else's inbox) is
-    left out, while the others stay live — and nothing published there reaches this socket."""
+    left out, while the others stay live — and nothing published there reaches this socket.
+
+    The first message says which topics were joined. That is what lets a page whose OWN topic was
+    the one skipped keep its fallback poll (live.ts marks data-live-on only on joined elements)
+    instead of reading "socket open" as "I am live" and waiting a minute per update."""
     me = make_resident(email="a@gahk.dk")
     other = make_resident(email="b@gahk.dk")
 
-    async def run() -> tuple[dict[str, Any], bool]:
+    async def run() -> tuple[dict[str, Any], bool, dict[str, Any]]:
         communicator = Socket(["opslagstavle", f"notifikationer.{other.pk}"], me)
         connected, _ = await communicator.connect()
         assert connected
-        await sync_to_async(live._send)(f"notifikationer.{other.pk}", {"topic": "x"})
+        joined = await communicator.receive_json_from()
+        await sync_to_async(live._send)([(f"notifikationer.{other.pk}", {"topic": "x"})])
         quiet = await communicator.receive_nothing(timeout=0.2)
-        await sync_to_async(live._send)("opslagstavle", {"topic": "opslagstavle", "kind": "changed", "pk": 1})
+        await sync_to_async(live._send)(
+            [("opslagstavle", {"topic": "opslagstavle", "kind": "changed", "pk": 1})]
+        )
         heard = await communicator.receive_json_from(timeout=5)
         await communicator.disconnect()
-        return heard, quiet
+        return heard, quiet, joined
 
-    heard, quiet = async_to_sync(run)()
+    heard, quiet, joined = async_to_sync(run)()
 
+    assert joined == {"kind": "subscribed", "topics": ["opslagstavle"]}
     assert quiet, "a signal for somebody else's inbox reached this socket"
     assert heard == {"topic": "opslagstavle", "kind": "changed", "pk": 1}
 
@@ -660,3 +702,54 @@ def test_the_channel_menu_leaves_out_a_channel_this_reader_may_not_open(
 def test_kanaler_can_never_be_a_channel_slug() -> None:
     """It is a fixed URL segment now; a channel by that name would be unreachable (checks.E008)."""
     assert "kanaler" in channels.RESERVED_SLUGS
+
+
+# --- review follow-ups --------------------------------------------------------------------------
+
+
+def test_the_repair_board_varies_on_hx_request(client: Client, beboer: Resident) -> None:
+    """One URL answers with the page or the bare board. Without Vary a browser can serve the cached
+    bare board on Back: an unstyled kanban with nothing around it."""
+    client.force_login(beboer)
+
+    for response in (client.get(REPAIRS), client.get(REPAIRS, HTTP_HX_REQUEST="true")):
+        assert "HX-Request" in response.headers.get("Vary", "")
+
+
+def test_the_channel_menu_is_held_until_the_picker_opens(client: Client, beboer: Resident) -> None:
+    """Rendered with data-live-busy, so a closed picker holds signals instead of fetching counts
+    nobody can see; feed.ts lifts it on open."""
+    client.force_login(beboer)
+
+    page = client.get(FEED_URL).content.decode()
+
+    menu = page.split('id="js-channel-menu"')[1].split(">")[0]
+    assert "data-live-busy" in menu
+
+
+def test_live_cards_says_what_was_posted_since_a_cursor(client: Client, beboer: Resident) -> None:
+    """A board that slept through new posts was never signalled them; on reconnect it asks."""
+    old = Notice.objects.create(author=beboer, body="Gammel", category=Category.NYT)
+    news = Notice.objects.create(author=beboer, body="Ny", category=Category.NYT)
+    other = Notice.objects.create(author=beboer, body="Anden kategori", category=Category.BEGIVENHED)
+    client.force_login(beboer)
+
+    board = client.get(BOARD).content.decode()
+    everything = client.get(BOARD + "kort", {"siden": old.pk}).content.decode()
+    filtered = client.get(BOARD + "kort", {"siden": old.pk, "kategori": Category.NYT}).content.decode()
+    plain = client.get(BOARD + "kort", {"id": old.pk}).content.decode()
+
+    assert f'data-newest="{other.pk}"' in board
+    assert f'data-pks="{other.pk},{news.pk}"' in everything
+    assert f'data-pks="{news.pk}"' in filtered
+    assert "js-board-new-since" not in plain, "only a resync asks"
+
+
+def test_a_card_says_its_category(client: Client, beboer: Resident) -> None:
+    """How the board tells a re-fetched card has moved off a filtered view (opslagstavle-live.ts)."""
+    notice = Notice.objects.create(author=beboer, body="Hej", category=Category.BEGIVENHED)
+    client.force_login(beboer)
+
+    cards = client.get(BOARD + "kort", {"id": notice.pk}).content.decode()
+
+    assert f'id="opslag-{notice.pk}" data-category="{Category.BEGIVENHED}"' in cards

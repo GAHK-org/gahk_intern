@@ -19,7 +19,7 @@ from django.contrib import messages
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Prefetch
+from django.db.models import Max, Prefetch
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -128,6 +128,9 @@ def board(request: HttpRequest) -> HttpResponse:
             "can_moderate": can_moderate(request),
             "events_allowed": events_allowed(request),
             "quick_emoji": EMOJI_SHORTLIST,
+            # The newest post that existed when this page was drawn, whatever the filter: the cursor
+            # a reconnecting board hands live_cards to learn what it missed (`?siden=`).
+            "newest_pk": Notice.objects.aggregate(newest=Max("pk"))["newest"] or 0,
             # Tells the trial group the board is not live yet, so they do not read the quiet as
             # nobody caring. Disappears on its own when ACCESS_ROLES is set to None.
             "limited_rollout": is_limited(),
@@ -190,6 +193,10 @@ def _detail_context(request: HttpRequest, pk: int) -> dict[str, object]:
 # The most cards one request draws: everything a board page can show at once.
 MAX_LIVE_CARDS = MAX_PINNED + PAGE_SIZE
 
+# The most "new since" pks one answer lists. Past this the banner reads "99+ nye opslag", which is
+# as precise as anyone needs a board they have not looked at for that long to be.
+MAX_NEW_SINCE = 99
+
 
 def live_cards(request: HttpRequest) -> HttpResponse:
     """The cards for `?id=…&id=…`, drawn exactly as the board draws them.
@@ -197,16 +204,29 @@ def live_cards(request: HttpRequest) -> HttpResponse:
     A card that is not in the answer has been deleted, and the board removes it — which is how a
     board that was asleep catches up on deletions it never heard about. So the ids are filtered,
     never refused: a junk id simply is not a card.
+
+    `?siden=<pk>` (with the board's `?kategori=`) also lists the posts created after that one, for
+    the same reconnecting board: what it missed while asleep was never signalled, so it asks, and
+    fills its "N nye opslag" banner from the answer.
     """
     if not request_allowed(request):
         return HttpResponse(status=204)
     ids = [int(raw) for raw in request.GET.getlist("id") if raw.isdigit()][:MAX_LIVE_CARDS]
     notices = _decorate(list(_list_queryset().filter(pk__in=ids)), request)
+    since = request.GET.get("siden", "")
+    new_since: list[int] | None = None
+    if since.isdigit():
+        newer = Notice.objects.filter(pk__gt=int(since))
+        category = request.GET.get("kategori") or ""
+        if category in Category.values:
+            newer = newer.filter(category=category)
+        new_since = list(newer.order_by("-pk").values_list("pk", flat=True)[:MAX_NEW_SINCE])
     return render(
         request,
         "opslagstavle/_live_cards.html",
         {
             "notices": notices,
+            "new_since": new_since,
             "can_moderate": can_moderate(request),
             "events_allowed": events_allowed(request),
             "quick_emoji": EMOJI_SHORTLIST,

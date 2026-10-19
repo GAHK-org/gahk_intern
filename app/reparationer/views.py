@@ -22,6 +22,7 @@ from django.db.models import Count, Q, QuerySet
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
+from django.utils.cache import patch_vary_headers
 from django.views.decorators.http import require_POST
 
 from residents.models import Role
@@ -129,7 +130,7 @@ def board(request: HttpRequest) -> HttpResponse:
     # A live signal re-reads the board through this same view, so its filters come along for free;
     # it gets the board alone (and no `messages`, which a background read must not consume).
     template = "reparationer/_kanban.html" if request.headers.get("HX-Request") else "reparationer/board.html"
-    return render(
+    response = render(
         request,
         template,
         {
@@ -145,6 +146,10 @@ def board(request: HttpRequest) -> HttpResponse:
             "manager_only_statuses": MANAGER_ONLY_STATUSES,
         },
     )
+    # One URL, two bodies. Without Vary the browser may keep the bare board under the page's URL
+    # and serve it on Back — an unstyled kanban with no page around it. The known htmx trap.
+    patch_vary_headers(response, ["HX-Request"])
+    return response
 
 
 @login_required

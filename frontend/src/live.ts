@@ -13,8 +13,11 @@
 //
 // Two promises the listeners rely on:
 //
-//   * `<html data-live-connected>` is present exactly while the socket is open. Den Hurtige's poll
-//     filters on it, so the old 5s poll comes back by itself whenever the socket is gone.
+//   * `data-live-on` is on every `[data-live]` element whose topics the server actually JOINED, and
+//     only while the socket is open. Den Hurtige's polls filter on it (`this.closest(...)`), so the
+//     old 5s poll comes back by itself whenever the socket is gone — and also when the socket is
+//     open but the server skipped this element's topic (core/consumers.py says why that can happen).
+//     `<html data-live-connected>` marks only that a socket is open, and nothing should poll on it.
 //   * After a RE-connection, a `resync` signal is raised. Whatever happened while the socket was
 //     down — a phone asleep in a pocket, a deploy restarting the server — was never signalled, so
 //     the page must catch up on everything it shows rather than wait for the next change.
@@ -45,6 +48,16 @@ const REFUSED = 4403;
 const RETRY_MIN_MS = 1000;
 const RETRY_MAX_MS = 30000;
 const CONNECTED_ATTR = "data-live-connected";
+const ON_ATTR = "data-live-on";
+
+/** Mark the elements whose every topic was joined; unmark the rest. An empty list unmarks all. */
+function markJoined(joined: string[]): void {
+  const set = new Set(joined);
+  document.querySelectorAll<HTMLElement>("[data-live]").forEach((el) => {
+    const mine = topicsOf(el);
+    el.toggleAttribute(ON_ATTR, mine.length > 0 && mine.every((t) => set.has(t)));
+  });
+}
 
 const topics = [
   ...new Set(Array.from(document.querySelectorAll<HTMLElement>("[data-live]")).flatMap(topicsOf)),
@@ -80,7 +93,10 @@ if (topics.length && "WebSocket" in window) {
 
     ws.addEventListener("message", (event: MessageEvent) => {
       try {
-        emit(JSON.parse(event.data as string) as LiveSignal);
+        const message = JSON.parse(event.data as string) as LiveSignal | { kind: "subscribed"; topics: string[] };
+        // The server's first word on every connection: which of the asked-for topics it joined.
+        if (message.kind === "subscribed") markJoined(message.topics);
+        else emit(message);
       } catch {
         // A malformed frame is dropped: the backstop poll and the next resync cover it.
       }
@@ -90,6 +106,7 @@ if (topics.length && "WebSocket" in window) {
       if (socket !== ws) return; // an old socket closing after a deliberate replacement
       socket = null;
       document.documentElement.removeAttribute(CONNECTED_ATTR);
+      markJoined([]);
       if (event.code === REFUSED) {
         refused = true;
         return;
@@ -121,6 +138,7 @@ if (topics.length && "WebSocket" in window) {
     socket = null;
     window.clearTimeout(retryTimer);
     document.documentElement.removeAttribute(CONNECTED_ATTR);
+    markJoined([]);
     ws?.close();
   });
   window.addEventListener("pageshow", (event: PageTransitionEvent) => {
