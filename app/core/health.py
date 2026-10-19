@@ -57,7 +57,7 @@ class HealthzMiddleware:
 
 # Touched by each worker's timer; the container healthcheck reads its age (docker-compose.prod.yml).
 # Only a liveness marker in the container's own /tmp: nothing is read from it but its mtime.
-WORKER_ALIVE_FILE = Path(os.environ.get("CELERY_ALIVE_FILE", "/tmp/celery-worker-alive"))  # noqa: S108
+WORKER_ALIVE_FILE = Path(os.environ.get("CELERY_ALIVE_FILE", "/tmp/celery-worker-alive"))  # noqa: S108  # nosec B108
 WORKER_HEARTBEAT_SECONDS = 30
 WORKER_STALE_AFTER = datetime.timedelta(minutes=2)
 # Beat schedules `core.tasks.heartbeat` every minute, so this is beat AND the default queue.
