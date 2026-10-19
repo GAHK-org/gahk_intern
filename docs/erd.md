@@ -593,8 +593,10 @@ erDiagram
         int requested_by_id FK
         datetime added_at
         datetime captured_at
+        bool capture_date_checked
         datetime file_modified_at
         datetime sort_at
+        string date_source
         string status
         int approved_by_id FK
         datetime approved_at
@@ -1397,8 +1399,10 @@ erDiagram
         int requested_by_id FK
         datetime added_at
         datetime captured_at
+        bool capture_date_checked
         datetime file_modified_at
         datetime sort_at
+        string date_source
         string status
         int approved_by_id FK
         datetime approved_at

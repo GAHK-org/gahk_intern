@@ -55,6 +55,7 @@ from .models import (
     AlbumDownloadState,
     AlbumImport,
     AlbumImportState,
+    DateSource,
     DerivativeState,
     DownloadVariant,
     Media,
@@ -949,6 +950,8 @@ def upload(request: HttpRequest, pk: int) -> HttpResponse:
         if outcome.also_in:
             paths = _album_paths(outcome.also_in)
             warnings.append(f"{name} findes også i {', '.join(sorted(paths.values()))}.")
+    if uploaded:
+        services.settle_dates(album)
     if wants_json:
         return JsonResponse({"uploaded": uploaded, "skipped": skipped, "warnings": warnings}, status=201)
     for note in [*skipped, *warnings]:
@@ -1022,6 +1025,7 @@ def media_detail(request: HttpRequest, pk: int) -> JsonResponse:
             "uploadedBy": media.requested_by.full_name,
             "uploadedAt": _formatted(media.added_at),
             "capturedAt": _formatted(media.captured_at),
+            **_approximate_date(media),
             "metadata": media.metadata,
             "tags": _tag_entries(media.tags.all(), media.album.lineage()),
             "tagUrl": reverse("photo_album:media_tags", args=[media.pk]) if can_tag else "",
@@ -1095,6 +1099,26 @@ def media_tags(request: HttpRequest, pk: int) -> JsonResponse:
 def _formatted(value: datetime | None) -> str:
     """The same wording the templates used to render, so the viewer reads identically."""
     return date_format(timezone.localtime(value), "j. F Y, H:i") if value else ""
+
+
+_APPROXIMATION_BASIS = {
+    DateSource.NEIGHBOURS: "ud fra de andre billeder i albummet",
+    DateSource.ALBUM_YEAR: "ud fra albummets årstal",
+}
+
+
+def _approximate_date(media: Media) -> dict[str, str]:
+    """`ca. september 2004` and why, for an item placed by an approximation; blank otherwise.
+
+    To the month only, or the year: an approximation is never as exact as a day would claim.
+    """
+    if not media.date_is_approximate or media.sort_at is None:
+        return {"approximateDate": "", "approximateDateBasis": ""}
+    precision = "Y" if media.date_source == DateSource.ALBUM_YEAR else "F Y"
+    return {
+        "approximateDate": f"ca. {date_format(timezone.localtime(media.sort_at), precision)}",
+        "approximateDateBasis": _APPROXIMATION_BASIS[DateSource(media.date_source)],
+    }
 
 
 def _managed_media(request: HttpRequest, pk: int) -> Media:
