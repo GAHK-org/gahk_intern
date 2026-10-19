@@ -1,4 +1,4 @@
-// Service worker for the intern PWA (Den Hurtige and opslagstavlen).
+// Service worker for the intern PWA: every push notification on the site lands here.
 //
 // Served from the ROOT path (/sw.js, see config/urls.py) so its scope covers /intern/. It lives
 // under templates/ because a TemplateView renders it, but the contents are deliberately plain
@@ -15,7 +15,7 @@
 // Bump when editing this file. A service worker is cached aggressively and updates silently, so
 // without a version marker there is no way to tell which copy is actually running — and debugging
 // "no notification arrives" against a stale worker wastes a lot of time.
-var SW_VERSION = 4;
+var SW_VERSION = 5;
 
 // Take over immediately instead of waiting for every tab to close — otherwise a fixed push handler
 // only reaches users after they close all intern tabs.
@@ -32,13 +32,18 @@ self.addEventListener('activate', function (event) {
 // listener at all is what several browsers look for before offering to install the app.
 self.addEventListener('fetch', function (event) {});
 
-// Incoming push from core/push.py. Payload keys: head, body, icon, url.
-// `url` is what routes the tap: Den Hurtige sends its feed, opslagstavlen sends the individual
-// post. Nothing here is per-feature — one worker serves both, and must keep doing so (see the
-// scope note above).
-// `head` is the sender's name, not the feature name: iOS and Android already label the
-// notification with the app it came from, so repeating "Den Hurtige" in the title wasted the
-// most valuable line on the lock screen. These fallbacks only fire for a payload-less push.
+// Incoming push from core/push.py (built by notifications/services.py). Payload keys:
+//   head, body, icon  what the notification says.
+//   url               where the notification points (the post, the event, the feed).
+//   open              where a TAP goes: /intern/notifikationer/aabn/<batch>/, which marks the
+//                     resident's in-app row seen and then redirects to `url`. Falls back to `url`.
+//   tag               set for grouped notifications ("A og B reagerede"): the new one replaces the
+//                     previous one for the same thing instead of stacking. Ungrouped ones have no
+//                     tag, so a second post never silently overwrites the first.
+//   vibrate           false = deliver silently. Decided server-side from the resident's settings.
+//   importance        1-4; 4 (Kritisk) stays on screen until dismissed.
+// `head` is the sender's name or a short title, not the feature name: iOS and Android already
+// label the notification with the app it came from. The fallbacks only fire for a payload-less push.
 self.addEventListener('push', function (event) {
   var data = {};
   if (event.data) {
@@ -52,25 +57,35 @@ self.addEventListener('push', function (event) {
   // apart — the second is an OS/browser notification setting, the first is delivery.
   console.log('[sw] push received', data);
 
+  var vibrate = data.vibrate !== false;
+  var options = {
+    body: data.body || 'Åbn for at læse mere.',
+    icon: data.icon || '/static/icons/icon-192x192.png',
+    badge: '/static/icons/badge-72x72.png', // monochrome, for the Android status bar
+    silent: !vibrate,
+    requireInteraction: data.importance === 4,
+    data: { url: data.open || data.url || '/intern/notifikationer/' },
+  };
+  if (vibrate) {
+    options.vibrate = data.importance >= 3 ? [200, 100, 200, 100, 200] : [200, 100, 200];
+  }
+  if (data.tag) {
+    options.tag = data.tag;
+    // Without renotify a replaced notification updates in place without a sound or buzz, so the
+    // second like on a post would be invisible until the shade is opened.
+    options.renotify = vibrate;
+  }
+
   event.waitUntil(
-    self.registration
-      .showNotification(data.head || 'Ny besked', {
-        body: data.body || 'Åbn for at læse mere.',
-        icon: data.icon || '/static/icons/icon-192x192.png',
-        badge: '/static/icons/badge-72x72.png', // monochrome, for the Android status bar
-        // Deliberately NO `tag`: a shared tag makes each notification replace the previous one, so
-        // a second post would silently overwrite the first. Every post stands alone.
-        data: { url: data.url || '/intern/den-hurtige/' },
-      })
-      .then(
-        function () {
-          console.log('[sw] notification shown');
-        },
-        function (err) {
-          // showNotification rejects if the icon/badge cannot be fetched, among other things.
-          console.error('[sw] showNotification failed', err);
-        },
-      ),
+    self.registration.showNotification(data.head || 'Ny besked', options).then(
+      function () {
+        console.log('[sw] notification shown');
+      },
+      function (err) {
+        // showNotification rejects if the icon/badge cannot be fetched, among other things.
+        console.error('[sw] showNotification failed', err);
+      },
+    ),
   );
 });
 
@@ -78,7 +93,7 @@ self.addEventListener('push', function (event) {
 // should not leave three copies of the feed behind.
 self.addEventListener('notificationclick', function (event) {
   event.notification.close();
-  var target = (event.notification.data && event.notification.data.url) || '/intern/den-hurtige/';
+  var target = (event.notification.data && event.notification.data.url) || '/intern/notifikationer/';
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (windows) {

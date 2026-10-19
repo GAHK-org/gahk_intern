@@ -14,7 +14,7 @@
       <label>Pris (kr)</label>
       <input type="number" name="price_kr" step="0.01" min="0" required>
       <label>Billede (valgfrit)</label>
-      <input type="file" name="image" accept="image/*">
+      <input type="file" name="image" accept="image/*,.heic,.heif">
       <label class="font-normal! mt-2"><input type="checkbox" name="active" checked> Aktiv (vises i tillen)</label>
       <label class="font-normal!"><input type="checkbox" name="highlighted"> Fremhævet</label>
       <p class="mt-3"><button type="submit">Opret vare</button></p>
@@ -38,7 +38,7 @@
             <label class="font-normal! mt-2"><input type="checkbox" name="active" {% if p.active %}checked{% endif %}> Aktiv</label>
             <label class="font-normal!"><input type="checkbox" name="highlighted" {% if p.highlighted %}checked{% endif %}> Fremhævet</label>
             <label>Skift billede</label>
-            <input type="file" name="image" accept="image/*">
+            <input type="file" name="image" accept="image/*,.heic,.heif">
             <p class="mt-3"><button type="submit">Gem</button></p>
           </div>
         </div>

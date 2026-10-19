@@ -20,6 +20,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from core.exports import csv_or_xlsx_response
+from core.uploads import attached_image
 from residents.models import Resident
 from residents.permissions import current_resident, role_required
 
@@ -656,7 +657,7 @@ def product_create(request: HttpRequest) -> HttpResponseRedirect:
         price_ore=price_ore,
         active="active" in request.POST,
         highlighted="highlighted" in request.POST,
-        image=request.FILES.get("image") or "",
+        image=attached_image(request, settings.PRODUCT_IMAGE_MAX_MB) or "",
     )
     messages.success(request, f"«{name}» oprettet.")
     return redirect("oelkaelder:products")
@@ -678,8 +679,9 @@ def product_update(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     product.name = name
     product.active = "active" in request.POST
     product.highlighted = "highlighted" in request.POST
-    if request.FILES.get("image"):
-        product.image = request.FILES["image"]
+    image = attached_image(request, settings.PRODUCT_IMAGE_MAX_MB)
+    if image:
+        product.image = image
     product.save()
     messages.success(request, f"«{name}» opdateret.")
     return redirect("oelkaelder:products")

@@ -23,7 +23,6 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
-from core import push
 from core.clock import current_date, current_datetime
 from core.danish import MONTHS, WEEKDAYS_SHORT
 from core.uploads import attached_image
@@ -31,7 +30,7 @@ from residents import birthdays as birthdays_mod
 from residents.models import Resident
 from residents.permissions import current_resident
 
-from . import access, icalendar, services
+from . import access, icalendar, maerkedage, services
 from .forms import EventCommentForm, EventForm
 from .models import Answer, CalendarFeedToken, Event, EventComment, Rsvp
 
@@ -116,6 +115,7 @@ def _month_grid(
     by_day: dict[datetime.date, list[Event]],
     chosen: datetime.date | None = None,
     birthdays: dict[datetime.date, list[birthdays_mod.Birthday]] | None = None,
+    marked_days: dict[datetime.date, list[maerkedage.Maerkedag]] | None = None,
 ) -> list[list[dict[str, object]]]:
     """The month as whole Monday-to-Sunday weeks, padded into the neighbouring months.
 
@@ -129,6 +129,7 @@ def _month_grid(
     would be a lie about one.
     """
     marked = birthdays or {}
+    special = marked_days or {}
     weeks: list[list[dict[str, object]]] = []
     for week in _weeks_of(first):
         weeks.append(
@@ -138,6 +139,7 @@ def _month_grid(
                     "outside": day.month != first.month,
                     "events": by_day.get(day, []),
                     "birthdays": marked.get(day, []),
+                    "maerkedage": special.get(day, []),
                     "chosen": day == chosen,
                 }
                 for day in week
@@ -225,9 +227,6 @@ def index(request: HttpRequest) -> HttpResponse:
         "events/index.html",
         {
             "page_obj": page,
-            "push_configured": push.is_configured(),
-            "vapid_public_key": push.vapid_public_key(),
-            "push_subscribed": push.subscribers(services.TOPIC).filter(user=resident).exists(),
             "limited_rollout": access.is_limited(),
         },
     )
@@ -545,6 +544,8 @@ def calendar(request: HttpRequest) -> HttpResponse:
     # 1 September is drawn on the August page, and a name that appears only when you click through
     # to the next month is a name the calendar failed to tell you about.
     birthdays = birthdays_mod.in_span(grid_first, grid_last)
+    # The founders' birthdays and other mærkedage: notes like the birthdays, every year.
+    marked_days = maerkedage.in_span(grid_first, grid_last)
 
     chosen = _requested_day(request, (grid_first, grid_last))
 
@@ -552,7 +553,7 @@ def calendar(request: HttpRequest) -> HttpResponse:
         request,
         "events/calendar.html",
         {
-            "weeks": _month_grid(first, by_day, chosen, birthdays),
+            "weeks": _month_grid(first, by_day, chosen, birthdays, marked_days),
             "month_label": f"{MONTHS[month].capitalize()} {year}",
             "this_month": _month_param(first),
             "prev": _month_param(first - datetime.timedelta(days=1)),
@@ -564,6 +565,7 @@ def calendar(request: HttpRequest) -> HttpResponse:
             # den 12." is what a tap on a quiet day should produce, not a panel that fails to appear.
             "chosen_events": by_day.get(chosen, []) if chosen else [],
             "chosen_birthdays": birthdays.get(chosen, []) if chosen else [],
+            "chosen_maerkedage": marked_days.get(chosen, []) if chosen else [],
         },
     )
 
@@ -630,9 +632,3 @@ def _touch(feed_token: CalendarFeedToken) -> None:
     if feed_token.last_used_at and now - feed_token.last_used_at < datetime.timedelta(hours=1):
         return
     CalendarFeedToken.objects.filter(pk=feed_token.pk).update(last_used_at=now)
-
-
-@access.access_required
-def save_subscription(request: HttpRequest) -> HttpResponse:
-    """Per-topic push opt-in. The body is shared with the other two features — see core.push."""
-    return push.handle_subscription_request(request, services.TOPIC)

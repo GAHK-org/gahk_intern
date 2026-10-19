@@ -3,7 +3,6 @@ import io
 import logging
 import os
 from datetime import date
-from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib import messages
@@ -15,6 +14,7 @@ from django.db.models import Q, QuerySet
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import url_has_allowed_host_and_scheme, urlsafe_base64_encode
 
@@ -42,11 +42,13 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     """Internal landing page (F-013). Shows the member's active-month roles and the shared
     WiFi/calendar info — now gated by authentication (not campus IP) with secrets read from env.
     Uses effective roles so the preview override is reflected here too."""
-    # Backstop for the ak_monthly_assessment cron job (DEPLOY.md §4b): books this month's AK
+    # Backstop for the ak_monthly_assessment cron job (DEPLOY.md §4b): charges last month's AK
     # deduction if the schedule missed it. Cheap and idempotent; see ak.services.
-    from ak.services import ensure_active_month_applied
+    from ak.services import ensure_previous_month_charged
+    from events import access as events_access
+    from events.agenda import agenda
 
-    ensure_active_month_applied()
+    ensure_previous_month_charged()
     year, month = active_period()
     roles = sorted(effective_roles(request))
     return render(
@@ -58,36 +60,10 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             "wifi_password": os.environ.get("WIFI_PASSWORD", ""),
             "calendar_user": os.environ.get("GOOGLE_CALENDAR_USER", ""),
             "calendar_password": os.environ.get("GOOGLE_CALENDAR_PASSWORD", ""),
-            "calendar_embed_url": _calendar_embed_url(),
+            # The kollegium's own calendar; empty for anyone the events rollout gate keeps out.
+            "agenda": agenda(current_resident(request)) if events_access.request_allowed(request) else None,
         },
     )
-
-
-def _calendar_embed_url() -> str:
-    """Build the shared Google Calendar agenda embed shown on the dashboard (restored from the
-    legacy /intern dashboard). The calendar IDs are public embed IDs, not secrets, but come from
-    env so the source stays deployment-agnostic. Returns "" when no calendar is configured."""
-    calendar_user = os.environ.get("GOOGLE_CALENDAR_USER", "").strip()
-    if not calendar_user:
-        return ""
-    calendar_ids = [calendar_user]
-    extra_ids = os.environ.get("GOOGLE_CALENDAR_EXTRA_IDS", "")
-    calendar_ids += [c.strip() for c in extra_ids.split(",") if c.strip()]
-    params = [
-        ("mode", "AGENDA"),
-        ("ctz", "Europe/Copenhagen"),
-        ("wkst", "2"),
-        ("bgcolor", "#ffffff"),
-        ("showTitle", "0"),
-        ("showNav", "0"),
-        ("showDate", "0"),
-        ("showPrint", "0"),
-        ("showTabs", "0"),
-        ("showCalendars", "0"),
-        ("showTz", "0"),
-    ]
-    params += [("src", cid) for cid in calendar_ids]
-    return "https://calendar.google.com/calendar/embed?" + urlencode(params)
 
 
 # ---- Alumneliste: the resident directory (F-010) ----
@@ -434,6 +410,8 @@ def _add_form_draft(request: HttpRequest, action: str) -> dict[str, object]:
         "first_name": (request.POST.get("first_name") or "").strip(),
         "last_name": (request.POST.get("last_name") or "").strip(),
         "email": (request.POST.get("email") or "").strip(),
+        "phone": (request.POST.get("phone") or "").strip(),
+        "birthday": (request.POST.get("birthday") or "").strip(),
     }
 
 
@@ -659,8 +637,17 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
             first = (request.POST.get("first_name") or "").strip()
             last = (request.POST.get("last_name") or "").strip()
             room = _pick(room_by_id, request.POST.get("room", ""))
+            phone = (request.POST.get("phone") or "").strip()[:40]
+            raw_birthday = (request.POST.get("birthday") or "").strip()
+            try:
+                birthday = date.fromisoformat(raw_birthday) if raw_birthday else None
+            except ValueError:
+                birthday = None
             if not (email and first and last and room):
                 messages.error(request, "Udfyld navn, e-mail og værelse for at tilføje en ny beboer.")
+                new_draft = _add_form_draft(request, "add_new")
+            elif raw_birthday and (birthday is None or birthday > timezone.localdate()):
+                messages.error(request, "Fødselsdagen er ikke en gyldig dato.")
                 new_draft = _add_form_draft(request, "add_new")
             elif Resident.objects.filter(email=email).exists():
                 messages.error(request, "Der findes allerede en beboer med den e-mail.")
@@ -675,7 +662,14 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                 # exactly the step that gets skipped, leaving holes in the stamtræ (F-011).
                 sponsor = _pick({r.id: r for r in Resident.objects.all()}, request.POST.get("sponsor", ""))
                 with transaction.atomic():
-                    r = Resident(email=email, first_name=first, last_name=last, sponsor=sponsor)
+                    r = Resident(
+                        email=email,
+                        first_name=first,
+                        last_name=last,
+                        phone=phone,
+                        birthday=birthday,
+                        sponsor=sponsor,
+                    )
                     r.set_unusable_password()  # they set one via the welcome/password-reset link (F-014)
                     r.save()
                     Residency.objects.create(

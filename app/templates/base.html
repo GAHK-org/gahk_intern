@@ -105,16 +105,38 @@
           <span class="hidden sm:inline">Forsiden</span>
         </a>
         {% if user.is_authenticated %}
-          <a href="{% url 'resident_profile' user.pk %}" class="topuser" title="Min profil">
-            {% if user.profile_picture %}
-              <img src="{{ user.profile_picture.url }}" alt="{{ user.first_name }}" class="avatar" style="border-radius:50%;object-fit:cover">
-            {% else %}
-              <span class="avatar">{{ user.first_name|slice:":1" }}{{ user.last_name|slice:":1" }}</span>
-            {% endif %}
-            <span class="hidden sm:inline">{{ user.first_name }}</span></a>
-          <form method="post" action="/intern/admin/logout" class="inline">
-            {% csrf_token %}<button type="submit" class="btn-top">Log ud</button>
-          </form>
+          {% include "notifications/_bell.html" %}
+          {% comment %}
+            The avatar opens the account menu: the profile, the notification settings (the bell beside
+            it is for reading them), the password, and logging out. Same Alpine pattern as the bell.
+          {% endcomment %}
+          <div class="user-menu" x-data="{ open: false }" @keydown.escape.window="open = false" @click.outside="open = false">
+            <button type="button" class="topuser user-menu-button" aria-haspopup="menu" aria-controls="user-menu-panel"
+                    :aria-expanded="open" @click="open = !open" title="Min konto">
+              {% if user.profile_picture %}
+                <img src="{{ user.avatar_url }}" alt="" class="avatar" style="border-radius:50%;object-fit:cover">
+              {% else %}
+                <span class="avatar" aria-hidden="true">{{ user.first_name|slice:":1" }}{{ user.last_name|slice:":1" }}</span>
+              {% endif %}
+              <span class="hidden sm:inline">{{ user.first_name }}</span>
+              <span class="user-menu-caret" aria-hidden="true">▾</span>
+              <span class="sr-only">Min konto</span>
+            </button>
+            <div id="user-menu-panel" class="user-menu-panel" role="menu" x-show="open" x-cloak>
+              <a role="menuitem" href="{% url 'resident_profile' user.pk %}">Min profil</a>
+              <a role="menuitem" href="{% url 'notifications:preferences' %}">Notifikationsindstillinger</a>
+              <a role="menuitem" href="/intern/admin/password-change">Skift kodeord</a>
+              <form method="post" action="/intern/admin/logout">
+                {% csrf_token %}<button type="submit" role="menuitem">Log ud</button>
+              </form>
+            </div>
+          </div>
+          {# Without JS the menu cannot open, and logging out must never depend on it. #}
+          <noscript>
+            <form method="post" action="/intern/admin/logout" class="inline">
+              {% csrf_token %}<button type="submit" class="btn-top">Log ud</button>
+            </form>
+          </noscript>
         {% else %}
           <a href="/intern/admin/login" class="btn-top">Log ind</a>
         {% endif %}

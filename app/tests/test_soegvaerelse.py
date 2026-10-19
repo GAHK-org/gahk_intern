@@ -481,8 +481,24 @@ def test_resident_cannot_delete_another_persons_application(make_resident: Calla
     c = Client()
     c.force_login(other)
 
-    assert c.post(reverse("soegvaerelse:delete_application", args=[app.id])).status_code == 404
+    assert c.post(reverse("soegvaerelse:delete_application", args=[app.id])).status_code == 403
     assert KvotientApplication.objects.filter(id=app.id).exists()  # untouched
+
+
+@pytest.mark.django_db
+def test_indstilling_can_delete_a_wrong_application(make_resident: Callable) -> None:
+    owner = make_resident(email="owner@gahk.dk")
+    ind = make_resident(email="ind@gahk.dk", roles=["indstilling"])
+    app = _application(owner, month_index(*next_period()), k=5.0)
+    c = Client()
+    c.force_login(ind)
+
+    assert "Slet ansøgning" in c.get(reverse("soegvaerelse:detail", args=[app.id])).content.decode()
+    resp = c.post(reverse("soegvaerelse:delete_application", args=[app.id]))
+
+    assert resp.status_code == 302
+    assert resp.url == reverse("soegvaerelse:admin")
+    assert not KvotientApplication.objects.filter(id=app.id).exists()
 
 
 @pytest.mark.django_db
