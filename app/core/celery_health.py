@@ -4,9 +4,29 @@ The worker's own timer, in the main process: it keeps beating while the pool's s
 hour-long encode, and stops if the worker itself hangs, which is what the healthcheck is for.
 """
 
+import logging
 from typing import Any
 
 from celery import bootsteps
+
+HEARTBEAT_TASK = "core.tasks.heartbeat"
+# Where Celery logs "Task … received" and "Task … succeeded" for every task.
+TASK_LIFECYCLE_LOGGERS = ("celery.worker.strategy", "celery.app.trace")
+
+
+class QuietHeartbeat(logging.Filter):
+    """Drops the received/succeeded INFO lines of the once-a-minute heartbeat task: 2,880 lines a
+    day saying nothing. A failure is logged above INFO and still shows."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        data = getattr(record, "data", None)
+        is_heartbeat = isinstance(data, dict) and data.get("name") == HEARTBEAT_TASK
+        return not (is_heartbeat and record.levelno == logging.INFO)
+
+
+def quiet_heartbeat_logs() -> None:
+    for name in TASK_LIFECYCLE_LOGGERS:
+        logging.getLogger(name).addFilter(QuietHeartbeat())
 
 
 class HeartbeatStep(bootsteps.StartStopStep):

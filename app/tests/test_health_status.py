@@ -2,6 +2,7 @@
 (core.health). `/healthz` itself is in test_healthz.py."""
 
 import datetime
+import logging
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,7 +17,7 @@ from django.utils import timezone
 from django_celery_beat.models import IntervalSchedule, PeriodicTask
 
 from core import health
-from core.celery_health import HeartbeatStep
+from core.celery_health import TASK_LIFECYCLE_LOGGERS, HeartbeatStep
 from core.models import ServiceHeartbeat
 from core.tasks import heartbeat
 from residents.models import Role
@@ -174,3 +175,24 @@ def test_the_status_page_is_for_administrators(make_resident: Callable) -> None:
     assert response.status_code == 200
     assert "Driftsstatus" in response.content.decode()
     assert {c.name for c in response.context["checks"]} >= {"Database", "S3", "Beat (planlagte opgaver)"}
+
+
+def _lifecycle_record(logger: str, task: str, level: int = logging.INFO) -> logging.LogRecord:
+    record = logging.LogRecord(logger, level, __file__, 1, "Task %(name)s[%(id)s] succeeded", None, None)
+    record.data = {"name": task, "id": "abc"}
+    return record
+
+
+def test_the_heartbeats_received_and_succeeded_lines_are_dropped() -> None:
+    for logger in TASK_LIFECYCLE_LOGGERS:
+        assert not logging.getLogger(logger).filter(_lifecycle_record(logger, "core.tasks.heartbeat"))
+
+
+def test_other_tasks_and_a_failing_heartbeat_are_still_logged() -> None:
+    for logger in TASK_LIFECYCLE_LOGGERS:
+        assert logging.getLogger(logger).filter(
+            _lifecycle_record(logger, "ak.tasks.apply_monthly_assessment")
+        )
+        assert logging.getLogger(logger).filter(
+            _lifecycle_record(logger, "core.tasks.heartbeat", logging.ERROR)
+        )

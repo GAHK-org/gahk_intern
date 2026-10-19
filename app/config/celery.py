@@ -9,6 +9,7 @@ app.config_from_object("django.conf:settings", namespace="CELERY")
 app.autodiscover_tasks()
 
 # Every worker reports it is alive, for its container healthcheck and the admin status page.
-from core.celery_health import HeartbeatStep  # noqa: E402
+from core.celery_health import HeartbeatStep, quiet_heartbeat_logs  # noqa: E402
 
 app.steps["worker"].add(HeartbeatStep)
+quiet_heartbeat_logs()
