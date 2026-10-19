@@ -12,9 +12,8 @@ IMAGE="${IMAGE:-ghcr.io/gahk-org/gahk_intern:main}"
 COOLIFY_URL="${COOLIFY_URL:-http://localhost:8000}"
 STATE_FILE="${STATE_FILE:-/var/lib/gahk-autodeploy/deployed-image}"
 
-# Pulled here rather than left to the deploy: Coolify's `docker compose up` then finds the new image
-# under :main on this host and recreates the containers. A pull with nothing new is one manifest
-# request to GHCR.
+# Pulled to see whether :main has moved; a pull with nothing new is one manifest request to GHCR.
+# Coolify pulls again before it stops anything, and finds it up to date.
 docker pull --quiet "$IMAGE" >/dev/null
 current=$(docker image inspect --format '{{.Id}}' "$IMAGE")
 deployed=$(cat "$STATE_FILE" 2>/dev/null || true)
@@ -24,7 +23,8 @@ fi
 
 revision=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE")
 echo "New image ${current} (commit ${revision:-unknown}); asking Coolify to deploy"
-curl --fail-with-body --silent --show-error --max-time 30 \
+# POST: since Coolify 4.2 a GET on /deploy only answers 405 "This endpoint has changed to a POST request".
+curl --fail-with-body --silent --show-error --max-time 30 --request POST \
   --header "Authorization: Bearer ${COOLIFY_TOKEN}" \
   "${COOLIFY_URL}/api/v1/deploy?uuid=${COOLIFY_APP_UUID}"
 echo
