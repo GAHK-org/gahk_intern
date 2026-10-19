@@ -36,8 +36,8 @@ Features decide **who** is told and **with what wording**; they call
 | Begivenheder | `events.personal` — RSVP deadline reminders, moved up from the venteliste | Høj | yes |
 | Begivenheder | `events.comments` — comments on events you host | Normal | yes |
 | Reparationer | `repairs` — new and handed-over tasks for your group | Normal | yes |
-| System | `system` — messages from the administrators about the site | Normal | **always** |
-| Generelt | `general` — announcements to the whole kollegium | Normal | **always** |
+| System | `system` — about the site itself: downtime, new features | Normal | **always** |
+| Generelt | `general` — **the catch-all**: everything without a category of its own, from a notice about your own application to an announcement to the whole kollegium | Normal | **always** |
 
 Groups are shown in this order everywhere (settings page, the by-category view). System and Generelt
 come last: they are rare, and the toggles people come to the settings page for are the feature ones.
@@ -46,6 +46,21 @@ The room categories are generated from the Den Hurtige channel registry, so addi
 its toggle. A new message in a room is **push only**: putting every chat message in the in-app list
 would bury the notifications that are about *you*. Replies and reactions to your own messages are
 in-app *and* push.
+
+### System and Generelt are catch-alls — don't add a category lightly
+
+The settings page is a table every resident scrolls, and each category is another row of toggles. A
+feature gets its own category only when its notifications are **recurring and plentiful enough that
+somebody would want them off on their own** (new posts, reactions, chat rooms). Everything else uses
+an existing one:
+
+- **Generelt** — anything without its own category: one-off messages about the resident's own
+  affairs (e.g. "din ansøgning er slettet") and announcements to everyone. Raise `importance` at the
+  call site when it matters more than Normal.
+- **System** — about the site itself (downtime, new features), not about a resident's own case.
+
+A feature does not get a group just for being a feature: a deleted room application is `general`,
+not a new "Søg værelse" group.
 
 System and Generelt can **not** be turned off in-app (`Category.in_app_optional = False`): the list
 is where somebody who has push off still sees what the house itself says. Push and vibration for
