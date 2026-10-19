@@ -23,14 +23,16 @@
 // The views behind data-live-url never render `messages`: these reads fire at moments the reader
 // did not choose, and must not eat a flash message waiting for the next page.
 
+// htmx is IMPORTED, never read off `window`: htmx 2's ES-module build (what main.ts bundles)
+// defines no global, so `window.htmx` is undefined here and every `window.htmx?.…` call was a
+// silent no-op. That is how Den Hurtige's feed came to ignore its live signals and update only on
+// the 60s backstop. The import is the same instance main.ts loaded.
+import htmx from "htmx.org";
 import { Idiomorph } from "idiomorph/htmx";
 import { LIVE_EVENT, concerns, topicsOf, type LiveSignal } from "./live";
 
 /** Raised on a region by a page script that wants it re-read now (the channel picker opening). */
 export const REFRESH_EVENT = "gahk:live-refresh";
-
-const htmx = (): { process: (el: Element) => void } | undefined =>
-  (window as unknown as { htmx?: { process: (el: Element) => void } }).htmx;
 
 /** The fragment at `url`, "" if the thing it draws is gone (404), or null to leave the page alone —
  * a 204 from an expired session, a network failure. */
@@ -48,7 +50,7 @@ export async function fetchFragment(url: string): Promise<string | null> {
 export function morphInto(old: Element, fresh: Element): void {
   Idiomorph.morph(old, fresh, { morphStyle: "outerHTML" });
   const now = fresh.id ? document.getElementById(fresh.id) : null;
-  htmx()?.process(now ?? old);
+  htmx.process(now ?? old);
 }
 
 /** One request at a time, with everything that arrived meanwhile batched into the next — three

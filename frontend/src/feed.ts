@@ -31,6 +31,7 @@
 // because the feed is morphed every five seconds and anything bound directly would have to be
 // re-armed after each poll.
 
+import htmx from "htmx.org";
 import { Idiomorph } from "idiomorph/htmx";
 import { LIVE_EVENT, concerns, topicsOf, type LiveSignal } from "./live";
 import { REFRESH_EVENT } from "./live-region";
@@ -68,7 +69,14 @@ function toBottom(el: HTMLElement): void {
 //   open   a picker or reader panel the reader opened; losing it closes it under their thumb
 const CLIENT_OWNED_ATTRS = new Set(["open"]);
 
-Idiomorph.defaults.ignoreActiveValue = true; // never rewrite the field being typed into
+// NOT idiomorph's ignoreActiveValue, which this used to set. That option leaves the focused
+// element's CHILDREN alone, not just its value — right for a <textarea>, whose children ARE its
+// value, and wrong for everything else that can hold focus. The thread panel is focused the moment
+// it opens (it has tabindex=-1; see the afterSwap handler below), so every refresh of it was
+// silently discarded: replies and reactions never appeared in an open thread, whether the refresh
+// came from the old 5s poll or a live signal. The rule it stood for — never rewrite the field being
+// typed into — is kept, for form fields only, in beforeNodeMorphed below.
+Idiomorph.defaults.ignoreActiveValue = false;
 Idiomorph.defaults.callbacks.beforeAttributeUpdated = (name: string, node: Element): boolean => {
   if (CLIENT_OWNED_ATTRS.has(name)) return false;
   // `style` is normally the server's to set — the avatar <img> carries one — but for the length of
@@ -84,8 +92,16 @@ Idiomorph.defaults.callbacks.beforeAttributeUpdated = (name: string, node: Eleme
 //
 // Marked with data-morph-skip in _thread.html rather than listed by selector here, so the template
 // that owns the form is the thing that says so.
+//
+// The field being typed into is client-owned too, wherever it is: a search box, an emoji field, a
+// reply not wrapped in data-morph-skip. Skipped whole while it has focus, so neither its value nor
+// its caret moves under the typist.
+const isFocusedField = (node: Element): boolean =>
+  node === document.activeElement &&
+  (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement);
+
 Idiomorph.defaults.callbacks.beforeNodeMorphed = (node: Node): boolean =>
-  !(node instanceof Element) || !node.hasAttribute("data-morph-skip");
+  !(node instanceof Element) || !(node.hasAttribute("data-morph-skip") || isFocusedField(node));
 
 if (feed && scroller) {
   // Start at the newest message, as a chat does.
@@ -205,8 +221,7 @@ if (feed && scroller) {
     // separates a modifier from its argument, as in `intersect root:#js-feed` -- so `gahk:open`
     // parses as the event `gahk` with a modifier, the attribute never matches, and the archive
     // simply never opens with nothing logged anywhere. A hyphen is inert to that parser.
-    const htmx = (window as unknown as { htmx?: { trigger: (e: Element, n: string) => void } }).htmx;
-    htmx?.trigger(el, "gahk-open-archive");
+    htmx.trigger(el, "gahk-open-archive");
   }
 
   // Where the reader is put once the first chunk lands, and it is deliberately NOT "exactly where
@@ -455,12 +470,13 @@ const chatTopics = topicsOf(document.querySelector<HTMLElement>(".chat[data-live
 document.addEventListener(LIVE_EVENT, (event: Event) => {
   const signal = (event as CustomEvent<LiveSignal>).detail;
   if (!chatTopics.length || !concerns(signal, chatTopics)) return;
-  const htmx = (window as unknown as { htmx?: { trigger: (e: Element, n: string) => void } }).htmx;
+  // htmx is imported at the top, not read off `window`: the ES-module build defines no global, and
+  // `window.htmx?.trigger` here was a silent no-op that left the feed on its 60s backstop.
   const live = document.getElementById(LIVE_ID);
-  if (live) htmx?.trigger(live, "gahk-live");
+  if (live) htmx.trigger(live, "gahk-live");
   const panel = threadPanel();
   if (panel?.hasAttribute("hx-get") && (signal.kind === "resync" || panel.dataset.threadPk === String(signal.pk))) {
-    htmx?.trigger(panel, "gahk-live");
+    htmx.trigger(panel, "gahk-live");
   }
 });
 
