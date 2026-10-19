@@ -31,8 +31,6 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name="workerjoblog",
-            index=models.Index(
-                fields=["parent_id"], name="core_worker_parent__970bd3_idx"
-            ),
+            index=models.Index(fields=["parent_id"], name="core_worker_parent__970bd3_idx"),
         ),
     ]
