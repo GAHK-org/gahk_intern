@@ -1280,3 +1280,21 @@ def test_the_mute_migration_reverses_to_channel_mutes(make_resident: Callable[..
     _migration().backwards(_apps([], created), None)  # type: ignore[attr-defined]
 
     assert [(m.resident_id, m.channel) for m in created] == [(a.pk, "tv-rezz")]  # type: ignore[attr-defined]
+
+
+@pytest.mark.django_db
+def test_notifications_live_in_the_topbar_not_the_sidebar(make_resident: Callable[..., Resident]) -> None:
+    """The bell is the one place to read them; their settings are in the avatar menu beside it."""
+    c = Client()
+    c.force_login(make_resident(email="menu@gahk.dk"))
+
+    response = c.get("/intern/")
+    labels = [label for _section, items in response.context["nav_intern"] for _url, label, _icon in items]
+    body = response.content.decode()
+
+    assert "Notifikationer" not in labels
+    assert 'class="notif-bell"' in body
+    menu = body[body.index('id="user-menu-panel"') :]
+    assert reverse("notifications:preferences") in menu
+    assert 'action="/intern/admin/logout"' in menu
+    assert "<noscript>" in body  # logging out never depends on the menu's JS
