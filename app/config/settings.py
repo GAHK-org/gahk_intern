@@ -450,6 +450,8 @@ MEDIA_ROOT = BASE_DIR / "media"
 
 # Secrets (WiFi/calendar/SMTP) come from the environment (.env / vault), never source. (F-013)
 LOGIN_URL = "/intern/admin/login"
+# A stale form (often a PWA's restored login page) explained instead of a bare 403 (residents.auth).
+CSRF_FAILURE_VIEW = "residents.auth.csrf_failure"
 LOGIN_REDIRECT_URL = "/intern/"
 LOGOUT_REDIRECT_URL = "/intern/admin/login"
 
@@ -540,6 +542,9 @@ LOGGING = {
         # handler of its own: it propagates to the worker's, and in the web process nothing prints
         # below WARNING.
         "photo_album": {"level": os.environ.get("PHOTO_ALBUM_LOG_LEVEL", "INFO")},
+        # Why a login failed, and why a form was refused as stale (residents.auth). Django's own
+        # CSRF warnings print only under DEBUG, so a 403 in production said nothing about why.
+        "residents": {"handlers": ["console"], "level": os.environ.get("RESIDENTS_LOG_LEVEL", "INFO")},
     },
 }
 
