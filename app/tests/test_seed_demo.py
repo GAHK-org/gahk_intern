@@ -87,3 +87,25 @@ def test_seed_demo_leaves_one_tombstone_with_its_replies_intact() -> None:
     tombstone = tombstones.get()
     assert tombstone.content == "", "a tombstone holds no content"
     assert tombstone.comments.exists(), "the replies outlive the message"
+
+
+@pytest.mark.django_db
+def test_seed_demo_gives_the_logins_notifications_in_every_state() -> None:
+    """The bell and the notifications page need something to show on a fresh checkout."""
+    from notifications import services
+    from notifications.categories import Importance
+    from notifications.models import Notification
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    beboer = Resident.objects.get(email="beboer@gahk.dk")
+    mine = Notification.objects.filter(recipient=beboer)
+
+    assert services.unseen_count(beboer.pk) == 4
+    assert mine.visible().filter(importance=Importance.KRITISK).exists()
+    assert mine.visible().filter(seen_at__isnull=False).count() == 2
+    assert any(len(n.actors) == 2 for n in mine)  # "Mette og Jonas svarede"
+    assert services.purge_expired() == 5  # one long-expired row per documented login
+    assert beboer.notification_preferences.filter(push=False).exists()
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)  # still idempotent
+    assert Notification.objects.filter(recipient__email="beboer@gahk.dk").count() == 7
