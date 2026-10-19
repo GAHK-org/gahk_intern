@@ -32,6 +32,7 @@
       <span><span class="cal-key cal-key-waiting"></span>Venteliste</span>
       <span><span class="cal-key cal-key-open"></span>Ikke svaret</span>
       <span><svg class="cal-flag" aria-hidden="true"><use href="#i-dannebrog"></use></svg>Fødselsdag</span>
+      <span><span class="cal-key cal-key-maerkedag"></span>Mærkedag</span>
       <a href="{% url 'events:feed_settings' %}">Abonnér i din kalender</a>
     </div>
   </div>
@@ -54,8 +55,15 @@
     {% for week in weeks %}
       <div class="cal-week" role="row">
         {% for cell in week %}
-          <div class="cal-cell{% if cell.outside %} is-outside{% endif %}{% if cell.date == today %} is-today{% endif %}{% if cell.chosen %} is-chosen{% endif %}" role="cell">
+          <div class="cal-cell{% if cell.outside %} is-outside{% endif %}{% if cell.date == today %} is-today{% endif %}{% if cell.chosen %} is-chosen{% endif %}{% if cell.maerkedage %} is-maerkedag{% endif %}" role="cell">
             <span class="cal-daynum">{{ cell.date|date:"j" }}</span>
+            {% comment %}Mærkedage (the founders' birthdays): a note like a birthday, but marked out — the whole cell is framed in brass.{% endcomment %}
+            {% for maerkedag in cell.maerkedage %}
+              <span class="cal-maerkedag" title="{{ maerkedag.title }}">
+                <svg class="cal-flag" aria-hidden="true"><use href="#i-dannebrog"></use></svg>
+                <span class="cal-maerkedag-name">{{ maerkedag.title }}</span>
+              </span>
+            {% endfor %}
             {% comment %}
               Fødselsdage. A NOTE, not a chip and not a link: nobody organises a birthday and
               nobody answers ja to it, so in a cell full of things that are true of it must not
@@ -80,7 +88,7 @@
                 {{ event.starts_at|date:"H.i" }} {{ event.title }}
               </a>
             {% endfor %}
-            {% if cell.birthdays %}
+            {% if cell.birthdays or cell.maerkedage %}
               {% comment %}
                 One flag however many birthdays the day holds. A second would be read as a second
                 country rather than a second person, and the panel below names them all anyway.
@@ -104,9 +112,9 @@
               cell that does not open is a cell that looks broken, and on a phone the flag is all
               there is to go on. Outside the events branch above for exactly that reason.
             {% endcomment %}
-            {% if cell.events or cell.birthdays %}
+            {% if cell.events or cell.birthdays or cell.maerkedage %}
               <a class="cal-daytap" href="?maaned={{ this_month }}&amp;dag={{ cell.date|date:'Y-m-d' }}#dag"
-                 aria-label="{{ cell.date|date:'j. F' }}{% if cell.events %} — {{ cell.events|length }} begivenhed{{ cell.events|length|pluralize:"er" }}{% endif %}{% if cell.birthdays %} — {{ cell.birthdays|length }} fødselsdag{{ cell.birthdays|length|pluralize:"e" }}{% endif %}"></a>
+                 aria-label="{{ cell.date|date:'j. F' }}{% for maerkedag in cell.maerkedage %} — {{ maerkedag.title }}{% endfor %}{% if cell.events %} — {{ cell.events|length }} begivenhed{{ cell.events|length|pluralize:"er" }}{% endif %}{% if cell.birthdays %} — {{ cell.birthdays|length }} fødselsdag{{ cell.birthdays|length|pluralize:"e" }}{% endif %}"></a>
             {% endif %}
           </div>
         {% endfor %}
@@ -131,6 +139,13 @@
         person, which is the only page a birthday HAS — and is why the row can be an anchor at all
         without pretending to be a begivenhed.
       {% endcomment %}
+      {% for maerkedag in chosen_maerkedage %}
+        <div class="cal-day-row cal-day-maerkedag">
+          <span class="cal-day-time"><svg class="cal-flag" aria-hidden="true"><use href="#i-dannebrog"></use></svg></span>
+          <span class="cal-day-title">{{ maerkedag.title }}{% if maerkedag.note %} <span class="muted">· {{ maerkedag.note }}</span>{% endif %}</span>
+          <span class="chip chip-brass">Mærkedag</span>
+        </div>
+      {% endfor %}
       {% for birthday in chosen_birthdays %}
         <a class="cal-day-row cal-day-birthday" href="{% url 'resident_profile' birthday.resident.pk %}">
           <span class="cal-day-time"><svg class="cal-flag" aria-hidden="true"><use href="#i-dannebrog"></use></svg></span>
@@ -161,7 +176,7 @@
         and the words "der sker ikke noget den dag" under it reads as a bug. Hence an explicit
         emptiness test over both lists rather than the {% empty %} clause of one of them.
       {% endcomment %}
-      {% if not chosen_events and not chosen_birthdays %}
+      {% if not chosen_events and not chosen_birthdays and not chosen_maerkedage %}
         <p class="muted cal-day-empty">Der sker ikke noget den dag.</p>
       {% endif %}
     </section>
