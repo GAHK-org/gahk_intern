@@ -49,7 +49,7 @@ from residents.views_admin import (
 
 DERIVATIVES = "photo_album.tasks.build_media_derivatives"
 IMPORT = "photo_album.tasks.process_album_import"
-NOTIFY = "core.tasks.send_admin_dummy_notification"
+NOTIFY = "oelkaelder.tasks.send_monthly_statements"
 LOCAL = ZoneInfo(settings.TIME_ZONE)
 
 

@@ -1,4 +1,4 @@
-"""AK monthly kryds deduction — officer-controlled per-calendar-month schedule + reconciliation (F-009).
+"""AK monthly kryds deduction — officer-controlled per-calendar-month schedule + reconciliation.
 
 The schedule (`AkMonthlyCharge`) has one row per calendar month (1..12), seeded on/2 by the migration;
 the amount is the same every year. Applying a period charges that calendar month's amount to the
@@ -274,3 +274,64 @@ def test_ak_charge_and_oelkaelder_statements_run_on_the_first() -> None:
     schedule = settings.CELERY_BEAT_SCHEDULE
     for name in ("apply-ak-monthly-assessment", "email-oelkaelder-monthly-statements"):
         assert schedule[name]["schedule"].day_of_month == {1}, name
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("delta", ["0", "abc", "2,5", ""])
+def test_officer_add_entry_rejects_zero_or_non_numeric_out_loud(make_resident: Callable, delta: str) -> None:
+    """add_entry used to drop these silently and redirect as if saved, so the officer believed the
+    resident had been credited."""
+    officer = make_resident(email="add-off@gahk.dk", roles=[Role.AK])
+    r = make_resident(email="add-r@gahk.dk")
+    c = Client()
+    c.force_login(officer)
+
+    resp = c.post(f"/intern/ak/log/{r.pk}/add", {"delta": delta, "reason": "x"}, follow=True)
+
+    assert [m.level_tag for m in resp.context["messages"]] == ["error"]
+    assert not AkEntry.objects.filter(resident=r).exists()
+
+
+@pytest.mark.django_db
+def test_officer_add_entry_confirms_success(make_resident: Callable) -> None:
+    officer = make_resident(email="add-off2@gahk.dk", roles=[Role.AK])
+    r = make_resident(email="add-r2@gahk.dk")
+    c = Client()
+    c.force_login(officer)
+
+    resp = c.post(f"/intern/ak/log/{r.pk}/add", {"delta": "+2", "reason": "Havearbejde"}, follow=True)
+
+    assert [m.level_tag for m in resp.context["messages"]] == ["success"]
+    assert AkEntry.balance_for(r) == 2
+
+
+@pytest.mark.django_db
+def test_missing_schedule_row_means_the_same_on_page_load_as_in_the_command(make_resident: Callable) -> None:
+    """The command created a default (on, 2) row for a month with none; the page-load backstop instead
+    took "missing" as "off" and deleted every charge for the period. Both now create the default."""
+    y, m = charge_period()
+    member = make_resident(email="missing-row@gahk.dk")
+    _place(member, y, m)
+    AkMonthlyCharge.objects.filter(month=m).delete()
+
+    ensure_previous_month_charged()
+
+    charge = AkMonthlyCharge.objects.get(month=m)
+    assert (charge.active, charge.krydser) == (True, 2)
+    assert _monthly(member, y, m).delta == -2
+
+
+@pytest.mark.django_db
+def test_officer_delete_asks_for_confirmation(make_resident: Callable) -> None:
+    officer = make_resident(email="del-off@gahk.dk", roles=[Role.AK])
+    r = make_resident(email="del-r@gahk.dk")
+    AkEntry.objects.create(resident=r, delta=3, kind=AkEntry.Kind.LABOUR, reason="Maling")
+    c = Client()
+    c.force_login(officer)
+
+    html = c.get(f"/intern/ak/log/{r.pk}").content.decode()
+
+    form = html.split('action="/intern/ak/log/')[1].split(">")[0]  # the add form comes first
+    delete_form = html.split("/delete/")[1].split(">")[0]
+    assert "confirm(" not in form
+    assert "onsubmit=\"return confirm('Slet +3 kryds" in delete_form

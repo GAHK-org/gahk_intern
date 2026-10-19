@@ -70,6 +70,13 @@ erDiagram
         int removed
     }
 
+    core_ServiceHeartbeat {
+        int id PK
+        string name
+        string hostname
+        datetime beat_at
+    }
+
     residents_Resident {
         int id PK
         string password
@@ -519,6 +526,7 @@ erDiagram
         datetime created_at
         datetime updated_at
         datetime archived_at
+        datetime finished_at
     }
 
     reparationer_RepairComment {
@@ -1038,6 +1046,13 @@ erDiagram
         int removed
     }
 
+    core_ServiceHeartbeat {
+        int id PK
+        string name
+        string hostname
+        datetime beat_at
+    }
+
     residents_Resident { }
 
     core_PushSubscription }o--|| residents_Resident : "user"
@@ -1501,6 +1516,7 @@ erDiagram
         datetime created_at
         datetime updated_at
         datetime archived_at
+        datetime finished_at
     }
 
     reparationer_RepairComment {

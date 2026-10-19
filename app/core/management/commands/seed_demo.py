@@ -73,7 +73,7 @@ from stats.models import DailyVisitCount, VisitTally
 
 from .seed_rooms import build_rooms
 
-DEMO_PASSWORD = "demo1234"  # noqa: S105 — public demo credential, not a secret
+DEMO_PASSWORD = "demo1234"  # noqa: S105  # nosec B105 — public demo credential, not a secret
 SEED = 1908  # the year GAHK was founded — any fixed value works, we just want reproducibility
 
 # Non-privileged chore groups (no site role) mixed in with the privileged ones from WORKGROUP_ROLE.
@@ -186,7 +186,7 @@ class Command(BaseCommand):
 
         self.fake = Faker("da_DK")
         Faker.seed(SEED)
-        self.rng = random.Random(SEED)  # noqa: S311 — demo data only, not security-sensitive
+        self.rng = random.Random(SEED)  # noqa: S311  # nosec B311 — demo data only, not security-sensitive
         self.now = timezone.now()
         today = timezone.localdate()
         self.year, self.month = today.year, today.month
@@ -609,7 +609,7 @@ class Command(BaseCommand):
         ]
         for room in self.rng.sample(rooms, k=min(15, len(rooms))):
             # A couple of superseded reports per room so the "vis tidligere rapport" dropdown has
-            # something to show (the real ones come from backfill_room_history).
+            # something to show (the real ones were imported from the old site).
             for age, current in ((self.rng.randint(400, 700), False), (self.rng.randint(1, 300), True)):
                 cond = RoomCondition.objects.create(
                     room=room,

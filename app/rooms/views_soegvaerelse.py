@@ -1,4 +1,4 @@
-"""Søg værelse - room-application lottery (F-004).
+"""Søg værelse - room-application lottery.
 
 Fresh-start build (legacy priorities/offers were destroyed by the cascade-delete bug). Fixes: ORM,
 atomic multi-row submit (application + priorities + orlov), detail visible to owner OR indstilling
@@ -24,6 +24,12 @@ from residents.permissions import current_resident, request_has_role, role_requi
 from .kvotient import compute_k, compute_k_parts, month_choices, month_index, month_label
 from .models import KvotientApplication, KvotientOrlov, KvotientPriority, RoomOffer
 from .notifications import notify_application_deleted
+
+# Upper bound for a submitted orlov. Generous (ten years) — it only exists so a typo or a crafted
+# value can't push K to nonsense; the real check is Indstillingen comparing it to the suggestion.
+MAX_ORLOV_MONTHS = 120
+# The apply form offers this many priority slots; the server holds a crafted request to it too.
+MAX_PRIORITIES = 5
 
 
 class Allocation(NamedTuple):
@@ -95,7 +101,7 @@ def allocate_round(month: int) -> Allocation:
 
 
 def computed_orlov_months(resident: Resident) -> int:
-    """Suggested orlov (F-004): every month the resident was NOT on the alumneliste between their
+    """Suggested orlov: every month the resident was NOT on the alumneliste between their
     move-in month and the current active period counts as leave. The list history reaches back well
     before any current resident's move-in, so a gap always means real absence, never missing data.
     Returned as a default the resident (or Indstillingen) can still override on the form."""
@@ -116,9 +122,12 @@ def computed_orlov_months(resident: Resident) -> int:
 @login_required
 def soeg(request: HttpRequest) -> HttpResponse:
     resident = current_resident(request)
-    offers = RoomOffer.objects.select_related("room").order_by("month", "room__number")
-    offered_rooms = [o.room for o in offers]
     target = month_index(*next_period())  # the lottery always allocates the upcoming month
+    # Only this round's offers: an application always targets `target`, and allocate_round only
+    # counts priorities for rooms offered in the application's month, so a stale offer from another
+    # month could be picked but would never count.
+    offers = RoomOffer.objects.filter(month=target).select_related("room").order_by("room__number")
+    offered_rooms = [o.room for o in offers]
     today = timezone.localdate()
     existing = (
         KvotientApplication.objects.filter(resident=resident, move_month=target)
@@ -127,22 +136,22 @@ def soeg(request: HttpRequest) -> HttpResponse:
     )
     # Prefill values for editing an existing application. done_studying_month is an absolute index;
     # split it back to (year, month) for the dropdowns. priority_slots is the saved rooms in rank
-    # order, padded to the five selects the template renders (None = leave that slot blank).
+    # order, padded to the MAX_PRIORITIES selects the template renders (None = leave that slot blank).
     done_year = done_month = orlov = None
-    slots: list[int | None] = [None] * 5
+    slots: list[int | None] = [None] * MAX_PRIORITIES
     if existing:
         done_year, done0 = divmod(existing.done_studying_month, 12)
         done_month = done0 + 1
         first_orlov = next(iter(existing.orlov_periods.all()), None)
         orlov = first_orlov.number_of_months if first_orlov else 0
         room_ids = [p.room_id for p in existing.priorities.all()]
-        slots = [room_ids[i] if i < len(room_ids) else None for i in range(5)]
+        slots = [room_ids[i] if i < len(room_ids) else None for i in range(MAX_PRIORITIES)]
     # Auto-orlov: months missing from the alumneliste since move-in. Pre-fills the field for a new
     # application (editable), and is shown as the suggestion so an edited value can be reset to it.
     suggested_orlov = computed_orlov_months(resident)
     if orlov is None:  # no existing application → default the field to the computed suggestion
         orlov = suggested_orlov
-    # Initial kvotient preview (F-004): show K on load from the existing application's numbers, if any.
+    # Initial kvotient preview: show K on load from the existing application's numbers, if any.
     # htmx recomputes it live as the resident changes the fields (see the `kvotient` fragment view).
     initial_kv = None
     if existing and resident.move_in_date:
@@ -158,6 +167,7 @@ def soeg(request: HttpRequest) -> HttpResponse:
         "existing_done_year": done_year,
         "existing_orlov_months": orlov,
         "suggested_orlov": suggested_orlov,
+        "max_orlov_months": MAX_ORLOV_MONTHS,
         "priority_slots": slots,
         "target": target,
         "has_move_in": bool(resident.move_in_date),
@@ -169,10 +179,33 @@ def soeg(request: HttpRequest) -> HttpResponse:
         except (KeyError, ValueError):
             messages.error(request, "Udfyld måneder korrekt.")
             return render(request, "soegvaerelse/apply.html", ctx)
-        orlov_months = int(request.POST.get("orlov_months") or 0)
-        room_ids = [int(r) for r in request.POST.getlist("priority") if r]
+        # The live preview clamps orlov at 0, but a submitted value must be valid on its own: a
+        # negative orlov would inflate K (a = months lived MINUS orlov).
+        try:
+            orlov_months = int(request.POST.get("orlov_months") or 0)
+        except ValueError:
+            orlov_months = -1
+        if not 0 <= orlov_months <= MAX_ORLOV_MONTHS:
+            messages.error(request, f"Orlov skal være et helt antal måneder mellem 0 og {MAX_ORLOV_MONTHS}.")
+            return render(request, "soegvaerelse/apply.html", ctx)
+        # Priorities must be distinct rooms offered THIS round; anything else would be stored but never
+        # count (or 500 on the FK for a non-existent room).
+        offered_ids = {room.id for room in offered_rooms}
+        try:
+            room_ids = [int(r) for r in request.POST.getlist("priority") if r]
+        except ValueError:
+            room_ids = [0]  # not a room id → rejected as "not offered" below
         if not room_ids:
             messages.error(request, "Vælg mindst én prioritet.")
+            return render(request, "soegvaerelse/apply.html", ctx)
+        if not set(room_ids) <= offered_ids:
+            messages.error(request, "Vælg kun værelser, der er i udbud i denne runde.")
+            return render(request, "soegvaerelse/apply.html", ctx)
+        if len(set(room_ids)) != len(room_ids):
+            messages.error(request, "Det samme værelse kan kun vælges én gang.")
+            return render(request, "soegvaerelse/apply.html", ctx)
+        if len(room_ids) > MAX_PRIORITIES:
+            messages.error(request, f"Du kan højst vælge {MAX_PRIORITIES} prioriteter.")
             return render(request, "soegvaerelse/apply.html", ctx)
         if not resident.move_in_date:
             messages.error(request, "Din indflytningsdato mangler - kontakt indstillingen.")
@@ -207,7 +240,7 @@ def soeg(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def kvotient(request: HttpRequest) -> HttpResponse:
-    """htmx fragment: the resident's live kvotient for the given study-end + orlov (F-004). Computed
+    """htmx fragment: the resident's live kvotient for the given study-end + orlov. Computed
     server-side against their real move-in date and next_period() as the target, so the number always
     matches what a real application would produce — no formula duplicated in JS. Reachable any time,
     so a resident can check their K even when no room round is open."""
@@ -261,7 +294,7 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
 @require_POST
 @login_required
 def delete_application(request: HttpRequest, pk: int) -> HttpResponseRedirect:
-    """A resident withdraws their own room application (F-004), or Indstillingen removes a wrong one.
+    """A resident withdraws their own room application, or Indstillingen removes a wrong one.
     Nobody else may delete another's. Cascades priorities + orlov."""
     app = get_object_or_404(KvotientApplication, pk=pk)
     if app.resident_id == current_resident(request).pk:
@@ -358,11 +391,19 @@ def close_offer(request: HttpRequest, offer_id: int) -> HttpResponseRedirect:
 def resolve_tie(request: HttpRequest, offer_id: int) -> HttpResponseRedirect:
     """Record indstillingen's manual resolution of a K-tie (the dorm coin flip): pin this offer's
     winner to the chosen application. allocate_round then treats the room as decided, which can cascade
-    to relieve other contests."""
+    to relieve other contests.
+
+    Only one of the applications actually tied for THIS room may be picked (which also means it listed
+    the room) — otherwise any application in the month could be pinned to a room it never asked for."""
     offer = get_object_or_404(RoomOffer, pk=offer_id)
     app = get_object_or_404(
         KvotientApplication, pk=request.POST.get("application") or 0, move_month=offer.month
     )
+    if offer.awarded_application_id != app.pk:  # re-posting the current resolution is a harmless no-op
+        tied = allocate_round(offer.month).contested.get(offer.room_id, [])
+        if app.pk not in {a.pk for a in tied}:
+            messages.error(request, "Ansøgningen er ikke blandt de K-lige ansøgere til dette værelse.")
+            return redirect("soegvaerelse:applicants", offer_id=offer.id)
     offer.awarded_application = app
     offer.save(update_fields=["awarded_application"])
     messages.success(request, f"{app.resident.full_name} valgt som vinder af {offer.room}.")
@@ -401,7 +442,7 @@ def end_round(request: HttpRequest) -> HttpResponseRedirect:
     resident who was not in the round would vanish from the list. So we first copy everyone who isn't
     already on the target list forward (rooms, groups and roles), then place the winners on top.
 
-    Room rounds are musical chairs (F-004): a room is offered when its occupant leaves; the winner is
+    Room rounds are musical chairs: a room is offered when its occupant leaves; the winner is
     an existing resident who moves in, freeing THEIR room for a further round, and so on until the last
     vacancy goes to a newcomer. So after placing winners, any non-winner still left in a won room is
     the departing occupant — removed here (with their monthly roles) so the winner doesn't share the

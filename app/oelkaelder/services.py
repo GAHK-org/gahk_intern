@@ -1,4 +1,4 @@
-"""Ølkælder money operations (F-003).
+"""Ølkælder money operations.
 
 The purchase path is the security-critical one. Fixes vs legacy:
   * **server-side pricing** — line prices are recomputed from the Product, never trusted from the client
@@ -70,7 +70,10 @@ def apply_interest() -> int:
     policy = InterestPolicy.get()
     if not policy.active:
         return 0
-    now = timezone.now()
+    # Local, not UTC: the created_at__year/__month lookups below are evaluated in TIME_ZONE
+    # (Europe/Copenhagen), so a UTC "now" names the previous month for the first hour or two of the 1st
+    # and the once-per-month guard would look at the wrong month.
+    today = timezone.localdate()
     charged = 0
     with transaction.atomic():
         for shopper in Shopper.objects.filter(active=True).select_related("resident"):
@@ -78,7 +81,7 @@ def apply_interest() -> int:
             if bal >= policy.threshold_ore:
                 continue  # not in debt beyond the threshold
             if shopper.adjustments.filter(
-                kind=Adjustment.Kind.INTEREST, created_at__year=now.year, created_at__month=now.month
+                kind=Adjustment.Kind.INTEREST, created_at__year=today.year, created_at__month=today.month
             ).exists():
                 continue  # already charged this month
             charge = int((Decimal(-bal) * policy.rate_percent / 100).quantize(Decimal(1), ROUND_HALF_UP))
@@ -214,8 +217,26 @@ def record_deposit(shopper: Shopper, amount_ore: int) -> None:
 
 
 @transaction.atomic
+def void_deposit(deposit_id: int, actor: str) -> bool:
+    """Soft-delete a mistaken deposit — the balance is derived, so it just drops out. Returns False if
+    it was already voided, so a double-submit cannot write a second log line. Logged with who and how
+    much like the other voids: a vanished deposit is money a resident will say they paid."""
+    deposit = Deposit.objects.select_related("shopper__resident").filter(pk=deposit_id).first()
+    if deposit is None or not Deposit.objects.filter(pk=deposit_id, is_valid=True).update(is_valid=False):
+        return False
+    shopper = deposit.shopper
+    LogEntry.objects.create(
+        message=(
+            f"Indbetaling #{deposit_id} på {deposit.amount_ore} øre for {shopper.resident.full_name} "
+            f"(shopper#{shopper.pk}) annulleret af {actor}."
+        )
+    )
+    return True
+
+
+@transaction.atomic
 def record_adjustment(shopper: Shopper, amount_ore: int, reason: str, actor: str) -> Adjustment:
-    """A manual signed correction to one shopper's balance (F-003). Negative = a charge that increases
+    """A manual signed correction to one shopper's balance. Negative = a charge that increases
     their debt; positive = a credit.
 
     This is the repair tool for the ølkælder data the 2026-08 migration could not reconstruct: sales
@@ -260,7 +281,7 @@ def void_adjustment(adjustment_id: int, actor: str) -> bool:
 
 @transaction.atomic
 def void_purchase(txn_id: int, actor: str) -> bool:
-    """Soft-delete a mistaken sale (F-003, legacy `deleteTransaction`). Returns False if it was already
+    """Soft-delete a mistaken sale (legacy `deleteTransaction`). Returns False if it was already
     voided, so a double-submit cannot write a second log line.
 
     No compensating ledger write is needed: balances are *derived*, and Shopper.balance_ore filters

@@ -1,4 +1,4 @@
-"""Salgsoverblik + per-person history (F-003, the legacy `allsales` screen)."""
+"""Salgsoverblik + per-person history (the legacy `allsales` screen)."""
 
 from collections.abc import Callable
 from datetime import datetime

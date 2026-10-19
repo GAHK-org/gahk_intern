@@ -114,7 +114,7 @@ class ProfileEditForm(forms.ModelForm):
 
 
 class ResidentPasswordResetForm(PasswordResetForm):
-    """Glemt-kodeord that also works for a resident who has never set one (F-014).
+    """Glemt-kodeord that also works for a resident who has never set one.
 
     Django's own `get_users` skips accounts without a usable password. New residents are created
     with exactly that (`set_unusable_password()` in the alumneliste's `add_new`) and rely on the

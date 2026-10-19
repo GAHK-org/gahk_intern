@@ -1108,7 +1108,7 @@ def _exif_captured_at(exif: Image.Exif) -> datetime | None:
     # DateTimeOriginal (36867) then DateTimeDigitized (36868), and nothing else. Tag 306 is
     # DateTime — the file's last-modified stamp, which a re-save in any editor rewrites to
     # today. Falling back to it gave a re-edited photo a confident, wrong "Optaget" date that
-    # also drove the grid's sort order; spec/features/Photo-album.md asks for NULL instead.
+    # also drove the grid's sort order; spec/features/photo-album.md asks for NULL instead.
     value = _exif_text(exif_values.get(36867) or exif_values.get(36868) or exif.get(36867) or exif.get(36868))
     try:
         moment = datetime.strptime(value, "%Y:%m:%d %H:%M:%S")  # noqa: DTZ007 — EXIF times are local

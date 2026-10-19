@@ -199,8 +199,6 @@ let pressAt: { x: number; y: number; index: number } | null = null
 /** Set when a drag ends, so the click browsers fire afterwards does not undo its own gesture. */
 let swallowClick = false
 
-const selectionCount = (): number => boxes.filter((b) => b?.checked).length
-
 function setMode(on: boolean): void {
   selecting = on
   scope?.classList.toggle('arkiv-selecting', on)

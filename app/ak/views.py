@@ -1,4 +1,4 @@
-"""AK views (F-009). Members see their own balance/log; AK officers (role `ak`) see everyone and can
+"""AK views. Members see their own balance/log; AK officers (role `ak`) see everyone and can
 add/adjust crosses for anyone. Balance is the SUM of ledger entries."""
 
 from django.contrib import messages
@@ -146,7 +146,11 @@ def add_entry(request: HttpRequest, pk: int) -> HttpResponseRedirect:
         delta = int(request.POST.get("delta", "0"))
     except ValueError:
         delta = 0
-    if delta:
+    if not delta:
+        # Said out loud, like add_self_entry: a silently ignored "2 krydser" (or "+2,5") reads as
+        # saved to the officer, who then has no idea the resident was never credited.
+        messages.error(request, "Ændringen skal være et helt tal forskelligt fra 0, fx +2 eller -1.")
+    else:
         AkEntry.objects.create(
             resident=resident,
             delta=delta,
@@ -155,6 +159,7 @@ def add_entry(request: HttpRequest, pk: int) -> HttpResponseRedirect:
             created_by=current_resident(request),
             created_at=timezone.now(),
         )
+        messages.success(request, f"{delta:+d} kryds registreret.")
     return redirect("ak:log", pk=pk)
 
 

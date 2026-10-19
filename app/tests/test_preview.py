@@ -113,7 +113,7 @@ def test_superuser_preview_restricts(make_resident: Callable) -> None:
 def test_plain_resident_and_anon_have_no_admin_nav(make_resident: Callable) -> None:
     beboer = make_resident(email="b@gahk.dk")
     html = _client(beboer).get("/intern/").content.decode()
-    # Værelsestjek is deliberately absent from this list: it is a base item for every resident (F-005).
+    # Værelsestjek is deliberately absent from this list: it is a base item for every resident.
     for label in ("AK-oversigt", "Ansøgninger", "Site-admin", "Ølkælder-admin", "Regnskab"):
         assert label not in html
     assert "Alumneliste" not in Client().get("/").content.decode()  # anon front page: no intern nav

@@ -1,10 +1,11 @@
 """Legacy password hasher.
 
-The old site stored passwords as a *salt-less* SHA-256 hex digest in `intern_alumne.password`
-(01-infrastructure.md A4). The ETL imports them as ``gahk_sha256$$<hexdigest>``. This hasher lets
+The old site stored passwords as a *salt-less* SHA-256 hex digest in `intern_alumne.password`; the
+migration imported them as ``gahk_sha256$$<hexdigest>``. This hasher lets
 Django verify those on login; because ``must_update`` returns True, Django immediately re-hashes the
-password with the default (strong) hasher on the next successful login — the upgrade-on-login path
-(scope §5). No forced global reset.
+password with the default (strong) hasher on the next successful login — the upgrade-on-login path.
+No forced global reset. Residents who have not logged in since the migration still hold such a
+hash, so this must stay until none are left (the wiki's GahkAuthLogin checks the same format).
 """
 
 import hashlib

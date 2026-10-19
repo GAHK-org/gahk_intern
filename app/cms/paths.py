@@ -3,8 +3,8 @@ form, the model field, the redirect table, the system check and the tests.
 
 The rewrite inherited a contradiction that cost a live page: `Page.slug` was a `SlugField`, whose
 validator forbids `/`, while the routing contract *requires* it. `config.urls` matches the whole
-multi-segment path as one lookup key, and `etl_cms` seeds `faciliteter/kokken` and eight siblings
-through `update_or_create`, which skips validators. So the database held addresses the edit form
+multi-segment path as one lookup key, and the legacy import seeded `faciliteter/kokken` and eight
+siblings through `update_or_create`, which skips validators. So the database held addresses the edit form
 could never accept back: an editor who changed `faciliteter/kokken` to `faciliteter-kokken` could
 not type the old value again, and the page fell out of its section sidebar (the only thing that
 links a sub-page — see cms.nav) and became unreachable.
@@ -13,7 +13,7 @@ Hence a validator that permits exactly the shape the router resolves, and nothin
 
   * two levels at most, matching the legacy routes.php map (`faciliteter/kokken`, never `a/b/c`);
   * lowercase ASCII words separated by `-`/`_`, so an address is typable and stable across the
-    /301s F-006 promises — this one rule also rejects uppercase, spaces, `.`, `..` and `køkken`;
+    /301s the CMS promises — this one rule also rejects uppercase, spaces, `.`, `..` and `køkken`;
   * no leading/trailing `/` and no `//`, which are the mistakes a hand-typed path actually makes;
   * a first segment that is not already mounted in the URLconf. A fixed pattern is matched before
     the catch-all, so a page addressed `intern` would simply never open, with nothing reporting it

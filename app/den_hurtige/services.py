@@ -33,8 +33,6 @@ if TYPE_CHECKING:
 
     from .models import QuickComment, QuickPost
 
-FEED_URL = "/intern/den-hurtige/"
-
 
 def _channel(slug: str) -> channels.Channel:
     """A post filed under a channel that has since been retired from the registry links to the

@@ -10,6 +10,7 @@ A consequence worth knowing: a majority of the group can still admit a newcomer 
 raises the cost of a unilateral grant; it does not make the group accountable to anyone outside it.
 """
 
+from django.db import transaction
 from django.db.models import Q, QuerySet
 from django.utils import timezone
 
@@ -49,3 +50,29 @@ def decide(grant: AdminAccessGrant, decided_by: Resident, *, approve: bool) -> N
     grant.decided_by = decided_by
     grant.decided_at = timezone.now()
     grant.save(update_fields=["status", "decided_by", "decided_at"])
+
+
+def reopen_denied(resident_id: int, requested_by: Resident | None) -> bool:
+    """Put a refused grant back up for decision when someone grants `administrator` again.
+
+    A grant only disappears once the resident holds the role in no month at all (signals._close_grant),
+    and role rows are history that is never deleted — so a refused administrator keeps a DENIED grant
+    for good, and without this a later, deliberate re-grant would quietly open nothing. Called from the
+    role editor only, not from the signal: the monthly roll-forward also mints role rows, and it must
+    not turn a refusal into a monthly re-request. Returns whether a grant was reopened.
+    """
+    reopened = AdminAccessGrant.objects.filter(
+        resident_id=resident_id, status=AdminAccessGrant.Status.DENIED
+    ).update(
+        status=AdminAccessGrant.Status.PENDING,
+        requested_by=requested_by,
+        decided_by=None,
+        decided_at=None,
+        created_at=timezone.now(),
+    )
+    if reopened:
+        from .tasks import notify_admin_access_request  # tasks imports this module
+
+        grant_id = AdminAccessGrant.objects.get(resident_id=resident_id).pk
+        transaction.on_commit(lambda: notify_admin_access_request.delay(grant_id))
+    return bool(reopened)

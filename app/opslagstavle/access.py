@@ -84,12 +84,6 @@ def can_moderate(request: HttpRequest) -> bool:
     return request.user.is_authenticated and request_has_role(request, *MODERATION_ROLES)
 
 
-def can_pin(request: HttpRequest) -> bool:
-    """Same set as moderation. A separate name because they are separate powers conceptually, and
-    splitting them later should not mean finding every call site."""
-    return can_moderate(request)
-
-
 def can_edit(request: HttpRequest, notice: Notice) -> bool:
     """The author, and only the author.
 

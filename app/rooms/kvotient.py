@@ -1,4 +1,4 @@
-"""Kvotient (room-lottery) ranking math (F-004).
+"""Kvotient (room-lottery) ranking math.
 
 Months are absolute, 0-indexed (decided): month_index(year, month) = year*12 + (month-1).
 K = a*100/(a+b+12) where a = months lived at GAHK (minus orlov) and b = months until study end,
@@ -31,7 +31,7 @@ def month_choices() -> list[tuple[int, str]]:
 def compute_k_parts(
     move_in_index: int, done_studying_index: int, target_index: int, orlov_months: int = 0
 ) -> dict[str, float]:
-    """The K components, so callers can *show* the formula, not just the result (F-004):
+    """The K components, so callers can *show* the formula, not just the result:
     a = months lived at GAHK up to the target (minus orlov), b = months from target to study end,
     K = a·100/(a+b+12). Single source of truth for the ranking math."""
     a = (target_index - move_in_index) - orlov_months

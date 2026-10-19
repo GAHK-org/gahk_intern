@@ -1,4 +1,4 @@
-"""Public CMS pages (F-006) — read-only rendering of Page content.
+"""Public CMS pages — read-only rendering of Page content.
 
 Bodies are editor-authored through the role-gated admin, sanitized with nh3 on every save (and on
 import), and rendered with `|safe` in the template. URLs match the legacy slugs (incl. multi-segment
@@ -66,7 +66,7 @@ def home(request: HttpRequest) -> HttpResponse:
 
 
 def events_news(request: HttpRequest) -> HttpResponse:
-    """Public "Nyheder & Begivenheder" page (F-007/F-008): upcoming + past events and the news archive."""
+    """Public "Nyheder & Begivenheder" page: upcoming + past events and the news archive."""
     today = timezone.localdate()
     return render(
         request,

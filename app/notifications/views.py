@@ -177,8 +177,6 @@ def preferences(request: HttpRequest) -> HttpResponse:
             "groups": groups,
             "settings": settings_row,
             "importance_choices": IMPORTANCE_CHOICES,
-            "push_configured": push.is_configured(),
-            "vapid_public_key": push.vapid_public_key(),
         },
     )
 

@@ -1,13 +1,13 @@
-"""Rooms views: vaerelsestjek (F-005 condition inspection). soegvaerelse (F-004) added separately.
+"""Rooms views: vaerelsestjek (room condition inspection). soegvaerelse added separately.
 
-F-005 fixes: ORM (no SQLi), CSRF, and the unflag-old + create-new write is atomic. (Per-criterion image
+Legacy fixes: ORM (no SQLi), CSRF, and the unflag-old + create-new write is atomic. (Per-criterion image
 *upload* is a later refinement — see model note; legacy image path references are shown read-only.)
 
 Superseded reports are kept (`is_current=False`) and surfaced by the "vis tidligere rapport" dropdown
 on `besvar`; submitting always writes a NEW current report, so viewing an old one never mutates it.
 The legacy equivalents of these screens are worth knowing about: its per-criterion lock rendered every
-field `disabled` until JS re-enabled them (so nothing posted without JS — F-005 calls this a bug, and
-the port inverts it), and its AK overview filled cells positionally from a delimited blob, putting
+field `disabled` until JS re-enabled them (so nothing posted without JS — a bug, which
+the port inverts), and its AK overview filled cells positionally from a delimited blob, putting
 every score under the wrong heading.
 
 Access: inspecting a room is open to **every logged-in resident**, not just the inspektion role — room
@@ -120,6 +120,14 @@ def besvar(request: HttpRequest, room_id: int) -> HttpResponse:
 
     if request.method == "POST":
         with transaction.atomic():
+            # Photos can't be re-posted (a browser never pre-fills a file input) and the form has no
+            # remove control, so a resubmit carries the current report's pictures forward per
+            # criterion; a new upload replaces that criterion's picture. Without this, correcting one
+            # score dropped every photo from the current report. The old report keeps its own rows.
+            previous = {
+                s.criterion_id: s
+                for s in RoomConditionScore.objects.filter(condition__room=rm, condition__is_current=True)
+            }
             RoomCondition.objects.filter(room=rm, is_current=True).update(is_current=False)
             cond = RoomCondition.objects.create(
                 room=rm,
@@ -152,13 +160,20 @@ def besvar(request: HttpRequest, room_id: int) -> HttpResponse:
                         f"({crit.score_min}-{crit.score_max}) og blev ikke gemt.",
                     )
                     score = None
-                if score is not None or comment or photo:
+                prev = previous.get(crit.id)
+                # The same stored file is shared by both reports (nothing deletes room photos), so
+                # carrying it forward copies only the reference. A new photo also supersedes the
+                # read-only legacy image paths.
+                kept_photo = prev.photo.name if prev and not photo else ""
+                kept_image = prev.image if prev and not photo else ""
+                if score is not None or comment or photo or kept_photo or kept_image:
                     RoomConditionScore.objects.create(
                         condition=cond,
                         criterion=crit,
                         score=score,
                         comment=comment,
-                        photo=photo or "",
+                        photo=photo or kept_photo,
+                        image=kept_image,
                     )
         return redirect("vaerelsestjek:room", room_id=rm.number)
 

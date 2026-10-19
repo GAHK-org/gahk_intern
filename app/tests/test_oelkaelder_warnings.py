@@ -1,5 +1,5 @@
 """ØK debt warnings (edge-triggered on purchase), configurable interest, and the derived balance
-including adjustments (F-003)."""
+including adjustments."""
 
 from collections.abc import Callable
 
@@ -93,3 +93,31 @@ def test_apply_interest_respects_active_and_threshold(make_resident: Callable) -
     apply_interest()
     assert big.adjustments.filter(kind=Adjustment.Kind.INTEREST).exists()  # -200 kr charged
     assert not small.adjustments.exists()  # -50 kr is inside the threshold, untouched
+
+
+@pytest.mark.django_db
+def test_apply_interest_month_guard_uses_local_time(
+    make_resident: Callable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """00:30 on 1 November in Copenhagen is still 31 October in UTC. The guard took year/month from
+    the UTC clock but the created_at__month lookup runs in local time, so a charge booked ten minutes
+    earlier (local November) was not seen and the debtor was charged twice for the same month."""
+    from datetime import UTC, datetime
+
+    from django.utils import timezone
+
+    InterestPolicy.objects.update_or_create(
+        id=1, defaults={"active": True, "rate_percent": 5, "threshold_ore": -10000}
+    )
+    debtor = Shopper.objects.create(resident=make_resident(email="midnight@gahk.dk"))
+    Adjustment.objects.create(shopper=debtor, amount_ore=-20000, kind=Adjustment.Kind.MANUAL, reason="gæld")
+    Adjustment.objects.create(
+        shopper=debtor,
+        amount_ore=-1000,
+        kind=Adjustment.Kind.INTEREST,
+        reason="Rente 5%",
+        created_at=datetime(2026, 10, 31, 23, 10, tzinfo=UTC),  # 00:10 on 1 Nov, local
+    )
+    monkeypatch.setattr(timezone, "now", lambda: datetime(2026, 10, 31, 23, 30, tzinfo=UTC))
+
+    assert apply_interest() == 0  # November is already charged

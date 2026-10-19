@@ -172,7 +172,7 @@ def navigation(request: HttpRequest) -> dict[str, object]:
         "can_preview": previewer,
         "wiki_url": settings.WIKI_URL,
     }
-    # DEV-ONLY simulated clock bar (F-004 local testing). Only when DEBUG and logged in; inert in prod.
+    # DEV-ONLY simulated clock bar (local testing of room rounds). Only when DEBUG and logged in; inert in prod.
     if settings.DEBUG and authed:
         from core.clock import current_date
 

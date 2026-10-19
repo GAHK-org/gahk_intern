@@ -924,18 +924,6 @@
   .duration-confirm { border:1px solid var(--green); background:var(--green); color:#fff; }
   .duration-confirm:disabled { opacity:.45; cursor:not-allowed; }
 
-  .archive-dayblock { display:block; }
-  .archive-day { position:sticky; top:4px; z-index:1; width:fit-content;
-    margin:18px auto 4px; padding:3px 12px; border-radius:999px;
-    background:var(--paper); border:1px solid var(--border);
-    /* The shadow is what makes a STUCK chip legible. Parked at the top of the scrollport it sits
-       over whatever is passing beneath it, and on a long message that is the middle of a line --
-       flat, that reads as a word having been redacted rather than as a label in front of it. A
-       soft drop makes it obviously float. box-shadow creates no stacking context, so the `.pop`
-       rule this file repeats everywhere is not in play. */
-    box-shadow:0 1px 4px rgba(24, 40, 30, .14);
-    font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase;
-    color:var(--muted); }
 
   /* An archived reaction row keeps its counts and its reader panels -- who reacted is a fact about
      the archive, and exactly what somebody reading it back wants -- but the pills stop looking
@@ -1196,7 +1184,7 @@
   .prose-gahk th { @apply font-semibold; background: var(--green-050); }
 
   /* ---- Begivenheder (events and RSVP) ---------------------------------------------------------
-     Reuses .card-flat/.card-pad/.chip/.btn/.page-head/.push-bar/.prose-gahk, and the .ni icon
+     Reuses .card-flat/.card-pad/.chip/.btn/.page-head/.prose-gahk, and the .ni icon
      sizing. Deliberately does NOT reuse .msg, .chat or .notice-* : an event list is a short column
      of dated cards, not a chat shell and not a paginated document feed, and borrowing either
      family would drag its layout assumptions along. */
@@ -1504,7 +1492,7 @@
   .pager { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
 
   /* ---- Opslagstavlen (the noticeboard) --------------------------------------------------------
-     Reuses .card-flat/.chip/.btn/.push-bar and, for the reaction row and comment replies, the
+     Reuses .card-flat/.chip/.btn and, for the reaction row and comment replies, the
      .reaction, .emoji-, .reply and .msg-text families in the Den Hurtige block below. Deliberately
      does NOT reuse the .chat, .msg and .composer families: those encode a one-viewport-tall chat
      shell with its own internal scroller, and a paginated document list wants the normal page
@@ -1703,7 +1691,7 @@
   .md-tabs > input[type="radio"]:nth-of-type(2):checked ~ .md-panel-preview { @apply block; }
   .md-panel-preview { min-height: 8rem; }
 
-  /* Horizontal, side-scrollable lineage chart (stamtræ, F-011): each node's children fan out to the
+  /* Horizontal, side-scrollable lineage chart (stamtræ): each node's children fan out to the
      right; connectors are pure-CSS pseudo-elements so there is no JS/CDN dependency. */
   .lineage { width: max-content; }
   .lineage ul { display: flex; flex-direction: column; justify-content: center; }
