@@ -306,6 +306,49 @@ def _zip(members: dict[str, bytes], *, entry_time: tuple[int, ...] = (2022, 3, 1
 
 
 @pytest.mark.django_db
+def test_an_import_lists_as_skipped_only_the_sidecars_it_did_not_keep(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """What the import script saves in its work directory is what the server reports skipped: a
+    sidecar stored with its file is on the server, one for nothing imported is not."""
+    resident = make_resident()
+    sidecar = _appledouble(datetime(2004, 10, 24, tzinfo=UTC))
+    first = import_zip_album(
+        archive=_zip(
+            {
+                "Fest/IMG_1.JPG": jpeg_bytes(),
+                "Fest/.AppleDouble/IMG_1.JPG": sidecar,
+                "Fest/.AppleDouble/IMG_9.JPG": sidecar,  # no IMG_9.JPG in the archive
+                "Fest/.AppleDouble/.Parent": sidecar,  # the folder's own
+                "Fest/.DS_Store": b"x",
+            }
+        ),
+        folder="2004",
+        resident=resident,
+        merge=True,
+    )
+    assert sorted(first.skipped) == [
+        "Fest/.AppleDouble/.Parent: macOS-metadata (ignoreret)",
+        "Fest/.AppleDouble/IMG_9.JPG: macOS-metadata (ignoreret)",
+        "Fest/.DS_Store: macOS-metadata (ignoreret)",
+    ]
+    stored = Media.objects.get()
+    Media.objects.filter(pk=stored.pk).update(sidecar="")  # as if imported before sidecars were kept
+
+    # Sent again, the file is a duplicate, and its sidecar goes to the one already there.
+    again = import_zip_album(
+        archive=_zip(
+            {"Fest/IMG_1.JPG": stored.original.open("rb").read(), "Fest/.AppleDouble/IMG_1.JPG": sidecar}
+        ),
+        folder="2004",
+        resident=resident,
+        merge=True,
+    )
+    assert again.skipped == ["Fest/IMG_1.JPG: findes allerede i albummet (ignoreret)"]
+    assert _stored(Media.objects.get().sidecar) == sidecar
+
+
+@pytest.mark.django_db
 def test_an_import_takes_a_files_date_from_its_appledouble_sidecar(
     make_resident: Callable[..., Resident],
 ) -> None:
@@ -538,6 +581,14 @@ def test_sidecars_sent_later_date_what_was_imported_without_them(
         "ambiguous": ["IMG_9.JPG"],
     }
     assert result["againstCapture"] == {"withinAMinute": 1, "withinADay": 0, "further": 1}
+    # What the script may delete its copy of: neither the unmatched nor the one that is no sidecar.
+    assert sorted(result["kept"]) == [
+        ".AppleDouble/IMG_1.JPG",
+        ".AppleDouble/IMG_5.JPG",
+        ".AppleDouble/IMG_6.JPG",
+        "Aften/.AppleDouble/IMG_3.JPG",
+        "aften/.AppleDouble/IMG_2.JPG",
+    ]
     assert _dates(first, second, reset) == [
         (party, DateSource.FILE),
         (party + timedelta(hours=1), DateSource.FILE),
@@ -547,6 +598,7 @@ def test_sidecars_sent_later_date_what_was_imported_without_them(
     assert _stored(Media.objects.get(pk=reset.pk).sidecar) == sidecars["Aften/.AppleDouble/IMG_3.JPG"]
     again = send()
     assert (again["stored"], again["updated"]) == (0, 0)  # sending again changes nothing
+    assert len(again["kept"]) == 5  # but they are still the items' own
 
 
 @pytest.mark.django_db
