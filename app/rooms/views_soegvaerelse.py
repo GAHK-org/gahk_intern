@@ -23,6 +23,7 @@ from residents.permissions import current_resident, request_has_role, role_requi
 
 from .kvotient import compute_k, compute_k_parts, month_choices, month_index, month_label
 from .models import KvotientApplication, KvotientOrlov, KvotientPriority, RoomOffer
+from .notifications import notify_application_deleted
 
 
 class Allocation(NamedTuple):
@@ -270,8 +271,11 @@ def delete_application(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     if not request_has_role(request, "indstilling"):
         raise PermissionDenied
     name = app.resident.full_name
+    # 200 leaves room for the sentence in front of it in the notification body (300 at most).
+    reason = (request.POST.get("reason") or "").strip()[:200]
+    notify_application_deleted(app, reason)
     app.delete()
-    messages.success(request, f"Ansøgningen fra {name} er slettet.")
+    messages.success(request, f"Ansøgningen fra {name} er slettet, og {name} har fået besked.")
     return redirect("soegvaerelse:admin")
 
 

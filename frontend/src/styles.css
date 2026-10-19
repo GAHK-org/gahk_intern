@@ -2249,6 +2249,13 @@
   .notif-panel { position:absolute; right:0; top:calc(100% + 8px); width:min(380px, calc(100vw - 24px));
     max-height:min(70vh, 560px); overflow:auto; background:var(--surface); color:var(--ink);
     border:1px solid var(--border); border-radius:12px; box-shadow:0 12px 32px rgba(0,0,0,.18); z-index:40; }
+  /* On a phone the avatar sits right of the bell, so a panel anchored to the bell's right edge ran
+     off the left of the screen. There the bell stops being the anchor and the panel spans the
+     sticky top bar instead, 12px in from both sides. */
+  @media (max-width:720px) {
+    .notif-bell { position:static; }
+    .notif-panel { left:12px; right:12px; width:auto; }
+  }
   .notif-panel-head { display:flex; align-items:center; justify-content:space-between; gap:8px;
     padding:10px 14px; border-bottom:1px solid var(--border); font-weight:700; font-size:14px; }
   .notif-panel-head a { font-size:13px; font-weight:600; color:var(--muted); }

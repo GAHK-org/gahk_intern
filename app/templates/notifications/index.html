@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Notifikationer - GAHK{% endblock %}
 {% block content %}
+  {% include "notifications/_fresh_on_back.html" %}
   <div class="page-head">
     <div>
       <div class="eyebrow">Intern</div>
@@ -9,7 +10,7 @@
     <div class="head-actions">
       {% if unseen %}
         <form method="post" action="{% url 'notifications:mark_all_seen' %}">
-          {% csrf_token %}<button type="submit" class="btn-secondary">Markér alle som set</button>
+          {% csrf_token %}<button type="submit" class="btn-secondary">Markér alle som læst</button>
         </form>
       {% endif %}
       <a class="btn notif-head-link" href="{% url 'notifications:preferences' %}"><svg><use href="#i-gear"></use></svg>Indstillinger</a>

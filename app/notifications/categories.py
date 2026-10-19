@@ -17,6 +17,21 @@ features that share a category:
     category takes the in-app toggle off the settings page and the row out of the dropdown.
   * **Default importance.** A caller may raise it for one notification (an event that was cancelled
     matters more than one that was created), but the category says what is normal.
+
+**Before adding a category**, check that a resident would actually want to switch it off on its own.
+The settings page is a table every resident scrolls; every leaf is another row of toggles. A new
+category earns its place only when it is *recurring and plentiful enough to be noise to somebody* —
+new posts, reactions, chat rooms. Anything else goes under an existing one:
+
+  * **`general` is the catch-all.** Everything that has no category of its own: one-off messages about
+    your own affairs ("din ansøgning er slettet"), and
+    announcements to the whole kollegium. It cannot be turned off in-app, which is right for exactly
+    these: rare, and about you. Raise `importance` at the call site if it matters more than Normal.
+  * **`system` is about the site itself** — downtime, new features, something wrong with the app.
+    Not about a resident's own case; that is `general`.
+
+So a feature does *not* get its own group just because it is a feature: a notice that an application
+was deleted is `general`, not a new "Søg værelse" group.
 """
 
 from dataclasses import dataclass
@@ -86,6 +101,8 @@ GROUP_ICONS: dict[str, str] = {
     "repairs": "wrench",
 }
 
+# The two catch-alls — see "Before adding a category" in the module docstring. Most features that
+# notify rarely should use GENERAL rather than a category of their own.
 SYSTEM = "system"
 GENERAL = "general"
 CHAT_REPLIES = "chat.replies"
@@ -167,14 +184,14 @@ def _build() -> tuple[Category, ...]:
             SYSTEM,
             "Systembeskeder",
             "system",
-            "Beskeder fra administratorerne om siden.",
+            "Om selve siden, fx nedetid og nye funktioner.",
             in_app_optional=False,
         ),
         Category(
             GENERAL,
             "Generelle beskeder",
             "general",
-            "Meddelelser til hele kollegiet.",
+            "Alt, der ikke har sin egen kategori — fx besked om din ansøgning eller meddelelser til hele kollegiet.",
             in_app_optional=False,
         ),
     )
