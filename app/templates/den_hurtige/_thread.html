@@ -7,7 +7,7 @@
     * #js-feed is also overflow-y:auto, so a full-screen mobile panel inside it would be clipped by
       and scroll with the list.
 
-  Being outside means it does not get the feed's refresh, so it POLLS ITSELF: the hx-* attributes
+  Being outside means it does not get the feed's refresh, so it REFRESHES ITSELF: the hx-* attributes
   below sit on this root element and are re-rendered identically by the server, so the trigger
   survives its own morph. `morph:outerHTML`, not innerHTML, for exactly that reason. Closing the
   panel removes this node and htmx disposes the timer with it -- there is no bookkeeping, and an
@@ -58,7 +58,13 @@
            role="complementary" aria-labelledby="thread-title-{{ post.pk }}" tabindex="-1"
            {% if not archived and not deleted %}
            hx-get="{% url 'den_hurtige:thread' post.pk %}"
-           hx-trigger="every 5s"
+           {% comment %}
+             The same three triggers as the feed's #js-live, for the same reasons (see feed.html):
+             a signal naming this message, the 5s poll only while the channel is not live,
+             and a 60s backstop.
+           {% endcomment %}
+           hx-trigger="gahk-live, every 5s [!this.closest('[data-live-on]')], every 60s"
+           hx-sync="this:queue last"
            hx-ext="morph"
            {% comment %}
              Explicit, not inherited. hx-target inherits down the tree in htmx, so without this the
@@ -121,7 +127,7 @@
       <label class="reply-attach" for="id_reply_image_{{ post.pk }}" title="Vedhæft billede">
         <span aria-hidden="true">📎</span>
         <span class="sr-only">Vedhæft billede til svar</span>
-        <input type="file" id="id_reply_image_{{ post.pk }}" name="image" accept="image/*">
+        <input type="file" id="id_reply_image_{{ post.pk }}" name="image" accept="image/*,.heic,.heif">
       </label>
       {% comment %}
         NOT `required`. A reply may be a photo on its own — "her, se" is a whole answer — and the

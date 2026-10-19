@@ -9,22 +9,41 @@
 """Import the photo archive in Dropbox (/GAHK billeder/<year>/<album>) into the photo album.
 
 One album at a time: list it in Dropbox, check it against the server's own import rules, download it
-as a ZIP, send it to the system import endpoint, wait for the result, delete the ZIP. Sub-folders
+as a ZIP, send it straight to the server's bucket in parts and start the import, wait for the
+result, delete the ZIP. Sub-folders
 become sub-albums (up to the server's depth limit). The server imports an archive completely or
 not at all, so a failed album leaves nothing half-imported behind, and locks every album it imports
 this way (Fotogruppen can unlock one that needs a change).
 
-Files the server would refuse — anything but photos and videos it accepts, files over its size
-limits or too deep — are kept out of the ZIP, so the rest of the album gets in, and saved to
-<work-dir>/<year>/<album>/invalid/ (mirroring the Dropbox folder) to be looked at and fixed. So is a
-file the server refuses on reading it, after which the rest is sent again. Metadata the server skips
-(.DS_Store, __MACOSX/, Thumbs.db, …) is sent anyway, so the server's log shows it, and a copy is kept
-in <work-dir>/<year>/<album>/metadata/.
+Nothing the server took is kept on this disk, and everything it did not take is — so every file in
+Dropbox that is not in the photo album can be gone through by hand. <work-dir>/NOT-ON-SERVER.md
+lists each one after every run: why, and a link to its copy (not-on-server.json is the same list
+for the script). Delete a copy once you have dealt with it; it is then listed apart and not fetched
+again. What is kept:
 
-Once the kept-out files are fixed, --retry-invalid sends them — and only them — to their album. The
-server adds them to it rather than refusing an album that already exists, storing only files it does
-not have (the same name with other content is a different photo and is kept). The album has to be
-unlocked on the site first. Sent files move on to retried/; what is still invalid stays.
+- Files the server would refuse — anything but photos and videos it accepts, files over its size
+  limits or too deep — are kept out of the ZIP, so the rest of the album gets in, and saved to
+  <work-dir>/<year>/<album>/invalid/ (mirroring the Dropbox folder) to be looked at and fixed. So
+  is a file the server refuses on reading it, after which the rest is sent again.
+- Metadata (.DS_Store, AppleDouble sidecars, Thumbs.db, …) is sent with the album. The server keeps
+  each photo's sidecar with it; a copy of the rest — what it reports skipping — is saved in
+  <work-dir>/<year>/<album>/metadata/. A duplicate it skips needs no copy: the album has the file.
+- Files beside the album folders in a year folder, and beside the year folders in the Dropbox root,
+  are saved in <work-dir>/<year>/_not-in-an-album/ and <work-dir>/_not-in-a-year-folder/.
+- Of an album that fails, what is not in its invalid/ stays in <work-dir>/<year>/<album>/failed.zip
+  until it is imported.
+
+Once the kept-out files are fixed, --retry-invalid sends them — and only them, with their sidecars —
+to their album. The server adds them to it rather than refusing an album that already exists,
+storing only files it does not have (the same name with other content is a different photo and is
+kept). The album has to be unlocked on the site first. What the server took is deleted; what is
+still invalid stays.
+
+--send-dates sends the AppleDouble sidecars saved in each imported album's metadata/ folder (the old
+file server's record of every file's own dates) to the server, which keeps each with its photo and
+dates the album's photos by them, as an import now does itself. For albums imported before the
+server read sidecars; the copies it kept are deleted here. It needs no Dropbox access, works on
+locked albums, and is safe to run again.
 
 Setup:
     export PHOTO_ALBUM_IMPORT_URL=https://<host>/intern/fotoalbum/importer-zip/system
@@ -39,6 +58,8 @@ Usage:
     uv run scripts/import_dropbox_photo_albums.py --year 2019 --confirm
     uv run scripts/import_dropbox_photo_albums.py --retry-failed --year 2019  # send failed albums again
     uv run scripts/import_dropbox_photo_albums.py --retry-invalid .dropbox-photo-album-import/2019/Sommerfest
+    uv run scripts/import_dropbox_photo_albums.py --send-dates --year-range 2001-2006
+    uv run scripts/import_dropbox_photo_albums.py --overview   # NOT-ON-SERVER.md again, after a clean-up
 
 Resuming: progress is saved in <work-dir>/state.json after every step, so stopping (Ctrl-C, a lost
 connection, a reboot) is safe — run the same command again and it continues where it stopped. An
@@ -50,6 +71,7 @@ with all its reasons — to <work-dir>/failures.log.
 """
 
 import argparse
+import io
 import json
 import os
 import re
@@ -58,12 +80,12 @@ import sys
 import time
 import unicodedata
 import zipfile
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Collection, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn, TextIO, TypeVar
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 import dropbox
 import requests
@@ -101,10 +123,18 @@ class Fatal(Exception):
 class AlbumFailed(Exception):
     """Stops one album; the run moves on to the next."""
 
-    def __init__(self, summary: str, details: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        summary: str,
+        details: list[str] | None = None,
+        *,
+        kept: Path | None = None,
+    ) -> None:
         super().__init__(summary)
         self.summary = summary
         self.details = details or []
+        # Where the album's files are kept here, if they were downloaded.
+        self.kept = kept
 
 
 # --- Output -------------------------------------------------------------------------------------
@@ -208,6 +238,13 @@ class State:
             **entry,
             "at": datetime.now(UTC).isoformat(timespec="seconds"),
         }
+        self._write()
+
+    def drop(self, key: str) -> None:
+        if self.albums.pop(key, None) is not None:
+            self._write()
+
+    def _write(self) -> None:
         partial = self.path.with_suffix(".json.partial")
         partial.write_text(
             json.dumps({"albums": self.albums}, indent=2, ensure_ascii=False),
@@ -216,6 +253,265 @@ class State:
         partial.replace(
             self.path
         )  # atomic: a crash mid-write never leaves a broken state file
+
+
+# --- What is not on the server ------------------------------------------------------------------
+
+LEDGER = "not-on-server.json"
+OVERVIEW = "NOT-ON-SERVER.md"
+# Where the files outside the album folders are kept: those beside the albums in a year folder in
+# <work-dir>/<year>/NOT_IN_AN_ALBUM, those beside the years in the Dropbox root in <work-dir>/NOT_IN_A_YEAR.
+NOT_IN_AN_ALBUM = "_not-in-an-album"
+NOT_IN_A_YEAR = "_not-in-a-year-folder"
+FAILED_ZIP = "failed.zip"  # <work-dir>/<year>/<album>/: what of a failed album is not in invalid/
+DOWNLOAD = "download.partial"  # <work-dir>/: a single file on its way from Dropbox
+# Why a file is not on the server, in the order the overview lists them.
+FILE_KINDS = {
+    "kept-out": "Kept out of the upload: the server would refuse them",
+    "refused": "Refused by the server when it read them",
+    "outside": "Outside the album folders",
+    "metadata": "Metadata the server did not keep",
+    "duplicate": "Duplicates the server skipped: the album has the same file",
+}
+ALBUM_KINDS = {
+    "failed": "Album folders that failed",
+    "exists": "Album folders not sent: an album of that name was on the server already",
+}
+
+
+def same_path(path: str) -> str:
+    """Dropbox paths as the list keys them: Dropbox may give a name decomposed, a ZIP composed."""
+    return unicodedata.normalize("NFC", path)
+
+
+class Ledger:
+    """Every file in Dropbox that is not on the server, keyed by its Dropbox path: why, and where its
+    copy is in the work directory — none for a duplicate, whose content the album has. Also every
+    album folder that did not get onto the server.
+
+    Written out as NOT-ON-SERVER.md after every run, for a person to go through. A copy deleted
+    there is one dealt with: it is listed apart, and not fetched again. A file the server takes
+    later (--retry-invalid, --send-dates, --retry-failed) is struck off, and its copy deleted.
+    """
+
+    def __init__(self, work_dir: Path, *, read_only: bool = False) -> None:
+        self.work_dir = work_dir
+        self.path = work_dir / LEDGER
+        self.read_only = read_only  # a dry run changes nothing
+        self.files: dict[str, dict[str, Any]] = {}
+        self.albums: dict[str, dict[str, Any]] = {}
+        self.new = not self.path.exists()
+        if not self.new:
+            try:
+                data = json.loads(self.path.read_text(encoding="utf-8"))
+                self.files, self.albums = data["files"], data["albums"]
+            except (ValueError, KeyError) as exc:
+                die(
+                    f"{self.path} is not a list this script wrote ({exc}). Move it away to start it over."
+                )
+
+    def get(self, dropbox_path: str) -> dict[str, Any] | None:
+        return self.files.get(same_path(dropbox_path))
+
+    def copy(self, entry: dict[str, Any]) -> Path | None:
+        return self.work_dir / entry["copy"] if entry.get("copy") else None
+
+    def dealt_with(self, entry: dict[str, Any]) -> bool:
+        copy = self.copy(entry)
+        return copy is not None and not copy.exists()
+
+    def file(
+        self, dropbox_path: str, kind: str, why: str, *, copy: Path | None, size: int
+    ) -> None:
+        self.files[same_path(dropbox_path)] = {
+            "kind": kind,
+            "why": why,
+            "copy": copy.relative_to(self.work_dir).as_posix() if copy else None,
+            "size": size,
+        }
+
+    def on_server(self, dropbox_path: str) -> None:
+        """The server has it now: strike it off, and delete the copy."""
+        entry = self.files.pop(same_path(dropbox_path), None)
+        if entry and (copy := self.copy(entry)) and not self.read_only:
+            copy.unlink(missing_ok=True)
+
+    def album(
+        self,
+        dropbox_path: str,
+        kind: str,
+        why: str,
+        *,
+        details: list[str] | None = None,
+        copy: Path | None = None,
+    ) -> None:
+        self.albums[same_path(dropbox_path)] = {
+            "kind": kind,
+            "why": why,
+            "details": details or [],
+            "copy": copy.relative_to(self.work_dir).as_posix() if copy else None,
+        }
+
+    def album_imported(self, dropbox_path: str) -> None:
+        self.albums.pop(same_path(dropbox_path), None)
+
+    def save(self) -> None:
+        if self.read_only:
+            return
+        partial = self.path.with_suffix(".json.partial")
+        partial.write_text(
+            json.dumps(
+                {
+                    "files": dict(sorted(self.files.items())),
+                    "albums": dict(sorted(self.albums.items())),
+                },
+                indent=2,
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        partial.replace(self.path)
+
+
+def cell(text: str) -> str:
+    """Text for a Markdown table cell: nothing in it read as markup, control characters shown."""
+    text = "".join(
+        repr(char)[1:-1] if unicodedata.category(char) == "Cc" else char
+        for char in text
+    )
+    return re.sub(r"([\\`*_\[\]<>|#])", r"\\\1", text)
+
+
+def reasons(entry: dict[str, Any]) -> str:
+    """An album's reasons on one line."""
+    return "; ".join(line.rstrip(".") for line in [entry["why"], *entry["details"]])
+
+
+def link(copy: str | None) -> str:
+    return f"[{cell(copy)}]({quote(copy)})" if copy else "—"
+
+
+def write_overview(ledger: Ledger) -> Path:
+    """NOT-ON-SERVER.md: the list, for a person to go through."""
+    pending = {
+        path: entry
+        for path, entry in ledger.files.items()
+        if not ledger.dealt_with(entry)
+    }
+    dealt = {
+        path: entry for path, entry in ledger.files.items() if ledger.dealt_with(entry)
+    }
+    lines = [
+        "# Not on the server",
+        "",
+        (
+            "Every file in Dropbox that is not in the photo album, and why, as"
+            " scripts/import_dropbox_photo_albums.py last found it"
+            f" ({datetime.now(UTC).strftime('%Y-%m-%d %H:%M')} UTC). Its copy is in this folder;"
+            " the link opens it. Decide what to do with each: fix it and send it with"
+            " --retry-invalid, add it on the site, or let it go — then delete the copy. A deleted"
+            " copy is listed as dealt with at the end, and is not fetched again."
+        ),
+        "",
+        "| | Count | Size |",
+        "|---|---:|---:|",
+    ]
+    for kind, label in ALBUM_KINDS.items():
+        if count := sum(1 for entry in ledger.albums.values() if entry["kind"] == kind):
+            lines.append(f"| {label} | {count} | |")
+    for kind, label in FILE_KINDS.items():
+        entries = [entry for entry in pending.values() if entry["kind"] == kind]
+        if entries:
+            size = human_size(sum(entry["size"] for entry in entries))
+            lines.append(f"| {label} | {len(entries)} | {size} |")
+    if dealt:
+        lines.append(f"| Dealt with: the copy is deleted | {len(dealt)} | |")
+    if not ledger.albums and not ledger.files:
+        lines.append("| Nothing: every file is on the server | 0 | |")
+    for kind, label in ALBUM_KINDS.items():
+        rows = [
+            f"| {cell(path)} | {cell(reasons(entry))} | {link(entry['copy'])} |"
+            for path, entry in sorted(ledger.albums.items())
+            if entry["kind"] == kind
+        ]
+        if rows:
+            lines += [
+                "",
+                f"## {label} ({len(rows)})",
+                "",
+                "| Album folder in Dropbox | Why | Copy here |",
+                "|---|---|---|",
+                *rows,
+            ]
+    for kind, label in FILE_KINDS.items():
+        rows = [
+            f"| {cell(path)} | {human_size(entry['size'])} | {cell(entry['why'])}"
+            f" | {link(entry['copy'])} |"
+            for path, entry in sorted(pending.items())
+            if entry["kind"] == kind
+        ]
+        if rows:
+            lines += [
+                "",
+                f"## {label} ({len(rows)})",
+                "",
+                "| File in Dropbox | Size | Why | Copy here |",
+                "|---|---:|---|---|",
+                *rows,
+            ]
+    if dealt:
+        lines += [
+            "",
+            f"## Dealt with: the copy is deleted ({len(dealt)})",
+            "",
+            "| File in Dropbox | Why it is not on the server |",
+            "|---|---|",
+            *(
+                f"| {cell(path)} | {cell(entry['why'])} |"
+                for path, entry in sorted(dealt.items())
+            ),
+        ]
+    path = ledger.work_dir / OVERVIEW
+    if not ledger.read_only:
+        partial = path.with_name(path.name + ".partial")
+        partial.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        partial.replace(path)
+    return path
+
+
+def report_not_on_server(ledger: Ledger) -> None:
+    if ledger.read_only and ledger.new:
+        return  # a dry run keeps no copies, and no list of them
+    overview = write_overview(ledger)
+    pending = [entry for entry in ledger.files.values() if not ledger.dealt_with(entry)]
+    out.heading("Not on the server")
+    for kind, label in ALBUM_KINDS.items():
+        if count := sum(1 for entry in ledger.albums.values() if entry["kind"] == kind):
+            out.info(f"  {count:4d}  {label.lower()}")
+    for kind, label in FILE_KINDS.items():
+        if count := sum(1 for entry in pending if entry["kind"] == kind):
+            out.info(f"  {count:4d}  {label.lower()}")
+    if dealt := len(ledger.files) - len(pending):
+        out.info(f"  {dealt:4d}  dealt with: the copy is deleted")
+    if not ledger.albums and not ledger.files:
+        out.ok("  Nothing: every file is on the server.")
+    elif ledger.read_only:
+        out.info(
+            f"  As the last run left them in {overview} (a dry run writes nothing)."
+        )
+    else:
+        out.info(f"  Each one, why, and where its copy is: {overview}")
+
+
+def prune(folder: Path) -> None:
+    """Remove the folders left empty below `folder`, and it too if it is."""
+    if not folder.is_dir():
+        return
+    for each in sorted(folder.rglob("*"), reverse=True):
+        if each.is_dir() and not any(each.iterdir()):
+            each.rmdir()
+    if not any(folder.iterdir()):
+        folder.rmdir()
 
 
 # --- The server ---------------------------------------------------------------------------------
@@ -264,6 +560,8 @@ class Server:
         self.session.headers.update(
             {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         )
+        # For the presigned part URLs (photo_album.direct_upload), which must not carry the token.
+        self.bucket = requests.Session()
 
     def _request(
         self,
@@ -344,19 +642,42 @@ class Server:
         The server adds it to an album of the same name if there is one, storing only files that
         album does not already have. With `album`, the ZIP's paths are relative to that album.
 
-        Sent again if the connection fails: the server only takes an import on once the whole
-        upload is in, and answers it at once, so a connection lost on the way means it has none.
+        Straight to the server's bucket, in parts, when it has one (photo_album.direct_upload):
+        through the app, the proxy in front of it cuts any upload that takes more than a minute,
+        which stopped the 3.2 GB "Bornholm med GAHK - April 06" twelve times. Then the import is
+        started with the upload's ticket, a request of a few hundred bytes.
+
+        Without a bucket the ZIP goes with the request, as before, and is sent again if the
+        connection fails: the server only takes an import on once the whole upload is in, and
+        answers it at once, so a connection lost on the way means it has none.
         """
-        with archive.open("rb") as handle:
+        upload = self._begin_upload(archive)
+        if upload is not None:
+            out.info(f"    straight to the bucket, in {len(upload['urls'])} part(s)")
+            etags = self._send_parts(archive, upload)
             response = self._request(
                 "POST",
                 self.endpoint,
-                what=f"send {archive.name}",
-                rewind=lambda: handle.seek(0),
-                data={"folder": folder, "album": album},
-                files={"archive": (archive.name, handle, "application/zip")},
-                timeout=(30, None),
+                what=f"start the import of {archive.name}",
+                data={
+                    "folder": folder,
+                    "album": album,
+                    "ticket": upload["ticket"],
+                    "parts": json.dumps(etags),
+                },
+                timeout=(30, 300),
             )
+        else:
+            with archive.open("rb") as handle:
+                response = self._request(
+                    "POST",
+                    self.endpoint,
+                    what=f"send {archive.name}",
+                    rewind=lambda: handle.seek(0),
+                    data={"folder": folder, "album": album},
+                    files={"archive": (archive.name, handle, "application/zip")},
+                    timeout=(30, None),
+                )
         if response.status_code == 400:
             raise AlbumFailed("The server refused the upload.", form_errors(response))
         if response.status_code == 413:
@@ -365,6 +686,109 @@ class Server:
             )
         response.raise_for_status()
         return urljoin(self.endpoint, response.json()["statusUrl"])
+
+    def _begin_upload(self, archive: Path) -> dict[str, Any] | None:
+        """The bucket upload the server sets up for `archive`: a ticket, the part size and a URL
+        per part. None to send the ZIP with the import instead — a server without a bucket says so,
+        and one older than direct uploads has no such address."""
+        response = self._request(
+            "POST",
+            f"{self.endpoint}/upload",
+            what=f"ask where to send {archive.name}",
+            data={"name": archive.name, "size": archive.stat().st_size},
+            timeout=60,
+        )
+        if response.status_code == 404:
+            return None
+        if response.status_code == 400:
+            raise AlbumFailed("The server refused the upload.", form_errors(response))
+        response.raise_for_status()
+        upload = response.json()
+        return upload if upload.get("direct") else None
+
+    def _send_parts(self, archive: Path, upload: dict[str, Any]) -> list[str]:
+        """Send `archive` to the upload's part URLs, a part at a time; returns their ETags in order."""
+        size, part_size, urls = (
+            archive.stat().st_size,
+            int(upload["partSize"]),
+            upload["urls"],
+        )
+        etags: list[str] = []
+        reported = 0
+        with archive.open("rb") as handle:
+            for number, url in enumerate(urls, 1):
+                handle.seek((number - 1) * part_size)
+                etags.append(
+                    self._send_part(
+                        url, handle.read(part_size), f"part {number} of {len(urls)}"
+                    )
+                )
+                sent = min(number * part_size, size)
+                if sent - reported >= size / 10 or number == len(urls):
+                    out.info(f"    … {human_size(sent)} of {human_size(size)} sent")
+                    reported = sent
+        return etags
+
+    def _send_part(self, url: str, data: bytes, what: str) -> str:
+        """PUT one part to its presigned URL; returns the bucket's ETag for it.
+
+        Tried again on its own, as `_request` tries a request: a busy bucket RETRIES times before
+        the album fails, an unreachable one UNREACHABLE_RETRIES times before the run stops. The URL
+        is the credential, so none of the session's headers go with it.
+        """
+        busy = unreachable = 0
+        while True:
+            try:
+                response = self.bucket.put(url, data=data, timeout=(30, 300))
+            except (requests.ConnectionError, requests.Timeout) as exc:
+                unreachable += 1
+                if unreachable > UNREACHABLE_RETRIES:
+                    raise Fatal(
+                        f"The bucket did not answer {UNREACHABLE_RETRIES + 1} times in a row while"
+                        f" sending {what} ({exc.__class__.__name__}). Giving up."
+                    ) from exc
+                out.warn(
+                    f"    … {what}: no answer ({exc.__class__.__name__}); trying again in"
+                    f" {UNREACHABLE_WAIT}s ({unreachable}/{UNREACHABLE_RETRIES})"
+                )
+                time.sleep(UNREACHABLE_WAIT)
+                continue
+            if response.ok and response.headers.get("ETag"):
+                return response.headers["ETag"]
+            if not _transient(response):
+                raise AlbumFailed(
+                    f"The bucket refused {what}: HTTP {response.status_code}.",
+                    [response.text[:500]],
+                )
+            busy += 1
+            if busy == RETRIES:
+                raise AlbumFailed(
+                    f"Could not send {what}: HTTP {response.status_code}."
+                )
+            wait = 2**busy
+            out.warn(
+                f"    … {what}: HTTP {response.status_code}; retrying in {wait}s ({busy}/{RETRIES - 1})"
+            )
+            time.sleep(wait)
+
+    def send_dates(self, archive: bytes, folder: str, album: str) -> dict[str, Any]:
+        """Send an album's sidecars (photo_album.services.apply_sidecars); returns what it did."""
+        response = self._request(
+            "POST",
+            f"{self.endpoint}/datoer",
+            what=f"send the dates for {folder}/{album}",
+            data={"folder": folder, "album": album},
+            files={"archive": ("datoer.zip", archive, "application/zip")},
+            timeout=(30, 300),
+        )
+        if response.status_code == 404:
+            raise Fatal(
+                f"{self.endpoint}/datoer does not exist. Is the server running a version that reads sidecars?"
+            )
+        if response.status_code == 400:
+            raise AlbumFailed("The server refused the dates.", form_errors(response))
+        response.raise_for_status()
+        return response.json()
 
     def status(self, url: str) -> dict[str, Any]:
         response = self._request(
@@ -525,6 +949,54 @@ def download_zip(
     partial.replace(target)
 
 
+def download_file(
+    client: dropbox.Dropbox,
+    source: str,
+    target: Path,
+    partial: Path,
+    modified: datetime | None,
+) -> None:
+    """Download one file to `target`, all of it or nothing, with the time Dropbox has for it.
+
+    Written to `partial` first — one place, as the folders it goes to hold Dropbox's own files.
+    """
+    for attempt in range(1, RETRIES + 1):
+        try:
+            _, response = with_dropbox_retries(
+                f"download {source}", lambda: client.files_download(source)
+            )
+            with response, partial.open("wb") as destination:
+                for chunk in response.iter_content(CHUNK_SIZE):
+                    destination.write(chunk)
+            break
+        except ApiError as exc:
+            partial.unlink(missing_ok=True)
+            raise AlbumFailed(f"Dropbox refused to send {source}: {exc.error}") from exc
+        except (
+            requests.ConnectionError,
+            requests.Timeout,
+            requests.exceptions.ChunkedEncodingError,
+        ) as exc:
+            partial.unlink(missing_ok=True)
+            if attempt == RETRIES:
+                raise AlbumFailed(
+                    f"The download of {source} kept breaking off ({exc.__class__.__name__})."
+                ) from exc
+            time.sleep(2**attempt)
+        except OSError as exc:
+            partial.unlink(missing_ok=True)
+            raise Fatal(f"Cannot write {partial}: {exc}") from exc
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        partial.replace(target)
+        if modified is not None:
+            stamp = modified.replace(tzinfo=UTC).timestamp()  # Dropbox's times are UTC
+            os.utime(target, (stamp, stamp))
+    except OSError as exc:
+        partial.unlink(missing_ok=True)
+        raise Fatal(f"Cannot write {target}: {exc}") from exc
+
+
 # --- Checking an album against the server's rules ----------------------------------------------
 
 
@@ -676,7 +1148,7 @@ def report_plan(plan: AlbumPlan, *, invalid_dir: Path) -> None:
     sub_albums = f", {len(plan.sub_albums)} sub-album(s)" if plan.sub_albums else ""
     out.info(f"  {plan.files} file(s), {human_size(plan.size)}{sub_albums}")
     report_lines(
-        "metadata (sent; the server skips it)",
+        "metadata (sent with it)",
         [f"{shown(path)} ({why})" for path, why in plan.metadata.items()],
     )
     if plan.invalid:
@@ -733,6 +1205,24 @@ class Outgoing:
     album: str  # the album it is sent to by name, or "" for the server to name it as it descends
     # Name in the ZIP -> path below the Dropbox folder.
     members: dict[str, tuple[str, ...]]
+    sizes: dict[tuple[str, ...], int] = field(default_factory=dict)  # by that path
+
+
+@dataclass
+class Folder:
+    """One album folder in Dropbox, and its folder here, where what the server lacks of it is kept."""
+
+    ledger: Ledger
+    dropbox_path: str
+    dir: Path
+
+    def dropbox(self, path: tuple[str, ...]) -> str:
+        """The Dropbox path of the file at `path` below the folder."""
+        return f"{self.dropbox_path}/{shown(path)}"
+
+
+# Where an album's copies are kept, by why the server lacks them.
+KEPT_IN = {"kept-out": "invalid", "refused": "invalid", "metadata": "metadata"}
 
 
 def dropbox_entries(archive: Path) -> dict[str, tuple[tuple[str, ...], int]]:
@@ -755,19 +1245,29 @@ def dropbox_entries(archive: Path) -> dict[str, tuple[tuple[str, ...], int]]:
 
 
 def save_members(
-    outgoing: Outgoing, names: list[str], target: Path, *, label: str
+    outgoing: Outgoing, whys: dict[str, str], folder: Folder, *, kind: str
 ) -> None:
-    """Copy these members out of the ZIP to `target`, at their paths in the Dropbox folder.
+    """Keep a copy of these members — name -> why the server lacks it — in the album's invalid/ or
+    metadata/ folder, at their paths in the Dropbox folder, and list them as `kind`.
 
     A file already there is left alone: it may be one fixed since, or the very file being retried.
     """
+    target = folder.dir / KEPT_IN[kind]
     saved = 0
     try:
         with zipfile.ZipFile(outgoing.path) as zip_file:
             by_name = {member_name(info): info for info in zip_file.infolist()}
-            for name in names:
+            for name, why in whys.items():
                 info = by_name[name]
-                destination = target.joinpath(*outgoing.members[name])
+                path = outgoing.members[name]
+                destination = target.joinpath(*path)
+                folder.ledger.file(
+                    folder.dropbox(path),
+                    kind,
+                    why,
+                    copy=destination,
+                    size=info.file_size,
+                )
                 if destination.exists():
                     continue
                 destination.parent.mkdir(parents=True, exist_ok=True)
@@ -780,10 +1280,12 @@ def save_members(
     except OSError as exc:
         raise Fatal(f"Cannot write to {target}: {exc}") from exc
     if saved:
-        out.info(f"  {saved} {label} file(s) saved in {target}")
+        out.info(f"  {saved} {kind} file(s) saved in {target}")
 
 
-def without(outgoing: Outgoing, drop: set[str], plan: AlbumPlan) -> Outgoing:
+def without(
+    outgoing: Outgoing, drop: set[str], plan: AlbumPlan, folder: Folder
+) -> Outgoing:
     """The ZIP without `drop`, its paths made relative to the album and sent to it by name.
 
     By name, because without those files the server might descend further than it would have —
@@ -791,19 +1293,32 @@ def without(outgoing: Outgoing, drop: set[str], plan: AlbumPlan) -> Outgoing:
     """
     partial = outgoing.path.with_name(outgoing.path.name + ".partial")
     members: dict[str, tuple[str, ...]] = {}
+    left_out: dict[str, str] = {}
     try:
         with (
             zipfile.ZipFile(outgoing.path) as source,
             zipfile.ZipFile(partial, "w") as target,
         ):
-            for info in source.infolist():
+            # The album's own files first: one outside it is what gives way to its namesake.
+            infos = sorted(
+                source.infolist(),
+                key=lambda info: (
+                    outgoing.members.get(member_name(info), ())[: len(plan.prefix)]
+                    != plan.prefix
+                ),
+            )
+            for info in infos:
                 name = member_name(info)
                 if name in drop or name not in outgoing.members:
                     continue
                 path = outgoing.members[name]
                 new_name = shown(below(path, plan.prefix))
+                # Metadata outside the album, meeting its namesake inside.
                 if new_name in members:
-                    continue  # metadata outside the album that meets its namesake inside; saved anyway
+                    left_out[name] = (
+                        "metadata outside the album the folder makes, with the name of a file in it"
+                    )
+                    continue
                 new_info = zipfile.ZipInfo(new_name, date_time=info.date_time)
                 with (
                     source.open(info) as data,
@@ -811,26 +1326,42 @@ def without(outgoing: Outgoing, drop: set[str], plan: AlbumPlan) -> Outgoing:
                 ):
                     shutil.copyfileobj(data, copy, CHUNK_SIZE)
                 members[new_name] = path
+        if left_out:
+            save_members(outgoing, left_out, folder, kind="metadata")
     except OSError as exc:
         partial.unlink(missing_ok=True)
         raise Fatal(f"Cannot write {partial}: {exc}") from exc
     partial.replace(outgoing.path)
-    return Outgoing(outgoing.path, plan.name, members)
+    return Outgoing(outgoing.path, plan.name, members, outgoing.sizes)
 
 
-def refused_members(errors: list[str], members: dict[str, Any]) -> list[str]:
-    """The members the server's reasons name — if every reason names one, otherwise none.
+def by_member(
+    lines: list[str], members: Collection[str]
+) -> tuple[dict[str, str], list[str]]:
+    """The server's "<member>: <why>" lines as member -> why, the longest name that fits — and the
+    lines that name no member."""
+    named: dict[str, str] = {}
+    other: list[str] = []
+    for line in lines:
+        cuts = [match.start() for match in re.finditer(": ", line)]
+        name = next(
+            (line[:cut] for cut in reversed(cuts) if line[:cut] in members), None
+        )
+        if name is None:
+            other.append(line)
+        else:
+            named[name] = line[len(name) + 2 :]
+    return named, other
+
+
+def refused_members(errors: list[str], members: Collection[str]) -> dict[str, str]:
+    """The members the server's reasons name, and why — if every reason names one, otherwise none.
 
     The server writes "<member>: <why>" for a file, and something else for the album as a whole
     (a folder name it cannot use, a locked album); only the first can be fixed by leaving files out.
     """
-    refused: set[str] = set()
-    for error in errors:
-        named = [name for name in members if error.startswith(f"{name}: ")]
-        if not named:
-            return []
-        refused.add(max(named, key=len))
-    return sorted(refused)
+    named, other = by_member(errors, members)
+    return {} if other else named
 
 
 def waiting(album_dir: Path) -> list[Path]:
@@ -861,6 +1392,7 @@ def import_album(
     client: dropbox.Dropbox,
     server: Server,
     state: State,
+    ledger: Ledger,
     options: Options,
     *,
     year: str,
@@ -870,7 +1402,8 @@ def import_album(
     rules: Rules,
 ) -> str:
     """Take one Dropbox folder as far as it will go. Returns its final status for the summary."""
-    album_dir = options.work_dir / year / folder_name
+    folder = Folder(ledger, album_path, options.work_dir / year / folder_name)
+    album_dir = folder.dir
     previous = state.get(album_path)
     if previous.get("status") == "imported":
         out.ok(
@@ -880,7 +1413,8 @@ def import_album(
     if previous.get("status") == "submitted":
         out.info("  Sent on an earlier run; asking the server how it went …")
         job = wait_for_job(server, options, previous["statusUrl"])
-        return imported(state, album_path, previous.get("album"), job, album_dir)
+        fetch_what_the_server_left(client, job, previous, folder, options=options)
+        return imported(state, album_path, previous.get("album"), job, folder)
     if previous.get("status") == "failed" and not options.retry_failed:
         out.warn(
             "  Failed on an earlier run — skipped. Fix it in Dropbox, then rerun with --retry-failed."
@@ -891,7 +1425,8 @@ def import_album(
 
     entries = list(list_folder(client, album_path, recursive=True))
     plan = plan_album(folder_name, entries, album_path, rules)
-    if plan.problems:
+    # A folder of nothing but metadata is downloaded all the same, for a copy of it to be kept.
+    if plan.problems and (options.dry_run or not plan.metadata):
         raise AlbumFailed(
             f"{len(plan.problems)} problem(s) in Dropbox:",
             plan.problems,
@@ -919,46 +1454,79 @@ def import_album(
         entries_in_zip = dropbox_entries(archive)
         plan = plan_files(folder_name, list(entries_in_zip.values()), rules)
         outgoing = Outgoing(
-            archive, "", {name: path for name, (path, _) in entries_in_zip.items()}
+            archive,
+            "",
+            {name: path for name, (path, _) in entries_in_zip.items()},
+            dict(entries_in_zip.values()),
         )
         names = {path: name for name, path in outgoing.members.items()}
         write_manifest(album_dir, year=year, album_path=album_path, plan=plan)
         save_members(
             outgoing,
-            [names[path] for path in plan.metadata],
-            album_dir / "metadata",
-            label="metadata",
-        )
-        save_members(
-            outgoing,
-            [names[path] for path in plan.invalid],
-            album_dir / "invalid",
-            label="kept-out",
+            {names[path]: why for path, why in plan.invalid.items()},
+            folder,
+            kind="kept-out",
         )
         if not plan.media:
+            save_members(
+                outgoing,
+                {
+                    names[path]: metadata_name(path, why)
+                    + ", in a folder with nothing else the server accepts"
+                    for path, why in plan.metadata.items()
+                },
+                folder,
+                kind="metadata",
+            )
             raise AlbumFailed(
-                f"Nothing in it the server accepts. The {len(plan.invalid)} file(s) are in"
-                f" {album_dir / 'invalid'}; fix them there and send them with --retry-invalid."
+                f"Nothing in it the server accepts. Its {plan.total_files} file(s) are in {album_dir}"
+                + (
+                    "; fix those in invalid/ and send them with --retry-invalid."
+                    if plan.invalid
+                    else "."
+                ),
+                kept=album_dir,
             )
         if plan.invalid:
-            outgoing = without(outgoing, {names[path] for path in plan.invalid}, plan)
-
-        def submitted(status_url: str) -> None:
-            state.set(
-                album_path, status="submitted", album=plan.name, statusUrl=status_url
+            outgoing = without(
+                outgoing, {names[path] for path in plan.invalid}, plan, folder
             )
 
-        job, _ = send(
-            server,
-            options,
-            outgoing,
-            plan,
-            year=year,
-            album_dir=album_dir,
-            submitted=submitted,
+        def submitted(status_url: str, sent: Outgoing) -> None:
+            state.set(
+                album_path,
+                status="submitted",
+                album=plan.name,
+                statusUrl=status_url,
+                # For an import still running when the run stops: what it sent, to tell
+                # the files the server reports skipping by, once the ZIP is gone.
+                prefix=list(plan.prefix),
+                byName=bool(sent.album),
+            )
+
+        job, sent = send(
+            server, options, outgoing, plan, folder, year=year, submitted=submitted
         )
-        return imported(state, album_path, plan.name, job, album_dir)
+        keep_what_the_server_left(job, sent, folder)
+        return imported(state, album_path, plan.name, job, folder)
+    except (AlbumFailed, requests.RequestException, ValueError) as error:
+        failure = (
+            error
+            if isinstance(error, AlbumFailed)
+            else AlbumFailed(f"Unexpected answer: {error}")
+        )
+        if failure.kept is None:
+            failure.kept = album_dir / FAILED_ZIP
+            album_dir.mkdir(parents=True, exist_ok=True)
+            archive.replace(failure.kept)
+            failure.details.append(
+                f"What of it is not in {album_dir / 'invalid'} is kept in {failure.kept}."
+            )
+        if failure is error:
+            raise
+        raise failure from error
     finally:
+        ledger.save()
         archive.unlink(
             missing_ok=True
         )  # Dropbox still has it; the disk should not fill up with retries
@@ -992,15 +1560,15 @@ def send(
     options: Options,
     outgoing: Outgoing,
     plan: AlbumPlan,
+    folder: Folder,
     *,
     year: str,
-    album_dir: Path,
-    submitted: Callable[[str], None],
+    submitted: Callable[[str, Outgoing], None],
 ) -> tuple[dict[str, Any], Outgoing]:
     """Send the ZIP and wait for the server's result; returns it, and what was sent in the end.
 
     Files the server refuses one by one — content it cannot read, which no listing shows — are
-    moved to invalid/ and the rest sent again. An import is all or nothing, so nothing of the
+    kept in invalid/ and the rest sent again. An import is all or nothing, so nothing of the
     refused attempt was stored.
     """
     for attempt in range(MAX_RESENDS + 1):
@@ -1008,32 +1576,188 @@ def send(
             f"  Sending {human_size(outgoing.path.stat().st_size)} to the server …"
         )
         status_url = server.submit(outgoing.path, year, album=outgoing.album)
-        submitted(status_url)
+        submitted(status_url, outgoing)
         try:
             return wait_for_job(server, options, status_url), outgoing
         except AlbumFailed as failure:
             refused = refused_members(failure.details, outgoing.members)
             if not refused or attempt == MAX_RESENDS:
                 raise
+            save_members(
+                outgoing,
+                {name: f"the server: {why}" for name, why in refused.items()},
+                folder,
+                kind="refused",
+            )
             media = set(plan.media)
             if all(
                 path not in media or name in refused
                 for name, path in outgoing.members.items()
             ):
-                save_members(outgoing, refused, album_dir / "invalid", label="kept-out")
+                save_members(
+                    outgoing,
+                    {
+                        name: metadata_name(path, plan.metadata.get(path, "metadata"))
+                        + ", in an album the server refused every photo and video of"
+                        for name, path in outgoing.members.items()
+                        if name not in refused
+                    },
+                    folder,
+                    kind="metadata",
+                )
                 raise AlbumFailed(
                     "The server refused every photo and video in it; they are in"
-                    f" {album_dir / 'invalid'}.",
+                    f" {folder.dir / 'invalid'}.",
                     failure.details,
+                    kept=folder.dir,
                 ) from failure
             out.warn(
                 f"  The server refused {len(refused)} file(s); keeping them out and sending the rest again:"
             )
             for line in failure.details:
                 out.warn(f"      {line}")
-            save_members(outgoing, refused, album_dir / "invalid", label="kept-out")
-            outgoing = without(outgoing, set(refused), plan)
+            outgoing = without(outgoing, set(refused), plan, folder)
     raise AssertionError("unreachable")
+
+
+# How the server reports a file it skipped as one it has (photo_album.services).
+ALREADY_THERE = "findes allerede i albummet (ignoreret)"
+DUPLICATE = re.compile(r"dublet af (?P<earlier>.+) \(ignoreret\)")
+
+
+def sidecar_target(path: tuple[str, ...]) -> tuple[str, ...] | None:
+    """The file an AppleDouble sidecar describes (photo_album.services._sidecar_target): x/._a.jpg,
+    x/.AppleDouble/a.jpg and __MACOSX/x/._a.jpg all describe x/a.jpg. None for anything else."""
+    parts = [part for part in path if part != "__MACOSX"]
+    if len(parts) >= 2 and parts[-2] == ".AppleDouble" and parts[-1] != ".Parent":
+        return (*parts[:-2], parts[-1])
+    if parts and parts[-1].startswith("._") and len(parts[-1]) > 2:
+        return (*parts[:-1], parts[-1][2:])
+    return None
+
+
+def metadata_why(why: str, path: tuple[str, ...], folder: Folder) -> str:
+    """Why the server skipped a metadata file, as the overview says it."""
+    if why.startswith("Windows-systemfil"):
+        return "Windows system file"
+    if not why.startswith("macOS-metadata"):
+        return f"the server: {why}"
+    described = sidecar_target(path)
+    if described is None:
+        return metadata_name(path, "macOS metadata")
+    entry = folder.ledger.get(folder.dropbox(described))
+    if entry and entry["kind"] in {"kept-out", "refused"}:
+        return f"AppleDouble sidecar of {shown(described)}, which is not on the server either"
+    return (
+        f"AppleDouble sidecar the server did not keep: it has no file {shown(described)}"
+        " to keep it with, or that file has its sidecar already"
+    )
+
+
+def keep_what_the_server_left(
+    job: dict[str, Any],
+    sent: Outgoing,
+    folder: Folder,
+    *,
+    save: Callable[[dict[str, str]], None] | None = None,
+    strike: bool = True,
+) -> set[str]:
+    """After an import: keep a copy of the metadata the server skipped, and list the duplicates it
+    skipped; strike what it stored off the list, deleting any copy of it. Returns the members on
+    the server — stored, or skipped as the same file as one it has.
+
+    `save` keeps those copies (from the ZIP sent, unless given); `strike` False leaves the list
+    as it is for what was stored, when it is not known exactly what was sent.
+    """
+    skipped, _ = by_member(job.get("skipped", []), sent.members)
+    metadata: dict[str, str] = {}
+    on_server: set[str] = set()
+    for name, path in sent.members.items():
+        why = skipped.get(name)
+        duplicate = DUPLICATE.fullmatch(why) if why else None
+        if why is None:
+            if strike:
+                folder.ledger.on_server(folder.dropbox(path))
+            on_server.add(name)
+        elif why == ALREADY_THERE or duplicate:
+            folder.ledger.on_server(folder.dropbox(path))
+            earlier = sent.members.get(duplicate["earlier"]) if duplicate else None
+            folder.ledger.file(
+                folder.dropbox(path),
+                "duplicate",
+                f"the same file as {shown(earlier)}, which the server stored"
+                if earlier
+                else "the album on the server had the same file already",
+                copy=None,
+                size=sent.sizes.get(path, 0),
+            )
+            on_server.add(name)
+        else:
+            metadata[name] = metadata_why(why, path, folder)
+    if save is None:
+        save_members(sent, metadata, folder, kind="metadata")
+    else:
+        save(metadata)
+    for kept_in in sorted(set(KEPT_IN.values())):
+        prune(folder.dir / kept_in)
+    return on_server
+
+
+def fetch_what_the_server_left(
+    client: dropbox.Dropbox,
+    job: dict[str, Any],
+    previous: dict[str, Any],
+    folder: Folder,
+    *,
+    options: Options,
+) -> None:
+    """keep_what_the_server_left for an import sent on an earlier run, whose ZIP is gone: the files
+    are told by their names as they were sent, and fetched from Dropbox one by one."""
+    prefix, by_name = tuple(previous.get("prefix", [])), previous.get("byName", False)
+    folder_name = PurePosixPath(folder.dropbox_path).name
+    cut = len(folder.dropbox_path.rstrip("/")) + 1
+    sent = Outgoing(Path(), "", {})
+    found: dict[tuple[str, ...], Any] = {}
+    for entry in list_folder(client, folder.dropbox_path, recursive=True):
+        if not isinstance(entry, dropbox.files.FileMetadata):
+            continue
+        path = PurePosixPath(same_path(entry.path_display[cut:])).parts
+        name = shown(below(path, prefix)) if by_name else f"{folder_name}/{shown(path)}"
+        sent.members.setdefault(name, path)
+        sent.sizes[path] = entry.size
+        found[path] = entry
+
+    def save(whys: dict[str, str]) -> None:
+        for name, why in whys.items():
+            entry, path = found[sent.members[name]], sent.members[name]
+            copy = folder.dir.joinpath("metadata", *path)
+            if not copy.exists():
+                download_file(
+                    client,
+                    entry.path_display,
+                    copy,
+                    options.work_dir / DOWNLOAD,
+                    entry.client_modified,
+                )
+            folder.ledger.file(
+                folder.dropbox(path), "metadata", why, copy=copy, size=entry.size
+            )
+        if whys:
+            out.info(
+                f"  {len(whys)} metadata file(s) saved in {folder.dir / 'metadata'}"
+            )
+
+    keep_what_the_server_left(job, sent, folder, save=save, strike=False)
+
+
+PROGRESS_STEPS = {"checking": "checked", "storing": "stored"}
+
+
+def describe_progress(progress: dict[str, Any] | None) -> str:
+    """The server's progress as ' — stored 120 of 400 files', or '' while it reports none."""
+    if not progress or progress.get("step") not in PROGRESS_STEPS:
+        return ""
+    return f" — {PROGRESS_STEPS[progress['step']]} {progress['done']} of {progress['total']} files"
 
 
 def wait_for_job(server: Server, options: Options, status_url: str) -> dict[str, Any]:
@@ -1049,6 +1773,7 @@ def wait_for_job(server: Server, options: Options, status_url: str) -> dict[str,
         elif time.monotonic() - last_report > 60:
             out.info(
                 f"    … still {job['state']} ({int(time.monotonic() - started) // 60} min)"
+                f"{describe_progress(job.get('progress'))}"
             )
             if (
                 job["state"] == "queued"
@@ -1074,9 +1799,9 @@ def imported(
     album_path: str,
     album: str | None,
     job: dict[str, Any],
-    album_dir: Path,
+    folder: Folder,
 ) -> str:
-    kept_out = len(waiting(album_dir))
+    kept_out = len(waiting(folder.dir))
     state.set(
         album_path,
         status="imported",
@@ -1085,10 +1810,13 @@ def imported(
         skipped=job.get("skipped", []),
         keptOut=kept_out,
     )
+    folder.ledger.album_imported(album_path)
+    folder.ledger.save()
+    (folder.dir / FAILED_ZIP).unlink(missing_ok=True)  # of an earlier attempt
     report_job(job, album)
     if kept_out:
         out.warn(
-            f"  {kept_out} file(s) were kept out and wait in {album_dir / 'invalid'}."
+            f"  {kept_out} file(s) were kept out and wait in {folder.dir / 'invalid'}."
         )
     return "imported"
 
@@ -1108,29 +1836,34 @@ def report_job(job: dict[str, Any], album: str | None) -> None:
         else:
             out.info(f"    left out: {line}")
     if metadata:
-        out.info(f"    left out: {metadata} metadata file(s)")
+        out.info(f"    left out: {metadata} metadata file(s), a copy of each kept")
 
 
 # --- Retrying the kept-out files of one album -----------------------------------------------------
 
 
-def retry_invalid(server: Server, options: Options, album_dir: Path) -> int:
-    """Send the files waiting in an album's invalid/ folder to that album, which they are merged into.
+def retry_invalid(
+    server: Server, ledger: Ledger, options: Options, album_dir: Path
+) -> int:
+    """Send the files waiting in an album's invalid/ folder to that album, which they are merged into,
+    with the sidecars kept for them in its metadata/ folder.
 
     Run it once they are fixed: converted, shrunk, or replaced (the folder mirrors the Dropbox one).
-    What is still invalid stays where it is; what the server took moves on to retried/.
+    What is still invalid stays where it is; what the server took is deleted.
     """
     try:
         manifest = json.loads((album_dir / "album.json").read_text(encoding="utf-8"))
-        year, album, prefix = (
+        year, album, prefix, dropbox_path = (
             manifest["year"],
             manifest["album"],
             tuple(manifest["prefix"]),
+            manifest["dropboxPath"],
         )
     except (OSError, ValueError, KeyError) as exc:
         raise Fatal(
             f"{album_dir} is not an album folder this script wrote (no readable album.json: {exc})."
         ) from exc
+    folder = Folder(ledger, dropbox_path, album_dir)
     invalid_dir = album_dir / "invalid"
     files = {path.relative_to(invalid_dir).parts: path for path in waiting(album_dir)}
     out.heading(f"{year}/{album} ← {invalid_dir}")
@@ -1156,6 +1889,9 @@ def retry_invalid(server: Server, options: Options, album_dir: Path) -> int:
     )
     for path, why in plan.invalid.items():
         out.warn(f"    still refused, stays: {shown(path)}: {why}")
+        if (entry := ledger.get(folder.dropbox(path))) and not options.dry_run:
+            entry["why"] = why  # as it is now
+    ledger.save()
     if not plan.media:
         out.warn("  Nothing the server would accept yet.")
         return 1 if plan.invalid else 0
@@ -1163,25 +1899,37 @@ def retry_invalid(server: Server, options: Options, album_dir: Path) -> int:
         out.warn(
             f'  "{year}/{album}" is not on the server; it will be created with these files.'
         )
+    # The server keeps a sidecar with its file, and dates the file by it.
+    sidecars: dict[tuple[str, ...], Path] = {}
+    for path in plan.media:
+        for candidate in (
+            (*path[:-1], ".AppleDouble", path[-1]),
+            (*path[:-1], f"._{path[-1]}"),
+        ):
+            if (sidecar := album_dir.joinpath("metadata", *candidate)).is_file():
+                sidecars[candidate] = sidecar
+                break
+    if sidecars:
+        out.info(f"  … with {len(sidecars)} sidecar(s) from {album_dir / 'metadata'}")
     if options.dry_run:
         return 0
 
     archive = album_dir.parent / f"{album_dir.name}.retry.zip"
     partial = archive.with_name(archive.name + ".partial")
-    members: dict[str, tuple[str, ...]] = {}
+    sources = {**{path: files[path] for path in plan.media}, **sidecars}
+    outgoing = Outgoing(archive, album, {})
     try:
         with zipfile.ZipFile(partial, "w") as zip_file:
-            for path in plan.media:
+            for path, source in sources.items():
                 name = shown(below(path, prefix))
-                info = zipfile.ZipInfo(
-                    name, date_time=zip_time(files[path].stat().st_mtime)
-                )
+                info = zipfile.ZipInfo(name, date_time=zip_time(source.stat().st_mtime))
                 with (
-                    files[path].open("rb") as data,
+                    source.open("rb") as data,
                     zip_file.open(info, "w", force_zip64=True) as copy,
                 ):
                     shutil.copyfileobj(data, copy, CHUNK_SIZE)
-                members[name] = path
+                outgoing.members[name] = path
+                outgoing.sizes[path] = source.stat().st_size
         partial.replace(archive)
     except OSError as exc:
         partial.unlink(missing_ok=True)
@@ -1190,25 +1938,193 @@ def retry_invalid(server: Server, options: Options, album_dir: Path) -> int:
         job, sent = send(
             server,
             options,
-            Outgoing(archive, album, members),
+            outgoing,
             plan,
+            folder,
             year=year,
-            album_dir=album_dir,
-            submitted=lambda _url: None,
+            submitted=lambda _url, _sent: None,
         )
+        report_job(job, album)
+        taken = keep_what_the_server_left(job, sent, folder)
     finally:
         archive.unlink(missing_ok=True)
-    report_job(job, album)
-    for path in sent.members.values():
-        moved = album_dir.joinpath("retried", *path)
-        moved.parent.mkdir(parents=True, exist_ok=True)
-        files[path].replace(moved)
-    for folder in sorted(invalid_dir.rglob("*"), reverse=True):
-        if folder.is_dir() and not any(folder.iterdir()):
-            folder.rmdir()
-    out.info(f"  {len(sent.members)} file(s) moved to {album_dir / 'retried'}")
+        ledger.save()
+    # A fixed file under a new name is on no list, but is the server's now all the same.
+    for name in taken:
+        sources[sent.members[name]].unlink(missing_ok=True)
+    for kept_in in sorted(set(KEPT_IN.values())):
+        prune(album_dir / kept_in)
+    out.info(f"  {len(taken)} file(s) the server has now, deleted here")
     if left := waiting(album_dir):
         out.warn(f"  {len(left)} file(s) still wait in {invalid_dir}.")
+    return 0
+
+
+# --- Dates for albums already imported ----------------------------------------------------------
+
+
+def saved_sidecars(album_dir: Path, prefix: tuple[str, ...]) -> dict[str, Path]:
+    """The AppleDouble sidecars in an album's metadata/ folder, by their path in the server's album.
+
+    Saved at their paths below the Dropbox folder; made relative to the album the server descended
+    to, the way an import's paths are. One outside it describes nothing in the album.
+    """
+    metadata = album_dir / "metadata"
+    sidecars: dict[str, Path] = {}
+    for file in sorted(metadata.rglob("*")):
+        path = file.relative_to(metadata).parts
+        if not file.is_file() or path[: len(prefix)] != prefix:
+            continue
+        if sidecar_target(path) is not None:
+            sidecars[shown(below(path, prefix))] = file
+    return sidecars
+
+
+def against_capture(counts: dict[str, int]) -> str:
+    """How well sidecars agree with the capture dates of the photos that have both — what tells
+    whether a sidecar can be believed for the photos that have nothing else."""
+    near, day, far = (
+        counts.get(key, 0) for key in ("withinAMinute", "withinADay", "further")
+    )
+    if not near + day + far:
+        return "No photo with a capture date had a sidecar to compare."
+    return (
+        f"Against {near + day + far} capture date(s), the sidecar was within a minute for {near},"
+        f" within a day for {day}, and further off for {far}."
+    )
+
+
+def strike_kept_sidecars(
+    result: dict[str, Any],
+    sidecars: dict[str, Path],
+    folder: Folder,
+    prefix: tuple[str, ...],
+) -> int:
+    """Delete the copies of the sidecars the server keeps now, and say why it keeps none of the
+    rest. Returns how many were deleted."""
+    if "kept" not in result:  # a server older than saying so
+        out.warn(
+            "    The server does not say which sidecars it kept; every copy stays here."
+        )
+        return 0
+    kept = set(result["kept"])
+    unmatched, ambiguous = set(result["unmatched"]), set(result["ambiguous"])
+    metadata = folder.dir / "metadata"
+    for name, file in sidecars.items():
+        path = file.relative_to(metadata).parts
+        if name in kept:
+            folder.ledger.on_server(folder.dropbox(path))
+            file.unlink(missing_ok=True)
+            continue
+        described = shown(sidecar_target(below(path, prefix)) or ())
+        why = (
+            f"AppleDouble sidecar of {described}, which is not in the album on the server"
+            if described in unmatched
+            else f"AppleDouble sidecar of {described}: more than one file in the album on the"
+            " server has that name"
+            if described in ambiguous
+            else "AppleDouble sidecar the server could not read"
+        )
+        folder.ledger.file(
+            folder.dropbox(path), "metadata", why, copy=file, size=file.stat().st_size
+        )
+    prune(metadata)
+    folder.ledger.save()
+    deleted = len(kept & set(sidecars))
+    if deleted:
+        out.info(f"    {deleted} sidecar copies deleted here: the server keeps them")
+    return deleted
+
+
+def send_dates(
+    server: Server, ledger: Ledger, options: Options, state: State, selected: set[str]
+) -> int:
+    """--send-dates: every imported album's saved sidecars to the server, which keeps each with its
+    photo and dates the photos by them. The server skipped sidecars when most of the archive was
+    imported; it reads them on import now, and this gives the albums imported before that the
+    same. The copies of the sidecars it kept are deleted."""
+    results: dict[str, int] = {
+        "albums": 0,
+        "updated": 0,
+        "redated": 0,
+        "deleted": 0,
+        "failed": 0,
+    }
+    for album_path, entry in sorted(state.albums.items()):
+        year, folder_name = PurePosixPath(album_path).parts[-2:]
+        if entry.get("status") != "imported" or (selected and year not in selected):
+            continue
+        album_dir = options.work_dir / year / folder_name
+        try:
+            manifest = json.loads(
+                (album_dir / "album.json").read_text(encoding="utf-8")
+            )
+            album, prefix = manifest["album"], tuple(manifest["prefix"])
+            folder = Folder(ledger, manifest["dropboxPath"], album_dir)
+        except (OSError, ValueError, KeyError) as exc:
+            out.warn(f"{year}/{folder_name}: no readable album.json ({exc}) — skipped.")
+            continue
+        out.heading(f"{year}/{album}")
+        sidecars = saved_sidecars(album_dir, prefix)
+        if not sidecars:
+            out.info("  No sidecars saved for it.")
+            continue
+        out.info(f"  {len(sidecars)} sidecar(s) from {album_dir / 'metadata'}")
+        if options.dry_run:
+            continue
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as zip_file:
+            for name, file in sidecars.items():
+                zip_file.write(file, name)
+        try:
+            result = server.send_dates(archive.getvalue(), year, album)
+        except (AlbumFailed, requests.RequestException, ValueError) as error:
+            failure = (
+                error
+                if isinstance(error, AlbumFailed)
+                else AlbumFailed(f"Unexpected answer: {error}")
+            )
+            out.failure(f"{album_path} (dates)", failure.summary, failure.details)
+            results["failed"] += 1
+            continue
+        out.ok(
+            f"  ✓ {result.get('stored', 0)} sidecar(s) stored beside their item;"
+            f" {result['updated']} item(s) dated by their sidecar, {result['unchanged']} had that date"
+            f" already, {result['undated']} sidecar(s) without a date for {year}; {result['redated']}"
+            " item(s) placed anew around them"
+        )
+        for names, why in (
+            (result["unmatched"], "describe no item on the server"),
+            (
+                result["ambiguous"],
+                "describe a name more than one item has (left alone)",
+            ),
+        ):
+            if names:
+                more = f" … and {len(names) - 5} more" if len(names) > 5 else ""
+                out.warn(
+                    f"    {len(names)} sidecar(s) {why}: {', '.join(names[:5])}{more}"
+                )
+        results["albums"] += 1
+        results["updated"] += result["updated"]
+        results["redated"] += result["redated"]
+        # Absent from a server older than the comparison.
+        for closeness, count in result.get("againstCapture", {}).items():
+            results[closeness] = results.get(closeness, 0) + count
+        out.info(f"    {against_capture(result.get('againstCapture', {}))}")
+        results["deleted"] += strike_kept_sidecars(result, sidecars, folder, prefix)
+    out.heading("Summary")
+    out.info(
+        f"  {results['albums']} album(s) sent: {results['updated']} item(s) dated by their sidecar,"
+        f" {results['redated']} placed anew around them; {results['deleted']} sidecar copies the"
+        " server keeps now deleted here"
+    )
+    out.info(f"  {against_capture(results)}")
+    if results["failed"]:
+        out.error(
+            f"✗ {results['failed']} album(s) failed; see {options.work_dir / 'failures.log'}."
+        )
+        return 1
     return 0
 
 
@@ -1245,43 +2161,234 @@ def year_range(value: str) -> set[str]:
     return {str(year) for year in range(int(start), int(end) + 1)}
 
 
-def year_folders(client: dropbox.Dropbox, root: str, selected: set[str]) -> list[str]:
+def year_folders(
+    client: dropbox.Dropbox, root: str, selected: set[str]
+) -> tuple[list[str], list[Any]]:
+    """The year folders in the Dropbox root to import, and what else is there."""
     try:
         entries = list(list_folder(client, root))
     except AlbumFailed as exc:
         raise Fatal(f"{exc.summary} Is --dropbox-root right?") from exc
-    folders = sorted(
+    found = sorted(
         entry.name
         for entry in entries
         if isinstance(entry, dropbox.files.FolderMetadata)
+        and (YEAR.fullmatch(entry.name) or entry.name == OTHER_FOLDER)
     )
-    found = [name for name in folders if YEAR.fullmatch(name) or name == OTHER_FOLDER]
-    for name in folders:
-        if name not in found:
-            out.warn(f"Ignoring {root}/{name}: not a year folder (or {OTHER_FOLDER}).")
-    for entry in entries:
-        if isinstance(entry, dropbox.files.FileMetadata):
-            out.warn(
-                f"Ignoring {entry.path_display}: files must be inside an album folder."
-            )
+    outside = [
+        entry
+        for entry in entries
+        if not (isinstance(entry, dropbox.files.FolderMetadata) and entry.name in found)
+    ]
     if selected:
         if missing := selected - set(found):
             raise Fatal(f"Not found in {root}: {', '.join(sorted(missing))}")
         found = [name for name in found if name in selected]
-    return found
+    return found, outside
 
 
-def album_folders(client: dropbox.Dropbox, year_path: str) -> list[Any]:
+def album_folders(
+    client: dropbox.Dropbox, year_path: str
+) -> tuple[list[Any], list[Any]]:
+    """The album folders in a year folder, and what else is there: files, and the metadata folders
+    an old file server left (.AppleDouble/, __MACOSX/), which are no albums."""
     entries = list(list_folder(client, year_path))
+    folders = sorted(
+        (
+            entry
+            for entry in entries
+            if isinstance(entry, dropbox.files.FolderMetadata)
+            and entry.name not in MACOS_METADATA_FOLDERS
+        ),
+        key=lambda entry: entry.name,
+    )
+    outside = [entry for entry in entries if entry not in folders]
+    return folders, outside
+
+
+def metadata_name(path: tuple[str, ...], why: str) -> str:
+    """What a metadata file is, for the overview: `why` (classify's), unless it says more."""
+    if path[-1] == ".Parent":
+        return "macOS metadata of the folder"
+    if described := sidecar_target(path):
+        return f"AppleDouble sidecar of {shown(described)}"
+    return why
+
+
+def outside_kind(
+    path: tuple[str, ...], size: int, rules: Rules, where: str
+) -> tuple[str, str]:
+    """How the list files something outside the album folders, at `path` below where it lies."""
+    kind, why = classify(path, size, rules)
+    if kind == "metadata":
+        return "metadata", f"{metadata_name(path, why)}, {where}"
+    return "outside", where
+
+
+def keep_outside(
+    client: dropbox.Dropbox,
+    ledger: Ledger,
+    options: Options,
+    entries: list[Any],
+    *,
+    parent: str,
+    here: Path,
+    rules: Rules,
+    where: str,
+) -> None:
+    """Keep a copy of what lies in `parent` outside its album (or year) folders — `entries`, files
+    and folders — in `here`, at its path below `parent`, and list it: the server never sees it."""
+    files: list[Any] = []
     for entry in entries:
         if isinstance(entry, dropbox.files.FileMetadata):
-            out.warn(
-                f"Ignoring {entry.path_display}: files must be inside an album folder."
+            files.append(entry)
+        elif isinstance(entry, dropbox.files.FolderMetadata):
+            try:
+                files += [
+                    each
+                    for each in list_folder(client, entry.path_display, recursive=True)
+                    if isinstance(each, dropbox.files.FileMetadata)
+                ]
+            except AlbumFailed as failure:
+                out.failure(entry.path_display, failure.summary, failure.details)
+    cut = len(parent.rstrip("/")) + 1
+    known = 0
+    for entry in sorted(files, key=lambda each: each.path_display):
+        if ledger.get(entry.path_display) is not None:
+            known += 1  # kept on an earlier run, or dealt with since
+            continue
+        path = PurePosixPath(same_path(entry.path_display[cut:])).parts
+        kind, why = outside_kind(path, entry.size, rules, where)
+        copy = here.joinpath(*path)
+        if options.dry_run:
+            out.warn(f"  {entry.path_display}: {why} — a copy would be kept in {copy}")
+            continue
+        try:
+            download_file(
+                client,
+                entry.path_display,
+                copy,
+                options.work_dir / DOWNLOAD,
+                entry.client_modified,
             )
-    folders = [
-        entry for entry in entries if isinstance(entry, dropbox.files.FolderMetadata)
-    ]
-    return sorted(folders, key=lambda entry: entry.name)
+        except AlbumFailed as failure:
+            out.failure(entry.path_display, failure.summary, failure.details)
+            continue
+        ledger.file(entry.path_display, kind, why, copy=copy, size=entry.size)
+        out.warn(f"  {entry.path_display}: {why} — a copy is kept in {copy}")
+    if known:
+        out.info(f"  {known} file(s) {where}, kept on an earlier run")
+    ledger.save()
+
+
+def local_files(folder: Path, *, finder: bool = False) -> list[Path]:
+    """The files kept below `folder`, not counting what Finder leaves there itself — unless
+    `finder`: in metadata/, a .DS_Store is more likely one from Dropbox."""
+    if not folder.is_dir():
+        return []
+    return sorted(
+        path
+        for path in folder.rglob("*")
+        if path.is_file() and (finder or path.name != ".DS_Store")
+    )
+
+
+def reconcile(ledger: Ledger, state: State, rules: Rules) -> None:
+    """Start the list from what runs from before there was one kept in the work directory: each
+    album folder's invalid/ and metadata/, and the albums that failed."""
+    for manifest_file in sorted(ledger.work_dir.glob("*/*/album.json")):
+        album_dir = manifest_file.parent
+        try:
+            manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+            folder = Folder(ledger, manifest["dropboxPath"], album_dir)
+            prefix = tuple(manifest["prefix"])
+        except (OSError, ValueError, KeyError):
+            continue
+        if album_dir.name in MACOS_METADATA_FOLDERS:
+            # A year folder's .AppleDouble/, taken for an album: the metadata of the files beside
+            # the albums, kept with them now.
+            here = album_dir.parent / NOT_IN_AN_ALBUM / album_dir.name
+            for kept_in in sorted(set(KEPT_IN.values())):
+                for file in local_files(
+                    album_dir / kept_in, finder=kept_in == "metadata"
+                ):
+                    path = file.relative_to(album_dir / kept_in).parts
+                    copy = here.joinpath(*path)
+                    copy.parent.mkdir(parents=True, exist_ok=True)
+                    file.replace(copy)
+                    kind, why = outside_kind(
+                        (album_dir.name, *path),
+                        copy.stat().st_size,
+                        rules,
+                        "in the year folder, not in an album folder",
+                    )
+                    ledger.file(
+                        folder.dropbox(path),
+                        kind,
+                        why,
+                        copy=copy,
+                        size=copy.stat().st_size,
+                    )
+            manifest_file.unlink()
+            prune(album_dir)
+            state.drop(folder.dropbox_path)
+            continue
+        for file in local_files(album_dir / "invalid"):
+            path = file.relative_to(album_dir / "invalid").parts
+            kind, why = classify(path, file.stat().st_size, rules)
+            if kind == "media":
+                kind, why = (
+                    "refused",
+                    "the server refused it when it read it (import.log says why)",
+                )
+            else:
+                kind = "kept-out"
+            ledger.file(
+                folder.dropbox(path), kind, why, copy=file, size=file.stat().st_size
+            )
+        imported = state.get(folder.dropbox_path).get("status") == "imported"
+        for file in local_files(album_dir / "metadata", finder=True):
+            path = file.relative_to(album_dir / "metadata").parts
+            if sidecar_target(path) is not None and path[: len(prefix)] == prefix:
+                why = (
+                    "AppleDouble sidecar the server did not keep when the album was imported:"
+                    " --send-dates sends it"
+                    if imported
+                    else "AppleDouble sidecar of an album folder not imported: an import sends"
+                    " it with the album"
+                )
+            elif sidecar_target(path) is not None:
+                why = "AppleDouble sidecar outside the album the folder makes"
+            else:
+                why = metadata_name(path, classify(path, file.stat().st_size, rules)[1])
+            ledger.file(
+                folder.dropbox(path),
+                "metadata",
+                why,
+                copy=file,
+                size=file.stat().st_size,
+            )
+    for album_path, entry in sorted(state.albums.items()):
+        if entry.get("status") == "failed":
+            errors = entry.get("errors") or ["it failed"]
+            album_dir = ledger.work_dir.joinpath(*PurePosixPath(album_path).parts[-2:])
+            ledger.album(
+                album_path,
+                "failed",
+                errors[0],
+                details=errors[1:],
+                copy=album_dir if album_dir.is_dir() else None,
+            )
+
+
+def open_ledger(server: Server, state: State, options: Options) -> Ledger:
+    """The list of what is not on the server, started from the work directory if there is none."""
+    ledger = Ledger(options.work_dir, read_only=options.dry_run)
+    if ledger.new and not options.dry_run:
+        _, rules = server.albums(OTHER_FOLDER)
+        reconcile(ledger, state, rules)
+        ledger.save()
+    return ledger
 
 
 # --- Main ---------------------------------------------------------------------------------------
@@ -1308,7 +2415,8 @@ def main() -> int:
         "--work-dir",
         type=Path,
         default=Path(".dropbox-photo-album-import"),
-        help="where the state file, the log and the ZIP in transit live",
+        help="where the state file, the logs, the ZIP in transit and the copies of what is not on"
+        " the server live",
     )
     parser.add_argument("--poll-interval", type=float, default=5.0)
     parser.add_argument(
@@ -1335,7 +2443,26 @@ def main() -> int:
         metavar="ALBUM_DIR",
         help="send the fixed files in <work-dir>/<year>/<album>/invalid to their album, and nothing else",
     )
+    parser.add_argument(
+        "--send-dates",
+        action="store_true",
+        help="send the sidecars saved for albums already imported, so the server dates their photos by them",
+    )
+    parser.add_argument(
+        "--overview",
+        action="store_true",
+        help=f"write {OVERVIEW} again from what is known, after you have dealt with some files;"
+        " needs no server or Dropbox",
+    )
     args = parser.parse_args()
+
+    if args.overview:
+        if not (args.work_dir / LEDGER).exists():
+            die(
+                f"There is no {args.work_dir / LEDGER} yet: it is written by an import."
+            )
+        report_not_on_server(Ledger(args.work_dir))
+        return 0
 
     if not args.endpoint:
         die("Set PHOTO_ALBUM_IMPORT_URL or pass --endpoint.")
@@ -1348,6 +2475,10 @@ def main() -> int:
     ):
         die(f"Not a year: {', '.join(invalid)}")
 
+    if args.send_dates and args.retry_invalid:
+        die(
+            "--send-dates and --retry-invalid are two different runs; pass one of them."
+        )
     if args.retry_invalid:
         album_dir = args.retry_invalid
         if album_dir.name == "invalid":
@@ -1356,15 +2487,22 @@ def main() -> int:
     args.work_dir.mkdir(parents=True, exist_ok=True)
     out.open_log(args.work_dir / "import.log", args.work_dir / "failures.log")
     # A ZIP the last run did not finish. Only beside the ZIPs: the album folders hold Dropbox files.
-    for leftover in args.work_dir.glob("*/*.partial"):
-        leftover.unlink()
+    for leftover in [*args.work_dir.glob("*/*.partial"), args.work_dir / DOWNLOAD]:
+        leftover.unlink(missing_ok=True)
     options = Options(
         args.work_dir, args.poll_interval, args.dry_run, args.confirm, args.retry_failed
     )
     server = Server(args.endpoint, token)
+    state = State(args.work_dir / "state.json")
+    try:
+        ledger = open_ledger(server, state, options)
+    except (Fatal, AlbumFailed, requests.RequestException) as exc:
+        out.failure("the run stopped", str(exc), [], echo=False)
+        out.error(f"\n✗ {exc}")
+        return 2
     if args.retry_invalid:
         try:
-            return retry_invalid(server, options, album_dir)
+            return retry_invalid(server, ledger, options, album_dir)
         except KeyboardInterrupt:
             out.error("\n✗ Stopped. Run the same command again to send them.")
             return 130
@@ -1379,23 +2517,58 @@ def main() -> int:
         except Fatal as exc:
             out.failure(f"{album_dir} (retry)", str(exc), [])
             return 2
-    state = State(args.work_dir / "state.json")
+        finally:
+            report_not_on_server(ledger)
+    if args.send_dates:
+        try:
+            return send_dates(server, ledger, options, state, selected)
+        except KeyboardInterrupt:
+            out.error(
+                "\n✗ Stopped. Run the same command again; sending an album twice changes nothing."
+            )
+            return 130
+        except Fatal as exc:
+            out.failure("sending dates", str(exc), [])
+            return 2
+        finally:
+            ledger.save()
+            report_not_on_server(ledger)
     client = dropbox_client()
     results: dict[str, list[str]] = {}
     kept_out: list[tuple[Path, int]] = []
 
     try:
         out.info(f"Checking {server.endpoint} …")
-        server.albums(
-            OTHER_FOLDER
-        )  # a wrong URL or token stops the run here, not after the Dropbox listing
+        # A wrong URL or token stops the run here, not after the Dropbox listing.
+        _, rules = server.albums(OTHER_FOLDER)
         out.info(f"Reading {args.dropbox_root} in Dropbox …")
-        for year in year_folders(client, args.dropbox_root, selected):
+        found, outside = year_folders(client, args.dropbox_root, selected)
+        keep_outside(
+            client,
+            ledger,
+            options,
+            outside,
+            parent=args.dropbox_root,
+            here=args.work_dir / NOT_IN_A_YEAR,
+            rules=rules,
+            where="in the Dropbox root, not in a year folder",
+        )
+        for year in found:
             year_path = f"{args.dropbox_root}/{year}"
             existing, rules = server.albums(year)
-            albums = album_folders(client, year_path)
+            albums, outside = album_folders(client, year_path)
             out.heading(
                 f"── {year}: {len(albums)} album folder(s), {len(existing)} album(s) already on the server"
+            )
+            keep_outside(
+                client,
+                ledger,
+                options,
+                outside,
+                parent=year_path,
+                here=args.work_dir / year / NOT_IN_AN_ALBUM,
+                rules=rules,
+                where="in the year folder, not in an album folder",
             )
             for entry in albums:
                 album_path = f"{year_path}/{entry.name}"
@@ -1405,6 +2578,7 @@ def main() -> int:
                         client,
                         server,
                         state,
+                        ledger,
                         options,
                         year=year,
                         folder_name=entry.name,
@@ -1429,11 +2603,28 @@ def main() -> int:
                             status="failed",
                             errors=[failure.summary, *failure.details],
                         )
+                        earlier = args.work_dir / year / entry.name / FAILED_ZIP
+                        ledger.album(
+                            album_path,
+                            "failed",
+                            failure.summary,
+                            details=failure.details,
+                            copy=failure.kept
+                            or (earlier if earlier.exists() else None),
+                        )
+                        ledger.save()
                     result = "failed"
                     if args.stop_on_error:
                         raise Fatal(
                             "Stopped at the first failure (--stop-on-error)."
                         ) from failure
+                if result == "exists" and not options.dry_run:
+                    ledger.album(
+                        album_path,
+                        "exists",
+                        "an album of that name is on the server already, so the folder was not"
+                        " sent; its files were not compared with the album's",
+                    )
                 if result == "imported":
                     existing.add(
                         same_name(state.get(album_path).get("album") or entry.name)
@@ -1445,14 +2636,17 @@ def main() -> int:
         out.error(
             "\n✗ Stopped. Progress is saved; run the same command again to continue."
         )
+        report_not_on_server(ledger)
         return 130
     except (Fatal, AlbumFailed, requests.RequestException) as exc:
         out.failure("the run stopped", str(exc), [], echo=False)
         out.error(f"\n✗ {exc}")
         out.error("  Progress is saved; run the same command again once this is fixed.")
+        report_not_on_server(ledger)
         return 2
     finally:
-        for leftover in args.work_dir.glob("*/*.partial"):
+        ledger.save()
+        for leftover in [*args.work_dir.glob("*/*.partial"), args.work_dir / DOWNLOAD]:
             leftover.unlink(missing_ok=True)
 
     out.heading("Summary")
@@ -1478,6 +2672,7 @@ def main() -> int:
             "  Fix them there, then send them to their album (unlock it on the site first):\n"
             f"    uv run scripts/import_dropbox_photo_albums.py --retry-invalid {kept_out[0][0]}"
         )
+    report_not_on_server(ledger)
     if results.get("failed"):
         out.error(f"\n✗ {len(results['failed'])} album(s) failed:")
         for name in results["failed"]:

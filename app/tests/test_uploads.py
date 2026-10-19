@@ -15,8 +15,12 @@ stay with their features.
 import pytest
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
+from PIL import Image
 
+from core.images import MAX_DIMENSION
 from core.uploads import attached_image, check_image_upload, validate_image_upload
+
+from .media_samples import heic_bytes
 
 JPEG = b"\xff\xd8\xff" + b"x" * 64
 
@@ -212,3 +216,62 @@ def test_the_ceiling_is_the_callers_to_choose(monkeypatch: object) -> None:
     refused = _FakeRequest({"image": upload("foto.jpg", "image/jpeg", body=body)})
     _patched(monkeypatch, refused)
     assert attached_image(refused, max_mb=1) is None
+
+
+# --- HEIC: accepted, and converted before anything is stored ----------------------------------------
+#
+# An iPhone saves HEIC by default and only Safari can decode it. frontend/src/imageupload.ts cannot
+# redraw it in any other browser, so it reaches the server at full camera size, and storing it would
+# leave every non-Safari reader with a broken image. These pin that it is turned into a JPEG first.
+
+
+def heic(
+    name: str = "IMG_4821.HEIC", content_type: str = "image/heic", size: tuple[int, int] = (64, 48)
+) -> SimpleUploadedFile:
+    return upload(name, content_type, heic_bytes(size))
+
+
+@pytest.mark.parametrize("content_type", ["image/heic", "image/heif", "", "application/octet-stream"])
+def test_a_heic_is_accepted_even_without_a_type(content_type: str) -> None:
+    """Chrome on Windows without Microsoft's HEIF extension sends no type at all for a .heic."""
+    assert check_image_upload(heic(content_type=content_type), max_mb=5) is None
+
+
+def test_an_untyped_file_is_still_refused_without_a_heic_extension() -> None:
+    """The untyped exemption is for HEIC only; it must not reopen the door for anything else."""
+    assert check_image_upload(upload("logo.svg", ""), max_mb=5) is not None
+    assert check_image_upload(upload("foto.jpg", "application/octet-stream"), max_mb=5) is not None
+
+
+def test_a_heic_is_stored_as_a_downscaled_jpeg() -> None:
+    stored = validate_image_upload(heic(size=(3200, 2400)), max_mb=5)
+
+    assert stored.name == "IMG_4821.jpg"
+    assert stored.content_type == "image/jpeg"
+    with Image.open(stored) as image:
+        assert image.format == "JPEG"
+        assert max(image.size) == MAX_DIMENSION
+
+
+def test_a_file_that_only_claims_to_be_heic_is_refused() -> None:
+    """The extension is not taken on trust: the file is decoded, and a fake fails there."""
+    with pytest.raises(ValidationError):
+        validate_image_upload(upload("evil.heic", "image/heic", b"<svg onload=alert(1)>"), max_mb=5)
+
+
+def test_a_heic_has_its_own_ceiling(settings: object) -> None:
+    """It arrives un-shrunk, like a GIF, so the caller's cap (written for downscaled files) would
+    refuse a perfectly ordinary iPhone photo."""
+    settings.HEIF_IMAGE_MAX_MB = 25  # type: ignore[attr-defined]
+    big = upload("IMG.heic", "image/heic", b"x" * (2 * 1024 * 1024))
+    assert check_image_upload(big, max_mb=1) is None
+
+
+def test_an_attached_heic_comes_back_as_a_jpeg(monkeypatch: object) -> None:
+    request = _FakeRequest({"image": heic()})
+    _patched(monkeypatch, request)
+
+    stored = attached_image(request, max_mb=5)
+    assert stored is not None
+    assert stored.name == "IMG_4821.jpg"
+    assert request._messages == []

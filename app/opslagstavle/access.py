@@ -42,8 +42,8 @@ from .models import Notice, NoticeComment
 # Open to the whole kollegium. Two things follow on their own rather than needing an edit, and
 # both are worth expecting instead of debugging: the "Under test" chip disappears (board.html reads
 # is_limited()), and the notification audience widens, because services._audience already runs every
-# fan-out through allowed_subscribers — so a new opslag now reaches every resident who has opted in
-# to the topic rather than only the trial group's devices.
+# fan-out through allowed_residents — so a new opslag now reaches every resident rather than only
+# the trial group.
 ACCESS_ROLES: tuple[str, ...] | None = None
 
 # Read through a lambda, never passed by value: this module global is what tests rebind and what a
@@ -70,9 +70,9 @@ def access_required(view: View) -> View:
     return _GATE.required(view)
 
 
-def allowed_subscribers(qs: QuerySet) -> QuerySet:
-    """Narrow a push audience to devices whose owner can actually open the board."""
-    return _GATE.allowed_subscribers(qs)
+def allowed_residents(qs: QuerySet) -> QuerySet:
+    """Narrow a notification audience to residents who can actually open the board."""
+    return _GATE.allowed_residents(qs)
 
 
 def can_moderate(request: HttpRequest) -> bool:

@@ -12,7 +12,7 @@
       <div style="display:flex;align-items:center;gap:1.25rem">
         <div style="position:relative;flex-shrink:0">
           {% if user.profile_picture %}
-            <img id="pp-preview" src="{{ user.profile_picture.url }}" alt=""
+            <img id="pp-preview" src="{{ user.avatar_url }}" alt=""
                  style="width:80px;height:80px;border-radius:50%;object-fit:cover;display:block">
           {% else %}
             <span id="pp-preview" class="avatar"
@@ -26,7 +26,7 @@
         </div>
         <label for="id_profile_picture" class="btn" style="cursor:pointer;margin:0">Skift billede</label>
       </div>
-      <input type="file" name="profile_picture" id="id_profile_picture" accept="image/*" style="display:none">
+      <input type="file" name="profile_picture" id="id_profile_picture" accept="image/*,.heic,.heif" style="display:none">
       <input type="checkbox" name="profile_picture-clear" id="id_profile_picture-clear_id" style="display:none">
       {% if form.profile_picture.errors %}
         <p class="text-red-600 text-sm mt-1">{{ form.profile_picture.errors|striptags }}</p>
@@ -59,9 +59,10 @@
         const old = document.getElementById('pp-preview');
         const img = document.createElement('img');
         img.id = 'pp-preview';
-        img.src = e.target.result;
         img.style.cssText = 'width:80px;height:80px;border-radius:50%;object-fit:cover;display:block';
-        old.replaceWith(img);
+        // Swapped in once it decodes: a HEIC does not outside Safari, and the server converts it.
+        img.onload = function () { old.replaceWith(img); };
+        img.src = e.target.result;
       };
       reader.readAsDataURL(file);
     });

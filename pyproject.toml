@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "django>=5.2,<5.3",
+    "channels>=4.2,<5.0",
     # The ASGI server. Not Daphne: it reads a whole request body into memory before the app sees any
     # of it, so one large upload (a photo-album ZIP) took the process down. uvicorn stops reading
     # the socket until the app has taken what it has. [standard] brings its WebSocket support.

@@ -4,5 +4,5 @@ from django.core.management import call_command
 
 @shared_task
 def apply_monthly_assessment() -> None:
-    """Apply this month's idempotent AK assessment."""
+    """Charge the month that just ended (idempotent AK assessment)."""
     call_command("ak_monthly_assessment")

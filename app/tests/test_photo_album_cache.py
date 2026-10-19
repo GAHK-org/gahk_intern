@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from django.test import Client
 
+from core import disk_cache
 from photo_album import cache
 from photo_album.models import Album, Media, MediaStatus
 from photo_album.services import build_derivatives, upload_media
@@ -52,12 +53,14 @@ def test_a_thumbnail_is_copied_once_then_served_from_disk(
 
     first = client.get(media.thumbnail.url)
     copy = cache_dir / cache.THUMBNAIL / media.thumbnail.name
-    assert first.status_code == 200 and first.content == stored
+    assert first.status_code == 200 and _body(first) == stored
+    assert first.streaming and first["Content-Length"] == str(len(stored))  # not read into memory
+    assert first["Content-Type"] == "image/jpeg"
     assert first["Cache-Control"] == "private, max-age=86400"
     assert copy.read_bytes() == stored
 
     media.thumbnail.storage.delete(media.thumbnail.name)  # the bucket is no longer asked
-    assert client.get(media.thumbnail.url).content == stored
+    assert _body(client.get(media.thumbnail.url)) == stored
 
 
 @pytest.mark.django_db
@@ -107,7 +110,7 @@ def test_a_failed_copy_falls_back_to_the_bucket(
     def disk_full(*_args: object) -> None:
         raise OSError("No space left on device")
 
-    monkeypatch.setattr(cache, "_fetch", disk_full)
+    monkeypatch.setattr(disk_cache, "_fetch", disk_full)
     response = client.get(media.thumbnail.url)
     assert response.status_code == 200 and _body(response) == _read(media.thumbnail.name)
 

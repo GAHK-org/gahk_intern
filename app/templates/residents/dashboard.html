@@ -13,6 +13,8 @@
     </div>
   </div>
 
+  {% include "notifications/_device.html" with mode="prompt" %}
+
   <div class="glance">
     <span class="g"><span class="gk">Aktiv måned</span> <b>{{ period }}</b></span>
     <span class="g"><span class="gk">Dine roller</span>
@@ -22,13 +24,29 @@
 
   <div class="grid2">
     <div class="card-flat">
-      <div class="card-head"><h2>Begivenheder på GAHK</h2>{% if calendar_embed_url %}<a href="https://calendar.google.com/" target="_blank" rel="noopener">Åbn i Google →</a>{% endif %}</div>
+      <div class="card-head"><h2>Begivenheder på GAHK</h2>{% if agenda is not None %}<a href="{% url 'events:calendar' %}">Åbn kalenderen →</a>{% endif %}</div>
       <div class="card-pad">
-        {% if calendar_embed_url %}
-          <iframe src="{{ calendar_embed_url }}" title="GAHK fælleskalender" style="width:100%;height:460px;border:1px solid var(--border);border-radius:10px"
-                  frameborder="0" scrolling="no" loading="lazy"></iframe>
+        {% if agenda is None %}
+          <p class="muted">Begivenheder er ikke åbnet for dig endnu.</p>
         {% else %}
-          <p class="muted">Kalenderen er ikke konfigureret (sæt <code class="code">GOOGLE_CALENDAR_USER</code>).</p>
+          <ul class="agenda">
+            {% for item in agenda %}
+              <li>
+                {% if item.url %}<a class="agenda-row" href="{{ item.url }}">{% else %}<div class="agenda-row{% if item.maerkedag %} is-maerkedag{% endif %}">{% endif %}
+                  <span class="agenda-date"><span class="agenda-day">{{ item.day|date:"j" }}</span><span class="agenda-mon">{{ item.day|date:"M" }}</span></span>
+                  <span class="agenda-body">
+                    <span class="agenda-title{% if item.cancelled %} is-cancelled{% endif %}">
+                      {% if item.maerkedag %}<svg class="cal-flag" aria-hidden="true"><use href="#i-dannebrog"></use></svg>{% endif %}{{ item.title }}
+                    </span>
+                    <span class="agenda-meta">{% if item.time %}{{ item.day|date:"l" }} kl. {{ item.time }}{% if item.note %} · {% endif %}{% endif %}{{ item.note }}</span>
+                  </span>
+                  {% if item.cancelled %}<span class="chip chip-neg">Aflyst</span>{% elif item.maerkedag %}<span class="chip chip-brass">Mærkedag</span>{% endif %}
+                {% if item.url %}</a>{% else %}</div>{% endif %}
+              </li>
+            {% empty %}
+              <li class="muted">Ingen kommende begivenheder. <a href="{% url 'events:create' %}">Opret en →</a></li>
+            {% endfor %}
+          </ul>
         {% endif %}
       </div>
     </div>

@@ -1,0 +1,8 @@
+{% comment %}
+  On the notifications page: coming BACK to it restores it from the browser's back-forward cache, as
+  it was before the click, so the notification just opened still looked unread. Reload instead.
+  Only here: elsewhere the instant back is worth more than a badge that is a moment behind.
+{% endcomment %}
+<script>
+  window.addEventListener("pageshow", function (event) { if (event.persisted) window.location.reload(); });
+</script>

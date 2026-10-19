@@ -6,7 +6,7 @@ import calendar
 import re
 import unicodedata
 from collections.abc import Iterable
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -23,21 +23,29 @@ from .storage import get_photo_album_storage
 
 ALBUM_DOWNLOAD_RETENTION = timedelta(days=7)
 
-# How long a ZIP build may sit in QUEUED or BUILDING before it is presumed dead.
+# When a background ZIP job — a download being built, an import being unpacked — is presumed dead.
 #
 # The task marks BUILDING before the work and clears it on success or on a caught exception — but a
-# worker killed outright (time limit, OOM, redeploy) catches nothing, and the row then kept
+# worker killed outright (OOM, hard time limit, redeploy) catches nothing, and the row then kept
 # `completed_at` NULL forever. That is not merely untidy: `purge_expired_downloads` filters on
 # `completed_at`, so the row was never collected either, and photo_album/detail.html renders the
 # "Download klargøres …" branch with a five-second reload in it — so that resident's album page
-# reloaded itself every five seconds, indefinitely. `fail_stalled_downloads` closes it.
+# reloaded itself every five seconds, indefinitely. An import stuck the same way kept the Dropbox
+# script waiting on "building" for good. `fail_stalled_downloads` and `fail_stalled_imports` close
+# them.
 #
-# An hour, to sit safely outside MEDIA_TASK_TIME_LIMIT: a build still legitimately running must
-# never be declared dead underneath itself.
-ALBUM_DOWNLOAD_STALE_AFTER = timedelta(hours=1)
+# Measured from the job's last PROGRESS, not from when it started: a running job records how far it
+# has got (photo_album.progress.JobProgress) at least every PROGRESS_WRITE_INTERVAL while it works,
+# so a big album that honestly takes hours is never declared dead underneath itself, while a job
+# whose worker is gone is noticed a quarter of an hour later rather than at some fixed age.
+JOB_STALLED_AFTER = timedelta(minutes=15)
+# A QUEUED job has no progress to measure, and waiting is not a symptom: the media queue runs one
+# job at a time, so a ZIP can honestly queue behind a run of hour-long video encodes. Its message
+# is only lost if a worker was killed after taking it off the broker and before starting it.
+JOB_QUEUED_TOO_LONG = timedelta(hours=12)
 
-# How long one worker's claim on a media row keeps others off it. Same reasoning as the constant
-# above and deliberately the same hour: it has to outlast the longest honest transcode, because
+# How long one worker's claim on a media row keeps others off it. An hour, the transcode's time
+# limit (tasks.MEDIA_TASK_TIME_LIMIT): it has to outlast the longest honest transcode, because
 # expiring early is what would let a second worker in beside the first.
 DERIVATIVE_CLAIM_TTL = timedelta(hours=1)
 
@@ -79,6 +87,10 @@ def album_thumbnail_path(instance: "Media", filename: str) -> str:
     return _media_key(instance, "thumbnail", filename)
 
 
+def album_sidecar_path(instance: "Media", filename: str) -> str:
+    return _media_key(instance, "sidecar", filename)
+
+
 def album_import_path(instance: "AlbumImport", filename: str) -> str:
     return f"photo-album-imports/{instance.token}/{Path(filename).name}"
 
@@ -102,6 +114,53 @@ class DerivativeState(models.TextChoices):
     READY = "ready", "Klar"
     PENDING = "pending", "Behandles"
     FAILED = "failed", "Mislykkedes"
+
+
+class DateSource(models.TextChoices):
+    """Where `Media.sort_at`, the date the grid and the timeline place an item at, comes from.
+
+    Only CAPTURED is when the photo was taken. Everything else is an approximation, and is shown
+    as one. A file time is when the file was last written, which is the moment of capture only if
+    every copy since kept it: the old server's sidecars hold capture times for some albums, but
+    for others the day they were copied, which can be days or months later.
+    """
+
+    CAPTURED = "captured", "Optaget"
+    FILE = "file", "Filens dato"
+    NEIGHBOURS = "neighbours", "Anslået ud fra albummet"
+    ALBUM_YEAR = "album_year", "Anslået ud fra albummets år"
+    ADDED = "added", "Uploadet"
+
+
+# The approximations only services.settle_dates can make, as they need the rest of the album.
+SETTLED_DATE_SOURCES = frozenset({DateSource.NEIGHBOURS, DateSource.ALBUM_YEAR})
+
+# How far outside its folder's year a date in an album is still believed: a New Year's Eve album
+# holds December's preparations and January's aftermath, and a film was often developed later.
+FOLDER_YEAR_SLACK_MONTHS = 6
+# A file time from before this is a camera or a file system that never had its clock set.
+EARLIEST_FILE_TIME = datetime(1990, 1, 1, tzinfo=UTC)
+
+
+def folder_year(folder: str) -> int | None:
+    return int(folder) if folder.isdecimal() else None
+
+
+def believable_date(moment: datetime, folder: str, *, file_time: bool) -> bool:
+    """Whether `moment` can be when a photo in `folder` was taken.
+
+    In a year folder it must fall in that year, give or take FOLDER_YEAR_SLACK_MONTHS — for 2004,
+    from 1 July 2003 up to 1 July 2005: the Dropbox archive stamps every file with the day it was
+    uploaded there in 2022, and an old camera with a flat battery starts again in 2001. Elsewhere
+    only a file time has a floor — a scanned print may honestly say 1975 in its metadata, but no
+    file was saved then.
+    """
+    year = folder_year(folder)
+    if year is not None:
+        start = timezone.make_aware(datetime(year - 1, 13 - FOLDER_YEAR_SLACK_MONTHS, 1))  # noqa: DTZ001
+        end = timezone.make_aware(datetime(year + 1, FOLDER_YEAR_SLACK_MONTHS + 1, 1))  # noqa: DTZ001
+        return start <= moment < end
+    return (not file_time or moment >= EARLIEST_FILE_TIME) and moment <= timezone.now() + timedelta(days=1)
 
 
 class AlbumDownloadState(models.TextChoices):
@@ -415,6 +474,17 @@ class Album(models.Model):
                 self._lock_cache["activity"] = {album.pk: values[f"a{album.pk}"] for album in lineage}
         return self._lock_cache["activity"]
 
+    def media_removed(self, media: "Media") -> None:
+        """Keep the cached lock state true after `media` was binned or deleted in the same request.
+
+        Removing the newest approved item in a subtree can lock an album, because its 90 days then
+        run from an older item. No other removal changes `_activity`, so the cache is dropped only
+        for that one, and a selection of many items from one album still works out its lock once.
+        """
+        activity = self._lock_cache.get("activity")
+        if activity and media.status == MediaStatus.APPROVED and media.added_at in activity.values():
+            del self._lock_cache["activity"]
+
     def _own_lock(self, latest: datetime | None, now: datetime | None) -> datetime | None:
         if self.manually_locked_at is not None:
             return self.manually_locked_at
@@ -486,6 +556,9 @@ class Media(models.Model):
     # SHA-256 of the original, for duplicate detection on upload and import. Blank on rows uploaded
     # before it existed until the nightly `tasks.backfill_media_hashes` has reached them.
     sha256 = models.CharField(max_length=64, blank=True, db_index=True)
+    # When that backfill last failed to read the original. Such a row waits behind every row not yet
+    # tried, so originals that are gone cannot take each night's budget before anything else.
+    hash_failed_at = models.DateTimeField(null=True, blank=True)
     original = models.FileField(
         upload_to=album_original_path, storage=get_photo_album_storage, max_length=500
     )
@@ -494,6 +567,12 @@ class Media(models.Model):
     )
     thumbnail = models.FileField(
         upload_to=album_thumbnail_path, storage=get_photo_album_storage, max_length=500
+    )
+    # The AppleDouble sidecar the file arrived with in a ZIP, as it was: the old file server's own
+    # record of the file (its dates above all, see services.appledouble_dates). Kept beside the
+    # original so it outlives the Dropbox archive and the import's work directory. Never served.
+    sidecar = models.FileField(
+        upload_to=album_sidecar_path, storage=get_photo_album_storage, max_length=500, blank=True
     )
     content_type = models.CharField(max_length=100, blank=True)
     derivative_state = models.CharField(
@@ -517,12 +596,17 @@ class Media(models.Model):
     )
     added_at = models.DateTimeField(auto_now_add=True)
     captured_at = models.DateTimeField(null=True, blank=True)
-    # The file's own last-modified time, as the browser (File.lastModified) or the ZIP entry reports
-    # it — the best date there is for a photo whose EXIF was stripped by a messenger app.
+    # False on an image stored before the album looked in XMP and IPTC for `captured_at` too; the
+    # nightly `tasks.settle_media_dates` reads its original again.
+    capture_date_checked = models.BooleanField(default=True)
+    # The file's own last-modified time, as the browser (File.lastModified), an AppleDouble sidecar
+    # or the ZIP entry reports it — the best date there is for a photo whose EXIF was stripped.
     file_modified_at = models.DateTimeField(null=True, blank=True)
     # The date the timeline and the album grid order by: when it was taken, else when the file was
-    # last modified, else when it was uploaded. Kept in a column so both can page on an index.
+    # last modified if that is believable, else an approximation (see `date_source` and
+    # `services.settle_dates`). Kept in a column so both can page on an index.
     sort_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    date_source = models.CharField(max_length=12, choices=DateSource.choices, default=DateSource.ADDED)
     status = models.CharField(max_length=10, choices=MediaStatus.choices, default=MediaStatus.PENDING)
     approved_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -557,15 +641,41 @@ class Media(models.Model):
         using: str | None = None,
         update_fields: Iterable[str] | None = None,
     ) -> None:
-        self.sort_at = self.captured_at or self.file_modified_at or self.added_at or timezone.now()
-        if update_fields is not None and {"captured_at", "file_modified_at", "added_at"} & set(update_fields):
-            update_fields = {*update_fields, "sort_at"}
+        # Only when a date is being written: own_date may load the album, and approving or binning a
+        # selection saves each item with a few other fields only.
+        if update_fields is None or {"captured_at", "file_modified_at", "added_at"} & set(update_fields):
+            own = self.own_date()
+            if own is not None:
+                self.sort_at, self.date_source = own
+            elif self.date_source not in SETTLED_DATE_SOURCES or self.sort_at is None:
+                # Until services.settle_dates has looked at the album around it.
+                self.sort_at, self.date_source = self.added_at or timezone.now(), DateSource.ADDED
+            if update_fields is not None:
+                update_fields = {*update_fields, "sort_at", "date_source"}
         super().save(
             force_insert=force_insert,
             force_update=force_update,
             using=using,
             update_fields=update_fields,
         )
+
+    def own_date(self) -> tuple[datetime, DateSource] | None:
+        """The date the file itself gives: when it was taken, else its file time if believable.
+
+        A capture date is always taken at its word for the item itself, even outside the album's
+        year; `services.settle_dates` is stricter about the ones it approximates others from.
+        """
+        if self.captured_at is not None:
+            return self.captured_at, DateSource.CAPTURED
+        modified = self.file_modified_at
+        if modified is not None and believable_date(modified, self.album.folder, file_time=True):
+            return modified, DateSource.FILE
+        return None
+
+    @property
+    def date_is_approximate(self) -> bool:
+        """Anything but a capture date from the file's own metadata (see DateSource)."""
+        return self.date_source != DateSource.CAPTURED
 
     @property
     def display_name(self) -> str:
@@ -608,6 +718,10 @@ class AlbumDownload(models.Model):
     )
     archive_key = models.CharField(max_length=255, blank=True)
     error = models.CharField(max_length=255, blank=True)
+    # How far the worker has got ({"step", "done", "total"}) and when it last moved on — what
+    # `fail_stalled_*` tells a slow job from a dead one by. See JOB_STALLED_AFTER.
+    progress = models.JSONField(default=dict, blank=True)
+    progressed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 
@@ -654,6 +768,10 @@ class AlbumImport(models.Model):
     # Whether it did: the archive was added to an album that already existed rather than creating it.
     merged = models.BooleanField(default=False)
     error = models.CharField(max_length=255, blank=True)
+    # How far the worker has got ({"step", "done", "total"}) and when it last moved on — what
+    # `fail_stalled_*` tells a slow job from a dead one by. See JOB_STALLED_AFTER.
+    progress = models.JSONField(default=dict, blank=True)
+    progressed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 

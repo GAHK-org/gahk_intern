@@ -46,6 +46,8 @@ from den_hurtige.demo import seed as seed_den_hurtige
 from den_hurtige.models import QuickComment, QuickPost, QuickReaction
 from events.demo import seed as seed_events
 from events.models import CalendarFeedToken, Event, EventInvite, Rsvp
+from notifications.demo import seed as seed_notifications
+from notifications.models import Notification, NotificationPreference, NotificationSettings
 from oelkaelder.models import (
     Deposit,
     Product,
@@ -143,6 +145,9 @@ WIPE_ORDER: list[type[models.Model]] = [
     QuickPost,
     Media,
     Album,
+    Notification,
+    NotificationPreference,
+    NotificationSettings,
     Resident,
     # Before Workgroup: ArchiveFolder references it with PROTECT (a SET_NULL would silently turn a
     # gated folder into a world-readable one), so the archive has to go first or --fresh cannot run.
@@ -207,6 +212,8 @@ class Command(BaseCommand):
             seed_arkiv(residents, self.now, self.rng)
             seed_photo_album(residents, self.now, self.rng)
             seed_den_hurtige(residents, self.now, self.rng)
+            # Last: its rows link to the events, opslag and Den Hurtige posts seeded above.
+            seed_notifications(residents, self.now, self.rng)
 
         self._report(residents)
 
@@ -462,10 +469,11 @@ class Command(BaseCommand):
 
         # The 12-month schedule rows are created by the migration; make sure they exist (belt-and-braces
         # for a --fresh run) then apply the monthly deduction through the real service for the recent
-        # months, so demo MONTHLY entries respect alumneliste membership.
+        # months that are over (the current one is charged on the 1st of the next), so demo MONTHLY
+        # entries respect alumneliste membership.
         for month in range(1, 13):
             AkMonthlyCharge.objects.get_or_create(month=month, defaults={"active": True, "krydser": 2})
-        for y, m in self._iter_recent_months(3):
+        for y, m in self._iter_recent_months(3)[:-1]:
             apply_monthly_charge(y, m)
 
     # ----------------------------------------------------------- ølkælder
@@ -655,7 +663,7 @@ class Command(BaseCommand):
             self.style.SUCCESS(
                 f"\nSeeded demo data: {len(residents)} residents, "
                 f"{Residency.objects.count()} residencies, {AkEntry.objects.count()} AK entries, "
-                f"{Event.objects.count()} begivenheder, "
+                f"{Event.objects.count()} begivenheder, {Notification.objects.count()} notifikationer, "
                 f"{Transaction.objects.count()} ølkælder purchases, {Application.objects.count()} applications."
             )
         )

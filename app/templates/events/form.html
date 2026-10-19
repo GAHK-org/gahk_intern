@@ -40,8 +40,12 @@
           </summary>
           <div class="invite-body">
             <label class="sr-only" for="js-invite-search">Søg beboer</label>
-            <input type="search" id="js-invite-search" class="invite-search"
-                   placeholder="Søg beboer…" autocomplete="off">
+            <div class="invite-tools">
+              <input type="search" id="js-invite-search" class="invite-search"
+                     placeholder="Søg beboer…" autocomplete="off">
+              {% comment %}Hidden until events.ts wires it up: without JS it would be a button that does nothing.{% endcomment %}
+              <button type="button" class="btn btn-secondary invite-all" data-invite-all hidden>Vælg alle beboere</button>
+            </div>
             <div class="invite-list">{{ field }}</div>
             <p class="muted event-help">Vælg mindst 4 beboere ud over dig selv.</p>
             {{ field.errors }}

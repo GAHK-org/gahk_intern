@@ -29,7 +29,7 @@ from django.utils import timezone
 
 from core.exports import csv_or_xlsx_response
 from core.models import Room
-from core.uploads import check_image_upload
+from core.uploads import prepare_image_upload
 from residents.permissions import current_resident, role_required
 
 from .models import RoomCondition, RoomConditionScore, RoomCriterion
@@ -137,10 +137,9 @@ def besvar(request: HttpRequest, room_id: int) -> HttpResponse:
                     # This used to accept any content type starting with `image/`, which let an SVG
                     # through — and værelsestjek is open to every resident, so that was a script
                     # executable from our own /media/ origin, not just an editor-account risk.
-                    error = check_image_upload(photo, settings.ROOM_PHOTO_MAX_MB)
+                    photo, error = prepare_image_upload(photo, settings.ROOM_PHOTO_MAX_MB)
                     if error is not None:
                         messages.warning(request, f"{crit.name}: {error} Billedet blev ikke gemt.")
-                        photo = None
                 score = _parse_score(raw)
                 if score is not None and not crit.accepts_score(score):
                     # Drop just this score, never the whole submission: the form carries ~28 criteria

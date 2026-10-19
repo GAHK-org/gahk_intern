@@ -1,9 +1,11 @@
-"""Den Hurtige: feed lifecycle, notification targeting, and the subscribe endpoint.
+"""Den Hurtige: feed lifecycle and notification targeting.
 
 Notification *targeting* is tested by collapsing `core.push._run_in_background` to a direct call
-and swapping `core.push._dispatch` for a recorder, so the assertions are about who would be
-notified — this feature's policy. The shared transport (the delivery loop, the subscribe endpoint,
-the VAPID checks, per-topic consent) is tested in test_push.py.
+and swapping `core.push._dispatch` for a recorder, and by reading the Notification rows the
+notifications app writes, so the assertions are about who would be told — this feature's policy.
+The machinery behind it (preferences, grouping, vibration, the open-link) is tested in
+test_notifications.py, and the shared transport (the delivery loop, the subscribe endpoint, the
+VAPID checks) in test_push.py.
 """
 
 import json
@@ -18,6 +20,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
 from django.test import Client, RequestFactory
 from django.test.utils import CaptureQueriesContext
+from django.urls import reverse
 from django.utils import timezone
 
 from core import push
@@ -31,12 +34,13 @@ from den_hurtige.models import (
     DELETE_GRACE,
     DURATION_CHOICES,
     QUICK_EMOJI,
-    ChannelMute,
     QuickComment,
     QuickPost,
     QuickReaction,
 )
 from den_hurtige.views import ARCHIVE_PAGE, channel_counts, posts_for, reactions_for
+from notifications import categories
+from notifications.models import Notification, NotificationPreference
 from residents.models import Resident, Role
 
 FEED_URL = "/intern/den-hurtige/"
@@ -81,15 +85,23 @@ def rollout_limited(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def subscribe(user: Resident, endpoint: str) -> PushSubscription:
-    """Register a fake device for `user`, opted in to Den Hurtige (explicit, not relying on the
-    field default — these tests are about who this feature reaches)."""
+    """Register a fake device for `user`. A device is for everything now — there is no per-feature
+    opt-in — and owning one is also what puts a resident with no residency this month into
+    notifications.services.everyone(), which is why these tests need nothing more."""
     return PushSubscription.objects.create(
         user=user,
         endpoint=endpoint,
         auth="a" * 22,
         p256dh="p" * 87,
         user_agent="pytest",
-        wants_den_hurtige=True,
+    )
+
+
+def mute(resident: Resident, slug: str) -> NotificationPreference:
+    """Turn push for one room off, as the settings page does. This is what a ChannelMute row became
+    (notifications migration 0002): a preference for the room's own category, push off."""
+    return NotificationPreference.objects.create(
+        resident=resident, category=categories.chat_room_key(slug), push=False
     )
 
 
@@ -100,7 +112,7 @@ def pushes(monkeypatch: pytest.MonkeyPatch, settings: object) -> list[tuple[list
     settings.VAPID_PRIVATE_KEY = "test-private-key"  # type: ignore[attr-defined]
     recorded: list[tuple[list[int], dict]] = []
 
-    def fake_dispatch(subscriptions: object, payload: dict) -> int:
+    def fake_dispatch(subscriptions: object, payload: dict, ttl: int = 0) -> int:
         ids = sorted(subscriptions.values_list("user_id", flat=True))  # type: ignore[attr-defined]
         recorded.append((ids, payload))
         return len(ids)
@@ -152,8 +164,6 @@ def test_manifest_points_at_the_feed_and_ships_every_icon_it_references() -> Non
         "1/traad",
         "1/slet",
         "1/reaktion",
-        "abonner",
-        "lyd/generelt",
         "tv-rezz/",
     ],
 )
@@ -522,8 +532,9 @@ def test_den_hurtige_pages_leak_no_template_syntax(
     """Django's {# … #} is single-line only; a multi-line one renders verbatim onto the page. This
     has bitten base.html and both feed templates already — assert every Den Hurtige surface is
     clean, with content present so the post/comment branches actually render."""
-    # Any non-empty pair: this only needs `push_configured` to be true so the subscribe bar renders
-    # and its markup is covered. Whether a pair is *valid* is test_push.py's business.
+    # Any non-empty pair: this only needs `push_configured` to be true so the device prompt
+    # (notifications/_device.html) renders and its markup is covered. Whether a pair is *valid* is
+    # test_push.py's business.
     settings.VAPID_PUBLIC_KEY = "test-public-key"  # type: ignore[attr-defined]
     settings.VAPID_PRIVATE_KEY = "test-private-key"  # type: ignore[attr-defined]
     author = make_resident(email="a@gahk.dk")
@@ -618,9 +629,11 @@ def test_feed_items_returns_204_for_an_expired_session(client: Client) -> None:
 # --- notification targeting -------------------------------------------------------------------
 
 
-def test_new_post_notifies_subscribers_except_the_author(
+def test_new_post_notifies_the_room_except_the_author(
     client: Client, make_resident: Callable[..., Resident], pushes: list
 ) -> None:
+    """A new message goes out under the room's own category, push only: the feed itself is the
+    in-app record of a chat message, so a bell row per message would only duplicate it."""
     author = make_resident(email="a@gahk.dk")
     other = make_resident(email="b@gahk.dk")
     subscribe(author, "https://push.example/author")
@@ -633,6 +646,26 @@ def test_new_post_notifies_subscribers_except_the_author(
     assert recipients == [other.pk]
     assert "Der er kage i køkkenet" in payload["body"]
     assert payload["url"] == FEED_URL
+    row = Notification.objects.get()
+    assert row.recipient_id == other.pk
+    assert row.category == categories.chat_room_key("generelt")
+    assert row.in_app is False and row.pushed is True
+    assert row.expires_at == QuickPost.objects.get().expires_at  # it dies with the message
+
+
+def test_a_room_notification_reaches_nobody_without_a_device(
+    client: Client, make_resident: Callable[..., Resident], pushes: list
+) -> None:
+    """The room categories are push only, so a resident who could read the room but has no device
+    gets no row at all — not an unreachable one that would only skew the statistics."""
+    author = make_resident(email="a@gahk.dk")
+    make_resident(email="b@gahk.dk", roles=(Role.ADMINISTRATOR,))  # in everyone(), no device
+
+    client.force_login(author)
+    client.post(FEED_URL + "opret", {"content": "Hej", "duration": "60"})
+
+    assert pushes == []
+    assert not Notification.objects.exists()
 
 
 def test_comment_notifies_only_the_original_poster_by_default(
@@ -648,13 +681,44 @@ def test_comment_notifies_only_the_original_poster_by_default(
     client.force_login(commenter)
     client.post(f"{FEED_URL}{post.pk}/kommentar", {"content": "Ja, kom forbi 42", "notify": "op"})
 
-    (recipients, _payload) = pushes[0]
+    [(recipients, _payload)] = pushes
     assert recipients == [author.pk]
+    row = Notification.objects.get()
+    assert row.recipient_id == author.pk
+    assert row.category == categories.CHAT_REPLIES
+    assert row.group_key == f"chat.replies:{post.pk}"
+
+
+def test_replies_to_one_message_fold_into_one_notification(
+    client: Client, make_resident: Callable[..., Resident], pushes: list
+) -> None:
+    """Two people answering the same message is one notification that names them both, newest
+    first — not two rows and two banners. The push carries the group key as its tag, so on the
+    device the second banner replaces the first."""
+    author = make_resident(email="a@gahk.dk")
+    subscribe(author, "https://push.example/author")
+    anders = make_resident(email="b@gahk.dk", first_name="Anders", last_name="And")
+    bente = make_resident(email="c@gahk.dk", first_name="Bente", last_name="Bjerg")
+    post = QuickPost.objects.create(author=author, content="Nogen der har en boremaskine?")
+
+    client.force_login(anders)
+    client.post(f"{FEED_URL}{post.pk}/kommentar", {"content": "Ja", "notify": "op"})
+    client.force_login(bente)
+    client.post(f"{FEED_URL}{post.pk}/kommentar", {"content": "Også mig", "notify": "op"})
+
+    row = Notification.objects.get()
+    assert row.recipient_id == author.pk
+    assert row.title == "Bente Bjerg og Anders And svarede"
+    assert [a["id"] for a in row.actors] == [bente.pk, anders.pk]
+    assert [p["head"] for _ids, p in pushes] == ["Anders And svarede", "Bente Bjerg og Anders And svarede"]
+    assert {p["tag"] for _ids, p in pushes} == {f"chat.replies:{post.pk}"}
 
 
 def test_comment_can_notify_everyone_except_the_commenter(
     client: Client, make_resident: Callable[..., Resident], pushes: list
 ) -> None:
+    """Underret alle tells the post's author as a reply (grouped, under "Svar på dine beskeder")
+    AND announces it to the room — minus the author, who must not be buzzed twice for one reply."""
     author = make_resident(email="a@gahk.dk")
     commenter = make_resident(email="b@gahk.dk")
     bystander = make_resident(email="c@gahk.dk")
@@ -665,8 +729,12 @@ def test_comment_can_notify_everyone_except_the_commenter(
     client.force_login(commenter)
     client.post(f"{FEED_URL}{post.pk}/kommentar", {"content": "Ja! Kl 21", "notify": "alle"})
 
-    (recipients, _payload) = pushes[0]
-    assert recipients == sorted([author.pk, bystander.pk])
+    assert sorted(ids for ids, _payload in pushes) == [[author.pk], [bystander.pk]]
+    by_recipient = {n.recipient_id: n for n in Notification.objects.all()}
+    assert set(by_recipient) == {author.pk, bystander.pk}
+    assert by_recipient[author.pk].category == categories.CHAT_REPLIES
+    assert by_recipient[bystander.pk].category == categories.chat_room_key("generelt")
+    assert by_recipient[bystander.pk].url == f"{FEED_URL}?traad={post.pk}"
 
 
 def test_commenting_on_your_own_post_notifies_nobody(
@@ -680,11 +748,14 @@ def test_commenting_on_your_own_post_notifies_nobody(
     client.post(f"{FEED_URL}{post.pk}/kommentar", {"content": "Rettelse: kl 16", "notify": "op"})
 
     assert pushes == []  # the only candidate recipient would have been the commenter
+    assert not Notification.objects.exists()
 
 
 def test_nothing_is_sent_when_vapid_keys_are_missing(
     client: Client, make_resident: Callable[..., Resident], pushes: list, settings: object
 ) -> None:
+    """And no row is written either: a room notification is push only, and with push unconfigured
+    (the normal dev state) there is nobody it could reach."""
     settings.VAPID_PUBLIC_KEY = ""  # type: ignore[attr-defined]
     settings.VAPID_PRIVATE_KEY = ""  # type: ignore[attr-defined]
     author = make_resident(email="a@gahk.dk")
@@ -694,6 +765,7 @@ def test_nothing_is_sent_when_vapid_keys_are_missing(
     client.post(FEED_URL + "opret", {"content": "Hej", "duration": "60"})
 
     assert pushes == []
+    assert not Notification.objects.exists()
 
 
 # --- emoji reactions -----------------------------------------------------------------------------
@@ -791,20 +863,91 @@ def test_real_emoji_are_accepted(client: Client, make_resident: Callable[..., Re
     assert QuickReaction.objects.get().emoji == emoji
 
 
-def test_reacting_notifies_nobody(
+def test_reacting_tells_the_author_and_nobody_else(
     client: Client, make_resident: Callable[..., Resident], pushes: list
 ) -> None:
-    """Reactions are deliberately silent: a dorm-wide feed where every thumbs-up buzzes every phone
-    is the noise this feature exists to remove."""
+    """A reaction is addressed to the message's author, under its own low-importance category —
+    never a room-wide buzz, which is the noise this feature exists to remove."""
     author = make_resident(email="a@gahk.dk")
-    reactor = make_resident(email="b@gahk.dk")
-    subscribe(author, "https://push.example/author")
+    reactor = make_resident(email="b@gahk.dk", first_name="Magnus", last_name="Pedersen")
+    bystander = make_resident(email="c@gahk.dk")
+    for user in (author, reactor, bystander):
+        subscribe(user, f"https://push.example/{user.pk}")
     post = QuickPost.objects.create(author=author, content="Kaffe")
 
     client.force_login(reactor)
     react(client, post, THUMB)
 
+    [(recipients, payload)] = pushes
+    assert recipients == [author.pk]
+    assert payload["head"] == "Magnus Pedersen reagerede på din besked"
+    assert payload["body"] == f"{THUMB} Kaffe"
+    assert payload["url"] == f"{FEED_URL}?traad={post.pk}"
+    assert payload["tag"] == f"chat.likes:{post.pk}"
+    row = Notification.objects.get()
+    assert row.recipient_id == author.pk
+    assert row.category == categories.CHAT_LIKES
+    assert row.group_key == f"chat.likes:{post.pk}"
+
+
+def test_reactions_to_one_message_fold_into_one_notification(
+    client: Client, make_resident: Callable[..., Resident], pushes: list
+) -> None:
+    """Ten thumbs-up are one row that says so, not ten — "A og B reagerede", then a count."""
+    author = make_resident(email="a@gahk.dk")
+    subscribe(author, "https://push.example/author")
+    post = QuickPost.objects.create(author=author, content="Kaffe")
+    reactors = [
+        make_resident(email=f"{name.lower()}@gahk.dk", first_name=name, last_name="Beboer")
+        for name in ("Anders", "Bente", "Carl")
+    ]
+
+    titles = []
+    for reactor in reactors:
+        client.force_login(reactor)
+        react(client, post, THUMB)
+        titles.append(Notification.objects.get().title)
+
+    assert titles == [
+        "Anders Beboer reagerede på din besked",
+        "Bente Beboer og Anders Beboer reagerede på din besked",
+        "3 personer reagerede på din besked",
+    ]
+
+
+def test_changing_or_clearing_a_reaction_notifies_nobody(
+    client: Client, make_resident: Callable[..., Resident], pushes: list
+) -> None:
+    """Only a NEW reaction is news. Swapping 👍 for 🎉 is a correction, and un-reacting must not buzz
+    the author's phone to tell them somebody now likes their message less."""
+    author = make_resident(email="a@gahk.dk")
+    reactor = make_resident(email="b@gahk.dk")
+    subscribe(author, "https://push.example/author")
+    post = QuickPost.objects.create(author=author, content="Kaffe")
+    client.force_login(reactor)
+    react(client, post, THUMB)
+    assert len(pushes) == 1
+    Notification.objects.update(seen_at=timezone.now())
+
+    react(client, post, PARTY)  # changed
+    react(client, post, PARTY)  # cleared
+
+    assert len(pushes) == 1
+    assert Notification.objects.get().seen_at is not None  # not re-surfaced either
+
+
+def test_reacting_to_your_own_message_notifies_nobody(
+    client: Client, make_resident: Callable[..., Resident], pushes: list
+) -> None:
+    author = make_resident(email="a@gahk.dk")
+    subscribe(author, "https://push.example/author")
+    post = QuickPost.objects.create(author=author, content="Kaffe")
+    client.force_login(author)
+
+    react(client, post, THUMB)
+
     assert pushes == []
+    assert not Notification.objects.exists()
 
 
 def test_reactions_die_with_their_post(client: Client, make_resident: Callable[..., Resident]) -> None:
@@ -1268,7 +1411,7 @@ def test_the_reply_form_accepts_files(client: Client, make_resident: Callable[..
         "multipart/form-data" in form
     )
     assert 'type="file"' in form
-    assert 'accept="image/*"' in form
+    assert 'accept="image/*,.heic,.heif"' in form
 
 
 # --- zoom lockdown -------------------------------------------------------------------------------
@@ -1510,7 +1653,9 @@ def test_the_channel_picker_costs_one_query(client: Client, make_resident: Calla
 
     The reply-count annotate on the posts query is also a COUNT, and is excluded here by the table
     it necessarily joins: this test is about the PICKER's counts, and
-    test_the_reply_count_costs_no_extra_query_per_message covers the other one."""
+    test_the_reply_count_costs_no_extra_query_per_message covers the other one. So is the
+    notification bell's unread badge, which every page under base.html draws and which has nothing
+    to do with the picker."""
     author = make_resident(email="a@gahk.dk")
     for slug in ("generelt", OTHER):
         QuickPost.objects.create(author=author, content=f"Besked i {slug}", channel=slug)
@@ -1523,7 +1668,9 @@ def test_the_channel_picker_costs_one_query(client: Client, make_resident: Calla
     counting = [
         q
         for q in captured.captured_queries
-        if "COUNT" in q["sql"].upper() and "den_hurtige_quickcomment" not in q["sql"]
+        if "COUNT" in q["sql"].upper()
+        and "den_hurtige_quickcomment" not in q["sql"]
+        and "notifications_notification" not in q["sql"]
     ]
     assert len(counting) == 1, counting
 
@@ -1546,14 +1693,14 @@ def test_a_channel_can_be_restricted_to_a_role(
     assert client.get(FEED_URL + "internt/").status_code == 200
 
 
-# --- channel mutes ------------------------------------------------------------------------------
+# --- room notifications and mutes ---------------------------------------------------------------
 
 
 def test_every_channel_notifies_until_it_is_muted(
     client: Client, make_resident: Callable[..., Resident], pushes: list
 ) -> None:
     """Opt-out, not opt-in: a new channel that notifies nobody until people find it is a new channel
-    nobody posts in."""
+    nobody posts in. Each room is its own category, so no preference row means "on"."""
     author = make_resident(email="a@gahk.dk")
     other = make_resident(email="b@gahk.dk")
     subscribe(other, "https://push.example/b")
@@ -1562,19 +1709,22 @@ def test_every_channel_notifies_until_it_is_muted(
     client.post(FEED_URL + "opret", {"content": "Afgang 21", "kanal": OTHER, "duration": "60"})
 
     assert pushes[0][0] == [other.pk]
+    assert Notification.objects.get().category == categories.chat_room_key(OTHER)
 
 
 def test_a_mute_silences_only_the_channel_it_names(
     client: Client, make_resident: Callable[..., Resident], pushes: list
 ) -> None:
+    """A mute is a push=False preference for one room's category; the other rooms are untouched."""
     author = make_resident(email="a@gahk.dk")
     quiet = make_resident(email="b@gahk.dk")
     subscribe(quiet, "https://push.example/b")
-    ChannelMute.objects.create(resident=quiet, channel=OTHER)
+    mute(quiet, OTHER)
     client.force_login(author)
 
     client.post(FEED_URL + "opret", {"content": "Afgang 21", "kanal": OTHER, "duration": "60"})
-    assert pushes[-1][0] == []
+    assert pushes == []
+    assert not Notification.objects.exists()  # push only, and push is off: nothing at all
 
     client.post(FEED_URL + "opret", {"content": "Kaffe", "kanal": "generelt", "duration": "60"})
     assert pushes[-1][0] == [quiet.pk]
@@ -1584,92 +1734,131 @@ def test_a_direct_reply_reaches_a_muted_poster(
     client: Client, make_resident: Callable[..., Resident], pushes: list
 ) -> None:
     """A mute is about the channel's chatter, not about answers to your own message — you are not
-    being broadcast at, you are being replied to."""
+    being broadcast at, you are being replied to. Replies are their own category (chat.replies),
+    which the room's toggle does not touch."""
     poster = make_resident(email="a@gahk.dk")
     subscribe(poster, "https://push.example/a")
-    ChannelMute.objects.create(resident=poster, channel=OTHER)
+    mute(poster, OTHER)
     post = QuickPost.objects.create(author=poster, content="Hvem er med?", channel=OTHER)
     client.force_login(make_resident(email="b@gahk.dk"))
 
     client.post(f"{FEED_URL}{post.pk}/kommentar", {"content": "Jeg er"})
 
     assert pushes[-1][0] == [poster.pk]
+    assert Notification.objects.get().category == categories.CHAT_REPLIES
 
 
 def test_notify_everyone_still_respects_a_mute(
     client: Client, make_resident: Callable[..., Resident], pushes: list
 ) -> None:
-    """Underret alle is a broadcast, and a mute is exactly a refusal of this channel's broadcasts."""
+    """Underret alle is a broadcast to the room, under the room's category, and a mute is exactly a
+    refusal of this channel's broadcasts."""
     poster = make_resident(email="a@gahk.dk")
     quiet = make_resident(email="b@gahk.dk")
+    loud = make_resident(email="c@gahk.dk")
     subscribe(quiet, "https://push.example/b")
-    ChannelMute.objects.create(resident=quiet, channel=OTHER)
+    subscribe(loud, "https://push.example/c")
+    mute(quiet, OTHER)
     post = QuickPost.objects.create(author=poster, content="Hvem er med?", channel=OTHER)
     client.force_login(poster)
 
     client.post(f"{FEED_URL}{post.pk}/kommentar", {"content": "Vi ses", "notify": "alle"})
 
-    assert pushes[-1][0] == []
+    assert [ids for ids, _payload in pushes] == [[loud.pk]]
+    assert not Notification.objects.filter(recipient=quiet).exists()
 
 
-def test_the_mute_button_toggles_both_ways(client: Client, make_resident: Callable[..., Resident]) -> None:
-    resident = make_resident(email="a@gahk.dk")
-    client.force_login(resident)
-    url = f"{FEED_URL}lyd/{OTHER}"
-
-    client.post(url)
-    assert ChannelMute.objects.filter(resident=resident, channel=OTHER).exists()
-
-    client.post(url)
-    assert not ChannelMute.objects.filter(resident=resident, channel=OTHER).exists()
-
-
-def test_muting_a_channel_that_is_already_muted_does_not_double_up(
+def test_the_room_bell_links_to_the_rooms_row_on_the_settings_page(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
-    """Two taps racing each other on a slow connection must not hit uniq_channel_mute and 500 on
-    what is meant to be a toggle."""
-    resident = make_resident(email="a@gahk.dk")
-    ChannelMute.objects.create(resident=resident, channel=OTHER)
-
-    ChannelMute.objects.get_or_create(resident=resident, channel=OTHER)
-
-    assert ChannelMute.objects.filter(resident=resident, channel=OTHER).count() == 1
-
-
-def test_muting_an_unknown_channel_is_404(client: Client, make_resident: Callable[..., Resident]) -> None:
+    """Rooms are turned on and off on the notifications settings page now, next to every other
+    choice — the feed's bell is a plain link to this room's row there, not a toggle of its own."""
     client.force_login(make_resident(email="a@gahk.dk"))
 
-    assert client.post(FEED_URL + "lyd/findes-ikke").status_code == 404
-    assert not ChannelMute.objects.exists()
+    body = client.get(f"{FEED_URL}{OTHER}/").content.decode()
+
+    link = re.search(r'<a class="chat-notif-link[^"]*" href="([^"]+)"', body)
+    assert link, "the room's notification link is missing"
+    assert link.group(1) == f"{reverse('notifications:preferences')}#rum-{OTHER}"
+    assert "is-off" not in link.group(0)  # no preference row = on
+    assert "Lyd til" in body
+
+
+def test_the_room_bell_shows_a_muted_room_as_off(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """...and only for the room that was muted: the state is read per room, per resident."""
+    resident = make_resident(email="a@gahk.dk")
+    mute(resident, OTHER)
+    mute(make_resident(email="b@gahk.dk"), "generelt")  # somebody else's mute is not mine
+    client.force_login(resident)
+
+    muted = client.get(f"{FEED_URL}{OTHER}/").content.decode()
+    unmuted = client.get(FEED_URL).content.decode()
+
+    assert 'class="chat-notif-link is-off"' in muted
+    assert "Lyd fra" in muted
+    assert "is-off" not in unmuted
+
+
+def test_a_room_with_only_vibration_off_is_not_drawn_as_muted(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """A preference row exists whenever anything differs from the default — vibration off, say. The
+    bell asks about push alone, so a room that still pushes (silently) is not drawn as muted."""
+    resident = make_resident(email="a@gahk.dk")
+    NotificationPreference.objects.create(
+        resident=resident, category=categories.chat_room_key(OTHER), vibrate=False
+    )
+    client.force_login(resident)
+
+    assert "is-off" not in client.get(f"{FEED_URL}{OTHER}/").content.decode()
+
+
+@pytest.mark.parametrize("path", ["lyd/tv-rezz", "abonner"])
+def test_the_old_mute_and_subscribe_endpoints_are_gone(
+    client: Client, make_resident: Callable[..., Resident], path: str
+) -> None:
+    """Muting moved to the settings page and subscribing to notifications/enhed. The segments stay
+    reserved (channels.RESERVED_SLUGS) so no channel can claim them, but nothing answers there."""
+    client.force_login(make_resident(email="a@gahk.dk"))
+
+    # Followed: APPEND_SLASH answers the bare "abonner" with a redirect to "abonner/", which the
+    # channel route then refuses as a channel that does not exist.
+    assert client.post(FEED_URL + path, follow=True).status_code == 404
+    assert not NotificationPreference.objects.exists()
 
 
 def test_a_notification_deep_links_to_the_channel_the_message_is_in(
     client: Client, make_resident: Callable[..., Resident], pushes: list
 ) -> None:
     """sw.js hands notificationclick whatever `url` the payload carries, so tapping must open the
-    feed the message is actually in rather than the default one."""
+    feed the message is actually in rather than the default one. A tap goes through the open-link
+    first (marking the row seen), which redirects there."""
     author = make_resident(email="a@gahk.dk")
     subscribe(make_resident(email="b@gahk.dk"), "https://push.example/b")
     client.force_login(author)
 
     client.post(FEED_URL + "opret", {"content": "Afgang 21", "kanal": OTHER, "duration": "60"})
 
-    assert pushes[-1][1]["url"] == f"{FEED_URL}{OTHER}/"
+    payload = pushes[-1][1]
+    assert payload["url"] == f"{FEED_URL}{OTHER}/"
+    assert payload["open"] == reverse("notifications:open_batch", args=[Notification.objects.get().batch])
 
 
-def test_a_notification_carries_no_tag(
+def test_a_message_notification_carries_no_tag(
     client: Client, make_resident: Callable[..., Resident], pushes: list
 ) -> None:
     """Deliberate, and worth pinning: a shared tag makes each notification replace the previous one,
-    so a second post would silently overwrite the first. As true per channel as it was feed-wide."""
+    so a second post would silently overwrite the first. As true per channel as it was feed-wide.
+    (Replies and reactions DO carry one, their group key, because there replacing is the point.)"""
     author = make_resident(email="a@gahk.dk")
     subscribe(make_resident(email="b@gahk.dk"), "https://push.example/b")
     client.force_login(author)
 
     client.post(FEED_URL + "opret", {"content": "Kaffe", "duration": "60"})
 
-    assert "tag" not in pushes[-1][1]
+    assert pushes[-1][1]["tag"] == ""
 
 
 # --- the channel registry -----------------------------------------------------------------------
@@ -2057,9 +2246,10 @@ def test_the_thread_panel_lives_outside_the_polled_region(
     assert page.index('id="js-feed"') < page.index('id="js-thread"')
 
 
-def test_the_thread_panel_polls_itself(client: Client, make_resident: Callable[..., Resident]) -> None:
-    """Being outside #js-feed means it gets no refresh from the feed's poll, so the fragment brings
-    its own — on its ROOT, morphed by outerHTML, so the trigger survives its own swap."""
+def test_the_thread_panel_refreshes_itself(client: Client, make_resident: Callable[..., Resident]) -> None:
+    """Being outside #js-feed means it gets no refresh from the feed's, so the fragment brings its
+    own — on its ROOT, morphed by outerHTML, so the trigger survives its own swap. The trigger is a
+    live signal with the 5s poll as its fallback (see test_live.py)."""
     author = make_resident(email="a@gahk.dk")
     post = QuickPost.objects.create(author=author, content="Kaffe")
     client.force_login(author)
@@ -2067,7 +2257,7 @@ def test_the_thread_panel_polls_itself(client: Client, make_resident: Callable[.
     fragment = client.get(f"{FEED_URL}{post.pk}/traad", HTTP_HX_REQUEST="true").content.decode()
 
     assert f'hx-get="{FEED_URL}{post.pk}/traad"' in fragment
-    assert 'hx-trigger="every 5s"' in fragment
+    assert 'hx-trigger="gahk-live, every 5s' in fragment
     assert 'hx-swap="morph:outerHTML"' in fragment
 
 
@@ -2369,14 +2559,17 @@ def test_the_feed_morphs_its_poll_instead_of_replacing_the_list(
     assert 'hx-swap="morph:innerHTML"' in body
 
 
-def test_the_feed_polls_every_five_seconds(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_the_feed_falls_back_to_polling_every_five_seconds(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
     """20s read as broken in a chat. The interval only became safe to shorten once the swap stopped
-    being destructive -- the two changes belong together, so this pins the pair."""
+    being destructive -- the two changes belong together, so this pins the pair. The feed is live
+    over a WebSocket now, and 5s is what it falls back to while that is down (test_live.py)."""
     client.force_login(make_resident(email="a@gahk.dk"))
 
     body = client.get(FEED_URL).content.decode()
 
-    assert 'hx-trigger="every 5s"' in body
+    assert 'hx-trigger="gahk-live, every 5s [' in body
 
 
 def test_the_poll_still_returns_the_whole_list(
@@ -3394,3 +3587,18 @@ def test_a_post_with_a_valid_duration_still_goes_straight_through(
 
     assert response.status_code == 302
     assert QuickPost.objects.get().minutes_left <= 60
+
+
+def test_the_authors_name_links_to_their_profile(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    from django.urls import reverse
+
+    author = make_resident(email="a@gahk.dk")
+    reader = make_resident(email="b@gahk.dk")
+    QuickPost.objects.create(author=author, content="Kaffe")
+    client.force_login(reader)
+
+    body = client.get(FEED_URL).content.decode()
+
+    assert f'href="{reverse("resident_profile", args=[author.pk])}">{author.full_name}</a>' in body

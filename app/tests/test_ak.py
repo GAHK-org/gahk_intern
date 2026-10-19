@@ -8,12 +8,14 @@ residents on that month's alumneliste.
 from collections.abc import Callable
 
 import pytest
+from django.conf import settings
 from django.core.management import call_command
 from django.db import IntegrityError
 from django.test import Client
+from django.utils import timezone
 
 from ak.models import AkAutoApply, AkEntry, AkMonthlyCharge
-from ak.services import apply_monthly_charge, ensure_active_month_applied
+from ak.services import apply_monthly_charge, charge_period, ensure_previous_month_charged
 from core.models import Room
 from residents.models import Residency, Role, active_period, prev_period
 
@@ -120,9 +122,9 @@ def test_amount_change_disable_and_removal(make_resident: Callable) -> None:
 
 
 @pytest.mark.django_db
-def test_save_books_active_month_only(make_resident: Callable) -> None:
-    """Saving the schedule persists all 12 months but only (re)books the active period — historical
-    months are never touched, so already-settled balances are safe."""
+def test_save_persists_the_schedule_and_books_nothing(make_resident: Callable) -> None:
+    """Saving the schedule persists all 12 months but charges nothing: the month in progress is charged
+    once it is over, and months already charged are never touched."""
     y, m = active_period()
     py, pm = prev_period((y, m))
     officer = make_resident(email="off@gahk.dk", roles=[Role.AK])
@@ -133,7 +135,7 @@ def test_save_books_active_month_only(make_resident: Callable) -> None:
 
     payload = {f"active_{mo}": "1" for mo in range(1, 13)}
     payload.update({f"krydser_{mo}": "2" for mo in range(1, 13)})
-    payload[f"krydser_{m}"] = "3"  # active month at 3
+    payload[f"krydser_{m}"] = "3"
 
     c = Client()
     c.force_login(officer)
@@ -141,7 +143,7 @@ def test_save_books_active_month_only(make_resident: Callable) -> None:
     assert resp.status_code == 302
 
     assert AkMonthlyCharge.objects.get(month=m).krydser == 3  # schedule persisted
-    assert _monthly(now_member, y, m).delta == -3  # active month booked
+    assert _monthly(now_member, y, m) is None  # month in progress: charged when it ends
     assert _monthly(past_member, py, pm) is None  # past month untouched
 
 
@@ -174,42 +176,75 @@ def test_overview_shows_twelve_month_schedule(make_resident: Callable) -> None:
 
 
 @pytest.mark.django_db
-def test_lazy_auto_apply_books_active_month_once(make_resident: Callable) -> None:
-    """The active month is booked lazily and only once — the marker stops it re-running every request."""
-    y, m = active_period()
+def test_charge_period_is_the_month_before_today() -> None:
+    today = timezone.localdate()
+    assert charge_period() == prev_period((today.year, today.month))
+
+
+@pytest.mark.django_db
+def test_lazy_charge_books_last_month_once(make_resident: Callable) -> None:
+    """Last month is charged lazily and only once — the marker stops it re-running every request."""
+    y, m = charge_period()
     _set_schedule(m, active=True, krydser=2)
     member = make_resident(email="lazy@gahk.dk")
     _place(member, y, m)
 
-    ensure_active_month_applied()
+    ensure_previous_month_charged()
     assert _monthly(member, y, m).delta == -2
     state = AkAutoApply.get()
     assert (state.year, state.month) == (y, m)
 
-    ensure_active_month_applied()  # marker already set → no-op
+    ensure_previous_month_charged()  # marker already set → no-op
     assert AkEntry.objects.filter(resident=member, kind=AkEntry.Kind.MONTHLY, year=y, month=m).count() == 1
 
 
 @pytest.mark.django_db
-def test_lazy_auto_apply_runs_when_month_advances(make_resident: Callable) -> None:
-    """When the active period is newer than the marker (a new month started), it applies."""
+def test_lazy_charge_does_not_touch_the_month_in_progress(make_resident: Callable) -> None:
     y, m = active_period()
     _set_schedule(m, active=True, krydser=2)
-    member = make_resident(email="adv@gahk.dk")
+    member = make_resident(email="inprogress@gahk.dk")
     _place(member, y, m)
-    py, pm = prev_period((y, m))
-    state = AkAutoApply.get()
-    state.year, state.month = py, pm  # marker stuck on last month
-    state.save()
 
-    ensure_active_month_applied()
-    assert _monthly(member, y, m).delta == -2  # advanced → booked
+    ensure_previous_month_charged()
+    assert _monthly(member, y, m) is None
 
 
 @pytest.mark.django_db
-def test_ak_page_visit_triggers_lazy_apply(make_resident: Callable) -> None:
-    """Loading an internal AK page books the month even if the scheduled command never runs."""
-    y, m = active_period()
+def test_lazy_charge_runs_when_a_new_month_has_started(make_resident: Callable) -> None:
+    """When the marker is older than last month (a new month started), it charges."""
+    y, m = charge_period()
+    _set_schedule(m, active=True, krydser=2)
+    member = make_resident(email="adv@gahk.dk")
+    _place(member, y, m)
+    state = AkAutoApply.get()
+    state.year, state.month = prev_period((y, m))  # marker stuck on the month before
+    state.save()
+
+    ensure_previous_month_charged()
+    assert _monthly(member, y, m).delta == -2
+
+
+@pytest.mark.django_db
+def test_a_resident_removed_during_the_month_is_not_charged(make_resident: Callable) -> None:
+    """The bug this design fixes: the month's list starts as a copy of the one before, and someone who
+    moved out is removed partway through. Charging from the final list means they never owe it."""
+    y, m = charge_period()
+    _set_schedule(m, active=True, krydser=2)
+    stays = make_resident(email="stays@gahk.dk")
+    _place(stays, y, m)
+    left = make_resident(email="left@gahk.dk")
+    _place(left, y, m)
+    Residency.objects.filter(resident=left, year=y, month=m).delete()  # removed before the month ended
+
+    ensure_previous_month_charged()
+    assert _monthly(stays, y, m).delta == -2
+    assert _monthly(left, y, m) is None
+
+
+@pytest.mark.django_db
+def test_ak_page_visit_triggers_lazy_charge(make_resident: Callable) -> None:
+    """Loading an internal AK page charges last month even if the scheduled command never runs."""
+    y, m = charge_period()
     _set_schedule(m, active=True, krydser=2)
     member = make_resident(email="visit@gahk.dk")
     _place(member, y, m)
@@ -217,17 +252,25 @@ def test_ak_page_visit_triggers_lazy_apply(make_resident: Callable) -> None:
 
     c = Client()
     c.force_login(member)
-    c.get("/intern/ak/")  # my_ak → ensure_active_month_applied
+    c.get("/intern/ak/")  # my_ak → ensure_previous_month_charged
     assert _monthly(member, y, m).delta == -2
 
 
 @pytest.mark.django_db
-def test_management_command_applies_active_period(make_resident: Callable) -> None:
-    y, m = active_period()
+def test_management_command_charges_last_month(make_resident: Callable) -> None:
+    y, m = charge_period()
     _set_schedule(m, active=True, krydser=2)
     r = make_resident(email="cmd@gahk.dk")
     _place(r, y, m)
     call_command("ak_monthly_assessment")
     assert _monthly(r, y, m).delta == -2
+    assert (AkAutoApply.get().year, AkAutoApply.get().month) == (y, m)
     call_command("ak_monthly_assessment")  # idempotent
     assert AkEntry.objects.filter(resident=r, kind=AkEntry.Kind.MONTHLY, year=y, month=m).count() == 1
+
+
+def test_ak_charge_and_oelkaelder_statements_run_on_the_first() -> None:
+    """Both settle the previous month, so both are scheduled for the 1st."""
+    schedule = settings.CELERY_BEAT_SCHEDULE
+    for name in ("apply-ak-monthly-assessment", "email-oelkaelder-monthly-statements"):
+        assert schedule[name]["schedule"].day_of_month == {1}, name

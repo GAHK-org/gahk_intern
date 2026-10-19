@@ -23,6 +23,6 @@ COPY --from=frontend /build/app/static/dist /app/static/dist
 RUN DJANGO_DEBUG=0 DJANGO_SECRET_KEY=build DATABASE_URL=sqlite:///:memory: python manage.py collectstatic --noinput
 EXPOSE 8000
 # migrate is run as a release/deploy step (see DEPLOY.md), not here.
-# One process; scaling means --workers or more of these (DEPLOY.md §4). No lifespan: Django's
-# ASGI handler has no handler for it, and uvicorn would log that on every start.
-CMD ["uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--lifespan", "off"]
+# One process; scaling means --workers or more of these (DEPLOY.md §4). No lifespan: Channels'
+# router has no handler for it, and uvicorn would log that on every start.
+CMD ["uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--lifespan", "off", "--timeout-keep-alive", "120"]

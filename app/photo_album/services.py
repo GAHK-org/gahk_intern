@@ -3,15 +3,21 @@
 import filecmp
 import hashlib
 import logging
+import re
+import struct
 import subprocess  # nosec B404
 import zipfile
+from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
+from functools import partial
 from io import BytesIO
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import Any
+from uuid import UUID
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -20,7 +26,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Case, Exists, F, OuterRef, Q, QuerySet, Value, When
 from django.db.models.functions import Lower
 from django.utils import timezone
-from PIL import ExifTags, Image, ImageOps, ImageSequence
+from PIL import ExifTags, Image, ImageFile, ImageOps, ImageSequence, IptcImagePlugin
 
 from residents.models import Resident
 
@@ -28,11 +34,14 @@ from .models import (
     MAX_ALBUM_DEPTH,
     MEDIA_VIEW_DEDUPE_WINDOW,
     Album,
+    DateSource,
     DerivativeState,
     Media,
     MediaStatus,
     MediaView,
     Tag,
+    believable_date,
+    folder_year,
     normalize_name,
     validate_album_name,
     validate_tag_name,
@@ -102,10 +111,14 @@ def backfill_hashes(*, limit: int = 0, until: datetime | None = None) -> HashBac
     Every upload is hashed when it is stored, so this only ever has the rows from before that to do
     — once they are done, a run is one indexed query that finds nothing. Stops after `limit` items
     or at `until`, whichever comes first, and reports how many are left for the next run.
+
+    Rows it has not tried yet go first, then those it could not read, longest ago first. They are
+    still retried, in case storage was only briefly unavailable, but only after everything else.
     """
     result = HashBackfill()
-    missing = Media.objects.filter(sha256="").exclude(original="").order_by("pk")
-    for media in (missing[:limit] if limit else missing).iterator():
+    missing = Media.objects.filter(sha256="").exclude(original="")
+    queue = missing.order_by(F("hash_failed_at").asc(nulls_first=True), "pk")
+    for media in (queue[:limit] if limit else queue).iterator():
         if until is not None and timezone.now() >= until:
             break
         digest = hashlib.sha256()
@@ -116,8 +129,9 @@ def backfill_hashes(*, limit: int = 0, until: datetime | None = None) -> HashBac
         except OSError as exc:
             result.unreadable.append(f"{media.pk} ({media.original.name}): {exc}")
             logger.warning("Could not read media %s (%s) to hash it: %s", media.pk, media.original.name, exc)
+            Media.objects.filter(pk=media.pk).update(hash_failed_at=timezone.now())
             continue
-        Media.objects.filter(pk=media.pk).update(sha256=digest.hexdigest())
+        Media.objects.filter(pk=media.pk).update(sha256=digest.hexdigest(), hash_failed_at=None)
         result.hashed += 1
     result.remaining = missing.count()
     return result
@@ -141,11 +155,17 @@ def store_upload(
     approved: bool = False,
     file_modified_at: datetime | None = None,
     sha256: str | None = None,
+    stored: tuple[str, UUID] | None = None,
+    sidecar: bytes = b"",
 ) -> UploadOutcome:
     """Store an original and queue its derivatives after the database transaction commits.
 
     The file keeps its exact name in `Media.filename`; its storage key only has to be unique, which
-    the uuid directory in it takes care of (see models._media_key).
+    the uuid directory in it takes care of (see models._media_key). `sidecar` is the AppleDouble
+    sidecar a ZIP brought it with, stored beside it as it was.
+
+    With `stored`, (key, uuid), the original is already at that key, sent straight to the bucket
+    (photo_album.direct_upload): `uploaded_file` is a local copy to read, and is not stored again.
     """
     if album.is_locked():
         raise ValueError("Albummet er låst.")
@@ -174,12 +194,17 @@ def store_upload(
         captured_at=extract_captured_at(uploaded_file),
         file_modified_at=file_modified_at,
     )
-    media.original.save(filename, uploaded_file, save=False)
+    if stored is None:
+        media.original.save(filename, uploaded_file, save=False)
+    else:
+        media.original.name, media.uuid = stored
+    if sidecar:  # after the uuid, which its key is made from
+        media.sidecar.save(filename, ContentFile(sidecar), save=False)
     media.derivative_state = DerivativeState.PENDING
     media.save()
-    from .tasks import build_media_derivatives
+    from .tasks import queue_derivatives
 
-    transaction.on_commit(lambda: build_media_derivatives.delay(media.pk))
+    transaction.on_commit(lambda: queue_derivatives(media))
     return UploadOutcome(media=media, also_in=also_in)
 
 
@@ -353,6 +378,57 @@ def _zip_modified_at(member: zipfile.ZipInfo) -> datetime | None:
         return None
 
 
+_APPLEDOUBLE_MAGIC = 0x00051607
+_APPLEDOUBLE_VERSION = 0x00020000
+_APPLEDOUBLE_FILE_DATES = 8  # the entry with the creation, modification, backup and access times
+_APPLEDOUBLE_EPOCH = datetime(2000, 1, 1, tzinfo=UTC)
+_APPLEDOUBLE_NO_DATE = -0x80000000
+
+
+def is_appledouble(data: bytes) -> bool:
+    return len(data) >= 26 and struct.unpack_from(">II", data) == (_APPLEDOUBLE_MAGIC, _APPLEDOUBLE_VERSION)
+
+
+def appledouble_dates(data: bytes) -> list[datetime]:
+    """The creation and modification times an AppleDouble sidecar keeps for its file, if any.
+
+    The old GAHK file server was a Mac server (netatalk), which kept each file's own dates in
+    `.AppleDouble/<name>` beside it. The Dropbox archive kept those sidecars, while stamping every
+    file in it with the day it was uploaded there, in 2022 — so the sidecar has the real date.
+    """
+    if not is_appledouble(data):
+        return []
+    (entries,) = struct.unpack_from(">H", data, 24)
+    for index in range(entries):
+        if 38 + 12 * index > len(data):
+            break
+        entry, offset, length = struct.unpack_from(">III", data, 26 + 12 * index)
+        if entry == _APPLEDOUBLE_FILE_DATES and length >= 8 and offset + 8 <= len(data):
+            return [
+                _APPLEDOUBLE_EPOCH + timedelta(seconds=value)
+                for value in struct.unpack_from(">ii", data, offset)
+                if value != _APPLEDOUBLE_NO_DATE
+            ]
+    return []
+
+
+def _sidecar_target(path: PurePosixPath) -> str | None:
+    """The member an AppleDouble sidecar describes: `x/.AppleDouble/a.jpg`, `x/._a.jpg` and
+    `__MACOSX/x/._a.jpg` all describe `x/a.jpg`. None for anything else (`.Parent` is the folder's)."""
+    parts = [part for part in path.parts if part != "__MACOSX"]
+    if len(parts) >= 2 and parts[-2] == ".AppleDouble" and parts[-1] != ".Parent":
+        return str(PurePosixPath(*parts[:-2], parts[-1]))
+    if parts and parts[-1].startswith("._") and len(parts[-1]) > 2:
+        return str(PurePosixPath(*parts[:-1], parts[-1][2:]))
+    return None
+
+
+def _file_time(sidecar: list[datetime], entry: datetime | None, folder: str) -> datetime | None:
+    """A member's own time: the earliest believable date its sidecar keeps, else the ZIP entry's."""
+    believable = [moment for moment in sidecar if believable_date(moment, folder, file_time=True)]
+    return min(believable) if believable else entry
+
+
 @dataclass
 class _ImportFile:
     member: str
@@ -361,6 +437,8 @@ class _ImportFile:
     path: Path
     sha256: str
     modified_at: datetime | None
+    sidecar: bytes = b""  # its AppleDouble sidecar in the archive, if it had one
+    sidecar_member: str = ""  # and that sidecar's own name in the archive
 
 
 @dataclass
@@ -391,7 +469,21 @@ def _existing_album(root: Album, folders: tuple[str, ...]) -> Album:
     return album
 
 
-def _extract(zip_archive: zipfile.ZipFile, member: zipfile.ZipInfo, target: Path, limit: int) -> str | None:
+# What an import reports its progress to: (step, done, total). See photo_album.progress.JobProgress.
+Progress = Callable[[str, int, int], None]
+
+
+def no_progress(step: str, done: int, total: int) -> None:
+    pass
+
+
+def _extract(
+    zip_archive: zipfile.ZipFile,
+    member: zipfile.ZipInfo,
+    target: Path,
+    limit: int,
+    still_working: Callable[[], None] = lambda: None,
+) -> str | None:
     """Copy one member to disk, hashing it on the way. Returns the hash, or None if it is too big.
 
     The declared size in the ZIP header is checked first, but the stream is capped too: the header is
@@ -406,6 +498,7 @@ def _extract(zip_archive: zipfile.ZipFile, member: zipfile.ZipInfo, target: Path
                 return None
             digest.update(chunk)
             destination.write(chunk)
+            still_working()  # a multi-gigabyte video is one member, but not one moment
     return digest.hexdigest()
 
 
@@ -417,11 +510,15 @@ def _plan_import(
     *,
     merge: bool = False,
     root_name: str = "",
+    progress: Progress = no_progress,
 ) -> _ImportPlan:
     """Pass one: read, check and extract everything, collecting EVERY reason to refuse the import."""
     plan = _ImportPlan(root_name=normalize_name(root_name or Path(archive_name or "album.zip").stem))
     maximum_bytes = max(settings.PHOTO_ALBUM_IMAGE_MAX_MB, settings.PHOTO_ALBUM_VIDEO_MAX_MB) * 1024 * 1024
     candidates: list[tuple[zipfile.ZipInfo, str, PurePosixPath]] = []
+    # Member name -> its AppleDouble sidecar (the sidecar's own member name, and its bytes). Kept
+    # with that file; listed as skipped, below, only when the file is not imported.
+    sidecars: dict[str, tuple[str, bytes]] = {}
     for member in zip_archive.infolist():
         name = _member_name(member)
         if member.is_dir() or name.endswith("/"):
@@ -432,7 +529,17 @@ def _plan_import(
             continue
         if _is_macos_archive_metadata(path):
             if path.name in MACOS_METADATA_ANY_SIZE or member.file_size <= MACOS_METADATA_MAX_BYTES:
-                plan.skipped.append(f"{name}: macOS-metadata (ignoreret)")
+                described = _sidecar_target(path)
+                data = b""
+                if described is not None and member.file_size <= MACOS_METADATA_MAX_BYTES:
+                    try:
+                        data = zip_archive.read(member)
+                    except (OSError, RuntimeError, zipfile.BadZipFile, EOFError):
+                        pass  # only a date lost; the file it describes is checked on its own
+                if described is not None and is_appledouble(data):
+                    sidecars[described] = (name, data)
+                else:
+                    plan.skipped.append(f"{name}: macOS-metadata (ignoreret)")
             else:
                 plan.errors.append(
                     f"{name}: ligner macOS-metadata, men er større end {MACOS_METADATA_MAX_BYTES // 1024} KB."
@@ -470,6 +577,7 @@ def _plan_import(
     folder_names: dict[tuple[str, ...], dict[str, str]] = {}  # parent folders -> lower(name) -> name
     seen: dict[tuple[tuple[str, ...], str], _ImportFile] = {}
     for index, (member, name, path) in enumerate(candidates):
+        progress("checking", index, len(candidates))
         folders = tuple(path.parts[len(prefix) : -1])
         if len(folders) > MAX_ALBUM_DEPTH:
             plan.errors.append(f"{name}: mapperne ligger dybere end {MAX_ALBUM_DEPTH + 1} niveauer.")
@@ -493,7 +601,13 @@ def _plan_import(
             continue
         target = workdir / f"{index}{Path(path.name).suffix.lower()}"
         try:
-            sha256 = _extract(zip_archive, member, target, maximum_bytes)
+            sha256 = _extract(
+                zip_archive,
+                member,
+                target,
+                maximum_bytes,
+                partial(progress, "checking", index, len(candidates)),
+            )
         except (OSError, RuntimeError, zipfile.BadZipFile, EOFError) as exc:
             plan.errors.append(f"{name}: kunne ikke læses ({exc}).")
             continue
@@ -504,7 +618,9 @@ def _plan_import(
             if error := check_media_content(File(extracted, name=path.name)):
                 plan.errors.append(f"{name}: {error}")
                 continue
-        item = _ImportFile(name, folders, path.name, target, sha256, _zip_modified_at(member))
+        sidecar_member, sidecar = sidecars.get(name, ("", b""))
+        modified_at = _file_time(appledouble_dates(sidecar), _zip_modified_at(member), folder)
+        item = _ImportFile(name, folders, path.name, target, sha256, modified_at, sidecar, sidecar_member)
         key = (tuple(folder.lower() for folder in folders), path.name)
         earlier = seen.get(key)
         if (
@@ -517,6 +633,14 @@ def _plan_import(
         seen.setdefault(key, item)
         plan.files.append(item)
 
+    # A sidecar is kept with its file, so it is "skipped" only when its file is not imported: one
+    # that describes a folder, a duplicate in the archive, or nothing in it at all.
+    imported = {item.member for item in plan.files}
+    plan.skipped.extend(
+        f"{sidecar_member}: macOS-metadata (ignoreret)"
+        for described, (sidecar_member, _) in sidecars.items()
+        if described not in imported
+    )
     if not plan.files and not plan.errors:
         plan.errors.append("ZIP-filen indeholder ingen billeder eller videoer.")
     if plan.existing_root is not None:
@@ -543,6 +667,7 @@ def import_zip_album(
     lock: bool = False,
     merge: bool = False,
     root_name: str = "",
+    progress: Progress = no_progress,
 ) -> ZipImport:
     """Import a ZIP as one album tree — completely, or not at all.
 
@@ -564,10 +689,13 @@ def import_zip_album(
     import does not descend through single folders. A retry of a few files from one sub-album would
     otherwise be named after that sub-album rather than merged into the album it belongs to.
 
+    `progress` is told how far each pass has got, as ("checking" | "storing", done, total).
+
     Returns the albums (root first), the log of files deliberately left out and how many were
     stored. Raises ValidationError carrying every error when the import is refused.
     """
-    archive.seek(0)
+    archive.seek(0)  # an S3 file is downloaded here, which reports no progress of its own
+    progress("reading", 0, 0)
     with TemporaryDirectory(prefix="photo-album-import-") as directory:
         try:
             with zipfile.ZipFile(archive) as zip_archive:
@@ -578,19 +706,25 @@ def import_zip_album(
                     Path(directory),
                     merge=merge,
                     root_name=root_name,
+                    progress=progress,
                 )
         except zipfile.BadZipFile as exc:
             raise ValidationError("ZIP-filen kunne ikke læses.") from exc
         if plan.errors:
             raise ValidationError(plan.errors)
-        albums, added = _store_import(plan, folder, resident, lock=lock)
+        albums, added = _store_import(plan, folder, resident, lock=lock, progress=progress)
         return ZipImport(
             albums=albums, skipped=plan.skipped, added=added, merged=plan.existing_root is not None
         )
 
 
 def _store_import(
-    plan: _ImportPlan, folder: str, resident: Resident, *, lock: bool = False
+    plan: _ImportPlan,
+    folder: str,
+    resident: Resident,
+    *,
+    lock: bool = False,
+    progress: Progress = no_progress,
 ) -> tuple[list[Album], int]:
     """Pass two: create the albums and store the files, all or nothing."""
     written: list[str] = []
@@ -603,7 +737,9 @@ def _store_import(
                 root = Album(folder=folder, name=plan.root_name)
                 root.save()
             albums[()] = root
-            for item in sorted(plan.files, key=lambda item: (len(item.folders), item.folders, item.member)):
+            files = sorted(plan.files, key=lambda item: (len(item.folders), item.folders, item.member))
+            for index, item in enumerate(files):
+                progress("storing", index, len(files))
                 for depth in range(1, len(item.folders) + 1):
                     key = tuple(name.lower() for name in item.folders[:depth])
                     if key not in albums:
@@ -625,13 +761,22 @@ def _store_import(
                         approved=True,
                         file_modified_at=item.modified_at,
                         sha256=item.sha256,
+                        sidecar=item.sidecar,
                     )
                 if outcome.duplicate is not None:
                     plan.skipped.append(f"{item.member}: findes allerede i albummet (ignoreret)")
+                    if item.sidecar and outcome.duplicate.sidecar:
+                        plan.skipped.append(f"{item.sidecar_member}: macOS-metadata (ignoreret)")
+                    elif item.sidecar:  # the file is there, but not its sidecar: keep it with it
+                        outcome.duplicate.sidecar.save(item.filename, ContentFile(item.sidecar), save=False)
+                        outcome.duplicate.save(update_fields=["sidecar"])
+                        written.append(outcome.duplicate.sidecar.name or "")
                 if outcome.media is not None:
                     added += 1
-                    if outcome.media.original.name:
-                        written.append(outcome.media.original.name)
+                    written.extend(
+                        name for name in (outcome.media.original.name, outcome.media.sidecar.name) if name
+                    )
+            settle_dates(root)
             if lock:
                 root.manually_locked_at = timezone.now()
                 root.save(update_fields=["manually_locked_at"])
@@ -714,10 +859,13 @@ def build_derivatives(media: Media) -> bool:
     media.thumbnail.save(variants.thumbnail.name or "thumbnail.jpg", variants.thumbnail, save=False)
     media.derivative_state = DerivativeState.READY
     update_fields = ["high_definition", "thumbnail", "derivative_state", "derivative_attempts"]
-    if media.captured_at is None and variants.captured_at is not None:
+    dated = media.captured_at is None and variants.captured_at is not None
+    if dated:
         media.captured_at = variants.captured_at
         update_fields.append("captured_at")
     media.save(update_fields=update_fields)
+    if dated:  # a video's date is only known now, and the items around it may lean on it
+        settle_dates(media.album)
     current = {media.high_definition.name, media.thumbnail.name}
     for name in previous:
         if name not in current:
@@ -940,25 +1088,355 @@ def extract_metadata(uploaded_file: File) -> dict[str, str]:
 
 
 def extract_captured_at(uploaded_file: File) -> datetime | None:
-    """Return the original image capture time when EXIF supplies one."""
+    """When the photo was taken, as the file's own metadata says: EXIF, else XMP, else IPTC.
+
+    XMP and IPTC are where a scanned print's date goes (the "Date Created" of Photoshop, Lightroom
+    and Picasa), and where some editors leave it after dropping the EXIF block.
+    """
     try:
         uploaded_file.seek(0)
-        exif = Image.open(uploaded_file).getexif()
-        exif_values = _exif_ifd(exif)
-        # DateTimeOriginal (36867) then DateTimeDigitized (36868), and nothing else. Tag 306 is
-        # DateTime — the file's last-modified stamp, which a re-save in any editor rewrites to
-        # today. Falling back to it gave a re-edited photo a confident, wrong "Optaget" date that
-        # also drove the grid's sort order; spec/features/photo-album.md asks for NULL instead.
-        value = _exif_text(
-            exif_values.get(36867) or exif_values.get(36868) or exif.get(36867) or exif.get(36868)
-        )
-        if not value:
-            return None
-        return datetime.strptime(value, "%Y:%m:%d %H:%M:%S").replace(tzinfo=timezone.get_current_timezone())
+        with Image.open(uploaded_file) as image:
+            return _exif_captured_at(image.getexif()) or _xmp_captured_at(image) or _iptc_captured_at(image)
     except (ImportError, OSError, TypeError, ValueError):
         return None
     finally:
         uploaded_file.seek(0)
+
+
+def _exif_captured_at(exif: Image.Exif) -> datetime | None:
+    exif_values = _exif_ifd(exif)
+    # DateTimeOriginal (36867) then DateTimeDigitized (36868), and nothing else. Tag 306 is
+    # DateTime — the file's last-modified stamp, which a re-save in any editor rewrites to
+    # today. Falling back to it gave a re-edited photo a confident, wrong "Optaget" date that
+    # also drove the grid's sort order; spec/features/photo-album.md asks for NULL instead.
+    value = _exif_text(exif_values.get(36867) or exif_values.get(36868) or exif.get(36867) or exif.get(36868))
+    try:
+        moment = datetime.strptime(value, "%Y:%m:%d %H:%M:%S")  # noqa: DTZ007 — EXIF times are local
+    except ValueError:
+        return None
+    return moment.replace(tzinfo=timezone.get_current_timezone())
+
+
+# The XMP properties that say when a photo was taken, best first. CreateDate is when the file was
+# made, which for a scan is the scanning: the same standing as EXIF's DateTimeDigitized.
+_XMP_CAPTURE_DATES = ("exif:DateTimeOriginal", "photoshop:DateCreated", "xmp:CreateDate", "xap:CreateDate")
+
+
+def _xmp_captured_at(image: Image.Image) -> datetime | None:
+    """A capture date from the XMP packet, read as text: these properties are always written either
+    as an attribute or as a simple element, and it saves parsing the XML."""
+    packet = image.info.get("xmp") or image.info.get("XML:com.adobe.xmp")
+    if packet is None and (tags := getattr(image, "tag_v2", None)) is not None:
+        packet = tags.get(700)  # TIFF keeps it in a tag
+    text = packet.decode("utf-8", "replace") if isinstance(packet, bytes) else str(packet or "")
+    for name in _XMP_CAPTURE_DATES:
+        pattern = re.escape(name)
+        match = re.search(rf'{pattern}\s*=\s*"([^"]*)"|<{pattern}>([^<]*)</{pattern}>', text)
+        if match and (moment := _metadata_date(match[1] or match[2] or "")):
+            return moment
+    return None
+
+
+def _iptc_captured_at(image: ImageFile.ImageFile) -> datetime | None:
+    """IPTC's Date Created (2:55, CCYYMMDD) and Time Created (2:60, HHMMSS±HHMM)."""
+    try:
+        info = IptcImagePlugin.getiptcinfo(image) or {}
+    except (OSError, SyntaxError, ValueError, TypeError, KeyError, IndexError):
+        return None
+
+    def text(key: tuple[int, int]) -> str:
+        value = info.get(key)
+        return _exif_text(value[0] if isinstance(value, list) else value)
+
+    day, time = text((2, 55)), text((2, 60))
+    if not re.fullmatch(r"\d{8}", day):
+        return None
+    if re.fullmatch(r"\d{6}([+-]\d{4})?", time):
+        return _metadata_date(f"{day[:4]}-{day[4:6]}-{day[6:]}T{time[:2]}:{time[2:4]}:{time[4:6]}{time[6:]}")
+    return _metadata_date(f"{day[:4]}-{day[4:6]}-{day[6:]}")
+
+
+def _metadata_date(value: str) -> datetime | None:
+    """An ISO 8601 date with or without a time. A day with no time is taken as noon, in local time;
+    anything vaguer than a day (`2004`, `2004-03`) is not a date to place a photo by."""
+    value = value.strip()
+    try:
+        moment = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if len(value) <= 10:  # no time of day
+        moment = moment.replace(hour=12)
+    return moment if timezone.is_aware(moment) else moment.replace(tzinfo=timezone.get_current_timezone())
+
+
+# --- Dates without a source ---------------------------------------------------------------------
+
+
+def _natural_key(name: str) -> tuple[tuple[int, int | str], ...]:
+    """File-name order as a person reads it, so IMG_9 comes before IMG_10."""
+    return tuple(
+        (0, int(part)) if part.isdecimal() else (1, part) for part in re.split(r"(\d+)", name.lower()) if part
+    )
+
+
+def _anchor(media: Media) -> datetime | None:
+    """A date to approximate the items around it from: one of its own, and inside its album's year."""
+    own = media.own_date()
+    if own is None or not believable_date(own[0], media.album.folder, file_time=own[1] == DateSource.FILE):
+        return None
+    return own[0]
+
+
+_Anchor = tuple[int, datetime]  # an item's position in its album and its date
+
+
+def _settled(items: list[Media], folder: str, parent: datetime | None) -> list[tuple[datetime, DateSource]]:
+    """The (sort_at, date_source) of each of one album's items, given in file-name order.
+
+    An item with no date of its own goes between the nearest anchors before and after it, spaced
+    by its position between them, or a second from the one anchor there is. With none in the album
+    it takes `parent`, the middle date further up the tree; then its upload time, if that is in the
+    folder's year; then the start of that year. Those last two keep file-name order a second apart.
+    """
+    year = folder_year(folder)
+    year_start = timezone.make_aware(datetime(year, 1, 1)) if year is not None else None  # noqa: DTZ001
+    nearest: _Anchor | None = None
+    before: list[_Anchor | None] = []
+    for index, item in enumerate(items):
+        if (anchor := _anchor(item)) is not None:
+            nearest = (index, anchor)
+        before.append(nearest)
+    nearest = None
+    after: list[_Anchor | None] = []
+    for index, item in reversed(list(enumerate(items))):
+        if (anchor := _anchor(item)) is not None:
+            nearest = (index, anchor)
+        after.append(nearest)
+    after.reverse()
+
+    settled: list[tuple[datetime, DateSource]] = []
+    for index, item in enumerate(items):
+        own, previous, following = item.own_date(), before[index], after[index]
+        if own is not None:
+            settled.append(own)
+        elif previous is not None and following is not None:
+            (first, start), (last, end) = previous, following
+            settled.append(
+                (start + (end - start) * ((index - first) / (last - first)), DateSource.NEIGHBOURS)
+            )
+        elif previous is not None:
+            settled.append((previous[1] + timedelta(seconds=index - previous[0]), DateSource.NEIGHBOURS))
+        elif following is not None:
+            settled.append((following[1] - timedelta(seconds=following[0] - index), DateSource.NEIGHBOURS))
+        elif parent is not None:
+            settled.append((parent + timedelta(seconds=index), DateSource.NEIGHBOURS))
+        elif year_start is None or believable_date(item.added_at, folder, file_time=True):
+            settled.append((item.added_at, DateSource.ADDED))
+        else:
+            settled.append((year_start + timedelta(seconds=index), DateSource.ALBUM_YEAR))
+    return settled
+
+
+def settle_dates(album: Album) -> int:
+    """Date every item in `album`'s subtree that has no believable date of its own.
+
+    Such an item is placed among the items around it in its album, in file-name order — the order
+    a camera or a scanner numbered them in. An album where none has a date takes the middle date of
+    its parent album's items (then the grandparent's, and so on). Failing that, the item keeps its
+    upload time if that falls in the folder's year — this year's album, uploaded this year — and
+    otherwise goes to the start of the year. In "Andet", which has no year, it keeps its upload
+    time. Every approximation is marked as one in `Media.date_source`.
+
+    Only dates inside the album's year are approximated from: a capture date outside it is still
+    that item's own date, but a camera whose clock reset to 2001 must not pull its neighbours along.
+
+    Binned items count too: they were still taken when they were, so binning or restoring one moves
+    nothing. Returns how many items changed.
+    """
+    albums = {each.pk: each for each in [*album.ancestors(), *album.subtree().order_by("depth", "pk")]}
+    by_album: dict[int, list[Media]] = defaultdict(list)
+    rows = Media.objects.filter(album_id__in=albums).only(
+        "album",
+        "filename",
+        "original",
+        "added_at",
+        "captured_at",
+        "file_modified_at",
+        "sort_at",
+        "date_source",
+    )
+    for media in rows:
+        media.album = albums[media.album_id]
+        by_album[media.album_id].append(media)
+    for items in by_album.values():
+        items.sort(key=lambda media: (_natural_key(media.display_name), media.pk))
+
+    middle: dict[int, datetime | None] = {}
+
+    def middle_date(album_id: int) -> datetime | None:
+        if album_id not in middle:
+            dates = sorted(anchor for media in by_album[album_id] if (anchor := _anchor(media)) is not None)
+            middle[album_id] = dates[len(dates) // 2] if dates else None
+        return middle[album_id]
+
+    def parent_date(target: Album) -> datetime | None:
+        dates = (middle_date(ancestor) for ancestor in reversed(target.ancestor_ids))
+        return next((date for date in dates if date is not None), None)
+
+    changed: list[Media] = []
+    for target in albums.values():
+        if not target.path.startswith(album.path) or not by_album[target.pk]:
+            continue  # an ancestor: only read, for its dates
+        items = by_album[target.pk]
+        for media, (sort_at, source) in zip(
+            items, _settled(items, target.folder, parent_date(target)), strict=True
+        ):
+            if (media.sort_at, media.date_source) != (sort_at, source):
+                media.sort_at, media.date_source = sort_at, source
+                changed.append(media)
+    Media.objects.bulk_update(changed, ["sort_at", "date_source"], batch_size=500)
+    return len(changed)
+
+
+def settle_all_dates() -> int:
+    """settle_dates for every album tree. Returns how many items changed."""
+    return sum(settle_dates(root) for root in Album.objects.filter(parent__isnull=True))
+
+
+@dataclass
+class SidecarDates:
+    """What apply_sidecars did, sidecar by sidecar."""
+
+    stored: int = 0  # sidecars kept beside an item that had none
+    updated: int = 0  # items given the date their sidecar keeps
+    unchanged: int = 0  # items that had it already
+    undated: int = 0  # sidecars with no date to believe for their album's year
+    unmatched: list[str] = field(default_factory=list)  # no item of that name in the album there
+    ambiguous: list[str] = field(default_factory=list)  # more than one
+    # The archive's names of the sidecars its item now has, whether stored now or before: what
+    # the script need not keep a copy of.
+    kept: list[str] = field(default_factory=list)
+    redated: int = 0  # items placed elsewhere once the album tree was settled again
+    # How the sidecar's date compares with the capture date, for items that have one: the measure
+    # of whether a sidecar can be believed for the items that have nothing else.
+    against_capture: dict[str, int] = field(
+        default_factory=lambda: {"withinAMinute": 0, "withinADay": 0, "further": 0}
+    )
+
+
+def apply_sidecars(*, archive: File, folder: str, root_name: str) -> SidecarDates:
+    """Give media already stored their AppleDouble sidecars, and the dates in them, as an import
+    now does.
+
+    For the Dropbox archive, most of which was imported before sidecars were read. The import
+    script keeps every album's sidecars in its work directory and sends them here as a ZIP, its
+    paths relative to the root album `root_name` in `folder`. Each sidecar goes to the item of
+    its name in the album at its path, albums found by name ignoring case, as a merging import
+    finds them. Locks do not apply: a date is no more the album's content than a tag is.
+
+    Not one transaction: each item is stored on its own, as stored objects cannot be rolled back,
+    and sending the same sidecars again changes nothing.
+
+    Raises ValidationError when there is no such album or the ZIP cannot be read.
+    """
+    root = Album.objects.filter(
+        folder=folder, parent__isnull=True, name__iexact=normalize_name(root_name)
+    ).first()
+    if root is None:
+        raise ValidationError(f'Der findes intet album med navnet "{root_name}" i {folder}.')
+    result = SidecarDates()
+    albums: dict[tuple[str, ...], Album | None] = {(): root}
+
+    def album_at(folders: tuple[str, ...]) -> Album | None:
+        if folders not in albums:
+            parent = album_at(folders[:-1])
+            albums[folders] = parent.children.filter(name__iexact=folders[-1]).first() if parent else None
+        return albums[folders]
+
+    try:
+        with zipfile.ZipFile(archive) as zip_archive:
+            for member in zip_archive.infolist():
+                name = _member_name(member)
+                described = _sidecar_target(PurePosixPath(name))
+                if member.is_dir() or described is None or member.file_size > MACOS_METADATA_MAX_BYTES:
+                    continue
+                data = zip_archive.read(member)
+                if not is_appledouble(data):
+                    continue
+                *folders, filename = PurePosixPath(described).parts
+                album = album_at(tuple(folders))
+                matches = list(album.media.filter(filename=filename)[:2]) if album else []
+                if len(matches) != 1:
+                    (result.ambiguous if matches else result.unmatched).append(described)
+                    continue
+                media = matches[0]
+                if not media.sidecar:
+                    media.sidecar.save(filename, ContentFile(data), save=False)
+                    media.save(update_fields=["sidecar"])
+                    result.stored += 1
+                result.kept.append(name)
+                moment = _file_time(appledouble_dates(data), None, folder)
+                if moment is None:
+                    result.undated += 1
+                    continue
+                if media.captured_at is not None:
+                    off = abs(moment - media.captured_at)
+                    closeness = (
+                        "withinAMinute"
+                        if off <= timedelta(minutes=1)
+                        else "withinADay"
+                        if off <= timedelta(days=1)
+                        else "further"
+                    )
+                    result.against_capture[closeness] += 1
+                if media.file_modified_at == moment:
+                    result.unchanged += 1
+                    continue
+                media.file_modified_at = moment
+                media.save(update_fields=["file_modified_at"])
+                result.updated += 1
+            result.redated = settle_dates(root)
+    except (zipfile.BadZipFile, OSError, EOFError, RuntimeError) as exc:
+        raise ValidationError("ZIP-filen kunne ikke læses.") from exc
+    return result
+
+
+@dataclass
+class CaptureDateReread:
+    checked: int = 0
+    found: int = 0
+    unreadable: list[str] = field(default_factory=list)
+    remaining: int = 0
+
+
+def reread_capture_dates(*, limit: int = 0, until: datetime | None = None) -> CaptureDateReread:
+    """Look again for a capture date in the originals stored before XMP and IPTC were read too.
+
+    Stops after `limit` items or at `until`, whichever comes first. An original that cannot be read
+    is not tried again: it has nothing to show either. Leaves the approximations to settle_dates.
+    """
+    result = CaptureDateReread()
+    unchecked = Media.objects.filter(capture_date_checked=False)
+    queue = unchecked.select_related("album").order_by("pk")
+    for media in (queue[:limit] if limit else queue).iterator():
+        if until is not None and timezone.now() >= until:
+            break
+        result.checked += 1
+        media.capture_date_checked = True
+        try:
+            with media.original.open("rb") as original:
+                media.captured_at = media.captured_at or extract_captured_at(
+                    File(original, name=media.display_name)
+                )
+        except (OSError, ValueError) as exc:  # ValueError: no original at all
+            result.unreadable.append(f"{media.pk} ({media.original.name}): {exc}")
+            logger.warning(
+                "Could not read media %s (%s) for its date: %s", media.pk, media.original.name, exc
+            )
+        result.found += media.captured_at is not None
+        media.save(update_fields=["capture_date_checked", "captured_at"])
+    result.remaining = unchecked.count()
+    return result
 
 
 def _exif_text(value: object) -> str:
@@ -1058,7 +1536,7 @@ def purge_expired(now: datetime | None = None) -> int:
 
 
 def _delete_files(media: Media) -> None:
-    for file_field in (media.original, media.high_definition, media.thumbnail):
+    for file_field in (media.original, media.high_definition, media.thumbnail, media.sidecar):
         if file_field:
             file_field.delete(save=False)
 

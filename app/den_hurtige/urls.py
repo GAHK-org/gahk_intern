@@ -25,14 +25,13 @@ urlpatterns = [
     # and a second path shape for the same choice is one more thing to keep in step. `?inden=`/`?id=`
     # carry the paging cursor; `?mere=1` asks for the next chunk rather than the whole panel.
     path("arkiv", views.archive, name="archive"),
+    # The channel picker's menu with its live counts, re-read on a live signal (partial, not a page).
+    path("kanaler", views.channel_menu, name="channel_menu"),
     path("opret", views.create_post, name="create_post"),
-    path("lyd/<slug:channel>", views.toggle_mute, name="toggle_mute"),
     path("<int:pk>/kommentar", views.create_comment, name="create_comment"),
     path("<int:pk>/traad", views.thread, name="thread"),
     path("<int:pk>/slet", views.delete_post, name="delete_post"),
     path("<int:pk>/reaktion", views.toggle_reaction, name="toggle_reaction"),
-    # Where frontend/src/push.ts registers/removes a device (login-gated, CSRF-protected).
-    path("abonner", views.save_subscription, name="save_subscription"),
     # Keep last: this pattern would otherwise swallow every fixed segment above.
     path("<slug:channel>/", views.feed, name="feed_channel"),
 ]

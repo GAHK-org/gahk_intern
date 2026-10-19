@@ -53,9 +53,12 @@ INSTALLED_APPS = [
     "reparationer",
     "arkiv",
     "photo_album",
+    "notifications",
 ]
 
 MIDDLEWARE = [
+    # /healthz and /health, before anything checks the Host header — see core/health.py.
+    "core.health.HealthCheckMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -70,6 +73,25 @@ MIDDLEWARE = [
 ROOT_URLCONF = "config.urls"
 ASGI_APPLICATION = "config.asgi.application"
 
+# Where live updates travel between the view that writes and the sockets that listen (core.live).
+# In-memory, which is exactly right while `web` is ONE uvicorn process (DEPLOY.md §4): the view and
+# every socket share that process, and there is nothing to run or to fail. It stops being right the
+# moment there are two — `--workers 3` or a second replica — because a signal sent in one process
+# never reaches sockets held by another. Pages then fall back to their slow poll and keep working,
+# just less live; the fix is a shared layer (channels_redis and a Redis service), not this setting.
+#
+# group_expiry is raised from Channels' default of one day, which silently drops a socket from its
+# topic 24 hours after it joined while the socket itself stays open. The page then believes it is
+# live, has switched its 5s poll off, and hears nothing: a Den Hurtige tab left open on a desktop
+# overnight would only update once a minute from then on. Membership is removed on disconnect
+# anyway, so the expiry only guards against leaks, and in one process a leak cannot outlive it.
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer",
+        "CONFIG": {"group_expiry": 60 * 60 * 24 * 365},
+    }
+}
+
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
@@ -81,6 +103,7 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "core.context_processors.navigation",
+                "notifications.context_processors.notifications",
             ],
         },
     },
@@ -170,11 +193,36 @@ CELERY_WORKER_REDIRECT_STDOUTS_LEVEL = "INFO"
 # does not hold a worker slot all night. The two photo-album jobs legitimately run longer and set
 # their own limits at the task — see photo_album/tasks.py::MEDIA_TASK_TIME_LIMIT.
 #
-# Redelivery from the two settings above does NOT make the reapers redundant: `build_album_download`
-# and `process_album_import` both refuse to run unless their row is still QUEUED, and by the time a
-# worker is lost it is BUILDING — so the redelivered message returns False and the row stays wedged.
-# What rescues those is fail_stalled_downloads; what rescues a media row is its claim expiring.
+# Redelivery from the two settings above does NOT re-run a lost download or import: by then its row
+# is BUILDING under the message's own task id, which the task takes as its worker having died and
+# marks failed (photo_album.tasks._claim_job). Redelivery is not the whole safety net, either — a
+# worker container killed outright redelivers nothing — so fail_stalled_downloads and
+# fail_stalled_imports also sweep for jobs that stopped reporting progress. A media row is rescued
+# by its claim expiring.
 CELERY_TASK_TIME_LIMIT = 900
+# One message at a time per worker process. The default of four lets a process sit on three more
+# while it runs an hour-long encode — messages the other worker could have started, and that are
+# lost rather than redelivered if the container is killed with them in hand.
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+# Two workers, so a quick job never waits behind an encode: everything defaults to "celery", run by
+# `worker`; what reads or writes whole media files goes to "media", run by `worker-media` one job at
+# a time (docker-compose.prod.yml). One at a time is also what keeps the box out of the OOM killer:
+# an import, a ZIP build and an ffmpeg encode side by side is what ran it out of memory.
+#
+# Photo thumbnails are the exception, chosen when they are queued (photo_album.tasks.
+# queue_derivatives): their own "thumbnails" queue, which `worker` takes from by turns with
+# "celery". The route below is only the fallback for a derivative queued any other way.
+# The Celery processes /health expects a fresh heartbeat from (core/heartbeat.py): each worker's
+# node name before the "@" (the -n in docker-compose.prod.yml), and "beat".
+HEALTH_PROCESSES = [p for p in os.environ.get("HEALTH_PROCESSES", "default,media,beat").split(",") if p]
+
+CELERY_TASK_ROUTES = {
+    "photo_album.tasks.build_media_derivatives": {"queue": "media"},
+    "photo_album.tasks.build_album_download": {"queue": "media"},
+    "photo_album.tasks.process_album_import": {"queue": "media"},
+    "photo_album.tasks.backfill_media_hashes": {"queue": "media"},
+    "photo_album.tasks.settle_media_dates": {"queue": "media"},
+}
 
 # A local migration client uses this bearer token to submit album ZIP imports as the non-login
 # System resident. Leave blank to disable token-authenticated imports.
@@ -187,6 +235,12 @@ CELERY_BEAT_SCHEDULE = {
     "purge-expired-applications": {
         "task": "admissions.tasks.purge_expired_applications",
         "schedule": crontab(minute=20, hour=3),
+    },
+    # Rows stop showing at their TTL by comparison (Notification.objects.active); this only frees
+    # the space, a month later, once the admin statistics are done counting them.
+    "purge-expired-notifications": {
+        "task": "notifications.tasks.purge_expired_notifications",
+        "schedule": crontab(minute=30, hour=3),
     },
     "purge-orphaned-notice-images": {
         "task": "opslagstavle.tasks.purge_orphaned_images",
@@ -217,12 +271,17 @@ CELERY_BEAT_SCHEDULE = {
         "task": "ak.tasks.apply_monthly_assessment",
         "schedule": crontab(minute=10, hour=4, day_of_month=1),
     },
-    # Hourly, and deliberately not daily: what it clears is a download the resident is still
-    # watching a spinner for, so the gap between "the worker died" and "the page says so" is the
-    # thing being minimised.
+    # Every quarter of an hour, matching JOB_STALLED_AFTER: what it clears is a download the
+    # resident is still watching a spinner for, so the gap between "the worker died" and "the page
+    # says so" is the thing being minimised. Off the hour, like everything else here.
     "fail-stalled-photo-album-downloads": {
         "task": "photo_album.tasks.fail_stalled_downloads",
-        "schedule": crontab(minute=5),
+        "schedule": crontab(minute="5-59/15"),
+    },
+    # The same for imports, which the import page and the Dropbox script are waiting on.
+    "fail-stalled-photo-album-imports": {
+        "task": "photo_album.tasks.fail_stalled_imports",
+        "schedule": crontab(minute="10-59/15"),
     },
     "purge-worker-job-logs": {
         "task": "core.tasks.purge_worker_job_logs",
@@ -251,6 +310,12 @@ CELERY_BEAT_SCHEDULE = {
     "backfill-photo-album-hashes": {
         "task": "photo_album.tasks.backfill_media_hashes",
         "schedule": crontab(minute=40, hour=2),
+    },
+    # 03:05, once the hash backfill's twenty minutes are up. Reads originals stored before XMP and
+    # IPTC were read for at most DATE_REREAD_BUDGET, then settles every album's approximate dates.
+    "settle-photo-album-dates": {
+        "task": "photo_album.tasks.settle_media_dates",
+        "schedule": crontab(minute=5, hour=3),
     },
     "remind-rsvp-deadlines": {
         "task": "events.tasks.remind_rsvp_deadlines",
@@ -349,6 +414,12 @@ _MEDIA_S3_OPTIONS = {
     # so the grep for "backups" finds this comment.
     "location": "media",
     "object_parameters": {"CacheControl": "private, max-age=604800"},
+    # How much of a file opened for reading is held in memory before the rest goes to a temporary
+    # file. django-storages defaults it to 0, which Python's SpooledTemporaryFile reads as "never
+    # roll over" — so every `.open()` downloaded the WHOLE object into RAM: a video before its
+    # encode, an album ZIP before its import. A ZIP of several hundred MB had the import worker at
+    # 800 MB when the kernel's OOM killer took it.
+    "max_memory_size": 10 * 1024 * 1024,
 }
 
 # Photo-album originals/derivatives (photo_album.storage.PhotoAlbumS3Storage): same bucket and
@@ -498,6 +569,21 @@ EVENT_IMAGE_MAX_MB = int(os.environ.get("EVENT_IMAGE_MAX_MB", "5"))
 # same value to avoid a GIF being postable in one place and not the next.
 ANIMATED_IMAGE_MAX_MB = int(os.environ.get("ANIMATED_IMAGE_MAX_MB", "5"))
 
+# The ceiling for a HEIC/HEIF photo, and for the same kind of reason as the one above: the format
+# cannot go through the browser downscaler. Only Safari can decode HEIC, so from any other browser a
+# straight-from-the-camera iPhone photo arrives at full size. A 48-megapixel one is well past 5 MB.
+# core.uploads converts it to a downscaled JPEG before it is stored, so this only bounds what one
+# request may upload and decode, not what ends up in the bucket.
+HEIF_IMAGE_MAX_MB = int(os.environ.get("HEIF_IMAGE_MAX_MB", "25"))
+
+# Ølkælder product photos. They were not checked at all until HEIC support made the upload path
+# worth looking at, and oel/ is a PUBLIC media prefix (core.media.PUBLIC_PREFIXES), so an
+# unchecked SVG there would have been script served from our own origin to anyone.
+PRODUCT_IMAGE_MAX_MB = int(os.environ.get("PRODUCT_IMAGE_MAX_MB", "5"))
+
+# Profile pictures. Was a literal 5 in residents.forms.
+PROFILE_PICTURE_MAX_MB = int(os.environ.get("PROFILE_PICTURE_MAX_MB", "5"))
+
 # Photo album uploads. Two ceilings rather than one: the album deliberately keeps the ORIGINAL at
 # full resolution (unlike every other feature here, which downscales in the browser first), so a
 # modern phone photo legitimately arrives at 10-15 MB, and a clip from the same phone is an order of
@@ -512,3 +598,15 @@ PHOTO_ALBUM_VIDEO_MAX_MB = int(os.environ.get("PHOTO_ALBUM_VIDEO_MAX_MB", "1000"
 PHOTO_ALBUM_CACHE_DIR = os.environ.get("PHOTO_ALBUM_CACHE_DIR", "")
 PHOTO_ALBUM_CACHE_THUMBNAIL_MB = int(os.environ.get("PHOTO_ALBUM_CACHE_THUMBNAIL_MB", "2048"))
 PHOTO_ALBUM_CACHE_HD_MB = int(os.environ.get("PHOTO_ALBUM_CACHE_HD_MB", "3072"))
+
+# The same kind of local copy for Den Hurtige's and opslagstavlen's image attachments (core.media,
+# core.disk_cache). It defaults to the photo album's directory, so the production volume and the
+# dev setups already configured for that one work for this too; the copies go in a subdirectory of
+# their own. Empty turns it off.
+MEDIA_CACHE_DIR = os.environ.get("MEDIA_CACHE_DIR", PHOTO_ALBUM_CACHE_DIR)
+MEDIA_CACHE_ATTACHMENTS_MB = int(os.environ.get("MEDIA_CACHE_ATTACHMENTS_MB", "2048"))
+# Only images people are still looking at are copied; an ARCHIVED one is served by a redirect to
+# the bucket, as before. Den Hurtige archives a message itself, when it expires. Opslagstavlen keeps
+# every post forever and has no archive, so for caching purposes an opslag counts as archived this
+# many days after it was posted.
+NOTICE_IMAGE_CACHE_DAYS = int(os.environ.get("NOTICE_IMAGE_CACHE_DAYS", "30"))

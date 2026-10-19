@@ -3,14 +3,16 @@ fragment the frontend fetches when the reader scrolls towards either end: a sent
 the bottom says where the next page in that direction comes from (views._page).{% endcomment %}
 {% if page.newer_url %}<div class="album-page-sentinel" data-page-before="{{ page.newer_url }}" aria-hidden="true"></div>{% endif %}
 {% for item in page.items %}
-	<article class="album-media-item" data-media-id="{{ item.pk }}" data-year="{{ item.sort_at|date:'Y' }}" data-month="{{ item.sort_at|date:'Y-m' }}" data-month-label="{{ item.sort_at|date:'F Y'|capfirst }}">
+	{% comment %}An item whose date is only known to the year sits at the start of it, so it gets a
+	ruler of its own there rather than claiming to be from January.{% endcomment %}
+	<article class="album-media-item" data-media-id="{{ item.pk }}" data-year="{{ item.sort_at|date:'Y' }}" {% if item.date_source == 'album_year' %}data-month="{{ item.sort_at|date:'Y' }}" data-month-label="{{ item.sort_at|date:'Y' }} · ukendt måned"{% else %}data-month="{{ item.sort_at|date:'Y-m' }}" data-month-label="{{ item.sort_at|date:'F Y'|capfirst }}"{% endif %}>
 	{% comment %}The tile carries an id and nothing else. Everything the viewer needs — the HD
 	url, the uploader, the timestamps, the EXIF blob, whether this reader may delete it — is
 	fetched from photo_album:media_detail when the item is actually opened. Rendering it into
 	every tile meant a 300-photo album shipped all of it 300 times to show one.{% endcomment %}
 	<label class="album-select" hidden><input type="checkbox" value="{{ item.pk }}" data-album-select aria-label="Vælg {{ item.title }}"></label>
 	{% if item.has_derivatives %}<button type="button" class="album-media-tile" data-detail-url="{% url 'photo_album:media_detail' item.pk %}">
-		<img src="{{ item.thumbnail.url }}" alt="{{ item.title }}" loading="lazy">{% if item.content_type|slice:':6' == 'video/' %}<span class="album-video-mark">Video</span>{% endif %}
+		<img src="{{ item.thumbnail.url }}" alt="{{ item.title }}" loading="lazy">{% if item.content_type|slice:':6' == 'video/' %}<span class="album-video-mark">Video</span>{% endif %}{% if item.date_is_approximate %}<span class="album-date-mark" title="Datoen er anslået">ca.</span>{% endif %}
 		{% if item.status == 'pending' %}<strong>Afventer godkendelse</strong>{% endif %}
 	</button>{% else %}<div class="album-media-tile album-media-placeholder" data-kind="{{ item.derivative_state }}">
 		<span class="album-media-placeholder-title">{{ item.title }}</span>

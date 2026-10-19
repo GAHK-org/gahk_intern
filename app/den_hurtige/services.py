@@ -1,19 +1,21 @@
-"""Who gets notified about what on Den Hurtige — the policy half of push.
+"""Who gets notified about what on Den Hurtige — the policy half of its notifications.
 
-The transport (pywebpush, the background thread, dead-endpoint cleanup, the VAPID keys) lives in
-core.push, shared with opslagstavlen. What stays here is the part that is genuinely this feature's:
-its audience, its URL, and the wording on the lock screen.
+The machinery (rows, preferences, push delivery, grouping) lives in the notifications app. What stays
+here is the part that is genuinely this feature's: its audience, its URLs, and the wording.
 
-Two audience rules layer on top of the shared topic opt-in, and both are this feature's alone:
+Three kinds of notification, each its own category on the settings page:
 
-  * **Channel mutes.** A ChannelMute row's *presence* means "do not notify me here", so every
-    channel notifies everyone until someone opts out — the opposite of a subscribe model, and
-    deliberately so: a new channel that notifies nobody until people find it is a new channel nobody
+  * **A new message in a room** (`chat.room.<slug>`, push only). One category per room, so muting a
+    noisy room is a toggle on the settings page — it used to be a ChannelMute row, and those were
+    carried over as preferences (notifications migration 0002). Every room notifies everyone until
+    someone turns it off: a new room that notifies nobody until people find it is a room nobody
     posts in.
-  * **A direct reply ignores the mute.** Someone answering your message is not broadcasting at you,
-    and a mute is about a channel's chatter rather than about replies to your own post. It still
-    respects the *topic* opt-in, though: a resident who turned Den Hurtige notifications off
-    entirely hears nothing.
+  * **A reply to your message** (`chat.replies`), grouped per message: "Anders og Bente svarede".
+    A reply is addressed to you, not to the room, so a muted room does not silence it.
+  * **A reaction to your message** (`chat.likes`), grouped the same way.
+
+Every chat notification expires with the message it is about: a push for a message that has already
+vanished from the feed is a tap into nothing.
 """
 
 from typing import TYPE_CHECKING
@@ -21,97 +23,96 @@ from typing import TYPE_CHECKING
 from django.db.models import QuerySet
 
 from core import push
-from core.models import PushSubscription
+from core.rollout import Gate
+from notifications import categories, services
 
-from . import channels
+from . import access, channels
 
 if TYPE_CHECKING:
     from residents.models import Resident
 
     from .models import QuickComment, QuickPost
 
-# The topic name this feature subscribes and notifies under (core.push.TOPIC_FIELDS).
-TOPIC = "den_hurtige"
+
+def _channel(slug: str) -> channels.Channel:
+    """A post filed under a channel that has since been retired from the registry links to the
+    default feed rather than a 404."""
+    return channels.lookup(slug) or channels.DEFAULT
 
 
-def is_configured() -> bool:
-    """Re-exported so the feed view and its tests keep one import. See core.push."""
-    return push.is_configured()
+def _thread_url(post: "QuickPost") -> str:
+    """Straight to the thread, not just the channel: ?traad= opens the panel on the channel page, so
+    the conversation and its surroundings both arrive — in a channel where everything expires, the
+    message may already have scrolled past. The service worker navigates an existing window rather
+    than only focusing it (app/templates/sw.js), so this works whether or not the app is open."""
+    return f"{_channel(post.channel).url}?traad={post.pk}"
 
 
-def vapid_public_key() -> str:
-    return push.vapid_public_key()
-
-
-def is_subscribed(resident: "Resident") -> bool:
-    """Whether any of this resident's devices is opted in to Den Hurtige — the initial state of the
-    subscribe toggle. Per *resident*, not per device: the page is rendered before JS has read this
-    browser's endpoint, and "you have this on somewhere" is the honest thing to show at that point.
-    The button corrects itself once push.ts compares the actual endpoint.
-    """
-    return push.subscribers(TOPIC).filter(user=resident).exists()
-
-
-def _channel_url(slug: str) -> str:
-    """Deep link for a channel's push notification, so tapping it opens the feed the message is
-    actually in rather than the default one. A post filed under a channel that has since been
-    retired from the registry links to the default feed rather than a 404."""
-    channel = channels.lookup(slug) or channels.DEFAULT
-    return channel.url
-
-
-def _audience(channel: str, exclude_user_id: int | None = None) -> QuerySet[PushSubscription]:
-    """Devices that should hear about something in `channel`.
-
-    Two filters stacked, in this order for a reason: the topic opt-in is consent to be notified by
-    this feature at all (core.push), and the mute is a preference about one feed within it. Losing
-    the first would notify people who turned the feature off; losing the second would notify people
-    who asked this channel to be quiet.
-    """
-    return push.subscribers(TOPIC, exclude_user_id=exclude_user_id).exclude(
-        user__channel_mutes__channel=channel
-    )
+def _audience(slug: str) -> "QuerySet[Resident]":
+    """Everyone who can open this room: the feature's rollout gate, then the room's own roles. The
+    resident's own toggle for the room is the notifications app's business, not this one's."""
+    channel = _channel(slug)
+    return Gate(lambda: channel.roles).allowed_residents(access.allowed_residents(services.everyone()))
 
 
 def notify_new_post(post: "QuickPost") -> None:
-    """Announce a new post to every subscriber except its author, minus anyone who muted the channel
-    it was posted in.
+    """Announce a new post to everyone who can read the room, except its author.
 
     The title is the sender's name, not the feature's: every platform already labels the
-    notification with the app it came from, so "Ny besked på Den Hurtige" said it twice and pushed
-    the part that matters — who, and what they wrote — down into the body. Titling with the person
-    is what every chat app does, and what makes a lock screen readable at a glance.
+    notification with the app it came from, so titling with the person is what makes a lock screen
+    readable at a glance.
     """
-    push.send(
-        _audience(post.channel, exclude_user_id=post.author_id),
-        head=post.author.full_name,
-        body=push.preview(post.content),
-        url=_channel_url(post.channel),
+    services.notify(
+        _audience(post.channel),
+        category=categories.chat_room_key(_channel(post.channel).slug),
+        title=post.author.full_name,
+        body=push.preview(post.content) or "📷 Billede",
+        url=_channel(post.channel).url,
+        expires_at=post.expires_at,
+        exclude=post.author_id,
     )
 
 
 def notify_new_comment(comment: "QuickComment") -> None:
-    """Announce a comment. `notify_everyone` decides the audience; the commenter never gets their
-    own comment back, and a reply to your own post notifies nobody.
-
-    A direct reply reaches the original poster even if they muted the channel — see the module
-    docstring — which is why that branch goes through `push.subscribers` rather than `_audience`.
-    """
-    channel = comment.post.channel
-    head = f"{comment.author.full_name} svarede"
+    """A reply tells the post's author (grouped, under "Svar på dine beskeder"). `notify_everyone`
+    additionally announces it to the room, as if it were a new post — minus the commenter and the
+    post's author, who has just been told."""
+    post = comment.post
     body = push.preview(comment.content) or "📷 Billede"
-    # Straight to the thread, not just the channel. Tapping "Anders svarede" used to land at the
-    # bottom of the feed, leaving you to find the message the notification was about -- which, in a
-    # channel where everything expires, may already have scrolled past. ?traad= opens the panel on
-    # the channel page, so the conversation and its surroundings both arrive. The service worker
-    # navigates an existing window rather than only focusing it (app/templates/sw.js), so this
-    # works whether or not the app is already open.
-    url = f"{_channel_url(channel)}?traad={comment.post_id}"
-
+    if comment.author_id != post.author_id:
+        services.notify_grouped(
+            post.author_id,
+            category=categories.CHAT_REPLIES,
+            group_key=f"chat.replies:{post.pk}",
+            actor=comment.author,
+            verb="svarede",
+            body=body,
+            url=_thread_url(post),
+            expires_at=post.expires_at,
+        )
     if comment.notify_everyone:
-        push.send(_audience(channel, exclude_user_id=comment.author_id), head=head, body=body, url=url)
-        return
-    if comment.author_id == comment.post.author_id:
-        return  # commenting on your own post: the only recipient would be yourself
-    recipients = push.subscribers(TOPIC).filter(user_id=comment.post.author_id)
-    push.send(recipients, head=head, body=body, url=url)
+        services.notify(
+            _audience(post.channel).exclude(pk=post.author_id),
+            category=categories.chat_room_key(_channel(post.channel).slug),
+            title=f"{comment.author.full_name} svarede",
+            body=body,
+            url=_thread_url(post),
+            expires_at=post.expires_at,
+            exclude=comment.author_id,
+        )
+
+
+def notify_reaction(post: "QuickPost", reactor: "Resident", emoji: str) -> None:
+    """Somebody reacted to `post`. Grouped per post, so ten reactions are one notification that
+    says "10 personer reagerede" rather than ten buzzes. Called on a NEW reaction only (see
+    core.reactions.apply_toggle)."""
+    services.notify_grouped(
+        post.author_id,
+        category=categories.CHAT_LIKES,
+        group_key=f"chat.likes:{post.pk}",
+        actor=reactor,
+        verb="reagerede på din besked",
+        body=f"{emoji} {push.preview(post.content)}".strip(),
+        url=_thread_url(post),
+        expires_at=post.expires_at,
+    )

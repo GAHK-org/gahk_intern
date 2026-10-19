@@ -35,6 +35,15 @@ def png_bytes() -> bytes:
     return output.getvalue()
 
 
+def heic_bytes(size: tuple[int, int] = (64, 48), colour: str = "red") -> bytes:
+    """A HEIC, as an iPhone saves by default. Only Safari can show one, so core.uploads converts it."""
+    from pillow_heif import from_pillow
+
+    output = BytesIO()
+    from_pillow(Image.new("RGB", size, colour)).save(output)
+    return output.getvalue()
+
+
 @functools.cache
 def mp4_bytes() -> bytes:
     """A one-second H.264 clip, generated once per test session (~0.5 s)."""

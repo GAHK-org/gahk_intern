@@ -1053,6 +1053,12 @@ def test_capture_time_reads_nested_exif_ifd(monkeypatch: pytest.MonkeyPatch) -> 
             return {36867: "2026:08:06 23:43:39"}
 
     class ImageFile:
+        def __enter__(self) -> "ImageFile":
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            pass
+
         def getexif(self) -> Exif:
             return Exif()
 
@@ -1628,8 +1634,9 @@ def test_album_detail_query_count_does_not_grow_with_the_number_of_photos(
     client.get(url)  # warm any per-process caches so the count below is the steady state
 
     # One more than before the album tree: the page now lists the album's sub-albums. One more again
-    # for the album's tags (a root album has no ancestors to inherit any from, so no query for those).
-    with django_assert_num_queries(10):  # type: ignore[operator]
+    # for the album's tags (a root album has no ancestors to inherit any from, so no query for those),
+    # and one for the notification bell's unseen count, which base.html draws on every page.
+    with django_assert_num_queries(11):  # type: ignore[operator]
         client.get(url)
 
 
@@ -1980,7 +1987,9 @@ def test_process_pending_media_skips_held_rows_and_reports_what_it_dispatched(
     Media.objects.filter(pk=held.pk).update(derivative_started_at=timezone.now())
 
     dispatched: list[int] = []
-    monkeypatch.setattr(tasks.build_media_derivatives, "delay", dispatched.append)
+    monkeypatch.setattr(
+        tasks.build_media_derivatives, "apply_async", lambda args, **options: dispatched.append(args[0])
+    )
 
     assert tasks.process_pending_media.run() == 1
     assert dispatched == [free.pk]
@@ -1992,30 +2001,55 @@ def test_a_download_whose_worker_never_returned_is_closed_out(
 ) -> None:
     """A worker killed outright runs no handler, so the row kept BUILDING and completed_at NULL —
     which `purge_expired_downloads` filters on, and which detail.html answers with a five-second
-    reload. The page reloaded itself forever and the row was never collected."""
-    from photo_album.models import ALBUM_DOWNLOAD_STALE_AFTER, AlbumDownload, AlbumDownloadState
+    reload. The page reloaded itself forever and the row was never collected.
+
+    Stalled means no PROGRESS for JOB_STALLED_AFTER, not an old row: a build that has run for hours
+    and is still reporting is left alone."""
+    from photo_album.models import JOB_QUEUED_TOO_LONG, JOB_STALLED_AFTER, AlbumDownload, AlbumDownloadState
     from photo_album.tasks import fail_stalled_downloads
 
     resident = make_resident()
     album = Album.objects.create(folder="2026", name="Fest")
-    stalled = AlbumDownload.objects.create(
-        album=album, requested_by=resident, media_ids=[], state=AlbumDownloadState.BUILDING
+    long_ago = timezone.now() - timedelta(hours=5)
+
+    def download(state: str, progressed_at: datetime | None, created_at: datetime) -> AlbumDownload:
+        row = AlbumDownload.objects.create(
+            album=album, requested_by=resident, media_ids=[], state=state, progressed_at=progressed_at
+        )
+        AlbumDownload.objects.filter(pk=row.pk).update(created_at=created_at)
+        return row
+
+    stalled = download(
+        AlbumDownloadState.BUILDING, timezone.now() - JOB_STALLED_AFTER - timedelta(minutes=1), long_ago
     )
-    fresh = AlbumDownload.objects.create(
-        album=album, requested_by=resident, media_ids=[], state=AlbumDownloadState.BUILDING
-    )
-    AlbumDownload.objects.filter(pk=stalled.pk).update(
-        created_at=timezone.now() - ALBUM_DOWNLOAD_STALE_AFTER - timedelta(minutes=1)
+    slow = download(AlbumDownloadState.BUILDING, timezone.now() - timedelta(minutes=1), long_ago)
+    from_before_progress = download(AlbumDownloadState.BUILDING, None, long_ago)
+    waiting = download(AlbumDownloadState.QUEUED, None, long_ago)
+    lost = download(
+        AlbumDownloadState.QUEUED, None, timezone.now() - JOB_QUEUED_TOO_LONG - timedelta(minutes=1)
     )
 
-    assert fail_stalled_downloads.run() == 1
+    assert fail_stalled_downloads.run() == 3
 
-    stalled.refresh_from_db()
-    fresh.refresh_from_db()
-    assert stalled.state == AlbumDownloadState.FAILED
+    states = {
+        name: AlbumDownload.objects.get(pk=row.pk).state
+        for name, row in {
+            "stalled": stalled,
+            "slow": slow,
+            "old": from_before_progress,
+            "waiting": waiting,
+            "lost": lost,
+        }.items()
+    }
+    assert states == {
+        "stalled": AlbumDownloadState.FAILED,
+        "slow": AlbumDownloadState.BUILDING,
+        "old": AlbumDownloadState.FAILED,
+        "waiting": AlbumDownloadState.QUEUED,
+        "lost": AlbumDownloadState.FAILED,
+    }
     # Set so `purge_expired_downloads`, which filters on it, can eventually collect the row.
-    assert stalled.completed_at is not None
-    assert fresh.state == AlbumDownloadState.BUILDING
+    assert AlbumDownload.objects.get(pk=stalled.pk).completed_at is not None
 
 
 @pytest.mark.django_db
@@ -2084,6 +2118,50 @@ def test_form_upload_refuses_a_file_that_is_not_what_its_name_says(
 
     assert not Media.objects.exists()
     assert "Billedet kunne ikke læses" in response.content.decode()
+
+
+@pytest.mark.django_db
+def test_form_upload_refuses_a_video_ffmpeg_cannot_check_in_time(
+    client: Client, make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The check's timeout used to escape as a 500."""
+    from photo_album import uploads
+
+    def too_slow(command: list[str], **_: object) -> None:
+        raise subprocess.TimeoutExpired(command, uploads.VIDEO_CHECK_TIMEOUT)
+
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    album = Album.objects.create(folder="2026", name="Fest")
+    clip = video_upload()  # made with ffmpeg, so before it is patched out
+    monkeypatch.setattr(uploads.subprocess, "run", too_slow)
+    client.force_login(administrator)
+
+    response = client.post(reverse("photo_album:upload", args=[album.pk]), {"uploads": [clip]}, follow=True)
+
+    assert response.status_code == 200
+    assert not Media.objects.exists()
+    assert "Videoen kunne ikke læses" in response.content.decode()
+
+
+def test_a_png_is_checked_by_its_checksums_without_being_decoded(monkeypatch: pytest.MonkeyPatch) -> None:
+    from PIL import PngImagePlugin
+
+    from photo_album.uploads import check_media_content
+
+    def decoded(_: object) -> None:
+        pytest.fail("the PNG was decoded")
+
+    monkeypatch.setattr(PngImagePlugin.PngImageFile, "load", decoded)
+    good = png_bytes()
+    pixels = good.index(b"IDAT") + 8
+    flipped = good[:pixels] + bytes([good[pixels] ^ 1]) + good[pixels + 1 :]
+
+    def check(content: bytes) -> str | None:
+        return check_media_content(SimpleUploadedFile("x.png", content, content_type="image/png"))
+
+    assert check(good) is None
+    assert "Billedet kunne ikke læses" in (check(good[: len(good) // 2]) or "")
+    assert "Billedet kunne ikke læses" in (check(flipped) or "")
 
 
 @pytest.mark.django_db
@@ -2223,6 +2301,34 @@ def test_backfill_hashes_fills_in_rows_stored_before_hashing(make_resident: Call
 
     media.refresh_from_db()
     assert media.sha256 == hashlib.sha256(content).hexdigest()
+
+
+@pytest.mark.django_db
+def test_hash_backfill_retries_unreadable_originals_after_everything_else(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """An original that is gone used to be first in line again every night."""
+    from photo_album.services import backfill_hashes
+
+    album = Album.objects.create(folder="2026", name="Fest")
+    resident = make_resident()
+    gone, readable = (
+        upload_media(album=album, uploaded_file=image_upload(f"{index}.jpg"), resident=resident)
+        for index in range(2)
+    )
+    gone.original.storage.delete(gone.original.name)
+    Media.objects.update(sha256="")
+
+    first = backfill_hashes(limit=1)
+    second = backfill_hashes(limit=1)
+    third = backfill_hashes(limit=1)
+
+    assert (first.hashed, len(first.unreadable)) == (0, 1)
+    assert (second.hashed, second.unreadable) == (1, [])  # not the missing one again
+    assert (third.hashed, len(third.unreadable)) == (0, 1)  # nothing else left: retried
+    readable.refresh_from_db()
+    assert readable.sha256 and readable.hash_failed_at is None
+    assert third.remaining == 1
 
 
 @pytest.mark.django_db

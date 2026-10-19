@@ -39,7 +39,7 @@
                  value="{{ existing.score|default_if_none:'' }}" class="w-20" aria-describedby="hint_{{ crit.code }}" :readonly="locked"></td>
           <td class="p-2 align-top"><input type="text" name="comment_{{ crit.code }}" value="{{ existing.comment|default:'' }}" :readonly="locked"></td>
           <td class="p-2 align-top">
-            <input type="file" name="image_{{ crit.code }}" accept="image/*">
+            <input type="file" name="image_{{ crit.code }}" accept="image/*,.heic,.heif">
             <button type="button" class="btn" x-show="locked" @click="locked = false">Opdater</button>
           </td>
         </tr>

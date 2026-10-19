@@ -61,12 +61,21 @@ def delete_attached_files(instance: models.Model) -> None:
         if file:
             targets.append((file.storage, file.name))
 
+    delete_files_after_commit(targets, f"{instance._meta.label}:{instance.pk}")
+
+
+def delete_files_after_commit(targets: list[tuple[Storage, str]], label: str) -> None:
+    """Delete each (storage, name) after the current transaction commits, logging any failure.
+
+    The half of delete_attached_files that does not care where the names came from, for a model that
+    replaces a file it owns while the row lives on (residents.models.Resident.profile_thumbnail).
+    """
     if not targets:
         return
 
-    label = f"{instance._meta.label}:{instance.pk}"
-
     def _purge() -> None:
+        from core.media import discard_cached_attachment  # core.media is a view module; keep it lazy
+
         for storage, name in targets:
             try:
                 storage.delete(name)
@@ -74,5 +83,8 @@ def delete_attached_files(instance: models.Model) -> None:
                 # Deliberately broad: every storage backend raises its own errors, and none of them
                 # are actionable here. See the module docstring.
                 logger.warning("could not delete %s for %s", name, label, exc_info=True)
+            # Whether or not the bucket delete worked: a photo deleted on screen must stop being
+            # served from this disk even if the bucket copy leaked.
+            discard_cached_attachment(name)
 
     transaction.on_commit(_purge)

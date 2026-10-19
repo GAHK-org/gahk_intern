@@ -38,7 +38,11 @@
 {% block body_class %}no-zoom chat-page{% endblock %}
 
 {% block content %}
-  <div class="chat">
+  {% comment %}
+    data-live: this page listens to its channel's live topic (den_hurtige.live), and the polls
+    below hear from it. See #js-live.
+  {% endcomment %}
+  <div class="chat" data-live="den-hurtige.{{ channel.slug }}">
     <div class="chat-head">
       {% comment %}
         The channel picker doubles as the page title, so it costs no vertical space at all: a
@@ -59,50 +63,32 @@
             <span class="channel-name">{{ channel.name }}</span>
             <span class="caret" aria-hidden="true">▾</span>
           </summary>
-          <nav class="channel-menu" aria-label="Kanaler">
-            {% for tab in tabs %}
-              <a class="channel-option{% if tab.current %} active{% endif %}" href="{{ tab.channel.url }}"
-                 {% if tab.current %}aria-current="page"{% endif %}>
-                <svg class="ni" aria-hidden="true"><use href="#i-{{ tab.channel.icon }}"></use></svg>
-                <span class="channel-option-name">{{ tab.channel.name }}</span>
-                {% if tab.live %}<span class="channel-count">{{ tab.live }}</span>{% endif %}
-              </a>
-            {% endfor %}
-          </nav>
+          {% include "den_hurtige/_channel_menu.html" %}
         </details>
       {% else %}
         <span class="channel-single">{{ channel.name }}</span>
       {% endif %}
       {% if limited_rollout %}<span class="chip chip-brass">Under test</span>{% endif %}
 
-      {% if push_configured %}
-        {% comment %}
-          Slim one-line bar rather than a card: during the trial it matters that people can turn
-          notifications on, but it must not push the messages below the fold. Driven by
-          frontend/src/push.ts, which is a no-op without a [data-push] element.
-
-          data-subscribed is rendered server-side because the browser cannot answer it: a device has
-          one push endpoint shared by every topic, so getSubscription() only says "subscribed to
-          something". Whether it wants *this* feature is a column on the server.
-        {% endcomment %}
-        {% include "core/_push_bar.html" with topic="den_hurtige" url_name="den_hurtige:save_subscription" success_text="Du får nu besked når nogen slår op." %}
-        {% comment %}
-          Per-channel mute. Separate from the subscribe button above, which is per *device* and
-          governs push at all; this is per resident and governs one channel. A plain form POST, not
-          htmx: it is pressed roughly twice a year and a full reload costs nothing.
-        {% endcomment %}
-        <form class="chat-mute" method="post" action="{% url 'den_hurtige:toggle_mute' channel.slug %}">
-          {% csrf_token %}
-          <button type="submit" class="btn-secondary"
-                  title="{% if muted %}Slå notifikationer fra {{ channel.name }} til igen{% else %}Slå notifikationer fra {{ channel.name }} fra{% endif %}">
-            {% if muted %}🔕 <span class="mute-label">Lyd fra</span>{% else %}🔔 <span class="mute-label">Lyd til</span>{% endif %}
-          </button>
-        </form>
-      {% endif %}
+      {% comment %}
+        This room's notification state, as a link to its row on the settings page — that is where
+        rooms are turned on and off now, next to every other notification choice. A plain link: it
+        is pressed roughly twice a year.
+      {% endcomment %}
+      <a class="chat-notif-link{% if muted %} is-off{% endif %}" href="{% url 'notifications:preferences' %}#rum-{{ channel.slug }}"
+         title="{% if muted %}Notifikationer fra {{ channel.name }} er slået fra{% else %}Du får notifikationer fra {{ channel.name }}{% endif %} — skift under indstillinger">
+        {% if muted %}🔕 <span class="mute-label">Lyd fra</span>{% else %}🔔 <span class="mute-label">Lyd til</span>{% endif %}
+      </a>
     </div>
 
     {% comment %}
-      The message list. Polled so other residents' messages appear without a refresh.
+      Asks this device to turn push on, once — gone for good after it has, and invisible where push
+      cannot work. See notifications/_device.html.
+    {% endcomment %}
+    {% include "notifications/_device.html" with mode="prompt" %}
+
+    {% comment %}
+      The message list. Kept current so other residents' messages appear without a refresh.
 
       MORPHED, not replaced: idiomorph patches the existing nodes rather than swapping the list out,
       so scroll position, open reply threads and a half-typed reply survive because they are simply
@@ -203,9 +189,31 @@
           </div>
         {% endif %}
 
+        {% comment %}
+          LIVE BY SIGNAL, POLLED ONLY AS A BACKSTOP. Three triggers, and they divide the work:
+
+            gahk-live    the channel's WebSocket said a message changed (frontend/src/feed.ts
+                         raises it). This is how a new message, reply count, reaction or deletion
+                         arrives — within a moment, not within five seconds.
+            every 5s     the old poll, now only while this channel is NOT live (the filter): a
+                         socket that dropped, a proxy that refuses the upgrade, or a socket that is
+                         open but whose server skipped this channel's topic. `data-live-on` is set
+                         on .chat by frontend/src/live.ts only once the server has said it joined
+                         the topic. Without it the page behaves exactly as it did before WebSockets.
+            every 60s    always. Some changes are not writes and so have no signal — a message
+                         archiving is the clock passing its expires_at, and the countdown on every
+                         bubble moves by itself — and the in-memory channel layer cannot hear a
+                         write made by another process (core.live). A minute is the countdown's own
+                         resolution.
+
+          hx-sync queues ONE follow-up request behind one in flight, so a burst of signals (three
+          people reacting at once) costs two fetches rather than three, and the last change is
+          never the one that gets dropped.
+        {% endcomment %}
         <div id="js-live"
              hx-get="{% url 'den_hurtige:feed_items' %}?kanal={{ channel.slug }}"
-             hx-trigger="every 5s"
+             hx-trigger="gahk-live, every 5s [!this.closest('[data-live-on]')], every 60s"
+             hx-sync="this:queue last"
              hx-ext="morph"
              hx-swap="morph:innerHTML">
           {% include "den_hurtige/_posts.html" %}
@@ -256,7 +264,7 @@
       <label class="composer-attach" for="id_image" title="Vedhæft billede">
         <span aria-hidden="true">📎</span>
         <span class="sr-only">Vedhæft billede</span>
-        <input type="file" id="id_image" name="image" accept="image/*">
+        <input type="file" id="id_image" name="image" accept="image/*,.heic,.heif">
       </label>
 
       <div class="composer-main">

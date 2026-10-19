@@ -17,6 +17,7 @@ urlpatterns = [
     path("beboer/<int:pk>/profil", views.profile, name="resident_profile"),
     path("beboer/min-profil/rediger", views.edit_profile, name="edit_profile"),
     path("stamtree/", views.stamtree, name="stamtree"),
+    path("notifikationer/", include("notifications.urls")),
     path("den-hurtige/", include("den_hurtige.urls")),
     path("opslagstavle/", include("opslagstavle.urls")),
     path("begivenheder/", include("events.urls")),
