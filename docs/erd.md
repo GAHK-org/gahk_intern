@@ -70,6 +70,13 @@ erDiagram
         int removed
     }
 
+    core_ServiceHeartbeat {
+        int id PK
+        string name
+        string hostname
+        datetime beat_at
+    }
+
     residents_Resident {
         int id PK
         string password
@@ -596,6 +603,7 @@ erDiagram
         datetime captured_at
         bool capture_date_checked
         datetime file_modified_at
+        string file_time_source
         datetime sort_at
         string date_source
         string status
@@ -653,6 +661,15 @@ erDiagram
         int count
         datetime first_viewed_at
         datetime last_viewed_at
+    }
+
+    photo_album_StorageReport {
+        int id PK
+        datetime measured_at
+        json totals
+        json by_album
+        json orphans
+        float seconds
     }
 
     photo_album_FeaturedMedia {
@@ -1038,6 +1055,13 @@ erDiagram
         int removed
     }
 
+    core_ServiceHeartbeat {
+        int id PK
+        string name
+        string hostname
+        datetime beat_at
+    }
+
     residents_Resident { }
 
     core_PushSubscription }o--|| residents_Resident : "user"
@@ -1403,6 +1427,7 @@ erDiagram
         datetime captured_at
         bool capture_date_checked
         datetime file_modified_at
+        string file_time_source
         datetime sort_at
         string date_source
         string status
@@ -1460,6 +1485,15 @@ erDiagram
         int count
         datetime first_viewed_at
         datetime last_viewed_at
+    }
+
+    photo_album_StorageReport {
+        int id PK
+        datetime measured_at
+        json totals
+        json by_album
+        json orphans
+        float seconds
     }
 
     photo_album_FeaturedMedia {

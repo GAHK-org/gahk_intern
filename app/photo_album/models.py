@@ -135,6 +135,21 @@ class DateSource(models.TextChoices):
 # The approximations only services.settle_dates can make, as they need the rest of the album.
 SETTLED_DATE_SOURCES = frozenset({DateSource.NEIGHBOURS, DateSource.ALBUM_YEAR})
 
+
+class FileTimeSource(models.TextChoices):
+    """Where `Media.file_modified_at` came from, which says how far it can be trusted.
+
+    A sidecar is the old file server's own record of the file. A ZIP entry's time is whatever the
+    machine that made the ZIP had: for the Dropbox archive, the day in 2022 it was uploaded there.
+    An upload's is the file's last-modified time on the uploader's device.
+    """
+
+    SIDECAR = "sidecar", "Sidecar"
+    ARCHIVE = "archive", "ZIP-filen"
+    UPLOAD = "upload", "Uploaderens fil"
+    UNKNOWN = "", "Ukendt"
+
+
 # How far outside its folder's year a date in an album is still believed: a New Year's Eve album
 # holds December's preparations and January's aftermath, and a film was often developed later.
 FOLDER_YEAR_SLACK_MONTHS = 6
@@ -146,6 +161,17 @@ def folder_year(folder: str) -> int | None:
     return int(folder) if folder.isdecimal() else None
 
 
+def folder_year_window(folder: str) -> tuple[datetime, datetime] | None:
+    """[start, end) of the dates a year folder's items can have: its year, FOLDER_YEAR_SLACK_MONTHS
+    either side. None for a folder that is not a year."""
+    year = folder_year(folder)
+    if year is None:
+        return None
+    start = timezone.make_aware(datetime(year - 1, 13 - FOLDER_YEAR_SLACK_MONTHS, 1))  # noqa: DTZ001
+    end = timezone.make_aware(datetime(year + 1, FOLDER_YEAR_SLACK_MONTHS + 1, 1))  # noqa: DTZ001
+    return start, end
+
+
 def believable_date(moment: datetime, folder: str, *, file_time: bool) -> bool:
     """Whether `moment` can be when a photo in `folder` was taken.
 
@@ -155,10 +181,9 @@ def believable_date(moment: datetime, folder: str, *, file_time: bool) -> bool:
     only a file time has a floor — a scanned print may honestly say 1975 in its metadata, but no
     file was saved then.
     """
-    year = folder_year(folder)
-    if year is not None:
-        start = timezone.make_aware(datetime(year - 1, 13 - FOLDER_YEAR_SLACK_MONTHS, 1))  # noqa: DTZ001
-        end = timezone.make_aware(datetime(year + 1, FOLDER_YEAR_SLACK_MONTHS + 1, 1))  # noqa: DTZ001
+    window = folder_year_window(folder)
+    if window is not None:
+        start, end = window
         return start <= moment < end
     return (not file_time or moment >= EARLIEST_FILE_TIME) and moment <= timezone.now() + timedelta(days=1)
 
@@ -606,6 +631,11 @@ class Media(models.Model):
     # The file's own last-modified time, as the browser (File.lastModified), an AppleDouble sidecar
     # or the ZIP entry reports it — the best date there is for a photo whose EXIF was stripped.
     file_modified_at = models.DateTimeField(null=True, blank=True)
+    # Where that time came from (FileTimeSource). Blank on a row without one, and on one stored
+    # before it was recorded until the nightly tasks.settle_media_dates has read its sidecar.
+    file_time_source = models.CharField(
+        max_length=8, choices=FileTimeSource.choices, blank=True, default=FileTimeSource.UNKNOWN
+    )
     # The date the timeline and the album grid order by: when it was taken, else when the file was
     # last modified if that is believable, else an approximation (see `date_source` and
     # `services.settle_dates`). Kept in a column so both can page on an index.
@@ -813,6 +843,45 @@ MEDIA_VIEW_DEDUPE_WINDOW = timedelta(minutes=10)
 # picked again.
 FEATURED_PER_DAY = 3
 FEATURED_COOLDOWN = timedelta(days=365)
+
+
+# The variants in a media key (_media_key), in the order the dashboard lists them.
+STORAGE_MEDIA_VARIANTS = ("original", "high-definition", "thumbnail", "sidecar")
+
+
+class StorageReport(models.Model):
+    """What the photo album holds in the bucket, as tasks.measure_photo_album_storage last found it.
+
+    The database knows no file sizes, so the bucket is listed: every object and every older
+    version it still keeps. One row per measurement, for the dashboard to show the latest and how
+    much it grew; a year of them is kept.
+    """
+
+    measured_at = models.DateTimeField(default=timezone.now, db_index=True)
+    # Category -> {"objects": n, "bytes": n}: the media files by variant (original, high-definition,
+    # thumbnail, sidecar), import archives, built downloads, and older versions ("noncurrent").
+    totals = models.JSONField(default=dict)
+    # Album id (as a string, JSON's keys) -> bytes of its media files now, every variant.
+    by_album = models.JSONField(default=dict)
+    # Media files no row points at, among those over a day old (younger ones may be uploads still
+    # under way): {"objects": n, "bytes": n, "keys": [the first ORPHAN_KEYS_KEPT]}. Counted in
+    # `totals` as well — it is a part of them, not more.
+    orphans = models.JSONField(default=dict)
+    seconds = models.FloatField(default=0)  # how long the listing took
+
+    class Meta:
+        ordering = ["-measured_at"]
+
+    def __str__(self) -> str:
+        return f"Lager målt {self.measured_at:%Y-%m-%d %H:%M}"
+
+    @property
+    def media_bytes(self) -> int:
+        return sum(self.totals.get(variant, {}).get("bytes", 0) for variant in STORAGE_MEDIA_VARIANTS)
+
+    @property
+    def total_bytes(self) -> int:
+        return sum(entry.get("bytes", 0) for entry in self.totals.values())
 
 
 class FeaturedMedia(models.Model):

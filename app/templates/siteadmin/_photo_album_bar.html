@@ -1,0 +1,3 @@
+{% comment %}How a set of items is dated, as one stacked bar: `counts` (dashboard.Counts), `big` for the large one.
+The numbers are beside it in every table it is drawn in, so the bar itself is hidden from screen readers.{% endcomment %}
+<div class="pad-bar{% if big %} is-big{% endif %}" aria-hidden="true">{% for segment in counts.segments %}<i class="pad-t-{{ segment.tier.key }}" style="width:{{ segment.percent|stringformat:'.3f' }}%" title="{{ segment.tier.label }}: {{ segment.count }} ({{ segment.percent|floatformat:0 }} %)"></i>{% endfor %}</div>

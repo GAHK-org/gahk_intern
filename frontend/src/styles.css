@@ -2487,4 +2487,38 @@
     .jobs-timeline-gap { border-bottom:0; border-left:1px dashed var(--border-strong); margin-left:1px; padding:2px 0 2px 16px; text-align:left; }
     .card-head:has(.jobs-legend) { flex-wrap:wrap; }
   }
+
+  /* The photo-album dashboard (siteadmin/photo_album.html), built on the worker-jobs page's parts
+     above. One colour per way an item can be dated, from a capture date (green) through the file
+     times (blues) to estimates (brass, orange) and none at all (red). */
+  .pad-t-captured { background:#3F8F5E; }
+  .pad-t-sidecar { background:#2F6E9E; }
+  .pad-t-upload { background:#5E95C4; }
+  .pad-t-archive { background:#8DB3D6; }
+  .pad-t-file { background:#B8CBDC; }
+  .pad-t-neighbours { background:#D4A33B; }
+  .pad-t-album_year { background:#DE7A35; }
+  .pad-t-added { background:var(--neg); }
+  .pad-bar { display:flex; height:10px; min-width:80px; border-radius:5px; overflow:hidden; background:var(--sunken); }
+  .pad-bar.is-big { height:22px; margin-bottom:14px; border-radius:6px; }
+  .pad-bar > i { display:block; height:100%; }
+  .pad-share { background:var(--green); }
+  .pad-bar-cell { width:16%; min-width:90px; vertical-align:middle !important; }
+  .pad-legend { flex-wrap:wrap; gap:6px 16px; margin-top:12px; font-size:12.5px; }
+  .pad-checks { font-size:14px; }
+  .pad-checks > li { display:flex; justify-content:space-between; align-items:baseline; gap:14px; padding:10px 18px; }
+  .pad-checks .jobs-sub { margin-left:6px; }
+  .pad-orphans { padding:12px 18px; border-top:1px solid var(--border); font-size:13px; color:var(--muted); }
+  .pad-orphans summary { margin-top:6px; cursor:pointer; }
+  .pad-orphans ul { margin:6px 0 0; padding-left:18px; }
+  .pad-key { display:inline-block; width:10px; height:10px; margin-right:4px; border-radius:2px; vertical-align:baseline; }
+  .pad-tiers td { vertical-align:top; }
+  .pad-note { margin:12px 0 0; }
+  .pad-intro { margin:0; padding:12px 18px 0; }
+  .pad-thumb { width:72px; min-width:72px; padding-top:6px !important; padding-bottom:6px !important; }
+  .pad-thumb img { display:block; width:44px; min-width:44px; height:44px; object-fit:cover; border-radius:4px; background:var(--sunken); }
+  .pad-media td { vertical-align:middle; }
+  .pad-when { white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .pad-pages { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 18px; border-top:1px solid var(--border); }
+  .pad-total td { border-top:1px solid var(--border-strong); }
 }

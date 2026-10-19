@@ -3,6 +3,7 @@
 from django.urls import path
 
 from notifications import views_admin as notifications_admin
+from photo_album import views_admin as photo_album_admin
 
 from . import views_admin
 
@@ -14,6 +15,8 @@ urlpatterns = [
     # Before the job page, whose <task_id> would take "live" too.
     path("worker-jobs/live", views_admin.worker_jobs_live, name="worker_jobs_live"),
     path("worker-jobs/<str:task_id>", views_admin.worker_job_detail, name="worker_job_detail"),
+    path("fotoalbum", photo_album_admin.photo_album_dashboard, name="photo_album"),
+    path("fotoalbum/maal-lager", photo_album_admin.photo_album_measure, name="photo_album_measure"),
     path("roles", views_admin.roles, name="roles"),
     path("notifikationer", notifications_admin.notifications, name="notifications"),
     path(

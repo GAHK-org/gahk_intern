@@ -36,6 +36,7 @@ from .models import (
     Album,
     DateSource,
     DerivativeState,
+    FileTimeSource,
     Media,
     MediaStatus,
     MediaView,
@@ -154,6 +155,7 @@ def store_upload(
     title: str = "",
     approved: bool = False,
     file_modified_at: datetime | None = None,
+    file_time_source: str = FileTimeSource.UNKNOWN,
     sha256: str | None = None,
     stored: tuple[str, UUID] | None = None,
     sidecar: bytes = b"",
@@ -162,7 +164,8 @@ def store_upload(
 
     The file keeps its exact name in `Media.filename`; its storage key only has to be unique, which
     the uuid directory in it takes care of (see models._media_key). `sidecar` is the AppleDouble
-    sidecar a ZIP brought it with, stored beside it as it was.
+    sidecar a ZIP brought it with, stored beside it as it was. `file_time_source` says where
+    `file_modified_at` came from (FileTimeSource).
 
     With `stored`, (key, uuid), the original is already at that key, sent straight to the bucket
     (photo_album.direct_upload): `uploaded_file` is a local copy to read, and is not stored again.
@@ -193,6 +196,7 @@ def store_upload(
         metadata=extract_metadata(uploaded_file),
         captured_at=extract_captured_at(uploaded_file),
         file_modified_at=file_modified_at,
+        file_time_source=file_time_source if file_modified_at is not None else FileTimeSource.UNKNOWN,
     )
     if stored is None:
         media.original.save(filename, uploaded_file, save=False)
@@ -216,6 +220,7 @@ def upload_media(
     title: str = "",
     approved: bool = False,
     file_modified_at: datetime | None = None,
+    file_time_source: str = FileTimeSource.UNKNOWN,
 ) -> Media:
     """`store_upload` for callers that only want the row: the new one, or the one it duplicated."""
     outcome = store_upload(
@@ -225,6 +230,7 @@ def upload_media(
         title=title,
         approved=approved,
         file_modified_at=file_modified_at,
+        file_time_source=file_time_source,
     )
     media = outcome.media or outcome.duplicate
     assert media is not None  # noqa: S101 — store_upload always returns one of the two  # nosec B101
@@ -423,10 +429,15 @@ def _sidecar_target(path: PurePosixPath) -> str | None:
     return None
 
 
-def _file_time(sidecar: list[datetime], entry: datetime | None, folder: str) -> datetime | None:
-    """A member's own time: the earliest believable date its sidecar keeps, else the ZIP entry's."""
+def _file_time(
+    sidecar: list[datetime], entry: datetime | None, folder: str
+) -> tuple[datetime | None, FileTimeSource]:
+    """A member's own time, and where it is from: the earliest believable date its sidecar keeps,
+    else the ZIP entry's."""
     believable = [moment for moment in sidecar if believable_date(moment, folder, file_time=True)]
-    return min(believable) if believable else entry
+    if believable:
+        return min(believable), FileTimeSource.SIDECAR
+    return entry, FileTimeSource.ARCHIVE if entry is not None else FileTimeSource.UNKNOWN
 
 
 @dataclass
@@ -439,6 +450,7 @@ class _ImportFile:
     modified_at: datetime | None
     sidecar: bytes = b""  # its AppleDouble sidecar in the archive, if it had one
     sidecar_member: str = ""  # and that sidecar's own name in the archive
+    modified_from: FileTimeSource = FileTimeSource.UNKNOWN  # where modified_at is from
 
 
 @dataclass
@@ -619,8 +631,10 @@ def _plan_import(
                 plan.errors.append(f"{name}: {error}")
                 continue
         sidecar_member, sidecar = sidecars.get(name, ("", b""))
-        modified_at = _file_time(appledouble_dates(sidecar), _zip_modified_at(member), folder)
-        item = _ImportFile(name, folders, path.name, target, sha256, modified_at, sidecar, sidecar_member)
+        modified_at, modified_from = _file_time(appledouble_dates(sidecar), _zip_modified_at(member), folder)
+        item = _ImportFile(
+            name, folders, path.name, target, sha256, modified_at, sidecar, sidecar_member, modified_from
+        )
         key = (tuple(folder.lower() for folder in folders), path.name)
         earlier = seen.get(key)
         if (
@@ -760,6 +774,7 @@ def _store_import(
                         resident=resident,
                         approved=True,
                         file_modified_at=item.modified_at,
+                        file_time_source=item.modified_from,
                         sha256=item.sha256,
                         sidecar=item.sidecar,
                     )
@@ -1375,7 +1390,7 @@ def apply_sidecars(*, archive: File, folder: str, root_name: str) -> SidecarDate
                     media.save(update_fields=["sidecar"])
                     result.stored += 1
                 result.kept.append(name)
-                moment = _file_time(appledouble_dates(data), None, folder)
+                moment, _ = _file_time(appledouble_dates(data), None, folder)
                 if moment is None:
                     result.undated += 1
                     continue
@@ -1391,9 +1406,12 @@ def apply_sidecars(*, archive: File, folder: str, root_name: str) -> SidecarDate
                     result.against_capture[closeness] += 1
                 if media.file_modified_at == moment:
                     result.unchanged += 1
+                    if media.file_time_source != FileTimeSource.SIDECAR:
+                        media.file_time_source = FileTimeSource.SIDECAR
+                        media.save(update_fields=["file_time_source"])
                     continue
-                media.file_modified_at = moment
-                media.save(update_fields=["file_modified_at"])
+                media.file_modified_at, media.file_time_source = moment, FileTimeSource.SIDECAR
+                media.save(update_fields=["file_modified_at", "file_time_source"])
                 result.updated += 1
             result.redated = settle_dates(root)
     except (zipfile.BadZipFile, OSError, EOFError, RuntimeError) as exc:
@@ -1436,6 +1454,48 @@ def reread_capture_dates(*, limit: int = 0, until: datetime | None = None) -> Ca
         result.found += media.captured_at is not None
         media.save(update_fields=["capture_date_checked", "captured_at"])
     result.remaining = unchecked.count()
+    return result
+
+
+@dataclass
+class FileTimeCheck:
+    checked: int = 0
+    from_sidecar: int = 0
+    unreadable: list[str] = field(default_factory=list)
+    remaining: int = 0
+
+
+def check_file_time_sources(*, limit: int = 0, until: datetime | None = None) -> FileTimeCheck:
+    """Tell, for files stored before it was recorded, whether their file time is their sidecar's.
+
+    Only a file with a sidecar was left unknown (migration 0019 settled the rest from the database).
+    It came in a ZIP, so its time is the sidecar's if the sidecar has that date to believe, and the
+    ZIP entry's otherwise. A sidecar that cannot be read leaves the row as it is, to be tried again.
+    Stops after `limit` items or at `until`, whichever comes first.
+    """
+    result = FileTimeCheck()
+    unknown = Media.objects.filter(
+        file_modified_at__isnull=False, file_time_source=FileTimeSource.UNKNOWN
+    ).exclude(sidecar="")
+    queue = unknown.select_related("album").order_by("pk")
+    for media in (queue[:limit] if limit else queue).iterator():
+        if until is not None and timezone.now() >= until:
+            break
+        try:
+            with media.sidecar.open("rb") as sidecar:
+                data = sidecar.read(MACOS_METADATA_MAX_BYTES)
+        except (OSError, ValueError) as exc:
+            result.unreadable.append(f"{media.pk} ({media.sidecar.name}): {exc}")
+            logger.warning(
+                "Could not read the sidecar of media %s (%s): %s", media.pk, media.sidecar.name, exc
+            )
+            continue
+        result.checked += 1
+        moment, _ = _file_time(appledouble_dates(data), None, media.album.folder)
+        source = FileTimeSource.SIDECAR if moment == media.file_modified_at else FileTimeSource.ARCHIVE
+        result.from_sidecar += source == FileTimeSource.SIDECAR
+        Media.objects.filter(pk=media.pk).update(file_time_source=source)
+    result.remaining = unknown.count()
     return result
 
 
