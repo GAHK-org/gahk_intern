@@ -90,8 +90,9 @@ class SystemZipImportForm(ZipAlbumImportForm):
     album = forms.CharField(max_length=140, required=False, validators=[validate_album_name])
 
 
-class SystemImportUploadForm(forms.Form):
-    """The import script asking to send an archive straight to the bucket (photo_album.direct_upload)."""
+class ImportUploadForm(forms.Form):
+    """Asking to send an archive straight to the bucket (photo_album.direct_upload): the import
+    script, or the import page in a browser."""
 
     name = forms.CharField(max_length=200)
     size = forms.IntegerField(min_value=1)
@@ -103,20 +104,53 @@ class SystemImportUploadForm(forms.Form):
         return name
 
 
-class SystemDirectImportForm(forms.Form):
-    """SystemZipImportForm for an archive already in the bucket: the upload's ticket and the ETags
-    of its parts, in order, instead of the file."""
+def _clean_parts(parts: object) -> list[str]:
+    if not isinstance(parts, list) or not parts or not all(isinstance(etag, str) for etag in parts):
+        raise ValidationError("Delene skal være en liste af ETags.")
+    return parts
+
+
+class DirectZipImportForm(forms.Form):
+    """An import of an archive already in the bucket: the upload's ticket and the ETags of its
+    parts, in order, instead of the file."""
 
     folder = forms.CharField(max_length=10, label="Mappe", validators=[validate_folder])
     album = forms.CharField(max_length=140, required=False, validators=[validate_album_name])
     ticket = forms.CharField()
-    parts = forms.JSONField()
+    # The import script's parts, which the server completes the upload from; a browser's Uppy
+    # completes its own and sends none.
+    parts = forms.JSONField(required=False)
 
     def clean_parts(self) -> list[str]:
         parts = self.cleaned_data["parts"]
-        if not isinstance(parts, list) or not parts or not all(isinstance(etag, str) for etag in parts):
-            raise ValidationError("Delene skal være en liste af ETags.")
-        return parts
+        return _clean_parts(parts) if parts else []
+
+
+class MediaUploadBeginForm(forms.Form):
+    """Asking to send one photo or video straight to the bucket; checked like the file itself would
+    be by name, type and size before a byte is sent."""
+
+    name = forms.CharField(max_length=255)
+    size = forms.IntegerField(min_value=1)
+    content_type = forms.CharField(max_length=100, required=False)
+
+
+class MediaUploadCommitForm(forms.Form):
+    """The photo or video sent, by its ticket, and what the upload form sends with every file."""
+
+    ticket = forms.CharField()
+    title = forms.CharField(max_length=255, required=False)
+    last_modified = forms.CharField(required=False)
+
+
+class DirectUploadSignForm(forms.Form):
+    """One request Uppy wants signed (@uppy/aws-s3's PresignableRequest), and the ticket it is for."""
+
+    ticket = forms.CharField()
+    method = forms.ChoiceField(choices=[(method, method) for method in ("POST", "PUT", "DELETE")])
+    key = forms.CharField(max_length=500)
+    upload_id = forms.CharField(max_length=500, required=False)
+    part_number = forms.IntegerField(min_value=1, required=False)
 
 
 class SystemSidecarDatesForm(ZipAlbumImportForm):

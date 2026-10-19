@@ -17,6 +17,7 @@ from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import Any
+from uuid import UUID
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -154,6 +155,7 @@ def store_upload(
     approved: bool = False,
     file_modified_at: datetime | None = None,
     sha256: str | None = None,
+    stored: tuple[str, UUID] | None = None,
     sidecar: bytes = b"",
 ) -> UploadOutcome:
     """Store an original and queue its derivatives after the database transaction commits.
@@ -161,6 +163,9 @@ def store_upload(
     The file keeps its exact name in `Media.filename`; its storage key only has to be unique, which
     the uuid directory in it takes care of (see models._media_key). `sidecar` is the AppleDouble
     sidecar a ZIP brought it with, stored beside it as it was.
+
+    With `stored`, (key, uuid), the original is already at that key, sent straight to the bucket
+    (photo_album.direct_upload): `uploaded_file` is a local copy to read, and is not stored again.
     """
     if album.is_locked():
         raise ValueError("Albummet er låst.")
@@ -189,8 +194,11 @@ def store_upload(
         captured_at=extract_captured_at(uploaded_file),
         file_modified_at=file_modified_at,
     )
-    media.original.save(filename, uploaded_file, save=False)
-    if sidecar:
+    if stored is None:
+        media.original.save(filename, uploaded_file, save=False)
+    else:
+        media.original.name, media.uuid = stored
+    if sidecar:  # after the uuid, which its key is made from
         media.sidecar.save(filename, ContentFile(sidecar), save=False)
     media.derivative_state = DerivativeState.PENDING
     media.save()
