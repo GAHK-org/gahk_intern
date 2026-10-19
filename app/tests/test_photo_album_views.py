@@ -5,7 +5,9 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from django.db import connection
 from django.test import Client, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
@@ -379,6 +381,73 @@ def test_selection_delete_touches_only_what_the_resident_may_remove(
     assert not Media.objects.filter(pk=mine.pk).exists()  # an own pending upload is withdrawn
     theirs.refresh_from_db()
     assert theirs.deleted_at is None
+
+
+@pytest.mark.django_db
+def test_selection_delete_checks_each_item_as_well_as_its_album(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """An open album does not open every item in it: a curator's 30 days still run per item."""
+    photographer = make_resident(roles=(Role.FOTO,))
+    uploader = make_resident(email="beboer@gahk.dk")
+    album = Album.objects.create(folder="2024", name="Fest")
+    recent = _media(album, uploader)
+    older = _media(album, uploader)
+    Media.objects.filter(pk=older.pk).update(added_at=timezone.now() - timedelta(days=40))
+    closed = Album.objects.create(folder="2024", name="Jul", manually_locked_at=timezone.now())
+    in_closed = _media(closed, uploader)
+    client.force_login(photographer)
+
+    client.post(
+        reverse("photo_album:selection"), {"action": "delete", "media": [recent.pk, older.pk, in_closed.pk]}
+    )
+
+    assert list(Media.objects.filter(deleted_at__isnull=False)) == [recent]
+    assert not Album.objects.get(pk=album.pk).is_locked()
+
+
+@pytest.mark.django_db
+def test_selection_delete_sees_the_lock_its_own_removals_bring_on(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """Binning the newest approved item can lock its album, and the rest of the selection obeys it."""
+    photographer = make_resident(roles=(Role.FOTO,))
+    uploader = make_resident(email="beboer@gahk.dk")
+    album = Album.objects.create(folder="2024", name="Fest")
+    now = timezone.now()
+    old, newest, pending = (_media(album, uploader), _media(album, uploader), _media(album, uploader))
+    Media.objects.filter(pk=old.pk).update(added_at=now - timedelta(days=100))
+    Media.objects.filter(pk=newest.pk).update(added_at=now - timedelta(days=10))
+    Media.objects.filter(pk=pending.pk).update(added_at=now - timedelta(days=5), status=MediaStatus.PENDING)
+    client.force_login(photographer)
+
+    client.post(reverse("photo_album:selection"), {"action": "delete", "media": [newest.pk, pending.pk]})
+
+    assert list(Media.objects.filter(deleted_at__isnull=False)) == [newest]
+    assert Album.objects.get(pk=album.pk).is_locked()  # its 90 days now run from `old`
+
+
+@pytest.mark.django_db
+def test_selection_delete_works_out_each_albums_lock_once(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """It used to be worked out for every item: about 1000 queries for 500 of them."""
+    photographer = make_resident(roles=(Role.FOTO,))
+    album = Album.objects.create(folder="2024", name="Fest")
+    sub_album = Album.objects.create(folder="2024", name="Fredag", parent=album)
+    items = [_media(album if index % 2 else sub_album, photographer) for index in range(8)]
+    client.force_login(photographer)
+
+    with CaptureQueriesContext(connection) as queries:
+        client.post(
+            reverse("photo_album:selection"), {"action": "delete", "media": [item.pk for item in items]}
+        )
+
+    assert Media.objects.filter(deleted_at__isnull=False).count() == len(items)
+    activity = [
+        query for query in queries.captured_queries if 'MAX("photo_album_media"."added_at")' in query["sql"]
+    ]
+    assert len(activity) == 2  # once per album
 
 
 @pytest.mark.django_db

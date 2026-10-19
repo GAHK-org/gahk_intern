@@ -16,6 +16,7 @@ Both the content type and the extension are checked, for the reason given there 
 type is a hint the client controls, and the extension is what the file is ultimately served as.
 """
 
+import logging
 import re
 import subprocess  # nosec B404
 from collections.abc import Iterator
@@ -30,6 +31,11 @@ from PIL import Image
 from pillow_heif import register_heif_opener
 
 register_heif_opener()
+
+logger = logging.getLogger(__name__)
+
+# How long ffmpeg may take to decode a video's first frame before the upload is refused.
+VIDEO_CHECK_TIMEOUT = 120
 
 # Extension -> the content type the file is stored and served as. The browser's own claim is only
 # checked against it (see `check_media_upload`); what gets stored is always this.
@@ -135,9 +141,11 @@ def check_media_content(upload: Any) -> str | None:  # noqa: ANN401 — an Uploa
     """Open the file and make sure it really is the picture or video its name says.
 
     Without this, a truncated JPEG or a renamed PDF was stored happily and only failed later, in the
-    worker — leaving an item in the album that could never be shown. Images are decoded (JPEGs at a
-    reduced scale, which is enough to hit a truncated or corrupt stream and costs a fraction of a
-    full decode); a video must give ffmpeg one decodable frame.
+    worker — leaving an item in the album that could never be shown. A PNG has its checksums
+    checked, which covers every byte of the compressed pixels without inflating them into memory.
+    Other images are decoded (JPEGs at a reduced scale, which is enough to hit a truncated or
+    corrupt stream and costs a fraction of a full decode); Pillow has no cheaper check for them. A
+    video must give ffmpeg one decodable frame.
     """
     if is_video(upload):
         return (
@@ -148,8 +156,11 @@ def check_media_content(upload: Any) -> str | None:  # noqa: ANN401 — an Uploa
     try:
         upload.seek(0)
         with Image.open(upload) as image:
-            image.draft("RGB", (512, 512))
-            image.load()
+            if image.format == "PNG":
+                image.verify()
+            else:
+                image.draft("RGB", (512, 512))
+                image.load()
     except Image.DecompressionBombError:
         return "Billedet har for mange pixels."
     except (OSError, ValueError, SyntaxError, TypeError):
@@ -160,30 +171,38 @@ def check_media_content(upload: Any) -> str | None:  # noqa: ANN401 — an Uploa
 
 
 def _video_decodes(upload: Any) -> bool:  # noqa: ANN401 — an UploadedFile
+    """Whether ffmpeg can decode the first frame. A file that keeps it busy past the timeout counts
+    as one it cannot: one frame of a real video is a fraction of a second."""
     try:
         import imageio_ffmpeg
     except ImportError:  # pragma: no cover — a dependency; without it nothing can be transcoded anyway
         return True
     with local_copy(upload) as path:
-        result = subprocess.run(  # noqa: S603  # nosec B603
-            [
-                imageio_ffmpeg.get_ffmpeg_exe(),
-                "-hide_banner",
-                "-v",
-                "error",
-                "-i",
-                path,
-                "-frames:v",
-                "1",
-                "-f",
-                "null",
-                "-",
-            ],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=120,
-        )
+        try:
+            result = subprocess.run(  # noqa: S603  # nosec B603
+                [
+                    imageio_ffmpeg.get_ffmpeg_exe(),
+                    "-hide_banner",
+                    "-v",
+                    "error",
+                    "-i",
+                    path,
+                    "-frames:v",
+                    "1",
+                    "-f",
+                    "null",
+                    "-",
+                ],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=VIDEO_CHECK_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "ffmpeg gave up on %s after %d s", getattr(upload, "name", ""), VIDEO_CHECK_TIMEOUT
+            )
+            return False
     return result.returncode == 0
 
 

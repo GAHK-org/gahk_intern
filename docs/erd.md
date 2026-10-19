@@ -581,6 +581,7 @@ erDiagram
         string title
         string filename
         string sha256
+        datetime hash_failed_at
         string original
         string high_definition
         string thumbnail
@@ -1384,6 +1385,7 @@ erDiagram
         string title
         string filename
         string sha256
+        datetime hash_failed_at
         string original
         string high_definition
         string thumbnail

@@ -93,9 +93,10 @@ def _install() -> None:
     """Attach the handler where records end up: the root logger, plus every logger configured not
     to propagate to it (core's own, Celery's task loggers)."""
     loggers = [logging.getLogger()]
+    # A copy: a logger created by another thread mid-walk would change the dict under the loop.
     loggers += [
         logger
-        for logger in logging.Logger.manager.loggerDict.values()
+        for logger in list(logging.Logger.manager.loggerDict.values())
         if isinstance(logger, logging.Logger) and not logger.propagate
     ]
     for logger in loggers:
