@@ -190,3 +190,18 @@ class PushDeliveryDay(models.Model):
         verbose_name = "Push-statistik (dag)"
         verbose_name_plural = "Push-statistik (dage)"
         ordering = ["-date"]
+
+
+class ServiceHeartbeat(models.Model):
+    """When a Celery process last said it was alive — see core/heartbeat.py. Read by /health.
+
+    One row per process name: "beat", and each worker's node name before the "@" ("default",
+    "media" — the -n in docker-compose.prod.yml), so a redeploy's new container id overwrites the
+    old row instead of leaving a dead one behind."""
+
+    name = models.CharField(max_length=100, unique=True)
+    hostname = models.CharField(max_length=255, blank=True)
+    beat_at = models.DateTimeField()
+
+    def __str__(self) -> str:
+        return f"{self.name} {self.beat_at:%Y-%m-%d %H:%M:%S}"

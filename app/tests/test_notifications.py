@@ -1298,3 +1298,11 @@ def test_notifications_live_in_the_topbar_not_the_sidebar(make_resident: Callabl
     assert reverse("notifications:preferences") in menu
     assert 'action="/intern/admin/logout"' in menu
     assert "<noscript>" in body  # logging out never depends on the menu's JS
+
+
+@pytest.mark.django_db
+def test_the_notifications_page_reloads_when_restored_by_back(make_resident: Callable[..., Resident]) -> None:
+    """Otherwise the browser's back-forward cache shows a notification just opened as still unread."""
+    c = Client()
+    c.force_login(make_resident(email="back@gahk.dk"))
+    assert "event.persisted" in c.get(reverse("notifications:index")).content.decode()
