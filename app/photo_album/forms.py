@@ -117,3 +117,9 @@ class SystemDirectImportForm(forms.Form):
         if not isinstance(parts, list) or not parts or not all(isinstance(etag, str) for etag in parts):
             raise ValidationError("Delene skal være en liste af ETags.")
         return parts
+
+
+class SystemSidecarDatesForm(ZipAlbumImportForm):
+    """The import script's sidecars for an album already imported, paths relative to `album`."""
+
+    album = forms.CharField(max_length=140, validators=[validate_album_name])

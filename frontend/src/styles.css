@@ -1975,8 +1975,10 @@
    .album-media-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(138px, 1fr)); gap:8px; }
    .album-media-item { min-width:0; }.album-media-tile { position:relative; width:100%; min-width:0; padding:0; overflow:hidden; border:0; border-radius:7px; background:var(--surface-2); color:var(--ink); text-align:left; cursor:pointer; }
    .album-media-tile img, .album-media-tile video { display:block; width:100%; aspect-ratio:1; object-fit:cover; background:var(--surface-2); }
-   .album-media-tile strong, .album-video-mark { position:absolute; top:6px; left:6px; padding:3px 6px; border-radius:4px; background:rgb(0 0 0 / .68); color:#fff; font-size:11px; }
+   .album-media-tile strong, .album-video-mark, .album-date-mark { position:absolute; top:6px; left:6px; padding:3px 6px; border-radius:4px; background:rgb(0 0 0 / .68); color:#fff; font-size:11px; }
    .album-video-mark { left:auto; right:6px; }
+   /* An approximated date (photo_album DateSource): quieter than the badges above, bottom left. */
+   .album-date-mark { top:auto; bottom:6px; padding:1px 5px; background:rgb(0 0 0 / .45); font-size:10px; }
    .album-media-tile:hover img, .album-media-tile:hover video, .album-media-tile:focus-visible img, .album-media-tile:focus-visible video { filter:brightness(.84); }
    /* A video whose derivatives are still being built out of band (photo_album DerivativeState):
       same footprint as a real tile so the grid does not reflow when the thumbnail appears. */
@@ -2033,7 +2035,7 @@
    .album-media-item { position:relative; }
    .album-select { position:absolute; z-index:2; top:6px; right:6px; display:grid; place-items:center; width:26px; height:26px; border-radius:50%; background:rgb(255 255 255 / .9); box-shadow:0 1px 4px rgb(0 0 0 / .3); cursor:pointer; }
    .album-select input { width:16px; height:16px; margin:0; accent-color:var(--brass); cursor:pointer; }
-   .album-media-grid.is-selecting .album-video-mark { display:none; }
+   .album-media-grid.is-selecting .album-video-mark, .album-media-grid.is-selecting .album-date-mark { display:none; }
    .album-media-item.is-selected .album-media-tile { outline:3px solid var(--brass); outline-offset:-3px; }
    .album-media-item.is-selected .album-media-tile img { filter:brightness(.8); }
    .album-selection-bar { position:sticky; z-index:15; top:68px; display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; margin:0 0 14px; padding:10px 14px; border:1px solid var(--border); border-radius:8px; background:var(--surface); box-shadow:0 8px 20px rgb(0 0 0 / .1); }

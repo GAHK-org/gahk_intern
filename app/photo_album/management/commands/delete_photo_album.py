@@ -134,7 +134,7 @@ class Command(BaseCommand):
             stored = [
                 name
                 for names in Media.objects.filter(pk__in=plan.media_ids).values_list(
-                    "original", "high_definition", "thumbnail"
+                    "original", "high_definition", "thumbnail", "sidecar"
                 )
                 for name in names
                 if name
