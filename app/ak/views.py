@@ -9,17 +9,17 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from residents.models import Resident, active_period
+from residents.models import Resident, active_period, next_period
 from residents.permissions import current_resident, role_required
 from residents.views import DA_MONTHS
 
 from .models import AkEntry, AkMonthlyCharge
-from .services import apply_monthly_charge, ensure_active_month_applied
+from .services import charge_period, ensure_previous_month_charged
 
 
 @login_required
 def my_ak(request: HttpRequest) -> HttpResponse:
-    ensure_active_month_applied()  # backstop for the monthly cron job (DEPLOY.md §4b)
+    ensure_previous_month_charged()  # backstop for the monthly cron job (DEPLOY.md §4b)
     user = current_resident(request)
     return render(
         request,
@@ -80,7 +80,7 @@ def _schedule_rows(active_month: int) -> list[dict]:
 
 @role_required("ak")
 def overview(request: HttpRequest) -> HttpResponse:
-    ensure_active_month_applied()  # backstop for the monthly cron job (DEPLOY.md §4b)
+    ensure_previous_month_charged()  # backstop for the monthly cron job (DEPLOY.md §4b)
     year, month = active_period()
     residents = Resident.objects.filter(residencies__year=year, residencies__month=month).distinct()
     balances = dict(
@@ -94,7 +94,6 @@ def overview(request: HttpRequest) -> HttpResponse:
             "rows": rows,
             "period": f"{year}-{month:02d}",
             "schedule": _schedule_rows(month),
-            "active_month_label": DA_MONTHS[month].capitalize(),
         },
     )
 
@@ -102,9 +101,9 @@ def overview(request: HttpRequest) -> HttpResponse:
 @require_POST
 @role_required("ak")
 def save_monthly_charges(request: HttpRequest) -> HttpResponseRedirect:
-    """Persist the per-calendar-month schedule (same amount every year) and re-book the *active* month's
-    deduction now. Only the active period is (re)applied — historical months are never touched, so
-    already-settled balances are safe."""
+    """Persist the per-calendar-month schedule (same amount every year). Nothing is booked here: a month
+    is charged once it is over, on the 1st of the next, with the schedule as it stands then. Months
+    already charged are never touched, so settled balances are safe."""
     officer = current_resident(request)
     for m in range(1, 13):
         active = request.POST.get(f"active_{m}") == "1"
@@ -117,11 +116,10 @@ def save_monthly_charges(request: HttpRequest) -> HttpResponseRedirect:
             month=m,
             defaults={"active": active, "krydser": krydser, "updated_by": officer},
         )
-    year, month = active_period()
-    written, removed = apply_monthly_charge(year, month, officer=officer)
+    _year, month = next_period(charge_period())
     messages.success(
         request,
-        f"Skema gemt. Denne måneds afskrivning: {written} bogført, {removed} fjernet.",
+        f"Skema gemt. {DA_MONTHS[month].capitalize()} trækkes, når måneden er omme, d. 1. i næste måned.",
     )
     return redirect("ak:overview")
 
