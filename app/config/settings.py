@@ -60,6 +60,8 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # /healthz and /health, before anything checks the Host header — see core/health.py.
+    "core.health.HealthCheckMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -213,6 +215,10 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 # Photo thumbnails are the exception, chosen when they are queued (photo_album.tasks.
 # queue_derivatives): their own "thumbnails" queue, which `worker` takes from by turns with
 # "celery". The route below is only the fallback for a derivative queued any other way.
+# The Celery processes /health expects a fresh heartbeat from (core/heartbeat.py): each worker's
+# node name before the "@" (the -n in docker-compose.prod.yml), and "beat".
+HEALTH_PROCESSES = [p for p in os.environ.get("HEALTH_PROCESSES", "default,media,beat").split(",") if p]
+
 CELERY_TASK_ROUTES = {
     "photo_album.tasks.build_media_derivatives": {"queue": "media"},
     "photo_album.tasks.build_album_download": {"queue": "media"},
