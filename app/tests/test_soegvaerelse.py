@@ -1,4 +1,4 @@
-"""Room lottery (F-004): the target/offer month is always the subsequent month (next_period),
+"""Room lottery: the target/offer month is always the subsequent month (next_period),
 stored as an absolute index but shown human-readably. See rooms/views_soegvaerelse.py."""
 
 from collections.abc import Callable
@@ -660,7 +660,7 @@ def test_soegvaerelse_pages_leak_no_template_syntax(make_resident: Callable) -> 
 
 @pytest.mark.django_db
 def test_computed_orlov_counts_months_off_the_list(make_resident: Callable) -> None:
-    """Auto-orlov = every month between move-in and the active period with no alumneliste row (F-004)."""
+    """Auto-orlov = every month between move-in and the active period with no alumneliste row."""
     from residents.models import active_period
     from rooms.views_soegvaerelse import computed_orlov_months
 
@@ -691,7 +691,7 @@ def test_apply_form_prefills_computed_orlov(make_resident: Callable) -> None:
 
 @pytest.mark.django_db
 def test_detail_shows_suggested_vs_submitted_orlov_to_indstilling(make_resident: Callable) -> None:
-    """Indstillingen sees the resident's declared orlov next to the auto-computed suggestion (F-004)."""
+    """Indstillingen sees the resident's declared orlov next to the auto-computed suggestion."""
     from rooms.models import KvotientOrlov
 
     resident = make_resident(email="applicant@gahk.dk", move_in_date=date(2024, 8, 1))

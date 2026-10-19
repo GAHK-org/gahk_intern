@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 @login_required
 def dashboard(request: HttpRequest) -> HttpResponse:
-    """Internal landing page (F-013). Shows the member's active-month roles and the shared
+    """Internal landing page. Shows the member's active-month roles and the shared
     WiFi/calendar info — now gated by authentication (not campus IP) with secrets read from env.
     Uses effective roles so the preview override is reflected here too."""
     # Backstop for the ak_monthly_assessment cron job (DEPLOY.md §4b): charges last month's AK
@@ -66,7 +66,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     )
 
 
-# ---- Alumneliste: the resident directory (F-010) ----
+# ---- Alumneliste: the resident directory ----
 # Re-exported under its old name because ak.views imports it from here. The list itself moved to
 # core.danish when the events calendar became the third copy.
 DA_MONTHS = MONTHS
@@ -212,7 +212,7 @@ def _period_badges(year: int, month: int) -> dict[int, list[tuple[str, str]]]:
 @login_required
 def directory(request: HttpRequest) -> HttpResponse:
     """Full directory page (login-required). Legacy `json()` was campus-IP gated; with real auth the
-    members-only login is the control (F-010). HTMX powers the live search and column sorting; the
+    members-only login is the control. HTMX powers the live search and column sorting; the
     period picker shows any past month's list (the legacy "oldLists"). Default order is by name."""
     year, month = _parse_period(request)
     sort, direction = _parse_sort(request)
@@ -340,7 +340,7 @@ def directory_export(request: HttpRequest) -> HttpResponse:
     return resp
 
 
-# ---- Stamtræ: the fylgje lineage (F-011) ----
+# ---- Stamtræ: the fylgje lineage ----
 def _fylgje_forest() -> list[dict[str, Resident | list]]:
     """Build the sponsor (fylgje) tree from resolved Resident.sponsor links. Residents with no (resolved)
     sponsor are roots under "Hagemanns Ånd". Cycle-safe; siblings ordered by move-in then name."""
@@ -367,7 +367,7 @@ def stamtree(request: HttpRequest) -> HttpResponse:
     return render(request, "stamtree/stamtree.html", {"forest": _fylgje_forest()})
 
 
-# ---- Next month's list — indstilling's monthly update task (F-010) ----
+# ---- Next month's list — indstilling's monthly update task ----
 def _sync_month_roles(
     resident_id: int, workgroup: Workgroup | None, year: int, month: int, is_admin: bool
 ) -> None:
@@ -416,7 +416,7 @@ def _add_form_draft(request: HttpRequest, action: str) -> dict[str, object]:
 
 
 def _send_welcome_email(request: HttpRequest, resident: Resident) -> bool:
-    """Welcome a newly created resident with a link to set their password (F-014). Best-effort — a
+    """Welcome a newly created resident with a link to set their password. Best-effort — a
     mail failure must not undo the creation — but it is logged and reported, never swallowed: the
     caller reports delivery to the user, and a wrong DEFAULT_FROM_EMAIL (one.com refuses senders the
     SMTP account is not an alias of) must not look like success. Returns whether the mail went out."""
@@ -659,7 +659,7 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                 wg = _pick(wg_by_id, request.POST.get("workgroup", ""))
                 # Fylgje is set here rather than left for a follow-up edit: whoever adds a newcomer
                 # knows who introduced them right then, and a separate trip through the edit form is
-                # exactly the step that gets skipped, leaving holes in the stamtræ (F-011).
+                # exactly the step that gets skipped, leaving holes in the stamtræ.
                 sponsor = _pick({r.id: r for r in Resident.objects.all()}, request.POST.get("sponsor", ""))
                 with transaction.atomic():
                     r = Resident(
@@ -670,7 +670,7 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                         birthday=birthday,
                         sponsor=sponsor,
                     )
-                    r.set_unusable_password()  # they set one via the welcome/password-reset link (F-014)
+                    r.set_unusable_password()  # they set one via the welcome/password-reset link
                     r.save()
                     Residency.objects.create(
                         resident=r,

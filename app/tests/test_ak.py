@@ -1,4 +1,4 @@
-"""AK monthly kryds deduction — officer-controlled per-calendar-month schedule + reconciliation (F-009).
+"""AK monthly kryds deduction — officer-controlled per-calendar-month schedule + reconciliation.
 
 The schedule (`AkMonthlyCharge`) has one row per calendar month (1..12), seeded on/2 by the migration;
 the amount is the same every year. Applying a period charges that calendar month's amount to the

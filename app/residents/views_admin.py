@@ -1,4 +1,4 @@
-"""Public-site admin (F-002) — administrator-gated. The legacy privilege-escalation and open
+"""Public-site admin — administrator-gated. The legacy privilege-escalation and open
 mass-mailer are structurally gone; this provides the legitimate admin screens, chiefly assigning the
 monthly embedsgruppe roles."""
 
@@ -1189,7 +1189,7 @@ def preview_set(request: HttpRequest) -> HttpResponseRedirect:
     return redirect("dashboard")
 
 
-# ---- DEV-ONLY simulated clock: fast-forward the month locally to test round rollover (F-004).
+# ---- DEV-ONLY simulated clock: fast-forward the month locally to test round rollover.
 # Hard-gated on settings.DEBUG — 404 in prod, so it can never be reached there. ----
 @require_POST
 @login_required

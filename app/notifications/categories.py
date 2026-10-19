@@ -201,8 +201,6 @@ CATEGORIES: tuple[Category, ...] = _build()
 
 BY_KEY: dict[str, Category] = {c.key: c for c in CATEGORIES}
 
-GROUP_NAMES: dict[str, str] = dict(GROUPS)
-
 
 def get(key: str) -> Category:
     """The category for `key`. Raises KeyError for an unknown key: a typo at a call site must fail

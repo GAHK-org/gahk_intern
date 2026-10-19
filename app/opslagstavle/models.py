@@ -93,7 +93,7 @@ class AuthoredByResident(models.Model):
     """A post or a comment, with its author's embedsgruppe frozen at the moment it was written.
 
     The pill beside a byline (see templates/opslagstavle/_notice_card.html) is a snapshot, not a
-    lookup. Embedsgrupper rotate monthly (F-010), so resolving it on read would relabel the whole
+    lookup. Embedsgrupper rotate monthly, so resolving it on read would relabel the whole
     board every time indstilling saves a månedsliste — a post from last spring would be attributed
     to whatever group its author happens to be in this month, and the archive would spend most of
     its life wrong. Written once, it stays true.

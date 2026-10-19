@@ -1,4 +1,4 @@
-"""Søg værelse - room-application lottery (F-004).
+"""Søg værelse - room-application lottery.
 
 Fresh-start build (legacy priorities/offers were destroyed by the cascade-delete bug). Fixes: ORM,
 atomic multi-row submit (application + priorities + orlov), detail visible to owner OR indstilling
@@ -95,7 +95,7 @@ def allocate_round(month: int) -> Allocation:
 
 
 def computed_orlov_months(resident: Resident) -> int:
-    """Suggested orlov (F-004): every month the resident was NOT on the alumneliste between their
+    """Suggested orlov: every month the resident was NOT on the alumneliste between their
     move-in month and the current active period counts as leave. The list history reaches back well
     before any current resident's move-in, so a gap always means real absence, never missing data.
     Returned as a default the resident (or Indstillingen) can still override on the form."""
@@ -142,7 +142,7 @@ def soeg(request: HttpRequest) -> HttpResponse:
     suggested_orlov = computed_orlov_months(resident)
     if orlov is None:  # no existing application → default the field to the computed suggestion
         orlov = suggested_orlov
-    # Initial kvotient preview (F-004): show K on load from the existing application's numbers, if any.
+    # Initial kvotient preview: show K on load from the existing application's numbers, if any.
     # htmx recomputes it live as the resident changes the fields (see the `kvotient` fragment view).
     initial_kv = None
     if existing and resident.move_in_date:
@@ -207,7 +207,7 @@ def soeg(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def kvotient(request: HttpRequest) -> HttpResponse:
-    """htmx fragment: the resident's live kvotient for the given study-end + orlov (F-004). Computed
+    """htmx fragment: the resident's live kvotient for the given study-end + orlov. Computed
     server-side against their real move-in date and next_period() as the target, so the number always
     matches what a real application would produce — no formula duplicated in JS. Reachable any time,
     so a resident can check their K even when no room round is open."""
@@ -261,7 +261,7 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
 @require_POST
 @login_required
 def delete_application(request: HttpRequest, pk: int) -> HttpResponseRedirect:
-    """A resident withdraws their own room application (F-004), or Indstillingen removes a wrong one.
+    """A resident withdraws their own room application, or Indstillingen removes a wrong one.
     Nobody else may delete another's. Cascades priorities + orlov."""
     app = get_object_or_404(KvotientApplication, pk=pk)
     if app.resident_id == current_resident(request).pk:
@@ -401,7 +401,7 @@ def end_round(request: HttpRequest) -> HttpResponseRedirect:
     resident who was not in the round would vanish from the list. So we first copy everyone who isn't
     already on the target list forward (rooms, groups and roles), then place the winners on top.
 
-    Room rounds are musical chairs (F-004): a room is offered when its occupant leaves; the winner is
+    Room rounds are musical chairs: a room is offered when its occupant leaves; the winner is
     an existing resident who moves in, freeing THEIR room for a further round, and so on until the last
     vacancy goes to a newcomer. So after placing winners, any non-winner still left in a won room is
     the departing occupant — removed here (with their monthly roles) so the winner doesn't share the

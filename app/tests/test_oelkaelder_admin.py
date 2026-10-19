@@ -1,4 +1,4 @@
-"""ØK (role `oelkaelder`) manages the kiosk assortment/prices and corrects deposits (F-003)."""
+"""ØK (role `oelkaelder`) manages the kiosk assortment/prices and corrects deposits."""
 
 from collections.abc import Callable
 from pathlib import Path

@@ -1,6 +1,6 @@
 # Deployment runbook
 
-Target stack (scope §4): **Django 5.2 + uvicorn/ASGI** behind **nginx/Traefik**, **PostgreSQL**, **WhiteNoise**
+Stack: **Django 5.2 + uvicorn/ASGI** behind **nginx/Traefik**, **PostgreSQL**, **WhiteNoise**
 for static, on **Hetzner** with **Coolify** (deploys of the CI-built image, §4a, + Let's Encrypt TLS) or **Kamal**. MediaWiki
 stays a separate **PHP + MariaDB** app on the same box. No SPA/API — one monolith.
 
@@ -21,8 +21,6 @@ container and `S3_*` at the local S3 (SeaweedFS) container (`task services:up`),
 `task dev`/`task dev:local`/`task seed`. SQLite is available only with an explicit `DATABASE_URL`,
 such as the one set by `task test:sqlite`; media always uses the configured object storage backend.
 
-`task db:up` additionally starts MariaDB, needed only for the legacy ETL (`task etl`).
-
 **Running Django directly on the host** instead of in a container:
 ```
 task dev:local     # same Postgres+S3 containers, but Django runs on the host (task debug for pdb)
@@ -36,7 +34,7 @@ task dev:down      # stop the app container (Postgres/S3 keep running — `task 
 
 
 ## 2. Secrets / environment (prod → `app/.env.prod`, never committed)
-All are read from the environment (F-013); rotate everything at cutover (scope §5 — legacy secrets are compromised).
+All are read from the environment; rotate everything at cutover (the legacy secrets are compromised).
 ```
 DJANGO_SECRET_KEY=<64+ random chars>
 DJANGO_DEBUG=0
@@ -52,7 +50,7 @@ WIFI_PASSWORD=…  GOOGLE_CALENDAR_USER=…  GOOGLE_CALENDAR_PASSWORD=…
 INDSTILLING_EMAIL=indstillingen@gahk.dk           # recipient only, not a sender
 POSTGRES_PASSWORD=<pw>                            # for the compose postgres service
 OELKAELDER_KIOSK_IPS=<the till's server-observed source IP>   # confirm from access logs, NOT ipconfig
-VAPID_PUBLIC_KEY=…  VAPID_PRIVATE_KEY=…           # Web Push for Den Hurtige — see below
+VAPID_PUBLIC_KEY=…  VAPID_PRIVATE_KEY=…           # Web Push for notifications — see below
 VAPID_ADMIN_EMAIL=autosvar@gahk.dk                # real address: push services report failures here
 S3_BUCKET=…  S3_LOCATION=fsn1  S3_ACCESS_KEY=…  S3_SECRET_KEY=…   # media object storage — see §4c
 AWS_REQUEST_CHECKSUM_CALCULATION=when_required    # ⚠ required with the above — see §4c
@@ -60,11 +58,10 @@ AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
 ```
 Store real values in Coolify's secret manager / a vault — not in git.
 
-**Web Push (Den Hurtige).** The two VAPID values are the *raw base64url* key pair, not PEM files —
+**Web Push (notifications).** The two VAPID values are the *raw base64url* key pair, not PEM files —
 `VAPID_PUBLIC_KEY` is handed to the browser as `applicationServerKey`, which must be the 65-byte
-uncompressed EC point. `app/.env.example` carries the generate/convert one-liner. Leave them unset
-and the feature degrades cleanly: the feed still works, the subscribe button just reports that push
-is not configured. **Rotating the pair invalidates every existing subscription**, so every resident
+uncompressed EC point. Leave them unset and notifications degrade to in-app only: no push prompt is
+shown, and the notification settings page says push is not set up on the server. **Rotating the pair invalidates every existing subscription**, so every resident
 would have to press the button again — settle on one pair before residents start subscribing.
 Push also requires HTTPS, which Traefik already terminates; on iOS the site must be added to the
 home screen before notifications are available at all.
@@ -85,10 +82,11 @@ so the app keeps working, and only the server log records the rejection. The one
 password reset — Django's built-in view does not suppress errors, so a bad `DEFAULT_FROM_EMAIL`
 turns "glemt kodeord" into a 500 for the resident.
 
-## 3. CI (GitHub Actions — `.github/workflows/ci.yml`) **[you: create the repo]**
-Fresh repo (do **not** import the legacy history — it contains plaintext secrets, scope §5). Jobs:
-`lint` (ruff + bandit), `test` (pytest against a Postgres service), `security` (pip-audit), `build`
-(the production image; on `main` also pushed to GHCR) and `publish` (moves `:main`, §4a). Add **Dependabot**. mypy is optional (code is currently untyped) — add later with django-stubs.
+## 3. CI (GitHub Actions — `.github/workflows/ci.yml`)
+Never import the legacy PHP repo's history — it contains plaintext secrets. Jobs: `lint` (ruff +
+bandit), `typecheck` (mypy + django-stubs), `test` (pytest against a Postgres service), `security`
+(pip-audit), `build` (the production image; on `main` also pushed to GHCR) and `publish` (moves
+`:main`, §4a). Dependabot is configured in `.github/dependabot.yml`.
 
 ## 4. Hosting (Hetzner) **[you]**
 1. Provision a Hetzner CX/CPX VM (EU/GDPR-aligned, DK-close).
@@ -235,6 +233,7 @@ idempotent, so a retry or an overlapping run is harmless.
 | Celery task | Schedule | Why |
 | --- | --- | --- |
 | `admissions.tasks.purge_expired_applications` | Daily 03:20 | Enforces the one-year application retention policy. |
+| `notifications.tasks.purge_expired_notifications` | Daily 03:30 | Deletes notifications 30 days after their TTL ran out; they already stop showing at the TTL, the month is for the admin statistics. |
 | `opslagstavle.tasks.purge_orphaned_images` | Daily 03:40 | Removes unused compose-toolbar image uploads. |
 | `reparationer.tasks.archive_finished_repairs` | Daily 03:50 | Archives completed repairs after 30 days. |
 | `events.tasks.purge_expired_events` | Daily 04:00 | Enforces event retention. |
@@ -279,11 +278,9 @@ eyeball on the first real run is simply that unused-image count.
 the reason given below; `purge_notices` does not.
 
 **`purge_notices` is the deliberate exception to the lazy-guard rule below, and should stay that
-way.** Den Hurtige purges on every feed load because its promise is "gone in 30 minutes": a message
-that should have vanished is visibly wrong to a reader within the hour, so cron failing silently has
-an immediate cost. Opslagstavlen now deletes no posts at all, and its sweep affects nothing a reader
-can see — a missed night leaves a few unreferenced files in the bucket. Putting that on every board
-request would be a bad trade. Don't "fix" the inconsistency.
+way.** Opslagstavlen deletes no posts, and its sweep affects nothing a reader can see — a missed
+night leaves a few unreferenced files in the bucket. Putting that on every board request would be a
+bad trade. Don't "fix" the inconsistency.
 
 **These do not replace the lazy guards, and the lazy guards should stay.** `ensure_previous_month_charged()`
 costs one single-row query on three pages, and it is the only thing that makes a
@@ -529,8 +526,8 @@ resident's photograph. Now only `core.media.PUBLIC_PREFIXES` — just `cms/` —
 and `Event.description`, which the logged-out front page renders; `body_media` rewrites only the
 *legacy* `/public/…` paths to `/static/legacy/`, so it never moves these off `/media/`. Every other
 prefix was checked individually and is reachable only from `/intern/` — including `oel/` and
-`public/`, which look public and are not (ølkælder lives under `/intern/oelkaelder/`, and
-`relocate_media` copies only ølkælder and værelsestjek legacy images into `media/public/`).
+`public/`, which look public and are not (ølkælder lives under `/intern/oelkaelder/`, and only
+ølkælder and værelsestjek legacy images were relocated into `media/public/`).
 
 **If a front-page image ever goes missing, this list is the first thing to check.** The gate is a
 blanket `login_required` per prefix, not per-object: any logged-in resident can fetch any non-`cms/`
@@ -571,7 +568,7 @@ second authority deleting backups on its own schedule, and if the two ever disag
 silently. What the bucket SHOULD clean up is what versioning leaves behind when Coolify prunes - see
 below.
 
-Offsets matter: §4b already runs tasks at 03:20, 03:40, 03:50 and 04:00, so backups sit in the
+Offsets matter: §4b already runs tasks at 03:05, 03:20, 03:30, 03:40, 03:50 and 04:00, so backups sit in the
 02:00-02:40 window and never overlap a purge on this small box. Coolify evaluates cron on the **host
 clock (UTC)** while Django's `TIME_ZONE` is `Europe/Copenhagen`.
 
@@ -613,7 +610,7 @@ so keep those keys somewhere outside Hetzner or you can read that backup only by
 is in it.
 
 Note also that a 30-day backup retention means applicant data deleted by `purge_applications`
-survives up to 30 days longer than F-001's one-year policy implies. Normal and defensible; written
+survives up to 30 days longer than the applications' one-year policy implies. Normal and defensible; written
 down here so it is a decision rather than a discovery.
 
 #### Verifying a backup, and rehearsing a restore
@@ -655,15 +652,9 @@ Two endpoints, both in `app/core/health.py`:
   failing check; the reason is in `web`'s log. Renaming a worker's `-n` in the compose file means
   updating `HEALTH_PROCESSES` to match.
 
-## 5. Data migration to prod
-```
-mysqldump the live gahk_dk  →  load into the MariaDB staging container
-task etl          # seed_rooms + all etl_* + reset_sequences   (needs LEGACY_DB_* env pointing at staging)
-task etl:verify   # count diff legacy ↔ clean (expect residents/residencies/kvotient/deposits lower; rest equal)
-python manage.py relocate_media   # copy referenced legacy images into MEDIA_ROOT
-```
-Encoding: connection charset is utf8mb3 — check per-table charsets, watch latin1→utf8 mojibake (02-schema-etl §1.4/A2).
-**Carve out the `wiki*`-prefixed tables** — they belong to MediaWiki (MariaDB), not the Postgres ETL.
+## 5. Data maintenance
+The data migration from the legacy PHP site is done, and its ETL has been removed from the repo (it
+is in the git history). Legacy passwords are still upgraded on login (`core.hashers`).
 
 To start a photo-album import over (a botched Dropbox folder, say), `python manage.py
 delete_photo_album --album <id>` or `--folder <yyyy|Andet>` deletes the tree, its media and its
@@ -671,7 +662,7 @@ stored files, locks or not. It asks for a typed confirmation code and refuses an
 2026-10-01 on (`PHOTO_ALBUM_DELETE_PROTECTED_FROM` moves that date, never into the future), so
 albums in real use are never at risk. Run it with `docker exec -it` — it needs a terminal.
 
-## 6. MediaWiki workstream (keep, don't rewrite — scope §3) **[you]**
+## 6. MediaWiki workstream (keep, don't rewrite) **[you]**
 - It currently **shares the `gahk_dk` DB** (user `gahk_dk`, table prefix `wiki`; `LocalSettings.php`).
   Split the `wiki*` tables into their **own MariaDB database** on the new box.
 - **Upgrade to the current LTS (1.43, supported to Dec 2027)**. MediaWiki upgrades span at most two LTS
@@ -702,14 +693,13 @@ albums in real use are never at risk. Run it with `docker exec -it` — it needs
       OUT — that is the live, ETL-populated content, the only prefix the gate leaves anonymous, and
       the one that actually has something to lose. Then log in and check opslagstavlen and
       begivenheder. All of these fail silently: the page returns 200 either way.
-- [ ] `task etl` + `etl_verify` + `relocate_media` run against a fresh dump; counts sane.
 - [ ] `createsuperuser`; assign initial roles via `/admin/roles`.
 - [ ] `sendtestemail` green for **both** sender addresses (§2); one real "glemt kodeord" round-trip.
 - [ ] Scheduled tasks created in Coolify (§4b); `purge_applications --dry-run` reviewed before the
       daily job is enabled, and each task run once by hand so its log is known-good.
 - [ ] Backups configured on all three Coolify resources (§4d); an **unattended** run confirmed in
       the bucket, and one restore rehearsed end-to-end with row counts checked.
-- [ ] Interim hardening done on the *old* box until DNS flips (scope §8: lock KCFinder, gate mass-mailers,
+- [ ] Interim hardening done on the *old* box until DNS flips (lock KCFinder, gate mass-mailers,
       delete `phpinfo.php`, pull & archive access logs).
 - [ ] MediaWiki migrated + upgraded to 1.43, reachable behind the proxy.
 - [ ] Staging smoke-tested; behavioural diff vs the live PHP site on key pages.

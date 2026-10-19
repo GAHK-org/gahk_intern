@@ -1,4 +1,4 @@
-"""Ølkælder — beer-cellar POS (F-003).
+"""Ølkælder — beer-cellar POS.
 
 Fixes baked in: all money is **integer øre** (never float); a shopper's **balance is derived from the
 ledger** (deposits - purchase shares of valid transactions), eliminating the non-atomic read-modify-write

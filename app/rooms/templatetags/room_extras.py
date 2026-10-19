@@ -1,4 +1,4 @@
-"""Template filters for the room lottery (F-004)."""
+"""Template filters for the room lottery."""
 
 from django import template
 

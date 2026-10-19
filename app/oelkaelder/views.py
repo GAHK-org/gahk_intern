@@ -1,4 +1,4 @@
-"""Ølkælder views (F-003). Kiosk (LAN-IP gated, no login) for the till; member balance view;
+"""Ølkælder views. Kiosk (LAN-IP gated, no login) for the till; member balance view;
 ølkælder-admin screens for deposits/balances."""
 
 import json
@@ -350,7 +350,7 @@ def _kr(ore: int) -> str:
     return f"{ore / 100:.2f}".replace(".", ",")
 
 
-# ---- Salgsoverblik (ØK role): every sale, one row per transaction (F-003, legacy `allsales`) ----
+# ---- Salgsoverblik (ØK role): every sale, one row per transaction (legacy `allsales`) ----
 PAGE_SIZE = 50
 EXPORT_MAX_ROWS = 5000
 DEFAULT_RANGE_DAYS = 90

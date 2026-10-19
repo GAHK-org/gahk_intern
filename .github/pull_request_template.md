@@ -2,7 +2,7 @@
 
 ## Summary
 
-<!-- What does this PR change and why? 1–3 sentences. Link any feature/spec IDs (e.g. F-013) or issues. -->
+<!-- What does this PR change and why? 1–3 sentences. Link any specs in spec/features/ or issues. -->
 
 -
 

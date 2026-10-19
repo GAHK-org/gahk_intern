@@ -9,7 +9,7 @@ class ResidentAdmin(admin.ModelAdmin):
     search_fields = ("email", "first_name", "last_name")
     ordering = ("first_name", "last_name")
     # NOTE: password is shown raw here for now; a proper ResidentAdmin with set/change-password
-    # forms comes with the auth feature build (F-014).
+    # forms comes with the auth feature build.
 
 
 @admin.register(Residency)

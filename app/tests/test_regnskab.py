@@ -1,4 +1,4 @@
-"""Regnskab (accounting) role: gated settlement view of moved-out residents' AK + ØK status (F-010)."""
+"""Regnskab (accounting) role: gated settlement view of moved-out residents' AK + ØK status."""
 
 from collections.abc import Callable
 

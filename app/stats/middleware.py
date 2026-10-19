@@ -1,4 +1,4 @@
-"""Front-page visit counter (F-002/F-011/F-013).
+"""Front-page visit counter.
 
 Counts visits to the front page **only**. The visitor IP is stored as an HMAC-SHA256 hash (keyed by
 VISIT_COUNTER_HMAC_KEY) — never raw — and counts are kept indefinitely. A 30-minute dedup window per

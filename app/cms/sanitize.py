@@ -1,4 +1,4 @@
-"""HTML sanitization for admin-edited CMS content (F-006 hardening).
+"""HTML sanitization for admin-edited CMS content.
 
 The CMS body is rendered with `|safe`, so admin input must be scrubbed of scripts/handlers before it is
 stored. nh3 (ammonia) always strips <script>, event handlers and dangerous URL schemes, and sanitizes

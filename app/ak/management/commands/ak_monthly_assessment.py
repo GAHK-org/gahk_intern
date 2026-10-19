@@ -1,4 +1,4 @@
-"""Monthly AK assessment (F-009): charge every resident on last month's alumneliste the configured
+"""Monthly AK assessment: charge every resident on last month's alumneliste the configured
 krydser for that month. Run on the night of the 1st, once the month is over, so the list it reads is
 the month's final one. The amount and whether a month is charged is set by AK officers per calendar
 month via the AK schedule (`AkMonthlyCharge`, same amount every year); this command applies it through

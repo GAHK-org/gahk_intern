@@ -251,11 +251,6 @@ class Event(models.Model):
         return f"{self.title} ({self.starts_at:%d.%m.%Y})"
 
     @property
-    def effective_end(self) -> datetime.datetime:
-        """When this is over, for retention and for "er den forbi?"."""
-        return self.ends_at or self.starts_at
-
-    @property
     def is_cancelled(self) -> bool:
         return self.cancelled_at is not None
 

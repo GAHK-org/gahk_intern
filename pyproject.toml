@@ -15,7 +15,6 @@ dependencies = [
     "python-dotenv>=1.0",
     "psycopg[binary,pool]>=3.1", # pool: Django's connection pool, which ASGI needs (config/settings.py)
     "whitenoise>=6.6",
-    "pymysql>=1.1", # ETL source reader (legacy MariaDB); harmless in prod
     "openpyxl>=3.1", # alumneliste Excel (.xlsx) export
     # >=0.3 is required, not cosmetic: core.markdown uses nh3.clean(attribute_filter=...), which
     # older 0.2 wheels do not accept — and a fresh resolve on one would TypeError at import in
@@ -26,7 +25,7 @@ dependencies = [
     # import, and core/links.py has no URL scanner at all — see that module on why the rules are
     # not hand-rolled.
     "markdown-it-py[linkify]>=4.0", # Markdown for resident-authored opslag; raw HTML off at the parser
-    "pywebpush>=2.4", # Web Push (VAPID + payload encryption) for Den Hurtige + opslagstavlen
+    "pywebpush>=2.4", # Web Push (VAPID + payload encryption) for notifications (core.push)
     # Object storage for MEDIA_ROOT (Hetzner Object Storage, S3-compatible). The [s3] extra pulls
     # boto3. >=1.14 is required, not cosmetic: it is the release that reads per-backend OPTIONS out
     # of STORAGES, which is the only configuration style this project uses — on 1.13 every OPTIONS

@@ -40,9 +40,8 @@ from core.storage import MediaS3Storage
 from opslagstavle.models import Notice
 from rooms.models import RoomConditionScore
 
-# A /media/ reference inside stored HTML or a stored URL column. Deliberately not the REF regex in
-# cms.sync_cms_media: that one matches the *legacy* /public/image/ paths, which are a different
-# migration and live under static/, not here.
+# A /media/ reference inside stored HTML or a stored URL column. Deliberately not the *legacy*
+# /public/image/ paths in CMS content: those live under static/legacy/, not here.
 MEDIA_REF = re.compile(r"/media/([^\s\"'()<>]+)")
 
 
@@ -121,7 +120,6 @@ class Command(BaseCommand):
         #    134 of them in production. Counting those as references made every one of them a
         #    permanent entry in the MISSING list, which is the section that has to stay empty to be
         #    worth reading: an operator who is used to seeing 134 there will not notice the 135th.
-        #    relocate_media.legacy_image_segments skips them for the same reason.
         for model in self._concrete_models():
             fields = [f for f in model._meta.get_fields() if isinstance(f, models.FileField)]
             if not fields:

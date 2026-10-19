@@ -139,10 +139,6 @@ class NotificationPreference(models.Model):
             models.UniqueConstraint(fields=["resident", "category"], name="uniq_notification_preference")
         ]
 
-    @property
-    def is_default(self) -> bool:
-        return self.in_app and self.push and self.vibrate
-
 
 class NotificationSettings(models.Model):
     """The resident-wide switches that are not per category. Missing row = the defaults below."""

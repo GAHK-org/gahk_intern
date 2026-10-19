@@ -1,8 +1,8 @@
 """Den Hurtige — the intern feed of short-lived urgent messages that replaces the Messenger group.
 
-Anyone who can reach it may post, comment and subscribe to push — but access itself is gated by
-den_hurtige.access, and individual channels may narrow that further (den_hurtige.channels).
-Notification fan-out lives in services.py and runs off the request thread.
+Anyone who can reach it may post and comment — but access itself is gated by den_hurtige.access,
+and individual channels may narrow that further (den_hurtige.channels). Who is notified is decided
+in services.py; delivery is the notifications app's.
 
 MESSAGES LEAVE THE FEED ON A TIMER AND ARE THEN ARCHIVED, NEVER DELETED (see models.py for the
 reversal and why). This module is where that is enforced, because "archived" is a read of the clock

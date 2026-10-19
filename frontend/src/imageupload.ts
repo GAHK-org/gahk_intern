@@ -1,5 +1,5 @@
 // Downscale/recompress image uploads in the browser before the form submits, so room-inspection
-// photos (F-005) stay small — big phone photos become ~a few hundred KB instead of multiple MB.
+// photos stay small — big phone photos become ~a few hundred KB instead of multiple MB.
 // No-op on pages without an image file input. Server keeps a hard size cap as a backstop.
 //
 // ANIMATIONS ARE THE EXCEPTION AND GO UP UNTOUCHED — see isAnimatedUpload. Everything below works
@@ -22,7 +22,7 @@ const PREVIEW_QUALITY = 0.82;
 /** Downscale one image to MAX_DIM/QUALITY, returning the original if there is nothing to gain.
  *
  * Exported because opslagstavlen uploads via fetch rather than a form submit, so it cannot use
- * hookImageForms below — and a second canvas downscaler with its own parameters is exactly the
+ * the delegated form-submit listener below — and a second canvas downscaler with its own parameters is exactly the
  * drift worth avoiding. */
 async function redraw(file: File, maxDim: number, quality: number): Promise<Blob | null> {
   // The shared canvas step. Extracted when Arkiv wanted a second size: one downscaler with a
@@ -178,14 +178,6 @@ document.addEventListener(
   },
   true,
 );
-
-/** Kept as a no-op for callers that used to re-arm forms after a swap.
- *
- * The delegated listener above needs no rescan, so there is nothing to do — but the export stays
- * so an out-of-tree caller does not break, and so this note is findable from the call site. */
-export function hookImageForms(_root: ParentNode = document): void {
-  /* nothing to do: submit is handled by the delegated capture listener above */
-}
 
 // --- Camera and clipboard (#126) ------------------------------------------------------------------
 

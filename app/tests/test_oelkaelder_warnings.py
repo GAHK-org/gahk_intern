@@ -1,5 +1,5 @@
 """ØK debt warnings (edge-triggered on purchase), configurable interest, and the derived balance
-including adjustments (F-003)."""
+including adjustments."""
 
 from collections.abc import Callable
 
