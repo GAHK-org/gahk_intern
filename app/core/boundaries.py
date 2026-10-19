@@ -50,7 +50,6 @@ BASELINE = frozenset(
         "cms.PageRedirect.created_by",
         "cms.PageVersion.created_by",
         "core.PushSubscription.user",
-        "den_hurtige.ChannelMute.resident",
         "den_hurtige.QuickComment.author",
         "den_hurtige.QuickPost.author",
         "den_hurtige.QuickReaction.author",

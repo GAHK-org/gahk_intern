@@ -10,10 +10,11 @@ from django.db import transaction
 from django.test import Client
 
 from ak.models import AkEntry, AkMonthlyCharge
+from ak.services import charge_period
 from core import boundaries, domain_events
 from core.models import Room
 from residents.api import MemberAreaVisited
-from residents.models import Residency, active_period
+from residents.models import Residency
 
 
 @dataclass(frozen=True)
@@ -94,12 +95,12 @@ def test_ak_is_subscribed_to_member_area_visits() -> None:
 
 
 @pytest.mark.django_db
-def test_opening_the_dashboard_books_this_months_ak_charge(
+def test_opening_the_dashboard_charges_the_month_that_just_ended(
     make_resident: Callable, django_capture_on_commit_callbacks: Callable
 ) -> None:
     """What residents.views.dashboard used to do by importing ak.services, now done by publishing an
     event that AK handles. Same outcome, and identity no longer depends on AK."""
-    year, month = active_period()
+    year, month = charge_period()
     AkMonthlyCharge.objects.update_or_create(month=month, defaults={"active": True, "krydser": 2})
     member = make_resident(email="dashboard@gahk.dk")
     room = Room.objects.create(legacy_index=901, number=901, floor="stuen", side="mod gaden")
@@ -147,3 +148,53 @@ def test_events_has_no_accessor_onto_the_board() -> None:
     from events.models import Event
 
     assert not hasattr(Event, "notices")
+
+
+# --- extension points: how a lower layer shows a feature's content --------------------------------
+
+
+def test_events_puts_its_card_on_the_dashboard_through_residents_api() -> None:
+    """The dashboard is identity's page; begivenheder's card reaches it by registration, because
+    identity may not import a feature."""
+    from events.handlers import agenda_card
+    from residents import api as residents_api
+
+    assert agenda_card in residents_api._dashboard_card_providers
+
+
+@pytest.mark.django_db
+def test_the_dashboard_card_answers_to_the_events_rollout_gate(
+    make_resident: Callable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Behind the gate the card stays and says so, with no agenda and no link to the calendar."""
+    from events import access as events_access
+    from residents.api import Role
+
+    monkeypatch.setattr(events_access, "ACCESS_ROLES", (Role.INSPEKTION,))
+    client = Client()
+    client.force_login(make_resident(email="gated@gahk.dk"))
+
+    body = client.get("/intern/").content.decode()
+
+    assert "Begivenheder på GAHK" in body
+    assert "Begivenheder er ikke åbnet for dig endnu." in body
+    assert "Åbn kalenderen" not in body
+
+
+def test_den_hurtige_registers_a_notification_category_per_room() -> None:
+    """notifications is platform and no longer imports den_hurtige.channels to build these."""
+    from den_hurtige import channels
+    from notifications import categories
+
+    registered = {c.key: c for c in categories.all_categories()}
+
+    for channel in channels.CHANNELS:
+        room = registered[channels.notification_category(channel.slug)]
+        assert (room.group, room.in_app, room.anchor) == ("chat", False, f"rum-{channel.slug}")
+
+
+def test_notifications_has_no_accessor_onto_residents() -> None:
+    from residents.api import Resident
+
+    for accessor in ("notifications", "notification_preferences", "notification_settings"):
+        assert not hasattr(Resident, accessor)

@@ -22,3 +22,5 @@ class DenHurtigeConfig(AppConfig):
         # Photos on live messages come from the server's disk, archived ones from the bucket.
         register_cacheable("quick_posts/", post_image_is_live)
         register_cacheable("quick_comments/", comment_image_is_live)
+
+        from . import handlers  # noqa: F401 — registers this app's hooks into other domains

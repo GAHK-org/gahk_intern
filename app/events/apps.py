@@ -10,3 +10,5 @@ class EventsConfig(AppConfig):
         from . import live
 
         live.register()
+
+        from . import handlers  # noqa: F401 — registers this app's hooks into other domains

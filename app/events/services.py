@@ -34,8 +34,7 @@ from django.db.models import QuerySet
 from core import push
 from core.clock import current_datetime
 from core.markdown import plain_text
-from notifications import categories
-from notifications import services as notifications
+from notifications import api as notifications
 from residents.api import Resident, roster_resident_ids
 
 from . import access
@@ -272,7 +271,7 @@ def notify_new_event(event: Event) -> None:
     """A new event goes to everyone who may see it — that is the point of leaving Facebook."""
     notifications.notify(
         _audience(event),
-        category=categories.EVENTS_NEW,
+        category=notifications.EVENTS_NEW,
         title=event.title,
         body=push.preview(f"{_when(event)} · {plain_text(event.description)}"),
         url=_url(event),
@@ -285,7 +284,7 @@ def notify_changed(event: Event) -> None:
     going = event.rsvps.filter(answer=Answer.JA).values("resident_id")
     notifications.notify(
         _audience(event).filter(pk__in=going),
-        category=categories.EVENTS_CHANGES,
+        category=notifications.EVENTS_CHANGES,
         title=f"Ændret: {event.title}",
         body=push.preview(f"Nu {_when(event)}"),
         url=_url(event),
@@ -297,7 +296,7 @@ def notify_cancelled(event: Event) -> None:
     going = event.rsvps.filter(answer=Answer.JA).values("resident_id")
     notifications.notify(
         _audience(event).filter(pk__in=going),
-        category=categories.EVENTS_CHANGES,
+        category=notifications.EVENTS_CHANGES,
         title=f"Aflyst: {event.title}",
         body=push.preview(f"{_when(event)} bliver ikke til noget."),
         url=_url(event),
@@ -340,7 +339,7 @@ def notify_new_comment(comment: EventComment) -> None:
     ):
         notifications.notify_grouped(
             host_id,
-            category=categories.EVENTS_COMMENTS,
+            category=notifications.EVENTS_COMMENTS,
             group_key=f"events.comments:{event.pk}",
             actor=comment.author,
             verb="kommenterede",
@@ -396,7 +395,7 @@ def send_deadline_reminder(event: Event, now: datetime.datetime | None = None) -
 
     return notifications.notify(
         deadline_reminder_audience(event),
-        category=categories.EVENTS_PERSONAL,
+        category=notifications.EVENTS_PERSONAL,
         title=event.title,
         body=f"Svarfrist {event.rsvp_deadline_at:%d.%m kl. %H.%M} — har du husket at svare?",
         url=_url(event),
@@ -429,7 +428,7 @@ def notify_promoted(rsvp: Rsvp) -> None:
     """A promotion is personal — exactly one person. Nobody else needs to know a seat moved."""
     notifications.notify(
         [rsvp.resident_id],
-        category=categories.EVENTS_PERSONAL,
+        category=notifications.EVENTS_PERSONAL,
         title=rsvp.event.title,
         body="Du er rykket op fra ventelisten og har nu en plads.",
         url=_url(rsvp.event),

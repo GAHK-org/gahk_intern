@@ -40,8 +40,7 @@ from django.views.decorators.http import require_POST
 from core.clock import current_date, current_datetime
 from core.reactions import CREATED, apply_toggle, reaction_rows
 from core.uploads import attached_image
-from notifications.categories import chat_room_key
-from notifications.models import NotificationPreference
+from notifications.api import push_turned_off
 from residents.api import current_resident, effective_roles
 
 from . import channels, live, services
@@ -259,11 +258,8 @@ def _channel_context(request: HttpRequest, channel: Channel) -> dict[str, object
         "channel": channel,
         "tabs": _tabs(request, channel),
         # The room's bell links to its row on the notifications settings page; "muted" is whether
-        # this resident turned push for the room off there. A preference row exists only for a
-        # category somebody changed, so no row is "on".
-        "muted": NotificationPreference.objects.filter(
-            resident=current_resident(request), category=chat_room_key(channel.slug), push=False
-        ).exists(),
+        # this resident turned push for the room off there.
+        "muted": push_turned_off(current_resident(request).pk, channels.notification_category(channel.slug)),
     }
 
 

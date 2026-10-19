@@ -18,7 +18,7 @@ Run the checks locally with `task boundaries`. CI runs the same checks on every 
 flowchart TD
     subgraph composition["composition — may import anything"]
         config["config (urls)"]
-        mgmt["core.management (seed, ETL)"]
+        mgmt["core.management (seed, operator commands)"]
         ctx["core.context_processors (sidebar)"]
         siteadmin["residents.views_admin (site admin)"]
     end
@@ -29,7 +29,8 @@ flowchart TD
         others["arkiv · cms · den_hurtige · photo_album · reparationer · rooms"]
     end
     subgraph platform["platform — knows who the user is"]
-        push["core.push"] ~~~ rollout["core.rollout"] ~~~ tasks["core.tasks"]
+        notifications --> push["core.push"]
+        rollout["core.rollout"] ~~~ tasks["core.tasks"]
     end
     identity["identity: residents"]
     kernel["kernel: core"]
@@ -40,7 +41,7 @@ flowchart TD
 |---|---|---|
 | composition | `config`, `core.management`, `core.context_processors`, `residents.views_admin`, `residents.urls_admin` | anything, including internals. Wiring and operator tooling only, never business rules. |
 | features | `admissions`, `ak`, `arkiv`, `cms`, `den_hurtige`, `events`, `oelkaelder`, `opslagstavle`, `photo_album`, `regnskab`, `reparationer`, `rooms`, `stats` | the `api` of the layers below; a sibling feature's `api` only if `tach.toml` lists it in `depends_on` |
-| platform | `core.push`, `core.rollout`, `core.tasks` | identity's `api`, kernel |
+| platform | `notifications`, `core.push`, `core.rollout`, `core.tasks` | the rest of platform (`notifications` only via its `api`), identity's `api`, kernel |
 | identity | `residents` | kernel |
 | kernel | `core` (everything else in it) | nothing above it |
 
@@ -66,7 +67,7 @@ app/<domain>/
 | **Query** | function → DTO, primitive, or a lazy queryset of **ids** | `events.api.event_summaries(ids) -> dict[int, EventSummary]` |
 | **Command** | function that changes this domain's state and enforces its invariants | `residents.api.place_on_roster(resident_id, period, room_id)` |
 | **Event** | frozen dataclass of ids and primitives, subclassing `core.domain_events.DomainEvent` | `residents.api.MemberAreaVisited(resident_id, year, month)` |
-| **Extension point** | a `register_…` function for "show me your content about X" | `events.api.register_mention_provider(provider)` |
+| **Extension point** | a `register_…` function for "show me your content about X" | `events.api.register_mention_provider(provider)`, `residents.api.register_dashboard_card(provider)` |
 
 DTOs are frozen dataclasses. Returning a model instance is what the rule exists to prevent: whoever
 receives it can read every relation on it and call `.save()`.
@@ -87,7 +88,7 @@ residents between rooms on next month's roster. The roster belongs to identity, 
 `Residency` and `RoleAssignment` rows itself.
 
 **Something happened, and someone else cares → event.** Opening the member dashboard is AK's cue to
-book the month's charge if the cron job missed it. `residents` publishes `MemberAreaVisited`;
+charge the month that just ended if the cron job missed it. `residents` publishes `MemberAreaVisited`;
 `ak/handlers.py` subscribes. Identity no longer imports AK, and doesn't know AK exists.
 
 ```python
@@ -104,7 +105,7 @@ domain_events.publish(MemberAreaVisited(resident_id=..., year=year, month=month)
 # ak/handlers.py — imported from AkConfig.ready()
 @subscribe(MemberAreaVisited)
 def book_monthly_charge_backstop(event: MemberAreaVisited) -> None:
-    ensure_active_month_applied()
+    ensure_previous_month_charged()
 ```
 
 Handlers run **after the publisher's transaction commits** (`transaction.on_commit`, `robust=True`).
@@ -117,6 +118,19 @@ posts that announce it. Querying `opslagstavle` from `events` would create an im
 the board already depends on events. Instead `events.api` offers `register_mention_provider`;
 `opslagstavle/handlers.py` registers one, and the event page renders whatever sections come back.
 The dependency now points one way only.
+
+The same inversion is how a lower layer shows a feature's content, since it may not import one at
+all. The member dashboard is identity's page, and its "Begivenheder på GAHK" card is begivenheder's:
+`residents.api` offers `register_dashboard_card`, and `events/handlers.py` registers a provider that
+renders the card. Likewise Den Hurtige's one-notification-category-per-room: `den_hurtige/handlers.py`
+hands them to `notifications.api.register_categories`, where `notifications` used to import the
+channel registry to build them.
+
+**Tell a resident something → `notifications.api`.** In-app and push notifications are platform,
+below every feature. A feature decides the audience and the wording and calls
+`notifications.api.notify(...)` (or `notify_grouped` for "Anders og Bente svarede"); notifications
+decides the rest from each resident's settings. `notifications` imports no feature: its demo rows
+get their links to seeded events, posts and messages from `seed_demo`, which is composition.
 
 **A report across domains → its own module.** `regnskab`, the settlement of a moved-out resident,
 combines who moved out (identity), the AK balance and the ølkælder balance. It owns no data, so it
@@ -182,7 +196,7 @@ doesn't need.
 
 Burn these down opportunistically, one PR at a time:
 
-1. **`core.boundaries.BASELINE`**: 40 cross-domain relations that still create reverse accessors,
+1. **`core.boundaries.BASELINE`**: 39 cross-domain relations that still create reverse accessors,
    almost all `FK → Resident` (`resident.notices`, `resident.shopper_accounts`, …). Each fix is
    `related_name="+"`, a migration with no SQL, and moving any user of the accessor to an `api` call.
    `opslagstavle.Notice.event` is the worked example.
@@ -191,6 +205,6 @@ Burn these down opportunistically, one PR at a time:
    migration.
 3. **`Resident` is exported as a model**, not a DTO (see *Identity*). Feature code that runs
    `Resident.objects…` at runtime could move to `residents.api` queries over time.
-4. **The composition layer can see everything.** `seed_demo`, `etl_verify` and the site-admin
+4. **The composition layer can see everything.** `seed_demo`, `audit_media` and the site-admin
    worker-jobs page use other domains' models directly. That's acceptable for operator tooling,
    but the composition `[[interfaces]]` block could be narrowed per module.

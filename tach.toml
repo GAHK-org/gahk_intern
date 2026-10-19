@@ -20,9 +20,9 @@ forbid_circular_dependencies = true
 ignore_type_checking_imports = true   # `if TYPE_CHECKING:` imports are annotations, not coupling
 
 layers = [
-    "composition",  # wires domains together: URLs, sidebar, site-admin console, seed/ETL commands
+    "composition",  # wires domains together: URLs, sidebar, site-admin console, seed/operator commands
     "features",     # one module per business domain
-    "platform",     # shared services that need to know who the user is (push, rollout gates)
+    "platform",     # shared services that need to know who the user is (notifications, push, rollout gates)
     "identity",     # residents: who somebody is, their room and roles this month
     "kernel",       # core: framework-level helpers with no domain knowledge
 ]
@@ -38,7 +38,7 @@ require_ignore_directive_reasons = "error" # `# tach-ignore(why) ...`, never a b
 [[modules]]
 paths = [
     "config",
-    "core.management",          # seed_demo, etl_verify, audit_media: deliberately cross-domain
+    "core.management",          # seed_demo, audit_media: deliberately cross-domain
     "core.context_processors",  # the sidebar asks every feature's rollout gate
     "residents.views_admin",    # site-admin console: worker jobs of every domain, roles, preview
     "residents.urls_admin",
@@ -77,6 +77,13 @@ paths = ["core.push", "core.rollout", "core.tasks"]
 layer = "platform"
 utility = true
 
+# In-app and push notifications: how every feature reaches people, so it sits below all of them and
+# imports none. A feature's own categories come in through notifications.api.register_categories
+# (Den Hurtige's rooms); its demo rows get their links to features' content from seed_demo.
+[[modules]]
+path = "notifications"
+layer = "platform"
+
 [[modules]]
 path = "residents"
 layer = "identity"
@@ -91,15 +98,15 @@ utility = true
 [[interfaces]]
 expose = ["api", "api\\..*"]
 from = [
-    "residents", "admissions", "ak", "arkiv", "cms", "den_hurtige", "events", "oelkaelder",
-    "opslagstavle", "photo_album", "regnskab", "reparationer", "rooms", "stats",
+    "residents", "notifications", "admissions", "ak", "arkiv", "cms", "den_hurtige", "events",
+    "oelkaelder", "opslagstavle", "photo_album", "regnskab", "reparationer", "rooms", "stats",
 ]
 
 [[interfaces]]
 expose = [".*"]
 from = [
-    "residents", "admissions", "ak", "arkiv", "cms", "den_hurtige", "events", "oelkaelder",
-    "opslagstavle", "photo_album", "regnskab", "reparationer", "rooms", "stats",
+    "residents", "notifications", "admissions", "ak", "arkiv", "cms", "den_hurtige", "events",
+    "oelkaelder", "opslagstavle", "photo_album", "regnskab", "reparationer", "rooms", "stats",
 ]
 visibility = [
     "config", "core.management", "core.context_processors", "residents.views_admin", "residents.urls_admin",

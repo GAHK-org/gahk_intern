@@ -12,15 +12,17 @@ Rows are written directly rather than through services.notify: that would apply 
 try to push, and the point here is a fixed picture. The links go to seeded events, opslag and Den
 Hurtige posts, so clicking one lands somewhere real. beboer@ also gets one muted room, so the
 settings page shows a row that differs from the default.
+
+Those links are other domains' content, and this app is platform: it may not import the features
+whose rows it points at. So seed_demo, which wires every domain together anyway, looks them up and
+hands them in as a `DemoContent`.
 """
 
 import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from django.urls import reverse
-
-from residents.models import Resident
+from residents.api import Resident
 
 from . import categories
 from .categories import Importance
@@ -43,42 +45,25 @@ class _Row:
     actors: tuple[Resident, ...] = ()
 
 
-def _links(now: datetime) -> tuple[str, str, str, str, str, str]:
-    """(event url, event title, other event title, notice url, chat url, chat preview), falling back
-    to the feature's front page when that feature seeded nothing."""
-    from den_hurtige import channels
-    from den_hurtige.models import QuickPost
-    from events.models import Event
-    from opslagstavle.models import Notice
+@dataclass(frozen=True)
+class DemoContent:
+    """What the demo rows point at in the features seeded before them."""
 
-    events = list(
-        Event.objects.filter(cancelled_at__isnull=True, starts_at__gt=now).order_by("starts_at")[:2]
-    )
-    event_url = reverse("events:detail", args=[events[0].pk]) if events else reverse("events:index")
-    event_title = events[0].title if events else "Fællesspisning"
-    other_title = events[1].title if len(events) > 1 else "Brætspilsaften"
-    notice = Notice.objects.order_by("-created_at").first()
-    notice_url = f"/intern/opslagstavle/{notice.pk}" if notice else "/intern/opslagstavle/"
-    post = QuickPost.objects.order_by("-created_at").first()
-    if post is None:
-        return event_url, event_title, other_title, notice_url, "/intern/den-hurtige/", ""
-    channel = channels.lookup(post.channel) or channels.DEFAULT
-    return (
-        event_url,
-        event_title,
-        other_title,
-        notice_url,
-        f"{channel.url}?traad={post.pk}",
-        post.content[:60],
-    )
+    event_url: str
+    event_title: str
+    other_event_title: str
+    notice_url: str
+    chat_url: str
+    chat_preview: str
+    # The category of the Den Hurtige room beboer@ has muted; None mutes nothing.
+    muted_room: str | None = None
 
 
-def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
+def seed(residents: list[Resident], now: datetime, rng: random.Random, content: DemoContent) -> int:
     logins = [r for r in residents if r.email in LOGINS]
     others = [r for r in residents if r.email not in LOGINS]
     if not logins or len(others) < 3:
         return 0
-    event_url, event_title, other_title, notice_url, chat_url, chat_preview = _links(now)
     rows: list[Notification] = []
     for resident in logins:
         a, b, c = rng.sample(others, 3)
@@ -94,9 +79,9 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
             _Row(
                 categories.EVENTS_CHANGES,
                 Importance.HOEJ,
-                f"Ændret: {event_title}",
+                f"Ændret: {content.event_title}",
                 "Starter nu en halv time senere.",
-                event_url,
+                content.event_url,
                 timedelta(hours=2),
             ),
             _Row(
@@ -104,7 +89,7 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
                 Importance.NORMAL,
                 f"{a.first_name} og {b.first_name} svarede",
                 "God idé, jeg tager kage med!",
-                notice_url,
+                content.notice_url,
                 timedelta(hours=5),
                 group_key="posts.replies:demo",
                 actors=(a, b),
@@ -113,8 +98,8 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
                 categories.CHAT_LIKES,
                 Importance.LAV,
                 "3 personer reagerede på din besked",
-                f"👍 {chat_preview}".strip(),
-                chat_url,
+                f"👍 {content.chat_preview}".strip(),
+                content.chat_url,
                 timedelta(days=1),
                 group_key="chat.likes:demo",
                 actors=(a, b, c),
@@ -122,9 +107,9 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
             _Row(
                 categories.EVENTS_NEW,
                 Importance.NORMAL,
-                other_title,
+                content.other_event_title,
                 "Alle er velkomne.",
-                event_url,
+                content.event_url,
                 timedelta(days=2),
                 seen=True,
             ),
@@ -133,7 +118,7 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
                 Importance.NORMAL,
                 "Husmøde i næste uge",
                 "Dagsordenen ligger på opslagstavlen.",
-                notice_url,
+                content.notice_url,
                 timedelta(days=3),
                 seen=True,
             ),
@@ -170,12 +155,10 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
     Notification.objects.bulk_create(rows)
 
     beboer = next((r for r in logins if r.email == "beboer@gahk.dk"), None)
-    if beboer is not None:
-        from den_hurtige import channels
-
+    if beboer is not None and content.muted_room is not None:
         NotificationPreference.objects.update_or_create(
             resident=beboer,
-            category=categories.chat_room_key(channels.CHANNELS[-1].slug),
+            category=content.muted_room,
             defaults={"in_app": True, "push": False, "vibrate": False},
         )
     return len(rows)

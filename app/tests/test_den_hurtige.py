@@ -101,7 +101,7 @@ def mute(resident: Resident, slug: str) -> NotificationPreference:
     """Turn push for one room off, as the settings page does. This is what a ChannelMute row became
     (notifications migration 0002): a preference for the room's own category, push off."""
     return NotificationPreference.objects.create(
-        resident=resident, category=categories.chat_room_key(slug), push=False
+        resident=resident, category=channels.notification_category(slug), push=False
     )
 
 
@@ -648,7 +648,7 @@ def test_new_post_notifies_the_room_except_the_author(
     assert payload["url"] == FEED_URL
     row = Notification.objects.get()
     assert row.recipient_id == other.pk
-    assert row.category == categories.chat_room_key("generelt")
+    assert row.category == channels.notification_category("generelt")
     assert row.in_app is False and row.pushed is True
     assert row.expires_at == QuickPost.objects.get().expires_at  # it dies with the message
 
@@ -733,7 +733,7 @@ def test_comment_can_notify_everyone_except_the_commenter(
     by_recipient = {n.recipient_id: n for n in Notification.objects.all()}
     assert set(by_recipient) == {author.pk, bystander.pk}
     assert by_recipient[author.pk].category == categories.CHAT_REPLIES
-    assert by_recipient[bystander.pk].category == categories.chat_room_key("generelt")
+    assert by_recipient[bystander.pk].category == channels.notification_category("generelt")
     assert by_recipient[bystander.pk].url == f"{FEED_URL}?traad={post.pk}"
 
 
@@ -1709,7 +1709,7 @@ def test_every_channel_notifies_until_it_is_muted(
     client.post(FEED_URL + "opret", {"content": "Afgang 21", "kanal": OTHER, "duration": "60"})
 
     assert pushes[0][0] == [other.pk]
-    assert Notification.objects.get().category == categories.chat_room_key(OTHER)
+    assert Notification.objects.get().category == channels.notification_category(OTHER)
 
 
 def test_a_mute_silences_only_the_channel_it_names(
@@ -1808,7 +1808,7 @@ def test_a_room_with_only_vibration_off_is_not_drawn_as_muted(
     bell asks about push alone, so a room that still pushes (silently) is not drawn as muted."""
     resident = make_resident(email="a@gahk.dk")
     NotificationPreference.objects.create(
-        resident=resident, category=categories.chat_room_key(OTHER), vibrate=False
+        resident=resident, category=channels.notification_category(OTHER), vibrate=False
     )
     client.force_login(resident)
 

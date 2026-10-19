@@ -22,7 +22,7 @@ from core.danish import MONTHS
 from core.exports import csv_or_xlsx_response
 from core.models import Cleaning, Room, Workgroup
 
-from .api import MemberAreaVisited, parse_period, period_options
+from .api import MemberAreaVisited, dashboard_cards, parse_period, period_options
 from .forms import ProfileEditForm, ResidentEditForm
 from .models import (
     WORKGROUP_ROLE,
@@ -44,12 +44,9 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     """Internal landing page. Shows the member's active-month roles and the shared
     WiFi/calendar info — now gated by authentication (not campus IP) with secrets read from env.
     Uses effective roles so the preview override is reflected here too."""
-    from events import access as events_access
-    from events.agenda import agenda
-
     year, month = active_period()
-    # AK books this month's deduction off this if its cron missed it (ak.handlers). Published rather
-    # than called, so identity does not depend on AK: see core.domain_events.
+    # AK charges the month that just ended off this if its cron missed it (ak.handlers). Published
+    # rather than called, so identity does not depend on AK: see core.domain_events.
     domain_events.publish(MemberAreaVisited(resident_id=current_resident(request).pk, year=year, month=month))
     roles = sorted(effective_roles(request))
     return render(
@@ -63,17 +60,14 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             "wifi_password": os.environ.get("WIFI_PASSWORD", ""),
             "calendar_user": os.environ.get("GOOGLE_CALENDAR_USER", ""),
             "calendar_password": os.environ.get("GOOGLE_CALENDAR_PASSWORD", ""),
-            # The kollegium's own calendar; empty for anyone the events rollout gate keeps out.
-            "agenda": agenda(current_resident(request)) if events_access.request_allowed(request) else None,
+            # Features' cards, such as begivenheder's calendar (events.handlers): registered with
+            # residents.api, because identity may not import a feature to draw one.
+            "dashboard_cards": dashboard_cards(request),
         },
     )
 
 
 # ---- Alumneliste: the resident directory ----
-# Re-exported under its old name because ak.views imports it from here. The list itself moved to
-# core.danish when the events calendar became the third copy.
-DA_MONTHS = MONTHS
-
 
 # Sortable columns → the ORM fields to order by. Whitelisted, so ?sort= can't inject arbitrary paths.
 SORT_FIELDS = {
@@ -228,7 +222,7 @@ def directory(request: HttpRequest) -> HttpResponse:
             "badges": _period_badges(year, month),
             "periods": period_options((year, month)),
             "period_value": f"{year}-{month}",
-            "period_label": f"{DA_MONTHS[month].capitalize()} {year}",
+            "period_label": f"{MONTHS[month].capitalize()} {year}",
             "q": q,
             "sort": sort,
             "dir": direction,

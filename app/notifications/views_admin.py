@@ -16,7 +16,7 @@ from django.views.decorators.http import require_POST
 
 from core.clock import current_datetime
 from core.models import PushDeliveryDay, PushSubscription
-from residents.permissions import role_required
+from residents.api import role_required
 
 from . import categories, services
 from .categories import IMPORTANCE_CHOICES, Importance
@@ -55,6 +55,12 @@ class BroadcastForm(forms.Form):
         return url
 
 
+def _category_name(key: str) -> str:
+    """The category's name, or its key for one retired since its rows were written."""
+    category = categories.lookup(key)
+    return category.name if category else key
+
+
 def _stats() -> dict[str, object]:
     now = current_datetime()
     windows = []
@@ -66,12 +72,7 @@ def _stats() -> dict[str, object]:
             pushed=Count("pk", filter=Q(pushed=True)),
         )
         by_category = [
-            {
-                **row,
-                "name": categories.BY_KEY[row["category"]].name
-                if row["category"] in categories.BY_KEY
-                else row["category"],
-            }
+            {**row, "name": _category_name(row["category"])}
             for row in rows.values("category")
             .annotate(
                 total=Count("pk"),

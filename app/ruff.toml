@@ -24,9 +24,14 @@ ignore = [
 "*/migrations/*" = ["E", "F", "UP", "B", "C4", "DTZ", "PIE", "RET", "FURB", "RUF", "S", "DJ", "PTH", "PL", "Q", "TID251"]
 "tests/*" = ["B", "F811", "DTZ", "S", "TID251"]  # tests use assert + literal demo passwords (S101/S105/S106/S107)
 # The only places allowed raw SQL (TID251 below): operator tooling over Celery's and the broker's own
-# tables, never a domain's. A new entry here is a design decision — say why in the PR.
+# tables, never a domain's — and code that needs the connection object itself rather than SQL (a
+# thread closing its own connection, asking whether a transaction is open). A new entry here is a
+# design decision — say why in the PR.
 "core/tasks.py" = ["TID251"]                      # broker/result-table maintenance
 "core/push.py" = ["TID251"]                       # closes the thread's connection, no SQL
+"core/health.py" = ["TID251"]                     # /health's SELECT 1, no table at all
+"core/heartbeat.py" = ["TID251"]                  # closes the heartbeat thread's connection, no SQL
+"photo_album/progress.py" = ["TID251"]            # transaction check + own thread's connection, no SQL
 "core/management/commands/*" = ["TID251"]         # reset_sequences and other operator commands
 "residents/views_admin.py" = ["TID251"]           # worker-jobs console reads celery_taskmeta
 

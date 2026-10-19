@@ -22,13 +22,14 @@ Deterministic logins (all password `demo1234`):
 import argparse
 import random
 import unicodedata
-from datetime import timedelta
+from datetime import datetime, timedelta
 from io import BytesIO
 
 from django.conf import settings
 from django.core.files.base import ContentFile
 from django.core.management.base import BaseCommand, CommandError
 from django.db import models, transaction
+from django.urls import reverse
 from django.utils import timezone
 
 from admissions.models import Application
@@ -42,10 +43,12 @@ from arkiv.models import ArchiveFile, ArchiveFolder
 from cms.models import Event as CmsEvent
 from cms.models import NewsItem, Page, PylonEvent
 from core.models import Cleaning, Room, Workgroup
+from den_hurtige import channels
 from den_hurtige.demo import seed as seed_den_hurtige
 from den_hurtige.models import QuickComment, QuickPost, QuickReaction
 from events.demo import seed as seed_events
 from events.models import CalendarFeedToken, Event, EventInvite, Rsvp
+from notifications.demo import DemoContent
 from notifications.demo import seed as seed_notifications
 from notifications.models import Notification, NotificationPreference, NotificationSettings
 from oelkaelder.models import (
@@ -160,6 +163,27 @@ WIPE_ORDER: list[type[models.Model]] = [
 ]
 
 
+def _notification_demo_content(now: datetime) -> DemoContent:
+    """What the demo notifications link to, falling back to a feature's front page when that
+    feature seeded nothing. Looked up here rather than in notifications.demo: notifications is
+    platform and may not import the features its rows point at; this command wires them all."""
+    events = list(
+        Event.objects.filter(cancelled_at__isnull=True, starts_at__gt=now).order_by("starts_at")[:2]
+    )
+    notice = Notice.objects.order_by("-created_at").first()
+    post = QuickPost.objects.order_by("-created_at").first()
+    channel = (channels.lookup(post.channel) or channels.DEFAULT) if post else None
+    return DemoContent(
+        event_url=reverse("events:detail", args=[events[0].pk]) if events else reverse("events:index"),
+        event_title=events[0].title if events else "Fællesspisning",
+        other_event_title=events[1].title if len(events) > 1 else "Brætspilsaften",
+        notice_url=f"/intern/opslagstavle/{notice.pk}" if notice else "/intern/opslagstavle/",
+        chat_url=f"{channel.url}?traad={post.pk}" if post and channel else "/intern/den-hurtige/",
+        chat_preview=post.content[:60] if post else "",
+        muted_room=channels.notification_category(channels.CHANNELS[-1].slug),
+    )
+
+
 def _ascii_slug(text: str) -> str:
     """Fold Danish letters to ASCII for email local-parts (Bjørn -> bjorn)."""
     swaps = {"æ": "ae", "ø": "oe", "å": "aa", "Æ": "ae", "Ø": "oe", "Å": "aa"}
@@ -215,7 +239,7 @@ class Command(BaseCommand):
             seed_photo_album(residents, self.now, self.rng)
             seed_den_hurtige(residents, self.now, self.rng)
             # Last: its rows link to the events, opslag and Den Hurtige posts seeded above.
-            seed_notifications(residents, self.now, self.rng)
+            seed_notifications(residents, self.now, self.rng, _notification_demo_content(self.now))
 
         self._report(residents)
 

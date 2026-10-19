@@ -30,6 +30,7 @@ from django.utils import timezone
 
 from core import push
 from core.models import PushSubscription, Room
+from den_hurtige.channels import notification_category
 from notifications import categories, services, tasks
 from notifications.categories import Importance
 from notifications.models import Notification, NotificationPreference, NotificationSettings
@@ -335,11 +336,11 @@ def test_a_room_category_makes_rows_only_for_device_owners_with_push_on(
     muted = make_resident(email="c@gahk.dk")
     device(reached_one)
     device(muted)
-    prefer(muted, categories.chat_room_key("tv-rezz"), push=False)
+    prefer(muted, notification_category("tv-rezz"), push=False)
 
     reached = services.notify(
         [reached_one.pk, no_device.pk, muted.pk],
-        category=categories.chat_room_key("tv-rezz"),
+        category=notification_category("tv-rezz"),
         title="Anders",
         body="Fodbold?",
         url="/intern/den-hurtige/tv-rezz/",
@@ -358,7 +359,7 @@ def test_push_only_rows_stay_out_of_the_in_app_lists(
     """Not in the badge, the dropdown or the page — a feed of every chat message would bury the
     notifications that are actually about you."""
     a, _b = two
-    services.notify([a.pk], category=categories.chat_room_key("generelt"), title="Rum-besked", url="/x/")
+    services.notify([a.pk], category=notification_category("generelt"), title="Rum-besked", url="/x/")
     client.force_login(a)
 
     assert services.unseen_count(a.pk) == 0
@@ -377,7 +378,7 @@ def test_without_vapid_keys_push_only_categories_produce_nothing(
     a = make_resident(email="a@gahk.dk")
     device(a)
 
-    assert services.notify([a.pk], category=categories.chat_room_key("generelt"), title="t", url="/x/") == 0
+    assert services.notify([a.pk], category=notification_category("generelt"), title="t", url="/x/") == 0
     assert services.notify([a.pk], category=categories.GENERAL, title="t", url="/x/") == 1
     assert Notification.objects.get().pushed is False
 
@@ -409,7 +410,7 @@ def test_a_chat_message_lives_exactly_as_long_as_the_message(
     expires = timezone.now() + datetime.timedelta(hours=2)
 
     services.notify(
-        [a.pk], category=categories.chat_room_key("generelt"), title="t", url="/x/", expires_at=expires
+        [a.pk], category=notification_category("generelt"), title="t", url="/x/", expires_at=expires
     )
 
     assert Notification.objects.get().expires_at == expires
@@ -657,6 +658,41 @@ def test_unseen_count_is_the_residents_own_visible_unseen_rows(
     assert services.unseen_count(a.pk) == 2
 
 
+# --- the category registry ----------------------------------------------------------------------
+
+
+def test_a_registered_category_needs_a_free_key_and_a_group_the_settings_page_draws(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(categories, "_registered", list(categories._registered))
+    monkeypatch.setattr(categories, "_by_key", dict(categories._by_key))
+
+    with pytest.raises(ValueError, match="already registered"):
+        categories.register([categories.Category(categories.GENERAL, "Endnu en", "general")])
+    with pytest.raises(ValueError, match="unknown group"):
+        categories.register([categories.Category("x.y", "X", "nowhere")])
+
+
+def test_registering_the_same_category_twice_is_a_no_op(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AppConfig.ready() can run more than once."""
+    monkeypatch.setattr(categories, "_registered", list(categories._registered))
+    monkeypatch.setattr(categories, "_by_key", dict(categories._by_key))
+    room = categories.get(notification_category("tv-rezz"))
+
+    categories.register([room])
+
+    assert categories.all_categories().count(room) == 1
+
+
+def test_registered_categories_list_first_in_their_group() -> None:
+    """Den Hurtige's rooms above "Svar på dine beskeder", as on the settings page before they were
+    registered rather than built here."""
+    [chat] = [leaves for key, _name, leaves in categories.grouped() if key == "chat"]
+
+    assert [c.key for c in chat[-2:]] == [categories.CHAT_REPLIES, categories.CHAT_LIKES]
+    assert all(c.key.startswith("chat.room.") for c in chat[:-2])
+
+
 # --- views: the list, the dropdown, opening -----------------------------------------------------
 
 
@@ -799,9 +835,7 @@ def test_open_batch_also_marks_a_push_only_row(
 ) -> None:
     """A room message has no in-app row to click — the push is the only way it is ever seen."""
     a, _b = two
-    services.notify(
-        [a.pk], category=categories.chat_room_key("generelt"), title="t", url="/intern/den-hurtige/"
-    )
+    services.notify([a.pk], category=notification_category("generelt"), title="t", url="/intern/den-hurtige/")
     client.force_login(a)
 
     response = client.get(pushes[0][1]["open"])
@@ -858,7 +892,7 @@ def test_the_bell_badge_counts_unseen(client: Client, make_resident: Callable[..
 def _all_on() -> dict[str, str]:
     """The POST of the settings form with every box ticked — the defaults."""
     data = {"vibrate": "on", "vibrate_min_importance": str(int(Importance.LAV))}
-    for category in categories.CATEGORIES:
+    for category in categories.all_categories():
         if category.in_app and category.in_app_optional:
             data[f"{category.key}__in_app"] = "on"
         data[f"{category.key}__push"] = "on"
@@ -876,7 +910,7 @@ def test_preferences_page_renders_every_category_and_room_anchor(
 
     assert response.status_code == 200
     html = response.content.decode()
-    for category in categories.CATEGORIES:
+    for category in categories.all_categories():
         assert f'name="{category.key}__push"' in html
         optional = category.in_app and category.in_app_optional
         assert (f'name="{category.key}__in_app"' in html) is optional
@@ -942,7 +976,7 @@ def test_preferences_round_trip(client: Client, make_resident: Callable[..., Res
     again deletes the row rather than storing an all-on one."""
     a = make_resident(email="a@gahk.dk")
     client.force_login(a)
-    room = categories.chat_room_key("mhga")
+    room = notification_category("mhga")
     data = _all_on()
     del data[f"{categories.POSTS_NEW}__push"]
     del data[f"{categories.CHAT_LIKES}__in_app"]
@@ -993,11 +1027,11 @@ def test_preferences_saved_on_the_page_steer_delivery(
     """End to end: muting a room on the settings page is what stops that room's pushes."""
     a, b = two
     data = _all_on()
-    del data[f"{categories.chat_room_key('tv-rezz')}__push"]
+    del data[f"{notification_category('tv-rezz')}__push"]
     client.force_login(a)
     client.post(reverse("notifications:preferences"), data)
 
-    services.notify([a.pk, b.pk], category=categories.chat_room_key("tv-rezz"), title="t", url="/x/")
+    services.notify([a.pk, b.pk], category=notification_category("tv-rezz"), title="t", url="/x/")
 
     assert [ids for ids, _p, _t in pushes] == [[b.pk]]
 
@@ -1236,9 +1270,9 @@ def test_each_channel_mute_becomes_a_room_preference_with_push_off(
         for p in NotificationPreference.objects.all()
     }
     assert stored == {
-        (a.pk, categories.chat_room_key("tv-rezz")): (True, False, True),
-        (a.pk, categories.chat_room_key("mhga")): (True, False, True),
-        (b.pk, categories.chat_room_key("tv-rezz")): (True, False, True),
+        (a.pk, notification_category("tv-rezz")): (True, False, True),
+        (a.pk, notification_category("mhga")): (True, False, True),
+        (b.pk, notification_category("tv-rezz")): (True, False, True),
     }
 
 
@@ -1252,7 +1286,7 @@ def test_the_migrated_mute_still_silences_the_room(
     device(b)
     _migration().forwards(_apps([SimpleNamespace(resident_id=a.pk, channel="gahkroom")]), None)  # type: ignore[attr-defined]
 
-    services.notify([a.pk, b.pk], category=categories.chat_room_key("gahkroom"), title="t", url="/x/")
+    services.notify([a.pk, b.pk], category=notification_category("gahkroom"), title="t", url="/x/")
 
     assert [ids for ids, _p, _t in pushes] == [[b.pk]]
     assert not Notification.objects.filter(recipient=a).exists()
@@ -1272,8 +1306,8 @@ def test_the_mute_migration_tolerates_an_existing_preference(make_resident: Call
 def test_the_mute_migration_reverses_to_channel_mutes(make_resident: Callable[..., Resident]) -> None:
     """Backwards turns only room preferences with push off back into mutes."""
     a = make_resident(email="a@gahk.dk")
-    prefer(a, categories.chat_room_key("tv-rezz"), push=False)
-    prefer(a, categories.chat_room_key("mhga"), vibrate=False)  # push on: not a mute
+    prefer(a, notification_category("tv-rezz"), push=False)
+    prefer(a, notification_category("mhga"), vibrate=False)  # push on: not a mute
     prefer(a, categories.POSTS_NEW, push=False)  # not a room
     created: list[object] = []
 

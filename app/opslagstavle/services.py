@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 from core import push
 from core.markdown import plain_text
-from notifications import categories, services
+from notifications import api as notifications
 
 from . import access
 
@@ -39,7 +39,7 @@ def notice_url(notice: "Notice") -> str:
 
 def _author_can_open(notice: "Notice") -> bool:
     """Whether the post's author can still open the board (rollout gate, or moved out)."""
-    return access.allowed_residents(services.everyone()).filter(pk=notice.author_id).exists()
+    return access.allowed_residents(notifications.everyone()).filter(pk=notice.author_id).exists()
 
 
 def notify_new_notice(notice: "Notice") -> None:
@@ -51,9 +51,9 @@ def notify_new_notice(notice: "Notice") -> None:
     """
     # Narrowed to people who can open the board: while the rollout gate is on, notifying a resident
     # who would get a 403 on tapping is worse than not notifying them.
-    services.notify(
-        access.allowed_residents(services.everyone()),
-        category=categories.POSTS_NEW,
+    notifications.notify(
+        access.allowed_residents(notifications.everyone()),
+        category=notifications.POSTS_NEW,
         title=notice.author.full_name,
         body=push.preview(plain_text(notice.body)),
         url=notice_url(notice),
@@ -66,9 +66,9 @@ def notify_new_comment(comment: "NoticeComment") -> None:
     notice = comment.notice
     if not _author_can_open(notice):
         return  # the author can no longer open the board (rollout gate, or moved out)
-    services.notify_grouped(
+    notifications.notify_grouped(
         notice.author_id,
-        category=categories.POSTS_REPLIES,
+        category=notifications.POSTS_REPLIES,
         group_key=f"posts.replies:{notice.pk}",
         actor=comment.author,
         verb="svarede",
@@ -83,9 +83,9 @@ def notify_reaction(notice: "Notice", reactor: "Resident", emoji: str) -> None:
     """Somebody reacted to `notice`. Called on a NEW reaction only (core.reactions.apply_toggle)."""
     if not _author_can_open(notice):
         return
-    services.notify_grouped(
+    notifications.notify_grouped(
         notice.author_id,
-        category=categories.POSTS_LIKES,
+        category=notifications.POSTS_LIKES,
         group_key=f"posts.likes:{notice.pk}",
         actor=reactor,
         verb="reagerede på dit opslag",

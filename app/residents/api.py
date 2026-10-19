@@ -13,13 +13,19 @@ Tach cannot see a `.save()` on an instance somebody else handed you; that rule i
 What stays private: `Residency`, `RoleAssignment`, `AdminAccessGrant` and everything in
 `residents.services`/`views`. The month-by-month roster is identity's business — other domains ask
 the questions below about it rather than querying its table.
+
+The member dashboard is identity's page, but some of what it shows belongs to a feature: the
+kollegium's calendar is begivenheder's. Identity sits below every feature and may not import one, so
+the dashboard is an extension point: a feature registers a card (`register_dashboard_card`) and the
+page renders whatever comes back — the inversion events.api uses for the posts about an event.
 """
 
-from collections.abc import Collection, Iterable
+from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass
 
 from django.db.models import Q, QuerySet
 from django.http import HttpRequest
+from django.utils.safestring import SafeString
 
 from core import domain_events
 from core.danish import MONTHS
@@ -52,6 +58,7 @@ __all__ = [
     "CMS_EDITOR_ROLES",
     "MODERATION_ROLES",
     "Birthday",
+    "DashboardCardProvider",
     "MemberAreaVisited",
     "Period",
     "Resident",
@@ -63,6 +70,7 @@ __all__ = [
     "can_preview",
     "carry_roster_forward",
     "current_resident",
+    "dashboard_cards",
     "effective_roles",
     "embedsgruppe_of",
     "has_active_role",
@@ -74,8 +82,10 @@ __all__ = [
     "period_options",
     "place_on_roster",
     "prev_period",
+    "register_dashboard_card",
     "remove_from_roster",
     "request_has_role",
+    "resident_ids_with_any_role",
     "resident_ids_with_roles",
     "role_required",
     "room_numbers_on_roster",
@@ -139,6 +149,14 @@ def resident_ids_with_roles(roles: Collection[str], period: Period | None = None
     return RoleAssignment.objects.filter(role__in=list(roles), year=year, month=month).values_list(
         "resident_id", flat=True
     )
+
+
+def resident_ids_with_any_role(period: Period | None = None) -> QuerySet:
+    """Ids of residents holding any role at all in `period` (the active month by default), as a lazy
+    subquery like roster_resident_ids. The people who run the house this month, whether or not they
+    live here: an administrator need not be on the alumneliste."""
+    year, month = period or active_period()
+    return RoleAssignment.objects.filter(year=year, month=month).values_list("resident_id", flat=True)
 
 
 def workgroup_ids_of(resident_id: int, period: Period | None = None) -> list[int]:
@@ -212,6 +230,29 @@ def period_options(selected: Period) -> list[dict[str, str | bool]]:
         {"value": f"{y}-{m}", "label": f"{MONTHS[m].capitalize()} {y}", "selected": (y, m) == selected}
         for y, m in periods
     ]
+
+
+# --- Extension point: features' cards on the member dashboard ------------------------------------
+
+# Gets the reader (to apply THEIR gates: the card's feature may be closed to them) and returns the
+# card's HTML, or None for "no card for this reader". The feature renders its own template, because
+# what a card shows — its links, its wording, its rollout gate — is the feature's business.
+DashboardCardProvider = Callable[[HttpRequest], SafeString | None]
+
+_dashboard_card_providers: list[DashboardCardProvider] = []
+
+
+def register_dashboard_card(provider: DashboardCardProvider) -> None:
+    """Show `provider`'s card on the member dashboard, ahead of Genveje, in registration order (which
+    is INSTALLED_APPS order). Call it from AppConfig.ready() — a domain's handlers.py."""
+    if provider not in _dashboard_card_providers:
+        _dashboard_card_providers.append(provider)
+
+
+def dashboard_cards(request: HttpRequest) -> list[SafeString]:
+    """Every registered provider's card for this reader."""
+    cards = (provider(request) for provider in _dashboard_card_providers)
+    return [card for card in cards if card is not None]
 
 
 # --- Commands -------------------------------------------------------------------------------------

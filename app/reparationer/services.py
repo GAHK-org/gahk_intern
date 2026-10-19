@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 
 from django.db.models import Q, QuerySet
 
-from notifications import categories, services
+from notifications import api as notifications
 from residents.api import Resident, Role, resident_ids_with_roles
 
 if TYPE_CHECKING:
@@ -46,9 +46,9 @@ def _residents_with_role(role: str) -> QuerySet[Resident]:
 def notify_new_task(task: "RepairTask") -> None:
     """A new repair lands on Viceværterne's desk by default — tell them, except the person who just
     reported it."""
-    services.notify(
+    notifications.notify(
         _residents_with_role(Role.VICEVAERT),
-        category=categories.REPAIRS,
+        category=notifications.REPAIRS,
         title="Ny reparation meldt ind",
         body=task.title,
         url=task_url(task),
@@ -58,9 +58,9 @@ def notify_new_task(task: "RepairTask") -> None:
 
 def notify_handed_to_repper(task: "RepairTask") -> None:
     """The repair was handed to Reppergruppen — tell them it is now theirs."""
-    services.notify(
+    notifications.notify(
         _residents_with_role(Role.REPPER),
-        category=categories.REPAIRS,
+        category=notifications.REPAIRS,
         title="Reparation overdraget til Repper",
         body=task.title,
         url=task_url(task),
@@ -69,9 +69,9 @@ def notify_handed_to_repper(task: "RepairTask") -> None:
 
 def notify_handed_to_vicevaert(task: "RepairTask") -> None:
     """The repair went back to Viceværterne — the mirror of notify_handed_to_repper."""
-    services.notify(
+    notifications.notify(
         _residents_with_role(Role.VICEVAERT),
-        category=categories.REPAIRS,
+        category=notifications.REPAIRS,
         title="Reparation sendt tilbage til Viceværterne",
         body=task.title,
         url=task_url(task),

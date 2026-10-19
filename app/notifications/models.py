@@ -10,6 +10,10 @@ Preferences are per *resident*, not per device, and stored as **exceptions**: a 
 NotificationPreference row means "everything on", which is the documented default. So a new
 category reaches everyone with no backfill, and the table only holds what people changed — the same
 direction ChannelMute used to take for Den Hurtige's rooms, which it replaces.
+
+Every relation to Resident is `related_name="+"`: a cross-domain relation, so a Resident gets no
+`.notifications` manager onto this app's tables (core/boundaries.py). Another domain asks
+notifications.api, by resident id.
 """
 
 import uuid
@@ -44,9 +48,7 @@ class NotificationQuerySet(models.QuerySet["Notification"]):
 
 
 class Notification(models.Model):
-    recipient = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notifications"
-    )
+    recipient = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
     category = models.CharField(max_length=60)
     importance = models.PositiveSmallIntegerField(choices=IMPORTANCE_CHOICES, default=Importance.NORMAL)
     title = models.CharField(max_length=200)
@@ -113,7 +115,7 @@ class Notification(models.Model):
     def group(self) -> str:
         """The category's display group. A row whose category was since retired counts as general
         rather than erroring — rows outlive code by up to their TTL plus the retention."""
-        category = categories.BY_KEY.get(self.category)
+        category = categories.lookup(self.category)
         return category.group if category else "general"
 
     @property
@@ -124,9 +126,7 @@ class Notification(models.Model):
 class NotificationPreference(models.Model):
     """One resident's exception to the default for one category. See the module docstring."""
 
-    resident = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notification_preferences"
-    )
+    resident = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
     category = models.CharField(max_length=60)
     in_app = models.BooleanField(default=True)
     push = models.BooleanField(default=True)
@@ -143,9 +143,7 @@ class NotificationPreference(models.Model):
 class NotificationSettings(models.Model):
     """The resident-wide switches that are not per category. Missing row = the defaults below."""
 
-    resident = models.OneToOneField(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notification_settings"
-    )
+    resident = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
     vibrate = models.BooleanField(default=True)
     # Push notifications below this level arrive without vibrating. LAV = vibrate for everything.
     vibrate_min_importance = models.PositiveSmallIntegerField(

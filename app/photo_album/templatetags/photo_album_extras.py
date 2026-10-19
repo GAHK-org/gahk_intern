@@ -7,7 +7,7 @@ from django import template
 from core.clock import current_date
 from photo_album import access
 from photo_album.featured import featured_for, on_this_day
-from residents.permissions import effective_roles
+from residents.api import effective_roles
 
 register = template.Library()
 
