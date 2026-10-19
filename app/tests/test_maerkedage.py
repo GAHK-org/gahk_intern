@@ -1,5 +1,5 @@
 """Kollegiets mærkedage (the founders' birthdays) on the calendar, and the dashboard's agenda that
-replaced the embedded Google Calendar."""
+replaced the embedded Google Calendar, and the invite picker's "Vælg alle beboere"."""
 
 import datetime
 from collections.abc import Callable
@@ -78,3 +78,14 @@ def test_the_agenda_announces_only_maerkedage_within_30_days(
     monkeypatch.setattr(agenda_mod, "current_date", lambda: datetime.date(2026, 5, 1))
     items = agenda_mod.agenda(beboer)
     assert [i.title for i in items if i.maerkedag] == ["Gustav Adolf Hagemanns fødselsdag"]
+
+
+@pytest.mark.django_db
+def test_the_invite_picker_offers_to_invite_every_resident(client: Client, beboer: Resident) -> None:
+    """Rendered hidden; events.ts reveals it, so without JS there is no button that does nothing."""
+    client.force_login(beboer)
+
+    body = client.get(f"{EVENTS}opret").content.decode()
+
+    assert "data-invite-all hidden" in body
+    assert "Vælg alle beboere" in body

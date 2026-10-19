@@ -1301,6 +1301,11 @@
   .invite-count { font-size: 12px; font-weight: 650; border-radius: 999px; padding: 2px 10px;
     background: var(--green-050); color: var(--green-700); border: 1px solid var(--green-100); }
   .invite-body { padding: 0 13px 13px; display: flex; flex-direction: column; gap: 9px; }
+  .invite-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .invite-tools .invite-search { flex: 1 1 200px; width: auto; }
+  .invite-all { flex: none; white-space: nowrap; }
+  /* .btn sets display, which would beat the hidden attribute. */
+  .invite-all[hidden] { display: none; }
   .invite-search { width: 100%; box-sizing: border-box; border: 1px solid var(--border-strong);
     border-radius: 8px; background: var(--surface-2); padding: 9px 11px; font: inherit; font-size: 16px; }
   /* Scrolls rather than growing the page: sixty names would otherwise push the save button so far
