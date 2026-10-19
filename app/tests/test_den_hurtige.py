@@ -2246,9 +2246,10 @@ def test_the_thread_panel_lives_outside_the_polled_region(
     assert page.index('id="js-feed"') < page.index('id="js-thread"')
 
 
-def test_the_thread_panel_polls_itself(client: Client, make_resident: Callable[..., Resident]) -> None:
-    """Being outside #js-feed means it gets no refresh from the feed's poll, so the fragment brings
-    its own — on its ROOT, morphed by outerHTML, so the trigger survives its own swap."""
+def test_the_thread_panel_refreshes_itself(client: Client, make_resident: Callable[..., Resident]) -> None:
+    """Being outside #js-feed means it gets no refresh from the feed's, so the fragment brings its
+    own — on its ROOT, morphed by outerHTML, so the trigger survives its own swap. The trigger is a
+    live signal with the 5s poll as its fallback (see test_live.py)."""
     author = make_resident(email="a@gahk.dk")
     post = QuickPost.objects.create(author=author, content="Kaffe")
     client.force_login(author)
@@ -2256,7 +2257,7 @@ def test_the_thread_panel_polls_itself(client: Client, make_resident: Callable[.
     fragment = client.get(f"{FEED_URL}{post.pk}/traad", HTTP_HX_REQUEST="true").content.decode()
 
     assert f'hx-get="{FEED_URL}{post.pk}/traad"' in fragment
-    assert 'hx-trigger="every 5s"' in fragment
+    assert 'hx-trigger="gahk-live, every 5s' in fragment
     assert 'hx-swap="morph:outerHTML"' in fragment
 
 
@@ -2558,14 +2559,17 @@ def test_the_feed_morphs_its_poll_instead_of_replacing_the_list(
     assert 'hx-swap="morph:innerHTML"' in body
 
 
-def test_the_feed_polls_every_five_seconds(client: Client, make_resident: Callable[..., Resident]) -> None:
+def test_the_feed_falls_back_to_polling_every_five_seconds(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
     """20s read as broken in a chat. The interval only became safe to shorten once the swap stopped
-    being destructive -- the two changes belong together, so this pins the pair."""
+    being destructive -- the two changes belong together, so this pins the pair. The feed is live
+    over a WebSocket now, and 5s is what it falls back to while that is down (test_live.py)."""
     client.force_login(make_resident(email="a@gahk.dk"))
 
     body = client.get(FEED_URL).content.decode()
 
-    assert 'hx-trigger="every 5s"' in body
+    assert 'hx-trigger="gahk-live, every 5s [' in body
 
 
 def test_the_poll_still_returns_the_whole_list(

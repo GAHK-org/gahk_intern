@@ -20,6 +20,12 @@
 // column, a lost session, a dead network) puts the card back where it came from and says why —
 // see reparationer.views._move_response, which answers this fetch in JSON and every other caller
 // with a redirect.
+//
+// The board is also LIVE (a live region — see _kanban.html and live-region.ts): somebody else's move
+// re-reads it and morphs the difference in. Never mid-gesture. `data-live-busy` is on the board from
+// the moment a drag begins until the server has answered the drop, and a signal arriving meanwhile
+// waits for it to come off — otherwise a redraw could put the card back in its old column while it
+// is under the reader's finger, or before the server has even been told it moved.
 
 const root = document.querySelector<HTMLElement>("[data-kanban]");
 
@@ -73,6 +79,12 @@ if (root && root.dataset.canMove === "1") {
   let lastX = 0; // where the pointer is, for autoscroll between pointermoves
   let lastY = 0;
   let moved = false; // a real drag happened, so the click that follows is not a click
+  let committing = 0; // drops the server has not answered yet
+
+  /** Lift the live-redraw hold once nothing is being dragged and every drop has its answer. */
+  const settle = (): void => {
+    if (!dragging && committing === 0) root.removeAttribute("data-live-busy");
+  };
 
   const highlight = (col: HTMLElement | null): void => {
     if (target === col) return;
@@ -87,6 +99,7 @@ if (root && root.dataset.canMove === "1") {
     if (!card) return;
     dragging = true;
     moved = true;
+    root.setAttribute("data-live-busy", "");
     say("");
     // Captured here and NOT on pointerdown, because a capture retargets the click that follows to
     // the capturing element: taking it on every press would mean no press ever reached the card's
@@ -176,6 +189,7 @@ if (root && root.dataset.canMove === "1") {
 
   /** Tell the server; put the card back if it says no. */
   const commit = async (moving: HTMLElement, origin: HTMLElement, column: HTMLElement): Promise<void> => {
+    committing += 1; // before the first await, so settle() in finish() already sees it
     const status = column.dataset.status ?? "";
     const url = moving.dataset.moveUrl ?? "";
     const undo = (message: string): void => {
@@ -202,6 +216,9 @@ if (root && root.dataset.canMove === "1") {
       else if (result.status !== status) undo("Sagen kunne ikke flyttes.");
     } catch {
       undo("Ingen forbindelse — sagen blev ikke flyttet.");
+    } finally {
+      committing -= 1;
+      settle();
     }
   };
 
@@ -211,7 +228,11 @@ if (root && root.dataset.canMove === "1") {
     const column = target;
     const wasDragging = dragging;
     cleanup();
-    if (!wasDragging || !moving || !origin || !column || column === origin) return;
+    if (wasDragging && moving && origin && column && column !== origin) drop(moving, origin, column);
+    settle();
+  };
+
+  const drop = (moving: HTMLElement, origin: HTMLElement, column: HTMLElement): void => {
     if (column.hasAttribute("data-manager-only") && !canManage) {
       say("Kun Reppergruppen kan flytte en sag til denne kolonne.");
       return;
@@ -260,7 +281,10 @@ if (root && root.dataset.canMove === "1") {
   });
 
   root.addEventListener("pointerup", finish);
-  root.addEventListener("pointercancel", cleanup);
+  root.addEventListener("pointercancel", () => {
+    cleanup();
+    settle();
+  });
 
   // The one thing pointer events cannot do on a touchscreen: preventDefault on `pointermove` does
   // not stop a scroll, and a scroll kills the drag with `pointercancel`. Only a non-passive

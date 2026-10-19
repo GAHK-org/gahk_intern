@@ -5,12 +5,13 @@
 declare module "alpinejs";
 
 // idiomorph ships no type declarations (its package.json has no `types` field), so this declares
-// exactly the sliver frontend/src/feed.ts touches. Importing the module registers htmx's `morph`
+// exactly the sliver feed.ts and opslagstavle-live.ts touch. Importing the module registers htmx's `morph`
 // extension as a side effect; `Idiomorph.defaults` is the only supported way to configure its
 // behaviour globally. Kept deliberately narrow rather than `declare module "idiomorph/htmx";`,
 // which would type the whole thing as `any` and hide a typo in the two callbacks we rely on.
 declare module "idiomorph/htmx" {
   export const Idiomorph: {
+    morph: (oldNode: Element, newContent: Element | string, config?: { morphStyle?: "outerHTML" | "innerHTML" }) => unknown;
     defaults: {
       ignoreActiveValue: boolean;
       restoreFocus: boolean;

@@ -105,10 +105,14 @@ def backfill_hashes(*, limit: int = 0, until: datetime | None = None) -> HashBac
     Every upload is hashed when it is stored, so this only ever has the rows from before that to do
     — once they are done, a run is one indexed query that finds nothing. Stops after `limit` items
     or at `until`, whichever comes first, and reports how many are left for the next run.
+
+    Rows it has not tried yet go first, then those it could not read, longest ago first. They are
+    still retried, in case storage was only briefly unavailable, but only after everything else.
     """
     result = HashBackfill()
-    missing = Media.objects.filter(sha256="").exclude(original="").order_by("pk")
-    for media in (missing[:limit] if limit else missing).iterator():
+    missing = Media.objects.filter(sha256="").exclude(original="")
+    queue = missing.order_by(F("hash_failed_at").asc(nulls_first=True), "pk")
+    for media in (queue[:limit] if limit else queue).iterator():
         if until is not None and timezone.now() >= until:
             break
         digest = hashlib.sha256()
@@ -119,8 +123,9 @@ def backfill_hashes(*, limit: int = 0, until: datetime | None = None) -> HashBac
         except OSError as exc:
             result.unreadable.append(f"{media.pk} ({media.original.name}): {exc}")
             logger.warning("Could not read media %s (%s) to hash it: %s", media.pk, media.original.name, exc)
+            Media.objects.filter(pk=media.pk).update(hash_failed_at=timezone.now())
             continue
-        Media.objects.filter(pk=media.pk).update(sha256=digest.hexdigest())
+        Media.objects.filter(pk=media.pk).update(sha256=digest.hexdigest(), hash_failed_at=None)
         result.hashed += 1
     result.remaining = missing.count()
     return result

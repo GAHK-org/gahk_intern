@@ -139,6 +139,23 @@ the album upload (for files of 8 MB or more) now send straight to the bucket in 
 configuration, e.g. `--entrypoints.https.transport.respondingTimeouts.readTimeout=3600s`), not
 something this repository controls.
 
+**More processes also means a shared channel layer.** Den Hurtige, opslagstavlen, the repair board,
+event pages and the notification bell are live over WebSockets (`/ws/live/?t=<topic>`,
+`app/core/live.py`); every intern page holds one socket, for the bell if nothing else. The signal from
+a write to the open pages travels through Channels' **in-memory** layer (`CHANNEL_LAYERS` in
+`config/settings.py`), which only reaches sockets held by the same process. With two or more, a page
+hears about a change only when it happens to be connected to the process that handled the write.
+Nothing breaks — Den Hurtige falls back to a 60-second backstop poll, the rest to how they were
+before they were live — it just stops being live. Add a Redis service and switch the layer to
+`channels_redis` in the same change that adds workers.
+
+The same limit applies to Celery today: a worker is another process, so what it writes (event
+reminders, mærkedage, the nightly repair archiving, photo-album jobs) is not signalled, and shows on
+the next page load as before. A shared layer is also what would make those live.
+
+Traefik proxies the WebSocket upgrade with no configuration; a proxy that refused it would leave
+Den Hurtige on its old 5-second poll and every other page as it was before.
+
 ### 4a. Deploys: CI builds the image, the server pulls it
 
 Coolify does not build anything. The flow is:
@@ -151,15 +168,19 @@ Coolify does not build anything. The flow is:
    minutes. It pulls `:main`; when the image differs from the last one it deployed, it calls the
    **local** Coolify API to redeploy the app, and Coolify's `docker compose up` recreates `web`,
    `worker`, `worker-media` and `beat` on the new image (the migration gate in `docker-compose.prod.yml` still applies).
+3. Coolify pulls the image before it stops the running containers, so a redeploy from Coolify by
+   hand also runs the newest published image, and an unreachable GHCR fails the deploy with the old
+   version still up. That takes **Coolify 4.3.19 or later**: earlier versions stop first and then
+   `docker compose up`, which never re-pulls an image the host already has, so "Redeploy" (with or
+   without the build cache, which only matters for builds) restarted the old version. A release
+   that fails to start (a broken migration, a crash on boot) still takes the site down: Coolify has
+   no rolling updates for Docker Compose apps.
 
 **Why pull, not a webhook from CI:** a webhook means a Coolify token in GitHub's secrets, i.e. a
 credential for the server held by GitHub. This way GitHub holds nothing for the server; the Coolify
 token never leaves it, and the only thing the server trusts GitHub for is the image.
 
-**The cost:** up to ~3 minutes between a green `main` and the deploy starting. And it relies on the
-pull and the deploy happening on the **same host** (one Hetzner box) — the script's pull is what
-gives Coolify the new image. If the app ever moves to a separate Coolify server, install the timer
-there.
+**The cost:** up to ~3 minutes between a green `main` and the deploy starting.
 
 #### Setting it up **[you]**
 
@@ -167,7 +188,7 @@ there.
    make it public (Package settings → Change visibility; the repo is public already), or keep it
    private and, on the server as root, `docker login ghcr.io` with a classic token holding only
    `read:packages`.
-2. **Coolify.** In the app's settings, turn **Auto Deploy off** — a push to `main` would otherwise
+2. **Coolify**, 4.3.19 or later (step 3 above). In the app's settings, turn **Auto Deploy off** — a push to `main` would otherwise
    deploy straight away, before CI has published the image. Enable the API (Settings → Advanced) and
    create a token with only the **deploy** permission. Note the app's UUID (last segment of its URL).
 3. **The timer**, on the server as root:
@@ -180,6 +201,8 @@ there.
    ```
    The first run deploys once (it has no record of a previous image). Watch it with
    `journalctl -u gahk-autodeploy -f`; `systemctl list-timers gahk-autodeploy` shows the next run.
+   The timer runs the installed copy, so re-run the first `install` line whenever the script
+   changes.
 
 **Rolling back:** set `IMAGE_TAG=sha-<good commit>` in the app's Coolify environment and redeploy.
 While it is set, new `:main` images still trigger deploys, but they redeploy the pinned one; remove
@@ -618,6 +641,18 @@ roughly 390k rows across 63 tables, dominated by the ølkælder ledger; ~124 res
 holds no binary data now that media is in the bucket. Cross-check the applied migrations against the
 branch — every project migration should be present (Django's own built-ins add ~18 beyond the files
 under `app/*/migrations/`).
+
+### 4e. Health checks
+Two endpoints, both in `app/core/health.py`:
+
+- **`/healthz`** — liveness only; `web`'s Docker healthcheck in `docker-compose.prod.yml` uses it,
+  and Coolify shows that status. It checks nothing beyond the process answering, because Traefik
+  drops an unhealthy container from routing: a dead worker must not take the site down with it.
+- **`/health`** — for an external uptime monitor (point it at `https://gahk.dk/health` and alert on
+  anything but 200). It returns 503 if the database or the S3 bucket is unreachable, or if any of
+  `default`, `media` and `beat` has not sent a heartbeat for 2 minutes. The JSON body names the
+  failing check; the reason is in `web`'s log. Renaming a worker's `-n` in the compose file means
+  updating `HEALTH_PROCESSES` to match.
 
 ## 5. Data migration to prod
 ```

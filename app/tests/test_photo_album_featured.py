@@ -108,6 +108,31 @@ def test_on_this_day_spreads_over_earlier_years(album: Album, make_resident: Cal
 
 
 @pytest.mark.django_db
+def test_on_this_day_drops_a_pick_binned_while_it_was_drawn(
+    album: Album, make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """It used to raise KeyError, and the dashboard with it."""
+    from photo_album import featured
+
+    resident = make_resident()
+    kept = _image(album, resident, captured_at=datetime(2025, 10, 13, 10, tzinfo=UTC))
+    binned = _image(album, resident, captured_at=datetime(2024, 10, 13, 10, tzinfo=UTC))
+    showable = featured._showable
+    calls = 0
+
+    def binned_after_the_draw() -> object:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            Media.objects.filter(pk=binned.pk).update(deleted_at=datetime(2026, 10, 13, tzinfo=UTC))
+        return showable()
+
+    monkeypatch.setattr(featured, "_showable", binned_after_the_draw)
+
+    assert on_this_day(DAY) == [kept]
+
+
+@pytest.mark.django_db
 def test_dashboard_links_each_picture_to_its_album(
     client: Client, album: Album, make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
 ) -> None:

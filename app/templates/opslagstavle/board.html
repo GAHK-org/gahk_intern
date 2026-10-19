@@ -3,10 +3,11 @@
 {% block content_width %}max-w-3xl{% endblock %}
 
 {% comment %}
-  Deliberately NO `no-zoom chat-page` body class and NO hx-trigger="every 20s". Both belong to Den
-  Hurtige, where messages die in 30 minutes and the page is used one-handed on a phone. A long post
-  with a table needs pinch-zoom, and polling a paginated multi-year archive would fight the pager,
-  throw away the reader's place, and re-render every post's Markdown every 20 seconds per open tab.
+  Deliberately NO `no-zoom chat-page` body class and NO hx-trigger="every …". The body class belongs
+  to Den Hurtige, which is used one-handed on a phone; a long post with a table needs pinch-zoom.
+  And a poll of a paginated multi-year archive would fight the pager, throw away the reader's place,
+  and re-render every post's Markdown every few seconds per open tab. The board is live instead
+  through a WebSocket signal that re-fetches only the cards that changed (see `data-live` below).
   There are tests asserting the absence of both.
 {% endcomment %}
 {% block content %}
@@ -35,33 +36,45 @@
   </nav>
 
   {% comment %}
-    Pinned posts sit above the pager on EVERY page, from their own queryset. Folding them into the
-    paginated one would show them on page 1 only — which makes pinning pointless once the board is a
-    few pages deep — and would depend on NULLS ordering, which differs between Postgres and SQLite.
+    LIVE, without moving anything. frontend/src/opslagstavle-live.ts listens to the board's topic:
+    a card on screen whose post changed is re-fetched and morphed in place, a deleted one is removed,
+    and a NEW post only fills in the banner below — never inserted, because that would push every
+    card down under somebody reading, and on page 2 it would not even belong here. The banner links
+    to page 1 of the same filter; `data-category` lets it ignore posts this filter would not show.
   {% endcomment %}
-  {% if pinned %}
-    <div class="board-list board-pinned">
-      {% for notice in pinned %}
+  <div data-live="opslagstavle" data-live-board data-category="{{ selected_category }}" data-newest="{{ newest_pk }}"
+       data-live-url="{% url 'opslagstavle:live_cards' %}">
+    <a class="board-new" id="js-board-new" href="{% querystring page=None %}" aria-live="polite" hidden><span></span></a>
+
+    {% comment %}
+      Pinned posts sit above the pager on EVERY page, from their own queryset. Folding them into the
+      paginated one would show them on page 1 only — which makes pinning pointless once the board is a
+      few pages deep — and would depend on NULLS ordering, which differs between Postgres and SQLite.
+    {% endcomment %}
+    {% if pinned %}
+      <div class="board-list board-pinned">
+        {% for notice in pinned %}
+          {% include "opslagstavle/_notice_card.html" %}
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <div class="board-list">
+      {% for notice in page_obj %}
         {% include "opslagstavle/_notice_card.html" %}
+      {% empty %}
+        {% if not pinned %}
+          <div class="card-flat card-pad">
+            <p><strong>Der er ingen opslag her endnu.</strong></p>
+            <p class="muted">
+              Tavlen er til det der skal kunne findes igen — vigtige begivenheder, resultatet af
+              værelsesrunden, fødselsdage. Skal noget kun gælde det næste døgn, hører det hjemme på
+              <a href="/intern/den-hurtige/">Den Hurtige</a>. Opslag slettes automatisk efter ca. 2 år.
+            </p>
+          </div>
+        {% endif %}
       {% endfor %}
     </div>
-  {% endif %}
-
-  <div class="board-list">
-    {% for notice in page_obj %}
-      {% include "opslagstavle/_notice_card.html" %}
-    {% empty %}
-      {% if not pinned %}
-        <div class="card-flat card-pad">
-          <p><strong>Der er ingen opslag her endnu.</strong></p>
-          <p class="muted">
-            Tavlen er til det der skal kunne findes igen — vigtige begivenheder, resultatet af
-            værelsesrunden, fødselsdage. Skal noget kun gælde det næste døgn, hører det hjemme på
-            <a href="/intern/den-hurtige/">Den Hurtige</a>. Opslag slettes automatisk efter ca. 2 år.
-          </p>
-        </div>
-      {% endif %}
-    {% endfor %}
   </div>
 
   {% if page_obj.paginator.num_pages > 1 %}

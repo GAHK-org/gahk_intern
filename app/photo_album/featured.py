@@ -105,8 +105,10 @@ def on_this_day(day: date) -> list[Media]:
         for year in years:
             if by_year[year] and len(chosen) < ON_THIS_DAY_LIMIT:
                 chosen.append(by_year[year].pop())
+    # A pick binned, rejected or stripped of its thumbnail since the query above drops out rather
+    # than raising: the strip is on every resident's dashboard.
     media = _showable().in_bulk(chosen)
-    return [media[pk] for pk in chosen]
+    return [media[pk] for pk in chosen if pk in media]
 
 
 def timeline_mosaic() -> list[Media]:

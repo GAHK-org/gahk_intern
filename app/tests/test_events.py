@@ -191,6 +191,19 @@ def test_every_route_is_closed_to_non_administrators(
     assert response.status_code == 403
 
 
+def test_the_live_region_is_closed_quietly(client: Client, beboer: Resident, rollout_limited: None) -> None:
+    """The one route that answers the gate with 204 rather than 403: it is read in the background by
+    a live signal (views.live_detail), and a 403 body would be read as the page. 204 leaves it be —
+    and hands a gated resident no more than the 403 does."""
+    event = make_event(beboer)
+    client.force_login(beboer)
+
+    response = client.get(f"{EVENTS}{event.pk}/indhold")
+
+    assert response.status_code == 204
+    assert response.content == b""
+
+
 def test_the_route_table_covers_every_url_pattern() -> None:
     """A route added without a gate test fails here rather than in production."""
     from events import urls as events_urls
@@ -209,6 +222,7 @@ def test_the_route_table_covers_every_url_pattern() -> None:
         "create_comment",
         "delete_comment",
         "event_ics",
+        "live_detail",  # test_the_live_region_is_closed_quietly — a 204 gate, not a 403
     }
     named = {p.name for p in events_urls.urlpatterns if p.name}
     assert named == covered, f"routes missing from the gate test: {named - covered}"
@@ -889,6 +903,7 @@ PRIVATE_ROUTES = [
     ("post", "{pk}/svar"),
     ("post", "{pk}/kommentar"),
     ("get", "{pk}/ics"),
+    ("get", "{pk}/indhold"),
 ]
 
 

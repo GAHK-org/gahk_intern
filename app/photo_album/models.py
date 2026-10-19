@@ -427,6 +427,17 @@ class Album(models.Model):
                 self._lock_cache["activity"] = {album.pk: values[f"a{album.pk}"] for album in lineage}
         return self._lock_cache["activity"]
 
+    def media_removed(self, media: "Media") -> None:
+        """Keep the cached lock state true after `media` was binned or deleted in the same request.
+
+        Removing the newest approved item in a subtree can lock an album, because its 90 days then
+        run from an older item. No other removal changes `_activity`, so the cache is dropped only
+        for that one, and a selection of many items from one album still works out its lock once.
+        """
+        activity = self._lock_cache.get("activity")
+        if activity and media.status == MediaStatus.APPROVED and media.added_at in activity.values():
+            del self._lock_cache["activity"]
+
     def _own_lock(self, latest: datetime | None, now: datetime | None) -> datetime | None:
         if self.manually_locked_at is not None:
             return self.manually_locked_at
@@ -498,6 +509,9 @@ class Media(models.Model):
     # SHA-256 of the original, for duplicate detection on upload and import. Blank on rows uploaded
     # before it existed until the nightly `tasks.backfill_media_hashes` has reached them.
     sha256 = models.CharField(max_length=64, blank=True, db_index=True)
+    # When that backfill last failed to read the original. Such a row waits behind every row not yet
+    # tried, so originals that are gone cannot take each night's budget before anything else.
+    hash_failed_at = models.DateTimeField(null=True, blank=True)
     original = models.FileField(
         upload_to=album_original_path, storage=get_photo_album_storage, max_length=500
     )

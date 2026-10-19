@@ -44,7 +44,7 @@ from notifications.categories import chat_room_key
 from notifications.models import NotificationPreference
 from residents.permissions import current_resident, effective_roles
 
-from . import channels, services
+from . import channels, live, services
 from .access import access_required, can_moderate, is_limited, request_allowed
 from .channels import Channel
 from .forms import ReactionForm
@@ -244,16 +244,20 @@ class Tab(NamedTuple):
     current: bool
 
 
-def _channel_context(request: HttpRequest, channel: Channel) -> dict[str, object]:
-    """The tab strip's data. Read by the page and by nothing else — the poll swaps only the message
-    list, so the counts refresh on navigation rather than every 20 seconds."""
+def _tabs(request: HttpRequest, channel: Channel) -> list[Tab]:
     counts = channel_counts()
+    return [
+        Tab(c, counts.get(c.slug, 0), c.slug == channel.slug)
+        for c in channels.visible(effective_roles(request))
+    ]
+
+
+def _channel_context(request: HttpRequest, channel: Channel) -> dict[str, object]:
+    """The tab strip's data. The poll swaps only the message list; the counts are kept current by
+    `channel_menu` instead, on a live signal from any channel and whenever the picker opens."""
     return {
         "channel": channel,
-        "tabs": [
-            Tab(c, counts.get(c.slug, 0), c.slug == channel.slug)
-            for c in channels.visible(effective_roles(request))
-        ],
+        "tabs": _tabs(request, channel),
         # The room's bell links to its row on the notifications settings page; "muted" is whether
         # this resident turned push for the room off there. A preference row exists only for a
         # category somebody changed, so no row is "on".
@@ -336,6 +340,24 @@ def feed_items(request: HttpRequest) -> HttpResponse:
             "quick_emoji": QUICK_EMOJI,
             "can_moderate": can_moderate(request),
         },
+    )
+
+
+def channel_menu(request: HttpRequest) -> HttpResponse:
+    """The channel picker's menu alone, with fresh live-post counts.
+
+    Re-read when the picker opens and on a live signal from any channel in it (den_hurtige.live), so
+    the counts are current whenever anyone can see them. One aggregate query (channel_counts), which
+    is why re-reading on every signal is affordable. Gated like feed_items, and for the same reason:
+    a 204, never a login page swapped into the menu.
+    """
+    if not request_allowed(request):
+        return HttpResponse(status=204)
+    channel = channels.lookup(request.GET.get("kanal"))
+    if channel is None or not channels.allowed(channel, effective_roles(request)):
+        return HttpResponse(status=204)
+    return render(
+        request, "den_hurtige/_channel_menu.html", {"channel": channel, "tabs": _tabs(request, channel)}
     )
 
 
@@ -674,6 +696,7 @@ def create_post(request: HttpRequest) -> HttpResponseRedirect:
         expires_at=current_datetime() + timedelta(minutes=minutes),
     )
     services.notify_new_post(post)
+    live.message_changed(post.channel, post.pk, "created")
     # No success message on purpose: the message appearing at the bottom of the feed *is* the
     # confirmation, and no chat app interrupts you to say a send worked. The warnings above (a
     # rejected image, over-long text) still surface, because those change what was actually posted.
@@ -755,6 +778,7 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponse:
         notify_everyone=request.POST.get("notify") == "alle",
     )
     services.notify_new_comment(comment)
+    live.message_changed(post.channel, post.pk)
     return _comment_response(request, post, back)
 
 
@@ -788,6 +812,7 @@ def toggle_reaction(request: HttpRequest, pk: int) -> HttpResponse:
         emoji = form.cleaned_data["emoji"]
         if apply_toggle(QuickReaction.objects, author=resident, emoji=emoji, post=post) == CREATED:
             services.notify_reaction(post, resident, emoji)
+        live.message_changed(post.channel, post.pk)
     # An invalid emoji falls through to a plain re-render: the row is still correct, and a one-tap
     # control has nowhere useful to put a validation error.
     return _reaction_row(request, post, resident.pk)
@@ -846,9 +871,12 @@ def delete_post(request: HttpRequest, pk: int) -> HttpResponseRedirect:
         raise PermissionDenied
     back = _channel_of(post)
     if post.within_delete_grace:
+        pk = post.pk  # delete() clears it
         post.delete()
+        live.message_changed(post.channel, pk, "deleted")
         messages.success(request, "Opslaget er slettet.")
     elif post.soft_delete():
+        live.message_changed(post.channel, post.pk)
         # Spelled out because it is the half people do not expect: the words are gone, the bubble
         # is not.
         messages.success(request, "Beskeden er slettet. «Besked slettet» bliver stående i samtalen.")
