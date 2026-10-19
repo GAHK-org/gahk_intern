@@ -227,9 +227,12 @@ CELERY_BEAT_SCHEDULE = {
         "options": {"expire_seconds": 50},
     },
     # Alerts on the status checks: the dead man's switch ping, and e-mails on a change (core.alerts).
+    # Expires like the heartbeat: checks that queued up behind a long job are dropped, not run (and
+    # pinged) in a burst after it.
     "check-health": {
         "task": "core.tasks.check_health",
         "schedule": 300.0,
+        "options": {"expire_seconds": 240},
     },
     "purge-expired-applications": {
         "task": "admissions.tasks.purge_expired_applications",

@@ -117,3 +117,13 @@ def test_the_check_health_task_is_kept_out_of_the_worker_log() -> None:
     record.data = {"name": "core.tasks.check_health", "id": "abc"}
     for logger in TASK_LIFECYCLE_LOGGERS:
         assert not logging.getLogger(logger).filter(record)
+
+
+def test_queued_up_health_checks_expire_instead_of_running_in_a_burst() -> None:
+    from django.conf import settings
+    from django_celery_beat.schedulers import ModelEntry
+
+    entry = settings.CELERY_BEAT_SCHEDULE["check-health"]
+    expire = ModelEntry._unpack_options(**entry["options"])["expire_seconds"]
+    assert expire is not None
+    assert 0 < expire < entry["schedule"]

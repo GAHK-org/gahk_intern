@@ -631,8 +631,10 @@ The in-app e-mails use the site's existing SMTP settings and need no account.
 #### Setting it up
 
 1. **Healthchecks.io:** create a check named "GAHK intern" with period **5 minutes** and grace
-   **10 minutes**. Under Integrations, add your e-mail (and the phone app or Telegram if you want
-   pushes). Copy the ping URL (`https://hc-ping.com/<uuid>`).
+   **15 minutes**. The check runs on the default worker, one job at a time, so a long job there (up to
+   the 15-minute task limit) can hold a ping up; period + grace must outlast that, or a long mail-out
+   reads as the server being down. Under Integrations, add your e-mail (and the phone app or Telegram
+   if you want pushes). Copy the ping URL (`https://hc-ping.com/<uuid>`).
 2. **Coolify environment:** set `HEALTHCHECK_PING_URL` to that URL, and `DB_SIZE_LIMIT_GB` to roughly the
    space Postgres can use. `HEALTH_ALERT_EMAILS` is optional: without it the e-mails go to this month's
    administrators. Redeploy.
