@@ -60,8 +60,13 @@ class HealthzMiddleware:
 WORKER_ALIVE_FILE = Path(os.environ.get("CELERY_ALIVE_FILE", "/tmp/celery-worker-alive"))  # noqa: S108  # nosec B108
 WORKER_HEARTBEAT_SECONDS = 30
 WORKER_STALE_AFTER = datetime.timedelta(minutes=2)
-# Beat schedules `core.tasks.heartbeat` every minute, so this is beat AND the default queue.
-BEAT_STALE_AFTER = datetime.timedelta(minutes=5)
+# Beat schedules `core.tasks.heartbeat` every minute and the default worker runs it, so this row is
+# beat AND the default queue keeping up. That worker runs one job at a time, so the heartbeat waits
+# behind whatever is running: the threshold must outlast the longest job (CELERY_TASK_TIME_LIMIT,
+# 15 min), or a long mail-out reads as a failure. Beat itself stopping is its container
+# healthcheck's job (manage.py healthcheck beat), which queueing does not affect.
+DEFAULT_QUEUE_STALE_AFTER = datetime.timedelta(minutes=20)
+DEFAULT_QUEUE_CHECK = "Standardkø (beat → worker)"
 # The workers the status page expects to hear from: the node names in docker-compose.prod.yml.
 EXPECTED_WORKERS = ("default", "media")
 
@@ -170,5 +175,5 @@ def system_status() -> list[Check]:
             _heartbeat_check(f"Worker ({node})", f"worker:{node}", WORKER_STALE_AFTER)
             for node in EXPECTED_WORKERS
         ),
-        _heartbeat_check("Beat (planlagte opgaver)", "beat", BEAT_STALE_AFTER),
+        _heartbeat_check(DEFAULT_QUEUE_CHECK, "beat", DEFAULT_QUEUE_STALE_AFTER),
     ]

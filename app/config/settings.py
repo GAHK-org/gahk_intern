@@ -214,10 +214,13 @@ PHOTO_ALBUM_DELETE_PROTECTED_FROM = os.environ.get("PHOTO_ALBUM_DELETE_PROTECTED
 DB_SIZE_LIMIT_GB = float(os.environ.get("DB_SIZE_LIMIT_GB") or 0) or None
 
 CELERY_BEAT_SCHEDULE = {
-    # Proves beat schedules and the default worker runs what it schedules (core.health).
+    # Proves beat schedules and the default worker runs what it schedules (core.health). Expires so
+    # the beats that queued up behind a long job are dropped, not run in a burst after it.
+    # `expire_seconds`, not Celery's `expires`: django-celery-beat's scheduler drops that key.
     "heartbeat": {
         "task": "core.tasks.heartbeat",
         "schedule": 60.0,
+        "options": {"expire_seconds": 50},
     },
     "purge-expired-applications": {
         "task": "admissions.tasks.purge_expired_applications",

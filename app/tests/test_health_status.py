@@ -88,7 +88,7 @@ def test_status_is_ok_with_fresh_heartbeats() -> None:
 
     assert checks["Worker (default)"].status == health.OK
     assert checks["Worker (media)"].status == health.OK
-    assert checks["Beat (planlagte opgaver)"].status == health.OK
+    assert checks[health.DEFAULT_QUEUE_CHECK].status == health.OK
 
 
 @pytest.mark.django_db
@@ -100,7 +100,7 @@ def test_status_fails_a_stale_or_missing_heartbeat() -> None:
     assert checks["Worker (default)"].status == health.FAIL
     assert checks["Worker (media)"].status == health.FAIL
     assert checks["Worker (media)"].detail == "Har aldrig meldt sig."
-    assert checks["Beat (planlagte opgaver)"].status == health.FAIL
+    assert checks[health.DEFAULT_QUEUE_CHECK].status == health.FAIL
 
 
 @pytest.mark.django_db
@@ -174,7 +174,7 @@ def test_the_status_page_is_for_administrators(make_resident: Callable) -> None:
     response = c.get("/admin/status")
     assert response.status_code == 200
     assert "Driftsstatus" in response.content.decode()
-    assert {c.name for c in response.context["checks"]} >= {"Database", "S3", "Beat (planlagte opgaver)"}
+    assert {c.name for c in response.context["checks"]} >= {"Database", "S3", health.DEFAULT_QUEUE_CHECK}
 
 
 def _lifecycle_record(logger: str, task: str, level: int = logging.INFO) -> logging.LogRecord:
@@ -196,3 +196,25 @@ def test_other_tasks_and_a_failing_heartbeat_are_still_logged() -> None:
         assert logging.getLogger(logger).filter(
             _lifecycle_record(logger, "core.tasks.heartbeat", logging.ERROR)
         )
+
+
+@pytest.mark.django_db
+def test_a_heartbeat_held_up_by_a_long_job_is_not_a_failure() -> None:
+    """The default worker runs one job at a time, so the heartbeat waits behind e.g. a long mail-out
+    (up to CELERY_TASK_TIME_LIMIT). That is the queue working, not beat failing."""
+    from django.conf import settings
+
+    assert health.DEFAULT_QUEUE_STALE_AFTER > datetime.timedelta(seconds=settings.CELERY_TASK_TIME_LIMIT)
+    _beat_at("beat", datetime.timedelta(minutes=10))
+    assert _by_name(health.system_status())[health.DEFAULT_QUEUE_CHECK].status == health.OK
+
+
+def test_queued_up_heartbeats_expire_instead_of_running_in_a_burst() -> None:
+    """Through django-celery-beat's own option mapping: it silently drops keys it does not know."""
+    from django.conf import settings
+    from django_celery_beat.schedulers import ModelEntry
+
+    entry = settings.CELERY_BEAT_SCHEDULE["heartbeat"]
+    expire = ModelEntry._unpack_options(**entry["options"])["expire_seconds"]
+    assert expire is not None
+    assert 0 < expire < entry["schedule"]
