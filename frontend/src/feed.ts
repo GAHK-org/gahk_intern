@@ -21,6 +21,10 @@
 // morphed region -- and merging them into one request with an out-of-band swap would put every
 // reply back into the 5s payload, which is exactly what moving replies into the panel removed.
 //
+// Both are now LIVE rather than polled: a WebSocket signal tells them when to re-fetch (see "live
+// signals" below), and the 5s timer runs only while that socket is down. Everything said here about
+// the morph is unchanged — only what pulls the trigger is.
+//
 // Blocks, in order: morph configuration, scroll-following, the iOS zoom lockdown, picker dismissal,
 // the thread panel's close/focus/history handling, the who-reacted gestures, the touch swipes, and
 // the composer. Every one of them is delegated from `document` rather than bound to an element,
@@ -28,6 +32,7 @@
 // re-armed after each poll.
 
 import { Idiomorph } from "idiomorph/htmx";
+import { LIVE_EVENT, type LiveSignal } from "./live";
 
 const FEED_ID = "js-feed";
 // The polled region, which is NO LONGER the scroller. #js-feed is the box that scrolls and holds
@@ -429,6 +434,27 @@ window.addEventListener("popstate", (event) => {
   if (!state?.denHurtigeThread) {
     pushedThreadEntry = false;
     clearThread();
+  }
+});
+
+// ---- live signals -----------------------------------------------------------------------------
+// The channel's WebSocket (./live) says a message changed; the regions that show it re-fetch
+// themselves. The fetching is htmx's, via the `gahk-live` trigger on #js-live and on the thread
+// panel (feed.html, _thread.html), so the requests, the morph and the hx-sync queueing are exactly
+// the ones the polls already used — this only says WHEN.
+//
+// The live list re-fetches on every signal: a new message, a reply count, a reaction, a deletion
+// all show there. The panel only on a signal naming ITS message, or a resync after the socket was
+// down — any reply or reaction it missed in that gap was never going to be signalled again.
+
+document.addEventListener(LIVE_EVENT, (event: Event) => {
+  const signal = (event as CustomEvent<LiveSignal>).detail;
+  const htmx = (window as unknown as { htmx?: { trigger: (e: Element, n: string) => void } }).htmx;
+  const live = document.getElementById(LIVE_ID);
+  if (live) htmx?.trigger(live, "gahk-live");
+  const panel = threadPanel();
+  if (panel?.hasAttribute("hx-get") && (signal.kind === "resync" || panel.dataset.threadPk === String(signal.pk))) {
+    htmx?.trigger(panel, "gahk-live");
   }
 });
 

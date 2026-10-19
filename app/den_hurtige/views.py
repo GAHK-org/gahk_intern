@@ -44,7 +44,7 @@ from notifications.categories import chat_room_key
 from notifications.models import NotificationPreference
 from residents.permissions import current_resident, effective_roles
 
-from . import channels, services
+from . import channels, live, services
 from .access import access_required, can_moderate, is_limited, request_allowed
 from .channels import Channel
 from .forms import ReactionForm
@@ -674,6 +674,7 @@ def create_post(request: HttpRequest) -> HttpResponseRedirect:
         expires_at=current_datetime() + timedelta(minutes=minutes),
     )
     services.notify_new_post(post)
+    live.message_changed(post.channel, post.pk, "created")
     # No success message on purpose: the message appearing at the bottom of the feed *is* the
     # confirmation, and no chat app interrupts you to say a send worked. The warnings above (a
     # rejected image, over-long text) still surface, because those change what was actually posted.
@@ -755,6 +756,7 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponse:
         notify_everyone=request.POST.get("notify") == "alle",
     )
     services.notify_new_comment(comment)
+    live.message_changed(post.channel, post.pk)
     return _comment_response(request, post, back)
 
 
@@ -788,6 +790,7 @@ def toggle_reaction(request: HttpRequest, pk: int) -> HttpResponse:
         emoji = form.cleaned_data["emoji"]
         if apply_toggle(QuickReaction.objects, author=resident, emoji=emoji, post=post) == CREATED:
             services.notify_reaction(post, resident, emoji)
+        live.message_changed(post.channel, post.pk)
     # An invalid emoji falls through to a plain re-render: the row is still correct, and a one-tap
     # control has nowhere useful to put a validation error.
     return _reaction_row(request, post, resident.pk)
@@ -846,9 +849,12 @@ def delete_post(request: HttpRequest, pk: int) -> HttpResponseRedirect:
         raise PermissionDenied
     back = _channel_of(post)
     if post.within_delete_grace:
+        pk = post.pk  # delete() clears it
         post.delete()
+        live.message_changed(post.channel, pk, "deleted")
         messages.success(request, "Opslaget er slettet.")
     elif post.soft_delete():
+        live.message_changed(post.channel, post.pk)
         # Spelled out because it is the half people do not expect: the words are gone, the bubble
         # is not.
         messages.success(request, "Beskeden er slettet. «Besked slettet» bliver stående i samtalen.")

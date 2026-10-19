@@ -129,6 +129,16 @@ before the app saw any of it — one large photo-album upload took the server do
 load-balances. There is no request timeout (Daphne's `-t 60` went with Daphne): a long request
 holds its thread for as long as it takes, which is why long work belongs in Celery.
 
+**More processes also means a shared channel layer.** Den Hurtige and opslagstavlen are live over
+WebSockets (`/ws/live/<topic>/`, `app/core/live.py`), and the signal from a write to the open pages
+travels through Channels' **in-memory** layer (`CHANNEL_LAYERS` in `config/settings.py`). That only
+reaches sockets held by the same process. With two or more, a page hears about a change only when it
+happens to be connected to the process that handled the write. Nothing breaks — Den Hurtige falls
+back to a 60-second backstop poll, opslagstavlen to how it was before it was live — it just stops
+being live. Add a Redis service and switch the layer
+to `channels_redis` in the same change that adds workers. Traefik proxies the WebSocket upgrade with
+no configuration; a proxy that refused it would leave every page on its old 5-second poll.
+
 ### 4a. Deploys: CI builds the image, the server pulls it
 
 Coolify does not build anything. The flow is:

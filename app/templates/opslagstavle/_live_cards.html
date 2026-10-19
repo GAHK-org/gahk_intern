@@ -1,0 +1,8 @@
+{% comment %}
+  The cards a live signal asked for (views.live_cards), drawn by the board's own partial so a
+  re-fetched card cannot differ from the one it replaces. The client morphs each into the card with
+  the same id and removes any it asked for that is not here.
+{% endcomment %}
+{% for notice in notices %}
+  {% include "opslagstavle/_notice_card.html" %}
+{% endfor %}

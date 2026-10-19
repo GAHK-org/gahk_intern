@@ -38,7 +38,11 @@
 {% block body_class %}no-zoom chat-page{% endblock %}
 
 {% block content %}
-  <div class="chat">
+  {% comment %}
+    data-live: this page listens to its channel's live topic (den_hurtige.live), and the polls
+    below hear from it. See #js-live.
+  {% endcomment %}
+  <div class="chat" data-live="den-hurtige.{{ channel.slug }}">
     <div class="chat-head">
       {% comment %}
         The channel picker doubles as the page title, so it costs no vertical space at all: a
@@ -93,7 +97,7 @@
     {% include "notifications/_device.html" with mode="prompt" %}
 
     {% comment %}
-      The message list. Polled so other residents' messages appear without a refresh.
+      The message list. Kept current so other residents' messages appear without a refresh.
 
       MORPHED, not replaced: idiomorph patches the existing nodes rather than swapping the list out,
       so scroll position, open reply threads and a half-typed reply survive because they are simply
@@ -194,9 +198,29 @@
           </div>
         {% endif %}
 
+        {% comment %}
+          LIVE BY SIGNAL, POLLED ONLY AS A BACKSTOP. Three triggers, and they divide the work:
+
+            gahk-live    the channel's WebSocket said a message changed (frontend/src/feed.ts
+                         raises it). This is how a new message, reply count, reaction or deletion
+                         arrives — within a moment, not within five seconds.
+            every 5s     the old poll, now only while there is NO live connection (the filter):
+                         a socket that dropped, a proxy that refuses the upgrade. The page then
+                         behaves exactly as it did before WebSockets.
+            every 60s    always. Some changes are not writes and so have no signal — a message
+                         archiving is the clock passing its expires_at, and the countdown on every
+                         bubble moves by itself — and the in-memory channel layer cannot hear a
+                         write made by another process (core.live). A minute is the countdown's own
+                         resolution.
+
+          hx-sync queues ONE follow-up request behind one in flight, so a burst of signals (three
+          people reacting at once) costs two fetches rather than three, and the last change is
+          never the one that gets dropped.
+        {% endcomment %}
         <div id="js-live"
              hx-get="{% url 'den_hurtige:feed_items' %}?kanal={{ channel.slug }}"
-             hx-trigger="every 5s"
+             hx-trigger="gahk-live, every 5s [!document.documentElement.hasAttribute('data-live-connected')], every 60s"
+             hx-sync="this:queue last"
              hx-ext="morph"
              hx-swap="morph:innerHTML">
           {% include "den_hurtige/_posts.html" %}
