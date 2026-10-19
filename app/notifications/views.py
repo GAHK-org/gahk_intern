@@ -72,6 +72,17 @@ def dropdown(request: HttpRequest) -> HttpResponse:
     return render(request, "notifications/_dropdown.html", {"rows": rows})
 
 
+def badge(request: HttpRequest) -> HttpResponse:
+    """Just the bell's badge, for a live signal (notifications.live) to re-read.
+
+    Not @login_required, for the reason den_hurtige.views.feed_items gives: a redirect to the login
+    page would be swapped in where the badge was. A logged-out page gets 204 and keeps what it has.
+    """
+    if not request.user.is_authenticated:
+        return HttpResponse(status=204)
+    return render(request, "notifications/_badge.html")
+
+
 @login_required
 def open_item(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     """Clicking a notification in the app: mark it seen, go where it points."""

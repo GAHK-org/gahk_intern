@@ -60,41 +60,7 @@
     MANAGER_ONLY_STATUSES): the script refuses the drop up front rather than letting them carry a
     card somewhere the server will only hand back.
   {% endcomment %}
-  <div class="kanban" data-kanban
-       data-can-move="{% if can_move %}1{% else %}0{% endif %}"
-       data-can-manage="{% if can_manage %}1{% else %}0{% endif %}">
-    {% comment %} Read by the script for the POST; not inside a <form>, nothing ever submits it. {% endcomment %}
-    <div hidden>{% csrf_token %}</div>
-    {% for status, label, tasks in columns %}
-      <div class="kanban-col" data-status="{{ status }}"
-           {% if status in manager_only_statuses %}data-manager-only{% endif %}>
-        <div class="kanban-col-head">
-          <span>{{ label }}</span>
-          <span class="chip chip-quiet" data-count>{{ tasks|length }}</span>
-        </div>
-        <div class="kanban-col-body" data-drop>
-          {% for task in tasks %}
-            <div class="kanban-card" data-task-id="{{ task.pk }}"
-                 data-move-url="{% url 'reparationer:set_status' task.pk %}">
-              <h3><a href="{% url 'reparationer:detail' task.pk %}">{{ task.title }}</a></h3>
-              {% if task.location %}<p class="muted">{{ task.location }}</p>{% endif %}
-              {% if task.description %}<p>{{ task.description|linebreaksbr }}</p>{% endif %}
-              <p class="chip chip-quiet">Ansvarlig: {{ task.get_responsible_display }}</p>
-              <p class="muted">
-                Meldt af {{ task.reported_by.first_name }} · {{ task.created_at|date:"j. M" }}
-                {% if task.comment_count %}· <a href="{% url 'reparationer:detail' task.pk %}">{{ task.comment_count }} note{{ task.comment_count|pluralize:"r" }}</a>{% endif %}
-              </p>
-            </div>
-          {% endfor %}
-          {% comment %}
-            Always rendered, hidden while the column has cards: a drag can empty a column without a
-            page load, and the script only has to flip `hidden` rather than mint markup.
-          {% endcomment %}
-          <p class="muted kanban-empty" data-empty {% if tasks %}hidden{% endif %}>Ingen sager her.</p>
-        </div>
-      </div>
-    {% endfor %}
-  </div>
+  {% include "reparationer/_kanban.html" %}
   {% comment %} Where a refused or failed drop says so; aria-live so it is not a silent snap-back. {% endcomment %}
   <p class="kanban-note muted mt-2" data-kanban-message role="status" aria-live="polite" hidden></p>
 {% endblock %}

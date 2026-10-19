@@ -35,7 +35,7 @@ from core.clock import current_datetime
 from core.models import PushSubscription
 from residents.models import Residency, Resident, RoleAssignment, active_period
 
-from . import categories
+from . import categories, live
 from .categories import Importance
 from .models import Notification, NotificationPreference, NotificationSettings
 
@@ -220,6 +220,7 @@ def notify(
         if pushed:
             (vibrating if decision.vibrate else silent).append(rid)
     Notification.objects.bulk_create(rows)
+    live.inbox_changed(row.recipient_id for row in rows if row.in_app)
 
     push.send_many(
         _deliveries(
@@ -320,6 +321,8 @@ def notify_grouped(
         row.expires_at = expires_at
         row.seen_at = None
         row.save()
+    if decision.in_app:
+        live.inbox_changed([recipient_id])
 
     if pushed:
         push.send_many(
@@ -340,7 +343,13 @@ def notify_grouped(
 
 
 def mark_seen(rows: QuerySet[Notification]) -> int:
-    return rows.filter(seen_at__isnull=True).update(seen_at=current_datetime())
+    unseen = rows.filter(seen_at__isnull=True)
+    # Whose badges this clears, read before the UPDATE makes them indistinguishable from the rest.
+    recipients = list(unseen.values_list("recipient_id", flat=True).distinct())
+    marked = unseen.update(seen_at=current_datetime())
+    if marked:
+        live.inbox_changed(recipients)
+    return marked
 
 
 def unseen_count(resident_id: int) -> int:

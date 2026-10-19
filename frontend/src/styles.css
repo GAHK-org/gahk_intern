@@ -1524,6 +1524,18 @@
      margins instead of into the ink, which is what "congested" was actually about. */
   .board-list { @apply flex flex-col gap-3; }
   .board-pinned { @apply mb-3; }
+  /* "N nye opslag — vis" (opslagstavle-live.ts). Sticky just under the 60px top bar, so it is seen
+     by somebody halfway down the page, which is where a reader usually is when a post arrives —
+     and it is a pill floating over the cards rather than a row pushing them down, because not
+     moving the cards is the whole reason a new post is announced instead of inserted. Its block
+     is zero-height for the same reason; the pill hangs below it. */
+  .board-new { position:sticky; top:68px; z-index:5; display:block; width:fit-content; height:0;
+    margin:0 auto; overflow:visible; text-decoration:none; }
+  .board-new[hidden] { display:none; }
+  .board-new > span { display:block; padding:6px 14px; border-radius:999px; background:var(--green);
+    color:#fff; font-size:.875rem; font-weight:600; box-shadow:0 6px 16px rgb(0 0 0 / .18);
+    white-space:nowrap; }
+  .topbar-hidden .board-new { top:8px; }
   .notice-card { @apply px-4; padding-block: 14px; }
   /* 15px, not the inherited 16. A card in a scanned list is not a page of prose: at 16px with
      leading-relaxed the excerpt was the loudest thing on the board and left the padding looking
