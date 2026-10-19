@@ -137,23 +137,36 @@ class PushSubscription(models.Model):
 
 
 class WorkerJobLog(models.Model):
-    """What one Celery task logged while it ran — see core/worker_logs.py. Shown on the worker-jobs
-    admin page. A successful job's is purged after WORKER_JOB_RETENTION by
-    core.tasks.purge_worker_job_logs; any other only from a pile of the same task and state, past
+    """The worker's own record of one Celery job: when it was sent, started and finished, what sent
+    it, and what it logged while it ran — see core/worker_logs.py. Shown on the worker-jobs admin
+    page, which reads the rest (status, result, traceback) from Celery's result table.
+
+    The broker's copy of the message, which is where the sent time, the parent and the arguments
+    otherwise live, is swept after a day (core.tasks.BROKER_MESSAGE_RETENTION); this row keeps them
+    for as long as the result is kept. A successful job's row is purged after WORKER_JOB_RETENTION
+    by core.tasks.purge_worker_job_logs; any other only from a pile of the same task and state, past
     UNSUCCESSFUL_JOBS_KEPT and UNSUCCESSFUL_JOB_RETENTION."""
 
     task_id = models.CharField(max_length=255, unique=True)
     task_name = models.CharField(max_length=255, blank=True)
     state = models.CharField(max_length=20, blank=True)
+    # When the message was published, from the header core.worker_logs stamps on it. Empty for a job
+    # sent before that header existed, or run eagerly.
+    sent_at = models.DateTimeField(null=True, blank=True)
     started_at = models.DateTimeField()
     finished_at = models.DateTimeField(null=True, blank=True)
+    # The job that queued this one, blank for one sent from a request or by Beat.
+    parent_id = models.CharField(max_length=255, blank=True)
+    # Celery's own reprs of the arguments (`argsrepr`/`kwargsrepr`), capped by Celery at 1024 chars.
+    arguments = models.TextField(blank=True)
+    keyword_arguments = models.TextField(blank=True)
     # [{"at": ISO time, "level": "INFO", "logger": "photo_album.tasks", "message": "…"}, …]
     lines = models.JSONField(default=list)
     # Lines past core.worker_logs.MAX_LINES, counted but not kept.
     omitted = models.PositiveIntegerField(default=0)
 
     class Meta:
-        indexes = [models.Index(fields=["finished_at"])]
+        indexes = [models.Index(fields=["finished_at"]), models.Index(fields=["parent_id"])]
 
     def __str__(self) -> str:
         return f"{self.task_name} {self.task_id}"
