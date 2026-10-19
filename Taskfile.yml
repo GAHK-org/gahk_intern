@@ -167,6 +167,9 @@ tasks:
   # These variants override both so the host run matches CI:
   #   test:pg     -> the compose Postgres via its host port (needs `task db:up`); matches CI exactly.
   #   test:sqlite -> a throwaway local SQLite file; no Docker needed, but misses Postgres-only behaviour.
+  #   test:pg:fresh -> test:pg on a newly created test DB. The test DB is otherwise reused between runs
+  #                 (--reuse-db in pytest.ini); recreate it after switching between branches whose
+  #                 migrations disagree.
   test:pg:
     desc: 'Run pytest against the local Postgres container (task db:up first); CI parity'
     dir: '{{.APP}}'
@@ -174,6 +177,12 @@ tasks:
       DATABASE_URL: 'postgres://gahk:gahk@localhost:5432/gahk'
       TURNSTILE_SECRET_KEY: ''
     cmds: ['{{.PY}} -m pytest {{.CLI_ARGS}}']
+
+  test:pg:fresh:
+    desc: 'Like test:pg, but recreate the test DB first (after switching branches with different migrations)'
+    cmds:
+      - task: test:pg
+        vars: { CLI_ARGS: '--create-db {{.CLI_ARGS}}' }
 
   test:sqlite:
     desc: 'Run pytest against a throwaway local SQLite DB (no Docker needed)'
