@@ -4,20 +4,21 @@ The signal is the whole contract between a write and every open page, so each wr
 to send one. A missing signal does not fail loudly anywhere else: the page just goes quiet until its
 60s backstop poll, which nobody would notice in review and everybody would notice in use.
 
-Two tests go through a real WebSocket (channels.testing) to prove the parts fit — the consumer's
+A few tests go through a real WebSocket conversation with the consumer to prove the parts fit — the consumer's
 refusal, and a view's write arriving on a subscribed socket. Those are transactional because the
 consumer reads the database from a worker thread, which cannot see an uncommitted test transaction.
 """
 
 import datetime
+import json
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from asgiref.sync import async_to_sync, sync_to_async
+from asgiref.testing import ApplicationCommunicator
 from channels.routing import URLRouter
-from channels.testing import WebsocketCommunicator
 from django.contrib.auth.models import AnonymousUser
 from django.contrib.sessions.backends.db import SessionStore
 from django.http import HttpRequest
@@ -349,12 +350,45 @@ def test_the_feed_polls_fast_only_without_a_live_connection(client: Client, bebo
 # --- through a real socket ----------------------------------------------------------------------
 
 
-def _communicator(topics: list[str], user: Resident | AnonymousUser) -> WebsocketCommunicator:
-    query = "&".join(f"t={topic}" for topic in topics)
-    communicator = WebsocketCommunicator(URLRouter(websocket_urlpatterns), f"/ws/live/?{query}")
-    communicator.scope["user"] = user
-    communicator.scope["session"] = SessionStore()
-    return communicator
+class Socket(ApplicationCommunicator):  # type: ignore[misc]
+    """A browser's end of one socket, talking ASGI to the real router and consumer.
+
+    Not channels.testing.WebsocketCommunicator, which this used to be: importing anything from
+    channels.testing runs that package's __init__, which imports Daphne for its live-server test
+    case. Daphne is not a dependency since uvicorn replaced it (DEPLOY.md §4), so the import only
+    worked on a machine with a stale virtualenv — and failed collection in CI. This is the sliver of
+    it these tests use, on asgiref's communicator, which is what Channels' own is built on.
+    """
+
+    def __init__(self, topics: list[str], user: Resident | AnonymousUser) -> None:
+        query = "&".join(f"t={topic}" for topic in topics)
+        scope = {
+            "type": "websocket",
+            "path": "/ws/live/",
+            "query_string": query.encode(),
+            "headers": [],
+            "subprotocols": [],
+            "user": user,
+            "session": SessionStore(),
+        }
+        super().__init__(URLRouter(websocket_urlpatterns), scope)
+
+    async def connect(self, timeout: float = 5) -> tuple[bool, object]:
+        """(True, subprotocol) once accepted; (False, close code) if refused at the handshake."""
+        await self.send_input({"type": "websocket.connect"})
+        response = await self.receive_output(timeout)
+        if response["type"] == "websocket.accept":
+            return True, response.get("subprotocol")
+        return False, response.get("code", 1000)
+
+    async def receive_json_from(self, timeout: float = 5) -> Any:  # noqa: ANN401
+        response = await self.receive_output(timeout)
+        assert response["type"] == "websocket.send", response
+        return json.loads(response["text"])
+
+    async def disconnect(self, code: int = 1000, timeout: float = 5) -> None:
+        await self.send_input({"type": "websocket.disconnect", "code": code})
+        await self.wait(timeout)
 
 
 @pytest.mark.django_db(transaction=True)
@@ -363,7 +397,7 @@ def test_a_refused_socket_is_closed_with_the_refusal_code() -> None:
     retrying (live.ts). A rejected handshake would look like a network failure."""
 
     async def run() -> dict[str, Any]:
-        communicator = _communicator(["den-hurtige.generelt"], AnonymousUser())
+        communicator = Socket(["den-hurtige.generelt"], AnonymousUser())
         connected, _ = await communicator.connect()
         assert connected
         closed = await communicator.receive_output()
@@ -381,7 +415,7 @@ def test_a_new_message_reaches_a_listening_socket(make_resident: Callable[..., R
     client.force_login(author)
 
     async def run() -> dict[str, Any]:
-        communicator = _communicator(["den-hurtige.generelt"], author)
+        communicator = Socket(["den-hurtige.generelt"], author)
         connected, _ = await communicator.connect()
         assert connected
         await sync_to_async(client.post)(FEED_URL + "opret", {"content": "Kaffe?", "duration": 60})
@@ -404,7 +438,7 @@ def test_one_socket_joins_every_topic_it_may_and_skips_the_rest(
     other = make_resident(email="b@gahk.dk")
 
     async def run() -> tuple[dict[str, Any], bool]:
-        communicator = _communicator(["opslagstavle", f"notifikationer.{other.pk}"], me)
+        communicator = Socket(["opslagstavle", f"notifikationer.{other.pk}"], me)
         connected, _ = await communicator.connect()
         assert connected
         await sync_to_async(live._send)(f"notifikationer.{other.pk}", {"topic": "x"})
