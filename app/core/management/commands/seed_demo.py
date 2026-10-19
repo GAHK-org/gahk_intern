@@ -46,6 +46,8 @@ from den_hurtige.demo import seed as seed_den_hurtige
 from den_hurtige.models import QuickComment, QuickPost, QuickReaction
 from events.demo import seed as seed_events
 from events.models import CalendarFeedToken, Event, EventInvite, Rsvp
+from notifications.demo import seed as seed_notifications
+from notifications.models import Notification, NotificationPreference, NotificationSettings
 from oelkaelder.models import (
     Deposit,
     Product,
@@ -143,6 +145,9 @@ WIPE_ORDER: list[type[models.Model]] = [
     QuickPost,
     Media,
     Album,
+    Notification,
+    NotificationPreference,
+    NotificationSettings,
     Resident,
     # Before Workgroup: ArchiveFolder references it with PROTECT (a SET_NULL would silently turn a
     # gated folder into a world-readable one), so the archive has to go first or --fresh cannot run.
@@ -207,6 +212,8 @@ class Command(BaseCommand):
             seed_arkiv(residents, self.now, self.rng)
             seed_photo_album(residents, self.now, self.rng)
             seed_den_hurtige(residents, self.now, self.rng)
+            # Last: its rows link to the events, opslag and Den Hurtige posts seeded above.
+            seed_notifications(residents, self.now, self.rng)
 
         self._report(residents)
 
@@ -656,7 +663,7 @@ class Command(BaseCommand):
             self.style.SUCCESS(
                 f"\nSeeded demo data: {len(residents)} residents, "
                 f"{Residency.objects.count()} residencies, {AkEntry.objects.count()} AK entries, "
-                f"{Event.objects.count()} begivenheder, "
+                f"{Event.objects.count()} begivenheder, {Notification.objects.count()} notifikationer, "
                 f"{Transaction.objects.count()} ølkælder purchases, {Application.objects.count()} applications."
             )
         )
