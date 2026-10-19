@@ -1,4 +1,4 @@
-"""Stamtræ (F-011): fylgje cycles must neither hide residents nor be creatable."""
+"""Stamtræ: fylgje cycles must neither hide residents nor be creatable."""
 
 from collections.abc import Callable
 

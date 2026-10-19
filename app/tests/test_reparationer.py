@@ -547,4 +547,3 @@ def test_the_two_crews_get_their_role_from_their_embedsgruppe() -> None:
     Spelling either differently silently grants nothing, which is exactly the bug this pins."""
     assert WORKGROUP_ROLE["Repperne"] == Role.REPPER
     assert WORKGROUP_ROLE["Vicevært"] == Role.VICEVAERT
-

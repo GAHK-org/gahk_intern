@@ -1,4 +1,4 @@
-"""The statistik page's visits chart (F-012)."""
+"""The statistik page's visits chart."""
 
 from collections.abc import Callable
 from datetime import timedelta

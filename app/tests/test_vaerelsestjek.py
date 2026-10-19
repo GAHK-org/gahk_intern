@@ -1,4 +1,4 @@
-"""Værelsestjek (F-005): resubmitting a room report."""
+"""Værelsestjek: resubmitting a room report."""
 
 from collections.abc import Callable
 from pathlib import Path
