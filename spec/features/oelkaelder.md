@@ -23,17 +23,18 @@ The beer cellar's till and every resident's tab, sold on credit and settled by b
 
 ## Credit limit
 - Off by default. When on, an account whose balance is below the configured limit (e.g. −100 kr) cannot buy; exactly at the limit is still allowed.
-- The till shows a blocked account as "Spærret – indbetal først" and explains the block when the alumne-ID is typed.
+- The till shows a blocked account, and only a blocked one, as "Spærret – indbetal først" with a highlighted balance, and explains the block when the alumne-ID is typed.
 - A split sale that includes a blocked buyer is refused as a whole, naming who is blocked.
 - A deposit that lifts the balance above the limit reopens the account immediately.
 
 ## Deposits and corrections
 - Residents pay by bank transfer; the Ølkælder role registers each deposit against the account (positive amounts only).
-- A mistaken deposit can be voided and drops out of the balance.
+- A mistaken deposit can be voided and drops out of the balance. Voiding twice does nothing.
 - A sale can be voided from the sales overview; every buyer of that basket is refunded at once. Voiding twice does nothing.
 - A manual adjustment adds or subtracts an amount from one account and requires a written reason; it shows in the resident's own statement under that reason.
 - Manual adjustments can be voided; interest charges cannot.
-- Sales, deposits, adjustments, voids and interest runs are written to an audit log.
+- An amount (deposit, adjustment or product price) that is not a number or is over 100,000 kr is refused with a message.
+- Sales, deposits, adjustments, voids (with who voided) and interest runs are written to an audit log.
 
 ## Debt warnings
 - Two warning emails are configurable (text, threshold in kr, on/off); the text can include the new balance.
@@ -49,6 +50,7 @@ The beer cellar's till and every resident's tab, sold on credit and settled by b
 - Deposit, sales and quantity reports per date range, on screen or downloaded as CSV or Excel.
 - Salgsoverblik lists every sale (buyers, total, per-person share, items, voided status), 50 per page, defaulting to the last 90 days; it can search buyers by name or email and filter sales with or without known buyers.
 - Salgsoverblik exports the whole filtered set, up to 5000 sales; larger exports are refused with a request for a shorter period.
+- In every download, cells that would start a spreadsheet formula are neutralised.
 - The person history shows one resident's full statement: purchases, deposits and adjustments, newest first.
 - The resident's own page shows the latest 100 statement lines; the officer view shows 200.
 
@@ -58,7 +60,7 @@ The beer cellar's till and every resident's tab, sold on credit and settled by b
 - Product images follow the site-wide image rules (no SVG, at most 5 MB, HEIC stored as JPEG); a refused image is dropped with a warning and the product is still saved.
 
 ## Monthly statement
-- On the 1st of each month at 06:10, every active account holder who is still a resident is emailed last month's deposits, purchases, adjustments and the balance at the end of that month.
+- On the 1st of each month at 06:10, every active account holder who is still a resident is emailed last month's deposits, purchases, adjustments and the balance at the end of that month. A failed email is logged and skipped; the rest are still sent.
 
 ## Decisions
 - The credit limit is separate from the interest threshold: both default to −100 kr, and sharing one number had turned "pays interest" into "may not buy". It is off by default so that blocking sales is an explicit choice by the Ølkælder officers.

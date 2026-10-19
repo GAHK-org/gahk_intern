@@ -10,7 +10,7 @@ An internal statistics page on applications and front-page visits, plus the coun
 - *Ansøgninger fordelt på type*: a pie of tour (Rundvisning) versus sublet (Fremleje) applications on file. Applications are deleted after a year, so this covers roughly the last twelve months.
 - *Hvor hørte de om os?*: a pie of where this year's tour applicants heard about the kollegium; blank answers are left out.
 - *Rundvisninger pr. universitet*: the top 15 universities among this year's tour applicants.
-- *Besøg pr. dag*: a line chart of front-page visits for the latest 30 days that had visits.
+- *Besøg pr. dag*: a line chart of front-page visits for the last 30 calendar days up to today; days without visits show as 0.
 - "This year" is the current calendar year.
 - Pie tooltips show percentages.
 - A panel with no data shows a short message instead of an empty chart.

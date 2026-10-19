@@ -9,7 +9,7 @@ The internal area's landing page at /intern/, and the sidebar and top bar shared
 
 ## The dashboard
 - Greets the resident by first name, with a "Søg værelse" button.
-- Shows the active month and the resident's roles for it ("Ingen særlige denne måned" when none).
+- Shows the active month and the names of the resident's roles for it ("Ingen særlige denne måned" when none).
 - "Begivenheder på GAHK": the next 6 upcoming events the resident can see (aflyste ones marked), plus any mærkedag in the next 30 days, in date order, with a link to the month calendar. With nothing coming up it offers to create an event; a resident without access to Begivenheder is told it is not open to them yet.
 - The mærkedage are the founders' birthdays, Gustav Adolf Hagemann's (16 May) and Mathilde Hagemann's (27 September), every year.
 - Shortcuts for everyone: Alumneliste, Mine AK-krydser, Min ølkælder-saldo. Plus Ølkælder-admin for the Ølkælder role, AK-oversigt for the AK role and Ansøgninger for Indstilling.
@@ -32,7 +32,7 @@ The internal area's landing page at /intern/, and the sidebar and top bar shared
 - **Værktøjer**: Reparationer for everyone.
 - **Administration**: Ansøgninger for Indstilling; Rediger indhold for the website editors (Administrator, Indstilling, Inspektion, PR); Site-admin and Roller for Administrator.
 - **Ressourcer**: Stamtræ, Statistik and Arkiv, then the external Wiki and "Fejl & ønsker" links, which open in a new tab.
-- Den Hurtige, Opslagstavle, Begivenheder, Fotoalbum and Arkiv are currently open to every resident; if one is later limited to certain roles, its sidebar entry disappears for everyone else.
+- Den Hurtige, Opslagstavle, Begivenheder, Fotoalbum and Arkiv are currently open to every resident; if one is later limited to certain roles, its sidebar entry disappears for everyone else, and for Fotoalbum so do the dashboard photos.
 - On a phone the sidebar opens from a menu button.
 
 ## Decisions

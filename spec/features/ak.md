@@ -22,12 +22,13 @@ The bookkeeping of the labour every resident owes the house, counted in krydser.
 - AK-oversigt shows a 12-month schedule (januar–december): whether each month is charged and how many krydser.
 - The schedule is the same every year.
 - A charged month costs at least 1 kryds.
+- A month missing from the schedule is charged the default 2 krydser, whichever way the charge is booked.
 - Saving the schedule books nothing. The month in progress is charged with the schedule as it stands when the month ends; months already charged are never changed.
 
 ## Registering work
 - A resident registers their own work with a whole number of krydser (at least 1) and a required description; it counts immediately, with no approval step.
-- An officer can add any non-zero whole number to a resident's log, with an optional note: positive counts as work, negative as a manual adjustment.
-- An officer can delete any entry from a resident's log.
+- An officer can add any non-zero whole number to a resident's log, with an optional note: positive counts as work, negative as a manual adjustment. Anything else is refused with a message.
+- An officer can delete any entry from a resident's log, after confirming.
 
 ## AK-oversigt
 - Lists residents on the current month's alumneliste, lowest balance first, each linking to their log.

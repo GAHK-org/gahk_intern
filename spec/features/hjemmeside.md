@@ -40,15 +40,17 @@ The public website: the front page, the content pages, and news and front-page e
 
 ## Editing and images
 - Page bodies, news bodies and event descriptions are HTML; unsafe markup is stripped on every save and again on restore.
+- Page headings and news titles allow only simple inline formatting (line breaks, bold, italic and the like); anything else is stripped on save, on restore and when shown.
 - Editors can upload an image from the body editor and insert it, with its description as alt text. Images must be real raster images up to 5 MB (a HEIC photo up to 25 MB, stored as JPEG); SVG and disguised files are refused.
 - The image library shows where each image is used. Deleting an image deletes its file.
-- A page's background is chosen from the image library; an existing old background is kept as an option.
-- Image links in content migrated from the old site keep working.
+- A page's background is chosen from the image library and displayed behind the page; an existing old background is kept as an option.
+- Image links migrated from the old site keep working in page bodies, news, front-page event descriptions and backgrounds.
 
 ## Decisions
 - The address is the lookup key, multi-segment, because the public addresses had to survive the move from the old site unchanged.
 - Old addresses point at the page rather than at a path, so a chain of renames never needs chain-following and cannot loop.
 - History outlives a deleted page and pages are administrator-only to delete, because there is no undo for a deleted page.
 - Snapshots and redirects are written only by the editor screens, not on every save, so a script or seed cannot fill history with author-less versions.
+- Headings are also cleaned when shown, because content migrated from the old site never passed through the editor.
 - The change log is CMS-only rather than the admin's general log, which would expose applicants' names and personnel data to the PR role.
 - The address picker, history and orphan warning exist because an editor once renamed a page out of its section and it vanished with no way back.

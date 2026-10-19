@@ -19,10 +19,10 @@ The room-application round: residents apply for rooms Indstillingen puts up for 
 - Higher K ranks first. The page shows the formula, the a and b values and the resulting K.
 - K updates live as the resident fills in the study-end month/year and orlov, and can be checked at any time, even when no rooms are on offer.
 - Move-in comes from the resident's registered move-in date. Without one, the page tells them to contact Indstillingen and they cannot apply.
-- Orlov is pre-filled with a suggestion: every month since move-in in which the resident was not on the alumneliste. The resident may change it.
+- Orlov is pre-filled with a suggestion: every month since move-in in which the resident was not on the alumneliste. The resident may change it to any whole number of months from 0 to 120.
 
 ## Applying
-- An application holds up to five ranked priorities chosen from the rooms on offer; at least one is required.
+- An application holds up to five ranked priorities, each a different room on offer for the month being applied for; at least one is required. The form lists only that month's offers.
 - A resident has one application per round. Submitting again replaces the priorities and recalculates K, but keeps the original submission time. The form opens pre-filled with the existing application.
 - K is fixed at submission, using the resident's own study-end and orlov figures.
 - Withdrawing an application deletes it, and notifies nobody.
@@ -33,7 +33,7 @@ The room-application round: residents apply for rooms Indstillingen puts up for 
 - Applicants are taken in K order, highest first. Each gets their highest-priority room that is still free, and nobody wins more than one room.
 - Submission time never breaks a tie. If the top contender for a room has the same K as another unplaced applicant who also listed it, the room is marked tied (uafgjort). All tied residents are held back from every other room until the tie is settled.
 - The applicants page for a room lists everyone who listed it, ranked by K and then priority, and marks the projected winner and any tied applicants.
-- Indstillingen settles a tie by recording the winner of the house's coin flip (lodtrækning). That room is then treated as decided, which can resolve other ties further down.
+- Indstillingen settles a tie by recording the winner of the house's coin flip (lodtrækning), who must be one of the applicants tied for that room. That room is then treated as decided, which can resolve other ties further down.
 
 ## Ending the round
 - "Afslut runde" writes the result straight onto next month's alumneliste:

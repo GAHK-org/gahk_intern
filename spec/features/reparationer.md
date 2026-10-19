@@ -4,7 +4,7 @@ A kanban board where residents report things that are broken and the Viceværter
 
 ## Access
 - Every logged-in resident can see the board and the archive, report a repair, and add notes.
-- Viceværter (the month's Vicevært embedsgruppe) can move tickets between columns, except into "AK projekt" and "Færdig", and hand tickets between the two crews.
+- Viceværter (the month's Vicevært embedsgruppe) can move tickets between columns, except into "AK projekt" and "Færdig" or out of "Færdig", and hand tickets between the two crews.
 - Reppergruppen (the Repperne embedsgruppe), Inspektion and Administrator can do everything: every column, handoffs, archive, reopen and delete.
 
 ## Reporting
@@ -29,8 +29,9 @@ A kanban board where residents report things that are broken and the Viceværter
 - A manager can delete a ticket outright.
 
 ## Archive
-- A ticket that has been in Færdig for 30 days is archived automatically by a nightly job (03:50). It leaves the board but is kept.
-- A manager can archive a Færdig ticket at once, or reopen an archived ticket, which returns it to Færdig on the board.
+- A ticket that has been in Færdig for 30 days is archived automatically by a nightly job (03:50). It leaves the board but is kept. The 30 days count from when it entered Færdig; a handoff or other change meanwhile does not restart them.
+- A manager can archive a Færdig ticket at once, or reopen an archived ticket, which returns it to Færdig on the board and starts the 30 days again.
+- Moving an archived ticket out of Færdig also brings it back onto the board.
 - The archive is a searchable list, newest archived first; archived tickets still open normally.
 
 ## Notifications
@@ -41,7 +42,7 @@ Sent through Notifications, under the Reparationer category (see notifications.m
 - Column changes and notes send no notifications.
 
 ## Decisions
-- "Færdig" and "AK projekt" are manager-only: closing a ticket and committing Reppergruppen's AK hours are their calls. "Godkend af Repper" exists so a Vicevært can mark something done without closing it.
+- "Færdig" and "AK projekt" are manager-only: closing a ticket and committing Reppergruppen's AK hours are their calls. Reopening a finished ticket is theirs too, so a Vicevært cannot undo a close they could not have made. "Godkend af Repper" exists so a Vicevært can mark something done without closing it.
 - Responsible is separate from the column because who owns a ticket and how far it has come are independent.
 - Either crew may hand a ticket either way: a handoff nobody can undo is one people hesitate to make.
 - Finished tickets are archived, not deleted, because a repair's history is worth keeping searchable.

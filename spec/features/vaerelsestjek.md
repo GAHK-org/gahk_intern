@@ -23,7 +23,7 @@ Condition reports for each room, usually made when someone moves in or out, with
 ## History
 - Earlier reports are kept. On the check page, "Vis tidligere rapport" fills the form with an older report's values.
 - Submitting from an older report still creates a new report. The old one is never changed.
-- Photos are not carried over. A new report contains only the photos uploaded with it.
+- A new report keeps each criterion's photo from the current report (including images imported from the old site) unless a new photo is uploaded for it, which replaces it. A photo cannot be removed, only replaced.
 
 ## Viewing a room
 - The room page shows the current report: who made it and when, and each criterion's score with its scale, comment and photos (including images imported from the old site).
@@ -32,11 +32,12 @@ Condition reports for each room, usually made when someone moves in or out, with
 ## AK overview
 - A table with one row for each room that has a report and one column for each criterion. It shows the current scores, plus the date of the last check and who made it.
 - Each room links to its report page.
-- It can be exported as CSV or Excel with the same columns.
+- It can be exported as CSV or Excel with the same columns. Cells that would start a spreadsheet formula are neutralised.
 
 ## Decisions
 - Any resident can make a check, not just Inspektionen. Checks are done by whoever is around, and restricting them to one embedsgruppe meant the work stalled. Every report records its author, so the history stays attributable.
 - An off-scale score is dropped instead of rejecting the whole report: the photo inputs cannot be refilled, so a rejection would mean photographing the room again. It is not clamped either, because a 5 stored as 2 would look exactly like a real 2.
 - In the AK table and the export, each score sits under its own criterion's column. The old site filled cells by position, so one missing criterion pushed every later score under the wrong heading.
+- Photos carry over because a browser cannot pre-fill a file input; otherwise correcting one score would drop every photo from the room's current report.
 - Rows are locked as read-only, not disabled, because disabled fields are not submitted. The form therefore still works without JavaScript.
 - Photo uploads use the site-wide image rules. Every resident can upload, so an SVG accepted here could run script from the site's own address.
