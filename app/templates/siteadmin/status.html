@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Driftsstatus - GAHK{% endblock %}
+{% block content %}
+  <div class="flex items-center justify-between mb-6">
+    <h1>Driftsstatus</h1>
+    <a class="btn" href="{% url 'siteadmin:home' %}">Administration</a>
+  </div>
+
+  <div class="card mb-4 border-l-4 {% if all_ok %}border-green-600{% else %}border-red-600{% endif %}">
+    <strong>{% if all_ok %}Alt kører.{% else %}Noget kræver opmærksomhed.{% endif %}</strong>
+    <p class="muted">Tjekket {{ checked_at|date:"Y-m-d H:i:s" }}. Genindlæs siden for at tjekke igen.</p>
+  </div>
+
+  <div class="card overflow-x-auto">
+    <table class="w-full border-collapse text-sm">
+      <thead><tr class="border-b border-gray-200 text-left"><th class="p-2">Tjeneste</th><th class="p-2">Status</th><th class="p-2">Detaljer</th></tr></thead>
+      <tbody>
+        {% for check in checks %}
+          <tr class="border-b border-gray-100">
+            <td class="p-2 font-semibold">{{ check.name }}</td>
+            <td class="p-2"><span class="chip{% if check.status == 'fejl' %} chip-neg{% elif check.status == 'advarsel' %} chip-brass{% endif %}">{{ check.status|capfirst }}</span></td>
+            <td class="p-2">{{ check.detail }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted mt-4">
+    Containernes egne healthchecks (web: <code>/healthz</code>, workers: deres heartbeat, beat: <code>manage.py healthcheck beat</code>)
+    holdes bevidst smalle; pladsmangel og S3 vises kun her, da en genstart ikke løser dem.
+  </p>
+{% endblock %}

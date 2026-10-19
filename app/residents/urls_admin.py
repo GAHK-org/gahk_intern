@@ -10,6 +10,7 @@ app_name = "siteadmin"
 
 urlpatterns = [
     path("", views_admin.home, name="home"),
+    path("status", views_admin.system_status, name="status"),
     path("worker-jobs", views_admin.worker_jobs, name="worker_jobs"),
     path("worker-jobs/<str:task_id>", views_admin.worker_job_detail, name="worker_job_detail"),
     path("roles", views_admin.roles, name="roles"),

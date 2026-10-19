@@ -210,7 +210,15 @@ PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL = os.environ.get("PHOTO_ALBUM_SYSTEM_IMPORT_EMAI
 # `manage.py delete_photo_album` refuses anything created or uploaded on or after this date
 # (YYYY-MM-DD). Blank means the command's own default, 2026-10-01; a date in the future is refused.
 PHOTO_ALBUM_DELETE_PROTECTED_FROM = os.environ.get("PHOTO_ALBUM_DELETE_PROTECTED_FROM", "")
+# Space set aside for the database, in GB; the admin status page fails above 70% of it (core.health).
+DB_SIZE_LIMIT_GB = float(os.environ.get("DB_SIZE_LIMIT_GB") or 0) or None
+
 CELERY_BEAT_SCHEDULE = {
+    # Proves beat schedules and the default worker runs what it schedules (core.health).
+    "heartbeat": {
+        "task": "core.tasks.heartbeat",
+        "schedule": 60.0,
+    },
     "purge-expired-applications": {
         "task": "admissions.tasks.purge_expired_applications",
         "schedule": crontab(minute=20, hour=3),

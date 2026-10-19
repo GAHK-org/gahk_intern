@@ -24,6 +24,7 @@ from django_celery_beat.models import PeriodicTask
 from kombu.exceptions import DecodeError
 
 from config.celery import app as celery_app
+from core import health
 from core.models import WorkerJobLog
 
 from . import admin_access
@@ -469,6 +470,21 @@ def _past_job_count(status: str = "", include_children: bool = False) -> int:
     except DatabaseError:
         return 0
     return int(row[0]) if row else 0
+
+
+@role_required("administrator")
+def system_status(request: HttpRequest) -> HttpResponse:
+    """Database size, S3, and when the workers and beat last reported in (core.health)."""
+    checks = health.system_status()
+    return render(
+        request,
+        "siteadmin/status.html",
+        {
+            "checks": checks,
+            "all_ok": all(c.status == health.OK for c in checks),
+            "checked_at": timezone.now(),
+        },
+    )
 
 
 @role_required("administrator")

@@ -177,3 +177,19 @@ class PushDeliveryDay(models.Model):
         verbose_name = "Push-statistik (dag)"
         verbose_name_plural = "Push-statistik (dage)"
         ordering = ["-date"]
+
+
+class ServiceHeartbeat(models.Model):
+    """When a background service last said it was alive — see core.health. One row per service:
+    "worker:default" and "worker:media" (the workers' own timer, so it keeps beating through a long
+    job), and "beat" (a task beat schedules every minute, so it proves beat AND the default queue)."""
+
+    name = models.CharField(max_length=60, unique=True)
+    beat_at = models.DateTimeField()
+
+    class Meta:
+        verbose_name = "Tjeneste-heartbeat"
+        verbose_name_plural = "Tjeneste-heartbeats"
+
+    def __str__(self) -> str:
+        return f"{self.name} {self.beat_at:%Y-%m-%d %H:%M:%S}"

@@ -164,3 +164,11 @@ def purge_worker_job_results() -> int:
             [_SUCCESS, UNSUCCESSFUL_JOBS_KEPT, now - UNSUCCESSFUL_JOB_RETENTION],
         )
         return deleted + cursor.rowcount
+
+
+@shared_task(ignore_result=True)
+def heartbeat() -> None:
+    """Every minute from beat (CELERY_BEAT_SCHEDULE). No result row: that would be 1440 a day."""
+    from .health import record_heartbeat
+
+    record_heartbeat("beat")

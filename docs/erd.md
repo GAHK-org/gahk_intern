@@ -66,6 +66,12 @@ erDiagram
         int removed
     }
 
+    core_ServiceHeartbeat {
+        int id PK
+        string name
+        datetime beat_at
+    }
+
     residents_Resident {
         int id PK
         string password
@@ -1024,6 +1030,12 @@ erDiagram
         int delivered
         int failed
         int removed
+    }
+
+    core_ServiceHeartbeat {
+        int id PK
+        string name
+        datetime beat_at
     }
 
     residents_Resident { }
