@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}{% if notice %}Redigér opslag{% else %}Nyt opslag{% endif %} - Opslagstavlen{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Opslagstavlen</p>
+      <h1>{% if notice %}Redigér opslag{% else %}Nyt opslag{% endif %}</h1>
+    </div>
+  </div>
+
+  <form method="post" class="card-flat card-pad board-compose" id="js-md-editor"
+        action="{% if notice %}{% url 'opslagstavle:edit' notice.pk %}{% else %}{% url 'opslagstavle:create' %}{% endif %}"
+        data-upload-url="{% url 'opslagstavle:upload_image' %}">
+    {% csrf_token %}
+    {% if form.non_field_errors %}
+      <div class="errorlist">{{ form.non_field_errors }}</div>
+    {% endif %}
+
+    {% for field in form %}
+      {% if field.name != 'body' %}
+        <div class="mb-3">
+          <label for="{{ field.id_for_label }}" class="font-semibold block mb-1">{{ field.label }}</label>
+          {{ field }}
+          {% if field.help_text %}<p class="muted text-sm mt-1">{{ field.help_text }}</p>{% endif %}
+          {% if field.errors %}<p class="errorlist text-sm">{{ field.errors|striptags }}</p>{% endif %}
+        </div>
+      {% endif %}
+    {% endfor %}
+
+    <label for="{{ form.body.id_for_label }}" class="font-semibold block mb-1">{{ form.body.label }}</label>
+
+    {% comment %}
+      Tabs with zero JavaScript: two radios and CSS `:checked ~ .md-panel`. The project prefers
+      platform primitives over Alpine wherever they reach (see the <details> pickers), and this is one
+      of the places they do. The only JS on this page is the toolbar and the image upload.
+    {% endcomment %}
+    <div class="md-tabs">
+      <input type="radio" name="md-tab" id="md-tab-write" checked>
+      <label class="md-tab" for="md-tab-write">Skriv</label>
+      <input type="radio" name="md-tab" id="md-tab-preview">
+      <label class="md-tab" for="md-tab-preview"
+             hx-post="{% url 'opslagstavle:preview' %}"
+             hx-include="#{{ form.body.id_for_label }}"
+             hx-target="#js-preview"
+             hx-swap="innerHTML">Forhåndsvisning</label>
+
+      <div class="md-panel md-panel-write">
+        {% comment %}
+          Buttons are wired by frontend/src/opslagstavle.ts. type="button" on every one of them —
+          without it they submit the form, which is a genuinely confusing way to lose a draft.
+        {% endcomment %}
+        <div class="md-toolbar" role="group" aria-label="Formatering">
+          <button type="button" data-md="bold" title="Fed (Ctrl+B)"><strong>B</strong></button>
+          <button type="button" data-md="italic" title="Kursiv (Ctrl+I)"><em>I</em></button>
+          <button type="button" data-md="heading" title="Overskrift">H</button>
+          <button type="button" data-md="link" title="Link">🔗</button>
+          <button type="button" data-md="list" title="Punktliste">•</button>
+          <button type="button" data-md="quote" title="Citat">❝</button>
+          <button type="button" data-md="code" title="Kode">&lt;/&gt;</button>
+          <label class="md-upload" title="Indsæt billede">
+            🖼
+            <span class="sr-only">Indsæt billede</span>
+            <input type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif,.heic,.heif" hidden data-md-image>
+          </label>
+          <span class="muted md-hint" data-md-status aria-live="polite"></span>
+        </div>
+        {{ form.body }}
+        {% if form.body.errors %}<p class="errorlist text-sm">{{ form.body.errors|striptags }}</p>{% endif %}
+        <p class="muted text-sm mt-1">
+          Du kan skrive med Markdown: <code>**fed**</code>, <code>## overskrift</code>,
+          <code>- punkt</code>, <code>[tekst](adresse)</code> og tabeller.
+        </p>
+      </div>
+
+      {% comment %}
+        The preview is rendered by the SERVER, through the same core.markdown call the reader's page
+        uses — so what you see here is byte-identical to what gets saved, by construction. A
+        client-side Markdown renderer would be a second implementation with a second allowlist, and
+        the first time they disagreed you would get the classic "the preview kept my HTML, the post
+        stripped it" bug. There is a test asserting the two match.
+      {% endcomment %}
+      <div class="md-panel md-panel-preview">
+        <div id="js-preview">
+          <p class="muted">Vælg «Forhåndsvisning» for at se opslaget som andre ser det.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-3 mt-4">
+      <button type="submit" class="btn">{% if notice %}Gem ændringer{% else %}Slå op{% endif %}</button>
+      <a href="{% if notice %}{% url 'opslagstavle:detail' notice.pk %}{% else %}{% url 'opslagstavle:board' %}{% endif %}">Annullér</a>
+    </div>
+  </form>
+{% endblock %}

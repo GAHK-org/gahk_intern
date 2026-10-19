@@ -84,7 +84,13 @@ class Transaction(models.Model):  # intern_oelkaelder_transaction
     is_valid = models.BooleanField(default=True)
 
     class Meta:
-        ordering = ["-created_at"]
+        # The -id tiebreak is load-bearing, not cosmetic: legacy created_at is minute-resolution and the
+        # till fires bursts, so timestamp ties are common. Postgres gives no stable order for tied sort
+        # keys across separate LIMIT/OFFSET queries, which silently duplicates rows onto one paginated
+        # page and drops them from another. The index matches the ordering so the sales list's date
+        # filter and "ORDER BY … LIMIT" are an index range scan instead of a seq scan plus sort.
+        ordering = ["-created_at", "-id"]
+        indexes = [models.Index(fields=["-created_at", "-id"], name="oelk_txn_created_id_idx")]
 
 
 class TransactionItem(models.Model):  # intern_oelkaelder_transaction_item
@@ -143,3 +149,37 @@ class InterestPolicy(models.Model):
     @classmethod
     def get(cls) -> "InterestPolicy":
         return cls.objects.get_or_create(pk=1)[0]
+
+
+class PurchasePolicy(models.Model):
+    """Single-row config (pk=1) for the ølkælder credit limit — how far into debt a shopper may go
+    before the till refuses to sell to them.
+
+    Deliberately separate from InterestPolicy. Both happen to default to -100 kr, and the till used
+    to hardcode that same number, which is how "you owe enough to be charged interest" quietly
+    became "you may not buy anything" — two different policies that ØK should be able to set apart.
+
+    Off by default: the legacy till never blocked a purchase (Oelkaelder_model::addItem has no
+    balance check), so switching it on is a decision for the ølkælder officers, not a silent
+    inheritance from a hardcoded template condition.
+    """
+
+    active = models.BooleanField(default=False)
+    # Balance strictly below this refuses the sale. Negative = the shopper owes money.
+    block_below_ore = models.IntegerField(default=-10000)  # -100 kr
+
+    class Meta:
+        verbose_name = "Købsgrænse"
+        verbose_name_plural = "Købsgrænser"
+
+    def __str__(self) -> str:
+        state = f"spærret under {self.block_below_ore / 100:.2f} kr" if self.active else "slået fra"
+        return f"Købsgrænse: {state}"
+
+    @classmethod
+    def get(cls) -> "PurchasePolicy":
+        return cls.objects.get_or_create(pk=1)[0]
+
+    def blocks(self, balance_ore: int) -> bool:
+        """Whether a shopper on this balance may not buy. Always False while the policy is off."""
+        return self.active and balance_ore < self.block_below_ore

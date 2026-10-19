@@ -1,51 +1,257 @@
 // Downscale/recompress image uploads in the browser before the form submits, so room-inspection
 // photos (F-005) stay small — big phone photos become ~a few hundred KB instead of multiple MB.
 // No-op on pages without an image file input. Server keeps a hard size cap as a backstop.
+//
+// ANIMATIONS ARE THE EXCEPTION AND GO UP UNTOUCHED — see isAnimatedUpload. Everything below works
+// by redrawing the image through a canvas, and a canvas has no way to keep more than one frame.
 const MAX_DIM = 1600; // longest edge, px
 const QUALITY = 0.82; // JPEG quality
+// Arkiv grid previews. 320px covers a 2x display at the ~160px the listing renders them at, and
+// a lower quality is invisible at that size while roughly halving the bytes again.
+const THUMB_DIM = 320;
+const THUMB_QUALITY = 0.7;
+// Arkiv's viewer size. Deliberately the same 1600/0.82 as MAX_DIM/QUALITY above - a photograph
+// large enough to fill any screen in the building and small enough that paging through a folder of
+// them is not somebody's mobile data. Mirrors PREVIEW_DIM/PREVIEW_QUALITY in
+// arkiv/management/commands/make_arkiv_thumbnails.py, which makes the same size server-side for
+// the imported backlog: if one changes, change both, or a folder shows previews at two sizes
+// depending on how its files happened to arrive.
+const PREVIEW_DIM = 1600;
+const PREVIEW_QUALITY = 0.82;
 
-async function shrink(file: File): Promise<File> {
-  if (!file.type.startsWith("image/")) return file;
+/** Downscale one image to MAX_DIM/QUALITY, returning the original if there is nothing to gain.
+ *
+ * Exported because opslagstavlen uploads via fetch rather than a form submit, so it cannot use
+ * hookImageForms below — and a second canvas downscaler with its own parameters is exactly the
+ * drift worth avoiding. */
+async function redraw(file: File, maxDim: number, quality: number): Promise<Blob | null> {
+  // The shared canvas step. Extracted when Arkiv wanted a second size: one downscaler with a
+  // parameter, rather than two with their own quirks, is exactly the drift the note above warns
+  // about. Returns null when the image cannot be decoded or the canvas is unavailable.
   let bmp: ImageBitmap;
   try {
     bmp = await createImageBitmap(file);
   } catch {
-    return file; // unsupported/undecodable → let the server handle it
+    return null; // unsupported/undecodable → let the caller decide
   }
-  const scale = Math.min(1, MAX_DIM / Math.max(bmp.width, bmp.height));
-  if (scale === 1 && file.size < 800_000) return file; // already small enough
+  const scale = Math.min(1, maxDim / Math.max(bmp.width, bmp.height));
   const w = Math.round(bmp.width * scale);
   const h = Math.round(bmp.height * scale);
   const canvas = document.createElement("canvas");
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext("2d");
-  if (!ctx) return file;
+  if (!ctx) return null;
   ctx.drawImage(bmp, 0, 0, w, h);
-  const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, "image/jpeg", QUALITY));
+  return new Promise<Blob | null>((res) => canvas.toBlob(res, "image/jpeg", quality));
+}
+
+/** Whether redrawing this file through a canvas would throw an animation away.
+ *
+ * `createImageBitmap` decodes the FIRST FRAME AND NOTHING ELSE, so the canvas step does not
+ * compress an animation — it discards every frame but one and renames the result .jpg. A reaction
+ * GIF posted to Den Hurtige arrived as a still, and no canvas API can preserve the rest, so the
+ * only fix is not to redraw these at all. They go up at full size; the server's cap for them is
+ * settings.ANIMATED_IMAGE_MAX_MB rather than the per-feature one (core/uploads.py::_size_ceiling).
+ *
+ * GIF IS DECIDED ON THE CONTENT TYPE ALONE, without reading the file. A still GIF is
+ * palette-limited and already small, so the handful of KB given up by never touching one is not
+ * worth walking GIF block structure to tell the two apart — and getting that walk wrong would
+ * flatten animations again, silently. WebP and PNG are sniffed instead: both are ordinary
+ * still-photo formats here and worth downscaling, so only their animated variants are passed
+ * through.
+ *
+ * The marker sits in the header of both, so the first few KB is enough to find one. */
+async function isAnimatedUpload(file: File): Promise<boolean> {
+  if (file.type === "image/gif") return true;
+  if (file.type !== "image/webp" && file.type !== "image/png") return false;
+  const head = new DataView(await file.slice(0, 4096).arrayBuffer());
+  const tagAt = (at: number, tag: string): boolean =>
+    at + tag.length <= head.byteLength &&
+    [...tag].every((c, k) => head.getUint8(at + k) === c.charCodeAt(0));
+
+  if (file.type === "image/webp") {
+    // RIFF....WEBP, then a VP8X chunk whose flags byte has bit 1 set for "has animation". A WebP
+    // without VP8X cannot be animated at all — that chunk is what carries the flag.
+    return (
+      tagAt(0, "RIFF") &&
+      tagAt(8, "WEBP") &&
+      tagAt(12, "VP8X") &&
+      head.byteLength > 20 &&
+      (head.getUint8(20) & 0x02) !== 0
+    );
+  }
+  // APNG: an acTL chunk, which the spec requires BEFORE the first IDAT — so reaching IDAT is a
+  // complete answer of "no" and there is no need to read past it. Chunks are
+  // length(4) + type(4) + data + crc(4), hence the 12.
+  for (let i = 8; i + 8 <= head.byteLength; i += 12 + head.getUint32(i)) {
+    if (tagAt(i + 4, "acTL")) return true;
+    if (tagAt(i + 4, "IDAT")) return false;
+  }
+  return false;
+}
+
+export async function downscaleImage(file: File): Promise<File> {
+  if (!file.type.startsWith("image/")) return file;
+  // Before the decode, not after: there is nothing to gain from bitmapping a file we will return
+  // untouched, and on a large GIF that decode is the expensive part.
+  if (await isAnimatedUpload(file)) return file;
+  const bmp = await createImageBitmap(file).catch(() => null);
+  if (!bmp) return file;
+  const scale = Math.min(1, MAX_DIM / Math.max(bmp.width, bmp.height));
+  if (scale === 1 && file.size < 800_000) return file; // already small enough
+  const blob = await redraw(file, MAX_DIM, QUALITY);
   if (!blob || blob.size >= file.size) return file; // no gain → keep original
   return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" });
 }
 
-function hook(form: HTMLFormElement) {
-  form.addEventListener("submit", async (e) => {
-    if (form.dataset.imgReady === "1") return; // second pass — allow normal submit
+/** A grid-sized preview, or null when the file is not a decodable image.
+ *
+ * ALWAYS returns the small version when it can, unlike downscaleImage: a thumbnail that falls back
+ * to the original would defeat its own purpose, which is that opening a folder of 200 party
+ * photographs costs a few hundred KB rather than a gigabyte of someone's mobile data. */
+export async function thumbnailImage(file: File): Promise<Blob | null> {
+  if (!file.type.startsWith("image/")) return null;
+  return redraw(file, THUMB_DIM, THUMB_QUALITY);
+}
+
+/** The viewer-sized version, or null when the file is not a decodable image.
+ *
+ * Made here rather than on the server for the same reason the thumbnail is: the preview exists the
+ * moment the photo does. A job on the Celery worker would leave a window in which the newest
+ * photograph is the one that has no preview, and the person who just uploaded it is the one about to
+ * go and look at it.
+ *
+ * Unlike downscaleImage this never falls back to the original: a preview that is the original is
+ * not a preview. The caller treats null as "no preview", which the server then confirms by asking
+ * the store rather than believing the browser. */
+export async function previewImage(file: File): Promise<Blob | null> {
+  if (!file.type.startsWith("image/")) return null;
+  return redraw(file, PREVIEW_DIM, PREVIEW_QUALITY);
+}
+
+// ONE delegated listener on the document, in the CAPTURE phase. Both halves of that matter.
+//
+// Capture, because htmx also listens for `submit` — on the form itself — as soon as a form carries
+// hx-post, which Den Hurtige's reply form now does. Two at-target listeners fire in registration
+// order, and htmx processes the node when it enters the DOM while this module runs at import: htmx
+// would win, and send the full-size phone photo before the downscale ever ran. A capture listener
+// on an ancestor always precedes at-target listeners, whoever registered first.
+//
+// Delegated, because the forms are rebuilt constantly — the feed morphs every five seconds and the
+// thread panel swaps in and out. Per-form hooking needed a re-arm after every swap plus a
+// data-img-hooked marker to stop listeners stacking up, and the marker then had to be protected
+// from the morph. A document-level listener sees forms that did not exist when it was registered,
+// so all of that machinery is gone.
+document.addEventListener(
+  "submit",
+  async (event: SubmitEvent) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    // OPT-OUT, not opt-in. Every image upload in the building wants downscaling — the one
+    // exception is the photo album, which keeps the original at full resolution on purpose and
+    // derives its own sizes server-side. Gating this on an opt-in attribute instead silently
+    // un-downscaled every other form (opslagstavlen, Den Hurtige, profiles, events, ølkælder,
+    // Arkiv), where the 5 MB server cap then drops a normal phone photo with only a warning.
+    if (form.hasAttribute("data-no-downscale-images")) return;
+    if (form.dataset.imgReady === "1") {
+      // Second pass, after the downscale. Clear the flag rather than leaving it set: a form that
+      // survives its own submit — the thread panel's, which htmx posts and then resets — would
+      // otherwise skip downscaling for every photo after the first.
+      delete form.dataset.imgReady;
+      return;
+    }
     const inputs = Array.from(
       form.querySelectorAll<HTMLInputElement>('input[type="file"][accept^="image"]'),
     );
     if (!inputs.some((i) => i.files && i.files.length)) return; // nothing picked
-    e.preventDefault();
+    event.preventDefault();
+    event.stopPropagation(); // keep htmx from posting this pass
     for (const input of inputs) {
       if (!input.files || !input.files.length) continue;
       const dt = new DataTransfer();
-      for (const f of Array.from(input.files)) dt.items.add(await shrink(f));
+      for (const f of Array.from(input.files)) dt.items.add(await downscaleImage(f));
       input.files = dt.files;
     }
     form.dataset.imgReady = "1";
     form.requestSubmit();
-  });
+  },
+  true,
+);
+
+/** Kept as a no-op for callers that used to re-arm forms after a swap.
+ *
+ * The delegated listener above needs no rescan, so there is nothing to do — but the export stays
+ * so an out-of-tree caller does not break, and so this note is findable from the call site. */
+export function hookImageForms(_root: ParentNode = document): void {
+  /* nothing to do: submit is handled by the delegated capture listener above */
 }
 
-for (const form of Array.from(document.querySelectorAll<HTMLFormElement>("form"))) {
-  if (form.querySelector('input[type="file"][accept^="image"]')) hook(form);
+// --- Camera and clipboard (#126) ------------------------------------------------------------------
+
+const IMAGE_INPUT = 'input[type="file"][accept^="image"]';
+
+// ANDROID OFFERS NO CAMERA FOR `accept="image/*"`. Chrome there hands a pure-image accept to the
+// system photo picker, which lists the gallery and nothing else; iOS shows "Take Photo" for the same
+// markup. One accept entry that is not an image type sends Chrome back to the older chooser, which
+// has the camera next to the files. The type is made up, so it lets no extra file through, and the
+// server checks every upload anyway (core.uploads).
+//
+// Added at click time, before the chooser opens, rather than in the templates: it is Android's
+// quirk, so iOS and desktop keep the plain accept, and every image input gets it, including ones
+// htmx swaps in later. `capture` is no answer: it skips the chooser and opens the camera directly,
+// which takes away picking an existing photo instead.
+const ANDROID_CAMERA = "android/force-camera-workaround";
+
+if (/Android/i.test(navigator.userAgent)) {
+  document.addEventListener(
+    "click",
+    (event) => {
+      const input = event.target;
+      if (!(input instanceof HTMLInputElement) || !input.matches(IMAGE_INPUT)) return;
+      if (!input.accept.split(",").includes(ANDROID_CAMERA)) input.accept += `,${ANDROID_CAMERA}`;
+    },
+    true,
+  );
 }
+
+/** The image input a paste at `target` is meant for, or null when that is not clear.
+ *
+ * The one in the same form: the reply box in Den Hurtige's thread panel and the composer above the
+ * feed are both on the page, and a photo pasted into one must not land in the other. Opslagstavlen's
+ * editor prefers its toolbar's image button. Outside any form, only a page with a single image input
+ * gets the photo - two candidates and no form to choose between them is a guess, and a wrong guess
+ * is worse than a paste that does nothing. */
+function pasteTarget(target: EventTarget | null): HTMLInputElement | null {
+  const usable = (inputs: Iterable<HTMLInputElement>): HTMLInputElement[] =>
+    Array.from(inputs).filter((i) => !i.disabled);
+  const form = target instanceof Element ? target.closest("form") : null;
+  if (form) {
+    const editor = form.querySelector<HTMLInputElement>("[data-md-image]");
+    if (editor && !editor.disabled) return editor;
+    const inForm = usable(form.querySelectorAll<HTMLInputElement>(IMAGE_INPUT));
+    if (inForm.length) return inForm.length === 1 ? inForm[0] : null;
+  }
+  const onPage = usable(document.querySelectorAll<HTMLInputElement>(IMAGE_INPUT));
+  return onPage.length === 1 ? onPage[0] : null;
+}
+
+// PASTING A SCREENSHOT ATTACHES IT, as if it had been picked. The files go into the input and a
+// `change` is dispatched, so everything that already listens for a picked photo - the thumbnail
+// note, opslagstavlen's upload, the downscale on submit - handles a pasted one without knowing.
+//
+// Only a clipboard of images and no text. Copying from a document can carry both a picture of the
+// selection and its text, and there the person meant the text; the browser's own paste goes ahead.
+document.addEventListener("paste", (event: ClipboardEvent) => {
+  const clipboard = event.clipboardData;
+  if (!clipboard || clipboard.types.includes("text/plain")) return;
+  const images = Array.from(clipboard.files).filter((f) => f.type.startsWith("image/"));
+  if (!images.length) return;
+  const input = pasteTarget(event.target);
+  if (!input) return;
+  event.preventDefault();
+  const dt = new DataTransfer();
+  for (const image of input.multiple ? images : images.slice(0, 1)) dt.items.add(image);
+  input.files = dt.files;
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+});

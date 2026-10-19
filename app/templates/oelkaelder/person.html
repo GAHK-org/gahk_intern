@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% load oel_extras ui_extras %}
+{% block title %}Personoversigt - GAHK Intern{% endblock %}
+{% block content_width %}max-w-5xl{% endblock %}
+{% block content %}
+  <p><a href="{% url 'oelkaelder:admin' %}">← Ølkælder-admin</a></p>
+  <div class="flex items-center justify-between">
+    <h1>Personoversigt</h1>
+    <a href="{% url 'oelkaelder:all_sales' %}" class="btn btn-secondary">Salgsoverblik</a>
+  </div>
+
+  <form method="get" class="card flex flex-wrap items-end gap-3">
+    <label class="text-sm">Beboer
+      <select name="resident" class="w-auto!" onchange="this.form.submit()">
+        <option value="">Vælg…</option>
+        {% for r in residents %}
+          <option value="{{ r.id }}"{% if chosen and r.id == chosen.id %} selected{% endif %}>{{ r.full_name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit" class="btn">Vis</button>
+  </form>
+
+  {% if chosen %}
+    <h2>{{ chosen.full_name }}</h2>
+    {% for account, balance in accounts %}
+      <p>Saldo{% if accounts|length > 1 %} (konto #{{ account.id }}){% endif %}:
+        <strong class="{{ balance|sign_class }}">{{ balance|kr }}</strong>
+        {% if not account.active %}<span class="muted">— deaktiveret</span>{% endif %}
+      </p>
+    {% endfor %}
+
+    {% for account, balance in accounts %}
+      <form method="post" action="{% url 'oelkaelder:add_adjustment' account.id %}" class="card">
+        {% csrf_token %}
+        <h2>Justér saldo{% if accounts|length > 1 %} (konto #{{ account.id }}){% endif %}</h2>
+        <p class="muted">
+          Til at rette fejl fra overflytningen — fx køb hvis købere ikke blev migreret (beboeren er
+          blevet trukket for lidt), eller kurve hvor en enkelt beboer kom til at betale hele beløbet
+          (trukket for meget). Begrundelsen vises i beboerens eget kontoudtog.
+        </p>
+        <div class="flex flex-wrap items-end gap-3">
+          <label class="text-sm">Retning
+            <select name="direction" class="w-auto!">
+              <option value="subtract">Træk fra (mere gæld)</option>
+              <option value="add">Tilføj (kredit)</option>
+            </select>
+          </label>
+          <label class="text-sm">Beløb (kr)
+            <input type="text" name="amount_kr" inputmode="decimal" placeholder="0,00" class="w-auto!" required>
+          </label>
+          <label class="text-sm flex-1">Begrundelse
+            <input type="text" name="reason" maxlength="255" required
+                   placeholder="Fx: manglende køb fra oktober 2023, mistet ved overflytning">
+          </label>
+          <button type="submit" class="btn">Registrér</button>
+        </div>
+      </form>
+    {% endfor %}
+
+    {% if adjustments %}
+      <h2>Manuelle justeringer</h2>
+      <table cellpadding="6" class="text-sm" style="width:100%; border-collapse:collapse">
+        <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec">
+          <th>Dato</th><th>Begrundelse</th><th style="text-align:right">Beløb</th><th></th>
+        </tr></thead>
+        <tbody>
+        {% for a in adjustments %}
+          <tr style="border-bottom:1px solid #f0f1f4"{% if not a.is_valid %} class="muted line-through"{% endif %}>
+            <td class="whitespace-nowrap">{{ a.created_at|date:"Y-m-d H:i" }}</td>
+            <td>{{ a.reason }}</td>
+            <td class="text-right whitespace-nowrap {{ a.amount_ore|sign_class }}">{{ a.amount_ore|kr }}</td>
+            <td class="text-right">
+              {% if a.is_valid %}
+                <form method="post" action="{% url 'oelkaelder:void_adjustment' a.id %}" style="display:inline"
+                      onsubmit="return confirm('Annullér justeringen på {{ a.amount_ore|kr }}?');">
+                  {% csrf_token %}
+                  <button type="submit" class="btn bg-red-600!">Annullér</button>
+                </form>
+              {% else %}Annulleret{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+
+    <h2>Kontoudtog</h2>
+    <table cellpadding="6" class="text-sm" style="width:100%; border-collapse:collapse">
+      <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec">
+        <th>Dato</th><th>Tekst</th><th style="text-align:right">Beløb</th>
+      </tr></thead>
+      <tbody>
+      {% for e in entries %}
+        <tr style="border-bottom:1px solid #f0f1f4">
+          <td class="whitespace-nowrap">{{ e.created_at|date:"Y-m-d H:i" }}</td>
+          <td>{{ e.text }}</td>
+          <td class="text-right whitespace-nowrap {{ e.amount_ore|sign_class }}">{{ e.amount_ore|kr }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="3" class="muted">Ingen posteringer.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="muted mt-3">Viser de seneste 200 posteringer. Annullerede køb indgår ikke.</p>
+  {% else %}
+    <p class="muted">Vælg en beboer for at se deres køb, indbetalinger og saldo.</p>
+  {% endif %}
+{% endblock %}

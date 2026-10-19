@@ -1,0 +1,26 @@
+{% comment %}
+  The sortable alumneliste table (headers + rows), swapped as a unit by htmx so the sort arrows update
+  with the rows. The hidden sort/dir inputs live here (not in the outside search box) so that after a
+  sort change the search input's hx-include picks up the new state. Header links carry the new sort/dir
+  and hx-include the current q + period; each also has a plain href for a no-JS full-page fallback.
+{% endcomment %}
+<input type="hidden" name="sort" value="{{ sort }}">
+<input type="hidden" name="dir" value="{{ dir }}">
+<table cellpadding="6" class="text-sm zebra" style="width:100%; border-collapse:collapse">
+  <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec; white-space:nowrap">
+    {% for h in headers %}
+      <th style="{% if h.sortable %}padding:0{% else %}padding-right:1.5rem{% endif %}">
+        {% if h.sortable %}
+          <a href="{% url 'directory' %}?period={{ period_value }}&amp;q={{ q|urlencode }}&amp;sort={{ h.key }}&amp;dir={{ h.next_dir }}"
+             hx-get="{% url 'directory_rows' %}?sort={{ h.key }}&amp;dir={{ h.next_dir }}"
+             hx-target="#dir-table" hx-swap="innerHTML" hx-include="[name='q'],[name='period']"
+             class="no-underline" style="display:block; padding:6px 1.5rem 6px 6px"
+             >{{ h.label }} <span class="muted">{{ h.arrow }}</span></a>
+        {% else %}{{ h.label }}{% endif %}
+      </th>
+    {% endfor %}
+  </tr></thead>
+  <tbody id="dir-rows">
+    {% include "alumneliste/_rows.html" %}
+  </tbody>
+</table>

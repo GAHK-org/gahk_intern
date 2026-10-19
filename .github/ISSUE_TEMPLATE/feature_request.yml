@@ -26,6 +26,7 @@ body:
       options:
         - "residents (alumneliste / dashboard)"
         - "admissions (optagelse)"
+        - "den_hurtige (chat / posts)"
         - "ak"
         - "oelkaelder"
         - "rooms (vaerelsestjek / soegvaerelse)"

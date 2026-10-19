@@ -1,17 +1,37 @@
 {% extends "base.html" %}
 {% block title %}AK - værelsesoversigt{% endblock %}
+{% block content_width %}max-w-full{% endblock %}
 {% block content %}
-  <h1>Værelsesoversigt (AK)</h1>
-  <table class="w-full border-collapse">
-    <thead><tr class="border-b border-gray-200"><th class="p-2">Værelse</th><th class="p-2">Seneste tjek</th><th class="p-2">Af</th></tr></thead>
-    <tbody>
-    {% for c in conditions %}
-      <tr class="border-b border-gray-100">
-        <td class="p-2"><a href="{% url 'vaerelsestjek:room' c.room.number %}">{{ c.room.number|stringformat:"03d" }}</a></td>
-        <td class="p-2">{{ c.recorded_at|date:"Y-m-d" }}</td>
-        <td class="p-2">{{ c.recorded_by_name }}</td>
-      </tr>
-    {% empty %}<tr><td colspan="3" class="muted p-2">Ingen tilstandsrapporter.</td></tr>{% endfor %}
-    </tbody>
-  </table>
+  <div class="flex items-center justify-between">
+    <h1>Værelsesoversigt (AK)</h1>
+    <span class="flex gap-2">
+      <a class="btn" href="?format=csv">Eksportér CSV</a>
+      <a class="btn" href="?format=xlsx">Eksportér Excel</a>
+    </span>
+  </div>
+  <p class="muted mb-4">Seneste tilstandsrapport per værelse, én kolonne per kriterie. Rul vandret for at
+    se alle kriterier; forklaringen af hver skala står på det enkelte værelses side.</p>
+
+  <div class="overflow-x-auto">
+    <table class="w-full border-collapse text-sm">
+      <thead>
+        <tr class="border-b border-gray-200 text-left">
+          <th class="p-2 whitespace-nowrap">Værelse</th>
+          <th class="p-2 whitespace-nowrap">Seneste tjek</th>
+          <th class="p-2 whitespace-nowrap">Af</th>
+          {% for c in criteria %}<th class="p-2 whitespace-nowrap" title="{{ c.description }}">{{ c.name }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in rows %}
+        <tr class="border-b border-gray-100">
+          <td class="p-2 whitespace-nowrap"><a href="{% url 'vaerelsestjek:room' row.condition.room.number %}">{{ row.condition.room.number|stringformat:"03d" }}</a></td>
+          <td class="p-2 whitespace-nowrap">{{ row.condition.recorded_at|date:"Y-m-d" }}</td>
+          <td class="p-2 whitespace-nowrap">{{ row.condition.recorded_by_name }}</td>
+          {% for s in row.scores %}<td class="p-2 text-center">{{ s|default_if_none:"" }}</td>{% endfor %}
+        </tr>
+      {% empty %}<tr><td colspan="4" class="muted p-2">Ingen tilstandsrapporter.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
 {% endblock %}

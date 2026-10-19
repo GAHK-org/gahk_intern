@@ -1,24 +1,58 @@
 {% extends "base.html" %}
 {% block title %}Tjek værelse {{ room.number }}{% endblock %}
+{% block content_width %}max-w-5xl{% endblock %}
 {% block content %}
   <h1>Tjek værelse {{ room.number|stringformat:"03d" }}</h1>
+
+  {% if history %}
+    <form method="get" class="card flex flex-wrap items-end gap-3">
+      <label class="text-sm">Vis tidligere rapport
+        <select name="rapport" class="w-auto!" onchange="this.form.submit()">
+          {% for h in history %}
+            <option value="{{ h.id }}"{% if showing and h.id == showing.id %} selected{% endif %}>{{ h.recorded_by_name|default:"Ukendt" }} — {{ h.recorded_at|date:"Y-m-d H:i" }}{% if h.is_current %} (nuværende){% endif %}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <noscript><button type="submit" class="btn">Vis</button></noscript>
+    </form>
+    {% if is_history %}
+      <p class="card muted">Du ser en tidligere rapport. Felterne er udfyldt med dens værdier — indsender du,
+        oprettes en <strong>ny</strong> rapport, og den gamle bevares uændret.</p>
+    {% endif %}
+  {% endif %}
+
   <form method="post" action="{% url 'vaerelsestjek:besvar' room.number %}" enctype="multipart/form-data">
     {% csrf_token %}
     <table class="w-full border-collapse">
       <thead><tr class="border-b border-gray-200"><th class="p-2">Kriterie</th><th class="p-2">Score</th><th class="p-2">Kommentar</th><th class="p-2">Billede</th></tr></thead>
       <tbody>
       {% for crit, existing in rows %}
+        {% comment %}
+          Locked by default, but only when JS runs: the inputs are never `disabled`, because disabled
+          fields do not POST — the trap the legacy worked around by re-enabling everything on save.
+          Without JS the row is simply editable and the form still works. F-005 records the legacy
+          disabled-until-JS pattern as a bug, so this is the same speed bump the other way up.
+        {% endcomment %}
+        <tr x-data="{ locked: true }">
+          <td class="p-2 align-top">{{ crit.name }}</td>
+          <td class="p-2 align-top"><input type="number" name="score_{{ crit.code }}" min="{{ crit.score_min }}" max="{{ crit.score_max }}" step="1"
+                 value="{{ existing.score|default_if_none:'' }}" class="w-20" aria-describedby="hint_{{ crit.code }}" :readonly="locked"></td>
+          <td class="p-2 align-top"><input type="text" name="comment_{{ crit.code }}" value="{{ existing.comment|default:'' }}" :readonly="locked"></td>
+          <td class="p-2 align-top">
+            <input type="file" name="image_{{ crit.code }}" accept="image/*,.heic,.heif">
+            <button type="button" class="btn" x-show="locked" @click="locked = false">Opdater</button>
+          </td>
+        </tr>
         <tr class="border-b border-gray-100">
-          <td class="p-2">{{ crit.name }}</td>
-          <td class="p-2"><input type="number" name="score_{{ crit.code }}" min="0" max="{{ crit.options }}"
-                 value="{{ existing.score|default_if_none:'' }}" class="w-20"></td>
-          <td class="p-2"><input type="text" name="comment_{{ crit.code }}" value="{{ existing.comment|default:'' }}"></td>
-          <td class="p-2"><input type="file" name="image_{{ crit.code }}" accept="image/*"></td>
+          <td colspan="4" class="px-2 py-1" id="hint_{{ crit.code }}">
+            {% if crit.description %}<p class="muted text-sm">{{ crit.description|linebreaksbr }}</p>{% endif %}
+            <p class="muted text-sm">Skala: {{ crit.score_min }}–{{ crit.score_max }}</p>
+          </td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
     <p class="muted mt-2">Store billeder skaleres automatisk ned før upload.</p>
-    <p class="mt-4"><button type="submit">Gem tilstandsrapport</button></p>
+    <p class="mt-4"><button type="submit" class="btn">Gem tilstandsrapport</button></p>
   </form>
 {% endblock %}

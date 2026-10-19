@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% load oel_extras %}
+{% block title %}Salgsoverblik - GAHK Intern{% endblock %}
+{% block content_width %}max-w-5xl{% endblock %}
+{% block content %}
+  <p><a href="{% url 'oelkaelder:admin' %}">← Ølkælder-admin</a></p>
+  <div class="flex items-center justify-between">
+    <h1>Salgsoverblik</h1>
+    <a href="{% url 'oelkaelder:person_history' %}" class="btn btn-secondary">Personoversigt</a>
+  </div>
+
+  <form method="get" class="card flex flex-wrap items-end gap-3">
+    <label class="text-sm">Fra<input type="date" name="start" value="{{ start|date:'Y-m-d' }}" class="w-auto!"></label>
+    <label class="text-sm">Til<input type="date" name="end" value="{{ end|date:'Y-m-d' }}" class="w-auto!"></label>
+    <label class="text-sm">Person<input type="search" name="q" value="{{ query }}" placeholder="Navn eller e-mail" class="w-auto!"></label>
+    <label class="text-sm">Købere
+      <select name="buyers" class="w-auto!">
+        <option value="">Alle</option>
+        <option value="any"{% if buyers == "any" %} selected{% endif %}>Kun med købere</option>
+        <option value="none"{% if buyers == "none" %} selected{% endif %}>Kun uden købere</option>
+      </select>
+    </label>
+    <button type="submit" class="btn">Vis</button>
+  </form>
+
+  <p class="muted">
+    {{ page_obj.paginator.count }} handel{{ page_obj.paginator.count|pluralize:"er" }} i perioden.
+    <a href="?{{ base_query }}{% if base_query %}&amp;{% endif %}format=csv">Eksportér CSV</a> ·
+    <a href="?{{ base_query }}{% if base_query %}&amp;{% endif %}format=xlsx">Eksportér Excel</a>
+  </p>
+
+  <table cellpadding="6" class="text-sm zebra" style="width:100%; border-collapse:collapse">
+    <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec; white-space:nowrap">
+      <th>Dato</th><th>Personer</th><th style="text-align:right">I alt</th>
+      <th style="text-align:right">Pr. person</th><th>Varer</th><th></th>
+    </tr></thead>
+    <tbody>
+    {% for row in rows %}
+      <tr{% if not row.is_valid %} class="muted line-through"{% endif %}>
+        <td class="whitespace-nowrap">{{ row.created_at|date:"Y-m-d H:i" }}</td>
+        <td{% if not row.has_buyers %} class="muted"{% endif %}>{{ row.people }}</td>
+        <td class="text-right whitespace-nowrap">{{ row.total_ore|kr }}</td>
+        <td class="text-right whitespace-nowrap">{{ row.per_person }}</td>
+        <td>{{ row.items }}</td>
+        <td class="text-right whitespace-nowrap">
+          {% if not row.is_valid %}
+            Annulleret
+          {% elif row.has_buyers %}
+            <form method="post" action="{% url 'oelkaelder:void_sale' row.txn_id %}" style="display:inline"
+                  onsubmit="return confirm('Annullér købet på {{ row.total_ore|kr }} for {{ row.people }}? Købernes saldi rettes automatisk.');">
+              {% csrf_token %}
+              <input type="hidden" name="start" value="{{ start|date:'Y-m-d' }}">
+              <input type="hidden" name="end" value="{{ end|date:'Y-m-d' }}">
+              <input type="hidden" name="q" value="{{ query }}">
+              <input type="hidden" name="buyers" value="{{ buyers }}">
+              <input type="hidden" name="page" value="{{ page_obj.number }}">
+              <button type="submit" class="btn bg-red-600!">Annullér</button>
+            </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="6" class="muted">Ingen handler i perioden.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  {% if page_obj.paginator.num_pages > 1 %}
+    <p class="muted mt-4 flex items-center gap-3">
+      {% if page_obj.has_previous %}<a href="?{{ base_query }}{% if base_query %}&amp;{% endif %}page={{ page_obj.previous_page_number }}">‹ forrige</a>{% endif %}
+      <span>Side {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
+      {% if page_obj.has_next %}<a href="?{{ base_query }}{% if base_query %}&amp;{% endif %}page={{ page_obj.next_page_number }}">næste ›</a>{% endif %}
+    </p>
+  {% endif %}
+
+  <p class="muted mt-4">
+    Handler uden købere stammer fra fraflyttere, der ikke blev migreret fra det gamle system. Varerne og
+    beløbet er korrekte; kun køberne mangler. De kan ikke annulleres, da der ikke er nogen saldo at rette.
+  </p>
+{% endblock %}

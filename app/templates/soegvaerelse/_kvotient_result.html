@@ -1,0 +1,10 @@
+{% load room_extras %}
+{% if not has_move_in %}
+  <p class="muted">Vi mangler din indflytningsdato, så din kvotient kan ikke beregnes — kontakt indstillingen.</p>
+{% elif kv %}
+  <p>Din kvotient: <strong>K = {{ kv.k }}</strong></p>
+  <p class="muted text-sm">a = {{ kv.a }} (måneder boet minus orlov) · b = {{ kv.b }} (måneder til studieslut)
+    · beregnet frem til {{ target|maaned }}.</p>
+{% else %}
+  <p class="muted">Udfyld «færdig med studie» for at se din kvotient.</p>
+{% endif %}

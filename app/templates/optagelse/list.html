@@ -3,22 +3,67 @@
 {% block content_width %}max-w-5xl{% endblock %}
 {% block content %}
   <h1>Ansøgninger</h1>
-  <p class="muted mb-4">Nyeste ansøgninger til rundvisning og fremleje. Endnu ikke modtagne er fremhævet.</p>
+  <p class="muted mb-4">Ansøgninger til rundvisning og fremleje. Endnu ikke modtagne er fremhævet.</p>
+
+  {% comment %}
+    Search runs over ALL applications (server-side, before pagination) — not just the current page. The
+    {% templatetag openblock %} querystring {% templatetag closeblock %} tag keeps every other active
+    filter (search, sort, kasserede, afventende, datointerval) when building each link and resets the
+    page. The eksport-knapper reuse this same form (formaction) so the download honours every filter,
+    including a fra/til-datointerval, and the currently typed dates without needing a separate submit.
+  {% endcomment %}
+  <form method="get" class="mb-4 flex flex-wrap items-end gap-2">
+    <input type="search" name="q" value="{{ q }}" placeholder="Søg navn, e-mail, uddannelse, motivation…"
+           class="flex-1 min-w-[16rem] rounded-md border border-gray-300 px-3 py-2 text-sm">
+    <label class="text-sm text-gray-600">Fra
+      <input type="date" name="from" value="{{ date_from }}"
+             class="block rounded-md border border-gray-300 px-2 py-1.5 text-sm"></label>
+    <label class="text-sm text-gray-600">Til
+      <input type="date" name="to" value="{{ date_to }}"
+             class="block rounded-md border border-gray-300 px-2 py-1.5 text-sm"></label>
+    <input type="hidden" name="sort" value="{{ sort }}">
+    <input type="hidden" name="dir" value="{{ dir }}">
+    {% if show_discarded %}<input type="hidden" name="show_discarded" value="1">{% endif %}
+    {% if only_pending %}<input type="hidden" name="pending" value="1">{% endif %}
+    <button type="submit" class="btn">Søg</button>
+    {% if q or date_from or date_to %}<a class="btn" href="{% querystring q=None from=None to=None page=None %}">Ryd</a>{% endif %}
+
+    {% comment %}Toggle: only not-yet-received applications.{% endcomment %}
+    {% if only_pending %}
+      <a class="btn" href="{% querystring pending=None page=None %}">Vis alle</a>
+    {% else %}
+      <a class="btn" href="{% querystring pending=1 page=None %}">Kun afventende</a>
+    {% endif %}
+
+    {% comment %}Toggle: whether kasserede (discarded) applications are shown.{% endcomment %}
+    {% if show_discarded %}
+      <a class="btn" href="{% querystring show_discarded=None page=None %}">Skjul kasserede</a>
+    {% else %}
+      <a class="btn" href="{% querystring show_discarded=1 page=None %}">Vis kasserede{% if discarded_count %} ({{ discarded_count }}){% endif %}</a>
+    {% endif %}
+
+    {% comment %}Export the current filter + date range. Submitting to the export URL carries every form field.{% endcomment %}
+    <span class="hidden sm:block flex-1"></span>
+    <button type="submit" class="btn" formaction="{% url 'admissions:export' %}" name="format" value="csv">Eksportér CSV</button>
+    <button type="submit" class="btn" formaction="{% url 'admissions:export' %}" name="format" value="xlsx">Eksportér Excel</button>
+  </form>
 
   <div class="rounded-lg border border-gray-200 overflow-x-auto">
     <table class="w-full text-sm border-collapse">
       <thead>
         <tr class="text-left bg-gray-50 border-b border-gray-200 text-gray-600">
-          <th class="px-3 py-2 font-semibold whitespace-nowrap">Dato</th>
-          <th class="px-3 py-2 font-semibold">Type</th>
-          <th class="px-3 py-2 font-semibold">Navn</th>
-          <th class="px-3 py-2 font-semibold">Uddannelse</th>
-          <th class="px-3 py-2 font-semibold">Modtaget af</th>
+          {% for h in headers %}
+            {# padding on the link, not the cell, so the whole header cell is clickable #}
+            <th class="p-0 font-semibold whitespace-nowrap">
+              <a href="{% querystring sort=h.key dir=h.next_dir page=None %}"
+                 class="block px-3 py-2 hover:underline">{{ h.label }} <span class="text-gray-400">{{ h.arrow }}</span></a>
+            </th>
+          {% endfor %}
         </tr>
       </thead>
       <tbody>
       {% for a in page_obj %}
-        <tr class="border-b border-gray-100 hover:bg-gray-50 {% if not a.received_by %}bg-amber-50{% endif %}">
+        <tr class="border-b border-gray-100 hover:bg-gray-50 {% if a.discarded_by %}opacity-60 line-through{% elif not a.received_by %}bg-amber-50{% endif %}">
           <td class="px-3 py-2 whitespace-nowrap text-gray-500">{{ a.submitted_at|date:"Y-m-d" }}</td>
           <td class="px-3 py-2">
             {% if a.type == "rundvisning" %}
@@ -29,6 +74,7 @@
           </td>
           <td class="px-3 py-2">
             <a href="{% url 'admissions:show' a.pk %}" class="text-emerald-700 hover:underline font-medium">{{ a.full_name }}</a>
+            {% if a.discarded_by %}<span class="no-underline inline-block rounded-full bg-red-100 text-red-800 text-xs px-2 py-0.5 ml-1">Kasseret</span>{% endif %}
           </td>
           <td class="px-3 py-2 text-gray-700">{{ a.university|default:a.occupation|default:"-" }}</td>
           <td class="px-3 py-2 whitespace-nowrap">
@@ -49,9 +95,9 @@
 
   {% if page_obj.paginator.num_pages > 1 %}
     <p class="muted mt-4 flex items-center gap-3">
-      {% if page_obj.has_previous %}<a href="?page={{ page_obj.previous_page_number }}">‹ forrige</a>{% endif %}
+      {% if page_obj.has_previous %}<a href="{% querystring page=page_obj.previous_page_number %}">‹ forrige</a>{% endif %}
       <span>Side {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
-      {% if page_obj.has_next %}<a href="?page={{ page_obj.next_page_number }}">næste ›</a>{% endif %}
+      {% if page_obj.has_next %}<a href="{% querystring page=page_obj.next_page_number %}">næste ›</a>{% endif %}
     </p>
   {% endif %}
 {% endblock %}

@@ -105,10 +105,15 @@ class Command(BaseCommand):
             )
         criteria = {c.code: c for c in RoomCriterion.objects.all()}
 
-        # ---- current room conditions (rebuild) + normalized scores ----
+        # ---- room conditions (rebuild) + normalized scores ----
+        # WARNING: this delete makes the command destructive on re-run — it removes inspections written
+        # in the new system too. Never run this against production after cutover; use the additive
+        # `backfill_room_history` command instead.
         RoomCondition.objects.all().delete()
         cond_skipped_room = scores = 0
-        for c in fetch_all("SELECT * FROM intern_room_condition WHERE is_newest=1"):
+        # All reports, not just is_newest=1: the superseded ones are the "vis tidligere rapport"
+        # history on the inspection form (F-005). 679 rows in the dump, of which 620 are superseded.
+        for c in fetch_all("SELECT * FROM intern_room_condition ORDER BY date"):
             room = by_number.get(c["room_id"])
             if room is None:
                 cond_skipped_room += 1
@@ -119,7 +124,7 @@ class Command(BaseCommand):
                 resident_id=rid if rid in resident_ids else None,
                 recorded_by_name=(c["alumne_fullname"] or "").strip(),
                 recorded_at=c["date"] or timezone.now(),
-                is_current=True,
+                is_current=bool(c["is_newest"]),
             )
             crit_scores = parse_kv(c["criteria"], ";")
             comments = parse_kv(c["comments"], ";")

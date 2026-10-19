@@ -3,20 +3,34 @@
 {% block title %}Ansøgere - Værelse {{ offer.room.number }}{% endblock %}
 {% block content %}
   <h1>Ansøgere til værelse {{ offer.room.number|stringformat:"03d" }} ({{ offer.month|maaned }})</h1>
-  <p class="muted mb-3">Rangeret efter K (højest først), derefter ansøgningstidspunkt og prioritet.</p>
+  <p class="muted mb-3">Rangeret efter K (højest først), derefter prioritet. Ansøgningstidspunkt afgør
+    <strong>ikke</strong> K-lige ansøgninger — det gør indstillingen (lodtrækning).</p>
+  {% if contested_app_ids %}
+    <p class="card border-amber-400">Uafgjort — flere ansøgere har samme K. Vælg en vinder (lodtrækning
+      i huset), så tildeles værelset til dem, når runden afsluttes.</p>
+  {% endif %}
   <table class="w-full border-collapse">
-    <thead><tr class="border-b border-gray-200"><th class="p-2">#</th><th class="p-2">Beboer</th><th class="p-2">K</th><th class="p-2">Prioritet</th><th class="p-2">Sendt</th></tr></thead>
+    <thead><tr class="border-b border-gray-200"><th class="p-2">#</th><th class="p-2">Beboer</th><th class="p-2">K</th><th class="p-2">Prioritet</th><th class="p-2">Sendt</th><th class="p-2"></th></tr></thead>
     <tbody>
     {% for p in prios %}
       <tr class="border-b border-gray-100">
         <td class="p-2">{{ forloop.counter }}</td>
         <td class="p-2"><a href="{% url 'soegvaerelse:detail' p.application.id %}">{{ p.application.resident.full_name }}</a>
-          {% if p.application.id == winner_app_id %}<span title="Ville vinde værelset">🏆</span>{% endif %}</td>
+          {% if p.application.id == winner_app_id %}<span title="Ville vinde værelset">🏆</span>{% endif %}
+          {% if p.application.id in contested_app_ids %}<span title="Uafgjort (K-lige)">⚖️</span>{% endif %}</td>
         <td class="p-2">{{ p.application.k }}</td>
         <td class="p-2">{{ p.priority }}</td>
         <td class="p-2">{{ p.application.apply_datetime|date:"Y-m-d H:i" }}</td>
+        <td class="p-2">
+          {% if p.application.id in contested_app_ids %}
+            <form method="post" action="{% url 'soegvaerelse:resolve_tie' offer.id %}" class="inline">
+              {% csrf_token %}<input type="hidden" name="application" value="{{ p.application.id }}">
+              <button type="submit">Vælg vinder</button>
+            </form>
+          {% endif %}
+        </td>
       </tr>
-    {% empty %}<tr><td colspan="5" class="muted p-2">Ingen ansøgere.</td></tr>{% endfor %}
+    {% empty %}<tr><td colspan="6" class="muted p-2">Ingen ansøgere.</td></tr>{% endfor %}
     </tbody>
   </table>
 {% endblock %}

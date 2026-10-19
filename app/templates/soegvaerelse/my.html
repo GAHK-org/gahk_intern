@@ -10,6 +10,10 @@
         {% for p in app.priorities.all %}{{ p.priority }}: {{ p.room.number|stringformat:"03d" }}{% if not forloop.last %} · {% endif %}{% endfor %}
       </p>
       <a href="{% url 'soegvaerelse:detail' app.id %}">Detaljer</a>
+      <form method="post" action="{% url 'soegvaerelse:delete_application' app.id %}" class="inline"
+            onsubmit="return confirm('Træk din ansøgning for {{ app.move_month|maaned }} tilbage?');">
+        {% csrf_token %}<button type="submit" class="bg-red-600! ml-2">Slet ansøgning</button>
+      </form>
     </div>
   {% empty %}
     <p class="muted">Du har ingen ansøgninger. <a href="{% url 'soegvaerelse:soeg' %}">Søg værelse</a></p>

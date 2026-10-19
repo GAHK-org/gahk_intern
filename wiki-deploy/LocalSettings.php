@@ -28,6 +28,12 @@ function gahkEnv($name, $default = null)
         }
         die("Configuration error: environment variable $name is not set.\n");
     }
+    // Reject un-substituted placeholders like "<openssl rand -hex 32>" or "<from step 2>". A quoted
+    // heredoc copies these in verbatim, and a non-empty value otherwise sails straight through —
+    // which for $wgSecretKey means a predictable key silently weakening CSRF and session security.
+    if ($value[0] === '<' && substr($value, -1) === '>') {
+        die("Configuration error: $name still holds the placeholder '$value'.\n");
+    }
     return $value;
 }
 
@@ -38,6 +44,27 @@ $wgSitename = "Gahk Wiki";
 $wgMetaNamespace = "Gahk_Wiki";
 
 $wgScriptPath = "/wiki";
+
+# Coolify/Traefik routes gahk.dk/wiki here with a `stripprefix` middleware, so Apache receives
+# "/index.php/Forside" while $wgScript is still "/wiki/index.php". MediaWiki extracts the page title
+# by matching REQUEST_URI against the pattern "$wgScript/$1" (WebRequest::getPathInfo, via
+# PathRouter). After the strip that match fails, so *every* path-style URL resolves to no title at
+# all and renders the main page — which on a private wiki is "Log på nødvendigt" for every link,
+# including the login link. The symptom is a login button that appears to do nothing: it navigates
+# to a page identical to the one you left.
+#
+# Do NOT try to fix this with $wgUsePathInfo = true. It was tried and does nothing: getPathInfo()
+# parses REQUEST_URI, not $_SERVER['PATH_INFO'], so the correctly-populated PATH_INFO ("/Forside")
+# is never consulted. $wgUsePathInfo only controls *whether* the REQUEST_URI parse is attempted.
+#
+# Query-style URLs carry the title in the query string, which the prefix strip leaves untouched.
+# Literal "/wiki/index.php" rather than "$wgScript" — $wgScript is not populated until Setup.php
+# runs, i.e. after this file is parsed, so interpolating it here yields an empty string.
+#
+# The alternative is removing Coolify's stripprefix middleware so $wgScriptPath matches natively;
+# that means overriding Coolify's generated Traefik labels, which is more fragile than accepting
+# query-style URLs. Moving the wiki to wiki.gahk.dk would remove the problem entirely.
+$wgArticlePath = "/wiki/index.php?title=$1";
 
 ## The protocol and server name to use in fully-qualified URLs
 $wgServer = gahkEnv('MW_SERVER', 'https://gahk.dk');
@@ -128,6 +155,16 @@ $wgFileExtensions[] = 'xlsx';
 $wgFileExtensions[] = 'odt';
 $wgFileExtensions[] = 'ods';
 $wgFileExtensions[] = 'pdf';
+
+# Deliberately BELOW the Dockerfile's upload_max_filesize (72M), not equal to it. MediaWiki checks
+# the size only after PHP has accepted the file, so anything PHP rejects never reaches this check —
+# and PHP rejects silently, leaving "the file you uploaded seems to be empty" as the only clue. With
+# a margin, MediaWiki is always the one that answers, and it says what the limit actually is.
+#
+# Without this line MediaWiki's default is 100M, i.e. *above* PHP's ceiling, which is the wrong way
+# round: every upload between the two limits would fail with the unhelpful message instead of the
+# helpful one.
+$wgMaxUploadSize = 64 * 1024 * 1024;
 
 
 wfLoadExtension('ShowRealUsernames');

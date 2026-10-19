@@ -10,7 +10,8 @@
       {% for s in scores %}
         <tr class="border-b border-gray-100">
           <td class="p-2">{{ s.criterion.name }}</td>
-          <td class="p-2">{{ s.score|default_if_none:"—" }}</td>
+          <td class="p-2">{{ s.score|default_if_none:"—" }}
+            <span class="muted text-sm">({{ s.criterion.score_min }}–{{ s.criterion.score_max }})</span></td>
           <td class="p-2">
             {{ s.comment }}
             {% if s.photo %}<div class="mt-1"><img src="{{ s.photo.url }}" alt="" class="max-w-xs h-auto rounded border border-gray-200" loading="lazy"></div>{% endif %}
@@ -20,6 +21,21 @@
       {% endfor %}
       </tbody>
     </table>
+
+    {% comment %}
+      The score legends, collapsed: repeating 28 of them inline would drown the table, but without
+      them a bare "3" is uninterpretable. Same crit.description the form shows under each field.
+    {% endcomment %}
+    <details class="mt-4">
+      <summary class="muted">Forklaring af skalaerne</summary>
+      <dl class="mt-2">
+        {% for s in scores %}{% if s.criterion.description %}
+          <dt class="font-semibold mt-2">{{ s.criterion.name }}
+            <span class="muted text-sm">({{ s.criterion.score_min }}–{{ s.criterion.score_max }})</span></dt>
+          <dd class="muted text-sm">{{ s.criterion.description|linebreaksbr }}</dd>
+        {% endif %}{% endfor %}
+      </dl>
+    </details>
   {% else %}
     <p class="muted">Ingen tilstandsrapport endnu.</p>
   {% endif %}

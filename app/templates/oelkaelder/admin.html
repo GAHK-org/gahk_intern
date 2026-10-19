@@ -4,7 +4,11 @@
 {% block content %}
   <div class="flex items-center justify-between">
     <h1>Ølkælder - saldi</h1>
-    <a href="{% url 'oelkaelder:products' %}" class="btn">Varer &amp; priser</a>
+    <span class="flex gap-2">
+      <a href="{% url 'oelkaelder:all_sales' %}" class="btn">Salgsoverblik</a>
+      <a href="{% url 'oelkaelder:person_history' %}" class="btn">Personoversigt</a>
+      <a href="{% url 'oelkaelder:products' %}" class="btn">Varer &amp; priser</a>
+    </span>
   </div>
 
   <table cellpadding="6" style="width:100%; border-collapse:collapse">
@@ -84,6 +88,20 @@
     <form method="post" action="{% url 'oelkaelder:apply_interest' %}" class="mt-3"
           onsubmit="return confirm('Anvend rente på alle skyldnere over grænsen? (én gang pr. måned)');">
       {% csrf_token %}<button type="submit" class="bg-red-600!">Anvend rente nu</button>
+    </form>
+  </div>
+
+  <div class="card mt-8" style="max-width:34rem">
+    <h2>Købsgrænse</h2>
+    <p class="muted" style="font-size:13.5px">
+      Når spærringen er slået til, kan kiosken ikke sælge til nogen hvis saldo er under grænsen —
+      hverken alene eller som del af et delt køb. De ser en besked om at indbetale først.
+      Slået fra betyder at gæld kun udløser advarselsmails og rente, som i det gamle system.
+    </p>
+    <form method="post" action="{% url 'oelkaelder:update_purchase_policy' %}">
+      {% csrf_token %}
+      {{ purchase_policy_form.as_p }}
+      <button type="submit" class="btn">Gem købsgrænse</button>
     </form>
   </div>
 

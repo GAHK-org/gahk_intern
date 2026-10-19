@@ -1,0 +1,10 @@
+{% comment %}
+  The compose form's preview panel, swapped in by htmx from opslagstavle:preview.
+
+  `html` is already a SafeString from core.markdown — the ONLY place resident-authored content is
+  marked safe. No `|safe` here, deliberately: adding one would mean the next refactor that passes raw
+  source through this template silently becomes stored XSS.
+{% endcomment %}
+<div class="board-body prose-gahk">
+  {% if html %}{{ html }}{% else %}<p class="muted">Der er ikke skrevet noget endnu.</p>{% endif %}
+</div>

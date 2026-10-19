@@ -42,6 +42,17 @@ class Application(models.Model):
         related_name="applications_received",
     )
     received_at = models.DateTimeField(null=True, blank=True)
+    # Indstillingen can discard an application ("Kasseret") — e.g. spam or an obvious non-fit. Discarded
+    # applications drop out of the list/search by default but are kept (retention purge still applies)
+    # and can be revealed with a toggle, or un-discarded. Nullable, so a plain migration.
+    discarded_by = models.ForeignKey(
+        "residents.Resident",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="applications_discarded",
+    )
+    discarded_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         indexes = [
@@ -56,3 +67,7 @@ class Application(models.Model):
     @property
     def is_received(self) -> bool:
         return self.received_by_id is not None
+
+    @property
+    def is_discarded(self) -> bool:
+        return self.discarded_by_id is not None

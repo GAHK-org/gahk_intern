@@ -1,4 +1,4 @@
-// Interactive charts for /nyintern/statistik/ (Chart.js, tree-shaken). Data comes from a
+// Interactive charts for /intern/statistik/ (Chart.js, tree-shaken). Data comes from a
 // `json_script` block rendered by the stats view; nothing runs on pages without it.
 import {
   ArcElement,

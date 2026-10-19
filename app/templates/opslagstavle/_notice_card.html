@@ -1,0 +1,223 @@
+{% load board_extras %}
+{% comment %}
+  One notice, used by both the board list and the detail page — so the two can never drift on what a
+  post looks like. `full` is set on the detail page: the list shows a truncated body and no comments.
+
+  The body is rendered with |markdown, which returns an already-safe string (core.markdown). Do NOT
+  add |safe here.
+
+  A post has no headline: the author heads the card, the way every other feed these residents use
+  already works, and the way people wrote them anyway once titles stopped being a restatement of the
+  first line. The category chip carries "what is this about" instead, and it is filterable.
+
+  In the list the whole card is tappable: the TIMESTAMP is the post's permalink, stretched over the
+  card with a CSS pseudo-element (.is-clickable below), so it stays one real link — keyboard
+  reachable, right-clickable, no JavaScript. It used to be the title link; the timestamp is what
+  every social feed uses for the same job. The author's name and avatar link to their profile.
+  Controls that must stay clickable are raised above it.
+{% endcomment %}
+<article class="notice-card card-flat{% if notice.pinned_at %} is-pinned{% endif %}{% if not full %} is-clickable{% endif %}" id="opslag-{{ notice.pk }}">
+  <div class="notice-head">
+    <div class="notice-headline">
+      <div class="notice-tags">
+        {% if notice.pinned_at %}
+          <span class="chip chip-brass" title="Fastgjort af {{ notice.pinned_by.full_name|default:'Inspektionen' }}">📌 Fastgjort</span>
+        {% endif %}
+        <span class="chip">{{ notice.get_category_display }}</span>
+        {% comment %}
+          The link to the begivenhed this post is about. Announce here, sign up there.
+
+          Three conditions, and each rules out a different way this could show a reader something
+          they should not follow:
+
+            * `events_allowed` — begivenheder has its own rollout gate, and while it is on, a chip
+              linking into it would 403 whoever tapped it. The mirror of the event page's own check
+              before it links back here (views.events_allowed).
+            * `visibility` — checked here as well as in the form's queryset, because an event that
+              was open when somebody linked it can be switched to "kun inviterede" afterwards, and
+              this chip is on a board the whole house reads.
+            * `notice.event` at all — it is deleted a week after it is held while this post lives
+              for two years, so None is an ordinary state, not an error.
+
+          A real link, and in the feed it sits under the card's stretched permalink, so it needs
+          raising above it (see .notice-event in the stylesheet).
+        {% endcomment %}
+        {% if events_allowed and notice.event and notice.event.visibility == "aabent" %}
+          <a class="chip chip-event notice-event" href="{% url 'events:detail' notice.event.pk %}">
+            <svg class="ni" aria-hidden="true"><use href="#i-calendar"></use></svg>
+            {{ notice.event.title }} · {{ notice.event.starts_at|date:"j. M" }}
+          </a>
+        {% endif %}
+      </div>
+      <div class="notice-author">
+        <div class="notice-avatar" aria-hidden="true">
+          <a class="author-link" href="{% url 'resident_profile' notice.author_id %}" tabindex="-1">
+          {% if notice.author.profile_picture %}
+            <img src="{{ notice.author.avatar_url }}" alt="" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:50%;display:block">
+          {% else %}
+            {{ notice.author.first_name|slice:":1" }}{{ notice.author.last_name|slice:":1" }}
+          {% endif %}
+          </a>
+        </div>
+        <div class="notice-byline">
+          {% comment %}
+            Name and embedsgruppe share a row; the timestamp keeps the line below. The pill is a
+            snapshot taken when the post was written (models.AuthoredByResident), not a lookup — on
+            a post from last spring it names the group its author was in THEN, which is what the
+            byline is claiming. Omitted entirely when the snapshot is empty (an alumnus, or a post
+            predating the field), rather than rendered as a blank pill.
+          {% endcomment %}
+          <span class="notice-nameline">
+            <a class="notice-name author-link" href="{% url 'resident_profile' notice.author_id %}">{{ notice.author.full_name }}</a>
+            {% if notice.author_embedsgruppe %}
+              <span class="chip chip-embedsgruppe">{{ notice.author_embedsgruppe }}</span>
+            {% endif %}
+          </span>
+          {% comment %}
+            TWO DATES ON ONE LINE IS ONE DATE TOO MANY IN THE FEED. Edited posts used to read
+            "24. august 2026, 10:01 · redigeret 7. september 2026, 10:11" -- 58 characters, which
+            wrapped to a second line on a phone and made an edited post visibly bulkier than an
+            untouched one. In a scanned list the reader wants "when was this posted" and, at most,
+            "has it changed since"; the minute of the edit is detail, and detail belongs on the
+            post's own page.
+
+            So the two views say different amounts, and `full` is the switch:
+              * feed   -- "24. aug 2026, 10:01 · redigeret". Month abbreviated, edit reduced to
+                          the bare fact. About half the width, and it stays on one line.
+              * detail -- both timestamps in full. There is room, and this is where someone who
+                          wants to know exactly when it changed has come to look.
+
+            `b` and not `M` for the month: Danish does not capitalise month names and Django's `M`
+            renders "Aug"/"Sept" -- `b` gives "aug"/"sept".
+
+            NO title= TOOLTIP on the short form, deliberately, however natural it looks here. In
+            the feed .notice-link's ::after is stretched over the whole card (see .is-clickable in
+            styles.css) and this line sits UNDER it, so the hover never reaches the <time> and the
+            tooltip cannot open -- and on the phone this is for, there is no hover to begin with.
+            The detail page carries the date as text instead, which is reachable by everyone.
+          {% endcomment %}
+          <span class="notice-meta muted">
+            {% if full %}
+              <time datetime="{{ notice.created_at|date:'c' }}">{{ notice.created_at|date:"j. F Y, H:i" }}</time>
+              {% if notice.edited_at %}· redigeret <time datetime="{{ notice.edited_at|date:'c' }}">{{ notice.edited_at|date:"j. F Y, H:i" }}</time>{% endif %}
+            {% else %}
+              <a class="notice-link" href="{% url 'opslagstavle:detail' notice.pk %}">
+                <time datetime="{{ notice.created_at|date:'c' }}">{{ notice.created_at|date:"j. b Y, H:i" }}</time>
+              </a>
+              {% if notice.edited_at %}· <time datetime="{{ notice.edited_at|date:'c' }}">redigeret</time>{% endif %}
+            {% endif %}
+          </span>
+        </div>
+      </div>
+    </div>
+
+    {% if notice.can_edit or notice.can_delete or can_moderate %}
+      {% comment %}
+        Redigér / Fastgør / Slet behind a meatballs button. Three buttons per card is a lot of
+        furniture on a board you scroll, and on a phone they wrapped under the byline — worse, "Slet"
+        ended up a thumb's width from the text you were reading.
+
+        Built on `.pop`, the same <details> the reaction panels use, rather than as a dropdown
+        anchored to the button. That is forced rather than stylistic: .notice-card is a .card-flat,
+        which is `overflow:hidden`, so an absolutely positioned menu would be sliced off at the
+        card's edge. .pop's panel is position:fixed and escapes that, and it arrives with the
+        backdrop, the tap-away and the Escape handling already written (frontend/src/feed.ts).
+
+        The wrapper stays .notice-actions: the stretched permalink covers the whole card, and that
+        class is what the CSS lifts above it. Without it the menu would be untappable in the feed.
+      {% endcomment %}
+      <div class="notice-actions">
+        <details class="pop notice-menu">
+          <summary class="notice-menu-button" title="Flere handlinger" aria-label="Flere handlinger">⋯</summary>
+          <div class="pop-backdrop"></div>
+          <div class="pop-panel">
+            <div class="pop-title">Handlinger</div>
+            {% if notice.can_edit %}
+              <a class="pop-item" href="{% url 'opslagstavle:edit' notice.pk %}">Redigér</a>
+            {% endif %}
+            {% if can_moderate %}
+              {% comment %}
+                Pin/unpin is a POST: it changes state, and a GET link would let a prefetching browser
+                or a crawler pin things by accident.
+              {% endcomment %}
+              <form method="post" action="{% url 'opslagstavle:toggle_pin' notice.pk %}">
+                {% csrf_token %}
+                <button type="submit" class="pop-item">
+                  {% if notice.pinned_at %}Frigør{% else %}Fastgør{% endif %}
+                </button>
+              </form>
+            {% endif %}
+            {% if notice.can_delete %}
+              <form method="post" action="{% url 'opslagstavle:delete' notice.pk %}"
+                    onsubmit="return confirm('Slet dette opslag af {{ notice.author.full_name|escapejs }} permanent?')">
+                {% csrf_token %}
+                <button type="submit" class="pop-item pop-item-danger">Slet</button>
+              </form>
+            {% endif %}
+          </div>
+        </details>
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="board-body prose-gahk">
+    {% comment %}
+      Truncated AFTER rendering, not before: truncatewords_html closes any tag it cuts through, while
+      truncating the Markdown source would slice a construct in half and render as noise.
+
+      More than one image => render the text without any of them and show a single thumbnail below,
+      so a photo album cannot push every other post off the screen. One image stays inline: it reads
+      as part of the post rather than as a gallery.
+    {% endcomment %}
+    {% comment %}
+      "Se mere" is shown from the truncation marker itself: truncatewords_html appends "…" only when
+      it actually cut something, so testing the rendered excerpt for it needs no second render and no
+      word counting that could disagree with what was really trimmed. (A body that contains an
+      ellipsis of its own inside its first 40 words would show the label spuriously. Accepted: the
+      label is honest about where a tap goes either way, and the alternative was rendering every
+      post's Markdown twice on a page that renders all of them.)
+
+      Deliberately a <span>, not a link. The stretched permalink already covers the whole card, and a
+      second link to the same place is worse for a screen reader than one — the same call the gallery
+      count below makes.
+    {% endcomment %}
+    {% if full %}
+      {{ notice.body|markdown }}
+    {% elif notice.thumbnail %}
+      {% with excerpt=notice.body|markdown_text_only|truncatewords_html:40 %}
+        {{ excerpt }}{% if "…" in excerpt %}<span class="see-more">Se mere …</span>{% endif %}
+      {% endwith %}
+    {% else %}
+      {% with excerpt=notice.body|markdown|truncatewords_html:40 %}
+        {{ excerpt }}{% if "…" in excerpt %}<span class="see-more">Se mere …</span>{% endif %}
+      {% endwith %}
+    {% endif %}
+  </div>
+
+  {% if notice.thumbnail and not full %}
+    {% comment %}
+      Not a link: it sits under the stretched permalink, so a tap here already opens the post. A
+      nested <a> would be covered by the overlay anyway, and two links to the same place is worse for
+      a screen reader than one.
+
+      Deliberately NOT aria-hidden. The thumbnail itself is decorative (alt=""), but "3 billeder" is
+      real information — it is the only thing telling a screen-reader user the post has pictures at
+      all, since the excerpt is rendered without them.
+    {% endcomment %}
+    <div class="notice-gallery">
+      <img src="{{ notice.thumbnail }}" alt="" loading="lazy" width="72" height="72">
+      <span class="notice-gallery-count muted">{{ notice.image_count }} billeder</span>
+    </div>
+  {% endif %}
+
+  <div class="notice-foot">
+    {% include "opslagstavle/_reactions.html" with reactions=notice.reaction_rows %}
+    {% if not full %}
+      <a class="muted notice-comments-link" href="{% url 'opslagstavle:detail' notice.pk %}">
+        {% with n=notice.comments.count %}
+          {% if n == 1 %}1 kommentar{% elif n %}{{ n }} kommentarer{% else %}Kommentér{% endif %}
+        {% endwith %}
+      </a>
+    {% endif %}
+  </div>
+</article>

@@ -1,53 +1,57 @@
 {% extends "base.html" %}
-{% block title %}Intern — GAHK{% endblock %}
+{% load photo_album_extras %}
+{% block title %}Intern - GAHK{% endblock %}
 {% block content %}
-  <h1>Velkommen, {{ user.first_name }}</h1>
-  <p class="muted">Aktiv periode: {{ period }}</p>
-
-  <div class="card">
-    <h2>Genveje</h2>
-    <p>
-      <a href="/nyintern/alumneliste/">Alumneliste</a> ·
-      <a href="/nyintern/ak/">Mine AK-krydser</a> ·
-      <a href="/nyintern/oelkaelder/min-saldo">Min ølkælder-saldo</a> ·
-      <a href="/nyintern/statistik/">Statistik</a> ·
-      <a href="{{ wiki_url }}">Wiki</a>
-      {% if "ak" in roles %} · <a href="/nyintern/ak/admin">AK-admin</a>{% endif %}
-      {% if "oelkaelder" in roles %} · <a href="/nyintern/oelkaelder/admin">Ølkælder-admin</a>{% endif %}
-      {% if "indstilling" in roles %} · <a href="/optagelse/listansoegninger">Ansøgninger</a>{% endif %}
-    </p>
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">G.&nbsp;A.&nbsp;Hagemanns Kollegium</div>
+      <h1>Goddag, {{ user.first_name }}</h1>
+    </div>
+    <div class="head-actions">
+      <a class="btn" href="/intern/soegvaerelse/">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21V9l9-6 9 6v12"/></svg>Søg værelse</a>
+    </div>
   </div>
 
-  <div class="card">
-    <h2>Dine embedsgrupper denne måned</h2>
-    {% if roles %}
-      <ul>{% for r in roles %}<li>{{ r }}</li>{% endfor %}</ul>
-    {% else %}
-      <p class="muted">Ingen særlige roller denne måned.</p>
-    {% endif %}
+  {% include "notifications/_device.html" with mode="prompt" %}
+
+  <div class="glance">
+    <span class="g"><span class="gk">Aktiv måned</span> <b>{{ period }}</b></span>
+    <span class="g"><span class="gk">Dine roller</span>
+      {% for r in roles %}<span class="chip">{{ r }}</span>{% empty %}<span class="muted">Ingen særlige denne måned</span>{% endfor %}
+    </span>
   </div>
 
-  <div class="card">
-    <h2>Begivenheder på GAHK</h2>
-    {% if calendar_embed_url %}
-      <iframe src="{{ calendar_embed_url }}" title="GAHK fælleskalender"
-              class="w-full max-w-md h-[500px] border border-gray-300 rounded"
-              frameborder="0" scrolling="no" loading="lazy"></iframe>
-    {% else %}
-      <p class="muted">Kalenderen er ikke konfigureret (sæt GOOGLE_CALENDAR_USER).</p>
-    {% endif %}
+  <div class="grid2">
+    <div class="card-flat">
+      <div class="card-head"><h2>Begivenheder på GAHK</h2>{% if calendar_embed_url %}<a href="https://calendar.google.com/" target="_blank" rel="noopener">Åbn i Google →</a>{% endif %}</div>
+      <div class="card-pad">
+        {% if calendar_embed_url %}
+          <iframe src="{{ calendar_embed_url }}" title="GAHK fælleskalender" style="width:100%;height:460px;border:1px solid var(--border);border-radius:10px"
+                  frameborder="0" scrolling="no" loading="lazy"></iframe>
+        {% else %}
+          <p class="muted">Kalenderen er ikke konfigureret (sæt <code class="code">GOOGLE_CALENDAR_USER</code>).</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card-flat">
+      <div class="card-head"><h2>Genveje</h2></div>
+      <div class="card-pad">
+        <div class="quick">
+          <a href="/intern/alumneliste/"><svg><use href="#i-list"></use></svg>Alumneliste</a>
+          <a href="/intern/ak/"><svg><use href="#i-check"></use></svg>Mine AK-krydser</a>
+          <a href="/intern/oelkaelder/min-saldo"><svg><use href="#i-beer"></use></svg>Min ølkælder-saldo</a>
+          {% if "oelkaelder" in roles %}<a href="/intern/oelkaelder/admin"><svg><use href="#i-beer"></use></svg>Ølkælder-admin</a>{% endif %}
+          {% if "ak" in roles %}<a href="/intern/ak/admin"><svg><use href="#i-check"></use></svg>AK-oversigt</a>{% endif %}
+          {% if "indstilling" in roles %}<a href="/optagelse/listansoegninger"><svg><use href="#i-inbox"></use></svg>Ansøgninger</a>{% endif %}
+        </div>
+        <div class="kv" style="margin-top:14px"><span class="l">WiFi-kode</span><span class="r"><span class="code">{{ wifi_password|default:"(sæt WIFI_PASSWORD)" }}</span></span></div>
+        <div class="kv"><span class="l">Fælleskalender</span><span class="r">{{ calendar_user|default:"(ikke sat)" }}{% if calendar_password %} / {{ calendar_password }}{% endif %}</span></div>
+        <div class="kv"><span class="l">Konto</span><span class="r"><a href="/intern/admin/password-change">Skift kodeord →</a></span></div>
+      </div>
+    </div>
   </div>
 
-  <div class="card">
-    <h2>Praktisk</h2>
-    <p><strong>WiFi-kodeord:</strong> {{ wifi_password|default:"(sæt WIFI_PASSWORD i .env)" }}</p>
-    <p><strong>Fælleskalender (Google):</strong>
-      {{ calendar_user|default:"(sæt GOOGLE_CALENDAR_USER)" }}{% if calendar_password %} / {{ calendar_password }}{% endif %}</p>
-  </div>
-
-  <form method="post" action="/nyintern/admin/logout">
-    {% csrf_token %}
-    <button type="submit">Log ud</button>
-    <a href="/nyintern/admin/password-change" style="margin-left:1rem">Skift kodeord</a>
-  </form>
+  {% photo_album_strip %}
 {% endblock %}

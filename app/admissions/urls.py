@@ -14,6 +14,8 @@ urlpatterns = [
     path("send_fremleje", views.fremlej, name="send_fremleje"),  # POST target (legacy URL)
     path("ansoeg/success", views.success, name="success"),
     path("listansoegninger", views.list_applications, name="list"),
+    path("eksport", views.export_applications, name="export"),
     path("showAnsoegning/<int:pk>", views.show_application, name="show"),
     path("setasreceived/<int:pk>", views.mark_received, name="setasreceived"),
+    path("kasser/<int:pk>", views.toggle_discarded, name="toggle_discarded"),
 ]

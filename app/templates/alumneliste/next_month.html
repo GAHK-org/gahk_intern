@@ -3,23 +3,50 @@
 {% block content_width %}max-w-6xl{% endblock %}
 {% block content %}
   <h1>Alumneliste for {{ target }}</h1>
-  <p class="muted">Forbered næste måneds liste. De <strong>privilegerede</strong> embedsgrupper
-  ({{ priv_names|join:", " }}) giver samtidig adgang til gruppens sider. Ændringerne træder først i
-  kraft, når {{ target }} bliver den aktuelle måned.</p>
 
-  {% if not has_list %}
+  {% comment %}
+    Month picker. Only two options on purpose (see views._target_period): next month, and the one in
+    effect so a mistake in the live list can be fixed without waiting for the month to roll over.
+  {% endcomment %}
+  <form method="get" action="{% url 'next_month_list' %}" class="flex items-center gap-2">
+    <label for="period" class="font-semibold">Rediger måned:</label>
+    <select id="period" name="period" onchange="this.form.submit()" class="w-auto!">
+      <option value="next" {% if not editing_current %}selected{% endif %}>Næste måned</option>
+      <option value="current" {% if editing_current %}selected{% endif %}>Nuværende måned ({{ current_period }})</option>
+    </select>
+  </form>
+
+  {% if editing_current %}
+    <p class="card chip-neg" style="border-color:#e7c7c3">
+      <strong>Du redigerer den liste, der gælder lige nu.</strong> Ændringer træder i kraft med det
+      samme — også adgang: fjerner du en beboers privilegerede embedsgruppe, mister vedkommende
+      adgangen til gruppens sider øjeblikkeligt.
+    </p>
+  {% else %}
+    <p class="muted">Forbered næste måneds liste. De <strong>privilegerede</strong> embedsgrupper
+    ({{ priv_names|join:", " }}) giver samtidig adgang til gruppens sider. Ændringerne træder først i
+    kraft, når {{ target }} bliver den aktuelle måned.</p>
+  {% endif %}
+
+  {% if not has_list and editing_current %}
+    <div class="card muted">
+      <p>Der er ingen liste for den nuværende måned ({{ current_period }}) at rette.</p>
+    </div>
+  {% elif not has_list %}
     <div class="card">
       <p>Der er endnu ingen liste for {{ target }}. Kopiér den aktuelle liste ({{ current_period }})
       som udgangspunkt — derefter kan du rette værelser, embedsgrupper og rengøring samt tilføje/fjerne
       beboere.</p>
       <form method="post" action="{% url 'next_month_list' %}" class="mt-2">
-        {% csrf_token %}<input type="hidden" name="action" value="copy">
+        {% csrf_token %}<input type="hidden" name="period" value="{% if editing_current %}current{% else %}next{% endif %}">
+        <input type="hidden" name="action" value="copy">
         <button type="submit" class="btn">Kopiér liste fra {{ current_period }}</button>
       </form>
     </div>
   {% else %}
     <form method="post" action="{% url 'next_month_list' %}">
-      {% csrf_token %}<input type="hidden" name="action" value="save">
+      {% csrf_token %}<input type="hidden" name="period" value="{% if editing_current %}current{% else %}next{% endif %}">
+        <input type="hidden" name="action" value="save">
       <div class="card overflow-x-auto">
         <table cellpadding="6" style="width:100%; border-collapse:collapse">
           <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec">
@@ -64,18 +91,19 @@
       <div class="card">
         <h2>Tilføj eksisterende beboer</h2>
         <form method="post" action="{% url 'next_month_list' %}" class="space-y-2">
-          {% csrf_token %}<input type="hidden" name="action" value="add_existing">
+          {% csrf_token %}<input type="hidden" name="period" value="{% if editing_current %}current{% else %}next{% endif %}">
+        <input type="hidden" name="action" value="add_existing">
           <label>Beboer</label>
           <select name="resident">
             <option value="">— vælg —</option>
-            {% for a in available %}<option value="{{ a.id }}">{{ a.full_name }} ({{ a.email }})</option>{% endfor %}
+            {% for a in available %}<option value="{{ a.id }}" {% if existing_draft.resident == a.id %}selected{% endif %}>{{ a.full_name }} ({{ a.email }})</option>{% endfor %}
           </select>
           <label>Værelse</label>
-          <select name="room"><option value="">— vælg —</option>{% for room in rooms %}<option value="{{ room.id }}">{{ room.number|stringformat:"03d" }}</option>{% endfor %}</select>
+          <select name="room"><option value="">— vælg —</option>{% for room in rooms %}<option value="{{ room.id }}" {% if existing_draft.room == room.id %}selected{% endif %}>{{ room.number|stringformat:"03d" }}</option>{% endfor %}</select>
           <label>Embedsgruppe</label>
-          <select name="workgroup"><option value="">— ingen —</option>{% for w in workgroups %}<option value="{{ w.id }}">{{ w.name }}</option>{% endfor %}</select>
+          <select name="workgroup"><option value="">— ingen —</option>{% for w in workgroups %}<option value="{{ w.id }}" {% if existing_draft.workgroup == w.id %}selected{% endif %}>{{ w.name }}</option>{% endfor %}</select>
           <label>Rengøring</label>
-          <select name="cleaning"><option value="">— ingen —</option>{% for c in cleanings %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}</select>
+          <select name="cleaning"><option value="">— ingen —</option>{% for c in cleanings %}<option value="{{ c.id }}" {% if existing_draft.cleaning == c.id %}selected{% endif %}>{{ c.name }}</option>{% endfor %}</select>
           <p><button type="submit" class="btn">Tilføj</button></p>
         </form>
       </div>
@@ -83,16 +111,24 @@
       <div class="card">
         <h2>Opret ny beboer</h2>
         <form method="post" action="{% url 'next_month_list' %}" class="space-y-2">
-          {% csrf_token %}<input type="hidden" name="action" value="add_new">
-          <label>Fornavn</label><input type="text" name="first_name">
-          <label>Efternavn</label><input type="text" name="last_name">
-          <label>E-mail</label><input type="email" name="email">
+          {% csrf_token %}<input type="hidden" name="period" value="{% if editing_current %}current{% else %}next{% endif %}">
+        <input type="hidden" name="action" value="add_new">
+          <label>Fornavn</label><input type="text" name="first_name" value="{{ new_draft.first_name|default:"" }}">
+          <label>Efternavn</label><input type="text" name="last_name" value="{{ new_draft.last_name|default:"" }}">
+          <label>E-mail</label><input type="email" name="email" value="{{ new_draft.email|default:"" }}">
+          <label>Telefon <span class="muted">(valgfri)</span></label><input type="tel" name="phone" maxlength="40" value="{{ new_draft.phone|default:"" }}">
+          <label>Fødselsdag <span class="muted">(valgfri)</span></label><input type="date" name="birthday" value="{{ new_draft.birthday|default:"" }}">
           <label>Værelse</label>
-          <select name="room"><option value="">— vælg —</option>{% for room in rooms %}<option value="{{ room.id }}">{{ room.number|stringformat:"03d" }}</option>{% endfor %}</select>
+          <select name="room"><option value="">— vælg —</option>{% for room in rooms %}<option value="{{ room.id }}" {% if new_draft.room == room.id %}selected{% endif %}>{{ room.number|stringformat:"03d" }}</option>{% endfor %}</select>
           <label>Embedsgruppe</label>
-          <select name="workgroup"><option value="">— ingen —</option>{% for w in workgroups %}<option value="{{ w.id }}">{{ w.name }}</option>{% endfor %}</select>
+          <select name="workgroup"><option value="">— ingen —</option>{% for w in workgroups %}<option value="{{ w.id }}" {% if new_draft.workgroup == w.id %}selected{% endif %}>{{ w.name }}</option>{% endfor %}</select>
           <label>Rengøring</label>
-          <select name="cleaning"><option value="">— ingen —</option>{% for c in cleanings %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}</select>
+          <select name="cleaning"><option value="">— ingen —</option>{% for c in cleanings %}<option value="{{ c.id }}" {% if new_draft.cleaning == c.id %}selected{% endif %}>{{ c.name }}</option>{% endfor %}</select>
+          <label>Fylgje (fadder)</label>
+          <select name="sponsor">
+            <option value="">— ingen —</option>
+            {% for r in all_residents %}<option value="{{ r.id }}" {% if new_draft.sponsor == r.id %}selected{% endif %}>{{ r.full_name }}</option>{% endfor %}
+          </select>
           <p class="muted">Den nye beboer sætter selv sit kodeord via "glemt kodeord".</p>
           <p><button type="submit" class="btn">Opret og tilføj</button></p>
         </form>

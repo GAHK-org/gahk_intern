@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Arkiv - {{ channel.name }} - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% comment %}
+  The standalone archive page. In a browser with JavaScript the archive is simply the feed scrolled
+  up (feed.html), so this exists for the two cases that are not that:
+
+    * NO JAVASCRIPT. There is no scrolling-to-load without it, so the sentinel's href lands here and
+      this page walks the same chunks with plain links. Same partial, same cursor, same chunk size —
+      it is the identical archive, paged by pressing rather than by scrolling.
+    * A BOOKMARK. This is the one part of Den Hurtige worth keeping a URL to, because it is the only
+      part that does not change under you.
+
+  Deliberately NOT the chat shell: no .chat-page body class, no 100dvh lock, no viewport lock. This
+  is a document you arrived at by following a link, and it scrolls like one.
+{% endcomment %}
+{% block content %}
+  <p class="thread-crumb">
+    <a href="{{ channel.url }}">&larr; Tilbage til {{ channel.name }}</a>
+  </p>
+
+  <h1 class="h2">Arkiv · {{ channel.name }}</h1>
+  <p class="archive-note">
+    Beskeder havner her når de forlader feedet. De bliver ikke slettet — men der kan ikke svares,
+    reageres eller slettes i arkivet.
+  </p>
+
+  <div class="thread-page card-flat archive-page">
+    {% include "den_hurtige/_archive_chunk.html" with paged=1 %}
+
+    {% if not days %}
+      <div class="feed-empty">
+        <p><strong>Arkivet er tomt.</strong></p>
+        <p class="muted">
+          Der er ikke gået tid nok endnu — beskeder lander her når deres tid på feedet er løbet ud.
+        </p>
+      </div>
+    {% endif %}
+  </div>
+
+  {% comment %}
+    The pager. The chunk above renders its own "ældre" control (a sentinel that degrades to a link
+    inside <noscript>), but that one is invisible with JavaScript ON, and this page is reachable by
+    bookmark in a normal browser — so the links are repeated here unconditionally, below the
+    messages, where a pager belongs.
+
+    ONE DIRECTION ONLY, and that is not an oversight. A cursor names where a chunk ENDS, so walking
+    back towards the newest end would need the opposite cursor threaded through every link — a
+    second paging scheme for a page whose whole job is to be the fallback. "Nyeste" restarts at the
+    top instead, which is one press from anywhere and cannot drift.
+  {% endcomment %}
+  <p class="archive-pager">
+    {% if not at_newest %}
+      <a href="{% url 'den_hurtige:archive' %}?kanal={{ channel.slug }}">&uarr; Nyeste</a>
+    {% endif %}
+    {% if older_than %}
+      <a href="{% url 'den_hurtige:archive' %}?kanal={{ channel.slug }}&amp;inden={{ older_than|urlencode }}">Ældre beskeder &darr;</a>
+    {% endif %}
+  </p>
+{% endblock %}

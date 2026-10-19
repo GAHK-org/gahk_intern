@@ -3,7 +3,7 @@
 <html lang="da">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
+  {% include "_csp_upgrade.html" %}
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}G. A. Hagemanns Kollegium{% endblock %}</title>
   <link rel="icon" href="{% static 'legacy/image/elements/lamassu.svg' %}" type="image/svg+xml">
@@ -24,7 +24,7 @@
         <span class="font-display text-lg sm:text-xl text-white">G. A. Hagemanns Kollegium</span>
       </a>
       <span class="flex-1"></span>
-      <a href="/nyintern/" class="text-xs uppercase tracking-wide text-white/70 hover:text-white no-underline whitespace-nowrap">Intern&nbsp;›</a>
+      <a href="/intern/" class="text-xs uppercase tracking-wide text-white/70 hover:text-white no-underline whitespace-nowrap">Intern&nbsp;›</a>
     </div>
     <nav class="bg-emerald-900/40">
       <ul class="max-w-5xl mx-auto w-full px-4 py-2 flex flex-wrap gap-x-5 gap-y-1 uppercase text-sm">

@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}{{ subject.full_name }} - GAHK Intern{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div style="display:flex; align-items:center; gap:1.25rem">
+      {% if subject.profile_picture %}
+        {# The thumbnail everywhere; the original only here, on request, in the shared viewer (#177). #}
+        <a href="{{ subject.profile_picture.url }}" target="_blank" rel="noopener"
+           data-viewer data-name="{{ subject.full_name }}" style="flex-shrink:0">
+          <img src="{{ subject.avatar_url }}" alt="{{ subject.full_name }}"
+               class="avatar avatar-lg" style="width:64px;height:64px;border-radius:50%;object-fit:cover">
+        </a>
+      {% else %}
+        <span class="avatar" style="width:64px;height:64px;font-size:1.5rem">{{ subject.first_name|slice:":1" }}{{ subject.last_name|slice:":1" }}</span>
+      {% endif %}
+      <div>
+        <h1 style="margin:0">
+          {{ subject.full_name }}
+          {% for emoji, label in badges %}<span title="{{ label }}">{{ emoji }}</span>{% endfor %}
+        </h1>
+        {% if subject.study %}<p class="muted" style="margin:.25rem 0 0">{{ subject.study }}</p>{% endif %}
+      </div>
+    </div>
+    {% if subject == user %}
+      <div class="head-actions">
+        <a class="btn" href="{% url 'edit_profile' %}">Rediger profil</a>
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="grid2">
+    <div class="card-flat">
+      <div class="card-head"><h2>Om {{ subject.first_name }}</h2></div>
+      <div class="card-pad">
+        {% if subject.bio %}
+          <p style="white-space:pre-wrap;margin-bottom:1rem">{{ subject.bio }}</p>
+        {% endif %}
+
+        {% if subject.facebook_link %}
+          <div class="kv">
+            <span class="l">Facebook</span>
+            <span class="r"><a href="{{ subject.facebook_link }}" target="_blank" rel="noopener">{{ subject.facebook_link }}</a></span>
+          </div>
+        {% endif %}
+        {% if subject.instagram_handle %}
+          <div class="kv">
+            <span class="l">Instagram</span>
+            <span class="r">
+              <a href="https://instagram.com/{{ subject.instagram_handle|cut:'@' }}" target="_blank" rel="noopener">
+                @{{ subject.instagram_handle|cut:"@" }}
+              </a>
+            </span>
+          </div>
+        {% endif %}
+
+        {% if residency or subject.sponsor or subject.fylgje_raw or subject.birthday or subject.move_in_date or subject.phone or subject.email %}
+          <div style="margin-top:1rem">
+            {% if residency %}
+              <div class="kv"><span class="l">Værelse</span><span class="r">{{ residency.room.number|stringformat:"03d" }}</span></div>
+              {% if residency.workgroup %}<div class="kv"><span class="l">Embedsgruppe</span><span class="r">{{ residency.workgroup.name }}</span></div>{% endif %}
+              {% if residency.cleaning %}<div class="kv"><span class="l">Rengøring</span><span class="r">{{ residency.cleaning.name }}</span></div>{% endif %}
+            {% endif %}
+            {% if subject.sponsor %}
+              <div class="kv"><span class="l">Fylgje</span><span class="r">{{ subject.sponsor.full_name }}</span></div>
+            {% elif subject.fylgje_raw %}
+              <div class="kv"><span class="l">Fylgje</span><span class="r">{{ subject.fylgje_raw }}</span></div>
+            {% endif %}
+            {% if subject.birthday %}<div class="kv"><span class="l">Fødselsdag</span><span class="r">{{ subject.birthday|date:"Y-m-d" }}</span></div>{% endif %}
+            {% if subject.move_in_date %}<div class="kv"><span class="l">Indflyttet</span><span class="r">{{ subject.move_in_date|date:"Y-m-d" }}</span></div>{% endif %}
+            {% if subject.phone %}<div class="kv"><span class="l">Telefon</span><span class="r">{{ subject.phone }}</span></div>{% endif %}
+            <div class="kv"><span class="l">Email</span><span class="r"><a href="mailto:{{ subject.email }}">{{ subject.email }}</a></span></div>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card-flat">
+      <div class="card-head"><h2>Seneste opslag</h2></div>
+      <div class="card-pad">
+        {% if recent_notices %}
+          <ul style="list-style:none;padding:0;margin:0">
+            {% for notice in recent_notices %}
+              <li style="padding:.5rem 0; border-bottom:1px solid var(--border,#e6e8ec)">
+                <a href="{% url 'opslagstavle:detail' notice.pk %}">{{ notice.body|truncatechars:80 }}</a>
+                <span class="muted" style="display:block;font-size:.8rem">{{ notice.created_at|date:"d. N Y" }}</span>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="muted">Ingen opslag endnu.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+{% endblock %}

@@ -1,0 +1,136 @@
+{% comment %}
+  One message's reaction row. Swapped on its own (hx-swap="outerHTML" onto this id) so tapping an
+  emoji never re-renders the feed — that would collapse open threads and fight the poll.
+
+  Panels hang off this row as `.pop`: a native <details> whose panel is position:fixed and centred
+  (a sheet on a phone) behind a backdrop, rather than absolutely positioned beside its own summary.
+  That is a fix, not decoration. The panel used to be anchored to the "+" button, which sits *after*
+  the pills — so on a message that already had several reactions it opened far to the right and ran
+  off the edge of the screen, and #js-feed's own overflow could clip it as well. Fixed positioning
+  escapes both. Tapping the backdrop closes it, via the handler in frontend/src/feed.ts.
+
+  WHO REACTED is per emoji, and reached by holding a pill rather than by a button of its own.
+  There used to be a single 👥 pill after the reactions that listed everyone. It worked, but it
+  spent a pill's width on every message that had any reaction at all — on a phone, next to three
+  or four reactions, that is the width that decides whether the row wraps — and it answered the
+  wrong question: you look at a specific emoji and wonder who used *that* one. So the panel is now
+  one per emoji, opened by holding the pill (touch), hovering it (mouse), right-clicking it, or
+  Shift+Enter (keyboard). See the `who` block in frontend/src/feed.ts for the gestures.
+
+  opslagstavle/_reactions.html is now the same widget again. It kept the 👥 pill and no gestures for
+  a while, on the argument that the noticeboard has room to spare — but that argument was about
+  layout, and what it cost was one control answering a different question per page. Change the
+  interaction here and change it there; the shared `.reaction*` CSS in frontend/src/styles.css
+  serves both.
+{% endcomment %}
+{% comment %}
+  `archived` turns this row read-only: the pills stop being buttons and the picker is not rendered
+  at all. Both halves are needed and neither is cosmetic — a disabled-looking pill that still
+  carried hx-post would still write on a keyboard Enter, and a picker with nothing behind it invites
+  a tap that answers with the row unchanged and no explanation.
+
+  The pills become <span>s rather than disabled <button>s so the counts stay selectable and stay in
+  the accessibility tree as the text they are; a disabled button is announced as a control you
+  cannot use, which is a worse answer than "this is a number". The reader panels below survive
+  intact — who reacted is a fact about the archive and is exactly what somebody reading it back
+  wants.
+{% endcomment %}
+<div class="reactions{% if not reactions %} is-empty{% endif %}{% if archived %} is-archived{% endif %}" id="reactions-{{ post.pk }}">
+  {% for r in reactions %}
+    {% if archived %}
+      <span class="reaction is-static{% if r.mine %} is-mine{% endif %}"
+            data-who="who-{{ post.pk }}-{{ forloop.counter }}"
+            aria-label="{{ r.emoji }} {{ r.count }}">{{ r.emoji }} <span class="n">{{ r.count }}</span></span>
+    {% else %}
+    {% comment %}
+      Tap toggles the reaction; hold/hover/right-click opens who. Those must not be the same
+      gesture — a tap that both changed your reaction and opened a panel would be neither.
+
+      NO title attribute. It carried a "hold inde for at se hvem" hint, and on a mouse that was
+      self-defeating: hovering already shows the names, so the browser drew its native tooltip
+      offering to explain a gesture on top of the tooltip that had just answered the question.
+      Two tooltips, one of them redundant. A title is only ever seen on hover anyway, so it never
+      reached the touch users the hint was written for. aria-haspopup carries it for screen
+      readers; everyone else discovers it by hovering, which is the thing itself.
+    {% endcomment %}
+    <button type="button" class="reaction{% if r.mine %} is-mine{% endif %}"
+            data-who="who-{{ post.pk }}-{{ forloop.counter }}"
+            aria-haspopup="dialog"
+            hx-post="{% url 'den_hurtige:toggle_reaction' post.pk %}"
+            hx-vals='{"emoji": "{{ r.emoji }}"}'
+            hx-target="#reactions-{{ post.pk }}" hx-swap="outerHTML"
+            aria-pressed="{% if r.mine %}true{% else %}false{% endif %}"
+            aria-label="{{ r.emoji }} {{ r.count }}">{{ r.emoji }} <span class="n">{{ r.count }}</span></button>
+    {% endif %}
+  {% endfor %}
+
+  {% comment %}
+    One panel per emoji, rendered inline rather than fetched on demand so it cannot go stale
+    against the row around it: the same `reactions` list renders both the pills and these panels,
+    so the two can never disagree about counts or ordering, and the poll refreshes them for free.
+
+    These sit after ALL the pills, not each beside its own, because a <details> panel nested
+    between two flex items would take part in the row's layout. They are position:fixed anyway, so
+    where they live in the DOM does not affect where they appear.
+
+    Kept as <details> — not divs toggled by script — so the existing click-away and Escape handlers
+    in feed.ts, which key off `details.pop[open]`, cover them with no new code.
+  {% endcomment %}
+  {% for r in reactions %}
+    <details class="pop who-picker" id="who-{{ post.pk }}-{{ forloop.counter }}">
+      <summary class="sr-only">Hvem reagerede med {{ r.emoji }}</summary>
+      <div class="pop-backdrop"></div>
+      <div class="pop-panel">
+        <div class="pop-title">{{ r.emoji }} {{ r.count }}</div>
+        {% comment %}
+          One row per PERSON. Comma-joining a group onto one line was unreadable as soon as a post
+          got popular: fifteen names wrapped into a paragraph you had to parse rather than scan. A
+          row each turns it into a list you scroll, which is what the panel is for. Order comes
+          straight from core.reactions.reaction_rows — the order people reacted in.
+        {% endcomment %}
+        <ul class="who-list">
+          {% for person in r.people %}
+            <li class="who-row"><span class="who-names">{{ person }}</span></li>
+          {% endfor %}
+        </ul>
+      </div>
+    </details>
+  {% endfor %}
+
+  {% comment %}
+    Picker as a native <details>: nothing opens it but the browser, it is keyboard accessible, and it
+    closes by itself because choosing an emoji swaps this whole row away. A bare text input was the
+    first attempt and was wrong on desktop — a browser gives you a cursor and no emoji help at all,
+    so the common ones are one tap here. The free field at the bottom keeps "any emoji" true, and on
+    a phone focusing it opens the system emoji keyboard.
+
+    `.add-label` shows only on a message with no reactions yet (styles.css keys off `.is-empty`
+    above), where this is the sole thing in the row and a bare glyph read as an empty slot rather
+    than the button that fills it.
+  {% endcomment %}
+  {% if not archived %}
+  <details class="pop emoji-picker" id="picker-{{ post.pk }}">
+    <summary class="reaction reaction-add" title="Tilføj reaktion" aria-label="Tilføj reaktion">☺<span aria-hidden="true">+</span><span class="add-label"> Reagér</span></summary>
+    <div class="pop-backdrop"></div>
+    <div class="pop-panel">
+      <div class="pop-title">Vælg en reaktion</div>
+      <div class="emoji-grid">
+        {% for e in quick_emoji %}
+          <button type="button" class="emoji-choice"
+                  hx-post="{% url 'den_hurtige:toggle_reaction' post.pk %}"
+                  hx-vals='{"emoji": "{{ e }}"}'
+                  hx-target="#reactions-{{ post.pk }}" hx-swap="outerHTML"
+                  aria-label="Reagér med {{ e }}">{{ e }}</button>
+        {% endfor %}
+      </div>
+      <form class="emoji-other"
+            hx-post="{% url 'den_hurtige:toggle_reaction' post.pk %}"
+            hx-target="#reactions-{{ post.pk }}" hx-swap="outerHTML">
+        <label class="sr-only" for="emoji-{{ post.pk }}">Anden emoji</label>
+        <input type="text" id="emoji-{{ post.pk }}" name="emoji" maxlength="32"
+               autocomplete="off" enterkeyhint="send" placeholder="Anden emoji…">
+      </form>
+    </div>
+  </details>
+  {% endif %}
+</div>

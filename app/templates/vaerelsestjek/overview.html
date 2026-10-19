@@ -1,8 +1,41 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}Værelsestjek - GAHK Intern{% endblock %}
+{% block content_width %}max-w-5xl{% endblock %}
 {% block content %}
   <h1>Værelsestjek</h1>
-  <p class="muted mb-4">Oversigt over værelser og deres seneste tilstandsrapport.</p>
+  <p class="muted mb-4">Vælg et værelse på plantegningen, eller find det i listen nedenfor.</p>
+
+  {% comment %}
+    Floor plans, restored from the legacy overview. The legacy had no image map or hotspots — just a
+    static plan per floor with a button group of room numbers beneath it — so this needs no JS.
+    Room.floor already holds "stuen" / "1. sal" … which is why regroup lines up with the images.
+  {% endcomment %}
+  <div class="grid gap-6 sm:grid-cols-2">
+    {% comment %}
+      No dictsort here, deliberately: `rows` is already ordered by room number (Room.Meta.ordering),
+      and numbers run in floor order (001-010 stuen, 101-114 1. sal, …), which is exactly what regroup
+      needs. `dictsort:"0.number"` also cannot index a tuple by position — it returns an empty string
+      on failure, so the whole picker silently rendered nothing.
+    {% endcomment %}
+    {% regroup rows by 0.floor as floors %}
+    {% for floor in floors %}
+      <div class="card">
+        <h2>{{ floor.grouper|capfirst }}</h2>
+        <img src="{% static floor.list.0.0.plan_image %}" alt="Plantegning, {{ floor.grouper }}"
+             class="max-w-full h-auto rounded border border-gray-200" loading="lazy">
+        <div class="flex flex-wrap gap-1 mt-2">
+          {% for room, cond in floor.list %}
+            <a href="{% url 'vaerelsestjek:besvar' room.number %}"
+               class="btn {% if not cond %}bg-gray-400!{% endif %}"
+               title="{% if cond %}Sidst tjekket {{ cond.recorded_at|date:'Y-m-d' }}{% else %}Aldrig tjekket{% endif %}">{{ room.number|stringformat:"03d" }}</a>
+          {% endfor %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  <h2 class="mt-6">Alle værelser</h2>
   <table class="w-full border-collapse">
     <thead><tr class="border-b border-gray-200"><th class="p-2">Værelse</th><th class="p-2">Etage</th><th class="p-2">Seneste tjek</th><th class="p-2"></th></tr></thead>
     <tbody>

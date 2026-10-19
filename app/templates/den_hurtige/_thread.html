@@ -1,0 +1,163 @@
+{% comment %}
+  The thread side panel: swapped into #js-thread, which is a SIBLING of #js-feed, never inside it.
+  That placement is the whole design:
+
+    * #js-feed is morphed every 5s with the entire message list. A panel inside it would be rebuilt
+      by every poll, and destroyed outright the moment its parent message expired mid-read.
+    * #js-feed is also overflow-y:auto, so a full-screen mobile panel inside it would be clipped by
+      and scroll with the list.
+
+  Being outside means it does not get the feed's refresh, so it POLLS ITSELF: the hx-* attributes
+  below sit on this root element and are re-rendered identically by the server, so the trigger
+  survives its own morph. `morph:outerHTML`, not innerHTML, for exactly that reason. Closing the
+  panel removes this node and htmx disposes the timer with it -- there is no bookkeeping, and an
+  empty #js-thread polls nothing at all.
+
+  Two pollers on one page is deliberate. The obvious alternative -- one request returning feed and
+  panel via an out-of-band swap -- re-couples them and puts every reply back into the 5s payload,
+  undoing the reason the feed stopped prefetching comments (views._active_posts).
+{% endcomment %}
+{% if not post %}
+  {% comment %}
+    Genuinely gone -- deleted while somebody had it open, or never theirs to see. NOT the expiry
+    case any more: a message that runs out of time is archived, and views._render_thread renders it
+    read-only rather than answering nothing (which is why the copy below no longer says "slettet"
+    about an expiry it would now be wrong about).
+
+    NOTE the absence of hx-get/hx-trigger: the panel must stop polling, or it asks for a gone
+    message every five seconds forever.
+  {% endcomment %}
+  <section class="thread-panel" role="complementary" aria-label="Tråd" tabindex="-1">
+    <div class="thread-head">
+      <button type="button" class="thread-back" data-thread-close aria-label="Luk tråd">
+        <span aria-hidden="true">&larr;</span>
+      </button>
+      <div class="thread-title">Tråd</div>
+      <button type="button" class="thread-x" data-thread-close aria-label="Luk tråd">
+        <span aria-hidden="true">&times;</span>
+      </button>
+    </div>
+    <div class="thread-body">
+      <p class="thread-empty muted">Beskeden findes ikke længere.</p>
+    </div>
+  </section>
+{% else %}
+  {% comment %}
+    AN ARCHIVED THREAD DOES NOT POLL. The hx-* attributes below are omitted outright rather than
+    left in place, because nothing about an archived message can change -- no reply can arrive, no
+    reaction can move, it cannot be deleted -- so the timer would be a request every five seconds
+    for a byte-identical answer, for as long as the panel stayed open. Same reasoning as the "gone"
+    branch above, one state along.
+
+    Neither does a deleted one, by the same argument -- hence `archived or deleted` on the class,
+    the poll and the reply form. Two flags rather than one because the subtitle names which state
+    it is.
+  {% endcomment %}
+  <section class="thread-panel{% if archived or deleted %} thread-archived{% endif %}"
+           id="js-thread-{{ post.pk }}" data-thread-pk="{{ post.pk }}"
+           role="complementary" aria-labelledby="thread-title-{{ post.pk }}" tabindex="-1"
+           {% if not archived and not deleted %}
+           hx-get="{% url 'den_hurtige:thread' post.pk %}"
+           hx-trigger="every 5s"
+           hx-ext="morph"
+           {% comment %}
+             Explicit, not inherited. hx-target inherits down the tree in htmx, so without this the
+             panel picks up whatever an ancestor declared and swaps ITSELF onto that element -- it
+             replaced its own container until this was pinned down.
+           {% endcomment %}
+           hx-target="this"
+           hx-swap="morph:outerHTML"
+           {% endif %}>
+    <div class="thread-head">
+      {% comment %}
+        Two close controls, one on each side, and only one is visible per breakpoint (see
+        .thread-back / .thread-x in styles.css). A back ARROW is what a full-screen phone view
+        needs -- it reads as "go back to the feed" -- while an × on the right is what a docked
+        desktop panel needs. Rendering both and hiding one costs nothing and avoids a JS decision.
+      {% endcomment %}
+      <button type="button" class="thread-back" data-thread-close aria-label="Tilbage til beskeder">
+        <span aria-hidden="true">&larr;</span>
+      </button>
+      <div style="min-width:0;flex:1">
+        <div class="thread-title" id="thread-title-{{ post.pk }}">Tråd</div>
+        <div class="thread-sub">
+          {% comment %}
+            Deleted wins over archived on a tombstone that has since aged out: it is the reason the
+            thread is read-only.
+          {% endcomment %}
+          {% if channel %}{{ channel.name }} · {% endif %}{{ post.comments.all|length }} svar{% if deleted %} · slettet{% elif archived %} · arkiveret{% endif %}
+        </div>
+      </div>
+      <button type="button" class="thread-x" data-thread-close aria-label="Luk tråd">
+        <span aria-hidden="true">&times;</span>
+      </button>
+    </div>
+
+    <div class="thread-body">
+      {% include "den_hurtige/_message.html" with post=post bare=1 archived=archived %}
+      {% include "den_hurtige/_replies.html" with post=post %}
+    </div>
+
+    {% comment %}
+      NO REPLY FORM ON AN ARCHIVED THREAD. Omitted rather than disabled: views.create_comment
+      refuses the post anyway, so a form here could only ever collect something it would then throw
+      away with an error — and "there is nowhere to type" says the rule better than an error does.
+      The note at the top of the archive panel is where the rule is explained in words.
+    {% endcomment %}
+    {% if not archived and not deleted %}
+    {% comment %}
+      data-morph-skip: the panel's own poll must not touch this subtree. Idiomorph's
+      ignoreActiveValue only spares the field being TYPED INTO, so a reply typed and then unfocused
+      -- to scroll up and re-read the message, or tap a reaction -- was wiped within five seconds.
+      Skipping the node skips its whole subtree, so the text, the attachment and the checkbox all
+      survive together. See CLIENT_OWNED_SUBTREES in frontend/src/feed.ts.
+    {% endcomment %}
+    <form class="reply-form" data-morph-skip enctype="multipart/form-data"
+          method="post" action="{% url 'den_hurtige:create_comment' post.pk %}"
+          hx-post="{% url 'den_hurtige:create_comment' post.pk %}"
+          hx-target="#js-replies-{{ post.pk }}" hx-swap="innerHTML"
+          hx-on::after-request="if (event.detail.successful) this.reset()">
+      {% csrf_token %}
+      <label class="reply-attach" for="id_reply_image_{{ post.pk }}" title="Vedhæft billede">
+        <span aria-hidden="true">📎</span>
+        <span class="sr-only">Vedhæft billede til svar</span>
+        <input type="file" id="id_reply_image_{{ post.pk }}" name="image" accept="image/*,.heic,.heif">
+      </label>
+      {% comment %}
+        NOT `required`. A reply may be a photo on its own — "her, se" is a whole answer — and the
+        attribute made the browser refuse to submit before the server ever saw the attachment.
+        Emptiness is checked server-side instead, where the upload is in hand and the two can be
+        weighed together (views.create_comment); the no-JS path therefore keeps working too.
+      {% endcomment %}
+      <label class="sr-only" for="id_comment_{{ post.pk }}">Svar</label>
+      <input type="text" id="id_comment_{{ post.pk }}" name="content"
+             maxlength="{{ max_content_chars }}" placeholder="Svar…" enterkeyhint="send">
+      <button type="submit" class="composer-send" title="Send" aria-label="Send">&uarr;</button>
+      {% comment %}
+        Feedback that the photo attached, and the only way to take it back off. A hidden file input
+        behind a paperclip shows nothing at all by itself, and a comment may be a photo ON ITS OWN -
+        so without this there is no evidence on screen that there is anything to send.
+
+        Empty and `hidden` in the markup: frontend/src/feed.ts fills in the thumbnail, the filename and
+        the size on `change`, and hides it again on clear or reset. It degrades to nothing without JS,
+        which is correct - the form still submits, and the server still validates the file.
+
+        Attributes rather than ids: opslagstavlen renders one of these per page, but the thread panel
+        renders one per thread, and the handler is shared with both.
+      {% endcomment %}
+      <div class="file-note" data-file-note hidden>
+        <img data-file-note-thumb alt="" hidden>
+        <span data-file-note-name></span>
+        <button type="button" data-file-note-clear>Fjern</button>
+      </div>
+      {% comment %}
+        One checkbox instead of the old radio pair. Unchecked still means "only the author",
+        which is the same default as before — see QuickComment.notify_everyone.
+      {% endcomment %}
+      <label class="reply-notify">
+        <input type="checkbox" name="notify" value="alle"> Underret alle
+      </label>
+    </form>
+    {% endif %}
+  </section>
+{% endif %}

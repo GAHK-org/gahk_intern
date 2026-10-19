@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Meld en reparation - GAHK Intern{% endblock %}
+{% block content_width %}max-w-2xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Værktøjer · Reparationer</p>
+      <h1>Meld en reparation</h1>
+    </div>
+  </div>
+
+  <form method="post" class="card-flat card-pad">
+    {% csrf_token %}
+    {% if form.non_field_errors %}
+      <div class="errorlist">{{ form.non_field_errors }}</div>
+    {% endif %}
+    {% for field in form %}
+      <div class="mb-3">
+        <label for="{{ field.id_for_label }}" class="font-semibold block mb-1">{{ field.label }}</label>
+        {{ field }}
+        {% if field.help_text %}<p class="muted text-sm mt-1">{{ field.help_text }}</p>{% endif %}
+        {% if field.errors %}<p class="errorlist text-sm">{{ field.errors|striptags }}</p>{% endif %}
+      </div>
+    {% endfor %}
+    <div class="flex gap-2">
+      <button type="submit" class="btn">Send</button>
+      <a href="{% url 'reparationer:board' %}" class="btn btn-secondary">Afbryd</a>
+    </div>
+  </form>
+{% endblock %}

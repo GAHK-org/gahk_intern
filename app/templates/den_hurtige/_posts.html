@@ -1,0 +1,25 @@
+{% comment %}
+  The message list on its own. Rendered inside feed.html on first load, and returned by
+  den_hurtige:feed_items for the 5s poll. Keep it self-contained: it is morphed into #js-feed
+  wholesale, so anything outside this file will not refresh.
+
+  Replies are NOT here. Each message carries a "N svar" link into den_hurtige:thread, which opens
+  the side panel (#js-thread, a sibling of the polled region — see feed.html). That is what let the
+  feed query stop prefetching every reply of every message every five seconds; it now annotates a
+  count instead. See views._active_posts.
+
+  Oldest first — the newest message sits directly above the composer, as in any chat.
+{% endcomment %}
+{% if days %}
+  {% include "den_hurtige/_days.html" %}
+{% else %}
+  <div class="feed-empty">
+    <p><strong>Ingen beskeder lige nu.</strong></p>
+    <p class="muted">
+      Skriv noget der er relevant den næste times tid — fælles kaffe, en pakke i porten, hjælp til
+      at bære. Beskeder forsvinder fra feedet når tiden er gået, men de bliver ikke slettet: de
+      ligger i arkivet, som du trækker ned til fra toppen. Skal noget stå fast, hører det stadig
+      hjemme i ankebogen eller på <a href="{% url 'opslagstavle:board' %}">opslagstavlen</a>.
+    </p>
+  </div>
+{% endif %}

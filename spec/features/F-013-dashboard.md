@@ -143,6 +143,25 @@ Record, do not fix.
   in CI).
 - Decide explicitly whether the dashboard should now increment the visit counter (it currently does not).
 
+## The shared Google calendar is now replaceable
+
+`app/events/` (see `spec/features/begivenheder.md`) gives the kollegium its own events feature with
+tilmelding, a month calendar and a subscribable `.ics` feed. That makes the embedded Google calendar
+— and the **shared Google account whose username and password are printed on the dashboard for every
+logged-in resident** — replaceable rather than load-bearing, which it was not before.
+
+It is deliberately **not** removed yet, and the missing step is not code: somebody has to export
+what is actually live in `mnic13suhuvarq6ffitg2j30m4@group.calendar.google.com` first, and nobody
+has. Deleting the embed before that loses whatever is in there. The order is therefore:
+
+1. Export the Google calendar (`.ics`) and read what is in it.
+2. Recreate anything still relevant as begivenheder, or accept the loss deliberately.
+3. Remove the embed, the credentials and the ServiceLogin link from `dashboard.html`, and the
+   assertions in `test_features.py` that currently pin them.
+4. Retire the shared Google account, or at least rotate it.
+
+Its own PR. Recorded here so that it does not get forgotten now that the blocker is gone.
+
 ## Open questions
 - Where should the Wi-Fi password and shared Google-calendar credentials live going forward? (Secrets
   manager / env / DB-backed editable setting?) Who owns rotating them, given they are currently

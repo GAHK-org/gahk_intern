@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Rediger profil - GAHK Intern{% endblock %}
+{% block content %}
+  <h1>Rediger min profil</h1>
+
+  <form method="post" enctype="multipart/form-data" class="card" style="max-width:640px">
+    {% csrf_token %}
+
+    {# Profile picture — custom rendering; remaining fields use generic loop below #}
+    <div class="mb-3">
+      <label class="font-semibold block mb-2">{{ form.profile_picture.label }}</label>
+      <div style="display:flex;align-items:center;gap:1.25rem">
+        <div style="position:relative;flex-shrink:0">
+          {% if user.profile_picture %}
+            <img id="pp-preview" src="{{ user.avatar_url }}" alt=""
+                 style="width:80px;height:80px;border-radius:50%;object-fit:cover;display:block">
+          {% else %}
+            <span id="pp-preview" class="avatar"
+                  style="width:80px;height:80px;font-size:1.75rem">{{ user.first_name|slice:":1" }}{{ user.last_name|slice:":1" }}</span>
+          {% endif %}
+          {% if user.profile_picture %}
+            <button type="button" id="pp-clear-btn"
+                    style="position:absolute;top:-3px;right:-3px;width:22px;height:22px;border-radius:50%;background:#c53030;color:#fff;border:2px solid #fff;cursor:pointer;font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center;padding:0"
+                    title="Slet billede" aria-label="Slet billede">×</button>
+          {% endif %}
+        </div>
+        <label for="id_profile_picture" class="btn" style="cursor:pointer;margin:0">Skift billede</label>
+      </div>
+      <input type="file" name="profile_picture" id="id_profile_picture" accept="image/*,.heic,.heif" style="display:none">
+      <input type="checkbox" name="profile_picture-clear" id="id_profile_picture-clear_id" style="display:none">
+      {% if form.profile_picture.errors %}
+        <p class="text-red-600 text-sm mt-1">{{ form.profile_picture.errors|striptags }}</p>
+      {% endif %}
+    </div>
+
+    {% for field in form %}
+      {% if field.html_name != 'profile_picture' %}
+        <div class="mb-3">
+          <label for="{{ field.id_for_label }}" class="font-semibold block mb-1">{{ field.label }}</label>
+          {{ field }}
+          {% if field.help_text %}<p class="muted text-sm mt-1">{{ field.help_text }}</p>{% endif %}
+          {% if field.errors %}<p class="text-red-600 text-sm mt-1">{{ field.errors|striptags }}</p>{% endif %}
+        </div>
+      {% endif %}
+    {% endfor %}
+
+    <div class="flex items-center gap-3 mt-4">
+      <button type="submit" class="btn">Gem profil</button>
+      <a href="{% url 'resident_profile' user.pk %}">Annullér</a>
+    </div>
+  </form>
+
+  <script>
+    document.getElementById('id_profile_picture').addEventListener('change', function () {
+      const file = this.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        const old = document.getElementById('pp-preview');
+        const img = document.createElement('img');
+        img.id = 'pp-preview';
+        img.style.cssText = 'width:80px;height:80px;border-radius:50%;object-fit:cover;display:block';
+        // Swapped in once it decodes: a HEIC does not outside Safari, and the server converts it.
+        img.onload = function () { old.replaceWith(img); };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    const ppClearBtn = document.getElementById('pp-clear-btn');
+    if (ppClearBtn) {
+      ppClearBtn.addEventListener('click', function () {
+        document.getElementById('id_profile_picture-clear_id').checked = true;
+        document.getElementById('id_profile_picture').value = '';
+        const old = document.getElementById('pp-preview');
+        const initials = document.createElement('span');
+        initials.id = 'pp-preview';
+        initials.className = 'avatar';
+        initials.style.cssText = 'width:80px;height:80px;font-size:1.75rem';
+        initials.textContent = '{{ user.first_name|slice:":1" }}{{ user.last_name|slice:":1" }}';
+        old.replaceWith(initials);
+        ppClearBtn.remove();
+      });
+    }
+  </script>
+{% endblock %}

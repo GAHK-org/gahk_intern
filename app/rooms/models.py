@@ -22,10 +22,15 @@ class KvotientApplication(models.Model):  # intern_kvotient_nyintern
     move_in_month = models.IntegerField()  # 0-indexed
     done_studying_month = models.IntegerField()
     k = models.FloatField()  # ranking quotient; computed at submit (formula kept)
-    apply_datetime = models.DateTimeField(default=timezone.now)
+    apply_datetime = models.DateTimeField(default=timezone.now)  # a record; NOT an allocation tiebreak
 
     class Meta:
         ordering = ["-k", "apply_datetime"]
+        # One application per resident per round. A "round" is a move_month; between rounds end_round /
+        # close_offer wipe the applications, so this never blocks a legitimate re-application later.
+        constraints = [
+            models.UniqueConstraint(fields=["resident", "move_month"], name="uniq_resident_move_month")
+        ]
 
     def __str__(self) -> str:
         return f"Kvotient {self.resident.full_name} (K={self.k:.2f})"
@@ -57,6 +62,12 @@ class KvotientOrlov(models.Model):  # intern_kvotient_orlov_nyintern (leave-of-a
 class RoomOffer(models.Model):  # intern_kvotient_offer_nyintern (a room offered in a given month)
     room = models.ForeignKey("core.Room", on_delete=models.PROTECT, related_name="offers")
     month = models.IntegerField()  # the month this room is offered for
+    # Manual tie resolution (F-004): when equal-K applicants contest this room, indstilling picks the
+    # winner (coin flip in the dorm) and it is recorded here; allocate_round then treats the room as
+    # decided. Ephemeral — the offer (and this pointer) is deleted when the round ends.
+    awarded_application = models.ForeignKey(
+        "KvotientApplication", on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["room", "month"], name="uniq_room_offer_month")]
@@ -69,11 +80,41 @@ class RoomOffer(models.Model):  # intern_kvotient_offer_nyintern (a room offered
 class RoomCriterion(models.Model):  # intern_room_criteria
     code = models.CharField(max_length=50, unique=True)  # legacy varchar id
     name = models.CharField(max_length=50)
-    description = models.TextField(blank=True)
-    options = models.PositiveSmallIntegerField()  # number of score options
+    description = models.TextField(blank=True)  # the score legend shown under the field (F-005)
+    options = models.PositiveSmallIntegerField()  # scale *shape* selector — see score_values
 
     def __str__(self) -> str:
         return self.name
+
+    @property
+    def score_values(self) -> list[int]:
+        """The scores this criterion accepts, mirroring legacy besvar.php:27-40 exactly:
+
+            options == 3  -> 0, 1, 2
+            options  > 2  -> 1 .. options        (options == 5 -> 1..5)
+            otherwise     -> 0, 1
+
+        `options` is a *shape* selector, not a maximum — only the ==3 case is zero-based. Of the 28
+        real criteria, 13 use 5 (->1..5), 9 use 3 (->0..2) and 7 use 2 (->0..1). Always contiguous,
+        so score_min/score_max describe the scale fully.
+        """
+        if self.options == 3:
+            return [0, 1, 2]
+        if self.options > 2:
+            return list(range(1, self.options + 1))
+        return [0, 1]
+
+    @property
+    def score_min(self) -> int:
+        return self.score_values[0]
+
+    @property
+    def score_max(self) -> int:
+        return self.score_values[-1]
+
+    def accepts_score(self, value: int | None) -> bool:
+        """None (unanswered) is always acceptable; anything else must be on the scale."""
+        return value is None or value in self.score_values
 
 
 class RoomCondition(models.Model):  # intern_room_condition (only the current state kept, decided)

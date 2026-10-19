@@ -10,6 +10,14 @@
   - changed-files:
       - any-glob-to-any-file: ["app/admissions/**", "app/templates/optagelse/**"]
 
+"area:den_hurtige":
+  - changed-files:
+      - any-glob-to-any-file: ["app/den_hurtige/**", "app/templates/den_hurtige/**"]
+
+"area:opslagstavle":
+  - changed-files:
+      - any-glob-to-any-file: ["app/opslagstavle/**", "app/templates/opslagstavle/**"]
+
 "area:ak":
   - changed-files:
       - any-glob-to-any-file: ["app/ak/**", "app/templates/ak/**"]

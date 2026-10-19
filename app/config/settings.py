@@ -1,13 +1,14 @@
 """Django settings for the GAHK rewrite (config project).
 
-Schema/decisions: see ../02-schema-etl.md. Target DB is PostgreSQL (via DATABASE_URL);
-falls back to SQLite for local dev/validation when DATABASE_URL is unset.
+Schema/decisions: see ../02-schema-etl.md. Target DB is PostgreSQL (via DATABASE_URL).
 """
 
 import os
 from pathlib import Path
 
 import dj_database_url
+from celery.schedules import crontab
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -17,7 +18,7 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-insecure-change-me")
 DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
 ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 
-# Behind Coolify/Traefik, TLS is terminated at the proxy and plain HTTP is forwarded to gunicorn.
+# Behind Coolify/Traefik, TLS is terminated at the proxy and plain HTTP is forwarded to uvicorn.
 # Trust the forwarded-proto header so request.is_secure(), CSRF, and secure cookies see HTTPS —
 # without this, every form POST (login included) fails CSRF in prod.
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
@@ -25,7 +26,12 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 # "https://gahk.dk,https://www.gahk.dk". Set in the environment for prod.
 CSRF_TRUSTED_ORIGINS = [o for o in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",") if o]
 SESSION_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_DOMAIN = ".gahk.dk" if not DEBUG else None
 CSRF_COOKIE_SECURE = not DEBUG
+
+# Absolute base for links in mail sent off the request thread, where there is no request to
+# call build_absolute_uri on (residents.tasks).
+SITE_URL = os.environ.get("SITE_URL", "http://localhost:8000" if DEBUG else "https://gahk.dk")
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -34,6 +40,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django_celery_beat",
     # GAHK domains
     "core",
     "residents",
@@ -43,6 +50,13 @@ INSTALLED_APPS = [
     "rooms",
     "oelkaelder",
     "stats",
+    "den_hurtige",
+    "opslagstavle",
+    "events",
+    "reparationer",
+    "arkiv",
+    "photo_album",
+    "notifications",
 ]
 
 MIDDLEWARE = [
@@ -58,6 +72,7 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = "config.urls"
+ASGI_APPLICATION = "config.asgi.application"
 
 TEMPLATES = [
     {
@@ -70,6 +85,7 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "core.context_processors.navigation",
+                "notifications.context_processors.notifications",
             ],
         },
     },
@@ -77,12 +93,27 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-DATABASES = {
-    "default": dj_database_url.config(
-        default=os.environ.get("DATABASE_URL", f"sqlite:///{BASE_DIR / 'db.sqlite3'}"),
-        conn_max_age=600,
-    )
-}
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    if DEBUG:
+        DATABASE_URL = "postgres://gahk:gahk@localhost:5432/gahk"
+    else:
+        raise ImproperlyConfigured("DATABASE_URL must be configured outside development.")
+
+DATABASES = {"default": dj_database_url.config(default=DATABASE_URL, conn_max_age=600)}
+
+# Under ASGI (config/asgi.py sets DATABASE_POOL) Django runs each request on a thread of its own, and
+# a persistent connection opened there is never closed: the request ends, its thread goes, and the
+# connection stays open until the process exits. In production that filled Postgres's 100
+# connections — a photo album's thumbnails are a request each, so browsing albums got there fast —
+# and from then on every page was a 500 until the next redeploy. Django's advice for ASGI is a pool
+# instead of persistent connections: a request borrows a connection and hands it back when it ends,
+# and max_size bounds what the process holds however many requests run at once (a request beyond it
+# waits for one, up to the pool's 30-second timeout).
+# Celery, manage.py and the tests are not ASGI and keep conn_max_age: their threads live on.
+if os.environ.get("DATABASE_POOL") == "1":
+    DATABASES["default"]["CONN_MAX_AGE"] = 0  # the pool refuses to run alongside persistent connections
+    DATABASES["default"].setdefault("OPTIONS", {})["pool"] = {"min_size": 2, "max_size": 20}
 
 # --- Auth (01-infrastructure.md A4/A5; 02-schema-etl.md §1.6) ---
 AUTH_USER_MODEL = "residents.Resident"
@@ -111,13 +142,266 @@ TIME_ZONE = "Europe/Copenhagen"
 USE_I18N = True
 USE_TZ = True
 
+# Celery persists queued messages and task results in PostgreSQL. Keeping this separate allows a
+# dedicated queue database later, while local and production defaults share the Django database.
+CELERY_DATABASE_URL = os.environ.get("CELERY_DATABASE_URL", DATABASE_URL)
+# Django accepts `postgres://`; SQLAlchemy requires the explicit PostgreSQL dialect and driver.
+if CELERY_DATABASE_URL.startswith("postgres://"):
+    CELERY_DATABASE_URL = CELERY_DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
+elif CELERY_DATABASE_URL.startswith("postgresql://"):
+    CELERY_DATABASE_URL = CELERY_DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
+CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", f"sqla+{CELERY_DATABASE_URL}")
+CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", f"db+{CELERY_DATABASE_URL}")
+CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+CELERY_TIMEZONE = TIME_ZONE
+# Keep work on the broker until it completes. If a worker process is killed, Celery rejects the
+# unacknowledged delivery so it can be picked up when a worker is available again.
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+# Without this, Celery stores only status/result/traceback and leaves `name`, `worker`, `queue` and
+# `retries` NULL in celery_taskmeta — which are four of the columns the siteadmin worker-jobs page
+# selects and displays, so "Worker", "Kø" and "Forsøg" were permanently blank there.
+CELERY_RESULT_EXTENDED = True
+# Never expire results by age: Celery's own cleanup would delete failed jobs along with the rest.
+# core.tasks.purge_worker_job_results deletes successful ones after a month, and others only from
+# piles of more than 1000 of one task and status, once 60 days old.
+CELERY_RESULT_EXPIRES = None
+# A management command run from a task (`purge_photo_album`, …) prints its summary to stdout, which
+# the worker redirects into logging — at WARNING by default, so every routine "Removed 0 item(s)"
+# showed up as a warning in the job's stored log (core/worker_logs.py) and the worker's own output.
+CELERY_WORKER_REDIRECT_STDOUTS_LEVEL = "INFO"
+# The default ceiling for a scheduled job: generous for a sweep, and short enough that a wedged one
+# does not hold a worker slot all night. The two photo-album jobs legitimately run longer and set
+# their own limits at the task — see photo_album/tasks.py::MEDIA_TASK_TIME_LIMIT.
+#
+# Redelivery from the two settings above does NOT re-run a lost download or import: by then its row
+# is BUILDING under the message's own task id, which the task takes as its worker having died and
+# marks failed (photo_album.tasks._claim_job). Redelivery is not the whole safety net, either — a
+# worker container killed outright redelivers nothing — so fail_stalled_downloads and
+# fail_stalled_imports also sweep for jobs that stopped reporting progress. A media row is rescued
+# by its claim expiring.
+CELERY_TASK_TIME_LIMIT = 900
+# One message at a time per worker process. The default of four lets a process sit on three more
+# while it runs an hour-long encode — messages the other worker could have started, and that are
+# lost rather than redelivered if the container is killed with them in hand.
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+# Two workers, so a quick job never waits behind an encode: everything defaults to "celery", run by
+# `worker`; what reads or writes whole media files goes to "media", run by `worker-media` one job at
+# a time (docker-compose.prod.yml). One at a time is also what keeps the box out of the OOM killer:
+# an import, a ZIP build and an ffmpeg encode side by side is what ran it out of memory.
+#
+# Photo thumbnails are the exception, chosen when they are queued (photo_album.tasks.
+# queue_derivatives): their own "thumbnails" queue, which `worker` takes from by turns with
+# "celery". The route below is only the fallback for a derivative queued any other way.
+CELERY_TASK_ROUTES = {
+    "photo_album.tasks.build_media_derivatives": {"queue": "media"},
+    "photo_album.tasks.build_album_download": {"queue": "media"},
+    "photo_album.tasks.process_album_import": {"queue": "media"},
+    "photo_album.tasks.backfill_media_hashes": {"queue": "media"},
+}
+
+# A local migration client uses this bearer token to submit album ZIP imports as the non-login
+# System resident. Leave blank to disable token-authenticated imports.
+PHOTO_ALBUM_IMPORT_TOKEN = os.environ.get("PHOTO_ALBUM_IMPORT_TOKEN", "")
+PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL = os.environ.get("PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL", "system@gahk.dk")
+# `manage.py delete_photo_album` refuses anything created or uploaded on or after this date
+# (YYYY-MM-DD). Blank means the command's own default, 2026-10-01; a date in the future is refused.
+PHOTO_ALBUM_DELETE_PROTECTED_FROM = os.environ.get("PHOTO_ALBUM_DELETE_PROTECTED_FROM", "")
+CELERY_BEAT_SCHEDULE = {
+    "purge-expired-applications": {
+        "task": "admissions.tasks.purge_expired_applications",
+        "schedule": crontab(minute=20, hour=3),
+    },
+    # Rows stop showing at their TTL by comparison (Notification.objects.active); this only frees
+    # the space, a month later, once the admin statistics are done counting them.
+    "purge-expired-notifications": {
+        "task": "notifications.tasks.purge_expired_notifications",
+        "schedule": crontab(minute=30, hour=3),
+    },
+    "purge-orphaned-notice-images": {
+        "task": "opslagstavle.tasks.purge_orphaned_images",
+        "schedule": crontab(minute=40, hour=3),
+    },
+    "archive-finished-repairs": {
+        "task": "reparationer.tasks.archive_finished_repairs",
+        "schedule": crontab(minute=50, hour=3),
+    },
+    "purge-expired-events": {
+        "task": "events.tasks.purge_expired_events",
+        "schedule": crontab(minute=0, hour=4),
+    },
+    "purge-expired-photo-album-downloads": {
+        "task": "photo_album.tasks.purge_expired_downloads",
+        "schedule": crontab(minute=20, hour=4),
+    },
+    # 04:30, not 04:10: at 04:10 it ran on top of `apply-ak-monthly-assessment` on the 1st of every
+    # month. Every job here is staggered so two never run together on the one small box, and this
+    # was the one pair that wasn't. (The collision is older than Celery — the cron table in
+    # DEPLOY.md §4b had `purge_photo_album` and `ak_monthly_assessment` both at 04:10 — so it was
+    # carried over rather than introduced, but it is fixed here rather than carried further.)
+    "purge-expired-photo-album-media": {
+        "task": "photo_album.tasks.purge_expired_media",
+        "schedule": crontab(minute=30, hour=4),
+    },
+    "apply-ak-monthly-assessment": {
+        "task": "ak.tasks.apply_monthly_assessment",
+        "schedule": crontab(minute=10, hour=4, day_of_month=1),
+    },
+    # Every quarter of an hour, matching JOB_STALLED_AFTER: what it clears is a download the
+    # resident is still watching a spinner for, so the gap between "the worker died" and "the page
+    # says so" is the thing being minimised. Off the hour, like everything else here.
+    "fail-stalled-photo-album-downloads": {
+        "task": "photo_album.tasks.fail_stalled_downloads",
+        "schedule": crontab(minute="5-59/15"),
+    },
+    # The same for imports, which the import page and the Dropbox script are waiting on.
+    "fail-stalled-photo-album-imports": {
+        "task": "photo_album.tasks.fail_stalled_imports",
+        "schedule": crontab(minute="10-59/15"),
+    },
+    "purge-worker-job-logs": {
+        "task": "core.tasks.purge_worker_job_logs",
+        "schedule": crontab(minute=40, hour=4),
+    },
+    "purge-worker-job-results": {
+        "task": "core.tasks.purge_worker_job_results",
+        "schedule": crontab(minute=45, hour=4),
+    },
+    # 04:50, after every other sweep: the rows it deletes are the messages those sweeps were
+    # delivered on, so running it last keeps one night's work visible in the table while that work
+    # is still happening.
+    "purge-delivered-broker-messages": {
+        "task": "core.tasks.purge_delivered_broker_messages",
+        "schedule": crontab(minute=50, hour=4),
+    },
+    "process-photo-album-media": {
+        "task": "photo_album.tasks.process_pending_media",
+        # Uploads enqueue their own derivative build on commit. This is only the nightly recovery
+        # pass for broker messages lost while unavailable or work stranded by a killed worker.
+        "schedule": crontab(minute=0, hour=2),
+    },
+    # 02:40, after the derivative recovery pass at 02:00. Only rows stored before hashing existed
+    # need it; each run reads originals for at most HASH_BACKFILL_BUDGET and leaves the rest for
+    # the next night, so the deploy needs no manual step and the box is never held for long.
+    "backfill-photo-album-hashes": {
+        "task": "photo_album.tasks.backfill_media_hashes",
+        "schedule": crontab(minute=40, hour=2),
+    },
+    "remind-rsvp-deadlines": {
+        "task": "events.tasks.remind_rsvp_deadlines",
+        "schedule": crontab(minute=0, hour=17),
+    },
+    "email-oelkaelder-monthly-statements": {
+        "task": "oelkaelder.tasks.send_monthly_statements",
+        "schedule": crontab(minute=10, hour=6, day_of_month=1),
+    },
+    "send-admin-dummy-notification": {
+        "task": "core.tasks.send_admin_dummy_notification",
+        "schedule": crontab(minute=0, hour="8,16"),
+    },
+}
+
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 STATICFILES_DIRS = [BASE_DIR / "static"]  # holds the Vite-built bundle (static/dist/)
 
+# Media (user uploads) always go to object storage: Hetzner in production, SeaweedFS for local dev
+# (docker-compose.yml's `s3` service) — there is no local-disk fallback. STORAGES["default"]
+# below is unconditionally core.storage.MediaS3Storage, so a missing or wrong S3_BUCKET is a loud
+# S3 error on the first upload, not a silent switch to writing files onto a disk nobody backs up.
+#
+# The one place local disk survives is the test suite: tests/conftest.py's autouse fixture
+# overrides STORAGES["default"] to plain FileSystemStorage for every test, so pytest never touches
+# a real bucket. That override is test-only — nothing here grants the same thing anywhere else.
+#
+# MEDIA_URL stays "/media/" regardless: it is a prefix of content stored in the database, and
+# core.checks (core.E007-E009) refuses to start the process if it or the backend's URLs ever stop
+# matching. core/storage.py has the full argument.
+#
+# Defaults describe the SeaweedFS container docker-compose.yml runs for local dev (bucket, credentials,
+# endpoint, path-style addressing), not Hetzner — so S3 works out of the box on a fresh checkout with
+# no app/.env at all. Gated on DEBUG rather than unconditional: DEPLOY.md requires DJANGO_DEBUG=0 in
+# production, so these defaults can never be what a real deploy silently runs on.
+S3_BUCKET = os.environ.get("S3_BUCKET", "gahk-s3" if DEBUG else "")
+# fsn1 (Falkenstein) / nbg1 (Nuremberg) / hel1 (Helsinki). Keep this in the same location as the VM:
+# traffic inside eu-central does not count against the account's egress allowance.
+S3_LOCATION = os.environ.get("S3_LOCATION", "fsn1")
+
+# Overridable for S3-compatible endpoints that are not Hetzner — namely the SeaweedFS container
+# docker-compose.yml runs for local dev. Path-style addressing is required there: it has no
+# wildcard TLS certificate for virtual-hosted-style requests, and unlike Hetzner it is reached over
+# plain HTTP on the docker network.
+S3_ENDPOINT_URL = os.environ.get(
+    "S3_ENDPOINT_URL", "http://localhost:9000" if DEBUG else f"https://{S3_LOCATION}.your-objectstorage.com"
+)
+S3_ADDRESSING_STYLE = os.environ.get("S3_ADDRESSING_STYLE", "path" if DEBUG else "virtual")
+
+# The endpoint a BROWSER can actually reach, for presigned URLs only — everything else (uploads,
+# HEAD, delete, ...) keeps using S3_ENDPOINT_URL above, which this process itself resolves fine.
+# The two differ only under `task dev` (the dockerized `web` service): Django reaches SeaweedFS over the
+# compose network at http://s3:8333, but the browser that follows the presigned URL is on the
+# HOST, which can only reach the published port at http://localhost:9000. Signing the URL with
+# the wrong host is not cosmetic — SigV4 signs the Host header, so the bucket 403s a request whose
+# Host does not match the one it was signed for, and rewriting the URL string afterwards cannot fix
+# that either. `task dev:local` and production both leave this unset, since S3_ENDPOINT_URL there is
+# already reachable from wherever the browser runs.
+S3_PUBLIC_ENDPOINT_URL = os.environ.get("S3_PUBLIC_ENDPOINT_URL", "") or S3_ENDPOINT_URL
+
+# botocore >= 1.36 defaults to sending x-amz-checksum-crc32 with aws-chunked framing on every PUT,
+# which S3-compatible providers — Hetzner AND SeaweedFS — mis-store or reject. botocore reads these
+# straight out of the environment itself, never through Django, so setdefault() here is what makes
+# uploads work without an app/.env at all; .setdefault leaves an explicit .env/real env var alone.
+os.environ.setdefault("AWS_REQUEST_CHECKSUM_CALCULATION", "when_required")
+os.environ.setdefault("AWS_RESPONSE_CHECKSUM_VALIDATION", "when_required")
+
+_MEDIA_S3_OPTIONS = {
+    "bucket_name": S3_BUCKET,
+    # gahkdev/gahkdevsecret (the pair docker-compose.yml's `s3` service is started with) when nothing is configured — see S3_BUCKET above.
+    "access_key": os.environ.get("S3_ACCESS_KEY", "gahkdev" if DEBUG else ""),
+    "secret_key": os.environ.get("S3_SECRET_KEY", "gahkdevsecret" if DEBUG else ""),
+    "endpoint_url": S3_ENDPOINT_URL,
+    "region_name": S3_LOCATION,
+    # Virtual-host style is what Hetzner documents: https://<bucket>.<loc>.your-objectstorage.com.
+    # The bucket name must therefore be DNS-safe — lowercase, and NO DOTS, or TLS SNI against their
+    # wildcard certificate fails for every request. SeaweedFS (local dev) overrides this to "path" via
+    # S3_ADDRESSING_STYLE, since it has no such certificate.
+    "addressing_style": S3_ADDRESSING_STYLE,
+    "signature_version": "s3v4",
+    # None, not "private". Hetzner implements bucket policies and not S3 ACLs, and rejects the
+    # x-amz-acl header outright.
+    "default_acl": None,
+    # The bucket is private; core.media.serve_media issues a presigned GET per request.
+    "querystring_auth": True,
+    # Kept in step with core.media.PRESIGN_TTL, which is what actually signs the URLs we serve.
+    "querystring_expire": 3600,
+    # FALSE, and django-storages defaults it to True — which skips Django's name-suffixing entirely.
+    # Resident.profile_picture uploads to a flat "profile_pictures/" with no date and no uniquifier,
+    # so with overwriting on, the second resident to upload an IMG_1234.jpg silently replaces the
+    # first one's photo and the first one's row then points at somebody else's face.
+    "file_overwrite": False,
+    # Shares the bucket with the database backups under "backups/", so the prefix is a security
+    # boundary, not tidiness — see core.storage.MEDIA_PREFIX. MediaS3Storage defaults it; named here
+    # so the grep for "backups" finds this comment.
+    "location": "media",
+    "object_parameters": {"CacheControl": "private, max-age=604800"},
+    # How much of a file opened for reading is held in memory before the rest goes to a temporary
+    # file. django-storages defaults it to 0, which Python's SpooledTemporaryFile reads as "never
+    # roll over" — so every `.open()` downloaded the WHOLE object into RAM: a video before its
+    # encode, an album ZIP before its import. A ZIP of several hundred MB had the import worker at
+    # 800 MB when the kernel's OOM killer took it.
+    "max_memory_size": 10 * 1024 * 1024,
+}
+
+# Photo-album originals/derivatives (photo_album.storage.PhotoAlbumS3Storage): same bucket and
+# credentials, but its OWN top-level key — "photo-album/…", never "media/photo-album/…". Unlike the
+# options above, nothing here is served through Django: .url() returns a presigned bucket URL
+# straight from S3, so "location" stays empty rather than "media" — see photo_album/storage.py.
+PHOTO_ALBUM_S3_OPTIONS = {**_MEDIA_S3_OPTIONS, "location": ""}
+
 # WhiteNoise hashed/compressed static in prod; plain storage in dev so {% static %} needs no manifest.
 STORAGES = {
-    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "default": {"BACKEND": "core.storage.MediaS3Storage", "OPTIONS": _MEDIA_S3_OPTIONS},
     "staticfiles": {
         "BACKEND": (
             "django.contrib.staticfiles.storage.StaticFilesStorage"
@@ -133,9 +417,9 @@ MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 # Secrets (WiFi/calendar/SMTP) come from the environment (.env / vault), never source. (F-013)
-LOGIN_URL = "/nyintern/admin/login"
-LOGIN_REDIRECT_URL = "/nyintern/"
-LOGOUT_REDIRECT_URL = "/nyintern/admin/login"
+LOGIN_URL = "/intern/admin/login"
+LOGIN_REDIRECT_URL = "/intern/"
+LOGOUT_REDIRECT_URL = "/intern/admin/login"
 
 # Email — defaults to the console backend in dev (prints instead of sending). SMTP from env in prod.
 EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
@@ -176,10 +460,124 @@ WIKI_URL = os.environ.get("WIKI_URL", "/wiki/")
 
 # Where residents report bugs / request features. Defaults to the project's GitHub issue chooser;
 # override FEEDBACK_URL if the repo moves or a different tracker is used.
-FEEDBACK_URL = os.environ.get(
-    "FEEDBACK_URL", "https://github.com/G-A-Hagemanns-Kollegium/ny_ny_intern/issues/new/choose"
-)
+FEEDBACK_URL = os.environ.get("FEEDBACK_URL", "https://github.com/GAHK-org/gahk_intern/issues/new/choose")
 
 # Room-inspection photo uploads (F-005): server-side hard cap. Images are also downscaled client-side
 # before upload, so this is mainly a backstop against oversized/crafted uploads.
 ROOM_PHOTO_MAX_MB = int(os.environ.get("ROOM_PHOTO_MAX_MB", "5"))
+
+# Web Push for Den Hurtige (the PWA that replaces the Messenger group). The two keys are the RAW
+# base64url VAPID pair, NOT the .pem files: VAPID_PUBLIC_KEY is handed to the browser as
+# `applicationServerKey`, which must be the 65-byte uncompressed EC point. app/.env.example shows how
+# to derive both from an existing PEM. Unset in dev → the subscribe button reports push unavailable.
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
+# Must be a real, monitored address: push services contact it about delivery problems, and some
+# reject pushes whose VAPID `sub` claim is not a usable mailto.
+VAPID_ADMIN_EMAIL = os.environ.get("VAPID_ADMIN_EMAIL", "autosvar@gahk.dk")
+
+# Optional image on a Den Hurtige post: server-side hard cap, same backstop as the room photos.
+QUICK_POST_MAX_MB = int(os.environ.get("QUICK_POST_MAX_MB", "5"))
+
+# Django's default logging config only wires up its own `django.*` loggers; anything our code logs
+# reaches stderr only at WARNING+, via logging's last-resort handler. Den Hurtige delivers push on a
+# background thread, where "nothing happened" and "every send failed" look identical without a log
+# line — so its logger gets an explicit console handler.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {"simple": {"format": "[{levelname}] {name}: {message}", "style": "{"}},
+    "handlers": {"console": {"class": "logging.StreamHandler", "formatter": "simple"}},
+    "loggers": {
+        "den_hurtige": {
+            "handlers": ["console"],
+            "level": os.environ.get("DEN_HURTIGE_LOG_LEVEL", "INFO"),
+            "propagate": False,
+        },
+        # core.push logs the "delivered to n/m device(s)" line for every fan-out. Without an explicit
+        # handler it would only surface at WARNING+, and that line is the only thing that tells "no
+        # subscribers" apart from "every send failed" — which look identical from the outside and
+        # both look exactly like push being broken.
+        "core": {
+            "handlers": ["console"],
+            "level": os.environ.get("CORE_LOG_LEVEL", "INFO"),
+            "propagate": False,
+        },
+        # INFO, so the lines a photo-album job logs (an import's left-out files, a ZIP's size) reach
+        # the job's stored log (core/worker_logs.py) even where the root logger is at WARNING. No
+        # handler of its own: it propagates to the worker's, and in the web process nothing prints
+        # below WARNING.
+        "photo_album": {"level": os.environ.get("PHOTO_ALBUM_LOG_LEVEL", "INFO")},
+    },
+}
+
+# CMS image uploads (editors add pictures from the admin instead of committing them to the repo).
+CMS_IMAGE_MAX_MB = int(os.environ.get("CMS_IMAGE_MAX_MB", "5"))
+
+# Opslagstavlen image uploads (inserted into a post's Markdown from the compose toolbar). Its own
+# setting rather than sharing the CMS one: every feature here caps its own uploads, and an ops
+# change for the CMS must not silently change what residents may post.
+NOTICE_IMAGE_MAX_MB = int(os.environ.get("NOTICE_IMAGE_MAX_MB", "5"))
+
+# One hero image per event. Its own setting for the same reason the two above are separate: each
+# feature caps its own uploads, so an ops change for one cannot silently change what residents may
+# post to another.
+EVENT_IMAGE_MAX_MB = int(os.environ.get("EVENT_IMAGE_MAX_MB", "5"))
+
+# The ceiling for an ANIMATED image, which cuts across the per-feature caps above rather than
+# joining them, because what it answers is a question about the FORMAT.
+#
+# Every cap above is written for a file that has already been through the browser downscaler, where
+# a phone photograph becomes a few hundred KB. An animation never goes through it: the canvas step
+# cannot compress an animation, only flatten it to its first frame, so frontend/src/imageupload.ts
+# passes one through at whatever size the resident picked (see `isAnimatedUpload` there). Measured
+# against 5 MB — a ceiling that assumes the downscaler ran — an ordinary reaction GIF from Giphy or
+# Tenor is refused, which is precisely the thing Den Hurtige, opslagstavlen and begivenheder wanted
+# to allow.
+#
+# One knob for every feature, unlike the caps above, and deliberately: the reason for the higher
+# number is the format, so splitting it per feature would be four settings that must all hold the
+# same value to avoid a GIF being postable in one place and not the next.
+ANIMATED_IMAGE_MAX_MB = int(os.environ.get("ANIMATED_IMAGE_MAX_MB", "5"))
+
+# The ceiling for a HEIC/HEIF photo, and for the same kind of reason as the one above: the format
+# cannot go through the browser downscaler. Only Safari can decode HEIC, so from any other browser a
+# straight-from-the-camera iPhone photo arrives at full size. A 48-megapixel one is well past 5 MB.
+# core.uploads converts it to a downscaled JPEG before it is stored, so this only bounds what one
+# request may upload and decode, not what ends up in the bucket.
+HEIF_IMAGE_MAX_MB = int(os.environ.get("HEIF_IMAGE_MAX_MB", "25"))
+
+# Ølkælder product photos. They were not checked at all until HEIC support made the upload path
+# worth looking at, and oel/ is a PUBLIC media prefix (core.media.PUBLIC_PREFIXES), so an
+# unchecked SVG there would have been script served from our own origin to anyone.
+PRODUCT_IMAGE_MAX_MB = int(os.environ.get("PRODUCT_IMAGE_MAX_MB", "5"))
+
+# Profile pictures. Was a literal 5 in residents.forms.
+PROFILE_PICTURE_MAX_MB = int(os.environ.get("PROFILE_PICTURE_MAX_MB", "5"))
+
+# Photo album uploads. Two ceilings rather than one: the album deliberately keeps the ORIGINAL at
+# full resolution (unlike every other feature here, which downscales in the browser first), so a
+# modern phone photo legitimately arrives at 10-15 MB, and a clip from the same phone is an order of
+# magnitude larger again. Its own settings for the same reason the *_MAX_MB above are separate —
+# each feature caps its own uploads, so an ops change for one cannot silently change another.
+PHOTO_ALBUM_IMAGE_MAX_MB = int(os.environ.get("PHOTO_ALBUM_IMAGE_MAX_MB", "50"))
+PHOTO_ALBUM_VIDEO_MAX_MB = int(os.environ.get("PHOTO_ALBUM_VIDEO_MAX_MB", "1000"))
+
+# A local copy of the album's thumbnails and HD images (photo_album.cache), so the grid does not
+# bounce every tile off S3. Empty turns it off; production sets it to a volume so a redeploy starts
+# warm. The two budgets are separate so one HD-heavy evening cannot push every thumbnail out.
+PHOTO_ALBUM_CACHE_DIR = os.environ.get("PHOTO_ALBUM_CACHE_DIR", "")
+PHOTO_ALBUM_CACHE_THUMBNAIL_MB = int(os.environ.get("PHOTO_ALBUM_CACHE_THUMBNAIL_MB", "2048"))
+PHOTO_ALBUM_CACHE_HD_MB = int(os.environ.get("PHOTO_ALBUM_CACHE_HD_MB", "3072"))
+
+# The same kind of local copy for Den Hurtige's and opslagstavlen's image attachments (core.media,
+# core.disk_cache). It defaults to the photo album's directory, so the production volume and the
+# dev setups already configured for that one work for this too; the copies go in a subdirectory of
+# their own. Empty turns it off.
+MEDIA_CACHE_DIR = os.environ.get("MEDIA_CACHE_DIR", PHOTO_ALBUM_CACHE_DIR)
+MEDIA_CACHE_ATTACHMENTS_MB = int(os.environ.get("MEDIA_CACHE_ATTACHMENTS_MB", "2048"))
+# Only images people are still looking at are copied; an ARCHIVED one is served by a redirect to
+# the bucket, as before. Den Hurtige archives a message itself, when it expires. Opslagstavlen keeps
+# every post forever and has no archive, so for caching purposes an opslag counts as archived this
+# many days after it was posted.
+NOTICE_IMAGE_CACHE_DAYS = int(os.environ.get("NOTICE_IMAGE_CACHE_DAYS", "30"))

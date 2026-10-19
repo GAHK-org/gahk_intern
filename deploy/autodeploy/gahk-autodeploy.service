@@ -1,0 +1,13 @@
+# Installed to /etc/systemd/system/ — see DEPLOY.md §4a. Started by gahk-autodeploy.timer.
+[Unit]
+Description=Deploy a new GAHK image from GHCR through Coolify
+Wants=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+# Root for the Docker socket and root's `docker login ghcr.io` (only needed for a private package).
+StateDirectory=gahk-autodeploy
+Environment=STATE_FILE=/var/lib/gahk-autodeploy/deployed-image
+EnvironmentFile=/etc/gahk-autodeploy.env
+ExecStart=/usr/local/bin/gahk-autodeploy

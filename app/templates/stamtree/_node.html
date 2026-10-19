@@ -1,6 +1,6 @@
 {# Recursive stamtræ node. `node` = {"resident", "children"}. #}
 <li>
-  <span class="node">{{ node.resident.full_name }}{% if node.resident.move_in_date %} <span class="text-gray-400 text-xs">'{{ node.resident.move_in_date|date:"y" }}</span>{% endif %}</span>
+  <a href="{% url 'resident_profile' node.resident.pk %}" class="node no-underline">{{ node.resident.full_name }}{% if node.resident.move_in_date %} <span class="text-gray-400 text-xs">'{{ node.resident.move_in_date|date:"y" }}</span>{% endif %}</a>
   {% if node.children %}
     <ul>{% for c in node.children %}{% include "stamtree/_node.html" with node=c %}{% endfor %}</ul>
   {% endif %}

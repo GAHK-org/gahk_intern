@@ -1,7 +1,9 @@
 {% extends "base.html" %}
 {% block title %}{{ app.full_name }} - Ansøgning{% endblock %}
 {% block content %}
-  <h1>{{ app.full_name }}</h1>
+  <h1>{{ app.full_name }}
+    {% if app.discarded_by %}<span class="inline-block rounded-full bg-red-100 text-red-800 text-sm px-2 py-0.5 align-middle">Kasseret</span>{% endif %}
+  </h1>
   <p class="muted">{{ app.get_type_display }} · {{ app.submitted_at|date:"Y-m-d H:i" }}</p>
   <div class="card">
     <p><strong>E-mail:</strong> {{ app.email }}</p>
@@ -18,10 +20,24 @@
   </div>
   {% if app.received_by %}
     <p class="muted">Modtaget af {{ app.received_by.full_name }} {{ app.received_at|date:"Y-m-d H:i" }}.</p>
-  {% else %}
+  {% elif not app.discarded_by %}
     <form method="post" action="{% url 'admissions:setasreceived' app.pk %}">
-      {% csrf_token %}<button type="submit">Markér som modtaget</button>
+      {% csrf_token %}<button type="submit" class="btn">Markér som modtaget</button>
     </form>
   {% endif %}
-  <p style="margin-top:1rem"><a href="{% url 'admissions:list' %}">‹ Alle ansøgninger</a></p>
+
+  <div class="flex items-center gap-3" style="margin-top:1rem">
+    <a href="{% url 'admissions:list' %}">‹ Alle ansøgninger</a>
+    <span class="flex-1"></span>
+    {% if app.discarded_by %}
+      <span class="muted text-sm">Kasseret af {{ app.discarded_by.full_name }} {{ app.discarded_at|date:"Y-m-d" }}.</span>
+      <form method="post" action="{% url 'admissions:toggle_discarded' app.pk %}">
+        {% csrf_token %}<button type="submit" class="btn">Fortryd kassering</button>
+      </form>
+    {% else %}
+      <form method="post" action="{% url 'admissions:toggle_discarded' app.pk %}">
+        {% csrf_token %}<button type="submit" class="btn">Kassér ansøgning</button>
+      </form>
+    {% endif %}
+  </div>
 {% endblock %}

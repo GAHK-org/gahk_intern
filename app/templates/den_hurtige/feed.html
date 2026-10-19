@@ -1,0 +1,306 @@
+{% extends "base.html" %}
+{% block title %}{{ channel.name }} - Den Hurtige - GAHK Intern{% endblock %}
+{% comment %}
+  A bespoke class rather than Tailwind's max-w-3xl, because the cap has to CHANGE when a thread is
+  open: 768px split into a feed and a panel leaves ~380px each, which is narrower than the phone
+  layout. .chat-shell widens to ~70rem while .thread-panel exists (see styles.css). It has to live
+  in the components layer to do that -- a Tailwind utility would out-specify a components rule.
+{% endcomment %}
+{% block content_width %}chat-shell{% endblock %}
+
+{% comment %}
+  Den Hurtige is used one-handed on a phone and behaves like an app, so the browser's zoom gestures
+  get in the way rather than helping: a pinch while scrolling, or a double tap meant for a reaction,
+  leaves the composer off-screen. Locked here rather than in base.html so the rest of intern — the
+  alumneliste, statistik, long CMS pages — keeps pinch-to-zoom, which people genuinely need there.
+
+  This meta alone is not enough: iOS has ignored `user-scalable=no` since iOS 10 (deliberately, for
+  accessibility). It covers Android and desktop; `.no-zoom` and the gesture handlers in
+  frontend/src/feed.ts cover iOS.
+
+  interactive-widget=resizes-content is about the SOFT KEYBOARD, and it is the one part of this
+  meta that behaves differently on the two platforms. Chrome on Android defaults to
+  `resizes-visual`: the keyboard shrinks the visual viewport but leaves the LAYOUT viewport alone,
+  so 100dvh still measures the whole screen, the shell stays full height, and the composer — the
+  last flex child, pinned to the bottom of that shell — sits behind the keyboard. Normally the
+  browser rescues this by scrolling the focused field into view, but this page took that escape
+  route away on purpose: html and body are both overflow:hidden (see .chat-page in styles.css, and
+  the note on why the frame must not come loose), so there is nothing left to scroll.
+
+  `resizes-content` makes the keyboard shrink the layout viewport instead. 100dvh then resolves to
+  the space ABOVE the keyboard, the shell shrinks to match, the feed gives up the height, and the
+  composer rides up with it — which is what it already does on iOS, and why this was an Android-only
+  complaint. Safari ignores the property, so nothing there changes.
+{% endcomment %}
+{% block viewport %}
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+{% endblock %}
+{% block body_class %}no-zoom chat-page{% endblock %}
+
+{% block content %}
+  <div class="chat">
+    <div class="chat-head">
+      {% comment %}
+        The channel picker doubles as the page title, so it costs no vertical space at all: a
+        <details> summary sitting exactly where the <h1> used to, with the menu absolutely
+        positioned over the feed rather than pushing it down.
+
+        A <details> rather than a native <select> because a <select> can only render text: these
+        five channels are told apart by their icons, and the live-post counts would have gone too.
+        It also needs no JavaScript to navigate (the options are plain links), matches the pattern
+        already used for reply threads and the emoji picker, and is dismissed by the same
+        click-away handler in frontend/src/feed.ts.
+      {% endcomment %}
+      <h1 class="sr-only">{{ channel.name }} — Den Hurtige</h1>
+      {% if tabs|length > 1 %}
+        <details class="channel-picker">
+          <summary>
+            <svg class="ni" aria-hidden="true"><use href="#i-{{ channel.icon }}"></use></svg>
+            <span class="channel-name">{{ channel.name }}</span>
+            <span class="caret" aria-hidden="true">▾</span>
+          </summary>
+          <nav class="channel-menu" aria-label="Kanaler">
+            {% for tab in tabs %}
+              <a class="channel-option{% if tab.current %} active{% endif %}" href="{{ tab.channel.url }}"
+                 {% if tab.current %}aria-current="page"{% endif %}>
+                <svg class="ni" aria-hidden="true"><use href="#i-{{ tab.channel.icon }}"></use></svg>
+                <span class="channel-option-name">{{ tab.channel.name }}</span>
+                {% if tab.live %}<span class="channel-count">{{ tab.live }}</span>{% endif %}
+              </a>
+            {% endfor %}
+          </nav>
+        </details>
+      {% else %}
+        <span class="channel-single">{{ channel.name }}</span>
+      {% endif %}
+      {% if limited_rollout %}<span class="chip chip-brass">Under test</span>{% endif %}
+
+      {% comment %}
+        This room's notification state, as a link to its row on the settings page — that is where
+        rooms are turned on and off now, next to every other notification choice. A plain link: it
+        is pressed roughly twice a year.
+      {% endcomment %}
+      <a class="chat-notif-link{% if muted %} is-off{% endif %}" href="{% url 'notifications:preferences' %}#rum-{{ channel.slug }}"
+         title="{% if muted %}Notifikationer fra {{ channel.name }} er slået fra{% else %}Du får notifikationer fra {{ channel.name }}{% endif %} — skift under indstillinger">
+        {% if muted %}🔕 <span class="mute-label">Lyd fra</span>{% else %}🔔 <span class="mute-label">Lyd til</span>{% endif %}
+      </a>
+    </div>
+
+    {% comment %}
+      Asks this device to turn push on, once — gone for good after it has, and invisible where push
+      cannot work. See notifications/_device.html.
+    {% endcomment %}
+    {% include "notifications/_device.html" with mode="prompt" %}
+
+    {% comment %}
+      The message list. Polled so other residents' messages appear without a refresh.
+
+      MORPHED, not replaced: idiomorph patches the existing nodes rather than swapping the list out,
+      so scroll position, open reply threads and a half-typed reply survive because they are simply
+      never touched. That is what let the interval drop from 20s to 5s — at 20s a new message read
+      as broken, and the old wholesale swap was too destructive to run any faster.
+
+      The response is still the WHOLE list, deliberately. An incremental "only what is new" endpoint
+      would be less traffic, but traffic was never the problem here (one request per tab per few
+      seconds, at ~60 rooms), and sending everything is what keeps deletions, expiry, reaction
+      counts and new replies correct without a second reconciliation path.
+    {% endcomment %}
+    {% comment %}
+      Feed and thread panel side by side. On a phone only one is shown at a time -- the CSS hides
+      #js-feed while a panel exists, rather than covering it with an overlay. That is not a style
+      choice: an overlay needs position:fixed and a z-index, which makes a stacking context, and no
+      ancestor of a `.pop` may create one or the emoji picker and the reader panels get trapped
+      inside it (see the .pop block in styles.css). Swapping display keeps the panel an ordinary
+      in-flow box, so the pickers still work from inside a thread -- and it takes the feed out of
+      the accessibility tree properly, so the panel needs no aria-modal and no focus trap.
+    {% endcomment %}
+    <div class="chat-cols">
+      {% comment %}
+        tabindex="-1" so closing the thread can hand focus back here when the message that opened it
+        has expired out of the list in the meantime. Without it focus() is a no-op and focus falls
+        to <body>, leaving a keyboard user with nothing to arrow away from.
+      {% endcomment %}
+      {% comment %}
+        THE SCROLLER, and it is no longer the polled region — that split is what lets the archive
+        live in here at all.
+
+        #js-feed used to carry the hx-get itself and morph its whole contents every five seconds.
+        Archived messages prepended into it would have been wiped by the next poll, because the
+        poll's response is the LIVE list and idiomorph removes what the server did not send. So the
+        poll moved down onto #js-live, which holds exactly what the server re-sends; everything
+        above it — the sentinel, the loaded history, the divider — sits outside the swap and is
+        simply never touched.
+
+        NO hx-target anywhere in this subtree, deliberately. hx-target is INHERITED in htmx, so a
+        target declared here would be picked up by the archive sentinel inside (which swaps itself)
+        and by the reaction buttons on every message. Each element defaulting to itself is what all
+        three want. The same trap is documented on #js-thread below, where it bit once already.
+      {% endcomment %}
+      <div id="js-feed" tabindex="-1">
+        {% if has_archive %}
+          {% comment %}
+            THE FIRST CHUNK IS NOT FETCHED UNTIL THE READER ASKS FOR IT, and the trigger is a custom
+            event rather than `intersect` for exactly that reason.
+
+            Intersect was wrong here, and wrong in the way that matters most on the commonest page
+            there is: a channel holding one short message does not fill the screen, so a sentinel
+            watching for visibility is visible immediately and fires on load — and keeps firing,
+            chunk after chunk, until the column is longer than the viewport. Somebody opening Den
+            Hurtige to read the one thing that was said today was met with a screenful of last
+            month instead, with today's message pushed to the bottom of it.
+
+            So this waits for `gahk-open-archive`, an event nothing in htmx can raise on its own. It
+            is dispatched by frontend/src/feed.ts only when somebody already at the very top of the
+            feed keeps dragging upwards — the gesture the divider below names, and an unmistakable
+            statement of intent. Until then the archive costs one EXISTS query and nothing else.
+
+            The sentinels INSIDE each chunk do use `intersect` (see _archive_chunk.html): opening
+            the archive is a decision, but continuing through it once you are in there is just
+            scrolling, and stopping to ask again at every chunk boundary would be worse than
+            useless.
+
+            It replaces ITSELF (outerHTML) with the chunk it fetches, so there is no bookkeeping and
+            nothing to reset.
+          {% endcomment %}
+          <div class="archive-more is-idle" id="js-archive-top"
+               hx-get="{% url 'den_hurtige:archive' %}?kanal={{ channel.slug }}"
+               hx-trigger="gahk-open-archive"
+               hx-swap="outerHTML">
+            <span class="muted">Henter arkivet…</span>
+            <noscript>
+              <a href="{% url 'den_hurtige:archive' %}?kanal={{ channel.slug }}">Se arkivet</a>
+            </noscript>
+          </div>
+        {% endif %}
+
+        {% comment %}
+          The boundary, and the small message that says what is above it. OUTSIDE #js-live so the
+          5s morph never touches it, and outside the archive region so no prepended chunk can land
+          below it.
+
+          It does two jobs. Before anything is loaded it is the INSTRUCTION — the archive is not
+          fetched until somebody performs the gesture it names, so without this sentence there is
+          nothing on the page to say the history exists at all. Once chunks have landed above it,
+          it is the line where the archive stops and the live conversation starts, which is why it
+          stays rather than being swapped away.
+
+          Rendered only when something has actually archived: telling somebody to drag up into an
+          empty archive is a worse first impression than saying nothing (views.feed's
+          `has_archive`).
+        {% endcomment %}
+        {% if has_archive %}
+          <div class="feed-divider">
+            <span><span aria-hidden="true">↑</span> Træk op for at se arkivet</span>
+          </div>
+        {% endif %}
+
+        <div id="js-live"
+             hx-get="{% url 'den_hurtige:feed_items' %}?kanal={{ channel.slug }}"
+             hx-trigger="every 5s"
+             hx-ext="morph"
+             hx-swap="morph:innerHTML">
+          {% include "den_hurtige/_posts.html" %}
+        </div>
+      </div>
+
+      {% comment %}
+        Empty until somebody opens a thread. Outside #js-feed so the 5s morph cannot reach it; the
+        fragment that lands here brings its own poll. `?traad=` pre-opens it, which is how a reply
+        push notification deep-links into a thread on a page that is already loaded.
+      {% endcomment %}
+      {% comment %}
+        NO hx-target here, deliberately. hx-target is an INHERITED attribute in htmx: the panel that
+        lands inside this container declares its own hx-get/hx-trigger for its 5s self-poll but no
+        target of its own, so it would inherit `this` from here — and inherited `this` resolves to
+        the element that DECLARED it. The panel's poll then swapped morph:outerHTML onto this
+        container and deleted it, after which nothing could find #js-thread to close or reuse.
+        Omitting it leaves each element defaulting to itself, which is what both want.
+      {% endcomment %}
+      <div id="js-thread"
+           {% if open_thread_pk %}hx-get="{% url 'den_hurtige:thread' open_thread_pk %}"
+           hx-trigger="load" hx-swap="innerHTML"{% endif %}></div>
+    </div>
+
+    {% comment %}
+      Composer, pinned to the bottom like a chat input. `.main` is the scroll container (not the
+      window), so position:sticky is enough — no fixed positioning, which would fight the iOS
+      keyboard.
+
+        THE DURATION IS ASKED, NOT ASSUMED (#192). Pressing send opens the sheet below; the author
+        answers, and that choice is what posts the message. Nothing is preselected anywhere, because
+        a preselected 2 døgn is precisely what stopped anybody choosing.
+
+        The native <select> is the NO-JAVASCRIPT path and nothing else. It is `required` with an
+        empty first option, so the browser itself refuses to send until a duration is picked — the
+        same rule the sheet enforces, by the only means available without scripting. feed.ts hides
+        it and drops `required` the moment it takes over, so a scripted browser is asked exactly
+        once, by the sheet. It stays a native <select> there so iOS gives it the wheel picker.
+    {% endcomment %}
+    <form class="composer" method="post" action="{% url 'den_hurtige:create_post' %}"
+          enctype="multipart/form-data" id="js-composer">
+      {% csrf_token %}
+      {% comment %}
+        Which feed this lands in. Rendered server-side, so the composer cannot disagree with the
+        page it is on — there is no client state to fall out of sync.
+      {% endcomment %}
+      <input type="hidden" name="kanal" value="{{ channel.slug }}">
+      <label class="composer-attach" for="id_image" title="Vedhæft billede">
+        <span aria-hidden="true">📎</span>
+        <span class="sr-only">Vedhæft billede</span>
+        <input type="file" id="id_image" name="image" accept="image/*,.heic,.heif">
+      </label>
+
+      <div class="composer-main">
+        <label class="sr-only" for="id_content">Besked</label>
+        <textarea id="id_content" name="content" rows="1" maxlength="{{ max_content_chars }}" required
+                  placeholder="Skriv i {{ channel.name }}…" enterkeyhint="enter">{{ draft }}</textarea>
+        <div class="composer-file" id="js-composer-file" hidden></div>
+      </div>
+
+      <label class="composer-duration" id="js-composer-duration" title="Hvor længe beskeden er relevant">
+        <span class="sr-only">Relevant i</span>
+        <select name="duration" id="id_duration" required>
+          <option value="" selected>⏱ Vælg tid</option>
+          {% for minutes, label in duration_choices %}
+            <option value="{{ minutes }}">⏱ {{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <button type="submit" class="composer-send" title="Send" aria-label="Send">↑</button>
+
+    </form>
+
+    {% comment %}
+      The duration sheet (#192). A <details class="pop">, so it inherits the backdrop, the
+      click-away and the Escape handling every other panel on this page already has (feed.ts,
+      DISMISSABLE). It is opened from script rather than by pressing its summary, which is the only
+      unusual thing about it; the summary is still real and still focusable, because Escape hands
+      focus back to it.
+
+      OUTSIDE THE COMPOSER, and that is not cosmetic. `.composer` is a grid whose every child is
+      placed by name (styles.css: .composer-attach/-main/-duration/-send), so a child without a
+      grid-area is auto-placed into a cell of its own and the sheet turned up wedged into the input
+      row. Out here it is not a grid item at all.
+
+      It still writes its answer into the composer's <select>, which feed.ts looks up by id — the
+      two do not need to be in the same subtree for that, only on the same page.
+    {% endcomment %}
+    <details class="pop duration-sheet" id="js-duration-sheet">
+      <summary class="sr-only">Vælg hvor længe beskeden er relevant</summary>
+      <div class="pop-backdrop"></div>
+      <div class="pop-panel duration-panel">
+        <div class="pop-title">Hvor længe er beskeden relevant?</div>
+        <div class="duration-options">
+          {% for minutes, label in duration_choices %}
+            <button type="button" class="duration-option" data-duration="{{ minutes }}">{{ label }}</button>
+          {% endfor %}
+        </div>
+        <div class="duration-actions">
+          <button type="button" class="duration-cancel">Annullér</button>
+          <button type="button" class="duration-confirm" disabled>Slå op</button>
+        </div>
+      </div>
+    </details>
+  </div>
+{% endblock %}

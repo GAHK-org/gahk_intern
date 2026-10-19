@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Abonnér på kalenderen - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <p class="event-crumb"><a href="{% url 'events:calendar' %}">&larr; Kalender</a></p>
+
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Kollegiet</p>
+      <h1>Få begivenhederne i din egen kalender</h1>
+    </div>
+  </div>
+
+  <div class="card-flat card-pad feed-box">
+    <p>
+      Tilføj adressen herunder i Google Kalender, Apple Kalender eller Outlook, så dukker alt du har
+      sagt ja til op automatisk — og opdaterer sig selv, hvis noget bliver flyttet eller aflyst.
+    </p>
+
+    {% comment %}
+      rel="noreferrer" and no prefetchable markup around it: the address IS the credential, so it
+      must not leak through a Referer header. See events.views.calendar_feed.
+    {% endcomment %}
+    <p class="feed-url"><a href="{{ feed_url }}" rel="noreferrer">{{ feed_url }}</a></p>
+
+    <div class="feed-warn">
+      <svg class="ni" aria-hidden="true"><use href="#i-lock"></use></svg>
+      <div>
+        <strong>Del ikke adressen med andre.</strong>
+        <p class="muted">
+          Den fungerer som en nøgle: alle der har den, kan se hvad du har sagt ja til — uden at
+          logge ind. Den viser kun dine egne begivenheder, aldrig andres.
+        </p>
+      </div>
+    </div>
+
+    <form method="post" action="{% url 'events:rotate_token' %}"
+          onsubmit="return confirm('Lav en ny adresse? Den gamle holder op med at virke, og du skal tilføje den nye i din kalender igen.')">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-secondary">Lav en ny adresse</button>
+      {% comment %}
+        Said plainly because calendar clients fail SILENTLY on a 404 — they simply stop updating,
+        with no error anywhere. Somebody who rotates without re-adding would just find their
+        calendar quietly frozen weeks later.
+      {% endcomment %}
+      <p class="muted event-help">
+        Brug det hvis adressen er kommet ud til nogen. Husk at rette den i din kalender bagefter —
+        din kalender siger ikke selv fra, den holder bare op med at opdatere.
+      </p>
+    </form>
+  </div>
+{% endblock %}

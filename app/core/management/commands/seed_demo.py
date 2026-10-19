@@ -23,16 +23,29 @@ import argparse
 import random
 import unicodedata
 from datetime import timedelta
+from io import BytesIO
 
 from django.conf import settings
+from django.core.files.base import ContentFile
 from django.core.management.base import BaseCommand, CommandError
 from django.db import models, transaction
 from django.utils import timezone
 
 from admissions.models import Application
-from ak.models import AkEntry
-from cms.models import Event, NewsItem, Page, PylonEvent
+from ak.models import AkEntry, AkMonthlyCharge
+from ak.services import apply_monthly_charge
+from arkiv.demo import seed as seed_arkiv
+from arkiv.models import ArchiveFile, ArchiveFolder
+
+# CmsEvent, never Event: the internal events app has one of the same name, and both are seeded
+# here. See events.models on the three-way collision.
+from cms.models import Event as CmsEvent
+from cms.models import NewsItem, Page, PylonEvent
 from core.models import Cleaning, Room, Workgroup
+from den_hurtige.demo import seed as seed_den_hurtige
+from den_hurtige.models import QuickComment, QuickPost, QuickReaction
+from events.demo import seed as seed_events
+from events.models import CalendarFeedToken, Event, EventInvite, Rsvp
 from oelkaelder.models import (
     Deposit,
     Product,
@@ -41,6 +54,10 @@ from oelkaelder.models import (
     Transaction,
     TransactionItem,
 )
+from opslagstavle.demo import seed as seed_opslagstavle
+from opslagstavle.models import Notice, NoticeComment, NoticeReaction
+from photo_album.demo import seed as seed_photo_album
+from photo_album.models import Album, Media
 from residents.models import WORKGROUP_ROLE, Residency, Resident, Role, RoleAssignment
 from rooms.models import (
     KvotientApplication,
@@ -60,9 +77,45 @@ SEED = 1908  # the year GAHK was founded — any fixed value works, we just want
 # Non-privileged chore groups (no site role) mixed in with the privileged ones from WORKGROUP_ROLE.
 EXTRA_WORKGROUPS = ["Haven", "Vinklubben", "Festudvalget", "Bladet", "IT / Netværk"]
 CLEANING_GROUPS = ["Køkken", "Bad 1. sal", "Bad 2. sal", "Trappe", "Kælder", "Fællesrum"]
+# (code, name, options, description) — real rows from intern_room_criteria covering all three scale
+# shapes, so the værelsestjek score explainer is visible in dev. See RoomCriterion.score_values.
+ROOM_CRITERIA = [
+    (
+        "walls",
+        "Vægge",
+        5,
+        (
+            "Maling.\n1: Nymalet/pæn stand,\n2: Få pletter eller misfarvninger,\n"
+            "3: Større pletter og misfarvninger,\n4: Revner,\n5: Huller el. svamp"
+        ),
+    ),
+    (
+        "floor",
+        "Gulve",
+        5,
+        (
+            "Lakering og slibning.\n1: God/pæn stand,\n2: Få ridser og pletter,\n"
+            "3: Større ridser og pletter,\n4: Mellem de to,\n5: Huller i gulvet eller skibslak"
+        ),
+    ),
+    (
+        "windows",
+        "Vinduer",
+        3,
+        "0: Virker/fin stand,\n1: Tætningslister eller hasper mangler,\n2: Virker ikke",
+    ),
+    ("curtains", "Gardiner", 2, "0: Er der\n1: Mangler"),
+]
 
 # Deletion order: children before parents so PROTECT FKs don't block the wipe.
 WIPE_ORDER: list[type[models.Model]] = [
+    Rsvp,
+    EventInvite,
+    CalendarFeedToken,
+    Event,
+    NoticeReaction,
+    NoticeComment,
+    Notice,
     PurchaseShare,
     TransactionItem,
     Transaction,
@@ -81,11 +134,20 @@ WIPE_ORDER: list[type[models.Model]] = [
     Residency,
     Page,
     NewsItem,
-    Event,
+    CmsEvent,
     PylonEvent,
     DailyVisitCount,
     VisitTally,
+    QuickReaction,
+    QuickComment,
+    QuickPost,
+    Media,
+    Album,
     Resident,
+    # Before Workgroup: ArchiveFolder references it with PROTECT (a SET_NULL would silently turn a
+    # gated folder into a world-readable one), so the archive has to go first or --fresh cannot run.
+    ArchiveFile,
+    ArchiveFolder,
     Room,
     Workgroup,
     Cleaning,
@@ -105,7 +167,7 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--fresh", action="store_true", help="Delete existing demo data first.")
-        parser.add_argument("--residents", type=int, default=40, help="How many residents to create.")
+        parser.add_argument("--residents", type=int, default=61, help="How many residents to create.")
         parser.add_argument("--force", action="store_true", help="Allow running when DEBUG is off.")
 
     def handle(self, *args, **opts) -> None:  # noqa: ANN002, ANN003
@@ -128,10 +190,11 @@ class Command(BaseCommand):
             if opts["fresh"]:
                 self._wipe()
             rooms = self._seed_rooms()
-            workgroups, cleanings = self._seed_lookups()
+            workgroups, cleanings = self._seed_lookups(opts["residents"])
             residents = self._seed_residents(opts["residents"])
             self._seed_residencies(residents, rooms, workgroups, cleanings)
             self._seed_roles(residents)
+            self._seed_profile_pictures(residents)
             self._seed_ak(residents)
             self._seed_oelkaelder(residents)
             self._seed_admissions(residents)
@@ -139,12 +202,22 @@ class Command(BaseCommand):
             self._seed_room_conditions(rooms, residents)
             self._seed_kvotient(residents, rooms)
             self._seed_stats()
+            seed_opslagstavle(residents, self.now, self.rng)
+            seed_events(residents, self.now, self.rng)
+            seed_arkiv(residents, self.now, self.rng)
+            seed_photo_album(residents, self.now, self.rng)
+            seed_den_hurtige(residents, self.now, self.rng)
 
         self._report(residents)
 
     # ---------------------------------------------------------------- wipe
     def _wipe(self) -> None:
         for model in WIPE_ORDER:
+            if model is Album:
+                # A sub-album PROTECTs its parent, so the tree is cleared from the leaves up.
+                for depth in sorted(set(Album.objects.values_list("depth", flat=True)), reverse=True):
+                    Album.objects.filter(depth=depth).delete()
+                continue
             model._default_manager.all().delete()
         self.stdout.write("  wiped existing demo data")
 
@@ -154,11 +227,24 @@ class Command(BaseCommand):
             Room.objects.update_or_create(legacy_index=r["legacy_index"], defaults=r)
         return list(Room.objects.all())
 
-    def _seed_lookups(self) -> tuple[list[Workgroup], list[Cleaning]]:
+    def _seed_lookups(self, total_residents: int) -> tuple[list[Workgroup], list[Cleaning]]:
+        # Henter og sorterer ALLE grupper (både faste og ekstra) for at sikre determinisme
+        all_names = sorted(list(WORKGROUP_ROLE.keys()) + EXTRA_WORKGROUPS)
+
+        # Matematisk fordeling så summen af 'size' bliver eksakt lig 'total_residents' (61)
+        base_size = total_residents // len(all_names)
+        remainder = total_residents % len(all_names)
+
         workgroups = []
-        for name in list(WORKGROUP_ROLE.keys()) + EXTRA_WORKGROUPS:
+        for i, name in enumerate(all_names):
+            target_size = base_size + (1 if i < remainder else 0)
+
             wg, _ = Workgroup.objects.get_or_create(name=name)
+            if wg.size != target_size:
+                wg.size = target_size
+                wg.save(update_fields=["size"])
             workgroups.append(wg)
+
         cleanings = [Cleaning.objects.get_or_create(name=n)[0] for n in CLEANING_GROUPS]
         return workgroups, cleanings
 
@@ -245,21 +331,50 @@ class Command(BaseCommand):
         workgroups: list[Workgroup],
         cleanings: list[Cleaning],
     ) -> None:
+        fixed_groups = {
+            "ak@gahk.dk": "AK-gruppen",
+            "oel@gahk.dk": "Ølkælderen",
+            "regnskab@gahk.dk": "Regnskabsgruppen",
+        }
+        workgroups_by_name = {workgroup.name: workgroup for workgroup in workgroups}
+
         for y, m in self._iter_recent_months(3):
-            # Give each resident a distinct room this month (rooms outnumber residents).
+            wg_counts = {wg.name: 0 for wg in workgroups}
+
             chosen_rooms = self.rng.sample(rooms, k=min(len(residents), len(rooms)))
             for resident, room in zip(residents, chosen_rooms, strict=False):
+                target_wg_name = fixed_groups.get(resident.email)
+                wg = None
+
+                # 1. Prøv faste roller først
+                if target_wg_name and target_wg_name in workgroups_by_name:
+                    preferred_wg = workgroups_by_name[target_wg_name]
+                    if preferred_wg.size == 0 or wg_counts[preferred_wg.name] < preferred_wg.size:
+                        wg = preferred_wg
+
+                # 2. Fyld op i grupper, der mangler folk
+                if not wg:
+                    strict_wgs = [w for w in workgroups if w.size > 0 and wg_counts[w.name] < w.size]
+                    if strict_wgs:
+                        wg = self.rng.choice(strict_wgs)
+                    else:
+                        available_wgs = [w for w in workgroups if w.size == 0 or wg_counts[w.name] < w.size]
+                        wg = self.rng.choice(available_wgs or workgroups)
+
+                wg_counts[wg.name] += 1
+
                 Residency.objects.update_or_create(
                     resident=resident,
                     year=y,
                     month=m,
                     defaults={
                         "room": room,
-                        "workgroup": self.rng.choice(workgroups),
+                        "workgroup": wg,
                         "cleaning": self.rng.choice(cleanings),
                     },
                 )
-        # Make one resident a "leaver" (present last month, gone this month) so the regnskab page has data.
+
+        # Sletter den sidst tilføjede beboer i nuværende måned, så næste måned præcis mangler 1 fordeling
         if residents:
             Residency.objects.filter(resident=residents[-1], year=self.year, month=self.month).delete()
 
@@ -297,6 +412,27 @@ class Command(BaseCommand):
 
         Resident.objects.filter(pk__in=assigned).update(is_staff=True)
 
+    def _seed_profile_pictures(self, residents: list[Resident]) -> None:
+        for index, resident in enumerate(residents[:8]):
+            if resident.profile_picture:
+                continue
+            resident.profile_picture.save(
+                f"{_ascii_slug(resident.full_name)}.jpg",
+                ContentFile(self._profile_image(resident.full_name, index)),
+                save=True,
+            )
+
+    def _profile_image(self, name: str, index: int) -> bytes:
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError:
+            return name.encode()
+        image = Image.new("RGB", (480, 480), ["#315b8d", "#1f6c64", "#8a4e70", "#517544"][index % 4])
+        ImageDraw.Draw(image).text((36, 36), name, fill="white")
+        output = BytesIO()
+        image.save(output, format="JPEG", quality=82)
+        return output.getvalue()
+
     # ------------------------------------------------------------------ AK
     def _seed_ak(self, residents: list[Resident]) -> None:
         entries = []
@@ -310,16 +446,8 @@ class Command(BaseCommand):
                     created_at=self.now - timedelta(days=120),
                 )
             )
-            for months_ago in range(3, 0, -1):
-                entries.append(
-                    AkEntry(
-                        resident=r,
-                        delta=-2,
-                        kind=AkEntry.Kind.MONTHLY,
-                        reason="Månedlig vurdering",
-                        created_at=self.now - timedelta(days=30 * months_ago),
-                    )
-                )
+            # Some labour history so balances vary.
+            for months_ago in (2, 1):
                 if self.rng.random() < 0.6:
                     entries.append(
                         AkEntry(
@@ -331,6 +459,15 @@ class Command(BaseCommand):
                         )
                     )
         AkEntry.objects.bulk_create(entries)
+
+        # The 12-month schedule rows are created by the migration; make sure they exist (belt-and-braces
+        # for a --fresh run) then apply the monthly deduction through the real service for the recent
+        # months that are over (the current one is charged on the 1st of the next), so demo MONTHLY
+        # entries respect alumneliste membership.
+        for month in range(1, 13):
+            AkMonthlyCharge.objects.get_or_create(month=month, defaults={"active": True, "krydser": 2})
+        for y, m in self._iter_recent_months(3)[:-1]:
+            apply_monthly_charge(y, m)
 
     # ----------------------------------------------------------- ølkælder
     def _seed_oelkaelder(self, residents: list[Resident]) -> None:
@@ -416,6 +553,21 @@ class Command(BaseCommand):
             body="<p>Sådan søger du en plads på kollegiet.</p>",
             menu_category=2,
         )
+        # A sub-page, so the section sidebar (cms.views._section_nav) and the CMS overview's
+        # reachability badge are both exercised in dev — with only top-level slugs, neither ever
+        # renders, and the bug that made a renamed page vanish was invisible locally.
+        Page.objects.create(
+            slug="faciliteter",
+            header="Faciliteter",
+            body="<p>Kollegiets faciliteter.</p>",
+            menu_category=1,
+        )
+        Page.objects.create(
+            slug="faciliteter/kokken",
+            header="Køkkenet",
+            body="<p>Fælleskøkkenet på hver gang.</p>",
+            menu_category=1,
+        )
         for _ in range(6):
             NewsItem.objects.create(
                 title=self.fake.sentence(nb_words=6),
@@ -424,7 +576,7 @@ class Command(BaseCommand):
             )
         today = timezone.localdate()
         for _ in range(8):
-            Event.objects.create(
+            CmsEvent.objects.create(
                 title=self.rng.choice(
                     ["Fællesspisning", "Havedag", "Julefrokost", "Rusarrangement", "Generalforsamling"]
                 ),
@@ -437,25 +589,35 @@ class Command(BaseCommand):
 
     # ------------------------------------------------------ room conditions
     def _seed_room_conditions(self, rooms: list[Room], residents: list[Resident]) -> None:
+        # Four real criteria from intern_room_criteria, chosen to cover all three scale shapes
+        # (5 -> 1..5, 3 -> 0..2, 2 -> 0..1) with their real Danish legends, so the score explainer and
+        # the range validation are both visible in dev. The previous invented set used options=4 —
+        # a shape no real criterion has — with no descriptions, which made the feature untestable.
+        # update_or_create, not get_or_create: re-seeding without --wipe must refresh stale rows.
         criteria = [
-            RoomCriterion.objects.get_or_create(code=c, defaults={"name": n, "options": 4})[0]
-            for c, n in [("walls", "Vægge"), ("floor", "Gulv"), ("windows", "Vinduer"), ("kitchen", "Køkken")]
+            RoomCriterion.objects.update_or_create(
+                code=code, defaults={"name": name, "options": options, "description": description}
+            )[0]
+            for code, name, options, description in ROOM_CRITERIA
         ]
         for room in self.rng.sample(rooms, k=min(15, len(rooms))):
-            cond = RoomCondition.objects.create(
-                room=room,
-                resident=self.rng.choice(residents),
-                recorded_by_name=self.rng.choice(residents).full_name,
-                recorded_at=self.now - timedelta(days=self.rng.randint(1, 300)),
-                is_current=True,
-            )
-            for crit in criteria:
-                RoomConditionScore.objects.create(
-                    condition=cond,
-                    criterion=crit,
-                    score=self.rng.randint(1, 4),
-                    comment=self.rng.choice(["", "Fin stand", "Slitage", "Skal males"]),
+            # A couple of superseded reports per room so the "vis tidligere rapport" dropdown has
+            # something to show (the real ones come from backfill_room_history).
+            for age, current in ((self.rng.randint(400, 700), False), (self.rng.randint(1, 300), True)):
+                cond = RoomCondition.objects.create(
+                    room=room,
+                    resident=self.rng.choice(residents),
+                    recorded_by_name=self.rng.choice(residents).full_name,
+                    recorded_at=self.now - timedelta(days=age),
+                    is_current=current,
                 )
+                for crit in criteria:
+                    RoomConditionScore.objects.create(
+                        condition=cond,
+                        criterion=crit,
+                        score=self.rng.choice(crit.score_values),  # always on-scale
+                        comment=self.rng.choice(["", "Fin stand", "Slitage", "Skal males"]),
+                    )
 
     # -------------------------------------------------------------- kvotient
     def _seed_kvotient(self, residents: list[Resident], rooms: list[Room]) -> None:
@@ -494,6 +656,7 @@ class Command(BaseCommand):
             self.style.SUCCESS(
                 f"\nSeeded demo data: {len(residents)} residents, "
                 f"{Residency.objects.count()} residencies, {AkEntry.objects.count()} AK entries, "
+                f"{Event.objects.count()} begivenheder, "
                 f"{Transaction.objects.count()} ølkælder purchases, {Application.objects.count()} applications."
             )
         )

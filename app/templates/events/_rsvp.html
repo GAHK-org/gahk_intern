@@ -1,0 +1,118 @@
+{% comment %}
+  The answer panel, and the only part of the detail page that changes when you answer. Swapped on
+  its own (hx-target on this id, hx-swap="outerHTML") so pressing Ja never re-renders the page —
+  which would lose the scroll position on a phone, halfway down an attendee list.
+
+  Rendered by both the detail view and the answer view from one context builder
+  (views._rsvp_context), so the page you land on and the panel you get back cannot disagree about
+  who holds a seat.
+{% endcomment %}
+<div class="rsvp-panel card-flat card-pad" id="rsvp-{{ event.pk }}">
+
+  {% if event.cancelled_at %}
+    <div class="rsvp-locked">
+      <svg class="ni" aria-hidden="true"><use href="#i-calendar"></use></svg>
+      <div>
+        <strong>Begivenheden er aflyst.</strong>
+        <p class="muted">Alle tilmeldte har fået besked.</p>
+      </div>
+    </div>
+
+  {% elif locked %}
+    {% comment %}
+      The buttons are REMOVED, not disabled. A greyed-out button with a live POST target behind it
+      is a lie, and the test asserts the action URL is absent from the page rather than that a
+      disabled attribute is present.
+    {% endcomment %}
+    <div class="rsvp-locked">
+      <svg class="ni" aria-hidden="true"><use href="#i-lock"></use></svg>
+      <div>
+        <strong>Svarfristen er udløbet.</strong>
+        <p class="muted">Deltagerlisten er endelig.</p>
+      </div>
+    </div>
+
+  {% else %}
+    <div class="rsvp-head">
+      <h2>Kommer du?</h2>
+      {% if event.capacity %}
+        <span class="chip {% if is_full %}chip-brass{% endif %}">
+          {{ seated_count }}/{{ event.capacity }} pladser
+        </span>
+      {% endif %}
+    </div>
+
+    <form class="rsvp-actions" hx-post="{% url 'events:answer' event.pk %}"
+          hx-target="#rsvp-{{ event.pk }}" hx-swap="outerHTML">
+      {% csrf_token %}
+      <button type="submit" name="svar" value="ja"
+              class="btn rsvp-ja{% if mine.answer == 'ja' %} is-chosen{% endif %}">
+        {% if is_full and mine.answer != 'ja' %}Skriv mig på venteliste{% else %}Ja{% endif %}
+      </button>
+      <button type="submit" name="svar" value="nej"
+              class="btn btn-secondary rsvp-nej{% if mine.answer == 'nej' %} is-chosen{% endif %}">
+        Nej
+      </button>
+    </form>
+
+    {% if event.rsvp_deadline_at %}
+      <p class="rsvp-deadline">
+        <svg class="ni" aria-hidden="true"><use href="#i-clock"></use></svg>
+        Svar inden {{ event.rsvp_deadline_at|date:"l j. F" }} kl. {{ event.rsvp_deadline_at|date:"H.i" }}
+      </p>
+    {% endif %}
+
+    {% if my_position %}
+      {% comment %}
+        Their own position, not just "der er en venteliste". "Nr. 3" is the difference between
+        planning your evening and refreshing the page.
+      {% endcomment %}
+      <p class="rsvp-waiting">Du står som nr. {{ my_position }} på ventelisten.</p>
+    {% elif mine.promoted_at %}
+      <p class="rsvp-promoted">Du er rykket op fra ventelisten og har nu en plads.</p>
+    {% endif %}
+  {% endif %}
+
+  <div class="rsvp-counts">
+    <strong>{{ seated_count }} kommer</strong>
+    {% if waitlist_count %}<span class="muted">· {{ waitlist_count }} på venteliste</span>{% endif %}
+    {% if declined_count %}<span class="muted">· {{ declined_count }} kan ikke</span>{% endif %}
+  </div>
+
+  {% if seated %}
+    <ul class="rsvp-people">
+      {% for r in seated %}
+        <li>
+          {% if r.resident.profile_picture %}
+            <img class="rsvp-avatar rsvp-avatar-img" src="{{ r.resident.avatar_url }}"
+                 alt="" loading="lazy" aria-hidden="true">
+          {% else %}
+            <span class="rsvp-avatar" aria-hidden="true">
+              {{ r.resident.first_name|slice:":1" }}{{ r.resident.last_name|slice:":1" }}
+            </span>
+          {% endif %}
+          <span class="rsvp-name">{{ r.resident.full_name }}</span>
+          {% if r.resident_id == event.organiser_id %}<span class="muted rsvp-role">arrangør</span>{% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  {% if waitlist %}
+    {% comment %}
+      The queue is public, and numbered. Seating is decided purely by the order people answered in
+      (services.seated), so showing the order is showing the rule — and someone who is told they are
+      "nr. 3" but cannot see who is ahead of them has to take the fairness on trust. It is also what
+      lets an organiser ask the person at the front whether they still want the seat.
+    {% endcomment %}
+    <p class="rsvp-sub">Venteliste</p>
+    <ul class="rsvp-people rsvp-queue">
+      {% for r in waitlist %}
+        <li>
+          <span class="rsvp-avatar rsvp-avatar-quiet" aria-hidden="true">{{ forloop.counter }}</span>
+          <span class="rsvp-name">{{ r.resident.full_name }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+</div>

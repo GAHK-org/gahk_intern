@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Papirkurv | Fotoalbum{% endblock %}
+{% block content %}
+<section class="album-detail">
+	<header class="album-heading"><div>{% if album %}<a class="album-back" href="{% url 'photo_album:detail' album.pk %}">{{ album.name }}</a>{% else %}<a class="album-back" href="{% url 'photo_album:index' %}">Fotoalbum</a>{% endif %}<h1>Papirkurv{% if album %} — {{ album.name }}{% endif %}</h1>{% if album %}<p class="album-subtitle">Med alle underalbummer. Medier slettes endeligt efter 30 dage.</p>{% else %}<p class="album-subtitle">Alle albummers papirkurve. Medier slettes endeligt efter 30 dage.</p>{% endif %}</div></header>
+	<div class="album-media-grid" data-album-gallery data-album-no-views>
+	{% for item in media %}
+		<article class="album-media-item">
+			{% if item.has_derivatives %}<button type="button" class="album-media-tile" data-detail-url="{% url 'photo_album:media_detail' item.pk %}">
+				<img src="{{ item.thumbnail.url }}" alt="{{ item.title }}" loading="lazy">
+				{% if item.content_type|slice:':6' == 'video/' %}<span class="album-video-mark">Video</span>{% endif %}
+			</button>{% else %}<div class="album-media-tile album-media-placeholder" data-kind="{{ item.derivative_state }}">
+				<span class="album-media-placeholder-title">{{ item.title }}</span>
+				<strong>{% if item.derivative_state == 'failed' %}Kunne ikke behandles{% else %}Behandles &hellip;{% endif %}</strong>
+			</div>{% endif %}
+			<p class="album-media-origin" title="{{ item.album_path }}">Fra album: {{ item.album_path }}</p>
+			<div class="album-media-controls"><form method="post" action="{% url 'photo_album:restore' item.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}"><button class="btn-link" type="submit">Gendan</button></form>{% if item.can_permanently_delete %}<form method="post" action="{% url 'photo_album:permanently_delete' item.pk %}" onsubmit="return confirm('Er du sikker på, at du vil slette mediet permanent?');">{% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}"><button class="btn-link-danger" type="submit">Slet permanent</button></form>{% endif %}</div>
+		</article>
+	{% empty %}<p class="album-empty">Der er ingen medier i papirkurven.</p>{% endfor %}
+	</div>
+</section>
+{% include "photo_album/_viewer.html" with eyebrow="Medie i papirkurven" %}
+{% endblock %}

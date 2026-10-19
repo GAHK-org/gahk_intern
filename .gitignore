@@ -8,8 +8,17 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 app/.env
-app/db.sqlite3
+# Every local SQLite DB, not just app/db.sqlite3: `task test:sqlite` writes app/test-db.sqlite3, and
+# any DATABASE_URL=sqlite:///… override drops a file next to manage.py. They hold real dev/test data.
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+# The Beat scheduler now stores its state in PostgreSQL through django-celery-beat.
+app/celerybeat-schedule*
 app/staticfiles/
+# photo_album.cache, when PHOTO_ALBUM_CACHE_DIR points inside the app for local testing.
+app/cache/
 app/static/dist/
 frontend/node_modules/
 
@@ -51,3 +60,13 @@ ubuntu-gahk*
 id_rsa*
 id_ed25519*
 acme.json
+
+# MEDIA_ROOT — resident-uploaded files, not source. Room-inspection photos (F-005) show the inside
+# of named people's rooms, and Den Hurtige attachments are whatever someone photographed just now.
+# In production these live on the server's volume; in dev they are a by-product of testing.
+# NB: this stops NEW files being picked up. The legacy room photos already committed under
+# app/media/public/image/intern/roomimages/ stay tracked until they are explicitly removed — and
+# they remain in history either way, so removing them is the same job as the 2026-08-04 dump.
+app/media/
+/.vscode
+.DS_Store

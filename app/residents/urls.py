@@ -1,10 +1,10 @@
-"""Internal members area + auth, under /nyintern/ (legacy URLs preserved). F-013/F-014."""
+"""Internal members area + auth, under /intern/. F-013/F-014."""
 
 from django.contrib.auth import views as auth_views
 from django.urls import include, path
 
 from . import views, views_regnskab
-from .forms import EmailAuthenticationForm
+from .forms import EmailAuthenticationForm, ResidentPasswordResetForm
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
@@ -14,7 +14,16 @@ urlpatterns = [
     path("alumneliste/eksport", views.directory_export, name="directory_export"),
     path("alumneliste/naeste-maaned", views.next_month_list, name="next_month_list"),
     path("beboer/<int:pk>/rediger", views.edit_resident, name="edit_resident"),
+    path("beboer/<int:pk>/profil", views.profile, name="resident_profile"),
+    path("beboer/min-profil/rediger", views.edit_profile, name="edit_profile"),
     path("stamtree/", views.stamtree, name="stamtree"),
+    path("notifikationer/", include("notifications.urls")),
+    path("den-hurtige/", include("den_hurtige.urls")),
+    path("opslagstavle/", include("opslagstavle.urls")),
+    path("begivenheder/", include("events.urls")),
+    path("reparationer/", include("reparationer.urls")),
+    path("arkiv/", include("arkiv.urls")),
+    path("fotoalbum/", include("photo_album.urls")),
     path("ak/", include("ak.urls")),
     path("oelkaelder/", include("oelkaelder.urls")),
     path("statistik/", include("stats.urls")),
@@ -33,7 +42,7 @@ urlpatterns = [
         "admin/password-change",
         auth_views.PasswordChangeView.as_view(
             template_name="registration/password_change.html",
-            success_url="/nyintern/admin/password-change/done",
+            success_url="/intern/admin/password-change/done",
         ),
         name="password_change",
     ),
@@ -48,10 +57,11 @@ urlpatterns = [
     path(
         "admin/password-reset",
         auth_views.PasswordResetView.as_view(
+            form_class=ResidentPasswordResetForm,  # also reaches residents who never set a password
             template_name="registration/password_reset_form.html",
             email_template_name="registration/password_reset_email.html",
             subject_template_name="registration/password_reset_subject.txt",
-            success_url="/nyintern/admin/password-reset/done",
+            success_url="/intern/admin/password-reset/done",
         ),
         name="password_reset",
     ),
@@ -63,7 +73,7 @@ urlpatterns = [
     path(
         "admin/reset/<uidb64>/<token>/",
         auth_views.PasswordResetConfirmView.as_view(
-            template_name="registration/password_reset_confirm.html", success_url="/nyintern/admin/reset/done"
+            template_name="registration/password_reset_confirm.html", success_url="/intern/admin/reset/done"
         ),
         name="password_reset_confirm",
     ),

@@ -27,7 +27,6 @@ def test_shop_renders_legacy_dom_without_frontend_bundle(make_resident: Callable
 
     # Legacy structure is server-rendered: product grid, keypad, active-users list.
     assert 'id="product-item-list"' in html
-    assert 'class="medlem"' in html
     assert 'id="alumneliste"' in html
     assert "Fadøl" in html
     assert f'data-rid="{shopper.resident_id}"' in html

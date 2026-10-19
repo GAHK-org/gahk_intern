@@ -41,22 +41,12 @@
 
   <!-- RIGHT: rail -->
   <aside class="rail">
-    <div class="logo"><img src="{% static 'legacy/image/elements/logo.png' %}" alt="GAHK"></div>
+    <div class="logo"><img style="width:100%" src="{% static 'legacy/image/elements/gahk-kiosk.jpg' %}" alt="GAHK"></div>
 
     <div class="basket">Dine indtastninger:</div>
     <ul id="basket-list"></ul>
     <div id="total">Total 0,00 kr</div>
     <div id="buttonCheckOut" class="disabled">Check ud</div>
-
-    <div class="medlem">
-      Check ud: <span id="shopper-id"></span>
-      <ul id="checkout-nos">
-        <li data-key="1">1</li><li data-key="2">2</li><li data-key="3">3</li>
-        <li data-key="4">4</li><li data-key="5">5</li><li data-key="6">6</li>
-        <li data-key="7">7</li><li data-key="8">8</li><li data-key="9">9</li>
-        <li class="neutral" data-key="del">&#9003;</li><li data-key="0">0</li><li class="neutral" data-key=""></li>
-      </ul>
-    </div>
 
     <div id="andre"></div>
   </aside>
@@ -70,13 +60,21 @@
     </div>
     <p>Vælg køber, eller "fordel på" flere for at dele købet ligeligt.</p>
     <ul id="alumneliste-checkout">
-      {% for s in shoppers %}
-        <li class="shopper {% if s.balance_ore <= -10000 %}inaktiv{% endif %}"
+      {% for s, balance, blocked in shopper_rows %}
+        {% comment %}
+          `blocked` comes from PurchasePolicy (off by default), not a hardcoded amount: the same
+          number also drives the interest threshold, and the two are separate policies.
+        {% endcomment %}
+        <li class="shopper {% if blocked %}inaktiv{% endif %}"
             data-id="{{ s.pk }}" data-rid="{{ s.resident_id }}" data-name="{{ s.resident.full_name }}">
           <div class="alumnumName">{{ s.resident.full_name }} <small>#{{ s.resident_id }}</small></div>
-          <div class="balance">{{ s.balance_ore|kr }}</div>
-          <div class="fordel" data-act="fordel">fordel på</div>
-          <div class="vaelg" data-act="vaelg">vælg</div>
+          <div class="balance{% if balance <= block_below_ore %} spaerret-balance{% elif balance < 0 %} negativ{% endif %}">{{ balance|kr }}</div>
+          {% if blocked %}
+            <div class="spaerret">Spærret &ndash; indbetal først</div>
+          {% else %}
+            <div class="fordel" data-act="fordel">fordel på</div>
+            <div class="vaelg" data-act="vaelg">vælg</div>
+          {% endif %}
         </li>
       {% endfor %}
     </ul>
@@ -95,6 +93,16 @@
       <h1>Forkert nummer</h1>
       <p>Det indtastede alumne-ID findes ikke. Prøv igen, eller vælg fra listen.</p>
       <div class="buttoncheckout" id="okwrongnumber">OK</div>
+    </div>
+    {% comment %}
+      A blocked shopper used to land in "Forkert nummer", which sent people off checking their
+      alumne-ID when the real problem was their balance.
+    {% endcomment %}
+    <div class="box" id="blocked">
+      <h1>Kontoen er spærret</h1>
+      <p>Du skylder mere end {{ block_limit_kr }} kr, så der kan ikke handles på kontoen.
+         Indbetal til ølkælderkontoen, så åbner den igen.</p>
+      <div class="buttoncheckout" id="okblocked">OK</div>
     </div>
   </div>
 
@@ -246,23 +254,6 @@
   });
   $("confirm-split").addEventListener("click", function () { if (chosen.length > 0) { goConfirm(); } });
 
-  // keypad: 3 digits -> match a shopper by resident id
-  var alumneNumber = "";
-  $("checkout-nos").addEventListener("click", function (e) {
-    var key = e.target.getAttribute("data-key"); if (key === null || key === "") { return; }
-    if (key === "del") { alumneNumber = alumneNumber.slice(0, -1); }
-    else if (alumneNumber.length < 3) { alumneNumber += key; }
-    $("shopper-id").firstChild ? ($("shopper-id").firstChild.data = alumneNumber) : ($("shopper-id").textContent = alumneNumber);
-    if (alumneNumber.length === 3) {
-      if (basket.length === 0) { alumneNumber = ""; $("shopper-id").textContent = ""; return; }
-      var li = document.querySelector('#alumneliste-checkout li[data-rid="' + alumneNumber + '"]');
-      alumneNumber = ""; $("shopper-id").textContent = "";
-      if (li && !li.classList.contains("inaktiv")) {
-        chosen = [{ pk: li.getAttribute("data-id"), name: li.getAttribute("data-name") }]; goConfirm();
-      } else { show($("checkout")); showBox("wrongnumber"); }
-    }
-  });
-
   // ---- confirmation + countdown ----
   function showBox(id) {
     var boxes = document.querySelectorAll("#checkout .box");
@@ -287,6 +278,7 @@
     stopCountdown(); hide($("checkout")); chosen = []; renderSplit();
   });
   $("okwrongnumber").addEventListener("click", function () { hide($("checkout")); });
+  $("okblocked").addEventListener("click", function () { hide($("checkout")); });
 
   function submitPurchase() {
     stopCountdown();

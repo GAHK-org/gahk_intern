@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}{% if event %}Redigér begivenhed{% else %}Ny begivenhed{% endif %} - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <p class="event-crumb">
+    <a href="{% if event %}{% url 'events:detail' event.pk %}{% else %}{% url 'events:index' %}{% endif %}">&larr; Tilbage</a>
+  </p>
+
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Kollegiet</p>
+      <h1>{% if event %}Redigér begivenhed{% else %}Ny begivenhed{% endif %}</h1>
+    </div>
+  </div>
+
+  {% comment %}
+    enctype is load-bearing: without it the browser posts the filename as text and the image is
+    silently lost, which no server-side test would otherwise notice.
+  {% endcomment %}
+  <form method="post" enctype="multipart/form-data" class="event-form card-flat card-pad">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+
+    {% for field in form %}
+      {% if field.name == "invitees" %}
+        {% comment %}
+          The guest list, folded away until it is relevant: a <details> whose open state follows the
+          radio above it, rather than Alpine or a listener. Sixty names is too many to have sitting
+          open on a phone for the common case, which is an open event.
+
+          A filtered checkbox list rather than <select multiple>, which on a phone is a scroll box
+          you cannot search and on a desktop needs ctrl-click nobody discovers.
+        {% endcomment %}
+        <details class="invite-picker" id="js-invitees"
+                 {% if form.instance.visibility == "kun_inviterede" or field.errors %}open{% endif %}>
+          <summary>
+            <span>{{ field.label }}</span>
+            <span class="muted invite-count" data-invite-count>{{ field.initial|length|default:0 }} valgt</span>
+          </summary>
+          <div class="invite-body">
+            <label class="sr-only" for="js-invite-search">Søg beboer</label>
+            <input type="search" id="js-invite-search" class="invite-search"
+                   placeholder="Søg beboer…" autocomplete="off">
+            <div class="invite-list">{{ field }}</div>
+            <p class="muted event-help">Vælg mindst 4 beboere ud over dig selv.</p>
+            {{ field.errors }}
+          </div>
+        </details>
+      {% else %}
+        <div class="event-field">
+          {% comment %}
+            Written out rather than `{{ field.label_tag }}`, which appends Django's default ":".
+            Every other form in this project renders its own label (opslagstavle/form.html), and one
+            page with "Titel:" among a dozen with "Titel" reads as a mistake.
+          {% endcomment %}
+          <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+          {{ field }}
+          {% if field.help_text %}<p class="muted event-help">{{ field.help_text }}</p>{% endif %}
+          {{ field.errors }}
+        </div>
+      {% endif %}
+    {% endfor %}
+
+    <div class="event-form-actions">
+      <button type="submit" class="btn">{% if event %}Gem{% else %}Opret{% endif %}</button>
+      <a class="btn btn-secondary"
+         href="{% if event %}{% url 'events:detail' event.pk %}{% else %}{% url 'events:index' %}{% endif %}">Annullér</a>
+    </div>
+  </form>
+{% endblock %}

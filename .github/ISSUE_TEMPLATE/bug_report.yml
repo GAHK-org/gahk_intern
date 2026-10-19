@@ -11,7 +11,7 @@ body:
     attributes:
       label: What happened?
       description: Describe the bug and what you expected instead.
-      placeholder: When I open /nyintern/ the calendar is blank, but it should show events.
+      placeholder: When I open /intern/ the calendar is blank, but it should show events.
     validations:
       required: true
 
@@ -21,7 +21,7 @@ body:
       label: Steps to reproduce
       placeholder: |
         1. Log in as a resident
-        2. Go to /nyintern/
+        2. Go to /intern/
         3. See ...
     validations:
       required: true
@@ -34,6 +34,7 @@ body:
       options:
         - "residents (alumneliste / dashboard)"
         - "admissions (optagelse)"
+        - "den_hurtige (chat / posts)"
         - "ak"
         - "oelkaelder"
         - "rooms (vaerelsestjek / soegvaerelse)"

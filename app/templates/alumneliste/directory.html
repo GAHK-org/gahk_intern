@@ -4,6 +4,12 @@
 {% block content %}
   <h1>Alumnelisten: {{ period_label }}</h1>
 
+  {% if clash_rooms and "indstilling" in effective_roles %}
+    <p class="card border-red-400">⚠ Værelseskonflikt: to beboere deler samme værelse
+      ({% for n in clash_rooms %}{{ n|stringformat:"03d" }}{% if not forloop.last %}, {% endif %}{% endfor %}).
+      Ret det under <a href="{% url 'next_month_list' %}">Rediger næste måned</a>.</p>
+  {% endif %}
+
   <div class="flex flex-wrap items-center gap-2 mb-3">
     <form method="get" class="flex items-center gap-2">
       <label for="period" class="font-semibold">Måned:</label>
@@ -22,20 +28,17 @@
     {% endif %}
   </div>
 
-  <input type="search" name="q" placeholder="Søg navn, studie, e-mail…"
-         hx-get="{% url 'directory_rows' %}" hx-vals='{"period": "{{ period_value }}"}'
-         hx-target="#dir-rows" hx-trigger="keyup changed delay:250ms, search"
+  {% comment %}
+    Search stays outside #dir-table so typing isn't interrupted by the swap; it includes the current
+    sort/dir (hidden inputs inside the table) and period so filtering preserves the chosen sort.
+  {% endcomment %}
+  <input type="search" name="q" value="{{ q }}" placeholder="Søg navn, studie, e-mail…"
+         hx-get="{% url 'directory_rows' %}" hx-target="#dir-table" hx-swap="innerHTML"
+         hx-include="[name='period'],[name='sort'],[name='dir']"
+         hx-trigger="keyup changed delay:250ms, search"
          style="width:100%; padding:.5rem; margin-bottom:1rem">
 
-  <div class="overflow-x-auto">
-    <table cellpadding="6" class="text-sm" style="width:100%; border-collapse:collapse">
-      <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec; white-space:nowrap">
-        <th>Navn</th><th>Værelse</th><th>Embedsgruppe</th><th>Rengøring</th><th>Fylgje</th>
-        <th>Fødselsdag</th><th>Indflyttet</th><th>Studie</th><th>Telefon</th><th>Email</th>
-      </tr></thead>
-      <tbody id="dir-rows">
-        {% include "alumneliste/_rows.html" %}
-      </tbody>
-    </table>
+  <div id="dir-table" class="overflow-x-auto">
+    {% include "alumneliste/_directory_table.html" %}
   </div>
 {% endblock %}

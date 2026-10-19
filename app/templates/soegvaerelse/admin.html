@@ -1,8 +1,39 @@
 {% extends "base.html" %}
 {% load room_extras %}
-{% block title %}Værelsesfordeling — GAHK Intern{% endblock %}
+{% block title %}Værelsesfordeling - GAHK Intern{% endblock %}
 {% block content %}
   <h1>Værelsesfordeling (indstilling)</h1>
+
+  {% if round_summary %}
+    <div class="card border-emerald-400">
+      <h2>Seneste runde: ændringer</h2>
+      {% if round_summary.moves %}
+        <p class="font-semibold mt-2">Tildelte værelser</p>
+        <ul class="ml-4 list-disc">
+          {% for m in round_summary.moves %}
+            <li>{{ m.name }}: {% if m.from %}værelse {{ m.from|stringformat:"03d" }} → {% else %}<span class="muted">ny beboer → </span>{% endif %}<strong>{{ m.to|stringformat:"03d" }}</strong></li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+      {% if round_summary.left %}
+        <p class="font-semibold mt-3">Fraflyttere fjernet</p>
+        <ul class="ml-4 list-disc">
+          {% for x in round_summary.left %}
+            <li>{{ x.name }} <span class="muted">(fra værelse {{ x.from|stringformat:"03d" }})</span></li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+      {% if round_summary.unresolved %}
+        <p class="font-semibold mt-3">Stadig uafgjort (K-lige — afgør og afslut igen)</p>
+        <ul class="ml-4 list-disc">
+          {% for n in round_summary.unresolved %}<li>Værelse {{ n|stringformat:"03d" }}</li>{% endfor %}
+        </ul>
+      {% endif %}
+      {% if not round_summary.moves and not round_summary.left %}
+        <p class="muted">Ingen ændringer.</p>
+      {% endif %}
+    </div>
+  {% endif %}
 
   <div class="card max-w-xl">
     <h2>Opret tilbud</h2>
@@ -28,12 +59,13 @@
   <table class="w-full border-collapse">
     <thead><tr class="border-b border-gray-200"><th class="p-2">Værelse</th><th class="p-2">Måned</th><th class="p-2">Fører</th><th class="p-2"></th></tr></thead>
     <tbody>
-    {% for offer, leader in offer_rows %}
+    {% for offer, leader, contested in offer_rows %}
       <tr class="border-b border-gray-100">
         <td class="p-2">{{ offer.room.number|stringformat:"03d" }}</td>
         <td class="p-2">{{ offer.month|maaned }}</td>
         <td class="p-2">
-          {% if leader %}{{ leader.resident.full_name }} <span class="muted">(K={{ leader.k }})</span>
+          {% if contested %}<span title="K-lige, kræver manuel afgørelse">⚖️ Uafgjort ({{ contested|length }} ansøgere, K={{ contested.0.k }})</span>
+          {% elif leader %}{{ leader.resident.full_name }} <span class="muted">(K={{ leader.k }})</span>
           {% else %}<span class="muted">Ingen ansøgere</span>{% endif %}
         </td>
         <td class="p-2">

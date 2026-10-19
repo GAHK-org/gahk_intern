@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Tråd - {{ channel.name }} - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% comment %}
+  The standalone thread page. Two callers, both of which must work without any JavaScript:
+
+    * the "N svar" link's plain href, when htmx has not upgraded it (no JS, or a middle-click).
+    * a reply push notification, which deep-links here so tapping "Anders svarede" lands on the
+      conversation it is telling you about rather than the bottom of the channel.
+
+  Deliberately NOT the chat shell: no .chat-page body class, no 100dvh lock, no viewport lock. This
+  is a document you arrived at by following a link, and it scrolls like one. The panel version of
+  the same content is _thread.html.
+{% endcomment %}
+{% block content %}
+  <p class="thread-crumb">
+    <a href="{{ channel.url }}">&larr; Tilbage til {{ channel.name }}</a>
+  </p>
+
+  <div class="thread-page card-flat{% if archived or deleted %} thread-archived{% endif %}">
+    {% include "den_hurtige/_message.html" with post=post bare=1 archived=archived %}
+    {% include "den_hurtige/_replies.html" with post=post %}
+
+    {% comment %}
+      No reply form once the message is archived — the same rule the panel enforces
+      (_thread.html), applied to the no-JS path it would otherwise leave open. views.create_comment
+      refuses the post regardless; omitting the form is what stops somebody typing into it first.
+
+      A deleted message closes it the same way, checked first so a tombstone that has since archived
+      explains why it is really shut. Reached often enough to matter: a reply notification goes out,
+      the author thinks better of the message, and the link is opened the next morning.
+    {% endcomment %}
+    {% if deleted %}
+      <p class="thread-empty muted">Beskeden er slettet. Der kan ikke længere svares på den.</p>
+    {% elif archived %}
+      <p class="thread-empty muted">Beskeden er arkiveret. Der kan ikke længere svares på den.</p>
+    {% else %}
+    <form class="reply-form" method="post" enctype="multipart/form-data"
+          action="{% url 'den_hurtige:create_comment' post.pk %}">
+      {% csrf_token %}
+      <label class="reply-attach" for="id_reply_image_{{ post.pk }}" title="Vedhæft billede">
+        <span aria-hidden="true">📎</span>
+        <span class="sr-only">Vedhæft billede til svar</span>
+        <input type="file" id="id_reply_image_{{ post.pk }}" name="image" accept="image/*,.heic,.heif">
+      </label>
+      {% comment %}
+        Feedback that the photo attached, and the only way to take it back off. A hidden file input
+        behind a paperclip shows nothing at all by itself, and a comment may be a photo ON ITS OWN -
+        so without this there is no evidence on screen that there is anything to send.
+
+        Empty and `hidden` in the markup: frontend/src/feed.ts fills in the thumbnail, the filename and
+        the size on `change`, and hides it again on clear or reset. It degrades to nothing without JS,
+        which is correct - the form still submits, and the server still validates the file.
+
+        Attributes rather than ids: opslagstavlen renders one of these per page, but the thread panel
+        renders one per thread, and the handler is shared with both.
+      {% endcomment %}
+      <div class="file-note" data-file-note hidden>
+        <img data-file-note-thumb alt="" hidden>
+        <span data-file-note-name></span>
+        <button type="button" data-file-note-clear>Fjern</button>
+      </div>
+      <label class="sr-only" for="id_comment_{{ post.pk }}">Svar</label>
+      <input type="text" id="id_comment_{{ post.pk }}" name="content" required
+             maxlength="{{ max_content_chars }}" placeholder="Svar…" enterkeyhint="send">
+      <button type="submit" class="btn btn-secondary">Send</button>
+      <label class="reply-notify">
+        <input type="checkbox" name="notify" value="alle"> Underret alle
+      </label>
+    </form>
+    {% endif %}
+  </div>
+{% endblock %}

@@ -3,7 +3,7 @@
 <html lang="da">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
+  {% include "_csp_upgrade.html" %}
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <title>{% block title %}Ølkælder - digital stregliste{% endblock %}</title>
@@ -76,11 +76,17 @@
     #alumneliste-checkout li { line-height: 40px; clear: both; overflow: hidden; padding: 6px 4px; border-bottom: 1px solid #eee; }
     #alumneliste-checkout .alumnumName { float: left; width: 46%; font-size: 1.25em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     #alumneliste-checkout .balance { float: left; width: 18%; color: #888; }
+    #alumneliste-checkout .balance.negativ { color: #b8860b; font-weight: 700; }
+    #alumneliste-checkout .balance.spaerret-balance { color: #a93333; font-weight: 700; }
     #alumneliste-checkout .vaelg { padding: 4px 14px; background: #33a936; color: #fff; float: right; margin-left: 6px; cursor: pointer; border-radius: 3px; }
     #alumneliste-checkout .fordel { padding: 4px 14px; background: #337ea9; color: #fff; float: right; margin-left: 6px; cursor: pointer; border-radius: 3px; }
     #alumneliste-checkout li.picked { background: #eef6fb; }
     #alumneliste-checkout li.inaktiv { color: #ccc; }
     #alumneliste-checkout li.inaktiv .vaelg, #alumneliste-checkout li.inaktiv .fordel { background: #ddd; }
+    /* Over the credit limit. The row was already greyed out, but nothing said why — a grey row with
+       grey buttons that ignore taps reads as a broken till, not as "you owe too much". */
+    #alumneliste-checkout .spaerret { float: right; padding: 4px 14px; margin-left: 6px; border-radius: 3px;
+      background: #f5e6e6; color: #a93333; font-size: .9em; }
 
     /* ---- confirmation modal ---- */
     #checkout { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,.9); z-index: 80; }

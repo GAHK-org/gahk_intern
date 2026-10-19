@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Begivenheder - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% comment %}
+  Upcoming only. There is no past to show: an event is deleted a week after it is held (see the
+  retention note in events/models.py), so there is deliberately no archive tab, no year filter and
+  no history pagination to build. The pager below is for a house with an unusually busy month, not
+  for scrolling backwards.
+{% endcomment %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Kollegiet</p>
+      <h1>Begivenheder {% if limited_rollout %}<span class="chip chip-brass">Under test</span>{% endif %}</h1>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-secondary" href="{% url 'events:calendar' %}">Kalender</a>
+      <a class="btn" href="{% url 'events:create' %}">Ny begivenhed</a>
+    </div>
+  </div>
+
+  <div class="event-list">
+    {% for event in page_obj %}
+      <article class="event-card card-flat{% if event.cancelled_at %} is-cancelled{% endif %}">
+          <a class="event-link" href="{% url 'events:detail' event.pk %}">
+            <div class="event-date" aria-hidden="true">
+              <span class="event-day">{{ event.starts_at|date:"j" }}</span>
+              <span class="event-month">{{ event.starts_at|date:"M" }}</span>
+            </div>
+            <div class="event-body">
+              <div class="event-title">
+                {{ event.title }}
+                {% if event.cancelled_at %}<span class="chip chip-neg">Aflyst</span>{% endif %}
+                {% if event.visibility == "kun_inviterede" %}
+                  <span class="chip chip-quiet">Kun inviterede</span>
+                {% endif %}
+              </div>
+              <div class="event-meta">
+                {{ event.starts_at|date:"H.i" }}{% if event.location %} · {{ event.location }}{% endif %}
+              </div>
+              <div class="event-foot">
+                {% if event.my_state == "kommer" %}
+                  <span class="chip">Du kommer</span>
+                {% elif event.my_state == "venteliste" %}
+                  <span class="chip chip-brass">På venteliste</span>
+                {% elif event.my_state == "nej" %}
+                  <span class="chip chip-neg">Du kan ikke</span>
+                {% else %}
+                  <span class="chip chip-quiet">Du har ikke svaret</span>
+                {% endif %}
+                <span class="muted event-count">{{ event.seated_count }} kommer</span>
+              </div>
+            </div>
+          </a>
+        </article>
+    {% empty %}
+      <div class="event-empty card-flat card-pad">
+        <p><strong>Der er ikke noget på programmet.</strong></p>
+        <p class="muted">
+          Lav den første — en fællesspisning, en filmaften, en tur. Begivenheder forsvinder af sig
+          selv en uge efter de er holdt, så du behøver ikke rydde op efter dig.
+        </p>
+      </div>
+    {% endfor %}
+  </div>
+
+  {% if page_obj.has_other_pages %}
+    <nav class="pager" aria-label="Sider">
+      {% if page_obj.has_previous %}
+        <a class="btn btn-secondary" href="?page={{ page_obj.previous_page_number }}">Forrige</a>
+      {% endif %}
+      <span class="muted">Side {{ page_obj.number }} af {{ page_obj.paginator.num_pages }}</span>
+      {% if page_obj.has_next %}
+        <a class="btn btn-secondary" href="?page={{ page_obj.next_page_number }}">Næste</a>
+      {% endif %}
+    </nav>
+  {% endif %}
+{% endblock %}

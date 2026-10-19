@@ -1,5 +1,5 @@
 # --- Stage 1: build the Tailwind/TS bundle (needs app/templates for Tailwind's @source scan) ---
-FROM node:24-slim AS frontend
+FROM node:26-slim AS frontend
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json* ./frontend/
 RUN cd frontend && npm install
@@ -20,7 +20,9 @@ ENV PATH="/app/.venv/bin:$PATH"
 COPY app/ /app/
 COPY --from=frontend /build/app/static/dist /app/static/dist
 # Hash/compress static at build time (WhiteNoise ManifestStaticFilesStorage). No DB needed for this.
-RUN DJANGO_DEBUG=0 DJANGO_SECRET_KEY=build python manage.py collectstatic --noinput
+RUN DJANGO_DEBUG=0 DJANGO_SECRET_KEY=build DATABASE_URL=sqlite:///:memory: python manage.py collectstatic --noinput
 EXPOSE 8000
 # migrate is run as a release/deploy step (see DEPLOY.md), not here.
-CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--timeout", "60"]
+# One process; scaling means --workers or more of these (DEPLOY.md §4). No lifespan: Channels'
+# router has no handler for it, and uvicorn would log that on every start.
+CMD ["uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--lifespan", "off", "--timeout-keep-alive", "120"]

@@ -14,8 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: app } }
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
         with: { enable-cache: true }
       - run: uv run ruff check .
       - run: uv run ruff format --check .
@@ -26,10 +26,26 @@ jobs:
     # Runs from the repo root (not app/): the [tool.mypy] config lives in pyproject.toml and the
     # django-stubs plugin only imports config.settings (which has safe defaults) — no DB needed.
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
         with: { enable-cache: true }
       - run: uv run mypy app
+
+  migrations:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: app } }
+    # Catches a model change whose migration was never generated. Cheap, and the only guard on
+    # hand-written migrations (SeparateDatabaseAndState, AlterModelTable): a state-only migration
+    # looks perfect against pytest's --reuse-db cache, so nothing else would notice a mismatch.
+    # No DB needed — makemigrations only compares the models to the migration graph.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with: { enable-cache: true }
+      - run: uv run python manage.py makemigrations --check --dry-run
+        env:
+          DJANGO_SECRET_KEY: ci-secret
+          VISIT_COUNTER_HMAC_KEY: ci
 
   test:
     runs-on: ubuntu-latest
@@ -48,22 +64,90 @@ jobs:
       DJANGO_SECRET_KEY: ci-secret
       VISIT_COUNTER_HMAC_KEY: ci
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
         with: { enable-cache: true }
       - run: uv run python -m pytest -q
 
   security:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
       # Audit the locked prod dependencies (exported from uv.lock, no requirements file committed).
       - run: uv export --frozen --no-dev --no-emit-project --format requirements-txt -o /tmp/req.txt
       - run: uvx pip-audit -r /tmp/req.txt
 
+  # Builds the production image on every run. On a push to main it is also pushed to GHCR as
+  # :sha-<commit>, but not yet as :main — the tag production deploys (DEPLOY.md §4a); see `publish`.
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/gahk-org/gahk_intern
+      PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     steps:
-      - uses: actions/checkout@v4
-      - run: docker build -t gahk:ci .       # verifies the multi-stage image builds (no push)
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
+      - if: env.PUSH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ env.PUSH == 'true' }}
+          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}
+          # `source` links the package to this repo on GitHub; `revision` says which commit a
+          # running container came from (`docker inspect`).
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Moves :main to this commit's image once the checks have passed — the server picks it up from
+  # there (DEPLOY.md §4a). A retag, not a rebuild, so production runs the bytes `build` produced.
+  # `security` is left out on purpose: a new advisory against a dependency should not freeze
+  # deploys, least of all the one that bumps it.
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [lint, typecheck, migrations, test, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: publish-image
+      cancel-in-progress: false
+    env:
+      IMAGE: ghcr.io/gahk-org/gahk_intern
+    steps:
+      # Two merges in quick succession race, and the older run can finish last. Only the current
+      # tip of main may become :main, or the server would roll back to the older commit.
+      - name: Is this still the tip of main?
+        id: tip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tip=$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)
+          if [ "$tip" = "$GITHUB_SHA" ]; then
+            echo "result=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=false" >> "$GITHUB_OUTPUT"
+            echo "main has moved on to \`${tip}\` — leaving \`:main\` to that run." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - if: steps.tip.outputs.result == 'true'
+        uses: docker/setup-buildx-action@v3
+      - if: steps.tip.outputs.result == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - if: steps.tip.outputs.result == 'true'
+        run: docker buildx imagetools create -t "${IMAGE}:main" "${IMAGE}:sha-${GITHUB_SHA}"

@@ -1,5 +1,6 @@
 """Indstilling can edit a resident's core data (name, e-mail, phone, dates, studie, fylgje)."""
 
+import datetime
 from collections.abc import Callable
 
 import pytest
@@ -75,3 +76,21 @@ def test_edit_link_shown_only_to_indstilling(make_resident: Callable) -> None:
     cp = Client()
     cp.force_login(plain)
     assert reverse("edit_resident", args=[resident.id]) not in cp.get(reverse("directory")).content.decode()
+
+
+@pytest.mark.django_db
+def test_edit_form_prefills_dates_in_iso(make_resident: Callable) -> None:
+    """A `type=date` input only pre-fills a value shaped "YYYY-MM-DD"; under LANGUAGE_CODE="da"
+    Django would render "01.01.2000", the browser would drop it, and saving would wipe the date."""
+    r = make_resident(
+        email="x@gahk.dk",
+        birthday=datetime.date(2000, 1, 1),
+        move_in_date=datetime.date(2021, 8, 1),
+    )
+    ind = make_resident(email="ind@gahk.dk", roles=("indstilling",))
+    c = Client()
+    c.force_login(ind)
+
+    html = c.get(reverse("edit_resident", args=[r.id])).content.decode()
+    assert 'value="2000-01-01"' in html
+    assert 'value="2021-08-01"' in html

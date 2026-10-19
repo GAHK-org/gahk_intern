@@ -1,9 +1,48 @@
 {% extends "base.html" %}
 {% load ui_extras %}
-{% block title %}AK-oversigt — GAHK Intern{% endblock %}
+{% block title %}AK-oversigt - GAHK Intern{% endblock %}
+{% block content_width %}max-w-5xl{% endblock %}
 {% block content %}
   <h1>AK-oversigt</h1>
-  <p class="muted">Aktiv periode {{ period }} · sorteret efter laveste saldo</p>
+  <p class="muted mb-4">Aktiv periode {{ period }}</p>
+
+  {% comment %}
+    Månedlig afskrivning: AK vælger for hver kalendermåned (januar-december) hvor mange krydser der
+    trækkes, og om måneden overhovedet trækkes. Beløbet er det samme år efter år. Der trækkes kun fra
+    beboere på alumnelisten den pågældende måned. En måned trækkes først, når den er omme: natten til
+    d. 1. i næste måned, fra månedens endelige alumneliste. "Gem" bogfører intet — allerede trukne
+    måneder røres ikke.
+  {% endcomment %}
+  <section class="card mb-6">
+    <h2 class="mt-0">Månedlig afskrivning</h2>
+    <p class="muted text-sm mb-4">
+      Vælg for hver måned hvor mange krydser der trækkes. Beløbet gælder hvert år. Der trækkes kun fra
+      beboere, der står på alumnelisten den måned. Måneden trækkes natten til d. 1. i næste måned, fra
+      den endelige alumneliste.
+    </p>
+    <form method="post" action="{% url 'ak:save_months' %}">
+      {% csrf_token %}
+      <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {% for c in schedule %}
+          <div class="rounded-lg border p-3 {% if c.is_active_month %}border-emerald-400 bg-emerald-50{% else %}border-gray-200{% endif %}">
+            <label class="flex items-center gap-2 font-semibold">
+              <input type="checkbox" name="active_{{ c.month }}" value="1" {% if c.active %}checked{% endif %}>
+              {{ c.label }}{% if c.is_active_month %} <span class="muted text-xs font-normal">· aktiv nu</span>{% endif %}
+            </label>
+            <div class="flex items-center gap-2 mt-2">
+              <input type="number" name="krydser_{{ c.month }}" value="{{ c.krydser }}" min="1"
+                     class="w-20 rounded-md border border-gray-300 px-2 py-1 text-sm">
+              <span class="text-sm text-gray-600">krydser</span>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+      <p class="mt-4"><button type="submit" class="btn">Gem</button></p>
+    </form>
+  </section>
+
+  <h2>Saldo · aktiv periode</h2>
+  <p class="muted text-sm mb-2">Sorteret efter laveste saldo.</p>
   <table cellpadding="6" style="width:100%; border-collapse:collapse">
     <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec"><th>Beboer</th><th>Saldo</th></tr></thead>
     <tbody>

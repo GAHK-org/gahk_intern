@@ -35,6 +35,13 @@ class _BaseApplicationForm(forms.ModelForm):
 
 
 class RundvisningForm(_BaseApplicationForm):
+    motivation = forms.CharField(
+        label="Motivation",
+        max_length=500,
+        required=False,
+        widget=forms.Textarea(attrs={"rows": 5}),
+    )
+
     class Meta:
         model = Application
         fields = [
@@ -57,9 +64,7 @@ class RundvisningForm(_BaseApplicationForm):
             "year_left": "Studieår tilbage",
             "university": "Universitet",
             "field_of_study": "Studieretning",
-            "motivation": "Motivation",
         }
-        widgets = {"motivation": forms.Textarea(attrs={"rows": 5})}
 
 
 class FremlejeForm(_BaseApplicationForm):

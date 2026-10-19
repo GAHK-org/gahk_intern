@@ -30,3 +30,12 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+
+      - id: generate-erd
+        name: Generate Mermaid ERD (docs/erd.md)
+        entry: uv run python scripts/generate_erd.py
+        language: system
+        pass_filenames: false
+        # Runs whenever a models.py changes; exit 1 means the diagram was updated —
+        # stage docs/erd.md and recommit (same flow as ruff --fix).
+        files: models\.py$

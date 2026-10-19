@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Opslagstavlen - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% comment %}
+  Deliberately NO `no-zoom chat-page` body class and NO hx-trigger="every 20s". Both belong to Den
+  Hurtige, where messages die in 30 minutes and the page is used one-handed on a phone. A long post
+  with a table needs pinch-zoom, and polling a paginated multi-year archive would fight the pager,
+  throw away the reader's place, and re-render every post's Markdown every 20 seconds per open tab.
+  There are tests asserting the absence of both.
+{% endcomment %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Kollegiet</p>
+      <h1>Opslagstavlen {% if limited_rollout %}<span class="chip chip-brass">Under test</span>{% endif %}</h1>
+    </div>
+    <div class="head-actions">
+      <a class="btn" href="{% url 'opslagstavle:create' %}">Nyt opslag</a>
+    </div>
+  </div>
+
+  {% comment %}
+    Category filter as plain links, not htmx: the result is bookmarkable and shareable ("se
+    resultatet af værelsesrunden"), back/forward works, and it composes with the pager for free via
+    {% querystring %}. An htmx swap would buy nothing on a 15-item list and cost all of that.
+  {% endcomment %}
+  <nav class="board-filters" aria-label="Filtrér efter kategori">
+    <a class="chip{% if not selected_category %} is-active{% endif %}"
+       href="{% querystring kategori=None page=None %}">Alle</a>
+    {% for value, label in categories %}
+      <a class="chip{% if selected_category == value %} is-active{% endif %}"
+         href="{% querystring kategori=value page=None %}">{{ label }}</a>
+    {% endfor %}
+  </nav>
+
+  {% comment %}
+    Pinned posts sit above the pager on EVERY page, from their own queryset. Folding them into the
+    paginated one would show them on page 1 only — which makes pinning pointless once the board is a
+    few pages deep — and would depend on NULLS ordering, which differs between Postgres and SQLite.
+  {% endcomment %}
+  {% if pinned %}
+    <div class="board-list board-pinned">
+      {% for notice in pinned %}
+        {% include "opslagstavle/_notice_card.html" %}
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <div class="board-list">
+    {% for notice in page_obj %}
+      {% include "opslagstavle/_notice_card.html" %}
+    {% empty %}
+      {% if not pinned %}
+        <div class="card-flat card-pad">
+          <p><strong>Der er ingen opslag her endnu.</strong></p>
+          <p class="muted">
+            Tavlen er til det der skal kunne findes igen — vigtige begivenheder, resultatet af
+            værelsesrunden, fødselsdage. Skal noget kun gælde det næste døgn, hører det hjemme på
+            <a href="/intern/den-hurtige/">Den Hurtige</a>. Opslag slettes automatisk efter ca. 2 år.
+          </p>
+        </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+
+  {% if page_obj.paginator.num_pages > 1 %}
+    <p class="muted mt-4 flex items-center gap-3 board-pager">
+      {% if page_obj.has_previous %}<a href="{% querystring page=page_obj.previous_page_number %}">‹ forrige</a>{% endif %}
+      <span>Side {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
+      {% if page_obj.has_next %}<a href="{% querystring page=page_obj.next_page_number %}">næste ›</a>{% endif %}
+    </p>
+  {% endif %}
+{% endblock %}

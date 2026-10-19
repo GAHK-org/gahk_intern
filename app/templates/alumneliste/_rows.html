@@ -1,6 +1,17 @@
+{% load ui_extras %}
 {% for r in rows %}
-  <tr style="border-bottom:1px solid #f0f1f4">
-    <td class="whitespace-nowrap">{{ r.resident.full_name }}{% if "indstilling" in effective_roles %}
+  <tr>
+    <td class="whitespace-nowrap">
+      <a href="{% url 'resident_profile' r.resident_id %}" class="no-underline" style="display:inline-flex;align-items:center;gap:.5rem">
+        {% if r.resident.profile_picture %}
+          <img src="{{ r.resident.avatar_url }}" alt="{{ r.resident.full_name }}"
+               style="width:28px;height:28px;border-radius:50%;object-fit:cover;flex-shrink:0">
+        {% else %}
+          <span class="avatar" style="width:28px;height:28px;font-size:.7rem;flex-shrink:0">{{ r.resident.first_name|slice:":1" }}{{ r.resident.last_name|slice:":1" }}</span>
+        {% endif %}
+        {{ r.resident.full_name }}
+        {% for emoji, label in badges|dict_get:r.resident_id %}<span title="{{ label }}">{{ emoji }}</span>{% endfor %}
+      </a>{% if "indstilling" in effective_roles %}
       <a href="{% url 'edit_resident' r.resident_id %}?next={{ request.get_full_path|urlencode }}" title="Rediger beboer" class="no-underline">✎</a>{% endif %}</td>
     <td>{{ r.room.number|stringformat:"03d" }}</td>
     <td>{{ r.workgroup.name|default:"" }}</td>

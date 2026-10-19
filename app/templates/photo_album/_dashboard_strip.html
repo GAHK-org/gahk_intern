@@ -1,0 +1,29 @@
+{% comment %}Each picture opens its album with the viewer already on it (?media=, see photo-album.ts).{% endcomment %}
+{% if featured or on_this_day %}
+  <div class="card-flat album-strip">
+    <div class="card-head"><h2>Dagens billeder</h2><a href="{% url 'photo_album:index' %}">Fotoalbum →</a></div>
+    <div class="card-pad">
+      {% if featured %}
+        <div class="album-strip-featured">
+          {% for item in featured %}
+            <a class="album-strip-item" href="{% url 'photo_album:detail' item.album_id %}?media={{ item.pk }}">
+              <img src="{{ item.thumbnail.url }}" alt="{{ item.title }}" loading="lazy">
+              <span>{{ item.album.name }}</span>
+            </a>
+          {% endfor %}
+        </div>
+      {% endif %}
+      {% if on_this_day %}
+        <h3 class="album-strip-subtitle">På denne dag</h3>
+        <div class="album-strip-earlier">
+          {% for item in on_this_day %}
+            <a class="album-strip-item" href="{% url 'photo_album:detail' item.album_id %}?media={{ item.pk }}">
+              <img src="{{ item.thumbnail.url }}" alt="{{ item.title }}" loading="lazy">
+              <span>{{ item.captured_at|date:"Y" }} · {{ item.album.name }}</span>
+            </a>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+  </div>
+{% endif %}
