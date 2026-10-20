@@ -35,14 +35,15 @@
       </div>
     {% endif %}
     <div>
-      <dt>Om {{ forecast.outlook_days }} dage</dt>
+      <dt>Om {{ forecast.outlook_days }} dage <span class="duty-th-note">bundet</span></dt>
       <dd><strong>{{ forecast.soon }}</strong> {% include "kitchen/_zone_chip.html" with zone=forecast.soon_zone %}</dd>
     </div>
     <div>
-      <dt>{{ forecast.end|date:"j. F" }}</dt>
-      <dd><strong>{{ forecast.end_balance }}</strong> {% include "kitchen/_zone_chip.html" with zone=forecast.end_zone %}</dd>
+      <dt>{{ forecast.end|date:"j. F" }} <span class="duty-th-note">foreløbigt</span></dt>
+      <dd><strong>{{ forecast.end_balance }}</strong> {% include "kitchen/_zone_chip.html" with zone=forecast.end_zone tentative=True %}</dd>
     </div>
   </dl>
+  <p class="muted forecast-firm-note">De næste {{ forecast.outlook_days }} dage kan en vagt ikke afmeldes, kun sælges, så dén del af prognosen er bundet. Vagter længere ude kan afmeldes frit; den del er stiplet.</p>
 
   <ul class="forecast-legend" aria-label="Zoner">
     <li><span class="forecast-swatch is-good"></span>3 point eller flere</li>

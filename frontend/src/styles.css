@@ -2685,4 +2685,34 @@
   .duty-verdict.is-fine { background:var(--green-050); border-color:var(--green-100); color:var(--pos); }
   .duty-verdict.is-neg { background:var(--neg-bg); border-color:#e7c7c3; color:var(--neg); }
   .duty-verdict.is-alarm { background:var(--zone-alarm); color:#fff; }
+
+  /* Firm vs tentative. The 30 days ahead count only shifts that can no longer be unenrolled from;
+     the end of the calendar also counts ones that can, so everything about it is drawn outlined
+     and dashed instead of filled: same zone colours, less certainty. */
+  .duty-th-note { display:block; font-size:11px; font-weight:500; color:var(--muted); letter-spacing:.02em; }
+  .forecast-stats .duty-th-note { display:inline; margin-left:4px; }
+  .duty-firm-note { margin:8px 2px 0; font-size:13px; }
+  .forecast-firm-note { margin:-6px 0 14px; font-size:13px; }
+  .duty-dist-label small { display:block; font-size:11px; font-weight:500; }
+
+  .duty-tile.is-tentative { border-style:dashed; box-shadow:none; }
+  .duty-tile.is-tentative.is-neg { background:var(--surface); border-color:var(--neg); }
+  .duty-tile.is-tentative.is-alarm { background:var(--surface); border-color:var(--zone-alarm); color:var(--ink); }
+  .duty-tile.is-tentative.is-alarm strong { color:var(--zone-alarm); }
+  .duty-tile.is-tentative.is-alarm .duty-tile-label, .duty-tile.is-tentative.is-alarm .duty-tile-note { color:var(--muted); }
+
+  .duty-dist.is-tentative .duty-dist-seg { box-shadow:none; border:1px dashed; background:transparent; }
+  .duty-dist.is-tentative .duty-dist-seg.is-good { border-color:var(--zone-good); }
+  .duty-dist.is-tentative .duty-dist-seg.is-warn { border-color:var(--zone-warn); }
+  .duty-dist.is-tentative .duty-dist-seg.is-neg { border-color:var(--zone-neg); }
+  .duty-dist.is-tentative .duty-dist-seg.is-alarm { border-color:var(--zone-alarm); background:var(--zone-neg-fill); color:var(--zone-alarm); }
+
+  .duty-verdict.is-tentative { background:transparent; border-style:dashed; }
+  .duty-verdict.is-tentative.is-fine { border-color:var(--pos); }
+  .duty-verdict.is-tentative.is-neg { border-color:var(--neg); }
+  .duty-verdict.is-tentative.is-alarm { border-color:var(--zone-alarm); color:var(--zone-alarm); }
+  .chip.is-tentative { background:transparent; border-style:dashed; }
+  .chip-alarm.is-tentative { color:var(--zone-alarm, #8E1B1B); }
+  .zone-alarm.is-tentative { background:transparent; color:var(--zone-alarm); border:1px dashed var(--zone-alarm); }
+  .spark-line.is-tentative { stroke-dasharray:3 2.5; }
 }

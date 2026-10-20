@@ -506,29 +506,46 @@ def test_account_page_draws_the_forecast_and_raises_the_alarm_under_minus_six(
     assert "forecast-alarm" in page and "Du rammer -10 point" in page
 
 
-def test_overview_lists_low_balances_with_whether_the_forecast_is_fine(make_resident: Callable) -> None:
+def test_overview_judges_low_balances_at_30_days_and_at_the_end_of_the_calendar(
+    make_resident: Callable,
+) -> None:
     officer = make_resident(email="k@gahk.dk", roles=(Role.KOKKENGRUPPE,))
-    catching_up = make_resident(email="c@gahk.dk", first_name="Ida")
+    soon_only = make_resident(email="c@gahk.dk", first_name="Ida")
+    later_only = make_resident(email="m@gahk.dk", first_name="Mads")
     sinking = make_resident(email="s@gahk.dk", first_name="Bo")
     flush = make_resident(email="f@gahk.dk", first_name="Eva")
-    for r in (catching_up, sinking, flush):
+    for r in (soon_only, later_only, sinking, flush):
         _live_here(r)
-    services.post_entry(catching_up.pk, -2, "x", KitchenPointEntry.Kind.MANUAL)
+    # The page charges this month first, so these are -6, -6, -13 and 16 once it has loaded; three
+    # more monthly charges (-12) fall before the end of the calendar.
+    services.post_entry(soon_only.pk, -2, "x", KitchenPointEntry.Kind.MANUAL)
+    services.post_entry(later_only.pk, -2, "x", KitchenPointEntry.Kind.MANUAL)
     services.post_entry(sinking.pk, -9, "x", KitchenPointEntry.Kind.MANUAL)
     services.post_entry(flush.pk, 20, "x", KitchenPointEntry.Kind.MANUAL)
-    # The page charges this month first (-4 each); 16 points within the 30 days then cover that,
-    # the deficit and up to two more monthly charges.
+    # 16 points inside the binding 30 days: fine then (-6 + 16, less at most two charges), short at
+    # the end (-6 + 16 - 12).
     for days in (2, 3, 4, 5):
-        services.enroll(_shift(datetime.timedelta(days=days), points=4), catching_up)
+        services.enroll(_shift(datetime.timedelta(days=days), points=4), soon_only)
+    # 20 points, all after the 30 days: short then, fine at the end (-6 + 20 - 12).
+    for days in (40, 45, 50, 55, 60):
+        services.enroll(_shift(datetime.timedelta(days=days), points=4), later_only)
 
     client = Client()
     client.force_login(officer)
     response = client.get(reverse("kitchen:dashboard"))
     low = {row.resident.pk: row for row in response.context["low"]}
-    assert set(low) == {catching_up.pk, sinking.pk}
-    assert low[catching_up.pk].fine and not low[sinking.pk].fine
+    assert set(low) == {soon_only.pk, later_only.pk, sinking.pk}
+    assert (low[soon_only.pk].soon_fine, low[soon_only.pk].end_fine) == (True, False)
+    assert (low[later_only.pk].soon_fine, low[later_only.pk].end_fine) == (False, True)
+    assert (low[sinking.pk].soon_fine, low[sinking.pk].end_fine) == (False, False)
     assert low[sinking.pk].soon_zone == "alarm"
-    assert [row.resident for row in response.context["rows"]] == [sinking, catching_up, flush]
-    assert response.context["negative_now"] == 2 and response.context["alarm_now"] == 1
+    assert [row.resident for row in response.context["rows"]] == [sinking, later_only, soon_only, flush]
+    assert response.context["negative_now"] == 3 and response.context["alarm_now"] == 1
+    assert response.context["negative_end"] == 2
     page = response.content.decode()
-    assert "OK ifølge prognosen" in page and "Under -6 om 30 dage" in page
+    assert "duty-verdict is-fine is-tentative" in page and "duty-verdict is-alarm" in page
+
+    # Each resident's chart gets a point where the binding 30 days end, for the dashed part to start.
+    chart = client.get(reverse("kitchen:resident", args=[later_only.pk])).context["forecast"]["chart"]
+    outlook = next(p for p in chart["points"] if p.get("kind") == "outlook")
+    assert outlook["x"] == chart["outlookAt"] and outlook["y"] < 0

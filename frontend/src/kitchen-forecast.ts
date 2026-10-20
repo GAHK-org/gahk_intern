@@ -15,8 +15,10 @@ import {
 
 Chart.register(LineController, LineElement, PointElement, LinearScale, Tooltip);
 
-type Point = { x: number; y: number; items: [string, number][] };
-type Forecast = { points: Point[]; yellowMax: number; alarmBelow: number };
+// `kind` marks the points that are not a booking: today, where the binding 30 days end, and the end
+// of the calendar.
+type Point = { x: number; y: number; items: [string, number][]; kind?: "now" | "outlook" | "end" };
+type Forecast = { points: Point[]; yellowMax: number; alarmBelow: number; outlookAt: number };
 type Zone = "good" | "warn" | "neg" | "alarm";
 
 const weekdayDate = new Intl.DateTimeFormat("da-DK", { weekday: "short", day: "numeric", month: "long" });
@@ -39,7 +41,7 @@ function render(canvas: HTMLCanvasElement, data: Forecast) {
 
   // Balances are whole points, so the zone edges sit half-way between them: a line resting on 0 is
   // plainly in yellow and one on -1 plainly in red, rather than on a boundary.
-  const { yellowMax, alarmBelow } = data;
+  const { yellowMax, alarmBelow, outlookAt } = data;
   const zone = (y: number): Zone =>
     y > yellowMax ? "good" : y >= 0 ? "warn" : y >= alarmBelow ? "neg" : "alarm";
 
@@ -101,6 +103,28 @@ function render(canvas: HTMLCanvasElement, data: Forecast) {
       band(-0.5, yellowMax + 0.5, token("--zone-warn-fill"), "Tæt på 0");
       band(alarmBelow - 0.5, -0.5, token("--zone-neg-fill"), "I minus");
       band(y.min, alarmBelow - 0.5, hatch, "Langt i minus", true);
+      // Past the binding 30 days, shifts can still be unenrolled: a veil over the zones and a marked
+      // line say that part is tentative (the forecast line itself turns dashed there).
+      const x = chart.scales.x.getPixelForValue(outlookAt);
+      if (x > area.left && x < area.right) {
+        ctx.fillStyle = surface;
+        ctx.globalAlpha = 0.35;
+        ctx.fillRect(x, area.top, area.right - x, area.bottom - area.top);
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = muted;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, area.top);
+        ctx.lineTo(x, area.bottom);
+        ctx.stroke();
+        ctx.font = "600 11px system-ui, sans-serif";
+        ctx.fillStyle = muted;
+        ctx.textBaseline = "top";
+        ctx.textAlign = "right";
+        ctx.fillText("bundet", x - 6, area.top + 4);
+        ctx.textAlign = "left";
+        ctx.fillText("foreløbigt", x + 6, area.top + 4);
+      }
       ctx.restore();
     },
   };
@@ -124,7 +148,7 @@ function render(canvas: HTMLCanvasElement, data: Forecast) {
     },
   };
 
-  const isEnd = (i: number) => i === data.points.length - 1 && !data.points[i].items.length && i > 0;
+  const isMarker = (i: number) => data.points[i].kind === "outlook" || data.points[i].kind === "end";
   const pointZone = (ctx: ScriptableContext<"line">) => zone((ctx.raw as Point).y);
 
   new Chart(canvas, {
@@ -139,12 +163,14 @@ function render(canvas: HTMLCanvasElement, data: Forecast) {
           stepped: "before",
           borderColor: ink,
           borderWidth: 2,
-          // In the alarm zone the line itself turns red and heavier.
+          // In the alarm zone the line itself turns red and heavier; past the binding 30 days it is
+          // dashed.
           segment: {
             borderColor: (ctx) => (zone(ctx.p0.parsed.y ?? 0) === "alarm" ? color.alarm : undefined),
             borderWidth: (ctx) => (zone(ctx.p0.parsed.y ?? 0) === "alarm" ? 3 : undefined),
+            borderDash: (ctx) => ((ctx.p0.parsed.x ?? 0) >= outlookAt ? [6, 4] : undefined),
           },
-          pointRadius: (ctx) => (isEnd(ctx.dataIndex) ? 0 : pointZone(ctx) === "alarm" ? 6 : 4),
+          pointRadius: (ctx) => (isMarker(ctx.dataIndex) ? 0 : pointZone(ctx) === "alarm" ? 6 : 4),
           pointHoverRadius: (ctx) => (pointZone(ctx) === "alarm" ? 8 : 6),
           pointHitRadius: 12,
           pointBackgroundColor: (ctx) => color[pointZone(ctx)],
@@ -202,10 +228,12 @@ function render(canvas: HTMLCanvasElement, data: Forecast) {
           displayColors: false,
           callbacks: {
             title: (items) => {
-              const i = items[0].dataIndex;
-              if (i === 0) return "I dag";
-              const at = (items[0].raw as Point).x;
-              return isEnd(i) ? `${weekdayDate.format(at)} · kalenderen slutter` : weekdayDate.format(at);
+              const point = items[0].raw as Point;
+              if (point.kind === "now") return "I dag";
+              const date = weekdayDate.format(point.x);
+              if (point.kind === "outlook") return `${date} · de bundne 30 dage slutter`;
+              if (point.kind === "end") return `${date} · kalenderen slutter`;
+              return point.x > outlookAt ? `${date} · foreløbigt` : date;
             },
             label: (item) => `Saldo ${(item.raw as Point).y} point`,
             footer: (items) =>

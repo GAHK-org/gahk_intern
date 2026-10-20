@@ -1,8 +1,9 @@
-{% comment %}One overview row's forecast (views._sparkline).{% endcomment %}
+{% comment %}One overview row's forecast (views._sparkline): solid while the shifts are binding, dashed after.{% endcomment %}
 <svg class="duty-spark" viewBox="0 0 {{ spark.width }} {{ spark.height }}" width="{{ spark.width }}" height="{{ spark.height }}"
      role="img" aria-label="Prognose fra {{ row.balance }} til {{ row.end_balance }} point">
   {% for band in spark.bands %}<rect class="spark-band is-{{ band.zone }}" x="0" y="{{ band.y }}" width="{{ spark.width }}" height="{{ band.height }}"/>{% endfor %}
   <line class="spark-check" x1="{{ spark.check_x }}" x2="{{ spark.check_x }}" y1="0" y2="{{ spark.height }}"/>
-  <path class="spark-line" d="{{ spark.path }}"/>
+  <path class="spark-line" d="{{ spark.firm_path }}"/>
+  <path class="spark-line is-tentative" d="{{ spark.tentative_path }}"/>
   <circle class="spark-end is-{{ spark.end_zone }}" cx="{{ spark.width|add:'-3' }}" cy="{{ spark.end_y }}" r="3"/>
 </svg>

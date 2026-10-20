@@ -30,7 +30,12 @@
       <div class="duty-tile{% if alarm_soon %} is-alarm{% elif negative_soon %} is-neg{% endif %}">
         <span class="duty-tile-label">I minus om {{ outlook_days }} dage</span>
         <strong>{{ negative_soon }}</strong>
-        <span class="duty-tile-note">{% if alarm_soon %}heraf {{ alarm_soon }} under {{ alarm_below }}{% else %}med de vagter, de har taget{% endif %}</span>
+        <span class="duty-tile-note">{% if alarm_soon %}heraf {{ alarm_soon }} under {{ alarm_below }} · {% endif %}bundne vagter</span>
+      </div>
+      <div class="duty-tile is-tentative{% if alarm_end %} is-alarm{% elif negative_end %} is-neg{% endif %}">
+        <span class="duty-tile-label">I minus {{ end|date:"j. F" }}</span>
+        <strong>{{ negative_end }}</strong>
+        <span class="duty-tile-note">{% if alarm_end %}heraf {{ alarm_end }} under {{ alarm_below }} · {% endif %}foreløbigt</span>
       </div>
       <a class="duty-tile" href="{% url 'kitchen:market' %}">
         <span class="duty-tile-label">Ledige vagter</span>
@@ -38,6 +43,10 @@
         <span class="duty-tile-note">de næste 7 dage · {{ for_sale }} til salg</span>
       </a>
     </div>
+    <p class="muted duty-firm-note">
+      <strong>Bundne vagter</strong>: de næste {{ outlook_days }} dage kan en vagt ikke afmeldes, kun sælges, så tallet om {{ outlook_days }} dage er det sikre bud.
+      <strong>Foreløbigt</strong>: vagter længere ude kan afmeldes frit, så tallet {{ end|date:"j. F" }}, hvor kalenderen slutter, kan nå at ændre sig – og står stiplet.
+    </p>
 
     <section class="card" aria-labelledby="dist-title">
       <h2 id="dist-title">Fordeling</h2>
@@ -48,8 +57,8 @@
         <li><span class="forecast-swatch is-alarm"></span>Under {{ alarm_below }}</li>
       </ul>
       {% for d in distribution %}
-        <div class="duty-dist">
-          <span class="duty-dist-label">{{ d.label }}</span>
+        <div class="duty-dist{% if d.tentative %} is-tentative{% endif %}">
+          <span class="duty-dist-label">{{ d.label }}{% if d.tentative %}<small>foreløbigt</small>{% endif %}</span>
           <div class="duty-dist-bar">
             {% for s in d.segments %}
               <span class="duty-dist-seg is-{{ s.zone }}" style="flex-basis:{{ s.share }}%"
@@ -65,22 +74,33 @@
 
     <section class="card" aria-labelledby="low-title">
       <h2 id="low-title">Lav saldo nu</h2>
-      <p class="muted">Beboere på {{ yellow_max }} point eller derunder. <strong>OK ifølge prognosen</strong> betyder, at de vagter, de har taget, bringer dem på 0 eller derover om {{ outlook_days }} dage – den periode, hvor en vagt ikke længere kan afmeldes, kun sælges.</p>
+      <p class="muted">Beboere på {{ yellow_max }} point eller derunder, og hvor prognosen bringer dem: <strong>OK</strong> er 0 point eller derover. Om {{ outlook_days }} dage er bundet; {{ end|date:"j. F" }} er foreløbigt.</p>
       <div class="duty-table-scroll">
         <table class="zebra duty-table">
-          <thead><tr><th>Beboer</th><th class="num">Nu</th><th>Status</th><th class="num">Om {{ outlook_days }} dage</th><th class="col-spark">Prognose</th><th>Næste vagt</th></tr></thead>
+          <thead>
+            <tr>
+              <th>Beboer</th>
+              <th class="num">Nu</th>
+              <th colspan="2">Om {{ outlook_days }} dage <span class="duty-th-note">bundet</span></th>
+              <th colspan="2">{{ end|date:"j. M" }} <span class="duty-th-note">foreløbigt</span></th>
+              <th class="col-spark">Prognose</th>
+              <th>Næste vagt</th>
+            </tr>
+          </thead>
           <tbody>
             {% for row in low %}
               <tr>
                 <td><a href="{% url 'kitchen:resident' row.resident.pk %}">{{ row.resident.full_name }}</a></td>
                 <td class="num"><strong class="zone-{{ row.zone }}">{{ row.balance }}</strong></td>
-                <td>{% include "kitchen/_verdict.html" %}</td>
                 <td class="num"><span class="zone-{{ row.soon_zone }}">{{ row.soon }}</span></td>
+                <td>{% include "kitchen/_verdict.html" with fine=row.soon_fine zone=row.soon_zone tentative=False %}</td>
+                <td class="num"><span class="zone-{{ row.end_zone }} is-tentative">{{ row.end_balance }}</span></td>
+                <td>{% include "kitchen/_verdict.html" with fine=row.end_fine zone=row.end_zone tentative=True %}</td>
                 <td class="col-spark">{% include "kitchen/_sparkline.html" with spark=row.spark %}</td>
                 <td>{% if row.next_shift %}{{ row.next_shift|date:"D j. M" }}{% else %}<span class="muted">Ingen</span>{% endif %}</td>
               </tr>
             {% empty %}
-              <tr><td colspan="6" class="muted">Ingen beboere med lav saldo.</td></tr>
+              <tr><td colspan="8" class="muted">Ingen beboere med lav saldo.</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -89,10 +109,20 @@
 
     <section class="card" aria-labelledby="all-title">
       <h2 id="all-title">Alle beboere</h2>
-      <p class="muted">Lavest saldo først. Den lodrette streg i prognosen er om {{ outlook_days }} dage; den går til {{ end|date:"j. F" }}, hvor kalenderen slutter.</p>
+      <p class="muted">Lavest saldo først. I prognosen er stregen fuldt optrukket de næste {{ outlook_days }} dage og stiplet derefter, frem til {{ end|date:"j. F" }}, hvor kalenderen slutter.</p>
       <div class="duty-table-scroll">
         <table class="zebra duty-table">
-          <thead><tr><th>Beboer</th><th class="num">Nu</th><th class="col-spark">Prognose</th><th class="num">Om {{ outlook_days }} dage</th><th class="num">{{ end|date:"j. M" }}</th><th class="num">Vagter</th><th>Næste vagt</th></tr></thead>
+          <thead>
+            <tr>
+              <th>Beboer</th>
+              <th class="num">Nu</th>
+              <th class="col-spark">Prognose</th>
+              <th class="num">Om {{ outlook_days }} dage <span class="duty-th-note">bundet</span></th>
+              <th class="num">{{ end|date:"j. M" }} <span class="duty-th-note">foreløbigt</span></th>
+              <th class="num">Vagter</th>
+              <th>Næste vagt</th>
+            </tr>
+          </thead>
           <tbody>
             {% for row in rows %}
               <tr>
@@ -100,7 +130,7 @@
                 <td class="num"><strong class="zone-{{ row.zone }}">{{ row.balance }}</strong></td>
                 <td class="col-spark">{% include "kitchen/_sparkline.html" with spark=row.spark %}</td>
                 <td class="num"><span class="zone-{{ row.soon_zone }}">{{ row.soon }}</span></td>
-                <td class="num"><span class="zone-{{ row.end_zone }}">{{ row.end_balance }}</span></td>
+                <td class="num"><span class="zone-{{ row.end_zone }} is-tentative">{{ row.end_balance }}</span></td>
                 <td class="num">{% if row.shift_count %}{{ row.shift_count }} <span class="muted">(+{{ row.shift_points }})</span>{% else %}<span class="muted">0</span>{% endif %}</td>
                 <td>{% if row.next_shift %}{{ row.next_shift|date:"D j. M" }}{% else %}<span class="muted">Ingen</span>{% endif %}</td>
               </tr>

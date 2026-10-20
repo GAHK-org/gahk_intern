@@ -265,7 +265,9 @@ def _forecast_context(resident: Resident, balance: int) -> dict:
     now = current_datetime()
     steps = services.forecast(resident)
     end = _horizon_end()
-    points: list[dict] = [{"x": _ms(now), "y": balance, "items": []}]
+    outlook = now + datetime.timedelta(days=services.OUTLOOK_DAYS)
+    soon = services.balance_at(balance, steps, outlook)
+    points: list[dict] = [{"x": _ms(now), "y": balance, "items": [], "kind": "now"}]
     for step in steps:
         item = [step.label, step.amount]
         if len(points) > 1 and points[-1]["x"] == _ms(step.at):
@@ -273,14 +275,17 @@ def _forecast_context(resident: Resident, balance: int) -> dict:
             points[-1]["items"].append(item)
         else:
             points.append({"x": _ms(step.at), "y": step.balance, "items": [item]})
+    # A point of its own where the binding part ends, so the line can turn dashed exactly there.
+    if _ms(outlook) not in {p["x"] for p in points}:
+        points.append({"x": _ms(outlook), "y": soon, "items": [], "kind": "outlook"})
+        points.sort(key=lambda p: p["x"])
     end_balance = steps[-1].balance if steps else balance
     if points[-1]["x"] < _ms(end):
-        points.append({"x": _ms(end), "y": end_balance, "items": []})
+        points.append({"x": _ms(end), "y": end_balance, "items": [], "kind": "end"})
     # Only worth its own figure when it is below today and not simply where the forecast ends.
     lowest = min(steps, key=lambda s: (s.balance, s.at), default=None)
     if lowest and (lowest.balance >= balance or lowest is steps[-1]):
         lowest = None
-    soon = services.balance_at(balance, steps, now + datetime.timedelta(days=services.OUTLOOK_DAYS))
     return {
         "steps": steps,
         "end": end,
@@ -291,7 +296,12 @@ def _forecast_context(resident: Resident, balance: int) -> dict:
         "soon_zone": services.zone(soon),
         "outlook_days": services.OUTLOOK_DAYS,
         "alarm": next((s for s in steps if s.zone == "alarm"), None),
-        "chart": {"points": points, "yellowMax": services.YELLOW_MAX, "alarmBelow": services.ALARM_BELOW},
+        "chart": {
+            "points": points,
+            "yellowMax": services.YELLOW_MAX,
+            "alarmBelow": services.ALARM_BELOW,
+            "outlookAt": _ms(outlook),
+        },
     }
 
 
@@ -489,7 +499,18 @@ def _sparkline(
     def y(value: float) -> float:
         return round(SPARK_HEIGHT * (hi - min(max(value, lo), hi)) / (hi - lo), 1)
 
-    path = f"M0 {y(balance)}" + "".join(f" H{x(s.at)} V{y(s.balance)}" for s in steps) + f" H{SPARK_WIDTH}"
+    # Two paths: solid up to `check_at`, dashed after it, where shifts may still be unenrolled.
+    firm = [s for s in steps if s.at <= check_at]
+    tentative = [s for s in steps if s.at > check_at]
+    at_check = firm[-1].balance if firm else balance
+    firm_path = (
+        f"M0 {y(balance)}" + "".join(f" H{x(s.at)} V{y(s.balance)}" for s in firm) + f" H{x(check_at)}"
+    )
+    tentative_path = (
+        f"M{x(check_at)} {y(at_check)}"
+        + "".join(f" H{x(s.at)} V{y(s.balance)}" for s in tentative)
+        + f" H{SPARK_WIDTH}"
+    )
     edges = [hi, services.YELLOW_MAX + 0.5, -0.5, services.ALARM_BELOW - 0.5, lo]
     bands = [
         {"zone": zone, "y": f"{y(top):g}", "height": f"{y(bottom) - y(top):.1f}"}
@@ -498,7 +519,8 @@ def _sparkline(
     ]
     last = steps[-1].balance if steps else balance
     return {
-        "path": path,
+        "firm_path": firm_path,
+        "tentative_path": tentative_path,
         "bands": bands,
         "end_y": f"{y(last):g}",
         "end_zone": services.zone(last),
@@ -511,13 +533,14 @@ def _sparkline(
 ZONES = ("good", "warn", "neg", "alarm")
 
 
-def _distribution(label: str, balances: list[int]) -> dict:
+def _distribution(label: str, balances: list[int], *, tentative: bool = False) -> dict:
     counts = dict.fromkeys(ZONES, 0)
     for balance in balances:
         counts[services.zone(balance)] += 1
     total = len(balances) or 1
     return {
         "label": label,
+        "tentative": tentative,
         "segments": [
             # A string for the same reason as _sparkline's coordinates: it goes into a style attribute.
             {"zone": zone, "count": counts[zone], "share": f"{100 * counts[zone] / total:.2f}"}
@@ -529,7 +552,10 @@ def _distribution(label: str, balances: list[int]) -> dict:
 
 @dataclass
 class OverviewRow:
-    """One resident on the overview. `soon` is the forecast balance OUTLOOK_DAYS ahead."""
+    """One resident on the overview, judged twice: `soon` is the forecast balance OUTLOOK_DAYS ahead,
+    which counts only shifts that can no longer be unenrolled from (the firm figure), and
+    `end_balance` is where it is at the end of the calendar, which also counts shifts that can still
+    be dropped freely (the tentative one)."""
 
     resident: Resident
     steps: list[services.ForecastStep]
@@ -546,8 +572,7 @@ class OverviewRow:
         return services.zone(self.soon)
 
     @property
-    def fine(self) -> bool:
-        """What the overview's "OK ifølge prognosen" means: back at 0 or more OUTLOOK_DAYS ahead."""
+    def soon_fine(self) -> bool:
         return self.soon >= 0
 
     @property
@@ -557,6 +582,10 @@ class OverviewRow:
     @property
     def end_zone(self) -> str:
         return services.zone(self.end_balance)
+
+    @property
+    def end_fine(self) -> bool:
+        return self.end_balance >= 0
 
     @cached_property
     def shifts(self) -> list[services.ForecastStep]:
@@ -616,6 +645,8 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             "alarm_now": sum(row.zone == "alarm" for row in rows),
             "negative_soon": sum(row.soon < 0 for row in rows),
             "alarm_soon": sum(row.soon_zone == "alarm" for row in rows),
+            "negative_end": sum(row.end_balance < 0 for row in rows),
+            "alarm_end": sum(row.end_zone == "alarm" for row in rows),
             "unmanned": services.unmanned_shifts(datetime.timedelta(days=7)).count(),
             "for_sale": KitchenAssignment.objects.filter(
                 for_sale=True, shift__starts_at__gt=now, shift__is_disabled=False
@@ -626,6 +657,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
                 _distribution(
                     f"{end.day}. {MONTHS[end.month]}",
                     [row.end_balance for row in rows],
+                    tentative=True,
                 ),
             ],
             "outlook_days": services.OUTLOOK_DAYS,
