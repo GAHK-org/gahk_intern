@@ -653,7 +653,22 @@ Two endpoints, both in `app/core/health.py`:
   anything but 200). It returns 503 if the database or the S3 bucket is unreachable, or if any of
   `default`, `media` and `beat` has not sent a heartbeat for 2 minutes. The JSON body names the
   failing check; the reason is in `web`'s log. Renaming a worker's `-n` in the compose file means
-  updating `HEALTH_PROCESSES` to match.
+  updating `HEALTH_PROCESSES` to match, and the name that service passes to `heartbeat_check.py`
+  (below), in its `command` and its healthcheck.
+
+`worker`, `worker-media` and `beat` have Docker healthchecks of their own, on the same heartbeat:
+each heartbeat also touches `/tmp/heartbeat-<name>` in its container, and
+`app/core/heartbeat_check.py` fails once that is older than 2 minutes. The container's command
+removes the file first, so after a restart the last run's file can't pass for the new one. Each
+start gets 10 minutes before a failure counts, since the container waits for `web`'s migrations.
+
+So Coolify's status for the app is `/health` per container: **Running (healthy)** when all four
+pass, **Running (unhealthy)** when any one fails, and the container that failed is the one to read
+the logs of (`docker inspect` shows the check's reason). Every service needs one: Coolify counts a
+running container without a healthcheck as *unknown*, and a single unknown container shows the
+whole app as **Running (unknown)**. An unhealthy worker or beat keeps running and nothing
+reroutes, so this is a status to look at, not a fix; alerting stays with the uptime monitor on
+`/health`.
 
 ## 5. Data migration to prod
 ```
