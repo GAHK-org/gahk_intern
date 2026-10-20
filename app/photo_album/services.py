@@ -122,17 +122,48 @@ def backfill_hashes(*, limit: int = 0, until: datetime | None = None) -> HashBac
         if until is not None and timezone.now() >= until:
             break
         digest = hashlib.sha256()
+        size = 0
         try:
             with media.original.open("rb") as original:
                 while chunk := original.read(1024 * 1024):
                     digest.update(chunk)
+                    size += len(chunk)
         except OSError as exc:
             result.unreadable.append(f"{media.pk} ({media.original.name}): {exc}")
             logger.warning("Could not read media %s (%s) to hash it: %s", media.pk, media.original.name, exc)
             Media.objects.filter(pk=media.pk).update(hash_failed_at=timezone.now())
             continue
-        Media.objects.filter(pk=media.pk).update(sha256=digest.hexdigest(), hash_failed_at=None)
+        Media.objects.filter(pk=media.pk).update(sha256=digest.hexdigest(), size=size, hash_failed_at=None)
         result.hashed += 1
+    result.remaining = missing.count()
+    return result
+
+
+@dataclass
+class SizeBackfill:
+    sized: int = 0
+    unreadable: int = 0
+    remaining: int = 0
+
+
+def backfill_sizes(*, until: datetime | None = None) -> SizeBackfill:
+    """Record the size of originals stored before sizes were: one HEAD request each, no download.
+
+    A row whose original cannot be asked about is left for the next run, behind the others.
+    """
+    result = SizeBackfill()
+    missing = Media.objects.filter(size__isnull=True).exclude(original="")
+    for media in missing.order_by("pk").iterator():
+        if until is not None and timezone.now() >= until:
+            break
+        try:
+            size = media.original.size
+        except OSError as exc:
+            result.unreadable += 1
+            logger.warning("Could not read the size of media %s (%s): %s", media.pk, media.original.name, exc)
+            continue
+        Media.objects.filter(pk=media.pk).update(size=size)
+        result.sized += 1
     result.remaining = missing.count()
     return result
 
@@ -193,6 +224,7 @@ def store_upload(
         metadata=extract_metadata(uploaded_file),
         captured_at=extract_captured_at(uploaded_file),
         file_modified_at=file_modified_at,
+        size=getattr(uploaded_file, "size", None),
     )
     if stored is None:
         media.original.save(filename, uploaded_file, save=False)
@@ -829,9 +861,24 @@ def build_derivatives(media: Media) -> bool:
 
     A source that cannot be decoded is NOT stored as its own derivatives any more (that put whatever
     bytes were uploaded inside an <img> in the grid); it is retried and then marked FAILED.
+
+    The attempt is counted BEFORE the work, not after: a worker killed mid-encode (out of memory,
+    the hard time limit) saves nothing afterwards, and a video that kills its worker every time
+    used to stay "Mediet behandles" forever instead of ending FAILED after MAX_DERIVATIVE_ATTEMPTS.
     """
-    media.derivative_attempts += 1
     filename = media.display_name or "upload"
+    if media.derivative_attempts >= MAX_DERIVATIVE_ATTEMPTS:
+        media.derivative_state = DerivativeState.FAILED
+        media.save(update_fields=["derivative_state"])
+        logger.warning(
+            "Gave up on media %s (%s) after %d attempts; marked as failed.",
+            media.pk,
+            filename,
+            media.derivative_attempts,
+        )
+        return False
+    media.derivative_attempts += 1
+    media.save(update_fields=["derivative_attempts"])
     video = is_video_media(media)
     with media.original.open("rb") as original:
         source = File(original, name=filename)
@@ -1016,7 +1063,11 @@ def video_variants(uploaded_file: File, filename: str) -> Variants | None:
                 ContentFile(thumbnail.read_bytes(), name=f"{Path(filename).stem}.jpg"),
                 captured_at,
             )
-    except (OSError, subprocess.CalledProcessError):
+    except subprocess.CalledProcessError as exc:
+        logger.warning("Could not convert %s: %s", filename, ffmpeg_failure(exc))
+        return None
+    except OSError as exc:
+        logger.warning("Could not convert %s: %s", filename, exc)
         return None
     finally:
         uploaded_file.seek(0)
@@ -1054,12 +1105,27 @@ def video_captured_at(ffmpeg: str, path: str) -> datetime | None:
 
 
 def _run_ffmpeg(executable: str, *arguments: str) -> None:
+    # Errors only (no banner, no progress lines), kept rather than discarded: when an encode fails,
+    # ffmpeg's last words are the only record of why.
     subprocess.run(  # noqa: S603  # nosec B603
-        [executable, "-y", *arguments],
+        [executable, "-y", "-hide_banner", "-nostats", "-loglevel", "error", *arguments],
         check=True,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        errors="replace",
     )
+
+
+def ffmpeg_failure(exc: subprocess.CalledProcessError) -> str:
+    """Why ffmpeg failed, in one line: the signal that stopped it, or the last thing it said."""
+    if exc.returncode < 0:
+        signal_number = -exc.returncode
+        hint = " — most likely the out-of-memory killer" if signal_number == 9 else ""
+        return f"ffmpeg was stopped by signal {signal_number}{hint}"
+    lines = [line.strip() for line in (exc.stderr or "").splitlines() if line.strip()]
+    said = " | ".join(lines[-3:])[:500]
+    return f"ffmpeg exited with {exc.returncode}: {said or 'no message'}"
 
 
 def extract_metadata(uploaded_file: File) -> dict[str, str]:

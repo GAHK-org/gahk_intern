@@ -290,6 +290,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "core.tasks.purge_worker_job_logs",
         "schedule": crontab(minute=40, hour=4),
     },
+    # Hourly: a job whose worker died under it is otherwise listed as running for good. It can
+    # only be told apart once it is past its time limit, so there is nothing to gain from sooner.
+    "close-lost-worker-jobs": {
+        "task": "core.tasks.close_lost_jobs",
+        "schedule": crontab(minute=35),
+    },
     "purge-worker-job-results": {
         "task": "core.tasks.purge_worker_job_results",
         "schedule": crontab(minute=45, hour=4),
