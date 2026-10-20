@@ -27,7 +27,7 @@ from django.db import connection
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.utils import timezone
 
-from .heartbeat import HEARTBEAT_MAX_AGE
+from .heartbeat_check import HEARTBEAT_MAX_AGE
 
 logger = logging.getLogger(__name__)
 

@@ -57,16 +57,18 @@ services:
     depends_on:
       - web
     command: >-
-      sh -c "until python manage.py migrate --check; do echo 'waiting for migrations'; sleep 3; done;
+      sh -c "python core/heartbeat_check.py --reset default;
+             until python manage.py migrate --check; do echo 'waiting for migrations'; sleep 3; done;
              celery -A config worker -Q celery,thumbnails -n default@%h --loglevel=INFO --concurrency=1"
     # Without a healthcheck, Coolify counts a running container as "unknown", and one unknown
-    # container shows the whole app as "Running (unknown)". This one fails when /health would call
-    # the process down: core/heartbeat.py touches /tmp/heartbeat-<name> (the -n before the "@") with
-    # every heartbeat row, and 120 is HEARTBEAT_MAX_AGE. A file rather than a query, so no check boots
-    # Django. Unhealthy costs only the status here: Traefik routes to `web` alone. start_period
-    # covers the wait for web's migrations (its own 120s) and the boot.
-    healthcheck:
-      test: ["CMD", "python", "-c", "import os, sys, time; sys.exit(time.time() - os.path.getmtime('/tmp/heartbeat-default') > 120)"]
+    # container shows the whole app as "Running (unknown)". core/heartbeat_check.py fails when
+    # /health would call the process down, on the file core/heartbeat.py touches with every
+    # heartbeat row; its argument is the -n before the "@". The --reset above is for restarts,
+    # which keep /tmp: the last run's file would pass before this run has beaten. Unhealthy costs
+    # only the status here, since Traefik routes to `web` alone. start_period is long because the
+    # wait for web's migrations has no bound, and a long one should not read as unhealthy workers.
+    healthcheck: &heartbeat-healthcheck
+      test: ["CMD", "python", "core/heartbeat_check.py", "default"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -78,15 +80,13 @@ services:
     depends_on:
       - web
     command: >-
-      sh -c "until python manage.py migrate --check; do echo 'waiting for migrations'; sleep 3; done;
+      sh -c "python core/heartbeat_check.py --reset media;
+             until python manage.py migrate --check; do echo 'waiting for migrations'; sleep 3; done;
              celery -A config worker -Q media -n media@%h --loglevel=INFO --concurrency=1"
     # As worker's. The heartbeat keeps beating through a 15-minute encode, so a long job is no failure.
     healthcheck:
-      test: ["CMD", "python", "-c", "import os, sys, time; sys.exit(time.time() - os.path.getmtime('/tmp/heartbeat-media') > 120)"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 600s
+      <<: *heartbeat-healthcheck
+      test: ["CMD", "python", "core/heartbeat_check.py", "media"]
 
   beat:
     image: ghcr.io/gahk-org/gahk_intern:${IMAGE_TAG:-main}
@@ -94,15 +94,13 @@ services:
     depends_on:
       - web
     command: >-
-      sh -c "until python manage.py migrate --check; do echo 'waiting for migrations'; sleep 3; done;
+      sh -c "python core/heartbeat_check.py --reset beat;
+             until python manage.py migrate --check; do echo 'waiting for migrations'; sleep 3; done;
              celery -A config beat --loglevel=INFO"
     # As worker's.
     healthcheck:
-      test: ["CMD", "python", "-c", "import os, sys, time; sys.exit(time.time() - os.path.getmtime('/tmp/heartbeat-beat') > 120)"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 600s
+      <<: *heartbeat-healthcheck
+      test: ["CMD", "python", "core/heartbeat_check.py", "beat"]
 
 volumes:
   media:
