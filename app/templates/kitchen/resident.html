@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% load ui_extras %}
+{% block title %}{{ resident.full_name }} - Køkkenvagter{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Køkkenvagter · Oversigt</p>
+      <h1>{{ resident.full_name }}</h1>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-secondary" href="{% url 'kitchen:dashboard' %}">‹ Til oversigten</a>
+    </div>
+  </div>
+
+  {% include "kitchen/_forecast.html" %}
+
+  <h2>Kommende vagter</h2>
+  <div class="board-list mb-4">
+    {% for a in upcoming %}
+      <div class="card-flat card-pad">
+        <a href="{% url 'kitchen:shift' a.shift.pk %}"><strong>{{ a.shift.title }}</strong></a>
+        · {{ a.shift.starts_at|date:"D j. M H:i" }}–{{ a.shift.ends_at|date:"H:i" }}
+        {% if a.spots > 1 %}· {{ a.spots }} pladser{% endif %}
+        {% if a.for_sale %}<span class="chip chip-quiet">Til salg</span>{% endif %}
+        {% if a.shift.is_disabled %}<span class="chip chip-quiet">Aflyst</span>{% endif %}
+      </div>
+    {% empty %}
+      <p class="muted">Ingen kommende vagter.</p>
+    {% endfor %}
+  </div>
+
+  {% if is_admin %}
+    <form method="post" class="card max-w-md">
+      {% csrf_token %}
+      <h2>Manuel postering</h2>
+      <label for="entry-amount">Beløb (fx 2 eller -3)</label>
+      <input id="entry-amount" type="number" name="amount" required>
+      <label for="entry-message">Begrundelse</label>
+      <input id="entry-message" type="text" name="message" maxlength="255" required>
+      <p class="mt-3"><button type="submit">Bogfør</button></p>
+    </form>
+  {% endif %}
+
+  <h2>Posteringer</h2>
+  {% include "kitchen/_ledger.html" %}
+{% endblock %}

@@ -1,24 +1,25 @@
 {% load ui_extras %}
 {% comment %}
-  The balance forecast on Min køkkenkonto: a step chart drawn by frontend/src/kitchen-forecast.ts from
-  the json_script below, with the same steps as a table for anyone who cannot or does not want to
-  read the chart. Context: balance, balance_zone, monthly_charge, forecast (views._forecast_context).
+  The balance forecast on Min køkkenkonto and on a resident's overview page: a step chart drawn by
+  frontend/src/kitchen-forecast.ts from the json_script below, with the same steps as a table for
+  anyone who cannot or does not want to read the chart. Context: resident, balance, balance_zone,
+  monthly_charge, forecast (views._forecast_context), and `own` on the resident's own page.
 {% endcomment %}
 <section class="card forecast" aria-labelledby="forecast-title">
   <h2 id="forecast-title">Prognose</h2>
-  <p class="muted">Hvis intet ændrer sig: dine vagter giver point, når de slutter, og den 1. i hver måned trækkes {{ monthly_charge }} point.</p>
+  <p class="muted">Hvis intet ændrer sig: hver vagt giver point, når den slutter, og den 1. i hver måned trækkes {{ monthly_charge }} point. Kun de pladser, der allerede er taget, tæller med.</p>
 
   {% if balance_zone == "alarm" or forecast.alarm %}
     <div class="forecast-alarm">
       <div>
         {% if balance_zone == "alarm" %}
-          <strong>Du står på {{ balance }} point – langt under målet.</strong>
+          <strong>{% if own %}Du står{% else %}{{ resident.first_name }} står{% endif %} på {{ balance }} point – langt under målet.</strong>
         {% else %}
-          <strong>Du rammer {{ forecast.alarm.balance }} point {{ forecast.alarm.at|date:"j. F" }}.</strong>
+          <strong>{% if own %}Du rammer{% else %}{{ resident.first_name }} rammer{% endif %} {{ forecast.alarm.balance }} point {{ forecast.alarm.at|date:"j. F" }}.</strong>
         {% endif %}
-        Tag en ledig vagt eller køb en, der er til salg.
+        {% if own %}Tag en ledig vagt eller køb en, der er til salg.{% endif %}
       </div>
-      <a class="btn" href="{% url 'kitchen:market' %}">Find en vagt</a>
+      {% if own %}<a class="btn" href="{% url 'kitchen:market' %}">Find en vagt</a>{% endif %}
     </div>
   {% endif %}
 
@@ -33,6 +34,10 @@
         <dd><strong>{{ forecast.lowest.balance }}</strong> {% include "kitchen/_zone_chip.html" with zone=forecast.lowest.zone %}</dd>
       </div>
     {% endif %}
+    <div>
+      <dt>Om {{ forecast.outlook_days }} dage</dt>
+      <dd><strong>{{ forecast.soon }}</strong> {% include "kitchen/_zone_chip.html" with zone=forecast.soon_zone %}</dd>
+    </div>
     <div>
       <dt>{{ forecast.end|date:"j. F" }}</dt>
       <dd><strong>{{ forecast.end_balance }}</strong> {% include "kitchen/_zone_chip.html" with zone=forecast.end_zone %}</dd>

@@ -20,5 +20,6 @@ urlpatterns = [
     path("tildeling/<int:pk>/koeb", views.buy, name="buy"),
     path("tildeling/<int:pk>/udeblevet", views.mark_absent, name="mark_absent"),
     path("admin", views.admin_overview, name="admin"),
-    path("admin/beboer/<int:pk>", views.admin_resident, name="admin_resident"),
+    path("oversigt", views.dashboard, name="dashboard"),
+    path("oversigt/beboer/<int:pk>", views.resident_overview, name="resident"),
 ]

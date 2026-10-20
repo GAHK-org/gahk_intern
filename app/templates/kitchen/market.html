@@ -13,6 +13,7 @@
     <div class="head-actions">
       <a class="btn btn-secondary" href="{% url 'kitchen:account' %}">Min konto (<span class="{{ balance|sign_class }}">{{ balance }}</span>)</a>
       <a class="btn btn-secondary" href="{% url 'events:feed_settings' %}">Kalenderabonnement</a>
+      {% if can_view_overview %}<a class="btn btn-secondary" href="{% url 'kitchen:dashboard' %}">Oversigt</a>{% endif %}
       {% if is_admin %}<a class="btn" href="{% url 'kitchen:admin' %}">Administration</a>{% endif %}
     </div>
   </div>

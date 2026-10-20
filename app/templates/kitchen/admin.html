@@ -10,6 +10,7 @@
     </div>
     <div class="head-actions">
       <a class="btn btn-secondary" href="{% url 'kitchen:market' %}">‹ Til vagterne</a>
+      <a class="btn btn-secondary" href="{% url 'kitchen:dashboard' %}">Oversigt</a>
     </div>
   </div>
 
@@ -25,17 +26,5 @@
     <p class="mt-3"><button type="submit">Opret vagt</button></p>
   </form>
 
-  <h2>Saldi</h2>
-  <p class="muted">Klik på en beboer for at se kontoen eller lave en manuel postering. Aflysning, bonus og udeblivelse håndteres på den enkelte vagt.</p>
-  <table cellpadding="6" style="width:100%; border-collapse:collapse">
-    <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec"><th>Beboer</th><th>Saldo</th></tr></thead>
-    <tbody>
-    {% for resident, balance in rows %}
-      <tr style="border-bottom:1px solid #f0f1f4">
-        <td><a href="{% url 'kitchen:admin_resident' resident.pk %}">{{ resident.full_name }}</a></td>
-        <td class="{{ balance|sign_class }}">{{ balance }}</td>
-      </tr>
-    {% empty %}<tr><td colspan="2" class="muted">Ingen beboere på denne måneds alumneliste.</td></tr>{% endfor %}
-    </tbody>
-  </table>
+  <p class="muted">Saldi, prognoser og manuelle posteringer finder du på <a href="{% url 'kitchen:dashboard' %}">oversigten</a>. Aflysning, bonus og udeblivelse håndteres på den enkelte vagt.</p>
 {% endblock %}

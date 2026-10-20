@@ -261,8 +261,38 @@ def test_admin_pages_require_kitchen_role(make_resident: Callable) -> None:
     assert (special.title, special.spots, special.points_per_spot) == ("Julefrokost", 4, 5)
     assert client.get(reverse("kitchen:shift", args=[special.pk])).status_code == 200
 
-    client.post(reverse("kitchen:admin_resident", args=[resident.pk]), {"amount": "3", "message": "Ekstra"})
+    client.post(reverse("kitchen:resident", args=[resident.pk]), {"amount": "3", "message": "Ekstra"})
     assert _balance(resident) == 3
+    assert client.get(reverse("kitchen:dashboard")).status_code == 200
+
+    client.force_login(resident)
+    assert client.get(reverse("kitchen:dashboard")).status_code == 403
+    assert client.get(reverse("kitchen:resident", args=[officer.pk])).status_code == 403
+
+
+def test_inspektion_sees_the_overview_and_forecasts_but_nothing_administrative(
+    make_resident: Callable,
+) -> None:
+    resident = make_resident(email="r@gahk.dk")
+    _live_here(resident)
+    inspector = make_resident(email="i@gahk.dk", roles=(Role.INSPEKTION,))
+    shift = _shift(datetime.timedelta(days=3))
+    client = Client()
+    client.force_login(inspector)
+
+    assert client.get(reverse("kitchen:dashboard")).status_code == 200
+    page = client.get(reverse("kitchen:resident", args=[resident.pk]))
+    assert page.status_code == 200
+    assert 'id="kitchen-forecast-data"' in page.content.decode()
+    assert "Manuel postering" not in page.content.decode()
+    assert reverse("kitchen:admin") not in client.get(reverse("kitchen:dashboard")).content.decode()
+
+    before = _balance(resident)
+    response = client.post(reverse("kitchen:resident", args=[resident.pk]), {"amount": "3", "message": "x"})
+    assert response.status_code == 403 and _balance(resident) == before
+    assert client.get(reverse("kitchen:admin")).status_code == 403
+    assert client.post(reverse("kitchen:disable", args=[shift.pk]), {"reason": "x"}).status_code == 403
+    assert client.post(reverse("kitchen:set_bonus", args=[shift.pk]), {"bonus": "2"}).status_code == 403
 
 
 def test_resident_enrolls_through_the_view(make_resident: Callable) -> None:
@@ -420,21 +450,24 @@ def test_forecast_books_held_shifts_and_the_monthly_charges(make_resident: Calla
     _live_here(r)
     services.post_entry(r.pk, 5, "start", KitchenPointEntry.Kind.MANUAL)
     services.enroll(_shift(datetime.timedelta(days=2), points=3), r)
-    # Lone holder of one of two spots: booked for both, as complete_shift will.
+    # Lone holder of one of two spots: only their own spot counts, as somebody else may take the other.
     services.enroll(_shift(datetime.timedelta(days=5), spots=2, points=3), r)
+    services.enroll(_shift(datetime.timedelta(days=8), spots=2, points=3), r, spots=2)
     cancelled = _shift(datetime.timedelta(days=6))
     services.enroll(cancelled, r)
     services.disable_shift(cancelled, "Lukket")
 
     steps = services.forecast(r)
     assert [s.at for s in steps] == sorted(s.at for s in steps)
-    assert sorted(s.amount for s in steps) == [-4, -4, -4, 3, 6]
+    assert sorted(s.amount for s in steps) == [-4, -4, -4, 3, 3, 6]
     assert "(2 pladser)" in next(s.label for s in steps if s.amount == 6)
     running = 5
     for step in steps:
         running += step.amount
         assert step.balance == running
-    assert steps[-1].balance == 5 + 3 + 6 - 3 * services.MONTHLY_CHARGE
+    assert steps[-1].balance == 5 + 3 + 3 + 6 - 3 * services.MONTHLY_CHARGE
+    assert services.balance_at(5, steps, timezone.now()) == 5
+    assert services.balance_at(5, steps, steps[-1].at) == steps[-1].balance
 
 
 def test_forecast_charges_follow_move_out_and_published_lists(make_resident: Callable) -> None:
@@ -471,3 +504,31 @@ def test_account_page_draws_the_forecast_and_raises_the_alarm_under_minus_six(
     services.post_entry(r.pk, -12, "bøde", KitchenPointEntry.Kind.MANUAL)
     page = client.get(reverse("kitchen:account")).content.decode()
     assert "forecast-alarm" in page and "Du rammer -10 point" in page
+
+
+def test_overview_lists_low_balances_with_whether_the_forecast_is_fine(make_resident: Callable) -> None:
+    officer = make_resident(email="k@gahk.dk", roles=(Role.KOKKENGRUPPE,))
+    catching_up = make_resident(email="c@gahk.dk", first_name="Ida")
+    sinking = make_resident(email="s@gahk.dk", first_name="Bo")
+    flush = make_resident(email="f@gahk.dk", first_name="Eva")
+    for r in (catching_up, sinking, flush):
+        _live_here(r)
+    services.post_entry(catching_up.pk, -2, "x", KitchenPointEntry.Kind.MANUAL)
+    services.post_entry(sinking.pk, -9, "x", KitchenPointEntry.Kind.MANUAL)
+    services.post_entry(flush.pk, 20, "x", KitchenPointEntry.Kind.MANUAL)
+    # The page charges this month first (-4 each); 16 points within the 30 days then cover that,
+    # the deficit and up to two more monthly charges.
+    for days in (2, 3, 4, 5):
+        services.enroll(_shift(datetime.timedelta(days=days), points=4), catching_up)
+
+    client = Client()
+    client.force_login(officer)
+    response = client.get(reverse("kitchen:dashboard"))
+    low = {row.resident.pk: row for row in response.context["low"]}
+    assert set(low) == {catching_up.pk, sinking.pk}
+    assert low[catching_up.pk].fine and not low[sinking.pk].fine
+    assert low[sinking.pk].soon_zone == "alarm"
+    assert [row.resident for row in response.context["rows"]] == [sinking, catching_up, flush]
+    assert response.context["negative_now"] == 2 and response.context["alarm_now"] == 1
+    page = response.content.decode()
+    assert "OK ifølge prognosen" in page and "Under -6 om 30 dage" in page

@@ -83,6 +83,10 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     ]
     if "ak" in roles:
         grupper.append(("/intern/ak/admin", "AK-oversigt", "check"))
+    # Inspektionen sees the overview and the forecasts, nothing else of the kitchen administration
+    # (kitchen.views.VIEW_ROLES).
+    if "kokkengruppe" in roles or "inspektion" in roles:
+        grupper.append(("/intern/koekkenvagter/oversigt", "Køkkenoversigt", "chart"))
     if "kokkengruppe" in roles:
         grupper.append(("/intern/koekkenvagter/admin", "Køkken-admin", "clock"))
     if "oelkaelder" in roles:

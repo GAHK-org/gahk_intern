@@ -6,7 +6,7 @@ permission gates + forms, and the scheduled tasks share exactly the same code pa
 
 import datetime
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from django.db import transaction
@@ -248,70 +248,94 @@ class ForecastStep:
         return zone(self.balance)
 
 
-def _charged_months(resident: Resident, horizon: datetime.date) -> list[datetime.date]:
-    """The first day of each month after the active one, up to `horizon`, that `resident` will be
-    charged for. A month whose alumneliste is already out says so; a later one is assumed to look
-    like this month's, less a resident whose move-out date falls before it."""
+# The forecast's firm part. A shift starting within FREE_UNENROLL_DAYS can no longer be dropped, only
+# sold, so the forecast balance that far ahead is what the overview judges a resident by.
+OUTLOOK_DAYS = FREE_UNENROLL_DAYS
+
+
+def _charged_months(residents: Sequence[Resident], horizon: datetime.date) -> dict[int, list[datetime.date]]:
+    """Per resident, the first day of each month after the active one, up to `horizon`, that they
+    will be charged for. A month whose alumneliste is already out says so; a later one is assumed to
+    look like this month's, less a resident whose move-out date falls before it."""
     year, month = active_period()
     first = datetime.date(year, month, 1)
     months = []
     while (first := add_months(first, 1)) <= horizon:
         months.append(first)
     if not months:
-        return []
-    listed = set(
-        Residency.objects.filter(year__gte=months[0].year, year__lte=months[-1].year)
-        .values_list("year", "month")
-        .distinct()
-    )
-    mine = set(resident.residencies.values_list("year", "month"))
-    living_here = (year, month) in mine
-    moves_out = resident.move_out_date
+        return {r.pk: [] for r in residents}
+    window = Residency.objects.filter(year__gte=year, year__lte=months[-1].year)
+    listed = set(window.values_list("year", "month").distinct())
+    mine: dict[int, set[tuple[int, int]]] = {r.pk: set() for r in residents}
+    for resident_id, y, m in window.filter(resident__in=residents).values_list(
+        "resident_id", "year", "month"
+    ):
+        mine[resident_id].add((y, m))
 
-    def charged(first: datetime.date) -> bool:
+    def charged(resident: Resident, first: datetime.date) -> bool:
         if (first.year, first.month) in listed:
-            return (first.year, first.month) in mine
-        return living_here and (moves_out is None or moves_out >= first)
+            return (first.year, first.month) in mine[resident.pk]
+        moves_out = resident.move_out_date
+        return (year, month) in mine[resident.pk] and (moves_out is None or moves_out >= first)
 
-    return [first for first in months if charged(first)]
+    return {r.pk: [first for first in months if charged(r, first)] for r in residents}
+
+
+def forecasts(residents: Sequence[Resident]) -> dict[int, list[ForecastStep]]:
+    """Where each resident's balance is heading if nothing changes: the points for the spots they
+    hold, booked when the shift ends, and the monthly charge on the 1st of each month up to the
+    calendar horizon.
+
+    Conservative on purpose. A lone holder of a multi-spot shift is counted for their own spots only,
+    although complete_shift gives them the rest if nobody else signs up: somebody else may. A shift
+    put for sale still counts, as it is theirs until it is sold."""
+    now = current_datetime()
+    events: dict[int, list[tuple[datetime.datetime, int, str]]] = {r.pk: [] for r in residents}
+    held = KitchenAssignment.objects.filter(
+        resident__in=residents, shift__completed_at__isnull=True, shift__is_disabled=False
+    ).select_related("shift")
+    for a in held:
+        shift = a.shift
+        start = timezone.localtime(shift.starts_at)
+        label = f"{shift.title} {WEEKDAYS_SHORT[start.weekday()]} {start:%d.%m}"
+        if a.spots > 1:
+            label += f" ({a.spots} pladser)"
+        if a.for_sale:
+            label += " – til salg"
+        events[a.resident_id].append((max(shift.ends_at, now), a.spots * shift.points_per_spot_total, label))
+    for resident_id, months in _charged_months(residents, calendar_horizon()).items():
+        for first in months:
+            at = max(timezone.make_aware(datetime.datetime.combine(first, datetime.time())), now)
+            events[resident_id].append((at, -MONTHLY_CHARGE, f"Månedlig afregning {MONTHS[first.month]}"))
+    # The ledger's SUM is the newest balance_after by construction (KitchenPointEntry.balances).
+    balances = dict(
+        KitchenPointEntry.objects.filter(resident__in=residents)
+        .values("resident")
+        .annotate(b=Sum("amount"))
+        .values_list("resident", "b")
+    )
+    result = {}
+    for resident in residents:
+        balance = balances.get(resident.pk, 0)
+        steps = []
+        # A charge and a shift at the same moment: the charge first, as the scheduled job runs at night.
+        for at, amount, label in sorted(events[resident.pk], key=lambda e: (e[0], e[1] > 0)):
+            balance += amount
+            steps.append(ForecastStep(at, amount, label, balance))
+        result[resident.pk] = steps
+    return result
 
 
 def forecast(resident: Resident) -> list[ForecastStep]:
-    """Where `resident`'s balance is heading if nothing changes: the points for every shift they hold,
-    booked when it ends, and the monthly charge on the 1st of each month up to the calendar horizon.
+    return forecasts([resident])[resident.pk]
 
-    "If nothing changes" includes the rule that a lone holder of a multi-spot shift gets every spot,
-    and a shift they have put for sale: both are what will be booked unless someone else acts."""
-    now = current_datetime()
-    held = (
-        KitchenAssignment.objects.filter(
-            resident=resident, shift__completed_at__isnull=True, shift__is_disabled=False
-        )
-        .select_related("shift")
-        .annotate(holders=Count("shift__assignments"))
-    )
-    events: list[tuple[datetime.datetime, int, str]] = []
-    for a in held:
-        shift = a.shift
-        spots = shift.spots if a.holders == 1 else a.spots
-        start = timezone.localtime(shift.starts_at)
-        label = f"{shift.title} {WEEKDAYS_SHORT[start.weekday()]} {start:%d.%m}"
-        if spots > 1:
-            label += f" ({spots} pladser)"
-        if a.for_sale:
-            label += " – til salg"
-        events.append((max(shift.ends_at, now), spots * shift.points_per_spot_total, label))
-    for first in _charged_months(resident, calendar_horizon()):
-        at = max(timezone.make_aware(datetime.datetime.combine(first, datetime.time())), now)
-        events.append((at, -MONTHLY_CHARGE, f"Månedlig afregning {MONTHS[first.month]}"))
-    # A charge and a shift at the same moment: the charge first, as the scheduled job runs at night.
-    events.sort(key=lambda e: (e[0], e[1] > 0))
-    balance = KitchenPointEntry.balance_for(resident.pk)
-    steps = []
-    for at, amount, label in events:
-        balance += amount
-        steps.append(ForecastStep(at, amount, label, balance))
-    return steps
+
+def balance_at(balance: int, steps: list[ForecastStep], when: datetime.datetime) -> int:
+    """The forecast balance at `when`, given today's `balance` and the steps from forecast()."""
+    for step in reversed(steps):
+        if step.at <= when:
+            return step.balance
+    return balance
 
 
 # --- enrolment ------------------------------------------------------------------------------------

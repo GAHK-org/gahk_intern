@@ -1,0 +1,8 @@
+{% comment %}Whether the forecast has a low-balance resident back at 0 or more within the outlook (views.dashboard).{% endcomment %}
+{% if row.fine %}
+  <span class="duty-verdict is-fine"><svg class="ni" aria-hidden="true"><use href="#i-check"/></svg>OK ifølge prognosen</span>
+{% elif row.soon_zone == "alarm" %}
+  <span class="duty-verdict is-alarm">Under {{ alarm_below }} om {{ outlook_days }} dage</span>
+{% else %}
+  <span class="duty-verdict is-neg">I minus om {{ outlook_days }} dage</span>
+{% endif %}

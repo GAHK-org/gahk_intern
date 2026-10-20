@@ -20,10 +20,12 @@ Each month, all residents should automatically be subtracted 4 points from their
 
 ### Balance forecast
 A resident's account page shows a diagram predicting their balance up to the end of the shift calendar, assuming nothing changes:
-- Each shift they hold adds its points when it ends. A lone holder of a multi-spot shift is counted for every spot (they will be given them); a shift put for sale counts until it is sold; a cancelled shift does not count.
+- Each shift they hold adds its points when it ends, for the spots they hold. The forecast is conservative: a lone holder of a multi-spot shift is not counted for the free spots, although they are given them if nobody else signs up, as somebody else may. A shift put for sale counts until it is sold; a cancelled shift does not count.
 - The monthly charge is subtracted on the 1st of each month: for a month whose alumneliste is published, if they are on it; otherwise if they live here now and their move-out date is not before that month.
 
-The diagram has three zones: green (3 points or more), yellow (0 to 2) and red (below 0). Under -6 the red zone turns deeper and hatched, the line turns red, and a banner above the diagram asks the resident to take a shift.
+It shows the balance now, the lowest point, the balance in 30 days and at the end of the calendar. 30 days is the window in which a shift can no longer be unenrolled from, only sold, so it is the forecast's firm part.
+
+The diagram has three zones: green (3 points or more), yellow (0 to 2, both included) and red (below 0). Under -6 the red zone turns deeper and hatched, the line turns red, and a banner above the diagram asks the resident to take a shift.
 The same steps are available as a table under the diagram.
 
 ## Shifts and shift calendar
@@ -65,6 +67,17 @@ If it has been deemed that a resident has not taken their shift, an administrato
 A transcation will revert the obtained points plus a fine. By default the fine is equivalent to the amount of points the shift is worth, however, administrators may adjust the fine.
 
 Administrators may add bonus points to specific shifts, that are awarded on top.
+
+Members of Inspektionen may see the overview and every resident's forecast and statement, but nothing else administrative: no special shifts, cancelling, bonus, absence or manual transactions.
+
+### Overview
+An overview page for administrators and Inspektionen, covering everyone on this month's alumneliste:
+- Figures: residents, how many are in minus now (and under -6), how many will be in minus in 30 days by the forecast, and unmanned shifts in the next 7 days (and shifts for sale).
+- The distribution over the zones now, in 30 days and at the end of the calendar.
+- Low balance now: residents on 2 points or less, with a small forecast diagram and whether they are fine by the forecast, i.e. at 0 or more in 30 days.
+- All residents, lowest balance first: balance now, a small forecast diagram, the balance in 30 days and at the end of the calendar, the shifts they hold and their next shift.
+
+Each resident links to a page with their forecast, upcoming shifts and statement; administrators also make manual transactions there.
 
 
 ## Assignment of shifts
