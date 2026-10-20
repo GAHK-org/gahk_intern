@@ -152,12 +152,20 @@
             <span class="flix-help">Spol hen til det øjeblik, du vil bruge, og finjustér med pilene.</span>
           {% endif %}
 
-          <h3 class="flix-subhead">Eget billede som miniature</h3>
-          <form method="post" action="{% url 'gahkflix:choose_picture' video.pk %}" enctype="multipart/form-data" class="flix-form">{% csrf_token %}
-            <input type="hidden" name="kind" value="thumbnail">
-            <input id="own-thumbnail" type="file" name="picture" accept="image/*,.heic,.heif" aria-label="Vælg dit eget billede" data-flix-autosubmit>
-            <span class="flix-help">Bliver til 16:9: tæt på den form beskæres det, ellers vises det helt på en sløret baggrund.</span>
-          </form>
+          <h3 class="flix-subhead">Eget billede</h3>
+          <div class="flix-form-row">
+            <form method="post" action="{% url 'gahkflix:choose_picture' video.pk %}" enctype="multipart/form-data" class="flix-form">{% csrf_token %}
+              <input type="hidden" name="kind" value="thumbnail">
+              <label for="own-thumbnail">Som miniature</label>
+              <input id="own-thumbnail" type="file" name="picture" accept="image/*,.heic,.heif" data-flix-autosubmit>
+            </form>
+            <form method="post" action="{% url 'gahkflix:choose_picture' video.pk %}" enctype="multipart/form-data" class="flix-form">{% csrf_token %}
+              <input type="hidden" name="kind" value="banner">
+              <label for="own-banner">Som banner</label>
+              <input id="own-banner" type="file" name="picture" accept="image/*,.heic,.heif" data-flix-autosubmit>
+            </form>
+          </div>
+          <span class="flix-help">Bliver til 16:9: tæt på den form beskæres det, ellers vises det helt på en sløret baggrund. Banneret vises stort, så brug gerne et billede, der er mindst 1920 pixel bredt.</span>
         </section>
 
         {# --- A new version --------------------------------------------------------------------- #}

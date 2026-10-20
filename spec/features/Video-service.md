@@ -66,8 +66,8 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   by hand, and then stays as set.
 - The thumbnail and the banner are picked from 10 random frames spread over the video, with black and
   flat frames redrawn; `Vis 10 nye billeder` draws another ten. Or the uploader picks the moment
-  themselves in a player, a second or a frame at a time, and it is cut from the best rendition. The
-  thumbnail may also be the uploader's own picture. The edit page shows what is chosen now apart
+  themselves in a player, a second or a frame at a time, and it is cut from the best rendition.
+  Either may also be a picture of the uploader's own. The edit page shows what is chosen now apart
   from the options, under a ruler.
 - Thumbnails and banners are 16:9. A picture close to that shape (from 4:3 to cinema widescreen) is
   cropped to it; any other — a phone held upright, a square, a panorama — is shown whole on a

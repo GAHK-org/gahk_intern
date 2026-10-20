@@ -288,12 +288,22 @@ def test_a_draft_is_published_once_it_has_pictures(
     assert not notified(admin, categories.GAHKFLIX_NEW)
 
 
-def test_custom_thumbnail_becomes_16_by_9(admin: Resident) -> None:
+@pytest.mark.parametrize(
+    ("kind", "size"),
+    [
+        ("thumbnail", (640, 360)),
+        # Never enlarged: the banner is as wide as the picture allows, up to Full HD.
+        ("banner", (800, 450)),
+    ],
+)
+def test_a_custom_thumbnail_or_banner_becomes_16_by_9(
+    admin: Resident, kind: str, size: tuple[int, int]
+) -> None:
     video = make_video(admin, published=False)
     response = client_for(admin).post(
         reverse("gahkflix:choose_picture", args=[video.pk]),
         {
-            "kind": "thumbnail",
+            "kind": kind,
             "picture": SimpleUploadedFile("mig.jpg", jpeg_bytes(size=(800, 600)), "image/jpeg"),
         },
     )
@@ -301,9 +311,9 @@ def test_custom_thumbnail_becomes_16_by_9(admin: Resident) -> None:
     video.refresh_from_db()
     from PIL import Image
 
-    with video.thumbnail.open("rb") as stored, Image.open(stored) as image:
-        assert image.size == (640, 360)  # 4:3, so cropped
-    assert video.thumbnail_frame is None
+    with getattr(video, kind).open("rb") as stored, Image.open(stored) as image:
+        assert image.size == size  # 4:3, so cropped
+    assert getattr(video, f"{kind}_frame") is None
 
 
 def test_the_upload_page_shows_your_unpublished_videos(admin: Resident, member: Resident) -> None:

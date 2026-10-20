@@ -789,8 +789,8 @@ def choose_picture(request: HttpRequest, pk: int) -> HttpResponse:
         elif (at := request.POST.get("at", "")) and at.replace(".", "", 1).isdecimal():
             # A moment the uploader picked in the player themselves.
             data = services.picture_at(video, float(at), kind)
-        elif kind == "thumbnail" and (upload_file := request.FILES.get("picture")) is not None:
-            data = services.picture_from_upload(upload_file)
+        elif (upload_file := request.FILES.get("picture")) is not None:
+            data = services.picture_from_upload(upload_file, kind)
         else:
             messages.error(request, "Vælg et billede.")
             return redirect("gahkflix:edit", video.pk)

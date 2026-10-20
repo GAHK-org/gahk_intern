@@ -662,8 +662,8 @@ MEDIA_CACHE_ATTACHMENTS_MB = int(os.environ.get("MEDIA_CACHE_ATTACHMENTS_MB", "2
 NOTICE_IMAGE_CACHE_DAYS = int(os.environ.get("NOTICE_IMAGE_CACHE_DAYS", "30"))
 
 # GAHKFlix (gahkflix/). The largest film a resident may upload; it goes straight to the bucket, never
-# through the app server (gahkflix/uploads.py). A custom thumbnail is an ordinary picture.
+# through the app server (gahkflix/uploads.py). A custom thumbnail or banner is an ordinary picture.
 GAHKFLIX_MAX_UPLOAD_GB = float(os.environ.get("GAHKFLIX_MAX_UPLOAD_GB", "5"))
-GAHKFLIX_THUMBNAIL_MAX_MB = int(os.environ.get("GAHKFLIX_THUMBNAIL_MAX_MB", "15"))
+GAHKFLIX_PICTURE_MAX_MB = int(os.environ.get("GAHKFLIX_PICTURE_MAX_MB", "15"))
 # Local copies of its thumbnails, banners and frames, in MEDIA_CACHE_DIR/gahkflix/ (gahkflix/cache.py).
 GAHKFLIX_CACHE_MB = int(os.environ.get("GAHKFLIX_CACHE_MB", "1024"))

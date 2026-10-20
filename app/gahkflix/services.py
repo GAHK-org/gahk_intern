@@ -455,16 +455,16 @@ def picture_at(video: Video, at: float, kind: str) -> bytes:
             return encoding.thumbnail_jpeg(image) if kind == "thumbnail" else encoding.banner_jpeg(image)
 
 
-def picture_from_upload(upload: Any) -> bytes:  # noqa: ANN401 — an UploadedFile
-    """A resident's own thumbnail: any picture, HEIC included, cut to 16:9. Raises ValidationError."""
+def picture_from_upload(upload: Any, kind: str) -> bytes:  # noqa: ANN401 — an UploadedFile
+    """A resident's own thumbnail or banner: any picture, HEIC included, cut to 16:9. Raises ValidationError."""
     from django.conf import settings
 
     from core.uploads import validate_image_upload
 
-    prepared = validate_image_upload(upload, settings.GAHKFLIX_THUMBNAIL_MAX_MB)
+    prepared = validate_image_upload(upload, settings.GAHKFLIX_PICTURE_MAX_MB)
     try:
         prepared.seek(0)
-        return encoding.thumbnail_jpeg(prepared)
+        return encoding.banner_jpeg(prepared) if kind == "banner" else encoding.thumbnail_jpeg(prepared)
     except OSError as exc:
         raise ValidationError("Billedet kunne ikke læses.") from exc
 
