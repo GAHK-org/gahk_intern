@@ -60,6 +60,12 @@ class PhotoAlbumS3Storage(PublicEndpointS3Storage):
             url = url.lstrip("/")
         return urljoin("/", url)
 
+    def read_head(self, name: str, size: int) -> bytes:
+        """The first `size` bytes of a stored file, by one ranged GET. `.open()` would not do:
+        django-storages downloads the whole object on the first read."""
+        key = self._normalize_name(clean_name(name))
+        return bytes(self.bucket.Object(key).get(Range=f"bytes=0-{size - 1}")["Body"].read())
+
     def signed_url(
         self, name: str, expire: int | None = None, parameters: dict[str, Any] | None = None
     ) -> str:

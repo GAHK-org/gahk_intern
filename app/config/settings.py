@@ -224,6 +224,7 @@ CELERY_TASK_ROUTES = {
     "photo_album.tasks.build_album_download": {"queue": "media"},
     "photo_album.tasks.process_album_import": {"queue": "media"},
     "photo_album.tasks.backfill_media_hashes": {"queue": "media"},
+    "photo_album.tasks.reencode_enlarged_video": {"queue": "media"},
     "photo_album.tasks.settle_media_dates": {"queue": "media"},
 }
 
@@ -289,6 +290,12 @@ CELERY_BEAT_SCHEDULE = {
     "purge-worker-job-logs": {
         "task": "core.tasks.purge_worker_job_logs",
         "schedule": crontab(minute=40, hour=4),
+    },
+    # Hourly: a job whose worker died under it is otherwise listed as running for good. It can
+    # only be told apart once it is past its time limit, so there is nothing to gain from sooner.
+    "close-lost-worker-jobs": {
+        "task": "core.tasks.close_lost_jobs",
+        "schedule": crontab(minute=35),
     },
     "purge-worker-job-results": {
         "task": "core.tasks.purge_worker_job_results",

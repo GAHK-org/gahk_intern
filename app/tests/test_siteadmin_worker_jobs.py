@@ -104,7 +104,11 @@ def test_photo_album_tasks_show_the_affected_media_and_import(
 ) -> None:
     resident = make_resident()
     album = Album.objects.create(folder="2026", name="Sommerfest")
-    media = Media.objects.create(album=album, title="sommer.jpg", requested_by=resident)
+    # The full file name, extension included — the title is the bare stem — and the size.
+    media = Media.objects.create(
+        album=album, title="sommer", filename="sommer.mpg", size=3 * 1024 * 1024, requested_by=resident
+    )
+    unsized = Media.objects.create(album=album, title="vinter", filename="vinter.jpg", requested_by=resident)
     album_import = AlbumImport.objects.create(
         requested_by=resident,
         folder="2026",
@@ -114,11 +118,13 @@ def test_photo_album_tasks_show_the_affected_media_and_import(
     jobs = [
         Job(id="a", task=DERIVATIVES, arguments=f"({media.pk},)"),
         Job(id="b", task=IMPORT, arguments=f"({album_import.pk},)"),
+        Job(id="c", task=DERIVATIVES, arguments=f"({unsized.pk},)"),
     ]
 
     _add_photo_album_context(jobs)
 
-    assert jobs[0].task_context == "Medie: sommer.jpg (album: 2026: Sommerfest)"
+    assert jobs[0].task_context == "Medie: sommer.mpg, 3,0\xa0MB (album: 2026: Sommerfest)"
+    assert jobs[2].task_context == "Medie: vinter.jpg (album: 2026: Sommerfest)"
     assert jobs[1].task_context == "ZIP: sommerfest.zip (mappe: 2026); albummer: 2026: Sommerfest"
 
 
@@ -589,3 +595,51 @@ def test_the_dashboard_is_empty_rather_than_broken_without_the_celery_tables(
     assert response.status_code == 200
     assert "Køen er tom." in response.content.decode()
     assert '<option value="nothing.here" selected>' in response.content.decode()
+
+
+def _started_row(task_id: str, task: str) -> None:
+    """A STARTED row as Celery 5.3+ stores it: no `date_done`, so nothing says when it began."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "INSERT INTO celery_taskmeta (task_id, status, date_done, name, worker, retries, queue)"
+            " VALUES (%s, 'STARTED', NULL, %s, 'media@test', 0, 'media')",
+            [task_id, task],
+        )
+
+
+def _status(task_id: str) -> tuple[str, datetime | None, str | None]:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT status, date_done, traceback FROM celery_taskmeta WHERE task_id = %s", [task_id]
+        )
+        return cursor.fetchone()
+
+
+@pytest.mark.usefixtures("celery_tables")
+def test_jobs_whose_worker_died_under_them_are_closed_as_failed() -> None:
+    """A worker killed outright records nothing: the job was listed as running for good, and never
+    purged, since the purge goes by `date_done` and Celery leaves it NULL on a running job."""
+    from core.tasks import LOST_JOB_GRACE, close_lost_jobs, task_time_limit
+
+    now = timezone.now()
+    limit = task_time_limit(DERIVATIVES)
+    _started_row("dead", DERIVATIVES)
+    _record("dead", now - limit - LOST_JOB_GRACE - timedelta(minutes=1), state="STARTED")
+    _started_row("slow", DERIVATIVES)
+    _record("slow", now - limit + timedelta(minutes=5), state="STARTED")
+    # From before the worker wrote its record as a job started: nothing to time it by, long dead.
+    _started_row("ancient", IMPORT)
+    _result("done", now - timedelta(hours=9))
+
+    assert close_lost_jobs.run() == 2
+
+    dead_status, dead_done, dead_traceback = _status("dead")
+    assert dead_status == "FAILURE"
+    assert "WorkerLostError" in (dead_traceback or "")
+    # The latest moment it can have ended, so it ages out with the other failures.
+    assert dead_done == (now - LOST_JOB_GRACE - timedelta(minutes=1)).astimezone(UTC).replace(tzinfo=None)
+    assert WorkerJobLog.objects.get(task_id="dead").state == "FAILURE"
+    assert _status("ancient")[0] == "FAILURE"
+    assert _status("ancient")[1] is not None
+    assert _status("slow")[0] == "STARTED"
+    assert _status("done")[0] == "SUCCESS"

@@ -70,6 +70,13 @@ erDiagram
         int removed
     }
 
+    core_ServiceHeartbeat {
+        int id PK
+        string name
+        string hostname
+        datetime beat_at
+    }
+
     residents_Resident {
         int id PK
         string password
@@ -582,6 +589,7 @@ erDiagram
         string filename
         string sha256
         datetime hash_failed_at
+        int size
         string original
         string high_definition
         string thumbnail
@@ -590,6 +598,7 @@ erDiagram
         string derivative_state
         int derivative_attempts
         datetime derivative_started_at
+        string derivative_task_id
         json metadata
         int requested_by_id FK
         datetime added_at
@@ -1038,6 +1047,13 @@ erDiagram
         int removed
     }
 
+    core_ServiceHeartbeat {
+        int id PK
+        string name
+        string hostname
+        datetime beat_at
+    }
+
     residents_Resident { }
 
     core_PushSubscription }o--|| residents_Resident : "user"
@@ -1389,6 +1405,7 @@ erDiagram
         string filename
         string sha256
         datetime hash_failed_at
+        int size
         string original
         string high_definition
         string thumbnail
@@ -1397,6 +1414,7 @@ erDiagram
         string derivative_state
         int derivative_attempts
         datetime derivative_started_at
+        string derivative_task_id
         json metadata
         int requested_by_id FK
         datetime added_at
