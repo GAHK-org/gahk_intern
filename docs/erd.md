@@ -589,6 +589,7 @@ erDiagram
         string filename
         string sha256
         datetime hash_failed_at
+        int size
         string original
         string high_definition
         string thumbnail
@@ -597,6 +598,7 @@ erDiagram
         string derivative_state
         int derivative_attempts
         datetime derivative_started_at
+        string derivative_task_id
         json metadata
         int requested_by_id FK
         datetime added_at
@@ -1413,6 +1415,7 @@ erDiagram
         string filename
         string sha256
         datetime hash_failed_at
+        int size
         string original
         string high_definition
         string thumbnail
@@ -1421,6 +1424,7 @@ erDiagram
         string derivative_state
         int derivative_attempts
         datetime derivative_started_at
+        string derivative_task_id
         json metadata
         int requested_by_id FK
         datetime added_at

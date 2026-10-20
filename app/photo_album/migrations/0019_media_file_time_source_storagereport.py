@@ -6,7 +6,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("photo_album", "0017_media_sidecar"),
+        ("photo_album", "0018_media_size_and_derivative_task"),
     ]
 
     operations = [

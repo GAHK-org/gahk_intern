@@ -17,6 +17,7 @@ from django.db import models, transaction
 from django.db.models import F, Max, Q
 from django.db.models.base import ModelBase
 from django.db.models.functions import Lower
+from django.template.defaultfilters import filesizeformat
 from django.utils import timezone
 
 from .storage import get_photo_album_storage
@@ -44,10 +45,11 @@ JOB_STALLED_AFTER = timedelta(minutes=15)
 # is only lost if a worker was killed after taking it off the broker and before starting it.
 JOB_QUEUED_TOO_LONG = timedelta(hours=12)
 
-# How long one worker's claim on a media row keeps others off it. An hour, the transcode's time
+# How long one worker's claim on a media row keeps others off it. Equal to the transcode's time
 # limit (tasks.MEDIA_TASK_TIME_LIMIT): it has to outlast the longest honest transcode, because
-# expiring early is what would let a second worker in beside the first.
-DERIVATIVE_CLAIM_TTL = timedelta(hours=1)
+# expiring early is what would let a second worker in beside the first. Four hours, not one: a long
+# video on this box's few cores honestly takes more than an hour.
+DERIVATIVE_CLAIM_TTL = timedelta(hours=4)
 
 
 # An album and everything under it may be at most five levels deep: depth 0 (a root album in a
@@ -588,6 +590,9 @@ class Media(models.Model):
     # When that backfill last failed to read the original. Such a row waits behind every row not yet
     # tried, so originals that are gone cannot take each night's budget before anything else.
     hash_failed_at = models.DateTimeField(null=True, blank=True)
+    # The original's size in bytes. Null on rows from before it was recorded until the nightly
+    # `tasks.backfill_media_hashes` has reached them.
+    size = models.BigIntegerField(null=True, blank=True)
     original = models.FileField(
         upload_to=album_original_path, storage=get_photo_album_storage, max_length=500
     )
@@ -619,6 +624,10 @@ class Media(models.Model):
     # on its own after DERIVATIVE_CLAIM_TTL, so the row becomes eligible again with nothing to
     # reset by hand. See `build_media_derivatives`, which takes it as a compare-and-swap.
     derivative_started_at = models.DateTimeField(null=True, blank=True)
+    # The Celery task that holds that claim. A message redelivered after its worker died finds the
+    # row still claimed under its own id — the only way it can tell "my first run died" from
+    # "another worker has it".
+    derivative_task_id = models.CharField(max_length=36, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
     requested_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="media_requests"
@@ -714,6 +723,13 @@ class Media(models.Model):
     @property
     def display_name(self) -> str:
         return self.filename or Path(self.original.name or "").name
+
+    @property
+    def display_name_and_size(self) -> str:
+        """'clip.mpg (412,5 MB)': the name with its extension, and the size when it is known."""
+        if self.size is None:
+            return self.display_name
+        return f"{self.display_name} ({filesizeformat(self.size)})"
 
     @property
     def is_in_bin(self) -> bool:

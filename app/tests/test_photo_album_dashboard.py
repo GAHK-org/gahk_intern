@@ -362,7 +362,7 @@ def test_the_migration_tells_imported_file_times_from_uploaded_ones(
     AlbumImport.objects.filter(pk=album_import.pk).update(created_at=started)
     Media.objects.update(file_time_source="")
 
-    importlib.import_module("photo_album.migrations.0019_fill_media_file_time_source").fill(apps, None)
+    importlib.import_module("photo_album.migrations.0020_fill_media_file_time_source").fill(apps, None)
 
     assert dict(Media.objects.values_list("pk", "file_time_source")) == {
         imported.pk: "archive",

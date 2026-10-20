@@ -24,6 +24,6 @@ def fill(apps: Apps, schema_editor: BaseDatabaseSchemaEditor) -> None:
 
 
 class Migration(migrations.Migration):
-    dependencies = [("photo_album", "0018_media_file_time_source_storagereport")]
+    dependencies = [("photo_album", "0019_media_file_time_source_storagereport")]
 
     operations = [migrations.RunPython(fill, migrations.RunPython.noop)]
