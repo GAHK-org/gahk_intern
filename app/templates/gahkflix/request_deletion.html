@@ -1,0 +1,16 @@
+{% extends "gahkflix/base.html" %}
+{% block title %}Anmod om sletning – GAHKFlix{% endblock %}
+{% block content %}
+  <div class="flix-page flix-page-narrow">
+    <h1 class="flix-page-title">Anmod om sletning af {{ video.title }}</h1>
+    <form method="post" class="flix-panel flix-form">{% csrf_token %}
+      <p>Videoen er uploadet {{ video.created_at|date:"j. F Y" }}. To andre administratorer skal godkende sletningen; derefter ligger den 30 dage i papirkurven, før den slettes helt.</p>
+      {{ form.non_field_errors }}
+      <label for="{{ form.reason.id_for_label }}">Hvorfor skal den slettes?</label>{{ form.reason }}{{ form.reason.errors }}
+      <div class="flix-actions">
+        <button class="flix-btn flix-btn-red" type="submit">Send anmodningen</button>
+        <a class="flix-btn flix-btn-small flix-btn-quiet" href="{% url 'gahkflix:edit' video.pk %}">Annuller</a>
+      </div>
+    </form>
+  </div>
+{% endblock %}

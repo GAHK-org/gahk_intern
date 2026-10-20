@@ -1,0 +1,26 @@
+{% if query %}
+  {% if people %}
+    <h2 class="flix-section-title" style="margin-top:0">Personer</h2>
+    <div class="flix-people">
+      {% for person in people %}
+        <a class="flix-person" href="{{ person.url }}">
+          {% if person.resident.profile_picture %}<img src="{{ person.resident.avatar_url }}" alt="">{% else %}<span class="flix-initials">{{ person.name|slice:":1"|upper }}</span>{% endif %}
+          {{ person.name }}
+        </a>
+      {% endfor %}
+    </div>
+  {% endif %}
+  {% if series %}
+    <h2 class="flix-section-title">Serier</h2>
+    <div class="flix-grid">{% for show in series %}{% include "gahkflix/_series_card.html" %}{% endfor %}</div>
+  {% endif %}
+  {% if videos %}
+    <h2 class="flix-section-title">Videoer</h2>
+    <div class="flix-grid">{% for video in videos %}{% include "gahkflix/_card.html" %}{% endfor %}</div>
+  {% endif %}
+  {% if not people and not series and not videos %}
+    <p class="flix-empty">Intet matcher "{{ query }}". Prøv et andet ord, et navn eller et tag.</p>
+  {% endif %}
+{% else %}
+  <p class="flix-empty">Søg i titler, beskrivelser, medvirkende, serier og tags.</p>
+{% endif %}

@@ -24,7 +24,9 @@ from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile, File
 from django.db import IntegrityError, transaction
 from django.db.models import Case, Exists, F, OuterRef, Q, QuerySet, Value, When
+from django.db.models.fields.files import FieldFile
 from django.db.models.functions import Lower
+from django.template.defaultfilters import filesizeformat
 from django.utils import timezone
 from PIL import ExifTags, Image, ImageFile, ImageOps, ImageSequence, IptcImagePlugin
 
@@ -33,9 +35,11 @@ from residents.models import Resident
 from .models import (
     MAX_ALBUM_DEPTH,
     MEDIA_VIEW_DEDUPE_WINDOW,
+    PURGE_AFTER,
     Album,
     DateSource,
     DerivativeState,
+    FileTimeSource,
     Media,
     MediaStatus,
     MediaView,
@@ -122,17 +126,48 @@ def backfill_hashes(*, limit: int = 0, until: datetime | None = None) -> HashBac
         if until is not None and timezone.now() >= until:
             break
         digest = hashlib.sha256()
+        size = 0
         try:
             with media.original.open("rb") as original:
                 while chunk := original.read(1024 * 1024):
                     digest.update(chunk)
+                    size += len(chunk)
         except OSError as exc:
             result.unreadable.append(f"{media.pk} ({media.original.name}): {exc}")
             logger.warning("Could not read media %s (%s) to hash it: %s", media.pk, media.original.name, exc)
             Media.objects.filter(pk=media.pk).update(hash_failed_at=timezone.now())
             continue
-        Media.objects.filter(pk=media.pk).update(sha256=digest.hexdigest(), hash_failed_at=None)
+        Media.objects.filter(pk=media.pk).update(sha256=digest.hexdigest(), size=size, hash_failed_at=None)
         result.hashed += 1
+    result.remaining = missing.count()
+    return result
+
+
+@dataclass
+class SizeBackfill:
+    sized: int = 0
+    unreadable: int = 0
+    remaining: int = 0
+
+
+def backfill_sizes(*, until: datetime | None = None) -> SizeBackfill:
+    """Record the size of originals stored before sizes were: one HEAD request each, no download.
+
+    A row whose original cannot be asked about is left for the next run, behind the others.
+    """
+    result = SizeBackfill()
+    missing = Media.objects.filter(size__isnull=True).exclude(original="")
+    for media in missing.order_by("pk").iterator():
+        if until is not None and timezone.now() >= until:
+            break
+        try:
+            size = media.original.size
+        except OSError as exc:
+            result.unreadable += 1
+            logger.warning("Could not read the size of media %s (%s): %s", media.pk, media.original.name, exc)
+            continue
+        Media.objects.filter(pk=media.pk).update(size=size)
+        result.sized += 1
     result.remaining = missing.count()
     return result
 
@@ -154,6 +189,7 @@ def store_upload(
     title: str = "",
     approved: bool = False,
     file_modified_at: datetime | None = None,
+    file_time_source: str = FileTimeSource.UNKNOWN,
     sha256: str | None = None,
     stored: tuple[str, UUID] | None = None,
     sidecar: bytes = b"",
@@ -162,7 +198,8 @@ def store_upload(
 
     The file keeps its exact name in `Media.filename`; its storage key only has to be unique, which
     the uuid directory in it takes care of (see models._media_key). `sidecar` is the AppleDouble
-    sidecar a ZIP brought it with, stored beside it as it was.
+    sidecar a ZIP brought it with, stored beside it as it was. `file_time_source` says where
+    `file_modified_at` came from (FileTimeSource).
 
     With `stored`, (key, uuid), the original is already at that key, sent straight to the bucket
     (photo_album.direct_upload): `uploaded_file` is a local copy to read, and is not stored again.
@@ -193,6 +230,8 @@ def store_upload(
         metadata=extract_metadata(uploaded_file),
         captured_at=extract_captured_at(uploaded_file),
         file_modified_at=file_modified_at,
+        file_time_source=file_time_source if file_modified_at is not None else FileTimeSource.UNKNOWN,
+        size=getattr(uploaded_file, "size", None),
     )
     if stored is None:
         media.original.save(filename, uploaded_file, save=False)
@@ -216,6 +255,7 @@ def upload_media(
     title: str = "",
     approved: bool = False,
     file_modified_at: datetime | None = None,
+    file_time_source: str = FileTimeSource.UNKNOWN,
 ) -> Media:
     """`store_upload` for callers that only want the row: the new one, or the one it duplicated."""
     outcome = store_upload(
@@ -225,6 +265,7 @@ def upload_media(
         title=title,
         approved=approved,
         file_modified_at=file_modified_at,
+        file_time_source=file_time_source,
     )
     media = outcome.media or outcome.duplicate
     assert media is not None  # noqa: S101 — store_upload always returns one of the two  # nosec B101
@@ -423,10 +464,15 @@ def _sidecar_target(path: PurePosixPath) -> str | None:
     return None
 
 
-def _file_time(sidecar: list[datetime], entry: datetime | None, folder: str) -> datetime | None:
-    """A member's own time: the earliest believable date its sidecar keeps, else the ZIP entry's."""
+def _file_time(
+    sidecar: list[datetime], entry: datetime | None, folder: str
+) -> tuple[datetime | None, FileTimeSource]:
+    """A member's own time, and where it is from: the earliest believable date its sidecar keeps,
+    else the ZIP entry's."""
     believable = [moment for moment in sidecar if believable_date(moment, folder, file_time=True)]
-    return min(believable) if believable else entry
+    if believable:
+        return min(believable), FileTimeSource.SIDECAR
+    return entry, FileTimeSource.ARCHIVE if entry is not None else FileTimeSource.UNKNOWN
 
 
 @dataclass
@@ -439,6 +485,7 @@ class _ImportFile:
     modified_at: datetime | None
     sidecar: bytes = b""  # its AppleDouble sidecar in the archive, if it had one
     sidecar_member: str = ""  # and that sidecar's own name in the archive
+    modified_from: FileTimeSource = FileTimeSource.UNKNOWN  # where modified_at is from
 
 
 @dataclass
@@ -619,8 +666,10 @@ def _plan_import(
                 plan.errors.append(f"{name}: {error}")
                 continue
         sidecar_member, sidecar = sidecars.get(name, ("", b""))
-        modified_at = _file_time(appledouble_dates(sidecar), _zip_modified_at(member), folder)
-        item = _ImportFile(name, folders, path.name, target, sha256, modified_at, sidecar, sidecar_member)
+        modified_at, modified_from = _file_time(appledouble_dates(sidecar), _zip_modified_at(member), folder)
+        item = _ImportFile(
+            name, folders, path.name, target, sha256, modified_at, sidecar, sidecar_member, modified_from
+        )
         key = (tuple(folder.lower() for folder in folders), path.name)
         earlier = seen.get(key)
         if (
@@ -760,6 +809,7 @@ def _store_import(
                         resident=resident,
                         approved=True,
                         file_modified_at=item.modified_at,
+                        file_time_source=item.modified_from,
                         sha256=item.sha256,
                         sidecar=item.sidecar,
                     )
@@ -829,9 +879,24 @@ def build_derivatives(media: Media) -> bool:
 
     A source that cannot be decoded is NOT stored as its own derivatives any more (that put whatever
     bytes were uploaded inside an <img> in the grid); it is retried and then marked FAILED.
+
+    The attempt is counted BEFORE the work, not after: a worker killed mid-encode (out of memory,
+    the hard time limit) saves nothing afterwards, and a video that kills its worker every time
+    used to stay "Mediet behandles" forever instead of ending FAILED after MAX_DERIVATIVE_ATTEMPTS.
     """
-    media.derivative_attempts += 1
     filename = media.display_name or "upload"
+    if media.derivative_attempts >= MAX_DERIVATIVE_ATTEMPTS:
+        media.derivative_state = DerivativeState.FAILED
+        media.save(update_fields=["derivative_state"])
+        logger.warning(
+            "Gave up on media %s (%s) after %d attempts; marked as failed.",
+            media.pk,
+            filename,
+            media.derivative_attempts,
+        )
+        return False
+    media.derivative_attempts += 1
+    media.save(update_fields=["derivative_attempts"])
     video = is_video_media(media)
     with media.original.open("rb") as original:
         source = File(original, name=filename)
@@ -852,6 +917,12 @@ def build_derivatives(media: Media) -> bool:
         )
         media.save(update_fields=["derivative_state", "derivative_attempts"])
         return False
+    _store_variants(media, variants)
+    return True
+
+
+def _store_variants(media: Media, variants: "Variants") -> None:
+    """Store new derivatives and mark the item READY, then delete the ones they replace."""
     previous = [name for name in (media.high_definition.name, media.thumbnail.name) if name]
     media.high_definition.save(
         variants.high_definition.name or "high-definition.mp4", variants.high_definition, save=False
@@ -870,7 +941,6 @@ def build_derivatives(media: Media) -> bool:
     for name in previous:
         if name not in current:
             media.thumbnail.storage.delete(name)
-    return True
 
 
 def pending_derivatives() -> "QuerySet[Media]":
@@ -961,85 +1031,245 @@ def _animated_gif_variant(
 def video_variants(uploaded_file: File, filename: str) -> Variants | None:
     """Transcode a video to a viewer-sized MP4 and extract a grid-sized JPEG frame."""
     try:
-        import imageio_ffmpeg
+        with TemporaryDirectory(prefix="photo-album-") as directory:
+            source = _copy_to_disk(uploaded_file, Path(directory), filename)
+            return _encode_video(_ffmpeg(), source, Path(directory), filename)
     except ImportError:
         return None
-
-    try:
-        with TemporaryDirectory(prefix="photo-album-") as directory:
-            source = Path(directory) / f"source{Path(filename).suffix or '.upload'}"
-            high_definition = Path(directory) / "high-definition.mp4"
-            thumbnail = Path(directory) / "thumbnail.jpg"
-            uploaded_file.seek(0)
-            with source.open("wb") as target:
-                for chunk in uploaded_file.chunks():
-                    target.write(chunk)
-            ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
-            captured_at = video_captured_at(ffmpeg, str(source))
-            _run_ffmpeg(
-                ffmpeg,
-                "-i",
-                str(source),
-                "-map",
-                "0:v:0",
-                "-map",
-                "0:a?",
-                "-vf",
-                # libx264 with yuv420p needs even dimensions; AVI and old camera formats are not
-                # always, and an odd one made the whole encode fail.
-                f"scale={HIGH_DEFINITION_SIZE}:{HIGH_DEFINITION_SIZE}:force_original_aspect_ratio=decrease,"
-                "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-                "-pix_fmt",
-                "yuv420p",
-                "-c:v",
-                "libx264",
-                "-crf",
-                "23",
-                "-c:a",
-                "aac",
-                "-movflags",
-                "+faststart",
-                str(high_definition),
-            )
-            _run_ffmpeg(
-                ffmpeg,
-                "-i",
-                str(source),
-                "-frames:v",
-                "1",
-                "-vf",
-                f"scale={THUMBNAIL_SIZE}:{THUMBNAIL_SIZE}:force_original_aspect_ratio=decrease",
-                str(thumbnail),
-            )
-            return Variants(
-                ContentFile(high_definition.read_bytes(), name=f"{Path(filename).stem}.mp4"),
-                ContentFile(thumbnail.read_bytes(), name=f"{Path(filename).stem}.jpg"),
-                captured_at,
-            )
-    except (OSError, subprocess.CalledProcessError):
+    except subprocess.CalledProcessError as exc:
+        logger.warning("Could not convert %s: %s", filename, ffmpeg_failure(exc))
+        return None
+    except OSError as exc:
+        logger.warning("Could not convert %s: %s", filename, exc)
         return None
     finally:
         uploaded_file.seek(0)
 
 
-def video_captured_at(ffmpeg: str, path: str) -> datetime | None:
-    """When the video was recorded, from its container metadata, or None.
+def _ffmpeg() -> str:
+    import imageio_ffmpeg
 
-    `ffmpeg -i` with no output prints the metadata and exits non-zero, which is expected here.
-    Years before 1971 are a camera's unset clock (or the QuickTime/Unix epoch), not a date.
+    return str(imageio_ffmpeg.get_ffmpeg_exe())
+
+
+def _copy_to_disk(uploaded_file: File, directory: Path, filename: str) -> Path:
+    source = directory / f"source{Path(filename).suffix or '.upload'}"
+    uploaded_file.seek(0)
+    with source.open("wb") as target:
+        for chunk in uploaded_file.chunks():
+            target.write(chunk)
+    return source
+
+
+# libx264 with yuv420p needs even dimensions; AVI and old camera formats are not always, and an
+# odd one made the whole encode fail. The box is never larger than the video itself: a plain
+# 1600x1600 box ENLARGED every smaller video to 1600 px — a 320x240 camera clip came out 1600x1200,
+# took twenty times the CPU and ten times the memory, and its "compressed" copy was six times the
+# size of the original.
+HIGH_DEFINITION_VIDEO_SCALE = (
+    f"scale='min({HIGH_DEFINITION_SIZE},iw)':'min({HIGH_DEFINITION_SIZE},ih)'"
+    ":force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2"
+)
+
+# Subtitle formats that are text, so can be carried into the MP4 as its own text format (mov_text).
+# Picture-based ones — DVD, Blu-ray, DVB — cannot become text; they stay in the original only.
+TEXT_SUBTITLE_CODECS = frozenset(
+    {"subrip", "srt", "ass", "ssa", "mov_text", "webvtt", "text", "microdvd", "sami", "subviewer", "mpl2"}
+)
+_STREAM = re.compile(r"^\s*Stream #0:(\d+)\S*: (Video|Audio|Subtitle): (\w+)(.*)$", re.MULTILINE)
+_DIMENSIONS = re.compile(r", (\d{2,5})x(\d{2,5})\b")
+
+
+@dataclass
+class VideoProbe:
+    """What `ffmpeg -i` says about a video: enough to convert it."""
+
+    text: str = ""
+
+    @property
+    def dimensions(self) -> tuple[int, int] | None:
+        """The first video stream's width and height, as stored (before any rotation)."""
+        for match in _STREAM.finditer(self.text):
+            if match.group(2) == "Video" and (size := _DIMENSIONS.search(match.group(4))):
+                return int(size.group(1)), int(size.group(2))
+        return None
+
+    @property
+    def subtitles(self) -> list[tuple[int, str]]:
+        """(stream index, codec) of every subtitle stream."""
+        return [
+            (int(match.group(1)), match.group(3))
+            for match in _STREAM.finditer(self.text)
+            if match.group(2) == "Subtitle"
+        ]
+
+
+def probe_video(ffmpeg: str, path: str, data: bytes | None = None) -> VideoProbe:
+    """`ffmpeg -i` on a file — or, with `data`, on the start of one fed through a pipe.
+
+    With no output named it prints what it found and exits non-zero, which is expected here.
     """
     try:
         result = subprocess.run(  # noqa: S603  # nosec B603
-            [ffmpeg, "-hide_banner", "-i", path],
+            [ffmpeg, "-hide_banner", "-i", "pipe:0" if data is not None else path],
             check=False,
             capture_output=True,
-            text=True,
-            errors="replace",
+            input=data,
             timeout=60,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return None
-    value = parse_video_creation_time(result.stderr)
+        return VideoProbe()
+    return VideoProbe(result.stderr.decode("utf-8", errors="replace"))
+
+
+def _encode_video(ffmpeg: str, source: Path, directory: Path, filename: str) -> Variants:
+    """The viewer MP4 and the grid JPEG for a video on disk. Raises CalledProcessError."""
+    probe = probe_video(ffmpeg, str(source))
+    high_definition = directory / "high-definition.mp4"
+    thumbnail = directory / "thumbnail.jpg"
+    _run_ffmpeg(
+        ffmpeg,
+        "-i",
+        str(source),
+        # ffmpeg picks the streams: the best video, and of the audio the stream with the most
+        # channels. Mapping every audio stream (`-map 0:a?`) took broken ones in too, and an old
+        # camera's MPEG with an empty AC3 track of "0 channels" beside its real sound failed whole.
+        # Subtitles and data streams are left out here; text subtitles are added below.
+        "-sn",
+        "-dn",
+        "-vf",
+        HIGH_DEFINITION_VIDEO_SCALE,
+        "-pix_fmt",
+        "yuv420p",
+        "-c:v",
+        "libx264",
+        "-crf",
+        "23",
+        "-c:a",
+        "aac",
+        "-movflags",
+        "+faststart",
+        str(high_definition),
+    )
+    _add_text_subtitles(ffmpeg, source, high_definition, probe, filename)
+    _run_ffmpeg(
+        ffmpeg,
+        "-i",
+        str(source),
+        "-frames:v",
+        "1",
+        "-vf",
+        f"scale={THUMBNAIL_SIZE}:{THUMBNAIL_SIZE}:force_original_aspect_ratio=decrease",
+        str(thumbnail),
+    )
+    return Variants(
+        ContentFile(high_definition.read_bytes(), name=f"{Path(filename).stem}.mp4"),
+        ContentFile(thumbnail.read_bytes(), name=f"{Path(filename).stem}.jpg"),
+        _video_creation_time(probe.text),
+    )
+
+
+def _add_text_subtitles(
+    ffmpeg: str, source: Path, high_definition: Path, probe: VideoProbe, filename: str
+) -> None:
+    """Copy the video's text subtitles into the viewer MP4, languages and default track kept.
+
+    A remux, not an encode: seconds, whatever the video's length. Should it fail, the MP4 simply
+    goes without them — the original keeps every subtitle either way.
+    """
+    text = [index for index, codec in probe.subtitles if codec in TEXT_SUBTITLE_CODECS]
+    pictures = sorted({codec for _, codec in probe.subtitles if codec not in TEXT_SUBTITLE_CODECS})
+    if pictures:
+        logger.info(
+            "%s has picture subtitles (%s), which only the original keeps.", filename, ", ".join(pictures)
+        )
+    if not text:
+        return
+    with_subtitles = high_definition.with_name("with-subtitles.mp4")
+    try:
+        _run_ffmpeg(
+            ffmpeg,
+            "-i",
+            str(high_definition),
+            "-i",
+            str(source),
+            "-map",
+            "0",
+            *(argument for index in text for argument in ("-map", f"1:{index}")),
+            "-c",
+            "copy",
+            "-c:s",
+            "mov_text",
+            "-movflags",
+            "+faststart",
+            str(with_subtitles),
+        )
+    except subprocess.CalledProcessError as exc:
+        logger.warning("Could not keep the subtitles of %s: %s", filename, ffmpeg_failure(exc))
+        return
+    with_subtitles.replace(high_definition)
+    logger.info("Kept %d subtitle track(s) of %s.", len(text), filename)
+
+
+# How much of a stored video `stored_video_dimensions` reads. The viewer copies are written with
+# +faststart, so their index — sizes included — is at the very start; so is an MPEG's or an AVI's.
+VIDEO_HEAD_BYTES = 4 * 1024 * 1024
+
+
+def read_head(field: FieldFile, size: int) -> bytes:
+    """The first `size` bytes of a stored file, without downloading the rest of it."""
+    from .storage import PhotoAlbumS3Storage
+
+    if isinstance(field.storage, PhotoAlbumS3Storage):
+        return field.storage.read_head(field.name or "", size)
+    with field.open("rb") as stored:
+        return bytes(stored.read(size))
+
+
+def stored_video_dimensions(field: FieldFile) -> tuple[int, int] | None:
+    """A stored video's width and height, from its first megabytes; None if they do not say."""
+    return probe_video(_ffmpeg(), "", read_head(field, VIDEO_HEAD_BYTES)).dimensions
+
+
+def shrink_enlarged_video(media: Media) -> str:
+    """Re-encode the viewer copy of a video that an earlier conversion enlarged past its original.
+
+    Returns what it did, for the job log. The item is left exactly as it was — still READY, its old
+    copy still served — unless the new copy is made: when the copy turns out not to be enlarged,
+    when the original is not smaller than HIGH_DEFINITION_SIZE, and when ffmpeg fails (raises
+    CalledProcessError).
+    """
+    name = media.display_name
+    copy = stored_video_dimensions(media.high_definition)
+    if copy is not None and max(copy) < HIGH_DEFINITION_SIZE:
+        return f"{name}: its copy is {copy[0]}x{copy[1]}, not enlarged; left as it is."
+    ffmpeg = _ffmpeg()
+    with media.original.open("rb") as original, TemporaryDirectory(prefix="photo-album-") as directory:
+        source = _copy_to_disk(File(original, name=name), Path(directory), name)
+        dimensions = probe_video(ffmpeg, str(source)).dimensions
+        if dimensions is None:
+            return f"{name}: ffmpeg could not tell the original's size; left as it is."
+        if max(dimensions) >= HIGH_DEFINITION_SIZE:
+            return f"{name}: the original is {dimensions[0]}x{dimensions[1]}, so its copy is not enlarged; left as it is."
+        old_size = media.high_definition.size
+        variants = _encode_video(ffmpeg, source, Path(directory), name)
+    _store_variants(media, variants)
+    return (
+        f"{name}: re-encoded at its own {dimensions[0]}x{dimensions[1]} instead of "
+        f"{f'{copy[0]}x{copy[1]}' if copy else 'enlarged'}; the copy went from "
+        f"{filesizeformat(old_size)} to {filesizeformat(media.high_definition.size)}."
+    )
+
+
+def video_captured_at(ffmpeg: str, path: str) -> datetime | None:
+    """When the video was recorded, from its container metadata, or None."""
+    return _video_creation_time(probe_video(ffmpeg, path).text)
+
+
+def _video_creation_time(probe_text: str) -> datetime | None:
+    """The creation time in `ffmpeg -i` output. Years before 1971 are a camera's unset clock (or the
+    QuickTime/Unix epoch), not a date."""
+    value = parse_video_creation_time(probe_text)
     if not value:
         return None
     try:
@@ -1054,12 +1284,27 @@ def video_captured_at(ffmpeg: str, path: str) -> datetime | None:
 
 
 def _run_ffmpeg(executable: str, *arguments: str) -> None:
+    # Errors only (no banner, no progress lines), kept rather than discarded: when an encode fails,
+    # ffmpeg's last words are the only record of why.
     subprocess.run(  # noqa: S603  # nosec B603
-        [executable, "-y", *arguments],
+        [executable, "-y", "-hide_banner", "-nostats", "-loglevel", "error", *arguments],
         check=True,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        errors="replace",
     )
+
+
+def ffmpeg_failure(exc: subprocess.CalledProcessError) -> str:
+    """Why ffmpeg failed, in one line: the signal that stopped it, or the last thing it said."""
+    if exc.returncode < 0:
+        signal_number = -exc.returncode
+        hint = " — most likely the out-of-memory killer" if signal_number == 9 else ""
+        return f"ffmpeg was stopped by signal {signal_number}{hint}"
+    lines = [line.strip() for line in (exc.stderr or "").splitlines() if line.strip()]
+    said = " | ".join(lines[-3:])[:500]
+    return f"ffmpeg exited with {exc.returncode}: {said or 'no message'}"
 
 
 def extract_metadata(uploaded_file: File) -> dict[str, str]:
@@ -1375,7 +1620,7 @@ def apply_sidecars(*, archive: File, folder: str, root_name: str) -> SidecarDate
                     media.save(update_fields=["sidecar"])
                     result.stored += 1
                 result.kept.append(name)
-                moment = _file_time(appledouble_dates(data), None, folder)
+                moment, _ = _file_time(appledouble_dates(data), None, folder)
                 if moment is None:
                     result.undated += 1
                     continue
@@ -1391,9 +1636,12 @@ def apply_sidecars(*, archive: File, folder: str, root_name: str) -> SidecarDate
                     result.against_capture[closeness] += 1
                 if media.file_modified_at == moment:
                     result.unchanged += 1
+                    if media.file_time_source != FileTimeSource.SIDECAR:
+                        media.file_time_source = FileTimeSource.SIDECAR
+                        media.save(update_fields=["file_time_source"])
                     continue
-                media.file_modified_at = moment
-                media.save(update_fields=["file_modified_at"])
+                media.file_modified_at, media.file_time_source = moment, FileTimeSource.SIDECAR
+                media.save(update_fields=["file_modified_at", "file_time_source"])
                 result.updated += 1
             result.redated = settle_dates(root)
     except (zipfile.BadZipFile, OSError, EOFError, RuntimeError) as exc:
@@ -1436,6 +1684,48 @@ def reread_capture_dates(*, limit: int = 0, until: datetime | None = None) -> Ca
         result.found += media.captured_at is not None
         media.save(update_fields=["capture_date_checked", "captured_at"])
     result.remaining = unchecked.count()
+    return result
+
+
+@dataclass
+class FileTimeCheck:
+    checked: int = 0
+    from_sidecar: int = 0
+    unreadable: list[str] = field(default_factory=list)
+    remaining: int = 0
+
+
+def check_file_time_sources(*, limit: int = 0, until: datetime | None = None) -> FileTimeCheck:
+    """Tell, for files stored before it was recorded, whether their file time is their sidecar's.
+
+    Only a file with a sidecar was left unknown (migration 0020 settled the rest from the database).
+    It came in a ZIP, so its time is the sidecar's if the sidecar has that date to believe, and the
+    ZIP entry's otherwise. A sidecar that cannot be read leaves the row as it is, to be tried again.
+    Stops after `limit` items or at `until`, whichever comes first.
+    """
+    result = FileTimeCheck()
+    unknown = Media.objects.filter(
+        file_modified_at__isnull=False, file_time_source=FileTimeSource.UNKNOWN
+    ).exclude(sidecar="")
+    queue = unknown.select_related("album").order_by("pk")
+    for media in (queue[:limit] if limit else queue).iterator():
+        if until is not None and timezone.now() >= until:
+            break
+        try:
+            with media.sidecar.open("rb") as sidecar:
+                data = sidecar.read(MACOS_METADATA_MAX_BYTES)
+        except (OSError, ValueError) as exc:
+            result.unreadable.append(f"{media.pk} ({media.sidecar.name}): {exc}")
+            logger.warning(
+                "Could not read the sidecar of media %s (%s): %s", media.pk, media.sidecar.name, exc
+            )
+            continue
+        result.checked += 1
+        moment, _ = _file_time(appledouble_dates(data), None, media.album.folder)
+        source = FileTimeSource.SIDECAR if moment == media.file_modified_at else FileTimeSource.ARCHIVE
+        result.from_sidecar += source == FileTimeSource.SIDECAR
+        Media.objects.filter(pk=media.pk).update(file_time_source=source)
+    result.remaining = unknown.count()
     return result
 
 
@@ -1525,8 +1815,8 @@ def permanently_delete(media: Media) -> None:
 def purge_expired(now: datetime | None = None) -> int:
     moment = now or timezone.now()
     expired = Media.objects.filter(
-        status=MediaStatus.PENDING, added_at__lt=moment - timedelta(days=30)
-    ) | Media.objects.filter(deleted_at__lt=moment - timedelta(days=30))
+        status=MediaStatus.PENDING, added_at__lt=moment - PURGE_AFTER
+    ) | Media.objects.filter(deleted_at__lt=moment - PURGE_AFTER)
     count = 0
     for media in expired.distinct():
         _delete_files(media)

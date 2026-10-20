@@ -202,6 +202,69 @@ def test_the_public_endpoint_resource_comes_from_the_shared_session_too(
     assert url.startswith("http://test-bucket.localhost:9000/media/opslag/a.jpg?")
 
 
+@pytest.mark.parametrize(
+    ("debug", "configured", "host", "expected"),
+    [
+        (True, "http://localhost:9000", "192.168.1.20", "http://192.168.1.20:9000"),  # a phone on the LAN
+        (True, "http://localhost:9000", "localhost", "http://localhost:9000"),  # the developer's own browser
+        (True, "http://localhost:9000", "", "http://localhost:9000"),  # outside a request
+        (False, "http://localhost:9000", "192.168.1.20", "http://localhost:9000"),  # never with DEBUG off
+        (True, "https://fsn1.your-objectstorage.com", "192.168.1.20", "https://fsn1.your-objectstorage.com"),
+    ],
+)
+def test_presigning_follows_the_page_host_only_in_local_development(
+    settings: object, debug: bool, configured: str, host: str, expected: str
+) -> None:
+    from core.storage import presigning_endpoint, request_host
+
+    settings.DEBUG = debug  # type: ignore[attr-defined]
+    token = request_host.set(host)
+    try:
+        assert presigning_endpoint(configured) == expected
+    finally:
+        request_host.reset(token)
+
+
+def test_a_phone_on_the_lan_gets_urls_signed_for_its_host(settings: object) -> None:
+    from core.storage import request_host
+
+    settings.DEBUG = True  # type: ignore[attr-defined]
+    settings.S3_PUBLIC_ENDPOINT_URL = "http://localhost:9000"  # type: ignore[attr-defined]
+    storage = MediaS3Storage(
+        bucket_name="gahk-s3", access_key="k", secret_key="s", endpoint_url="http://s3:8333",
+        region_name="fsn1", signature_version="s3v4", addressing_style="path",
+    )  # fmt: skip
+    assert storage.signed_url("opslag/a.jpg").startswith("http://localhost:9000/gahk-s3/media/opslag/a.jpg?")
+    token = request_host.set("192.168.1.20")
+    try:
+        assert storage.signed_url("opslag/a.jpg").startswith(
+            "http://192.168.1.20:9000/gahk-s3/media/opslag/a.jpg?"
+        )
+    finally:
+        request_host.reset(token)
+
+
+def test_the_middleware_tells_the_storage_the_page_host(settings: object, rf: Any) -> None:  # noqa: ANN401
+    from django.http import HttpResponse
+
+    from core.middleware import PresignForRequestHost
+    from core.storage import request_host
+
+    seen: list[str] = []
+
+    def view(request: object) -> HttpResponse:
+        seen.append(request_host.get())
+        return HttpResponse()
+
+    settings.ALLOWED_HOSTS = ["*"]  # type: ignore[attr-defined]
+    settings.DEBUG = True  # type: ignore[attr-defined]
+    PresignForRequestHost(view)(rf.get("/", HTTP_HOST="192.168.1.20:8800"))
+    settings.DEBUG = False  # type: ignore[attr-defined]
+    PresignForRequestHost(view)(rf.get("/", HTTP_HOST="192.168.1.20:8800"))
+    assert seen == ["192.168.1.20", ""]
+    assert request_host.get() == ""  # reset once the request is over
+
+
 def test_the_storage_still_pickles() -> None:
     storage = s3_storage()
     storage.connection

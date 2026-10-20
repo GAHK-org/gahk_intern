@@ -1,0 +1,48 @@
+{% extends "gahkflix/base.html" %}
+{% load gahkflix %}
+{% block title %}Mine videoer – GAHKFlix{% endblock %}
+{% block content %}
+  <div class="flix-page">
+    <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px">
+      <h1 class="flix-page-title">Mine videoer</h1>
+      <a class="flix-btn flix-btn-small flix-btn-red" href="{% url 'gahkflix:upload' %}">+ Upload</a>
+    </div>
+
+    {% if drafts %}
+      <h2 class="flix-section-title" style="margin-top:4px">Kladder</h2>
+      {% include "gahkflix/_draft_list.html" %}
+    {% endif %}
+
+    <h2 class="flix-section-title">Udgivet</h2>
+    {% if live %}
+      <div class="flix-grid">{% for video in live %}{% include "gahkflix/_card.html" %}{% endfor %}</div>
+    {% else %}
+      <p class="flix-empty">Du har ikke udgivet nogen videoer endnu.</p>
+    {% endif %}
+
+    {% if binned %}
+      <h2 class="flix-section-title">I papirkurven</h2>
+      <div class="flix-list">
+        {% for video in binned %}
+          <div class="flix-list-item">
+            <span class="flix-card-img">{% picture_url video "thumbnail" as thumb %}{% if thumb %}<img src="{{ thumb }}" alt="">{% endif %}</span>
+            <div><h3>{{ video.title }}</h3><p>Slettes helt {{ video.purge_at|date:"j. F Y" }}. Kun en administrator kan gendanne den.</p></div>
+            <span></span>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {% if requests %}
+      <h2 class="flix-section-title">Mine anmodninger</h2>
+      <table class="flix-table">
+        <thead><tr><th>Hvad</th><th>Hvornår</th><th>Status</th></tr></thead>
+        <tbody>
+          {% for change in requests %}
+            <tr><td><a href="{% url 'gahkflix:request' change.pk %}">{{ change.get_kind_display }}: {{ change.target }}</a></td><td>{{ change.created_at|date:"j. M Y" }}</td><td>{{ change.get_state_display }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+{% endblock %}

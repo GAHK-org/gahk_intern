@@ -17,11 +17,15 @@ from django.db import models, transaction
 from django.db.models import F, Max, Q
 from django.db.models.base import ModelBase
 from django.db.models.functions import Lower
+from django.template.defaultfilters import filesizeformat
 from django.utils import timezone
 
 from .storage import get_photo_album_storage
 
 ALBUM_DOWNLOAD_RETENTION = timedelta(days=7)
+# How long an upload may wait for approval, and a binned item in the bin, before it goes for good
+# (services.purge_expired).
+PURGE_AFTER = timedelta(days=30)
 
 # When a background ZIP job — a download being built, an import being unpacked — is presumed dead.
 #
@@ -44,10 +48,11 @@ JOB_STALLED_AFTER = timedelta(minutes=15)
 # is only lost if a worker was killed after taking it off the broker and before starting it.
 JOB_QUEUED_TOO_LONG = timedelta(hours=12)
 
-# How long one worker's claim on a media row keeps others off it. An hour, the transcode's time
+# How long one worker's claim on a media row keeps others off it. Equal to the transcode's time
 # limit (tasks.MEDIA_TASK_TIME_LIMIT): it has to outlast the longest honest transcode, because
-# expiring early is what would let a second worker in beside the first.
-DERIVATIVE_CLAIM_TTL = timedelta(hours=1)
+# expiring early is what would let a second worker in beside the first. Four hours, not one: a long
+# video on this box's few cores honestly takes more than an hour.
+DERIVATIVE_CLAIM_TTL = timedelta(hours=4)
 
 
 # An album and everything under it may be at most five levels deep: depth 0 (a root album in a
@@ -135,6 +140,21 @@ class DateSource(models.TextChoices):
 # The approximations only services.settle_dates can make, as they need the rest of the album.
 SETTLED_DATE_SOURCES = frozenset({DateSource.NEIGHBOURS, DateSource.ALBUM_YEAR})
 
+
+class FileTimeSource(models.TextChoices):
+    """Where `Media.file_modified_at` came from, which says how far it can be trusted.
+
+    A sidecar is the old file server's own record of the file. A ZIP entry's time is whatever the
+    machine that made the ZIP had: for the Dropbox archive, the day in 2022 it was uploaded there.
+    An upload's is the file's last-modified time on the uploader's device.
+    """
+
+    SIDECAR = "sidecar", "Sidecar"
+    ARCHIVE = "archive", "ZIP-filen"
+    UPLOAD = "upload", "Uploaderens fil"
+    UNKNOWN = "", "Ukendt"
+
+
 # How far outside its folder's year a date in an album is still believed: a New Year's Eve album
 # holds December's preparations and January's aftermath, and a film was often developed later.
 FOLDER_YEAR_SLACK_MONTHS = 6
@@ -146,6 +166,17 @@ def folder_year(folder: str) -> int | None:
     return int(folder) if folder.isdecimal() else None
 
 
+def folder_year_window(folder: str) -> tuple[datetime, datetime] | None:
+    """[start, end) of the dates a year folder's items can have: its year, FOLDER_YEAR_SLACK_MONTHS
+    either side. None for a folder that is not a year."""
+    year = folder_year(folder)
+    if year is None:
+        return None
+    start = timezone.make_aware(datetime(year - 1, 13 - FOLDER_YEAR_SLACK_MONTHS, 1))  # noqa: DTZ001
+    end = timezone.make_aware(datetime(year + 1, FOLDER_YEAR_SLACK_MONTHS + 1, 1))  # noqa: DTZ001
+    return start, end
+
+
 def believable_date(moment: datetime, folder: str, *, file_time: bool) -> bool:
     """Whether `moment` can be when a photo in `folder` was taken.
 
@@ -155,10 +186,9 @@ def believable_date(moment: datetime, folder: str, *, file_time: bool) -> bool:
     only a file time has a floor — a scanned print may honestly say 1975 in its metadata, but no
     file was saved then.
     """
-    year = folder_year(folder)
-    if year is not None:
-        start = timezone.make_aware(datetime(year - 1, 13 - FOLDER_YEAR_SLACK_MONTHS, 1))  # noqa: DTZ001
-        end = timezone.make_aware(datetime(year + 1, FOLDER_YEAR_SLACK_MONTHS + 1, 1))  # noqa: DTZ001
+    window = folder_year_window(folder)
+    if window is not None:
+        start, end = window
         return start <= moment < end
     return (not file_time or moment >= EARLIEST_FILE_TIME) and moment <= timezone.now() + timedelta(days=1)
 
@@ -563,6 +593,9 @@ class Media(models.Model):
     # When that backfill last failed to read the original. Such a row waits behind every row not yet
     # tried, so originals that are gone cannot take each night's budget before anything else.
     hash_failed_at = models.DateTimeField(null=True, blank=True)
+    # The original's size in bytes. Null on rows from before it was recorded until the nightly
+    # `tasks.backfill_media_hashes` has reached them.
+    size = models.BigIntegerField(null=True, blank=True)
     original = models.FileField(
         upload_to=album_original_path, storage=get_photo_album_storage, max_length=500
     )
@@ -594,6 +627,10 @@ class Media(models.Model):
     # on its own after DERIVATIVE_CLAIM_TTL, so the row becomes eligible again with nothing to
     # reset by hand. See `build_media_derivatives`, which takes it as a compare-and-swap.
     derivative_started_at = models.DateTimeField(null=True, blank=True)
+    # The Celery task that holds that claim. A message redelivered after its worker died finds the
+    # row still claimed under its own id — the only way it can tell "my first run died" from
+    # "another worker has it".
+    derivative_task_id = models.CharField(max_length=36, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
     requested_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="media_requests"
@@ -606,6 +643,11 @@ class Media(models.Model):
     # The file's own last-modified time, as the browser (File.lastModified), an AppleDouble sidecar
     # or the ZIP entry reports it — the best date there is for a photo whose EXIF was stripped.
     file_modified_at = models.DateTimeField(null=True, blank=True)
+    # Where that time came from (FileTimeSource). Blank on a row without one, and on one stored
+    # before it was recorded until the nightly tasks.settle_media_dates has read its sidecar.
+    file_time_source = models.CharField(
+        max_length=8, choices=FileTimeSource.choices, blank=True, default=FileTimeSource.UNKNOWN
+    )
     # The date the timeline and the album grid order by: when it was taken, else when the file was
     # last modified if that is believable, else an approximation (see `date_source` and
     # `services.settle_dates`). Kept in a column so both can page on an index.
@@ -684,6 +726,13 @@ class Media(models.Model):
     @property
     def display_name(self) -> str:
         return self.filename or Path(self.original.name or "").name
+
+    @property
+    def display_name_and_size(self) -> str:
+        """'clip.mpg (412,5 MB)': the name with its extension, and the size when it is known."""
+        if self.size is None:
+            return self.display_name
+        return f"{self.display_name} ({filesizeformat(self.size)})"
 
     @property
     def is_in_bin(self) -> bool:
@@ -813,6 +862,45 @@ MEDIA_VIEW_DEDUPE_WINDOW = timedelta(minutes=10)
 # picked again.
 FEATURED_PER_DAY = 3
 FEATURED_COOLDOWN = timedelta(days=365)
+
+
+# The variants in a media key (_media_key), in the order the dashboard lists them.
+STORAGE_MEDIA_VARIANTS = ("original", "high-definition", "thumbnail", "sidecar")
+
+
+class StorageReport(models.Model):
+    """What the photo album holds in the bucket, as tasks.measure_photo_album_storage last found it.
+
+    The database knows no file sizes, so the bucket is listed: every object and every older
+    version it still keeps. One row per measurement, for the dashboard to show the latest and how
+    much it grew; a year of them is kept.
+    """
+
+    measured_at = models.DateTimeField(default=timezone.now, db_index=True)
+    # Category -> {"objects": n, "bytes": n}: the media files by variant (original, high-definition,
+    # thumbnail, sidecar), import archives, built downloads, and older versions ("noncurrent").
+    totals = models.JSONField(default=dict)
+    # Album id (as a string, JSON's keys) -> bytes of its media files now, every variant.
+    by_album = models.JSONField(default=dict)
+    # Media files no row points at, among those over a day old (younger ones may be uploads still
+    # under way): {"objects": n, "bytes": n, "keys": [the first ORPHAN_KEYS_KEPT]}. Counted in
+    # `totals` as well — it is a part of them, not more.
+    orphans = models.JSONField(default=dict)
+    seconds = models.FloatField(default=0)  # how long the listing took
+
+    class Meta:
+        ordering = ["-measured_at"]
+
+    def __str__(self) -> str:
+        return f"Lager målt {self.measured_at:%Y-%m-%d %H:%M}"
+
+    @property
+    def media_bytes(self) -> int:
+        return sum(self.totals.get(variant, {}).get("bytes", 0) for variant in STORAGE_MEDIA_VARIANTS)
+
+    @property
+    def total_bytes(self) -> int:
+        return sum(entry.get("bytes", 0) for entry in self.totals.values())
 
 
 class FeaturedMedia(models.Model):

@@ -1,0 +1,8 @@
+{% extends "gahkflix/base.html" %}
+{% block title %}Anmodning – GAHKFlix{% endblock %}
+{% block content %}
+  <div class="flix-page flix-page-narrow" style="max-width:1000px">
+    <p><a href="{% if is_administrator %}{% url 'gahkflix:approvals' %}{% else %}{% url 'gahkflix:mine' %}{% endif %}" class="muted">← Tilbage</a></p>
+    {% include "gahkflix/_request.html" %}
+  </div>
+{% endblock %}

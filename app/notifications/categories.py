@@ -87,6 +87,7 @@ GROUPS: tuple[tuple[str, str], ...] = (
     ("posts", "Opslagstavlen"),
     ("events", "Begivenheder"),
     ("repairs", "Reparationer"),
+    ("gahkflix", "GAHKFlix"),
     ("system", "System"),
     ("general", "Generelt"),
 )
@@ -99,6 +100,7 @@ GROUP_ICONS: dict[str, str] = {
     "posts": "board",
     "events": "calendar",
     "repairs": "wrench",
+    "gahkflix": "film",
 }
 
 # The two catch-alls — see "Before adding a category" in the module docstring. Most features that
@@ -115,6 +117,11 @@ EVENTS_CHANGES = "events.changes"
 EVENTS_PERSONAL = "events.personal"
 EVENTS_COMMENTS = "events.comments"
 REPAIRS = "repairs"
+GAHKFLIX_NEW = "gahkflix.new"
+GAHKFLIX_CAST = "gahkflix.cast"
+GAHKFLIX_UPLOADS = "gahkflix.uploads"
+GAHKFLIX_APPROVALS = "gahkflix.approvals"
+GAHKFLIX_DRAFTS = "gahkflix.drafts"
 
 # The prefix of a Den Hurtige room's category. One category per room, generated from the channel
 # registry below, so adding a channel gives it a settings toggle without touching this file.
@@ -180,6 +187,30 @@ def _build() -> tuple[Category, ...]:
             "Når nogen kommenterer en begivenhed, du er vært for.",
         ),
         Category(REPAIRS, "Reparationer", "repairs", "Nye og overdragede reparationer for din gruppe."),
+        Category(GAHKFLIX_NEW, "Nye videoer", "gahkflix", "Når en ny video udgives på GAHKFlix."),
+        Category(GAHKFLIX_CAST, "Når du medvirker", "gahkflix", "Når du bliver krediteret i en video."),
+        Category(
+            GAHKFLIX_UPLOADS,
+            "Dine uploads og anmodninger",
+            "gahkflix",
+            "Når din video er behandlet, når en anmodning, du har sendt, er afgjort, og om kladder, du ikke har udgivet.",
+            in_app_optional=False,
+        ),
+        Category(
+            GAHKFLIX_APPROVALS,
+            "Godkendelser",
+            "gahkflix",
+            "Ændringer og sletninger, som en administrator skal godkende.",
+            importance=Importance.HOEJ,
+            in_app_optional=False,
+        ),
+        Category(
+            GAHKFLIX_DRAFTS,
+            "Kladder, der ikke er udgivet",
+            "gahkflix",
+            "Ugentligt overblik over upublicerede kladder, og besked dagen før en slettes. Til administratorer.",
+            in_app_optional=False,
+        ),
         Category(
             SYSTEM,
             "Systembeskeder",

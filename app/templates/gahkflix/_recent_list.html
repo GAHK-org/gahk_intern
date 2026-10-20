@@ -1,0 +1,23 @@
+{% comment %} The uploader's recent videos (`recent`, each with `latest_file`) on the upload page, so one already uploaded is not uploaded again. {% endcomment %}
+{% load gahkflix %}
+<div class="flix-list">
+  {% for video in recent %}
+    {% picture_url video "thumbnail" as thumb %}
+    <div class="flix-list-item">
+      <span class="flix-card-img">{% if thumb %}<img src="{{ thumb }}" alt="">{% else %}<span class="flix-card-blank">{{ video.title|slice:":1"|upper }}</span>{% endif %}</span>
+      <div>
+        <h3><a href="{% if video.is_draft %}{% url 'gahkflix:edit' video.pk %}{% else %}{% url 'gahkflix:detail' video.pk %}{% endif %}">{{ video.title }}</a></h3>
+        {% with latest=video.latest_file %}
+          <p>
+            {% if latest.is_pending %}<span class="flix-state">Behandles · {{ latest.progress }} %</span>
+            {% elif latest.state == "failed" %}<span class="flix-state is-failed">Mislykkedes</span>
+            {% elif video.is_draft %}<span class="flix-state is-draft">Ikke udgivet</span>
+            {% else %}<span class="flix-state">Udgivet</span>{% endif %}
+          </p>
+          <p>{{ latest.original_name }} · uploadet {{ video.created_at|date:"j. F Y" }}</p>
+        {% endwith %}
+      </div>
+      {% if video.is_draft %}<a class="flix-btn flix-btn-small flix-btn-quiet" href="{% url 'gahkflix:edit' video.pk %}">Gør færdig</a>{% else %}<span></span>{% endif %}
+    </div>
+  {% endfor %}
+</div>

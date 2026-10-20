@@ -1,6 +1,7 @@
 import io
 import logging
 import posixpath
+import subprocess  # nosec B404 — only to catch ffmpeg's CalledProcessError
 from collections.abc import Buffer, Callable, Iterator
 from datetime import timedelta
 from functools import partial
@@ -15,6 +16,7 @@ from django.db.models import Q, QuerySet
 from django.utils import timezone
 from zipstream import ZIP_STORED, ZipStream
 
+from .dashboard import measure_storage
 from .models import (
     ALBUM_DOWNLOAD_RETENTION,
     DERIVATIVE_CLAIM_TTL,
@@ -31,15 +33,20 @@ from .models import (
 )
 from .progress import JobProgress
 from .services import (
+    MAX_DERIVATIVE_ATTEMPTS,
     Progress,
     backfill_hashes,
+    backfill_sizes,
     build_derivatives,
+    check_file_time_sources,
+    ffmpeg_failure,
     import_zip_album,
     is_video_media,
     no_progress,
     pending_derivatives,
     reread_capture_dates,
     settle_all_dates,
+    shrink_enlarged_video,
 )
 from .storage import PhotoAlbumS3Storage, get_photo_album_storage
 
@@ -55,10 +62,14 @@ logger = logging.getLogger(__name__)
 # which both tasks already handle — `build_album_download` catches it in its `except Exception` and
 # records FAILED with a message, rather than vanishing. The hard limit is only the backstop for a
 # task wedged somewhere uninterruptible, five minutes later.
-MEDIA_TASK_TIME_LIMIT = 60 * 60
+#
+# Four hours: a long video on this box's few cores honestly takes more than the hour this used to
+# be. It holds the one media slot for as long as it runs, so ZIP jobs queue behind it meanwhile.
+# DERIVATIVE_CLAIM_TTL must stay equal to it.
+MEDIA_TASK_TIME_LIMIT = 4 * 60 * 60
 MEDIA_TASK_SOFT_TIME_LIMIT = MEDIA_TASK_TIME_LIMIT - 300
 
-# Album ZIPs, both ways, may take longer still: one Dropbox album can be a whole year. What
+# Album ZIPs, both ways, may take as long: one Dropbox album can be a whole year. What
 # tells a slow one from a dead one is its progress (JOB_STALLED_AFTER), not its age, so the limit
 # here is only the ceiling for a job that keeps reporting yet never finishes.
 ZIP_TASK_TIME_LIMIT = 4 * 60 * 60
@@ -133,23 +144,76 @@ def _unclaimed(queryset: "QuerySet[Media]") -> "QuerySet[Media]":
     )
 
 
-@shared_task(time_limit=MEDIA_TASK_TIME_LIMIT, soft_time_limit=MEDIA_TASK_SOFT_TIME_LIMIT)
-def build_media_derivatives(media_id: int) -> bool:
-    """Build derivatives for one committed upload, if it still needs them and nobody else has it."""
+class DerivativesNotBuilt(Exception):
+    """A media item's derivatives could not be built. Raised so the job shows as failed, with why."""
+
+
+@shared_task(bind=True, time_limit=MEDIA_TASK_TIME_LIMIT, soft_time_limit=MEDIA_TASK_SOFT_TIME_LIMIT)
+def build_media_derivatives(self: Task, media_id: int) -> bool:
+    """Build derivatives for one committed upload, if it still needs them and nobody else has it.
+
+    Returns False only when there is nothing for it to do: the row is gone, ready, or another worker
+    holds it. A file that could not be converted — or whose worker died converting it — RAISES, so
+    the job is listed as failed rather than as a success that returned False, which is how a video
+    could sit on "Mediet behandles" with nothing on the jobs page to say why.
+    """
+    task_id = self.request.id or ""
     # CLAIM FIRST, AS ONE STATEMENT. `UPDATE ... WHERE` takes the row lock, so of two workers handed
     # the same id exactly one sees a rowcount of 1 and the other backs off — which a read-then-write
     # could not promise. Whoever loses returns False rather than starting a second ffmpeg encode of
     # the same file and a second increment of `derivative_attempts`.
     claimed = _unclaimed(Media.objects.filter(pk=media_id, derivative_state=DerivativeState.PENDING)).update(
-        derivative_started_at=timezone.now()
+        derivative_started_at=timezone.now(), derivative_task_id=task_id
     )
     if not claimed:
+        # Redelivered after its worker was killed (CELERY_TASK_REJECT_ON_WORKER_LOST): the row is
+        # still claimed under this very message's id, and nobody is coming back to it. Release it
+        # for the nightly `process_pending_media` — the dead run already counted its attempt.
+        if task_id and Media.objects.filter(
+            pk=media_id,
+            derivative_state=DerivativeState.PENDING,
+            derivative_task_id=task_id,
+            derivative_started_at__isnull=False,
+        ).update(derivative_started_at=None):
+            raise DerivativesNotBuilt(
+                f"The worker converting media {media_id} was lost (killed — out of memory, or a "
+                "redeploy). It is tried again by the nightly process_pending_media."
+            )
         return False
     try:
         media = Media.objects.get(pk=media_id)
     except Media.DoesNotExist:
         return False
-    return build_derivatives(media)
+    logger.info("Converting %s, in %s.", media.display_name_and_size, media.album)
+    if build_derivatives(media):
+        return True
+    if media.derivative_state == DerivativeState.FAILED:
+        raise DerivativesNotBuilt(
+            f"{media.display_name_and_size} could not be converted; gave up after {media.derivative_attempts} attempts."
+        )
+    raise DerivativesNotBuilt(
+        f"{media.display_name_and_size} could not be converted (attempt {media.derivative_attempts} of "
+        f"{MAX_DERIVATIVE_ATTEMPTS}); tried again by the nightly process_pending_media."
+    )
+
+
+@shared_task(time_limit=MEDIA_TASK_TIME_LIMIT, soft_time_limit=MEDIA_TASK_SOFT_TIME_LIMIT)
+def reencode_enlarged_video(media_id: int) -> str:
+    """Re-encode one video's viewer copy at the video's own size, if an earlier conversion enlarged
+    it to 1600 px. Queued by `manage.py reencode_enlarged_photo_album_videos`."""
+    try:
+        media = Media.objects.select_related("album").get(pk=media_id, derivative_state=DerivativeState.READY)
+    except Media.DoesNotExist:
+        return f"Media {media_id} is gone or not ready; left as it is."
+    logger.info("Checking %s, in %s.", media.display_name_and_size, media.album)
+    try:
+        outcome = shrink_enlarged_video(media)
+    except subprocess.CalledProcessError as exc:
+        raise DerivativesNotBuilt(
+            f"{media.display_name_and_size} could not be re-encoded ({ffmpeg_failure(exc)}); its old copy is kept."
+        ) from exc
+    logger.info("%s", outcome)
+    return outcome
 
 
 def queue_derivatives(media: Media) -> None:
@@ -191,42 +255,73 @@ HASH_BACKFILL_BUDGET = timedelta(minutes=20)
 
 @shared_task(time_limit=MEDIA_TASK_TIME_LIMIT, soft_time_limit=MEDIA_TASK_SOFT_TIME_LIMIT)
 def backfill_media_hashes() -> int:
-    """Nightly: hash originals stored before hashes were. Returns how many were hashed."""
-    result = backfill_hashes(until=timezone.now() + HASH_BACKFILL_BUDGET)
+    """Nightly: hash originals stored before hashes were, then record the size of those stored
+    before sizes were (a HEAD each), in what is left of the budget. Returns how many were hashed."""
+    until = timezone.now() + HASH_BACKFILL_BUDGET
+    result = backfill_hashes(until=until)
     logger.info(
         "Hashed %d media item(s); %d could not be read; %d still without a hash.",
         result.hashed,
         len(result.unreadable),
         result.remaining,
     )
+    sizes = backfill_sizes(until=until)
+    logger.info(
+        "Recorded the size of %d media item(s); %d could not be read; %d still without a size.",
+        sizes.sized,
+        sizes.unreadable,
+        sizes.remaining,
+    )
     return result.hashed
 
 
 # How long one night may read originals again for a capture date, for the same reason.
 DATE_REREAD_BUDGET = timedelta(minutes=20)
+# And sidecars, to tell where the file times stored before that was recorded came from. A sidecar
+# is a few hundred bytes, so the archive's thousands are read in one night.
+FILE_TIME_CHECK_BUDGET = timedelta(minutes=10)
 
 
 @shared_task(time_limit=MEDIA_TASK_TIME_LIMIT, soft_time_limit=MEDIA_TASK_SOFT_TIME_LIMIT)
 def settle_media_dates() -> int:
-    """Nightly: read originals stored before XMP and IPTC were read for a capture date, then give
-    every item without a believable date an approximate one (services.settle_dates). Returns how
-    many items were re-dated.
+    """Nightly: read originals stored before XMP and IPTC were read for a capture date, and the
+    sidecars of files whose time's source is not known yet, then give every item without a
+    believable date an approximate one (services.settle_dates). Returns how many were re-dated.
 
     Every album is settled, not only those read tonight: that is what dates the items stored before
     approximations existed. Once they are, it changes nothing, at two queries per album tree.
     """
     reread = reread_capture_dates(until=timezone.now() + DATE_REREAD_BUDGET)
+    sources = check_file_time_sources(until=timezone.now() + FILE_TIME_CHECK_BUDGET)
     changed = settle_all_dates()
     logger.info(
         "Read %d original(s) again and found %d capture date(s); %d could not be read; %d left. "
-        "%d item(s) re-dated.",
+        "Read %d sidecar(s) for where a file time is from, %d of them its source; %d could not be "
+        "read; %d left. %d item(s) re-dated.",
         reread.checked,
         reread.found,
         len(reread.unreadable),
         reread.remaining,
+        sources.checked,
+        sources.from_sidecar,
+        len(sources.unreadable),
+        sources.remaining,
         changed,
     )
     return changed
+
+
+@shared_task(time_limit=MEDIA_TASK_TIME_LIMIT, soft_time_limit=MEDIA_TASK_SOFT_TIME_LIMIT)
+def measure_photo_album_storage() -> int:
+    """Nightly, and when the dashboard asks: what the album takes up in the bucket. Returns the bytes."""
+    report = measure_storage()
+    logger.info(
+        "Measured the photo album's storage: %d byte(s) in %d object(s), in %.1f s.",
+        report.total_bytes,
+        sum(entry.get("objects", 0) for entry in report.totals.values()),
+        report.seconds,
+    )
+    return report.total_bytes
 
 
 @shared_task

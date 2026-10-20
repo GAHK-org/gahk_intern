@@ -4,7 +4,6 @@ monthly embedsgruppe roles."""
 
 import ast
 import datetime
-import functools
 import io
 import json
 import pickle  # nosec B403: _ResultUnpickler rejects every global/class lookup.
@@ -21,6 +20,7 @@ from django.db import DatabaseError, connection, transaction
 from django.db.models import Avg, F
 from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect, QueryDict
 from django.shortcuts import redirect, render
+from django.template.defaultfilters import filesizeformat
 from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
@@ -29,6 +29,7 @@ from kombu.exceptions import DecodeError
 
 from config.celery import app as celery_app
 from core.models import WorkerJobLog
+from core.tasks import task_time_limit
 from core.worker_logs import SENT_AT_HEADER, parse_sent_at
 
 from . import admin_access
@@ -125,22 +126,6 @@ def _format_duration(duration: datetime.timedelta | None) -> str:
 
 def _between(start: datetime.datetime | None, end: datetime.datetime | None) -> str:
     return _format_duration(end - start) if start and end else ""
-
-
-@functools.cache
-def _task_registry() -> Mapping[str, Any]:
-    """Celery's registry with every app's tasks module imported, as a worker has it. A web process
-    otherwise imports a tasks module only once something there sends one of its tasks, and a task
-    it has not met would be measured against the global time limit instead of its own."""
-    celery_app.autodiscover_tasks(force=True)
-    return celery_app.tasks
-
-
-def _time_limit(task_name: str) -> datetime.timedelta:
-    """How long a job of this task may run before the worker kills it: its own hard limit, or the
-    global one."""
-    task = _task_registry().get(task_name)
-    return datetime.timedelta(seconds=getattr(task, "time_limit", None) or settings.CELERY_TASK_TIME_LIMIT)
 
 
 class _TaskName:
@@ -241,7 +226,7 @@ class Job(_TaskName):
         """Mark it as running since `started_at`, measured against its time limit."""
         if self.started_at:
             self.elapsed = now - self.started_at
-        self.time_limit = _time_limit(self.task)
+        self.time_limit = task_time_limit(self.task)
 
     def take_record(self, record: WorkerJobLog) -> None:
         """Fill in from the worker's record what the result row and the message did not have."""
@@ -296,13 +281,13 @@ def _task_argument_id(arguments: str) -> int | None:
 
 def _add_photo_album_context(jobs: list[Job]) -> None:
     """Attach concise resource names for photo-album tasks with two batched database queries."""
-    media_task = "photo_album.tasks.build_media_derivatives"
+    media_tasks = {"photo_album.tasks.build_media_derivatives", "photo_album.tasks.reencode_enlarged_video"}
     import_task = "photo_album.tasks.process_album_import"
     argument_ids = [_task_argument_id(job.arguments) for job in jobs]
     media_ids: set[int] = {
         argument_id
         for job, argument_id in zip(jobs, argument_ids, strict=True)
-        if job.task == media_task and argument_id is not None
+        if job.task in media_tasks and argument_id is not None
     }
     import_ids: set[int] = {
         argument_id
@@ -318,7 +303,7 @@ def _add_photo_album_context(jobs: list[Job]) -> None:
         media.pk: media
         for media in Media.objects.filter(pk__in=media_ids)
         .select_related("album")
-        .only("pk", "title", "album__id", "album__folder", "album__name")
+        .only("pk", "filename", "original", "size", "album__id", "album__folder", "album__name")
     }
     imports_by_id = {
         album_import.pk: album_import
@@ -337,8 +322,9 @@ def _add_photo_album_context(jobs: list[Job]) -> None:
     }
 
     for job, argument_id in zip(jobs, argument_ids, strict=True):
-        if argument_id is not None and job.task == media_task and (media := media_by_id.get(argument_id)):
-            job.task_context = f"Medie: {media.title} (album: {media.album})"
+        if argument_id is not None and job.task in media_tasks and (media := media_by_id.get(argument_id)):
+            size = f", {filesizeformat(media.size)}" if media.size is not None else ""
+            job.task_context = f"Medie: {media.display_name}{size} (album: {media.album})"
         elif (
             argument_id is not None
             and job.task == import_task
@@ -351,6 +337,44 @@ def _add_photo_album_context(jobs: list[Job]) -> None:
             if imported_albums:
                 context += f"; albummer: {', '.join(imported_albums)}"
             job.task_context = context
+
+
+def _add_gahkflix_context(jobs: list[Job]) -> None:
+    """Name the upload, or the video, that a GAHKFlix job works on: one query for each."""
+    file_task, frames_task = "gahkflix.tasks.process_video_file", "gahkflix.tasks.redraw_frames"
+    argument_ids = [_task_argument_id(job.arguments) for job in jobs]
+    file_ids = {
+        i for job, i in zip(jobs, argument_ids, strict=True) if job.task == file_task and i is not None
+    }
+    video_ids = {
+        i for job, i in zip(jobs, argument_ids, strict=True) if job.task == frames_task and i is not None
+    }
+    if not file_ids and not video_ids:
+        return
+
+    from gahkflix.models import Video, VideoFile
+
+    files_by_id = {
+        video_file.pk: video_file
+        for video_file in VideoFile.objects.filter(pk__in=file_ids)
+        .select_related("video")
+        .only("pk", "original_name", "size", "video__id", "video__title")
+    }
+    videos_by_id = {video.pk: video for video in Video.objects.filter(pk__in=video_ids).only("pk", "title")}
+
+    for job, argument_id in zip(jobs, argument_ids, strict=True):
+        if argument_id is None:
+            continue
+        if job.task == file_task and (video_file := files_by_id.get(argument_id)):
+            job.task_context = f"Video: {video_file.original_name}, {filesizeformat(video_file.size)} ({video_file.video.title})"
+        elif job.task == frames_task and (video := videos_by_id.get(argument_id)):
+            job.task_context = f"Video: {video.title}"
+
+
+def _add_task_context(jobs: list[Job]) -> None:
+    """What each job works on, for the apps whose jobs say so."""
+    _add_photo_album_context(jobs)
+    _add_gahkflix_context(jobs)
 
 
 def _take_messages(jobs: list[Job]) -> None:
@@ -474,7 +498,7 @@ def _queue() -> Queue:
             groups[key] = QueueGroup(queue=job.queue, task=job.task, count=in_group)
         groups[key].jobs.append(job)
         jobs.append(job)
-    _add_photo_album_context(jobs)
+    _add_task_context(jobs)
     return Queue(groups=list(groups.values()))
 
 
@@ -498,7 +522,8 @@ def _running(now: datetime.datetime) -> list[Job]:
             id=task_id,
             task=name or UNKNOWN_TASK,
             status="STARTED",
-            # With track_started, Celery stores STARTED with date_done = when it started.
+            # Celery (5.3 and later) stores STARTED with date_done NULL, so this is normally empty
+            # and the start comes from the worker's own record below.
             started_at=started_at,
             worker=worker or "",
             queue=queue or "",
@@ -509,7 +534,7 @@ def _running(now: datetime.datetime) -> list[Job]:
         job.run(now)
         jobs.append(job)
     _take_messages(jobs)
-    _add_photo_album_context(jobs)
+    _add_task_context(jobs)
     return jobs
 
 
@@ -827,7 +852,7 @@ def _history(filters: JobFilters, now: datetime.datetime, *, limit: int, offset:
             job.finished_at = done_at
         jobs.append(job)
     _take_messages(jobs)
-    _add_photo_album_context(jobs)
+    _add_task_context(jobs)
     return jobs
 
 
@@ -989,7 +1014,7 @@ def _job_details(task_id: str, now: datetime.datetime) -> tuple[Job, WorkerJobLo
             job.finished_at = done_at
     if job.status == "STARTED":
         job.run(now)
-    _add_photo_album_context([job])
+    _add_task_context([job])
     return job, record
 
 
@@ -1047,7 +1072,7 @@ def _child_jobs(parent_id: str) -> tuple[list[Job], dict[str, int]]:
     for child in children:
         counts[child.status] = counts.get(child.status, 0) + 1
     shown = children[:CHILD_JOBS_SHOWN]
-    _add_photo_album_context(shown)
+    _add_task_context(shown)
     return shown, counts
 
 

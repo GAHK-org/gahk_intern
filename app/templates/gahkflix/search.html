@@ -1,0 +1,10 @@
+{% extends "gahkflix/base.html" %}
+{% block title %}{% if query %}{{ query }} – {% endif %}Søg – GAHKFlix{% endblock %}
+{% block content %}
+  <div class="flix-page">
+    <form method="get" action="{% url 'gahkflix:search' %}" role="search" style="margin-bottom:22px" data-flix-live-search="{% url 'gahkflix:search' %}">
+      <input class="flix-field" type="search" name="q" value="{{ query }}" placeholder="Søg efter titler, personer, serier og tags" aria-label="Søg" autofocus style="font-size:20px;padding:14px 16px">
+    </form>
+    <div data-flix-search-results>{% include "gahkflix/_search_results.html" %}</div>
+  </div>
+{% endblock %}

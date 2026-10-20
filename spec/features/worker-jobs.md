@@ -14,7 +14,11 @@ ran and how it went, and what is scheduled next. Under Administration → Worker
 - **Kører nu:** every running job — what it works on, which worker, how long it waited, how long it
   has run, and how much of its time limit that is.
 - A job still marked as running past its time limit is not running: its worker died under it. Such
-  jobs are counted separately, in red, with a link to them.
+  jobs are counted separately, in red, with a link to them, until the hourly cleanup marks them as
+  failed (ten minutes past their limit at the earliest).
+- A photo-album media job names the file in full, extension included, with its size and album. A
+  GAHKFlix encode names the uploaded file with its size and the video's title; a frame redraw names
+  the video.
 - **I kø:** waiting jobs grouped by queue and job type, with the count of each and the first five
   in the order they will be taken, each with its sent time.
 

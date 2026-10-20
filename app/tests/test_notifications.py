@@ -877,10 +877,52 @@ def test_preferences_page_renders_every_category_and_room_anchor(
     assert response.status_code == 200
     html = response.content.decode()
     for category in categories.CATEGORIES:
+        if category.group == "gahkflix":  # behind its rollout gate; see the next test
+            assert f'name="{category.key}__push"' not in html
+            continue
         assert f'name="{category.key}__push"' in html
         optional = category.in_app and category.in_app_optional
         assert (f'name="{category.key}__in_app"' in html) is optional
     assert 'id="rum-tv-rezz"' in html
+
+
+def test_gahkflix_settings_follow_its_rollout_gate(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    client.force_login(make_resident(email="foto@gahk.dk", roles=("foto",)))
+
+    html = client.get(reverse("notifications:preferences")).content.decode()
+
+    for category in categories.CATEGORIES:
+        if category.group == "gahkflix":
+            assert f'name="{category.key}__push"' in html  # push can always be switched off
+            # In-app, only "new videos" and "credited" can; the rest always show.
+            assert (f'name="{category.key}__in_app"' in html) is category.in_app_optional
+    assert {c.key for c in categories.CATEGORIES if c.group == "gahkflix" and c.in_app_optional} == {
+        categories.GAHKFLIX_NEW,
+        categories.GAHKFLIX_CAST,
+    }
+
+
+def test_gahkflix_own_affairs_always_show_in_app_but_push_is_optional(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    from notifications.models import Notification, NotificationPreference
+    from notifications.services import notify
+
+    resident = make_resident(email="foto@gahk.dk", roles=("foto",))
+    client.force_login(resident)
+    # Everything unticked: the in-app row of an own-affairs category is stored as on regardless.
+    client.post(reverse("notifications:preferences"), {})
+    pref = NotificationPreference.objects.get(resident=resident, category=categories.GAHKFLIX_UPLOADS)
+    assert pref.in_app and not pref.push and not pref.vibrate
+    assert not NotificationPreference.objects.get(resident=resident, category=categories.GAHKFLIX_NEW).in_app
+
+    # Even a saved "off in the app" from before does not hide it in the app.
+    NotificationPreference.objects.filter(pk=pref.pk).update(in_app=False)
+    notify([resident.pk], category=categories.GAHKFLIX_UPLOADS, title="Din video er klar", url="/intern/")
+    row = Notification.objects.get(recipient=resident)
+    assert row.in_app and not row.pushed
 
 
 def test_system_and_general_come_last_on_the_settings_page(
