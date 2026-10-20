@@ -224,6 +224,7 @@ CELERY_TASK_ROUTES = {
     "photo_album.tasks.build_album_download": {"queue": "media"},
     "photo_album.tasks.process_album_import": {"queue": "media"},
     "photo_album.tasks.backfill_media_hashes": {"queue": "media"},
+    "photo_album.tasks.reencode_enlarged_video": {"queue": "media"},
     "photo_album.tasks.settle_media_dates": {"queue": "media"},
 }
 

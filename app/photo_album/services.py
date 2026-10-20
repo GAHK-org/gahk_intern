@@ -24,7 +24,9 @@ from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile, File
 from django.db import IntegrityError, transaction
 from django.db.models import Case, Exists, F, OuterRef, Q, QuerySet, Value, When
+from django.db.models.fields.files import FieldFile
 from django.db.models.functions import Lower
+from django.template.defaultfilters import filesizeformat
 from django.utils import timezone
 from PIL import ExifTags, Image, ImageFile, ImageOps, ImageSequence, IptcImagePlugin
 
@@ -899,6 +901,12 @@ def build_derivatives(media: Media) -> bool:
         )
         media.save(update_fields=["derivative_state", "derivative_attempts"])
         return False
+    _store_variants(media, variants)
+    return True
+
+
+def _store_variants(media: Media, variants: "Variants") -> None:
+    """Store new derivatives and mark the item READY, then delete the ones they replace."""
     previous = [name for name in (media.high_definition.name, media.thumbnail.name) if name]
     media.high_definition.save(
         variants.high_definition.name or "high-definition.mp4", variants.high_definition, save=False
@@ -917,7 +925,6 @@ def build_derivatives(media: Media) -> bool:
     for name in previous:
         if name not in current:
             media.thumbnail.storage.delete(name)
-    return True
 
 
 def pending_derivatives() -> "QuerySet[Media]":
@@ -1008,61 +1015,11 @@ def _animated_gif_variant(
 def video_variants(uploaded_file: File, filename: str) -> Variants | None:
     """Transcode a video to a viewer-sized MP4 and extract a grid-sized JPEG frame."""
     try:
-        import imageio_ffmpeg
+        with TemporaryDirectory(prefix="photo-album-") as directory:
+            source = _copy_to_disk(uploaded_file, Path(directory), filename)
+            return _encode_video(_ffmpeg(), source, Path(directory), filename)
     except ImportError:
         return None
-
-    try:
-        with TemporaryDirectory(prefix="photo-album-") as directory:
-            source = Path(directory) / f"source{Path(filename).suffix or '.upload'}"
-            high_definition = Path(directory) / "high-definition.mp4"
-            thumbnail = Path(directory) / "thumbnail.jpg"
-            uploaded_file.seek(0)
-            with source.open("wb") as target:
-                for chunk in uploaded_file.chunks():
-                    target.write(chunk)
-            ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
-            captured_at = video_captured_at(ffmpeg, str(source))
-            _run_ffmpeg(
-                ffmpeg,
-                "-i",
-                str(source),
-                "-map",
-                "0:v:0",
-                "-map",
-                "0:a?",
-                "-vf",
-                # libx264 with yuv420p needs even dimensions; AVI and old camera formats are not
-                # always, and an odd one made the whole encode fail.
-                f"scale={HIGH_DEFINITION_SIZE}:{HIGH_DEFINITION_SIZE}:force_original_aspect_ratio=decrease,"
-                "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-                "-pix_fmt",
-                "yuv420p",
-                "-c:v",
-                "libx264",
-                "-crf",
-                "23",
-                "-c:a",
-                "aac",
-                "-movflags",
-                "+faststart",
-                str(high_definition),
-            )
-            _run_ffmpeg(
-                ffmpeg,
-                "-i",
-                str(source),
-                "-frames:v",
-                "1",
-                "-vf",
-                f"scale={THUMBNAIL_SIZE}:{THUMBNAIL_SIZE}:force_original_aspect_ratio=decrease",
-                str(thumbnail),
-            )
-            return Variants(
-                ContentFile(high_definition.read_bytes(), name=f"{Path(filename).stem}.mp4"),
-                ContentFile(thumbnail.read_bytes(), name=f"{Path(filename).stem}.jpg"),
-                captured_at,
-            )
     except subprocess.CalledProcessError as exc:
         logger.warning("Could not convert %s: %s", filename, ffmpeg_failure(exc))
         return None
@@ -1073,24 +1030,230 @@ def video_variants(uploaded_file: File, filename: str) -> Variants | None:
         uploaded_file.seek(0)
 
 
-def video_captured_at(ffmpeg: str, path: str) -> datetime | None:
-    """When the video was recorded, from its container metadata, or None.
+def _ffmpeg() -> str:
+    import imageio_ffmpeg
 
-    `ffmpeg -i` with no output prints the metadata and exits non-zero, which is expected here.
-    Years before 1971 are a camera's unset clock (or the QuickTime/Unix epoch), not a date.
+    return str(imageio_ffmpeg.get_ffmpeg_exe())
+
+
+def _copy_to_disk(uploaded_file: File, directory: Path, filename: str) -> Path:
+    source = directory / f"source{Path(filename).suffix or '.upload'}"
+    uploaded_file.seek(0)
+    with source.open("wb") as target:
+        for chunk in uploaded_file.chunks():
+            target.write(chunk)
+    return source
+
+
+# libx264 with yuv420p needs even dimensions; AVI and old camera formats are not always, and an
+# odd one made the whole encode fail. The box is never larger than the video itself: a plain
+# 1600x1600 box ENLARGED every smaller video to 1600 px — a 320x240 camera clip came out 1600x1200,
+# took twenty times the CPU and ten times the memory, and its "compressed" copy was six times the
+# size of the original.
+HIGH_DEFINITION_VIDEO_SCALE = (
+    f"scale='min({HIGH_DEFINITION_SIZE},iw)':'min({HIGH_DEFINITION_SIZE},ih)'"
+    ":force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2"
+)
+
+# Subtitle formats that are text, so can be carried into the MP4 as its own text format (mov_text).
+# Picture-based ones — DVD, Blu-ray, DVB — cannot become text; they stay in the original only.
+TEXT_SUBTITLE_CODECS = frozenset(
+    {"subrip", "srt", "ass", "ssa", "mov_text", "webvtt", "text", "microdvd", "sami", "subviewer", "mpl2"}
+)
+_STREAM = re.compile(r"^\s*Stream #0:(\d+)\S*: (Video|Audio|Subtitle): (\w+)(.*)$", re.MULTILINE)
+_DIMENSIONS = re.compile(r", (\d{2,5})x(\d{2,5})\b")
+
+
+@dataclass
+class VideoProbe:
+    """What `ffmpeg -i` says about a video: enough to convert it."""
+
+    text: str = ""
+
+    @property
+    def dimensions(self) -> tuple[int, int] | None:
+        """The first video stream's width and height, as stored (before any rotation)."""
+        for match in _STREAM.finditer(self.text):
+            if match.group(2) == "Video" and (size := _DIMENSIONS.search(match.group(4))):
+                return int(size.group(1)), int(size.group(2))
+        return None
+
+    @property
+    def subtitles(self) -> list[tuple[int, str]]:
+        """(stream index, codec) of every subtitle stream."""
+        return [
+            (int(match.group(1)), match.group(3))
+            for match in _STREAM.finditer(self.text)
+            if match.group(2) == "Subtitle"
+        ]
+
+
+def probe_video(ffmpeg: str, path: str, data: bytes | None = None) -> VideoProbe:
+    """`ffmpeg -i` on a file — or, with `data`, on the start of one fed through a pipe.
+
+    With no output named it prints what it found and exits non-zero, which is expected here.
     """
     try:
         result = subprocess.run(  # noqa: S603  # nosec B603
-            [ffmpeg, "-hide_banner", "-i", path],
+            [ffmpeg, "-hide_banner", "-i", "pipe:0" if data is not None else path],
             check=False,
             capture_output=True,
-            text=True,
-            errors="replace",
+            input=data,
             timeout=60,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return None
-    value = parse_video_creation_time(result.stderr)
+        return VideoProbe()
+    return VideoProbe(result.stderr.decode("utf-8", errors="replace"))
+
+
+def _encode_video(ffmpeg: str, source: Path, directory: Path, filename: str) -> Variants:
+    """The viewer MP4 and the grid JPEG for a video on disk. Raises CalledProcessError."""
+    probe = probe_video(ffmpeg, str(source))
+    high_definition = directory / "high-definition.mp4"
+    thumbnail = directory / "thumbnail.jpg"
+    _run_ffmpeg(
+        ffmpeg,
+        "-i",
+        str(source),
+        # ffmpeg picks the streams: the best video, and of the audio the stream with the most
+        # channels. Mapping every audio stream (`-map 0:a?`) took broken ones in too, and an old
+        # camera's MPEG with an empty AC3 track of "0 channels" beside its real sound failed whole.
+        # Subtitles and data streams are left out here; text subtitles are added below.
+        "-sn",
+        "-dn",
+        "-vf",
+        HIGH_DEFINITION_VIDEO_SCALE,
+        "-pix_fmt",
+        "yuv420p",
+        "-c:v",
+        "libx264",
+        "-crf",
+        "23",
+        "-c:a",
+        "aac",
+        "-movflags",
+        "+faststart",
+        str(high_definition),
+    )
+    _add_text_subtitles(ffmpeg, source, high_definition, probe, filename)
+    _run_ffmpeg(
+        ffmpeg,
+        "-i",
+        str(source),
+        "-frames:v",
+        "1",
+        "-vf",
+        f"scale={THUMBNAIL_SIZE}:{THUMBNAIL_SIZE}:force_original_aspect_ratio=decrease",
+        str(thumbnail),
+    )
+    return Variants(
+        ContentFile(high_definition.read_bytes(), name=f"{Path(filename).stem}.mp4"),
+        ContentFile(thumbnail.read_bytes(), name=f"{Path(filename).stem}.jpg"),
+        _video_creation_time(probe.text),
+    )
+
+
+def _add_text_subtitles(
+    ffmpeg: str, source: Path, high_definition: Path, probe: VideoProbe, filename: str
+) -> None:
+    """Copy the video's text subtitles into the viewer MP4, languages and default track kept.
+
+    A remux, not an encode: seconds, whatever the video's length. Should it fail, the MP4 simply
+    goes without them — the original keeps every subtitle either way.
+    """
+    text = [index for index, codec in probe.subtitles if codec in TEXT_SUBTITLE_CODECS]
+    pictures = sorted({codec for _, codec in probe.subtitles if codec not in TEXT_SUBTITLE_CODECS})
+    if pictures:
+        logger.info(
+            "%s has picture subtitles (%s), which only the original keeps.", filename, ", ".join(pictures)
+        )
+    if not text:
+        return
+    with_subtitles = high_definition.with_name("with-subtitles.mp4")
+    try:
+        _run_ffmpeg(
+            ffmpeg,
+            "-i",
+            str(high_definition),
+            "-i",
+            str(source),
+            "-map",
+            "0",
+            *(argument for index in text for argument in ("-map", f"1:{index}")),
+            "-c",
+            "copy",
+            "-c:s",
+            "mov_text",
+            "-movflags",
+            "+faststart",
+            str(with_subtitles),
+        )
+    except subprocess.CalledProcessError as exc:
+        logger.warning("Could not keep the subtitles of %s: %s", filename, ffmpeg_failure(exc))
+        return
+    with_subtitles.replace(high_definition)
+    logger.info("Kept %d subtitle track(s) of %s.", len(text), filename)
+
+
+# How much of a stored video `stored_video_dimensions` reads. The viewer copies are written with
+# +faststart, so their index — sizes included — is at the very start; so is an MPEG's or an AVI's.
+VIDEO_HEAD_BYTES = 4 * 1024 * 1024
+
+
+def read_head(field: FieldFile, size: int) -> bytes:
+    """The first `size` bytes of a stored file, without downloading the rest of it."""
+    from .storage import PhotoAlbumS3Storage
+
+    if isinstance(field.storage, PhotoAlbumS3Storage):
+        return field.storage.read_head(field.name or "", size)
+    with field.open("rb") as stored:
+        return bytes(stored.read(size))
+
+
+def stored_video_dimensions(field: FieldFile) -> tuple[int, int] | None:
+    """A stored video's width and height, from its first megabytes; None if they do not say."""
+    return probe_video(_ffmpeg(), "", read_head(field, VIDEO_HEAD_BYTES)).dimensions
+
+
+def shrink_enlarged_video(media: Media) -> str:
+    """Re-encode the viewer copy of a video that an earlier conversion enlarged past its original.
+
+    Returns what it did, for the job log. The item is left exactly as it was — still READY, its old
+    copy still served — unless the new copy is made: when the copy turns out not to be enlarged,
+    when the original is not smaller than HIGH_DEFINITION_SIZE, and when ffmpeg fails (raises
+    CalledProcessError).
+    """
+    name = media.display_name
+    copy = stored_video_dimensions(media.high_definition)
+    if copy is not None and max(copy) < HIGH_DEFINITION_SIZE:
+        return f"{name}: its copy is {copy[0]}x{copy[1]}, not enlarged; left as it is."
+    ffmpeg = _ffmpeg()
+    with media.original.open("rb") as original, TemporaryDirectory(prefix="photo-album-") as directory:
+        source = _copy_to_disk(File(original, name=name), Path(directory), name)
+        dimensions = probe_video(ffmpeg, str(source)).dimensions
+        if dimensions is None:
+            return f"{name}: ffmpeg could not tell the original's size; left as it is."
+        if max(dimensions) >= HIGH_DEFINITION_SIZE:
+            return f"{name}: the original is {dimensions[0]}x{dimensions[1]}, so its copy is not enlarged; left as it is."
+        old_size = media.high_definition.size
+        variants = _encode_video(ffmpeg, source, Path(directory), name)
+    _store_variants(media, variants)
+    return (
+        f"{name}: re-encoded at its own {dimensions[0]}x{dimensions[1]} instead of "
+        f"{f'{copy[0]}x{copy[1]}' if copy else 'enlarged'}; the copy went from "
+        f"{filesizeformat(old_size)} to {filesizeformat(media.high_definition.size)}."
+    )
+
+
+def video_captured_at(ffmpeg: str, path: str) -> datetime | None:
+    """When the video was recorded, from its container metadata, or None."""
+    return _video_creation_time(probe_video(ffmpeg, path).text)
+
+
+def _video_creation_time(probe_text: str) -> datetime | None:
+    """The creation time in `ffmpeg -i` output. Years before 1971 are a camera's unset clock (or the
+    QuickTime/Unix epoch), not a date."""
+    value = parse_video_creation_time(probe_text)
     if not value:
         return None
     try:

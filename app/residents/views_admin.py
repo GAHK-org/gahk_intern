@@ -281,13 +281,13 @@ def _task_argument_id(arguments: str) -> int | None:
 
 def _add_photo_album_context(jobs: list[Job]) -> None:
     """Attach concise resource names for photo-album tasks with two batched database queries."""
-    media_task = "photo_album.tasks.build_media_derivatives"
+    media_tasks = {"photo_album.tasks.build_media_derivatives", "photo_album.tasks.reencode_enlarged_video"}
     import_task = "photo_album.tasks.process_album_import"
     argument_ids = [_task_argument_id(job.arguments) for job in jobs]
     media_ids: set[int] = {
         argument_id
         for job, argument_id in zip(jobs, argument_ids, strict=True)
-        if job.task == media_task and argument_id is not None
+        if job.task in media_tasks and argument_id is not None
     }
     import_ids: set[int] = {
         argument_id
@@ -322,7 +322,7 @@ def _add_photo_album_context(jobs: list[Job]) -> None:
     }
 
     for job, argument_id in zip(jobs, argument_ids, strict=True):
-        if argument_id is not None and job.task == media_task and (media := media_by_id.get(argument_id)):
+        if argument_id is not None and job.task in media_tasks and (media := media_by_id.get(argument_id)):
             size = f", {filesizeformat(media.size)}" if media.size is not None else ""
             job.task_context = f"Medie: {media.display_name}{size} (album: {media.album})"
         elif (

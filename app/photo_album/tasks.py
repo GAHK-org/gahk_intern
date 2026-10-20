@@ -1,6 +1,7 @@
 import io
 import logging
 import posixpath
+import subprocess  # nosec B404 — only to catch ffmpeg's CalledProcessError
 from collections.abc import Buffer, Callable, Iterator
 from datetime import timedelta
 from functools import partial
@@ -36,12 +37,14 @@ from .services import (
     backfill_hashes,
     backfill_sizes,
     build_derivatives,
+    ffmpeg_failure,
     import_zip_album,
     is_video_media,
     no_progress,
     pending_derivatives,
     reread_capture_dates,
     settle_all_dates,
+    shrink_enlarged_video,
 )
 from .storage import PhotoAlbumS3Storage, get_photo_album_storage
 
@@ -190,6 +193,25 @@ def build_media_derivatives(self: Task, media_id: int) -> bool:
         f"{media.display_name_and_size} could not be converted (attempt {media.derivative_attempts} of "
         f"{MAX_DERIVATIVE_ATTEMPTS}); tried again by the nightly process_pending_media."
     )
+
+
+@shared_task(time_limit=MEDIA_TASK_TIME_LIMIT, soft_time_limit=MEDIA_TASK_SOFT_TIME_LIMIT)
+def reencode_enlarged_video(media_id: int) -> str:
+    """Re-encode one video's viewer copy at the video's own size, if an earlier conversion enlarged
+    it to 1600 px. Queued by `manage.py reencode_enlarged_photo_album_videos`."""
+    try:
+        media = Media.objects.select_related("album").get(pk=media_id, derivative_state=DerivativeState.READY)
+    except Media.DoesNotExist:
+        return f"Media {media_id} is gone or not ready; left as it is."
+    logger.info("Checking %s, in %s.", media.display_name_and_size, media.album)
+    try:
+        outcome = shrink_enlarged_video(media)
+    except subprocess.CalledProcessError as exc:
+        raise DerivativesNotBuilt(
+            f"{media.display_name_and_size} could not be re-encoded ({ffmpeg_failure(exc)}); its old copy is kept."
+        ) from exc
+    logger.info("%s", outcome)
+    return outcome
 
 
 def queue_derivatives(media: Media) -> None:
