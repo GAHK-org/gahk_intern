@@ -57,9 +57,12 @@ INSTALLED_APPS = [
     "arkiv",
     "photo_album",
     "notifications",
+    "gahkflix",
 ]
 
 MIDDLEWARE = [
+    # /healthz and /health, before anything checks the Host header — see core/health.py.
+    "core.health.HealthCheckMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -69,10 +72,31 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "stats.middleware.FrontPageVisitCounterMiddleware",
+    # DEBUG only: presigned URLs follow the host the page was opened on, so a phone on the LAN works.
+    "core.middleware.PresignForRequestHost",
 ]
 
 ROOT_URLCONF = "config.urls"
 ASGI_APPLICATION = "config.asgi.application"
+
+# Where live updates travel between the view that writes and the sockets that listen (core.live).
+# In-memory, which is exactly right while `web` is ONE uvicorn process (DEPLOY.md §4): the view and
+# every socket share that process, and there is nothing to run or to fail. It stops being right the
+# moment there are two — `--workers 3` or a second replica — because a signal sent in one process
+# never reaches sockets held by another. Pages then fall back to their slow poll and keep working,
+# just less live; the fix is a shared layer (channels_redis and a Redis service), not this setting.
+#
+# group_expiry is raised from Channels' default of one day, which silently drops a socket from its
+# topic 24 hours after it joined while the socket itself stays open. The page then believes it is
+# live, has switched its 5s poll off, and hears nothing: a Den Hurtige tab left open on a desktop
+# overnight would only update once a minute from then on. Membership is removed on disconnect
+# anyway, so the expiry only guards against leaks, and in one process a leak cannot outlive it.
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer",
+        "CONFIG": {"group_expiry": 60 * 60 * 24 * 365},
+    }
+}
 
 TEMPLATES = [
     {
@@ -194,11 +218,20 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 # Photo thumbnails are the exception, chosen when they are queued (photo_album.tasks.
 # queue_derivatives): their own "thumbnails" queue, which `worker` takes from by turns with
 # "celery". The route below is only the fallback for a derivative queued any other way.
+# The Celery processes /health expects a fresh heartbeat from (core/heartbeat.py): each worker's
+# node name before the "@" (the -n in docker-compose.prod.yml), and "beat".
+HEALTH_PROCESSES = [p for p in os.environ.get("HEALTH_PROCESSES", "default,media,beat").split(",") if p]
+
 CELERY_TASK_ROUTES = {
     "photo_album.tasks.build_media_derivatives": {"queue": "media"},
     "photo_album.tasks.build_album_download": {"queue": "media"},
     "photo_album.tasks.process_album_import": {"queue": "media"},
     "photo_album.tasks.backfill_media_hashes": {"queue": "media"},
+    "photo_album.tasks.reencode_enlarged_video": {"queue": "media"},
+    "photo_album.tasks.settle_media_dates": {"queue": "media"},
+    "photo_album.tasks.measure_photo_album_storage": {"queue": "media"},
+    "gahkflix.tasks.process_video_file": {"queue": "media"},
+    "gahkflix.tasks.redraw_frames": {"queue": "media"},
 }
 
 # A local migration client uses this bearer token to submit album ZIP imports as the non-login
@@ -260,9 +293,36 @@ CELERY_BEAT_SCHEDULE = {
         "task": "photo_album.tasks.fail_stalled_imports",
         "schedule": crontab(minute="10-59/15"),
     },
+    # Sends again a GAHKFlix encode whose worker stopped reporting (gahkflix.tasks.recover_stalled).
+    "recover-stalled-gahkflix-encodes": {
+        "task": "gahkflix.tasks.recover_stalled",
+        "schedule": crontab(minute="13-59/15"),
+    },
+    # GAHKFlix's bin and expired requests after 30 days, unpublished drafts after 90, and stored files
+    # nothing refers to (gahkflix.services.sweep_orphans).
+    "gahkflix-housekeeping": {
+        "task": "gahkflix.tasks.housekeeping",
+        "schedule": crontab(minute=25, hour=4),
+    },
+    # Reminders about unpublished drafts go out in the day, not with the night's sweeps: they are
+    # read by people, and a push at 04:25 wakes them.
+    "gahkflix-weekly-draft-reminders": {
+        "task": "gahkflix.tasks.weekly_draft_reminders",
+        "schedule": crontab(minute=5, hour=10, day_of_week=1),
+    },
+    "gahkflix-warn-expiring-drafts": {
+        "task": "gahkflix.tasks.warn_expiring_drafts",
+        "schedule": crontab(minute=15, hour=10),
+    },
     "purge-worker-job-logs": {
         "task": "core.tasks.purge_worker_job_logs",
         "schedule": crontab(minute=40, hour=4),
+    },
+    # Hourly: a job whose worker died under it is otherwise listed as running for good. It can
+    # only be told apart once it is past its time limit, so there is nothing to gain from sooner.
+    "close-lost-worker-jobs": {
+        "task": "core.tasks.close_lost_jobs",
+        "schedule": crontab(minute=35),
     },
     "purge-worker-job-results": {
         "task": "core.tasks.purge_worker_job_results",
@@ -287,6 +347,18 @@ CELERY_BEAT_SCHEDULE = {
     "backfill-photo-album-hashes": {
         "task": "photo_album.tasks.backfill_media_hashes",
         "schedule": crontab(minute=40, hour=2),
+    },
+    # 03:05, once the hash backfill's twenty minutes are up. Reads originals stored before XMP and
+    # IPTC were read for at most DATE_REREAD_BUDGET, then settles every album's approximate dates.
+    "settle-photo-album-dates": {
+        "task": "photo_album.tasks.settle_media_dates",
+        "schedule": crontab(minute=5, hour=3),
+    },
+    # 05:00, after the night's purges, so the dashboard shows what is left. Lists the bucket's
+    # photo-album prefixes: a thousand objects a request, a few minutes for the whole archive.
+    "measure-photo-album-storage": {
+        "task": "photo_album.tasks.measure_photo_album_storage",
+        "schedule": crontab(minute=0, hour=5),
     },
     "remind-rsvp-deadlines": {
         "task": "events.tasks.remind_rsvp_deadlines",
@@ -345,7 +417,8 @@ S3_ADDRESSING_STYLE = os.environ.get("S3_ADDRESSING_STYLE", "path" if DEBUG else
 # the wrong host is not cosmetic — SigV4 signs the Host header, so the bucket 403s a request whose
 # Host does not match the one it was signed for, and rewriting the URL string afterwards cannot fix
 # that either. `task dev:local` and production both leave this unset, since S3_ENDPOINT_URL there is
-# already reachable from wherever the browser runs.
+# already reachable from wherever the browser runs. In DEBUG, a page opened from another machine on
+# the network signs for that machine's view of this host instead (core.storage.presigning_endpoint).
 S3_PUBLIC_ENDPOINT_URL = os.environ.get("S3_PUBLIC_ENDPOINT_URL", "") or S3_ENDPOINT_URL
 
 # botocore >= 1.36 defaults to sending x-amz-checksum-crc32 with aws-chunked framing on every PUT,
@@ -418,6 +491,8 @@ MEDIA_ROOT = BASE_DIR / "media"
 
 # Secrets (WiFi/calendar/SMTP) come from the environment (.env / vault), never source. (F-013)
 LOGIN_URL = "/intern/admin/login"
+# A stale form (often a PWA's restored login page) explained instead of a bare 403 (residents.auth).
+CSRF_FAILURE_VIEW = "residents.auth.csrf_failure"
 LOGIN_REDIRECT_URL = "/intern/"
 LOGOUT_REDIRECT_URL = "/intern/admin/login"
 
@@ -508,6 +583,10 @@ LOGGING = {
         # handler of its own: it propagates to the worker's, and in the web process nothing prints
         # below WARNING.
         "photo_album": {"level": os.environ.get("PHOTO_ALBUM_LOG_LEVEL", "INFO")},
+        "gahkflix": {"level": os.environ.get("GAHKFLIX_LOG_LEVEL", "INFO")},
+        # Why a login failed, and why a form was refused as stale (residents.auth). Django's own
+        # CSRF warnings print only under DEBUG, so a 403 in production said nothing about why.
+        "residents": {"handlers": ["console"], "level": os.environ.get("RESIDENTS_LOG_LEVEL", "INFO")},
     },
 }
 
@@ -581,3 +660,10 @@ MEDIA_CACHE_ATTACHMENTS_MB = int(os.environ.get("MEDIA_CACHE_ATTACHMENTS_MB", "2
 # every post forever and has no archive, so for caching purposes an opslag counts as archived this
 # many days after it was posted.
 NOTICE_IMAGE_CACHE_DAYS = int(os.environ.get("NOTICE_IMAGE_CACHE_DAYS", "30"))
+
+# GAHKFlix (gahkflix/). The largest film a resident may upload; it goes straight to the bucket, never
+# through the app server (gahkflix/uploads.py). A custom thumbnail or banner is an ordinary picture.
+GAHKFLIX_MAX_UPLOAD_GB = float(os.environ.get("GAHKFLIX_MAX_UPLOAD_GB", "5"))
+GAHKFLIX_PICTURE_MAX_MB = int(os.environ.get("GAHKFLIX_PICTURE_MAX_MB", "15"))
+# Local copies of its thumbnails, banners and frames, in MEDIA_CACHE_DIR/gahkflix/ (gahkflix/cache.py).
+GAHKFLIX_CACHE_MB = int(os.environ.get("GAHKFLIX_CACHE_MB", "1024"))

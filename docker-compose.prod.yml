@@ -5,7 +5,9 @@
 # injected by Coolify's env manager, so there is no committed env_file. MediaWiki is its own app.
 #
 # The image is not built here: CI builds it and moves `:main` once the checks pass, and a timer on the
-# server pulls it and asks Coolify to redeploy (DEPLOY.md §4a). All four services run the same one.
+# server asks Coolify to redeploy when it moves (DEPLOY.md §4a). All four services run the same one.
+# Coolify pulls it before it stops the running containers (4.3.19 and later), so a redeploy by hand
+# gets the current `:main` too, and an unreachable registry fails the deploy with the old one still up.
 # IMAGE_TAG is for rolling back: set it to `sha-<commit>` in Coolify and redeploy; unset to follow main.
 services:
   web:
@@ -24,6 +26,15 @@ services:
       - photo-album-cache:/app/cache
     expose:
       - "8000"                 # reached by Coolify/Traefik over the internal network (not host-published)
+    # Liveness only (core/health.py): an unhealthy container gets no traffic from Traefik, so this
+    # must not fail just because a worker is down — /health is the full check, for uptime monitors.
+    # Python, not curl: the slim image has no curl. start_period covers the migrate before uvicorn.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
 
   # `web` runs the migrations; the workers and beat WAIT for them rather than racing them. Without the gate,
   # every deploy that adds a migration starts `beat` against a database with no
@@ -46,8 +57,22 @@ services:
     depends_on:
       - web
     command: >-
-      sh -c "until python manage.py migrate --check; do echo 'waiting for migrations'; sleep 3; done;
+      sh -c "python core/heartbeat_check.py --reset default;
+             until python manage.py migrate --check; do echo 'waiting for migrations'; sleep 3; done;
              celery -A config worker -Q celery,thumbnails -n default@%h --loglevel=INFO --concurrency=1"
+    # Without a healthcheck, Coolify counts a running container as "unknown", and one unknown
+    # container shows the whole app as "Running (unknown)". core/heartbeat_check.py fails when
+    # /health would call the process down, on the file core/heartbeat.py touches with every
+    # heartbeat row; its argument is the -n before the "@". The --reset above is for restarts,
+    # which keep /tmp: the last run's file would pass before this run has beaten. Unhealthy costs
+    # only the status here, since Traefik routes to `web` alone. start_period is long because the
+    # wait for web's migrations has no bound, and a long one should not read as unhealthy workers.
+    healthcheck: &heartbeat-healthcheck
+      test: ["CMD", "python", "core/heartbeat_check.py", "default"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 600s
 
   worker-media:
     image: ghcr.io/gahk-org/gahk_intern:${IMAGE_TAG:-main}
@@ -55,8 +80,13 @@ services:
     depends_on:
       - web
     command: >-
-      sh -c "until python manage.py migrate --check; do echo 'waiting for migrations'; sleep 3; done;
+      sh -c "python core/heartbeat_check.py --reset media;
+             until python manage.py migrate --check; do echo 'waiting for migrations'; sleep 3; done;
              celery -A config worker -Q media -n media@%h --loglevel=INFO --concurrency=1"
+    # As worker's. The heartbeat keeps beating through a 15-minute encode, so a long job is no failure.
+    healthcheck:
+      <<: *heartbeat-healthcheck
+      test: ["CMD", "python", "core/heartbeat_check.py", "media"]
 
   beat:
     image: ghcr.io/gahk-org/gahk_intern:${IMAGE_TAG:-main}
@@ -64,8 +94,13 @@ services:
     depends_on:
       - web
     command: >-
-      sh -c "until python manage.py migrate --check; do echo 'waiting for migrations'; sleep 3; done;
+      sh -c "python core/heartbeat_check.py --reset beat;
+             until python manage.py migrate --check; do echo 'waiting for migrations'; sleep 3; done;
              celery -A config beat --loglevel=INFO"
+    # As worker's.
+    healthcheck:
+      <<: *heartbeat-healthcheck
+      test: ["CMD", "python", "core/heartbeat_check.py", "beat"]
 
 volumes:
   media:

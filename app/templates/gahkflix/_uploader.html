@@ -1,0 +1,15 @@
+{% comment %} The upload widget, for a new video and for a new version of one (`upload_config.video`). {% endcomment %}
+<div class="flix-panel" data-flix-upload>
+  {{ upload_config|json_script:"flix-upload-config" }}
+  <label class="flix-dropzone" data-flix-drop>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+    <strong>{% if upload_config.video %}Vælg den nye version{% else %}Vælg en video, eller træk den herind{% endif %}</strong>
+    <span class="muted">MP4, MOV, M4V, WebM, AVI, MKV, 3GP, MTS, MPEG, WMV eller OGV · op til {{ max_gb|floatformat:"-1" }} GB</span>
+    <input type="file" accept="video/*,.mp4,.m4v,.mov,.webm,.avi,.mkv,.3gp,.3g2,.mts,.m2ts,.mpg,.mpeg,.wmv,.ogv" hidden data-flix-file>
+  </label>
+  <div data-flix-progress hidden>
+    <p style="margin:14px 0 8px"><b data-flix-filename></b> <span class="muted" data-flix-filesize></span></p>
+    <div class="flix-meter"><span data-flix-meter></span></div>
+  </div>
+  <p class="flix-upload-status" role="status" data-flix-upload-status></p>
+</div>

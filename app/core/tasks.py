@@ -1,4 +1,9 @@
 import datetime
+import functools
+import logging
+import zoneinfo
+from collections.abc import Mapping
+from typing import Any
 
 from celery import shared_task
 from django.conf import settings
@@ -8,6 +13,7 @@ from django.db.models import F, Subquery, Window
 from django.db.models.functions import RowNumber
 from django.utils import timezone
 
+from config.celery import app as celery_app
 from residents.models import Resident, active_period
 
 # How long a delivered broker message is kept before being swept.
@@ -37,9 +43,37 @@ WORKER_JOB_RETENTION = datetime.timedelta(days=30)
 UNSUCCESSFUL_JOB_RETENTION = datetime.timedelta(days=60)
 UNSUCCESSFUL_JOBS_KEPT = 1000
 
+logger = logging.getLogger(__name__)
+
 # Celery's status for a job that succeeded, as stored in celery_taskmeta.status and copied into
 # WorkerJobLog.state.
 _SUCCESS = "SUCCESS"
+_STARTED = "STARTED"
+_FAILURE = "FAILURE"
+
+# How far past its hard time limit a job Celery still has as running must be before it is taken
+# for lost. At the limit the worker kills it and records the failure itself; this is its moment to.
+LOST_JOB_GRACE = datetime.timedelta(minutes=10)
+LOST_JOB_TRACEBACK = (
+    "WorkerLostError: the job never finished. Its worker was killed outright (out of memory, a "
+    "redeploy) and nothing recorded the end, so core.tasks.close_lost_jobs closed it."
+)
+
+
+@functools.cache
+def _task_registry() -> Mapping[str, Any]:
+    """Celery's registry with every app's tasks module imported, as a worker has it. A web process
+    otherwise imports a tasks module only once something there sends one of its tasks, and a task
+    it has not met would be measured against the global time limit instead of its own."""
+    celery_app.autodiscover_tasks(force=True)
+    return celery_app.tasks
+
+
+def task_time_limit(task_name: str) -> datetime.timedelta:
+    """How long a job of this task may run before the worker kills it: its own hard limit, or the
+    global one."""
+    task = _task_registry().get(task_name)
+    return datetime.timedelta(seconds=getattr(task, "time_limit", None) or settings.CELERY_TASK_TIME_LIMIT)
 
 
 @shared_task
@@ -74,16 +108,19 @@ def purge_delivered_broker_messages() -> int:
     Raw SQL because `kombu_message` is kombu's table, not a Django model — there is no manager to
     ask, and inventing one would claim ownership of a schema another library migrates.
 
-    A NAIVE cutoff on purpose: the column is `timestamp without time zone` holding UTC (verified
-    against the running database), so handing Postgres an aware datetime would compare against the
-    session timezone and sweep the wrong hour's rows.
+    A NAIVE cutoff on purpose, in settings.TIME_ZONE: the column is `timestamp without time zone`,
+    which kombu fills with the worker's `datetime.now()` when the worker takes the message — local
+    time, because Django's settings export TZ=TIME_ZONE into the process. (Celery's own `date_done`
+    is the one holding UTC.) An aware cutoff would be compared in the session timezone instead, and
+    a UTC one keeps every row an hour or two past its day.
 
     Guarded on the table existing rather than on the broker URL, so pointing CELERY_BROKER_URL at
     Redis or RabbitMQ makes this a no-op instead of an error — the table is simply not there.
     """
     if "kombu_message" not in connection.introspection.table_names():
         return 0
-    cutoff = datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - BROKER_MESSAGE_RETENTION
+    cutoff = timezone.localtime(timezone=zoneinfo.ZoneInfo(settings.TIME_ZONE)).replace(tzinfo=None)
+    cutoff -= BROKER_MESSAGE_RETENTION
     with connection.cursor() as cursor:
         cursor.execute(
             "DELETE FROM kombu_message WHERE visible = false AND timestamp < %s",
@@ -121,6 +158,60 @@ def purge_worker_job_logs() -> int:
         pk__in=Subquery(excess), started_at__lt=now - UNSUCCESSFUL_JOB_RETENTION
     ).delete()
     return deleted + unsuccessful
+
+
+@shared_task
+def close_lost_jobs() -> int:
+    """Mark as failed the jobs Celery still has as running that cannot be running any more.
+
+    A worker killed outright records nothing, so its job's result row keeps status STARTED for good:
+    listed as running on the worker-jobs page, and never purged — purge_worker_job_results goes by
+    `date_done`, which Celery leaves NULL on a STARTED row. A job is lost once it has run past its
+    hard time limit (plus LOST_JOB_GRACE), since by then its worker would have killed it and said
+    so. Its start is the worker's own record (core.worker_logs writes one as each job starts); a
+    STARTED row without one is from before those existed, and long dead.
+
+    `date_done` becomes the latest moment the job can have ended — start plus time limit — or now
+    when the start is unknown, so the row ages out with the other failures. Should a job be closed
+    wrongly after all, nothing is lost: its real end overwrites the row.
+    """
+    from .models import WorkerJobLog
+
+    if "celery_taskmeta" not in connection.introspection.table_names():
+        return 0
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT task_id, name FROM celery_taskmeta WHERE status = %s", [_STARTED])
+        running = dict(cursor.fetchall())
+    if not running:
+        return 0
+    started = dict(WorkerJobLog.objects.filter(task_id__in=running).values_list("task_id", "started_at"))
+    now = timezone.now()
+    closed = 0
+    for task_id, name in running.items():
+        limit = task_time_limit(name or "")
+        started_at = started.get(task_id)
+        if started_at is not None and now - started_at <= limit + LOST_JOB_GRACE:
+            continue
+        ended_at = started_at + limit if started_at is not None else now
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE celery_taskmeta SET status = %s, date_done = %s, traceback = %s, result = NULL"
+                " WHERE task_id = %s AND status = %s",
+                [
+                    _FAILURE,
+                    ended_at.astimezone(datetime.UTC).replace(tzinfo=None),
+                    LOST_JOB_TRACEBACK,
+                    task_id,
+                    _STARTED,
+                ],
+            )
+            closed += cursor.rowcount
+        WorkerJobLog.objects.filter(task_id=task_id, finished_at__isnull=True).update(
+            state=_FAILURE, finished_at=ended_at
+        )
+    if closed:
+        logger.warning("Closed %d job(s) whose worker was lost while they ran.", closed)
+    return closed
 
 
 @shared_task

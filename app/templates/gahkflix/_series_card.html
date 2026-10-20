@@ -1,0 +1,12 @@
+{% load gahkflix %}{% with cover=covers|get_item:show.pk %}{% picture_url cover "thumbnail" as thumb %}
+<a class="flix-card" href="{% url 'gahkflix:series' show.pk %}" title="{{ show.title }}">
+  <span class="flix-card-img">
+    {% if thumb %}<img src="{{ thumb }}" alt="" loading="lazy" decoding="async">{% else %}<span class="flix-card-blank" aria-hidden="true">{{ show.title|slice:":1"|upper }}</span>{% endif %}
+    <span class="flix-card-badge">Serie</span>
+    <span class="flix-card-label">
+      <span class="flix-card-title">{{ show.title }}</span>
+      {% if show.n %}<span class="flix-card-meta">{{ show.n }} afsnit</span>{% endif %}
+    </span>
+  </span>
+</a>
+{% endwith %}

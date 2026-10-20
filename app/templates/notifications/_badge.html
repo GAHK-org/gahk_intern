@@ -1,0 +1,6 @@
+{% comment %}
+  The bell's unseen count. Its own file because a live signal re-reads it on its own
+  (notifications:badge, frontend/src/bell.ts). The wrapper is always rendered, empty at zero, so
+  there is always something with this id to replace.
+{% endcomment %}
+<span id="js-notif-badge">{% with unseen=notifications_unseen %}{% if unseen %}<span class="notif-badge">{% if unseen > 99 %}99+{% else %}{{ unseen }}{% endif %}</span>{% endif %}{% endwith %}</span>

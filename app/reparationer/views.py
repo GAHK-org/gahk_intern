@@ -22,12 +22,13 @@ from django.db.models import Count, Q, QuerySet
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
+from django.utils.cache import patch_vary_headers
 from django.views.decorators.http import require_POST
 
 from residents.models import Role
 from residents.permissions import current_resident, request_has_role, role_required
 
-from . import services
+from . import live, services
 from .forms import COMMON_AREAS, RepairCommentForm, RepairTaskForm
 from .models import RepairComment, RepairTask
 
@@ -126,9 +127,12 @@ def board(request: HttpRequest) -> HttpResponse:
         (status, label, [t for t in tasks if t.status == status])
         for status, label in RepairTask.Status.choices
     ]
-    return render(
+    # A live signal re-reads the board through this same view, so its filters come along for free;
+    # it gets the board alone (and no `messages`, which a background read must not consume).
+    template = "reparationer/_kanban.html" if request.headers.get("HX-Request") else "reparationer/board.html"
+    response = render(
         request,
-        "reparationer/board.html",
+        template,
         {
             "columns": columns,
             "query": query,
@@ -142,6 +146,10 @@ def board(request: HttpRequest) -> HttpResponse:
             "manager_only_statuses": MANAGER_ONLY_STATUSES,
         },
     )
+    # One URL, two bodies. Without Vary the browser may keep the bare board under the page's URL
+    # and serve it on Back — an unstyled kanban with no page around it. The known htmx trap.
+    patch_vary_headers(response, ["HX-Request"])
+    return response
 
 
 @login_required
@@ -172,6 +180,7 @@ def create(request: HttpRequest) -> HttpResponse:
         task.reported_by = current_resident(request)
         task.save()
         services.notify_new_task(task)
+        live.task_changed(task.pk, "created")
         messages.success(request, "Reparationen er meldt ind.")
         return redirect("reparationer:board")
     return render(request, "reparationer/form.html", {"form": form})
@@ -192,6 +201,7 @@ def set_status(request: HttpRequest, pk: int) -> HttpResponse:
     if status in RepairTask.Status.values:
         task.status = status
         task.save(update_fields=["status", "updated_at"])
+        live.task_changed(task.pk)
     return _move_response(request, task)
 
 
@@ -223,6 +233,7 @@ def set_responsible(request: HttpRequest, pk: int) -> HttpResponse:
 
     task.responsible = responsible
     task.save(update_fields=["responsible", "updated_at"])
+    live.task_changed(task.pk)
     if responsible == RepairTask.Responsible.REPPER:
         services.notify_handed_to_repper(task)
         messages.success(request, "Reparationen er overdraget til Repper.")
@@ -236,7 +247,9 @@ def set_responsible(request: HttpRequest, pk: int) -> HttpResponse:
 @role_required(*MANAGE_ROLES)
 def delete(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     task = get_object_or_404(RepairTask, pk=pk)
+    task_pk = task.pk  # delete() clears it
     task.delete()
+    live.task_changed(task_pk, "deleted")
     messages.success(request, "Reparationen er slettet.")
     return redirect("reparationer:board")
 
@@ -251,6 +264,7 @@ def archive_now(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     if task.status == RepairTask.Status.FAERDIG and task.archived_at is None:
         task.archived_at = timezone.now()
         task.save(update_fields=["archived_at"])
+        live.task_changed(task.pk)
         messages.success(request, "Reparationen er arkiveret.")
     return redirect("reparationer:detail", pk=task.pk)
 
@@ -264,6 +278,7 @@ def unarchive(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     if task.archived_at is not None:
         task.archived_at = None
         task.save(update_fields=["archived_at"])
+        live.task_changed(task.pk)
         messages.success(request, "Reparationen er genåbnet fra arkivet.")
     return redirect("reparationer:detail", pk=task.pk)
 
@@ -316,6 +331,7 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     comment.task = task
     comment.author = current_resident(request)
     comment.save()
+    live.task_changed(task.pk)  # the card's note count
     return redirect("reparationer:detail", pk=task.pk)
 
 
@@ -327,5 +343,6 @@ def delete_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
         raise PermissionDenied
     task_pk = comment.task_id
     comment.delete()
+    live.task_changed(task_pk)
     messages.success(request, "Noten er slettet.")
     return redirect("reparationer:detail", pk=task_pk)

@@ -1,0 +1,97 @@
+{% comment %}
+  The top of the worker-jobs page: the tiles, what runs and what waits. Rendered into the page, and
+  on its own by worker_jobs_live for the poll in worker_jobs.html, which morphs it in place.
+  Nothing in here may hold state of its own (an open <details>, a focused field): the next poll
+  would put it back the way the server rendered it.
+{% endcomment %}
+{% load ui_extras %}
+<div class="jobs-tiles">
+  <a class="jobs-tile" href="#koe">
+    <span class="jobs-tile-k">I kø</span>
+    <span class="jobs-tile-v">{{ queue.total }}</span>
+    <span class="jobs-tile-s">{% if queue.oldest_sent_at %}ældste venter {{ queue.oldest_sent_at|ago:now }}{% elif queue.total %}sendetid ukendt{% else %}ingen venter{% endif %}</span>
+  </a>
+  <a class="jobs-tile{% if stale %} is-alert{% endif %}" href="#koerer">
+    <span class="jobs-tile-k">Kører nu</span>
+    <span class="jobs-tile-v">{{ running|length }}</span>
+    <span class="jobs-tile-s">{% if stale %}+ {{ stale|length }} over tidsgrænsen{% elif running %}ældste startet for {{ running.0.started_at|ago:now }} siden{% else %}ingen lige nu{% endif %}</span>
+  </a>
+  <a class="jobs-tile{% if day.failed %} is-alert{% endif %}" href="?status=FAILURE&amp;period=24h&amp;children=1#historik">
+    <span class="jobs-tile-k">Fejlet, 24 timer</span>
+    <span class="jobs-tile-v">{{ day.failed }}</span>
+    <span class="jobs-tile-s">{% if day.last_failure_at %}seneste for {{ day.last_failure_at|ago:now }} siden{% else %}ingen fejl{% endif %}</span>
+  </a>
+  <a class="jobs-tile" href="?status=SUCCESS&amp;period=24h&amp;children=1#historik">
+    <span class="jobs-tile-k">Gennemført, 24 timer</span>
+    <span class="jobs-tile-v">{{ day.succeeded }}</span>
+    <span class="jobs-tile-s">{% if day.average %}gns. køretid {{ day.average }}{% else %}&nbsp;{% endif %}</span>
+  </a>
+</div>
+
+<div class="jobs-live">
+  <section class="card-flat" id="koerer">
+    <div class="card-head">
+      <h2>Kører nu</h2>
+      <span class="muted text-sm">opdateret {{ now|date:"H:i:s" }}</span>
+    </div>
+    {% if stale %}
+      <div class="jobs-stale">
+        <span class="chip chip-neg">{{ stale|length }} over tidsgrænsen</span>
+        Står som startet, men har kørt længere end opgaven må — worker'en er død under {% if stale|length == 1 %}det{% else %}dem{% endif %}.
+        <a href="?status=STARTED&amp;children=1#historik">Se {% if stale|length == 1 %}det{% else %}dem{% endif %}</a>
+      </div>
+    {% endif %}
+    {% if running %}
+      <ul class="jobs-list">
+        {% for job in running %}
+          <li>
+            <div class="jobs-row">
+              <div class="min-w-0">
+                <a class="jobs-name" href="{% url 'siteadmin:worker_job_detail' job.id %}">{{ job.name }}</a><span class="jobs-app">{{ job.app }}</span>
+                {% if job.task_context %}<div class="jobs-sub">{{ job.task_context }}</div>{% elif job.arguments %}<div class="jobs-args">{{ job.arguments }}</div>{% endif %}
+                <div class="jobs-sub">{{ job.worker_name|default:"ukendt worker" }}{% if job.queue %} · {{ job.queue }}{% endif %}{% if job.waited %} · ventede {{ job.waited }}{% endif %}</div>
+              </div>
+              <div class="jobs-when">
+                <b class="num">{{ job.running_for }}</b>
+                <span>startet {{ job.started_at|date:"H:i:s" }}</span>
+              </div>
+            </div>
+            <div class="jobs-meter{% if job.limit_used >= 75 %} is-near{% endif %}" title="{{ job.running_for }} af tidsgrænsen på {{ job.time_limit_label }}">
+              <span style="width:{{ job.limit_used }}%"></span>
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="jobs-empty">Ingen jobs kører lige nu.</p>
+    {% endif %}
+  </section>
+
+  <section class="card-flat" id="koe">
+    <div class="card-head">
+      <h2>I kø</h2>
+      {% if queue.total %}<span class="chip chip-quiet">{{ queue.total }} job{{ queue.total|pluralize:"s" }}</span>{% endif %}
+    </div>
+    {% for group in queue.groups %}
+      <div class="jobs-group">
+        <div class="jobs-group-head">
+          <span class="jobs-name">{{ group.name }}</span><span class="jobs-app">{{ group.app }}</span>
+          <span class="chip chip-quiet">{{ group.queue }}</span>
+          <b class="jobs-group-count num">{{ group.count }}</b>
+        </div>
+        <ol class="jobs-queued">
+          {% for job in group.jobs %}
+            <li>
+              <span class="num">{{ job.sent_at|date:"H:i:s"|default:"–" }}</span>
+              {% if job.id %}<a href="{% url 'siteadmin:worker_job_detail' job.id %}">{% endif %}{{ job.task_context|default:job.arguments|default:job.id|truncatechars:70 }}{% if job.id %}</a>{% endif %}
+              {% if job.eta %}<span class="chip chip-brass">kør efter {{ job.eta|slice:"11:19" }}</span>{% endif %}
+            </li>
+          {% endfor %}
+        </ol>
+        {% if group.more %}<p class="jobs-sub">… og {{ group.more }} mere</p>{% endif %}
+      </div>
+    {% empty %}
+      <p class="jobs-empty">Køen er tom.</p>
+    {% endfor %}
+  </section>
+</div>

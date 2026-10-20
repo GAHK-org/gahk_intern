@@ -1,0 +1,25 @@
+{% extends "gahkflix/base.html" %}
+{% block title %}Tidslinje – GAHKFlix{% endblock %}
+{% block content %}
+  <div class="flix-page">
+    <h1 class="flix-page-title">Tidslinje</h1>
+    {% if years %}
+      <nav class="flix-timeline-years" aria-label="Spring til år">
+        {% for year, months in years %}<a href="#aar-{{ year }}">{{ year }}</a>{% endfor %}
+      </nav>
+      {% for year, months in years %}
+        <section class="flix-year" id="aar-{{ year }}">
+          <h2>{{ year }}</h2>
+          {% for month, videos in months %}
+            <div class="flix-month">
+              <h3>{{ videos.0.display_date|date:"F" }}</h3>
+              <div class="flix-grid">{% for video in videos %}{% include "gahkflix/_card.html" %}{% endfor %}</div>
+            </div>
+          {% endfor %}
+        </section>
+      {% endfor %}
+    {% else %}
+      <p class="flix-empty">Der er ingen videoer endnu.</p>
+    {% endif %}
+  </div>
+{% endblock %}

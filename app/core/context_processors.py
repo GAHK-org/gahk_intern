@@ -8,6 +8,7 @@ from django.http import HttpRequest
 from arkiv.access import roles_allowed as arkiv_allowed
 from den_hurtige.access import roles_allowed as den_hurtige_allowed
 from events.access import roles_allowed as events_allowed
+from gahkflix.access import roles_allowed as gahkflix_allowed
 from opslagstavle.access import roles_allowed as opslagstavle_allowed
 from photo_album.access import roles_allowed as photo_album_allowed
 from residents.permissions import CMS_EDITOR_ROLES, can_preview, effective_roles
@@ -70,6 +71,9 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     oversigt.append(("/intern/alumneliste/", "Alumneliste", "list"))
     if photo_album_allowed(roles):
         oversigt.append(("/intern/fotoalbum/", "Fotoalbum", "photo"))
+    # Still gated to administrators and Fotogruppen (gahkflix.access.ACCESS_ROLES).
+    if gahkflix_allowed(roles):
+        oversigt.append(("/intern/gahkflix/", "GAHKFlix", "film"))
     vaerelser: list[NavItem] = [
         ("/intern/soegvaerelse/", "Søg værelse", "house"),
         ("/intern/vaerelsestjek/", "Værelsestjek", "inspect"),  # open to every resident

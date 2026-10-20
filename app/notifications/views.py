@@ -16,6 +16,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from core import push
+from gahkflix import access as gahkflix_access
 from residents.permissions import current_resident
 
 from . import categories, services
@@ -70,6 +71,17 @@ def dropdown(request: HttpRequest) -> HttpResponse:
     resident = current_resident(request)
     rows = Notification.objects.filter(recipient=resident).visible().ranked()[:DROPDOWN_SIZE]
     return render(request, "notifications/_dropdown.html", {"rows": rows})
+
+
+def badge(request: HttpRequest) -> HttpResponse:
+    """Just the bell's badge, for a live signal (notifications.live) to re-read.
+
+    Not @login_required, for the reason den_hurtige.views.feed_items gives: a redirect to the login
+    page would be swapped in where the badge was. A logged-out page gets 204 and keeps what it has.
+    """
+    if not request.user.is_authenticated:
+        return HttpResponse(status=204)
+    return render(request, "notifications/_badge.html")
 
 
 @login_required
@@ -142,6 +154,9 @@ def preferences(request: HttpRequest) -> HttpResponse:
 
     groups = []
     for key, name, leaves in categories.grouped():
+        # GAHKFlix is still behind its rollout gate; nobody outside it can get these.
+        if key == "gahkflix" and not gahkflix_access.request_allowed(request):
+            continue
         rows = []
         for category in leaves:
             pref = saved.get(category.key)

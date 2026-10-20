@@ -36,8 +36,13 @@ Features decide **who** is told and **with what wording**; they call
 | Begivenheder | `events.personal` — RSVP deadline reminders, moved up from the venteliste | Høj | yes |
 | Begivenheder | `events.comments` — comments on events you host | Normal | yes |
 | Reparationer | `repairs` — new and handed-over tasks for your group | Normal | yes |
-| System | `system` — messages from the administrators about the site | Normal | **always** |
-| Generelt | `general` — announcements to the whole kollegium | Normal | **always** |
+| GAHKFlix | `gahkflix.new` — a video is published | Normal | yes |
+| GAHKFlix | `gahkflix.cast` — you are credited in a published video | Normal | yes |
+| GAHKFlix | `gahkflix.uploads` — your upload is processed or failed; your request was decided; your unpublished drafts | Normal | yes |
+| GAHKFlix | `gahkflix.approvals` — a late edit or a deletion awaits an administrator | Høj | yes |
+| GAHKFlix | `gahkflix.drafts` — for administrators: unpublished drafts, weekly and the day before one is deleted | Normal | yes |
+| System | `system` — about the site itself: downtime, new features | Normal | **always** |
+| Generelt | `general` — **the catch-all**: everything without a category of its own, from a notice about your own application to an announcement to the whole kollegium | Normal | **always** |
 
 Groups are shown in this order everywhere (settings page, the by-category view). System and Generelt
 come last: they are rare, and the toggles people come to the settings page for are the feature ones.
@@ -47,9 +52,29 @@ its toggle. A new message in a room is **push only**: putting every chat message
 would bury the notifications that are about *you*. Replies and reactions to your own messages are
 in-app *and* push.
 
+### System and Generelt are catch-alls — don't add a category lightly
+
+The settings page is a table every resident scrolls, and each category is another row of toggles. A
+feature gets its own category only when its notifications are **recurring and plentiful enough that
+somebody would want them off on their own** (new posts, reactions, chat rooms). Everything else uses
+an existing one:
+
+- **Generelt** — anything without its own category: one-off messages about the resident's own
+  affairs (e.g. "din ansøgning er slettet") and announcements to everyone. Raise `importance` at the
+  call site when it matters more than Normal.
+- **System** — about the site itself (downtime, new features), not about a resident's own case.
+
+A feature does not get a group just for being a feature: a deleted room application is `general`,
+not a new "Søg værelse" group.
+
 System and Generelt can **not** be turned off in-app (`Category.in_app_optional = False`): the list
 is where somebody who has push off still sees what the house itself says. Push and vibration for
 them can be turned off like any other category.
+
+GAHKFlix's `gahkflix.uploads`, `gahkflix.approvals` and `gahkflix.drafts` can **not** be turned off
+in-app either (`in_app_optional = False`), like System and Generelt: they are about something the
+resident has to act on. Their push and vibration can be turned off. `gahkflix.new` and
+`gahkflix.cast` can be turned off like any other category.
 
 ## Importance
 
@@ -91,6 +116,14 @@ they would get a 403 on opening. Acting on your own content never notifies you.
 - **Reparationer** → `repairs` to current holders of the responsible role (Viceværterne for a new
   report or one sent back, Reppergruppen for one handed over), plus administrators and superusers.
   The reporter is not told about their own new report.
+- **GAHKFlix** → `gahkflix.new` to everyone who can open GAHKFlix, except the uploader;
+  `gahkflix.cast` to residents newly credited in a published video; `gahkflix.uploads` to the
+  uploader and to whoever asked for a change; `gahkflix.approvals` to the administrators and
+  Fotogruppen, except the one asking. Unpublished drafts more than a week old: every Monday each
+  uploader gets one `gahkflix.uploads` about theirs and the administrators one `gahkflix.drafts`
+  overview; the day before a draft is deleted, its uploader (Høj) and the administrators (Høj) are
+  warned once. While GAHKFlix is behind its rollout gate, its group is hidden
+  on the settings page for residents outside it, and none of them are notified.
 
 ## In-app notifications
 

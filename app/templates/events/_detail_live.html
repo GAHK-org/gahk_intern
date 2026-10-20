@@ -1,0 +1,258 @@
+{% load board_extras %}
+{% load text_extras %}
+{% comment %}
+  Everything on the event page, as one live region. Rendered inside detail.html on first load and by
+  views.live_detail when a signal names this event (events.live), and morphed in by
+  frontend/src/live-region.ts: the guest list and counts move as people answer, the facts change on
+  an edit or a cancellation, the thread grows. The whole page rather than the answer panel alone,
+  because an edit or a cancellation changes nearly all of it.
+
+  The answer buttons survive the morph (htmx.process re-wires anything new); the comment form is
+  skipped outright, so nothing being typed is lost.
+{% endcomment %}
+<div id="js-event-live" data-live="begivenheder.{{ event.pk }}" data-live-region data-live-pk="{{ event.pk }}"
+     data-live-url="{% url 'events:live_detail' event.pk %}"
+     data-live-gone="Begivenheden er slettet eller ikke længere synlig for dig.">
+  {% if event.image %}
+    <a href="{{ event.image.url }}" target="_blank" rel="noopener" class="event-hero">
+      <img src="{{ event.image.url }}" alt="" loading="lazy">
+    </a>
+  {% endif %}
+
+  <div class="page-head">
+    <div>
+      <h1>
+        {{ event.title }}
+        {% if event.cancelled_at %}<span class="chip chip-neg">Aflyst</span>{% endif %}
+        {% if event.visibility == "kun_inviterede" %}
+          <span class="chip chip-quiet">
+            <svg class="ni" aria-hidden="true"><use href="#i-lock"></use></svg>
+            Kun inviterede
+          </span>
+        {% endif %}
+      </h1>
+    </div>
+    {% if can_edit or can_delete or can_cancel %}
+      <div class="head-actions">
+        {% if can_edit %}
+          <a class="btn btn-secondary" href="{% url 'events:edit' event.pk %}">Redigér</a>
+        {% endif %}
+        {% comment %}
+          Slet only while nobody has committed; after that the control is Aflys. See
+          access.can_delete — a hard delete cannot be retracted from a calendar that already
+          imported the event, and STATUS:CANCELLED can.
+        {% endcomment %}
+        {% if can_delete %}
+          <form method="post" action="{% url 'events:delete' event.pk %}"
+                onsubmit="return confirm('Slet «{{ event.title|escapejs }}» permanent?')">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-danger">Slet</button>
+          </form>
+        {% elif can_cancel %}
+          <form method="post" action="{% url 'events:cancel' event.pk %}"
+                onsubmit="return confirm('Aflys «{{ event.title|escapejs }}»? Alle tilmeldte får besked.')">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-danger">Aflys</button>
+          </form>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+
+  <dl class="event-facts">
+    <div>
+      <dt><svg class="ni" aria-hidden="true"><use href="#i-calendar"></use></svg><span class="sr-only">Hvornår</span></dt>
+      <dd>
+        {{ event.starts_at|date:"l j. F" }}, {{ event.starts_at|date:"H.i" }}{% if event.ends_at %}&ndash;{{ event.ends_at|date:"H.i" }}{% endif %}
+      </dd>
+    </div>
+    {% if event.location %}
+      <div>
+        <dt><svg class="ni" aria-hidden="true"><use href="#i-house"></use></svg><span class="sr-only">Hvor</span></dt>
+        <dd>{{ event.location }}</dd>
+      </div>
+    {% endif %}
+    <div>
+      <dt><svg class="ni" aria-hidden="true"><use href="#i-users"></use></svg><span class="sr-only">Arrangør</span></dt>
+      <dd>{{ event.organiser.full_name }}</dd>
+    </div>
+  </dl>
+
+  {% comment %}
+    A plain link, not a button: it is a GET that downloads a file, and the browser's own
+    "open with Kalender" is the whole interaction. Offered to everyone who can see the event
+    rather than only to people who said ja — wanting the time in your calendar before you decide
+    is the ordinary case.
+
+    The one-off download and the subscribable feed answer different questions ("put THIS in my
+    calendar" vs "keep my calendar up to date"), so both are on offer and the second says what it
+    is instead of being a second file link.
+  {% endcomment %}
+  <p class="event-ics">
+    <a href="{% url 'events:event_ics' event.pk %}">
+      <svg class="ni" aria-hidden="true"><use href="#i-calendar"></use></svg>
+      Tilføj til din kalender
+    </a>
+    <span class="muted">·</span>
+    <a href="{% url 'events:feed_settings' %}">Abonnér på alle dine begivenheder</a>
+  </p>
+
+  {% if event.description %}
+    {% comment %}
+      Rendered on read, like opslagstavlen. `markdown` is core.markdown behind board_extras — the
+      one place resident-written content is marked safe.
+    {% endcomment %}
+    <div class="prose-gahk event-description">{{ event.description|markdown }}</div>
+  {% endif %}
+
+  {% include "events/_rsvp.html" %}
+
+  {% if notices %}
+    {% comment %}
+      The posts that announced this. Only rendered for a reader who can actually open opslagstavlen
+      — it is still behind a role gate, and a link that 403s is worse than no link (see
+      views._related_notices).
+    {% endcomment %}
+    <section class="event-notices">
+      <h2>Omtalt på opslagstavlen</h2>
+      {% for notice in notices %}
+        {% comment %}
+          An excerpt, not just a byline. "Frederik Formand · 24. maj" says a post exists; it does not
+          say which one, and on an event with two or three of them that is the only thing the reader
+          needs in order to pick.
+
+          Rendered and then stripped rather than truncating the Markdown source, for the same reason
+          the board's own excerpts are (see _notice_card.html): truncating the source slices a
+          construct in half and shows `**Hej` to the reader.
+        {% endcomment %}
+        <a class="event-notice" href="{% url 'opslagstavle:detail' notice.pk %}">
+          <span class="event-notice-body">
+            {{ notice.body|markdown_text_only|striptags|truncatewords:14 }}
+          </span>
+          <span class="event-notice-who muted">
+            {{ notice.author.full_name }} · {{ notice.created_at|date:"j. F" }}
+          </span>
+        </a>
+      {% endfor %}
+    </section>
+  {% endif %}
+
+  {% comment %}
+    The thread. Reuses opslagstavlen's comment markup and CSS wholesale — .notice-comments, .reply,
+    .reply-head, .msg-text, .comment-form — because it IS the same widget, and a second set of
+    classes for the same rows is how the two reaction rows drifted apart (see the header of
+    den_hurtige/_message.html for how that went).
+
+    BELOW the answer panel and below the posts, deliberately. The panel is what the page is for:
+    an event asks you a question with a deadline on it, and pushing that below a thread would put
+    a conversation between the reader and the button they came to press. The thread is what you
+    read once you have answered, which is why commenting redirects to #kommentarer (see
+    views._comment_anchor) rather than back to the top.
+
+    Rendered for everyone who can open the page, including a cancelled event — see
+    views.create_comment for why aflyst does not close the thread.
+  {% endcomment %}
+  <section class="notice-comments" aria-labelledby="kommentarer">
+    <h2 id="kommentarer">
+      {% with n=comments|length %}
+        {% if n == 1 %}1 kommentar{% elif n %}{{ n }} kommentarer{% else %}Kommentarer{% endif %}
+      {% endwith %}
+    </h2>
+
+    {% for comment in comments %}
+      <div class="reply">
+        {% comment %}
+          The byline is its own flex ROW because .msg-del is a <form> positioned with
+          `margin-left:auto`, which means nothing outside a flex container — loose in the .reply it
+          took a blank line of its own between the name and the text. Same note as opslagstavlen's.
+
+          NO embedsgruppe pill here, unlike the board's comments: this model keeps no snapshot of
+          it, because the snapshot exists to stop a rotating group from relabelling a multi-year
+          archive and an event is gone a week after it is held. See EventComment in models.py.
+        {% endcomment %}
+        <div class="reply-head">
+          <span class="reply-name">{{ comment.author.full_name }}</span>
+          <span class="msg-meta">{{ comment.created_at|date:"j. b Y, H:i" }}</span>
+          {% if comment.can_delete %}
+            <form method="post" action="{% url 'events:delete_comment' comment.pk %}" class="msg-del"
+                  onsubmit="return confirm('Slet «{{ comment.body|truncatechars:60|escapejs }}» permanent?')">
+              {% csrf_token %}
+              <button type="submit" title="Slet kommentar" aria-label="Slet kommentar">&times;</button>
+            </form>
+          {% endif %}
+        </div>
+        {% comment %}
+          Plain text, autoescaped, `white-space:pre-wrap` from .msg-text — comments are deliberately
+          not Markdown (see EventComment). |links makes a pasted link clickable and short without
+          opening the door to arbitrary markup, and uses the same URL scanner the description
+          above does — see opslagstavle/detail.html for why |urlize could not stay.
+        {% endcomment %}
+        <div class="msg-text">{{ comment.body|links }}</div>
+        {% if comment.image %}
+          {% comment %}
+            A link to the full picture around a capped thumbnail, exactly as a Den Hurtige message
+            renders its photo — same `.msg-image` rule, so the two look alike and no CSS was added.
+            loading="lazy" because a long thread is the case this exists for.
+          {% endcomment %}
+          <a href="{{ comment.image.url }}" target="_blank" rel="noopener" class="msg-image">
+            <img src="{{ comment.image.url }}" alt="" loading="lazy">
+          </a>
+        {% endif %}
+      </div>
+    {% empty %}
+      <p class="muted">Ingen kommentarer endnu.</p>
+    {% endfor %}
+
+    {% comment %}
+      data-morph-skip: a live re-draw (an answer, an edit, somebody else's comment) must not touch a
+      comment being written. frontend/src/feed.ts sets the morph callback that honours it.
+    {% endcomment %}
+    <form method="post" enctype="multipart/form-data" data-morph-skip
+          action="{% url 'events:create_comment' event.pk %}" class="comment-form">
+      {% csrf_token %}
+      {% comment %}
+        ENCTYPE IS LOAD-BEARING. Without multipart/form-data the browser posts the file's NAME and
+        nothing else, request.FILES is empty, and the comment saves with no picture and no error
+        anywhere — the single most confusing way this can break.
+
+        NOT `required` on either control: a comment may be a photo on its own, and text on its own
+        is the ordinary case. "Neither" is refused by the view, which is the only place that knows
+        whether an attached file survived validation (see views.create_comment).
+
+        The paperclip is Den Hurtige's `.reply-attach` — a hidden input behind a clickable label,
+        so it looks like the rest of the site instead of a browser file picker.
+      {% endcomment %}
+      <label class="reply-attach" for="id_comment_image_{{ event.pk }}" title="Vedhæft billede">
+        <span aria-hidden="true">📎</span>
+        <span class="sr-only">Vedhæft billede til kommentaren</span>
+        <input type="file" id="id_comment_image_{{ event.pk }}" name="image" accept="image/*,.heic,.heif">
+      </label>
+
+      {% for field in comment_form %}
+        <div class="mb-3">
+          <label class="sr-only" for="{{ field.id_for_label }}">{{ field.label }}</label>
+          {{ field }}
+          {% if field.errors %}<p class="errorlist text-sm">{{ field.errors|striptags }}</p>{% endif %}
+        </div>
+      {% endfor %}
+      {% comment %}
+        Feedback that the photo attached, and the only way to take it back off. A hidden file input
+        behind a paperclip shows nothing at all by itself, and a comment may be a photo ON ITS OWN -
+        so without this there is no evidence on screen that there is anything to send.
+
+        Empty and `hidden` in the markup: frontend/src/feed.ts fills in the thumbnail, the filename and
+        the size on `change`, and hides it again on clear or reset. It degrades to nothing without JS,
+        which is correct - the form still submits, and the server still validates the file.
+
+        Attributes rather than ids: opslagstavlen renders one of these per page, but the thread panel
+        renders one per thread, and the handler is shared with both.
+      {% endcomment %}
+      <div class="file-note" data-file-note hidden>
+        <img data-file-note-thumb alt="" hidden>
+        <span data-file-note-name></span>
+        <button type="button" data-file-note-clear>Fjern</button>
+      </div>
+      <button type="submit" class="btn">Kommentér</button>
+    </form>
+  </section>
+</div>

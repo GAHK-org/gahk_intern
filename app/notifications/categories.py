@@ -17,6 +17,21 @@ features that share a category:
     category takes the in-app toggle off the settings page and the row out of the dropdown.
   * **Default importance.** A caller may raise it for one notification (an event that was cancelled
     matters more than one that was created), but the category says what is normal.
+
+**Before adding a category**, check that a resident would actually want to switch it off on its own.
+The settings page is a table every resident scrolls; every leaf is another row of toggles. A new
+category earns its place only when it is *recurring and plentiful enough to be noise to somebody* —
+new posts, reactions, chat rooms. Anything else goes under an existing one:
+
+  * **`general` is the catch-all.** Everything that has no category of its own: one-off messages about
+    your own affairs ("din ansøgning er slettet"), and
+    announcements to the whole kollegium. It cannot be turned off in-app, which is right for exactly
+    these: rare, and about you. Raise `importance` at the call site if it matters more than Normal.
+  * **`system` is about the site itself** — downtime, new features, something wrong with the app.
+    Not about a resident's own case; that is `general`.
+
+So a feature does *not* get its own group just because it is a feature: a notice that an application
+was deleted is `general`, not a new "Søg værelse" group.
 """
 
 from dataclasses import dataclass
@@ -72,6 +87,7 @@ GROUPS: tuple[tuple[str, str], ...] = (
     ("posts", "Opslagstavlen"),
     ("events", "Begivenheder"),
     ("repairs", "Reparationer"),
+    ("gahkflix", "GAHKFlix"),
     ("system", "System"),
     ("general", "Generelt"),
 )
@@ -84,8 +100,11 @@ GROUP_ICONS: dict[str, str] = {
     "posts": "board",
     "events": "calendar",
     "repairs": "wrench",
+    "gahkflix": "film",
 }
 
+# The two catch-alls — see "Before adding a category" in the module docstring. Most features that
+# notify rarely should use GENERAL rather than a category of their own.
 SYSTEM = "system"
 GENERAL = "general"
 CHAT_REPLIES = "chat.replies"
@@ -98,6 +117,11 @@ EVENTS_CHANGES = "events.changes"
 EVENTS_PERSONAL = "events.personal"
 EVENTS_COMMENTS = "events.comments"
 REPAIRS = "repairs"
+GAHKFLIX_NEW = "gahkflix.new"
+GAHKFLIX_CAST = "gahkflix.cast"
+GAHKFLIX_UPLOADS = "gahkflix.uploads"
+GAHKFLIX_APPROVALS = "gahkflix.approvals"
+GAHKFLIX_DRAFTS = "gahkflix.drafts"
 
 # The prefix of a Den Hurtige room's category. One category per room, generated from the channel
 # registry below, so adding a channel gives it a settings toggle without touching this file.
@@ -163,18 +187,42 @@ def _build() -> tuple[Category, ...]:
             "Når nogen kommenterer en begivenhed, du er vært for.",
         ),
         Category(REPAIRS, "Reparationer", "repairs", "Nye og overdragede reparationer for din gruppe."),
+        Category(GAHKFLIX_NEW, "Nye videoer", "gahkflix", "Når en ny video udgives på GAHKFlix."),
+        Category(GAHKFLIX_CAST, "Når du medvirker", "gahkflix", "Når du bliver krediteret i en video."),
+        Category(
+            GAHKFLIX_UPLOADS,
+            "Dine uploads og anmodninger",
+            "gahkflix",
+            "Når din video er behandlet, når en anmodning, du har sendt, er afgjort, og om kladder, du ikke har udgivet.",
+            in_app_optional=False,
+        ),
+        Category(
+            GAHKFLIX_APPROVALS,
+            "Godkendelser",
+            "gahkflix",
+            "Ændringer og sletninger, som en administrator skal godkende.",
+            importance=Importance.HOEJ,
+            in_app_optional=False,
+        ),
+        Category(
+            GAHKFLIX_DRAFTS,
+            "Kladder, der ikke er udgivet",
+            "gahkflix",
+            "Ugentligt overblik over upublicerede kladder, og besked dagen før en slettes. Til administratorer.",
+            in_app_optional=False,
+        ),
         Category(
             SYSTEM,
             "Systembeskeder",
             "system",
-            "Beskeder fra administratorerne om siden.",
+            "Om selve siden, fx nedetid og nye funktioner.",
             in_app_optional=False,
         ),
         Category(
             GENERAL,
             "Generelle beskeder",
             "general",
-            "Meddelelser til hele kollegiet.",
+            "Alt, der ikke har sin egen kategori — fx besked om din ansøgning eller meddelelser til hele kollegiet.",
             in_app_optional=False,
         ),
     )

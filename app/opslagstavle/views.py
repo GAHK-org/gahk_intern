@@ -4,13 +4,14 @@ Open to every logged-in resident: posting, commenting and reacting need no role,
 (plus administrator) can delete anyone's content and pin posts. See access.py for why there is no
 staged-rollout gate.
 
-**Deliberately not a chat.** Den Hurtige polls itself every 20 seconds, keeps the reader's scroll
-position across swaps, re-opens threads afterwards and locks pinch-zoom — all of which exist because
-its messages die in 30 minutes. None of it applies to a multi-year archive, and copying it would cost
-real things: polling fights pagination, discards the reader's place, and re-renders every post's
-Markdown server-side every 20 seconds per open tab. If "what is new since I last looked" ever turns
-out to matter, the cheap honest version is a `last_seen` timestamp driving an "N nye opslag" banner —
-not a poll.
+**Deliberately not a chat.** Den Hurtige locks pinch-zoom and follows the bottom of the
+conversation, because its messages die in hours. None of that applies to a multi-year archive.
+
+**It is live, and it does not poll.** A poll was rejected here for good reasons — it fights the
+pager, discards the reader's place, and re-renders every post's Markdown every few seconds per open
+tab whether or not anything happened. A WebSocket signal (opslagstavle.live) answers all three: a
+page re-fetches only when something changed, only the cards it is showing, and a NEW post is an
+"N nye opslag" banner rather than an insertion, so nothing moves under the reader.
 """
 
 from django.conf import settings
@@ -18,7 +19,7 @@ from django.contrib import messages
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Prefetch
+from django.db.models import Max, Prefetch
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -30,8 +31,16 @@ from core.reactions import CREATED, apply_toggle, reaction_rows
 from core.uploads import attached_image, validate_image_upload
 from residents.permissions import current_resident
 
-from . import services
-from .access import access_required, can_delete, can_delete_comment, can_edit, can_moderate, is_limited
+from . import live, services
+from .access import (
+    access_required,
+    can_delete,
+    can_delete_comment,
+    can_edit,
+    can_moderate,
+    is_limited,
+    request_allowed,
+)
 from .forms import NoticeCommentForm, NoticeForm, ReactionForm
 from .images import sync_images
 from .models import (
@@ -119,6 +128,9 @@ def board(request: HttpRequest) -> HttpResponse:
             "can_moderate": can_moderate(request),
             "events_allowed": events_allowed(request),
             "quick_emoji": EMOJI_SHORTLIST,
+            # The newest post that existed when this page was drawn, whatever the filter: the cursor
+            # a reconnecting board hands live_cards to learn what it missed (`?siden=`).
+            "newest_pk": Notice.objects.aggregate(newest=Max("pk"))["newest"] or 0,
             # Tells the trial group the board is not live yet, so they do not read the quiet as
             # nobody caring. Disappears on its own when ACCESS_ROLES is set to None.
             "limited_rollout": is_limited(),
@@ -146,23 +158,88 @@ def events_allowed(request: HttpRequest) -> bool:
 def detail(request: HttpRequest, pk: int) -> HttpResponse:
     """One post with its comments. Exists as a stable permalink, which is what a notification can
     link to — `?page=4` is not an address for a thing."""
+    return render(request, "opslagstavle/detail.html", _detail_context(request, pk))
+
+
+def _detail_context(request: HttpRequest, pk: int) -> dict[str, object]:
+    """Everything the detail page draws, shared with `live_detail` so the two cannot differ."""
     notice = get_object_or_404(_list_queryset().prefetch_related("comments__author"), pk=pk)
     _decorate([notice], request)
     comments = list(notice.comments.all())
     for comment in comments:
         comment.can_delete = can_delete_comment(request, comment)  # type: ignore[attr-defined]
+    return {
+        "notice": notice,
+        "comments": comments,
+        "comment_form": NoticeCommentForm(),
+        "can_moderate": can_moderate(request),
+        "events_allowed": events_allowed(request),
+        "quick_emoji": EMOJI_SHORTLIST,
+    }
+
+
+# --- what a live signal re-fetches (opslagstavle.live, frontend/src/opslagstavle-live.ts) ---------
+#
+# Both are fragments and both are NOT decorated, for the reason den_hurtige.views.feed_items gives:
+# @access_required redirects an expired session to the login page, fetch follows the redirect, and
+# the page would be handed a login form to read cards out of. They answer 204 instead, which the
+# client takes as "leave everything as it is".
+#
+# Neither renders `messages`, and that is load-bearing rather than tidy. Django's message storage is
+# consumed by whatever iterates it, and these requests fire on their own, from a socket, at moments
+# the reader did not choose — including the instant after they deleted a comment, when "Kommentaren
+# er slettet." is waiting for the redirect's page. A fragment that drew the messages would eat it.
+
+# The most cards one request draws: everything a board page can show at once.
+MAX_LIVE_CARDS = MAX_PINNED + PAGE_SIZE
+
+# The most "new since" pks one answer lists. Past this the banner reads "99+ nye opslag", which is
+# as precise as anyone needs a board they have not looked at for that long to be.
+MAX_NEW_SINCE = 99
+
+
+def live_cards(request: HttpRequest) -> HttpResponse:
+    """The cards for `?id=…&id=…`, drawn exactly as the board draws them.
+
+    A card that is not in the answer has been deleted, and the board removes it — which is how a
+    board that was asleep catches up on deletions it never heard about. So the ids are filtered,
+    never refused: a junk id simply is not a card.
+
+    `?siden=<pk>` (with the board's `?kategori=`) also lists the posts created after that one, for
+    the same reconnecting board: what it missed while asleep was never signalled, so it asks, and
+    fills its "N nye opslag" banner from the answer.
+    """
+    if not request_allowed(request):
+        return HttpResponse(status=204)
+    ids = [int(raw) for raw in request.GET.getlist("id") if raw.isdigit()][:MAX_LIVE_CARDS]
+    notices = _decorate(list(_list_queryset().filter(pk__in=ids)), request)
+    since = request.GET.get("siden", "")
+    new_since: list[int] | None = None
+    if since.isdigit():
+        newer = Notice.objects.filter(pk__gt=int(since))
+        category = request.GET.get("kategori") or ""
+        if category in Category.values:
+            newer = newer.filter(category=category)
+        new_since = list(newer.order_by("-pk").values_list("pk", flat=True)[:MAX_NEW_SINCE])
     return render(
         request,
-        "opslagstavle/detail.html",
+        "opslagstavle/_live_cards.html",
         {
-            "notice": notice,
-            "comments": comments,
-            "comment_form": NoticeCommentForm(),
+            "notices": notices,
+            "new_since": new_since,
             "can_moderate": can_moderate(request),
             "events_allowed": events_allowed(request),
             "quick_emoji": EMOJI_SHORTLIST,
         },
     )
+
+
+def live_detail(request: HttpRequest, pk: int) -> HttpResponse:
+    """The detail page's live region: the post and its comments. 404 once the post is gone, which
+    the page answers by saying so (opslagstavle-live.ts)."""
+    if not request_allowed(request):
+        return HttpResponse(status=204)
+    return render(request, "opslagstavle/_detail_live.html", _detail_context(request, pk))
 
 
 @access_required
@@ -177,6 +254,7 @@ def create(request: HttpRequest) -> HttpResponse:
             notice.save()
             sync_images(notice)
         services.notify_new_notice(notice)
+        live.notice_created(notice)
         messages.success(request, "Opslaget er slået op.")
         return redirect("opslagstavle:detail", pk=notice.pk)
     return render(request, "opslagstavle/form.html", {"form": form, "notice": None})
@@ -197,6 +275,7 @@ def edit(request: HttpRequest, pk: int) -> HttpResponse:
             notice.edited_at = timezone.now()
             notice.save()
             sync_images(notice)
+        live.notice_changed(notice.pk)
         messages.success(request, "Opslaget er opdateret.")
         return redirect("opslagstavle:detail", pk=notice.pk)
     return render(request, "opslagstavle/form.html", {"form": form, "notice": notice})
@@ -208,7 +287,9 @@ def delete(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     notice = get_object_or_404(Notice, pk=pk)
     if not can_delete(request, notice):
         raise PermissionDenied
+    notice_pk = notice.pk  # delete() clears it
     notice.delete()  # images follow by CASCADE + the post_delete receiver
+    live.notice_deleted(notice_pk)
     messages.success(request, "Opslaget er slettet.")
     return redirect("opslagstavle:board")
 
@@ -232,6 +313,7 @@ def toggle_pin(request: HttpRequest, pk: int) -> HttpResponseRedirect:
         notice.pinned_at = None
         notice.pinned_by = None
         notice.save(update_fields=["pinned_at", "pinned_by"])
+        live.notice_changed(notice.pk)
         messages.success(request, "Opslaget er ikke længere fastgjort.")
     else:
         if Notice.objects.pinned().count() >= MAX_PINNED:
@@ -243,6 +325,7 @@ def toggle_pin(request: HttpRequest, pk: int) -> HttpResponseRedirect:
         notice.pinned_at = timezone.now()
         notice.pinned_by = current_resident(request)
         notice.save(update_fields=["pinned_at", "pinned_by"])
+        live.notice_changed(notice.pk)
         messages.success(request, "Opslaget er fastgjort.")
     return redirect("opslagstavle:detail", pk=notice.pk)
 
@@ -282,6 +365,7 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
         comment.image = image
     comment.save()
     services.notify_new_comment(comment)
+    live.notice_changed(notice.pk)
     return redirect("opslagstavle:detail", pk=notice.pk)
 
 
@@ -293,6 +377,7 @@ def delete_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
         raise PermissionDenied
     notice_pk = comment.notice_id
     comment.delete()
+    live.notice_changed(notice_pk)
     messages.success(request, "Kommentaren er slettet.")
     return redirect("opslagstavle:detail", pk=notice_pk)
 
@@ -313,6 +398,7 @@ def toggle_reaction(request: HttpRequest, pk: int) -> HttpResponse:
         emoji = form.cleaned_data["emoji"]
         if apply_toggle(NoticeReaction.objects, author=resident, emoji=emoji, notice=notice) == CREATED:
             services.notify_reaction(notice, resident, emoji)
+        live.notice_changed(notice.pk)
     # An invalid emoji falls through to a plain re-render: the row is still correct, and a one-tap
     # control has nowhere useful to put a validation error.
     # NOT prefetched, and NOT reactions_for(): a prefetch is evaluated when the item is fetched,

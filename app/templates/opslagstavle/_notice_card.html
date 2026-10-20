@@ -16,7 +16,7 @@
   every social feed uses for the same job. The author's name and avatar link to their profile.
   Controls that must stay clickable are raised above it.
 {% endcomment %}
-<article class="notice-card card-flat{% if notice.pinned_at %} is-pinned{% endif %}{% if not full %} is-clickable{% endif %}" id="opslag-{{ notice.pk }}">
+<article class="notice-card card-flat{% if notice.pinned_at %} is-pinned{% endif %}{% if not full %} is-clickable{% endif %}" id="opslag-{{ notice.pk }}" data-category="{{ notice.category }}">
   <div class="notice-head">
     <div class="notice-headline">
       <div class="notice-tags">

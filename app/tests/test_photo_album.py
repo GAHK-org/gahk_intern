@@ -1053,6 +1053,12 @@ def test_capture_time_reads_nested_exif_ifd(monkeypatch: pytest.MonkeyPatch) -> 
             return {36867: "2026:08:06 23:43:39"}
 
     class ImageFile:
+        def __enter__(self) -> "ImageFile":
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            pass
+
         def getexif(self) -> Exif:
             return Exif()
 
@@ -2115,6 +2121,50 @@ def test_form_upload_refuses_a_file_that_is_not_what_its_name_says(
 
 
 @pytest.mark.django_db
+def test_form_upload_refuses_a_video_ffmpeg_cannot_check_in_time(
+    client: Client, make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The check's timeout used to escape as a 500."""
+    from photo_album import uploads
+
+    def too_slow(command: list[str], **_: object) -> None:
+        raise subprocess.TimeoutExpired(command, uploads.VIDEO_CHECK_TIMEOUT)
+
+    administrator = make_resident(roles=(Role.ADMINISTRATOR,))
+    album = Album.objects.create(folder="2026", name="Fest")
+    clip = video_upload()  # made with ffmpeg, so before it is patched out
+    monkeypatch.setattr(uploads.subprocess, "run", too_slow)
+    client.force_login(administrator)
+
+    response = client.post(reverse("photo_album:upload", args=[album.pk]), {"uploads": [clip]}, follow=True)
+
+    assert response.status_code == 200
+    assert not Media.objects.exists()
+    assert "Videoen kunne ikke læses" in response.content.decode()
+
+
+def test_a_png_is_checked_by_its_checksums_without_being_decoded(monkeypatch: pytest.MonkeyPatch) -> None:
+    from PIL import PngImagePlugin
+
+    from photo_album.uploads import check_media_content
+
+    def decoded(_: object) -> None:
+        pytest.fail("the PNG was decoded")
+
+    monkeypatch.setattr(PngImagePlugin.PngImageFile, "load", decoded)
+    good = png_bytes()
+    pixels = good.index(b"IDAT") + 8
+    flipped = good[:pixels] + bytes([good[pixels] ^ 1]) + good[pixels + 1 :]
+
+    def check(content: bytes) -> str | None:
+        return check_media_content(SimpleUploadedFile("x.png", content, content_type="image/png"))
+
+    assert check(good) is None
+    assert "Billedet kunne ikke læses" in (check(good[: len(good) // 2]) or "")
+    assert "Billedet kunne ikke læses" in (check(flipped) or "")
+
+
+@pytest.mark.django_db
 def test_store_upload_keeps_same_named_files_and_skips_exact_copies(
     make_resident: Callable[..., Resident],
 ) -> None:
@@ -2251,6 +2301,34 @@ def test_backfill_hashes_fills_in_rows_stored_before_hashing(make_resident: Call
 
     media.refresh_from_db()
     assert media.sha256 == hashlib.sha256(content).hexdigest()
+
+
+@pytest.mark.django_db
+def test_hash_backfill_retries_unreadable_originals_after_everything_else(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """An original that is gone used to be first in line again every night."""
+    from photo_album.services import backfill_hashes
+
+    album = Album.objects.create(folder="2026", name="Fest")
+    resident = make_resident()
+    gone, readable = (
+        upload_media(album=album, uploaded_file=image_upload(f"{index}.jpg"), resident=resident)
+        for index in range(2)
+    )
+    gone.original.storage.delete(gone.original.name)
+    Media.objects.update(sha256="")
+
+    first = backfill_hashes(limit=1)
+    second = backfill_hashes(limit=1)
+    third = backfill_hashes(limit=1)
+
+    assert (first.hashed, len(first.unreadable)) == (0, 1)
+    assert (second.hashed, second.unreadable) == (1, [])  # not the missing one again
+    assert (third.hashed, len(third.unreadable)) == (0, 1)  # nothing else left: retried
+    readable.refresh_from_db()
+    assert readable.sha256 and readable.hash_failed_at is None
+    assert third.remaining == 1
 
 
 @pytest.mark.django_db

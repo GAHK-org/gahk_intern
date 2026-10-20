@@ -1,0 +1,17 @@
+{% comment %} One horizontal row of cards: `title`, `videos`, and optionally `url`, `ranked`, `resume`. {% endcomment %}
+<section class="flix-row" data-flix-row>
+  <h2 class="flix-row-title">
+    {% if url %}<a href="{{ url }}">{{ title }} <span class="flix-more">Se alle ›</span></a>{% else %}{{ title }}{% endif %}
+  </h2>
+  <button class="flix-arrow is-prev" type="button" aria-label="Forrige" data-flix-prev hidden>‹</button>
+  <div class="flix-slider{% if ranked %} is-ranked{% endif %}" data-flix-slider>
+    {% for video in videos %}
+      {% if ranked %}
+        <div class="flix-ranked"><span class="flix-rank" aria-hidden="true">{{ forloop.counter }}</span>{% include "gahkflix/_card.html" %}</div>
+      {% else %}
+        {% include "gahkflix/_card.html" %}
+      {% endif %}
+    {% endfor %}
+  </div>
+  <button class="flix-arrow is-next" type="button" aria-label="Næste" data-flix-next>›</button>
+</section>

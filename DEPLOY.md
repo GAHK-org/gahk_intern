@@ -101,8 +101,9 @@ Fresh repo (do **not** import the legacy history — it contains plaintext secre
    photo-album thumbnails and HD images, at most ~5 GB (`PHOTO_ALBUM_CACHE_THUMBNAIL_MB`,
    `PHOTO_ALBUM_CACHE_HD_MB`). It also holds, under `attachments/`, the photos on live Den Hurtige
    messages and recent opslag (`MEDIA_CACHE_DIR`, defaulting to the same directory;
-   `MEDIA_CACHE_ATTACHMENTS_MB`, default 2 GB). It is only a cache: losing it costs a cold start,
-   nothing else.
+   `MEDIA_CACHE_ATTACHMENTS_MB`, default 2 GB), and under `gahkflix/` GAHKFlix's thumbnails,
+   banners and candidate frames (`GAHKFLIX_CACHE_MB`, default 1 GB). It is only a cache: losing it
+   costs a cold start, nothing else.
 4. `web` runs `migrate` on start then uvicorn; Coolify/Traefik terminates TLS and proxies HTTP and WebSocket traffic to :8000.
 5. `Scaleway` is the fallback if you prefer a first-party managed Postgres.
 
@@ -126,8 +127,35 @@ before the app saw any of it — one large photo-album upload took the server do
 
 **If that ceases to be an acceptable trade**, the answer is more processes, not a bigger one:
 `--workers 3` on the uvicorn command, or the `web` service at several replicas that Coolify
-load-balances. There is no request timeout (Daphne's `-t 60` went with Daphne): a long request
-holds its thread for as long as it takes, which is why long work belongs in Celery.
+load-balances. There is no request timeout in the app (Daphne's `-t 60` went with Daphne): a long
+request holds its thread for as long as it takes, which is why long work belongs in Celery.
+
+**But the proxy has one: Coolify's Traefik drops a request whose body takes more than 60 seconds to
+arrive** (Traefik v3's default `readTimeout`). Measured on 2026-10-19: a body dribbled in at 16 KB/s
+got a 502 after 61 s. That is what stopped the Dropbox album "Bornholm med GAHK - April 06" (3.2 GB)
+twelve times while every album under 540 MB went through. The import script, the import page and
+the album upload (for files of 8 MB or more) now send straight to the bucket in parts
+(`photo_album/direct_upload.py`), as Arkiv does — which in the browser needs the bucket's CORS rule
+(§4c). Every other form still meets the minute. Raising it is a Coolify setting (the proxy's
+configuration, e.g. `--entrypoints.https.transport.respondingTimeouts.readTimeout=3600s`), not
+something this repository controls.
+
+**More processes also means a shared channel layer.** Den Hurtige, opslagstavlen, the repair board,
+event pages and the notification bell are live over WebSockets (`/ws/live/?t=<topic>`,
+`app/core/live.py`); every intern page holds one socket, for the bell if nothing else. The signal from
+a write to the open pages travels through Channels' **in-memory** layer (`CHANNEL_LAYERS` in
+`config/settings.py`), which only reaches sockets held by the same process. With two or more, a page
+hears about a change only when it happens to be connected to the process that handled the write.
+Nothing breaks — Den Hurtige falls back to a 60-second backstop poll, the rest to how they were
+before they were live — it just stops being live. Add a Redis service and switch the layer to
+`channels_redis` in the same change that adds workers.
+
+The same limit applies to Celery today: a worker is another process, so what it writes (event
+reminders, mærkedage, the nightly repair archiving, photo-album jobs) is not signalled, and shows on
+the next page load as before. A shared layer is also what would make those live.
+
+Traefik proxies the WebSocket upgrade with no configuration; a proxy that refused it would leave
+Den Hurtige on its old 5-second poll and every other page as it was before.
 
 ### 4a. Deploys: CI builds the image, the server pulls it
 
@@ -141,15 +169,19 @@ Coolify does not build anything. The flow is:
    minutes. It pulls `:main`; when the image differs from the last one it deployed, it calls the
    **local** Coolify API to redeploy the app, and Coolify's `docker compose up` recreates `web`,
    `worker`, `worker-media` and `beat` on the new image (the migration gate in `docker-compose.prod.yml` still applies).
+3. Coolify pulls the image before it stops the running containers, so a redeploy from Coolify by
+   hand also runs the newest published image, and an unreachable GHCR fails the deploy with the old
+   version still up. That takes **Coolify 4.3.19 or later**: earlier versions stop first and then
+   `docker compose up`, which never re-pulls an image the host already has, so "Redeploy" (with or
+   without the build cache, which only matters for builds) restarted the old version. A release
+   that fails to start (a broken migration, a crash on boot) still takes the site down: Coolify has
+   no rolling updates for Docker Compose apps.
 
 **Why pull, not a webhook from CI:** a webhook means a Coolify token in GitHub's secrets, i.e. a
 credential for the server held by GitHub. This way GitHub holds nothing for the server; the Coolify
 token never leaves it, and the only thing the server trusts GitHub for is the image.
 
-**The cost:** up to ~3 minutes between a green `main` and the deploy starting. And it relies on the
-pull and the deploy happening on the **same host** (one Hetzner box) — the script's pull is what
-gives Coolify the new image. If the app ever moves to a separate Coolify server, install the timer
-there.
+**The cost:** up to ~3 minutes between a green `main` and the deploy starting.
 
 #### Setting it up **[you]**
 
@@ -157,7 +189,7 @@ there.
    make it public (Package settings → Change visibility; the repo is public already), or keep it
    private and, on the server as root, `docker login ghcr.io` with a classic token holding only
    `read:packages`.
-2. **Coolify.** In the app's settings, turn **Auto Deploy off** — a push to `main` would otherwise
+2. **Coolify**, 4.3.19 or later (step 3 above). In the app's settings, turn **Auto Deploy off** — a push to `main` would otherwise
    deploy straight away, before CI has published the image. Enable the API (Settings → Advanced) and
    create a token with only the **deploy** permission. Note the app's UUID (last segment of its URL).
 3. **The timer**, on the server as root:
@@ -170,6 +202,8 @@ there.
    ```
    The first run deploys once (it has no record of a previous image). Watch it with
    `journalctl -u gahk-autodeploy -f`; `systemctl list-timers gahk-autodeploy` shows the next run.
+   The timer runs the installed copy, so re-run the first `install` line whenever the script
+   changes.
 
 **Rolling back:** set `IMAGE_TAG=sha-<good commit>` in the app's Coolify environment and redeploy.
 While it is set, new `:main` images still trigger deploys, but they redeploy the pinned one; remove
@@ -183,8 +217,8 @@ Coolify by hand.
 ### 4b. Scheduled tasks (Celery Beat → worker)
 
 **Two workers, two queues.** `CELERY_TASK_ROUTES` in `config/settings.py` sends the jobs that read
-or write whole media files — video encodes, album ZIP imports and downloads, the hash backfill — to
-the `media` queue, run by `worker-media`, one job at a time. Everything else (mail, the sweeps below)
+or write whole media files — photo-album and GAHKFlix video encodes, album ZIP imports and downloads,
+the hash backfill — to the `media` queue, run by `worker-media`, one job at a time. Everything else (mail, the sweeps below)
 stays on the default `celery` queue, run by `worker`, so a quick job never waits behind an hour-long
 encode. Photo thumbnails are queued on `thumbnails`, which `worker` also takes, by turns with
 `celery` — the broker (kombu's SQLAlchemy transport) has no message priorities, but a worker on two
@@ -209,12 +243,19 @@ idempotent, so a retry or an overlapping run is harmless.
 | `photo_album.tasks.purge_expired_downloads` | Daily 04:20 | Removes album ZIPs and their rows seven days after they were built. |
 | `photo_album.tasks.purge_expired_media` | Daily 04:30 | Removes expired pending and binned photo-album media. **04:30, not 04:10** — it collided with the AK assessment on the 1st of every month. |
 | `core.tasks.purge_worker_job_logs` | Daily 04:40 | Deletes the stored per-job logs (`core.WorkerJobLog`, shown on `/admin/worker-jobs`) of successful jobs after 30 days. Logs of other jobs (failed, revoked, unfinished) are kept, except that per task and state only the newest 1000 are safe: older ones beyond them go once 60 days old. |
+| `core.tasks.close_lost_jobs` | Hourly, :35 | Marks as failed the jobs Celery still has as running past their hard time limit (plus ten minutes): a worker killed outright records nothing, so its job stayed "Kører" on `/admin/worker-jobs` for good and, with Celery leaving `date_done` empty on a running job, was never purged either. |
 | `core.tasks.purge_worker_job_results` | Daily 04:45 | Deletes successful jobs from the result backend (`celery_taskmeta`) after 30 days. Replaces Celery's own `celery.backend_cleanup` (off: `CELERY_RESULT_EXPIRES = None`), which deleted failed jobs after a day too. Other jobs (failed, revoked, unfinished) are kept, except that per task name and status only the newest 1000 are safe: older ones beyond them go once 60 days old. |
 | `core.tasks.purge_delivered_broker_messages` | Daily 04:50 | Deletes acknowledged rows from `kombu_message`. The SQLAlchemy transport never removes a message it has delivered — it only flips `visible` — so without this the broker table is pure accumulation. Runs last, so one night's sweeps stay visible while they are still running. |
 | `photo_album.tasks.process_pending_media` | Daily 02:00 | Recovery sweep for derivative builds whose queued task was lost. |
-| `photo_album.tasks.backfill_media_hashes` | Daily 02:40 | Hashes originals stored before SHA-256 hashing existed, for at most 20 minutes a night, so duplicate detection knows them too. Replaces the manual `backfill_photo_album_hashes` deploy step; once every row is hashed it finds nothing to do. |
+| `photo_album.tasks.backfill_media_hashes` | Daily 02:40 | Hashes originals stored before SHA-256 hashing existed, for at most 20 minutes a night, so duplicate detection knows them too, then records the size of originals stored before sizes were (one HEAD request each) in what is left of those 20 minutes. Replaces the manual `backfill_photo_album_hashes` deploy step; once every row is done it finds nothing to do. |
+| `photo_album.tasks.settle_media_dates` | Daily 03:05 | Reads images stored before XMP and IPTC were read for a capture date again, for at most 20 minutes a night, and for at most ten more the sidecars of files whose file time's source is not known yet (`file_time_source`; the first night after deploy that is the whole Dropbox archive's), then dates every item without a believable date of its own from its album (`date_source`). The first night after deploy it moves the Dropbox archive's undated photos out of 2022. `manage.py settle_photo_album_dates` does the same in one go. The archive's albums imported before the server read AppleDouble sidecars get the sidecars' dates once `scripts/import_dropbox_photo_albums.py --send-dates` is run from the machine holding the import's work directory. |
+| `photo_album.tasks.measure_photo_album_storage` | Daily 05:00 | Lists the bucket's photo-album prefixes into a `StorageReport` for the admin dashboard (Administration → Fotoalbum): bytes by kind, by album, older versions, and files no item points at. A few minutes for the whole archive; the dashboard's "Mål igen" runs it at once. Keeps a year of reports. |
 | `photo_album.tasks.fail_stalled_downloads` | Every 15 min, from :05 | Closes out ZIP builds no worker came back to. A worker killed outright runs no handler, so its row stays `BUILDING` — never collected, and the album page keeps reloading itself every five seconds waiting for it. A running build records its progress at least every 30 seconds, so "stalled" means no progress for 15 minutes, however long the build has run; a job still `QUEUED` after 12 hours counts too. |
 | `photo_album.tasks.fail_stalled_imports` | Every 15 min, from :10 | The same for ZIP imports, which otherwise kept the import page and the Dropbox script waiting on "building" for good. Also deletes the uploaded ZIP the dead job left in the bucket. |
+| `gahkflix.tasks.recover_stalled` | Every 15 min, from :13 | Sends a GAHKFlix encode again when its worker stopped reporting (no heartbeat for 15 minutes) or its queued message was lost; after three attempts the upload is marked failed and the uploader told. |
+| `gahkflix.tasks.housekeeping` | Daily 04:25 | Deletes GAHKFlix videos 30 days after they were binned and drafts not published 90 days after their upload, with all their files, and lets change requests nobody decided within 30 days expire. Then deletes stored files under `gahkflix/` that no row refers to once they are two days old — an upload whose tab closed before it was saved, or whatever a crashed worker left. **It refuses, and deletes nothing, when more than half of what is stored would go**: that means the database does not belong to the bucket. |
+| `gahkflix.tasks.weekly_draft_reminders` | Mondays 10:05 | Reminds each uploader of their drafts more than a week old, and sends the administrators and Fotogruppen an overview of all of them. In the day, unlike the sweeps: people read these. |
+| `gahkflix.tasks.warn_expiring_drafts` | Daily 10:15 | The day before an unpublished draft is deleted, warns its uploader and the administrators — once. |
 | `events.tasks.remind_rsvp_deadlines` | Daily 17:00 | Sends due RSVP reminders. |
 | `oelkaelder.tasks.send_monthly_statements` | Day 1, 06:10 | Mails every active ølkælder account its previous calendar month, like the AK charge above. **Sends real mail to residents** — the only task here that does. |
 | `core.tasks.send_admin_dummy_notification` | Daily 08:00 and 16:00 | **Temporary, and deliberately still here.** Mails every administrator and superuser twice a day to prove Beat and the worker are alive in production. Delete this entry and `core.tasks.send_admin_dummy_notification` once that is confirmed — nothing else depends on it. |
@@ -360,12 +401,17 @@ only one of which is a FileField; `tests/test_audit_media.py` has one test per s
 FileField whose legacy rows hold the old site's absolute URL ("legacy imageurl"). Those images are
 broken on the live site today, independently of any of this, and are a separate fix.
 
-#### The bucket needs a CORS rule once Arkiv can upload
+#### The bucket needs a CORS rule for uploads from the browser
 
-Arkiv sends files **straight from the browser to Hetzner** (`arkiv/uploads.py`) — a 2 GB video
-cannot go through the app server. That POST is cross-origin, from
+Arkiv and GAHKFlix send files **straight from the browser to Hetzner** (`arkiv/uploads.py`,
+`gahkflix/uploads.py`) — a 2 GB video cannot go through the app server. So does the photo album,
+for a ZIP on the import page and for any photo or video of 8 MB or more
+(`photo_album/direct_upload.py`): the proxy cuts an upload that takes more than a minute (§4). They
+share the bucket, so the one rule below covers all three. Those requests are cross-origin, from
 `https://gahk.dk` to `https://<bucket>.<loc>.your-objectstorage.com`, so the bucket has to say the
-origin is allowed or the browser refuses to send it.
+origin is allowed or the browser refuses to send them. Without the rule the photo album falls back
+to posting the file through the app as before, which works for anything that goes in within the
+minute; Arkiv and GAHKFlix have no such fallback.
 
 **Nothing in dev or CI can catch a missing rule**, because the local path never leaves the app: the
 symptom is uploads failing in production only, with a CORS error in the browser console and nothing
@@ -377,7 +423,7 @@ from django.core.files.storage import storages
 s = storages['default']; c = s.connection.meta.client
 c.put_bucket_cors(Bucket=s.bucket_name, CORSConfiguration={'CORSRules': [
   {'AllowedOrigins': ['https://gahk.dk', 'https://www.gahk.dk'],
-   'AllowedMethods': ['POST'],
+   'AllowedMethods': ['POST', 'PUT', 'DELETE'],
    'AllowedHeaders': ['*'],
    'ExposeHeaders': ['ETag'],
    'MaxAgeSeconds': 3600},
@@ -385,10 +431,14 @@ c.put_bucket_cors(Bucket=s.bucket_name, CORSConfiguration={'CORSRules': [
 print(c.get_bucket_cors(Bucket=s.bucket_name)['CORSRules'])"
 ```
 
-`POST` only, and only those origins. **Reading needs no CORS** — a download is a top-level
-navigation to a redirect, not a `fetch`, so this became necessary the day upload landed and not
-before. Widening `AllowedMethods` to `GET`/`PUT` or `AllowedOrigins` to `*` would let any page on
-the internet script requests against the bucket with a stolen presigned URL; there is no reason to.
+`POST` for Arkiv's presigned policy and for the photo album's multipart uploads, which Uppy
+(`@uppy/aws-s3`) starts and completes itself; `PUT` for their parts; `DELETE` to abort one that
+failed or was cancelled. The server signs each of those requests for the one key it chose
+(`photo_album/direct_upload.py`). `ETag` must be exposed: Uppy reads each part's ETag to complete
+the upload. Only those origins. **Reading needs no
+CORS** — a download is a top-level navigation to a redirect, not a `fetch`. Widening
+`AllowedMethods` to `GET` or `AllowedOrigins` to `*` would let any page on the internet script
+requests against the bucket with a stolen presigned URL; there is no reason to.
 
 #### `arkiv-zip/` needs a lifecycle rule
 
@@ -419,7 +469,7 @@ than a snippet somebody pastes into a shell.
 
 | ID | Prefix | What it does |
 | --- | --- | --- |
-| `abort-incomplete-uploads` | (all) | aborts stalled multipart uploads after 7 days |
+| `abort-incomplete-uploads` | (all) | aborts stalled multipart uploads after 7 days — including an import archive the Dropbox script stopped sending halfway |
 | `expire-noncurrent-arkiv` | `arkiv/` | purged originals actually go, 30 days later |
 | `expire-noncurrent-arkiv-thumb` | `arkiv-thumb/` | derived, so 1 day |
 | `expire-noncurrent-arkiv-preview` | `arkiv-preview/` | derived, so 1 day |
@@ -601,6 +651,33 @@ holds no binary data now that media is in the bucket. Cross-check the applied mi
 branch — every project migration should be present (Django's own built-ins add ~18 beyond the files
 under `app/*/migrations/`).
 
+### 4e. Health checks
+Two endpoints, both in `app/core/health.py`:
+
+- **`/healthz`** — liveness only; `web`'s Docker healthcheck in `docker-compose.prod.yml` uses it,
+  and Coolify shows that status. It checks nothing beyond the process answering, because Traefik
+  drops an unhealthy container from routing: a dead worker must not take the site down with it.
+- **`/health`** — for an external uptime monitor (point it at `https://gahk.dk/health` and alert on
+  anything but 200). It returns 503 if the database or the S3 bucket is unreachable, or if any of
+  `default`, `media` and `beat` has not sent a heartbeat for 2 minutes. The JSON body names the
+  failing check; the reason is in `web`'s log. Renaming a worker's `-n` in the compose file means
+  updating `HEALTH_PROCESSES` to match, and the name that service passes to `heartbeat_check.py`
+  (below), in its `command` and its healthcheck.
+
+`worker`, `worker-media` and `beat` have Docker healthchecks of their own, on the same heartbeat:
+each heartbeat also touches `/tmp/heartbeat-<name>` in its container, and
+`app/core/heartbeat_check.py` fails once that is older than 2 minutes. The container's command
+removes the file first, so after a restart the last run's file can't pass for the new one. Each
+start gets 10 minutes before a failure counts, since the container waits for `web`'s migrations.
+
+So Coolify's status for the app is `/health` per container: **Running (healthy)** when all four
+pass, **Running (unhealthy)** when any one fails, and the container that failed is the one to read
+the logs of (`docker inspect` shows the check's reason). Every service needs one: Coolify counts a
+running container without a healthcheck as *unknown*, and a single unknown container shows the
+whole app as **Running (unknown)**. An unhealthy worker or beat keeps running and nothing
+reroutes, so this is a status to look at, not a fix; alerting stays with the uptime monitor on
+`/health`.
+
 ## 5. Data migration to prod
 ```
 mysqldump the live gahk_dk  →  load into the MariaDB staging container
@@ -642,6 +719,8 @@ albums in real use are never at risk. Run it with `docker exec -it` — it needs
       reporting `0 uploaded, N already present and identical` (the checksum proof).
 - [ ] **Before residents can upload to Arkiv:** the bucket CORS rule set (§4c) and one real upload
       tried from a browser — a missing rule fails in production only, and silently in the Django log.
+- [ ] **Before opening GAHKFlix's rollout gate** (`gahkflix/access.py`): one real upload from a
+      phone, through to playback — it uses the same CORS rule, and its encode runs on `worker-media`.
 - [ ] **Before emptying the `media` volume:** bucket versioning `Enabled` **and** the lifecycle rules
       in place (§4d), backups green, and one copy off Hetzner. Until then the volume is the rollback.
 - [ ] After the bucket is live, confirm images still render on a **public CMS page** while logged

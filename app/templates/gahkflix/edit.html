@@ -1,0 +1,212 @@
+{% extends "gahkflix/base.html" %}
+{% load gahkflix %}
+{% block title %}Rediger {{ video.title }} – GAHKFlix{% endblock %}
+{% block content %}
+  <div class="flix-page">
+    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:18px">
+      <h1 class="flix-page-title" style="margin:0">{{ video.title }}</h1>
+      {% if video.is_draft %}<span class="flix-state is-draft">Kladde</span>{% endif %}
+      {% if video.is_published %}<a class="flix-btn flix-btn-small flix-btn-quiet" href="{% url 'gahkflix:detail' video.pk %}">Se videoen</a>{% endif %}
+    </div>
+    {% if video.is_draft %}
+      <p class="muted" style="margin:-8px 0 18px;font-size:14px">Kun du og administratorerne kan se kladden. Den slettes med alle sine filer {{ video.draft_deleted_on|date:"j. F Y" }}, hvis den ikke er udgivet inden.</p>
+    {% endif %}
+
+    {# --- Processing and publishing ------------------------------------------------------------ #}
+    {% if processing %}
+      <div class="flix-panel" data-flix-processing="{% url 'gahkflix:status' video.pk %}">
+        <h2>{% if video.file %}Den nye version behandles{% else %}Videoen behandles{% endif %}</h2>
+        <p>Der laves HD- og Full HD-udgaver og billeder at vælge mellem. Det kan tage et stykke tid for en lang video; du kan godt lukke siden imens og skrive oplysningerne nedenfor.</p>
+        <div class="flix-meter"><span data-flix-meter style="width:{{ latest_file.progress }}%"></span></div>
+        <p class="flix-upload-status" data-flix-processing-status>{% if latest_file.state == "queued" %}I kø …{% else %}{{ latest_file.progress }} % færdig{% endif %}</p>
+      </div>
+    {% elif latest_file.state == "failed" %}
+      <div class="flix-panel" style="border-color:#5c1a1e">
+        <h2>{% if video.file %}Den nye version kunne ikke behandles{% else %}Videoen kunne ikke behandles{% endif %}</h2>
+        <p>{{ latest_file.error }}</p>
+        {% if not video.file %}<p>Upload filen igen nedenfor, eller slet kladden.</p>{% endif %}
+      </div>
+    {% endif %}
+
+    {% if video.is_draft and video.file %}
+      <div class="flix-panel">
+        <h2>Udgiv</h2>
+        {% if missing %}
+          <p>Før videoen kan udgives:</p>
+          <ul style="margin:0 0 6px;padding-left:20px;color:#f1dc8f">{% for item in missing %}<li>{{ item }}</li>{% endfor %}</ul>
+        {% else %}
+          <p>Alt er klar. Når du udgiver den, kan alle på GAHKFlix se den{% if video.cast.exists %}, og de medvirkende får besked{% endif %}.</p>
+        {% endif %}
+        <form method="post" action="{% url 'gahkflix:publish' video.pk %}" class="flix-actions">{% csrf_token %}
+          <button class="flix-btn flix-btn-red" type="submit"{% if missing %} disabled{% endif %}>Udgiv videoen</button>
+        </form>
+      </div>
+    {% endif %}
+
+    {% if needs_approval %}
+      <p class="flix-banner-note" style="margin:0 0 18px">
+        Videoen blev uploadet for mere end 30 dage siden. Ændringer – også af billederne – sendes til godkendelse hos en anden administrator.
+        {% if open_edit %}<a href="{% url 'gahkflix:request' open_edit.pk %}">Se det ventende forslag</a>.{% endif %}
+      </p>
+    {% elif video.is_published %}
+      <p class="muted" style="margin:0 0 18px;font-size:14px">Du kan rette oplysningerne frit i {{ days_left.edit }} dag{{ days_left.edit|pluralize:"e" }} endnu. Derefter skal ændringer godkendes af en anden administrator.</p>
+    {% endif %}
+
+    <div class="flix-two">
+      {# --- Details ----------------------------------------------------------------------------- #}
+      <form method="post" class="flix-panel flix-form">{% csrf_token %}
+        <h2>Oplysninger</h2>
+        {{ form.non_field_errors }}
+        <label for="{{ form.title.id_for_label }}">Titel</label>{{ form.title }}{{ form.title.errors }}
+        <label for="{{ form.description.id_for_label }}">Beskrivelse</label>{{ form.description }}{{ form.description.errors }}
+        <label for="{{ form.recorded_on.id_for_label }}">Optaget</label>{{ form.recorded_on }}{{ form.recorded_on.errors }}
+        <span class="flix-help">{% if video.recorded_on_manual %}Sat i hånden.{% elif video.recorded_on %}Læst fra videofilen. Ret den, hvis den er forkert.{% else %}Findes, når videoen er behandlet, hvis filen har en dato.{% endif %}</span>
+        {{ episode_numbers|json_script:"flix-episode-numbers" }}
+        <div class="flix-form-row" data-flix-numbers data-series="{{ form.series.id_for_label }}">
+          <div><label for="{{ form.series.id_for_label }}">Serie</label>{{ form.series }}</div>
+          <div><label for="{{ form.season.id_for_label }}">Sæson</label><div class="flix-suggest">{{ form.season }}<ul role="listbox" aria-label="Sæsoner i serien" data-numbers-for="season" hidden></ul></div></div>
+          <div><label for="{{ form.episode.id_for_label }}">Afsnit</label><div class="flix-suggest">{{ form.episode }}<ul role="listbox" aria-label="Afsnit i sæsonen" data-numbers-for="episode" hidden></ul></div></div>
+        </div>
+        {{ form.series.errors }}{{ form.season.errors }}{{ form.episode.errors }}
+        <span class="flix-help"><a href="{% url 'gahkflix:series_create' %}?next={{ request.path|urlencode }}">Opret en ny serie</a></span>
+
+        <label>Medvirkende</label>
+        <div class="flix-editor" data-flix-cast data-lookup="{% url 'gahkflix:residents_lookup' %}" data-target="{{ form.cast.id_for_label }}">
+          <div class="flix-editor-list" data-list></div>
+          <div class="flix-suggest">
+            <input type="text" class="flix-field" placeholder="Skriv et navn …" autocomplete="off" aria-label="Tilføj medvirkende" data-input>
+            <ul role="listbox" data-suggestions hidden></ul>
+          </div>
+        </div>
+        <span class="flix-help">Vælg en beboer på listen, eller tryk Enter for at tilføje en udefra. Rollen er valgfri (fx "Instruktør" eller "Hamlet").</span>
+        {{ form.cast }}{{ form.cast.errors }}
+
+        <label>Tags</label>
+        <div class="flix-editor" data-flix-tags data-lookup="{% url 'gahkflix:tags_lookup' %}" data-target="{{ form.tags.id_for_label }}">
+          <div class="flix-chips-edit" data-list></div>
+          <div class="flix-suggest">
+            <input type="text" class="flix-field" placeholder="fx revy, julefrokost" autocomplete="off" aria-label="Tilføj tag" data-input>
+            <ul role="listbox" data-suggestions hidden></ul>
+          </div>
+        </div>
+        <span class="flix-help">Bogstaver, tal, punktum, bindestreg og understregning. Enter tilføjer.</span>
+        {{ form.tags }}{{ form.tags.errors }}
+
+        <div class="flix-actions">
+          <button class="flix-btn flix-btn-red" type="submit">{% if needs_approval %}Send til godkendelse{% else %}Gem{% endif %}</button>
+        </div>
+      </form>
+
+      <div>
+        {# --- Pictures -------------------------------------------------------------------------- #}
+        <section class="flix-panel" id="billeder">
+          <h2>Miniature og banner</h2>
+          <p>Miniaturen er videoens kort; banneret er det store billede øverst på videoens side. Begge skal vælges.</p>
+          <h3 class="flix-subhead">Valgt nu</h3>
+          <div class="flix-chosen">
+            <figure><figcaption>Miniature</figcaption><span class="flix-card-img">{% picture_url video "thumbnail" as thumb %}{% if thumb %}<img src="{{ thumb }}" alt="Nuværende miniature">{% else %}<span class="flix-card-blank">?</span>{% endif %}</span></figure>
+            <figure><figcaption>Banner</figcaption><span class="flix-card-img">{% picture_url video "banner" as banner %}{% if banner %}<img src="{{ banner }}" alt="Nuværende banner">{% else %}<span class="flix-card-blank">?</span>{% endif %}</span></figure>
+          </div>
+
+          <div class="flix-divider" role="separator"><span>Vælg et nyt billede</span></div>
+
+          <h3 class="flix-subhead">Billeder fra videoen</h3>
+          {% if frames %}
+            <div class="flix-frames">
+              {% for frame in frames %}
+                <div class="flix-frame{% if video.thumbnail_frame_id == frame.pk %} is-thumbnail{% endif %}{% if video.banner_frame_id == frame.pk %} is-banner{% endif %}">
+                  <img src="{% frame_url frame %}" alt="Billede fra {{ frame.at_seconds|duration }}" loading="lazy">
+                  <span class="flix-frame-time">{{ frame.at_seconds|floatformat:0 }} s</span>
+                  <form method="post" action="{% url 'gahkflix:choose_picture' video.pk %}" class="flix-frame-tools">{% csrf_token %}
+                    <input type="hidden" name="frame" value="{{ frame.pk }}">
+                    <button type="submit" name="kind" value="thumbnail" aria-pressed="{% if video.thumbnail_frame_id == frame.pk %}true{% else %}false{% endif %}">Miniature</button>
+                    <button type="submit" name="kind" value="banner" aria-pressed="{% if video.banner_frame_id == frame.pk %}true{% else %}false{% endif %}">Banner</button>
+                  </form>
+                </div>
+              {% endfor %}
+            </div>
+            <div class="flix-actions">
+              <form method="post" action="{% url 'gahkflix:new_frames' video.pk %}">{% csrf_token %}<button class="flix-btn flix-btn-small flix-btn-quiet" type="submit">Vis 10 nye billeder</button></form>
+            </div>
+          {% else %}
+            <p class="flix-empty" style="padding:10px 0">Billederne er klar, når videoen er behandlet.</p>
+          {% endif %}
+
+          {% if video.file %}
+            <h3 class="flix-subhead">Vælg selv et øjeblik</h3>
+            <div class="flix-scrub" data-flix-scrub>
+              <video src="{% url 'gahkflix:stream' video.pk 'hd' %}" preload="metadata" muted playsinline controls></video>
+              <div class="flix-scrub-tools" role="group" aria-label="Finjustér">
+                <button type="button" data-step="-1" aria-label="Et sekund tilbage">−1 s</button>
+                <button type="button" data-step="-0.04" aria-label="Et billede tilbage">‹</button>
+                <output data-flix-scrub-time>0:00,00</output>
+                <button type="button" data-step="0.04" aria-label="Et billede frem">›</button>
+                <button type="button" data-step="1" aria-label="Et sekund frem">+1 s</button>
+              </div>
+              <form method="post" action="{% url 'gahkflix:choose_picture' video.pk %}" class="flix-frame-tools">{% csrf_token %}
+                <input type="hidden" name="at" value="0" data-flix-scrub-at>
+                <button type="submit" name="kind" value="thumbnail">Brug som miniature</button>
+                <button type="submit" name="kind" value="banner">Brug som banner</button>
+              </form>
+            </div>
+            <span class="flix-help">Spol hen til det øjeblik, du vil bruge, og finjustér med pilene.</span>
+          {% endif %}
+
+          <h3 class="flix-subhead">Eget billede</h3>
+          <div class="flix-form-row">
+            <form method="post" action="{% url 'gahkflix:choose_picture' video.pk %}" enctype="multipart/form-data" class="flix-form">{% csrf_token %}
+              <input type="hidden" name="kind" value="thumbnail">
+              <label for="own-thumbnail">Som miniature</label>
+              <input id="own-thumbnail" type="file" name="picture" accept="image/*,.heic,.heif" data-flix-autosubmit>
+            </form>
+            <form method="post" action="{% url 'gahkflix:choose_picture' video.pk %}" enctype="multipart/form-data" class="flix-form">{% csrf_token %}
+              <input type="hidden" name="kind" value="banner">
+              <label for="own-banner">Som banner</label>
+              <input id="own-banner" type="file" name="picture" accept="image/*,.heic,.heif" data-flix-autosubmit>
+            </form>
+          </div>
+          <span class="flix-help">Bliver til 16:9: tæt på den form beskæres det, ellers vises det helt på en sløret baggrund. Banneret vises stort, så brug gerne et billede, der er mindst 1920 pixel bredt.</span>
+        </section>
+
+        {# --- A new version --------------------------------------------------------------------- #}
+        {% if can_upload_revision and not processing %}
+          <section id="ny-version">
+            <h2 class="flix-section-title" style="margin-top:0">Ny version af filen</h2>
+            <div class="flix-help" style="font-size:14px;margin:0 0 10px;color:#ccc">
+              <p style="margin:0 0 6px">Brug den her, når der er fejl i videoen – en forkert klipning, dårlig lyd, en scene, der mangler. Upload den rettede fil her, <strong>ikke</strong> som en ny video: titel, beskrivelse, billeder, medvirkende, visninger og link bliver ved denne, og den nuværende version afspilles, til den nye er færdig.</p>
+              <p style="margin:0">{% if video.is_published %}Muligt indtil {{ video.revision_window_ends|date:"j. F \k\l. H.i" }}.{% else %}Muligt, så længe videoen er en kladde. Når den er udgivet, kun indtil {{ video.revision_window_ends|date:"j. F \k\l. H.i" }}.{% endif %}</p>
+            </div>
+            {% include "gahkflix/_uploader.html" %}
+          </section>
+        {% elif video.is_published and not processing %}
+          <section id="ny-version" class="flix-panel">
+            <h2>Ny version af filen</h2>
+            <p>Videofilen kan kun skiftes de første 7 dage efter upload, og de er gået ({{ video.revision_window_ends|date:"j. F Y" }}).</p>
+          </section>
+        {% endif %}
+
+        {# --- Deleting ---------------------------------------------------------------------------- #}
+        <section class="flix-panel">
+          <h2>Slet</h2>
+          {% if can_delete %}
+            {% if video.is_draft %}
+              <p>Kladden og alle dens filer slettes med det samme.</p>
+            {% else %}
+              <p>Videoen lægges i papirkurven og slettes helt efter 30 dage. Efter 7 dage kan den kun slettes, hvis tre administratorer er enige.</p>
+            {% endif %}
+            <form method="post" action="{% url 'gahkflix:delete' video.pk %}" data-flix-confirm="{% if video.is_draft %}Slet kladden for altid?{% else %}Læg videoen i papirkurven?{% endif %}">{% csrf_token %}
+              <button class="flix-btn flix-btn-small flix-btn-quiet" type="submit">{% if video.is_draft %}Slet kladden{% else %}Læg i papirkurven{% endif %}</button>
+            </form>
+          {% elif open_delete %}
+            <p>Der er en anmodning om at slette videoen. <a href="{% url 'gahkflix:request' open_delete.pk %}">Se anmodningen</a>.</p>
+          {% elif can_request_deletion %}
+            <p>Videoen er over 7 dage gammel. Den kan kun slettes, hvis to andre administratorer godkender det.</p>
+            <a class="flix-btn flix-btn-small flix-btn-quiet" href="{% url 'gahkflix:request_deletion' video.pk %}">Anmod om sletning</a>
+          {% else %}
+            <p>Videoen er over 7 dage gammel og kan kun slettes af administratorerne. Skriv til dem, hvis den skal fjernes.</p>
+          {% endif %}
+        </section>
+      </div>
+    </div>
+  </div>
+{% endblock %}

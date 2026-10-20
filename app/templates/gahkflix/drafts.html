@@ -1,0 +1,27 @@
+{% extends "gahkflix/base.html" %}
+{% load gahkflix %}
+{% block title %}Kladder – GAHKFlix{% endblock %}
+{% block content %}
+  <div class="flix-page flix-page-narrow" style="max-width:1000px">
+    <h1 class="flix-page-title">Kladder</h1>
+    <p class="muted" style="margin-top:-8px">Videoer, der er uploadet, men ikke udgivet. En kladde slettes med alle sine filer 90 dage efter, den blev uploadet. Uploaderen og administratorerne får en påmindelse hver mandag og dagen før.</p>
+    <div class="flix-list">
+      {% for video in videos %}
+        {% picture_url video "thumbnail" as thumb %}
+        <div class="flix-list-item">
+          <span class="flix-card-img">{% if thumb %}<img src="{{ thumb }}" alt="">{% else %}<span class="flix-card-blank">{{ video.title|slice:":1"|upper }}</span>{% endif %}</span>
+          <div>
+            <h3><a href="{% url 'gahkflix:edit' video.pk %}">{{ video.title }}</a></h3>
+            <p>Uploadet af <a href="{% url 'resident_profile' video.uploaded_by_id %}">{{ video.uploaded_by.full_name }}</a> {{ video.created_at|date:"j. F Y" }} · slettes {{ video.draft_deleted_on|date:"j. F Y" }}</p>
+            {% with latest=video.latest_file %}
+              <p>{% if latest.is_pending %}<span class="flix-state">Behandles · {{ latest.progress }} %</span>{% elif latest.state == "failed" %}<span class="flix-state is-failed">Mislykkedes</span> {{ latest.error }}{% elif not video.has_pictures %}Mangler miniature eller banner.{% else %}Klar til at blive udgivet.{% endif %}</p>
+            {% endwith %}
+          </div>
+          <a class="flix-btn flix-btn-small flix-btn-quiet" href="{% url 'gahkflix:edit' video.pk %}">Åbn</a>
+        </div>
+      {% empty %}
+        <p class="flix-empty">Ingen kladder.</p>
+      {% endfor %}
+    </div>
+  </div>
+{% endblock %}

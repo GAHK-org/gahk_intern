@@ -1,5 +1,6 @@
 """Background ZIP jobs: progress, telling a slow job from a dead one, and where jobs run."""
 
+import subprocess
 import threading
 import zipfile
 from collections.abc import Callable
@@ -10,6 +11,7 @@ from typing import Any
 import pytest
 from django.conf import settings
 from django.core.files.base import ContentFile
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection, transaction
 from django.test import Client
 from django.urls import reverse
@@ -23,14 +25,19 @@ from photo_album.models import (
     AlbumDownloadState,
     AlbumImport,
     AlbumImportState,
+    DerivativeState,
+    Media,
 )
 from photo_album.progress import JobProgress
+from photo_album.services import MAX_DERIVATIVE_ATTEMPTS
 from photo_album.storage import PhotoAlbumS3Storage, get_photo_album_storage
 from photo_album.tasks import (
     DOWNLOAD_INTERRUPTED,
     FAILED_IMPORT_ARCHIVE_KEPT,
     IMPORT_INTERRUPTED,
+    DerivativesNotBuilt,
     build_album_download,
+    build_media_derivatives,
     fail_stalled_downloads,
     fail_stalled_imports,
     process_album_import,
@@ -306,3 +313,136 @@ def test_a_photo_is_queued_for_the_quick_worker_and_a_video_for_the_media_worker
         upload_media(album=album, uploaded_file=video_upload("clip.mp4"), resident=resident)
 
     assert queued == [("photo.jpg", "thumbnails"), ("clip.mp4", "media")]
+
+
+# --- Media derivatives -----------------------------------------------------------------------------
+
+
+def _broken_video(make_resident: Callable[..., Resident], **fields: object) -> Media:
+    from photo_album.models import Album
+    from photo_album.services import upload_media
+
+    album = Album.objects.create(folder="2004", name=f"Fremkaldning {Album.objects.count()}")
+    corrupt = SimpleUploadedFile("clip.mpg", b"not a video", content_type="video/mpeg")
+    resident = make_resident(email=f"uploader-{album.pk}@gahk.dk")
+    media = upload_media(album=album, uploaded_file=corrupt, resident=resident)
+    if fields:
+        Media.objects.filter(pk=media.pk).update(**fields)
+        media.refresh_from_db()
+    return media
+
+
+@pytest.mark.django_db
+def test_a_video_that_cannot_be_converted_is_a_failed_job_naming_the_file(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """It used to return False — a successful job — so a video sat on "Mediet behandles" with nothing
+    on the jobs page to say why."""
+    media = _broken_video(make_resident)
+
+    with pytest.raises(DerivativesNotBuilt, match=r"clip\.mpg \(11\xa0bytes\).*attempt 1 of 3"):
+        build_media_derivatives.apply(args=(media.pk,), task_id="first")
+
+    media.refresh_from_db()
+    assert media.derivative_state == DerivativeState.PENDING
+    assert media.derivative_attempts == 1
+
+
+@pytest.mark.django_db
+def test_an_attempt_counts_even_when_the_worker_dies_during_it(
+    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A worker killed mid-encode saves nothing afterwards, so a video that killed its worker every
+    time was never counted, never given up on, and stayed "Mediet behandles" forever."""
+    from photo_album import services
+
+    media = _broken_video(make_resident)
+
+    def killed(*_: object) -> None:
+        raise SystemExit  # stands in for the kill: nothing after this line runs
+
+    monkeypatch.setattr(services, "video_variants", killed)
+    with pytest.raises(SystemExit):
+        build_media_derivatives.apply(args=(media.pk,), task_id="first")
+
+    media.refresh_from_db()
+    assert media.derivative_attempts == 1
+
+
+@pytest.mark.django_db
+def test_a_video_out_of_attempts_is_marked_failed_without_another_try(
+    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from photo_album import services
+
+    media = _broken_video(make_resident, derivative_attempts=MAX_DERIVATIVE_ATTEMPTS)
+    monkeypatch.setattr(services, "video_variants", lambda *_: pytest.fail("tried again"))
+
+    with pytest.raises(DerivativesNotBuilt, match="gave up after 3 attempts"):
+        build_media_derivatives.apply(args=(media.pk,), task_id="last")
+
+    media.refresh_from_db()
+    assert media.derivative_state == DerivativeState.FAILED
+
+
+@pytest.mark.django_db
+def test_a_redelivered_conversion_whose_first_run_died_fails_and_releases_the_row(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """With acks_late and reject_on_worker_lost, the message comes back after its worker is killed,
+    finds the row still claimed and used to return False: a "successful" job that hid the kill."""
+    claimed_at = timezone.now()
+    media = _broken_video(
+        make_resident, derivative_started_at=claimed_at, derivative_task_id="first", derivative_attempts=1
+    )
+    other = _broken_video(make_resident, derivative_started_at=claimed_at, derivative_task_id="someone-else")
+
+    with pytest.raises(DerivativesNotBuilt, match="was lost"):
+        build_media_derivatives.apply(args=(media.pk,), task_id="first")
+    # Another worker's claim is theirs: this message has nothing to do.
+    assert build_media_derivatives.apply(args=(other.pk,), task_id="duplicate").get() is False
+
+    media.refresh_from_db()
+    other.refresh_from_db()
+    # Released for the nightly process_pending_media; the dead run's attempt stays counted.
+    assert media.derivative_started_at is None
+    assert media.derivative_attempts == 1
+    assert other.derivative_started_at == claimed_at
+
+
+def test_a_failed_ffmpeg_says_why() -> None:
+    from photo_album.services import ffmpeg_failure
+
+    killed = subprocess.CalledProcessError(-9, ["ffmpeg"], stderr="")
+    refused = subprocess.CalledProcessError(
+        1, ["ffmpeg"], stderr="[mpeg @ 0x1] start time not set\n\nInvalid data found when processing input\n"
+    )
+
+    assert ffmpeg_failure(killed) == "ffmpeg was stopped by signal 9 — most likely the out-of-memory killer"
+    assert ffmpeg_failure(refused) == (
+        "ffmpeg exited with 1: [mpeg @ 0x1] start time not set | Invalid data found when processing input"
+    )
+
+
+def test_a_conversion_claim_lasts_as_long_as_a_conversion_may_run() -> None:
+    """Shorter, and a second worker could take the row while the first is still encoding it."""
+    from photo_album.models import DERIVATIVE_CLAIM_TTL
+    from photo_album.tasks import MEDIA_TASK_TIME_LIMIT
+
+    assert DERIVATIVE_CLAIM_TTL == timedelta(seconds=MEDIA_TASK_TIME_LIMIT)
+
+
+@pytest.mark.django_db
+def test_the_size_of_an_original_is_recorded_on_upload_and_backfilled(
+    make_resident: Callable[..., Resident],
+) -> None:
+    from photo_album.services import backfill_sizes
+
+    media = _broken_video(make_resident)
+    assert media.size == len(b"not a video")
+    Media.objects.filter(pk=media.pk).update(size=None)
+
+    result = backfill_sizes()
+
+    media.refresh_from_db()
+    assert (result.sized, result.remaining, media.size) == (1, 0, len(b"not a video"))
