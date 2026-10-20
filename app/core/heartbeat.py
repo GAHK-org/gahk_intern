@@ -32,7 +32,7 @@ HEARTBEAT_INTERVAL = 30  # seconds
 HEARTBEAT_MAX_AGE = 120  # seconds
 # /tmp in the image. Each healthcheck in docker-compose.prod.yml spells out this path and
 # HEARTBEAT_MAX_AGE, so a change to either goes there too.
-HEARTBEAT_DIR = Path(tempfile.gettempdir())
+HEARTBEAT_DIR = Path("/tmp")  # noqa: S108  # nosec B108 — the healthchecks read this exact path
 
 _stop = threading.Event()
 

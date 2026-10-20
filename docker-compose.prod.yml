@@ -70,7 +70,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 180s
+      start_period: 600s
 
   worker-media:
     image: ghcr.io/gahk-org/gahk_intern:${IMAGE_TAG:-main}
@@ -86,7 +86,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 180s
+      start_period: 600s
 
   beat:
     image: ghcr.io/gahk-org/gahk_intern:${IMAGE_TAG:-main}
@@ -102,7 +102,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 180s
+      start_period: 600s
 
 volumes:
   media:

@@ -102,7 +102,7 @@ def test_health_fails_when_the_database_is_unreachable(bucket: mock.Mock) -> Non
 
 
 @pytest.fixture
-def heartbeat_dir(tmp_path: Path) -> Path:
+def heartbeat_dir(tmp_path: Path) -> Iterator[Path]:
     with mock.patch.object(heartbeat, "HEARTBEAT_DIR", tmp_path):
         yield tmp_path
 
