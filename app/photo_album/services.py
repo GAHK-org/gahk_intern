@@ -35,6 +35,7 @@ from residents.models import Resident
 from .models import (
     MAX_ALBUM_DEPTH,
     MEDIA_VIEW_DEDUPE_WINDOW,
+    PURGE_AFTER,
     Album,
     DateSource,
     DerivativeState,
@@ -1814,8 +1815,8 @@ def permanently_delete(media: Media) -> None:
 def purge_expired(now: datetime | None = None) -> int:
     moment = now or timezone.now()
     expired = Media.objects.filter(
-        status=MediaStatus.PENDING, added_at__lt=moment - timedelta(days=30)
-    ) | Media.objects.filter(deleted_at__lt=moment - timedelta(days=30))
+        status=MediaStatus.PENDING, added_at__lt=moment - PURGE_AFTER
+    ) | Media.objects.filter(deleted_at__lt=moment - PURGE_AFTER)
     count = 0
     for media in expired.distinct():
         _delete_files(media)

@@ -40,6 +40,11 @@ from residents.models import Resident, Role
 from .media_samples import image_upload, jpeg_bytes
 
 URL = "siteadmin:photo_album"
+DATES = "siteadmin:photo_album_dates"
+
+
+def _list(kind: str) -> str:
+    return reverse("siteadmin:photo_album_list", args=[kind])
 
 
 def local(*parts: int) -> datetime:
@@ -123,12 +128,14 @@ def archive(make_resident: Callable[..., Resident]) -> dict[str, Media]:
 def test_only_administrators_see_the_dashboard(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
-    assert client.get(reverse(URL)).status_code == 302  # to the login
+    pages = [reverse(URL), reverse(DATES), _list("afventer"), _list("filer-uden-billede")]
+    assert [client.get(page).status_code for page in pages] == [302] * 4  # to the login
     client.force_login(make_resident(roles=(Role.FOTO,)))  # Fotogruppen curates, but this is the admin's
-    assert client.get(reverse(URL)).status_code == 403
+    assert [client.get(page).status_code for page in pages] == [403] * 4
     assert client.post(reverse("siteadmin:photo_album_measure")).status_code == 403
     client.force_login(make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,)))
-    assert client.get(reverse(URL)).status_code == 200
+    assert [client.get(page).status_code for page in pages] == [200] * 4
+    assert client.get(_list("ingen-saadan")).status_code == 404
     assert reverse(URL) in client.get(reverse("siteadmin:home")).content.decode()
 
 
@@ -176,25 +183,29 @@ def test_the_albums_with_most_without_a_date_of_their_own_come_first(archive: di
 
 
 @pytest.mark.django_db
-def test_the_page_shows_the_numbers_and_the_items_to_look_at(
+def test_the_overview_sums_the_dating_up_and_the_dating_page_has_the_rest(
     admin_client: Client, archive: dict[str, Media]
 ) -> None:
-    page = admin_client.get(reverse(URL)).content.decode()
+    overview = admin_client.get(reverse(URL)).content.decode()
+    assert "Filens dato: sidecar" in overview and "Anslået ud fra albummets år" in overview
+    assert reverse(DATES) + "?mappe=2004" in overview
+    assert "IMG_2.JPG" not in overview  # the items to look at are the dating page's
 
-    assert "Filens dato: sidecar" in page and "Anslået ud fra albummets år" in page
+    page = admin_client.get(reverse(DATES)).content.decode()
     assert "IMG_2.JPG" in page  # outside the window, as shown
     assert f"?media={archive['reset'].pk}" in page
     assert "scan.png" in page and "IMG_6.JPG" in page  # without a date of their own
 
-    by_file_time = admin_client.get(reverse(URL), {"filtid": "1"}).context
+    by_file_time = admin_client.get(reverse(DATES), {"filtid": "1"}).context
     assert [row.media for row in by_file_time["outside"].items] == [archive["rejected"]]
-    estimated = admin_client.get(reverse(URL), {"kilde": "album_year"}).context
+    estimated = admin_client.get(reverse(DATES), {"kilde": "album_year"}).context
     assert [row.media for row in estimated["undated"].items] == [archive["album_year"]]
-    in_andet = admin_client.get(reverse(URL), {"mappe": "Andet"}).context
+    in_andet = admin_client.get(reverse(DATES), {"mappe": "Andet"}).context
     assert [row.media for row in in_andet["undated"].items] == [archive["added"]]
     assert in_andet["outside"].page.paginator.count == 0
     assert [row.label for row in in_andet["album_rows"]] == ["Diverse"]
-    assert admin_client.get(reverse(URL), {"mappe": "1999"}).context["folder"] == ""  # no such folder
+    assert dict(in_andet["counts"].tiers) == {"captured": 1, "added": 1}  # the folder's own dating
+    assert admin_client.get(reverse(DATES), {"mappe": "1999"}).context["folder"] == ""  # no such folder
 
 
 @pytest.mark.django_db
@@ -208,29 +219,133 @@ def test_a_list_pages_on_and_keeps_the_rest_of_the_query(
             album, resident, f"IMG_{index:02}.JPG", DateSource.ALBUM_YEAR, local(2004, 1, 1, 0, 0, index)
         )
 
-    first = admin_client.get(reverse(URL), {"mappe": "2004", "uden_for": "2"}).context["undated"]
+    first = admin_client.get(reverse(DATES), {"mappe": "2004", "uden_for": "2"}).context["undated"]
     assert len(first.items) == 25 and first.previous_url == ""
     assert first.next_url == "?mappe=2004&uden_for=2&uden_dato=2#uden-dato"
-    second = admin_client.get(reverse(URL) + first.next_url.split("#")[0]).context["undated"]
+    second = admin_client.get(reverse(DATES) + first.next_url.split("#")[0]).context["undated"]
     assert [row.media.filename for row in second.items] == [f"IMG_{index}.JPG" for index in range(25, 30)]
 
 
 @pytest.mark.django_db
-def test_it_lists_what_needs_looking_after(make_resident: Callable[..., Resident]) -> None:
+def test_it_counts_what_needs_looking_after(make_resident: Callable[..., Resident]) -> None:
     resident = make_resident(email="foto@gahk.dk")
     album = Album.objects.create(folder="2004", name="Fest")
-    _item(album, resident, "a.jpg", sha256="1" * 64, status=MediaStatus.PENDING)
-    _item(album, resident, "b.jpg", sha256="1" * 64)
-    _item(album, resident, "c.jpg", sha256="1" * 64, derivative_state=DerivativeState.FAILED)
+    _item(album, resident, "a.jpg", sha256="1" * 64, size=10, status=MediaStatus.PENDING)
+    _item(album, resident, "b.jpg", sha256="1" * 64, size=10)
+    _item(album, resident, "c.jpg", sha256="1" * 64, size=10, derivative_state=DerivativeState.FAILED)
     _item(album, resident, "d.mp4", derivative_state=DerivativeState.PENDING, capture_date_checked=False)
     AlbumImport.objects.create(requested_by=resident, folder="2004", archive_name="Fest.zip", state="ready")
 
     upkeep = dashboard.upkeep()
 
-    assert (upkeep.pending, upkeep.derivatives_pending, upkeep.derivatives_failed_count) == (1, 1, 1)
-    assert (upkeep.duplicate_files, upkeep.duplicate_copies) == (1, 2)
-    assert (upkeep.unhashed, upkeep.capture_dates_to_read) == (1, 1)
+    assert (upkeep.pending, upkeep.in_bin, upkeep.derivatives_pending, upkeep.derivatives_failed) == (
+        1,
+        0,
+        1,
+        1,
+    )
+    assert {row.media_list.slug: row.count for row in upkeep.rows} == {
+        "afventer": 1,
+        "papirkurv": 0,
+        "venter-versioner": 1,
+        "fejlede-versioner": 1,
+        "uden-fingeraftryk": 1,
+        "uden-stoerrelse": 1,
+        "dubletter": 3,  # every copy, the first one too
+        "optagelsesdato": 1,
+        "filtid-kilde": 0,
+    }
     assert [each.archive_name for each in upkeep.recent_imports] == ["Fest.zip"]
+
+
+@pytest.mark.django_db
+def test_each_count_opens_a_list_of_its_items_with_their_details(
+    admin_client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    resident = make_resident(email="foto@gahk.dk", first_name="Fie", last_name="Foto")
+    album = Album.objects.create(folder="2004", name="Fest")
+    sub = Album.objects.create(folder="2004", name="Aften", parent=album)
+    pending = _item(
+        sub, resident, "a.jpg", status=MediaStatus.PENDING, size=2048, metadata={"Kamera": "Nikon E3100"}
+    )
+    binned = _item(
+        album, resident, "b.jpg", deleted_at=timezone.now() - timedelta(days=10), deleted_by=resident
+    )
+    failed = _item(
+        album,
+        resident,
+        "clip.mpg",
+        content_type="video/mpeg",
+        derivative_state=DerivativeState.FAILED,
+        derivative_attempts=3,
+        derivative_task_id="0f1e2d3c-0000-4000-8000-000000000001",
+    )
+    first = _item(album, resident, "c.jpg", sha256="2" * 64, size=5)
+    copy = _item(sub, resident, "c kopi.jpg", sha256="2" * 64, size=5)
+    big = _item(album, resident, "huge.mov", size=3 * 1024**3)
+
+    overview = admin_client.get(reverse(URL)).content.decode()
+    assert _list("afventer") in overview and _list("fejlede-versioner") in overview
+    assert _list("papirkurv") in overview  # a count of nothing links nowhere; these have some
+
+    waiting = admin_client.get(_list("afventer"))
+    assert [row.media for row in waiting.context["list"].items] == [pending]
+    assert waiting.context["list"].items[0].expires == pending.added_at + timedelta(days=30)
+    page = waiting.content.decode()
+    assert (
+        "Fest / Aften" in page and "Fie Foto" in page and "Nikon E3100" in page and "2,0\xa0KB" in page
+    )  # filesizeformat keeps the number and its unit together
+    assert reverse("photo_album:download_original", args=[pending.pk]) in page
+    assert reverse("photo_album:detail", args=[sub.pk]) not in page  # a list, not the album
+
+    in_bin = admin_client.get(_list("papirkurv")).context["list"].items
+    assert [(row.media, row.expires) for row in in_bin] == [(binned, binned.deleted_at + timedelta(days=30))]
+
+    failures = admin_client.get(_list("fejlede-versioner")).content.decode()
+    assert "clip.mpg" in failures and "3 forsøg" in failures
+    assert reverse("siteadmin:worker_job_detail", args=[failed.derivative_task_id]) in failures  # why
+
+    duplicates = admin_client.get(_list("dubletter")).context["list"].items
+    assert [(row.media, row.group) for row in duplicates] == [(first, 1), (copy, 1)]  # the first stored first
+
+    largest = admin_client.get(_list("stoerste")).context["list"].items
+    assert [row.media for row in largest][:2] == [big, pending]
+
+
+@pytest.mark.django_db
+def test_the_files_no_item_points_at_are_listed_from_the_latest_measurement(
+    admin_client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    album = Album.objects.create(folder="2004", name="Fest")
+    StorageReport.objects.create(
+        orphans={
+            "objects": 3,
+            "bytes": 160,
+            "keys": [
+                {
+                    "key": f"photo-album/{album.pk}/u1/original/a.jpg",
+                    "bytes": 100,
+                    "modified": "2026-10-01T12:00:00+00:00",
+                },
+                {
+                    "key": "photo-album/999999/u2/thumbnail/b.jpg",
+                    "bytes": 60,
+                    "modified": "2026-10-02T12:00:00+00:00",
+                },
+                f"photo-album/{album.pk}/u3/sidecar/c.jpg",  # from before sizes were kept
+            ],
+        }
+    )
+
+    response = admin_client.get(_list("filer-uden-billede"))
+
+    orphans = response.context["orphans"]
+    assert [(orphan.variant, orphan.bytes, orphan.album) for orphan in orphans] == [
+        ("original", 100, album),
+        ("thumbnail", 60, None),  # the album is gone too
+        ("sidecar", None, album),
+    ]
+    assert "albummet findes ikke længere" in response.content.decode()
 
 
 # --- Where a file time is from ------------------------------------------------------------------
@@ -412,18 +527,18 @@ def test_the_storage_is_measured_from_the_files_themselves(
     assert response.status_code == 302 and response["Location"].endswith("#lager")
     report = StorageReport.objects.get()
     assert report.totals["original"] == {"objects": 4, "bytes": 2 * len(content) + 10}
-    assert report.orphans == {
-        "objects": 1,
-        "bytes": 7,
-        "keys": [f"photo-album/{album.pk}/gone/original/c.jpg"],
-    }
+    assert (report.orphans["objects"], report.orphans["bytes"]) == (1, 7)
+    assert [(entry["key"], entry["bytes"]) for entry in report.orphans["keys"]] == [
+        (f"photo-album/{album.pk}/gone/original/c.jpg", 7)
+    ]
     assert report.totals["sidecar"] == {"objects": 2, "bytes": 20}
     assert report.totals["imports"] == {"objects": 1, "bytes": 100}
     assert report.totals["high-definition"]["objects"] == report.totals["thumbnail"]["objects"] == 2
     assert set(report.by_album) == {str(album.pk), str(sub.pk)}
     assert report.media_bytes + 100 == report.total_bytes
-    page_text = admin_client.get(reverse(URL)).content.decode()
-    assert "1 fil uden billede" in page_text and f"photo-album/{album.pk}/gone/original/c.jpg" in page_text
+    assert "1 fil uden billede" in admin_client.get(reverse(URL)).content.decode()
+    orphan_list = admin_client.get(_list("filer-uden-billede")).content.decode()
+    assert f"photo-album/{album.pk}/gone/original/c.jpg" in orphan_list
 
     page = admin_client.get(reverse(URL)).context
     assert page["storage"].largest[0].label == "Fest"  # with its sub-album
@@ -514,7 +629,8 @@ def test_a_bucket_is_listed_with_the_older_versions_it_keeps(bucket: Stubber) ->
     }
     assert report.by_album == {"7": 1010, "8": 500, "9": 5}
     # No row points at any of them, but only the old one is past an upload still under way.
-    assert report.orphans == {"objects": 1, "bytes": 5, "keys": ["photo-album/9/u3/original/c.jpg"]}
+    assert (report.orphans["objects"], report.orphans["bytes"]) == (1, 5)
+    assert [entry["key"] for entry in report.orphans["keys"]] == ["photo-album/9/u3/original/c.jpg"]
 
 
 @pytest.mark.django_db

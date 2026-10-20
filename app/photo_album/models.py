@@ -23,6 +23,9 @@ from django.utils import timezone
 from .storage import get_photo_album_storage
 
 ALBUM_DOWNLOAD_RETENTION = timedelta(days=7)
+# How long an upload may wait for approval, and a binned item in the bin, before it goes for good
+# (services.purge_expired).
+PURGE_AFTER = timedelta(days=30)
 
 # When a background ZIP job — a download being built, an import being unpacked — is presumed dead.
 #

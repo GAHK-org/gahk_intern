@@ -10,7 +10,7 @@ import operator
 import os
 import time
 from collections import Counter
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from functools import reduce
@@ -19,11 +19,12 @@ from typing import Any, cast
 
 from botocore.exceptions import ClientError
 from django.core.files.storage import FileSystemStorage
-from django.db.models import Count, Q, QuerySet
+from django.db.models import Count, F, Q, QuerySet
 from django.db.models.functions import ExtractYear
 from django.utils import timezone
 
 from .models import (
+    PURGE_AFTER,
     STORAGE_MEDIA_VARIANTS,
     Album,
     AlbumImport,
@@ -400,6 +401,14 @@ def undated_media(folder: str = "", source: str = "") -> QuerySet[Media]:
     return queryset.select_related("album").order_by(*LIST_ORDER)
 
 
+def media_labels_for_albums(albums: Iterable[Album]) -> dict[int, str]:
+    """ "Root / Sub" of each album, from one query for every name along the way."""
+    albums = list(albums)
+    ids = {pk for album in albums for pk in _path_ids(album)}
+    names = dict(Album.objects.filter(pk__in=ids).values_list("pk", "name"))
+    return {album.pk: " / ".join(names.get(pk, "?") for pk in _path_ids(album)) for album in albums}
+
+
 def media_labels(items: Iterable[Media]) -> dict[int, str]:
     """ "Root / Sub" of each item's album, from one query for every name along the way."""
     items = list(items)
@@ -411,53 +420,166 @@ def media_labels(items: Iterable[Media]) -> dict[int, str]:
 # --- What needs looking after -------------------------------------------------------------------
 
 
+def _duplicated() -> QuerySet[Media]:
+    """Live items whose content another live item has too."""
+    hashes = (
+        live_media()
+        .exclude(sha256="")
+        .values("sha256")
+        .annotate(copies=Count("pk"))
+        .filter(copies__gt=1)
+        .values("sha256")
+    )
+    return live_media().filter(sha256__in=hashes)
+
+
+@dataclass(frozen=True)
+class MediaList:
+    """One kind of item to look at, item by item with its details (views_admin.photo_album_list)."""
+
+    slug: str
+    title: str
+    hint: str
+    items: Callable[[], QuerySet[Media]]
+    alert: bool = False  # marked red on the dashboard while there are any
+
+
+MEDIA_LISTS = {
+    media_list.slug: media_list
+    for media_list in (
+        MediaList(
+            "afventer",
+            "Afventer godkendelse",
+            f"Uploadet af en beboer og ikke godkendt endnu. Er de ikke godkendt {PURGE_AFTER.days} dage efter,"
+            " slettes de.",
+            lambda: live_media().filter(status=MediaStatus.PENDING).order_by("added_at", "pk"),
+        ),
+        MediaList(
+            "papirkurv",
+            "I papirkurven",
+            f"Slettet eller afvist. Slettes for altid {PURGE_AFTER.days} dage efter.",
+            lambda: Media.objects.filter(deleted_at__isnull=False).order_by("deleted_at", "pk"),
+        ),
+        MediaList(
+            "venter-versioner",
+            "Venter på HD-version og miniature",
+            "Videoer konverteres i baggrunden, én ad gangen; et billede tager et øjeblik.",
+            lambda: live_media().filter(derivative_state=DerivativeState.PENDING).order_by("added_at", "pk"),
+        ),
+        MediaList(
+            "fejlede-versioner",
+            "Kunne ikke få HD-version og miniature",
+            "Konverteringen er opgivet efter tre forsøg; jobbet viser hvorfor. manage.py"
+            " retry_failed_photo_album_media giver dem tre nye.",
+            lambda: live_media().filter(derivative_state=DerivativeState.FAILED).order_by("-added_at", "pk"),
+            alert=True,
+        ),
+        MediaList(
+            "uden-fingeraftryk",
+            "Uden fingeraftryk",
+            "Ingen SHA-256 endnu, så en dublet af dem genkendes ikke. Den natlige kørsel tager dem; dem, der"
+            " ikke kunne læses, til sidst.",
+            lambda: (
+                Media.objects.filter(sha256="")
+                .exclude(original="")
+                .order_by(F("hash_failed_at").asc(nulls_first=True), "pk")
+            ),
+        ),
+        MediaList(
+            "uden-stoerrelse",
+            "Uden kendt størrelse",
+            "Gemt før filens størrelse blev registreret. Den natlige kørsel slår den op.",
+            lambda: Media.objects.filter(size__isnull=True).exclude(original="").order_by("pk"),
+        ),
+        MediaList(
+            "dubletter",
+            "Samme fil flere gange",
+            "Filer med nøjagtig samme indhold (SHA-256), gruppe for gruppe; den først gemte står øverst.",
+            lambda: _duplicated().order_by("sha256", "added_at", "pk"),
+        ),
+        MediaList(
+            "optagelsesdato",
+            "Venter på at blive læst igen for optagelsesdato",
+            "Gemt før XMP og IPTC blev læst. Den natlige kørsel læser originalerne igen.",
+            lambda: Media.objects.filter(capture_date_checked=False).order_by("pk"),
+        ),
+        MediaList(
+            "filtid-kilde",
+            "Filtider med ukendt kilde",
+            "Gemt med en sidecar, før kilden blev registreret. Den natlige kørsel læser sidecaren.",
+            lambda: (
+                Media.objects.filter(file_modified_at__isnull=False, file_time_source=FileTimeSource.UNKNOWN)
+                .exclude(sidecar="")
+                .order_by("pk")
+            ),
+        ),
+        MediaList(
+            "stoerste",
+            "De største filer",
+            "Efter originalens størrelse. Filer, hvis størrelse ikke er kendt endnu, er ikke med.",
+            lambda: live_media().filter(size__isnull=False).order_by("-size", "pk"),
+        ),
+    )
+}
+# The lists the dashboard's upkeep counts, in its order.
+UPKEEP_LISTS = (
+    "afventer",
+    "papirkurv",
+    "venter-versioner",
+    "fejlede-versioner",
+    "uden-fingeraftryk",
+    "uden-stoerrelse",
+    "dubletter",
+    "optagelsesdato",
+    "filtid-kilde",
+)
+
+
+@dataclass
+class UpkeepRow:
+    media_list: MediaList
+    count: int
+
+
 @dataclass
 class Upkeep:
-    pending: int  # awaiting approval
-    in_bin: int
-    derivatives_pending: int
-    derivatives_failed: list[Media]
-    derivatives_failed_count: int
-    unhashed: int
-    hash_failed: int
-    capture_dates_to_read: int
-    file_time_sources_to_read: int
-    duplicate_files: int  # files stored more than once
-    duplicate_copies: int  # the copies of them beyond the first
+    rows: list[UpkeepRow]
     recent_imports: list[AlbumImport]
 
+    def count(self, slug: str) -> int:
+        return next(row.count for row in self.rows if row.media_list.slug == slug)
 
-FAILED_SHOWN = 10
+    @property
+    def pending(self) -> int:
+        return self.count("afventer")
+
+    @property
+    def in_bin(self) -> int:
+        return self.count("papirkurv")
+
+    @property
+    def derivatives_pending(self) -> int:
+        return self.count("venter-versioner")
+
+    @property
+    def derivatives_failed(self) -> int:
+        return self.count("fejlede-versioner")
+
+    @property
+    def capture_dates_to_read(self) -> int:
+        return self.count("optagelsesdato")
+
+    @property
+    def file_time_sources_to_read(self) -> int:
+        return self.count("filtid-kilde")
+
+
 IMPORTS_SHOWN = 8
 
 
 def upkeep() -> Upkeep:
-    live = live_media()
-    failed = live.filter(derivative_state=DerivativeState.FAILED)
-    duplicates = (
-        live.exclude(sha256="")
-        .values("sha256")
-        .annotate(copies=Count("pk"))
-        .filter(copies__gt=1)
-        .values_list("copies", flat=True)
-    )
-    copies = list(duplicates)
     return Upkeep(
-        pending=live.filter(status=MediaStatus.PENDING).count(),
-        in_bin=Media.objects.filter(deleted_at__isnull=False).count(),
-        derivatives_pending=live.filter(derivative_state=DerivativeState.PENDING).count(),
-        derivatives_failed=list(failed.select_related("album").order_by("-added_at")[:FAILED_SHOWN]),
-        derivatives_failed_count=failed.count(),
-        unhashed=Media.objects.filter(sha256="").exclude(original="").count(),
-        hash_failed=Media.objects.filter(sha256="", hash_failed_at__isnull=False).count(),
-        capture_dates_to_read=Media.objects.filter(capture_date_checked=False).count(),
-        file_time_sources_to_read=Media.objects.filter(
-            file_modified_at__isnull=False, file_time_source=FileTimeSource.UNKNOWN
-        )
-        .exclude(sidecar="")
-        .count(),
-        duplicate_files=len(copies),
-        duplicate_copies=sum(copies) - len(copies),
+        rows=[UpkeepRow(MEDIA_LISTS[slug], MEDIA_LISTS[slug].items().count()) for slug in UPKEEP_LISTS],
         recent_imports=list(
             AlbumImport.objects.select_related("requested_by").order_by("-created_at")[:IMPORTS_SHOWN]
         ),
@@ -583,12 +705,54 @@ def measure_storage() -> StorageReport:
             orphans["objects"] += 1
             orphans["bytes"] += stored.size
             if len(orphans["keys"]) < ORPHAN_KEYS_KEPT:
-                orphans["keys"].append(stored.key)
+                orphans["keys"].append(
+                    {"key": stored.key, "bytes": stored.size, "modified": stored.modified.isoformat()}
+                )
     report = StorageReport.objects.create(
         totals=totals, by_album=by_album, orphans=orphans, seconds=time.monotonic() - started
     )
     StorageReport.objects.filter(measured_at__lt=timezone.now() - STORAGE_REPORTS_KEPT).delete()
     return report
+
+
+@dataclass
+class Orphan:
+    """A media file no item points at, as the latest measurement found it."""
+
+    key: str
+    bytes: int | None
+    modified: datetime | None
+    album: Album | None  # the album its key names, if that still exists
+    album_label: str
+    variant: str
+
+
+def orphan_files(report: StorageReport | None) -> list[Orphan]:
+    if report is None:
+        return []
+    entries = [
+        entry if isinstance(entry, dict) else {"key": entry}  # a measurement from before sizes were kept
+        for entry in report.orphans.get("keys", [])
+    ]
+    ids = {int(album_id) for entry in entries if (album_id := _album_of(entry["key"])) is not None}
+    albums = {album.pk: album for album in Album.objects.filter(pk__in=ids)}
+    labels = media_labels_for_albums(albums.values())
+    found = []
+    for entry in entries:
+        album_id = _album_of(entry["key"])
+        album = albums.get(int(album_id)) if album_id is not None else None
+        modified = entry.get("modified")
+        found.append(
+            Orphan(
+                key=entry["key"],
+                bytes=entry.get("bytes"),
+                modified=datetime.fromisoformat(modified) if modified else None,
+                album=album,
+                album_label=labels.get(album.pk, "") if album else "",
+                variant=_category(entry["key"]),
+            )
+        )
+    return found
 
 
 @dataclass

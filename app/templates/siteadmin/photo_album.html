@@ -9,25 +9,24 @@
       <h1>Fotoalbum</h1>
     </div>
     <div class="head-actions">
-      <a class="btn btn-secondary" href="#datoer">Datering</a>
-      <a class="btn btn-secondary" href="#aar">År</a>
+      <a class="btn btn-secondary" href="{% url 'siteadmin:photo_album_dates' %}">Datering</a>
       <a class="btn btn-secondary" href="#lager">Lager</a>
       <a class="btn btn-secondary" href="#vedligehold">Vedligehold</a>
     </div>
   </div>
 
   <div class="jobs-tiles">
-    <a class="jobs-tile" href="#aar">
+    <a class="jobs-tile" href="#mapper">
       <span class="jobs-tile-k">Billeder og videoer</span>
       <span class="jobs-tile-v">{{ view.counts.total }}</span>
       <span class="jobs-tile-s">{{ view.counts.photos }} billeder · {{ view.counts.videos }} videoer</span>
     </a>
-    <a class="jobs-tile" href="#albummer">
+    <a class="jobs-tile" href="{% url 'siteadmin:photo_album_dates' %}#albummer">
       <span class="jobs-tile-k">Albummer</span>
       <span class="jobs-tile-v">{{ view.roots }}</span>
       <span class="jobs-tile-s">+ {{ view.sub_albums }} underalbummer{% if view.empty_albums %} · {{ view.empty_albums }} tomme{% endif %}</span>
     </a>
-    <a class="jobs-tile" href="#datoer">
+    <a class="jobs-tile" href="{% url 'siteadmin:photo_album_dates' %}">
       <span class="jobs-tile-k">Med optagelsesdato</span>
       <span class="jobs-tile-v">{{ view.counts.captured_percent|floatformat:0 }} %</span>
       <span class="jobs-tile-s">{{ view.counts.captured }} af {{ view.counts.total }}</span>
@@ -39,204 +38,74 @@
     </a>
   </div>
   <div class="jobs-tiles">
-    <a class="jobs-tile" href="#uden-dato">
+    <a class="jobs-tile" href="{% url 'siteadmin:photo_album_dates' %}#uden-dato">
       <span class="jobs-tile-k">Uden egen dato</span>
       <span class="jobs-tile-v">{{ view.counts.without_own_date }}</span>
       <span class="jobs-tile-s">{{ view.counts.estimated }} anslået · {{ view.counts.undated }} ved uploadtid</span>
     </a>
-    <a class="jobs-tile{% if view.counts.outside %} is-alert{% endif %}" href="#uden-for">
+    <a class="jobs-tile{% if view.counts.outside %} is-alert{% endif %}" href="{% url 'siteadmin:photo_album_dates' %}#uden-for">
       <span class="jobs-tile-k">Uden for ±6 måneder</span>
       <span class="jobs-tile-v">{{ view.counts.outside }}</span>
       <span class="jobs-tile-s">vist uden for albummets år</span>
     </a>
-    <a class="jobs-tile" href="#vedligehold">
+    <a class="jobs-tile" href="{% url 'siteadmin:photo_album_list' 'afventer' %}">
       <span class="jobs-tile-k">Afventer godkendelse</span>
       <span class="jobs-tile-v">{{ upkeep.pending }}</span>
       <span class="jobs-tile-s">{{ upkeep.in_bin }} i papirkurven</span>
     </a>
-    <a class="jobs-tile{% if upkeep.derivatives_failed_count %} is-alert{% endif %}" href="#vedligehold">
+    <a class="jobs-tile{% if upkeep.derivatives_failed %} is-alert{% endif %}" href="{% if upkeep.derivatives_failed %}{% url 'siteadmin:photo_album_list' 'fejlede-versioner' %}{% else %}{% url 'siteadmin:photo_album_list' 'venter-versioner' %}{% endif %}">
       <span class="jobs-tile-k">Mangler versioner</span>
-      <span class="jobs-tile-v">{{ upkeep.derivatives_pending|add:upkeep.derivatives_failed_count }}</span>
-      <span class="jobs-tile-s">{% if upkeep.derivatives_failed_count %}{{ upkeep.derivatives_failed_count }} fejlet{% else %}ingen fejlet{% endif %}</span>
+      <span class="jobs-tile-v">{{ upkeep.derivatives_pending|add:upkeep.derivatives_failed }}</span>
+      <span class="jobs-tile-s">{% if upkeep.derivatives_failed %}{{ upkeep.derivatives_failed }} fejlet{% else %}ingen fejlet{% endif %}</span>
     </a>
   </div>
 
   <section class="card-flat jobs-section" id="datoer">
     <div class="card-head">
       <h2>Hvordan billederne er dateret</h2>
-      <span class="muted text-sm">{{ view.counts.total }} billeder og videoer</span>
+      <a class="btn btn-secondary" href="{% url 'siteadmin:photo_album_dates' %}">Se dateringen</a>
     </div>
     <div class="card-pad">
       {% include "siteadmin/_photo_album_bar.html" with counts=view.counts big=True %}
-      <table class="zebra jobs-table pad-tiers">
-        <thead><tr><th>Datoen kommer fra</th><th class="num">Antal</th><th class="num">Andel</th></tr></thead>
-        <tbody>
-          {% for segment in view.counts.segments %}
-            <tr>
-              <td><i class="pad-key pad-t-{{ segment.tier.key }}"></i> <b>{{ segment.tier.label }}</b><div class="jobs-sub">{{ segment.tier.hint }}</div></td>
-              <td class="num">{{ segment.count }}</td>
-              <td class="num">{{ segment.percent|floatformat:1 }} %</td>
-            </tr>
-          {% empty %}
-            <tr><td colspan="3" class="muted">Albummet er tomt.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      <p class="muted text-sm pad-note">
-        Kun en optagelsesdato er sikker. En filtid bruges kun, når den ligger i albummets år ±6 måneder{% if view.rejected_file_times %} — {{ view.rejected_file_times }} filtid{{ view.rejected_file_times|pluralize:"er" }} gjorde ikke og er ikke brugt (<a href="?filtid=1#uden-for">se dem</a>){% endif %}.
-        {% if upkeep.file_time_sources_to_read %}{{ upkeep.file_time_sources_to_read }} filtid{{ upkeep.file_time_sources_to_read|pluralize:"er" }} venter på, at nattens kørsel læser sidecaren for at finde kilden.{% endif %}
-        {% if upkeep.capture_dates_to_read %}{{ upkeep.capture_dates_to_read }} original{{ upkeep.capture_dates_to_read|pluralize:"er" }} venter på at blive læst igen for en optagelsesdato.{% endif %}
-      </p>
+      <ul class="pad-summary">
+        {% for segment in view.counts.segments %}
+          <li title="{{ segment.tier.hint }}"><i class="pad-key pad-t-{{ segment.tier.key }}"></i>{{ segment.tier.label }} <b class="num">{{ segment.count }}</b> <span class="muted">{{ segment.percent|floatformat:0 }} %</span></li>
+        {% empty %}
+          <li class="muted">Albummet er tomt.</li>
+        {% endfor %}
+      </ul>
     </div>
   </section>
 
-  <section class="card-flat jobs-section" id="aar">
-    <div class="card-head">
-      <h2>Billeder og videoer pr. år, efter dato</h2>
-      <span class="muted text-sm">efter den dato, de vises ved</span>
-    </div>
-    <div class="card-pad">
-      {% with columns=view.timeline.columns %}
-        {% if columns %}
-          <div class="jobs-chart" role="img"
-               aria-label="Billeder og videoer pr. år fra {{ view.timeline.first }}, efter den dato, de vises ved. Tallene står i tabellen under diagrammet.">
-            <span class="jobs-gridline" style="bottom:100%"><span>{{ view.timeline.scale }}</span></span>
-            <div class="jobs-cols" style="grid-template-columns:repeat({{ columns|length }}, minmax(0, 1fr))">
-              {% for column in columns %}
-                <div class="jobs-col" data-tip="{{ column.year }} · {{ column.counts.total }} i alt · {{ column.counts.captured }} med optagelsesdato · {{ column.counts.without_own_date }} uden egen dato">
-                  {% for tier, count, height in column.heights %}<i class="pad-t-{{ tier.key }}" style="height:{{ height|stringformat:'.2f' }}%"></i>{% endfor %}
-                </div>
-              {% endfor %}
-            </div>
-          </div>
-          <div class="jobs-axis" aria-hidden="true" style="grid-template-columns:repeat({{ columns|length }}, minmax(0, 1fr))">
-            {% for column in columns %}<span>{{ column.label }}</span>{% endfor %}
-          </div>
-          <div class="jobs-legend pad-legend">
-            {% for tier in tiers %}<span><i class="pad-t-{{ tier.key }}"></i>{{ tier.label }}</span>{% endfor %}
-          </div>
-          <details class="jobs-table-view">
-            <summary>Vis tallene</summary>
-            <table class="zebra jobs-table">
-              <thead><tr><th>År</th><th class="num">I alt</th><th class="num">Optagelsesdato</th><th class="num">Filens dato</th><th class="num">Anslået</th><th class="num">Ingen dato</th></tr></thead>
-              <tbody>
-                {% for column in columns %}{% if column.counts.total %}
-                  <tr><td>{{ column.year }}</td><td class="num">{{ column.counts.total }}</td><td class="num">{{ column.counts.captured }}</td><td class="num">{{ column.counts.file_time }}</td><td class="num">{{ column.counts.estimated }}</td><td class="num">{{ column.counts.undated }}</td></tr>
-                {% endif %}{% endfor %}
-              </tbody>
-            </table>
-          </details>
-        {% else %}
-          <p class="jobs-empty">Intet er dateret endnu.</p>
-        {% endif %}
-      {% endwith %}
-    </div>
-  </section>
-
-  <section class="card-flat jobs-section">
+  <section class="card-flat jobs-section" id="mapper">
     <div class="card-head">
       <h2>Pr. mappe</h2>
-      <span class="muted text-sm">vælg en mappe for at se dens albummer og billeder</span>
+      <span class="muted text-sm">en mappe åbner dens datering</span>
     </div>
     <div class="overflow-x-auto">
       <table class="zebra jobs-table">
         <thead>
           <tr>
             <th>Mappe</th><th class="num">Albummer</th><th class="num">Billeder</th>
-            <th class="pad-bar-cell">Datering</th><th class="num" title="Andel med optagelsesdato">Optaget</th>
-            <th class="num" title="Anslået, eller vist ved uploadtidspunktet">Uden dato</th>
-            <th class="num" title="Vist mere end seks måneder uden for mappens år">±6 mdr.</th><th class="num">Lager</th>
+            <th class="pad-bar-cell">Datering</th><th class="num" title="Andel med optagelsesdato">Optaget</th><th class="num">Lager</th>
           </tr>
         </thead>
         <tbody>
           {% for row in view.folders %}
-            <tr{% if row.folder == folder %} class="is-selected"{% endif %}>
-              <td><a class="jobs-name" href="{% querystring mappe=row.folder uden_for=None uden_dato=None %}#albummer">{{ row.folder }}</a></td>
+            <tr>
+              <td><a class="jobs-name" href="{% url 'siteadmin:photo_album_dates' %}?mappe={{ row.folder|urlencode }}">{{ row.folder }}</a></td>
               <td class="num">{{ row.roots }}{% if row.sub_albums %} <span class="jobs-sub">+{{ row.sub_albums }}</span>{% endif %}</td>
               <td class="num">{{ row.counts.total }}{% if row.counts.videos %}<div class="jobs-sub">heraf {{ row.counts.videos }} video{{ row.counts.videos|pluralize:"er" }}</div>{% endif %}</td>
               <td class="pad-bar-cell">{% include "siteadmin/_photo_album_bar.html" with counts=row.counts %}</td>
               <td class="num">{% if row.counts.total %}{{ row.counts.captured_percent|floatformat:0 }} %{% else %}–{% endif %}</td>
-              <td class="num">{{ row.counts.without_own_date|default:"–" }}</td>
-              <td class="num">{% if row.counts.outside %}<a class="jobs-fail-count" href="{% querystring mappe=row.folder filtid=None uden_for=None %}#uden-for">{{ row.counts.outside }}</a>{% else %}–{% endif %}</td>
               <td class="num">{% if row.bytes is not None %}{{ row.bytes|filesizeformat }}{% else %}–{% endif %}</td>
             </tr>
           {% empty %}
-            <tr><td colspan="8" class="muted">Ingen albummer endnu.</td></tr>
+            <tr><td colspan="6" class="muted">Ingen albummer endnu.</td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
-  </section>
-
-  <section class="card-flat jobs-section" id="albummer">
-    <div class="card-head">
-      <h2>{% if folder %}Albummer i {{ folder }}{% else %}Albummer med flest uden egen dato{% endif %}</h2>
-      {% if folder %}<a class="jobs-reset" href="{% querystring mappe=None uden_for=None uden_dato=None %}#albummer">Alle mapper</a>{% endif %}
-    </div>
-    <div class="overflow-x-auto">
-      <table class="zebra jobs-table">
-        <thead>
-          <tr>
-            <th>Album</th><th class="num">I alt</th><th class="pad-bar-cell">Datering</th>
-            <th class="num" title="Med optagelsesdato">Optaget</th><th class="num" title="Med filens dato">Filtid</th>
-            <th class="num" title="Anslået, eller vist ved uploadtidspunktet">Uden dato</th>
-            <th class="num" title="Vist mere end seks måneder uden for mappens år">±6 mdr.</th><th class="num">Lager</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for row in album_rows %}
-            <tr>
-              <td>
-                <a href="{% url 'photo_album:detail' row.album.pk %}">{{ row.label }}</a>
-                {% if not folder %}<span class="jobs-app">{{ row.album.folder }}</span>{% endif %}
-              </td>
-              <td class="num">{{ row.counts.total }}</td>
-              <td class="pad-bar-cell">{% include "siteadmin/_photo_album_bar.html" with counts=row.counts %}</td>
-              <td class="num">{{ row.counts.captured|default:"–" }}</td>
-              <td class="num">{{ row.counts.file_time|default:"–" }}</td>
-              <td class="num">{{ row.counts.without_own_date|default:"–" }}</td>
-              <td class="num">{{ row.counts.outside|default:"–" }}</td>
-              <td class="num">{% if row.bytes is not None %}{{ row.bytes|filesizeformat }}{% else %}–{% endif %}</td>
-            </tr>
-          {% empty %}
-            <tr><td colspan="8" class="muted">{% if folder %}Ingen billeder i {{ folder }}.{% else %}Alle billeder har en dato af deres egen.{% endif %}</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="card-flat jobs-section" id="uden-for">
-    <div class="card-head">
-      <h2>Uden for ±6 måneder{% if folder %} i {{ folder }}{% endif %}</h2>
-      <span class="muted text-sm">datoer, der ikke passer med mappens år</span>
-    </div>
-    <p class="jobs-sub pad-intro">
-      {% if by_file_time %}
-        Filer, hvis filtid ligger mere end seks måneder uden for mappens år. Den er ikke brugt: de er dateret på anden vis, som kolonnen Kilde viser.
-      {% else %}
-        Billeder, der vises ved en dato mere end seks måneder uden for mappens år. Som regel en optagelsesdato fra et kamera med forkert ur, eller et billede i det forkerte album.
-      {% endif %}
-    </p>
-    <nav class="jobs-states" aria-label="Hvilken dato">
-      <a class="jobs-pill{% if not by_file_time %} is-on{% endif %}" href="{% querystring filtid=None uden_for=None %}#uden-for">Vist dato <b>{{ outside_shown_count }}</b></a>
-      <a class="jobs-pill{% if by_file_time %} is-on{% endif %}" href="{% querystring filtid=1 uden_for=None %}#uden-for">Filtid, ikke brugt <b>{{ outside_file_count }}</b></a>
-    </nav>
-    {% include "siteadmin/_photo_album_media.html" with list=outside empty="Ingen." %}
-  </section>
-
-  <section class="card-flat jobs-section" id="uden-dato">
-    <div class="card-head">
-      <h2>Uden egen dato{% if folder %} i {{ folder }}{% endif %}</h2>
-      <span class="muted text-sm">anslået, eller vist ved uploadtidspunktet</span>
-    </div>
-    <nav class="jobs-states" aria-label="Hvordan de er dateret">
-      <a class="jobs-pill{% if not source %} is-on{% endif %}" href="{% querystring kilde=None uden_dato=None %}#uden-dato">Alle <b>{{ undated_total }}</b></a>
-      {% for key, tier, count in undated_filters %}
-        <a class="jobs-pill{% if source == key %} is-on{% endif %}" href="{% querystring kilde=key uden_dato=None %}#uden-dato" title="{{ tier.hint }}">{{ tier.label }} <b>{{ count }}</b></a>
-      {% endfor %}
-    </nav>
-    {% include "siteadmin/_photo_album_media.html" with list=undated empty="Alle har en dato af deres egen." %}
   </section>
 
   <section class="card-flat jobs-section" id="lager">
@@ -268,20 +137,16 @@
           </tbody>
         </table>
       </div>
-      {% with orphans=storage.report.orphans %}
-        {% if orphans.objects %}
-          <div class="pad-orphans">
-            <span class="chip chip-brass">{{ orphans.objects }} fil{{ orphans.objects|pluralize:"er" }} uden billede · {{ orphans.bytes|filesizeformat }}</span>
-            Filer under photo-album/, som intet billede eller nogen video peger på — rester fra en fejlet upload, import eller sletning. De tæller med i tallene ovenfor; ingen af dem fra det seneste døgn.
-            <details>
-              <summary>Vis {% if orphans.objects > orphans.keys|length %}de første {{ orphans.keys|length }}{% else %}dem{% endif %}</summary>
-              <ul class="jobs-mono">{% for key in orphans.keys %}<li>{{ key }}</li>{% endfor %}</ul>
-            </details>
-          </div>
-        {% endif %}
-      {% endwith %}
+      {% if storage.report.orphans.objects %}<div class="pad-orphans">
+        {% with orphans=storage.report.orphans %}
+          {% if orphans.objects %}
+            <a class="chip chip-brass" href="{% url 'siteadmin:photo_album_list' orphans_list %}">{{ orphans.objects }} fil{{ orphans.objects|pluralize:"er" }} uden billede · {{ orphans.bytes|filesizeformat }}</a>
+            Filer under photo-album/, som intet billede eller nogen video peger på — rester fra en fejlet upload, import eller sletning. De tæller med i tallene ovenfor.
+          {% endif %}
+        {% endwith %}
+      </div>{% endif %}
       {% if storage.largest %}
-        <div class="card-head"><h2>Største albummer</h2><span class="muted text-sm">med underalbummer</span></div>
+        <div class="card-head"><h2>Største albummer</h2><span class="muted text-sm">med underalbummer · <a href="{% url 'siteadmin:photo_album_list' 'stoerste' %}">de største filer</a></span></div>
         <div class="overflow-x-auto">
           <table class="zebra jobs-table">
             <thead><tr><th>Album</th><th>Mappe</th><th class="num">Billeder og videoer</th><th class="num">Størrelse</th></tr></thead>
@@ -306,26 +171,16 @@
   <section class="card-flat jobs-section" id="vedligehold">
     <div class="card-head"><h2>Vedligehold</h2></div>
     <ul class="jobs-list pad-checks">
-      <li class="jobs-row"><span>Afventer godkendelse</span><b class="num">{{ upkeep.pending }}</b></li>
-      <li class="jobs-row"><span>I papirkurven <span class="jobs-sub">slettes for altid efter opbevaringstiden</span></span><b class="num">{{ upkeep.in_bin }}</b></li>
-      <li class="jobs-row"><span>Venter på HD-version og miniature <span class="jobs-sub">videoer bygges om natten</span></span><b class="num">{{ upkeep.derivatives_pending }}</b></li>
-      <li class="jobs-row"><span>Kunne ikke få HD-version og miniature</span><b class="num">{% if upkeep.derivatives_failed_count %}<span class="chip chip-neg">{{ upkeep.derivatives_failed_count }}</span>{% else %}0{% endif %}</b></li>
-      <li class="jobs-row"><span>Uden fingeraftryk (til dubletter) <span class="jobs-sub">{% if upkeep.hash_failed %}{{ upkeep.hash_failed }} kunne ikke læses; {% endif %}tages om natten</span></span><b class="num">{{ upkeep.unhashed }}</b></li>
-      <li class="jobs-row"><span>Samme fil flere gange <span class="jobs-sub">{{ upkeep.duplicate_files }} fil{{ upkeep.duplicate_files|pluralize:"er" }}, som findes mere end én gang</span></span><b class="num">{{ upkeep.duplicate_copies }}</b></li>
-      <li class="jobs-row"><span>Venter på at blive læst igen for optagelsesdato</span><b class="num">{{ upkeep.capture_dates_to_read }}</b></li>
-      <li class="jobs-row"><span>Filtider med ukendt kilde, der venter på nattens kørsel</span><b class="num">{{ upkeep.file_time_sources_to_read }}</b></li>
+      {% for row in upkeep.rows %}
+        <li>
+          <div>
+            {% if row.count %}<a href="{% url 'siteadmin:photo_album_list' row.media_list.slug %}">{{ row.media_list.title }}</a>{% else %}<span>{{ row.media_list.title }}</span>{% endif %}
+            <div class="jobs-sub">{{ row.media_list.hint }}</div>
+          </div>
+          <b class="num">{% if row.count and row.media_list.alert %}<span class="chip chip-neg">{{ row.count }}</span>{% else %}{{ row.count }}{% endif %}</b>
+        </li>
+      {% endfor %}
     </ul>
-    {% if upkeep.derivatives_failed %}
-      <div class="card-head"><h2>Fejlede versioner</h2><span class="muted text-sm">de seneste {{ upkeep.derivatives_failed|length }}</span></div>
-      <ul class="jobs-list">
-        {% for item in upkeep.derivatives_failed %}
-          <li class="jobs-row">
-            <span><a href="{% url 'photo_album:detail' item.album_id %}?media={{ item.pk }}">{{ item.display_name }}</a> <span class="jobs-sub">{{ item.album.folder }}: {{ item.album.name }}</span></span>
-            <span class="jobs-when">{{ item.derivative_attempts }} forsøg</span>
-          </li>
-        {% endfor %}
-      </ul>
-    {% endif %}
     <div class="card-head"><h2>Seneste importer</h2></div>
     <div class="overflow-x-auto">
       <table class="zebra jobs-table">
