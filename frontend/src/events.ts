@@ -40,8 +40,33 @@ if (picker) {
     const target = event.target;
     if (!(target instanceof HTMLInputElement)) return;
     if (target.name === "visibility") picker.open = target.value === "kun_inviterede";
-    if (target.type === "checkbox") updateCount();
+    if (target.type === "checkbox") {
+      updateCount();
+      updateAllButton();
+    }
   });
+
+  // "Vælg alle beboere": tick everyone, or untick everyone once they all are. Every box, not only
+  // the ones a search is showing, since the button says all.
+  const allButton = picker.querySelector<HTMLButtonElement>("[data-invite-all]");
+  const allChecked = (): boolean => boxes.length > 0 && boxes.every((b) => b.checked);
+  const updateAllButton = (): void => {
+    if (allButton) allButton.textContent = allChecked() ? "Fravælg alle" : "Vælg alle beboere";
+  };
+
+  if (allButton) {
+    allButton.hidden = boxes.length === 0;
+    allButton.addEventListener("click", () => {
+      const check = !allChecked();
+      for (const box of boxes) {
+        box.checked = check;
+        rowOf(box).hidden = false;
+      }
+      if (search) search.value = "";
+      updateCount();
+      updateAllButton();
+    });
+  }
 
   search?.addEventListener("input", () => {
     const needle = search.value.trim().toLowerCase();
@@ -53,4 +78,5 @@ if (picker) {
   });
 
   updateCount();
+  updateAllButton();
 }

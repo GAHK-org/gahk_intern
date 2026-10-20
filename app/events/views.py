@@ -23,7 +23,6 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
-from core import push
 from core.clock import current_date, current_datetime
 from core.danish import MONTHS, WEEKDAYS_SHORT
 from core.uploads import attached_image
@@ -32,7 +31,7 @@ from residents import birthdays as birthdays_mod
 from residents.models import Resident
 from residents.permissions import current_resident
 
-from . import access, icalendar, services
+from . import access, icalendar, live, maerkedage, services
 from .forms import EventCommentForm, EventForm
 from .models import Answer, CalendarFeedToken, Event, EventComment, Rsvp
 
@@ -117,6 +116,7 @@ def _month_grid(
     by_day: dict[datetime.date, list[Event]],
     chosen: datetime.date | None = None,
     birthdays: dict[datetime.date, list[birthdays_mod.Birthday]] | None = None,
+    marked_days: dict[datetime.date, list[maerkedage.Maerkedag]] | None = None,
 ) -> list[list[dict[str, object]]]:
     """The month as whole Monday-to-Sunday weeks, padded into the neighbouring months.
 
@@ -130,6 +130,7 @@ def _month_grid(
     would be a lie about one.
     """
     marked = birthdays or {}
+    special = marked_days or {}
     weeks: list[list[dict[str, object]]] = []
     for week in _weeks_of(first):
         weeks.append(
@@ -139,6 +140,7 @@ def _month_grid(
                     "outside": day.month != first.month,
                     "events": by_day.get(day, []),
                     "birthdays": marked.get(day, []),
+                    "maerkedage": special.get(day, []),
                     "chosen": day == chosen,
                 }
                 for day in week
@@ -226,9 +228,6 @@ def index(request: HttpRequest) -> HttpResponse:
         "events/index.html",
         {
             "page_obj": page,
-            "push_configured": push.is_configured(),
-            "vapid_public_key": push.vapid_public_key(),
-            "push_subscribed": push.subscribers(services.TOPIC).filter(user=resident).exists(),
             "limited_rollout": access.is_limited(),
         },
     )
@@ -236,6 +235,25 @@ def index(request: HttpRequest) -> HttpResponse:
 
 @access.access_required
 def detail(request: HttpRequest, pk: int) -> HttpResponse:
+    return render(request, "events/detail.html", _detail_context(request, pk))
+
+
+def live_detail(request: HttpRequest, pk: int) -> HttpResponse:
+    """The detail page's live region, re-read on a signal for this event (events.live).
+
+    Not decorated: a redirect to the login page would be read as the page. 204 for a page whose
+    session or access has gone, which the client takes as "leave it"; 404 — from _get_event — for
+    an event that was deleted or is no longer visible to this reader, which the page says out loud.
+    Never renders `messages`, which a background read would otherwise consume (see
+    opslagstavle.views.live_cards).
+    """
+    if not access.request_allowed(request):
+        return HttpResponse(status=204)
+    return render(request, "events/_detail_live.html", _detail_context(request, pk))
+
+
+def _detail_context(request: HttpRequest, pk: int) -> dict[str, object]:
+    """Everything the detail page draws, shared with `live_detail` so the two cannot differ."""
     event = _get_event(request, pk)
     resident = current_resident(request)
     context = _rsvp_context(request, event)
@@ -253,7 +271,7 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
             "comment_form": EventCommentForm(),
         }
     )
-    return render(request, "events/detail.html", context)
+    return context
 
 
 def _comments(request: HttpRequest, event: Event) -> list:
@@ -356,6 +374,7 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
         comment.image = image
     comment.save()
     services.notify_new_comment(comment)
+    live.event_changed(event.pk)
     return redirect(_comment_anchor(event.pk))
 
 
@@ -369,6 +388,7 @@ def delete_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
         raise PermissionDenied
     event_pk = comment.event_id
     comment.delete()
+    live.event_changed(event_pk)
     messages.success(request, "Kommentaren er slettet.")
     return redirect(_comment_anchor(event_pk))
 
@@ -426,6 +446,7 @@ def edit(request: HttpRequest, pk: int) -> HttpResponse:
     else:
         updated.save()
     services.sync_invites(updated, list(form.cleaned_data["invitees"]), invited_by=current_resident(request))
+    live.event_changed(updated.pk)
     messages.success(request, "Begivenheden er opdateret.")
     return redirect("events:detail", pk=event.pk)
 
@@ -437,7 +458,9 @@ def delete(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     event = _get_event(request, pk)
     if not access.can_delete(event, current_resident(request)):
         raise PermissionDenied
+    event_pk = event.pk  # delete() clears it
     event.delete()
+    live.event_changed(event_pk, "deleted")
     messages.success(request, "Begivenheden er slettet.")
     return redirect("events:index")
 
@@ -449,6 +472,7 @@ def cancel(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     if not access.can_cancel(event, current_resident(request)):
         raise PermissionDenied
     services.cancel(event)
+    live.event_changed(event.pk)
     messages.success(request, "Begivenheden er aflyst, og alle tilmeldte har fået besked.")
     return redirect("events:detail", pk=event.pk)
 
@@ -470,6 +494,8 @@ def answer(request: HttpRequest, pk: int) -> HttpResponse:
             services.set_answer(event.pk, current_resident(request), choice)
         except services.RsvpClosed:
             pass
+        else:
+            live.event_changed(event.pk)
     event.refresh_from_db()
     return render(request, "events/_rsvp.html", _rsvp_context(request, event))
 
@@ -546,6 +572,8 @@ def calendar(request: HttpRequest) -> HttpResponse:
     # 1 September is drawn on the August page, and a name that appears only when you click through
     # to the next month is a name the calendar failed to tell you about.
     birthdays = birthdays_mod.in_span(grid_first, grid_last)
+    # The founders' birthdays and other mærkedage: notes like the birthdays, every year.
+    marked_days = maerkedage.in_span(grid_first, grid_last)
 
     chosen = _requested_day(request, (grid_first, grid_last))
 
@@ -553,7 +581,7 @@ def calendar(request: HttpRequest) -> HttpResponse:
         request,
         "events/calendar.html",
         {
-            "weeks": _month_grid(first, by_day, chosen, birthdays),
+            "weeks": _month_grid(first, by_day, chosen, birthdays, marked_days),
             "month_label": f"{MONTHS[month].capitalize()} {year}",
             "this_month": _month_param(first),
             "prev": _month_param(first - datetime.timedelta(days=1)),
@@ -565,6 +593,7 @@ def calendar(request: HttpRequest) -> HttpResponse:
             # den 12." is what a tap on a quiet day should produce, not a panel that fails to appear.
             "chosen_events": by_day.get(chosen, []) if chosen else [],
             "chosen_birthdays": birthdays.get(chosen, []) if chosen else [],
+            "chosen_maerkedage": marked_days.get(chosen, []) if chosen else [],
         },
     )
 
@@ -633,9 +662,3 @@ def _touch(feed_token: CalendarFeedToken) -> None:
     if feed_token.last_used_at and now - feed_token.last_used_at < datetime.timedelta(hours=1):
         return
     CalendarFeedToken.objects.filter(pk=feed_token.pk).update(last_used_at=now)
-
-
-@access.access_required
-def save_subscription(request: HttpRequest) -> HttpResponse:
-    """Per-topic push opt-in. The body is shared with the other two features — see core.push."""
-    return push.handle_subscription_request(request, services.TOPIC)

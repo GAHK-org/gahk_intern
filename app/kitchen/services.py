@@ -6,22 +6,23 @@ permission gates + forms, and the scheduled tasks share exactly the same code pa
 
 import datetime
 import logging
+from collections.abc import Iterable
 
 from django.db import transaction
-from django.db.models import Count, F, Q, QuerySet, Sum
+from django.db.models import Count, F, QuerySet, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
-from core import push
 from core.clock import current_datetime
 from core.danish import WEEKDAYS_SHORT
+from notifications import categories
+from notifications import services as notifications
 from residents.models import Residency, Resident, active_period
 
 from .models import KitchenAssignment, KitchenMonthlyState, KitchenPointEntry, KitchenShift
 
 logger = logging.getLogger(__name__)
 
-TOPIC = "koekkenvagter"
 MARKET_URL = "/intern/koekkenvagter/"
 
 MONTHLY_CHARGE = 4
@@ -445,13 +446,11 @@ def set_bonus(shift: KitchenShift, bonus: int) -> None:
 # --- notifications --------------------------------------------------------------------------------
 
 
-def is_subscribed(resident: Resident) -> bool:
-    return push.subscribers(TOPIC).filter(user=resident).exists()
-
-
-def _current_resident_ids() -> QuerySet:
+def _current_resident_ids() -> list[int]:
+    """This month's alumneliste, as ids: notifications.notify would read a QuerySet's own pk, which
+    for a Residency queryset is the wrong id."""
     year, month = active_period()
-    return Residency.objects.filter(year=year, month=month).values_list("resident_id", flat=True)
+    return list(Residency.objects.filter(year=year, month=month).values_list("resident_id", flat=True))
 
 
 def _negative_resident_ids(below: int) -> list[int]:
@@ -471,38 +470,49 @@ def notify_for_sale(assignment: KitchenAssignment, *, background: bool = True) -
     if shift.starts_at - current_datetime() > datetime.timedelta(days=7):
         return
     bonus = f" (+{assignment.sale_bonus} ekstra point)" if assignment.sale_bonus else ""
-    push.send(
-        push.subscribers(TOPIC)
-        .filter(user_id__in=_current_resident_ids())
-        .exclude(user_id=assignment.resident_id),
-        head="Køkkenvagt til salg",
+    notifications.notify(
+        _current_resident_ids(),
+        category=categories.KITCHEN,
+        title="Køkkenvagt til salg",
         body=f"{_shift_line(shift)}{bonus}",
         url=MARKET_URL,
+        # Nobody can buy it once it has started.
+        expires_at=shift.starts_at,
+        exclude=assignment.resident_id,
         background=background,
     )
 
 
-def _notify_unmanned(shifts: list[KitchenShift], recipients: Q, head: str) -> set[int]:
+def _notify_unmanned(shifts: list[KitchenShift], recipients: Iterable[int], title: str) -> set[int]:
+    """Tell `recipients` about `shifts`; returns who was reached. Expires when the last one starts."""
     if not shifts:
         return set()
-    subs = push.subscribers(TOPIC).filter(recipients)
+    recipients = set(recipients)
     body = "; ".join(_shift_line(s) for s in shifts[:3])
     if len(shifts) > 3:
         body += f" og {len(shifts) - 3} mere"
-    push.send(subs, head=head, body=body, url=MARKET_URL, background=False)
-    return set(subs.values_list("user_id", flat=True))
+    notifications.notify(
+        recipients,
+        category=categories.KITCHEN,
+        title=title,
+        body=body,
+        url=MARKET_URL,
+        expires_at=max(s.starts_at for s in shifts),
+        background=False,
+    )
+    return recipients
 
 
 def notify_unmanned_daily() -> None:
     """Everyone: unmanned within 24h. Negative balance: unmanned within 72h (once per run)."""
     told = _notify_unmanned(
         list(unmanned_shifts(datetime.timedelta(hours=24))),
-        Q(user_id__in=_current_resident_ids()),
+        _current_resident_ids(),
         "Ledige køkkenvagter inden for et døgn",
     )
     _notify_unmanned(
         list(unmanned_shifts(datetime.timedelta(hours=72))),
-        Q(user_id__in=_negative_resident_ids(0)) & ~Q(user_id__in=told),
+        set(_negative_resident_ids(0)) - told,
         "Ledige køkkenvagter de næste 3 dage",
     )
 
@@ -511,6 +521,6 @@ def notify_unmanned_weekly() -> None:
     """Balance under -10: unmanned within the next 7 days."""
     _notify_unmanned(
         list(unmanned_shifts(datetime.timedelta(days=7))),
-        Q(user_id__in=_negative_resident_ids(-10)),
+        _negative_resident_ids(-10),
         "Ledige køkkenvagter i den kommende uge",
     )

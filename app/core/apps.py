@@ -23,3 +23,7 @@ class CoreConfig(AppConfig):
         register(check_media_url)
         register(check_media_storage_url)
         register(check_media_storage_prefix)
+
+        # Connects the Celery signals that keep each task's log for the worker-jobs page, and the
+        # worker/beat signals that start the heartbeats /health reads.
+        from . import heartbeat, worker_logs  # noqa: F401

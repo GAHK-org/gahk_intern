@@ -481,8 +481,62 @@ def test_resident_cannot_delete_another_persons_application(make_resident: Calla
     c = Client()
     c.force_login(other)
 
-    assert c.post(reverse("soegvaerelse:delete_application", args=[app.id])).status_code == 404
+    assert c.post(reverse("soegvaerelse:delete_application", args=[app.id])).status_code == 403
     assert KvotientApplication.objects.filter(id=app.id).exists()  # untouched
+
+
+@pytest.mark.django_db
+def test_indstilling_can_delete_a_wrong_application(make_resident: Callable) -> None:
+    owner = make_resident(email="owner@gahk.dk")
+    ind = make_resident(email="ind@gahk.dk", roles=["indstilling"])
+    app = _application(owner, month_index(*next_period()), k=5.0)
+    c = Client()
+    c.force_login(ind)
+
+    assert "Slet ansøgning" in c.get(reverse("soegvaerelse:detail", args=[app.id])).content.decode()
+    resp = c.post(reverse("soegvaerelse:delete_application", args=[app.id]))
+
+    assert resp.status_code == 302
+    assert resp.url == reverse("soegvaerelse:admin")
+    assert not KvotientApplication.objects.filter(id=app.id).exists()
+
+
+@pytest.mark.django_db
+def test_the_applicant_is_told_when_indstilling_deletes_their_application(make_resident: Callable) -> None:
+    from notifications.categories import GENERAL, Importance
+    from notifications.models import Notification
+
+    owner = make_resident(email="owner@gahk.dk")
+    ind = make_resident(email="ind@gahk.dk", roles=["indstilling"])
+    app = _application(owner, month_index(*next_period()), k=5.0)
+    c = Client()
+    c.force_login(ind)
+
+    c.post(
+        reverse("soegvaerelse:delete_application", args=[app.id]), {"reason": "Du har allerede et værelse."}
+    )
+
+    note = Notification.objects.get(recipient=owner, category=GENERAL)
+    assert note.importance == Importance.HOEJ
+    assert note.title == "Din værelsesansøgning er slettet"
+    assert "Begrundelse: Du har allerede et værelse." in note.body
+    assert note.url == reverse("soegvaerelse:my")
+    assert not Notification.objects.filter(recipient=ind).exists()
+
+
+@pytest.mark.django_db
+def test_withdrawing_your_own_application_notifies_nobody(make_resident: Callable) -> None:
+    from notifications.models import Notification
+
+    owner = make_resident(email="owner@gahk.dk")
+    app = _application(owner, month_index(*next_period()), k=5.0)
+    c = Client()
+    c.force_login(owner)
+
+    c.post(reverse("soegvaerelse:delete_application", args=[app.id]))
+
+    assert not KvotientApplication.objects.filter(id=app.id).exists()
+    assert not Notification.objects.exists()
 
 
 @pytest.mark.django_db

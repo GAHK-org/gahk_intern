@@ -18,7 +18,7 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-insecure-change-me")
 DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
 ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 
-# Behind Coolify/Traefik, TLS is terminated at the proxy and plain HTTP is forwarded to Daphne.
+# Behind Coolify/Traefik, TLS is terminated at the proxy and plain HTTP is forwarded to uvicorn.
 # Trust the forwarded-proto header so request.is_secure(), CSRF, and secure cookies see HTTPS —
 # without this, every form POST (login included) fails CSRF in prod.
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
@@ -26,6 +26,7 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 # "https://gahk.dk,https://www.gahk.dk". Set in the environment for prod.
 CSRF_TRUSTED_ORIGINS = [o for o in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",") if o]
 SESSION_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_DOMAIN = ".gahk.dk" if not DEBUG else None
 CSRF_COOKIE_SECURE = not DEBUG
 
 # Absolute base for links in mail sent off the request thread, where there is no request to
@@ -33,7 +34,6 @@ CSRF_COOKIE_SECURE = not DEBUG
 SITE_URL = os.environ.get("SITE_URL", "http://localhost:8000" if DEBUG else "https://gahk.dk")
 
 INSTALLED_APPS = [
-    "daphne",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -57,9 +57,12 @@ INSTALLED_APPS = [
     "arkiv",
     "photo_album",
     "kitchen",
+    "notifications",
 ]
 
 MIDDLEWARE = [
+    # /healthz and /health, before anything checks the Host header — see core/health.py.
+    "core.health.HealthCheckMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -74,6 +77,25 @@ MIDDLEWARE = [
 ROOT_URLCONF = "config.urls"
 ASGI_APPLICATION = "config.asgi.application"
 
+# Where live updates travel between the view that writes and the sockets that listen (core.live).
+# In-memory, which is exactly right while `web` is ONE uvicorn process (DEPLOY.md §4): the view and
+# every socket share that process, and there is nothing to run or to fail. It stops being right the
+# moment there are two — `--workers 3` or a second replica — because a signal sent in one process
+# never reaches sockets held by another. Pages then fall back to their slow poll and keep working,
+# just less live; the fix is a shared layer (channels_redis and a Redis service), not this setting.
+#
+# group_expiry is raised from Channels' default of one day, which silently drops a socket from its
+# topic 24 hours after it joined while the socket itself stays open. The page then believes it is
+# live, has switched its 5s poll off, and hears nothing: a Den Hurtige tab left open on a desktop
+# overnight would only update once a minute from then on. Membership is removed on disconnect
+# anyway, so the expiry only guards against leaks, and in one process a leak cannot outlive it.
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer",
+        "CONFIG": {"group_expiry": 60 * 60 * 24 * 365},
+    }
+}
+
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
@@ -85,6 +107,7 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "core.context_processors.navigation",
+                "notifications.context_processors.notifications",
             ],
         },
     },
@@ -100,6 +123,19 @@ if not DATABASE_URL:
         raise ImproperlyConfigured("DATABASE_URL must be configured outside development.")
 
 DATABASES = {"default": dj_database_url.config(default=DATABASE_URL, conn_max_age=600)}
+
+# Under ASGI (config/asgi.py sets DATABASE_POOL) Django runs each request on a thread of its own, and
+# a persistent connection opened there is never closed: the request ends, its thread goes, and the
+# connection stays open until the process exits. In production that filled Postgres's 100
+# connections — a photo album's thumbnails are a request each, so browsing albums got there fast —
+# and from then on every page was a 500 until the next redeploy. Django's advice for ASGI is a pool
+# instead of persistent connections: a request borrows a connection and hands it back when it ends,
+# and max_size bounds what the process holds however many requests run at once (a request beyond it
+# waits for one, up to the pool's 30-second timeout).
+# Celery, manage.py and the tests are not ASGI and keep conn_max_age: their threads live on.
+if os.environ.get("DATABASE_POOL") == "1":
+    DATABASES["default"]["CONN_MAX_AGE"] = 0  # the pool refuses to run alongside persistent connections
+    DATABASES["default"].setdefault("OPTIONS", {})["pool"] = {"min_size": 2, "max_size": 20}
 
 # --- Auth (01-infrastructure.md A4/A5; 02-schema-etl.md §1.6) ---
 AUTH_USER_MODEL = "residents.Resident"
@@ -149,24 +185,66 @@ CELERY_TASK_REJECT_ON_WORKER_LOST = True
 # `retries` NULL in celery_taskmeta — which are four of the columns the siteadmin worker-jobs page
 # selects and displays, so "Worker", "Kø" and "Forsøg" were permanently blank there.
 CELERY_RESULT_EXTENDED = True
+# Never expire results by age: Celery's own cleanup would delete failed jobs along with the rest.
+# core.tasks.purge_worker_job_results deletes successful ones after a month, and others only from
+# piles of more than 1000 of one task and status, once 60 days old.
+CELERY_RESULT_EXPIRES = None
+# A management command run from a task (`purge_photo_album`, …) prints its summary to stdout, which
+# the worker redirects into logging — at WARNING by default, so every routine "Removed 0 item(s)"
+# showed up as a warning in the job's stored log (core/worker_logs.py) and the worker's own output.
+CELERY_WORKER_REDIRECT_STDOUTS_LEVEL = "INFO"
 # The default ceiling for a scheduled job: generous for a sweep, and short enough that a wedged one
 # does not hold a worker slot all night. The two photo-album jobs legitimately run longer and set
 # their own limits at the task — see photo_album/tasks.py::MEDIA_TASK_TIME_LIMIT.
 #
-# Redelivery from the two settings above does NOT make the reapers redundant: `build_album_download`
-# and `process_album_import` both refuse to run unless their row is still QUEUED, and by the time a
-# worker is lost it is BUILDING — so the redelivered message returns False and the row stays wedged.
-# What rescues those is fail_stalled_downloads; what rescues a media row is its claim expiring.
+# Redelivery from the two settings above does NOT re-run a lost download or import: by then its row
+# is BUILDING under the message's own task id, which the task takes as its worker having died and
+# marks failed (photo_album.tasks._claim_job). Redelivery is not the whole safety net, either — a
+# worker container killed outright redelivers nothing — so fail_stalled_downloads and
+# fail_stalled_imports also sweep for jobs that stopped reporting progress. A media row is rescued
+# by its claim expiring.
 CELERY_TASK_TIME_LIMIT = 900
+# One message at a time per worker process. The default of four lets a process sit on three more
+# while it runs an hour-long encode — messages the other worker could have started, and that are
+# lost rather than redelivered if the container is killed with them in hand.
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+# Two workers, so a quick job never waits behind an encode: everything defaults to "celery", run by
+# `worker`; what reads or writes whole media files goes to "media", run by `worker-media` one job at
+# a time (docker-compose.prod.yml). One at a time is also what keeps the box out of the OOM killer:
+# an import, a ZIP build and an ffmpeg encode side by side is what ran it out of memory.
+#
+# Photo thumbnails are the exception, chosen when they are queued (photo_album.tasks.
+# queue_derivatives): their own "thumbnails" queue, which `worker` takes from by turns with
+# "celery". The route below is only the fallback for a derivative queued any other way.
+# The Celery processes /health expects a fresh heartbeat from (core/heartbeat.py): each worker's
+# node name before the "@" (the -n in docker-compose.prod.yml), and "beat".
+HEALTH_PROCESSES = [p for p in os.environ.get("HEALTH_PROCESSES", "default,media,beat").split(",") if p]
+
+CELERY_TASK_ROUTES = {
+    "photo_album.tasks.build_media_derivatives": {"queue": "media"},
+    "photo_album.tasks.build_album_download": {"queue": "media"},
+    "photo_album.tasks.process_album_import": {"queue": "media"},
+    "photo_album.tasks.backfill_media_hashes": {"queue": "media"},
+    "photo_album.tasks.settle_media_dates": {"queue": "media"},
+}
 
 # A local migration client uses this bearer token to submit album ZIP imports as the non-login
 # System resident. Leave blank to disable token-authenticated imports.
 PHOTO_ALBUM_IMPORT_TOKEN = os.environ.get("PHOTO_ALBUM_IMPORT_TOKEN", "")
 PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL = os.environ.get("PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL", "system@gahk.dk")
+# `manage.py delete_photo_album` refuses anything created or uploaded on or after this date
+# (YYYY-MM-DD). Blank means the command's own default, 2026-10-01; a date in the future is refused.
+PHOTO_ALBUM_DELETE_PROTECTED_FROM = os.environ.get("PHOTO_ALBUM_DELETE_PROTECTED_FROM", "")
 CELERY_BEAT_SCHEDULE = {
     "purge-expired-applications": {
         "task": "admissions.tasks.purge_expired_applications",
         "schedule": crontab(minute=20, hour=3),
+    },
+    # Rows stop showing at their TTL by comparison (Notification.objects.active); this only frees
+    # the space, a month later, once the admin statistics are done counting them.
+    "purge-expired-notifications": {
+        "task": "notifications.tasks.purge_expired_notifications",
+        "schedule": crontab(minute=30, hour=3),
     },
     "purge-orphaned-notice-images": {
         "task": "opslagstavle.tasks.purge_orphaned_images",
@@ -197,12 +275,25 @@ CELERY_BEAT_SCHEDULE = {
         "task": "ak.tasks.apply_monthly_assessment",
         "schedule": crontab(minute=10, hour=4, day_of_month=1),
     },
-    # Hourly, and deliberately not daily: what it clears is a download the resident is still
-    # watching a spinner for, so the gap between "the worker died" and "the page says so" is the
-    # thing being minimised.
+    # Every quarter of an hour, matching JOB_STALLED_AFTER: what it clears is a download the
+    # resident is still watching a spinner for, so the gap between "the worker died" and "the page
+    # says so" is the thing being minimised. Off the hour, like everything else here.
     "fail-stalled-photo-album-downloads": {
         "task": "photo_album.tasks.fail_stalled_downloads",
-        "schedule": crontab(minute=5),
+        "schedule": crontab(minute="5-59/15"),
+    },
+    # The same for imports, which the import page and the Dropbox script are waiting on.
+    "fail-stalled-photo-album-imports": {
+        "task": "photo_album.tasks.fail_stalled_imports",
+        "schedule": crontab(minute="10-59/15"),
+    },
+    "purge-worker-job-logs": {
+        "task": "core.tasks.purge_worker_job_logs",
+        "schedule": crontab(minute=40, hour=4),
+    },
+    "purge-worker-job-results": {
+        "task": "core.tasks.purge_worker_job_results",
+        "schedule": crontab(minute=45, hour=4),
     },
     # 04:50, after every other sweep: the rows it deletes are the messages those sweeps were
     # delivered on, so running it last keeps one night's work visible in the table while that work
@@ -217,6 +308,19 @@ CELERY_BEAT_SCHEDULE = {
         # pass for broker messages lost while unavailable or work stranded by a killed worker.
         "schedule": crontab(minute=0, hour=2),
     },
+    # 02:40, after the derivative recovery pass at 02:00. Only rows stored before hashing existed
+    # need it; each run reads originals for at most HASH_BACKFILL_BUDGET and leaves the rest for
+    # the next night, so the deploy needs no manual step and the box is never held for long.
+    "backfill-photo-album-hashes": {
+        "task": "photo_album.tasks.backfill_media_hashes",
+        "schedule": crontab(minute=40, hour=2),
+    },
+    # 03:05, once the hash backfill's twenty minutes are up. Reads originals stored before XMP and
+    # IPTC were read for at most DATE_REREAD_BUDGET, then settles every album's approximate dates.
+    "settle-photo-album-dates": {
+        "task": "photo_album.tasks.settle_media_dates",
+        "schedule": crontab(minute=5, hour=3),
+    },
     "remind-rsvp-deadlines": {
         "task": "events.tasks.remind_rsvp_deadlines",
         "schedule": crontab(minute=0, hour=17),
@@ -230,17 +334,19 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(minute=0, hour="8,16"),
     },
     # Points are booked when a shift ends, so this runs often; it is one query when nothing is due.
+    # Two minutes past the quarter, clear of the other quarter-hourly jobs (5 and 10 past).
     "complete-finished-kitchen-shifts": {
         "task": "kitchen.tasks.complete_finished_shifts",
-        "schedule": crontab(minute="*/15"),
+        "schedule": crontab(minute="2-59/15"),
     },
     "extend-kitchen-calendar": {
         "task": "kitchen.tasks.extend_calendar",
-        "schedule": crontab(minute=30, hour=3),
+        "schedule": crontab(minute=35, hour=3),
     },
+    # 04:15 on the 1st, between the AK assessment (04:10) and the download purge (04:20).
     "apply-kitchen-monthly-charge": {
         "task": "kitchen.tasks.apply_monthly_charge",
-        "schedule": crontab(minute=40, hour=4, day_of_month=1),
+        "schedule": crontab(minute=15, hour=4, day_of_month=1),
     },
     "notify-unmanned-kitchen-shifts": {
         "task": "kitchen.tasks.notify_unmanned_daily",
@@ -256,8 +362,8 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 STATICFILES_DIRS = [BASE_DIR / "static"]  # holds the Vite-built bundle (static/dist/)
 
-# Media (user uploads) always go to object storage: Hetzner in production, MinIO for local dev
-# (docker-compose.yml's `minio` service) — there is no local-disk fallback. STORAGES["default"]
+# Media (user uploads) always go to object storage: Hetzner in production, SeaweedFS for local dev
+# (docker-compose.yml's `s3` service) — there is no local-disk fallback. STORAGES["default"]
 # below is unconditionally core.storage.MediaS3Storage, so a missing or wrong S3_BUCKET is a loud
 # S3 error on the first upload, not a silent switch to writing files onto a disk nobody backs up.
 #
@@ -269,7 +375,7 @@ STATICFILES_DIRS = [BASE_DIR / "static"]  # holds the Vite-built bundle (static/
 # core.checks (core.E007-E009) refuses to start the process if it or the backend's URLs ever stop
 # matching. core/storage.py has the full argument.
 #
-# Defaults describe the MinIO container docker-compose.yml runs for local dev (bucket, credentials,
+# Defaults describe the SeaweedFS container docker-compose.yml runs for local dev (bucket, credentials,
 # endpoint, path-style addressing), not Hetzner — so S3 works out of the box on a fresh checkout with
 # no app/.env at all. Gated on DEBUG rather than unconditional: DEPLOY.md requires DJANGO_DEBUG=0 in
 # production, so these defaults can never be what a real deploy silently runs on.
@@ -278,8 +384,8 @@ S3_BUCKET = os.environ.get("S3_BUCKET", "gahk-s3" if DEBUG else "")
 # traffic inside eu-central does not count against the account's egress allowance.
 S3_LOCATION = os.environ.get("S3_LOCATION", "fsn1")
 
-# Overridable for S3-compatible endpoints that are not Hetzner — namely the MinIO container
-# docker-compose.yml runs for local dev. Path-style addressing is required there: MinIO has no
+# Overridable for S3-compatible endpoints that are not Hetzner — namely the SeaweedFS container
+# docker-compose.yml runs for local dev. Path-style addressing is required there: it has no
 # wildcard TLS certificate for virtual-hosted-style requests, and unlike Hetzner it is reached over
 # plain HTTP on the docker network.
 S3_ENDPOINT_URL = os.environ.get(
@@ -289,9 +395,9 @@ S3_ADDRESSING_STYLE = os.environ.get("S3_ADDRESSING_STYLE", "path" if DEBUG else
 
 # The endpoint a BROWSER can actually reach, for presigned URLs only — everything else (uploads,
 # HEAD, delete, ...) keeps using S3_ENDPOINT_URL above, which this process itself resolves fine.
-# The two differ only under `task dev` (the dockerized `web` service): Django reaches MinIO over the
-# compose network at http://minio:9000, but the browser that follows the presigned URL is on the
-# HOST, which can only reach MinIO's published port at http://localhost:9000. Signing the URL with
+# The two differ only under `task dev` (the dockerized `web` service): Django reaches SeaweedFS over the
+# compose network at http://s3:8333, but the browser that follows the presigned URL is on the
+# HOST, which can only reach the published port at http://localhost:9000. Signing the URL with
 # the wrong host is not cosmetic — SigV4 signs the Host header, so the bucket 403s a request whose
 # Host does not match the one it was signed for, and rewriting the URL string afterwards cannot fix
 # that either. `task dev:local` and production both leave this unset, since S3_ENDPOINT_URL there is
@@ -299,7 +405,7 @@ S3_ADDRESSING_STYLE = os.environ.get("S3_ADDRESSING_STYLE", "path" if DEBUG else
 S3_PUBLIC_ENDPOINT_URL = os.environ.get("S3_PUBLIC_ENDPOINT_URL", "") or S3_ENDPOINT_URL
 
 # botocore >= 1.36 defaults to sending x-amz-checksum-crc32 with aws-chunked framing on every PUT,
-# which S3-compatible providers — Hetzner AND MinIO — mis-store or reject. botocore reads these
+# which S3-compatible providers — Hetzner AND SeaweedFS — mis-store or reject. botocore reads these
 # straight out of the environment itself, never through Django, so setdefault() here is what makes
 # uploads work without an app/.env at all; .setdefault leaves an explicit .env/real env var alone.
 os.environ.setdefault("AWS_REQUEST_CHECKSUM_CALCULATION", "when_required")
@@ -307,14 +413,14 @@ os.environ.setdefault("AWS_RESPONSE_CHECKSUM_VALIDATION", "when_required")
 
 _MEDIA_S3_OPTIONS = {
     "bucket_name": S3_BUCKET,
-    # minioadmin/minioadmin (MinIO's own defaults) when nothing is configured — see S3_BUCKET above.
-    "access_key": os.environ.get("S3_ACCESS_KEY", "minioadmin" if DEBUG else ""),
-    "secret_key": os.environ.get("S3_SECRET_KEY", "minioadmin" if DEBUG else ""),
+    # gahkdev/gahkdevsecret (the pair docker-compose.yml's `s3` service is started with) when nothing is configured — see S3_BUCKET above.
+    "access_key": os.environ.get("S3_ACCESS_KEY", "gahkdev" if DEBUG else ""),
+    "secret_key": os.environ.get("S3_SECRET_KEY", "gahkdevsecret" if DEBUG else ""),
     "endpoint_url": S3_ENDPOINT_URL,
     "region_name": S3_LOCATION,
     # Virtual-host style is what Hetzner documents: https://<bucket>.<loc>.your-objectstorage.com.
     # The bucket name must therefore be DNS-safe — lowercase, and NO DOTS, or TLS SNI against their
-    # wildcard certificate fails for every request. MinIO (local dev) overrides this to "path" via
+    # wildcard certificate fails for every request. SeaweedFS (local dev) overrides this to "path" via
     # S3_ADDRESSING_STYLE, since it has no such certificate.
     "addressing_style": S3_ADDRESSING_STYLE,
     "signature_version": "s3v4",
@@ -335,6 +441,12 @@ _MEDIA_S3_OPTIONS = {
     # so the grep for "backups" finds this comment.
     "location": "media",
     "object_parameters": {"CacheControl": "private, max-age=604800"},
+    # How much of a file opened for reading is held in memory before the rest goes to a temporary
+    # file. django-storages defaults it to 0, which Python's SpooledTemporaryFile reads as "never
+    # roll over" — so every `.open()` downloaded the WHOLE object into RAM: a video before its
+    # encode, an album ZIP before its import. A ZIP of several hundred MB had the import worker at
+    # 800 MB when the kernel's OOM killer took it.
+    "max_memory_size": 10 * 1024 * 1024,
 }
 
 # Photo-album originals/derivatives (photo_album.storage.PhotoAlbumS3Storage): same bucket and
@@ -447,6 +559,11 @@ LOGGING = {
             "level": os.environ.get("CORE_LOG_LEVEL", "INFO"),
             "propagate": False,
         },
+        # INFO, so the lines a photo-album job logs (an import's left-out files, a ZIP's size) reach
+        # the job's stored log (core/worker_logs.py) even where the root logger is at WARNING. No
+        # handler of its own: it propagates to the worker's, and in the web process nothing prints
+        # below WARNING.
+        "photo_album": {"level": os.environ.get("PHOTO_ALBUM_LOG_LEVEL", "INFO")},
     },
 }
 
@@ -479,6 +596,21 @@ EVENT_IMAGE_MAX_MB = int(os.environ.get("EVENT_IMAGE_MAX_MB", "5"))
 # same value to avoid a GIF being postable in one place and not the next.
 ANIMATED_IMAGE_MAX_MB = int(os.environ.get("ANIMATED_IMAGE_MAX_MB", "5"))
 
+# The ceiling for a HEIC/HEIF photo, and for the same kind of reason as the one above: the format
+# cannot go through the browser downscaler. Only Safari can decode HEIC, so from any other browser a
+# straight-from-the-camera iPhone photo arrives at full size. A 48-megapixel one is well past 5 MB.
+# core.uploads converts it to a downscaled JPEG before it is stored, so this only bounds what one
+# request may upload and decode, not what ends up in the bucket.
+HEIF_IMAGE_MAX_MB = int(os.environ.get("HEIF_IMAGE_MAX_MB", "25"))
+
+# Ølkælder product photos. They were not checked at all until HEIC support made the upload path
+# worth looking at, and oel/ is a PUBLIC media prefix (core.media.PUBLIC_PREFIXES), so an
+# unchecked SVG there would have been script served from our own origin to anyone.
+PRODUCT_IMAGE_MAX_MB = int(os.environ.get("PRODUCT_IMAGE_MAX_MB", "5"))
+
+# Profile pictures. Was a literal 5 in residents.forms.
+PROFILE_PICTURE_MAX_MB = int(os.environ.get("PROFILE_PICTURE_MAX_MB", "5"))
+
 # Photo album uploads. Two ceilings rather than one: the album deliberately keeps the ORIGINAL at
 # full resolution (unlike every other feature here, which downscales in the browser first), so a
 # modern phone photo legitimately arrives at 10-15 MB, and a clip from the same phone is an order of
@@ -486,3 +618,22 @@ ANIMATED_IMAGE_MAX_MB = int(os.environ.get("ANIMATED_IMAGE_MAX_MB", "5"))
 # each feature caps its own uploads, so an ops change for one cannot silently change another.
 PHOTO_ALBUM_IMAGE_MAX_MB = int(os.environ.get("PHOTO_ALBUM_IMAGE_MAX_MB", "50"))
 PHOTO_ALBUM_VIDEO_MAX_MB = int(os.environ.get("PHOTO_ALBUM_VIDEO_MAX_MB", "1000"))
+
+# A local copy of the album's thumbnails and HD images (photo_album.cache), so the grid does not
+# bounce every tile off S3. Empty turns it off; production sets it to a volume so a redeploy starts
+# warm. The two budgets are separate so one HD-heavy evening cannot push every thumbnail out.
+PHOTO_ALBUM_CACHE_DIR = os.environ.get("PHOTO_ALBUM_CACHE_DIR", "")
+PHOTO_ALBUM_CACHE_THUMBNAIL_MB = int(os.environ.get("PHOTO_ALBUM_CACHE_THUMBNAIL_MB", "2048"))
+PHOTO_ALBUM_CACHE_HD_MB = int(os.environ.get("PHOTO_ALBUM_CACHE_HD_MB", "3072"))
+
+# The same kind of local copy for Den Hurtige's and opslagstavlen's image attachments (core.media,
+# core.disk_cache). It defaults to the photo album's directory, so the production volume and the
+# dev setups already configured for that one work for this too; the copies go in a subdirectory of
+# their own. Empty turns it off.
+MEDIA_CACHE_DIR = os.environ.get("MEDIA_CACHE_DIR", PHOTO_ALBUM_CACHE_DIR)
+MEDIA_CACHE_ATTACHMENTS_MB = int(os.environ.get("MEDIA_CACHE_ATTACHMENTS_MB", "2048"))
+# Only images people are still looking at are copied; an ARCHIVED one is served by a redirect to
+# the bucket, as before. Den Hurtige archives a message itself, when it expires. Opslagstavlen keeps
+# every post forever and has no archive, so for caching purposes an opslag counts as archived this
+# many days after it was posted.
+NOTICE_IMAGE_CACHE_DAYS = int(os.environ.get("NOTICE_IMAGE_CACHE_DAYS", "30"))

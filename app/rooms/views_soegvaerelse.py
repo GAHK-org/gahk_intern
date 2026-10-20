@@ -23,6 +23,7 @@ from residents.permissions import current_resident, request_has_role, role_requi
 
 from .kvotient import compute_k, compute_k_parts, month_choices, month_index, month_label
 from .models import KvotientApplication, KvotientOrlov, KvotientPriority, RoomOffer
+from .notifications import notify_application_deleted
 
 
 class Allocation(NamedTuple):
@@ -260,12 +261,22 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
 @require_POST
 @login_required
 def delete_application(request: HttpRequest, pk: int) -> HttpResponseRedirect:
-    """A resident withdraws their own room application (F-004). Scoped to the owner via the lookup, so
-    one resident can't delete another's. Cascades priorities + orlov."""
-    app = get_object_or_404(KvotientApplication, pk=pk, resident=current_resident(request))
+    """A resident withdraws their own room application (F-004), or Indstillingen removes a wrong one.
+    Nobody else may delete another's. Cascades priorities + orlov."""
+    app = get_object_or_404(KvotientApplication, pk=pk)
+    if app.resident_id == current_resident(request).pk:
+        app.delete()
+        messages.success(request, "Din ansøgning er trukket tilbage.")
+        return redirect("soegvaerelse:my")
+    if not request_has_role(request, "indstilling"):
+        raise PermissionDenied
+    name = app.resident.full_name
+    # 200 leaves room for the sentence in front of it in the notification body (300 at most).
+    reason = (request.POST.get("reason") or "").strip()[:200]
+    notify_application_deleted(app, reason)
     app.delete()
-    messages.success(request, "Din ansøgning er trukket tilbage.")
-    return redirect("soegvaerelse:my")
+    messages.success(request, f"Ansøgningen fra {name} er slettet, og {name} har fået besked.")
+    return redirect("soegvaerelse:admin")
 
 
 @role_required("indstilling")

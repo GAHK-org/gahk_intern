@@ -6,7 +6,7 @@ This is the one place in the project where direct-to-object-storage earns its co
 worth being clear about why, because the media path deliberately does the opposite. Opslag images
 are capped at 5 MB and already downscaled in the browser, so posting them through Django costs
 nothing. Arkiv holds the video somebody took at sommerfest: 2 GB, uploaded from a phone on dorm
-wifi, against a single Daphne process with a 60-second timeout. That upload cannot go
+wifi, against a single app process, for as long as dorm wifi takes. That upload cannot go
 through the app - not slowly, not at all.
 
 **Two steps, so the database never holds a row for bytes that never arrived.**
@@ -70,10 +70,9 @@ MAX_PREVIEW_BYTES = 4 * 1024 * 1024
 # it may weigh. Keyed by the string the client sends, so adding a third size is a line here, a line
 # in imageupload.ts, and nothing else.
 #
-# Both are made client-side for the same reason the project has no Celery: the alternative is
-# Pillow in the production image and a scheduled sweep, which would also leave a window where a
-# just-uploaded photograph has no preview - and the person who just uploaded is precisely the one
-# about to open the folder and look. `make_arkiv_thumbnails` stays the one-off for the imported
+# Both are made client-side so that they exist the moment the original does. A job on the Celery
+# worker would leave a window where a just-uploaded photograph has no preview - and the person who
+# just uploaded is precisely the one about to open the folder and look. `make_arkiv_thumbnails` stays the one-off for the imported
 # backlog and the hand-run net for anything a browser could not decode.
 DERIVED_SIZES: dict[str, tuple[Any, int]] = {
     "thumbnail": (thumbnail_key, MAX_THUMBNAIL_BYTES),

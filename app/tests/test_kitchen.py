@@ -1,5 +1,5 @@
 """Køkkenvagter (spec/features/kitchen-duty.md): calendar, ledger, enrolment, trading, completion,
-absence, administration and the personal calendar feed."""
+absence, administration, notifications and the personal calendar feed."""
 
 import datetime
 from collections.abc import Callable
@@ -13,6 +13,8 @@ from core.models import Room
 from events.models import CalendarFeedToken
 from kitchen import services
 from kitchen.models import KitchenAssignment, KitchenPointEntry, KitchenShift
+from notifications import categories
+from notifications.models import Notification
 from residents.models import Residency, Role, active_period
 
 pytestmark = pytest.mark.django_db
@@ -42,6 +44,14 @@ def _end(shift: KitchenShift) -> None:
 
 def _balance(resident: object) -> int:
     return KitchenPointEntry.balance_for(resident.pk)  # type: ignore[attr-defined]
+
+
+def _live_here(resident: object, year: int | None = None, month: int | None = None) -> None:
+    """Put `resident` on a month's alumneliste (the active one by default)."""
+    if year is None:
+        year, month = active_period()
+    room, _ = Room.objects.get_or_create(legacy_index=1, number=1, floor="stuen", side="mod gaden")
+    Residency.objects.create(resident=resident, room=room, year=year, month=month)
 
 
 def test_free_spots_are_coloured_by_how_soon_the_shift_starts() -> None:
@@ -351,3 +361,44 @@ def test_assigned_shift_appears_in_personal_calendar_feed(make_resident: Callabl
     token = CalendarFeedToken.for_resident(r)
     body = Client().get(reverse("events_feed", args=[token.token])).content.decode()
     assert f"UID:koekkenvagt-{shift.pk}@gahk.dk" in body
+
+
+def test_shift_for_sale_notifies_this_months_residents_but_not_the_seller(make_resident: Callable) -> None:
+    seller, buyer, outsider = (make_resident(email=f"{n}@gahk.dk") for n in ("s", "b", "o"))
+    _live_here(seller)
+    _live_here(buyer)
+    shift = _shift(datetime.timedelta(days=2))
+    services.enroll(shift, seller)
+    services.put_for_sale(KitchenAssignment.objects.get(shift=shift), 2)
+    row = Notification.objects.get()
+    assert (row.recipient_id, row.category) == (buyer.pk, categories.KITCHEN)
+    assert row.body.endswith("(+2 ekstra point)")
+    assert row.expires_at == shift.starts_at
+    assert outsider.pk != row.recipient_id
+
+
+def test_shift_for_sale_more_than_a_week_ahead_is_not_announced(make_resident: Callable) -> None:
+    seller, other = make_resident(email="s@gahk.dk"), make_resident(email="b@gahk.dk")
+    _live_here(seller)
+    _live_here(other)
+    shift = _shift(datetime.timedelta(days=10))
+    services.enroll(shift, seller)
+    services.put_for_sale(KitchenAssignment.objects.get(shift=shift), 0)
+    assert not Notification.objects.exists()
+
+
+def test_unmanned_shifts_notify_everyone_within_a_day_and_the_negative_within_three(
+    make_resident: Callable,
+) -> None:
+    fine, broke = make_resident(email="f@gahk.dk"), make_resident(email="n@gahk.dk")
+    _live_here(fine)
+    _live_here(broke)
+    services.post_entry(broke.pk, -1, "x", KitchenPointEntry.Kind.MANUAL)
+    _shift(datetime.timedelta(hours=48))
+    services.notify_unmanned_daily()
+    assert list(Notification.objects.values_list("recipient_id", flat=True)) == [broke.pk]
+
+    Notification.objects.all().delete()
+    _shift(datetime.timedelta(hours=5))
+    services.notify_unmanned_daily()
+    assert sorted(Notification.objects.values_list("recipient_id", flat=True)) == sorted([fine.pk, broke.pk])

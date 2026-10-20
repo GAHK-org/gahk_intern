@@ -9,7 +9,6 @@ urlpatterns = [
     path("raekker", views.sheet_rows, name="sheet_rows"),
     path("historik", views.history, name="history"),
     path("konto", views.account, name="account"),
-    path("push", views.save_subscription, name="save_subscription"),
     path("vagt/<int:pk>", views.shift_detail, name="shift"),
     path("vagt/<int:pk>/tilmeld", views.enroll, name="enroll"),
     path("vagt/<int:pk>/aflys", views.disable, name="disable"),

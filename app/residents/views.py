@@ -3,7 +3,6 @@ import io
 import logging
 import os
 from datetime import date
-from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib import messages
@@ -15,6 +14,7 @@ from django.db.models import Q, QuerySet
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import url_has_allowed_host_and_scheme, urlsafe_base64_encode
 
@@ -42,11 +42,13 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     """Internal landing page (F-013). Shows the member's active-month roles and the shared
     WiFi/calendar info — now gated by authentication (not campus IP) with secrets read from env.
     Uses effective roles so the preview override is reflected here too."""
-    # Backstop for the ak_monthly_assessment cron job (DEPLOY.md §4b): books this month's AK
+    # Backstop for the ak_monthly_assessment cron job (DEPLOY.md §4b): charges last month's AK
     # deduction if the schedule missed it. Cheap and idempotent; see ak.services.
-    from ak.services import ensure_active_month_applied
+    from ak.services import ensure_previous_month_charged
+    from events import access as events_access
+    from events.agenda import agenda
 
-    ensure_active_month_applied()
+    ensure_previous_month_charged()
     year, month = active_period()
     roles = sorted(effective_roles(request))
     return render(
@@ -58,36 +60,10 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             "wifi_password": os.environ.get("WIFI_PASSWORD", ""),
             "calendar_user": os.environ.get("GOOGLE_CALENDAR_USER", ""),
             "calendar_password": os.environ.get("GOOGLE_CALENDAR_PASSWORD", ""),
-            "calendar_embed_url": _calendar_embed_url(),
+            # The kollegium's own calendar; empty for anyone the events rollout gate keeps out.
+            "agenda": agenda(current_resident(request)) if events_access.request_allowed(request) else None,
         },
     )
-
-
-def _calendar_embed_url() -> str:
-    """Build the shared Google Calendar agenda embed shown on the dashboard (restored from the
-    legacy /intern dashboard). The calendar IDs are public embed IDs, not secrets, but come from
-    env so the source stays deployment-agnostic. Returns "" when no calendar is configured."""
-    calendar_user = os.environ.get("GOOGLE_CALENDAR_USER", "").strip()
-    if not calendar_user:
-        return ""
-    calendar_ids = [calendar_user]
-    extra_ids = os.environ.get("GOOGLE_CALENDAR_EXTRA_IDS", "")
-    calendar_ids += [c.strip() for c in extra_ids.split(",") if c.strip()]
-    params = [
-        ("mode", "AGENDA"),
-        ("ctz", "Europe/Copenhagen"),
-        ("wkst", "2"),
-        ("bgcolor", "#ffffff"),
-        ("showTitle", "0"),
-        ("showNav", "0"),
-        ("showDate", "0"),
-        ("showPrint", "0"),
-        ("showTabs", "0"),
-        ("showCalendars", "0"),
-        ("showTz", "0"),
-    ]
-    params += [("src", cid) for cid in calendar_ids]
-    return "https://calendar.google.com/calendar/embed?" + urlencode(params)
 
 
 # ---- Alumneliste: the resident directory (F-010) ----
@@ -414,6 +390,31 @@ def _pick[T](mapping: dict[int, T], raw: str | None) -> T | None:
     return mapping.get(int(raw)) if raw and raw.isdigit() else None
 
 
+def _add_form_draft(request: HttpRequest, action: str) -> dict[str, object]:
+    """What the add-forms posted, echoed back so a rejected submission keeps what was typed.
+
+    Ids come back as ints so the template can compare them to `room.id` directly rather than
+    stringformat-ing every option.
+    """
+
+    def _int(raw: str | None) -> int | None:
+        return int(raw) if raw and raw.isdigit() else None
+
+    return {
+        "action": action,
+        "resident": _int(request.POST.get("resident")),
+        "room": _int(request.POST.get("room")),
+        "workgroup": _int(request.POST.get("workgroup")),
+        "cleaning": _int(request.POST.get("cleaning")),
+        "sponsor": _int(request.POST.get("sponsor")),
+        "first_name": (request.POST.get("first_name") or "").strip(),
+        "last_name": (request.POST.get("last_name") or "").strip(),
+        "email": (request.POST.get("email") or "").strip(),
+        "phone": (request.POST.get("phone") or "").strip(),
+        "birthday": (request.POST.get("birthday") or "").strip(),
+    }
+
+
 def _send_welcome_email(request: HttpRequest, resident: Resident) -> bool:
     """Welcome a newly created resident with a link to set their password (F-014). Best-effort — a
     mail failure must not undo the creation — but it is logged and reported, never swallowed: the
@@ -482,6 +483,9 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
     cleanings = list(Cleaning.objects.order_by("name"))
 
     next_rows = None  # Sporer om vi skal hente fra databasen eller bruge brugerens kladde
+    # Same idea for the two add-forms: a rejected submission re-renders holding what was typed.
+    existing_draft: dict[str, object] | None = None
+    new_draft: dict[str, object] | None = None
 
     if request.method == "POST":
         action = request.POST.get("action")
@@ -606,8 +610,10 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
             resident = _pick({r.id: r for r in Resident.objects.all()}, request.POST.get("resident", ""))
             if not (resident and room):
                 messages.error(request, "Vælg både en beboer og et værelse.")
+                existing_draft = _add_form_draft(request, "add_existing")
             elif _room_taken(room, ny, nm, exclude_resident_id=resident.id):
                 messages.error(request, f"Værelse {room.number:03d} er allerede optaget i {ny}-{nm:02d}.")
+                existing_draft = _add_form_draft(request, "add_existing")
             else:
                 wg = _pick(wg_by_id, request.POST.get("workgroup", ""))
                 Residency.objects.update_or_create(
@@ -622,19 +628,33 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                 )
                 _sync_month_roles(resident.id, wg, ny, nm, resident.id in admins)
                 messages.success(request, f"{resident.full_name} tilføjet til {ny}-{nm:02d}.")
-            return redirect(f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}")
+                return redirect(
+                    f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}"
+                )
 
         elif action == "add_new":  # create a new resident and add them
             email = (request.POST.get("email") or "").strip().lower()
             first = (request.POST.get("first_name") or "").strip()
             last = (request.POST.get("last_name") or "").strip()
             room = _pick(room_by_id, request.POST.get("room", ""))
+            phone = (request.POST.get("phone") or "").strip()[:40]
+            raw_birthday = (request.POST.get("birthday") or "").strip()
+            try:
+                birthday = date.fromisoformat(raw_birthday) if raw_birthday else None
+            except ValueError:
+                birthday = None
             if not (email and first and last and room):
                 messages.error(request, "Udfyld navn, e-mail og værelse for at tilføje en ny beboer.")
+                new_draft = _add_form_draft(request, "add_new")
+            elif raw_birthday and (birthday is None or birthday > timezone.localdate()):
+                messages.error(request, "Fødselsdagen er ikke en gyldig dato.")
+                new_draft = _add_form_draft(request, "add_new")
             elif Resident.objects.filter(email=email).exists():
                 messages.error(request, "Der findes allerede en beboer med den e-mail.")
+                new_draft = _add_form_draft(request, "add_new")
             elif _room_taken(room, ny, nm):
                 messages.error(request, f"Værelse {room.number:03d} er allerede optaget i {ny}-{nm:02d}.")
+                new_draft = _add_form_draft(request, "add_new")
             else:
                 wg = _pick(wg_by_id, request.POST.get("workgroup", ""))
                 # Fylgje is set here rather than left for a follow-up edit: whoever adds a newcomer
@@ -642,7 +662,14 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                 # exactly the step that gets skipped, leaving holes in the stamtræ (F-011).
                 sponsor = _pick({r.id: r for r in Resident.objects.all()}, request.POST.get("sponsor", ""))
                 with transaction.atomic():
-                    r = Resident(email=email, first_name=first, last_name=last, sponsor=sponsor)
+                    r = Resident(
+                        email=email,
+                        first_name=first,
+                        last_name=last,
+                        phone=phone,
+                        birthday=birthday,
+                        sponsor=sponsor,
+                    )
                     r.set_unusable_password()  # they set one via the welcome/password-reset link (F-014)
                     r.save()
                     Residency.objects.create(
@@ -663,7 +690,9 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                         "Velkomstmailen kunne ikke sendes — bed dem bruge “glemt kodeord”, "
                         "og tjek serverloggen.",
                     )
-            return redirect(f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}")
+                return redirect(
+                    f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}"
+                )
 
     # Hvis next_rows stadig er None, betyder det at det er en GET request ELLER
     # en action (som "save") slog fejl og allerede populerede listen lokalt.
@@ -696,6 +725,8 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
             # the person is added rather than in a follow-up edit nobody remembers to make.
             "all_residents": Resident.objects.order_by("first_name", "last_name"),
             "priv_names": sorted(WORKGROUP_ROLE.keys()),
+            "existing_draft": existing_draft,
+            "new_draft": new_draft,
         },
     )
 

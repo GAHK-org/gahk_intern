@@ -6,10 +6,14 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "django>=5.2,<5.3",
-    "channels[daphne]>=4.2,<5.0",
+    "channels>=4.2,<5.0",
+    # The ASGI server. Not Daphne: it reads a whole request body into memory before the app sees any
+    # of it, so one large upload (a photo-album ZIP) took the process down. uvicorn stops reading
+    # the socket until the app has taken what it has. [standard] brings its WebSocket support.
+    "uvicorn[standard]>=0.54",
     "dj-database-url>=2.1",
     "python-dotenv>=1.0",
-    "psycopg[binary]>=3.1",
+    "psycopg[binary,pool]>=3.1", # pool: Django's connection pool, which ASGI needs (config/settings.py)
     "whitenoise>=6.6",
     "pymysql>=1.1", # ETL source reader (legacy MariaDB); harmless in prod
     "openpyxl>=3.1", # alumneliste Excel (.xlsx) export
@@ -32,8 +36,8 @@ dependencies = [
     "imageio-ffmpeg>=0.6", # bundled FFmpeg binary for photo-album video derivatives
     "pillow-heif>=1.1",
     "zipstream-ng>=1.8", # stream photo-album ZIP downloads without temporary archive files
-    "celery>=5.5,<5.6", # background work and scheduled jobs
-    "django-celery-beat>=2.8,<2.9", # PostgreSQL-backed schedules and last-run state
+    "celery>=5.5,<5.7", # background work and scheduled jobs
+    "django-celery-beat>=2.8,<2.10", # PostgreSQL-backed schedules and last-run state
     "sqlalchemy>=2.0", # PostgreSQL-backed Celery broker and task-result backend
 ]
 

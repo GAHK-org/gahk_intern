@@ -21,13 +21,20 @@
 // morphed region -- and merging them into one request with an out-of-band swap would put every
 // reply back into the 5s payload, which is exactly what moving replies into the panel removed.
 //
+// Both are now LIVE rather than polled: a WebSocket signal tells them when to re-fetch (see "live
+// signals" below), and the 5s timer runs only while that socket is down. Everything said here about
+// the morph is unchanged — only what pulls the trigger is.
+//
 // Blocks, in order: morph configuration, scroll-following, the iOS zoom lockdown, picker dismissal,
 // the thread panel's close/focus/history handling, the who-reacted gestures, the touch swipes, and
 // the composer. Every one of them is delegated from `document` rather than bound to an element,
 // because the feed is morphed every five seconds and anything bound directly would have to be
 // re-armed after each poll.
 
+import htmx from "htmx.org";
 import { Idiomorph } from "idiomorph/htmx";
+import { LIVE_EVENT, concerns, topicsOf, type LiveSignal } from "./live";
+import { REFRESH_EVENT } from "./live-region";
 
 const FEED_ID = "js-feed";
 // The polled region, which is NO LONGER the scroller. #js-feed is the box that scrolls and holds
@@ -59,10 +66,21 @@ function toBottom(el: HTMLElement): void {
 }
 
 // Attributes the CLIENT owns, which the server never sends and morphing would therefore strip:
-//   open   a picker or reader panel the reader opened; losing it closes it under their thumb
-const CLIENT_OWNED_ATTRS = new Set(["open"]);
+//   open            a picker or reader panel the reader opened; losing it closes it under their thumb
+//   data-live-busy  live-region.ts's hold. The server renders the channel menu held (it starts
+//                   closed); a refresh of the OPEN menu would otherwise put the hold back on it and
+//                   freeze it, and a refresh mid-drag would take the kanban's off.
+//   data-live-on    live.ts's "this element's topic was joined", which the polls filter on
+const CLIENT_OWNED_ATTRS = new Set(["open", "data-live-busy", "data-live-on"]);
 
-Idiomorph.defaults.ignoreActiveValue = true; // never rewrite the field being typed into
+// NOT idiomorph's ignoreActiveValue, which this used to set. That option leaves the focused
+// element's CHILDREN alone, not just its value — right for a <textarea>, whose children ARE its
+// value, and wrong for everything else that can hold focus. The thread panel is focused the moment
+// it opens (it has tabindex=-1; see the afterSwap handler below), so every refresh of it was
+// silently discarded: replies and reactions never appeared in an open thread, whether the refresh
+// came from the old 5s poll or a live signal. The rule it stood for — never rewrite the field being
+// typed into — is kept, for form fields only, in beforeNodeMorphed below.
+Idiomorph.defaults.ignoreActiveValue = false;
 Idiomorph.defaults.callbacks.beforeAttributeUpdated = (name: string, node: Element): boolean => {
   if (CLIENT_OWNED_ATTRS.has(name)) return false;
   // `style` is normally the server's to set — the avatar <img> carries one — but for the length of
@@ -78,8 +96,16 @@ Idiomorph.defaults.callbacks.beforeAttributeUpdated = (name: string, node: Eleme
 //
 // Marked with data-morph-skip in _thread.html rather than listed by selector here, so the template
 // that owns the form is the thing that says so.
+//
+// The field being typed into is client-owned too, wherever it is: a search box, an emoji field, a
+// reply not wrapped in data-morph-skip. Skipped whole while it has focus, so neither its value nor
+// its caret moves under the typist.
+const isFocusedField = (node: Element): boolean =>
+  node === document.activeElement &&
+  (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement);
+
 Idiomorph.defaults.callbacks.beforeNodeMorphed = (node: Node): boolean =>
-  !(node instanceof Element) || !node.hasAttribute("data-morph-skip");
+  !(node instanceof Element) || !(node.hasAttribute("data-morph-skip") || isFocusedField(node));
 
 if (feed && scroller) {
   // Start at the newest message, as a chat does.
@@ -199,8 +225,7 @@ if (feed && scroller) {
     // separates a modifier from its argument, as in `intersect root:#js-feed` -- so `gahk:open`
     // parses as the event `gahk` with a modifier, the attribute never matches, and the archive
     // simply never opens with nothing logged anywhere. A hyphen is inert to that parser.
-    const htmx = (window as unknown as { htmx?: { trigger: (e: Element, n: string) => void } }).htmx;
-    htmx?.trigger(el, "gahk-open-archive");
+    htmx.trigger(el, "gahk-open-archive");
   }
 
   // Where the reader is put once the first chunk lands, and it is deliberately NOT "exactly where
@@ -430,6 +455,45 @@ window.addEventListener("popstate", (event) => {
     pushedThreadEntry = false;
     clearThread();
   }
+});
+
+// ---- live signals -----------------------------------------------------------------------------
+// The channel's WebSocket (./live) says a message changed; the regions that show it re-fetch
+// themselves. The fetching is htmx's, via the `gahk-live` trigger on #js-live and on the thread
+// panel (feed.html, _thread.html), so the requests, the morph and the hx-sync queueing are exactly
+// the ones the polls already used — this only says WHEN.
+//
+// The live list re-fetches on every signal FOR ITS CHANNEL: a new message, a reply count, a
+// reaction, a deletion all show there. The page's socket also hears the other channels (for the
+// picker's counts, _channel_menu.html) and the bell, and none of that is the feed's business. The
+// panel only on a signal naming ITS message, or a resync after the socket was down — any reply or
+// reaction it missed in that gap was never going to be signalled again.
+
+const chatTopics = topicsOf(document.querySelector<HTMLElement>(".chat[data-live]") ?? document.createElement("div"));
+
+document.addEventListener(LIVE_EVENT, (event: Event) => {
+  const signal = (event as CustomEvent<LiveSignal>).detail;
+  if (!chatTopics.length || !concerns(signal, chatTopics)) return;
+  // htmx is imported at the top, not read off `window`: the ES-module build defines no global, and
+  // `window.htmx?.trigger` here was a silent no-op that left the feed on its 60s backstop.
+  const live = document.getElementById(LIVE_ID);
+  if (live) htmx.trigger(live, "gahk-live");
+  const panel = threadPanel();
+  if (panel?.hasAttribute("hx-get") && (signal.kind === "resync" || panel.dataset.threadPk === String(signal.pk))) {
+    htmx.trigger(panel, "gahk-live");
+  }
+});
+
+// The picker's counts are live while it is open (a live region, _channel_menu.html) and held while
+// it is closed, so a signal from any channel costs a fetch only in the tabs where somebody can see
+// the counts. Opening re-reads them as well, which covers what no signal announces: messages
+// archiving off the clock. A signal held while closed and the open's own refresh are one fetch.
+document.querySelector<HTMLDetailsElement>("details.channel-picker")?.addEventListener("toggle", (event) => {
+  const picker = event.currentTarget as HTMLDetailsElement;
+  const menu = picker.querySelector<HTMLElement>(".channel-menu");
+  if (!menu) return;
+  menu.toggleAttribute("data-live-busy", !picker.open);
+  if (picker.open) menu.dispatchEvent(new Event(REFRESH_EVENT, { bubbles: true }));
 });
 
 // ---- who reacted ------------------------------------------------------------------------------
@@ -1053,6 +1117,80 @@ if (composer instanceof HTMLFormElement) {
     });
   }
 
+  // ---- the duration sheet (#192) ----
+  //
+  // Sending asks how long the message stays relevant, and the answer is what posts it. The <select>
+  // beside the composer is the no-JS path; with this file running it is hidden and de-required, so
+  // the question is asked exactly once, here.
+  //
+  // The sheet writes its answer INTO that same <select>, so submitting carries it with no extra
+  // field and no state of our own. `confirmed` is the one flag: it lets the second requestSubmit
+  // through instead of re-opening the sheet forever.
+  const sheet = document.getElementById("js-duration-sheet");
+  const durationWrap = document.getElementById("js-composer-duration");
+  const duration = composer.querySelector<HTMLSelectElement>('select[name="duration"]');
+
+  if (sheet instanceof HTMLDetailsElement && duration && durationWrap) {
+    durationWrap.hidden = true;
+    // Dropped together with hiding it: a `required` control that is not visible makes the browser
+    // refuse to submit while reporting the problem on an element nobody can see, which presents as
+    // a send button that silently does nothing.
+    duration.required = false;
+
+    const confirm = sheet.querySelector<HTMLButtonElement>(".duration-confirm");
+    let confirmed = false;
+
+    const choose = (minutes: string): void => {
+      duration.value = minutes;
+      for (const option of sheet.querySelectorAll<HTMLButtonElement>(".duration-option")) {
+        option.classList.toggle("is-chosen", option.dataset.duration === minutes);
+      }
+      if (confirm) confirm.disabled = false;
+    };
+
+    const close = (): void => {
+      sheet.open = false;
+    };
+
+    composer.addEventListener("submit", (event: SubmitEvent) => {
+      if (confirmed) return;
+      // Native validation has already passed by the time `submit` fires, so an empty message never
+      // reaches the sheet — the browser has asked for the text first, which is the right order.
+      event.preventDefault();
+      sheet.open = true;
+      sheet.querySelector<HTMLButtonElement>(".duration-option")?.focus();
+    });
+
+    sheet.addEventListener("click", (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      const option = target.closest<HTMLButtonElement>(".duration-option");
+      if (option?.dataset.duration) {
+        choose(option.dataset.duration);
+        return;
+      }
+      if (target.closest(".duration-cancel")) {
+        close();
+        return;
+      }
+      if (target.closest(".duration-confirm") && duration.value) {
+        confirmed = true;
+        close();
+        composer.requestSubmit();
+      }
+    });
+
+    // The message was not sent, so the choice should not persist as though it had been: reopening
+    // the sheet after a cancel must ask again rather than sit there already answered.
+    sheet.addEventListener("toggle", () => {
+      if (sheet.open || confirmed) return;
+      duration.value = "";
+      for (const option of sheet.querySelectorAll<HTMLButtonElement>(".duration-option")) {
+        option.classList.remove("is-chosen");
+      }
+      if (confirm) confirm.disabled = true;
+    });
+  }
+
   // Confirm the attachment landed — a file input styled as a paperclip gives no other feedback.
   if (fileInput && fileNote) {
     fileInput.addEventListener("change", () => {
@@ -1129,10 +1267,14 @@ document.addEventListener("change", (event) => {
   // Only for something the browser will actually render. `accept="image/*"` steers the picker but
   // does not bind it, and a broken-image icon is worse feedback than none - the filename still
   // shows either way, and the server has the final say on what it will store (core.uploads).
+  // Shown on load rather than straight away: an image/ type is not a promise the browser can decode
+  // it, and a HEIC from an iPhone is exactly that case everywhere but Safari. The server converts it.
   const thumb = note.querySelector<HTMLImageElement>("[data-file-note-thumb]");
   if (thumb && file.type.startsWith("image/")) {
+    thumb.onload = () => {
+      thumb.hidden = false;
+    };
     thumb.src = URL.createObjectURL(file);
-    thumb.hidden = false;
   }
   note.hidden = false;
 });

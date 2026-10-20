@@ -13,7 +13,6 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from core import push
 from core.clock import current_datetime
 from core.danish import MONTHS, WEEKDAYS_SHORT
 from residents.models import Residency, Resident, Role, active_period
@@ -236,9 +235,6 @@ def market(request: HttpRequest) -> HttpResponse:
             "now": now,
             "balance": KitchenPointEntry.balance_for(resident.pk),
             "is_admin": _is_admin(request),
-            "push_configured": push.is_configured(),
-            "vapid_public_key": push.vapid_public_key(),
-            "push_subscribed": services.is_subscribed(resident),
         },
     )
 
@@ -348,12 +344,6 @@ def buy(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     shift_id = assignment.shift_id
     _attempt(request, lambda: services.buy(assignment, current_resident(request)), "Vagten er din.")
     return redirect("kitchen:shift", pk=shift_id)
-
-
-@require_POST
-@login_required
-def save_subscription(request: HttpRequest) -> HttpResponse:
-    return push.handle_subscription_request(request, services.TOPIC)
 
 
 # --- administration -------------------------------------------------------------------------------

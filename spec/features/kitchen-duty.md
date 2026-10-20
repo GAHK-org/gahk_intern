@@ -82,7 +82,9 @@ Last, the calendar view, allowing signing up for shifts in the greater future.
 
 
 ## Notifications
-All residents will be notified (by push notification) if:
+Sent under the notification category Køkkenvagter, so each resident chooses in-app, push and vibration on the notification settings page. A notification disappears when the shift it is about has started.
+
+All residents will be notified if:
 - A shift is put for sale and the shift takes place within the next 7 days
 - There are any unassigned shifts within the next 24 hours
 

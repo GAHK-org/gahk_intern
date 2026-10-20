@@ -1,32 +1,125 @@
 {% extends "base.html" %}
-{% block title %}Worker-job detalje - GAHK{% endblock %}
+{% load ui_extras %}
+{% block title %}{{ job.name }} - Worker-jobs - GAHK{% endblock %}
+{% block content_width %}max-w-6xl{% endblock %}
 {% block content %}
-  <div class="flex items-center justify-between mb-6">
-    <div><a class="muted" href="{% url 'siteadmin:worker_jobs' %}">Worker-job</a><h1>Jobdetaljer</h1></div>
-    <a class="btn" href="{% url 'siteadmin:home' %}">Administration</a>
+  <div class="page-head">
+    <div class="min-w-0">
+      <div class="eyebrow"><a href="{% url 'siteadmin:home' %}">Administration</a> › <a href="{% url 'siteadmin:worker_jobs' %}">Worker-jobs</a></div>
+      <h1 class="jobs-title"><span class="jobs-name">{{ job.name }}</span> <span class="chip {{ job.state_class }}">{{ job.state_label }}</span></h1>
+      <div class="muted">{{ job.task }}{% if job.task_context %} · {{ job.task_context }}{% endif %}</div>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-secondary" href="{% url 'siteadmin:worker_jobs' %}?type={{ job.task|urlencode }}&amp;children=1#historik">Alle {{ job.name }}</a>
+    </div>
   </div>
-  <div class="card overflow-x-auto">
-    <dl class="grid gap-4 text-sm">
-      <div><dt class="muted">Opgave</dt><dd class="font-mono break-all">{{ job.task }}</dd></div>
-      <div><dt class="muted">Job-ID</dt><dd class="font-mono break-all">{{ job.id }}</dd></div>
-      <div><dt class="muted">Status</dt><dd>{{ job.status|default:"Venter i kø" }}</dd></div>
-      <div><dt class="muted">Kø</dt><dd>{{ job.queue|default:"-" }}</dd></div>
-      <div><dt class="muted">Sendt</dt><dd>{{ job.submitted_at|date:"Y-m-d H:i:s"|default:"-" }}</dd></div>
-      <div><dt class="muted">Afsluttet</dt><dd>{{ job.finished_at|date:"Y-m-d H:i:s"|default:"-" }}</dd></div>
-      <div><dt class="muted">Forløbet tid</dt><dd>{{ job.runtime|default:"Afventer afslutning" }}</dd></div>
-      <div><dt class="muted">Worker</dt><dd class="font-mono break-all">{{ job.worker|default:"-" }}</dd></div>
-      <div><dt class="muted">Forsøg</dt><dd>{{ job.retries|default:0 }}</dd></div>
-      <div><dt class="muted">Kør efter</dt><dd>{{ job.eta|default:"Nu" }}</dd></div>
-      <div><dt class="muted">Udløber</dt><dd>{{ job.expires|default:"-" }}</dd></div>
-      <div><dt class="muted">Oprindelse</dt><dd class="font-mono break-all">{{ job.origin|default:"-" }}</dd></div>
-      <div><dt class="muted">Rodjob</dt><dd class="font-mono break-all">{{ job.root_id|default:"-" }}</dd></div>
-      <div><dt class="muted">Forældrejob</dt><dd class="font-mono break-all">{{ job.parent_id|default:"-" }}</dd></div>
-      <div><dt class="muted">Argumenter</dt><dd class="font-mono break-all">{{ job.arguments|default:"-" }}</dd></div>
-      <div><dt class="muted">Nøgleordsargumenter</dt><dd class="font-mono break-all">{{ job.keyword_arguments|default:"-" }}</dd></div>
+
+  <section class="card-flat jobs-section">
+    <ol class="jobs-timeline">
+      <li class="{% if job.sent_at %}is-done{% endif %}">
+        <span class="jobs-timeline-k">Sendt</span>
+        <b>{{ job.sent_at|date:"j. b Y H:i:s"|default:"ikke registreret" }}</b>
+      </li>
+      <li class="jobs-timeline-gap">{% if job.waited %}ventede {{ job.waited }}{% elif job.status == "PENDING" and job.sent_at %}venter …{% endif %}</li>
+      <li class="{% if job.started_at %}is-done{% endif %}">
+        <span class="jobs-timeline-k">Startet</span>
+        <b>{{ job.started_at|date:"j. b Y H:i:s"|default:"–" }}</b>
+      </li>
+      <li class="jobs-timeline-gap">{% if job.ran %}kørte {{ job.ran }}{% elif job.status == "STARTED" %}kører, {{ job.running_for }} …{% endif %}</li>
+      <li class="{% if job.finished_at %}is-done{% endif %}">
+        <span class="jobs-timeline-k">Afsluttet</span>
+        <b>{{ job.finished_at|date:"j. b Y H:i:s"|default:"–" }}</b>
+      </li>
+    </ol>
+    {% if job.status == "STARTED" %}
+      <div class="card-pad jobs-limit">
+        <div class="jobs-meter{% if job.limit_used >= 75 %} is-near{% endif %}"><span style="width:{{ job.limit_used }}%"></span></div>
+        <p class="jobs-sub">
+          {{ job.running_for }} af tidsgrænsen på {{ job.time_limit_label }}.
+          {% if job.over_time_limit %}<span class="chip chip-neg">Over tidsgrænsen</span> Worker'en ville have stoppet jobbet, så den er død under det.{% endif %}
+        </p>
+      </div>
+    {% endif %}
+  </section>
+
+  <section class="card-flat jobs-section">
+    <div class="card-head"><h2>Detaljer</h2></div>
+    <dl class="jobs-facts">
+      <div><dt>Job-ID</dt><dd class="jobs-mono">{{ job.id }}</dd></div>
+      <div><dt>Kø</dt><dd>{{ job.queue|default:"–" }}</dd></div>
+      <div><dt>Worker</dt><dd class="jobs-mono">{{ job.worker|default:"–" }}</dd></div>
+      <div><dt>Genforsøg</dt><dd>{{ job.retries }}</dd></div>
+      <div><dt>Argumenter</dt><dd class="jobs-mono">{{ job.arguments|default:"–" }}</dd></div>
+      <div><dt>Nøgleordsargumenter</dt><dd class="jobs-mono">{{ job.keyword_arguments|default:"–" }}</dd></div>
+      <div><dt>Forældrejob</dt><dd class="jobs-mono">{% if job.parent_id %}<a href="{% url 'siteadmin:worker_job_detail' job.parent_id %}">{{ job.parent_id }}</a>{% else %}–{% endif %}</dd></div>
+      <div><dt>Rodjob</dt><dd class="jobs-mono">{% if job.root_id and job.root_id != job.id and job.root_id != job.parent_id %}<a href="{% url 'siteadmin:worker_job_detail' job.root_id %}">{{ job.root_id }}</a>{% else %}{{ job.root_id|default:"–" }}{% endif %}</dd></div>
+      <div><dt>Kør efter</dt><dd>{{ job.eta|default:"Straks" }}</dd></div>
+      <div><dt>Udløber</dt><dd>{{ job.expires|default:"–" }}</dd></div>
+      <div><dt>Sendt fra</dt><dd class="jobs-mono">{{ job.origin|default:"–" }}</dd></div>
     </dl>
-  </div>
-  {% if job.result is not None %}<h2 class="mt-8">Resultat</h2><pre class="card overflow-x-auto text-sm">{{ job.result }}</pre>{% endif %}
-  {% if job.traceback %}<h2 class="mt-8">Undtagelse og traceback</h2><pre class="card overflow-x-auto text-sm">{{ job.traceback }}</pre>{% endif %}
-  <h2 class="mt-8">Worker-log</h2>
-  <div class="card"><p class="muted">Worker-logge gemmes ikke i databasen. Se worker-containerens log for dette job-ID.</p></div>
+  </section>
+
+  {% if child_total %}
+    <section class="card-flat jobs-section">
+      <div class="card-head">
+        <h2>Underopgaver ({{ child_total }})</h2>
+        <div class="jobs-states-inline">
+          {% for status, label, count in child_counts %}<span class="chip {% if status == 'FAILURE' %}chip-neg{% elif status == 'SUCCESS' %}{% else %}chip-quiet{% endif %}">{{ label }} {{ count }}</span>{% endfor %}
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="zebra jobs-table">
+          <thead><tr><th>Opgave</th><th>Status</th><th>Sendt</th><th class="num">Ventetid</th><th class="num">Køretid</th><th>Afsluttet</th></tr></thead>
+          <tbody>
+            {% for child in children %}
+              <tr>
+                <td class="jobs-task-cell">
+                  <a class="jobs-name" href="{% url 'siteadmin:worker_job_detail' child.id %}">{{ child.name }}</a><span class="jobs-app">{{ child.app }}</span>
+                  {% if child.task_context %}<div class="jobs-sub">{{ child.task_context }}</div>{% elif child.arguments %}<div class="jobs-args">{{ child.arguments }}</div>{% endif %}
+                </td>
+                <td><span class="chip {{ child.state_class }}">{{ child.state_label }}</span></td>
+                <td class="jobs-time">{{ child.sent_at|date:"j. b H:i:s"|default:"–" }}</td>
+                <td class="num">{{ child.waited|default:"–" }}</td>
+                <td class="num">{{ child.ran|default:"–" }}</td>
+                <td class="jobs-time">{{ child.finished_at|date:"j. b H:i:s"|default:"–" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if child_total > children|length %}<p class="jobs-empty">De første {{ children|length }} vises; tallene ovenfor tæller alle {{ child_total }}.</p>{% endif %}
+    </section>
+  {% endif %}
+
+  {% if job.traceback %}
+    <section class="card-flat jobs-section">
+      <div class="card-head"><h2>Undtagelse og traceback</h2></div>
+      <pre class="jobs-pre">{{ job.traceback }}</pre>
+    </section>
+  {% endif %}
+  {% if job.result is not None %}
+    <section class="card-flat jobs-section">
+      <div class="card-head"><h2>Resultat</h2></div>
+      <pre class="jobs-pre">{{ job.result }}</pre>
+    </section>
+  {% endif %}
+
+  <section class="card-flat jobs-section">
+    <div class="card-head"><h2>Worker-log</h2>{% if job_log.lines %}<span class="muted text-sm">{{ job_log.lines|length }} linje{{ job_log.lines|length|pluralize:"r" }}</span>{% endif %}</div>
+    {% if job_log.lines %}
+      <div class="overflow-x-auto">
+        <table class="zebra jobs-table jobs-log">
+          <thead><tr><th>Tid</th><th>Niveau</th><th>Kilde</th><th>Besked</th></tr></thead>
+          <tbody>
+            {% for line in job_log.lines %}
+              <tr{% if line.level != "INFO" %} class="is-{{ line.level|lower }}"{% endif %}><td class="jobs-mono">{{ line.at|slice:"11:19" }}</td><td>{{ line.level }}</td><td class="jobs-mono jobs-sub">{{ line.logger }}</td><td class="jobs-message">{{ line.message }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if job_log.omitted %}<p class="jobs-empty">… og {{ job_log.omitted }} linje{{ job_log.omitted|pluralize:"r" }} mere, som ikke blev gemt.</p>{% endif %}
+    {% else %}
+      <p class="jobs-empty">Jobbet har ikke logget noget{% if not job.finished_at %} endnu{% endif %}. Logge fra vellykkede jobs gemmes i 30 dage. Andre gemmes, til der er over 1000 af samme job med samme status; så slettes de ældste ud over de 1000, når de er over 60 dage gamle.</p>
+    {% endif %}
+  </section>
 {% endblock %}

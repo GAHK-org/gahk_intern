@@ -19,7 +19,7 @@
 
   {% for comment in post.comments.all %}
     <div class="reply">
-      <span class="reply-name">{{ comment.author.full_name }}</span>
+      <a class="reply-name author-link" href="{% url 'resident_profile' comment.author_id %}">{{ comment.author.full_name }}</a>
       <span class="msg-meta">{{ comment.created_at|date:"H:i" }}</span>
       {% comment %}
         Guarded because a reply may be a photo with no caption: an empty <div> still occupies its

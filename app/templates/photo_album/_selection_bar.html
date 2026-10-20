@@ -1,0 +1,12 @@
+{% comment %}Shown by the frontend in selection mode; it adds one hidden "media" input per chosen tile
+on submit. views.selection checks every item on its own.{% endcomment %}
+<form class="album-selection-bar" method="post" action="{% url 'photo_album:selection' %}" data-album-selection hidden>
+	{% csrf_token %}
+	{% if album %}<input type="hidden" name="album" value="{{ album.pk }}">{% endif %}
+	<input type="hidden" name="next" value="{{ request.get_full_path }}">
+	<span class="album-selection-count" data-album-selection-count aria-live="polite">0 valgt</span>
+	<span class="album-selection-download"><select name="variant" aria-label="Filtype">{% for value, label in variants %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select><button class="btn-link" type="submit" name="action" value="download">Download</button></span>
+	{% if can_manage %}<button class="btn-link" type="submit" name="action" value="approve">Godkend</button><button class="btn-link-danger" type="submit" name="action" value="reject">Afvis</button>{% endif %}
+	<button class="btn-link-danger" type="submit" name="action" value="delete" data-album-selection-delete>Fjern</button>
+	<button class="btn-link" type="button" data-album-selection-cancel>Annuller</button>
+</form>

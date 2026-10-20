@@ -1,6 +1,6 @@
 # Dev-only image for `docker compose --profile docker up web` (hot-reload). NOT used in production —
 # see Dockerfile for that. Installs dependencies (incl. the dev group) once at build time; app/ is
-# bind-mounted at runtime (docker-compose.yml) so host edits reach Django's autoreloader without a
+# bind-mounted at runtime (docker-compose.yml) so host edits reach uvicorn's --reload without a
 # rebuild. No frontend build/collectstatic step: DEBUG=1 serves STATICFILES_DIRS directly, so the
 # same `app/static/dist` a host-run `task frontend:build`/`frontend:watch` produces is picked up
 # through the bind mount.
@@ -15,6 +15,9 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --python /usr/local/bin/python
 ENV PATH="/src/.venv/bin:$PATH"
 WORKDIR /src/app
+# A host edit reaches the container through the bind mount without a file event, so --reload has to
+# poll for it, as runserver did. Without this a change is never picked up.
+ENV WATCHFILES_FORCE_POLLING=true
 EXPOSE 8000
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+CMD ["sh", "-c", "python manage.py check && exec uvicorn config.asgi:application --host 0.0.0.0 --port 8000 --lifespan off --reload --reload-include '*.html'"]
 

@@ -20,12 +20,12 @@ and not a column anyone could constrain:
 Every view here is scoped to one channel.
 """
 
+from collections.abc import Sequence
 from datetime import date, datetime, timedelta
 from typing import NamedTuple
 
 from django.conf import settings
 from django.contrib import messages
-from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.files.uploadedfile import UploadedFile
 from django.db.models import Count, Prefetch, QuerySet
@@ -38,19 +38,19 @@ from django.utils.formats import date_format
 from django.views.decorators.http import require_POST
 
 from core.clock import current_date, current_datetime
-from core.push import handle_subscription_request
-from core.reactions import apply_toggle, reaction_rows
+from core.reactions import CREATED, apply_toggle, reaction_rows
 from core.uploads import attached_image
+from notifications.categories import chat_room_key
+from notifications.models import NotificationPreference
 from residents.permissions import current_resident, effective_roles
 
-from . import channels, services
+from . import channels, live, services
 from .access import access_required, can_moderate, is_limited, request_allowed
 from .channels import Channel
 from .forms import ReactionForm
 from .models import (
     DURATION_CHOICES,
     QUICK_EMOJI,
-    ChannelMute,
     QuickComment,
     QuickPost,
     QuickReaction,
@@ -147,9 +147,33 @@ def mark_runs(posts: list[QuickPost], user_id: int) -> list[QuickPost]:
     return posts
 
 
-def posts_for(request: HttpRequest, channel: Channel) -> list[QuickPost]:
-    """One channel's active messages, ready to render."""
-    return mark_runs(list(_active_posts(channel)), current_resident(request).pk)
+def group_by_day(posts: Sequence[QuickPost], user_id: int) -> list["DayGroup"]:
+    """Split messages IN READING ORDER into one group per calendar day, each with its heading.
+
+    `mark_runs` is called per day rather than over the whole list: a date heading interrupts a run
+    visually, so a burst that straddles midnight must not be drawn as one group with the heading
+    wedged into the middle of it.
+    """
+    today = current_date()
+    days: list[DayGroup] = []
+    for post in posts:
+        day = timezone.localdate(post.created_at)
+        if not days or days[-1].date != day:
+            days.append(DayGroup(day, _day_label(day, today), []))
+        days[-1].posts.append(post)
+    for entry in days:
+        mark_runs(entry.posts, user_id)
+    return days
+
+
+def posts_for(request: HttpRequest, channel: Channel) -> list["DayGroup"]:
+    """One channel's active messages, grouped under date headings and ready to render.
+
+    Grouped rather than flat since #197: the bubble carries only a clock, so without a heading a
+    message from yesterday is indistinguishable from one an hour old. The archive already read this
+    way; the live feed holds up to two days of messages and did not.
+    """
+    return group_by_day(list(_active_posts(channel)), current_resident(request).pk)
 
 
 def _channel_or_404(request: HttpRequest, slug: str | None) -> Channel:
@@ -220,18 +244,25 @@ class Tab(NamedTuple):
     current: bool
 
 
-def _channel_context(request: HttpRequest, channel: Channel) -> dict[str, object]:
-    """The tab strip's data. Read by the page and by nothing else — the poll swaps only the message
-    list, so the counts refresh on navigation rather than every 20 seconds."""
+def _tabs(request: HttpRequest, channel: Channel) -> list[Tab]:
     counts = channel_counts()
+    return [
+        Tab(c, counts.get(c.slug, 0), c.slug == channel.slug)
+        for c in channels.visible(effective_roles(request))
+    ]
+
+
+def _channel_context(request: HttpRequest, channel: Channel) -> dict[str, object]:
+    """The tab strip's data. The poll swaps only the message list; the counts are kept current by
+    `channel_menu` instead, on a live signal from any channel and whenever the picker opens."""
     return {
         "channel": channel,
-        "tabs": [
-            Tab(c, counts.get(c.slug, 0), c.slug == channel.slug)
-            for c in channels.visible(effective_roles(request))
-        ],
-        "muted": ChannelMute.objects.filter(
-            resident=current_resident(request), channel=channel.slug
+        "tabs": _tabs(request, channel),
+        # The room's bell links to its row on the notifications settings page; "muted" is whether
+        # this resident turned push for the room off there. A preference row exists only for a
+        # category somebody changed, so no row is "on".
+        "muted": NotificationPreference.objects.filter(
+            resident=current_resident(request), category=chat_room_key(channel.slug), push=False
         ).exists(),
     }
 
@@ -251,16 +282,13 @@ def feed(request: HttpRequest, channel: str | None = None) -> HttpResponse:
         request,
         "den_hurtige/feed.html",
         {
-            "posts": posts_for(request, resolved),
+            "days": posts_for(request, resolved),
             "duration_choices": DURATION_CHOICES,
-            # Per channel: a plan for tonight and a lost bike key go stale on different schedules.
-            "default_duration": resolved.default_duration,
+            # Nothing is preselected (#192): the author answers before the message goes out.
+            # `draft` is the text of a submission the server just refused, carried across the
+            # redirect so a rejected message is not retyped.
+            "draft": request.session.pop(DRAFT_SESSION_KEY, ""),
             "max_content_chars": MAX_CONTENT_CHARS,
-            "push_configured": services.is_configured(),
-            "vapid_public_key": services.vapid_public_key(),
-            # Whether ANY of this resident's devices wants this topic. The browser cannot answer it
-            # (one endpoint serves every topic), so the toggle's initial state is rendered here.
-            "push_subscribed": services.is_subscribed(current_resident(request)),
             "quick_emoji": QUICK_EMOJI,
             "can_moderate": can_moderate(request),
             # Tells the testers the page is not live yet, so they do not assume silence means
@@ -307,11 +335,29 @@ def feed_items(request: HttpRequest) -> HttpResponse:
         request,
         "den_hurtige/_posts.html",
         {
-            "posts": posts_for(request, channel),
+            "days": posts_for(request, channel),
             "max_content_chars": MAX_CONTENT_CHARS,
             "quick_emoji": QUICK_EMOJI,
             "can_moderate": can_moderate(request),
         },
+    )
+
+
+def channel_menu(request: HttpRequest) -> HttpResponse:
+    """The channel picker's menu alone, with fresh live-post counts.
+
+    Re-read when the picker opens and on a live signal from any channel in it (den_hurtige.live), so
+    the counts are current whenever anyone can see them. One aggregate query (channel_counts), which
+    is why re-reading on every signal is affordable. Gated like feed_items, and for the same reason:
+    a 204, never a login page swapped into the menu.
+    """
+    if not request_allowed(request):
+        return HttpResponse(status=204)
+    channel = channels.lookup(request.GET.get("kanal"))
+    if channel is None or not channels.allowed(channel, effective_roles(request)):
+        return HttpResponse(status=204)
+    return render(
+        request, "den_hurtige/_channel_menu.html", {"channel": channel, "tabs": _tabs(request, channel)}
     )
 
 
@@ -336,14 +382,15 @@ def feed_items(request: HttpRequest) -> HttpResponse:
 ARCHIVE_PAGE = 30
 
 
-class ArchiveDay(NamedTuple):
-    """One day's archived messages, oldest first, under one date heading.
+class DayGroup(NamedTuple):
+    """One day's messages, oldest first, under one date heading. Used by the feed and the archive.
 
     Built here rather than with {% ifchanged %} in the template, for a reason that only shows up on
     the second chunk: `ifchanged` resets with each render, so the first message of every fetched
     chunk would emit a date heading whether or not the chunk below it had just emitted the same one.
-    Grouping server-side also lets the day carry its own label, which needs "i dag"/"i går" and the
-    Danish month names, and lets each day's runs be marked against its own neighbours.
+    The live feed has the same problem for the same reason — its 20s poll re-renders the list on its
+    own. Grouping server-side also lets the day carry its own label, which needs "i dag"/"i går" and
+    the Danish month names, and lets each day's runs be marked against its own neighbours.
     """
 
     date: date
@@ -351,7 +398,7 @@ class ArchiveDay(NamedTuple):
     posts: list[QuickPost]
 
 
-def _archive_label(day: date, today: date) -> str:
+def _day_label(day: date, today: date) -> str:
     """A date heading a resident reads without decoding: "i dag", "i går", "12. marts", "12. marts
     2024". The year appears only when it is not this one, which is the only time it carries any
     information and is otherwise most of the width of the heading."""
@@ -380,7 +427,7 @@ def _archive_before(request: HttpRequest) -> datetime | None:
 
 def _archive_chunk(
     channel: Channel, before: datetime | None, user_id: int
-) -> tuple[list[ArchiveDay], datetime | None]:
+) -> tuple[list[DayGroup], datetime | None]:
     """One chunk of the channel's archive, oldest first, plus the cursor for the chunk before it.
 
     OLDEST FIRST, because this is prepended above the live messages and has to read downwards into
@@ -427,19 +474,7 @@ def _archive_chunk(
     older_than = page[-1].created_at if more else None
     page.reverse()
 
-    today = current_date()
-    days: list[ArchiveDay] = []
-    for post in page:
-        day = timezone.localdate(post.created_at)
-        if not days or days[-1].date != day:
-            days.append(ArchiveDay(day, _archive_label(day, today), []))
-        days[-1].posts.append(post)
-    # Per day, not across the chunk: a date heading interrupts a run visually, so a burst that
-    # straddles midnight must not be drawn as one group with the heading wedged into the middle
-    # of it. Same call the live feed makes, on each day's own list.
-    for entry in days:
-        mark_runs(entry.posts, user_id)
-    return days, older_than
+    return group_by_day(page, user_id), older_than
 
 
 def _archive_context(request: HttpRequest, channel: Channel) -> dict[str, object]:
@@ -599,6 +634,22 @@ def _channel_of(post: QuickPost) -> str:
     return channel.url
 
 
+DRAFT_SESSION_KEY = "den_hurtige_draft"
+
+
+def _reject(request: HttpRequest, channel: Channel, content: str, message: str) -> HttpResponseRedirect:
+    """Refuse a submission and bounce back to the feed with the text still in the box.
+
+    The composer posts and redirects, so without this a rejected message is simply gone — and it was
+    typed in a hurry by somebody who thought they had sent it. An attached image cannot be carried:
+    no server can refill a file input. The text is the part worth saving and the part that took the
+    effort; the warning says the image has to be picked again.
+    """
+    messages.error(request, message)
+    request.session[DRAFT_SESSION_KEY] = content
+    return redirect(channel.url)
+
+
 def _posting_channel(request: HttpRequest) -> Channel:
     """The channel a submitted form belongs to.
 
@@ -623,15 +674,19 @@ def create_post(request: HttpRequest) -> HttpResponseRedirect:
         messages.error(request, "Skriv en besked før du slår op.")
         return redirect(channel.url)
     if len(content) > MAX_CONTENT_CHARS:
-        messages.error(request, f"Beskeden må højst fylde {MAX_CONTENT_CHARS} tegn.")
-        return redirect(channel.url)
+        return _reject(request, channel, content, f"Beskeden må højst fylde {MAX_CONTENT_CHARS} tegn.")
 
+    # THE ONE FIELD THIS VIEW WILL NOT GUESS AT (#192). Every other unrecognised value here falls
+    # back to a default, because a resident who has typed an urgent message should not lose it to a
+    # hidden field they never saw — but the duration is not hidden any more, it is the question the
+    # composer asks before it will send, and quietly answering it with 2 døgn is the whole reason
+    # nothing ever left the feed.
     try:
-        minutes = int(request.POST.get("duration", channel.default_duration))
+        minutes = int(request.POST.get("duration") or 0)
     except ValueError:
-        minutes = channel.default_duration
+        minutes = 0
     if minutes not in VALID_DURATIONS:
-        minutes = channel.default_duration
+        return _reject(request, channel, content, "Vælg hvor længe beskeden skal være relevant.")
 
     post = QuickPost.objects.create(
         author=author,
@@ -641,6 +696,7 @@ def create_post(request: HttpRequest) -> HttpResponseRedirect:
         expires_at=current_datetime() + timedelta(minutes=minutes),
     )
     services.notify_new_post(post)
+    live.message_changed(post.channel, post.pk, "created")
     # No success message on purpose: the message appearing at the bottom of the feed *is* the
     # confirmation, and no chat app interrupts you to say a send worked. The warnings above (a
     # rejected image, over-long text) still surface, because those change what was actually posted.
@@ -722,6 +778,7 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponse:
         notify_everyone=request.POST.get("notify") == "alle",
     )
     services.notify_new_comment(comment)
+    live.message_changed(post.channel, post.pk)
     return _comment_response(request, post, back)
 
 
@@ -731,7 +788,8 @@ def toggle_reaction(request: HttpRequest, pk: int) -> HttpResponse:
     """Set, change or clear this person's one emoji on a message, returning just its reaction row.
 
     Each resident has at most one reaction per message: a new emoji replaces theirs, and re-tapping
-    the current one clears it. Deliberately silent — no notification is sent (see QuickReaction).
+    the current one clears it. A NEW reaction tells the message's author (grouped, see
+    services.notify_reaction); changing or clearing one tells nobody.
 
     Renders only the partial so a tap never re-renders the feed, which would collapse open threads
     and fight the 20-second poll.
@@ -751,7 +809,10 @@ def toggle_reaction(request: HttpRequest, pk: int) -> HttpResponse:
     if form.is_valid():
         # Set / move / clear lives in core.reactions so Den Hurtige and opslagstavlen cannot drift
         # into different semantics for the same widget.
-        apply_toggle(QuickReaction.objects, author=resident, emoji=form.cleaned_data["emoji"], post=post)
+        emoji = form.cleaned_data["emoji"]
+        if apply_toggle(QuickReaction.objects, author=resident, emoji=emoji, post=post) == CREATED:
+            services.notify_reaction(post, resident, emoji)
+        live.message_changed(post.channel, post.pk)
     # An invalid emoji falls through to a plain re-render: the row is still correct, and a one-tap
     # control has nowhere useful to put a validation error.
     return _reaction_row(request, post, resident.pk)
@@ -810,9 +871,12 @@ def delete_post(request: HttpRequest, pk: int) -> HttpResponseRedirect:
         raise PermissionDenied
     back = _channel_of(post)
     if post.within_delete_grace:
+        pk = post.pk  # delete() clears it
         post.delete()
+        live.message_changed(post.channel, pk, "deleted")
         messages.success(request, "Opslaget er slettet.")
     elif post.soft_delete():
+        live.message_changed(post.channel, post.pk)
         # Spelled out because it is the half people do not expect: the words are gone, the bubble
         # is not.
         messages.success(request, "Beskeden er slettet. «Besked slettet» bliver stående i samtalen.")
@@ -821,46 +885,3 @@ def delete_post(request: HttpRequest, pk: int) -> HttpResponseRedirect:
         # a request arriving a moment earlier would have taken instead.
         messages.error(request, "Beskeden er allerede slettet.")
     return redirect(back)
-
-
-@require_POST
-@access_required
-def toggle_mute(request: HttpRequest, channel: str) -> HttpResponseRedirect:
-    """Silence, or un-silence, push from one channel for this resident.
-
-    A row exists only while the channel is muted, so the absence of a row is "notify me" — every
-    channel is on until someone turns it off (see ChannelMute for why that direction). Idempotent in
-    both directions: a double-tap on a slow connection cannot end up with two rows or an exception.
-    """
-    resolved = _channel_or_404(request, channel)
-    resident = current_resident(request)
-    removed, _per_model = ChannelMute.objects.filter(resident=resident, channel=resolved.slug).delete()
-    if removed:
-        messages.success(request, f"Du får igen notifikationer fra {resolved.name}.")
-    else:
-        # get_or_create, not create: two taps racing each other would otherwise hit the
-        # uniq_channel_mute constraint and 500 on what is meant to be a toggle.
-        ChannelMute.objects.get_or_create(resident=resident, channel=resolved.slug)
-        messages.success(request, f"Notifikationer fra {resolved.name} er slået fra.")
-    return redirect(resolved.url)
-
-
-@require_POST
-@login_required
-def save_subscription(request: HttpRequest) -> HttpResponse:
-    """Store (or drop) this browser's opt-in to Den Hurtige notifications.
-
-    @login_required rather than @access_required, with the access gate re-applied *inside*: the
-    endpoint is shared with opslagstavlen (which every resident may use), so gating the whole view
-    on ACCESS_ROLES would lock plain residents out of subscribing to the noticeboard.
-
-    That inner check is a no-op today — ACCESS_ROLES is None now that the trial is over — but it is
-    what makes re-gating the feature (access.py's documented one-line edit) actually re-gate it.
-    Without it, narrowing ACCESS_ROLES would still leave anyone able to register for its
-    notifications.
-
-    The per-topic upsert/teardown itself is core.push.handle_subscription_request.
-    """
-    if not request_allowed(request):
-        return HttpResponse(status=403)
-    return handle_subscription_request(request, services.TOPIC)

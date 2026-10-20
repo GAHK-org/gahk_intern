@@ -244,26 +244,19 @@
     background:var(--green-100); color:var(--green-700); }
   .channel-option.active .channel-count { background:var(--brass); color:#fff; }
 
-  .chat-mute { flex:none; }
-  /* The push button renders both wordings; one is hidden per breakpoint. Wide screens get the full
-     "Slå fra på denne enhed"; phones get the shorter one, and the per-channel bell drops to its
-     icon alone (its state is the icon, and the button keeps a title). Together that is what buys
-     the channel name enough room to sit on one line beside them. */
-  .label-short { display:none; }
+  /* On phones the room's notification link drops to its icon alone (its state is the icon, and the
+     link keeps a title), which is what buys the channel name room to sit on one line beside it. */
   /* Everything except the channel name keeps its natural width, so the name is the one thing
      that gives way when the row is tight. Includes the "Under test" chip for whenever the
      rollout gate is turned back on. */
   .chat-head .chip { flex:none; }
-  .chat-mute button { font-size:13px; padding:5px 12px; border-radius:999px; }
 
-  /* margin-left:auto groups the push controls on the right, so the picker and the "Under test"
-     chip stay together on the left instead of being spread apart by space-between. */
-  .push-bar { margin-left:auto; flex:none; display:flex; align-items:center; gap:8px; font-size:13px; }
+  /* This device's push subscription (notifications/_device.html, driven by frontend/src/push.ts). */
+  .push-bar { flex:none; display:flex; align-items:center; gap:8px; font-size:13px; }
   .push-bar button { font-size:13px; font-weight:600; padding:5px 12px; border-radius:999px;
     background:var(--surface); border:1px solid var(--border-strong); color:var(--ink); cursor:pointer; }
   .push-bar button:hover { background:var(--green-050); border-color:var(--green-100); color:var(--green-700); }
-  /* Already subscribed: this drops to a quiet link so the per-channel bell is the loud control.
-     See frontend/src/push.ts for why it is demoted rather than removed. */
+  /* Already subscribed (settings page): "turn off" is a quiet link, not a call to action. */
   .push-bar button.is-quiet { background:none; border-color:transparent; color:var(--muted);
     font-weight:500; text-decoration:underline; padding:5px 4px; }
   .push-bar button.is-quiet:hover { background:none; color:var(--ink); }
@@ -349,10 +342,8 @@
      highest-contrast thing on the page, which is what makes a conversation scannable: you find
      your own messages by colour, never by reading them. */
   .msg-own .msg-bubble { background:var(--green); color:#fff; }
-  /* The clock rides INSIDE the bubble (see .msg-clock below), so on green it cannot stay --faint,
-     which is a warm grey chosen against paper and all but vanishes here. White at .78 lands at
-     5.4:1 on --green -- above AA for the 11.5px it is set at. */
-  .msg-own .msg-meta { color:rgba(255, 255, 255, .78); }
+  /* The clock rides ABOVE the bubble, on its own line, so it is --faint on paper for every message
+     -- including your own green ones, which is why there is no white-on-green variant any more. */
 
   /* NO BORDER, and the shadow is a FILTER rather than box-shadow. Both follow from the tail being
      a pseudo-element (below): a border cannot be mitred around a separate box, and box-shadow
@@ -438,7 +429,13 @@
   .msg-own .msg-text a:hover { color:#fff; text-decoration-color:#fff; }
   .msg-line-text { display:flow-root; }
   .msg-bubble .msg-text { display:inline; }
-  .msg-bubble .msg-clock { float:right; white-space:nowrap; margin:2px 0 0 8px; }
+  /* Date and time above the bubble, indented past the 34px avatar + 10px gap so it lines up with the
+     bubble's left edge; own messages have no avatar and sit on the right. nowrap keeps
+     "7. Okt 2026, 14:32 · ⏱ 2 timer" on one line. */
+  .msg-clock { padding-left:44px; margin:0 0 2px; white-space:nowrap; line-height:1.3; }
+  .msg-own .msg-clock { padding-left:0; text-align:right; }
+  /* The thread's parent message is always left-aligned, even when it is your own. */
+  .msg-parent .msg-clock { padding-left:44px; text-align:left; }
   .msg-image img { max-width:min(100%, 320px); height:auto; border-radius:10px; margin-top:6px; display:block; }
 
   /* --- What a swipe reveals ------------------------------------------------------------------
@@ -885,6 +882,48 @@
   /* The box a day's sticky heading is confined to -- see _archive_chunk.html for why it has to
      exist. No styling of its own on purpose: the messages inside are the same partial the live
      feed renders, and anything set here would apply to them and not to their live counterparts. */
+  .day-block { display:block; }
+  .day-chip { position:sticky; top:4px; z-index:1; width:fit-content;
+    margin:18px auto 4px; padding:3px 12px; border-radius:999px;
+    background:var(--paper); border:1px solid var(--border);
+    /* The shadow is what makes a STUCK chip legible. Parked at the top of the scrollport it sits
+       over whatever is passing beneath it, and on a long message that is the middle of a line --
+       flat, that reads as a word having been redacted rather than as a label in front of it. A
+       soft drop makes it obviously float. box-shadow creates no stacking context, so the `.pop`
+       rule this file repeats everywhere is not in play. */
+    box-shadow:0 1px 4px rgba(24, 40, 30, .14);
+    font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase;
+    color:var(--muted); }
+
+  /* ---- the duration sheet (#192) ----
+     Positioning, backdrop and shadow all come from `.pop`/`.pop-panel` above -- this is the panel's
+     CONTENTS and nothing else. An earlier version re-anchored the panel beside the composer with
+     position:absolute, which is the exact arrangement the .pop block was written to replace: it
+     hung off the send button at the right edge and #js-feed could clip it. */
+  .duration-sheet { display:block; }
+  .duration-panel { width:min(320px, calc(100vw - 32px)); }
+  /* FOUR COLUMNS AT EVERY WIDTH, which is the least-bad answer to seven options. 3-up left the
+     last one alone beside two empty cells; a wrapping flex row filled the gap by growing the
+     orphan, which at the desktop panel width made "2 døgn" the widest target in the sheet -- the
+     exact nudge #192 exists to remove. 4-up splits 4 + 3 and leaves one empty cell, which reads as
+     a short last row rather than as a highlighted option. A fixed count also keeps the split the
+     same on a phone and on a laptop; a flex basis silently re-columned between the two. */
+  .duration-options { display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; }
+  /* 44px is the smallest target reliably hit with a thumb, and this is a phone-first feed: the
+     whole point of the sheet is that it is answered in one tap without aiming. */
+  .duration-option { min-height:44px; padding:6px 4px; border-radius:var(--radius-sm);
+    border:1px solid var(--border); background:var(--surface); color:var(--ink);
+    font:inherit; font-size:13px; font-weight:600; cursor:pointer; }
+  .duration-option:hover { background:var(--surface-2); }
+  .duration-option.is-chosen { background:var(--green); border-color:var(--green); color:#fff; }
+  .duration-actions { display:flex; justify-content:flex-end; gap:8px;
+    margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
+  .duration-cancel, .duration-confirm { min-height:40px; padding:0 14px;
+    border-radius:var(--radius-sm); font:inherit; font-size:14px; font-weight:600; cursor:pointer; }
+  .duration-cancel { border:1px solid var(--border); background:var(--surface); color:var(--ink); }
+  .duration-confirm { border:1px solid var(--green); background:var(--green); color:#fff; }
+  .duration-confirm:disabled { opacity:.45; cursor:not-allowed; }
+
   .archive-dayblock { display:block; }
   .archive-day { position:sticky; top:4px; z-index:1; width:fit-content;
     margin:18px auto 4px; padding:3px 12px; border-radius:999px;
@@ -1000,12 +1039,10 @@
     .chat-page .brandcell { display:none; }
     .chat-head { margin:0 -18px; padding:5px 18px; }
     .chat-head { gap:6px; }
-    .label-long { display:none; }
-    .label-short { display:inline; }
     .mute-label { display:none; }
     .channel-picker > summary, .channel-single { font-size:16px; }
     .channel-menu { min-width:210px; }
-    .push-bar button, .chat-mute button { padding:3px 10px; font-size:12px; }
+    .push-bar button, .chat-notif-link { padding:3px 10px; font-size:12px; }
     /* Tighter bubbles: smaller avatar, less padding, tighter leading. The bubble cap goes UP, not
        down -- 80% of a 360px column is 288px, and the narrower the screen the more a low cap costs
        in wrapped lines for no gain in readability. */
@@ -1111,6 +1148,16 @@
        screen and pushed the whole conversation off the bottom. */
     .app { grid-template-columns:1fr; grid-template-rows:auto auto 1fr;
       grid-template-areas:"brand" "top" "main"; }
+    /* Both rows stuck at top:0 and the brand row (z-index 31) covered the top bar, burger and all,
+       so on a phone the menu was only reachable from the top of the page. Only the top bar sticks. */
+    .brandcell { position:static; }
+    html:not(:has(body.chat-page)) { scroll-padding-top:60px; }
+    /* Slid away while scrolling down, back on scroll-up (topbar.ts). The album's sticky bars sit
+       under it, so they move up into the space it leaves. */
+    .topbar { transition:transform .2s ease; }
+    .topbar-hidden .topbar { transform:translateY(-100%); }
+    .topbar-hidden .album-timeline-years { top:0; }
+    .topbar-hidden .album-selection-bar { top:8px; }
     .hamburger { display:block; }
     .topsearch { display:none; }
     .sidebar { position:fixed; top:0; left:0; bottom:0; width:264px; z-index:50; box-shadow:var(--shadow); transform:translateX(-100%); transition:transform .2s ease; }
@@ -1240,7 +1287,7 @@
   .rsvp-sub { margin: 4px 0 0; font-size: 12px; font-weight: 700; letter-spacing: .04em;
     text-transform: uppercase; color: var(--muted); }
   .rsvp-queue .rsvp-name { font-weight: 500; }
-  .rsvp-avatar-quiet { background: transparent; color: var(--muted); border: 1px solid var(--line);
+  .rsvp-avatar-quiet { background: transparent; color: var(--muted); border: 1px solid var(--border);
     font-size: 12px; }
 
   /* The guest list. A <details> so the closed state costs one line rather than sixty, and so it
@@ -1254,6 +1301,11 @@
   .invite-count { font-size: 12px; font-weight: 650; border-radius: 999px; padding: 2px 10px;
     background: var(--green-050); color: var(--green-700); border: 1px solid var(--green-100); }
   .invite-body { padding: 0 13px 13px; display: flex; flex-direction: column; gap: 9px; }
+  .invite-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .invite-tools .invite-search { flex: 1 1 200px; width: auto; }
+  .invite-all { flex: none; white-space: nowrap; }
+  /* .btn sets display, which would beat the hidden attribute. */
+  .invite-all[hidden] { display: none; }
   .invite-search { width: 100%; box-sizing: border-box; border: 1px solid var(--border-strong);
     border-radius: 8px; background: var(--surface-2); padding: 9px 11px; font: inherit; font-size: 16px; }
   /* Scrolls rather than growing the page: sixty names would otherwise push the save button so far
@@ -1373,6 +1425,42 @@
   .cal-day-birthday .cal-flag { width: 20px; height: 15.1px; }
   .cal-day-empty { margin: 0; padding: 14px; font-size: 14px; }
 
+  /* Mærkedage (the founders' birthdays): a note like a birthday, but given a place of honour —
+     a brass label in the cell and a brass frame round it, so the day stands out at any width. */
+  .cal-cell.is-maerkedag { border-color: var(--brass); box-shadow: inset 0 0 0 1px var(--brass); }
+  .cal-maerkedag { display: flex; align-items: center; gap: 5px; min-width: 0; padding: 3px 6px;
+    border-radius: 6px; background: var(--warn-bg); border: 1px solid #e7d8b0; color: var(--brass-ink);
+    font-size: 11.5px; font-weight: 700; line-height: 1.3; }
+  .cal-maerkedag-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cal-key-maerkedag { background: var(--warn-bg); border: 1px solid var(--brass); }
+  .cal-day-maerkedag, .cal-day-maerkedag:hover { background: var(--warn-bg); }
+  .cal-day-maerkedag .cal-day-time { display: inline-flex; align-items: center; }
+  .cal-day-maerkedag .cal-flag { width: 20px; height: 15.1px; }
+  /* A <div> among the <a> rows, so :first-of-type leaves the first link without its divider. */
+  .cal-day-maerkedag + .cal-day-row { border-top: 1px solid var(--border); }
+
+  /* The dashboard's agenda: the next events and mærkedage, one row each. */
+  .agenda { list-style: none; margin: 0; padding: 0; }
+  .agenda-row { display: flex; align-items: center; gap: 12px; padding: 10px 6px;
+    border-top: 1px solid var(--border); color: var(--ink); text-decoration: none; }
+  .agenda li:first-child .agenda-row { border-top: 0; }
+  a.agenda-row:hover { background: var(--surface-2); }
+  .agenda-row.is-maerkedag { background: var(--warn-bg); border: 1px solid #e7d8b0; border-radius: 9px;
+    color: var(--brass-ink); }
+  li:has(.is-maerkedag) + li .agenda-row { border-top: 0; }
+  .agenda-date { flex: none; width: 40px; display: flex; flex-direction: column; align-items: center;
+    line-height: 1.1; }
+  .agenda-day { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .agenda-mon { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--faint); }
+  .agenda-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .agenda-title { display: flex; align-items: center; gap: 6px; font-size: 14.5px; font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agenda-title.is-cancelled { text-decoration: line-through; opacity: .7; }
+  .agenda-meta { font-size: 12.5px; color: var(--muted); }
+  .agenda-meta::first-letter { text-transform: uppercase; }
+  .agenda li.muted { padding: 6px 0; }
+
   /* PHONE. The month stops being a wall of text and becomes what a phone calendar actually is: a
      grid of dates you can read, dots saying which days have something on them, and a tap that opens
      the day underneath. It used to scroll sideways at 660px wide, which meant three days visible at
@@ -1395,6 +1483,7 @@
        cell is a centred column, so a day with both gets a flag and its dots stacked and centred,
        and a day with only a birthday does not leave a hole where the dots would have been. */
     .cal-birthday { display: none; }
+    .cal-maerkedag { display: none; }
     .cal-flag-mark { display: block; width: 14px; height: 10.6px; }
   }
 
@@ -1435,6 +1524,18 @@
      margins instead of into the ink, which is what "congested" was actually about. */
   .board-list { @apply flex flex-col gap-3; }
   .board-pinned { @apply mb-3; }
+  /* "N nye opslag — vis" (opslagstavle-live.ts). Sticky just under the 60px top bar, so it is seen
+     by somebody halfway down the page, which is where a reader usually is when a post arrives —
+     and it is a pill floating over the cards rather than a row pushing them down, because not
+     moving the cards is the whole reason a new post is announced instead of inserted. Its block
+     is zero-height for the same reason; the pill hangs below it. */
+  .board-new { position:sticky; top:68px; z-index:5; display:block; width:fit-content; height:0;
+    margin:0 auto; overflow:visible; text-decoration:none; }
+  .board-new[hidden] { display:none; }
+  .board-new > span { display:block; padding:6px 14px; border-radius:999px; background:var(--green);
+    color:#fff; font-size:.875rem; font-weight:600; box-shadow:0 6px 16px rgb(0 0 0 / .18);
+    white-space:nowrap; }
+  .topbar-hidden .board-new { top:8px; }
   .notice-card { @apply px-4; padding-block: 14px; }
   /* 15px, not the inherited 16. A card in a scanned list is not a page of prose: at 16px with
      leading-relaxed the excerpt was the loudest thing on the board and left the padding looking
@@ -1549,6 +1650,13 @@
     text-transform: uppercase; }
   .notice-byline { @apply flex flex-col; min-width: 0; }
   .notice-name { @apply font-semibold leading-snug; font-size: 15px; color: var(--ink); }
+  /* An author's name/avatar, linking to their profile in both feeds. Reads as a byline, not a link. */
+  .author-link { color: inherit; text-decoration: none; }
+  .author-link:hover { text-decoration: underline; }
+  .msg-avatar > .author-link, .notice-avatar > .author-link { display: grid; place-items: center;
+    width: 100%; height: 100%; border-radius: 50%; text-decoration: none; }
+  /* Comes before .notice-link in the markup, so it needs z-index to beat the stretched permalink. */
+  .notice-card.is-clickable .notice-author .author-link { position: relative; z-index: 1; }
   /* Name and embedsgruppe pill share the byline's first line; the timestamp keeps the second.
      Wrapping, not truncating: "Legat- og kunstgruppen" is wider than the gap beside a name on a
      phone, and a pill reading "Legat- og kuns..." names no group anyone recognises. min-width:0 so
@@ -1711,10 +1819,10 @@
   .breadcrumb [aria-hidden] { color:var(--muted); }
   .breadcrumb [aria-current] { color:var(--muted); }
 
-  .arkiv-list { list-style:none; margin:0; padding:0; border:1px solid var(--line); border-radius:10px;
-    overflow:hidden; background:var(--card); }
+  .arkiv-list { list-style:none; margin:0; padding:0; border:1px solid var(--border); border-radius:10px;
+    overflow:hidden; background:var(--surface); }
   .arkiv-list li { display:flex; align-items:center; gap:10px; padding:10px 14px;
-    border-bottom:1px solid var(--line); }
+    border-bottom:1px solid var(--border); }
   .arkiv-list li:last-child { border-bottom:0; }
   .arkiv-list li > a { display:flex; align-items:center; gap:10px; flex:1 1 auto; min-width:0;
     color:inherit; text-decoration:none; }
@@ -1783,20 +1891,59 @@
   .arkiv-grid .ni { width:40px; height:40px; margin:24px auto; display:block; color:var(--muted); }
 
    /* --- Photo album ------------------------------------------------------------------------- */
+   /* .main's overflow:auto makes it the sticky elements' scroller, and as the window does the
+      scrolling they never stuck. On album pages it clips instead, so the year bar and the selection
+      bar stay below the 60 px top bar as intended. */
+   .main:has([data-album-page]) { overflow:clip; }
    .album-heading { display:flex; align-items:end; justify-content:space-between; gap:16px; margin-bottom:28px; }
-   .album-heading h1 { margin:0; font-family:Georgia, serif; font-size:32px; color:var(--ink); }
+   .album-heading > div:first-child { min-width:0; }
+   .album-heading h1 { margin:0; font-family:Georgia, serif; font-size:32px; color:var(--ink); overflow-wrap:anywhere; }
    .album-eyebrow { margin:0 0 5px; color:var(--brass); font-size:12px; font-weight:700; letter-spacing:0; text-transform:uppercase; }
    .album-folders { display:grid; gap:28px; }
-   .album-folder { border-top:1px solid var(--line); padding-top:16px; }
+   /* The index's way into the timeline: a mosaic of random pictures (one large, six small) under a
+      dark band with the title. With few or no pictures the empty cells show the dark ground. On hover
+      each picture zooms inside its own cell, so the seams stay; the card itself stays put, as lifting
+      it and deepening its shadow made the whole thing jump. */
+   .album-timeline-card { position:relative; display:block; margin-bottom:32px; overflow:hidden; border-radius:var(--radius);
+      color:#fffdf7; text-decoration:none; background:var(--ink); box-shadow:var(--shadow); }
+   .album-timeline-card:focus-visible { outline:3px solid var(--brass); outline-offset:3px; }
+   .album-timeline-mosaic { display:grid; grid-template-columns:repeat(5, 1fr); grid-template-rows:repeat(2, 120px); gap:3px; }
+   .album-timeline-mosaic > span { min-width:0; overflow:hidden; }
+   .album-timeline-mosaic > span:first-child { grid-row:span 2; grid-column:span 2; }
+   .album-timeline-mosaic img { display:block; width:100%; height:100%; object-fit:cover; transition:transform .4s; }
+   .album-timeline-card:hover .album-timeline-mosaic img { transform:scale(1.05); }
+   .album-timeline-label { position:absolute; inset:auto 0 0 0; display:grid; gap:4px; padding:56px 22px 18px;
+      background:linear-gradient(to top, rgb(14 20 16 / .92) 0%, rgb(14 20 16 / .72) 55%, transparent); }
+   .album-timeline-label .album-eyebrow { margin:0; color:#e2c27a; }
+   .album-timeline-label strong { font-family:Georgia, serif; font-size:30px; line-height:1.1; }
+   .album-timeline-label > span:not(.album-eyebrow) { color:#e4ebe5; font-size:14px; }
+   .album-timeline-label .album-timeline-go { justify-self:start; margin-top:8px; padding:7px 14px; border-radius:999px;
+      color:var(--ink); background:var(--brass); font-weight:700; }
+   .album-timeline-card:hover .album-timeline-go { background:#c49a3f; }
+   @media (max-width:720px) {
+     .album-timeline-mosaic { grid-template-columns:repeat(3, 1fr); grid-template-rows:repeat(2, 92px); }
+     .album-timeline-mosaic > span:nth-child(n+4) { display:none; }
+     .album-timeline-label { padding:40px 16px 14px; }
+     .album-timeline-label strong { font-size:24px; }
+   }
+   @media (prefers-reduced-motion:reduce) { .album-timeline-mosaic img { transition:none; } }
+   .album-folder { border-top:1px solid var(--border); padding-top:16px; }
    .album-folder h2 { display:flex; align-items:center; gap:8px; margin:0 0 12px; font-size:16px; }
    .album-folder h2 svg, .album-subtitle svg { width:19px; height:19px; color:var(--brass); fill:none; stroke:currentColor; }
-   .album-folder-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:10px; }
-   .album-card { display:grid; grid-template-columns:30px 1fr; gap:2px 10px; min-height:82px; padding:14px;
-      border:1px solid var(--line); border-radius:8px; color:inherit; text-decoration:none; background:var(--card); }
-   .album-card:hover { border-color:var(--brass); background:var(--surface-2); }
-   .album-card svg { grid-row:span 2; width:28px; height:28px; fill:none; stroke:var(--brass); }
-   .album-card-name { align-self:end; font-weight:650; }
-   .album-card-count { align-self:start; color:var(--muted); font-size:12px; }
+   .album-folder-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 150px), 1fr)); gap:14px; }
+   /* Cover on top, name below: every card in a row is the same height whatever the album is called.
+      `min-width:0` lets a grid item shrink below its longest word, and the name is clamped to two
+      lines (full name in the title attribute), so a long name can neither widen nor stretch a row. */
+   .album-card { display:flex; flex-direction:column; min-width:0; overflow:hidden; border:1px solid var(--border); border-radius:10px;
+      color:inherit; text-decoration:none; background:var(--surface); box-shadow:var(--shadow-sm); transition:border-color .15s, box-shadow .15s, transform .15s; }
+   .album-card:hover { border-color:var(--brass); box-shadow:var(--shadow); transform:translateY(-1px); }
+   .album-card-cover { display:block; width:100%; aspect-ratio:4 / 3; object-fit:cover; background:var(--sunken); }
+   .album-card-placeholder { display:grid; place-items:center; width:100%; aspect-ratio:4 / 3; background:var(--sunken); }
+   .album-card-placeholder svg { width:34px; height:34px; fill:none; stroke:var(--faint); }
+   .album-card-body { display:grid; gap:2px; min-width:0; padding:10px 12px 12px; }
+   .album-card-name { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; line-clamp:2; overflow:hidden;
+      overflow-wrap:anywhere; font-weight:650; line-height:1.3; }
+   .album-card-count { color:var(--muted); font-size:12px; }
    .album-empty { margin:24px 0; color:var(--muted); }
    .album-back { color:var(--brass); font-size:13px; text-decoration:none; }
    .album-back:hover { text-decoration:underline; }
@@ -1814,35 +1961,154 @@
    .album-file-picker input { position:absolute; inline-size:1px; block-size:1px; opacity:0; }
    .album-file-picker span { color:var(--brass); font-weight:650; }.album-file-picker small { color:var(--muted); }
    .album-upload > input { flex:1 1 180px; min-width:0; }
-   .album-upload-selection { padding:10px 12px; border:1px solid var(--line); border-radius:6px; background:var(--surface-2); }
+   .album-upload-selection { padding:10px 12px; border:1px solid var(--border); border-radius:6px; background:var(--surface-2); }
    .album-upload-selection p { margin:0 0 5px; font-size:13px; font-weight:650; }.album-upload-selection ul { max-height:132px; margin:0; padding-left:20px; overflow:auto; color:var(--muted); font-size:13px; }
    .album-upload-progress progress { display:block; width:100%; height:12px; accent-color:var(--brass); }.album-upload-progress p { margin:6px 0 0; color:var(--muted); font-size:13px; }
+   .album-import-help { max-width:680px; margin:0 0 18px; color:var(--muted); }.album-import-help strong { color:var(--ink); }
    .album-import-result { margin-top:24px; }.album-import-result ul { margin:8px 0; padding-left:20px; }.album-import-skipped { color:var(--neg); }
    .album-import-progress { margin-top:16px; }.album-import-progress progress { display:block; width:100%; height:12px; accent-color:var(--brass); }.album-import-progress p { margin:6px 0 0; color:var(--muted); font-size:13px; }
+   .album-import-progress.is-working p { display:flex; align-items:center; gap:8px; }
+   .album-import-progress.is-working p::before { content:""; flex:none; width:14px; height:14px; box-sizing:border-box; border:2px solid var(--border); border-top-color:var(--brass); border-radius:50%; animation:album-spin .8s linear infinite; }
+   @keyframes album-spin { to { rotate:360deg; } }
+   @media (prefers-reduced-motion:reduce) { .album-import-progress.is-working p::before { animation-duration:2.4s; } }
    .album-import-form.is-submitted { opacity:.72; }.album-import-form.is-submitted input:disabled { background:var(--sunken); color:var(--muted); cursor:not-allowed; }.album-import-form .btn:disabled { background:var(--faint); color:#fff; cursor:not-allowed; opacity:1; }
    .album-media-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(138px, 1fr)); gap:8px; }
    .album-media-item { min-width:0; }.album-media-tile { position:relative; width:100%; min-width:0; padding:0; overflow:hidden; border:0; border-radius:7px; background:var(--surface-2); color:var(--ink); text-align:left; cursor:pointer; }
    .album-media-tile img, .album-media-tile video { display:block; width:100%; aspect-ratio:1; object-fit:cover; background:var(--surface-2); }
-   .album-media-tile strong, .album-video-mark { position:absolute; top:6px; left:6px; padding:3px 6px; border-radius:4px; background:rgb(0 0 0 / .68); color:#fff; font-size:11px; }
+   .album-media-tile strong, .album-video-mark, .album-date-mark { position:absolute; top:6px; left:6px; padding:3px 6px; border-radius:4px; background:rgb(0 0 0 / .68); color:#fff; font-size:11px; }
    .album-video-mark { left:auto; right:6px; }
+   /* An approximated date (photo_album DateSource): quieter than the badges above, bottom left. */
+   .album-date-mark { top:auto; bottom:6px; padding:1px 5px; background:rgb(0 0 0 / .45); font-size:10px; }
    .album-media-tile:hover img, .album-media-tile:hover video, .album-media-tile:focus-visible img, .album-media-tile:focus-visible video { filter:brightness(.84); }
    /* A video whose derivatives are still being built out of band (photo_album DerivativeState):
       same footprint as a real tile so the grid does not reflow when the thumbnail appears. */
-   .album-media-placeholder { display:flex; aspect-ratio:1; flex-direction:column; align-items:center; justify-content:center; gap:4px; padding:10px; border:1px dashed var(--line); background:var(--surface-2); color:var(--muted); text-align:center; cursor:default; }
+   .album-media-placeholder { display:flex; aspect-ratio:1; flex-direction:column; align-items:center; justify-content:center; gap:4px; padding:10px; border:1px dashed var(--border); background:var(--surface-2); color:var(--muted); text-align:center; cursor:default; }
    .album-media-placeholder strong { position:static; background:none; color:var(--ink); font-size:12px; }
    .album-media-placeholder[data-kind="failed"] strong { color:var(--neg); }
    .album-media-placeholder-title { overflow:hidden; max-width:100%; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
    .album-media-placeholder small { font-size:11px; }
    .album-media-origin { margin:5px 4px 0; overflow:hidden; color:var(--muted); text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
    .album-media-controls { min-height:22px; padding:3px 4px; justify-content:center; }.album-media-controls button { border:0; background:none; padding:0; color:var(--brass); cursor:pointer; font:inherit; font-size:12px; }.album-media-controls .btn-link-danger { color:var(--neg); }
-   .album-viewer { display:none; width:min(1120px, calc(100vw - 32px)); height:min(760px, calc(100vh - 32px)); max-width:none; max-height:none; margin:auto; padding:0; border:0; border-radius:8px; color:var(--ink); background:var(--card); }
+   .album-viewer { display:none; width:min(1120px, calc(100vw - 32px)); height:min(760px, calc(100vh - 32px)); max-width:none; max-height:none; margin:auto; padding:0; border:0; border-radius:8px; color:var(--ink); background:var(--surface); }
    .album-viewer::backdrop { background:rgb(5 12 9 / .88); }
    .album-viewer[open] { display:grid; grid-template-columns:minmax(0, 1fr) 260px; grid-template-rows:minmax(0, 1fr); overflow:visible; }
    .album-viewer-stage { min-width:0; min-height:0; display:grid; place-items:center; overflow:hidden; padding:24px; box-sizing:border-box; background:#111; }
    .album-viewer-stage img, .album-viewer-stage video { display:block; width:100%; height:100%; min-width:0; min-height:0; max-width:100%; max-height:100%; object-fit:contain; transform-origin:center; }
    .album-viewer aside { padding:28px 20px; overflow:auto; color:#f6f3ea; background:#26332d; }.album-viewer h2 { margin:0 0 18px; color:#fffdf7; font-family:Georgia, serif; font-size:22px; }.album-viewer dl { margin:0 0 24px; }.album-viewer dt { margin-top:10px; color:#d2ddd4; font-size:12px; }.album-viewer dd { margin:2px 0 0; color:#fffdf7; }
    .album-viewer-mobile-date, .album-viewer-menu, .album-viewer-menu-button { display:none; }.album-viewer-close, .album-viewer-arrow { position:absolute; display:grid; place-items:center; width:38px; height:38px; border:0; border-radius:50%; background:rgb(0 0 0 / .64); color:#fff; font-size:24px; cursor:pointer; }.album-viewer-close { top:-12px; right:-12px; }.album-viewer-arrow { top:calc(50% - 19px); }.album-viewer-previous { left:-48px; }.album-viewer-next { right:-48px; }
-   @media (max-width:720px) { .album-heading { align-items:start; flex-direction:column; }.album-upload-dialog { width:calc(100vw - 24px); }.album-upload > input { min-height:38px; }.album-media-grid { grid-template-columns:repeat(auto-fill, minmax(110px, 1fr)); }.album-viewer { width:100vw; height:100dvh; max-height:none; margin:0; border-radius:0; background:#111; }.album-viewer[open] { grid-template-columns:1fr; grid-template-rows:minmax(0, 1fr) auto; overflow:hidden; }.album-viewer-stage { height:auto; padding:58px 16px 16px; touch-action:pan-y; }.album-viewer-stage img { max-height:none; }.album-viewer aside { padding:12px 62px 14px 16px; overflow:visible; background:#111; }.album-viewer aside .album-eyebrow, .album-viewer aside dl, .album-viewer aside > .btn, .album-viewer aside form, .album-viewer-arrow { display:none; }.album-viewer h2 { margin:0; font-size:17px; }.album-viewer-mobile-date { display:block; margin:3px 0 0; color:#d2ddd4; font-size:13px; }.album-viewer-close { top:10px; right:10px; z-index:2; }.album-viewer-menu-button { position:absolute; z-index:2; top:10px; right:56px; display:grid; place-items:center; width:38px; height:38px; padding:0; border:0; border-radius:50%; background:rgb(0 0 0 / .64); color:#fff; font-size:25px; line-height:1; cursor:pointer; }.album-viewer-menu { position:absolute; z-index:3; top:56px; right:10px; display:block; width:min(300px, calc(100vw - 20px)); max-height:calc(100dvh - 130px); padding:16px; overflow:auto; box-sizing:border-box; border-radius:6px; color:#fffdf7; background:#26332d; box-shadow:0 12px 32px rgb(0 0 0 / .42); }.album-viewer-menu[hidden] { display:none; }.album-viewer-menu dl { margin:0 0 18px; }.album-viewer-menu dt { margin-top:10px; color:#d2ddd4; font-size:12px; }.album-viewer-menu dd { margin:2px 0 0; }.album-viewer-menu form { margin-top:12px; } }
+   /* Album tree: breadcrumbs, sub-album cards, the "this album / everything below" switch. */
+   .album-breadcrumbs { display:flex; flex-wrap:wrap; gap:4px; min-width:0; margin-bottom:4px; overflow-wrap:anywhere; }
+   .album-breadcrumbs .album-back + .album-back::before { content:"/"; margin-right:4px; color:var(--muted); }
+   .album-actions { flex-wrap:wrap; justify-content:flex-end; }
+   .album-actions .btn-link, .album-actions .btn-link-danger { font-size:13px; }.album-actions summary.btn-link { cursor:pointer; }
+   .album-menu { position:relative; }.album-menu > summary { list-style:none; }.album-menu > summary::-webkit-details-marker { display:none; }
+   .album-menu > summary::after { content:" ▾"; font-size:11px; }
+   .album-menu-panel { position:absolute; z-index:20; top:calc(100% + 6px); right:0; display:grid !important; gap:8px; width:max-content; min-width:200px; max-width:min(320px, calc(100vw - 32px)); padding:12px; border:1px solid var(--border); border-radius:8px; background:var(--surface); box-shadow:0 12px 28px rgb(0 0 0 / .16); }
+   .album-menu-panel p, .album-menu-panel label { margin:0; color:var(--muted); font-size:13px; }
+   .album-menu-panel .btn-link { justify-self:start; }
+   .album-menu-choice { display:grid; gap:4px; margin:0; padding:0; border:0; }
+   .album-menu-choice label { display:flex; align-items:center; gap:6px; color:var(--ink); }
+   .album-lock-status { justify-content:flex-start; margin:-14px 0 20px; }.album-lock-status a { color:inherit; }
+   .album-lock-note { color:var(--muted); font-size:13px; }
+   .album-download-notice p { margin:0; }
+   .album-children { margin-bottom:24px; }.album-children h2 { margin:0 0 10px; font-size:16px; }
+   .album-create-sub input { min-width:0; }
+   .album-scope { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 18px; }
+   .album-scope a { padding:5px 11px; border:1px solid var(--border); border-radius:999px; color:var(--muted); font-size:13px; text-decoration:none; }
+   .album-scope a[aria-current] { border-color:var(--brass); color:var(--ink); background:var(--surface-2); }
+   /* Paging: sentinels are where the next page arrives. overflow-anchor is off because the script
+      keeps the reader's place itself, and the browser doing it as well would move them twice. */
+   .album-strip { margin-top:20px; }
+   .album-strip-featured { display:grid; grid-template-columns:repeat(3, minmax(0, 220px)); gap:12px; }
+   .album-strip-earlier { display:grid; grid-template-columns:repeat(auto-fill, minmax(88px, 1fr)); gap:10px; }
+   .album-strip-subtitle { margin:18px 0 10px; font-size:13px; font-weight:700; color:var(--muted); }
+   .album-strip-subtitle:first-child { margin-top:0; }
+   .album-strip-item { display:grid; gap:5px; min-width:0; color:inherit; text-decoration:none; }
+   .album-strip-item img { width:100%; aspect-ratio:1; object-fit:cover; border-radius:8px; background:var(--sunken); }
+   .album-strip-item span { overflow:hidden; color:var(--muted); font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+   .album-strip-item:hover span { color:var(--green-700); }
+   .album-media-grid { overflow-anchor:none; }
+   .album-page-sentinel { grid-column:1 / -1; height:1px; }
+   .album-page-sentinel.is-loading { height:48px; background:linear-gradient(90deg, transparent, var(--surface-2), transparent); background-size:200% 100%; animation:album-loading 1.2s linear infinite; }
+   @keyframes album-loading { from { background-position:200% 0; } to { background-position:-200% 0; } }
+   /* Selection mode */
+   .album-media-item { position:relative; }
+   .album-select { position:absolute; z-index:2; top:6px; right:6px; display:grid; place-items:center; width:26px; height:26px; border-radius:50%; background:rgb(255 255 255 / .9); box-shadow:0 1px 4px rgb(0 0 0 / .3); cursor:pointer; }
+   .album-select input { width:16px; height:16px; margin:0; accent-color:var(--brass); cursor:pointer; }
+   .album-media-grid.is-selecting .album-video-mark, .album-media-grid.is-selecting .album-date-mark { display:none; }
+   .album-media-item.is-selected .album-media-tile { outline:3px solid var(--brass); outline-offset:-3px; }
+   .album-media-item.is-selected .album-media-tile img { filter:brightness(.8); }
+   .album-selection-bar { position:sticky; z-index:15; top:68px; display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; margin:0 0 14px; padding:10px 14px; border:1px solid var(--border); border-radius:8px; background:var(--surface); box-shadow:0 8px 20px rgb(0 0 0 / .1); }
+   .album-selection-bar[hidden] { display:none; }
+   .album-selection-bar button { border:0; background:none; padding:0; color:var(--brass); cursor:pointer; font:inherit; }
+   .album-selection-bar button.btn-link-danger { color:var(--neg); }
+   .album-selection-bar button:disabled { color:var(--muted); cursor:not-allowed; }
+   .album-selection-count { font-weight:650; }
+   .album-selection-download { display:flex; align-items:center; gap:8px; }.album-selection-download select { min-height:30px; }
+   /* Timeline */
+   .album-timeline-years { position:sticky; z-index:14; top:60px; display:flex; gap:6px; margin:0 0 16px; padding:8px 0; overflow-x:auto; background:var(--surface); scrollbar-width:none; }
+   .album-timeline-years a { flex:none; padding:4px 10px; border-radius:999px; color:var(--muted); font-size:13px; text-decoration:none; }
+   .album-timeline-years a[aria-current] { color:#fff; background:var(--brass); }
+   .album-month-ruler { grid-column:1 / -1; display:flex; align-items:center; gap:12px; margin:22px 0 2px; color:var(--ink); font-family:Georgia, serif; font-size:19px; }
+   .album-month-ruler::after { content:""; flex:1; height:2px; border-radius:1px; background:linear-gradient(to right, var(--brass), var(--border) 60%); }
+   .album-month-ruler:first-child, .album-page-sentinel + .album-month-ruler { margin-top:0; }
+   /* The time rail (photo-album.ts, timeRail) sits in a lane kept free beside the timeline; on a
+      phone there is no room for a lane, so it shrinks to a line and a dot at the screen's edge. */
+   .album-timeline { padding-right:64px; }
+   .album-time-rail { position:fixed; z-index:15; top:72px; bottom:36px; right:24px; width:3px; border-radius:2px; background:var(--border); }
+   .album-time-rail a { position:absolute; right:12px; translate:0 -50%; padding:1px 6px; border-radius:999px; color:var(--muted); background:var(--surface); font-size:11px; font-weight:600; text-decoration:none; }
+   .album-time-rail a::after { content:""; position:absolute; top:50%; right:-12px; width:9px; height:1px; background:var(--faint); }
+   .album-time-rail a:hover { color:var(--ink); }
+   .album-time-rail-thumb { position:absolute; left:50%; display:none; width:15px; height:15px; box-sizing:border-box; translate:-50% -50%;
+      border:3px solid var(--surface); border-radius:50%; background:var(--brass); box-shadow:0 1px 5px rgb(0 0 0 / .3); transition:top .25s ease; }
+   .album-time-rail.is-placed .album-time-rail-thumb { display:block; }
+   .album-time-rail-thumb span { position:absolute; top:50%; right:24px; translate:0 -50%; padding:5px 12px; border-radius:999px; color:#fffdf7; background:var(--ink);
+      font-size:13px; font-weight:700; white-space:nowrap; box-shadow:var(--shadow); opacity:0; transition:opacity .2s; pointer-events:none; }
+   .album-time-rail.is-scrolling .album-time-rail-thumb span, .album-time-rail:hover .album-time-rail-thumb span { opacity:1; }
+   @media (max-width:720px) {
+     .album-timeline { padding-right:0; }
+     .album-time-rail { right:3px; top:24px; bottom:24px; background:rgb(0 0 0 / .12); }
+     .album-time-rail a { display:none; }
+     .album-time-rail-thumb { width:13px; height:13px; border-width:2px; }
+     .album-month-ruler { margin-top:16px; font-size:17px; }
+   }
+   /* Tags: chips linking to the timeline filtered on them; an album's inherited ones are dashed. */
+   .album-tags, .album-tag-filter { display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; margin:0 0 20px; }
+   .album-heading + .album-tags { margin-top:-14px; }
+   .album-tags[hidden] { display:none; }
+   .album-tag-list { display:flex; flex-wrap:wrap; gap:6px; margin:0; padding:0; list-style:none; }
+   .album-tag-list:empty { display:none; }
+   .album-tag { display:inline-flex; align-items:center; padding:2px 10px; border:1px solid var(--border); border-radius:999px; background:var(--surface-2); color:var(--ink); font-size:13px; line-height:1.5; text-decoration:none; }
+   .album-tag:has(button) { padding-right:3px; }
+   .album-tag a { color:inherit; text-decoration:none; }.album-tag a:hover { color:var(--brass-ink); }
+   .album-tag.is-inherited { border-style:dashed; background:transparent; color:var(--muted); }
+   .album-tag button { padding:0 5px; border:0; background:none; color:var(--muted); font-size:15px; line-height:1; cursor:pointer; }.album-tag button:hover { color:var(--neg); }
+   a.album-tag.is-active { gap:5px; border-color:var(--brass); background:var(--brass); color:#fff; }a.album-tag.is-active:hover { background:var(--brass-ink); }
+   .album-tag-add { position:relative; }
+   .album-tag-add[hidden] { display:none; }
+   .album-tag-add input { width:160px; min-height:30px; padding:4px 10px; font-size:13px; }
+   .album-tag-options { position:absolute; z-index:30; top:calc(100% + 4px); left:0; min-width:100%; max-height:240px; margin:0; padding:4px; overflow:auto; box-sizing:border-box; list-style:none; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--ink); box-shadow:0 12px 28px rgb(0 0 0 / .16); }
+   .album-tag-options[hidden] { display:none; }
+   .album-tag-options li { padding:5px 8px; border-radius:5px; font-size:13px; white-space:nowrap; cursor:pointer; }
+   .album-tag-options li:hover, .album-tag-options li[aria-selected="true"] { background:var(--surface-2); }
+   .album-tag-error { margin:4px 0 0; color:var(--neg); font-size:13px; }
+   .album-tag-error[hidden] { display:none; }
+   .album-viewer .album-tags { margin:0 0 20px; }
+   .album-viewer .album-tag { border-color:rgb(255 255 255 / .24); background:rgb(255 255 255 / .08); color:#fffdf7; }
+   .album-viewer .album-tag.is-inherited { background:transparent; color:#d2ddd4; }
+   .album-viewer .album-tag a:hover { color:#f3d58f; }.album-viewer .album-tag button { color:#d2ddd4; }
+   .album-viewer .album-tag-error { color:#f5b3a8; }
+   @media (max-width:720px) { .album-viewer aside .album-tags { display:none; }.album-tag-add input { width:100%; }.album-tag-add { flex:1 1 160px; } }
+   /* Downloads, import results, viewer extras */
+   .album-download-list { display:grid; gap:10px; margin:0; padding:0; list-style:none; }
+   .album-download-list li { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; }
+   .album-import-tree { margin:8px 0; padding:0; list-style:none; }
+   .album-import-tree li { padding-left:calc(var(--depth, 0) * 18px); }
+   .album-viewer-views { margin:0 0 16px; color:#d2ddd4; font-size:13px; }.album-viewer-views:empty { display:none; }
+   .album-viewer dd a, .album-viewer-menu dd a { color:#f3d58f; }
+   .album-upload-notes { margin:8px 0 0; padding-left:20px; color:var(--neg); font-size:13px; }.album-upload-notes:empty { display:none; }
+   .album-form-error { color:var(--neg); font-size:13px; }
+   @media (max-width:720px) { .album-heading { align-items:start; flex-direction:column; }.album-actions { position:relative; align-self:stretch; }.album-menu { position:static; }.album-menu-panel { left:0; right:0; width:auto; max-width:none; }.album-upload-dialog { width:calc(100vw - 24px); }.album-upload > input { min-height:38px; }.album-media-grid { grid-template-columns:repeat(auto-fill, minmax(110px, 1fr)); }.album-viewer { width:100vw; height:100dvh; max-height:none; margin:0; border-radius:0; background:#111; }.album-viewer[open] { grid-template-columns:1fr; grid-template-rows:minmax(0, 1fr) auto; overflow:hidden; }.album-viewer-stage { height:auto; padding:58px 16px 16px; touch-action:pan-y; }.album-viewer-stage img { max-height:none; }.album-viewer aside { padding:12px 62px 14px 16px; overflow:visible; background:#111; }.album-viewer aside .album-eyebrow, .album-viewer aside dl, .album-viewer aside > .btn, .album-viewer aside form, .album-viewer-arrow { display:none; }.album-viewer h2 { margin:0; font-size:17px; }.album-viewer-mobile-date { display:block; margin:3px 0 0; color:#d2ddd4; font-size:13px; }.album-viewer-close { top:10px; right:10px; z-index:2; }.album-viewer-menu-button { position:absolute; z-index:2; top:10px; right:56px; display:grid; place-items:center; width:38px; height:38px; padding:0; border:0; border-radius:50%; background:rgb(0 0 0 / .64); color:#fff; font-size:25px; line-height:1; cursor:pointer; }.album-viewer-menu { position:absolute; z-index:3; top:56px; right:10px; display:block; width:min(300px, calc(100vw - 20px)); max-height:calc(100dvh - 130px); padding:16px; overflow:auto; box-sizing:border-box; border-radius:6px; color:#fffdf7; background:#26332d; box-shadow:0 12px 32px rgb(0 0 0 / .42); }.album-viewer-menu[hidden] { display:none; }.album-viewer-menu dl { margin:0 0 18px; }.album-viewer-menu dt { margin-top:10px; color:#d2ddd4; font-size:12px; }.album-viewer-menu dd { margin:2px 0 0; }.album-viewer-menu form { margin-top:12px; } }
 
   /* The checkbox sits on the picture rather than beside it. Hidden until there is a reason to show
      it - a selection in progress, a hover, or keyboard focus - so an ordinary browse is pictures
@@ -1979,6 +2245,247 @@
   @media (max-width: 560px) {
     /* The metadata is the first thing to go: on a phone the name is the whole point. */
     .arkiv-meta { display:none; }
+  }
+
+  /* ---- Notifications (app/notifications): the topbar bell, its dropdown, the list and settings ---- */
+  /* Alpine's x-cloak: hidden until Alpine has initialised, so the bell's panel never flashes open. */
+  [x-cloak] { display:none !important; }
+
+  .notif-bell { position:relative; }
+  .notif-bell-button { position:relative; padding:6px 9px; }
+  .notif-head-link svg { stroke:currentColor; fill:none; }
+  .notif-bell-button svg { width:18px; height:18px; stroke:currentColor; fill:none; }
+  .notif-badge { position:absolute; top:-6px; right:-6px; min-width:18px; height:18px; padding:0 5px;
+    border-radius:999px; background:var(--neg); color:#fff; font-size:11px; font-weight:700; line-height:18px;
+    text-align:center; border:2px solid var(--green); }
+  /* Anchored to the bell's right edge and clamped to the viewport, so on a phone it is near-full width
+     instead of hanging off the left side of the screen. */
+  .notif-panel { position:absolute; right:0; top:calc(100% + 8px); width:min(380px, calc(100vw - 24px));
+    max-height:min(70vh, 560px); overflow:auto; background:var(--surface); color:var(--ink);
+    border:1px solid var(--border); border-radius:12px; box-shadow:0 12px 32px rgba(0,0,0,.18); z-index:40; }
+  /* On a phone the avatar sits right of the bell, so a panel anchored to the bell's right edge ran
+     off the left of the screen. There the bell stops being the anchor and the panel spans the
+     sticky top bar instead, 12px in from both sides. */
+  @media (max-width:720px) {
+    .notif-bell { position:static; }
+    .notif-panel { left:12px; right:12px; width:auto; }
+  }
+  .notif-panel-head { display:flex; align-items:center; justify-content:space-between; gap:8px;
+    padding:10px 14px; border-bottom:1px solid var(--border); font-weight:700; font-size:14px; }
+  .notif-panel-head a { font-size:13px; font-weight:600; color:var(--muted); }
+  .notif-panel-foot { display:block; text-align:center; padding:10px; font-size:13px; font-weight:600;
+    border-top:1px solid var(--border); text-decoration:none; }
+  .notif-empty { padding:14px; font-size:14px; }
+
+  /* The avatar's account menu, beside the bell and styled like its panel. */
+  .user-menu { position:relative; }
+  .user-menu-button { background:transparent; border:0; border-radius:8px; padding:4px 6px; cursor:pointer; font:inherit; }
+  .user-menu-button:hover, .user-menu-button[aria-expanded="true"] { background:rgba(255,255,255,.12); }
+  .user-menu-caret { font-size:11px; opacity:.8; }
+  .user-menu-panel { position:absolute; right:0; top:calc(100% + 8px); min-width:220px; padding:6px 0;
+    background:var(--surface); color:var(--ink); border:1px solid var(--border); border-radius:12px;
+    box-shadow:0 12px 32px rgba(0,0,0,.18); z-index:40; }
+  .user-menu-panel a, .user-menu-panel button { display:block; width:100%; box-sizing:border-box; padding:9px 14px;
+    text-align:left; font-size:14px; font-weight:600; color:var(--ink); text-decoration:none; background:none;
+    border:0; cursor:pointer; font-family:inherit; }
+  .user-menu-panel a:hover, .user-menu-panel button:hover { background:var(--surface-2); }
+  .user-menu-panel form { margin:0; border-top:1px solid var(--border); margin-top:6px; padding-top:6px; }
+
+  .notif-item { display:flex; align-items:flex-start; gap:10px; padding:11px 14px; text-decoration:none;
+    color:var(--ink); border-bottom:1px solid var(--border); border-left:3px solid transparent; }
+  .notif-item:last-child { border-bottom:none; }
+  .notif-item:hover { background:var(--surface-2); color:var(--ink); }
+  .notif-item > svg { width:18px; height:18px; flex:none; margin-top:2px; color:var(--muted); stroke:currentColor; fill:none; }
+  .notif-text { flex:1; min-width:0; font-size:14px; }
+  .notif-title { display:block; font-weight:500; }
+  .notif-body { display:block; color:var(--muted); font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .notif-time { display:block; color:var(--faint); font-size:12px; margin-top:2px; }
+  /* The left edge carries the importance level: nothing for low, brass for high, red for critical. */
+  .notif-imp-2 { border-left-color:var(--border); }
+  .notif-imp-3 { border-left-color:var(--brass); }
+  .notif-imp-4 { border-left-color:var(--neg); background:var(--neg-bg); }
+  .notif-item.is-unseen { background:var(--green-050); }
+  .notif-item.is-unseen .notif-title { font-weight:700; }
+  .notif-dot { width:8px; height:8px; border-radius:50%; background:var(--green); flex:none; margin-top:6px; }
+  .notif-level { display:inline-block; font-size:10.5px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--brass-ink); margin-right:6px; }
+  .notif-imp-4 .notif-level { color:var(--neg); }
+
+  .notif-views { display:flex; gap:8px; margin:0 0 14px; }
+  .notif-views .chip { text-decoration:none; }
+  .notif-section { margin-bottom:16px; }
+  /* Fixed layout + fixed check columns, so the columns line up from one group's card to the next
+     whatever the length of the category names. The outer cells pad to the card's own 18px. */
+  .notif-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:14px; }
+  .notif-table .notif-col { width:92px; }
+  .notif-table th, .notif-table td { padding:11px 10px; vertical-align:middle; }
+  .notif-table th:first-child, .notif-table td:first-child { padding-left:18px; }
+  .notif-table th:last-child, .notif-table td:last-child { padding-right:18px; }
+  .notif-table td:not(:first-child), .notif-table th:not(:first-child) { text-align:center; }
+  .notif-table thead th { font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; background:var(--surface-2); border-bottom:1px solid var(--border); }
+  .notif-table tbody tr + tr { border-top:1px solid var(--border); }
+  .notif-table strong { font-weight:600; }
+  .notif-desc { font-size:13px; color:var(--muted); margin-top:2px; }
+  .notif-table input[type=checkbox] { width:18px; height:18px; vertical-align:middle; }
+  .notif-table input[type=checkbox]:disabled { opacity:.55; cursor:not-allowed; }
+  .notif-table tr:target { background:var(--warn-bg); }
+  .notif-admin-table { width:100%; border-collapse:collapse; font-size:14px; }
+  @media (max-width:640px) {
+    .notif-table .notif-col { width:64px; }
+    .notif-table th, .notif-table td { padding:10px 6px; }
+    .notif-table thead th { font-size:11px; letter-spacing:0; }
+  }
+  .notif-check { display:flex; align-items:center; gap:8px; font-weight:600; margin-bottom:10px; }
+  .notif-select { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+  .notif-save { position:sticky; bottom:12px; display:flex; justify-content:flex-end; }
+  .notif-broadcast textarea, .notif-broadcast input[type=text], .notif-broadcast select { width:100%; max-width:560px; }
+
+  /* The device prompt on the dashboard and in Den Hurtige: a card-like strip, not the old right-
+     aligned header control (that was .push-bar inside the chat head). */
+  .push-prompt { margin:0 0 14px; padding:10px 14px; border:1px solid var(--green-100); border-radius:10px;
+    background:var(--green-050); justify-content:space-between; flex-wrap:wrap; }
+  .push-prompt-text { font-weight:600; }
+  /* The chat room's notification indicator: a link to the room's row on the settings page. */
+  .chat-notif-link { flex:none; margin-left:auto; display:inline-flex; align-items:center; gap:4px; font-size:13px; font-weight:600;
+    padding:5px 10px; border-radius:999px; border:1px solid var(--border-strong); background:var(--surface);
+    color:var(--ink); text-decoration:none; }
+  .chat-notif-link:hover { background:var(--green-050); color:var(--green-700); }
+  .chat-notif-link.is-off { color:var(--muted); }
+
+  /* --- worker-jobs dashboard (siteadmin/worker_jobs.html, _worker_jobs_live.html, worker_job_detail.html) --- */
+  /* A chip for a state that is neither good nor bad news: waiting in the queue, annulled. */
+  .chip-quiet { background:var(--sunken); color:var(--muted); border-color:var(--border); }
+
+  .jobs-section { margin-bottom:20px; }
+  .jobs-name { font-family:ui-monospace,Menlo,monospace; font-size:13px; font-weight:650; overflow-wrap:anywhere; }
+  a.jobs-name { color:var(--green-700); }
+  .jobs-app { margin-left:7px; font-size:11.5px; color:var(--faint); white-space:nowrap; }
+  .jobs-sub { font-size:12.5px; color:var(--muted); overflow-wrap:anywhere; }
+  .jobs-args, .jobs-mono { font-family:ui-monospace,Menlo,monospace; font-size:12px; overflow-wrap:anywhere; }
+  .jobs-args { color:var(--faint); }
+  .jobs-empty { margin:0; padding:14px 18px; color:var(--muted); font-size:13.5px; }
+
+  /* The tiles: label, number, one line of what it means. A tile with bad news gets a red edge as
+     well as its words — never the colour alone. */
+  .jobs-tiles { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:14px; margin-bottom:20px; }
+  .jobs-tile { display:block; padding:14px 16px; background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--radius); box-shadow:var(--shadow-sm); color:var(--ink); text-decoration:none; }
+  a.jobs-tile:hover { border-color:var(--green-100); background:var(--green-050); color:var(--ink); }
+  .jobs-tile.is-alert { border-color:#e7c7c3; box-shadow:inset 4px 0 0 var(--neg), var(--shadow-sm); }
+  .jobs-tile-k { display:block; font-size:11px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); }
+  .jobs-tile-v { display:block; margin-top:4px; font-size:30px; font-weight:700; line-height:1.15; font-variant-numeric:tabular-nums; }
+  .jobs-tile-s { display:block; margin-top:2px; font-size:12.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  .jobs-live { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:20px; align-items:start; margin-bottom:20px; }
+  .jobs-list { list-style:none; margin:0; padding:0; }
+  .jobs-list > li { padding:12px 18px; }
+  .jobs-list > li + li { border-top:1px solid var(--border); }
+  .jobs-row { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; }
+  .jobs-when { flex:none; text-align:right; font-size:12.5px; color:var(--muted); }
+  .jobs-when b { display:block; font-size:15px; color:var(--ink); }
+  /* A running job's share of its time limit. The track is a lighter step of the fill's own colour. */
+  .jobs-meter { height:4px; margin-top:8px; border-radius:2px; background:var(--green-100); overflow:hidden; }
+  .jobs-meter > span { display:block; height:100%; border-radius:2px; background:var(--green); }
+  .jobs-meter.is-near { background:var(--warn-bg); }
+  .jobs-meter.is-near > span { background:var(--brass); }
+  .jobs-stale { padding:11px 18px; border-bottom:1px solid var(--border); background:var(--neg-bg); font-size:13px; }
+  .jobs-stale a { font-weight:600; color:var(--neg); }
+
+  .jobs-group { padding:11px 18px; }
+  .jobs-group + .jobs-group { border-top:1px solid var(--border); }
+  .jobs-group-head { display:flex; align-items:center; flex-wrap:wrap; gap:4px 8px; }
+  .jobs-group-head .jobs-app { margin-left:0; }
+  .jobs-group-count { margin-left:auto; font-size:15px; }
+  .jobs-queued { list-style:none; margin:6px 0 0; padding:0; font-size:12.5px; }
+  .jobs-queued li { display:flex; align-items:baseline; gap:10px; padding:2px 0; overflow-wrap:anywhere; }
+  .jobs-queued .num { flex:none; color:var(--muted); }
+
+  /* The activity chart: a column an hour, failed at the baseline and succeeded on top, with the
+     2px surface gap between them and a rounded end on the top one. Colours checked with the
+     dataviz validator (deuteranopia ΔE 11 between the two, 3:1 against the card). */
+  .jobs-legend { display:flex; gap:16px; font-size:13px; color:var(--muted); }
+  .jobs-legend span { display:inline-flex; align-items:center; gap:6px; }
+  .jobs-legend b { color:var(--ink); }
+  .jobs-legend i { display:inline-block; width:10px; height:10px; border-radius:2px; }
+  .jobs-key-ok { background:#4FA06E; }
+  .jobs-key-fail { background:var(--neg); }
+  .jobs-chart { position:relative; height:150px; margin-top:12px; border-bottom:1px solid var(--border-strong); }
+  .jobs-gridline { position:absolute; left:0; right:0; border-top:1px solid var(--border); }
+  .jobs-gridline > span { position:absolute; left:0; bottom:2px; font-size:11px; color:var(--faint); }
+  .jobs-cols, .jobs-axis { display:grid; grid-template-columns:repeat(24, minmax(0, 1fr)); }
+  .jobs-cols { position:relative; height:100%; }
+  .jobs-col { position:relative; display:flex; flex-direction:column-reverse; align-items:center; gap:2px; height:100%; }
+  .jobs-col:hover { background:var(--sunken); }
+  .jobs-col > i { display:block; width:min(24px, 70%); min-height:3px; }
+  .jobs-col > i:last-child { border-radius:4px 4px 0 0; }
+  .jobs-col:hover::after { content:attr(data-tip); position:absolute; bottom:calc(100% + 6px); left:50%; transform:translateX(-50%);
+    z-index:5; padding:5px 9px; border-radius:6px; background:var(--ink); color:#fff; font-size:12px; white-space:nowrap; pointer-events:none; }
+  .jobs-col:nth-child(-n+4):hover::after { left:0; transform:none; }
+  .jobs-col:nth-last-child(-n+4):hover::after { left:auto; right:0; transform:none; }
+  .jobs-axis { margin-top:4px; font-size:11px; color:var(--faint); }
+  .jobs-axis span { text-align:center; }
+  .jobs-table-view { margin-top:12px; font-size:13px; }
+  .jobs-table-view summary { cursor:pointer; color:var(--muted); }
+  .jobs-table-view table { margin-top:8px; }
+
+  .jobs-table { width:100%; border-collapse:collapse; font-size:13.5px; }
+  .jobs-table thead th { padding:9px 14px; font-size:11.5px; font-weight:650; letter-spacing:.04em; text-transform:uppercase;
+    color:var(--muted); background:var(--surface-2); border-bottom:1px solid var(--border); white-space:nowrap; }
+  .jobs-table td { vertical-align:top; }
+  .jobs-table th:first-child, .jobs-table td:first-child { padding-left:18px; }
+  .jobs-table th:last-child, .jobs-table td:last-child { padding-right:18px; }
+  .jobs-table .num { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .jobs-table .jobs-time { white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .jobs-table tr.is-selected td { background:var(--green-050); }
+  .jobs-task-cell { min-width:270px; }
+  .jobs-fail-count { font-weight:700; color:var(--neg); }
+
+  .jobs-filters { display:flex; flex-wrap:wrap; align-items:flex-end; gap:10px 16px; padding:14px 18px; background:var(--surface-2); border-bottom:1px solid var(--border); }
+  .jobs-filters label { margin:0; font-size:12px; font-weight:650; color:var(--muted); }
+  .jobs-filters select { display:block; width:auto; min-width:150px; max-width:280px; margin-top:4px; padding:6px 8px; font-size:14px; font-weight:400; }
+  .jobs-filters .jobs-check { display:flex; align-items:center; gap:7px; padding-bottom:8px; font-size:14px; font-weight:500; color:var(--ink); }
+  .jobs-check input { width:16px; height:16px; }
+  .jobs-reset { padding-bottom:8px; font-size:13px; font-weight:600; }
+  .jobs-states { display:flex; flex-wrap:wrap; gap:6px; padding:12px 18px; border-bottom:1px solid var(--border); }
+  .jobs-states-inline { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; }
+  .jobs-pill { display:inline-flex; align-items:center; gap:6px; padding:4px 11px; border:1px solid var(--border-strong); border-radius:999px;
+    background:var(--surface); color:var(--ink); font-size:13px; font-weight:600; text-decoration:none; }
+  .jobs-pill b { font-weight:650; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .jobs-pill:hover { border-color:var(--green); color:var(--green-700); }
+  .jobs-pill.is-on { background:var(--green); border-color:var(--green); color:#fff; }
+  .jobs-pill.is-on b { color:#fff; }
+  .jobs-pager { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 18px; border-top:1px solid var(--border); font-size:14px; }
+
+  /* The job's page: sent → started → finished, with the wait and the run between them. */
+  .jobs-title { display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
+  .jobs-title .jobs-name { font-size:22px; }
+  .jobs-timeline { list-style:none; margin:0; padding:16px 18px; display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; }
+  .jobs-timeline > li:not(.jobs-timeline-gap) { padding-left:14px; border-left:3px solid var(--border-strong); }
+  .jobs-timeline > li.is-done { border-left-color:var(--green); }
+  .jobs-timeline b { display:block; font-weight:650; font-variant-numeric:tabular-nums; }
+  .jobs-timeline-k { display:block; font-size:11px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); }
+  .jobs-timeline-gap { flex:1 1 60px; min-width:60px; padding-bottom:4px; border-bottom:1px dashed var(--border-strong);
+    text-align:center; font-size:12.5px; color:var(--muted); }
+  .jobs-limit { padding-top:0; }
+  .jobs-facts { display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:14px 24px; margin:0; padding:16px 18px; font-size:13.5px; }
+  .jobs-facts dt { font-size:12px; color:var(--muted); }
+  .jobs-facts dd { margin:2px 0 0; }
+  .jobs-pre { margin:0; padding:14px 18px; overflow-x:auto; font-size:12.5px; line-height:1.5; }
+  .jobs-log td { padding:6px 14px; }
+  .jobs-log .jobs-message { white-space:pre-wrap; overflow-wrap:anywhere; }
+  .jobs-log tr.is-warning td { background:var(--warn-bg); }
+  .jobs-log tr.is-error td, .jobs-log tr.is-critical td { background:var(--neg-bg); }
+
+  @media (max-width:960px) {
+    .jobs-live { grid-template-columns:minmax(0, 1fr); }
+  }
+  @media (max-width:720px) {
+    .jobs-tiles { grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; }
+    .jobs-tile-v { font-size:24px; }
+    .jobs-tile-s { white-space:normal; }
+    .jobs-timeline { flex-direction:column; align-items:stretch; }
+    .jobs-timeline-gap { border-bottom:0; border-left:1px dashed var(--border-strong); margin-left:1px; padding:2px 0 2px 16px; text-align:left; }
+    .card-head:has(.jobs-legend) { flex-wrap:wrap; }
   }
 
   /* ---- Køkkenvagter: the month sheet, modelled on the paper plan on the kitchen board ---- */

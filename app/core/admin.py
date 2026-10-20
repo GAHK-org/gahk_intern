@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Cleaning, PushSubscription, Room, Workgroup
+from .models import Cleaning, PushDeliveryDay, PushSubscription, Room, Workgroup
 
 
 @admin.register(Room)
@@ -25,14 +25,30 @@ class CleaningAdmin(admin.ModelAdmin):
 
 @admin.register(PushSubscription)
 class PushSubscriptionAdmin(admin.ModelAdmin):
-    """Read-only apart from the topic flags: the rest of the row is written by the browser and is
-    useless if hand-edited. Deleting one is the supported action — it just means that device stops
-    getting notifications."""
+    """Read-only: the row is written by the browser and is useless if hand-edited. Deleting one is
+    the supported action — it just means that device stops getting notifications. What a resident
+    is told lives in their notification settings, not here (notifications.models)."""
 
-    list_display = ("user", "wants_den_hurtige", "wants_opslagstavle", "user_agent", "created_at")
-    list_filter = ("wants_den_hurtige", "wants_opslagstavle")
+    list_display = ("user", "user_agent", "created_at", "last_success_at", "failure_count")
     search_fields = ("user__first_name", "user__last_name", "user__email")
-    readonly_fields = ("user", "endpoint", "auth", "p256dh", "user_agent", "created_at")
+    readonly_fields = (
+        "user",
+        "endpoint",
+        "auth",
+        "p256dh",
+        "user_agent",
+        "created_at",
+        "last_success_at",
+        "failure_count",
+    )
+
+    def has_add_permission(self, request: object) -> bool:
+        return False
+
+
+@admin.register(PushDeliveryDay)
+class PushDeliveryDayAdmin(admin.ModelAdmin):
+    list_display = ("date", "delivered", "failed", "removed")
 
     def has_add_permission(self, request: object) -> bool:
         return False
