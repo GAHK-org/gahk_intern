@@ -29,6 +29,7 @@ from django.db.models import Q
 from django.db.models.base import ModelBase
 from django.db.models.fields.files import FieldFile
 from django.db.models.functions import Lower
+from django.template.defaultfilters import filesizeformat
 from django.utils import timezone
 
 from photo_album.models import TAG_MAX_LENGTH, validate_tag_name
@@ -79,6 +80,10 @@ def full_hd_path(instance: "VideoFile", filename: str) -> str:
 
 def hd_path(instance: "VideoFile", filename: str) -> str:
     return _video_key(instance.video.uuid, str(instance.uuid), "hd", Path(filename).name)
+
+
+def subtitle_path(instance: "VideoSubtitle", filename: str) -> str:
+    return _video_key(instance.file.video.uuid, str(instance.file.uuid), "subtitles", Path(filename).name)
 
 
 def frame_path(instance: "VideoFrame", filename: str) -> str:
@@ -335,6 +340,9 @@ class VideoFile(models.Model):
     progress = models.PositiveSmallIntegerField(default=0)
     error = models.CharField(max_length=255, blank=True)
     attempts = models.PositiveSmallIntegerField(default=0)
+    # The job that claimed it last. A message Celery sends again after its worker died finds its own
+    # id here, and so knows the earlier run of it is dead (tasks.process_video_file).
+    task_id = models.CharField(max_length=36, blank=True)
     # Refreshed while the encode runs. A stale one is a worker that died (tasks.recover_stalled).
     heartbeat_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
@@ -363,6 +371,36 @@ class VideoFile(models.Model):
     def qualities(self) -> list[str]:
         """The renditions there are, best first — what the player's quality toggle offers."""
         return [name for name, field in (("fullhd", self.full_hd), ("hd", self.hd)) if field]
+
+    @property
+    def name_and_size(self) -> str:
+        """'revy.mov (2,3 GB)', for the job log."""
+        return f"{self.original_name} ({filesizeformat(self.size)})"
+
+
+class VideoSubtitle(models.Model):
+    """One text subtitle track of an upload, kept as WebVTT, the format a browser's player reads.
+
+    Read from the file when it is processed, in the file's own order. The player does not offer them
+    yet; they are kept so it can without processing every video again. Picture subtitles (DVD,
+    Blu-ray) cannot become text, so only the original keeps those.
+    """
+
+    file = models.ForeignKey(VideoFile, on_delete=models.CASCADE, related_name="subtitles")
+    track = models.FileField(upload_to=subtitle_path, storage=get_video_storage, max_length=500)
+    position = models.PositiveSmallIntegerField()
+    # As the file names it, an ISO 639-2 code ("dan", "eng"); "" when it does not say.
+    language = models.CharField(max_length=16, blank=True)
+    title = models.CharField(max_length=255, blank=True)
+    # The file's own flags: shown unless switched off, and shown even then (signs, foreign speech).
+    is_default = models.BooleanField(default=False)
+    is_forced = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["position", "pk"]
+
+    def __str__(self) -> str:
+        return self.title or self.language or f"Spor {self.position + 1}"
 
 
 class VideoFrame(models.Model):

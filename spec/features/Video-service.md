@@ -40,6 +40,12 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   upscaled, cropped or stretched: a video keeps its own shape (portrait, 4:3, 15:9, …) and the player
   shows it whole, with black bars where it does not fill the screen. The player switches quality without losing its place,
   remembers the choice in the browser, and starts phones in HD.
+- A video keeps one sound track: the one with the most channels, as ffmpeg would choose. A track
+  with nothing in it (an old camera's broken one) is never taken, and a video with no usable sound
+  is kept silent rather than refused.
+- Text subtitles (SRT, ASS, the MP4 kind) are kept as WebVTT files beside the renditions, each with
+  its language and its default and forced flags, so the player can offer them later; it does not
+  yet. Picture subtitles (DVD, Blu-ray) cannot become text, and only the original keeps them.
 - Playback resumes where the reader stopped, once they are 10 seconds in. Within the last 5% (at
   least 5 seconds) a video counts as watched and starts from the beginning next time.
 - A view counts after 5 seconds of actual playback, or half of a very short video. Views by the same
@@ -136,5 +142,10 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 - The player opens over the page rather than as a page of its own because a browser only lets a page
   play sound from inside the click that asked for it, and a page load loses that click.
 - Duplicates are checked across all videos, not only the uploader's: one film should exist once.
-- Encodes run one at a time on the media worker. One that stops reporting is retried, at most three
-  times, and then marked failed for the uploader to see.
+- Encodes run one at a time on the media worker. One that stops reporting, or whose ffmpeg is stopped
+  (most often for want of memory), is tried again, at most three times in all, and then marked failed
+  for the uploader to see; that says nothing about the file. A file ffmpeg refuses is marked failed at
+  once. Either way the job is listed as failed on the worker-jobs page with the reason, and a job
+  Celery sends again after its worker died says so instead of passing as done.
+- Subtitles are kept as files of their own rather than inside the MP4s: WebVTT is what a browser's
+  player reads, and inside an MP4 only Safari shows them.

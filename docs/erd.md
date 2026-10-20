@@ -769,6 +769,7 @@ erDiagram
         int progress
         string error
         int attempts
+        string task_id
         datetime heartbeat_at
         datetime completed_at
         float duration
@@ -779,6 +780,17 @@ erDiagram
         string hd
         int full_hd_size
         int hd_size
+    }
+
+    gahkflix_VideoSubtitle {
+        int id PK
+        int file_id FK
+        string track
+        int position
+        string language
+        string title
+        bool is_default
+        bool is_forced
     }
 
     gahkflix_VideoFrame {
@@ -937,6 +949,7 @@ erDiagram
     gahkflix_Video }o--o{ gahkflix_Tag : "tags"
     gahkflix_VideoFile }o--|| gahkflix_Video : "video"
     gahkflix_VideoFile }o--|| residents_Resident : "uploaded_by"
+    gahkflix_VideoSubtitle }o--|| gahkflix_VideoFile : "file"
     gahkflix_VideoFrame }o--|| gahkflix_Video : "video"
     gahkflix_CastMember }o--|| gahkflix_Video : "video"
     gahkflix_CastMember }o--|o residents_Resident : "resident"
@@ -1387,6 +1400,7 @@ erDiagram
         int progress
         string error
         int attempts
+        string task_id
         datetime heartbeat_at
         datetime completed_at
         float duration
@@ -1397,6 +1411,17 @@ erDiagram
         string hd
         int full_hd_size
         int hd_size
+    }
+
+    gahkflix_VideoSubtitle {
+        int id PK
+        int file_id FK
+        string track
+        int position
+        string language
+        string title
+        bool is_default
+        bool is_forced
     }
 
     gahkflix_VideoFrame {
@@ -1470,6 +1495,7 @@ erDiagram
     gahkflix_Video }o--o{ gahkflix_Tag : "tags"
     gahkflix_VideoFile }o--|| gahkflix_Video : "video"
     gahkflix_VideoFile }o--|| residents_Resident : "uploaded_by"
+    gahkflix_VideoSubtitle }o--|| gahkflix_VideoFile : "file"
     gahkflix_VideoFrame }o--|| gahkflix_Video : "video"
     gahkflix_CastMember }o--|| gahkflix_Video : "video"
     gahkflix_CastMember }o--|o residents_Resident : "resident"

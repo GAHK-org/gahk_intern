@@ -10,6 +10,9 @@ also serves the site, and size is the cheaper of the two at our scale.
 
 NEVER UPSCALED. Full HD is only made when the source is larger than HD, and an HD rendition of a
 small source keeps the source's size. Portrait phone video gets portrait boxes (1080x1920, 720x1280).
+
+ONE SOUND TRACK, the one with the most channels (Probe.audio_stream), and the text subtitles as WebVTT
+files beside the renditions (extract_subtitles), for the player to offer.
 """
 
 import logging
@@ -18,7 +21,7 @@ import re
 import subprocess  # nosec B404
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -45,13 +48,58 @@ BORING_FRAME_STDDEV = 8.0
 
 
 class EncodeError(Exception):
-    """ffmpeg refused; the message is the end of what it printed."""
+    """ffmpeg failed; the message says why: the end of what it printed, or the signal that stopped it.
+
+    `killed` means a signal stopped it, most often the out-of-memory killer. That says nothing about
+    the file, so the file is tried again (tasks.py) instead of refused as broken.
+    """
+
+    def __init__(self, message: str, *, killed: bool = False) -> None:
+        super().__init__(message)
+        self.killed = killed
+
+    @classmethod
+    def from_exit(cls, returncode: int, output: str) -> "EncodeError":
+        if returncode < 0:
+            signal_number = -returncode
+            hint = " — most likely the out-of-memory killer" if signal_number == 9 else ""
+            return cls(f"ffmpeg was stopped by signal {signal_number}{hint}", killed=True)
+        lines = [line.strip() for line in output.splitlines() if line.strip()]
+        return cls(" / ".join(lines[-3:])[-250:] or f"ffmpeg exited with {returncode}")
 
 
 def ffmpeg_exe() -> str:
     import imageio_ffmpeg
 
     return str(imageio_ffmpeg.get_ffmpeg_exe())
+
+
+@dataclass(frozen=True)
+class AudioStream:
+    index: int  # the stream's number in the file, as `-map 0:<index>` takes it
+    channels: int  # 0 for a track ffmpeg cannot make out, like an old camera's broken AC3
+    default: bool = False
+
+
+# Subtitle formats that are text, so can become WebVTT. Picture-based ones (DVD, Blu-ray, DVB)
+# cannot; only the original keeps those.
+TEXT_SUBTITLE_CODECS = frozenset(
+    {"subrip", "srt", "ass", "ssa", "mov_text", "webvtt", "text", "microdvd", "sami", "subviewer", "mpl2"}
+)
+
+
+@dataclass(frozen=True)
+class SubtitleStream:
+    index: int
+    codec: str
+    language: str = ""  # as the file names it ("dan", "eng"); "" when it does not say
+    title: str = ""
+    default: bool = False
+    forced: bool = False
+
+    @property
+    def is_text(self) -> bool:
+        return self.codec in TEXT_SUBTITLE_CODECS
 
 
 @dataclass
@@ -63,13 +111,75 @@ class Probe:
     has_video: bool
     has_audio: bool
     recorded_at: datetime | None
+    audio: list[AudioStream] = field(default_factory=list)
+    subtitles: list[SubtitleStream] = field(default_factory=list)
+
+    @property
+    def audio_stream(self) -> int | None:
+        """The sound to keep, as ffmpeg itself would pick it: the track with the most channels.
+
+        Not simply the first. An old camera's MPEG can have a broken AC3 track ("0 channels") before
+        its real sound, and encoding that one fails the whole video; a film can have a mono
+        commentary track before its own sound. None when no track has any channels: the video is
+        then kept without sound rather than refused.
+        """
+        usable = [stream for stream in self.audio if stream.channels > 0]
+        if not usable:
+            return None
+        return max(usable, key=lambda stream: (stream.channels, stream.default, -stream.index)).index
 
 
 _DURATION = re.compile(r"Duration:\s*(\d+):(\d{2}):(\d{2}(?:\.\d+)?)")
 _VIDEO_STREAM = re.compile(r"Stream #\d+:\d+.*?: Video: (?P<rest>.*)")
 _SIZE = re.compile(r"(?<![0-9a-fA-Fx])(\d{2,5})x(\d{2,5})(?![0-9])")
 _ROTATION = re.compile(r"rotation of (-?\d+(?:\.\d+)?) degrees|rotate\s*:\s*(-?\d+)")
-_AUDIO_STREAM = re.compile(r"Stream #\d+:\d+.*?: Audio: ")
+# "  Stream #0:2[0x3](dan): Subtitle: mov_text (tx3g / 0x67337874), 0 kb/s (default)"
+_STREAM = re.compile(
+    r"^\s*Stream #\d+:(?P<index>\d+)(?:\[\w+\])?(?:\((?P<language>[^)]*)\))?: "
+    r"(?P<kind>\w+): (?P<codec>\w+)(?P<rest>.*)$",
+    re.MULTILINE,
+)
+_TITLE = re.compile(r"^\s+title\s*:\s*(?P<title>.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+_LAYOUT_CHANNELS = {"mono": 1, "stereo": 2, "downmix": 2, "quad": 4, "hexagonal": 6, "octagonal": 8}
+
+
+def _channels(details: str) -> int:
+    """The channel count in an audio stream's line: "stereo", "5.1(side)", "0 channels". A layout
+    named some other way still counts as sound, with one channel."""
+    for part in details.split(","):
+        layout = part.split("(")[0].strip()
+        if match := re.fullmatch(r"(\d+) channels", layout):
+            return int(match[1])
+        if layout in _LAYOUT_CHANNELS:
+            return _LAYOUT_CHANNELS[layout]
+        if match := re.fullmatch(r"(\d+)\.(\d+)", layout):
+            return int(match[1]) + int(match[2])
+    return 1
+
+
+def _streams(output: str) -> tuple[list[AudioStream], list[SubtitleStream]]:
+    """The audio and subtitle streams `ffmpeg -i` lists, each with what its own block says."""
+    matches = list(_STREAM.finditer(output))
+    audio, subtitles = [], []
+    for position, match in enumerate(matches):
+        default = "(default)" in match["rest"]
+        if match["kind"] == "Audio":
+            audio.append(AudioStream(int(match["index"]), _channels(match["rest"]), default))
+        elif match["kind"] == "Subtitle":
+            end = matches[position + 1].start() if position + 1 < len(matches) else len(output)
+            title = _TITLE.search(output, match.end(), end)
+            language = match["language"] or ""
+            subtitles.append(
+                SubtitleStream(
+                    index=int(match["index"]),
+                    codec=match["codec"],
+                    language="" if language == "und" else language,
+                    title=title["title"] if title else "",
+                    default=default,
+                    forced="(forced)" in match["rest"],
+                )
+            )
+    return audio, subtitles
 
 
 def parse_probe(output: str) -> Probe:
@@ -86,13 +196,16 @@ def parse_probe(output: str) -> Probe:
         degrees = float(rotation[1] or rotation[2]) if rotation else 0.0
         if round(abs(degrees)) % 180 == 90:
             width, height = height, width
+    audio, subtitles = _streams(output)
     return Probe(
         duration=duration,
         width=width,
         height=height,
         has_video=video is not None,
-        has_audio=_AUDIO_STREAM.search(output) is not None,
+        has_audio=bool(audio),
         recorded_at=_recorded_at(output),
+        audio=audio,
+        subtitles=subtitles,
     )
 
 
@@ -164,10 +277,15 @@ def encode(
     plan: list[Rendition],
     duration: float | None,
     on_progress: Callable[[float], None] = lambda fraction: None,
+    *,
+    audio: int | None,
 ) -> None:
     """Encode every rendition in `plan` to `outputs[rendition.name]`, reporting progress as 0–1.
 
-    Raises EncodeError with the tail of ffmpeg's output when it fails. The ffmpeg process is killed
+    `audio` is the one sound stream to keep (Probe.audio_stream), None for none. Subtitles are left
+    out here; extract_subtitles keeps the text ones.
+
+    Raises EncodeError with why ffmpeg failed. The ffmpeg process is killed
     on the way out whatever happens — including a Celery soft time limit raised inside the loop
     below — so a timed-out task never leaves an encode running behind it.
     """
@@ -178,13 +296,14 @@ def encode(
         splits = "".join(f"[s{index}]" for index in range(len(plan)))
         chains = ";".join(f"[s{index}]{_scale(r.box)}[{labels[index]}]" for index, r in enumerate(plan))
         graph = f"[0:v:0]split={len(plan)}{splits};{chains}"
-    arguments = [ffmpeg_exe(), "-hide_banner", "-nostdin", "-y", "-i", str(source), "-filter_complex", graph]
+    # Errors only, so what is left in the log when it fails is the reason, not the stream listing.
+    arguments = [ffmpeg_exe(), "-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-i", str(source)]
+    arguments += ["-filter_complex", graph]
     for label, rendition in zip(labels, plan, strict=True):
         arguments += [
             "-map",
             f"[{label}]",
-            "-map",
-            "0:a:0?",
+            *(["-map", f"0:{audio}"] if audio is not None else []),
             "-c:v",
             "libx264",
             "-preset",
@@ -221,8 +340,62 @@ def encode(
                 process.wait()
         if returncode != 0:
             log.seek(0)
-            tail = log.read().decode("utf-8", "replace").strip().splitlines()[-3:]
-            raise EncodeError(" / ".join(tail)[-250:] or f"ffmpeg exited with {returncode}")
+            raise EncodeError.from_exit(returncode, log.read().decode("utf-8", "replace"))
+
+
+# Reading a film through for one subtitle track takes seconds to a minute from local disk. Kept well
+# under the heartbeat's 15 minutes, since a track's conversion reports no progress of its own.
+SUBTITLE_TIMEOUT = 5 * 60
+
+
+def extract_subtitles(
+    source: Path,
+    streams: list[SubtitleStream],
+    directory: Path,
+    on_progress: Callable[[float], None] = lambda fraction: None,
+) -> list[tuple[SubtitleStream, Path]]:
+    """Each text subtitle track of `source` as a WebVTT file, the format a browser's player reads.
+
+    A conversion of text, not an encode, so it is quick whatever the film's length. A track ffmpeg
+    cannot convert is left out and logged; the original keeps every track either way, picture
+    subtitles included.
+    """
+    text = [stream for stream in streams if stream.is_text]
+    if pictures := sorted({stream.codec for stream in streams if not stream.is_text}):
+        logger.info(
+            "%s has picture subtitles (%s), which only the original keeps.", source.name, ", ".join(pictures)
+        )
+    extracted = []
+    for done, stream in enumerate(text, start=1):
+        target = directory / f"subtitles-{stream.index}.vtt"
+        command = [ffmpeg_exe(), "-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-i", str(source)]
+        command += ["-map", f"0:{stream.index}", "-c:s", "webvtt", str(target)]
+        try:
+            result = subprocess.run(  # noqa: S603  # nosec B603
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=SUBTITLE_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "Gave up converting subtitle stream %d (%s) after %d s",
+                stream.index,
+                stream.codec,
+                SUBTITLE_TIMEOUT,
+            )
+            continue
+        if result.returncode == 0 and target.is_file() and target.stat().st_size:
+            extracted.append((stream, target))
+        else:
+            reason = EncodeError.from_exit(result.returncode, result.stderr)
+            logger.warning(
+                "Could not convert subtitle stream %d (%s): %s", stream.index, stream.codec, reason
+            )
+        on_progress(done / len(text))
+    return extracted
 
 
 def frame_times(duration: float | None, count: int, rng: random.Random) -> list[float]:

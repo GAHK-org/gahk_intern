@@ -45,6 +45,7 @@ from .models import (
     Video,
     VideoFile,
     VideoFrame,
+    VideoSubtitle,
     ViewEvent,
     Watch,
     key_of,
@@ -70,8 +71,23 @@ RESUME_FROM = 10.0
 PICTURE_KINDS = ("thumbnail", "banner")
 
 
+class NotProcessed(Exception):
+    """The file is marked FAILED and its uploader told. Raised, not returned as False, so the job is
+    listed as failed on the worker-jobs page, with why."""
+
+
 def _now() -> datetime:
     return timezone.now()
+
+
+def _file_keys(video_file: VideoFile) -> list[str | None]:
+    """Every stored file of one upload: the original, its renditions and its subtitle tracks."""
+    return [
+        video_file.original.name,
+        video_file.full_hd.name,
+        video_file.hd.name,
+        *(subtitle.track.name for subtitle in video_file.subtitles.all()),
+    ]
 
 
 def _delete_keys(keys: Iterable[str | None]) -> None:
@@ -231,7 +247,7 @@ def commit_upload(ticket: UploadTicket, resident: Resident, stored_size: int | N
                 raise refuse("Videoen findes ikke længere.")
             # Earlier failed versions are only clutter once a new one is on its way.
             for failed in video.files.filter(state=FileState.FAILED).exclude(pk=video.file_id or 0):
-                _delete_keys([failed.original.name, failed.full_hd.name, failed.hd.name])
+                _delete_keys(_file_keys(failed))
                 failed.delete()
         else:
             video = Video.objects.create(
@@ -318,11 +334,35 @@ def _store_frames(video: Video, frames: list[tuple[float, Path]]) -> list[VideoF
     return stored
 
 
+def _store_subtitles(video_file: VideoFile, tracks: list[tuple[encoding.SubtitleStream, Path]]) -> None:
+    """Keep the upload's text subtitles, replacing any that an earlier attempt at it stored."""
+    earlier = list(video_file.subtitles.all())
+    _delete_keys(subtitle.track.name for subtitle in earlier)
+    VideoSubtitle.objects.filter(pk__in=[subtitle.pk for subtitle in earlier]).delete()
+    for position, (stream, path) in enumerate(tracks):
+        subtitle = VideoSubtitle(
+            file=video_file,
+            position=position,
+            language=stream.language[:16],
+            title=stream.title[:255],
+            is_default=stream.default,
+            is_forced=stream.forced,
+        )
+        language = "".join(c for c in stream.language if c.isalnum()) or "und"
+        with path.open("rb") as track:
+            subtitle.track.save(f"{position + 1}-{language}.vtt", File(track), save=False)
+        subtitle.save()
+    if tracks:
+        logger.info("Kept %d subtitle track(s) of %s", len(tracks), video_file.name_and_size)
+
+
 def process_file(video_file: VideoFile, rng: random.Random | None = None) -> bool:
     """Download, check, encode and cut frames from one claimed upload. Returns whether it is READY.
 
-    A refusal (a duplicate, a file with no video in it, an encode ffmpeg rejects) marks it FAILED
-    and tells the uploader. Anything else is raised, for the task to retry.
+    A refusal (a duplicate, a file with no video in it) marks it FAILED, tells the uploader and
+    returns False: the job did what it should. An encode ffmpeg rejects is marked FAILED the same way
+    but raises NotProcessed, so the job is listed as failed. Anything else is raised for the task to
+    retry, ffmpeg stopped by a signal included: running out of memory says nothing about the file.
     """
     video = video_file.video
     beat = _heartbeat(video_file)
@@ -352,11 +392,24 @@ def process_file(video_file: VideoFile, rng: random.Random | None = None) -> boo
         plan = encoding.plan_renditions(info.width, info.height)
         outputs = {rendition.name: work / f"{rendition.name}.mp4" for rendition in plan}
         try:
-            encoding.encode(source, outputs, plan, info.duration, lambda f: beat(0.1 + f * 0.8))
+            encoding.encode(
+                source, outputs, plan, info.duration, lambda f: beat(0.1 + f * 0.8), audio=info.audio_stream
+            )
         except encoding.EncodeError as exc:
+            if exc.killed:
+                logger.warning(
+                    "Encoding %s stopped, attempt %d of %d: %s",
+                    video_file.name_and_size,
+                    video_file.attempts,
+                    MAX_ATTEMPTS,
+                    exc,
+                )
+                raise
             logger.warning("ffmpeg refused video file %s: %s", video_file.pk, exc)
-            return _fail(video_file, "Videoen kunne ikke omkodes. Filen er måske ødelagt.")
+            _fail(video_file, "Videoen kunne ikke omkodes. Filen er måske ødelagt.")
+            raise NotProcessed(f"{video_file.name_and_size} could not be encoded: {exc}") from exc
         beat(0.9, force=True)
+        subtitles = encoding.extract_subtitles(source, info.subtitles, work, lambda f: beat(0.9 + f * 0.03))
         stem = "".join(c if c.isalnum() or c in "-_" else "-" for c in Path(video_file.original_name).stem)[
             :60
         ]
@@ -367,6 +420,7 @@ def process_file(video_file: VideoFile, rng: random.Random | None = None) -> boo
             with outputs["fullhd"].open("rb") as full_hd:
                 video_file.full_hd.save(f"{stem or 'video'}-fullhd.mp4", File(full_hd), save=False)
             video_file.full_hd_size = outputs["fullhd"].stat().st_size
+        _store_subtitles(video_file, subtitles)
         beat(0.95, force=True)
         frames = encoding.draw_frames(source, info.duration, work, FRAMES_PER_DRAW, rng or random.Random())  # noqa: S311  # nosec B311
         _store_frames(video, frames)
@@ -394,7 +448,7 @@ def process_file(video_file: VideoFile, rng: random.Random | None = None) -> boo
             update.append("recorded_on")
         video.save(update_fields=update)
         if previous is not None and previous.pk != video_file.pk:
-            _delete_keys([previous.original.name, previous.full_hd.name, previous.hd.name])
+            _delete_keys(_file_keys(previous))
             previous.delete()
     logger.info("Video file %s ready: %s, %.0f s", video_file.pk, plan, info.duration or 0)
     notify.processed(video, revision=previous is not None)
@@ -850,7 +904,7 @@ def delete_permanently(video: Video) -> None:
     """Every stored file of the video, then its rows. For a draft, and for the bin's sweep."""
     keys: list[str | None] = [video.thumbnail.name, video.banner.name]
     for video_file in video.files.all():
-        keys += [video_file.original.name, video_file.full_hd.name, video_file.hd.name]
+        keys += _file_keys(video_file)
     keys += [frame.image.name for frame in video.frames.all()]
     for change in video.change_requests.filter(state=ChangeRequest.State.OPEN):
         keys += _pending_pictures(change.changes)
@@ -949,6 +1003,7 @@ def referenced_keys() -> set[str]:
     keys: set[str] = set()
     for fields in (
         VideoFile.objects.values_list("original", "full_hd", "hd"),
+        VideoSubtitle.objects.values_list("track"),
         Video.objects.values_list("thumbnail", "banner"),
         VideoFrame.objects.values_list("image"),
     ):

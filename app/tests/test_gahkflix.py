@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import imageio_ffmpeg
 import pytest
+from celery.exceptions import SoftTimeLimitExceeded
 from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -37,7 +38,7 @@ from notifications import categories
 from notifications.models import Notification
 from residents.models import Resident, Role
 
-from .media_samples import jpeg_bytes, mp4_bytes
+from .media_samples import broken_audio_mpg_bytes, jpeg_bytes, mp4_bytes, subtitled_mkv_bytes
 
 if TYPE_CHECKING:
     from PIL import Image
@@ -1116,6 +1117,124 @@ def test_a_claimed_file_is_not_processed_twice(admin: Resident) -> None:
     assert tasks.process_video_file(video.files.get().pk) is False
 
 
+def test_a_job_sent_again_after_its_worker_died_is_a_failed_job(admin: Resident) -> None:
+    """Celery sends a killed worker's job again; it finds the file claimed under its own id."""
+    video_file = make_video(admin, published=False).files.get()
+    VideoFile.objects.filter(pk=video_file.pk).update(
+        state=FileState.PROCESSING, task_id="dead-run", attempts=1
+    )
+    with pytest.raises(tasks.WorkerLost, match="was lost"):
+        tasks.process_video_file.apply(args=[video_file.pk], task_id="dead-run", throw=True)
+    # Any other job finds the file busy, as before: nothing for it to do.
+    assert tasks.process_video_file.apply(args=[video_file.pk], task_id="other", throw=True).get() is False
+    video_file.refresh_from_db()
+    # Left for recover_stalled, the dead run's attempt counted.
+    assert (video_file.state, video_file.attempts) == (FileState.PROCESSING, 1)
+
+
+def test_a_file_ffmpeg_refuses_is_a_failed_job(admin: Resident, monkeypatch: pytest.MonkeyPatch) -> None:
+    upload(client_for(admin), mp4_bytes())  # committed; outside on_commit, its job is not sent
+    video_file = VideoFile.objects.get()
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise encoding.EncodeError("Invalid data found when processing input")
+
+    monkeypatch.setattr(encoding, "encode", refuse)
+    with pytest.raises(services.NotProcessed, match="could not be encoded: Invalid data"):
+        tasks.process_video_file.apply(args=[video_file.pk], throw=True)
+    video_file.refresh_from_db()
+    assert video_file.state == FileState.FAILED
+    assert len(notified(admin, categories.GAHKFLIX_UPLOADS)) == 1
+
+
+def test_ffmpeg_stopped_by_a_signal_is_tried_again_not_blamed_on_the_file(
+    admin: Resident, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    upload(client_for(admin), mp4_bytes())
+    video_file = VideoFile.objects.get()
+
+    def killed(*args: object, **kwargs: object) -> None:
+        raise encoding.EncodeError.from_exit(-9, "")
+
+    monkeypatch.setattr(encoding, "encode", killed)
+    with pytest.raises(encoding.EncodeError, match="out-of-memory killer"):
+        tasks.process_video_file.apply(args=[video_file.pk], throw=True)
+    video_file.refresh_from_db()
+    assert (video_file.state, video_file.attempts) == (FileState.QUEUED, 1)
+    assert not notified(admin, categories.GAHKFLIX_UPLOADS)
+
+
+def test_an_encode_past_its_time_limit_is_a_failed_job(
+    admin: Resident, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    upload(client_for(admin), mp4_bytes())
+    video_file = VideoFile.objects.get()
+
+    def slow(*args: object, **kwargs: object) -> None:
+        raise SoftTimeLimitExceeded()
+
+    monkeypatch.setattr(services, "process_file", slow)
+    with pytest.raises(services.NotProcessed, match="time limit"):
+        tasks.process_video_file.apply(args=[video_file.pk], throw=True)
+    video_file.refresh_from_db()
+    assert video_file.state == FileState.FAILED
+
+
+def test_the_sound_is_the_track_with_most_channels_not_a_broken_first_one(
+    admin: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+) -> None:
+    """An old camera's MPEG: an AC3 track ffmpeg makes out as "0 channels" before its real sound.
+    Taking the first track failed the whole encode."""
+    with django_capture_on_commit_callbacks(execute=True):
+        upload(client_for(admin), broken_audio_mpg_bytes(), name="gammel.mpg")
+    video_file = VideoFile.objects.get()
+    assert video_file.state == FileState.READY, video_file.error
+    assert encoding.probe(Path(video_file.hd.path)).has_audio
+
+
+def test_text_subtitles_are_kept_as_webvtt(
+    admin: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+) -> None:
+    with django_capture_on_commit_callbacks(execute=True):
+        upload(client_for(admin), subtitled_mkv_bytes(), name="film.mkv")
+    video = Video.objects.get()
+    video_file = video.files.get()
+    assert video_file.state == FileState.READY, video_file.error
+    danish, english = video_file.subtitles.all()
+    assert (danish.language, danish.is_default, english.language, english.is_default) == (
+        "dan",
+        True,
+        "eng",
+        False,
+    )
+    with danish.track.open("rb") as track:
+        content = track.read().decode()
+    assert content.startswith("WEBVTT") and "Hej med dig" in content
+    assert danish.track.name.startswith(f"gahkflix/{video.uuid}/{video_file.uuid}/subtitles/")
+    assert {danish.track.name, english.track.name} <= services.referenced_keys()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        services.delete_permanently(video)
+    assert not get_video_storage().exists(danish.track.name)
+
+
+def test_the_jobs_page_names_what_a_gahkflix_job_works_on(admin: Resident) -> None:
+    from residents.views_admin import Job, _add_task_context
+
+    video = make_video(admin, title="Julefrokost")
+    video_file = video.files.get()
+    VideoFile.objects.filter(pk=video_file.pk).update(size=3 * 1024 * 1024)
+    jobs = [
+        Job(id="a", task="gahkflix.tasks.process_video_file", arguments=f"({video_file.pk},)"),
+        Job(id="b", task="gahkflix.tasks.redraw_frames", arguments=f"({video.pk},)"),
+    ]
+
+    _add_task_context(jobs)
+
+    assert jobs[0].task_context == "Video: revy.mp4, 3,0\xa0MB (Julefrokost)"
+    assert jobs[1].task_context == "Video: Julefrokost"
+
+
 # --- ffmpeg helpers -----------------------------------------------------------------------------
 
 
@@ -1134,6 +1253,43 @@ def test_probe_reads_rotation_duration_and_date() -> None:
     assert probe.duration == 62.5
     assert probe.has_audio and probe.has_video
     assert probe.recorded_at is not None and probe.recorded_at.date() == date(2025, 12, 24)
+
+
+def test_probe_lists_the_sound_and_subtitle_tracks() -> None:
+    output = """
+  Stream #0:0[0x1e0]: Video: mpeg1video, yuv420p(tv, progressive), 320x240 [SAR 1:1 DAR 4:3], 25 fps
+  Stream #0:1[0x80]: Audio: ac3, 0 channels, fltp
+  Stream #0:2[0x1c0]: Audio: mp2, 44100 Hz, mono, s16p, 384 kb/s
+  Stream #0:3[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, 5.1(side), fltp, 384 kb/s
+  Stream #0:4[0x3](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
+  Stream #0:5(dan): Subtitle: subrip (srt) (default)
+      Metadata:
+        title           : Danske undertekster
+  Stream #0:6[0x5](eng): Subtitle: mov_text (tx3g / 0x67337874), 0 kb/s (forced)
+      Metadata:
+        handler_name    : SubtitleHandler
+  Stream #0:7(und): Subtitle: hdmv_pgs_subtitle (pgssub), 1920x1080
+"""
+    probe = encoding.parse_probe(output)
+    assert [(stream.index, stream.channels) for stream in probe.audio] == [(1, 0), (2, 1), (3, 6), (4, 2)]
+    assert probe.audio_stream == 3  # the most channels; never the broken track
+    danish, english, pictures = probe.subtitles
+    assert danish == encoding.SubtitleStream(5, "subrip", "dan", "Danske undertekster", default=True)
+    assert (english.language, english.title, english.forced, english.is_text) == ("eng", "", True, True)
+    assert (pictures.language, pictures.is_text) == ("", False)
+    # Only a broken track: the video is kept without sound rather than refused.
+    assert encoding.parse_probe("  Stream #0:1: Audio: ac3, 0 channels, fltp\n").audio_stream is None
+
+
+def test_ffmpeg_says_why_it_failed() -> None:
+    refused = encoding.EncodeError.from_exit(1, "Input #0, mpeg\n\nmp2: invalid frame\nConversion failed!\n")
+    assert not refused.killed
+    assert str(refused) == "Input #0, mpeg / mp2: invalid frame / Conversion failed!"
+    killed = encoding.EncodeError.from_exit(-9, "")
+    assert (
+        killed.killed
+        and str(killed) == "ffmpeg was stopped by signal 9 — most likely the out-of-memory killer"
+    )
 
 
 def test_renditions_are_never_upscaled() -> None:
