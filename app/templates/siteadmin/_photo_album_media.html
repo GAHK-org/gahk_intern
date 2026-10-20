@@ -1,0 +1,33 @@
+{% comment %}A page of items to look at: `list` (views_admin.MediaList), `empty` when there are none.{% endcomment %}
+<div class="overflow-x-auto">
+  <table class="zebra jobs-table pad-media">
+    <thead>
+      <tr><th><span class="sr-only">Miniature</span></th><th>Fil</th><th>Album</th><th>Vises ved</th><th>Kilde</th><th>Optaget</th><th>Filens dato</th></tr>
+    </thead>
+    <tbody>
+      {% for row in list.items %}
+        <tr>
+          <td class="pad-thumb">{% if row.media.has_derivatives %}<img src="{{ row.media.thumbnail.url }}" alt="" loading="lazy">{% endif %}</td>
+          <td>
+            <a href="{% url 'photo_album:detail' row.media.album_id %}?media={{ row.media.pk }}">{{ row.media.display_name }}</a>
+            {% if row.media.content_type|slice:':6' == 'video/' %}<span class="chip chip-quiet">Video</span>{% endif %}
+          </td>
+          <td>{{ row.album }} <span class="jobs-app">{{ row.media.album.folder }}</span></td>
+          <td class="pad-when">{{ row.media.sort_at|date:"j. b Y" }}</td>
+          <td><i class="pad-key pad-t-{{ row.tier.key }}"></i> {{ row.tier.label }}</td>
+          <td class="pad-when">{{ row.media.captured_at|date:"j. b Y H:i"|default:"–" }}</td>
+          <td class="pad-when">{% if row.media.file_modified_at %}{{ row.media.file_modified_at|date:"j. b Y H:i" }}{% if row.media.file_time_source %}<div class="jobs-sub">{{ row.media.get_file_time_source_display }}</div>{% endif %}{% else %}–{% endif %}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="7" class="muted">{{ empty }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if list.page.has_other_pages %}
+  <nav class="pad-pages" aria-label="Sider">
+    {% if list.previous_url %}<a class="btn btn-secondary" href="{{ list.previous_url }}">Forrige</a>{% endif %}
+    <span class="muted text-sm">{{ list.page.start_index }}–{{ list.page.end_index }} af {{ list.page.paginator.count }}</span>
+    {% if list.next_url %}<a class="btn btn-secondary" href="{{ list.next_url }}">Næste</a>{% endif %}
+  </nav>
+{% endif %}

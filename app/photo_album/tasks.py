@@ -16,6 +16,7 @@ from django.db.models import Q, QuerySet
 from django.utils import timezone
 from zipstream import ZIP_STORED, ZipStream
 
+from .dashboard import measure_storage
 from .models import (
     ALBUM_DOWNLOAD_RETENTION,
     DERIVATIVE_CLAIM_TTL,
@@ -37,6 +38,7 @@ from .services import (
     backfill_hashes,
     backfill_sizes,
     build_derivatives,
+    check_file_time_sources,
     ffmpeg_failure,
     import_zip_album,
     is_video_media,
@@ -275,29 +277,51 @@ def backfill_media_hashes() -> int:
 
 # How long one night may read originals again for a capture date, for the same reason.
 DATE_REREAD_BUDGET = timedelta(minutes=20)
+# And sidecars, to tell where the file times stored before that was recorded came from. A sidecar
+# is a few hundred bytes, so the archive's thousands are read in one night.
+FILE_TIME_CHECK_BUDGET = timedelta(minutes=10)
 
 
 @shared_task(time_limit=MEDIA_TASK_TIME_LIMIT, soft_time_limit=MEDIA_TASK_SOFT_TIME_LIMIT)
 def settle_media_dates() -> int:
-    """Nightly: read originals stored before XMP and IPTC were read for a capture date, then give
-    every item without a believable date an approximate one (services.settle_dates). Returns how
-    many items were re-dated.
+    """Nightly: read originals stored before XMP and IPTC were read for a capture date, and the
+    sidecars of files whose time's source is not known yet, then give every item without a
+    believable date an approximate one (services.settle_dates). Returns how many were re-dated.
 
     Every album is settled, not only those read tonight: that is what dates the items stored before
     approximations existed. Once they are, it changes nothing, at two queries per album tree.
     """
     reread = reread_capture_dates(until=timezone.now() + DATE_REREAD_BUDGET)
+    sources = check_file_time_sources(until=timezone.now() + FILE_TIME_CHECK_BUDGET)
     changed = settle_all_dates()
     logger.info(
         "Read %d original(s) again and found %d capture date(s); %d could not be read; %d left. "
-        "%d item(s) re-dated.",
+        "Read %d sidecar(s) for where a file time is from, %d of them its source; %d could not be "
+        "read; %d left. %d item(s) re-dated.",
         reread.checked,
         reread.found,
         len(reread.unreadable),
         reread.remaining,
+        sources.checked,
+        sources.from_sidecar,
+        len(sources.unreadable),
+        sources.remaining,
         changed,
     )
     return changed
+
+
+@shared_task(time_limit=MEDIA_TASK_TIME_LIMIT, soft_time_limit=MEDIA_TASK_SOFT_TIME_LIMIT)
+def measure_photo_album_storage() -> int:
+    """Nightly, and when the dashboard asks: what the album takes up in the bucket. Returns the bytes."""
+    report = measure_storage()
+    logger.info(
+        "Measured the photo album's storage: %d byte(s) in %d object(s), in %.1f s.",
+        report.total_bytes,
+        sum(entry.get("objects", 0) for entry in report.totals.values()),
+        report.seconds,
+    )
+    return report.total_bytes
 
 
 @shared_task

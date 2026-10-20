@@ -68,6 +68,7 @@ from .models import (
     DateSource,
     DerivativeState,
     DownloadVariant,
+    FileTimeSource,
     Media,
     MediaStatus,
     Tag,
@@ -1090,6 +1091,7 @@ def upload(request: HttpRequest, pk: int) -> HttpResponse:
                 title=form.cleaned_data["title"],
                 approved=access.can_manage_media(request),
                 file_modified_at=_file_modified_at(modified[index] if index < len(modified) else None),
+                file_time_source=FileTimeSource.UPLOAD,
             )
         except ValueError as exc:  # locked between the check above and now
             if wants_json:
@@ -1223,6 +1225,7 @@ def upload_commit(request: HttpRequest, pk: int) -> JsonResponse:
                 title=form.cleaned_data["title"],
                 approved=access.can_manage_media(request),
                 file_modified_at=_file_modified_at(form.cleaned_data["last_modified"] or None),
+                file_time_source=FileTimeSource.UPLOAD,
                 stored=(upload["key"], UUID(upload["uuid"])),
             )
         except ValueError as exc:  # locked since it was begun

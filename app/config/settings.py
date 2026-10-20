@@ -226,6 +226,7 @@ CELERY_TASK_ROUTES = {
     "photo_album.tasks.backfill_media_hashes": {"queue": "media"},
     "photo_album.tasks.reencode_enlarged_video": {"queue": "media"},
     "photo_album.tasks.settle_media_dates": {"queue": "media"},
+    "photo_album.tasks.measure_photo_album_storage": {"queue": "media"},
 }
 
 # A local migration client uses this bearer token to submit album ZIP imports as the non-login
@@ -326,6 +327,12 @@ CELERY_BEAT_SCHEDULE = {
     "settle-photo-album-dates": {
         "task": "photo_album.tasks.settle_media_dates",
         "schedule": crontab(minute=5, hour=3),
+    },
+    # 05:00, after the night's purges, so the dashboard shows what is left. Lists the bucket's
+    # photo-album prefixes: a thousand objects a request, a few minutes for the whole archive.
+    "measure-photo-album-storage": {
+        "task": "photo_album.tasks.measure_photo_album_storage",
+        "schedule": crontab(minute=0, hour=5),
     },
     "remind-rsvp-deadlines": {
         "task": "events.tasks.remind_rsvp_deadlines",
