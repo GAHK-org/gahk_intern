@@ -101,8 +101,9 @@ Fresh repo (do **not** import the legacy history — it contains plaintext secre
    photo-album thumbnails and HD images, at most ~5 GB (`PHOTO_ALBUM_CACHE_THUMBNAIL_MB`,
    `PHOTO_ALBUM_CACHE_HD_MB`). It also holds, under `attachments/`, the photos on live Den Hurtige
    messages and recent opslag (`MEDIA_CACHE_DIR`, defaulting to the same directory;
-   `MEDIA_CACHE_ATTACHMENTS_MB`, default 2 GB). It is only a cache: losing it costs a cold start,
-   nothing else.
+   `MEDIA_CACHE_ATTACHMENTS_MB`, default 2 GB), and under `gahkflix/` GAHKFlix's thumbnails,
+   banners and candidate frames (`GAHKFLIX_CACHE_MB`, default 1 GB). It is only a cache: losing it
+   costs a cold start, nothing else.
 4. `web` runs `migrate` on start then uvicorn; Coolify/Traefik terminates TLS and proxies HTTP and WebSocket traffic to :8000.
 5. `Scaleway` is the fallback if you prefer a first-party managed Postgres.
 
@@ -216,8 +217,8 @@ Coolify by hand.
 ### 4b. Scheduled tasks (Celery Beat → worker)
 
 **Two workers, two queues.** `CELERY_TASK_ROUTES` in `config/settings.py` sends the jobs that read
-or write whole media files — video encodes, album ZIP imports and downloads, the hash backfill — to
-the `media` queue, run by `worker-media`, one job at a time. Everything else (mail, the sweeps below)
+or write whole media files — photo-album and GAHKFlix video encodes, album ZIP imports and downloads,
+the hash backfill — to the `media` queue, run by `worker-media`, one job at a time. Everything else (mail, the sweeps below)
 stays on the default `celery` queue, run by `worker`, so a quick job never waits behind an hour-long
 encode. Photo thumbnails are queued on `thumbnails`, which `worker` also takes, by turns with
 `celery` — the broker (kombu's SQLAlchemy transport) has no message priorities, but a worker on two
@@ -251,6 +252,10 @@ idempotent, so a retry or an overlapping run is harmless.
 | `photo_album.tasks.measure_photo_album_storage` | Daily 05:00 | Lists the bucket's photo-album prefixes into a `StorageReport` for the admin dashboard (Administration → Fotoalbum): bytes by kind, by album, older versions, and files no item points at. A few minutes for the whole archive; the dashboard's "Mål igen" runs it at once. Keeps a year of reports. |
 | `photo_album.tasks.fail_stalled_downloads` | Every 15 min, from :05 | Closes out ZIP builds no worker came back to. A worker killed outright runs no handler, so its row stays `BUILDING` — never collected, and the album page keeps reloading itself every five seconds waiting for it. A running build records its progress at least every 30 seconds, so "stalled" means no progress for 15 minutes, however long the build has run; a job still `QUEUED` after 12 hours counts too. |
 | `photo_album.tasks.fail_stalled_imports` | Every 15 min, from :10 | The same for ZIP imports, which otherwise kept the import page and the Dropbox script waiting on "building" for good. Also deletes the uploaded ZIP the dead job left in the bucket. |
+| `gahkflix.tasks.recover_stalled` | Every 15 min, from :13 | Sends a GAHKFlix encode again when its worker stopped reporting (no heartbeat for 15 minutes) or its queued message was lost; after three attempts the upload is marked failed and the uploader told. |
+| `gahkflix.tasks.housekeeping` | Daily 04:25 | Deletes GAHKFlix videos 30 days after they were binned and drafts not published 90 days after their upload, with all their files, and lets change requests nobody decided within 30 days expire. Then deletes stored files under `gahkflix/` that no row refers to once they are two days old — an upload whose tab closed before it was saved, or whatever a crashed worker left. **It refuses, and deletes nothing, when more than half of what is stored would go**: that means the database does not belong to the bucket. |
+| `gahkflix.tasks.weekly_draft_reminders` | Mondays 10:05 | Reminds each uploader of their drafts more than a week old, and sends the administrators and Fotogruppen an overview of all of them. In the day, unlike the sweeps: people read these. |
+| `gahkflix.tasks.warn_expiring_drafts` | Daily 10:15 | The day before an unpublished draft is deleted, warns its uploader and the administrators — once. |
 | `events.tasks.remind_rsvp_deadlines` | Daily 17:00 | Sends due RSVP reminders. |
 | `oelkaelder.tasks.send_monthly_statements` | Day 1, 06:10 | Mails every active ølkælder account its previous calendar month, like the AK charge above. **Sends real mail to residents** — the only task here that does. |
 | `core.tasks.send_admin_dummy_notification` | Daily 08:00 and 16:00 | **Temporary, and deliberately still here.** Mails every administrator and superuser twice a day to prove Beat and the worker are alive in production. Delete this entry and `core.tasks.send_admin_dummy_notification` once that is confirmed — nothing else depends on it. |
@@ -398,14 +403,15 @@ broken on the live site today, independently of any of this, and are a separate 
 
 #### The bucket needs a CORS rule for uploads from the browser
 
-Arkiv sends files **straight from the browser to Hetzner** (`arkiv/uploads.py`) — a 2 GB video
-cannot go through the app server. So does the photo album, for a ZIP on the import page and for
-any photo or video of 8 MB or more (`photo_album/direct_upload.py`): the proxy cuts an upload that
-takes more than a minute (§4). Those requests are cross-origin, from
+Arkiv and GAHKFlix send files **straight from the browser to Hetzner** (`arkiv/uploads.py`,
+`gahkflix/uploads.py`) — a 2 GB video cannot go through the app server. So does the photo album,
+for a ZIP on the import page and for any photo or video of 8 MB or more
+(`photo_album/direct_upload.py`): the proxy cuts an upload that takes more than a minute (§4). They
+share the bucket, so the one rule below covers all three. Those requests are cross-origin, from
 `https://gahk.dk` to `https://<bucket>.<loc>.your-objectstorage.com`, so the bucket has to say the
 origin is allowed or the browser refuses to send them. Without the rule the photo album falls back
 to posting the file through the app as before, which works for anything that goes in within the
-minute; Arkiv has no such fallback.
+minute; Arkiv and GAHKFlix have no such fallback.
 
 **Nothing in dev or CI can catch a missing rule**, because the local path never leaves the app: the
 symptom is uploads failing in production only, with a CORS error in the browser console and nothing
@@ -713,6 +719,8 @@ albums in real use are never at risk. Run it with `docker exec -it` — it needs
       reporting `0 uploaded, N already present and identical` (the checksum proof).
 - [ ] **Before residents can upload to Arkiv:** the bucket CORS rule set (§4c) and one real upload
       tried from a browser — a missing rule fails in production only, and silently in the Django log.
+- [ ] **Before opening GAHKFlix's rollout gate** (`gahkflix/access.py`): one real upload from a
+      phone, through to playback — it uses the same CORS rule, and its encode runs on `worker-media`.
 - [ ] **Before emptying the `media` volume:** bucket versioning `Enabled` **and** the lifecycle rules
       in place (§4d), backups green, and one copy off Hetzner. Until then the volume is the rollback.
 - [ ] After the bucket is live, confirm images still render on a **public CMS page** while logged

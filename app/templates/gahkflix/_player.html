@@ -1,0 +1,16 @@
+{% comment %}
+  The player's markup, filled in by gahkflix.ts from the film's config: on the play page, and cloned
+  from the <template> in base.html when "Afspil" opens it over the page instead.
+{% endcomment %}
+<div class="flix-player" data-flix-player>
+  <video playsinline preload="auto"></video>
+  <div class="flix-player-top">
+    <a class="flix-back" href="{% url 'gahkflix:home' %}" aria-label="Tilbage" data-flix-back>←</a>
+    <h1><span data-flix-title></span><small data-flix-subtitle></small></h1>
+  </div>
+  <div class="flix-quality" role="group" aria-label="Kvalitet" data-flix-quality hidden></div>
+  <button class="flix-skip" type="button" data-flix-skip hidden>Spring intro over</button>
+  <a class="flix-next" href="#" data-flix-next hidden>Næste afsnit ▸</a>
+  <button class="flix-start" type="button" aria-label="Afspil" data-flix-start hidden><span>▶</span></button>
+  <p class="flix-player-error" role="alert" data-flix-error hidden></p>
+</div>

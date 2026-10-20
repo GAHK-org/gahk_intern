@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     "arkiv",
     "photo_album",
     "notifications",
+    "gahkflix",
 ]
 
 MIDDLEWARE = [
@@ -71,6 +72,8 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "stats.middleware.FrontPageVisitCounterMiddleware",
+    # DEBUG only: presigned URLs follow the host the page was opened on, so a phone on the LAN works.
+    "core.middleware.PresignForRequestHost",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -227,6 +230,8 @@ CELERY_TASK_ROUTES = {
     "photo_album.tasks.reencode_enlarged_video": {"queue": "media"},
     "photo_album.tasks.settle_media_dates": {"queue": "media"},
     "photo_album.tasks.measure_photo_album_storage": {"queue": "media"},
+    "gahkflix.tasks.process_video_file": {"queue": "media"},
+    "gahkflix.tasks.redraw_frames": {"queue": "media"},
 }
 
 # A local migration client uses this bearer token to submit album ZIP imports as the non-login
@@ -287,6 +292,27 @@ CELERY_BEAT_SCHEDULE = {
     "fail-stalled-photo-album-imports": {
         "task": "photo_album.tasks.fail_stalled_imports",
         "schedule": crontab(minute="10-59/15"),
+    },
+    # Sends again a GAHKFlix encode whose worker stopped reporting (gahkflix.tasks.recover_stalled).
+    "recover-stalled-gahkflix-encodes": {
+        "task": "gahkflix.tasks.recover_stalled",
+        "schedule": crontab(minute="13-59/15"),
+    },
+    # GAHKFlix's bin and expired requests after 30 days, unpublished drafts after 90, and stored files
+    # nothing refers to (gahkflix.services.sweep_orphans).
+    "gahkflix-housekeeping": {
+        "task": "gahkflix.tasks.housekeeping",
+        "schedule": crontab(minute=25, hour=4),
+    },
+    # Reminders about unpublished drafts go out in the day, not with the night's sweeps: they are
+    # read by people, and a push at 04:25 wakes them.
+    "gahkflix-weekly-draft-reminders": {
+        "task": "gahkflix.tasks.weekly_draft_reminders",
+        "schedule": crontab(minute=5, hour=10, day_of_week=1),
+    },
+    "gahkflix-warn-expiring-drafts": {
+        "task": "gahkflix.tasks.warn_expiring_drafts",
+        "schedule": crontab(minute=15, hour=10),
     },
     "purge-worker-job-logs": {
         "task": "core.tasks.purge_worker_job_logs",
@@ -391,7 +417,8 @@ S3_ADDRESSING_STYLE = os.environ.get("S3_ADDRESSING_STYLE", "path" if DEBUG else
 # the wrong host is not cosmetic — SigV4 signs the Host header, so the bucket 403s a request whose
 # Host does not match the one it was signed for, and rewriting the URL string afterwards cannot fix
 # that either. `task dev:local` and production both leave this unset, since S3_ENDPOINT_URL there is
-# already reachable from wherever the browser runs.
+# already reachable from wherever the browser runs. In DEBUG, a page opened from another machine on
+# the network signs for that machine's view of this host instead (core.storage.presigning_endpoint).
 S3_PUBLIC_ENDPOINT_URL = os.environ.get("S3_PUBLIC_ENDPOINT_URL", "") or S3_ENDPOINT_URL
 
 # botocore >= 1.36 defaults to sending x-amz-checksum-crc32 with aws-chunked framing on every PUT,
@@ -556,6 +583,7 @@ LOGGING = {
         # handler of its own: it propagates to the worker's, and in the web process nothing prints
         # below WARNING.
         "photo_album": {"level": os.environ.get("PHOTO_ALBUM_LOG_LEVEL", "INFO")},
+        "gahkflix": {"level": os.environ.get("GAHKFLIX_LOG_LEVEL", "INFO")},
         # Why a login failed, and why a form was refused as stale (residents.auth). Django's own
         # CSRF warnings print only under DEBUG, so a 403 in production said nothing about why.
         "residents": {"handlers": ["console"], "level": os.environ.get("RESIDENTS_LOG_LEVEL", "INFO")},
@@ -632,3 +660,10 @@ MEDIA_CACHE_ATTACHMENTS_MB = int(os.environ.get("MEDIA_CACHE_ATTACHMENTS_MB", "2
 # every post forever and has no archive, so for caching purposes an opslag counts as archived this
 # many days after it was posted.
 NOTICE_IMAGE_CACHE_DAYS = int(os.environ.get("NOTICE_IMAGE_CACHE_DAYS", "30"))
+
+# GAHKFlix (gahkflix/). The largest film a resident may upload; it goes straight to the bucket, never
+# through the app server (gahkflix/uploads.py). A custom thumbnail or banner is an ordinary picture.
+GAHKFLIX_MAX_UPLOAD_GB = float(os.environ.get("GAHKFLIX_MAX_UPLOAD_GB", "5"))
+GAHKFLIX_PICTURE_MAX_MB = int(os.environ.get("GAHKFLIX_PICTURE_MAX_MB", "15"))
+# Local copies of its thumbnails, banners and frames, in MEDIA_CACHE_DIR/gahkflix/ (gahkflix/cache.py).
+GAHKFLIX_CACHE_MB = int(os.environ.get("GAHKFLIX_CACHE_MB", "1024"))
