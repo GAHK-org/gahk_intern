@@ -18,6 +18,14 @@ A resident should aim to have a positive or zero balance.
 Each month, all residents should automatically be subtracted 4 points from their account.
 
 
+### Balance forecast
+A resident's account page shows a diagram predicting their balance up to the end of the shift calendar, assuming nothing changes:
+- Each shift they hold adds its points when it ends. A lone holder of a multi-spot shift is counted for every spot (they will be given them); a shift put for sale counts until it is sold; a cancelled shift does not count.
+- The monthly charge is subtracted on the 1st of each month: for a month whose alumneliste is published, if they are on it; otherwise if they live here now and their move-out date is not before that month.
+
+The diagram has three zones: green (3 points or more), yellow (0 to 2) and red (below 0). Under -6 the red zone turns deeper and hatched, the line turns red, and a banner above the diagram asks the resident to take a shift.
+The same steps are available as a table under the diagram.
+
 ## Shifts and shift calendar
 A shift is taken by one or more residents (amount of spots).
 A shift with multiple spots may be taken by the same resident. In this case, the resident will receive the total amount of points for the specifed amount of spots.

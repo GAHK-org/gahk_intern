@@ -1,0 +1,72 @@
+{% load ui_extras %}
+{% comment %}
+  The balance forecast on Min køkkenkonto: a step chart drawn by frontend/src/kitchen-forecast.ts from
+  the json_script below, with the same steps as a table for anyone who cannot or does not want to
+  read the chart. Context: balance, balance_zone, monthly_charge, forecast (views._forecast_context).
+{% endcomment %}
+<section class="card forecast" aria-labelledby="forecast-title">
+  <h2 id="forecast-title">Prognose</h2>
+  <p class="muted">Hvis intet ændrer sig: dine vagter giver point, når de slutter, og den 1. i hver måned trækkes {{ monthly_charge }} point.</p>
+
+  {% if balance_zone == "alarm" or forecast.alarm %}
+    <div class="forecast-alarm">
+      <div>
+        {% if balance_zone == "alarm" %}
+          <strong>Du står på {{ balance }} point – langt under målet.</strong>
+        {% else %}
+          <strong>Du rammer {{ forecast.alarm.balance }} point {{ forecast.alarm.at|date:"j. F" }}.</strong>
+        {% endif %}
+        Tag en ledig vagt eller køb en, der er til salg.
+      </div>
+      <a class="btn" href="{% url 'kitchen:market' %}">Find en vagt</a>
+    </div>
+  {% endif %}
+
+  <dl class="forecast-stats">
+    <div>
+      <dt>Nu</dt>
+      <dd><strong>{{ balance }}</strong> {% include "kitchen/_zone_chip.html" with zone=balance_zone %}</dd>
+    </div>
+    {% if forecast.lowest %}
+      <div>
+        <dt>Lavest {{ forecast.lowest.at|date:"j. F" }}</dt>
+        <dd><strong>{{ forecast.lowest.balance }}</strong> {% include "kitchen/_zone_chip.html" with zone=forecast.lowest.zone %}</dd>
+      </div>
+    {% endif %}
+    <div>
+      <dt>{{ forecast.end|date:"j. F" }}</dt>
+      <dd><strong>{{ forecast.end_balance }}</strong> {% include "kitchen/_zone_chip.html" with zone=forecast.end_zone %}</dd>
+    </div>
+  </dl>
+
+  <ul class="forecast-legend" aria-label="Zoner">
+    <li><span class="forecast-swatch is-good"></span>3 point eller flere</li>
+    <li><span class="forecast-swatch is-warn"></span>0 til 2</li>
+    <li><span class="forecast-swatch is-neg"></span>-1 til -6</li>
+    <li><span class="forecast-swatch is-alarm"></span>Under -6</li>
+  </ul>
+  <div class="forecast-chart">
+    <canvas id="kitchen-forecast" role="img"
+            aria-label="Saldoprognose frem til {{ forecast.end|date:'j. F' }}: fra {{ balance }} til {{ forecast.end_balance }} point. Tallene står i tabellen nedenfor."></canvas>
+  </div>
+  {{ forecast.chart|json_script:"kitchen-forecast-data" }}
+
+  <details class="forecast-table">
+    <summary>Vis som tabel</summary>
+    <table class="zebra">
+      <thead><tr><th>Dato</th><th>Hvad</th><th>Point</th><th>Saldo</th></tr></thead>
+      <tbody>
+        {% for step in forecast.steps %}
+          <tr>
+            <td>{{ step.at|date:"D j. M" }}</td>
+            <td>{{ step.label }}</td>
+            <td class="{{ step.amount|sign_class }}">{% if step.amount > 0 %}+{% endif %}{{ step.amount }}</td>
+            <td><strong class="zone-{{ step.zone }}">{{ step.balance }}</strong></td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="4" class="muted">Ingen kommende vagter eller afregninger.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </details>
+</section>

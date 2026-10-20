@@ -1,5 +1,5 @@
 """Køkkenvagter (spec/features/kitchen-duty.md): calendar, ledger, enrolment, trading, completion,
-absence, administration, notifications and the personal calendar feed."""
+absence, administration, notifications, the balance forecast and the personal calendar feed."""
 
 import datetime
 from collections.abc import Callable
@@ -402,3 +402,72 @@ def test_unmanned_shifts_notify_everyone_within_a_day_and_the_negative_within_th
     _shift(datetime.timedelta(hours=5))
     services.notify_unmanned_daily()
     assert sorted(Notification.objects.values_list("recipient_id", flat=True)) == sorted([fine.pk, broke.pk])
+
+
+def test_zones_are_green_yellow_red_and_alarm_under_minus_six() -> None:
+    assert [services.zone(b) for b in (3, 2, 0, -1, -6, -7)] == [
+        "good",
+        "warn",
+        "warn",
+        "neg",
+        "neg",
+        "alarm",
+    ]
+
+
+def test_forecast_books_held_shifts_and_the_monthly_charges(make_resident: Callable) -> None:
+    r = make_resident()
+    _live_here(r)
+    services.post_entry(r.pk, 5, "start", KitchenPointEntry.Kind.MANUAL)
+    services.enroll(_shift(datetime.timedelta(days=2), points=3), r)
+    # Lone holder of one of two spots: booked for both, as complete_shift will.
+    services.enroll(_shift(datetime.timedelta(days=5), spots=2, points=3), r)
+    cancelled = _shift(datetime.timedelta(days=6))
+    services.enroll(cancelled, r)
+    services.disable_shift(cancelled, "Lukket")
+
+    steps = services.forecast(r)
+    assert [s.at for s in steps] == sorted(s.at for s in steps)
+    assert sorted(s.amount for s in steps) == [-4, -4, -4, 3, 6]
+    assert "(2 pladser)" in next(s.label for s in steps if s.amount == 6)
+    running = 5
+    for step in steps:
+        running += step.amount
+        assert step.balance == running
+    assert steps[-1].balance == 5 + 3 + 6 - 3 * services.MONTHLY_CHARGE
+
+
+def test_forecast_charges_follow_move_out_and_published_lists(make_resident: Callable) -> None:
+    year, month = active_period()
+    next_month = services.add_months(datetime.date(year, month, 1), 1)
+    leaving = make_resident(email="l@gahk.dk", move_out_date=next_month + datetime.timedelta(days=10))
+    _live_here(leaving)
+    assert [s.amount for s in services.forecast(leaving)] == [-4]
+
+    # Not here now, but on next month's published list: charged for that month only.
+    arriving = make_resident(email="a@gahk.dk")
+    _live_here(arriving, next_month.year, next_month.month)
+    assert [s.at.date() for s in services.forecast(arriving)] == [next_month]
+
+    # Here now, but left off next month's published list: that month is skipped, later ones assumed.
+    dropped = make_resident(email="d@gahk.dk")
+    _live_here(dropped)
+    assert next_month not in [s.at.date() for s in services.forecast(dropped)]
+    assert len(services.forecast(dropped)) == 2
+
+
+def test_account_page_draws_the_forecast_and_raises_the_alarm_under_minus_six(
+    make_resident: Callable,
+) -> None:
+    r = make_resident()
+    _live_here(r)
+    services.post_entry(r.pk, 10, "start", KitchenPointEntry.Kind.MANUAL)
+    client = Client()
+    client.force_login(r)
+
+    page = client.get(reverse("kitchen:account")).content.decode()
+    assert 'id="kitchen-forecast-data"' in page and "forecast-alarm" not in page
+
+    services.post_entry(r.pk, -12, "bøde", KitchenPointEntry.Kind.MANUAL)
+    page = client.get(reverse("kitchen:account")).content.decode()
+    assert "forecast-alarm" in page and "Du rammer -10 point" in page

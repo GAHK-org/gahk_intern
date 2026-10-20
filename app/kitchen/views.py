@@ -239,16 +239,56 @@ def market(request: HttpRequest) -> HttpResponse:
     )
 
 
+def _ms(at: datetime.datetime) -> int:
+    return int(at.timestamp() * 1000)
+
+
+def _forecast_context(resident: Resident, balance: int) -> dict:
+    """The balance forecast as a step chart (json_script for frontend/src/kitchen-forecast.ts) and
+    the same steps as a table, with the numbers the summary above the chart quotes."""
+    now = current_datetime()
+    steps = services.forecast(resident)
+    end = timezone.make_aware(datetime.datetime.combine(services.calendar_horizon(), datetime.time()))
+    points: list[dict] = [{"x": _ms(now), "y": balance, "items": []}]
+    for step in steps:
+        item = [step.label, step.amount]
+        if len(points) > 1 and points[-1]["x"] == _ms(step.at):
+            points[-1]["y"] = step.balance
+            points[-1]["items"].append(item)
+        else:
+            points.append({"x": _ms(step.at), "y": step.balance, "items": [item]})
+    end_balance = steps[-1].balance if steps else balance
+    if points[-1]["x"] < _ms(end):
+        points.append({"x": _ms(end), "y": end_balance, "items": []})
+    # Only worth its own figure when it is below today and not simply where the forecast ends.
+    lowest = min(steps, key=lambda s: (s.balance, s.at), default=None)
+    if lowest and (lowest.balance >= balance or lowest is steps[-1]):
+        lowest = None
+    return {
+        "steps": steps,
+        "end": end,
+        "end_balance": end_balance,
+        "end_zone": services.zone(end_balance),
+        "lowest": lowest,
+        "alarm": next((s for s in steps if s.zone == "alarm"), None),
+        "chart": {"points": points, "yellowMax": services.YELLOW_MAX, "alarmBelow": services.ALARM_BELOW},
+    }
+
+
 @login_required
 def account(request: HttpRequest) -> HttpResponse:
     _backstops()
     resident = current_resident(request)
+    balance = KitchenPointEntry.balance_for(resident.pk)
     return render(
         request,
         "kitchen/account.html",
         {
             "resident": resident,
-            "balance": KitchenPointEntry.balance_for(resident.pk),
+            "balance": balance,
+            "balance_zone": services.zone(balance),
+            "forecast": _forecast_context(resident, balance),
+            "monthly_charge": services.MONTHLY_CHARGE,
             "entries": resident.kitchen_entries.select_related("created_by")[:200],
             "upcoming": resident.kitchen_assignments.filter(shift__ends_at__gt=current_datetime())
             .select_related("shift")
