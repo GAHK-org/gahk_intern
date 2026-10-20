@@ -6,4 +6,4 @@ class ResidentsConfig(AppConfig):
     name = "residents"
 
     def ready(self) -> None:
-        from . import signals  # noqa: F401  (connect RoleAssignment → is_staff sync)
+        from . import auth, signals  # noqa: F401  (failed-login log; RoleAssignment → is_staff sync)
