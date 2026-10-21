@@ -37,7 +37,7 @@ def _safe(url: str) -> str:
 
 @login_required
 def index(request: HttpRequest) -> HttpResponse:
-    """Every active notification, most important first, then newest. `?visning=kategori` groups
+    """Every active notification, unseen first, then most important, then newest. `?visning=kategori` groups
     them under their category's group instead."""
     resident = current_resident(request)
     view = request.GET.get("visning", "kronologisk")
