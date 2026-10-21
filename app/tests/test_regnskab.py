@@ -141,6 +141,41 @@ def test_set_economic_account_number_rejects_get(make_resident: Callable) -> Non
 
 
 @pytest.mark.django_db
+def test_economic_account_number_not_editable_via_django_admin_by_regnskab_alone(
+    make_resident: Callable,
+) -> None:
+    """Resident.has_perm/has_module_perms require an approved Administrator (see residents/models.py)
+    — a plain regnskab-role user has is_staff=True but must NOT be able to reach the Django Admin
+    change form for a Resident (which has no field restriction of its own and would otherwise expose
+    economic_account_number, bypassing the regnskab-gated inline-edit view entirely)."""
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    target = make_resident(email="target@gahk.dk", economic_account_number=4207)
+    c = Client()
+    c.force_login(acc)
+
+    response = c.get(f"/django-admin/residents/resident/{target.pk}/change/")
+
+    assert response.status_code != 200
+
+
+@pytest.mark.django_db
+def test_economic_account_number_editable_via_django_admin_by_approved_administrator(
+    make_resident: Callable,
+) -> None:
+    from residents.models import AdminAccessGrant
+
+    admin = make_resident(email="admin@gahk.dk", roles=("administrator",))
+    AdminAccessGrant.objects.filter(resident=admin).update(status=AdminAccessGrant.Status.APPROVED)
+    target = make_resident(email="target@gahk.dk", economic_account_number=4207)
+    c = Client()
+    c.force_login(admin)
+
+    response = c.get(f"/django-admin/residents/resident/{target.pk}/change/")
+
+    assert response.status_code == 200
+
+
+@pytest.mark.django_db
 def test_send_alumneregninger_requires_regnskab_role(make_resident: Callable) -> None:
     plain = make_resident(email="plain@gahk.dk")
     c = Client()
