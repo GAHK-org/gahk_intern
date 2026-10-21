@@ -1,0 +1,49 @@
+{% extends "gahkflix/base.html" %}
+{% load gahkflix %}
+{% block content %}
+  {% if hero %}
+    {% picture_url hero "banner" as banner %}
+    <section class="flix-hero">
+      <div class="flix-hero-img" style="background-image:url('{{ banner }}')" role="img" aria-label="{{ hero.title }}"></div>
+      <div class="flix-hero-body">
+        <div class="flix-hero-kicker"><b>G</b>{% if hero.series %}Serie{% else %}Film{% endif %}</div>
+        <h1 class="flix-hero-title">{{ hero.series.title|default:hero.title }}</h1>
+        <div class="flix-hero-meta">
+          {% if hero.trending_viewers %}<span class="flix-match">Populær lige nu</span>{% endif %}
+          {% if hero.series %}<span>{{ hero.episode_label|default:hero.title }}</span>{% endif %}
+          <span>{{ hero.display_date|date:"Y" }}</span>
+          {% if hero.file.duration %}<span>{{ hero.file.duration|duration }}</span>{% endif %}
+        </div>
+        {% if hero.description %}<p class="flix-hero-desc">{{ hero.description }}</p>{% endif %}
+        <div class="flix-hero-actions">
+          <a class="flix-btn flix-btn-play" href="{% url 'gahkflix:play' hero.pk %}" data-flix-play><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l12-7.5z"/></svg>Afspil</a>
+          <a class="flix-btn flix-btn-info" href="{% url 'gahkflix:detail' hero.pk %}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M12 11v6M12 7.5v.5"/></svg>Mere info</a>
+        </div>
+      </div>
+    </section>
+  {% endif %}
+
+  {% if rows or series %}
+    <div class="flix-rows{% if not hero %} is-plain{% endif %}">
+      {% for row in rows %}
+        {% include "gahkflix/_row.html" with title=row.title videos=row.videos url=row.url ranked=row.ranked resume=row.resume %}
+      {% endfor %}
+      {% if series %}
+        <section class="flix-row" data-flix-row>
+          <h2 class="flix-row-title"><a href="{% url 'gahkflix:series_list' %}">Serier <span class="flix-more">Se alle ›</span></a></h2>
+          <button class="flix-arrow is-prev" type="button" aria-label="Forrige" data-flix-prev hidden>‹</button>
+          <div class="flix-slider" data-flix-slider>
+            {% for show in series %}{% include "gahkflix/_series_card.html" %}{% endfor %}
+          </div>
+          <button class="flix-arrow is-next" type="button" aria-label="Næste" data-flix-next>›</button>
+        </section>
+      {% endif %}
+    </div>
+  {% else %}
+    <section class="flix-hero-empty">
+      <h1>Velkommen til GAHKFlix</h1>
+      <p>Kollegiets egne film: revyer, sketches, fester og alt det andet, I har filmet.<br>Der er ingen videoer endnu – vær den første.</p>
+      <a class="flix-btn flix-btn-red" href="{% url 'gahkflix:upload' %}">Upload en video</a>
+    </section>
+  {% endif %}
+{% endblock %}

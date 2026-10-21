@@ -8,6 +8,10 @@ A thread, not a periodic task: a task would sit in the queue behind whatever the
 and `worker-media` legitimately spends up to CELERY_TASK_TIME_LIMIT (15 min) on one video encode,
 so a queued heartbeat would report a perfectly healthy worker as dead. The thread runs in the
 worker's main process, beside the pool, and keeps beating however long a task takes.
+
+Each beat also touches a file, which is what the worker's and beat's Docker healthchecks read
+(core/heartbeat_check.py): Coolify then shows each container as /health sees it, without booting
+Django and querying the database every 30 seconds in each container.
 """
 
 import logging
@@ -19,11 +23,11 @@ from celery.signals import beat_init, worker_ready, worker_shutdown
 from django.db import close_old_connections, connection
 from django.utils import timezone
 
+from .heartbeat_check import heartbeat_file
+
 logger = logging.getLogger(__name__)
 
 HEARTBEAT_INTERVAL = 30  # seconds
-# /health calls a process down once its row is this old: several missed beats, not one slow write.
-HEARTBEAT_MAX_AGE = 120  # seconds
 
 _stop = threading.Event()
 
@@ -45,6 +49,14 @@ def _run(name: str, hostname: str, stop: threading.Event) -> None:
             # A database blip must not end the thread: the next beat retries, and until then the
             # row just ages, which is what /health should see.
             logger.exception("Could not record the %s heartbeat", name)
+        else:
+            # Only once the row is written, so the file is no fresher than what /health reads.
+            # Its own handler: a full disk here is no database problem, and /health stays green.
+            path = heartbeat_file(name)
+            try:
+                path.touch()
+            except OSError:
+                logger.exception("Recorded the %s heartbeat, but could not touch %s", name, path)
         finally:
             # The thread's own connection; holding it open between beats would pin one per process.
             connection.close()

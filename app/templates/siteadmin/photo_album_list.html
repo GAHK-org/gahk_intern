@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% load ui_extras %}
+{% block title %}{{ title }} - Fotoalbum - Admin - GAHK{% endblock %}
+{% block content_width %}max-w-6xl{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <div class="eyebrow"><a href="{% url 'siteadmin:home' %}">Administration</a> · <a href="{% url 'siteadmin:photo_album' %}">Fotoalbum</a></div>
+      <h1>{{ title }}</h1>
+    </div>
+  </div>
+
+  <nav class="jobs-states pad-folders" aria-label="Lister">
+    {% for other, count in others %}
+      <a class="jobs-pill{% if other.slug == kind %} is-on{% endif %}" href="{% url 'siteadmin:photo_album_list' other.slug %}">{{ other.title }} <b>{{ count }}</b></a>
+    {% endfor %}
+    <a class="jobs-pill{% if kind == orphans_list %} is-on{% endif %}" href="{% url 'siteadmin:photo_album_list' orphans_list %}">Filer uden billede</a>
+  </nav>
+
+  <section class="card-flat jobs-section">
+    <p class="jobs-sub pad-intro pad-list-hint">{{ hint }}</p>
+
+    {% if kind == orphans_list %}
+      {% if report %}
+        <p class="jobs-sub pad-intro">
+          Målt {{ report.measured_at|date:"j. b Y H:i" }}: {{ report.orphans.objects|default:0 }} fil{{ report.orphans.objects|pluralize:"er" }}, {{ report.orphans.bytes|default:0|filesizeformat }}{% if report.orphans.objects > orphans|length %} — her de første {{ orphans|length }}{% endif %}.
+        </p>
+        <div class="overflow-x-auto">
+          <table class="zebra jobs-table">
+            <thead><tr><th>Fil i bucketten</th><th>Hvad</th><th class="num">Størrelse</th><th>Ændret</th><th>Album</th></tr></thead>
+            <tbody>
+              {% for orphan in orphans %}
+                <tr>
+                  <td class="jobs-mono">{{ orphan.key }}</td>
+                  <td>{{ orphan.variant }}</td>
+                  <td class="num">{% if orphan.bytes is not None %}{{ orphan.bytes|filesizeformat }}{% else %}–{% endif %}</td>
+                  <td class="pad-when">{{ orphan.modified|date:"j. b Y H:i"|default:"–" }}</td>
+                  <td>{% if orphan.album %}{{ orphan.album_label }} <span class="jobs-app">{{ orphan.album.folder }}</span>{% else %}<span class="muted">albummet findes ikke længere</span>{% endif %}</td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="5" class="muted">Ingen: hver fil har sit billede.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="jobs-empty">Lageret er ikke målt endnu.</p>
+      {% endif %}
+    {% else %}
+      <p class="jobs-sub pad-intro">{{ list.page.paginator.count }} i alt.</p>
+      <ul class="pad-items">
+        {% for row in list.items %}
+          {% with media=row.media %}
+            <li class="pad-item{% if kind == 'dubletter' and row.group|divisibleby:2 %} is-shaded{% endif %}">
+              <div class="pad-thumb">{% if media.has_derivatives %}<img src="{{ media.thumbnail.url }}" alt="" loading="lazy">{% else %}<span class="pad-no-thumb">{% if media.content_type|slice:':6' == 'video/' %}Video{% else %}Ingen miniature{% endif %}</span>{% endif %}</div>
+              <div class="pad-main">
+                <div class="pad-name">
+                  <b>{{ media.display_name }}</b>
+                  {% if media.content_type|slice:':6' == 'video/' %}<span class="chip chip-quiet">Video</span>{% endif %}
+                  {% if media.size is not None %}<span class="jobs-sub">{{ media.size|filesizeformat }}</span>{% endif %}
+                  {% if media.deleted_at %}<span class="chip chip-neg">I papirkurven</span>{% elif media.status == 'pending' %}<span class="chip chip-brass">Afventer</span>{% endif %}
+                  {% if media.derivative_state == 'failed' %}<span class="chip chip-neg">Versioner fejlet</span>{% elif media.derivative_state == 'pending' %}<span class="chip chip-quiet">Versioner venter</span>{% endif %}
+                </div>
+                <div class="jobs-sub">{{ row.album }} · {{ media.album.folder }} — uploadet {{ media.added_at|date:"j. b Y H:i" }} af {{ media.requested_by.full_name }}</div>
+                <div class="pad-why">
+                  {% if row.expires %}Slettes {{ row.expires|date:"j. b Y" }} (om {{ row.expires|ahead:now }}).{% endif %}
+                  {% if kind == 'papirkurv' %}Slettet {{ media.deleted_at|date:"j. b Y H:i" }}{% if media.deleted_by %} af {{ media.deleted_by.full_name }}{% endif %}.{% endif %}
+                  {% if kind == 'venter-versioner' or kind == 'fejlede-versioner' %}
+                    {{ media.derivative_attempts }} forsøg{% if media.derivative_started_at %}, seneste startet {{ media.derivative_started_at|date:"j. b Y H:i" }}{% endif %}.
+                    {% if media.derivative_task_id %}<a href="{% url 'siteadmin:worker_job_detail' media.derivative_task_id %}">{% if kind == 'fejlede-versioner' %}Se hvorfor{% else %}Se jobbet{% endif %}</a>{% endif %}
+                  {% endif %}
+                  {% if kind == 'uden-fingeraftryk' and media.hash_failed_at %}Kunne ikke læses {{ media.hash_failed_at|date:"j. b Y H:i" }}.{% endif %}
+                  {% if kind == 'dubletter' %}Gruppe {{ row.group }} · <span class="jobs-mono">{{ media.sha256|truncatechars:17 }}</span>{% endif %}
+                  {% if kind == 'filtid-kilde' %}Filtid {{ media.file_modified_at|date:"j. b Y H:i" }}; sidecaren er gemt.{% endif %}
+                  {% if kind == 'optagelsesdato' %}Vises ved {{ media.sort_at|date:"j. b Y" }} ({{ row.tier.label|lower }}).{% endif %}
+                </div>
+              </div>
+              <div class="pad-actions">{% if media.original %}<a class="btn btn-secondary" href="{% url 'photo_album:download_original' media.pk %}">Originalen</a>{% endif %}</div>
+              <details class="pad-details">
+                <summary>Detaljer</summary>
+                <dl class="jobs-facts">
+                  <div><dt>Fil</dt><dd>{{ media.display_name }}{% if media.title != media.display_name %} <span class="muted">(titel: {{ media.title }})</span>{% endif %}</dd></div>
+                  <div><dt>Type og størrelse</dt><dd>{{ media.content_type|default:"ukendt" }} · {% if media.size is not None %}{{ media.size|filesizeformat }} ({{ media.size }} bytes){% else %}størrelse ukendt{% endif %}</dd></div>
+                  <div><dt>Album</dt><dd>{{ row.album }} ({{ media.album.folder }}, nr. {{ media.album_id }})</dd></div>
+                  <div><dt>Status</dt><dd>{{ media.get_status_display }}{% if media.status == 'approved' and media.approved_at %}, godkendt {{ media.approved_at|date:"j. b Y H:i" }}{% if media.approved_by %} af {{ media.approved_by.full_name }}{% endif %}{% endif %}{% if media.deleted_at %}; slettet {{ media.deleted_at|date:"j. b Y H:i" }}{% if media.deleted_by %} af {{ media.deleted_by.full_name }}{% endif %}{% endif %}</dd></div>
+                  <div><dt>Uploadet</dt><dd>{{ media.added_at|date:"j. b Y H:i" }} af {{ media.requested_by.full_name }}</dd></div>
+                  <div><dt>Vises ved</dt><dd>{{ media.sort_at|date:"j. b Y H:i"|default:"–" }} · {{ row.tier.label }}</dd></div>
+                  <div><dt>Optaget</dt><dd>{{ media.captured_at|date:"j. b Y H:i"|default:"–" }}{% if not media.capture_date_checked %} <span class="muted">(læses igen i nat)</span>{% endif %}</dd></div>
+                  <div><dt>Filens dato</dt><dd>{% if media.file_modified_at %}{{ media.file_modified_at|date:"j. b Y H:i" }} · {{ media.get_file_time_source_display }}{% else %}–{% endif %}</dd></div>
+                  <div><dt>Versioner</dt><dd>{{ media.get_derivative_state_display }}, {{ media.derivative_attempts }} forsøg{% if media.derivative_task_id %} · <a href="{% url 'siteadmin:worker_job_detail' media.derivative_task_id %}">job</a>{% endif %}</dd></div>
+                  <div><dt>SHA-256</dt><dd class="jobs-mono">{{ media.sha256|default:"–" }}</dd></div>
+                  <div><dt>UUID</dt><dd class="jobs-mono">{{ media.uuid }}</dd></div>
+                  <div><dt>Original</dt><dd class="jobs-mono">{{ media.original.name|default:"–" }}</dd></div>
+                  <div><dt>HD-version</dt><dd class="jobs-mono">{{ media.high_definition.name|default:"–" }}</dd></div>
+                  <div><dt>Miniature</dt><dd class="jobs-mono">{{ media.thumbnail.name|default:"–" }}</dd></div>
+                  <div><dt>Sidecar</dt><dd class="jobs-mono">{{ media.sidecar.name|default:"–" }}</dd></div>
+                  {% for key, value in media.metadata.items %}<div><dt>{{ key }}</dt><dd>{{ value }}</dd></div>{% endfor %}
+                </dl>
+              </details>
+            </li>
+          {% endwith %}
+        {% empty %}
+          <li class="jobs-empty">Ingen.</li>
+        {% endfor %}
+      </ul>
+      {% if list.page.has_other_pages %}
+        <nav class="pad-pages" aria-label="Sider">
+          {% if list.previous_url %}<a class="btn btn-secondary" href="{{ list.previous_url }}">Forrige</a>{% endif %}
+          <span class="muted text-sm">{{ list.page.start_index }}–{{ list.page.end_index }} af {{ list.page.paginator.count }}</span>
+          {% if list.next_url %}<a class="btn btn-secondary" href="{{ list.next_url }}">Næste</a>{% endif %}
+        </nav>
+      {% endif %}
+    {% endif %}
+  </section>
+{% endblock %}

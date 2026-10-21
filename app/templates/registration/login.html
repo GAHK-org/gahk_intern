@@ -4,7 +4,8 @@
   <h1>Log ind</h1>
   <div class="card" style="max-width:420px">
     {% if form.errors %}<p class="errorlist">Forkert e-mail eller kodeord.</p>{% endif %}
-    <form method="post" action="">
+    {# novalidate: the browser's own e-mail check would block an address the server accepts. #}
+    <form method="post" action="" novalidate>
       {% csrf_token %}
       <label for="id_username">E-mail</label>
       {{ form.username }}
@@ -15,4 +16,21 @@
     </form>
     <p class="muted" style="margin-top:.8rem"><a href="{% url 'password_reset' %}">Glemt kodeord?</a></p>
   </div>
+  {% comment %}
+    This page's token goes stale while it sits unused, and a PWA resumed from the background shows
+    the same page again without loading it, so the form is then refused (CSRF). Load it afresh when
+    it comes back from the back-forward cache, or into view after minutes in the background.
+  {% endcomment %}
+  <script>
+    (function () {
+      var STALE_AFTER_MS = 5 * 60 * 1000;
+      var hiddenAt = null;
+      window.addEventListener("pageshow", function (event) { if (event.persisted) window.location.reload(); });
+      document.addEventListener("visibilitychange", function () {
+        if (document.visibilityState === "hidden") { hiddenAt = Date.now(); return; }
+        if (hiddenAt !== null && Date.now() - hiddenAt > STALE_AFTER_MS) window.location.reload();
+        hiddenAt = null;
+      });
+    })();
+  </script>
 {% endblock %}

@@ -1,0 +1,19 @@
+{% extends "gahkflix/base.html" %}
+{% block title %}{% if series %}Rediger {{ series.title }}{% else %}Ny serie{% endif %} – GAHKFlix{% endblock %}
+{% block content %}
+  <div class="flix-page flix-page-narrow">
+    <h1 class="flix-page-title">{% if series %}Rediger {{ series.title }}{% else %}Ny serie{% endif %}</h1>
+    {% if needs_approval %}<p class="flix-banner-note" style="margin:0 0 18px">Serien er over 30 dage gammel, så ændringen sendes til godkendelse hos en anden administrator.</p>{% endif %}
+    <form method="post" class="flix-panel flix-form">{% csrf_token %}
+      {{ form.non_field_errors }}
+      <label for="{{ form.title.id_for_label }}">Titel</label>{{ form.title }}{{ form.title.errors }}
+      <label for="{{ form.description.id_for_label }}">Beskrivelse</label>{{ form.description }}{{ form.description.errors }}
+      {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+      {% if not series %}<span class="flix-help">Enhver kan oprette en serie og lægge sine egne videoer i den.</span>{% endif %}
+      <div class="flix-actions">
+        <button class="flix-btn flix-btn-red" type="submit">{% if needs_approval %}Send til godkendelse{% elif series %}Gem{% else %}Opret serien{% endif %}</button>
+        <a class="flix-btn flix-btn-small flix-btn-quiet" href="{% if series %}{% url 'gahkflix:series' series.pk %}{% else %}{% url 'gahkflix:series_list' %}{% endif %}">Annuller</a>
+      </div>
+    </form>
+  </div>
+{% endblock %}

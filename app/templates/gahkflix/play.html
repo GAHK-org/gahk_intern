@@ -1,0 +1,15 @@
+{% extends "gahkflix/base.html" %}
+{% block title %}{{ video.title }} – GAHKFlix{% endblock %}
+{% block body_class %}flix-play{% endblock %}
+{% block header %}{% endblock %}
+{% block footer %}{% endblock %}
+{% block content %}
+  {% comment %}
+    A link to the player opened directly. Clicking "Afspil" inside GAHKFlix opens the same player over
+    the page instead (gahkflix.ts), which is what lets the intro start with sound at once: a browser
+    only allows that inside the click that asked for it. Here, if the browser says no, the player
+    shows a big play button.
+  {% endcomment %}
+  {{ player|json_script:"flix-player-config" }}
+  {% include "gahkflix/_player.html" %}
+{% endblock %}

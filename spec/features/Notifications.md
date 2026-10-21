@@ -37,6 +37,11 @@ Features decide **who** is told and **with what wording**; they call
 | Begivenheder | `events.comments` — comments on events you host | Normal | yes |
 | Reparationer | `repairs` — new and handed-over tasks for your group | Normal | yes |
 | Køkkenvagter | `kitchen` — shifts for sale and unmanned shifts (see kitchen-duty.md) | Normal | yes |
+| GAHKFlix | `gahkflix.new` — a video is published | Normal | yes |
+| GAHKFlix | `gahkflix.cast` — you are credited in a published video | Normal | yes |
+| GAHKFlix | `gahkflix.uploads` — your upload is processed or failed; your request was decided; your unpublished drafts | Normal | yes |
+| GAHKFlix | `gahkflix.approvals` — a late edit or a deletion awaits an administrator | Høj | yes |
+| GAHKFlix | `gahkflix.drafts` — for administrators: unpublished drafts, weekly and the day before one is deleted | Normal | yes |
 | System | `system` — about the site itself: downtime, new features | Normal | **always** |
 | Generelt | `general` — **the catch-all**: everything without a category of its own, from a notice about your own application to an announcement to the whole kollegium | Normal | **always** |
 
@@ -66,6 +71,11 @@ not a new "Søg værelse" group.
 System and Generelt can **not** be turned off in-app (`Category.in_app_optional = False`): the list
 is where somebody who has push off still sees what the house itself says. Push and vibration for
 them can be turned off like any other category.
+
+GAHKFlix's `gahkflix.uploads`, `gahkflix.approvals` and `gahkflix.drafts` can **not** be turned off
+in-app either (`in_app_optional = False`), like System and Generelt: they are about something the
+resident has to act on. Their push and vibration can be turned off. `gahkflix.new` and
+`gahkflix.cast` can be turned off like any other category.
 
 ## Importance
 
@@ -110,6 +120,14 @@ they would get a 403 on opening. Acting on your own content never notifies you.
 - **Køkkenvagter** → `kitchen`. A shift put for sale within 7 days → this month's residents except
   the seller, gone when the shift starts. Unmanned shifts → this month's residents (within 24 hours)
   or those with a negative balance (72 hours; under -10 weekly, 7 days), gone when the last starts.
+- **GAHKFlix** → `gahkflix.new` to everyone who can open GAHKFlix, except the uploader;
+  `gahkflix.cast` to residents newly credited in a published video; `gahkflix.uploads` to the
+  uploader and to whoever asked for a change; `gahkflix.approvals` to the administrators and
+  Fotogruppen, except the one asking. Unpublished drafts more than a week old: every Monday each
+  uploader gets one `gahkflix.uploads` about theirs and the administrators one `gahkflix.drafts`
+  overview; the day before a draft is deleted, its uploader (Høj) and the administrators (Høj) are
+  warned once. While GAHKFlix is behind its rollout gate, its group is hidden
+  on the settings page for residents outside it, and none of them are notified.
 
 ## In-app notifications
 

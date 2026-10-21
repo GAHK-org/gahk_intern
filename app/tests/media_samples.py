@@ -80,3 +80,62 @@ def image_upload(name: str = "photo.jpg", content: bytes | None = None) -> Simpl
 
 def video_upload(name: str = "clip.mp4") -> SimpleUploadedFile:
     return SimpleUploadedFile(name, mp4_bytes(), content_type="video/mp4")
+
+
+def _ffmpeg_output(suffix: str, *arguments: str, inputs: dict[str, bytes] | None = None) -> bytes:
+    """What ffmpeg writes for `arguments` — inputs named in `inputs` are written beside it first."""
+    with TemporaryDirectory() as directory:
+        for name, content in (inputs or {}).items():
+            (Path(directory) / name).write_bytes(content)
+        target = Path(directory) / f"out{suffix}"
+        subprocess.run(
+            [imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-loglevel", "error", *arguments, str(target)],
+            check=True,
+            cwd=directory,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return target.read_bytes()
+
+
+def sized_mp4_bytes(width: int, height: int) -> bytes:
+    """A one-second H.264 clip of the given size."""
+    return _ffmpeg_output(
+        ".mp4",
+        *("-f", "lavfi", "-i", f"testsrc=duration=1:size={width}x{height}:rate=5"),
+        *("-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart"),
+    )
+
+
+def broken_audio_mpg_bytes() -> bytes:
+    """An MPEG like an old camera's that would not convert: beside its real (MP2) sound, an AC3 track
+    so damaged that ffmpeg makes it out as "0 channels". Its sync words are wiped to get there."""
+    mpeg = _ffmpeg_output(
+        ".mpg",
+        *("-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=25"),
+        *("-f", "lavfi", "-i", "sine=duration=1"),
+        *("-map", "0", "-map", "1", "-map", "1", "-c:v", "mpeg1video", "-c:a:0", "ac3", "-c:a:1", "mp2"),
+        *("-f", "mpeg"),
+    )
+    return mpeg.replace(b"\x0b\x77", b"\x00\x00")
+
+
+def subtitled_mkv_bytes() -> bytes:
+    """A one-second Matroska clip with two text subtitle tracks, Danish (the default) and English."""
+    cue = "1\n00:00:00,000 --> 00:00:01,000\n{}\n"
+    return _ffmpeg_output(
+        ".mkv",
+        *("-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=10"),
+        *("-i", "da.srt", "-i", "en.srt", "-map", "0", "-map", "1", "-map", "2"),
+        *(
+            "-c:v",
+            "mpeg4",
+            "-c:s",
+            "srt",
+            "-metadata:s:s:0",
+            "language=dan",
+            "-metadata:s:s:1",
+            "language=eng",
+        ),
+        inputs={"da.srt": cue.format("Hej med dig").encode(), "en.srt": cue.format("Hello there").encode()},
+    )

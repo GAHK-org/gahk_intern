@@ -32,7 +32,20 @@ class EmailAuthenticationForm(AuthenticationForm):
     def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
         super().__init__(*args, **kwargs)
         self.fields["username"].label = "E-mail"
-        self.fields["username"].widget.attrs.update({"autofocus": True, "autocomplete": "email"})
+        # An e-mail field, not Django's plain text one: phones show the @ keyboard and leave the
+        # address alone. In an installed PWA, where autofill often offers nothing, autocorrect could
+        # turn a typed "o" into "ø" and the login failed with the right password.
+        widget = self.fields["username"].widget
+        widget.input_type = "email"
+        widget.attrs.update(
+            {
+                "autofocus": True,
+                "autocomplete": "email",
+                "autocapitalize": "none",
+                "autocorrect": "off",
+                "spellcheck": "false",
+            }
+        )
 
 
 class ResidentEditForm(forms.ModelForm):
