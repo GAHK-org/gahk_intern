@@ -54,6 +54,7 @@ from .forms import (
     MediaUploadBeginForm,
     MediaUploadCommitForm,
     MediaUploadForm,
+    SystemAlbumRenameForm,
     SystemSidecarDatesForm,
     SystemZipImportForm,
     ZipAlbumImportForm,
@@ -945,6 +946,35 @@ def system_import_upload(request: HttpRequest) -> JsonResponse:
     if _token_import_resident(request) is None:
         raise PermissionDenied
     return _begin_import_upload(request, browser=False)
+
+
+@csrf_exempt
+@require_POST
+def system_rename_album(request: HttpRequest) -> JsonResponse:
+    """The import script renaming a root album it imported — one the server named after a folder it
+    descended into, say: Dropbox's "2014/GAHK Color Run" held only "101GOPRO/", and the album was
+    called "101GOPRO". Locked or not (services.rename_album)."""
+    if _token_import_resident(request) is None:
+        raise PermissionDenied
+    form = SystemAlbumRenameForm(request.POST)
+    if not form.is_valid():
+        return JsonResponse({"errors": form.errors.get_json_data()}, status=400)
+    folder, current = form.cleaned_data["folder"], normalize_name(form.cleaned_data["album"])
+    album = Album.objects.filter(parent__isnull=True, folder=folder, name__iexact=current).first()
+    if album is None:
+        return JsonResponse(
+            {"errors": {"album": [{"message": f'Der er intet album "{current}" i {folder}.'}]}}, status=404
+        )
+    try:
+        services.rename_album(album, form.cleaned_data["name"], even_if_locked=True)
+    except ValidationError as exc:
+        return JsonResponse(
+            {"errors": {"name": [{"message": message} for message in exc.messages]}}, status=400
+        )
+    logger.info(
+        "The import script renamed album %s in %s from %s to %s.", album.pk, folder, current, album.name
+    )
+    return JsonResponse({"id": album.pk, "folder": album.folder, "name": album.name})
 
 
 @csrf_exempt

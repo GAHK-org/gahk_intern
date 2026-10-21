@@ -292,9 +292,13 @@ def create_album(*, name: str, folder: str = "", parent: Album | None = None) ->
     return album
 
 
-def rename_album(album: Album, name: str) -> None:
-    """Rename an album. Its storage keys and its path are made of ids, so nothing else moves."""
-    if album.is_locked():
+def rename_album(album: Album, name: str, *, even_if_locked: bool = False) -> None:
+    """Rename an album. Its storage keys and its path are made of ids, so nothing else moves.
+
+    `even_if_locked` is for the import script's own albums: it locks each on arrival so the archive
+    is not edited by accident, and correcting a name it gave one itself is no accident.
+    """
+    if album.is_locked() and not even_if_locked:
         raise ValidationError("Albummet er låst og kan ikke omdøbes.")
     album.name = normalize_name(name.strip())
     album.full_clean(exclude=["path"])
