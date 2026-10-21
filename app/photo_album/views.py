@@ -474,7 +474,7 @@ def rename_album(request: HttpRequest, pk: int) -> HttpResponse:
         _form_error_messages(request, form)
         return redirect("photo_album:detail", album.pk)
     try:
-        services.rename_album(album, form.cleaned_data["name"])
+        services.rename_album(album, form.cleaned_data["name"], by=current_resident(request))
     except ValidationError as exc:
         _error_messages(request, exc)
     else:
@@ -953,8 +953,9 @@ def system_import_upload(request: HttpRequest) -> JsonResponse:
 def system_rename_album(request: HttpRequest) -> JsonResponse:
     """The import script renaming a root album it imported — one the server named after a folder it
     descended into, say: Dropbox's "2014/GAHK Color Run" held only "101GOPRO/", and the album was
-    called "101GOPRO". Locked or not (services.rename_album)."""
-    if _token_import_resident(request) is None:
+    called "101GOPRO". Locked or not, if the script imported it: services.rename_album decides."""
+    resident = _token_import_resident(request)
+    if resident is None:
         raise PermissionDenied
     form = SystemAlbumRenameForm(request.POST)
     if not form.is_valid():
@@ -966,7 +967,7 @@ def system_rename_album(request: HttpRequest) -> JsonResponse:
             {"errors": {"album": [{"message": f'Der er intet album "{current}" i {folder}.'}]}}, status=404
         )
     try:
-        services.rename_album(album, form.cleaned_data["name"], even_if_locked=True)
+        services.rename_album(album, form.cleaned_data["name"], by=resident)
     except ValidationError as exc:
         return JsonResponse(
             {"errors": {"name": [{"message": message} for message in exc.messages]}}, status=400

@@ -37,6 +37,8 @@ from .models import (
     MEDIA_VIEW_DEDUPE_WINDOW,
     PURGE_AFTER,
     Album,
+    AlbumImport,
+    AlbumImportState,
     DateSource,
     DerivativeState,
     FileTimeSource,
@@ -292,13 +294,15 @@ def create_album(*, name: str, folder: str = "", parent: Album | None = None) ->
     return album
 
 
-def rename_album(album: Album, name: str, *, even_if_locked: bool = False) -> None:
+def rename_album(album: Album, name: str, *, by: Resident) -> None:
     """Rename an album. Its storage keys and its path are made of ids, so nothing else moves.
 
-    `even_if_locked` is for the import script's own albums: it locks each on arrival so the archive
-    is not edited by accident, and correcting a name it gave one itself is no accident.
+    A locked album keeps its name, with one exception decided here rather than by the caller: the
+    import script may rename an album it imported itself. It locks every album on arrival so the
+    archive is not edited by accident, and correcting a name it gave one is no accident (the
+    script's --rename-albums). The caller only says who is renaming.
     """
-    if album.is_locked() and not even_if_locked:
+    if album.is_locked() and not imported_by_import_script(album, by):
         raise ValidationError("Albummet er låst og kan ikke omdøbes.")
     album.name = normalize_name(name.strip())
     album.full_clean(exclude=["path"])
@@ -308,6 +312,19 @@ def rename_album(album: Album, name: str, *, even_if_locked: bool = False) -> No
             album.save(update_fields=["name"])
     except IntegrityError as exc:
         raise ValidationError({"name": "Der findes allerede et album med det navn."}) from exc
+
+
+def is_import_script(resident: Resident) -> bool:
+    """The resident the import script acts as (views._token_import_resident): nobody logs in as it."""
+    return resident.email == settings.PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL
+
+
+def imported_by_import_script(album: Album, resident: Resident) -> bool:
+    """Whether `resident` is the import script and one of its imports made `album`, or added to it."""
+    if not is_import_script(resident):
+        return False
+    imports = AlbumImport.objects.filter(requested_by=resident, state=AlbumImportState.READY)
+    return any(album.pk in album_ids for album_ids in imports.values_list("album_ids", flat=True))
 
 
 # --- Tags ---------------------------------------------------------------------------------------
