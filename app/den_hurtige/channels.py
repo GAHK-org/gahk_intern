@@ -21,6 +21,8 @@ from dataclasses import dataclass
 
 from django.urls import reverse
 
+from residents.permissions import KITCHEN
+
 
 @dataclass(frozen=True)
 class Channel:
@@ -80,6 +82,13 @@ CHANNELS: tuple[Channel, ...] = (
         icon="users",
         description="Make Hallen Great Again.",
     ),
+    # Open to everyone, and the only channel the kitchen account sees (see `allowed`).
+    Channel(
+        slug="koekken",
+        name="Køkkenet",
+        icon="chat",
+        description="Nyt fra køkkenet.",
+    ),
 )
 
 # The channel a post lands in when nothing says otherwise, and the one the bare URL renders. Must
@@ -91,6 +100,10 @@ CHANNELS: tuple[Channel, ...] = (
 # as the alias /intern/den-hurtige/den-hurtige/. Slug and name are free to differ; only the slug
 # is stored on posts.
 DEFAULT = CHANNELS[0]
+
+# The kitchen staff's channel. Its slug is the kitchen pseudo-role's, which core.middleware's
+# KITCHEN_HOME also spells out.
+KITCHEN_CHANNEL = KITCHEN
 
 BY_SLUG: dict[str, Channel] = {c.slug: c for c in CHANNELS}
 
@@ -123,4 +136,6 @@ def visible(roles: set[str] | frozenset[str]) -> list[Channel]:
 def allowed(channel: Channel, roles: set[str] | frozenset[str]) -> bool:
     """Whether a role set may open this channel. Mirrors access.roles_allowed, and stacks with it:
     den_hurtige.access gates the feature, this gates one channel within it."""
+    if KITCHEN in roles:
+        return channel.slug == KITCHEN_CHANNEL
     return channel.roles is None or not set(roles).isdisjoint(channel.roles)

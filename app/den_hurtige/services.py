@@ -54,7 +54,10 @@ def _audience(slug: str) -> "QuerySet[Resident]":
     """Everyone who can open this room: the feature's rollout gate, then the room's own roles. The
     resident's own toggle for the room is the notifications app's business, not this one's."""
     channel = _channel(slug)
-    return Gate(lambda: channel.roles).allowed_residents(access.allowed_residents(services.everyone()))
+    audience = Gate(lambda: channel.roles).allowed_residents(access.allowed_residents(services.everyone()))
+    if channel.slug == channels.KITCHEN_CHANNEL:
+        audience = audience | services.kitchen()
+    return audience
 
 
 def notify_new_post(post: "QuickPost") -> None:
