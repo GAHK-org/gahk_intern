@@ -8,6 +8,7 @@ needing an internal URL slug) so a future e-conomic API change is caught here in
 alumneregning send time.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -51,6 +52,22 @@ def _years_response(*periods: tuple[str, str, str]) -> FakeResponse:
     )
 
 
+_NO_JOURNALS = FakeResponse(_json={"collection": []})
+
+
+def _no_drafts_fake_get(inner: Callable[..., FakeResponse]) -> Callable[..., FakeResponse]:
+    """Wraps a fake_get so "/journals" short-circuits to no journals (no draft entries found) —
+    for tests that only care about posted entries. get_draft_entries_for_account's own tests cover
+    the draft-matching logic directly."""
+
+    def fake_get(url: str, **kw: object) -> FakeResponse:
+        if url.endswith("/journals"):
+            return _NO_JOURNALS
+        return inner(url, **kw)
+
+    return fake_get
+
+
 def test_get_account_parses_fields(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         economic.requests,
@@ -74,13 +91,14 @@ def test_get_entries_in_range_uses_year_self_link_not_entries_link(monkeypatch: 
             return _years_response(("2026", "2026-01-01", "2026-12-31"))
         return FakeResponse(_json={"collection": [{"entryNumber": 1, "date": "2026-08-15", "amount": 100.0}]})
 
-    monkeypatch.setattr(economic.requests, "get", fake_get)
+    monkeypatch.setattr(economic.requests, "get", _no_drafts_fake_get(fake_get))
 
     entries = economic.get_entries_in_range(1101, date(2026, 8, 1), date(2026, 8, 31))
 
     assert entries == [
         economic.LedgerEntry(
             entry_number=1,
+            is_draft=False,
             date="2026-08-15",
             text="",
             amount=100.0,
@@ -113,7 +131,7 @@ def test_get_entries_in_range_filters_out_entries_outside_the_range(
             }
         )
 
-    monkeypatch.setattr(economic.requests, "get", fake_get)
+    monkeypatch.setattr(economic.requests, "get", _no_drafts_fake_get(fake_get))
 
     entries = economic.get_entries_in_range(1101, date(2026, 8, 1), date(2026, 8, 31))
 
@@ -131,7 +149,7 @@ def test_get_entries_in_range_handles_split_fiscal_year_slug(monkeypatch: pytest
             return _years_response(("2015/2016", "2015-10-01", "2016-03-31"))
         return FakeResponse(_json={"collection": []})
 
-    monkeypatch.setattr(economic.requests, "get", fake_get)
+    monkeypatch.setattr(economic.requests, "get", _no_drafts_fake_get(fake_get))
 
     economic.get_entries_in_range(1101, date(2015, 11, 1), date(2015, 12, 1))
 
@@ -152,11 +170,11 @@ def test_get_entries_in_range_spans_multiple_overlapping_periods(
             )
         return FakeResponse(_json={"collection": []})
 
-    monkeypatch.setattr(economic.requests, "get", fake_get)
+    monkeypatch.setattr(economic.requests, "get", _no_drafts_fake_get(fake_get))
 
     economic.get_entries_in_range(1101, date(2026, 6, 15), date(2026, 7, 15))
 
-    assert len(calls) == 3  # years list + both overlapping periods' entries
+    assert len(calls) == 3  # years list + both overlapping periods' entries (/journals is intercepted)
 
 
 def test_get_entries_in_range_returns_empty_when_no_period_overlaps(
@@ -165,10 +183,129 @@ def test_get_entries_in_range_returns_empty_when_no_period_overlaps(
     monkeypatch.setattr(
         economic.requests,
         "get",
-        lambda url, **kw: _years_response(("2025", "2025-04-01", "2025-09-30")),
+        _no_drafts_fake_get(lambda url, **kw: _years_response(("2025", "2025-04-01", "2025-09-30"))),
     )
 
     assert economic.get_entries_in_range(1101, date(2026, 10, 1), date(2026, 10, 31)) == []
+
+
+def test_get_draft_entries_matches_account_side_as_is(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A draft line keyed directly against this account uses e-conomic's amount unchanged."""
+    monkeypatch.setattr(
+        economic.requests,
+        "get",
+        lambda url, **kw: (
+            FakeResponse(_json={"collection": [{"journalNumber": 1}]})
+            if url.endswith("/journals")
+            else FakeResponse(
+                _json={
+                    "collection": [
+                        {
+                            "journalEntryNumber": 21,
+                            "date": "2026-10-05",
+                            "text": "Print af billede",
+                            "amount": 5.0,
+                            "account": {"accountNumber": 4207},
+                            "contraAccount": {"accountNumber": 2115},
+                            "entryType": "financeVoucher",
+                            "voucher": {"voucherNumber": 960},
+                        }
+                    ]
+                }
+            )
+        ),
+    )
+
+    entries = economic.get_draft_entries_for_account(4207, date(2026, 10, 1), date(2026, 10, 31))
+
+    assert entries == [
+        economic.LedgerEntry(
+            entry_number=21,
+            is_draft=True,
+            date="2026-10-05",
+            text="Print af billede",
+            amount=5.0,
+            entry_type="financeVoucher",
+            voucher_number=960,
+            due_date=None,
+        )
+    ]
+
+
+def test_get_draft_entries_negates_amount_when_matched_via_contra_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A batch voucher charging many accounts from one shared account only has THIS account as the
+    contraAccount on its line — e-conomic's amount there is from the other account's perspective, so
+    it must be negated to give this account's own (confirmed against the real API: a real "Gæstespisere"
+    batch voucher line showed amount=-255 with contraAccount=4207, and the e-conomic UI's own kontokort
+    for account 4207 showed that same posting as +255)."""
+    monkeypatch.setattr(
+        economic.requests,
+        "get",
+        lambda url, **kw: (
+            FakeResponse(_json={"collection": [{"journalNumber": 1}]})
+            if url.endswith("/journals")
+            else FakeResponse(
+                _json={
+                    "collection": [
+                        {
+                            "journalEntryNumber": 47,
+                            "date": "2026-10-05",
+                            "text": "Gæstespisere - september",
+                            "amount": -255.0,
+                            "account": {"accountNumber": 5310},
+                            "contraAccount": {"accountNumber": 4207},
+                            "entryType": "financeVoucher",
+                            "voucher": {"voucherNumber": 970},
+                        }
+                    ]
+                }
+            )
+        ),
+    )
+
+    entries = economic.get_draft_entries_for_account(4207, date(2026, 10, 1), date(2026, 10, 31))
+
+    assert len(entries) == 1
+    assert entries[0].amount == 255.0  # negated from e-conomic's -255
+
+
+def test_get_draft_entries_filters_by_date(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        economic.requests,
+        "get",
+        lambda url, **kw: (
+            FakeResponse(_json={"collection": [{"journalNumber": 1}]})
+            if url.endswith("/journals")
+            else FakeResponse(
+                _json={
+                    "collection": [
+                        {
+                            "journalEntryNumber": 1,
+                            "date": "2026-09-30",  # before range
+                            "text": "x",
+                            "amount": 1.0,
+                            "account": {"accountNumber": 4207},
+                            "voucher": {},
+                        },
+                        {
+                            "journalEntryNumber": 2,
+                            "date": "2026-10-15",  # inside range
+                            "text": "x",
+                            "amount": 1.0,
+                            "account": {"accountNumber": 4207},
+                            "voucher": {},
+                        },
+                    ]
+                }
+            )
+        ),
+    )
+
+    entries = economic.get_draft_entries_for_account(4207, date(2026, 10, 1), date(2026, 10, 31))
+
+    assert [e.entry_number for e in entries] == [2]
 
 
 def test_401_raises_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:

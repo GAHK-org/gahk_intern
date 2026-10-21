@@ -359,12 +359,18 @@ class EconomicLedgerEntry(models.Model):
     what e-conomic said at sync time — so a balance or a statement can be read from gahk-intern's own
     data instead of a live API call every time, and the record survives even if e-conomic access ever
     lapses. Matches how AkEntry/oelkaelder.Transaction already work: entries summed, never edited or
-    deleted — see residents.ledger.sync_entries, which only ever INSERTs (entry_number is the e-conomic
-    posting's own id, unique, so a re-sync just finds nothing new to add).
+    deleted — see residents.ledger.sync_entries, which only ever INSERTs.
+
+    is_draft distinguishes e-conomic's two entry id sequences, which are independent and can collide
+    numerically: posted entries have their own entryNumber, draft/journal entries (not yet formally
+    booked — GAHK's regnskab wants these included, not just posted ones, see F-010) have their own
+    journalEntryNumber from a completely separate counter. (entry_number, is_draft) together are the
+    sync key, not entry_number alone.
     """
 
     resident = models.ForeignKey(Resident, on_delete=models.PROTECT, related_name="economic_entries")
-    entry_number = models.PositiveIntegerField(unique=True)  # e-conomic's own id for this posting
+    entry_number = models.PositiveIntegerField()  # e-conomic's entryNumber, or journalEntryNumber if draft
+    is_draft = models.BooleanField(default=False)
     date = models.DateField()
     text = models.CharField(max_length=255, blank=True)
     amount = models.DecimalField(max_digits=12, decimal_places=2)  # + = resident owes GAHK (e-conomic's sign)
@@ -376,6 +382,9 @@ class EconomicLedgerEntry(models.Model):
     class Meta:
         ordering = ["date", "entry_number"]
         indexes = [models.Index(fields=["resident", "date"])]
+        constraints = [
+            models.UniqueConstraint(fields=["entry_number", "is_draft"], name="uniq_entry_number_per_kind")
+        ]
 
     def __str__(self) -> str:
         return f"{self.resident.full_name} — {self.date} {self.amount} kr (e-conomic #{self.entry_number})"

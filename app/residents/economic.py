@@ -69,9 +69,14 @@ class EconomicAccount:
 @dataclass(frozen=True)
 class LedgerEntry:
     """One posting from e-conomic's own ledger touching this account — the raw material
-    residents.ledger mirrors into an immutable local row."""
+    residents.ledger mirrors into an immutable local row.
+
+    entry_number is entryNumber for a posted entry or journalEntryNumber for a draft one — two
+    independent e-conomic counters that can collide numerically, which is why is_draft is part of
+    the identity (see EconomicLedgerEntry's uniqueness constraint)."""
 
     entry_number: int
+    is_draft: bool
     date: str
     text: str
     amount: float  # e-conomic's own sign convention: positive = the alumne owes GAHK
@@ -147,12 +152,62 @@ def get_account(account_number: int) -> EconomicAccount:
     )
 
 
+def get_draft_entries_for_account(account_number: int, date_from: date, date_to: date) -> list[LedgerEntry]:
+    """Unposted/draft entries touching this account, dated within [date_from, date_to] — from
+    e-conomic's journals (GAHK has exactly one, "Daglig"/journal 1, but this reads whatever journals
+    exist rather than hardcoding that). Regnskab wants drafts included in a statement, not just
+    formally posted entries (F-010) — e-conomic's own kontokort UI shows them too.
+
+    Matches on EITHER side of the double-entry pair: a draft line's own "account" field is only
+    populated for the side it was originally keyed against (e.g. "Print af billede" against this
+    account directly); a batch voucher charging many residents from one shared income account
+    (e.g. "Gæstespisere" — guest dining) only has this account as the "contraAccount" on its line,
+    never as "account". Missing that side means missing real drafts the e-conomic UI does show —
+    confirmed against the real API/UI together: a batch voucher's charge to one resident showed up
+    only via contraAccount, not account. When matched via contraAccount, the amount is negated to
+    give this account's own perspective (e-conomic's amount there is from the OTHER account's side).
+    """
+    entries: list[LedgerEntry] = []
+    journals = _get(f"{BASE_URL}/journals", params={"pagesize": 1000}).json()
+    for journal in journals.get("collection", []):
+        data = _get(
+            f"{BASE_URL}/journals/{journal['journalNumber']}/entries",
+            params={
+                "pagesize": 1000,
+                "filter": (
+                    f"account.accountNumber$eq:{account_number}"
+                    f"$or:contraAccount.accountNumber$eq:{account_number}"
+                ),
+            },
+        ).json()
+        for item in data.get("collection", []):
+            if not (date_from <= date.fromisoformat(item["date"]) <= date_to):
+                continue
+            is_primary = item.get("account", {}).get("accountNumber") == account_number
+            amount = item.get("amount", 0.0) if is_primary else -item.get("amount", 0.0)
+            entries.append(
+                LedgerEntry(
+                    entry_number=item["journalEntryNumber"],
+                    is_draft=True,
+                    date=item["date"],
+                    text=item.get("text", ""),
+                    amount=amount,
+                    entry_type=item.get("entryType", ""),
+                    voucher_number=item.get("voucher", {}).get("voucherNumber", 0),
+                    due_date=None,
+                )
+            )
+    return entries
+
+
 def get_entries_in_range(account_number: int, date_from: date, date_to: date) -> list[LedgerEntry]:
     """Every posting on this account whose own date falls within [date_from, date_to] — e.g. exactly
-    "August 2026", independent of e-conomic's own ~6-month fiscal period boundaries. This is the
-    period-specific detail shown on a statement; the balance figure (get_account) is separate and NOT
-    derived from these entries, since an alumne can have a nonzero balance with nothing posted in a
-    given range (prior debt carried forward) — see residents.alumneregning.
+    "August 2026", independent of e-conomic's own ~6-month fiscal period boundaries — INCLUDING draft
+    entries not yet formally posted (get_draft_entries_for_account; regnskab wants those included,
+    not just posted ones). This is the period-specific detail shown on a statement; the balance
+    figure (get_account) is separate and NOT derived from these entries, since an alumne can have a
+    nonzero balance with nothing posted in a given range (prior debt carried forward) — see
+    residents.alumneregning.
 
     e-conomic's periods do not align with calendar months, so [date_from, date_to] can span more than
     one fiscal period; this reads every period overlapping the range and keeps only entries whose own
@@ -163,8 +218,13 @@ def get_entries_in_range(account_number: int, date_from: date, date_to: date) ->
     (confirmed against the real API: it returned 19108 rows, every posting on every account, for an
     account that only has 124 of its own across its entire ~10-year history), despite being reached
     from an account-scoped collection.
+
+    pagesize=1000 on the years list itself, not just the entries calls: e-conomic defaults to 20 per
+    page, and a long-lived account can have more than 20 fiscal periods by now (confirmed against the
+    real API — a resident's account had 23) — an unpaginated call silently drops the newest ones,
+    which is exactly backwards: those are the ones a billing range is usually asking about.
     """
-    years = _get(f"{BASE_URL}/accounts/{account_number}/accounting-years").json()
+    years = _get(f"{BASE_URL}/accounts/{account_number}/accounting-years", params={"pagesize": 1000}).json()
     overlapping = [
         year
         for year in years.get("collection", [])
@@ -181,6 +241,7 @@ def get_entries_in_range(account_number: int, date_from: date, date_to: date) ->
         entries.extend(
             LedgerEntry(
                 entry_number=item["entryNumber"],
+                is_draft=False,
                 date=item["date"],
                 text=item.get("text", ""),
                 amount=item.get("amount", 0.0),
@@ -191,4 +252,6 @@ def get_entries_in_range(account_number: int, date_from: date, date_to: date) ->
             for item in data.get("collection", [])
             if date_from <= date.fromisoformat(item["date"]) <= date_to
         )
+
+    entries.extend(get_draft_entries_for_account(account_number, date_from, date_to))
     return entries

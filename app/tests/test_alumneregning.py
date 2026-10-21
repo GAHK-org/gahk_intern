@@ -25,9 +25,10 @@ def _account(balance: float, name: str = "Alumne") -> economic.EconomicAccount:
     return economic.EconomicAccount(account_number=1101, name=name, balance=balance)
 
 
-def _entry(number: int, date_str: str, amount: float) -> economic.LedgerEntry:
+def _entry(number: int, date_str: str, amount: float, is_draft: bool = False) -> economic.LedgerEntry:
     return economic.LedgerEntry(
         entry_number=number,
+        is_draft=is_draft,
         date=date_str,
         text="Husleje",
         amount=amount,

@@ -2,9 +2,16 @@
 alumneregning automation). See EconomicLedgerEntry's docstring for why this mirror exists: e-conomic
 stays the real books, this is GAHK's own append-only copy of it.
 
-Insert-only and idempotent: entry_number is e-conomic's own id for a posting and is unique here, so
-re-syncing a resident already covered by a previous sync just finds nothing new — existing rows are
-never updated or deleted, which is what "immutable" means for a mirror of someone else's ledger.
+Insert-only and idempotent: (entry_number, is_draft) is e-conomic's own id for a posting (entryNumber
+for a posted entry, journalEntryNumber for a draft — two independent counters that can collide
+numerically, hence the pair) and is unique here, so re-syncing a resident already covered by a
+previous sync just finds nothing new — existing rows are never updated or deleted, which is what
+"immutable" means for a mirror of someone else's ledger. One real consequence of that for drafts
+specifically: e-conomic drafts are themselves mutable (editable/deletable there) and get a brand new
+entryNumber once formally posted, so a draft mirrored here can end up double-counted against its own
+later posted version if both get synced — this module does not attempt to detect or merge that; it is
+why alumneregning's actual quoted balance comes from economic.get_account() instead of summing what
+is mirrored here (see balance()'s docstring).
 
 Deliberately decoupled from residents.economic: this module only persists economic.LedgerEntry
 objects it is handed, it does not fetch them itself. The caller (residents.alumneregning) decides
@@ -26,11 +33,12 @@ from .models import EconomicLedgerEntry, Resident
 def sync_entries(resident: Resident, entries: Iterable[economic.LedgerEntry]) -> int:
     """Store the given e-conomic entries for `resident`, skipping any already mirrored locally.
     Returns how many new rows were inserted."""
-    known = set(EconomicLedgerEntry.objects.filter(resident=resident).values_list("entry_number", flat=True))
+    known = set(EconomicLedgerEntry.objects.filter(resident=resident).values_list("entry_number", "is_draft"))
     new_entries = [
         EconomicLedgerEntry(
             resident=resident,
             entry_number=entry.entry_number,
+            is_draft=entry.is_draft,
             date=entry.date,
             text=entry.text,
             amount=Decimal(str(entry.amount)),
@@ -39,7 +47,7 @@ def sync_entries(resident: Resident, entries: Iterable[economic.LedgerEntry]) ->
             due_date=entry.due_date or None,
         )
         for entry in entries
-        if entry.entry_number not in known
+        if (entry.entry_number, entry.is_draft) not in known
     ]
     EconomicLedgerEntry.objects.bulk_create(new_entries)
     return len(new_entries)

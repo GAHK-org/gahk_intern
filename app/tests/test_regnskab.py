@@ -269,6 +269,7 @@ def test_preview_renders_rows_and_pdf_link(monkeypatch: pytest.MonkeyPatch, make
         lambda n, f, t: [
             economic.LedgerEntry(
                 entry_number=1,
+                is_draft=False,
                 date="2026-08-01",
                 text="Husleje",
                 amount=100.0,
@@ -314,6 +315,7 @@ def test_statement_pdf_view_returns_pdf(monkeypatch: pytest.MonkeyPatch, make_re
         lambda n, f, t: [
             economic.LedgerEntry(
                 entry_number=1,
+                is_draft=False,
                 date="2026-08-01",
                 text="Husleje",
                 amount=100.0,

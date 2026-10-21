@@ -3,9 +3,12 @@
 Replaces fetching a rendered invoice/kontokort PDF from e-conomic: GAHK tracks alumni via per-person
 chart-of-accounts entries, not e-conomic Customers/Invoices, so there is no e-conomic-rendered PDF to
 fetch for an alumne's statement (see residents.economic.get_account's docstring). This builds the same
-"kontokort" shape the old manual process downloaded — the period's postings, each with a running
-subtotal, plus the account's actual current balance (not derived from the postings shown: an alumne
-can have a nonzero balance with nothing posted in the given period, carried forward from before).
+"kontokort" shape the old manual process downloaded — the period's postings (both posted and draft —
+regnskab wants drafts included, not just formally booked entries, see economic.get_entries_in_range),
+each with a running subtotal, plus the account's actual current balance (not derived from the
+postings shown: an alumne can have a nonzero balance with nothing posted in the given period, carried
+forward from before). Draft lines are marked "(kladde)" — unlike a posted entry, e-conomic's own
+draft can still be edited or deleted before it is formally booked.
 """
 
 from __future__ import annotations
@@ -62,8 +65,9 @@ def render(
         for entry in sorted(entries, key=lambda e: e.date):
             amount = Decimal(str(entry.amount))
             running += amount
+            text = (entry.text or "") + (" (kladde)" if entry.is_draft else "")
             pdf.cell(28, 7, entry.date)
-            pdf.cell(104, 7, (entry.text or "")[:58])
+            pdf.cell(104, 7, text[:58])
             pdf.cell(28, 7, _kr(amount), align="R")
             pdf.cell(28, 7, _kr(running), align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.ln(5)

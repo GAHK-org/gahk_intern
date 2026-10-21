@@ -15,9 +15,12 @@ from residents import economic, ledger
 from residents.models import EconomicLedgerEntry
 
 
-def _entry(number: int, amount: float, date: str = "2026-08-01") -> economic.LedgerEntry:
+def _entry(
+    number: int, amount: float, date: str = "2026-08-01", is_draft: bool = False
+) -> economic.LedgerEntry:
     return economic.LedgerEntry(
         entry_number=number,
+        is_draft=is_draft,
         date=date,
         text="x",
         amount=amount,
@@ -64,3 +67,18 @@ def test_balance_is_zero_with_no_entries(make_resident: Callable) -> None:
     resident = make_resident(email="a@gahk.dk", economic_account_number=1101)
 
     assert ledger.balance(resident) == Decimal(0)
+
+
+@pytest.mark.django_db
+def test_posted_and_draft_entries_with_the_same_number_do_not_collide(make_resident: Callable) -> None:
+    """entryNumber (posted) and journalEntryNumber (draft) are independent e-conomic counters and can
+    coincide numerically — both must be kept, not deduplicated against each other."""
+    resident = make_resident(email="a@gahk.dk", economic_account_number=1101)
+
+    inserted = ledger.sync_entries(
+        resident, [_entry(1, 100.0, is_draft=False), _entry(1, 50.0, is_draft=True)]
+    )
+
+    assert inserted == 2
+    assert EconomicLedgerEntry.objects.filter(resident=resident, entry_number=1).count() == 2
+    assert ledger.balance(resident) == Decimal("150.00")
