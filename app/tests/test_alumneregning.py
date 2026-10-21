@@ -261,3 +261,75 @@ def test_rate_limit_error_is_reported_and_batch_continues(
     assert "rate-limit" in by_email["alice@gahk.dk"].detail
     assert by_email["bob@gahk.dk"].outcome == "sent"
     assert len(mail.outbox) == 1
+
+
+@pytest.mark.django_db
+def test_preview_does_not_send_but_mirrors_entries(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
+    _give_residency(resident, 2026, 8, room_index=1)
+    monkeypatch.setattr(economic, "get_period_entries", lambda n, on_date: [_entry(1, "2026-08-01", 250.0)])
+
+    rows = alumneregning.preview_alumneregninger(*AUGUST)
+
+    assert len(rows) == 1
+    assert rows[0].resident == resident
+    assert rows[0].status == "ready"
+    assert "250,00 kr" in rows[0].detail
+    assert mail.outbox == []  # nothing was sent
+    # A preview still reads real data, so it mirrors into the local ledger same as a send does.
+    assert EconomicLedgerEntry.objects.filter(resident=resident, entry_number=1).exists()
+
+
+@pytest.mark.django_db
+def test_preview_reports_no_entries(monkeypatch: pytest.MonkeyPatch, make_resident: Callable) -> None:
+    resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
+    _give_residency(resident, 2026, 8, room_index=1)
+    monkeypatch.setattr(economic, "get_period_entries", lambda n, on_date: [])
+
+    rows = alumneregning.preview_alumneregninger(*AUGUST)
+
+    assert rows[0].status == "no_entries"
+
+
+@pytest.mark.django_db
+def test_preview_auth_error_aborts(monkeypatch: pytest.MonkeyPatch, make_resident: Callable) -> None:
+    resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
+    _give_residency(resident, 2026, 8, room_index=1)
+
+    def get_period_entries(account_number: int, on_date: date) -> list[economic.LedgerEntry]:
+        raise economic.EconomicAuthError("token revoked")
+
+    monkeypatch.setattr(economic, "get_period_entries", get_period_entries)
+
+    with pytest.raises(economic.EconomicAuthError):
+        alumneregning.preview_alumneregninger(*AUGUST)
+
+
+@pytest.mark.django_db
+def test_render_preview_pdf_returns_bytes(monkeypatch: pytest.MonkeyPatch, make_resident: Callable) -> None:
+    resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
+    monkeypatch.setattr(economic, "get_period_entries", lambda n, on_date: [_entry(1, "2026-08-01", 250.0)])
+
+    pdf = alumneregning.render_preview_pdf(resident, *AUGUST)
+
+    assert pdf is not None
+    assert pdf.startswith(b"%PDF-")
+
+
+@pytest.mark.django_db
+def test_render_preview_pdf_none_when_no_entries(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
+    monkeypatch.setattr(economic, "get_period_entries", lambda n, on_date: [])
+
+    assert alumneregning.render_preview_pdf(resident, *AUGUST) is None
+
+
+@pytest.mark.django_db
+def test_render_preview_pdf_none_without_account_number(make_resident: Callable) -> None:
+    resident = make_resident(email="alumne@gahk.dk")
+
+    assert alumneregning.render_preview_pdf(resident, *AUGUST) is None

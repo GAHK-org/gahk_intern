@@ -240,6 +240,117 @@ def test_send_alumneregninger_rejects_fra_after_til(make_resident: Callable) -> 
 
 
 @pytest.mark.django_db
+def test_preview_requires_regnskab_role(make_resident: Callable) -> None:
+    plain = make_resident(email="plain@gahk.dk")
+    c = Client()
+    c.force_login(plain)
+
+    response = c.get(reverse("preview_alumneregninger"), {"fra": "2026-08-01", "til": "2026-08-31"})
+
+    assert response.status_code == 403
+
+
+@pytest.mark.django_db
+def test_preview_renders_rows_and_pdf_link(monkeypatch: pytest.MonkeyPatch, make_resident: Callable) -> None:
+    alumne = make_resident(
+        email="alumne@gahk.dk", economic_account_number=1101, first_name="Alu", last_name="Mne"
+    )
+    Residency.objects.create(
+        resident=alumne,
+        year=2026,
+        month=8,
+        room=Room.objects.create(legacy_index=1, number=1, floor="stuen", side="mod gaden"),
+    )
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))  # created after, see note above
+    monkeypatch.setattr(
+        economic,
+        "get_period_entries",
+        lambda n, on_date: [
+            economic.LedgerEntry(
+                entry_number=1,
+                date="2026-08-01",
+                text="Husleje",
+                amount=100.0,
+                entry_type="financeVoucher",
+                voucher_number=1,
+                due_date=None,
+            )
+        ],
+    )
+    c = Client()
+    c.force_login(acc)
+
+    html = c.get(
+        reverse("preview_alumneregninger"), {"fra": "2026-08-01", "til": "2026-08-31"}
+    ).content.decode()
+
+    assert "Alu Mne" in html
+    assert "Vil blive sendt" in html
+    assert reverse("alumneregning_statement_pdf", args=[alumne.pk]) in html
+    assert "Bekræft og send" in html
+
+
+@pytest.mark.django_db
+def test_preview_rejects_invalid_period(make_resident: Callable) -> None:
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    c = Client()
+    c.force_login(acc)
+
+    response = c.get(reverse("preview_alumneregninger"), {"fra": "2026-08-31", "til": "2026-08-01"})
+
+    assert response.status_code == 302
+    assert response.url == reverse("regnskab")
+
+
+@pytest.mark.django_db
+def test_statement_pdf_view_returns_pdf(monkeypatch: pytest.MonkeyPatch, make_resident: Callable) -> None:
+    alumne = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    monkeypatch.setattr(
+        economic,
+        "get_period_entries",
+        lambda n, on_date: [
+            economic.LedgerEntry(
+                entry_number=1,
+                date="2026-08-01",
+                text="Husleje",
+                amount=100.0,
+                entry_type="financeVoucher",
+                voucher_number=1,
+                due_date=None,
+            )
+        ],
+    )
+    c = Client()
+    c.force_login(acc)
+
+    response = c.get(
+        reverse("alumneregning_statement_pdf", args=[alumne.pk]), {"fra": "2026-08-01", "til": "2026-08-31"}
+    )
+
+    assert response.status_code == 200
+    assert response["Content-Type"] == "application/pdf"
+    assert response.content.startswith(b"%PDF-")
+
+
+@pytest.mark.django_db
+def test_statement_pdf_view_404s_with_no_entries(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    alumne = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    monkeypatch.setattr(economic, "get_period_entries", lambda n, on_date: [])
+    c = Client()
+    c.force_login(acc)
+
+    response = c.get(
+        reverse("alumneregning_statement_pdf", args=[alumne.pk]), {"fra": "2026-08-01", "til": "2026-08-31"}
+    )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.django_db
 def test_regnskab_workgroup_grants_role(make_resident: Callable) -> None:
     """Being placed in the 'Regnskab' embedsgruppe auto-grants the regnskab role for that month."""
     r = make_resident(email="d@gahk.dk")

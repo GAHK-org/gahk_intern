@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Forhåndsvisning af alumneregninger - GAHK Intern{% endblock %}
+{% block content %}
+  <h1>Forhåndsvisning af alumneregninger</h1>
+  <p class="muted text-sm mb-3">Periode: {{ date_from }} – {{ date_to }}</p>
+  <p class="muted text-sm mb-3">
+    Ingen e-mails er sendt endnu. Tjek listen og eventuelt PDF'erne nedenfor, og bekræft først derefter.
+  </p>
+
+  <div class="overflow-x-auto mb-6">
+    <table cellpadding="6" class="text-sm" style="width:100%; border-collapse:collapse">
+      <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec; white-space:nowrap">
+        <th>Navn</th><th>E-mail</th><th>Status</th><th>Detalje</th><th></th>
+      </tr></thead>
+      <tbody>
+        {% for row in rows %}
+          <tr style="border-bottom:1px solid #f0f1f4">
+            <td>{{ row.resident.full_name }}</td>
+            <td>{{ row.resident.email }}</td>
+            <td class="whitespace-nowrap {% if row.status == 'failed' %}text-red-600 font-semibold{% endif %}">
+              {% if row.status == 'ready' %}Vil blive sendt
+              {% elif row.status == 'no_entries' %}Ingen posteringer
+              {% else %}Fejlede{% endif %}
+            </td>
+            <td>{{ row.detail }}</td>
+            <td class="whitespace-nowrap">
+              {% if row.status == 'ready' %}
+                <a href="{% url 'alumneregning_statement_pdf' row.resident.pk %}?fra={{ date_from|urlencode }}&til={{ date_to|urlencode }}"
+                   target="_blank" rel="noopener">Se PDF</a>
+              {% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5" class="muted">Ingen alumner boede på kollegiet i perioden med et e-conomic kontonr. sat.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if rows %}
+    <form method="post" action="{% url 'send_alumneregninger' %}"
+          onsubmit="return confirm('Send alumneregninger for den valgte periode til alle alumner med et e-conomic kontonr.?');">
+      {% csrf_token %}
+      <input type="hidden" name="fra" value="{{ date_from|date:'Y-m-d' }}">
+      <input type="hidden" name="til" value="{{ date_to|date:'Y-m-d' }}">
+      <button type="submit" class="btn">Bekræft og send</button>
+      <a href="{% url 'regnskab' %}" class="btn">Annuller</a>
+    </form>
+  {% else %}
+    <a href="{% url 'regnskab' %}" class="btn">Tilbage til regnskab</a>
+  {% endif %}
+{% endblock %}

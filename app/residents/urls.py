@@ -15,6 +15,16 @@ urlpatterns = [
         name="set_economic_account_number",
     ),
     path(
+        "regnskab/alumneregninger/forhaandsvisning",
+        views_regnskab.preview_alumneregninger_view,
+        name="preview_alumneregninger",
+    ),
+    path(
+        "regnskab/alumneregninger/<int:pk>/pdf",
+        views_regnskab.alumneregning_statement_pdf_view,
+        name="alumneregning_statement_pdf",
+    ),
+    path(
         "regnskab/alumneregninger/send",
         views_regnskab.send_alumneregninger_view,
         name="send_alumneregninger",

@@ -49,14 +49,12 @@
   <div style="border-top:1px solid #e6e8ec; margin-top:2rem; padding-top:1.5rem">
     <h2>Alumneregninger</h2>
     <p class="muted text-sm mb-3">
-      Sender en e-mail med en genereret kontoudskrift (posteringerne for e-conomic-perioden, der
-      dækker "Fra"-datoen nedenfor) til hver alumne med et e-conomic kontonr. ovenfor, der boede på
-      kollegiet i den valgte periode.
+      Viser en forhåndsvisning af, hvem der vil modtage en e-mail med en genereret kontoudskrift
+      (posteringerne for e-conomic-perioden, der dækker "Fra"-datoen nedenfor) — alumner med et
+      e-conomic kontonr. ovenfor, der boede på kollegiet i den valgte periode. Selve afsendelsen sker
+      først efter du har set forhåndsvisningen.
     </p>
-    <form method="post" action="{% url 'send_alumneregninger' %}"
-          class="flex flex-wrap items-end gap-2"
-          onsubmit="return confirm('Send alumneregninger for den valgte periode til alle alumner med et e-conomic kontonr.?');">
-      {% csrf_token %}
+    <form method="get" action="{% url 'preview_alumneregninger' %}" class="flex flex-wrap items-end gap-2">
       <div>
         <label for="fra" class="font-semibold block text-sm">Fra</label>
         <input type="date" id="fra" name="fra" value="{{ alumneregning_from }}" required>
@@ -65,7 +63,7 @@
         <label for="til" class="font-semibold block text-sm">Til</label>
         <input type="date" id="til" name="til" value="{{ alumneregning_to }}" required>
       </div>
-      <button type="submit" class="btn">Send alumneregninger</button>
+      <button type="submit" class="btn">Forhåndsvis alumneregninger</button>
     </form>
     <p class="text-sm mt-2">
       <a href="{% url 'alumneregning_settings' %}">Rediger besked og følgebrev →</a>

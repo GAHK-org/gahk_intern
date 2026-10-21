@@ -12,7 +12,7 @@ from typing import NamedTuple
 
 from django.contrib import messages
 from django.db.models import Q
-from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
+from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed, HttpResponseNotFound
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.http import url_has_allowed_host_and_scheme
 
@@ -110,11 +110,75 @@ def _parse_date(value: str | None) -> date | None:
         return None
 
 
+def _parse_billing_period(source: dict) -> tuple[date, date] | None:
+    date_from = _parse_date(source.get("fra"))
+    date_to = _parse_date(source.get("til"))
+    if date_from is None or date_to is None or date_from > date_to:
+        return None
+    return date_from, date_to
+
+
+_AUTH_ERROR_MESSAGE = (
+    "E-conomic-adgangen er udløbet eller blevet tilbagekaldt. Kontakt en administrator for at "
+    "genoprette forbindelsen (nyt AgreementGrantToken via e-conomics udviklerportal)."
+)
+
+
+@role_required("regnskab")
+def preview_alumneregninger_view(request: HttpRequest) -> HttpResponse:
+    """Shows who would be billed for a chosen period, and the outcome e-conomic would give each of
+    them (ready to send / no entries for that period / failed), with a link to view each one's
+    generated statement PDF — all without sending anything. The regnskab-facing step before actually
+    committing via send_alumneregninger_view, which this page's own form posts to.
+    """
+    period = _parse_billing_period(request.GET)
+    if period is None:
+        messages.error(request, "Angiv en gyldig periode — fra-dato skal være før (eller lig med) til-dato.")
+        return redirect("regnskab")
+    date_from, date_to = period
+
+    try:
+        rows = alumneregning.preview_alumneregninger(date_from, date_to)
+    except economic.EconomicAuthError:
+        messages.error(request, _AUTH_ERROR_MESSAGE + " Ingen forhåndsvisning kunne hentes.")
+        return redirect("regnskab")
+
+    return render(
+        request,
+        "regnskab/alumneregninger_preview.html",
+        {"rows": rows, "date_from": date_from, "date_to": date_to},
+    )
+
+
+@role_required("regnskab")
+def alumneregning_statement_pdf_view(request: HttpRequest, pk: int) -> HttpResponse:
+    """One resident's generated statement PDF for a period, shown inline — what the preview page's
+    "Se PDF" link opens. Same generation path send_alumneregninger_view uses, just not emailed."""
+    period = _parse_billing_period(request.GET)
+    if period is None:
+        return HttpResponseNotFound("Ugyldig eller manglende periode.")
+    date_from, date_to = period
+
+    resident = get_object_or_404(Resident, pk=pk)
+    try:
+        pdf = alumneregning.render_preview_pdf(resident, date_from, date_to)
+    except economic.EconomicAuthError:
+        messages.error(request, _AUTH_ERROR_MESSAGE)
+        return redirect("regnskab")
+    if pdf is None:
+        return HttpResponseNotFound("Ingen posteringer for denne alumne i den valgte periode.")
+
+    response = HttpResponse(pdf, content_type="application/pdf")
+    response["Content-Disposition"] = f'inline; filename="alumneregning-{date_from.isoformat()}.pdf"'
+    return response
+
+
 @role_required("regnskab")
 def send_alumneregninger_view(request: HttpRequest) -> HttpResponse:
     """The "one button": email every billable alumne (e-conomic account number set, lived at GAHK
     during the period) their statement for the e-conomic fiscal period covering the regnskab-chosen
-    date range's start (e.g. all of August).
+    date range's start (e.g. all of August). Reached either directly from the overview page's form,
+    or after reviewing the preview (preview_alumneregninger_view).
 
     Runs synchronously and renders what happened per alumne — sent / no entries in that e-conomic
     period / failed — rather than queuing a Celery task. At the volume this runs at (alumni with an
@@ -125,21 +189,16 @@ def send_alumneregninger_view(request: HttpRequest) -> HttpResponse:
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    date_from = _parse_date(request.POST.get("fra"))
-    date_to = _parse_date(request.POST.get("til"))
-    if date_from is None or date_to is None or date_from > date_to:
+    period = _parse_billing_period(request.POST)
+    if period is None:
         messages.error(request, "Angiv en gyldig periode — fra-dato skal være før (eller lig med) til-dato.")
         return redirect("regnskab")
+    date_from, date_to = period
 
     try:
         results = alumneregning.send_alumneregninger(date_from, date_to)
     except economic.EconomicAuthError:
-        messages.error(
-            request,
-            "E-conomic-adgangen er udløbet eller blevet tilbagekaldt. Kontakt en administrator for "
-            "at genoprette forbindelsen (nyt AgreementGrantToken via e-conomics udviklerportal) — "
-            "ingen alumneregninger blev sendt.",
-        )
+        messages.error(request, _AUTH_ERROR_MESSAGE + " Ingen alumneregninger blev sendt.")
         return redirect("regnskab")
 
     return render(
