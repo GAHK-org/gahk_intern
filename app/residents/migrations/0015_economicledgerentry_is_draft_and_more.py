@@ -4,24 +4,25 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('residents', '0014_rename_economic_customer_number'),
+        ("residents", "0014_rename_economic_customer_number"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='economicledgerentry',
-            name='is_draft',
+            model_name="economicledgerentry",
+            name="is_draft",
             field=models.BooleanField(default=False),
         ),
         migrations.AlterField(
-            model_name='economicledgerentry',
-            name='entry_number',
+            model_name="economicledgerentry",
+            name="entry_number",
             field=models.PositiveIntegerField(),
         ),
         migrations.AddConstraint(
-            model_name='economicledgerentry',
-            constraint=models.UniqueConstraint(fields=('entry_number', 'is_draft'), name='uniq_entry_number_per_kind'),
+            model_name="economicledgerentry",
+            constraint=models.UniqueConstraint(
+                fields=("entry_number", "is_draft"), name="uniq_entry_number_per_kind"
+            ),
         ),
     ]

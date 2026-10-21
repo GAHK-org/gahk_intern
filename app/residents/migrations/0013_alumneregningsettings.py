@@ -4,23 +4,32 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('residents', '0012_economicledgerentry'),
+        ("residents", "0012_economicledgerentry"),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='AlumneregningSettings',
+            name="AlumneregningSettings",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('message_template', models.TextField(default='Hej $FORNAVN,\n\nOs i Regnskabsgruppen sender dig hermed (vedhæftet) din alumneregning.\n\n$SALDO_LINE\n\nVi beder om at du generelt forsøger at holde din gæld så lav som muligt.\n\nHvis du skylder mere end 600 kr. beder vi om at du indbetaler inden for udgangen af indeværende uge. Skulle du have brug for en speciel aftale om afbetaling, fordi din gæld er for stor til, at du kan betale den af på én gang, så bedes du kontakte det siddende inspektionsmedlem i Regnskabsgruppen.\n\nUDFLYTTER-INFO: Denne regning skal ikke betales.\nI tilfælde af at du skylder alumnekassen penge bliver dette fratrukket dit depositum som PKS tilbagebetaler snarest.\n\n------------------------------------------------------------------------\n\nPå vegne af Regnskabsgruppen på G. A. Hagemanns Kollegium\n\nReg. nr. $REG_NR Konto nr. $KONTO_NR\n\n------------------------------------------------------------------------')),
-                ('followup_pdf', models.FileField(blank=True, upload_to='alumneregning/')),
-                ('updated_at', models.DateTimeField(auto_now=True)),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True, primary_key=True, serialize=False, verbose_name="ID"
+                    ),
+                ),
+                (
+                    "message_template",
+                    models.TextField(
+                        default="Hej $FORNAVN,\n\nOs i Regnskabsgruppen sender dig hermed (vedhæftet) din alumneregning.\n\n$SALDO_LINE\n\nVi beder om at du generelt forsøger at holde din gæld så lav som muligt.\n\nHvis du skylder mere end 600 kr. beder vi om at du indbetaler inden for udgangen af indeværende uge. Skulle du have brug for en speciel aftale om afbetaling, fordi din gæld er for stor til, at du kan betale den af på én gang, så bedes du kontakte det siddende inspektionsmedlem i Regnskabsgruppen.\n\nUDFLYTTER-INFO: Denne regning skal ikke betales.\nI tilfælde af at du skylder alumnekassen penge bliver dette fratrukket dit depositum som PKS tilbagebetaler snarest.\n\n------------------------------------------------------------------------\n\nPå vegne af Regnskabsgruppen på G. A. Hagemanns Kollegium\n\nReg. nr. $REG_NR Konto nr. $KONTO_NR\n\n------------------------------------------------------------------------"
+                    ),
+                ),
+                ("followup_pdf", models.FileField(blank=True, upload_to="alumneregning/")),
+                ("updated_at", models.DateTimeField(auto_now=True)),
             ],
             options={
-                'verbose_name': 'Alumneregning-indstillinger',
-                'verbose_name_plural': 'Alumneregning-indstillinger',
+                "verbose_name": "Alumneregning-indstillinger",
+                "verbose_name_plural": "Alumneregning-indstillinger",
             },
         ),
     ]
