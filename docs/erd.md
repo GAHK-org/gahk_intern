@@ -99,6 +99,7 @@ erDiagram
         string instagram_handle
         bool is_active
         bool is_staff
+        bool is_kitchen
         datetime date_joined
     }
 
@@ -1908,6 +1909,7 @@ erDiagram
         string instagram_handle
         bool is_active
         bool is_staff
+        bool is_kitchen
         datetime date_joined
     }
 

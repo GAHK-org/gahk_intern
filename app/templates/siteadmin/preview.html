@@ -33,6 +33,11 @@
         <input type="hidden" name="mode" value="resident">
         <button type="submit" class="btn w-full">Ingen rolle (beboer)</button>
       </form>
+      <form method="post" action="{% url 'siteadmin:preview_set' %}">
+        {% csrf_token %}
+        <input type="hidden" name="mode" value="kitchen">
+        <button type="submit" class="btn w-full">Køkkenet (ikke beboer)</button>
+      </form>
     </div>
   </div>
 

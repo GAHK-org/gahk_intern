@@ -5,7 +5,8 @@ from .models import Residency, Resident, RoleAssignment
 
 @admin.register(Resident)
 class ResidentAdmin(admin.ModelAdmin):
-    list_display = ("email", "first_name", "last_name", "is_staff", "is_active")
+    list_display = ("email", "first_name", "last_name", "is_staff", "is_active", "is_kitchen")
+    list_filter = ("is_kitchen", "is_active")
     search_fields = ("email", "first_name", "last_name")
     ordering = ("first_name", "last_name")
     # NOTE: password is shown raw here for now; a proper ResidentAdmin with set/change-password

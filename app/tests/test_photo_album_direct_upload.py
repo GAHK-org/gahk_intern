@@ -45,15 +45,15 @@ def bucket(monkeypatch: pytest.MonkeyPatch) -> Iterator[Stubber]:
         stubber.assert_no_pending_responses()
 
 
-def _begin(client: Client, bucket: Stubber, size: int) -> dict[str, object]:
+def _begin(
+    client: Client, bucket: Stubber, size: int, name: str = "Bornholm med GAHK.zip"
+) -> dict[str, object]:
     bucket.add_response(
         "create_multipart_upload",
         {"UploadId": "upload-1"},
         {"Bucket": "test-bucket", "Key": ANY, "ContentType": "application/zip"},
     )
-    response = client.post(
-        reverse("photo_album:system_import_upload"), {"name": "Bornholm med GAHK.zip", "size": size}, **TOKEN
-    )
+    response = client.post(reverse("photo_album:system_import_upload"), {"name": name, "size": size}, **TOKEN)
     assert response.status_code == 200
     return response.json()
 
@@ -374,3 +374,102 @@ def test_only_who_may_upload_or_import_may_begin(
     assert (
         client.post(reverse("photo_album:import_zip_upload"), {"name": "a.zip", "size": 1}).status_code == 403
     )
+
+
+def _complete(bucket: Stubber, upload: dict[str, object], size: int) -> str:
+    """The bucket's answers to completing `upload` in one part; returns its key."""
+    key = unquote(urlparse(upload["urls"][0]).path).lstrip("/")  # type: ignore[index]
+    bucket.add_response(
+        "complete_multipart_upload",
+        {},
+        {"Bucket": "test-bucket", "Key": key, "UploadId": "upload-1", "MultipartUpload": ANY},
+    )
+    bucket.add_response("head_object", {"ContentLength": size}, {"Bucket": "test-bucket", "Key": key})
+    return key
+
+
+@pytest.mark.django_db
+@override_settings(PHOTO_ALBUM_IMPORT_TOKEN="migration-token")
+def test_an_archive_with_a_long_name_is_imported(client: Client, bucket: Stubber) -> None:
+    """The key is photo-album-imports/<uuid>/<name>: 101 characters for this album, one more than the
+    column then held — and every attempt to start its import was a 500."""
+    name = "Generalforsamlingen oktober 2006-Therese.zip"
+    upload = _begin(client, bucket, MB, name=name)
+    key = _complete(bucket, upload, MB)
+    assert len(key) > 100
+
+    response = client.post(
+        reverse("photo_album:system_import_zip"),
+        {"folder": "2006", "ticket": upload["ticket"], "parts": json.dumps(['"a"'])},
+        **TOKEN,
+    )
+
+    assert response.status_code == 202
+    assert AlbumImport.objects.get().archive.name == key
+
+
+def test_the_longest_name_an_upload_may_have_fits_its_key() -> None:
+    from photo_album.forms import ImportUploadForm
+
+    longest = "x" * (ImportUploadForm.base_fields["name"].max_length - len(".zip")) + ".zip"  # type: ignore[attr-defined]
+
+    assert len(direct_upload.import_key(longest)) <= AlbumImport._meta.get_field("archive").max_length
+
+
+@pytest.mark.django_db
+@override_settings(PHOTO_ALBUM_IMPORT_TOKEN="migration-token")
+def test_an_archive_whose_import_cannot_be_created_is_not_left_in_the_bucket(
+    client: Client, bucket: Stubber, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    upload = _begin(client, bucket, MB)
+    key = _complete(bucket, upload, MB)
+    bucket.add_response("delete_object", {}, {"Bucket": "test-bucket", "Key": key})
+
+    def broken(**_: object) -> None:
+        raise RuntimeError("the database said no")
+
+    monkeypatch.setattr(AlbumImport.objects, "create", broken)
+    with pytest.raises(RuntimeError, match="the database said no"):
+        client.post(
+            reverse("photo_album:system_import_zip"),
+            {"folder": "2006", "ticket": upload["ticket"], "parts": json.dumps(['"a"'])},
+            **TOKEN,
+        )
+
+
+@pytest.mark.django_db
+def test_uploaded_archives_no_import_refers_to_are_deleted_after_two_days(
+    bucket: Stubber, make_resident: Callable[..., Resident]
+) -> None:
+    from photo_album.tasks import purge_orphaned_import_archives
+
+    referenced = "photo-album-imports/1/kept.zip"
+    AlbumImport.objects.create(
+        requested_by=make_resident(), folder="2006", archive_name="kept.zip", archive=referenced
+    )
+    now = timezone.now()
+    bucket.add_response(
+        "list_objects_v2",
+        {
+            "Contents": [
+                {
+                    "Key": "photo-album-imports/2/abandoned.zip",
+                    "LastModified": now - timedelta(days=3),
+                    "Size": 1,
+                },
+                {"Key": referenced, "LastModified": now - timedelta(days=3), "Size": 1},
+                # Finished a moment ago: its import may still be on its way.
+                {
+                    "Key": "photo-album-imports/3/recent.zip",
+                    "LastModified": now - timedelta(hours=1),
+                    "Size": 1,
+                },
+            ]
+        },
+        {"Bucket": "test-bucket", "Prefix": "photo-album-imports/"},
+    )
+    bucket.add_response(
+        "delete_object", {}, {"Bucket": "test-bucket", "Key": "photo-album-imports/2/abandoned.zip"}
+    )
+
+    assert purge_orphaned_import_archives.run() == 1

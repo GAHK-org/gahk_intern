@@ -69,6 +69,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "core.middleware.KitchenAccountGate",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "stats.middleware.FrontPageVisitCounterMiddleware",
@@ -263,6 +264,11 @@ CELERY_BEAT_SCHEDULE = {
     "purge-expired-events": {
         "task": "events.tasks.purge_expired_events",
         "schedule": crontab(minute=0, hour=4),
+    },
+    # 04:15: an upload finished but never submitted — 04:10 is the AK assessment on the 1st.
+    "purge-orphaned-photo-album-import-archives": {
+        "task": "photo_album.tasks.purge_orphaned_import_archives",
+        "schedule": crontab(minute=15, hour=4),
     },
     "purge-expired-photo-album-downloads": {
         "task": "photo_album.tasks.purge_expired_downloads",
