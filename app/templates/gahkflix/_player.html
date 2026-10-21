@@ -7,10 +7,30 @@
   <div class="flix-player-top">
     <a class="flix-back" href="{% url 'gahkflix:home' %}" aria-label="Tilbage" data-flix-back>←</a>
     <h1><span data-flix-title></span><small data-flix-subtitle></small></h1>
+    <label class="flix-autoplay"><input type="checkbox" role="switch" data-flix-autoplay checked> Autoplay</label>
   </div>
   <div class="flix-quality" role="group" aria-label="Kvalitet" data-flix-quality hidden></div>
   <button class="flix-skip" type="button" data-flix-skip hidden>Spring intro over</button>
   <a class="flix-next" href="#" data-flix-next hidden>Næste afsnit ▸</a>
+  {# The end card: what plays next, with a countdown — or, after a few in a row, a question. #}
+  <section class="flix-upnext" aria-live="polite" data-flix-upnext hidden>
+    <img alt="" data-flix-upnext-image>
+    <div class="flix-upnext-text">
+      <p class="flix-upnext-kicker" data-flix-upnext-kicker></p>
+      <h2 data-flix-upnext-title></h2>
+      <p class="flix-upnext-label" data-flix-upnext-label></p>
+      <p class="flix-upnext-description" data-flix-upnext-description></p>
+      <div class="flix-upnext-actions">
+        <button class="flix-upnext-play" type="button" data-flix-upnext-play>
+          <svg viewBox="0 0 36 36" aria-hidden="true" data-flix-upnext-ring hidden>
+            <circle cx="18" cy="18" r="16" pathLength="100"></circle>
+          </svg>
+          <span data-flix-upnext-play-label>Afspil nu</span>
+        </button>
+        <button class="flix-upnext-cancel" type="button" data-flix-upnext-cancel>Annuller</button>
+      </div>
+    </div>
+  </section>
   <button class="flix-start" type="button" aria-label="Afspil" data-flix-start hidden><span>▶</span></button>
   <p class="flix-player-error" role="alert" data-flix-error hidden></p>
 </div>
