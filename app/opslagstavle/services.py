@@ -38,7 +38,10 @@ def notice_url(notice: "Notice") -> str:
 
 
 def _author_can_open(notice: "Notice") -> bool:
-    """Whether the post's author can still open the board (rollout gate, or moved out)."""
+    """Whether the post's author can still open the board (rollout gate, or moved out). The kitchen
+    account is not in everyone(), but can always open its own posts."""
+    if notice.author.is_kitchen:
+        return notice.author.is_active
     return access.allowed_residents(services.everyone()).filter(pk=notice.author_id).exists()
 
 
