@@ -17,6 +17,8 @@ Deterministic logins (all password `demo1234`):
     ak@gahk.dk         AK role
     oel@gahk.dk        Ølkælder role
     beboer@gahk.dk     plain resident (no roles)
+    koekken@gahk.dk    Køkkengruppen role (kitchen administration and overview)
+    inspektion@gahk.dk Inspektionen role (sees the kitchen overview, administers nothing there)
 """
 
 import argparse
@@ -51,6 +53,8 @@ from gahkflix.models import ChangeRequest as GahkflixRequest
 from gahkflix.models import Series as GahkflixSeries
 from gahkflix.models import Tag as GahkflixTag
 from gahkflix.models import Video as GahkflixVideo
+from kitchen.demo import seed as seed_kitchen
+from kitchen.models import KitchenAssignment, KitchenMonthlyState, KitchenPointEntry, KitchenShift
 from notifications.demo import seed as seed_notifications
 from notifications.models import Notification, NotificationPreference, NotificationSettings
 from oelkaelder.models import (
@@ -136,6 +140,10 @@ WIPE_ORDER: list[type[models.Model]] = [
     KvotientApplication,
     RoomOffer,
     AkEntry,
+    KitchenPointEntry,
+    KitchenAssignment,
+    KitchenShift,
+    KitchenMonthlyState,
     Application,
     RoleAssignment,
     Residency,
@@ -211,6 +219,9 @@ class Command(BaseCommand):
             self._seed_roles(residents)
             self._seed_profile_pictures(residents)
             self._seed_ak(residents)
+            # Its own generator: the kitchen's demo draws a great many numbers, and sharing self.rng
+            # would reshuffle every feature seeded after it whenever it changed.
+            seed_kitchen(residents, self.now, random.Random(SEED))  # noqa: S311 — demo data only
             self._seed_oelkaelder(residents)
             self._seed_admissions(residents)
             self._seed_cms()
@@ -279,6 +290,9 @@ class Command(BaseCommand):
             ("oel@gahk.dk", "Ole", "Ølmand", {}),
             ("regnskab@gahk.dk", "Regina", "Regnskab", {}),
             ("beboer@gahk.dk", "Bente", "Beboer", {}),
+            # After the others, so the residents the other demos pick by position stay the same.
+            ("koekken@gahk.dk", "Karen", "Køkken", {}),
+            ("inspektion@gahk.dk", "Ivan", "Inspektør", {}),
         ]
         for email, first, last, extra in fixtures:
             r = self._make_resident(email, first, last, **extra)
@@ -353,6 +367,8 @@ class Command(BaseCommand):
             "ak@gahk.dk": "AK-gruppen",
             "oel@gahk.dk": "Ølkælderen",
             "regnskab@gahk.dk": "Regnskabsgruppen",
+            "koekken@gahk.dk": "Køkkengruppen",
+            "inspektion@gahk.dk": "Inspektionen",
         }
         workgroups_by_name = {workgroup.name: workgroup for workgroup in workgroups}
 
@@ -405,6 +421,8 @@ class Command(BaseCommand):
             "ak@gahk.dk": [Role.AK],
             "oel@gahk.dk": [Role.OELKAELDER],
             "regnskab@gahk.dk": [Role.REGNSKAB],
+            "koekken@gahk.dk": [Role.KOKKENGRUPPE],
+            "inspektion@gahk.dk": [Role.INSPEKTION],
         }
         assigned = set()
         for email, roles in fixed.items():
@@ -675,6 +693,7 @@ class Command(BaseCommand):
                 f"\nSeeded demo data: {len(residents)} residents, "
                 f"{Residency.objects.count()} residencies, {AkEntry.objects.count()} AK entries, "
                 f"{Event.objects.count()} begivenheder, {Notification.objects.count()} notifikationer, "
+                f"{KitchenShift.objects.count()} køkkenvagter, {KitchenPointEntry.objects.count()} køkkenposteringer, "
                 f"{Transaction.objects.count()} ølkælder purchases, {Application.objects.count()} applications."
             )
         )
@@ -685,5 +704,7 @@ class Command(BaseCommand):
             ("ak@gahk.dk", "AK role"),
             ("oel@gahk.dk", "Ølkælder role"),
             ("beboer@gahk.dk", "plain resident"),
+            ("koekken@gahk.dk", "Køkkengruppen role"),
+            ("inspektion@gahk.dk", "Inspektionen role"),
         ]:
             self.stdout.write(f"  {email:22} {desc}")

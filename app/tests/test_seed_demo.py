@@ -109,3 +109,80 @@ def test_seed_demo_gives_the_logins_notifications_in_every_state() -> None:
 
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)  # still idempotent
     assert Notification.objects.filter(recipient__email="beboer@gahk.dk").count() == 7
+
+
+@pytest.mark.django_db
+def test_seed_demo_gives_the_kitchen_every_zone_verdict_and_plan_state() -> None:
+    """kitchen.demo promises a picture: every zone today, every combination of the overview's two
+    verdicts, statements that add up, and the plan's awkward states. Each is checked here, so a
+    change to the rules that quietly empties one of them fails rather than leaving a blank cell."""
+    import datetime
+
+    from django.test import Client
+    from django.urls import reverse
+    from django.utils import timezone
+
+    from kitchen import demo, services
+    from kitchen.models import KitchenAssignment, KitchenPointEntry, KitchenShift
+    from residents.models import Residency
+
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    now = timezone.now()
+
+    # Statements: an unbroken chain of balances, in time order, ending where the profile said.
+    for resident in Resident.objects.all():
+        entries = list(resident.kitchen_entries.order_by("id"))
+        balance = 0
+        for entry in entries:
+            assert (entry.balance_before, entry.balance_after) == (balance, balance + entry.amount)
+            balance = entry.balance_after
+        assert [e.created_at for e in entries] == sorted(e.created_at for e in entries)
+    balances = KitchenPointEntry.balances()
+    for email, (_profile, balance) in demo.LOGINS.items():
+        assert balances[Resident.objects.get(email=email).pk] == balance, email
+    kinds = set(KitchenPointEntry.objects.values_list("kind", flat=True))
+    assert kinds == {"shift", "monthly", "absence", "trade", "manual"}
+
+    # Every zone now, and every combination of "fine in 30 days" and "fine at the end".
+    year, month = active_period()
+    current = list(Resident.objects.filter(residencies__year=year, residencies__month=month))
+    forecasts = services.forecasts(current)
+    zones, verdicts = set(), set()
+    for resident in current:
+        steps, balance = forecasts[resident.pk], balances.get(resident.pk, 0)
+        soon = services.balance_at(balance, steps, now + datetime.timedelta(days=services.OUTLOOK_DAYS))
+        end = steps[-1].balance if steps else balance
+        zones.add(services.zone(balance))
+        verdicts.add((soon >= 0, end >= 0))
+    assert zones == {"good", "warn", "neg", "alarm"}
+    assert verdicts == {(True, True), (True, False), (False, True), (False, False)}
+
+    # The plan: history behind, the calendar ahead, and the states that take effort to make by hand.
+    assert KitchenShift.objects.filter(date=services.calendar_horizon()).exists()
+    assert KitchenShift.objects.filter(ends_at__lte=now, completed_at__isnull=False).count() > 100
+    assert services.unmanned_shifts(datetime.timedelta(hours=24)).exists()
+    assert (
+        KitchenShift.objects.filter(starts_at__gt=now, is_disabled=True).exclude(disabled_reason="").exists()
+    )
+    assert KitchenShift.objects.filter(starts_at__gt=now, bonus_points__gt=0).exists()
+    assert KitchenShift.objects.filter(starts_at__gt=now, kind="special").exists()
+    ahead = KitchenAssignment.objects.filter(shift__starts_at__gt=now)
+    assert ahead.filter(spots=2).exists(), "nobody holds both spots of an evening"
+    assert ahead.filter(for_sale=True, sale_bonus__gt=0).exists()
+    beboer = Resident.objects.get(email="beboer@gahk.dk")
+    assert ahead.filter(resident=beboer, for_sale=True).exists()
+    assert any(services.can_unenroll(a) for a in ahead.filter(resident=beboer).select_related("shift")), (
+        "beboer@ has no sign-up inside the regret window"
+    )
+    assert ahead.filter(self_enrolled_at__gt=now - datetime.timedelta(minutes=10)).count() == 1
+    assert KitchenAssignment.objects.filter(is_absent=True).count() == 2
+    assert Residency.objects.filter(resident__email="koekken@gahk.dk", year=year, month=month).exists()
+
+    client = Client()
+    for email, status in (("koekken@gahk.dk", 200), ("inspektion@gahk.dk", 200), ("beboer@gahk.dk", 403)):
+        client.force_login(Resident.objects.get(email=email))
+        assert client.get(reverse("kitchen:dashboard")).status_code == status, email
+
+    entries = KitchenPointEntry.objects.count()
+    call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    assert KitchenPointEntry.objects.count() == entries

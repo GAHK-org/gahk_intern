@@ -88,30 +88,26 @@ def calendar_horizon() -> datetime.date:
 # --- calendar -------------------------------------------------------------------------------------
 
 
-def ensure_calendar() -> int:
-    """Create the standard shifts from today up to the 3-month horizon. Idempotent; returns how many
-    were created. Cheap when already done: one indexed lookup."""
-    today = current_datetime().date()
-    horizon = calendar_horizon()
-    if KitchenShift.objects.filter(date=horizon).exclude(kind=Kind.SPECIAL).exists():
-        return 0
+def create_standard_shifts(start: datetime.date, end: datetime.date) -> int:
+    """Create the standard week's shifts for start..end (inclusive) that do not exist yet. Returns
+    how many were created."""
     existing = set(
-        KitchenShift.objects.filter(date__gte=today, date__lte=horizon)
+        KitchenShift.objects.filter(date__gte=start, date__lte=end)
         .exclude(kind=Kind.SPECIAL)
         .values_list("date", "kind")
     )
     new = []
-    day = today
-    while day <= horizon:
-        for kind, start, end, spots, points in STANDARD_WEEK[day.weekday()]:
+    day = start
+    while day <= end:
+        for kind, begins, ends, spots, points in STANDARD_WEEK[day.weekday()]:
             if (day, kind) in existing:
                 continue
             new.append(
                 KitchenShift(
                     kind=kind,
                     date=day,
-                    starts_at=_aware(day, start),
-                    ends_at=_aware(day, end),
+                    starts_at=_aware(day, begins),
+                    ends_at=_aware(day, ends),
                     spots=spots,
                     points_per_spot=points,
                 )
@@ -119,6 +115,15 @@ def ensure_calendar() -> int:
         day += datetime.timedelta(days=1)
     KitchenShift.objects.bulk_create(new, ignore_conflicts=True)
     return len(new)
+
+
+def ensure_calendar() -> int:
+    """Create the standard shifts from today up to the 3-month horizon. Idempotent; returns how many
+    were created. Cheap when already done: one indexed lookup."""
+    horizon = calendar_horizon()
+    if KitchenShift.objects.filter(date=horizon).exclude(kind=Kind.SPECIAL).exists():
+        return 0
+    return create_standard_shifts(current_datetime().date(), horizon)
 
 
 def open_shifts() -> QuerySet[KitchenShift]:
