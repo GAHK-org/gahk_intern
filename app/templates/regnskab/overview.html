@@ -50,8 +50,9 @@
     <h2>Alumneregninger</h2>
     <p class="muted text-sm mb-3">
       Viser en forhåndsvisning af, hvem der vil modtage en e-mail med en genereret kontoudskrift
-      (posteringerne for e-conomic-perioden, der dækker "Fra"-datoen nedenfor) — alumner med et
-      e-conomic kontonr. ovenfor, der boede på kollegiet i den valgte periode. Selve afsendelsen sker
+      (posteringer i den valgte periode, samt den aktuelle saldo fra e-conomic) — alumner med et
+      e-conomic kontonr. ovenfor, der boede på kollegiet i perioden. Alle med en saldo får en
+      regning, også hvis der ikke er nye posteringer i netop denne periode. Selve afsendelsen sker
       først efter du har set forhåndsvisningen.
     </p>
     <form method="get" action="{% url 'preview_alumneregninger' %}" class="flex flex-wrap items-end gap-2">

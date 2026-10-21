@@ -16,7 +16,6 @@
             <td>{{ result.resident.email }}</td>
             <td class="whitespace-nowrap {% if result.outcome == 'failed' %}text-red-600 font-semibold{% endif %}">
               {% if result.outcome == 'sent' %}Sendt
-              {% elif result.outcome == 'no_entries' %}Ingen posteringer
               {% else %}Fejlede{% endif %}
             </td>
             <td>{{ result.detail }}</td>

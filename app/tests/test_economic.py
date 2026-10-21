@@ -63,7 +63,7 @@ def test_get_account_parses_fields(monkeypatch: pytest.MonkeyPatch) -> None:
     assert account == economic.EconomicAccount(account_number=1101, name="Alumne-Sten", balance=0.0)
 
 
-def test_get_period_entries_uses_year_self_link_not_entries_link(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_entries_in_range_uses_year_self_link_not_entries_link(monkeypatch: pytest.MonkeyPatch) -> None:
     """The year's own "entries" hyperlink is whole-company, not account-scoped (a real e-conomic API
     quirk) — the client must build the URL from the year's "self" link instead."""
     calls: list[str] = []
@@ -72,16 +72,16 @@ def test_get_period_entries_uses_year_self_link_not_entries_link(monkeypatch: py
         calls.append(url)
         if url.endswith("/accounting-years"):
             return _years_response(("2026", "2026-01-01", "2026-12-31"))
-        return FakeResponse(_json={"collection": [{"entryNumber": 1, "date": "2026-08-01", "amount": 100.0}]})
+        return FakeResponse(_json={"collection": [{"entryNumber": 1, "date": "2026-08-15", "amount": 100.0}]})
 
     monkeypatch.setattr(economic.requests, "get", fake_get)
 
-    entries = economic.get_period_entries(1101, date(2026, 8, 1))
+    entries = economic.get_entries_in_range(1101, date(2026, 8, 1), date(2026, 8, 31))
 
     assert entries == [
         economic.LedgerEntry(
             entry_number=1,
-            date="2026-08-01",
+            date="2026-08-15",
             text="",
             amount=100.0,
             entry_type="",
@@ -93,7 +93,34 @@ def test_get_period_entries_uses_year_self_link_not_entries_link(monkeypatch: py
     assert calls[1] == "https://restapi.e-conomic.com/accounts/1101/accounting-years/2026/entries"
 
 
-def test_get_period_entries_handles_split_fiscal_year_slug(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_entries_in_range_filters_out_entries_outside_the_range(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fiscal period can be wider than the requested date range (e.g. a 6-month e-conomic period
+    vs. a one-month billing range) — only entries whose own date is inside [date_from, date_to] are
+    kept, even though the whole period's entries are fetched."""
+
+    def fake_get(url: str, **kw: object) -> FakeResponse:
+        if url.endswith("/accounting-years"):
+            return _years_response(("2026", "2026-04-01", "2026-09-30"))
+        return FakeResponse(
+            _json={
+                "collection": [
+                    {"entryNumber": 1, "date": "2026-07-01", "amount": 50.0},  # before range
+                    {"entryNumber": 2, "date": "2026-08-15", "amount": 100.0},  # inside range
+                    {"entryNumber": 3, "date": "2026-09-01", "amount": 25.0},  # after range
+                ]
+            }
+        )
+
+    monkeypatch.setattr(economic.requests, "get", fake_get)
+
+    entries = economic.get_entries_in_range(1101, date(2026, 8, 1), date(2026, 8, 31))
+
+    assert [e.entry_number for e in entries] == [2]
+
+
+def test_get_entries_in_range_handles_split_fiscal_year_slug(monkeypatch: pytest.MonkeyPatch) -> None:
     """A fiscal year not aligned to the calendar displays as "2015/2016" but its real URL id is an
     e-conomic-internal slug ("2015_6_2016") — pinned here so a format change is caught."""
     calls: list[str] = []
@@ -106,12 +133,33 @@ def test_get_period_entries_handles_split_fiscal_year_slug(monkeypatch: pytest.M
 
     monkeypatch.setattr(economic.requests, "get", fake_get)
 
-    economic.get_period_entries(1101, date(2015, 12, 1))
+    economic.get_entries_in_range(1101, date(2015, 11, 1), date(2015, 12, 1))
 
     assert calls[1] == "https://restapi.e-conomic.com/accounts/1101/accounting-years/2015_6_2016/entries"
 
 
-def test_get_period_entries_returns_empty_when_no_period_covers_the_date(
+def test_get_entries_in_range_spans_multiple_overlapping_periods(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A requested range crossing an e-conomic fiscal period boundary reads every period it overlaps."""
+    calls: list[str] = []
+
+    def fake_get(url: str, **kw: object) -> FakeResponse:
+        calls.append(url)
+        if url.endswith("/accounting-years"):
+            return _years_response(
+                ("2026-H1", "2026-01-01", "2026-06-30"), ("2026-H2", "2026-07-01", "2026-12-31")
+            )
+        return FakeResponse(_json={"collection": []})
+
+    monkeypatch.setattr(economic.requests, "get", fake_get)
+
+    economic.get_entries_in_range(1101, date(2026, 6, 15), date(2026, 7, 15))
+
+    assert len(calls) == 3  # years list + both overlapping periods' entries
+
+
+def test_get_entries_in_range_returns_empty_when_no_period_overlaps(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -120,7 +168,7 @@ def test_get_period_entries_returns_empty_when_no_period_covers_the_date(
         lambda url, **kw: _years_response(("2025", "2025-04-01", "2025-09-30")),
     )
 
-    assert economic.get_period_entries(1101, date(2026, 10, 1)) == []
+    assert economic.get_entries_in_range(1101, date(2026, 10, 1), date(2026, 10, 31)) == []
 
 
 def test_401_raises_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:

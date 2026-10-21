@@ -19,7 +19,6 @@
             <td>{{ row.resident.email }}</td>
             <td class="whitespace-nowrap {% if row.status == 'failed' %}text-red-600 font-semibold{% endif %}">
               {% if row.status == 'ready' %}Vil blive sendt
-              {% elif row.status == 'no_entries' %}Ingen posteringer
               {% else %}Fejlede{% endif %}
             </td>
             <td>{{ row.detail }}</td>

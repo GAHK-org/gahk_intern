@@ -8,12 +8,13 @@ is read directly and deterministically via residents.economic instead of matched
 
 What gets sent: a PDF statement generated locally (residents.statement_pdf — NOT fetched from
 e-conomic; GAHK's account-based setup has nothing like a rendered invoice to fetch, see
-economic.get_period_entries's docstring) from that account's e-conomic entries for the ONE fiscal
-period covering date_from, plus the regnskab-edited følgebrev PDF (AlumneregningSettings) if one is
-set. The balance quoted in the mail is the sum of that same period's entries — not an all-time sum:
-GAHK's accounts are type `profitAndLoss` and reset each fiscal period rather than carrying a running
-balance, confirmed against the real API (summing one account's entire ~10-year history gave
--506,720, while e-conomic's own current balance for it was 0).
+economic.get_account's docstring) showing the period's postings (economic.get_entries_in_range) plus
+the regnskab-edited følgebrev PDF (AlumneregningSettings) if one is set. The balance quoted in the
+mail is e-conomic's own current balance for the account (economic.get_account) — NOT derived from the
+period's postings: GAHK's real alumni accounts are type "status" (Danish e-conomic UI: "Balance") and
+carry a continuous running balance, so an alumne with nothing posted in the chosen period can still
+have (and should still be told about) an outstanding balance carried forward from before. Everyone
+billable therefore gets mailed, whether or not anything new was posted in the period.
 
 Every fetched entry is still mirrored into the local immutable ledger (residents.ledger) regardless —
 including during a preview (preview_alumneregninger/render_preview_pdf): that is GAHK's own permanent
@@ -49,8 +50,8 @@ from .models import AlumneregningSettings, Residency, Resident
 
 logger = logging.getLogger(__name__)
 
-Outcome = Literal["sent", "no_entries", "failed"]
-PreviewStatus = Literal["ready", "no_entries", "failed"]
+Outcome = Literal["sent", "failed"]
+PreviewStatus = Literal["ready", "failed"]
 
 
 @dataclass(frozen=True)
@@ -74,8 +75,8 @@ class PreparedStatement:
 
     resident: Resident
     account_number: int
-    entries: list[economic.LedgerEntry]
-    balance: Decimal
+    entries: list[economic.LedgerEntry]  # this period's postings only — may be empty
+    balance: Decimal  # e-conomic's own current balance for the account, not derived from `entries`
     pdf: bytes
     body: str
 
@@ -121,17 +122,16 @@ def _prepare_one(
     date_from: date,
     date_to: date,
     mail_settings: AlumneregningSettings,
-) -> PreparedStatement | None:
-    """Fetches this account's entries for the e-conomic period covering date_from, mirrors them into
-    the local ledger, and renders the statement PDF + mail body. Returns None if there are no entries
-    for that period (no open e-conomic period for this account yet, or genuinely nothing posted)."""
-    entries = economic.get_period_entries(account_number, date_from)
-    if not entries:
-        return None
+) -> PreparedStatement:
+    """Fetches the account's current balance and this period's postings, mirrors the postings into
+    the local ledger, and renders the statement PDF + mail body. Always produces something to send —
+    see the module docstring on why a period with nothing posted still gets mailed."""
+    balance = Decimal(str(economic.get_account(account_number).balance))
+    entries = economic.get_entries_in_range(account_number, date_from, date_to)
+    if entries:
+        ledger.sync_entries(resident, entries)
 
-    ledger.sync_entries(resident, entries)
-    balance = sum((Decimal(str(e.amount)) for e in entries), Decimal(0))
-    pdf = statement_pdf.render(resident, account_number, entries, date_from, date_to)
+    pdf = statement_pdf.render(resident, account_number, entries, balance, date_from, date_to)
     body = _body(resident, balance, mail_settings.message_template)
     return PreparedStatement(resident, account_number, entries, balance, pdf, body)
 
@@ -144,10 +144,6 @@ def _send_one(
     mail_settings: AlumneregningSettings,
 ) -> AlumneregningResult:
     prepared = _prepare_one(resident, account_number, date_from, date_to, mail_settings)
-    if prepared is None:
-        return AlumneregningResult(
-            resident, "no_entries", f"Ingen posteringer/åben e-conomic-periode for {date_from}."
-        )
 
     email = EmailMessage(
         subject="Alumneregning",
@@ -162,16 +158,19 @@ def _send_one(
                 mail_settings.followup_pdf.name.rsplit("/", 1)[-1], followup.read(), "application/pdf"
             )
     email.send()
-    return AlumneregningResult(
-        resident, "sent", f"{len(prepared.entries)} posteringer, saldo {_kr(prepared.balance)} kr."
+    detail = (
+        f"{len(prepared.entries)} posteringer, saldo {_kr(prepared.balance)} kr."
+        if prepared.entries
+        else f"Ingen nye posteringer, saldo (videreført) {_kr(prepared.balance)} kr."
     )
+    return AlumneregningResult(resident, "sent", detail)
 
 
 def send_alumneregninger(date_from: date, date_to: date) -> list[AlumneregningResult]:
-    """Email every billable resident (see _residents_billable_for) their statement for the e-conomic
-    fiscal period covering date_from. Best-effort per resident: one failing (e-conomic error, bad
-    data) does not stop the rest — reported in the results instead, same as the old script's per-row
-    error printing."""
+    """Email every billable resident (see _residents_billable_for) their statement for
+    [date_from, date_to]. Best-effort per resident: one failing (e-conomic error, bad account number)
+    does not stop the rest — reported in the results instead, same as the old script's per-row error
+    printing."""
     mail_settings = AlumneregningSettings.get_solo()
     results: list[AlumneregningResult] = []
     for resident in _residents_billable_for(date_from, date_to):
@@ -200,10 +199,10 @@ def send_alumneregninger(date_from: date, date_to: date) -> list[AlumneregningRe
 
 
 def preview_alumneregninger(date_from: date, date_to: date) -> list[PreviewRow]:
-    """Who WOULD be billed for [date_from, date_to], and whether e-conomic has anything to send them
-    — without sending anything. Same error handling as send_alumneregninger: an auth error aborts
-    immediately (raised, not reported per-row — it affects every alumne equally), a rate limit or
-    other API error is reported per-resident so the rest of the preview still renders."""
+    """Who WOULD be billed for [date_from, date_to], and what their statement would say — without
+    sending anything. Same error handling as send_alumneregninger: an auth error aborts immediately
+    (raised, not reported per-row — it affects every alumne equally), a rate limit or other API error
+    is reported per-resident so the rest of the preview still renders."""
     mail_settings = AlumneregningSettings.get_solo()
     rows: list[PreviewRow] = []
     for resident in _residents_billable_for(date_from, date_to):
@@ -221,28 +220,19 @@ def preview_alumneregninger(date_from: date, date_to: date) -> list[PreviewRow]:
             rows.append(PreviewRow(resident, "failed", str(exc)))
             continue
 
-        if prepared is None:
-            rows.append(
-                PreviewRow(
-                    resident, "no_entries", f"Ingen posteringer/åben e-conomic-periode for {date_from}."
-                )
-            )
-        else:
-            rows.append(
-                PreviewRow(
-                    resident,
-                    "ready",
-                    f"{len(prepared.entries)} posteringer, saldo {_kr(prepared.balance)} kr.",
-                )
-            )
+        detail = (
+            f"{len(prepared.entries)} posteringer, saldo {_kr(prepared.balance)} kr."
+            if prepared.entries
+            else f"Ingen nye posteringer, saldo (videreført) {_kr(prepared.balance)} kr."
+        )
+        rows.append(PreviewRow(resident, "ready", detail))
     return rows
 
 
 def render_preview_pdf(resident: Resident, date_from: date, date_to: date) -> bytes | None:
     """The statement PDF for one resident/period — what the regnskab preview's "Se PDF" link shows.
-    None if the resident has no account number set, or e-conomic has nothing for that period."""
+    None only if the resident has no account number set."""
     if resident.economic_account_number is None:
         return None
     mail_settings = AlumneregningSettings.get_solo()
-    prepared = _prepare_one(resident, resident.economic_account_number, date_from, date_to, mail_settings)
-    return prepared.pdf if prepared else None
+    return _prepare_one(resident, resident.economic_account_number, date_from, date_to, mail_settings).pdf

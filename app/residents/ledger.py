@@ -48,8 +48,10 @@ def sync_entries(resident: Resident, entries: Iterable[economic.LedgerEntry]) ->
 def balance(resident: Resident) -> Decimal:
     """The sum of everything currently mirrored locally for this resident — positive = they owe GAHK,
     matching e-conomic's own sign convention (EconomicLedgerEntry.amount). Not what alumneregning
-    mails quote: GAHK's accounts reset each fiscal period (see economic.get_period_entries), so a
-    send's balance is the sum of that one period's entries, not this all-time local total, which can
-    span several different periods synced over time. This is a general-purpose inspection helper."""
+    mails quote: a send only ever mirrors one chosen date range's entries at a time (see
+    residents.alumneregning), so this all-time local total can be incomplete if e-conomic has postings
+    from periods never synced. alumneregning mails use economic.get_account's own balance instead,
+    which is always authoritative regardless of what has been synced locally. This is a
+    general-purpose inspection helper over whatever has been mirrored so far."""
     total = resident.economic_entries.aggregate(total=Sum("amount"))["total"]
     return total or Decimal(0)

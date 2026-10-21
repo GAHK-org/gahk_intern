@@ -165,8 +165,10 @@ def alumneregning_statement_pdf_view(request: HttpRequest, pk: int) -> HttpRespo
     except economic.EconomicAuthError:
         messages.error(request, _AUTH_ERROR_MESSAGE)
         return redirect("regnskab")
+    except economic.EconomicApiError as exc:
+        return HttpResponseNotFound(f"Kunne ikke hente kontoudtog fra e-conomic: {exc}")
     if pdf is None:
-        return HttpResponseNotFound("Ingen posteringer for denne alumne i den valgte periode.")
+        return HttpResponseNotFound("Denne alumne har intet e-conomic kontonr. sat.")
 
     response = HttpResponse(pdf, content_type="application/pdf")
     response["Content-Disposition"] = f'inline; filename="alumneregning-{date_from.isoformat()}.pdf"'

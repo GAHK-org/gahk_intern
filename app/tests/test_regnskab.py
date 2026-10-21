@@ -1,7 +1,6 @@
 """Regnskab (accounting) role: gated settlement view of moved-out residents' AK + ØK status (F-010)."""
 
 from collections.abc import Callable
-from datetime import date
 
 import pytest
 from django.test import Client
@@ -176,7 +175,8 @@ def test_send_alumneregninger_view_renders_results(
     # month) over today's real calendar month once one exists, so "acc"'s role grant must be made
     # for whatever active_period() resolves to at that point, not whatever it was before.
     acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
-    monkeypatch.setattr(economic, "get_period_entries", lambda n, on_date: [])  # no open e-conomic period
+    monkeypatch.setattr(economic, "get_account", lambda n: economic.EconomicAccount(n, "x", 600.0))
+    monkeypatch.setattr(economic, "get_entries_in_range", lambda n, f, t: [])  # nothing posted this period
     c = Client()
     c.force_login(acc)
 
@@ -185,8 +185,8 @@ def test_send_alumneregninger_view_renders_results(
     ).content.decode()
 
     assert "Alu Mne" in html
-    assert "Ingen posteringer" in html
-    assert "2026-08-01" in html
+    assert "Sendt" in html
+    assert "videreført" in html
 
 
 @pytest.mark.django_db
@@ -202,10 +202,10 @@ def test_send_alumneregninger_view_handles_auth_error_gracefully(
     )
     acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))  # see note above: created after
 
-    def get_period_entries(account_number: int, on_date: date) -> list:
+    def get_account(account_number: int) -> economic.EconomicAccount:
         raise economic.EconomicAuthError("token revoked")
 
-    monkeypatch.setattr(economic, "get_period_entries", get_period_entries)
+    monkeypatch.setattr(economic, "get_account", get_account)
     c = Client()
     c.force_login(acc)
 
@@ -262,10 +262,11 @@ def test_preview_renders_rows_and_pdf_link(monkeypatch: pytest.MonkeyPatch, make
         room=Room.objects.create(legacy_index=1, number=1, floor="stuen", side="mod gaden"),
     )
     acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))  # created after, see note above
+    monkeypatch.setattr(economic, "get_account", lambda n: economic.EconomicAccount(n, "x", 100.0))
     monkeypatch.setattr(
         economic,
-        "get_period_entries",
-        lambda n, on_date: [
+        "get_entries_in_range",
+        lambda n, f, t: [
             economic.LedgerEntry(
                 entry_number=1,
                 date="2026-08-01",
@@ -306,10 +307,11 @@ def test_preview_rejects_invalid_period(make_resident: Callable) -> None:
 def test_statement_pdf_view_returns_pdf(monkeypatch: pytest.MonkeyPatch, make_resident: Callable) -> None:
     alumne = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
     acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    monkeypatch.setattr(economic, "get_account", lambda n: economic.EconomicAccount(n, "x", 100.0))
     monkeypatch.setattr(
         economic,
-        "get_period_entries",
-        lambda n, on_date: [
+        "get_entries_in_range",
+        lambda n, f, t: [
             economic.LedgerEntry(
                 entry_number=1,
                 date="2026-08-01",
@@ -334,12 +336,29 @@ def test_statement_pdf_view_returns_pdf(monkeypatch: pytest.MonkeyPatch, make_re
 
 
 @pytest.mark.django_db
-def test_statement_pdf_view_404s_with_no_entries(
+def test_statement_pdf_view_works_with_no_entries_in_range(
     monkeypatch: pytest.MonkeyPatch, make_resident: Callable
 ) -> None:
+    """No postings in the chosen range is not a 404 — the account still has a balance to show."""
     alumne = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
     acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
-    monkeypatch.setattr(economic, "get_period_entries", lambda n, on_date: [])
+    monkeypatch.setattr(economic, "get_account", lambda n: economic.EconomicAccount(n, "x", 600.0))
+    monkeypatch.setattr(economic, "get_entries_in_range", lambda n, f, t: [])
+    c = Client()
+    c.force_login(acc)
+
+    response = c.get(
+        reverse("alumneregning_statement_pdf", args=[alumne.pk]), {"fra": "2026-08-01", "til": "2026-08-31"}
+    )
+
+    assert response.status_code == 200
+    assert response.content.startswith(b"%PDF-")
+
+
+@pytest.mark.django_db
+def test_statement_pdf_view_404s_without_account_number(make_resident: Callable) -> None:
+    alumne = make_resident(email="alumne@gahk.dk")  # no economic_account_number set
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
     c = Client()
     c.force_login(acc)
 

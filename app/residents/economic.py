@@ -129,9 +129,16 @@ def _get(
 
 
 def get_account(account_number: int) -> EconomicAccount:
-    """The account's name and e-conomic's own current balance for it — used to show a human-readable
-    confirmation in the regnskab UI (e.g. "1101 — Alumne-Sten") when setting a resident's account
-    number, not as the source of truth for the alumneregning balance (residents.ledger owns that)."""
+    """The account's name and e-conomic's own current balance for it.
+
+    This IS the source of truth for "what does this alumne currently owe" — not a sum we compute
+    ourselves. GAHK's real alumni accounts are type "status" (balance-sheet: Danish e-conomic UI
+    calls this "Balance") and carry a continuous running balance across fiscal periods, so e-conomic's
+    own balance figure is already correct; trusting it also means this code does not need to know or
+    guess an account's type. (An earlier version of this function/get_period_entries assumed every
+    account was `profitAndLoss` — reset to zero each fiscal period — based on account 1101, which
+    turned out not to be representative of GAHK's real per-alumne accounts; see git history.)
+    """
     data = _get(f"{BASE_URL}/accounts/{account_number}").json()
     return EconomicAccount(
         account_number=data["accountNumber"],
@@ -140,54 +147,48 @@ def get_account(account_number: int) -> EconomicAccount:
     )
 
 
-def _find_period(account_number: int, on_date: date) -> dict[str, Any] | None:
-    """The account's e-conomic fiscal period whose [fromDate, toDate] contains `on_date`, or None.
+def get_entries_in_range(account_number: int, date_from: date, date_to: date) -> list[LedgerEntry]:
+    """Every posting on this account whose own date falls within [date_from, date_to] — e.g. exactly
+    "August 2026", independent of e-conomic's own ~6-month fiscal period boundaries. This is the
+    period-specific detail shown on a statement; the balance figure (get_account) is separate and NOT
+    derived from these entries, since an alumne can have a nonzero balance with nothing posted in a
+    given range (prior debt carried forward) — see residents.alumneregning.
 
-    GAHK's accounts are type `profitAndLoss` — they are closed/reset each fiscal period rather than
-    carrying a running balance across periods the way a balance-sheet account would (confirmed
-    against the real API: summing every entry ever posted to a real account gave -506,720, while
-    e-conomic's own current balance for it was 0). So "this alumne's balance" only makes sense as
-    "this fiscal period's entries", not an all-time sum — see get_period_entries.
+    e-conomic's periods do not align with calendar months, so [date_from, date_to] can span more than
+    one fiscal period; this reads every period overlapping the range and keeps only entries whose own
+    date is actually inside it. The account-scoped entries URL has to be built from the period's URL
+    id (the "self" link's last path segment, e.g. "2015_6_2016" for the fiscal year e-conomic
+    displays as "2015/2016" — an internal slug, not standard percent-encoding of the display value) —
+    and NOT from the period's own "entries" link, which is the whole-COMPANY entries for that period
+    (confirmed against the real API: it returned 19108 rows, every posting on every account, for an
+    account that only has 124 of its own across its entire ~10-year history), despite being reached
+    from an account-scoped collection.
     """
     years = _get(f"{BASE_URL}/accounts/{account_number}/accounting-years").json()
-    for year in years.get("collection", []):
-        if date.fromisoformat(year["fromDate"]) <= on_date <= date.fromisoformat(year["toDate"]):
-            return year
-    return None
-
-
-def get_period_entries(account_number: int, on_date: date) -> list[LedgerEntry]:
-    """Entries for the one e-conomic fiscal period covering `on_date` (the regnskab-chosen billing
-    range's start) — not this account's whole history. Returns [] if no period covers that date at
-    all (GAHK's books not yet rolled forward that far), rather than guessing by falling back to a
-    stale period.
-
-    The account-scoped entries URL has to be built from the period's URL id (the "self" link's last
-    path segment, e.g. "2015_6_2016" for the fiscal year e-conomic displays as "2015/2016" — an
-    internal slug, not standard percent-encoding of the display value) — and NOT from the period's
-    own "entries" link, which is the whole-COMPANY entries for that period (confirmed against the
-    real API: it returned 19108 rows, every posting on every account, for an account that only has
-    124 of its own across its entire ~10-year history), despite being reached from an
-    account-scoped collection.
-    """
-    period = _find_period(account_number, on_date)
-    if period is None:
-        return []
-
-    period_id = period["self"].rsplit("/", 1)[-1]
-    data = _get(
-        f"{BASE_URL}/accounts/{account_number}/accounting-years/{period_id}/entries",
-        params={"pagesize": 1000},
-    ).json()
-    return [
-        LedgerEntry(
-            entry_number=item["entryNumber"],
-            date=item["date"],
-            text=item.get("text", ""),
-            amount=item.get("amount", 0.0),
-            entry_type=item.get("entryType", ""),
-            voucher_number=item.get("voucherNumber", 0),
-            due_date=item.get("dueDate"),
-        )
-        for item in data.get("collection", [])
+    overlapping = [
+        year
+        for year in years.get("collection", [])
+        if date.fromisoformat(year["fromDate"]) <= date_to and date_from <= date.fromisoformat(year["toDate"])
     ]
+
+    entries: list[LedgerEntry] = []
+    for period in overlapping:
+        period_id = period["self"].rsplit("/", 1)[-1]
+        data = _get(
+            f"{BASE_URL}/accounts/{account_number}/accounting-years/{period_id}/entries",
+            params={"pagesize": 1000},
+        ).json()
+        entries.extend(
+            LedgerEntry(
+                entry_number=item["entryNumber"],
+                date=item["date"],
+                text=item.get("text", ""),
+                amount=item.get("amount", 0.0),
+                entry_type=item.get("entryType", ""),
+                voucher_number=item.get("voucherNumber", 0),
+                due_date=item.get("dueDate"),
+            )
+            for item in data.get("collection", [])
+            if date_from <= date.fromisoformat(item["date"]) <= date_to
+        )
+    return entries

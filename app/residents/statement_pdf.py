@@ -2,9 +2,10 @@
 
 Replaces fetching a rendered invoice/kontokort PDF from e-conomic: GAHK tracks alumni via per-person
 chart-of-accounts entries, not e-conomic Customers/Invoices, so there is no e-conomic-rendered PDF to
-fetch for an alumne's statement (see residents.economic.get_period_entries's docstring). This builds
-the same "kontokort" shape the old manual process downloaded — date, description, amount, running
-balance — from the entries already fetched for this send.
+fetch for an alumne's statement (see residents.economic.get_account's docstring). This builds the same
+"kontokort" shape the old manual process downloaded — the period's postings, each with a running
+subtotal, plus the account's actual current balance (not derived from the postings shown: an alumne
+can have a nonzero balance with nothing posted in the given period, carried forward from before).
 """
 
 from __future__ import annotations
@@ -27,10 +28,12 @@ def render(
     resident: Resident,
     account_number: int,
     entries: list[economic.LedgerEntry],
+    balance: Decimal,
     date_from: date,
     date_to: date,
 ) -> bytes:
-    """A one-page account statement: every entry in [date_from, date_to] with a running balance."""
+    """A one-page account statement: the period's postings (if any) with a running subtotal, plus the
+    account's actual current balance from e-conomic."""
     pdf = FPDF()
     pdf.add_page()
 
@@ -47,24 +50,29 @@ def render(
     )
     pdf.ln(5)
 
-    pdf.set_font("helvetica", "B", 10)
-    pdf.cell(28, 8, "Dato", border="B")
-    pdf.cell(104, 8, "Tekst", border="B")
-    pdf.cell(28, 8, "Beløb", border="B", align="R")
-    pdf.cell(28, 8, "Saldo", border="B", align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    if entries:
+        pdf.set_font("helvetica", "B", 10)
+        pdf.cell(28, 8, "Dato", border="B")
+        pdf.cell(104, 8, "Tekst", border="B")
+        pdf.cell(28, 8, "Beløb", border="B", align="R")
+        pdf.cell(28, 8, "Subtotal", border="B", align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
-    pdf.set_font("helvetica", "", 10)
-    running = Decimal(0)
-    for entry in sorted(entries, key=lambda e: e.date):
-        amount = Decimal(str(entry.amount))
-        running += amount
-        pdf.cell(28, 7, entry.date)
-        pdf.cell(104, 7, (entry.text or "")[:58])
-        pdf.cell(28, 7, _kr(amount), align="R")
-        pdf.cell(28, 7, _kr(running), align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.set_font("helvetica", "", 10)
+        running = Decimal(0)
+        for entry in sorted(entries, key=lambda e: e.date):
+            amount = Decimal(str(entry.amount))
+            running += amount
+            pdf.cell(28, 7, entry.date)
+            pdf.cell(104, 7, (entry.text or "")[:58])
+            pdf.cell(28, 7, _kr(amount), align="R")
+            pdf.cell(28, 7, _kr(running), align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(5)
+    else:
+        pdf.set_font("helvetica", "", 10)
+        pdf.cell(0, 8, "Ingen nye posteringer i perioden.", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(5)
 
-    pdf.ln(5)
     pdf.set_font("helvetica", "B", 11)
-    pdf.cell(0, 8, f"Saldo i alt: {_kr(running)} kr", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 8, f"Saldo (aktuel kontosaldo): {_kr(balance)} kr", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
     return bytes(pdf.output())
