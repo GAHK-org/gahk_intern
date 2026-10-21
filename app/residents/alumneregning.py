@@ -173,10 +173,10 @@ def send_alumneregninger(date_from: date, date_to: date) -> list[AlumneregningRe
     mail_settings = AlumneregningSettings.get_solo()
     results: list[AlumneregningResult] = []
     for resident in _residents_billable_for(date_from, date_to):
+        account_number = resident.economic_account_number
+        assert account_number is not None  # noqa: S101  # nosec B101 — _residents_billable_for filters on it
         try:
-            results.append(
-                _send_one(resident, resident.economic_account_number, date_from, date_to, mail_settings)
-            )
+            results.append(_send_one(resident, account_number, date_from, date_to, mail_settings))
         except economic.EconomicAuthError as exc:
             # No silent refresh is possible (see EconomicAuthError's docstring) — stop the whole
             # batch rather than report the same "reconnect e-conomic" failure once per remaining
@@ -205,10 +205,10 @@ def preview_alumneregninger(date_from: date, date_to: date) -> list[PreviewRow]:
     mail_settings = AlumneregningSettings.get_solo()
     rows: list[PreviewRow] = []
     for resident in _residents_billable_for(date_from, date_to):
+        account_number = resident.economic_account_number
+        assert account_number is not None  # noqa: S101  # nosec B101 — _residents_billable_for filters on it
         try:
-            prepared = _prepare_one(
-                resident, resident.economic_account_number, date_from, date_to, mail_settings
-            )
+            prepared = _prepare_one(resident, account_number, date_from, date_to, mail_settings)
         except economic.EconomicAuthError as exc:
             logger.error("alumneregning preview: e-conomic access invalid/revoked: %s", exc)
             raise

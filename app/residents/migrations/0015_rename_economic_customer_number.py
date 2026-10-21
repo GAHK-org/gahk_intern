@@ -7,7 +7,7 @@ class Migration(migrations.Migration):
     preserved under the new name, even though it will need to be replaced with a real accountNumber."""
 
     dependencies = [
-        ("residents", "0013_alumneregningsettings"),
+        ("residents", "0014_alumneregningsettings"),
     ]
 
     operations = [
