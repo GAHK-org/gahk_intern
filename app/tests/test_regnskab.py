@@ -179,6 +179,26 @@ def test_send_alumneregninger_view_renders_results(
 
 
 @pytest.mark.django_db
+def test_send_alumneregninger_view_handles_auth_error_gracefully(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    make_resident(email="alumne@gahk.dk", economic_customer_number=42)
+
+    def get_entries(customer_number: int) -> list:
+        raise economic.EconomicAuthError("token revoked")
+
+    monkeypatch.setattr(economic, "get_entries", get_entries)
+    c = Client()
+    c.force_login(acc)
+
+    response = c.post(reverse("send_alumneregninger"), {"fra": "2026-08-01", "til": "2026-08-31"})
+
+    assert response.status_code == 302  # not a 500 — redirects back with a message
+    assert response.url == reverse("regnskab")
+
+
+@pytest.mark.django_db
 def test_send_alumneregninger_rejects_missing_period(make_resident: Callable) -> None:
     acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
     c = Client()

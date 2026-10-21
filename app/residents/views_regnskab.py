@@ -18,7 +18,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 
 from ak.models import AkEntry
 
-from . import alumneregning
+from . import alumneregning, economic
 from .forms import AlumneregningSettingsForm, EconomicCustomerNumberForm
 from .models import AlumneregningSettings, Residency, Resident, prev_period
 from .permissions import role_required
@@ -130,7 +130,17 @@ def send_alumneregninger_view(request: HttpRequest) -> HttpResponse:
         messages.error(request, "Angiv en gyldig periode — fra-dato skal være før (eller lig med) til-dato.")
         return redirect("regnskab")
 
-    results = alumneregning.send_alumneregninger(date_from, date_to)
+    try:
+        results = alumneregning.send_alumneregninger(date_from, date_to)
+    except economic.EconomicAuthError:
+        messages.error(
+            request,
+            "E-conomic-adgangen er udløbet eller blevet tilbagekaldt. Kontakt en administrator for "
+            "at genoprette forbindelsen (nyt AgreementGrantToken via e-conomics udviklerportal) — "
+            "ingen alumneregninger blev sendt.",
+        )
+        return redirect("regnskab")
+
     return render(
         request,
         "regnskab/alumneregninger_sent.html",

@@ -6,7 +6,7 @@ the real restapi.e-conomic.com demo company (customerNumber=1); these tests pin 
 shape so a future e-conomic API change is caught here instead of only at alumneregning send time.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pytest
 import requests
@@ -20,6 +20,7 @@ class FakeResponse:
     _json: object = None
     content: bytes = b""
     text: str = ""
+    headers: dict = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -107,3 +108,80 @@ def test_get_invoice_pdf_returns_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(economic.requests, "get", lambda url, **kw: FakeResponse(content=b"%PDF-1.7 fake"))
 
     assert economic.get_invoice_pdf("https://restapi.e-conomic.com/invoices/booked/1/pdf") == b"%PDF-1.7 fake"
+
+
+def test_401_raises_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        economic.requests, "get", lambda url, **kw: FakeResponse(status_code=401, text="bad token")
+    )
+
+    with pytest.raises(economic.EconomicAuthError):
+        economic.get_customer(1)
+
+
+def test_403_raises_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        economic.requests, "get", lambda url, **kw: FakeResponse(status_code=403, text="revoked")
+    )
+
+    with pytest.raises(economic.EconomicAuthError):
+        economic.get_customer(1)
+
+
+def test_400_raises_validation_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        economic.requests, "get", lambda url, **kw: FakeResponse(status_code=400, text="bad filter syntax")
+    )
+
+    with pytest.raises(economic.EconomicValidationError):
+        economic.get_customer(1)
+
+
+def test_500_raises_plain_api_error_not_a_subclass(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        economic.requests, "get", lambda url, **kw: FakeResponse(status_code=500, text="oops")
+    )
+
+    with pytest.raises(economic.EconomicApiError) as exc_info:
+        economic.get_customer(1)
+    assert not isinstance(exc_info.value, economic.EconomicAuthError)
+    assert not isinstance(exc_info.value, economic.EconomicValidationError)
+
+
+def test_429_retries_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    sleeps: list[float] = []
+    monkeypatch.setattr(economic.time, "sleep", sleeps.append)
+    responses = iter(
+        [
+            FakeResponse(status_code=429, headers={"Retry-After": "2"}),
+            FakeResponse(status_code=429),  # no Retry-After this time -> falls back to backoff
+            FakeResponse(
+                status_code=200, _json={"customerNumber": 1, "name": "x", "balance": 0.0, "dueAmount": 0.0}
+            ),
+        ]
+    )
+    monkeypatch.setattr(economic.requests, "get", lambda url, **kw: next(responses))
+
+    customer = economic.get_customer(1)
+
+    assert customer.customer_number == 1
+    assert sleeps == [2.0, economic._BASE_BACKOFF_SECONDS * 2**1]  # Retry-After honoured, then exponential
+
+
+def test_429_exhausted_raises_rate_limit_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(economic.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(economic.requests, "get", lambda url, **kw: FakeResponse(status_code=429))
+
+    with pytest.raises(economic.EconomicRateLimitError):
+        economic.get_customer(1)
+
+
+def test_network_error_still_raises_plain_api_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_timeout(url: str, **kwargs: object) -> FakeResponse:
+        raise requests.Timeout("too slow")
+
+    monkeypatch.setattr(economic.requests, "get", raise_timeout)
+
+    with pytest.raises(economic.EconomicApiError) as exc_info:
+        economic.get_customer(1)
+    assert not isinstance(exc_info.value, economic.EconomicRateLimitError)

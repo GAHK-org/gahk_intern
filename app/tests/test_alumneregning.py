@@ -232,3 +232,46 @@ def test_one_failure_does_not_stop_the_rest(monkeypatch: pytest.MonkeyPatch, mak
     assert by_resident[ok.pk].outcome == "sent"
     assert len(mail.outbox) == 1  # only the one that succeeded
     assert not EconomicLedgerEntry.objects.filter(resident=failing).exists()  # failed sync wrote nothing
+
+
+@pytest.mark.django_db
+def test_auth_error_aborts_the_whole_batch(monkeypatch: pytest.MonkeyPatch, make_resident: Callable) -> None:
+    """An invalid/revoked e-conomic connection affects every alumne equally — stop immediately
+    rather than report the same "reconnect e-conomic" failure once per remaining alumne."""
+    make_resident(email="alice@gahk.dk", economic_customer_number=1, first_name="Alice")  # processed first
+    make_resident(email="bob@gahk.dk", economic_customer_number=2, first_name="Bob")
+
+    def get_entries(customer_number: int) -> list[economic.LedgerEntry]:
+        raise economic.EconomicAuthError("token revoked")
+
+    monkeypatch.setattr(economic, "get_entries", get_entries)
+
+    with pytest.raises(economic.EconomicAuthError):
+        alumneregning.send_alumneregninger(*AUGUST)
+
+    assert mail.outbox == []  # Bob was never even attempted
+
+
+@pytest.mark.django_db
+def test_rate_limit_error_is_reported_and_batch_continues(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    make_resident(email="alice@gahk.dk", economic_customer_number=1, first_name="Alice")  # processed first
+    make_resident(email="bob@gahk.dk", economic_customer_number=2, first_name="Bob")
+
+    def get_entries(customer_number: int) -> list[economic.LedgerEntry]:
+        if customer_number == 1:
+            raise economic.EconomicRateLimitError("still 429 after retries")
+        return [_entry(1, "2026-08-01", 0.0)]
+
+    monkeypatch.setattr(economic, "get_entries", get_entries)
+    monkeypatch.setattr(economic, "get_booked_invoices", lambda n: [_invoice(1, "2026-08-01")])
+    monkeypatch.setattr(economic, "get_invoice_pdf", lambda url: b"%PDF-fake")
+
+    results = alumneregning.send_alumneregninger(*AUGUST)
+
+    by_email = {r.resident.email: r for r in results}
+    assert by_email["alice@gahk.dk"].outcome == "failed"
+    assert "rate-limit" in by_email["alice@gahk.dk"].detail
+    assert by_email["bob@gahk.dk"].outcome == "sent"
+    assert len(mail.outbox) == 1

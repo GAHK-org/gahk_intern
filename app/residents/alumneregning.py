@@ -127,6 +127,20 @@ def send_alumneregninger(date_from: date, date_to: date) -> list[AlumneregningRe
             results.append(
                 _send_one(resident, resident.economic_customer_number, date_from, date_to, mail_settings)
             )
+        except economic.EconomicAuthError as exc:
+            # No silent refresh is possible (see EconomicAuthError's docstring) — stop the whole
+            # batch rather than report the same "reconnect e-conomic" failure once per remaining
+            # alumne, and surface it as an exception so the view renders a clear error, not a
+            # results table full of identical rows.
+            logger.error("alumneregning: e-conomic access invalid/revoked: %s", exc)
+            raise
+        except economic.EconomicRateLimitError as exc:
+            logger.warning("alumneregning: e-conomic rate limit for resident %s: %s", resident.pk, exc)
+            results.append(
+                AlumneregningResult(
+                    resident, "failed", "E-conomic rate-limit ramt — prøv at sende igen om lidt."
+                )
+            )
         except economic.EconomicApiError as exc:
             logger.warning("alumneregning failed for resident %s: %s", resident.pk, exc)
             results.append(AlumneregningResult(resident, "failed", str(exc)))

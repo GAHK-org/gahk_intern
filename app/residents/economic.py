@@ -13,6 +13,7 @@ tokens. See app/.env.example for how real tokens are obtained.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -26,9 +27,37 @@ BASE_URL = "https://restapi.e-conomic.com"
 _JSON_TIMEOUT = 15
 _PDF_TIMEOUT = 30
 
+# e-conomic's rate-limit status. One initial attempt plus this many retries, each backing off
+# (Retry-After if e-conomic sends one, else exponential: 1s, 2s, 4s) before giving up.
+_RATE_LIMIT_STATUS = 429
+MAX_RATE_LIMIT_RETRIES = 3
+_BASE_BACKOFF_SECONDS = 1.0
+
 
 class EconomicApiError(Exception):
     """A non-2xx response from e-conomic, or the request itself failing (network, timeout, ...)."""
+
+
+class EconomicAuthError(EconomicApiError):
+    """401/403 — the AppSecretToken/AgreementGrantToken pair is invalid, expired, or revoked.
+
+    e-conomic's tokens are long-lived, not short-lived OAuth access tokens, so there is no silent
+    refresh to attempt here — the only fix is a human re-running the install/grant flow in
+    e-conomic's developer portal to mint a new AgreementGrantToken. Callers (residents.alumneregning)
+    turn this into an actionable "reconnect e-conomic" message rather than a generic failure.
+    """
+
+
+class EconomicValidationError(EconomicApiError):
+    """400/422 — the request itself was malformed (bad filter syntax, unknown id, ...). Retrying the
+    identical request fails the same way every time; this signals a bug in the caller, not a
+    transient condition, so _get does not retry it the way it retries a 429."""
+
+
+class EconomicRateLimitError(EconomicApiError):
+    """429 — e-conomic's call-cost rate limit was hit and MAX_RATE_LIMIT_RETRIES backoff retries
+    were all still rate-limited. Raised only after _get has already tried to recover; a caller
+    seeing this should wait longer than _get's own backoff before trying again."""
 
 
 @dataclass(frozen=True)
@@ -70,16 +99,45 @@ def _headers() -> dict[str, str]:
     }
 
 
+def _error_for_status(response: requests.Response, url: str) -> EconomicApiError:
+    detail = f"e-conomic {response.status_code} on {url}: {response.text[:200]}"
+    if response.status_code in (401, 403):
+        return EconomicAuthError(detail)
+    if response.status_code in (400, 422):
+        return EconomicValidationError(detail)
+    return EconomicApiError(detail)
+
+
+def _retry_delay_seconds(response: requests.Response, attempt: int) -> float:
+    header = response.headers.get("Retry-After")
+    if header:
+        try:
+            return float(header)
+        except ValueError:
+            pass  # not a valid seconds value (e.g. an HTTP-date) — fall through to our own backoff
+    return _BASE_BACKOFF_SECONDS * (2**attempt)
+
+
 def _get(
     url: str, *, params: dict[str, Any] | None = None, timeout: int = _JSON_TIMEOUT
 ) -> requests.Response:
-    try:
-        response = requests.get(url, headers=_headers(), params=params, timeout=timeout)
-    except requests.RequestException as exc:
-        raise EconomicApiError(f"e-conomic request failed: {url}") from exc
-    if not response.ok:
-        raise EconomicApiError(f"e-conomic {response.status_code} on {url}: {response.text[:200]}")
-    return response
+    for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
+        try:
+            response = requests.get(url, headers=_headers(), params=params, timeout=timeout)
+        except requests.RequestException as exc:
+            raise EconomicApiError(f"e-conomic request failed: {url}") from exc
+
+        if response.status_code != _RATE_LIMIT_STATUS:
+            if not response.ok:
+                raise _error_for_status(response, url)
+            return response
+
+        if attempt < MAX_RATE_LIMIT_RETRIES:
+            time.sleep(_retry_delay_seconds(response, attempt))
+
+    raise EconomicRateLimitError(
+        f"e-conomic rate limit on {url}: still 429 after {MAX_RATE_LIMIT_RETRIES} retries"
+    )
 
 
 def get_customer(customer_number: int) -> EconomicCustomer:
