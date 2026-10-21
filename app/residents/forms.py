@@ -126,6 +126,18 @@ class ProfileEditForm(forms.ModelForm):
         return upload
 
 
+class EconomicCustomerNumberForm(forms.ModelForm):
+    """Regnskab sets or clears a resident's e-conomic debtor customerNumber (alumneregning automation,
+    F-010 regnskab role). A single-field form rather than adding it to ResidentEditForm: that form is
+    indstilling's general edit surface, and this value is regnskab's own, edited inline from the
+    regnskab lookup/leaver rows instead."""
+
+    class Meta:
+        model = Resident
+        fields = ["economic_customer_number"]
+        labels = {"economic_customer_number": "E-conomic kundenr."}
+
+
 class ResidentPasswordResetForm(PasswordResetForm):
     """Glemt-kodeord that also works for a resident who has never set one (F-014).
 

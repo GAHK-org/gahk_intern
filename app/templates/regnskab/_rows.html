@@ -12,7 +12,17 @@
     <td class="whitespace-nowrap {% if row.oek_ore < 0 %}text-red-600 font-semibold{% endif %}">
       {{ row.oek_ore|kr }}
     </td>
+    <td class="whitespace-nowrap">
+      <form method="post" action="{% url 'set_economic_customer_number' row.resident.pk %}"
+            class="flex items-center gap-1">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+        <input type="number" name="economic_customer_number" min="1" style="width:5rem"
+               value="{{ row.resident.economic_customer_number|default_if_none:'' }}" placeholder="–">
+        <button type="submit" class="btn">Gem</button>
+      </form>
+    </td>
   </tr>
 {% empty %}
-  <tr><td colspan="4" class="muted">Ingen.</td></tr>
+  <tr><td colspan="5" class="muted">Ingen.</td></tr>
 {% endfor %}

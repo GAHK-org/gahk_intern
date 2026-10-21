@@ -83,6 +83,63 @@ def test_view_is_regnskab_gated(make_resident: Callable) -> None:
 
 
 @pytest.mark.django_db
+def test_set_economic_customer_number_updates_resident(make_resident: Callable) -> None:
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    target = make_resident(email="target@gahk.dk")
+    c = Client()
+    c.force_login(acc)
+
+    response = c.post(
+        reverse("set_economic_customer_number", args=[target.pk]),
+        {"economic_customer_number": "42", "next": reverse("regnskab")},
+    )
+
+    target.refresh_from_db()
+    assert target.economic_customer_number == 42
+    assert response.status_code == 302
+    assert response.url == reverse("regnskab")
+
+
+@pytest.mark.django_db
+def test_set_economic_customer_number_can_be_cleared(make_resident: Callable) -> None:
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    target = make_resident(email="target@gahk.dk", economic_customer_number=42)
+    c = Client()
+    c.force_login(acc)
+
+    c.post(reverse("set_economic_customer_number", args=[target.pk]), {"economic_customer_number": ""})
+
+    target.refresh_from_db()
+    assert target.economic_customer_number is None
+
+
+@pytest.mark.django_db
+def test_set_economic_customer_number_requires_regnskab_role(make_resident: Callable) -> None:
+    plain = make_resident(email="plain@gahk.dk")
+    target = make_resident(email="target@gahk.dk")
+    c = Client()
+    c.force_login(plain)
+
+    response = c.post(
+        reverse("set_economic_customer_number", args=[target.pk]), {"economic_customer_number": "42"}
+    )
+
+    assert response.status_code == 403
+    target.refresh_from_db()
+    assert target.economic_customer_number is None
+
+
+@pytest.mark.django_db
+def test_set_economic_customer_number_rejects_get(make_resident: Callable) -> None:
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    target = make_resident(email="target@gahk.dk")
+    c = Client()
+    c.force_login(acc)
+
+    assert c.get(reverse("set_economic_customer_number", args=[target.pk])).status_code == 405
+
+
+@pytest.mark.django_db
 def test_regnskab_workgroup_grants_role(make_resident: Callable) -> None:
     """Being placed in the 'Regnskab' embedsgruppe auto-grants the regnskab role for that month."""
     r = make_resident(email="d@gahk.dk")

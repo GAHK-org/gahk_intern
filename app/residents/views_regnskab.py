@@ -8,12 +8,15 @@ as raw krydser and accounting converts it by their own rules.
 
 from typing import NamedTuple
 
+from django.contrib import messages
 from django.db.models import Q
-from django.http import HttpRequest, HttpResponse
-from django.shortcuts import render
+from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
+from django.shortcuts import get_object_or_404, redirect, render
+from django.utils.http import url_has_allowed_host_and_scheme
 
 from ak.models import AkEntry
 
+from .forms import EconomicCustomerNumberForm
 from .models import Residency, Resident, prev_period
 from .permissions import role_required
 from .views import DA_MONTHS, _parse_period, _period_options
@@ -67,3 +70,25 @@ def overview(request: HttpRequest) -> HttpResponse:
             "results": results,
         },
     )
+
+
+@role_required("regnskab")
+def set_economic_customer_number(request: HttpRequest, pk: int) -> HttpResponse:
+    """Set or clear one resident's e-conomic debtor customerNumber, posted inline from a regnskab
+    lookup/leaver row (_rows.html). Redirects back to wherever the row was shown — the leavers list
+    for a given period, or a free-text lookup — rather than always back to the plain overview."""
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    resident = get_object_or_404(Resident, pk=pk)
+    form = EconomicCustomerNumberForm(request.POST, instance=resident)
+    if form.is_valid():
+        form.save()
+        messages.success(request, f"E-conomic kundenr. for {resident.full_name} er opdateret.")
+    else:
+        messages.error(request, f"Kunne ikke gemme e-conomic kundenr. for {resident.full_name}.")
+
+    nxt = request.POST.get("next", "")
+    if nxt and url_has_allowed_host_and_scheme(nxt, allowed_hosts={request.get_host()}):
+        return redirect(nxt)
+    return redirect("regnskab")

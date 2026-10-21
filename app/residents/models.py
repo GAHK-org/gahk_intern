@@ -116,6 +116,11 @@ class Resident(AbstractBaseUser, PermissionsMixin):
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="proteges"
     )
     fylgje_raw = models.CharField(max_length=255, blank=True)  # original free-text, kept if unresolved
+    # e-conomic's customerNumber for this alumne's debtor account (F-010 regnskab role; alumneregning
+    # automation). Set by regnskab once, used to pull balance/invoices from the e-conomic REST API
+    # instead of the old manual combined-PDF export + name-matching workflow. Unset for most current
+    # residents — only alumni actually billed through e-conomic have one.
+    economic_customer_number = models.PositiveIntegerField(null=True, blank=True, unique=True)
     # profile
     profile_picture = models.FileField(upload_to="profile_pictures/", blank=True)
     # A small square copy of profile_picture, made by the worker (residents.tasks). Every avatar on

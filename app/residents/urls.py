@@ -9,6 +9,11 @@ from .forms import EmailAuthenticationForm, ResidentPasswordResetForm
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
     path("regnskab/", views_regnskab.overview, name="regnskab"),
+    path(
+        "regnskab/<int:pk>/economic-nummer",
+        views_regnskab.set_economic_customer_number,
+        name="set_economic_customer_number",
+    ),
     path("alumneliste/", views.directory, name="directory"),
     path("alumneliste/rows", views.directory_rows, name="directory_rows"),
     path("alumneliste/eksport", views.directory_export, name="directory_export"),
