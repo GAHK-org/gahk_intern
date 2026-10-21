@@ -4,7 +4,8 @@
   <h1>Alumneregning-indstillinger</h1>
   <p class="muted mb-4">
     Beskeden og følgebrevet herunder bruges til alle alumneregninger, der sendes fra
-    <a href="{% url 'regnskab' %}">regnskabssiden</a>.
+    <a href="{% url 'regnskab' %}">regnskabssiden</a>. Følgebrevet sættes ind som de første side(r) i
+    selve regnings-PDF'en — ikke en separat vedhæftning.
   </p>
 
   {% if settings.followup_pdf %}

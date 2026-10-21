@@ -8,8 +8,9 @@ is read directly and deterministically via residents.economic instead of matched
 
 What gets sent: a PDF statement generated locally (residents.statement_pdf — NOT fetched from
 e-conomic; GAHK's account-based setup has nothing like a rendered invoice to fetch, see
-economic.get_account's docstring) showing the period's postings (economic.get_entries_in_range) plus
-the regnskab-edited følgebrev PDF (AlumneregningSettings) if one is set. The balance quoted in the
+economic.get_account's docstring) showing the period's postings (economic.get_entries_in_range), with
+the regnskab-uploaded følgebrev (AlumneregningSettings), if any, merged in as a permanent first page
+(statement_pdf.prepend_followup) — one PDF, not two attachments. The balance quoted in the
 mail is e-conomic's own current balance for the account (economic.get_account) — NOT derived from the
 period's postings: GAHK's real alumni accounts are type "status" (Danish e-conomic UI: "Balance") and
 carry a continuous running balance, so an alumne with nothing posted in the chosen period can still
@@ -132,6 +133,9 @@ def _prepare_one(
         ledger.sync_entries(resident, entries)
 
     pdf = statement_pdf.render(resident, account_number, entries, balance, date_from, date_to)
+    if mail_settings.followup_pdf:
+        with mail_settings.followup_pdf.open("rb") as followup:
+            pdf = statement_pdf.prepend_followup(followup.read(), pdf)
     body = _body(resident, balance, mail_settings.message_template)
     return PreparedStatement(resident, account_number, entries, balance, pdf, body)
 
@@ -152,11 +156,6 @@ def _send_one(
         to=[resident.email],
     )
     email.attach(f"alumneregning-{date_from.isoformat()}.pdf", prepared.pdf, "application/pdf")
-    if mail_settings.followup_pdf:
-        with mail_settings.followup_pdf.open("rb") as followup:
-            email.attach(
-                mail_settings.followup_pdf.name.rsplit("/", 1)[-1], followup.read(), "application/pdf"
-            )
     email.send()
     detail = (
         f"{len(prepared.entries)} posteringer, saldo {_kr(prepared.balance)} kr."

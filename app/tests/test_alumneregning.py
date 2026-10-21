@@ -7,12 +7,15 @@ an alumne with a balance but no new postings still gets billed), not the e-conom
 test_economic.py) or the real API (verified manually during development).
 """
 
+import io
 from collections.abc import Callable
 from datetime import date
 
 import pytest
 from django.core import mail
 from django.core.files.base import ContentFile
+from fpdf import FPDF
+from pypdf import PdfReader
 
 from core.models import Room
 from residents import alumneregning, economic
@@ -36,6 +39,16 @@ def _entry(number: int, date_str: str, amount: float, is_draft: bool = False) ->
         voucher_number=1,
         due_date=None,
     )
+
+
+def _one_page_pdf(text: str) -> bytes:
+    """A minimal real PDF (not just PDF-looking bytes) — pypdf.PdfReader needs an actual parseable
+    document, unlike the old single-attachment test which could get away with arbitrary bytes."""
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("helvetica", "", 12)
+    pdf.cell(0, 10, text)
+    return bytes(pdf.output())
 
 
 def _give_residency(resident: Resident, year: int, month: int, room_index: int) -> None:
@@ -185,25 +198,30 @@ def test_unknown_placeholder_in_edited_template_renders_literally(
 
 
 @pytest.mark.django_db
-def test_attaches_the_followup_pdf_when_one_is_set(
+def test_followup_pdf_is_merged_in_as_the_first_page(
     monkeypatch: pytest.MonkeyPatch, make_resident: Callable
 ) -> None:
     resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
     _give_residency(resident, 2026, 8, room_index=1)
     mail_settings = AlumneregningSettings.objects.create(pk=1)
-    mail_settings.followup_pdf.save("folgebrev.pdf", ContentFile(b"%PDF-followup"), save=True)
+    mail_settings.followup_pdf.save("folgebrev.pdf", ContentFile(_one_page_pdf("Kaere alumner")), save=True)
     monkeypatch.setattr(economic, "get_account", lambda n: _account(0.0))
     monkeypatch.setattr(economic, "get_entries_in_range", lambda n, f, t: [_entry(1, "2026-08-01", 0.0)])
 
     alumneregning.send_alumneregninger(*AUGUST)
 
-    assert len(mail.outbox[0].attachments) == 2
-    names = {a[0] for a in mail.outbox[0].attachments}
-    assert names == {"alumneregning-2026-08-01.pdf", "folgebrev.pdf"}
+    # One PDF, not a separate attachment — the følgebrev's page(s) come first.
+    assert len(mail.outbox[0].attachments) == 1
+    name, content, _mimetype = mail.outbox[0].attachments[0]
+    assert name == "alumneregning-2026-08-01.pdf"
+    merged = PdfReader(io.BytesIO(content))
+    assert len(merged.pages) == 2
+    assert "Kaere alumner" in merged.pages[0].extract_text()
+    assert "Alumneregning" in merged.pages[1].extract_text()
 
 
 @pytest.mark.django_db
-def test_no_followup_pdf_means_one_attachment(
+def test_no_followup_pdf_means_statement_only(
     monkeypatch: pytest.MonkeyPatch, make_resident: Callable
 ) -> None:
     resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
@@ -214,6 +232,8 @@ def test_no_followup_pdf_means_one_attachment(
     alumneregning.send_alumneregninger(*AUGUST)
 
     assert len(mail.outbox[0].attachments) == 1
+    _name, content, _mimetype = mail.outbox[0].attachments[0]
+    assert len(PdfReader(io.BytesIO(content)).pages) == 1
 
 
 @pytest.mark.django_db

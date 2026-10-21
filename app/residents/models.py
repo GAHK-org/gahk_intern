@@ -423,9 +423,12 @@ DEFAULT_ALUMNEREGNING_MESSAGE = (
 
 class AlumneregningSettings(models.Model):
     """The editable-in-the-UI content every alumneregning mail is built from (F-010 regnskab):
-    the message body template and an optional følgebrev (cover letter) PDF attached alongside the
-    e-conomic invoice. Singleton — always pk=1 — because there is exactly one of these at a time,
-    same shape as the legacy system's ID=1 `intern_alumne_emailtonew` row it replaces.
+    the message body template and an optional følgebrev (cover letter) PDF, merged in as the
+    statement PDF's first page (residents.statement_pdf.prepend_followup) rather than sent as a
+    separate attachment. Regnskab expects to swap the følgebrev out roughly every 6 months, hence it
+    being editable here rather than baked into the generated statement. Singleton — always pk=1 —
+    because there is exactly one of these at a time, same shape as the legacy system's ID=1
+    `intern_alumne_emailtonew` row it replaces.
     """
 
     message_template = models.TextField(default=DEFAULT_ALUMNEREGNING_MESSAGE)

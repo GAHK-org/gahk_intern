@@ -140,7 +140,9 @@ class EconomicAccountNumberForm(forms.ModelForm):
 
 class AlumneregningSettingsForm(forms.ModelForm):
     """Regnskab edits the alumneregning mail body and følgebrev PDF in the UI (F-010), replacing what
-    used to be a hardcoded message.txt + a static følgebrev.pdf in the old repo."""
+    used to be a hardcoded message.txt + a static følgebrev.pdf in the old repo. The uploaded PDF gets
+    merged in as the statement's first page (residents.statement_pdf.prepend_followup), not sent as a
+    separate attachment."""
 
     class Meta:
         model = AlumneregningSettings
@@ -158,7 +160,12 @@ class AlumneregningSettingsForm(forms.ModelForm):
                 "Pladsholdere, der udskiftes automatisk: $FORNAVN, $SALDO_LINE "
                 "(sætningen om gæld/tilgodehavende), $REG_NR, $KONTO_NR."
             ),
-            "followup_pdf": "Vedhæftes sammen med regningen til hver alumne. Lad stå tom for ingen følgebrev.",
+            "followup_pdf": (
+                "Valgfrit følgebrev, sættes ind som de(n) første side(r) i selve regnings-PDF'en til "
+                "hver alumne — ikke en separat vedhæftning. Lad stå tom for ingen følgebrev. Opdateres "
+                'typisk ca. hvert halve år. "How to aflæse din alumneregning" står altid med bagerst i '
+                "PDF'en, uanset om der er et følgebrev."
+            ),
         }
 
     def clean_followup_pdf(self) -> object:

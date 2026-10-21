@@ -9,15 +9,22 @@ each with a running subtotal, plus the account's actual current balance (not der
 postings shown: an alumne can have a nonzero balance with nothing posted in the given period, carried
 forward from before). Draft lines are marked "(kladde)" — unlike a posted entry, e-conomic's own
 draft can still be edited or deleted before it is formally booked.
+
+prepend_followup() then merges in the regnskab-uploaded følgebrev (AlumneregningSettings), if any, as a
+permanent first page ahead of the rendered statement — see residents.alumneregning for where that's
+called from.
 """
 
 from __future__ import annotations
 
+import io
 from datetime import date
 from decimal import Decimal
 
+from django.conf import settings
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
+from pypdf import PdfReader, PdfWriter
 
 from . import economic
 from .models import Resident
@@ -25,6 +32,19 @@ from .models import Resident
 
 def _kr(amount: Decimal) -> str:
     return f"{amount:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def prepend_followup(followup_pdf: bytes, statement_pdf: bytes) -> bytes:
+    """Merges the regnskab-uploaded følgebrev in front of the generated statement, producing one PDF —
+    the følgebrev is a permanent first page (updated roughly every 6 months by regnskab), not a second
+    mail attachment, so a recipient sees it before the figures without having to open a second file."""
+    writer = PdfWriter()
+    for source in (followup_pdf, statement_pdf):
+        for page in PdfReader(io.BytesIO(source)).pages:
+            writer.add_page(page)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
 
 
 def render(
@@ -79,4 +99,43 @@ def render(
     pdf.set_font("helvetica", "B", 11)
     pdf.cell(0, 8, f"Saldo (aktuel kontosaldo): {_kr(balance)} kr", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
+    _render_how_to_read(pdf)
+
     return bytes(pdf.output())
+
+
+def _render_how_to_read(pdf: FPDF) -> None:
+    """The permanent "how to read your alumneregning" explainer (carried over verbatim from the old
+    følgebrev.pdf's page 3). Baked into every statement rather than left to the optional, freely-edited
+    følgebrev upload, so it's never missing just because nobody attached a følgebrev for a given send."""
+    pdf.ln(10)
+    pdf.set_font("helvetica", "B", 12)
+    pdf.cell(0, 8, "HOW TO AFLÆSE DIN ALUMNEREGNING", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+    pdf.set_font("helvetica", "", 10)
+    pdf.multi_cell(
+        0,
+        6,
+        'Det nederste tal i søjlen til højre under "saldo" er din gæld til kollegiet, aka hvor '
+        "meget du skylder fællesskabet. Hvis beløbet er negativt skylder kollegiet dig penge - "
+        "GAHK står i gæld til dig.",
+        new_x=XPos.LMARGIN,
+        new_y=YPos.NEXT,
+    )
+    pdf.ln(3)
+    pdf.cell(0, 6, "Betalingen sendes til:", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 6, f"Reg nr: {settings.ALUMNEREGNING_BANK_REG}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 6, f"Konto nr: {settings.ALUMNEREGNING_BANK_ACCOUNT}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.ln(3)
+    pdf.cell(0, 6, "Ved overførsel, husk:", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 6, "- Skriv dit navn", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 6, "- Overfør i hele kroner", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 6, "- Din gæld må ikke overstige 600 kroner.", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.ln(3)
+    pdf.cell(
+        0,
+        6,
+        f"Hvis du har spørgsmål, så kontakt din søde regnskabsgruppe på mail: {settings.ALUMNEREGNING_FROM_EMAIL}",
+        new_x=XPos.LMARGIN,
+        new_y=YPos.NEXT,
+    )
