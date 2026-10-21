@@ -16,6 +16,7 @@ from django.db.models import Q, QuerySet
 from django.utils import timezone
 from zipstream import ZIP_STORED, ZipStream
 
+from . import direct_upload
 from .dashboard import measure_storage
 from .models import (
     ALBUM_DOWNLOAD_RETENTION,
@@ -515,6 +516,27 @@ def _discard_archives(imports: "QuerySet[AlbumImport]") -> None:
     for album_import in imports.exclude(archive=""):
         album_import.archive.delete(save=False)
         album_import.save(update_fields=["archive"])
+
+
+# How long a finished upload may wait for its import before it counts as abandoned: past the 24 h a
+# ticket is good for (direct_upload.TTL), so no upload that could still be submitted is taken.
+ORPHANED_IMPORT_AFTER = timedelta(days=2)
+
+
+@shared_task
+def purge_orphaned_import_archives() -> int:
+    """Daily: delete uploaded import ZIPs no import refers to (direct_upload.purge_orphaned_imports).
+
+    An import's own ZIP is deleted when it finishes (process_album_import) or a day after it fails
+    (fail_stalled_imports); this is for the ones that never became an import at all.
+    """
+    referenced = set(AlbumImport.objects.exclude(archive="").values_list("archive", flat=True))
+    deleted = direct_upload.purge_orphaned_imports(
+        referenced, older_than=timezone.now() - ORPHANED_IMPORT_AFTER
+    )
+    for key in deleted:
+        logger.info("Deleted %s, which no import refers to.", key)
+    return len(deleted)
 
 
 @shared_task
