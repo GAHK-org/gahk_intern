@@ -36,6 +36,7 @@ Features decide **who** is told and **with what wording**; they call
 | Begivenheder | `events.personal` — RSVP deadline reminders, moved up from the venteliste | Høj | yes |
 | Begivenheder | `events.comments` — comments on events you host | Normal | yes |
 | Reparationer | `repairs` — new and handed-over tasks for your group | Normal | yes |
+| Køkkenvagter | `kitchen` — shifts for sale and unmanned shifts (see kitchen-duty.md) | Normal | yes |
 | GAHKFlix | `gahkflix.new` — a video is published | Normal | yes |
 | GAHKFlix | `gahkflix.cast` — you are credited in a published video | Normal | yes |
 | GAHKFlix | `gahkflix.uploads` — your upload is processed or failed; your request was decided; your unpublished drafts | Normal | yes |
@@ -116,6 +117,9 @@ they would get a 403 on opening. Acting on your own content never notifies you.
 - **Reparationer** → `repairs` to current holders of the responsible role (Viceværterne for a new
   report or one sent back, Reppergruppen for one handed over), plus administrators and superusers.
   The reporter is not told about their own new report.
+- **Køkkenvagter** → `kitchen`. A shift put for sale within 7 days → this month's residents except
+  the seller, gone when the shift starts. Unmanned shifts → this month's residents (within 24 hours)
+  or those with a negative balance (72 hours; under -10 weekly, 7 days), gone when the last starts.
 - **GAHKFlix** → `gahkflix.new` to everyone who can open GAHKFlix, except the uploader;
   `gahkflix.cast` to residents newly credited in a published video; `gahkflix.uploads` to the
   uploader and to whoever asked for a change; `gahkflix.approvals` to the administrators and

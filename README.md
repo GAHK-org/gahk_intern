@@ -29,6 +29,8 @@ kan køres igen når som helst (`--fresh` rydder først). Logins (kodeord `demo1
 | `ak@gahk.dk` | AK-rolle |
 | `oel@gahk.dk` | Ølkælder-rolle |
 | `beboer@gahk.dk` | almindelig beboer (kan bruge opslagstavlen, men ikke Den Hurtige endnu) |
+| `koekken@gahk.dk` | Køkkengruppen-rolle (køkkenvagternes administration og oversigt) |
+| `inspektion@gahk.dk` | Inspektionen-rolle (ser køkkenoversigten, men administrerer intet der) |
 
 ## Test
 

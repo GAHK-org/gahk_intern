@@ -2540,4 +2540,232 @@
   .pad-when { white-space:nowrap; font-variant-numeric:tabular-nums; }
   .pad-pages { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 18px; border-top:1px solid var(--border); }
   .pad-total td { border-top:1px solid var(--border-strong); }
+
+  /* ---- Køkkenvagter: the month sheet, modelled on the paper plan on the kitchen board ---- */
+  .duty-head { display:flex; flex-wrap:wrap; align-items:center; gap:10px 18px; margin:28px 0 12px; }
+  .duty-head h2 { margin:0; }
+  .duty-nav { display:flex; align-items:center; gap:8px; }
+  .duty-nav strong { text-align:center; font-size:15px; }
+  .duty-nav .btn { padding:4px 12px; }
+  .duty-legend { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 0 auto; }
+  .duty-legend .duty-slot { flex:none; min-height:0; padding:3px 9px; font-size:12px; font-weight:600;
+    pointer-events:none; }
+
+  /* Scrolls with the page. .main is overflow:auto, which would capture the sticky header, so the
+     duty pages release it; only narrow screens get a sideways scroller (and lose the sticky head). */
+  .duty-page .main { overflow:visible; }
+  .duty-scroll { border:1px solid var(--border-strong); border-radius:var(--radius);
+    background:var(--surface); box-shadow:var(--shadow-sm); }
+  @media (max-width: 1100px) { .duty-scroll { overflow-x:auto; } }
+  .duty-grid { width:100%; min-width:760px; border-collapse:separate; border-spacing:0; font-size:13px; }
+  .duty-grid thead th { position:sticky; top:60px; z-index:2; background:var(--green); color:#fff;
+    font-size:12.5px; font-weight:600; letter-spacing:.02em; padding:9px 8px; text-align:center;
+    white-space:nowrap; }
+  .duty-grid thead th:first-child { border-top-left-radius:calc(var(--radius) - 1px); }
+  .duty-grid thead th:last-child { border-top-right-radius:calc(var(--radius) - 1px); }
+  .duty-grid td, .duty-grid tbody th { padding:4px 5px; border-bottom:1px solid var(--border);
+    border-left:1px solid var(--border); vertical-align:middle; }
+  .duty-grid tbody tr:last-child > * { border-bottom:0; }
+
+  .duty-date { width:5.5rem; text-align:left !important; white-space:nowrap; font-weight:600;
+    border-left:0 !important; padding-left:12px !important; }
+  .duty-wd { display:inline-block; width:2.2em; color:var(--muted); font-weight:500; text-transform:capitalize; }
+
+  .duty-grid tr.is-weekend > * { background:var(--sunken); }
+  .duty-grid tr.is-today > th { box-shadow:inset 4px 0 0 var(--brass); }
+  .duty-grid tr.is-today > * { background:var(--warn-bg); }
+  .duty-grid tr:target > * { background:var(--green-050); }
+  .duty-grid tr.duty-month > th { padding:10px 12px 6px; text-align:left; font-size:14px; font-weight:700;
+    color:var(--green-700); background:var(--green-050); border-left:0; }
+  .duty-grid tr.duty-more > td { padding:14px; text-align:center; border-left:0; color:var(--muted); }
+  /* The 30-day line: above it a taken shift can only be sold, below it you may simply unenroll. */
+  .duty-grid tr.duty-ruler > td { padding:0; border-left:0; border-bottom:0; border-top:2px dashed var(--brass);
+    background:var(--warn-bg); }
+  .duty-ruler span { display:inline-block; padding:4px 12px; font-size:12px; font-weight:600; color:var(--brass-ink); }
+  .duty-ruler span + span { float:right; }
+
+  /* A slot that does not exist on that weekday — the grey boxes on the paper sheet. */
+  .duty-na { background:repeating-linear-gradient(135deg, var(--sunken) 0 6px, var(--border) 6px 7px) !important; }
+
+  .duty-slots { display:flex; gap:4px; }
+  .duty-slot { flex:1 1 0; min-width:0; min-height:28px; display:flex; align-items:stretch;
+    border:1px solid var(--border-strong); border-radius:6px; overflow:hidden; background:var(--surface);
+    color:var(--ink); text-decoration:none; font:inherit; font-size:13px; padding:0; cursor:pointer; }
+  .duty-slot:hover { border-color:var(--green); }
+  .duty-name { flex:1; min-width:0; padding:4px 7px; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; text-align:left; font-weight:600; }
+  /* The points box at the right of every slot, as on the paper. */
+  .duty-pts { flex:none; display:flex; align-items:center; justify-content:center; min-width:24px;
+    padding:0 5px; border-left:1px solid var(--border-strong); background:var(--surface-2);
+    color:var(--muted); font-size:12px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .duty-slot.is-mine { background:var(--green-100); border-color:var(--green); color:var(--green-700); }
+  .duty-slot.is-mine .duty-pts { background:var(--green); border-color:var(--green); color:#fff; }
+  .duty-slot.is-sale { background:var(--warn-bg); border-color:var(--brass); color:var(--brass-ink); }
+  .duty-slot.is-sale .duty-pts { border-color:var(--brass); }
+  .duty-slot.is-absent .duty-name { color:var(--neg); text-decoration:line-through; }
+  .duty-slot.is-free { border-style:dashed; background:transparent; color:var(--muted); }
+  .duty-slot.is-free .duty-name { font-weight:500; }
+  .duty-slot.is-free:hover { background:var(--green-050); color:var(--green-700); border-style:solid; }
+  /* Free spots that are running out of time: light red within 72 hours, red within 24. */
+  .duty-slot.is-free.is-soon { border-style:solid; border-color:#E3A9A3; background:var(--neg-bg); color:var(--neg); }
+  .duty-slot.is-free.is-soon .duty-pts { border-color:#E3A9A3; background:#FBF1EF; color:var(--neg); }
+  .duty-slot.is-free.is-critical { border-style:solid; border-color:var(--neg); background:var(--neg); color:#fff; }
+  .duty-slot.is-free.is-critical .duty-name { font-weight:600; }
+  .duty-slot.is-free.is-critical .duty-pts { border-color:rgba(255,255,255,.4); background:#9A2F2F; color:#fff; }
+  .duty-slot.is-free.is-soon:hover, .duty-slot.is-free.is-critical:hover { background:var(--green-050);
+    border-color:var(--green); color:var(--green-700); }
+  .duty-slot.is-free.is-soon:hover .duty-pts, .duty-slot.is-free.is-critical:hover .duty-pts {
+    border-color:var(--green); background:var(--surface-2); color:var(--muted); }
+  .duty-slot.is-empty { cursor:default; border-style:dashed; background:transparent; }
+  /* Extra spot of a multi-spot holder: shown as theirs, but taken over on click like a free spot. */
+  .duty-slot.is-override { background:#E6EEF8; border-color:#4A78B0; color:#24508A; }
+  .duty-slot.is-override .duty-pts { border-color:#4A78B0; background:#D5E2F3; color:#24508A; }
+  .duty-take-label { display:none; }
+  .duty-slot.is-override:hover, .duty-slot.is-override:focus-visible { background:var(--green-050);
+    color:var(--green-700); border-color:var(--green); }
+  .duty-slot.is-override:hover .duty-pts, .duty-slot.is-override:focus-visible .duty-pts {
+    border-color:var(--green); background:var(--surface-2); color:var(--muted); }
+  .duty-slot.is-override:hover .duty-name, .duty-slot.is-override:focus-visible .duty-name { display:none; }
+  .duty-slot.is-override:hover .duty-take-label, .duty-slot.is-override:focus-visible .duty-take-label {
+    display:block; font-weight:500; }
+  .duty-take { display:contents; }
+
+  .duty-cancelled { display:block; padding:5px 7px; border-radius:6px; text-align:center;
+    background:var(--neg-bg); color:var(--neg); font-size:12px; font-weight:600; text-decoration:none; }
+  .duty-extra { min-width:11rem; }
+  .duty-special + .duty-special { margin-top:4px; }
+  .duty-special-title { display:block; margin-bottom:2px; font-size:12px; font-weight:600;
+    color:var(--ink); text-decoration:none; }
+
+  .duty-dialog { width:min(440px, calc(100vw - 32px)); margin:auto; padding:22px 24px; border:0;
+    border-radius:var(--radius); background:var(--surface); color:var(--ink); box-shadow:0 20px 50px rgb(0 0 0 / .3); }
+  .duty-dialog::backdrop { background:rgba(15, 30, 22, .45); }
+  .duty-dialog h2 { margin:0 0 10px; font-size:20px; }
+  .duty-dialog [data-duty-dialog-text] { font-weight:600; }
+  .duty-dialog [data-duty-dialog-spots]:empty { display:none; }
+  .duty-dialog-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:18px; }
+
+  /* ---- Køkkenvagter: the balance forecast on Min køkkenkonto ----
+     Zone colours are read by frontend/src/kitchen-forecast.ts from these properties, so the chart's
+     bands and this legend cannot drift apart. Under -6 is the alarm zone: deeper red and hatched. */
+  .forecast, .duty-dash { --zone-good:#0CA30C; --zone-warn:#E3A008; --zone-neg:#D03B3B; --zone-alarm:#8E1B1B;
+    --zone-good-fill:rgba(12,163,12,.10); --zone-warn-fill:rgba(250,178,25,.24);
+    --zone-neg-fill:rgba(208,59,59,.12); --zone-alarm-fill:rgba(208,59,59,.30);
+    --zone-alarm-hatch:rgba(142,27,27,.45); }
+  .forecast h2 { margin:0 0 4px; }
+  .forecast > p { margin:0 0 14px; }
+  .forecast-alarm { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px 16px;
+    margin:0 0 16px; padding:12px 16px; border-radius:var(--radius-sm); background:var(--zone-alarm); color:#fff;
+    box-shadow:0 0 0 3px rgba(208,59,59,.25); }
+  .forecast-alarm .btn { background:#fff; color:var(--zone-alarm); font-weight:600; }
+  .forecast-alarm .btn:hover { background:var(--neg-bg); color:var(--zone-alarm); }
+  .chip-alarm { background:var(--zone-alarm, #8E1B1B); color:#fff; border-color:var(--zone-alarm, #8E1B1B); }
+
+  .forecast-stats { display:flex; flex-wrap:wrap; gap:8px 32px; margin:0 0 14px; }
+  .forecast-stats dt { font-size:12.5px; color:var(--muted); }
+  .forecast-stats dd { margin:2px 0 0; display:flex; align-items:center; gap:8px; }
+  .forecast-stats strong { font-size:24px; line-height:1.1; font-variant-numeric:tabular-nums; }
+
+  .forecast-legend { display:flex; flex-wrap:wrap; gap:4px 16px; margin:0 0 6px; padding:0; list-style:none;
+    font-size:12.5px; color:var(--muted); }
+  .forecast-legend li { display:flex; align-items:center; gap:6px; }
+  .forecast-swatch { width:14px; height:10px; border-radius:2px; }
+  .forecast-swatch.is-good { background:var(--zone-good-fill); box-shadow:inset 0 0 0 1px var(--zone-good); }
+  .forecast-swatch.is-warn { background:var(--zone-warn-fill); box-shadow:inset 0 0 0 1px var(--zone-warn); }
+  .forecast-swatch.is-neg { background:var(--zone-neg-fill); box-shadow:inset 0 0 0 1px var(--zone-neg); }
+  .forecast-swatch.is-alarm { box-shadow:inset 0 0 0 1px var(--zone-alarm);
+    background:repeating-linear-gradient(135deg, var(--zone-alarm-hatch) 0 2px, var(--zone-alarm-fill) 2px 5px); }
+
+  /* Height includes the x-axis band, so the month labels are never cut off. */
+  .forecast-chart { position:relative; height:280px; }
+  @media (max-width: 640px) { .forecast-chart { height:230px; } }
+
+  .forecast-table { margin-top:12px; }
+  .forecast-table summary { cursor:pointer; color:var(--green-700); font-weight:600; font-size:14px; }
+  .forecast-table table { width:100%; margin-top:8px; border-collapse:collapse; font-size:14px; }
+  .forecast-table th, .forecast-table td { padding:6px 8px; text-align:left; }
+  .forecast-table td:nth-child(3), .forecast-table td:nth-child(4),
+  .forecast-table th:nth-child(3), .forecast-table th:nth-child(4) { text-align:right; font-variant-numeric:tabular-nums; }
+  .zone-good { color:var(--pos); } .zone-warn { color:var(--brass-ink); }
+  .zone-neg { color:var(--neg); } .zone-alarm { color:#fff; background:var(--zone-alarm); padding:1px 6px; border-radius:4px; }
+
+  /* ---- Køkkenvagter: the overview for Køkkengruppen and Inspektionen ---- */
+  .duty-tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); gap:12px; margin:0 0 4px; }
+  .duty-tile { display:flex; flex-direction:column; gap:2px; padding:14px 16px; border:1px solid var(--border);
+    border-radius:var(--radius); background:var(--surface); box-shadow:var(--shadow-sm); color:var(--ink); text-decoration:none; }
+  a.duty-tile:hover { border-color:var(--green); color:var(--ink); }
+  .duty-tile strong { font-size:30px; line-height:1.15; font-variant-numeric:tabular-nums; }
+  .duty-tile-label { font-size:13px; font-weight:600; color:var(--muted); }
+  .duty-tile-note { font-size:12.5px; color:var(--muted); }
+  .duty-tile.is-neg { background:var(--neg-bg); border-color:#e7c7c3; }
+  .duty-tile.is-neg strong { color:var(--neg); }
+  .duty-tile.is-alarm { background:var(--zone-alarm); border-color:var(--zone-alarm); color:#fff; }
+  .duty-tile.is-alarm .duty-tile-label, .duty-tile.is-alarm .duty-tile-note { color:rgba(255,255,255,.88); }
+
+  .duty-dist { display:grid; grid-template-columns:7rem 1fr; align-items:center; gap:10px; margin:10px 0; }
+  .duty-dist-label { font-size:13px; font-weight:600; color:var(--muted); }
+  .duty-dist-bar { display:flex; gap:2px; min-height:26px; }
+  .duty-dist-seg { display:flex; align-items:center; justify-content:center; min-width:24px; border-radius:4px;
+    font-size:12px; font-weight:700; font-variant-numeric:tabular-nums; color:var(--ink); }
+  .duty-dist-seg.is-good { background:var(--zone-good-fill); box-shadow:inset 0 0 0 1px var(--zone-good); }
+  .duty-dist-seg.is-warn { background:var(--zone-warn-fill); box-shadow:inset 0 0 0 1px var(--zone-warn); }
+  .duty-dist-seg.is-neg { background:var(--zone-neg-fill); box-shadow:inset 0 0 0 1px var(--zone-neg); }
+  .duty-dist-seg.is-alarm { background:var(--zone-alarm); color:#fff; }
+  .duty-dist-note { margin:12px 0 0; font-size:13px; }
+
+  .duty-table-scroll { overflow-x:auto; }
+  .duty-table { width:100%; border-collapse:collapse; font-size:14px; }
+  .duty-table th, .duty-table td { padding:6px 10px; text-align:left; vertical-align:middle; white-space:nowrap; }
+  .duty-table .num { text-align:right; font-variant-numeric:tabular-nums; }
+  @media (max-width: 640px) { .duty-table .col-spark { display:none; } }
+
+  .duty-spark { display:block; overflow:visible; }
+  /* Quieter than the big chart: a table of them must read as rows of lines, not of colour. */
+  .spark-band { opacity:.7; }
+  .spark-band.is-good { fill:var(--zone-good-fill); }
+  .spark-band.is-warn { fill:var(--zone-warn-fill); }
+  .spark-band.is-neg { fill:var(--zone-neg-fill); }
+  .spark-band.is-alarm { fill:var(--zone-alarm-fill); }
+  .spark-check { stroke:var(--muted); stroke-width:1; opacity:.55; }
+  .spark-line { fill:none; stroke:var(--ink); stroke-width:1.5; stroke-linejoin:round; }
+  .spark-end { stroke:var(--surface); stroke-width:1.5; }
+  .spark-end.is-good { fill:var(--zone-good); } .spark-end.is-warn { fill:var(--zone-warn); }
+  .spark-end.is-neg { fill:var(--zone-neg); } .spark-end.is-alarm { fill:var(--zone-alarm); }
+
+  .duty-verdict { display:inline-flex; align-items:center; gap:5px; padding:2px 10px; border-radius:999px;
+    border:1px solid transparent; font-size:12.5px; font-weight:600; }
+  .duty-verdict .ni { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:2.5; }
+  .duty-verdict.is-fine { background:var(--green-050); border-color:var(--green-100); color:var(--pos); }
+  .duty-verdict.is-neg { background:var(--neg-bg); border-color:#e7c7c3; color:var(--neg); }
+  .duty-verdict.is-alarm { background:var(--zone-alarm); color:#fff; }
+
+  /* Firm vs tentative. The 30 days ahead count only shifts that can no longer be unenrolled from;
+     the end of the calendar also counts ones that can, so everything about it is drawn outlined
+     and dashed instead of filled: same zone colours, less certainty. */
+  .duty-th-note { display:block; font-size:11px; font-weight:500; color:var(--muted); letter-spacing:.02em; }
+  .forecast-stats .duty-th-note { display:inline; margin-left:4px; }
+  .duty-firm-note { margin:8px 2px 0; font-size:13px; }
+  .forecast-firm-note { margin:-6px 0 14px; font-size:13px; }
+  .duty-dist-label small { display:block; font-size:11px; font-weight:500; }
+
+  .duty-tile.is-tentative { border-style:dashed; box-shadow:none; }
+  .duty-tile.is-tentative.is-neg { background:var(--surface); border-color:var(--neg); }
+  .duty-tile.is-tentative.is-alarm { background:var(--surface); border-color:var(--zone-alarm); color:var(--ink); }
+  .duty-tile.is-tentative.is-alarm strong { color:var(--zone-alarm); }
+  .duty-tile.is-tentative.is-alarm .duty-tile-label, .duty-tile.is-tentative.is-alarm .duty-tile-note { color:var(--muted); }
+
+  .duty-dist.is-tentative .duty-dist-seg { box-shadow:none; border:1px dashed; background:transparent; }
+  .duty-dist.is-tentative .duty-dist-seg.is-good { border-color:var(--zone-good); }
+  .duty-dist.is-tentative .duty-dist-seg.is-warn { border-color:var(--zone-warn); }
+  .duty-dist.is-tentative .duty-dist-seg.is-neg { border-color:var(--zone-neg); }
+  .duty-dist.is-tentative .duty-dist-seg.is-alarm { border-color:var(--zone-alarm); background:var(--zone-neg-fill); color:var(--zone-alarm); }
+
+  .duty-verdict.is-tentative { background:transparent; border-style:dashed; }
+  .duty-verdict.is-tentative.is-fine { border-color:var(--pos); }
+  .duty-verdict.is-tentative.is-neg { border-color:var(--neg); }
+  .duty-verdict.is-tentative.is-alarm { border-color:var(--zone-alarm); color:var(--zone-alarm); }
+  .chip.is-tentative { background:transparent; border-style:dashed; }
+  .chip-alarm.is-tentative { color:var(--zone-alarm, #8E1B1B); }
+  .zone-alarm.is-tentative { background:transparent; color:var(--zone-alarm); border:1px dashed var(--zone-alarm); }
+  .spark-line.is-tentative { stroke-dasharray:3 2.5; }
 }

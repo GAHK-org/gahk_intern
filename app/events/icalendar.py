@@ -179,7 +179,8 @@ def one_event(event: Event) -> str:
     return _wrap(_vevent(event))
 
 
-def feed(events: list[tuple[Event, bool]], *, name: str) -> str:
-    """A resident's subscribable calendar. `events` is (event, is_waitlisted) in start order."""
+def feed(events: list[tuple[Event, bool]], *, name: str, extra: list[str] | None = None) -> str:
+    """A resident's subscribable calendar. `events` is (event, is_waitlisted) in start order;
+    `extra` is already-built VEVENT lines from other features (kitchen shifts)."""
     body = [line for event, waiting in events for line in _vevent(event, tentative=waiting)]
-    return _wrap(body, name=name)
+    return _wrap([*body, *(extra or [])], name=name)

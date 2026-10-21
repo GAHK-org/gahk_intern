@@ -26,6 +26,7 @@ from django.views.decorators.http import require_GET, require_POST
 from core.clock import current_date, current_datetime
 from core.danish import MONTHS, WEEKDAYS_SHORT
 from core.uploads import attached_image
+from kitchen import icalendar as kitchen_icalendar
 from residents import birthdays as birthdays_mod
 from residents.models import Resident
 from residents.permissions import current_resident
@@ -635,7 +636,9 @@ def calendar_feed(request: HttpRequest, token: str) -> HttpResponse:
     )
     entries = [(event, _my_state(event, resident) == "venteliste") for event in mine]
 
-    body = icalendar.feed(entries, name="GAHK – mine begivenheder")
+    body = icalendar.feed(
+        entries, name="GAHK – mine begivenheder", extra=kitchen_icalendar.vevents_for(resident.pk, since)
+    )
     response = HttpResponse(body, content_type="text/calendar; charset=utf-8")
     # inline, NOT attachment: a subscribing client just GETs this, and `attachment` would make a
     # resident who pastes the URL into a browser download a file instead of seeing it work.

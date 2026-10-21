@@ -1,0 +1,42 @@
+{% for row in rows %}
+  {% if row.month_label %}
+    <tr class="duty-month"><th colspan="{{ colspan }}" scope="rowgroup">{{ row.month_label }}</th></tr>
+  {% endif %}
+  {% if row.unenroll_cutoff %}
+    <tr class="duty-ruler">
+      <td colspan="{{ colspan }}">
+        <span>↑ Kan kun sælges</span>
+        <span>Vagter fra {{ row.unenroll_cutoff|date:"j/n \k\l. H:i" }} kan du melde fra uden at sælge ↓</span>
+      </td>
+    </tr>
+  {% endif %}
+  <tr id="dag-{{ row.date|date:'Y-m-d' }}" class="{% if row.is_weekend %}is-weekend{% endif %}{% if row.is_today %} is-today{% endif %}">
+    <th class="duty-date" scope="row">
+      <span class="duty-wd">{{ row.weekday }}</span> {{ row.date|date:"j/n" }}
+    </th>
+    {% for shift in row.cells %}
+      {% if shift %}
+        {% include "kitchen/_duty_cell.html" %}
+      {% else %}
+        <td class="duty-na"></td>
+      {% endif %}
+    {% endfor %}
+    <td class="duty-extra">
+      {% for shift in row.extra %}
+        <div class="duty-special">
+          <a href="{% url 'kitchen:shift' shift.pk %}" class="duty-special-title">{{ shift.title }} <span class="muted">{{ shift.starts_at|time:"G:i" }}–{{ shift.ends_at|time:"G:i" }}</span></a>
+          {% include "kitchen/_duty_slots.html" %}
+        </div>
+      {% endfor %}
+    </td>
+  </tr>
+{% endfor %}
+{% if more_from %}
+  {% comment %} Replaced by the next 30 days when scrolled into view; the link is the no-JS fallback. {% endcomment %}
+  <tr class="duty-more" hx-get="{% url 'kitchen:sheet_rows' %}?fra={{ more_from|date:'Y-m-d' }}"
+      hx-trigger="intersect once" hx-swap="outerHTML">
+    <td colspan="{{ colspan }}">
+      <a href="{% url 'kitchen:market' %}?til={{ more_from|date:'Y-m-d' }}#dag-{{ more_from|date:'Y-m-d' }}">Vis flere dage…</a>
+    </td>
+  </tr>
+{% endif %}

@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}{{ shift.title }} - Køkkenvagter{% endblock %}
+{% block content_width %}max-w-2xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Køkkenvagter</p>
+      <h1>{{ shift.title }}</h1>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-secondary" href="{{ back_url }}">‹ Til kalenderen</a>
+    </div>
+  </div>
+
+  <div class="card-flat card-pad mb-4">
+    <p><strong>{{ shift.starts_at|date:"l j. F Y, H:i" }}–{{ shift.ends_at|date:"H:i" }}</strong></p>
+    <p>{{ shift.points_per_spot }} point pr. plads{% if shift.bonus_points %} + {{ shift.bonus_points }} bonuspoint{% endif %} · {{ shift.spots }} plads{{ shift.spots|pluralize:"er" }} · {{ free }} ledig{{ free|pluralize:"e" }}</p>
+    {% if shift.kind == "special" and shift.description %}<p class="chip chip-quiet">Særlig vagt</p>{% endif %}
+    {% if shift.is_disabled %}<p class="chip chip-quiet">Aflyst: {{ shift.disabled_reason }}</p>{% endif %}
+    {% if shift.completed_at %}<p class="muted">Point uddelt {{ shift.completed_at|date:"j. M Y H:i" }}.</p>{% endif %}
+
+    {% if can_enroll %}
+      <form method="post" action="{% url 'kitchen:enroll' shift.pk %}" class="mt-3"
+            data-duty-confirm="{{ shift.title }}, {{ shift.starts_at|date:'l j. F' }} kl. {{ shift.starts_at|time:'H:i' }}–{{ shift.ends_at|time:'H:i' }} · {{ shift.points_per_spot_total }} point pr. plads">
+        {% csrf_token %}
+        {% if max_spots > 1 %}
+          <label>Antal pladser</label>
+          <input type="number" name="spots" min="1" max="{{ max_spots }}" value="1">
+        {% else %}
+          <input type="hidden" name="spots" value="1">
+        {% endif %}
+        <button type="submit">{% if mine %}Tag flere pladser{% else %}Skriv mig på{% endif %}</button>
+        {% if not free %}<p class="muted text-sm">Vagten er fuld, men du kan overtage en plads fra en, der har taget flere.</p>{% endif %}
+      </form>
+      {% include "kitchen/_confirm_dialog.html" %}
+    {% endif %}
+  </div>
+
+  <h2>Tilmeldte</h2>
+  <div class="board-list mb-4">
+    {% for a in assignments %}
+      <div class="card-flat card-pad">
+        <strong>{{ a.resident.full_name }}</strong>{% if a.spots > 1 %} · {{ a.spots }} pladser{% endif %}
+        {% if a.awarded_points %} · {{ a.awarded_points }} point{% endif %}
+        {% if a.for_sale %}<span class="chip chip-quiet">Til salg{% if a.sale_bonus %} (+{{ a.sale_bonus }}){% endif %}</span>{% endif %}
+        {% if a.is_absent %}<span class="chip chip-quiet">Udeblevet</span>{% endif %}
+
+        {% if a.resident_id == request.user.pk and not shift.has_started %}
+          <div class="mt-3">
+            {% if a.can_unenroll %}
+              <form method="post" action="{% url 'kitchen:unenroll' a.pk %}" style="display:inline">
+                {% csrf_token %}<button type="submit">Meld fra</button>
+              </form>
+              {% if a.regret_until %}<span class="muted text-sm">Du kan fortryde indtil kl. {{ a.regret_until|time:"H:i" }}.</span>{% endif %}
+            {% endif %}
+            {% if a.for_sale %}
+              <form method="post" action="{% url 'kitchen:cancel_sale' a.pk %}" style="display:inline">
+                {% csrf_token %}<button type="submit">Tag af markedet</button>
+              </form>
+            {% else %}
+              <form method="post" action="{% url 'kitchen:sell' a.pk %}">
+                {% csrf_token %}
+                <label>Ekstra point du betaler køberen (0–{{ max_sale_bonus }})</label>
+                <input type="number" name="bonus" min="0" max="{{ max_sale_bonus }}" value="0">
+                <button type="submit">Sæt til salg</button>
+              </form>
+              {% if not a.can_unenroll %}<p class="muted text-sm">Mindre end {{ free_unenroll_days }} dage til vagten: du kan ikke melde fra, men du kan sætte den til salg.</p>{% endif %}
+            {% endif %}
+          </div>
+        {% elif a.for_sale and not shift.has_started %}
+          <form method="post" action="{% url 'kitchen:buy' a.pk %}" class="mt-3">
+            {% csrf_token %}<button type="submit">Køb vagten</button>
+          </form>
+        {% endif %}
+
+        {% if a.can_mark_absent %}
+          <form method="post" action="{% url 'kitchen:mark_absent' a.pk %}" class="mt-3"
+                onsubmit="return confirm('Registrér {{ a.resident.full_name|escapejs }} som udeblevet?');">
+            {% csrf_token %}
+            <label>Bøde (standard: {{ a.awarded_points }})</label>
+            <input type="number" name="fine" min="0" placeholder="{{ a.awarded_points }}">
+            <button type="submit" class="kanban-danger">Registrér udeblivelse</button>
+          </form>
+        {% endif %}
+      </div>
+    {% empty %}
+      <p class="muted">Ingen har taget vagten endnu.</p>
+    {% endfor %}
+  </div>
+
+  {% if is_admin %}
+    <h2>Administration</h2>
+    <div class="card-flat card-pad mb-4">
+      {% if not shift.completed_at %}
+        <form method="post" action="{% url 'kitchen:set_bonus' shift.pk %}">
+          {% csrf_token %}
+          <label>Bonuspoint pr. plads</label>
+          <input type="number" name="bonus" min="0" value="{{ shift.bonus_points }}">
+          <button type="submit">Gem bonus</button>
+        </form>
+      {% endif %}
+      {% if not shift.has_started %}
+        {% if shift.is_disabled %}
+          <form method="post" action="{% url 'kitchen:enable' shift.pk %}" class="mt-3">
+            {% csrf_token %}<button type="submit">Genåbn vagten</button>
+          </form>
+        {% else %}
+          <form method="post" action="{% url 'kitchen:disable' shift.pk %}" class="mt-3">
+            {% csrf_token %}
+            <label>Begrundelse for aflysning</label>
+            <input type="text" name="reason" required>
+            <button type="submit" class="kanban-danger">Aflys vagten</button>
+          </form>
+        {% endif %}
+      {% endif %}
+    </div>
+  {% endif %}
+{% endblock %}

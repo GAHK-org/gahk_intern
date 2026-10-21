@@ -87,6 +87,7 @@ GROUPS: tuple[tuple[str, str], ...] = (
     ("posts", "Opslagstavlen"),
     ("events", "Begivenheder"),
     ("repairs", "Reparationer"),
+    ("kitchen", "Køkkenvagter"),
     ("gahkflix", "GAHKFlix"),
     ("system", "System"),
     ("general", "Generelt"),
@@ -100,6 +101,7 @@ GROUP_ICONS: dict[str, str] = {
     "posts": "board",
     "events": "calendar",
     "repairs": "wrench",
+    "kitchen": "clock",
     "gahkflix": "film",
 }
 
@@ -117,6 +119,7 @@ EVENTS_CHANGES = "events.changes"
 EVENTS_PERSONAL = "events.personal"
 EVENTS_COMMENTS = "events.comments"
 REPAIRS = "repairs"
+KITCHEN = "kitchen"
 GAHKFLIX_NEW = "gahkflix.new"
 GAHKFLIX_CAST = "gahkflix.cast"
 GAHKFLIX_UPLOADS = "gahkflix.uploads"
@@ -210,6 +213,12 @@ def _build() -> tuple[Category, ...]:
             "gahkflix",
             "Ugentligt overblik over upublicerede kladder, og besked dagen før en slettes. Til administratorer.",
             in_app_optional=False,
+        ),
+        Category(
+            KITCHEN,
+            "Køkkenvagter",
+            "kitchen",
+            "Vagter til salg og ledige vagter, der snart mangler en.",
         ),
         Category(
             SYSTEM,

@@ -1,0 +1,551 @@
+"""Køkkenvagter (spec/features/kitchen-duty.md): calendar, ledger, enrolment, trading, completion,
+absence, administration, notifications, the balance forecast and the personal calendar feed."""
+
+import datetime
+from collections.abc import Callable
+
+import pytest
+from django.test import Client
+from django.urls import reverse
+from django.utils import timezone
+
+from core.models import Room
+from events.models import CalendarFeedToken
+from kitchen import services
+from kitchen.models import KitchenAssignment, KitchenPointEntry, KitchenShift
+from notifications import categories
+from notifications.models import Notification
+from residents.models import Residency, Role, active_period
+
+pytestmark = pytest.mark.django_db
+
+
+def _shift(
+    starts_in: datetime.timedelta, *, hours: int = 1, spots: int = 1, points: int = 3, **extra: object
+) -> KitchenShift:
+    start = timezone.now() + starts_in
+    return KitchenShift.objects.create(
+        kind=KitchenShift.Kind.SPECIAL,
+        date=timezone.localtime(start).date(),
+        starts_at=start,
+        ends_at=start + datetime.timedelta(hours=hours),
+        spots=spots,
+        points_per_spot=points,
+        **extra,
+    )
+
+
+def _end(shift: KitchenShift) -> None:
+    """Move a shift into the recent past so it can be completed."""
+    shift.starts_at = timezone.now() - datetime.timedelta(hours=2)
+    shift.ends_at = timezone.now() - datetime.timedelta(hours=1)
+    shift.save()
+
+
+def _balance(resident: object) -> int:
+    return KitchenPointEntry.balance_for(resident.pk)  # type: ignore[attr-defined]
+
+
+def _live_here(resident: object, year: int | None = None, month: int | None = None) -> None:
+    """Put `resident` on a month's alumneliste (the active one by default)."""
+    if year is None:
+        year, month = active_period()
+    room, _ = Room.objects.get_or_create(legacy_index=1, number=1, floor="stuen", side="mod gaden")
+    Residency.objects.create(resident=resident, room=room, year=year, month=month)
+
+
+def test_free_spots_are_coloured_by_how_soon_the_shift_starts() -> None:
+    from kitchen.views import _urgency
+
+    now = timezone.now()
+    assert _urgency(_shift(datetime.timedelta(hours=5)), now) == "critical"
+    assert _urgency(_shift(datetime.timedelta(hours=48)), now) == "soon"
+    assert _urgency(_shift(datetime.timedelta(days=5)), now) == ""
+    assert _urgency(_shift(-datetime.timedelta(hours=1)), now) == ""
+
+
+def test_standard_calendar_is_generated_three_months_ahead_and_idempotent() -> None:
+    created = services.ensure_calendar()
+    assert created > 0
+    assert KitchenShift.objects.filter(date=services.calendar_horizon()).count() == 3
+    assert services.ensure_calendar() == 0
+
+    friday = KitchenShift.objects.filter(kind="evening", date__week_day=6).first()  # Django: Sunday=1
+    sunday = KitchenShift.objects.filter(kind="evening", date__week_day=1).first()
+    saturday = KitchenShift.objects.filter(kind="evening", date__week_day=7).first()
+    monday_morning = KitchenShift.objects.filter(kind="morning", date__week_day=2).first()
+    assert (friday.points_per_spot, friday.spots) == (4, 2)
+    assert (sunday.points_per_spot, sunday.spots) == (2, 1)
+    assert (saturday.points_per_spot, saturday.spots) == (1, 1)
+    assert timezone.localtime(monday_morning.starts_at).time() == datetime.time(6, 30)
+
+
+def test_ledger_records_balance_before_and_after(make_resident: Callable) -> None:
+    r = make_resident()
+    services.post_entry(r.pk, 5, "a", KitchenPointEntry.Kind.MANUAL)
+    entry = services.post_entry(r.pk, -7, "b", KitchenPointEntry.Kind.MANUAL)
+    assert (entry.balance_before, entry.amount, entry.balance_after) == (5, -7, -2)
+    assert _balance(r) == -2
+    assert KitchenPointEntry.balances()[r.pk] == -2
+
+
+def test_monthly_charge_hits_current_residents_once(make_resident: Callable) -> None:
+    year, month = active_period()
+    member = make_resident(email="m@gahk.dk")
+    outsider = make_resident(email="o@gahk.dk")
+    Residency.objects.create(
+        resident=member,
+        room=Room.objects.create(legacy_index=1, number=1, floor="stuen", side="mod gaden"),
+        year=year,
+        month=month,
+    )
+    assert services.apply_monthly_charge(year, month) == 1
+    assert services.apply_monthly_charge(year, month) == 0
+    assert _balance(member) == -4
+    assert _balance(outsider) == 0
+
+
+def test_single_holder_of_multi_spot_shift_gets_all_spots(make_resident: Callable) -> None:
+    r = make_resident()
+    shift = _shift(datetime.timedelta(days=1), spots=2, points=3)
+    services.enroll(shift, r)
+    _end(shift)
+    assert services.complete_finished_shifts() == 1
+    assert _balance(r) == 6
+    assert services.complete_finished_shifts() == 0  # never booked twice
+
+
+def test_two_holders_each_get_their_own_spot(make_resident: Callable) -> None:
+    a, b = make_resident(email="a@gahk.dk"), make_resident(email="b@gahk.dk")
+    shift = _shift(datetime.timedelta(days=1), spots=2, points=3)
+    services.enroll(shift, a)
+    services.enroll(shift, b)
+    _end(shift)
+    services.complete_finished_shifts()
+    assert (_balance(a), _balance(b)) == (3, 3)
+
+
+def test_bonus_points_are_awarded_on_top(make_resident: Callable) -> None:
+    r = make_resident()
+    shift = _shift(datetime.timedelta(days=1), points=3)
+    services.enroll(shift, r)
+    services.set_bonus(shift, 2)
+    _end(shift)
+    services.complete_finished_shifts()
+    assert _balance(r) == 5
+
+
+def test_full_shift_refuses_but_multi_spot_holder_can_be_overridden(make_resident: Callable) -> None:
+    a, b, c = (make_resident(email=f"{x}@gahk.dk") for x in "abc")
+    shift = _shift(datetime.timedelta(days=1), spots=2)
+    services.enroll(shift, a, spots=2)
+    services.enroll(shift, b)
+    assert KitchenAssignment.objects.get(resident=a).spots == 1
+    assert KitchenAssignment.objects.get(resident=b).spots == 1
+    with pytest.raises(services.ShiftError):
+        services.enroll(shift, c)
+
+
+def test_disabled_or_started_shift_cannot_be_taken(make_resident: Callable) -> None:
+    r = make_resident()
+    shift = _shift(datetime.timedelta(days=1))
+    services.disable_shift(shift, "Køkkenet er lukket")
+    with pytest.raises(services.ShiftError):
+        services.enroll(shift, r)
+    started = _shift(-datetime.timedelta(minutes=10))
+    with pytest.raises(services.ShiftError):
+        services.enroll(started, r)
+
+
+def test_unenroll_only_more_than_30_days_ahead(make_resident: Callable) -> None:
+    r = make_resident()
+    far = _shift(datetime.timedelta(days=40))
+    near = _shift(datetime.timedelta(days=10))
+    services.enroll(far, r)
+    services.enroll(near, r)
+    KitchenAssignment.objects.update(self_enrolled_at=timezone.now() - datetime.timedelta(minutes=11))
+    services.unenroll(KitchenAssignment.objects.get(shift=far))
+    with pytest.raises(services.ShiftError):
+        services.unenroll(KitchenAssignment.objects.get(shift=near))
+
+
+def test_fresh_signup_can_be_regretted_unless_shift_is_within_an_hour(make_resident: Callable) -> None:
+    r = make_resident()
+    tomorrow = _shift(datetime.timedelta(days=1))
+    imminent = _shift(datetime.timedelta(minutes=50))
+    services.enroll(tomorrow, r)
+    services.enroll(imminent, r)
+    services.unenroll(KitchenAssignment.objects.get(shift=tomorrow))
+    with pytest.raises(services.ShiftError):
+        services.unenroll(KitchenAssignment.objects.get(shift=imminent))
+
+
+def test_bought_shift_is_not_in_the_regret_window(make_resident: Callable) -> None:
+    seller, buyer = make_resident(email="s@gahk.dk"), make_resident(email="k@gahk.dk")
+    shift = _shift(datetime.timedelta(days=2))
+    services.enroll(shift, seller)
+    assignment = KitchenAssignment.objects.get(resident=seller)
+    services.put_for_sale(assignment, 3)
+    services.buy(assignment, buyer)
+    with pytest.raises(services.ShiftError):
+        services.unenroll(KitchenAssignment.objects.get(resident=buyer))
+
+
+def test_trading_moves_shift_and_extra_points(make_resident: Callable) -> None:
+    seller, buyer = make_resident(email="s@gahk.dk"), make_resident(email="k@gahk.dk")
+    shift = _shift(datetime.timedelta(days=2), points=3)
+    services.enroll(shift, seller)
+    assignment = KitchenAssignment.objects.get(resident=seller)
+    with pytest.raises(services.ShiftError):
+        services.put_for_sale(assignment, 4)
+    services.put_for_sale(assignment, 2)
+    services.buy(assignment, buyer)
+    assert KitchenAssignment.objects.get(shift=shift).resident == buyer
+    assert (_balance(seller), _balance(buyer)) == (-2, 2)
+    _end(shift)
+    services.complete_finished_shifts()
+    assert (_balance(seller), _balance(buyer)) == (-2, 5)
+
+
+def test_absence_reverts_points_and_fines(make_resident: Callable) -> None:
+    admin, r = make_resident(email="adm@gahk.dk"), make_resident()
+    shift = _shift(datetime.timedelta(days=1), points=3)
+    services.enroll(shift, r)
+    _end(shift)
+    services.complete_finished_shifts()
+    services.mark_absent(KitchenAssignment.objects.get(resident=r), None, admin)
+    assert _balance(r) == -3
+    with pytest.raises(services.ShiftError):
+        services.mark_absent(KitchenAssignment.objects.get(resident=r), None, admin)
+
+
+def test_absence_fine_can_be_adjusted_and_window_is_seven_days(make_resident: Callable) -> None:
+    admin, r = make_resident(email="adm@gahk.dk"), make_resident()
+    shift = _shift(datetime.timedelta(days=1), points=3)
+    services.enroll(shift, r)
+    _end(shift)
+    services.mark_absent(KitchenAssignment.objects.get(resident=r), 1, admin)  # completes first
+    assert _balance(r) == -1
+
+    old = _shift(-datetime.timedelta(days=8))
+    KitchenAssignment.objects.create(shift=old, resident=r)
+    with pytest.raises(services.ShiftError):
+        services.mark_absent(KitchenAssignment.objects.get(shift=old), None, admin)
+
+
+def test_admin_pages_require_kitchen_role(make_resident: Callable) -> None:
+    resident = make_resident(email="r@gahk.dk")
+    officer = make_resident(email="k@gahk.dk", roles=(Role.KOKKENGRUPPE,))
+    client = Client()
+    client.force_login(resident)
+    assert client.get(reverse("kitchen:market")).status_code == 200
+    assert client.get(reverse("kitchen:account")).status_code == 200
+    assert client.get(reverse("kitchen:admin")).status_code == 403
+
+    client.force_login(officer)
+    assert client.get(reverse("kitchen:admin")).status_code == 200
+    day = timezone.localdate() + datetime.timedelta(days=5)
+    response = client.post(
+        reverse("kitchen:admin"),
+        {
+            "description": "Julefrokost",
+            "date": day.isoformat(),
+            "start": "16:00",
+            "end": "23:00",
+            "points_per_spot": 5,
+            "spots": 4,
+        },
+    )
+    special = KitchenShift.objects.get(kind="special")
+    assert response.status_code == 302
+    assert (special.title, special.spots, special.points_per_spot) == ("Julefrokost", 4, 5)
+    assert client.get(reverse("kitchen:shift", args=[special.pk])).status_code == 200
+
+    client.post(reverse("kitchen:resident", args=[resident.pk]), {"amount": "3", "message": "Ekstra"})
+    assert _balance(resident) == 3
+    assert client.get(reverse("kitchen:dashboard")).status_code == 200
+
+    client.force_login(resident)
+    assert client.get(reverse("kitchen:dashboard")).status_code == 403
+    assert client.get(reverse("kitchen:resident", args=[officer.pk])).status_code == 403
+
+
+def test_inspektion_sees_the_overview_and_forecasts_but_nothing_administrative(
+    make_resident: Callable,
+) -> None:
+    resident = make_resident(email="r@gahk.dk")
+    _live_here(resident)
+    inspector = make_resident(email="i@gahk.dk", roles=(Role.INSPEKTION,))
+    shift = _shift(datetime.timedelta(days=3))
+    client = Client()
+    client.force_login(inspector)
+
+    assert client.get(reverse("kitchen:dashboard")).status_code == 200
+    page = client.get(reverse("kitchen:resident", args=[resident.pk]))
+    assert page.status_code == 200
+    assert 'id="kitchen-forecast-data"' in page.content.decode()
+    assert "Manuel postering" not in page.content.decode()
+    assert reverse("kitchen:admin") not in client.get(reverse("kitchen:dashboard")).content.decode()
+
+    before = _balance(resident)
+    response = client.post(reverse("kitchen:resident", args=[resident.pk]), {"amount": "3", "message": "x"})
+    assert response.status_code == 403 and _balance(resident) == before
+    assert client.get(reverse("kitchen:admin")).status_code == 403
+    assert client.post(reverse("kitchen:disable", args=[shift.pk]), {"reason": "x"}).status_code == 403
+    assert client.post(reverse("kitchen:set_bonus", args=[shift.pk]), {"bonus": "2"}).status_code == 403
+
+
+def test_resident_enrolls_through_the_view(make_resident: Callable) -> None:
+    r = make_resident()
+    shift = _shift(datetime.timedelta(days=3))
+    client = Client()
+    client.force_login(r)
+    client.post(reverse("kitchen:enroll", args=[shift.pk]), {"spots": "1"})
+    assert KitchenAssignment.objects.filter(shift=shift, resident=r).exists()
+
+
+def test_sheet_shows_slots_and_take_button_returns_to_it(make_resident: Callable) -> None:
+    r = make_resident(first_name="Vilma")
+    services.ensure_calendar()
+    shift = KitchenShift.objects.filter(kind="evening", starts_at__gt=timezone.now()).first()
+    client = Client()
+    client.force_login(r)
+    page = client.get(reverse("kitchen:market")).content.decode()
+    assert "17:30–21:00" in page and "+ Tag" in page
+    assert "data-duty-confirm=" in page and "data-duty-dialog" in page
+
+    response = client.post(reverse("kitchen:enroll", args=[shift.pk]), {"spots": "1", "next": "market"})
+    assert response["Location"].endswith(f"#dag-{shift.date:%Y-%m-%d}")
+    page = client.get(response["Location"]).content.decode()
+    assert "duty-slot is-mine" in page and "Vilma" in page
+
+
+def test_extra_spots_of_a_multi_spot_holder_render_as_overridable(make_resident: Callable) -> None:
+    holder = make_resident(email="h@gahk.dk", first_name="Holger")
+    other = make_resident(email="o@gahk.dk")
+    services.ensure_calendar()
+    shift = KitchenShift.objects.filter(kind="evening", spots=2, starts_at__gt=timezone.now()).first()
+    services.enroll(shift, holder, spots=2)
+    client = Client()
+
+    client.force_login(holder)  # the holder never sees their own spots as overridable
+    page = client.get(reverse("kitchen:market")).content.decode()
+    assert "duty-take-label" not in page
+
+    client.force_login(other)
+    page = client.get(reverse("kitchen:market")).content.decode()
+    assert page.count("duty-take-label") == 1
+    client.post(reverse("kitchen:enroll", args=[shift.pk]), {"spots": "1", "next": "market"})
+    assert KitchenAssignment.objects.get(resident=holder).spots == 1
+    assert KitchenAssignment.objects.get(resident=other).spots == 1
+
+
+def test_sheet_shows_30_days_and_loads_more_up_to_the_horizon(make_resident: Callable) -> None:
+    client = Client()
+    client.force_login(make_resident())
+    today = timezone.localdate()
+    page = client.get(reverse("kitchen:market")).content.decode()
+    assert f'id="dag-{today + datetime.timedelta(days=30):%Y-%m-%d}"' in page
+    assert f'id="dag-{today + datetime.timedelta(days=31):%Y-%m-%d}"' not in page
+    assert f"?fra={today + datetime.timedelta(days=31):%Y-%m-%d}" in page
+
+    horizon = services.calendar_horizon()
+    last = client.get(reverse("kitchen:sheet_rows"), {"fra": f"{horizon:%Y-%m-%d}"}).content.decode()
+    assert f'id="dag-{horizon:%Y-%m-%d}"' in last and "duty-more" not in last
+
+    # A loaded chunk only gets a month heading where a month actually begins.
+    fra = today + datetime.timedelta(days=30)
+    chunk = client.get(reverse("kitchen:sheet_rows"), {"fra": f"{fra:%Y-%m-%d}"}).content.decode()
+    firsts = sum((fra + datetime.timedelta(days=i)).day == 1 for i in range(30))
+    assert chunk.count('class="duty-month"') == firsts
+
+
+def test_sheet_marks_where_free_unenrolment_starts(make_resident: Callable) -> None:
+    client = Client()
+    client.force_login(make_resident())
+    cutoff = timezone.localdate() + datetime.timedelta(days=services.FREE_UNENROLL_DAYS)
+    page = client.get(reverse("kitchen:market")).content.decode()
+    assert page.count('class="duty-ruler"') == 1
+    ruler, cutoff_row = page.index("duty-ruler"), page.index(f'id="dag-{cutoff:%Y-%m-%d}"')
+    assert ruler < cutoff_row
+    assert page.index(f'id="dag-{cutoff - datetime.timedelta(days=1):%Y-%m-%d}"') < ruler
+
+
+def test_history_pages_through_the_past(make_resident: Callable) -> None:
+    r = make_resident()
+    old = _shift(-datetime.timedelta(days=40))
+    KitchenAssignment.objects.create(shift=old, resident=r)
+    client = Client()
+    client.force_login(r)
+    first = client.get(reverse("kitchen:history")).content.decode()
+    assert f'id="dag-{old.date:%Y-%m-%d}"' not in first and "Ældre" in first
+    older = timezone.localdate() - datetime.timedelta(days=30)
+    page = client.get(reverse("kitchen:history"), {"til": f"{older:%Y-%m-%d}"}).content.decode()
+    assert f'id="dag-{old.date:%Y-%m-%d}"' in page and "Nyere" in page
+
+
+def test_assigned_shift_appears_in_personal_calendar_feed(make_resident: Callable) -> None:
+    r = make_resident()
+    shift = _shift(datetime.timedelta(days=3))
+    services.enroll(shift, r)
+    token = CalendarFeedToken.for_resident(r)
+    body = Client().get(reverse("events_feed", args=[token.token])).content.decode()
+    assert f"UID:koekkenvagt-{shift.pk}@gahk.dk" in body
+
+
+def test_shift_for_sale_notifies_this_months_residents_but_not_the_seller(make_resident: Callable) -> None:
+    seller, buyer, outsider = (make_resident(email=f"{n}@gahk.dk") for n in ("s", "b", "o"))
+    _live_here(seller)
+    _live_here(buyer)
+    shift = _shift(datetime.timedelta(days=2))
+    services.enroll(shift, seller)
+    services.put_for_sale(KitchenAssignment.objects.get(shift=shift), 2)
+    row = Notification.objects.get()
+    assert (row.recipient_id, row.category) == (buyer.pk, categories.KITCHEN)
+    assert row.body.endswith("(+2 ekstra point)")
+    assert row.expires_at == shift.starts_at
+    assert outsider.pk != row.recipient_id
+
+
+def test_shift_for_sale_more_than_a_week_ahead_is_not_announced(make_resident: Callable) -> None:
+    seller, other = make_resident(email="s@gahk.dk"), make_resident(email="b@gahk.dk")
+    _live_here(seller)
+    _live_here(other)
+    shift = _shift(datetime.timedelta(days=10))
+    services.enroll(shift, seller)
+    services.put_for_sale(KitchenAssignment.objects.get(shift=shift), 0)
+    assert not Notification.objects.exists()
+
+
+def test_unmanned_shifts_notify_everyone_within_a_day_and_the_negative_within_three(
+    make_resident: Callable,
+) -> None:
+    fine, broke = make_resident(email="f@gahk.dk"), make_resident(email="n@gahk.dk")
+    _live_here(fine)
+    _live_here(broke)
+    services.post_entry(broke.pk, -1, "x", KitchenPointEntry.Kind.MANUAL)
+    _shift(datetime.timedelta(hours=48))
+    services.notify_unmanned_daily()
+    assert list(Notification.objects.values_list("recipient_id", flat=True)) == [broke.pk]
+
+    Notification.objects.all().delete()
+    _shift(datetime.timedelta(hours=5))
+    services.notify_unmanned_daily()
+    assert sorted(Notification.objects.values_list("recipient_id", flat=True)) == sorted([fine.pk, broke.pk])
+
+
+def test_zones_are_green_yellow_red_and_alarm_under_minus_six() -> None:
+    assert [services.zone(b) for b in (3, 2, 0, -1, -6, -7)] == [
+        "good",
+        "warn",
+        "warn",
+        "neg",
+        "neg",
+        "alarm",
+    ]
+
+
+def test_forecast_books_held_shifts_and_the_monthly_charges(make_resident: Callable) -> None:
+    r = make_resident()
+    _live_here(r)
+    services.post_entry(r.pk, 5, "start", KitchenPointEntry.Kind.MANUAL)
+    services.enroll(_shift(datetime.timedelta(days=2), points=3), r)
+    # Lone holder of one of two spots: only their own spot counts, as somebody else may take the other.
+    services.enroll(_shift(datetime.timedelta(days=5), spots=2, points=3), r)
+    services.enroll(_shift(datetime.timedelta(days=8), spots=2, points=3), r, spots=2)
+    cancelled = _shift(datetime.timedelta(days=6))
+    services.enroll(cancelled, r)
+    services.disable_shift(cancelled, "Lukket")
+
+    steps = services.forecast(r)
+    assert [s.at for s in steps] == sorted(s.at for s in steps)
+    assert sorted(s.amount for s in steps) == [-4, -4, -4, 3, 3, 6]
+    assert "(2 pladser)" in next(s.label for s in steps if s.amount == 6)
+    running = 5
+    for step in steps:
+        running += step.amount
+        assert step.balance == running
+    assert steps[-1].balance == 5 + 3 + 3 + 6 - 3 * services.MONTHLY_CHARGE
+    assert services.balance_at(5, steps, timezone.now()) == 5
+    assert services.balance_at(5, steps, steps[-1].at) == steps[-1].balance
+
+
+def test_forecast_charges_follow_move_out_and_published_lists(make_resident: Callable) -> None:
+    year, month = active_period()
+    next_month = services.add_months(datetime.date(year, month, 1), 1)
+    leaving = make_resident(email="l@gahk.dk", move_out_date=next_month + datetime.timedelta(days=10))
+    _live_here(leaving)
+    assert [s.amount for s in services.forecast(leaving)] == [-4]
+
+    # Not here now, but on next month's published list: charged for that month only.
+    arriving = make_resident(email="a@gahk.dk")
+    _live_here(arriving, next_month.year, next_month.month)
+    assert [s.at.date() for s in services.forecast(arriving)] == [next_month]
+
+    # Here now, but left off next month's published list: that month is skipped, later ones assumed.
+    dropped = make_resident(email="d@gahk.dk")
+    _live_here(dropped)
+    assert next_month not in [s.at.date() for s in services.forecast(dropped)]
+    assert len(services.forecast(dropped)) == 2
+
+
+def test_account_page_draws_the_forecast_and_raises_the_alarm_under_minus_six(
+    make_resident: Callable,
+) -> None:
+    r = make_resident()
+    _live_here(r)
+    services.post_entry(r.pk, 10, "start", KitchenPointEntry.Kind.MANUAL)
+    client = Client()
+    client.force_login(r)
+
+    page = client.get(reverse("kitchen:account")).content.decode()
+    assert 'id="kitchen-forecast-data"' in page and "forecast-alarm" not in page
+
+    services.post_entry(r.pk, -12, "bøde", KitchenPointEntry.Kind.MANUAL)
+    page = client.get(reverse("kitchen:account")).content.decode()
+    assert "forecast-alarm" in page and "Du rammer -10 point" in page
+
+
+def test_overview_judges_low_balances_at_30_days_and_at_the_end_of_the_calendar(
+    make_resident: Callable,
+) -> None:
+    officer = make_resident(email="k@gahk.dk", roles=(Role.KOKKENGRUPPE,))
+    soon_only = make_resident(email="c@gahk.dk", first_name="Ida")
+    later_only = make_resident(email="m@gahk.dk", first_name="Mads")
+    sinking = make_resident(email="s@gahk.dk", first_name="Bo")
+    flush = make_resident(email="f@gahk.dk", first_name="Eva")
+    for r in (soon_only, later_only, sinking, flush):
+        _live_here(r)
+    # The page charges this month first, so these are -6, -6, -13 and 16 once it has loaded; three
+    # more monthly charges (-12) fall before the end of the calendar.
+    services.post_entry(soon_only.pk, -2, "x", KitchenPointEntry.Kind.MANUAL)
+    services.post_entry(later_only.pk, -2, "x", KitchenPointEntry.Kind.MANUAL)
+    services.post_entry(sinking.pk, -9, "x", KitchenPointEntry.Kind.MANUAL)
+    services.post_entry(flush.pk, 20, "x", KitchenPointEntry.Kind.MANUAL)
+    # 16 points inside the binding 30 days: fine then (-6 + 16, less at most two charges), short at
+    # the end (-6 + 16 - 12).
+    for days in (2, 3, 4, 5):
+        services.enroll(_shift(datetime.timedelta(days=days), points=4), soon_only)
+    # 20 points, all after the 30 days: short then, fine at the end (-6 + 20 - 12).
+    for days in (40, 45, 50, 55, 60):
+        services.enroll(_shift(datetime.timedelta(days=days), points=4), later_only)
+
+    client = Client()
+    client.force_login(officer)
+    response = client.get(reverse("kitchen:dashboard"))
+    low = {row.resident.pk: row for row in response.context["low"]}
+    assert set(low) == {soon_only.pk, later_only.pk, sinking.pk}
+    assert (low[soon_only.pk].soon_fine, low[soon_only.pk].end_fine) == (True, False)
+    assert (low[later_only.pk].soon_fine, low[later_only.pk].end_fine) == (False, True)
+    assert (low[sinking.pk].soon_fine, low[sinking.pk].end_fine) == (False, False)
+    assert low[sinking.pk].soon_zone == "alarm"
+    assert [row.resident for row in response.context["rows"]] == [sinking, later_only, soon_only, flush]
+    assert response.context["negative_now"] == 3 and response.context["alarm_now"] == 1
+    assert response.context["negative_end"] == 2
+    page = response.content.decode()
+    assert "duty-verdict is-fine is-tentative" in page and "duty-verdict is-alarm" in page
+
+    # Each resident's chart gets a point where the binding 30 days end, for the dashed part to start.
+    chart = client.get(reverse("kitchen:resident", args=[later_only.pk])).context["forecast"]["chart"]
+    outlook = next(p for p in chart["points"] if p.get("kind") == "outlook")
+    assert outlook["x"] == chart["outlookAt"] and outlook["y"] < 0

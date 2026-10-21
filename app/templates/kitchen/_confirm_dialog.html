@@ -1,0 +1,12 @@
+<dialog class="duty-dialog" data-duty-dialog aria-labelledby="duty-dialog-title">
+  <form method="dialog">
+    <h2 id="duty-dialog-title">Tag vagten?</h2>
+    <p data-duty-dialog-text></p>
+    <p class="muted text-sm" data-duty-dialog-spots></p>
+    <p class="muted text-sm">Du kan fortryde i {{ regret_minutes }} minutter. Derefter kan du kun melde fra mere end {{ free_unenroll_days }} dage før — ellers må du sælge vagten.</p>
+    <div class="duty-dialog-actions">
+      <button type="submit" value="cancel" class="btn btn-secondary">Annuller</button>
+      <button type="submit" value="confirm" class="btn" autofocus>Tag vagt</button>
+    </div>
+  </form>
+</dialog>

@@ -1,0 +1,7 @@
+{% comment %}
+  Whether a forecast figure is at 0 or more (views.OverviewRow). `tentative` for the end of the
+  calendar, which also counts shifts that can still be unenrolled from: drawn outlined and dashed.
+{% endcomment %}
+<span class="duty-verdict is-{% if fine %}fine{% else %}{{ zone }}{% endif %}{% if tentative %} is-tentative{% endif %}">
+  {% if fine %}<svg class="ni" aria-hidden="true"><use href="#i-check"/></svg>OK{% elif zone == "alarm" %}Under {{ alarm_below }}{% else %}I minus{% endif %}
+</span>
