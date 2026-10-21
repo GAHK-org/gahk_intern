@@ -10,6 +10,7 @@ from django.utils import timezone
 from ak.models import AkEntry
 from core.models import Room, Workgroup
 from oelkaelder.models import Deposit, Shopper
+from residents import economic
 from residents.models import Residency, RoleAssignment, prev_period
 from residents.views import _sync_month_roles
 
@@ -137,6 +138,45 @@ def test_set_economic_customer_number_rejects_get(make_resident: Callable) -> No
     c.force_login(acc)
 
     assert c.get(reverse("set_economic_customer_number", args=[target.pk])).status_code == 405
+
+
+@pytest.mark.django_db
+def test_send_alumneregninger_requires_regnskab_role(make_resident: Callable) -> None:
+    plain = make_resident(email="plain@gahk.dk")
+    c = Client()
+    c.force_login(plain)
+
+    assert c.post(reverse("send_alumneregninger")).status_code == 403
+
+
+@pytest.mark.django_db
+def test_send_alumneregninger_rejects_get(make_resident: Callable) -> None:
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    c = Client()
+    c.force_login(acc)
+
+    assert c.get(reverse("send_alumneregninger")).status_code == 405
+
+
+@pytest.mark.django_db
+def test_send_alumneregninger_view_renders_results(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    make_resident(email="alumne@gahk.dk", economic_customer_number=42, first_name="Alu", last_name="Mne")
+    monkeypatch.setattr(
+        economic,
+        "get_customer",
+        lambda n: economic.EconomicCustomer(customer_number=n, name="x", balance=0.0, due_amount=0.0),
+    )
+    monkeypatch.setattr(economic, "get_booked_invoices", lambda n: [])
+    c = Client()
+    c.force_login(acc)
+
+    html = c.post(reverse("send_alumneregninger")).content.decode()
+
+    assert "Alu Mne" in html
+    assert "Ingen fakturaer" in html
 
 
 @pytest.mark.django_db

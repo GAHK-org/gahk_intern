@@ -528,6 +528,13 @@ OELKAELDER_BANK_ACCOUNT = os.environ.get("OELKAELDER_BANK_ACCOUNT", "1642635456"
 ECONOMIC_APP_SECRET_TOKEN = os.environ.get("ECONOMIC_APP_SECRET_TOKEN", "demo" if DEBUG else "")
 ECONOMIC_AGREEMENT_GRANT_TOKEN = os.environ.get("ECONOMIC_AGREEMENT_GRANT_TOKEN", "demo" if DEBUG else "")
 
+# Sender + bank details for alumneregning mails (residents.alumneregning). The account is GAHK's main
+# kollegium account — distinct from OELKAELDER_BANK_REG/_ACCOUNT above, which is the separate ølkælder
+# till account. Defaults match what the legacy manual process (alumneregning/send_mail.py) used.
+ALUMNEREGNING_FROM_EMAIL = os.environ.get("ALUMNEREGNING_FROM_EMAIL", "regnskab@gahk.dk")
+ALUMNEREGNING_BANK_REG = os.environ.get("ALUMNEREGNING_BANK_REG", "9070")
+ALUMNEREGNING_BANK_ACCOUNT = os.environ.get("ALUMNEREGNING_BANK_ACCOUNT", "1642410853")
+
 # Front-page visit counter: server-side secret for HMAC-hashing visitor IPs (F-002/F-011).
 VISIT_COUNTER_HMAC_KEY = os.environ.get("VISIT_COUNTER_HMAC_KEY", "dev-hmac-key")
 

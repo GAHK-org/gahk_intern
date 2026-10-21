@@ -16,6 +16,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 
 from ak.models import AkEntry
 
+from . import alumneregning
 from .forms import EconomicCustomerNumberForm
 from .models import Residency, Resident, prev_period
 from .permissions import role_required
@@ -92,3 +93,20 @@ def set_economic_customer_number(request: HttpRequest, pk: int) -> HttpResponse:
     if nxt and url_has_allowed_host_and_scheme(nxt, allowed_hosts={request.get_host()}):
         return redirect(nxt)
     return redirect("regnskab")
+
+
+@role_required("regnskab")
+def send_alumneregninger_view(request: HttpRequest) -> HttpResponse:
+    """The "one button": email every alumne with an e-conomic customerNumber their latest statement.
+
+    Runs synchronously and renders what happened per alumne — sent / no invoices in e-conomic / failed
+    — rather than queuing a Celery task. At the volume this runs at (alumni with a customerNumber set,
+    at most monthly) a page load blocking for the duration is simpler to build, run, and debug than a
+    background job with a progress page; revisit as a task (like oelkaelder's own monthly statement
+    mail) if the list grows enough for that to matter.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    results = alumneregning.send_alumneregninger()
+    return render(request, "regnskab/alumneregninger_sent.html", {"results": results})

@@ -36,7 +36,7 @@
   </form>
 
   {% if q %}
-    <div class="overflow-x-auto">
+    <div class="overflow-x-auto mb-8">
       <table cellpadding="6" class="text-sm" style="width:100%; border-collapse:collapse">
         <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec; white-space:nowrap">
           <th>Navn</th><th>Værelse</th><th>AK</th><th>Ølkælder</th><th>E-conomic nr.</th>
@@ -45,4 +45,15 @@
       </table>
     </div>
   {% endif %}
+
+  <h2>Alumneregninger</h2>
+  <p class="muted text-sm mb-3">
+    Sender en e-mail med vedhæftet regning (seneste bogførte faktura fra e-conomic) til hver alumne,
+    der har fået sat et e-conomic kundenr. ovenfor.
+  </p>
+  <form method="post" action="{% url 'send_alumneregninger' %}"
+        onsubmit="return confirm('Send alumneregninger til alle alumner med et e-conomic kundenr.?');">
+    {% csrf_token %}
+    <button type="submit" class="btn">Send alumneregninger</button>
+  </form>
 {% endblock %}

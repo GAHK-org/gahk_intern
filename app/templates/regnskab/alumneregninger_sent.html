@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Alumneregninger sendt - GAHK Intern{% endblock %}
+{% block content %}
+  <h1>Alumneregninger</h1>
+
+  <div class="overflow-x-auto mb-8">
+    <table cellpadding="6" class="text-sm" style="width:100%; border-collapse:collapse">
+      <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec; white-space:nowrap">
+        <th>Navn</th><th>E-mail</th><th>Status</th><th>Detalje</th>
+      </tr></thead>
+      <tbody>
+        {% for result in results %}
+          <tr style="border-bottom:1px solid #f0f1f4">
+            <td>{{ result.resident.full_name }}</td>
+            <td>{{ result.resident.email }}</td>
+            <td class="whitespace-nowrap {% if result.outcome == 'failed' %}text-red-600 font-semibold{% endif %}">
+              {% if result.outcome == 'sent' %}Sendt
+              {% elif result.outcome == 'no_invoices' %}Ingen fakturaer
+              {% else %}Fejlede{% endif %}
+            </td>
+            <td>{{ result.detail }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="4" class="muted">Ingen alumner har et e-conomic kundenr. sat endnu.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <a href="{% url 'regnskab' %}" class="btn">Tilbage til regnskab</a>
+{% endblock %}

@@ -14,6 +14,11 @@ urlpatterns = [
         views_regnskab.set_economic_customer_number,
         name="set_economic_customer_number",
     ),
+    path(
+        "regnskab/alumneregninger/send",
+        views_regnskab.send_alumneregninger_view,
+        name="send_alumneregninger",
+    ),
     path("alumneliste/", views.directory, name="directory"),
     path("alumneliste/rows", views.directory_rows, name="directory_rows"),
     path("alumneliste/eksport", views.directory_export, name="directory_export"),
