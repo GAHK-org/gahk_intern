@@ -919,6 +919,18 @@ class Schedule(_TaskName):
     last: TaskType | None
 
 
+def _next_run(task: PeriodicTask, now: datetime.datetime) -> datetime.datetime:
+    """When Beat sends the entry next, worked out as Beat does. A crontab matches its hours against
+    last_run_at in whatever zone it is handed, so it is read in the schedule's own zone: in the UTC
+    the database gives back, a daily 17:00 run came next at 17:00 UTC the same day, long past. The
+    estimate is measured from the schedule's clock, set to `now` here — its own later reading put
+    every run a moment early, 16:59 for 17:00."""
+    schedule = task.schedule
+    tz = getattr(schedule, "tz", celery_app.timezone)
+    schedule.nowfun = lambda: now.astimezone(tz)
+    return now + schedule.remaining_estimate((task.last_run_at or now).astimezone(tz))
+
+
 def _schedules(types: list[TaskType], now: datetime.datetime) -> list[Schedule]:
     """Beat's enabled entries, each with when it runs next and how its task last ended."""
     by_task = {task_type.task: task_type for task_type in types}
@@ -927,7 +939,7 @@ def _schedules(types: list[TaskType], now: datetime.datetime) -> list[Schedule]:
         "interval", "crontab", "solar", "clocked"
     ):
         try:
-            next_run_at = now + task.schedule.remaining_estimate(task.last_run_at or now)
+            next_run_at = _next_run(task, now)
         except (AttributeError, TypeError, ValueError):
             next_run_at = None
         schedules.append(

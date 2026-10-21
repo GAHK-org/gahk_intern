@@ -889,15 +889,28 @@ def _queue_import(
     """Queue the import of the form's archive, or with `stored`, (key, name), of one already sent
     to the bucket (photo_album.direct_upload)."""
     archive, archive_name = stored or (form.cleaned_data["archive"], form.cleaned_data["archive"].name)
-    album_import = AlbumImport.objects.create(
-        requested_by=resident,
-        folder=form.cleaned_data["folder"],
-        archive_name=archive_name,
-        archive=archive,
-        lock_when_done=lock,
-        merge_into_existing=merge,
-        album_name=form.cleaned_data.get("album", ""),
-    )
+    try:
+        album_import = AlbumImport.objects.create(
+            requested_by=resident,
+            folder=form.cleaned_data["folder"],
+            archive_name=archive_name,
+            archive=archive,
+            lock_when_done=lock,
+            merge_into_existing=merge,
+            album_name=form.cleaned_data.get("album", ""),
+        )
+    except Exception:
+        # An archive already in the bucket that no import will ever read: without this, every
+        # attempt of the Dropbox script left a whole album behind (the ~1 GB ZIP of the album whose
+        # key was too long for the column, once per try).
+        if stored is not None:
+            try:
+                direct_upload.delete(stored[0])
+            except Exception:  # the error that matters is the one being raised
+                logger.warning(
+                    "Could not delete %s after its import failed to start", stored[0], exc_info=True
+                )
+        raise
     from .tasks import process_album_import
 
     def enqueue() -> None:
