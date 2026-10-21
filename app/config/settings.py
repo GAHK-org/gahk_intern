@@ -518,6 +518,16 @@ INDSTILLING_EMAIL = os.environ.get("INDSTILLING_EMAIL", "indstillingen@gahk.dk")
 OELKAELDER_BANK_REG = os.environ.get("OELKAELDER_BANK_REG", "9070")
 OELKAELDER_BANK_ACCOUNT = os.environ.get("OELKAELDER_BANK_ACCOUNT", "1642635456")
 
+# e-conomic REST API (residents.economic) — customer balance/invoices for alumneregninger. Real
+# tokens come from a Developer Agreement app + a per-company AgreementGrantToken (e-conomic's
+# developer portal), which requires MitID Erhverv verification of the developer account — until
+# GAHK has that, both default to "demo" in DEBUG, which authenticates against e-conomic's public
+# demo company (restapi.e-conomic.com) so this feature is developable without real credentials.
+# In production there is no such fallback: an unset token is a 401 from e-conomic, not a silent
+# demo-data response.
+ECONOMIC_APP_SECRET_TOKEN = os.environ.get("ECONOMIC_APP_SECRET_TOKEN", "demo" if DEBUG else "")
+ECONOMIC_AGREEMENT_GRANT_TOKEN = os.environ.get("ECONOMIC_AGREEMENT_GRANT_TOKEN", "demo" if DEBUG else "")
+
 # Front-page visit counter: server-side secret for HMAC-hashing visitor IPs (F-002/F-011).
 VISIT_COUNTER_HMAC_KEY = os.environ.get("VISIT_COUNTER_HMAC_KEY", "dev-hmac-key")
 

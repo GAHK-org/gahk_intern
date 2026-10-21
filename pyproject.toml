@@ -39,6 +39,7 @@ dependencies = [
     "celery>=5.5,<5.7", # background work and scheduled jobs
     "django-celery-beat>=2.8,<2.10", # PostgreSQL-backed schedules and last-run state
     "sqlalchemy>=2.0", # PostgreSQL-backed Celery broker and task-result backend
+    "requests>=2.32", # e-conomic REST API client (residents.economic) for alumneregning automation
 ]
 
 [dependency-groups]
