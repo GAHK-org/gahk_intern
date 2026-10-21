@@ -124,7 +124,9 @@
               <span class="sr-only">Min konto</span>
             </button>
             <div id="user-menu-panel" class="user-menu-panel" role="menu" x-show="open" x-cloak>
-              <a role="menuitem" href="{% url 'resident_profile' user.pk %}">Min profil</a>
+              {% if "koekken" not in effective_roles %}{# the kitchen account has no profile page #}
+                <a role="menuitem" href="{% url 'resident_profile' user.pk %}">Min profil</a>
+              {% endif %}
               <a role="menuitem" href="{% url 'notifications:preferences' %}">Notifikationsindstillinger</a>
               <a role="menuitem" href="/intern/admin/password-change">Skift kodeord</a>
               <form method="post" action="/intern/admin/logout">
