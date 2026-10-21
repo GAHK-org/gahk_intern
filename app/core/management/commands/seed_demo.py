@@ -65,7 +65,14 @@ from opslagstavle.demo import seed as seed_opslagstavle
 from opslagstavle.models import Notice, NoticeComment, NoticeReaction
 from photo_album.demo import seed as seed_photo_album
 from photo_album.models import Album, Media
-from residents.models import WORKGROUP_ROLE, Residency, Resident, Role, RoleAssignment
+from residents.models import (
+    WORKGROUP_ROLE,
+    EconomicLedgerEntry,
+    Residency,
+    Resident,
+    Role,
+    RoleAssignment,
+)
 from rooms.models import (
     KvotientApplication,
     KvotientPriority,
@@ -158,6 +165,9 @@ WIPE_ORDER: list[type[models.Model]] = [
     GahkflixVideo,
     GahkflixSeries,
     GahkflixTag,
+    # Also before Resident: the local immutable mirror of e-conomic postings (F-010) PROTECTs its
+    # resident — a real audit record should never silently vanish because a Resident row was deleted.
+    EconomicLedgerEntry,
     Resident,
     # Before Workgroup: ArchiveFolder references it with PROTECT (a SET_NULL would silently turn a
     # gated folder into a world-readable one), so the archive has to go first or --fresh cannot run.
