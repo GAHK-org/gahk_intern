@@ -79,7 +79,7 @@ def test_the_dashboard_and_default_channel_lead_home(kitchen: Resident, path: st
 
 def test_the_sidebar_lists_only_its_pages(kitchen: Resident) -> None:
     html = _client(kitchen).get("/intern/reparationer/").content.decode()
-    assert "Alumneliste" not in html and "Min profil" not in html
+    assert "Alumneliste" not in html and "Min profil" not in html and "Søg beboer" not in html
     assert HOME in html
 
 

@@ -96,10 +96,12 @@
 
     <header class="topbar">
       <button class="hamburger" @click="sidebar = !sidebar" aria-label="Menu">☰</button>
-      <form class="topsearch" method="get" action="/intern/alumneliste/" role="search">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-        <input type="search" name="q" placeholder="Søg beboer, studie, e-mail…" aria-label="Søg beboer">
-      </form>
+      {% if "koekken" not in effective_roles %}{# searches the alumneliste, which the kitchen account cannot open #}
+        <form class="topsearch" method="get" action="/intern/alumneliste/" role="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input type="search" name="q" placeholder="Søg beboer, studie, e-mail…" aria-label="Søg beboer">
+        </form>
+      {% endif %}
       <div class="topright">
         <a href="/" class="btn-top" title="Til GAHK-forsiden">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
