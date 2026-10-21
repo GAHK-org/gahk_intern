@@ -46,14 +46,28 @@
     </div>
   {% endif %}
 
-  <h2>Alumneregninger</h2>
-  <p class="muted text-sm mb-3">
-    Sender en e-mail med vedhæftet regning (seneste bogførte faktura fra e-conomic) til hver alumne,
-    der har fået sat et e-conomic kundenr. ovenfor.
-  </p>
-  <form method="post" action="{% url 'send_alumneregninger' %}"
-        onsubmit="return confirm('Send alumneregninger til alle alumner med et e-conomic kundenr.?');">
-    {% csrf_token %}
-    <button type="submit" class="btn">Send alumneregninger</button>
-  </form>
+  <div style="border-top:1px solid #e6e8ec; margin-top:2rem; padding-top:1.5rem">
+    <h2>Alumneregninger</h2>
+    <p class="muted text-sm mb-3">
+      Sender en e-mail med vedhæftet regning (den bogførte faktura fra e-conomic, der falder i
+      perioden nedenfor) til hver alumne, der har fået sat et e-conomic kundenr. ovenfor.
+    </p>
+    <form method="post" action="{% url 'send_alumneregninger' %}"
+          class="flex flex-wrap items-end gap-2"
+          onsubmit="return confirm('Send alumneregninger for den valgte periode til alle alumner med et e-conomic kundenr.?');">
+      {% csrf_token %}
+      <div>
+        <label for="fra" class="font-semibold block text-sm">Fra</label>
+        <input type="date" id="fra" name="fra" value="{{ alumneregning_from }}" required>
+      </div>
+      <div>
+        <label for="til" class="font-semibold block text-sm">Til</label>
+        <input type="date" id="til" name="til" value="{{ alumneregning_to }}" required>
+      </div>
+      <button type="submit" class="btn">Send alumneregninger</button>
+    </form>
+    <p class="text-sm mt-2">
+      <a href="{% url 'alumneregning_settings' %}">Rediger besked og følgebrev →</a>
+    </p>
+  </div>
 {% endblock %}

@@ -379,6 +379,61 @@ class EconomicLedgerEntry(models.Model):
         return f"{self.resident.full_name} — {self.date} {self.amount} kr (e-conomic #{self.entry_number})"
 
 
+# string.Template source for the default alumneregning mail body (residents.alumneregning._body
+# substitutes $FORNAVN/$SALDO_LINE/$REG_NR/$KONTO_NR). Matches the wording the legacy script's
+# message.txt used, kept as the starting point regnskab edits from in AlumneregningSettings.
+DEFAULT_ALUMNEREGNING_MESSAGE = (
+    "Hej $FORNAVN,\n"
+    "\n"
+    "Os i Regnskabsgruppen sender dig hermed (vedhæftet) din alumneregning.\n"
+    "\n"
+    "$SALDO_LINE\n"
+    "\n"
+    "Vi beder om at du generelt forsøger at holde din gæld så lav som muligt.\n"
+    "\n"
+    "Hvis du skylder mere end 600 kr. beder vi om at du indbetaler inden for udgangen af "
+    "indeværende uge. Skulle du have brug for en speciel aftale om afbetaling, fordi din gæld er "
+    "for stor til, at du kan betale den af på én gang, så bedes du kontakte det siddende "
+    "inspektionsmedlem i Regnskabsgruppen.\n"
+    "\n"
+    "UDFLYTTER-INFO: Denne regning skal ikke betales.\n"
+    "I tilfælde af at du skylder alumnekassen penge bliver dette fratrukket dit depositum som PKS "
+    "tilbagebetaler snarest.\n"
+    "\n"
+    "------------------------------------------------------------------------\n"
+    "\n"
+    "På vegne af Regnskabsgruppen på G. A. Hagemanns Kollegium\n"
+    "\n"
+    "Reg. nr. $REG_NR Konto nr. $KONTO_NR\n"
+    "\n"
+    "------------------------------------------------------------------------"
+)
+
+
+class AlumneregningSettings(models.Model):
+    """The editable-in-the-UI content every alumneregning mail is built from (F-010 regnskab):
+    the message body template and an optional følgebrev (cover letter) PDF attached alongside the
+    e-conomic invoice. Singleton — always pk=1 — because there is exactly one of these at a time,
+    same shape as the legacy system's ID=1 `intern_alumne_emailtonew` row it replaces.
+    """
+
+    message_template = models.TextField(default=DEFAULT_ALUMNEREGNING_MESSAGE)
+    followup_pdf = models.FileField(upload_to="alumneregning/", blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Alumneregning-indstillinger"
+        verbose_name_plural = "Alumneregning-indstillinger"
+
+    def __str__(self) -> str:
+        return "Alumneregning-indstillinger"
+
+    @classmethod
+    def get_solo(cls) -> "AlumneregningSettings":
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+
 def active_period() -> tuple[int, int]:
     """The (year, month) currently *in effect*: the most recent published residency list that has
     already started. A list indstilling is preparing for a future month does NOT become active until

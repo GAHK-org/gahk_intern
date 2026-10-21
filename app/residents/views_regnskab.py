@@ -6,6 +6,8 @@ balance (kr; negative = owes the bar). AK has no monetary value defined in the s
 as raw krydser and accounting converts it by their own rules.
 """
 
+import calendar
+from datetime import date
 from typing import NamedTuple
 
 from django.contrib import messages
@@ -17,8 +19,8 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from ak.models import AkEntry
 
 from . import alumneregning
-from .forms import EconomicCustomerNumberForm
-from .models import Residency, Resident, prev_period
+from .forms import AlumneregningSettingsForm, EconomicCustomerNumberForm
+from .models import AlumneregningSettings, Residency, Resident, prev_period
 from .permissions import role_required
 from .views import DA_MONTHS, _parse_period, _period_options
 
@@ -69,6 +71,10 @@ def overview(request: HttpRequest) -> HttpResponse:
             "leavers": leavers,
             "q": q,
             "results": results,
+            # Alumneregninger send-form defaults: the selected period's calendar month, so picking
+            # "august" above also pre-fills the invoice date range below.
+            "alumneregning_from": date(year, month, 1).isoformat(),
+            "alumneregning_to": date(year, month, calendar.monthrange(year, month)[1]).isoformat(),
         },
     )
 
@@ -95,12 +101,22 @@ def set_economic_customer_number(request: HttpRequest, pk: int) -> HttpResponse:
     return redirect("regnskab")
 
 
+def _parse_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
 @role_required("regnskab")
 def send_alumneregninger_view(request: HttpRequest) -> HttpResponse:
-    """The "one button": email every alumne with an e-conomic customerNumber their latest statement.
+    """The "one button": email every alumne with an e-conomic customerNumber the booked invoice
+    falling in a regnskab-chosen date range (e.g. all of August).
 
-    Runs synchronously and renders what happened per alumne — sent / no invoices in e-conomic / failed
-    — rather than queuing a Celery task. At the volume this runs at (alumni with a customerNumber set,
+    Runs synchronously and renders what happened per alumne — sent / no invoice in range / failed —
+    rather than queuing a Celery task. At the volume this runs at (alumni with a customerNumber set,
     at most monthly) a page load blocking for the duration is simpler to build, run, and debug than a
     background job with a progress page; revisit as a task (like oelkaelder's own monthly statement
     mail) if the list grows enough for that to matter.
@@ -108,5 +124,31 @@ def send_alumneregninger_view(request: HttpRequest) -> HttpResponse:
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    results = alumneregning.send_alumneregninger()
-    return render(request, "regnskab/alumneregninger_sent.html", {"results": results})
+    date_from = _parse_date(request.POST.get("fra"))
+    date_to = _parse_date(request.POST.get("til"))
+    if date_from is None or date_to is None or date_from > date_to:
+        messages.error(request, "Angiv en gyldig periode — fra-dato skal være før (eller lig med) til-dato.")
+        return redirect("regnskab")
+
+    results = alumneregning.send_alumneregninger(date_from, date_to)
+    return render(
+        request,
+        "regnskab/alumneregninger_sent.html",
+        {"results": results, "date_from": date_from, "date_to": date_to},
+    )
+
+
+@role_required("regnskab")
+def alumneregning_settings_view(request: HttpRequest) -> HttpResponse:
+    """Edit the alumneregning mail body + følgebrev PDF (AlumneregningSettings.get_solo(), F-010)."""
+    instance = AlumneregningSettings.get_solo()
+    if request.method == "POST":
+        form = AlumneregningSettingsForm(request.POST, request.FILES, instance=instance)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Alumneregning-indstillinger er opdateret.")
+            return redirect("alumneregning_settings")
+        messages.error(request, "Ret fejlene og prøv igen.")
+    else:
+        form = AlumneregningSettingsForm(instance=instance)
+    return render(request, "regnskab/alumneregning_indstillinger.html", {"form": form, "settings": instance})

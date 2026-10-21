@@ -169,10 +169,37 @@ def test_send_alumneregninger_view_renders_results(
     c = Client()
     c.force_login(acc)
 
-    html = c.post(reverse("send_alumneregninger")).content.decode()
+    html = c.post(
+        reverse("send_alumneregninger"), {"fra": "2026-08-01", "til": "2026-08-31"}
+    ).content.decode()
 
     assert "Alu Mne" in html
     assert "Ingen fakturaer" in html
+    assert "2026-08-01" in html
+
+
+@pytest.mark.django_db
+def test_send_alumneregninger_rejects_missing_period(make_resident: Callable) -> None:
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    c = Client()
+    c.force_login(acc)
+
+    response = c.post(reverse("send_alumneregninger"), {"fra": "2026-08-01"})  # no "til"
+
+    assert response.status_code == 302
+    assert response.url == reverse("regnskab")
+
+
+@pytest.mark.django_db
+def test_send_alumneregninger_rejects_fra_after_til(make_resident: Callable) -> None:
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    c = Client()
+    c.force_login(acc)
+
+    response = c.post(reverse("send_alumneregninger"), {"fra": "2026-08-31", "til": "2026-08-01"})
+
+    assert response.status_code == 302
+    assert response.url == reverse("regnskab")
 
 
 @pytest.mark.django_db

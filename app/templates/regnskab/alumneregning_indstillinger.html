@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Alumneregning-indstillinger - GAHK Intern{% endblock %}
+{% block content %}
+  <h1>Alumneregning-indstillinger</h1>
+  <p class="muted mb-4">
+    Beskeden og følgebrevet herunder bruges til alle alumneregninger, der sendes fra
+    <a href="{% url 'regnskab' %}">regnskabssiden</a>.
+  </p>
+
+  {% if settings.followup_pdf %}
+    <p class="muted text-sm mb-3">
+      Nuværende følgebrev: <a href="{{ settings.followup_pdf.url }}">{{ settings.followup_pdf.name }}</a>
+    </p>
+  {% endif %}
+
+  <form method="post" enctype="multipart/form-data" class="mb-4">
+    {% csrf_token %}
+    <div class="mb-3">
+      <label for="{{ form.message_template.id_for_label }}" class="font-semibold block mb-1">
+        {{ form.message_template.label }}
+      </label>
+      {{ form.message_template }}
+      <p class="muted text-sm mt-1">{{ form.message_template.help_text }}</p>
+      {% for error in form.message_template.errors %}<p class="text-red-600 text-sm">{{ error }}</p>{% endfor %}
+    </div>
+    <div class="mb-3">
+      <label for="{{ form.followup_pdf.id_for_label }}" class="font-semibold block mb-1">
+        {{ form.followup_pdf.label }}
+      </label>
+      {{ form.followup_pdf }}
+      <p class="muted text-sm mt-1">{{ form.followup_pdf.help_text }}</p>
+      {% for error in form.followup_pdf.errors %}<p class="text-red-600 text-sm">{{ error }}</p>{% endfor %}
+    </div>
+    <button type="submit" class="btn">Gem</button>
+    <a href="{% url 'regnskab' %}" class="btn">Tilbage til regnskab</a>
+  </form>
+{% endblock %}

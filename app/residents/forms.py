@@ -8,7 +8,7 @@ from django.core.files.uploadedfile import UploadedFile
 
 from core.uploads import validate_image_upload
 
-from .models import Resident
+from .models import AlumneregningSettings, Resident
 
 
 class LocalDateInput(forms.DateInput):
@@ -136,6 +136,38 @@ class EconomicCustomerNumberForm(forms.ModelForm):
         model = Resident
         fields = ["economic_customer_number"]
         labels = {"economic_customer_number": "E-conomic kundenr."}
+
+
+class AlumneregningSettingsForm(forms.ModelForm):
+    """Regnskab edits the alumneregning mail body and følgebrev PDF in the UI (F-010), replacing what
+    used to be a hardcoded message.txt + a static følgebrev.pdf in the old repo."""
+
+    class Meta:
+        model = AlumneregningSettings
+        fields = ["message_template", "followup_pdf"]
+        labels = {
+            "message_template": "Besked",
+            "followup_pdf": "Følgebrev (PDF)",
+        }
+        widgets = {
+            "message_template": forms.Textarea(attrs={"rows": 16}),
+            "followup_pdf": forms.ClearableFileInput(attrs={"accept": "application/pdf"}),
+        }
+        help_texts = {
+            "message_template": (
+                "Pladsholdere, der udskiftes automatisk: $FORNAVN, $SALDO_LINE "
+                "(sætningen om gæld/tilgodehavende), $REG_NR, $KONTO_NR."
+            ),
+            "followup_pdf": "Vedhæftes sammen med regningen til hver alumne. Lad stå tom for ingen følgebrev.",
+        }
+
+    def clean_followup_pdf(self) -> object:
+        upload = self.cleaned_data.get("followup_pdf")
+        if isinstance(upload, UploadedFile):
+            name = (upload.name or "").lower()
+            if upload.content_type != "application/pdf" and not name.endswith(".pdf"):
+                raise forms.ValidationError("Følgebrevet skal være en PDF-fil.")
+        return upload
 
 
 class ResidentPasswordResetForm(PasswordResetForm):
