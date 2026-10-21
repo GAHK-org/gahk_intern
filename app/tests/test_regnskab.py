@@ -1,6 +1,7 @@
 """Regnskab (accounting) role: gated settlement view of moved-out residents' AK + ØK status (F-010)."""
 
 from collections.abc import Callable
+from datetime import date
 
 import pytest
 from django.test import Client
@@ -84,60 +85,60 @@ def test_view_is_regnskab_gated(make_resident: Callable) -> None:
 
 
 @pytest.mark.django_db
-def test_set_economic_customer_number_updates_resident(make_resident: Callable) -> None:
+def test_set_economic_account_number_updates_resident(make_resident: Callable) -> None:
     acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
     target = make_resident(email="target@gahk.dk")
     c = Client()
     c.force_login(acc)
 
     response = c.post(
-        reverse("set_economic_customer_number", args=[target.pk]),
-        {"economic_customer_number": "42", "next": reverse("regnskab")},
+        reverse("set_economic_account_number", args=[target.pk]),
+        {"economic_account_number": "1101", "next": reverse("regnskab")},
     )
 
     target.refresh_from_db()
-    assert target.economic_customer_number == 42
+    assert target.economic_account_number == 1101
     assert response.status_code == 302
     assert response.url == reverse("regnskab")
 
 
 @pytest.mark.django_db
-def test_set_economic_customer_number_can_be_cleared(make_resident: Callable) -> None:
+def test_set_economic_account_number_can_be_cleared(make_resident: Callable) -> None:
     acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
-    target = make_resident(email="target@gahk.dk", economic_customer_number=42)
+    target = make_resident(email="target@gahk.dk", economic_account_number=1101)
     c = Client()
     c.force_login(acc)
 
-    c.post(reverse("set_economic_customer_number", args=[target.pk]), {"economic_customer_number": ""})
+    c.post(reverse("set_economic_account_number", args=[target.pk]), {"economic_account_number": ""})
 
     target.refresh_from_db()
-    assert target.economic_customer_number is None
+    assert target.economic_account_number is None
 
 
 @pytest.mark.django_db
-def test_set_economic_customer_number_requires_regnskab_role(make_resident: Callable) -> None:
+def test_set_economic_account_number_requires_regnskab_role(make_resident: Callable) -> None:
     plain = make_resident(email="plain@gahk.dk")
     target = make_resident(email="target@gahk.dk")
     c = Client()
     c.force_login(plain)
 
     response = c.post(
-        reverse("set_economic_customer_number", args=[target.pk]), {"economic_customer_number": "42"}
+        reverse("set_economic_account_number", args=[target.pk]), {"economic_account_number": "1101"}
     )
 
     assert response.status_code == 403
     target.refresh_from_db()
-    assert target.economic_customer_number is None
+    assert target.economic_account_number is None
 
 
 @pytest.mark.django_db
-def test_set_economic_customer_number_rejects_get(make_resident: Callable) -> None:
+def test_set_economic_account_number_rejects_get(make_resident: Callable) -> None:
     acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
     target = make_resident(email="target@gahk.dk")
     c = Client()
     c.force_login(acc)
 
-    assert c.get(reverse("set_economic_customer_number", args=[target.pk])).status_code == 405
+    assert c.get(reverse("set_economic_account_number", args=[target.pk])).status_code == 405
 
 
 @pytest.mark.django_db
@@ -162,10 +163,20 @@ def test_send_alumneregninger_rejects_get(make_resident: Callable) -> None:
 def test_send_alumneregninger_view_renders_results(
     monkeypatch: pytest.MonkeyPatch, make_resident: Callable
 ) -> None:
+    alumne = make_resident(
+        email="alumne@gahk.dk", economic_account_number=1101, first_name="Alu", last_name="Mne"
+    )
+    Residency.objects.create(
+        resident=alumne,
+        year=2026,
+        month=8,
+        room=Room.objects.create(legacy_index=1, number=1, floor="stuen", side="mod gaden"),
+    )
+    # Created AFTER the Residency above: active_period() picks the most recent Residency's (year,
+    # month) over today's real calendar month once one exists, so "acc"'s role grant must be made
+    # for whatever active_period() resolves to at that point, not whatever it was before.
     acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
-    make_resident(email="alumne@gahk.dk", economic_customer_number=42, first_name="Alu", last_name="Mne")
-    monkeypatch.setattr(economic, "get_entries", lambda n: [])
-    monkeypatch.setattr(economic, "get_booked_invoices", lambda n: [])
+    monkeypatch.setattr(economic, "get_period_entries", lambda n, on_date: [])  # no open e-conomic period
     c = Client()
     c.force_login(acc)
 
@@ -174,7 +185,7 @@ def test_send_alumneregninger_view_renders_results(
     ).content.decode()
 
     assert "Alu Mne" in html
-    assert "Ingen fakturaer" in html
+    assert "Ingen posteringer" in html
     assert "2026-08-01" in html
 
 
@@ -182,13 +193,19 @@ def test_send_alumneregninger_view_renders_results(
 def test_send_alumneregninger_view_handles_auth_error_gracefully(
     monkeypatch: pytest.MonkeyPatch, make_resident: Callable
 ) -> None:
-    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
-    make_resident(email="alumne@gahk.dk", economic_customer_number=42)
+    alumne = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
+    Residency.objects.create(
+        resident=alumne,
+        year=2026,
+        month=8,
+        room=Room.objects.create(legacy_index=1, number=1, floor="stuen", side="mod gaden"),
+    )
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))  # see note above: created after
 
-    def get_entries(customer_number: int) -> list:
+    def get_period_entries(account_number: int, on_date: date) -> list:
         raise economic.EconomicAuthError("token revoked")
 
-    monkeypatch.setattr(economic, "get_entries", get_entries)
+    monkeypatch.setattr(economic, "get_period_entries", get_period_entries)
     c = Client()
     c.force_login(acc)
 

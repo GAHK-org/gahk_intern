@@ -1,10 +1,9 @@
-"""residents.alumneregning — the "one button" monthly alumni billing mail (F-010 regnskab role).
+"""residents.alumneregning — the "one button" billing mail for a chosen period (F-010 regnskab role).
 
-economic.get_entries/get_booked_invoices/get_invoice_pdf are monkeypatched directly: these tests
-cover alumneregning's own logic (who gets mailed, which invoice, what happens on failure, that a send
-mirrors entries into the local ledger first, and the date-range filter on which invoice gets picked),
-not the e-conomic client itself (see test_economic.py) or the real API (verified manually during
-development).
+economic.get_period_entries is monkeypatched directly: these tests cover alumneregning's own logic
+(who gets mailed, the generated statement PDF, what happens on failure, that a send mirrors entries
+into the local ledger, and the Residency-based eligibility filter), not the e-conomic client itself
+(see test_economic.py) or the real API (verified manually during development).
 """
 
 from collections.abc import Callable
@@ -14,48 +13,44 @@ import pytest
 from django.core import mail
 from django.core.files.base import ContentFile
 
+from core.models import Room
 from residents import alumneregning, economic
-from residents.models import AlumneregningSettings, EconomicLedgerEntry
+from residents.models import AlumneregningSettings, EconomicLedgerEntry, Residency, Resident
 
 AUGUST = (date(2026, 8, 1), date(2026, 8, 31))
-
-
-def _invoice(number: int, date_str: str, pdf_url: str = "https://example/pdf") -> economic.BookedInvoice:
-    return economic.BookedInvoice(
-        booked_invoice_number=number, date=date_str, due_date=None, remainder=0.0, pdf_url=pdf_url
-    )
 
 
 def _entry(number: int, date_str: str, amount: float) -> economic.LedgerEntry:
     return economic.LedgerEntry(
         entry_number=number,
         date=date_str,
-        text="Invoice",
+        text="Husleje",
         amount=amount,
-        entry_type="customerInvoice",
+        entry_type="financeVoucher",
         voucher_number=1,
         due_date=None,
     )
 
 
+def _give_residency(resident: Resident, year: int, month: int, room_index: int) -> None:
+    room = Room.objects.create(legacy_index=room_index, number=room_index, floor="stuen", side="mod gaden")
+    Residency.objects.create(resident=resident, room=room, year=year, month=month)
+
+
 @pytest.mark.django_db
-def test_sends_mail_with_invoice_from_the_chosen_range(
+def test_sends_mail_with_generated_pdf_for_the_period(
     monkeypatch: pytest.MonkeyPatch, make_resident: Callable
 ) -> None:
-    resident = make_resident(email="alumne@gahk.dk", economic_customer_number=42)
-    monkeypatch.setattr(economic, "get_entries", lambda n: [_entry(1, "2026-08-01", 250.0)])
-    monkeypatch.setattr(
-        economic,
-        "get_booked_invoices",
-        lambda n: [_invoice(1, "2026-07-01"), _invoice(2, "2026-08-01")],  # July is out of range
-    )
-    monkeypatch.setattr(economic, "get_invoice_pdf", lambda url: b"%PDF-fake")
+    resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
+    _give_residency(resident, 2026, 8, room_index=1)
+    monkeypatch.setattr(economic, "get_period_entries", lambda n, on_date: [_entry(1, "2026-08-01", 250.0)])
 
     results = alumneregning.send_alumneregninger(*AUGUST)
 
     assert len(results) == 1
     assert results[0].resident == resident
     assert results[0].outcome == "sent"
+    assert "250,00 kr" in results[0].detail
     assert len(mail.outbox) == 1
     sent = mail.outbox[0]
     assert sent.to == ["alumne@gahk.dk"]
@@ -63,53 +58,57 @@ def test_sends_mail_with_invoice_from_the_chosen_range(
     assert "250,00 kr" in sent.body
     assert "din gæld til kollegiet" in sent.body
     filename, content, content_type = sent.attachments[0]
-    assert filename == "alumneregning-2026-08-01.pdf"  # the August invoice, not the July one
-    assert content == b"%PDF-fake"
+    assert filename == "alumneregning-2026-08-01.pdf"
+    assert content.startswith(b"%PDF-")
     assert content_type == "application/pdf"
+    # The balance quoted in the mail came from a row actually mirrored into the local ledger.
     assert EconomicLedgerEntry.objects.filter(resident=resident, entry_number=1).exists()
 
 
 @pytest.mark.django_db
-def test_no_invoice_in_range_is_reported_without_sending(
+def test_no_entries_for_the_period_is_reported_without_sending(
     monkeypatch: pytest.MonkeyPatch, make_resident: Callable
 ) -> None:
-    make_resident(email="alumne@gahk.dk", economic_customer_number=42)
-    monkeypatch.setattr(economic, "get_entries", lambda n: [])
-    monkeypatch.setattr(
-        economic, "get_booked_invoices", lambda n: [_invoice(1, "2026-07-01")]
-    )  # out of range
+    resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
+    _give_residency(resident, 2026, 8, room_index=1)
+    monkeypatch.setattr(economic, "get_period_entries", lambda n, on_date: [])  # no open e-conomic period
 
     results = alumneregning.send_alumneregninger(*AUGUST)
 
-    assert results[0].outcome == "no_invoices"
-    assert "2026-08-01" in results[0].detail
-    assert "2026-08-31" in results[0].detail
+    assert results[0].outcome == "no_entries"
     assert mail.outbox == []
 
 
 @pytest.mark.django_db
-def test_picks_latest_invoice_within_range(monkeypatch: pytest.MonkeyPatch, make_resident: Callable) -> None:
-    make_resident(email="alumne@gahk.dk", economic_customer_number=42)
-    monkeypatch.setattr(economic, "get_entries", lambda n: [_entry(1, "2026-08-01", 0.0)])
-    monkeypatch.setattr(
-        economic,
-        "get_booked_invoices",
-        lambda n: [_invoice(1, "2026-08-05"), _invoice(2, "2026-08-20")],  # both in range
-    )
-    monkeypatch.setattr(economic, "get_invoice_pdf", lambda url: b"%PDF-fake")
+def test_skips_residents_without_a_residency_in_the_billed_period(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
+    _give_residency(resident, 2025, 1, room_index=1)  # lived there, but not in August 2026
+    monkeypatch.setattr(economic, "get_period_entries", lambda n, on_date: [_entry(1, "2026-08-01", 100.0)])
 
-    alumneregning.send_alumneregninger(*AUGUST)
+    results = alumneregning.send_alumneregninger(*AUGUST)
 
-    filename, _content, _content_type = mail.outbox[0].attachments[0]
-    assert filename == "alumneregning-2026-08-20.pdf"
+    assert results == []
+    assert mail.outbox == []
+
+
+@pytest.mark.django_db
+def test_skips_residents_without_a_customer_number(make_resident: Callable) -> None:
+    resident = make_resident(email="no-number@gahk.dk")
+    _give_residency(resident, 2026, 8, room_index=1)
+
+    results = alumneregning.send_alumneregninger(*AUGUST)
+
+    assert results == []
+    assert mail.outbox == []
 
 
 @pytest.mark.django_db
 def test_sync_is_idempotent_across_sends(monkeypatch: pytest.MonkeyPatch, make_resident: Callable) -> None:
-    resident = make_resident(email="alumne@gahk.dk", economic_customer_number=42)
-    monkeypatch.setattr(economic, "get_entries", lambda n: [_entry(1, "2026-08-01", 250.0)])
-    monkeypatch.setattr(economic, "get_booked_invoices", lambda n: [_invoice(1, "2026-08-01")])
-    monkeypatch.setattr(economic, "get_invoice_pdf", lambda url: b"%PDF-fake")
+    resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
+    _give_residency(resident, 2026, 8, room_index=1)
+    monkeypatch.setattr(economic, "get_period_entries", lambda n, on_date: [_entry(1, "2026-08-01", 250.0)])
 
     alumneregning.send_alumneregninger(*AUGUST)
     alumneregning.send_alumneregninger(*AUGUST)  # e-conomic returns the same entry again on re-sync
@@ -122,10 +121,9 @@ def test_sync_is_idempotent_across_sends(monkeypatch: pytest.MonkeyPatch, make_r
 def test_credit_balance_gets_the_other_wording(
     monkeypatch: pytest.MonkeyPatch, make_resident: Callable
 ) -> None:
-    make_resident(email="alumne@gahk.dk", economic_customer_number=42)
-    monkeypatch.setattr(economic, "get_entries", lambda n: [_entry(1, "2026-08-01", -100.0)])
-    monkeypatch.setattr(economic, "get_booked_invoices", lambda n: [_invoice(1, "2026-08-01")])
-    monkeypatch.setattr(economic, "get_invoice_pdf", lambda url: b"%PDF-fake")
+    resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
+    _give_residency(resident, 2026, 8, room_index=1)
+    monkeypatch.setattr(economic, "get_period_entries", lambda n, on_date: [_entry(1, "2026-08-01", -100.0)])
 
     alumneregning.send_alumneregninger(*AUGUST)
 
@@ -133,26 +131,15 @@ def test_credit_balance_gets_the_other_wording(
 
 
 @pytest.mark.django_db
-def test_skips_residents_without_a_customer_number(make_resident: Callable) -> None:
-    make_resident(email="no-number@gahk.dk")
-
-    results = alumneregning.send_alumneregninger(*AUGUST)
-
-    assert results == []
-    assert mail.outbox == []
-
-
-@pytest.mark.django_db
 def test_uses_the_regnskab_edited_message_template(
     monkeypatch: pytest.MonkeyPatch, make_resident: Callable
 ) -> None:
-    make_resident(email="alumne@gahk.dk", economic_customer_number=42, first_name="Tove")
+    resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101, first_name="Tove")
+    _give_residency(resident, 2026, 8, room_index=1)
     AlumneregningSettings.objects.create(
         pk=1, message_template="Kære $FORNAVN. $SALDO_LINE Konto: $KONTO_NR."
     )
-    monkeypatch.setattr(economic, "get_entries", lambda n: [_entry(1, "2026-08-01", 100.0)])
-    monkeypatch.setattr(economic, "get_booked_invoices", lambda n: [_invoice(1, "2026-08-01")])
-    monkeypatch.setattr(economic, "get_invoice_pdf", lambda url: b"%PDF-fake")
+    monkeypatch.setattr(economic, "get_period_entries", lambda n, on_date: [_entry(1, "2026-08-01", 100.0)])
 
     alumneregning.send_alumneregninger(*AUGUST)
 
@@ -167,11 +154,10 @@ def test_unknown_placeholder_in_edited_template_renders_literally(
     monkeypatch: pytest.MonkeyPatch, make_resident: Callable
 ) -> None:
     """A regnskab typo ($SALDOO) must not break the send for everyone — safe_substitute leaves it as-is."""
-    make_resident(email="alumne@gahk.dk", economic_customer_number=42)
+    resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
+    _give_residency(resident, 2026, 8, room_index=1)
     AlumneregningSettings.objects.create(pk=1, message_template="Saldo: $SALDOO")
-    monkeypatch.setattr(economic, "get_entries", lambda n: [_entry(1, "2026-08-01", 0.0)])
-    monkeypatch.setattr(economic, "get_booked_invoices", lambda n: [_invoice(1, "2026-08-01")])
-    monkeypatch.setattr(economic, "get_invoice_pdf", lambda url: b"%PDF-fake")
+    monkeypatch.setattr(economic, "get_period_entries", lambda n, on_date: [_entry(1, "2026-08-01", 0.0)])
 
     results = alumneregning.send_alumneregninger(*AUGUST)
 
@@ -183,12 +169,11 @@ def test_unknown_placeholder_in_edited_template_renders_literally(
 def test_attaches_the_followup_pdf_when_one_is_set(
     monkeypatch: pytest.MonkeyPatch, make_resident: Callable
 ) -> None:
-    make_resident(email="alumne@gahk.dk", economic_customer_number=42)
+    resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
+    _give_residency(resident, 2026, 8, room_index=1)
     mail_settings = AlumneregningSettings.objects.create(pk=1)
     mail_settings.followup_pdf.save("folgebrev.pdf", ContentFile(b"%PDF-followup"), save=True)
-    monkeypatch.setattr(economic, "get_entries", lambda n: [_entry(1, "2026-08-01", 0.0)])
-    monkeypatch.setattr(economic, "get_booked_invoices", lambda n: [_invoice(1, "2026-08-01")])
-    monkeypatch.setattr(economic, "get_invoice_pdf", lambda url: b"%PDF-invoice")
+    monkeypatch.setattr(economic, "get_period_entries", lambda n, on_date: [_entry(1, "2026-08-01", 0.0)])
 
     alumneregning.send_alumneregninger(*AUGUST)
 
@@ -201,10 +186,9 @@ def test_attaches_the_followup_pdf_when_one_is_set(
 def test_no_followup_pdf_means_one_attachment(
     monkeypatch: pytest.MonkeyPatch, make_resident: Callable
 ) -> None:
-    make_resident(email="alumne@gahk.dk", economic_customer_number=42)
-    monkeypatch.setattr(economic, "get_entries", lambda n: [_entry(1, "2026-08-01", 0.0)])
-    monkeypatch.setattr(economic, "get_booked_invoices", lambda n: [_invoice(1, "2026-08-01")])
-    monkeypatch.setattr(economic, "get_invoice_pdf", lambda url: b"%PDF-invoice")
+    resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
+    _give_residency(resident, 2026, 8, room_index=1)
+    monkeypatch.setattr(economic, "get_period_entries", lambda n, on_date: [_entry(1, "2026-08-01", 0.0)])
 
     alumneregning.send_alumneregninger(*AUGUST)
 
@@ -213,17 +197,17 @@ def test_no_followup_pdf_means_one_attachment(
 
 @pytest.mark.django_db
 def test_one_failure_does_not_stop_the_rest(monkeypatch: pytest.MonkeyPatch, make_resident: Callable) -> None:
-    failing = make_resident(email="fails@gahk.dk", economic_customer_number=1, first_name="Fail")
-    ok = make_resident(email="ok@gahk.dk", economic_customer_number=2, first_name="Ok")
+    failing = make_resident(email="fails@gahk.dk", economic_account_number=1, first_name="Fail")
+    _give_residency(failing, 2026, 8, room_index=1)
+    ok = make_resident(email="ok@gahk.dk", economic_account_number=2, first_name="Ok")
+    _give_residency(ok, 2026, 8, room_index=2)
 
-    def get_entries(customer_number: int) -> list[economic.LedgerEntry]:
-        if customer_number == 1:
+    def get_period_entries(account_number: int, on_date: date) -> list[economic.LedgerEntry]:
+        if account_number == 1:
             raise economic.EconomicApiError("e-conomic 500")
         return [_entry(1, "2026-08-01", 0.0)]
 
-    monkeypatch.setattr(economic, "get_entries", get_entries)
-    monkeypatch.setattr(economic, "get_booked_invoices", lambda n: [_invoice(1, "2026-08-01")])
-    monkeypatch.setattr(economic, "get_invoice_pdf", lambda url: b"%PDF-fake")
+    monkeypatch.setattr(economic, "get_period_entries", get_period_entries)
 
     results = alumneregning.send_alumneregninger(*AUGUST)
 
@@ -231,20 +215,22 @@ def test_one_failure_does_not_stop_the_rest(monkeypatch: pytest.MonkeyPatch, mak
     assert by_resident[failing.pk].outcome == "failed"
     assert by_resident[ok.pk].outcome == "sent"
     assert len(mail.outbox) == 1  # only the one that succeeded
-    assert not EconomicLedgerEntry.objects.filter(resident=failing).exists()  # failed sync wrote nothing
+    assert not EconomicLedgerEntry.objects.filter(resident=failing).exists()  # failed fetch wrote nothing
 
 
 @pytest.mark.django_db
 def test_auth_error_aborts_the_whole_batch(monkeypatch: pytest.MonkeyPatch, make_resident: Callable) -> None:
     """An invalid/revoked e-conomic connection affects every alumne equally — stop immediately
     rather than report the same "reconnect e-conomic" failure once per remaining alumne."""
-    make_resident(email="alice@gahk.dk", economic_customer_number=1, first_name="Alice")  # processed first
-    make_resident(email="bob@gahk.dk", economic_customer_number=2, first_name="Bob")
+    alice = make_resident(email="alice@gahk.dk", economic_account_number=1, first_name="Alice")
+    _give_residency(alice, 2026, 8, room_index=1)  # processed first (alphabetical)
+    bob = make_resident(email="bob@gahk.dk", economic_account_number=2, first_name="Bob")
+    _give_residency(bob, 2026, 8, room_index=2)
 
-    def get_entries(customer_number: int) -> list[economic.LedgerEntry]:
+    def get_period_entries(account_number: int, on_date: date) -> list[economic.LedgerEntry]:
         raise economic.EconomicAuthError("token revoked")
 
-    monkeypatch.setattr(economic, "get_entries", get_entries)
+    monkeypatch.setattr(economic, "get_period_entries", get_period_entries)
 
     with pytest.raises(economic.EconomicAuthError):
         alumneregning.send_alumneregninger(*AUGUST)
@@ -256,17 +242,17 @@ def test_auth_error_aborts_the_whole_batch(monkeypatch: pytest.MonkeyPatch, make
 def test_rate_limit_error_is_reported_and_batch_continues(
     monkeypatch: pytest.MonkeyPatch, make_resident: Callable
 ) -> None:
-    make_resident(email="alice@gahk.dk", economic_customer_number=1, first_name="Alice")  # processed first
-    make_resident(email="bob@gahk.dk", economic_customer_number=2, first_name="Bob")
+    alice = make_resident(email="alice@gahk.dk", economic_account_number=1, first_name="Alice")
+    _give_residency(alice, 2026, 8, room_index=1)  # processed first
+    bob = make_resident(email="bob@gahk.dk", economic_account_number=2, first_name="Bob")
+    _give_residency(bob, 2026, 8, room_index=2)
 
-    def get_entries(customer_number: int) -> list[economic.LedgerEntry]:
-        if customer_number == 1:
+    def get_period_entries(account_number: int, on_date: date) -> list[economic.LedgerEntry]:
+        if account_number == 1:
             raise economic.EconomicRateLimitError("still 429 after retries")
         return [_entry(1, "2026-08-01", 0.0)]
 
-    monkeypatch.setattr(economic, "get_entries", get_entries)
-    monkeypatch.setattr(economic, "get_booked_invoices", lambda n: [_invoice(1, "2026-08-01")])
-    monkeypatch.setattr(economic, "get_invoice_pdf", lambda url: b"%PDF-fake")
+    monkeypatch.setattr(economic, "get_period_entries", get_period_entries)
 
     results = alumneregning.send_alumneregninger(*AUGUST)
 

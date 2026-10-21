@@ -126,16 +126,16 @@ class ProfileEditForm(forms.ModelForm):
         return upload
 
 
-class EconomicCustomerNumberForm(forms.ModelForm):
-    """Regnskab sets or clears a resident's e-conomic debtor customerNumber (alumneregning automation,
-    F-010 regnskab role). A single-field form rather than adding it to ResidentEditForm: that form is
-    indstilling's general edit surface, and this value is regnskab's own, edited inline from the
-    regnskab lookup/leaver rows instead."""
+class EconomicAccountNumberForm(forms.ModelForm):
+    """Regnskab sets or clears a resident's e-conomic chart-of-accounts accountNumber (alumneregning
+    automation, F-010 regnskab role). A single-field form rather than adding it to ResidentEditForm:
+    that form is indstilling's general edit surface, and this value is regnskab's own, edited inline
+    from the regnskab lookup/leaver rows instead."""
 
     class Meta:
         model = Resident
-        fields = ["economic_customer_number"]
-        labels = {"economic_customer_number": "E-conomic kundenr."}
+        fields = ["economic_account_number"]
+        labels = {"economic_account_number": "E-conomic kontonr."}
 
 
 class AlumneregningSettingsForm(forms.ModelForm):

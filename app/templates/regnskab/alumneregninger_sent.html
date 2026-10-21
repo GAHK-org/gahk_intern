@@ -16,13 +16,13 @@
             <td>{{ result.resident.email }}</td>
             <td class="whitespace-nowrap {% if result.outcome == 'failed' %}text-red-600 font-semibold{% endif %}">
               {% if result.outcome == 'sent' %}Sendt
-              {% elif result.outcome == 'no_invoices' %}Ingen fakturaer
+              {% elif result.outcome == 'no_entries' %}Ingen posteringer
               {% else %}Fejlede{% endif %}
             </td>
             <td>{{ result.detail }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="4" class="muted">Ingen alumner har et e-conomic kundenr. sat endnu.</td></tr>
+          <tr><td colspan="4" class="muted">Ingen alumner boede på kollegiet i perioden med et e-conomic kontonr. sat.</td></tr>
         {% endfor %}
       </tbody>
     </table>

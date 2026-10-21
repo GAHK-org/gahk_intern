@@ -11,8 +11,8 @@ urlpatterns = [
     path("regnskab/", views_regnskab.overview, name="regnskab"),
     path(
         "regnskab/<int:pk>/economic-nummer",
-        views_regnskab.set_economic_customer_number,
-        name="set_economic_customer_number",
+        views_regnskab.set_economic_account_number,
+        name="set_economic_account_number",
     ),
     path(
         "regnskab/alumneregninger/send",

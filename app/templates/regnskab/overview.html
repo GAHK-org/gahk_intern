@@ -21,7 +21,7 @@
   <div class="overflow-x-auto mb-8">
     <table cellpadding="6" class="text-sm" style="width:100%; border-collapse:collapse">
       <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec; white-space:nowrap">
-        <th>Navn</th><th>Værelse ({{ prior_label }})</th><th>AK</th><th>Ølkælder</th><th>E-conomic nr.</th>
+        <th>Navn</th><th>Værelse ({{ prior_label }})</th><th>AK</th><th>Ølkælder</th><th>E-conomic kontonr.</th>
       </tr></thead>
       <tbody>{% include "regnskab/_rows.html" with rows=leavers %}</tbody>
     </table>
@@ -39,7 +39,7 @@
     <div class="overflow-x-auto mb-8">
       <table cellpadding="6" class="text-sm" style="width:100%; border-collapse:collapse">
         <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec; white-space:nowrap">
-          <th>Navn</th><th>Værelse</th><th>AK</th><th>Ølkælder</th><th>E-conomic nr.</th>
+          <th>Navn</th><th>Værelse</th><th>AK</th><th>Ølkælder</th><th>E-conomic kontonr.</th>
         </tr></thead>
         <tbody>{% include "regnskab/_rows.html" with rows=results %}</tbody>
       </table>
@@ -49,12 +49,13 @@
   <div style="border-top:1px solid #e6e8ec; margin-top:2rem; padding-top:1.5rem">
     <h2>Alumneregninger</h2>
     <p class="muted text-sm mb-3">
-      Sender en e-mail med vedhæftet regning (den bogførte faktura fra e-conomic, der falder i
-      perioden nedenfor) til hver alumne, der har fået sat et e-conomic kundenr. ovenfor.
+      Sender en e-mail med en genereret kontoudskrift (posteringerne for e-conomic-perioden, der
+      dækker "Fra"-datoen nedenfor) til hver alumne med et e-conomic kontonr. ovenfor, der boede på
+      kollegiet i den valgte periode.
     </p>
     <form method="post" action="{% url 'send_alumneregninger' %}"
           class="flex flex-wrap items-end gap-2"
-          onsubmit="return confirm('Send alumneregninger for den valgte periode til alle alumner med et e-conomic kundenr.?');">
+          onsubmit="return confirm('Send alumneregninger for den valgte periode til alle alumner med et e-conomic kontonr.?');">
       {% csrf_token %}
       <div>
         <label for="fra" class="font-semibold block text-sm">Fra</label>

@@ -1,14 +1,20 @@
-"""Syncs each alumne's e-conomic postings into the local, immutable EconomicLedgerEntry mirror
-(F-010 regnskab, alumneregning automation). See EconomicLedgerEntry's docstring for why this mirror
-exists: e-conomic stays the real books, this is GAHK's own append-only copy of it.
+"""Mirrors e-conomic postings into the local, immutable EconomicLedgerEntry table (F-010 regnskab,
+alumneregning automation). See EconomicLedgerEntry's docstring for why this mirror exists: e-conomic
+stays the real books, this is GAHK's own append-only copy of it.
 
 Insert-only and idempotent: entry_number is e-conomic's own id for a posting and is unique here, so
 re-syncing a resident already covered by a previous sync just finds nothing new — existing rows are
 never updated or deleted, which is what "immutable" means for a mirror of someone else's ledger.
+
+Deliberately decoupled from residents.economic: this module only persists economic.LedgerEntry
+objects it is handed, it does not fetch them itself. The caller (residents.alumneregning) decides
+which e-conomic period's entries are relevant to a given send; this module's job is just the
+immutable local copy, not that business decision.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from decimal import Decimal
 
 from django.db.models import Sum
@@ -17,8 +23,8 @@ from . import economic
 from .models import EconomicLedgerEntry, Resident
 
 
-def sync_entries(resident: Resident, customer_number: int) -> int:
-    """Pull every e-conomic posting for one resident and store the ones not already mirrored locally.
+def sync_entries(resident: Resident, entries: Iterable[economic.LedgerEntry]) -> int:
+    """Store the given e-conomic entries for `resident`, skipping any already mirrored locally.
     Returns how many new rows were inserted."""
     known = set(EconomicLedgerEntry.objects.filter(resident=resident).values_list("entry_number", flat=True))
     new_entries = [
@@ -32,7 +38,7 @@ def sync_entries(resident: Resident, customer_number: int) -> int:
             voucher_number=entry.voucher_number or None,
             due_date=entry.due_date or None,
         )
-        for entry in economic.get_entries(customer_number)
+        for entry in entries
         if entry.entry_number not in known
     ]
     EconomicLedgerEntry.objects.bulk_create(new_entries)
@@ -40,7 +46,10 @@ def sync_entries(resident: Resident, customer_number: int) -> int:
 
 
 def balance(resident: Resident) -> Decimal:
-    """The resident's balance as GAHK's own ledger mirror currently has it — positive = they owe
-    GAHK, matching e-conomic's own sign convention (EconomicLedgerEntry.amount)."""
+    """The sum of everything currently mirrored locally for this resident — positive = they owe GAHK,
+    matching e-conomic's own sign convention (EconomicLedgerEntry.amount). Not what alumneregning
+    mails quote: GAHK's accounts reset each fiscal period (see economic.get_period_entries), so a
+    send's balance is the sum of that one period's entries, not this all-time local total, which can
+    span several different periods synced over time. This is a general-purpose inspection helper."""
     total = resident.economic_entries.aggregate(total=Sum("amount"))["total"]
     return total or Decimal(0)

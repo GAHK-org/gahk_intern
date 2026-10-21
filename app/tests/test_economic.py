@@ -2,11 +2,14 @@
 
 Mocks requests.get directly rather than hitting the network: these are unit tests of the client's own
 parsing/error-handling, not of e-conomic's API. The client was developed and manually verified against
-the real restapi.e-conomic.com demo company (customerNumber=1); these tests pin that known response
-shape so a future e-conomic API change is caught here instead of only at alumneregning send time.
+the real restapi.e-conomic.com API (GAHK's real company, account 1101) — these tests pin known response
+shapes (including the account-scoped-years-link-is-actually-company-wide quirk, and split fiscal years
+needing an internal URL slug) so a future e-conomic API change is caught here instead of only at
+alumneregning send time.
 """
 
 from dataclasses import dataclass, field
+from datetime import date
 
 import pytest
 import requests
@@ -30,84 +33,94 @@ class FakeResponse:
         return self._json
 
 
-def test_get_customer_parses_balance_and_due_amount(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = []
+def _years_response(*periods: tuple[str, str, str]) -> FakeResponse:
+    """periods: (year_label, fromDate, toDate) tuples, e.g. ("2025", "2025-04-01", "2025-09-30")."""
+    return FakeResponse(
+        _json={
+            "collection": [
+                {
+                    "year": label,
+                    "fromDate": from_date,
+                    "toDate": to_date,
+                    "self": f"https://restapi.e-conomic.com/accounting-years/{label.replace('/', '_6_')}",
+                    "entries": "https://restapi.e-conomic.com/accounting-years/WRONG-whole-company-link",
+                }
+                for label, from_date, to_date in periods
+            ]
+        }
+    )
 
-    def fake_get(url: str, **kwargs: object) -> FakeResponse:
-        calls.append((url, kwargs))
-        return FakeResponse(
-            _json={"customerNumber": 1, "name": "Decathlon", "balance": -1600.0, "dueAmount": 0.0}
-        )
+
+def test_get_account_parses_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        economic.requests,
+        "get",
+        lambda url, **kw: FakeResponse(_json={"accountNumber": 1101, "name": "Alumne-Sten", "balance": 0.0}),
+    )
+
+    account = economic.get_account(1101)
+
+    assert account == economic.EconomicAccount(account_number=1101, name="Alumne-Sten", balance=0.0)
+
+
+def test_get_period_entries_uses_year_self_link_not_entries_link(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The year's own "entries" hyperlink is whole-company, not account-scoped (a real e-conomic API
+    quirk) — the client must build the URL from the year's "self" link instead."""
+    calls: list[str] = []
+
+    def fake_get(url: str, **kw: object) -> FakeResponse:
+        calls.append(url)
+        if url.endswith("/accounting-years"):
+            return _years_response(("2026", "2026-01-01", "2026-12-31"))
+        return FakeResponse(_json={"collection": [{"entryNumber": 1, "date": "2026-08-01", "amount": 100.0}]})
 
     monkeypatch.setattr(economic.requests, "get", fake_get)
 
-    customer = economic.get_customer(1)
+    entries = economic.get_period_entries(1101, date(2026, 8, 1))
 
-    assert customer == economic.EconomicCustomer(
-        customer_number=1, name="Decathlon", balance=-1600.0, due_amount=0.0
-    )
-    url, kwargs = calls[0]
-    assert url == f"{economic.BASE_URL}/customers/1"
-    assert kwargs["headers"]["X-AppSecretToken"]
-    assert kwargs["headers"]["X-AgreementGrantToken"]
-
-
-def test_get_customer_raises_on_error_response(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        economic.requests, "get", lambda url, **kw: FakeResponse(status_code=404, text="Customer not found")
-    )
-
-    with pytest.raises(economic.EconomicApiError, match="404"):
-        economic.get_customer(999)
-
-
-def test_get_customer_raises_on_network_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    def raise_connection_error(url: str, **kwargs: object) -> FakeResponse:
-        raise requests.ConnectionError("boom")
-
-    monkeypatch.setattr(economic.requests, "get", raise_connection_error)
-
-    with pytest.raises(economic.EconomicApiError):
-        economic.get_customer(1)
-
-
-def test_get_booked_invoices_parses_collection(monkeypatch: pytest.MonkeyPatch) -> None:
-    payload = {
-        "collection": [
-            {
-                "bookedInvoiceNumber": 1,
-                "date": "2022-06-02",
-                "dueDate": "2022-06-10",
-                "remainder": 0.0,
-                "pdf": {"download": "https://restapi.e-conomic.com/invoices/booked/1/pdf"},
-            }
-        ]
-    }
-    monkeypatch.setattr(economic.requests, "get", lambda url, **kw: FakeResponse(_json=payload))
-
-    invoices = economic.get_booked_invoices(1)
-
-    assert invoices == [
-        economic.BookedInvoice(
-            booked_invoice_number=1,
-            date="2022-06-02",
-            due_date="2022-06-10",
-            remainder=0.0,
-            pdf_url="https://restapi.e-conomic.com/invoices/booked/1/pdf",
+    assert entries == [
+        economic.LedgerEntry(
+            entry_number=1,
+            date="2026-08-01",
+            text="",
+            amount=100.0,
+            entry_type="",
+            voucher_number=0,
+            due_date=None,
         )
     ]
+    # The second call must hit the account-scoped URL (built from "self"), never the "entries" link.
+    assert calls[1] == "https://restapi.e-conomic.com/accounts/1101/accounting-years/2026/entries"
 
 
-def test_get_booked_invoices_empty_collection(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(economic.requests, "get", lambda url, **kw: FakeResponse(_json={"collection": []}))
+def test_get_period_entries_handles_split_fiscal_year_slug(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A fiscal year not aligned to the calendar displays as "2015/2016" but its real URL id is an
+    e-conomic-internal slug ("2015_6_2016") — pinned here so a format change is caught."""
+    calls: list[str] = []
 
-    assert economic.get_booked_invoices(1) == []
+    def fake_get(url: str, **kw: object) -> FakeResponse:
+        calls.append(url)
+        if url.endswith("/accounting-years"):
+            return _years_response(("2015/2016", "2015-10-01", "2016-03-31"))
+        return FakeResponse(_json={"collection": []})
+
+    monkeypatch.setattr(economic.requests, "get", fake_get)
+
+    economic.get_period_entries(1101, date(2015, 12, 1))
+
+    assert calls[1] == "https://restapi.e-conomic.com/accounts/1101/accounting-years/2015_6_2016/entries"
 
 
-def test_get_invoice_pdf_returns_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(economic.requests, "get", lambda url, **kw: FakeResponse(content=b"%PDF-1.7 fake"))
+def test_get_period_entries_returns_empty_when_no_period_covers_the_date(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        economic.requests,
+        "get",
+        lambda url, **kw: _years_response(("2025", "2025-04-01", "2025-09-30")),
+    )
 
-    assert economic.get_invoice_pdf("https://restapi.e-conomic.com/invoices/booked/1/pdf") == b"%PDF-1.7 fake"
+    assert economic.get_period_entries(1101, date(2026, 10, 1)) == []
 
 
 def test_401_raises_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -116,7 +129,7 @@ def test_401_raises_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     with pytest.raises(economic.EconomicAuthError):
-        economic.get_customer(1)
+        economic.get_account(1)
 
 
 def test_403_raises_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -125,16 +138,16 @@ def test_403_raises_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     with pytest.raises(economic.EconomicAuthError):
-        economic.get_customer(1)
+        economic.get_account(1)
 
 
 def test_400_raises_validation_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        economic.requests, "get", lambda url, **kw: FakeResponse(status_code=400, text="bad filter syntax")
+        economic.requests, "get", lambda url, **kw: FakeResponse(status_code=400, text="bad account number")
     )
 
     with pytest.raises(economic.EconomicValidationError):
-        economic.get_customer(1)
+        economic.get_account(1)
 
 
 def test_500_raises_plain_api_error_not_a_subclass(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -143,7 +156,7 @@ def test_500_raises_plain_api_error_not_a_subclass(monkeypatch: pytest.MonkeyPat
     )
 
     with pytest.raises(economic.EconomicApiError) as exc_info:
-        economic.get_customer(1)
+        economic.get_account(1)
     assert not isinstance(exc_info.value, economic.EconomicAuthError)
     assert not isinstance(exc_info.value, economic.EconomicValidationError)
 
@@ -155,16 +168,14 @@ def test_429_retries_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
         [
             FakeResponse(status_code=429, headers={"Retry-After": "2"}),
             FakeResponse(status_code=429),  # no Retry-After this time -> falls back to backoff
-            FakeResponse(
-                status_code=200, _json={"customerNumber": 1, "name": "x", "balance": 0.0, "dueAmount": 0.0}
-            ),
+            FakeResponse(status_code=200, _json={"accountNumber": 1, "name": "x", "balance": 0.0}),
         ]
     )
     monkeypatch.setattr(economic.requests, "get", lambda url, **kw: next(responses))
 
-    customer = economic.get_customer(1)
+    account = economic.get_account(1)
 
-    assert customer.customer_number == 1
+    assert account.account_number == 1
     assert sleeps == [2.0, economic._BASE_BACKOFF_SECONDS * 2**1]  # Retry-After honoured, then exponential
 
 
@@ -173,7 +184,7 @@ def test_429_exhausted_raises_rate_limit_error(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(economic.requests, "get", lambda url, **kw: FakeResponse(status_code=429))
 
     with pytest.raises(economic.EconomicRateLimitError):
-        economic.get_customer(1)
+        economic.get_account(1)
 
 
 def test_network_error_still_raises_plain_api_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -183,5 +194,5 @@ def test_network_error_still_raises_plain_api_error(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(economic.requests, "get", raise_timeout)
 
     with pytest.raises(economic.EconomicApiError) as exc_info:
-        economic.get_customer(1)
+        economic.get_account(1)
     assert not isinstance(exc_info.value, economic.EconomicRateLimitError)

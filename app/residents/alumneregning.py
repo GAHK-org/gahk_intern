@@ -1,31 +1,33 @@
-"""Alumneregninger: monthly billing mails to former residents (F-010 regnskab role).
+"""Alumneregninger: billing mails to former residents for a chosen period (F-010 regnskab role).
 
-Replaces the old manual flow (alumneregning/send_mail.py in a separate repo): download a combined
-PDF of every debtor's account card from e-conomic, OCR-match pages to names, split, email. Here each
-alumne's e-conomic customerNumber is already on their Resident (residents.forms.EconomicCustomerNumberForm),
-so their statement is fetched directly and deterministically via residents.economic instead.
+Replaces the old manual flow (alumneregning/send_mail.py in a separate repo): download a combined PDF
+of every debtor's account card from e-conomic, OCR-match pages to names, split, email. GAHK does not
+track alumni as e-conomic Customers — each alumne has their own chart-of-accounts GL account instead
+(residents.forms.EconomicAccountNumberForm sets Resident.economic_account_number), so their statement
+is read directly and deterministically via residents.economic instead of matched by OCR.
 
-What gets sent: the alumne's *booked invoice falling within a caller-chosen date range* (one PDF,
-e-conomic's own rendering) plus the regnskab-edited følgebrev PDF (AlumneregningSettings, if one is
-set) as attachments, and their balance in the mail body — but the balance comes from GAHK's own local
-ledger mirror (residents.ledger), not a live e-conomic customer.balance call. Each send first syncs
-that resident's entries (residents.ledger.sync_entries), so the figure quoted in the mail is also the
-one now sitting in gahk-intern's own permanent record, not just e-conomic's.
+What gets sent: a PDF statement generated locally (residents.statement_pdf — NOT fetched from
+e-conomic; GAHK's account-based setup has nothing like a rendered invoice to fetch, see
+economic.get_period_entries's docstring) from that account's e-conomic entries for the ONE fiscal
+period covering date_from, plus the regnskab-edited følgebrev PDF (AlumneregningSettings) if one is
+set. The balance quoted in the mail is the sum of that same period's entries — not an all-time sum:
+GAHK's accounts are type `profitAndLoss` and reset each fiscal period rather than carrying a running
+balance, confirmed against the real API (summing one account's entire ~10-year history gave
+-506,720, while e-conomic's own current balance for it was 0).
 
-The mail body itself is AlumneregningSettings.message_template (edited in the UI by regnskab,
-defaults to models.DEFAULT_ALUMNEREGNING_MESSAGE), a string.Template filled in with $FORNAVN,
-$SALDO_LINE (the balance sentence, sign-aware — computed here, not editable, since it is derived
-data rather than wording), $REG_NR and $KONTO_NR. safe_substitute(), not substitute(): a typo'd
-placeholder in a regnskab-edited template should render literally, not break every send in the batch.
+Every fetched entry is still mirrored into the local immutable ledger (residents.ledger) regardless —
+that is GAHK's own permanent audit record of what was read from e-conomic, independent of which
+period happens to be "current" for a given send.
 
-The date range (e.g. "August 2026", or any custom from/to) picks WHICH invoice gets attached — the
-balance itself is never period-scoped, it is always the running total, same as e-conomic's own
-customer.balance. One invoice attached per send, not every open entry in the range like the old
-combined PDF — e-conomic books one invoice per billing run, so a resident billed once in the chosen
-range gets that run's bill. If more than one invoice falls in range, the latest wins. If that
-assumption turns out wrong in practice (multiple invoices per month, or postings that never become an
-"invoice"), residents.economic.get_booked_invoices already returns the full list to build a richer
-statement from.
+Who gets mailed: residents with an economic_account_number set AND a Residency falling within
+[date_from, date_to] — i.e. people who actually lived at GAHK during the period being billed, not
+every resident who has ever been given an account number.
+
+The mail body is AlumneregningSettings.message_template (edited in the UI by regnskab, defaults to
+models.DEFAULT_ALUMNEREGNING_MESSAGE), a string.Template filled in with $FORNAVN, $SALDO_LINE (the
+balance sentence, sign-aware — computed here, not editable, since it is derived data rather than
+wording), $REG_NR and $KONTO_NR. safe_substitute(), not substitute(): a typo'd placeholder in a
+regnskab-edited template should render literally, not break every send in the batch.
 """
 
 from __future__ import annotations
@@ -39,13 +41,14 @@ from typing import Literal
 
 from django.conf import settings
 from django.core.mail import EmailMessage
+from django.db.models import F, QuerySet
 
-from . import economic, ledger
-from .models import AlumneregningSettings, Resident
+from . import economic, ledger, statement_pdf
+from .models import AlumneregningSettings, Residency, Resident
 
 logger = logging.getLogger(__name__)
 
-Outcome = Literal["sent", "no_invoices", "failed"]
+Outcome = Literal["sent", "no_entries", "failed"]
 
 
 @dataclass(frozen=True)
@@ -73,28 +76,39 @@ def _body(resident: Resident, balance: Decimal, message_template: str) -> str:
     )
 
 
+def _residents_billable_for(date_from: date, date_to: date) -> QuerySet[Resident]:
+    """Residents eligible for this send: an e-conomic account number set, and a Residency row whose
+    (year, month) falls within [date_from, date_to] — i.e. they actually lived at GAHK at some point
+    during the period being billed."""
+    lower = date_from.year * 12 + date_from.month
+    upper = date_to.year * 12 + date_to.month
+    resident_ids = (
+        Residency.objects.annotate(month_number=F("year") * 12 + F("month"))
+        .filter(month_number__gte=lower, month_number__lte=upper)
+        .values_list("resident_id", flat=True)
+        .distinct()
+    )
+    return Resident.objects.filter(pk__in=resident_ids, economic_account_number__isnull=False).order_by(
+        "first_name", "last_name"
+    )
+
+
 def _send_one(
     resident: Resident,
-    customer_number: int,
+    account_number: int,
     date_from: date,
     date_to: date,
     mail_settings: AlumneregningSettings,
 ) -> AlumneregningResult:
-    ledger.sync_entries(resident, customer_number)
-    balance = ledger.balance(resident)
-
-    invoices = [
-        inv
-        for inv in economic.get_booked_invoices(customer_number)
-        if date_from <= date.fromisoformat(inv.date) <= date_to
-    ]
-    if not invoices:
+    entries = economic.get_period_entries(account_number, date_from)
+    if not entries:
         return AlumneregningResult(
-            resident, "no_invoices", f"Ingen bogført faktura mellem {date_from} og {date_to}."
+            resident, "no_entries", f"Ingen posteringer/åben e-conomic-periode for {date_from}."
         )
 
-    latest = max(invoices, key=lambda inv: inv.date)
-    pdf = economic.get_invoice_pdf(latest.pdf_url)
+    ledger.sync_entries(resident, entries)
+    balance = sum((Decimal(str(e.amount)) for e in entries), Decimal(0))
+    pdf = statement_pdf.render(resident, account_number, entries, date_from, date_to)
 
     email = EmailMessage(
         subject="Alumneregning",
@@ -102,30 +116,27 @@ def _send_one(
         from_email=f"Regnskabsgruppen <{settings.ALUMNEREGNING_FROM_EMAIL}>",
         to=[resident.email],
     )
-    email.attach(f"alumneregning-{latest.date}.pdf", pdf, "application/pdf")
+    email.attach(f"alumneregning-{date_from.isoformat()}.pdf", pdf, "application/pdf")
     if mail_settings.followup_pdf:
         with mail_settings.followup_pdf.open("rb") as followup:
             email.attach(
                 mail_settings.followup_pdf.name.rsplit("/", 1)[-1], followup.read(), "application/pdf"
             )
     email.send()
-    return AlumneregningResult(resident, "sent", f"Faktura {latest.booked_invoice_number} ({latest.date}).")
+    return AlumneregningResult(resident, "sent", f"{len(entries)} posteringer, saldo {_kr(balance)} kr.")
 
 
 def send_alumneregninger(date_from: date, date_to: date) -> list[AlumneregningResult]:
-    """Email every resident with an e-conomic customerNumber the booked invoice falling in
-    [date_from, date_to] (inclusive). Best-effort per resident: one failing (e-conomic error, bad
+    """Email every billable resident (see _residents_billable_for) their statement for the e-conomic
+    fiscal period covering date_from. Best-effort per resident: one failing (e-conomic error, bad
     data) does not stop the rest — reported in the results instead, same as the old script's per-row
     error printing."""
     mail_settings = AlumneregningSettings.get_solo()
     results: list[AlumneregningResult] = []
-    residents = Resident.objects.filter(economic_customer_number__isnull=False).order_by(
-        "first_name", "last_name"
-    )
-    for resident in residents:
+    for resident in _residents_billable_for(date_from, date_to):
         try:
             results.append(
-                _send_one(resident, resident.economic_customer_number, date_from, date_to, mail_settings)
+                _send_one(resident, resident.economic_account_number, date_from, date_to, mail_settings)
             )
         except economic.EconomicAuthError as exc:
             # No silent refresh is possible (see EconomicAuthError's docstring) — stop the whole
