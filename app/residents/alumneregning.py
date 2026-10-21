@@ -6,23 +6,29 @@ alumne's e-conomic customerNumber is already on their Resident (residents.forms.
 so their statement is fetched directly and deterministically via residents.economic instead.
 
 What gets sent: the alumne's most recent *booked invoice* from e-conomic (one PDF, e-conomic's own
-rendering) plus their current balance in the mail body. One invoice, not every open entry since the
-last accounting meeting like the old combined PDF — e-conomic books one invoice per billing run, so
-"most recent" is that run's bill. If that assumption turns out wrong in practice (multiple invoices
-per month, or postings that never become an "invoice"), residents.economic.get_booked_invoices
-already returns the full list to build a richer statement from.
+rendering) as the attachment, and their balance in the mail body — but the balance comes from GAHK's
+own local ledger mirror (residents.ledger), not a live e-conomic customer.balance call. Each send
+first syncs that resident's entries (residents.ledger.sync_entries), so the figure quoted in the mail
+is also the one now sitting in gahk-intern's own permanent record, not just e-conomic's.
+
+One invoice attached, not every open entry since the last accounting meeting like the old combined
+PDF — e-conomic books one invoice per billing run, so "most recent" is that run's bill. If that
+assumption turns out wrong in practice (multiple invoices per month, or postings that never become an
+"invoice"), residents.economic.get_booked_invoices already returns the full list to build a richer
+statement from.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Literal
 
 from django.conf import settings
 from django.core.mail import EmailMessage
 
-from . import economic
+from . import economic, ledger
 from .models import Resident
 
 logger = logging.getLogger(__name__)
@@ -37,11 +43,11 @@ class AlumneregningResult:
     detail: str = ""
 
 
-def _kr(amount: float) -> str:
+def _kr(amount: Decimal) -> str:
     return f"{amount:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-def _body(resident: Resident, balance: float) -> str:
+def _body(resident: Resident, balance: Decimal) -> str:
     saldo_line = (
         f"Din saldo er nu {_kr(balance)} kr. — det er din gæld til kollegiet."
         if balance >= 0
@@ -82,7 +88,9 @@ def _body(resident: Resident, balance: float) -> str:
 
 
 def _send_one(resident: Resident, customer_number: int) -> AlumneregningResult:
-    customer = economic.get_customer(customer_number)
+    ledger.sync_entries(resident, customer_number)
+    balance = ledger.balance(resident)
+
     invoices = economic.get_booked_invoices(customer_number)
     if not invoices:
         return AlumneregningResult(resident, "no_invoices", "Ingen bogførte fakturaer i e-conomic.")
@@ -92,7 +100,7 @@ def _send_one(resident: Resident, customer_number: int) -> AlumneregningResult:
 
     email = EmailMessage(
         subject="Alumneregning",
-        body=_body(resident, customer.balance),
+        body=_body(resident, balance),
         from_email=f"Regnskabsgruppen <{settings.ALUMNEREGNING_FROM_EMAIL}>",
         to=[resident.email],
     )

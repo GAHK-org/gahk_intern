@@ -48,6 +48,21 @@ class BookedInvoice:
     pdf_url: str
 
 
+@dataclass(frozen=True)
+class LedgerEntry:
+    """One posting from e-conomic's own ledger (GET .../entries) touching this customer's account —
+    the raw material residents.ledger mirrors into an immutable local row. Not booked-invoice data:
+    this also covers payments, manual postings, anything entryType covers."""
+
+    entry_number: int
+    date: str
+    text: str
+    amount: float  # e-conomic's own sign convention: positive = the customer owes GAHK
+    entry_type: str
+    voucher_number: int
+    due_date: str | None
+
+
 def _headers() -> dict[str, str]:
     return {
         "X-AppSecretToken": settings.ECONOMIC_APP_SECRET_TOKEN,
@@ -91,6 +106,43 @@ def get_booked_invoices(customer_number: int) -> list[BookedInvoice]:
         )
         for item in data.get("collection", [])
     ]
+
+
+def _accounting_years() -> list[str]:
+    data = _get(f"{BASE_URL}/accounting-years").json()
+    return [item["year"] for item in data.get("collection", [])]
+
+
+def get_entries(customer_number: int) -> list[LedgerEntry]:
+    """Every ledger posting touching this customer's account, across every accounting year.
+
+    e-conomic has no flat /entries collection — GET /entries itself returns a developerHint saying so
+    — entries only exist nested under an accounting year (or account+year). So this enumerates years
+    first (cheap: one small JSON call) and queries each year's entries filtered to this customer.
+    Small enough at GAHK's volume (a handful of years, each with a handful of alumni entries) to do
+    unconditionally rather than caching/narrowing to "recent" years — see residents.ledger for how
+    this gets made idempotent (entry_number is the sync key, so re-fetching already-seen years is
+    wasted calls but never wrong).
+    """
+    entries: list[LedgerEntry] = []
+    for year in _accounting_years():
+        data = _get(
+            f"{BASE_URL}/accounting-years/{year}/entries",
+            params={"filter": f"customer.customerNumber$eq:{customer_number}", "pagesize": 1000},
+        ).json()
+        entries.extend(
+            LedgerEntry(
+                entry_number=item["entryNumber"],
+                date=item["date"],
+                text=item.get("text", ""),
+                amount=item.get("amount", 0.0),
+                entry_type=item.get("entryType", ""),
+                voucher_number=item.get("voucherNumber", 0),
+                due_date=item.get("dueDate"),
+            )
+            for item in data.get("collection", [])
+        )
+    return entries
 
 
 def get_invoice_pdf(pdf_url: str) -> bytes:

@@ -351,6 +351,34 @@ class AdminAccessGrant(models.Model):
         return f"{self.resident.full_name} — {self.get_status_display()}"
 
 
+class EconomicLedgerEntry(models.Model):
+    """One posting from e-conomic's own ledger, mirrored locally (F-010 regnskab, alumneregning
+    automation). e-conomic remains the real books; this is GAHK's own permanent, append-only copy of
+    what e-conomic said at sync time — so a balance or a statement can be read from gahk-intern's own
+    data instead of a live API call every time, and the record survives even if e-conomic access ever
+    lapses. Matches how AkEntry/oelkaelder.Transaction already work: entries summed, never edited or
+    deleted — see residents.ledger.sync_entries, which only ever INSERTs (entry_number is the e-conomic
+    posting's own id, unique, so a re-sync just finds nothing new to add).
+    """
+
+    resident = models.ForeignKey(Resident, on_delete=models.PROTECT, related_name="economic_entries")
+    entry_number = models.PositiveIntegerField(unique=True)  # e-conomic's own id for this posting
+    date = models.DateField()
+    text = models.CharField(max_length=255, blank=True)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)  # + = resident owes GAHK (e-conomic's sign)
+    entry_type = models.CharField(max_length=40, blank=True)
+    voucher_number = models.PositiveIntegerField(null=True, blank=True)
+    due_date = models.DateField(null=True, blank=True)
+    synced_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["date", "entry_number"]
+        indexes = [models.Index(fields=["resident", "date"])]
+
+    def __str__(self) -> str:
+        return f"{self.resident.full_name} — {self.date} {self.amount} kr (e-conomic #{self.entry_number})"
+
+
 def active_period() -> tuple[int, int]:
     """The (year, month) currently *in effect*: the most recent published residency list that has
     already started. A list indstilling is preparing for a future month does NOT become active until

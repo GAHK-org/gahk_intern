@@ -164,11 +164,7 @@ def test_send_alumneregninger_view_renders_results(
 ) -> None:
     acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
     make_resident(email="alumne@gahk.dk", economic_customer_number=42, first_name="Alu", last_name="Mne")
-    monkeypatch.setattr(
-        economic,
-        "get_customer",
-        lambda n: economic.EconomicCustomer(customer_number=n, name="x", balance=0.0, due_amount=0.0),
-    )
+    monkeypatch.setattr(economic, "get_entries", lambda n: [])
     monkeypatch.setattr(economic, "get_booked_invoices", lambda n: [])
     c = Client()
     c.force_login(acc)
