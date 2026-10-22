@@ -1276,6 +1276,32 @@ def next_episode(video: Video) -> Video | None:
     return None
 
 
+def up_next(video: Video, resident: Resident) -> Video | None:
+    """What autoplay starts after this video: the next episode, else a film the resident hasn't finished."""
+    if (episode := next_episode(video)) is not None:
+        return episode
+    finished = set(Watch.objects.filter(resident=resident, finished=True).values_list("video_id", flat=True))
+    newest = published().filter(series=None).order_by("-published_at")[:50]
+    for candidate in [*similar(video), *trending(20), *newest]:
+        if (
+            candidate.series_id is None
+            and candidate.pk != video.pk
+            and candidate.file_id
+            and candidate.pk not in finished
+        ):
+            return candidate
+    # Everything seen: start over with the film watched longest ago.
+    rewatch = (
+        Watch.objects.filter(resident=resident, finished=True, video__in=published().filter(series=None))
+        .exclude(video=video)
+        .exclude(video__file=None)
+        .select_related("video__file")
+        .order_by(F("position_at").asc(nulls_first=True), "pk")
+        .first()
+    )
+    return rewatch.video if rewatch else None
+
+
 def similar(video: Video, limit: int = 12) -> list[Video]:
     """More like this: other videos sharing its tags or its cast, most in common first."""
     tags = list(video.tags.values_list("pk", flat=True))

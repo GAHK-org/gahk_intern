@@ -20,9 +20,5 @@
 	"deletethispage": "Kustuta see lehekülg",
 	"undeletethispage": "Taasta see lehekülg",
 	"protectthispage": "Kaitse seda lehekülge",
-	"unprotectthispage": "Muuda selle lehekülje kaitset",
-	"talkpage": "Selle lehekülje arutelu",
-	"articlepage": "Vaata sisulehekülge",
-	"userpage": "Vaata kasutajalehekülge",
-	"projectpage": "Vaata projektilehekülge"
+	"unprotectthispage": "Muuda selle lehekülje kaitset"
 }

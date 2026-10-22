@@ -8,8 +8,8 @@
 		]
 	},
 	"skinname-cologneblue": "Azul colonial",
-	"cologneblue.css": "/* O CSS que se coloque aquí afectará a quen use a aparencia Azul colonial */",
-	"cologneblue.js": "/* Calquera JavaScript que haxa aquí será cargado para os usuarios que usen a aparencia Azul colonial */",
+	"cologneblue.css": "/* O CSS colocado aquí afectará aos usuarios da aparencia Azul colonial */",
+	"cologneblue.js": "/* O código JavaScript colocado aquí cargarase para os usuarios que utilicen a aparencia Azul colonial */",
 	"cologneblue-desc": "Un tema lixeiro con formato minimalista",
 	"qbfind": "Procurar",
 	"qbbrowse": "Navegar",
@@ -22,9 +22,5 @@
 	"deletethispage": "Borrar esta páxina",
 	"undeletethispage": "Restaurar esta páxina",
 	"protectthispage": "Protexer esta páxina",
-	"unprotectthispage": "Cambiar a protección desta páxina",
-	"talkpage": "Conversar sobre esta páxina",
-	"articlepage": "Ver a páxina de contido",
-	"userpage": "Ver a páxina {{GENDER:{{BASEPAGENAME}}|do usuario|da usuaria}}",
-	"projectpage": "Ver a páxina do proxecto"
+	"unprotectthispage": "Cambiar a protección desta páxina"
 }

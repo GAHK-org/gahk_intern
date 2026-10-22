@@ -4,50 +4,56 @@
  * CologneBlue, the old pre-Monobook skins
  */
 
-/* stylelint-disable selector-class-pattern */
-
 /* For clarity, explicitly state some recommendations from
  * https://www.w3.org/TR/CSS21/sample.html to make sure the editsection links scale right
  */
 
+.mw-heading1,
 h1 {
 	font-size: 2em;
 }
 
+.mw-heading2,
 h2 {
 	font-size: 1.5em;
 }
 
+.mw-heading3,
 h3 {
 	font-size: 1.17em;
 }
 
+.mw-heading4,
 h4 {
 	font-size: 1.11em;
 }
 
+.mw-heading5,
 h5 {
 	font-size: 1.05em;
 }
 
+.mw-heading6,
 h6 {
 	font-size: 1em;
 }
 
+.mw-heading1,
 h1,
+.mw-heading2,
 h2,
+.mw-heading3,
 h3,
+.mw-heading4,
 h4,
+.mw-heading5,
 h5,
+.mw-heading6,
 h6 {
 	font-weight: bolder;
 }
 
 /* Now the custom parts */
-
-#footer {
-	clear: both;
-}
 
 /* images */
 /* @noflip */
@@ -255,10 +261,6 @@ table.small {
 	padding-right: 0.5em;
 }
 
-.sharedUploadNotice {
-	font-style: italic;
-}
-
 span.unpatrolled {
 	font-weight: bold;
 	color: #f00;
@@ -283,67 +285,12 @@ li span.deleted {
 	font-style: italic;
 }
 
-/* Classes for Exif data display */
-table.mw_metadata {
-	margin-left: 0.5em;
-	border: 0;
-	border-collapse: collapse;
-}
-
-table.mw_metadata caption {
-	font-weight: bold;
-}
-
-table.mw_metadata td,
-table.mw_metadata th {
-	border: 1px solid #aaa;
-	padding-left: 4px;
-	padding-right: 4px;
-}
-
-table.mw_metadata th {
-	background-color: #f9f9f9;
-	font-weight: normal;
-}
-
-table.mw_metadata td {
-	background-color: #fcfcfc;
-	padding-top: 0.1em;
-	padding-bottom: 0.1em;
-}
-
-table.mw_metadata td.spacer {
-	background: inherit;
-	border-width: 0 1px;
-}
-
 .visualClear {
 	clear: both;
 }
 
 #jump-to-nav {
 	display: none;
-}
-
-div.multipageimagenavbox {
-	border: 1px solid #c0c0c0;
-	padding: 4px;
-	margin: 1em;
-	background: #f0f0f0;
-}
-
-div.multipageimagenavbox div.thumb {
-	border: 0;
-	margin-left: 2em;
-	margin-right: 2em;
-}
-
-div.multipageimagenavbox hr {
-	margin: 6px;
-}
-
-table.multipageimage td {
-	text-align: center;
 }
 
 .templatesUsed {

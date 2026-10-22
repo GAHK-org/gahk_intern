@@ -5,7 +5,8 @@
 			"DzWiki",
 			"Edinwiki",
 			"Kal-El",
-			"Srdjan m"
+			"Srdjan m",
+			"Srđan"
 		]
 	},
 	"skinname-cologneblue": "Kelnsko plava",
@@ -20,12 +21,8 @@
 	"faqpage": "Project:NPP",
 	"editthispage": "Uredite ovu stranicu",
 	"create-this-page": "Napravi ovu stranicu",
-	"deletethispage": "Obriši ovu stranicu",
+	"deletethispage": "Izbriši ovu stranicu",
 	"undeletethispage": "Povrati ovu stranicu",
 	"protectthispage": "Zaštiti ovu stranicu",
-	"unprotectthispage": "Promijeni zaštitu ove stranice",
-	"talkpage": "Razgovor o stranici",
-	"articlepage": "Pogledaj članak",
-	"userpage": "Pogledaj korisničku stranicu",
-	"projectpage": "Pogledaj stranicu projekta"
+	"unprotectthispage": "Promijeni zaštitu ove stranice"
 }

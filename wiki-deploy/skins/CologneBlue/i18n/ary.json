@@ -3,11 +3,11 @@
 		"authors": [
 			"Daoudata",
 			"Enzoreg",
+			"Ideophagous",
 			"Reda Benkhadra",
 			"SADIQUI",
 			"Zanatos",
-			"زكريا",
-			"Ideophagous"
+			"زكريا"
 		]
 	},
 	"qbfind": "لقَى",
@@ -20,9 +20,5 @@
 	"create-this-page": "صاوب صفحة بهاد العنوان",
 	"deletethispage": "محي هاد الصفحة",
 	"protectthispage": "حمي هاد الصفحة",
-	"unprotectthispage": "بدّل الحماية ديال الصفحة",
-	"talkpage": "ناقش هاد الصفحة",
-	"articlepage": "شوف الصفحة ديال المحتوى",
-	"userpage": "شوف صفحة لخدايمي(ة)",
-	"projectpage": "شوف صفحة المشروع"
+	"unprotectthispage": "بدّل الحماية ديال الصفحة"
 }

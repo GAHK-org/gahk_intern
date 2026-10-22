@@ -1,9 +1,11 @@
 {
 	"@metadata": {
 		"authors": [
+			"LaMagiaaa",
 			"StephDC",
 			"Suchichi02",
-			"Yanteng3"
+			"Yanteng3",
+			"Davidzdh"
 		]
 	},
 	"skinname-cologneblue": "馨藍",
@@ -19,10 +21,6 @@
 	"create-this-page": "立",
 	"deletethispage": "刪是頁",
 	"undeletethispage": "反刪此頁",
-	"protectthispage": "緘封",
-	"unprotectthispage": "啟函",
-	"talkpage": "參議此文",
-	"articlepage": "閱內文",
-	"userpage": "簿",
-	"projectpage": "計畫"
+	"protectthispage": "緘此頁",
+	"unprotectthispage": "啟函"
 }

@@ -15,9 +15,5 @@
 	"create-this-page": "Oldal létrehozása",
 	"deletethispage": "Lap törlése",
 	"protectthispage": "Lapvédelem",
-	"unprotectthispage": "Védelem módosítása",
-	"talkpage": "A lappal kapcsolatos megbeszélés",
-	"articlepage": "Szócikk megtekintése",
-	"userpage": "Felhasználó lapjának megtekintése",
-	"projectpage": "Projektlap megtekintése"
+	"unprotectthispage": "Védelem módosítása"
 }

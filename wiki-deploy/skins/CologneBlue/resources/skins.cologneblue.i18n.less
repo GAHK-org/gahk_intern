@@ -1,0 +1,12 @@
+.cb-piped-list {
+	margin: 0;
+}
+
+#titlelinks span,
+.cb-piped-list > li {
+	display: inline;
+
+	&:not( :first-child )::before {
+		content: '@{msg-pipe-separator}';
+	}
+}

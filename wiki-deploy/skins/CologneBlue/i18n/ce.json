@@ -10,18 +10,14 @@
 	"cologneblue-desc": "Минимум форматашца атта тема.",
 	"qbfind": "Лахар",
 	"qbbrowse": "Хьажар",
-	"qbedit": "Нисйе",
+	"qbedit": "Нисйан",
 	"qbpageoptions": "АгӀонан гӀирс нисбар",
 	"qbmyoptions": "Хьан нисдарш",
 	"faqpage": "Project:СиХХ",
-	"editthispage": "Нисйе хӀара агӀо",
+	"editthispage": "ХӀара агӀо нисйан",
 	"create-this-page": "Кхолла хӀара агӀо",
 	"deletethispage": "ДӀайаккха хӀара агӀо",
 	"undeletethispage": "ХӀара агӀо меттахӀоттор",
-	"protectthispage": "Ларъе хӀара агӀо",
-	"unprotectthispage": "ХӀокху агӀонан ларйар хийца",
-	"talkpage": "ХӀара агӀо йийцаре йилла",
-	"articlepage": "Хьажа йаззаме",
-	"userpage": "Хьажа декъашхочуьна агӀоне",
-	"projectpage": "Хьажа проектан агӀоне"
+	"protectthispage": "Ларйе хӀара агӀо",
+	"unprotectthispage": "ХӀокху агӀонан ларйар хийца"
 }

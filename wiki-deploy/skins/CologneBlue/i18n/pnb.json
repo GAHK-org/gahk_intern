@@ -1,10 +1,10 @@
 {
 	"@metadata": {
 		"authors": [
-			"Khalid Mahmood",
-			"Saanvel",
 			"Abbas dhothar",
-			"Bgo eiu"
+			"Bgo eiu",
+			"Khalid Mahmood",
+			"Saanvel"
 		]
 	},
 	"skinname-cologneblue": "کولون نیلا",
@@ -19,9 +19,5 @@
 	"deletethispage": "ایہ صفحہ مٹاؤ",
 	"undeletethispage": "اس صفحے نوں واپس لیاؤ",
 	"protectthispage": "ایہ صفحہ بچاؤ",
-	"unprotectthispage": " اس صفحے دا بچاؤ بدلو",
-	"talkpage": "اس صفحے دے بارے وچ گل بات کرو",
-	"articlepage": "مضمون آلا صفحہ",
-	"userpage": "ورتن آلے دا صفجہ ویکھو",
-	"projectpage": "منصوبے  دا صفحہ ویکھو"
+	"unprotectthispage": " اس صفحے دا بچاؤ بدلو"
 }

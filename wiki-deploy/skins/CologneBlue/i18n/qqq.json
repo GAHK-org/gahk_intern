@@ -1,6 +1,7 @@
 {
 	"@metadata": {
 		"authors": [
+			"Amire80",
 			"EugeneZelenko",
 			"Matma Rex",
 			"Meno25",
@@ -13,8 +14,8 @@
 		]
 	},
 	"skinname-cologneblue": "{{name}}",
-	"cologneblue.css": "{{optional}}",
-	"cologneblue.js": "{{optional}}",
+	"cologneblue.css": "{{optional}}\n{{related/css}}",
+	"cologneblue.js": "{{optional}}\n{{related/js}}",
 	"cologneblue-desc": "{{desc|what=skin|name=Cologne Blue|url=https://www.mediawiki.org/wiki/Skin:Cologne_Blue}}",
 	"qbfind": "Alternative for \"search\" as used in Cologne Blue skin.\n{{Identical|Find}}",
 	"qbbrowse": "Heading in sidebar menu in CologneBlue skin as seen in [[File:CologneBlue sidebar qqx.png]]\n{{Identical|Browse}}",
@@ -27,9 +28,5 @@
 	"deletethispage": "In the Cologne Blue skin this is the text for link to delete the page in admin view, at the bottom of the page.\n{{Identical|Delete this page}}",
 	"undeletethispage": "In the Cologne Blue skin this is the text for link to undelete the page in admin view, at the bottom of the page.",
 	"protectthispage": "In this Cologne Blue skin this is the text for link to protect the page in admin view, at the bottom of the page.\n{{Identical|Protect this page}}",
-	"unprotectthispage": "In this Cologne Blue skin this is the anchor text for the link to unprotect the page in admin view, at the bottom of the page.\n{{Identical|Unprotect this page}}",
-	"talkpage": "In the Cologne Blue skin this is the text for link to discuss the page, at the bottom of the page.",
-	"articlepage": "'Content page' is used for NS_MAIN and any other non-standard namespaces. Only used in the Cologne Blue skin in the bottomLinks part.\n\n{{Identical|Content page}}",
-	"userpage": "Used in user talk pages as the text of the link to the user page, with the Cologne Blue skin.",
-	"projectpage": "Used as link text in Talk page of project page with the Cologne Blue skin."
+	"unprotectthispage": "In this Cologne Blue skin this is the anchor text for the link to unprotect the page in admin view, at the bottom of the page.\n{{Identical|Unprotect this page}}"
 }

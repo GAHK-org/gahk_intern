@@ -3,12 +3,12 @@
 		"authors": [
 			"Gomoko",
 			"RV1971",
-			"Wladek92",
-			"Verdy p"
+			"Verdy p",
+			"Wladek92"
 		]
 	},
 	"action-showrealname": "voir les vrais noms",
 	"right-showrealname": "Voir les noms réels des utilisateurs sur la [[Special:ListUsers|liste des utilisateurs]]",
-	"sru-realname-desc": "Ajoute les noms réels des utilisateurs et/ou éventuellement d'autres données personnelles à la page [[Special:ListUsers]]",
+	"sru-realname-desc": "Étend la page [[Special:ListUsers]] pour afficher également les noms réels des utilisateurs ou éventuellement d’autres données personnelles.",
 	"sru-realname-append": "&nbsp;– $1"
 }

@@ -1,11 +1,11 @@
 {
 	"@metadata": {
 		"authors": [
+			"Amire80",
 			"Boukman",
 			"Jvm",
 			"Masterches",
-			"Tisave",
-			"Amire80"
+			"Tisave"
 		]
 	},
 	"qbfind": "Jwenn",
@@ -19,9 +19,5 @@
 	"deletethispage": "Efase paj sa",
 	"undeletethispage": "Retabli paj sa a",
 	"protectthispage": "Pwoteje paj sa",
-	"unprotectthispage": "Chanje nivo pwoteksyon",
-	"talkpage": "Diskite paj sa a",
-	"articlepage": "Wè paj atik",
-	"userpage": "Wè paj itilizatè",
-	"projectpage": "Wè paj pwojè"
+	"unprotectthispage": "Chanje nivo pwoteksyon"
 }

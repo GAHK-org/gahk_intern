@@ -20,9 +20,5 @@
 	"deletethispage": "გვერდის წაშლა",
 	"undeletethispage": "ამ გვერდის აღდგენა",
 	"protectthispage": "დაბლოკე ეს გვერდი",
-	"unprotectthispage": "შეცვალე ამ გვერდის დაცვის დონე",
-	"talkpage": "მოცემული გვერდის განხილვა",
-	"articlepage": "სტატიის ნახვა",
-	"userpage": "გადახედე მომხმარებლის გვერდს",
-	"projectpage": "დაათვალიერე პროექტის გვერდი"
+	"unprotectthispage": "შეცვალე ამ გვერდის დაცვის დონე"
 }

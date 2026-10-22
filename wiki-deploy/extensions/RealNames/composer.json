@@ -1,5 +1,4 @@
 {
-	"name": "ofbeaton/mediawiki-realnames",
 	"license": "BSD-2-Clause",
 	"description": "attempts to add realname to all username links.",
 	"keywords": [
@@ -15,25 +14,32 @@
 		},
 		{
 			"name": "realnames Community",
-			"homepage": "https://github.com/ofbeaton/mediawiki-realnames/graphs/contributors"
+			"homepage": "https://github.com/wikimedia/mediawiki-extensions-Realnames/graphs/contributors"
 		}
 	],
 	"require-dev": {
-		"mediawiki/mediawiki-codesniffer": "39.0.0",
+		"mediawiki/mediawiki-codesniffer": "45.0.0",
+		"mediawiki/minus-x": "1.1.3",
 		"php-parallel-lint/php-console-highlighter": "1.0.0",
-		"php-parallel-lint/php-parallel-lint": "1.3.2",
+		"php-parallel-lint/php-parallel-lint": "1.4.0",
 		"phpcompatibility/php-compatibility": "*",
 		"roave/security-advisories": "dev-master"
 	},
 	"scripts": {
 		"test": [
 			"parallel-lint . --exclude vendor",
+			"minus-x check .",
 			"@phpcs"
 		],
 		"fix": [
-			"phpcbf -p",
+			"minus-x fix .",
 			"phpcbf"
 		],
-		"phpcs": "phpcs -s ."
+		"phpcs": "phpcs -sp --cache"
+	},
+	"config": {
+		"allow-plugins": {
+			"dealerdirect/phpcodesniffer-composer-installer": true
+		}
 	}
 }

@@ -1,8 +1,8 @@
 {
 	"@metadata": {
 		"authors": [
-			"Als-Holder",
-			80686
+			"80686",
+			"Als-Holder"
 		]
 	},
 	"qbfind": "Finde",
@@ -16,9 +16,5 @@
 	"deletethispage": "Syte lösche",
 	"undeletethispage": "Die Syte widerhärstelle",
 	"protectthispage": "Artikel schütze",
-	"unprotectthispage": "Syteschutz ändere",
-	"talkpage": "Iber die Syte dischputiere",
-	"articlepage": "Syte",
-	"userpage": "Benutzersyte",
-	"projectpage": "Projektsyte azeige"
+	"unprotectthispage": "Syteschutz ändere"
 }

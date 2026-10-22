@@ -35,6 +35,7 @@ from core.worker_logs import SENT_AT_HEADER, parse_sent_at
 from . import admin_access
 from .models import AdminAccessGrant, Resident, Role, RoleAssignment, active_period
 from .permissions import (
+    KITCHEN,
     PREVIEW_SESSION_KEY,
     current_resident,
     effective_roles,
@@ -1220,6 +1221,8 @@ def preview_set(request: HttpRequest) -> HttpResponseRedirect:
         request.session[PREVIEW_SESSION_KEY] = []
     elif mode == "admin":
         request.session[PREVIEW_SESSION_KEY] = [Role.ADMINISTRATOR]
+    elif mode == "kitchen":
+        request.session[PREVIEW_SESSION_KEY] = [KITCHEN]
     else:  # mode == "role"
         role = request.POST.get("role")
         request.session[PREVIEW_SESSION_KEY] = [role] if role in Role.values else []

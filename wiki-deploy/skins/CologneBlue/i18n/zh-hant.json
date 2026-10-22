@@ -1,6 +1,7 @@
 {
 	"@metadata": {
 		"authors": [
+			"Cookai1205",
 			"Cwlin0416",
 			"Kly",
 			"Liangent",
@@ -8,9 +9,9 @@
 			"Winston Sung"
 		]
 	},
-	"skinname-cologneblue": "科隆香水藍（Cologne Blue）",
-	"cologneblue.css": "/* 此 CSS 會影響使用 Cologne Blue 介面外觀的使用者 */",
-	"cologneblue.js": "/* 此 JavaScript 會用於使用 Cologne Blue 介面外觀的使用者 */",
+	"skinname-cologneblue": "Cologne Blue​（科隆香水藍）",
+	"cologneblue.css": "/* 此處所有的 CSS 都會在使用者使用 Cologne Blue 外觀時載入 */",
+	"cologneblue.js": "/* 此處所有的 JavaScript 都會在使用者使用 Cologne Blue 外觀時載入 */",
 	"cologneblue-desc": "使用最少格式設定的輕量級外觀",
 	"qbfind": "尋找",
 	"qbbrowse": "瀏覽",
@@ -18,14 +19,10 @@
 	"qbpageoptions": "此頁面",
 	"qbmyoptions": "我的頁面",
 	"faqpage": "Project:FAQ",
-	"editthispage": "編輯本頁",
+	"editthispage": "編輯此頁",
 	"create-this-page": "建立本頁",
 	"deletethispage": "刪除此頁",
 	"undeletethispage": "取消刪除此頁",
 	"protectthispage": "保護此頁面",
-	"unprotectthispage": "變更此頁的保護",
-	"talkpage": "討論此頁面",
-	"articlepage": "檢視內容頁面",
-	"userpage": "檢視使用者頁面",
-	"projectpage": "檢視專案頁面"
+	"unprotectthispage": "變更此頁面的保護層級"
 }

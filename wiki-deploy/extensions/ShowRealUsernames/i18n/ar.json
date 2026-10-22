@@ -7,6 +7,5 @@
 	},
 	"action-showrealname": "رؤية الأسماء الحقيقية",
 	"right-showrealname": "مشاهدة الأسماء الحقيقية في [[Special:ListUsers]]",
-	"sru-realname-desc": "يمدد [[Special:ListUsers]] لتظهر أيضا الاسم الحقيقي لكل مستخدم و/أو معلومات أخرى خاصة بالمستخدم",
-	"sru-realname-append": "&nbsp;&ndash; $1"
+	"sru-realname-desc": "يمدد [[Special:ListUsers]] لتظهر أيضا الاسم الحقيقي لكل مستخدم و/أو معلومات أخرى خاصة بالمستخدم"
 }

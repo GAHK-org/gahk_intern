@@ -2,9 +2,11 @@
 	"@metadata": {
 		"authors": [
 			"Maax",
-			"Mimursal"
+			"Mimursal",
+			"AhmedG612"
 		]
 	},
+	"cologneblue-desc": "Muuqaal khafiif ah oo leh qaabayn yar",
 	"qbfind": "Raadi",
 	"qbbrowse": "Ka soo raadi",
 	"qbedit": "Wax ka bedel",
@@ -14,10 +16,7 @@
 	"editthispage": "Boggaan wax ka bedel",
 	"create-this-page": "Sameey boggaan",
 	"deletethispage": "Tirtir bogaan",
+	"undeletethispage": "Soo celi boggan",
 	"protectthispage": "Difaac boggaan",
-	"unprotectthispage": "Bedel difaacida boggaan",
-	"talkpage": "Wadahadalka boggan",
-	"articlepage": "Fiiri bogga qoraalka",
-	"userpage": "Itus bogga isticmaalaha",
-	"projectpage": "Itus bogga mashruuca"
+	"unprotectthispage": "Bedel difaacida boggaan"
 }

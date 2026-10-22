@@ -115,7 +115,8 @@ textarea {
 	top: -9999px;
 }
 
-#quickbar h3 {
+#quickbar h3,
+#quickbar .mw-portlet > label {
 	font-family: 'Verdana', 'Arial', sans-serif;
 	font-size: 10pt;
 	font-weight: bold;
@@ -125,6 +126,7 @@ textarea {
 	padding: 0;
 	margin-bottom: 2px;
 	margin-top: 6px;
+	display: block;
 }
 
 #quickbar form {
@@ -132,6 +134,7 @@ textarea {
 	margin-top: 0;
 }
 
+#quickbar .mw-portlet ul,
 #quickbar .portlet ul,
 #quickbar .portlet li {
 	list-style-type: none;
@@ -140,11 +143,18 @@ textarea {
 	line-height: inherit;
 }
 
+/* If the portlet is empty e.g. edit portlet  on special pages,
+this list should be removed: T271978#6747698 */
+.emptyPortlet {
+	display: none;
+}
+
 div.after-portlet {
 	display: inline;
 	padding-left: 0.5em;
 }
 
+.mw-heading1,
 h1 {
 	color: #666;
 	font-family: 'Verdana', 'Arial', sans-serif;
@@ -152,9 +162,11 @@ h1 {
 	line-height: 21pt;
 }
 
-h1#firstHeading {
+.mw-first-heading {
 	padding-bottom: 0;
 	margin-bottom: 0;
+	/* Change the default from mediawiki.skinning CSS to let indicators float into heading area (T373617) */
+	display: block;
 }
 
 .mw-indicators {
@@ -202,6 +214,7 @@ a.stub,
 }
 
 a.new,
+#quickbar a.new,
 #quickbar span.new a,
 #footer span.new a {
 	color: #c20;
@@ -229,8 +242,8 @@ small {
 	display: none;
 }
 
-input.mw-searchInput {
-	width: 106px;
+#searchInput {
+	width: 114px;
 }
 
 /* Directionality-specific styles */
@@ -297,7 +310,7 @@ input.mw-searchInput {
 	font-size: 10pt;
 }
 
-#toplinks p {
+#toplinks ul {
 	position: absolute;
 	right: 0;
 	margin: 0;
@@ -311,6 +324,12 @@ input.mw-searchInput {
 
 #toplinks #variantlinks {
 	bottom: 12pt;
+}
+
+/* languages */
+#langlinks ul {
+	padding-left: 0;
+	display: inline;
 }
 
 #sitesub {
@@ -333,4 +352,18 @@ input.mw-searchInput {
 /* Override text justification (user preference), see bug 31990 */
 #linkcollection * {
 	text-align: right;
+}
+
+/* Override `element` feature styles (mediawiki.skinning/element.less) */
+a {
+	text-decoration: underline;
+}
+
+.mw-heading1,
+h1,
+.mw-heading2,
+h2 {
+	/* stylelint-disable-next-line declaration-property-value-disallowed-list */
+	border-bottom: none;
+	margin-bottom: 0;
 }

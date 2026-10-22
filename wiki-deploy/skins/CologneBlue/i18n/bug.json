@@ -1,21 +1,18 @@
 {
 	"@metadata": {
 		"authors": [
-			"Kurniasan"
+			"Kurniasan",
+			"Rdwnnr"
 		]
 	},
-	"qbfind": "Assapparang",
-	"qbbrowse": "Berowoso",
-	"qbedit": "Padécéŋ",
-	"qbpageoptions": "Édé leppa",
-	"qbmyoptions": "Leppana iya'",
+	"qbfind": "Assappareng",
+	"qbbrowse": "Jalaja",
+	"qbedit": "Padécéng",
+	"qbpageoptions": "Lempaédé",
+	"qbmyoptions": "Lemparang iyaq",
 	"faqpage": "Project:FAQ",
-	"editthispage": "Padécéŋiki iyé leppa",
-	"create-this-page": "Ebbuiki leppa iyé",
-	"deletethispage": "Peddé iyé leppa",
-	"protectthispage": "Accalinruŋi leppa iyyé",
-	"talkpage": "Bicara iyé leppa",
-	"articlepage": "Ita lontara",
-	"userpage": "Ita leppa papaké",
-	"projectpage": "Ita leppa proyék"
+	"editthispage": "Padécéngngi lemparédé",
+	"create-this-page": "Ébburi lemparédé",
+	"deletethispage": "Buwangngi lemparédé",
+	"protectthispage": "Lénrungngi lemparédé"
 }

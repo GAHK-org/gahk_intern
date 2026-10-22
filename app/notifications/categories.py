@@ -232,6 +232,20 @@ CATEGORIES: tuple[Category, ...] = _build()
 
 BY_KEY: dict[str, Category] = {c.key: c for c in CATEGORIES}
 
+# What the kitchen account (residents.permissions.KITCHEN) can be sent; its settings page shows only
+# these. Its own channel, replies and reactions to its posts, comments on its opslag, broadcasts.
+KITCHEN_CATEGORIES = frozenset(
+    {
+        chat_room_key(channels.KITCHEN_CHANNEL),
+        CHAT_REPLIES,
+        CHAT_LIKES,
+        POSTS_REPLIES,
+        POSTS_LIKES,
+        SYSTEM,
+        GENERAL,
+    }
+)
+
 GROUP_NAMES: dict[str, str] = dict(GROUPS)
 
 

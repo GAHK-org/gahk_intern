@@ -3,10 +3,10 @@
 		"authors": [
 			"Bugoslav",
 			"Dalibor Bosits",
+			"Ponor",
 			"Roberta F.",
 			"SpeedyGonsales",
-			"Tivek",
-			"Ponor"
+			"Tivek"
 		]
 	},
 	"skinname-cologneblue": "Kölnska plava",
@@ -22,9 +22,5 @@
 	"deletethispage": "Izbriši ovu stranicu",
 	"undeletethispage": "Vrati ovu stranicu",
 	"protectthispage": "Zaštiti stranicu",
-	"unprotectthispage": "Promijeni zaštitu ove stranice",
-	"talkpage": "Razgovor o stranici",
-	"articlepage": "Vidi članak",
-	"userpage": "Vidi suradničku stranicu",
-	"projectpage": "Vidi stranicu o projektu"
+	"unprotectthispage": "Promijeni zaštitu ove stranice"
 }
