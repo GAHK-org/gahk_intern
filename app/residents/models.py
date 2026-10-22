@@ -369,7 +369,11 @@ class EconomicLedgerEntry(models.Model):
         ordering = ["date", "entry_number"]
         indexes = [models.Index(fields=["resident", "date"])]
         constraints = [
-            models.UniqueConstraint(fields=["entry_number", "is_draft"], name="uniq_entry_number_per_kind")
+            # Scoped by resident, not just (entry_number, is_draft): e-conomic's numbering is not
+            # necessarily company-wide, and ledger.sync_entries's own dedup is per-resident too.
+            models.UniqueConstraint(
+                fields=["resident", "entry_number", "is_draft"], name="uniq_entry_number_per_resident"
+            )
         ]
 
     def __str__(self) -> str:

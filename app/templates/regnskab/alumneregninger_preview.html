@@ -24,7 +24,7 @@
             <td>{{ row.detail }}</td>
             <td class="whitespace-nowrap">
               {% if row.status == 'ready' %}
-                <a href="{% url 'alumneregning_statement_pdf' row.resident.pk %}?fra={{ date_from|urlencode }}&til={{ date_to|urlencode }}"
+                <a href="{% url 'alumneregning_statement_pdf' row.resident.pk %}?fra={{ date_from|date:'Y-m-d' }}&til={{ date_to|date:'Y-m-d' }}"
                    target="_blank" rel="noopener">Se PDF</a>
               {% endif %}
             </td>

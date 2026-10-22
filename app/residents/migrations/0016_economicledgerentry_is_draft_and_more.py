@@ -22,7 +22,7 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(
             model_name="economicledgerentry",
             constraint=models.UniqueConstraint(
-                fields=("entry_number", "is_draft"), name="uniq_entry_number_per_kind"
+                fields=("resident", "entry_number", "is_draft"), name="uniq_entry_number_per_resident"
             ),
         ),
     ]

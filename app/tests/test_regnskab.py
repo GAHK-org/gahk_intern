@@ -320,8 +320,10 @@ def test_preview_renders_rows_and_pdf_link(monkeypatch: pytest.MonkeyPatch, make
 
     assert "Alu Mne" in html
     assert "Vil blive sendt" in html
-    assert reverse("alumneregning_statement_pdf", args=[alumne.pk]) in html
     assert "Bekræft og send" in html
+    pdf_url = f"{reverse('alumneregning_statement_pdf', args=[alumne.pk])}?fra=2026-08-01&til=2026-08-31"
+    assert pdf_url in html  # ISO dates, not Danish-locale-formatted — the link must actually resolve
+    assert c.get(pdf_url)["Content-Type"] == "application/pdf"
 
 
 @pytest.mark.django_db

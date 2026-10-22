@@ -60,3 +60,17 @@ def test_posted_and_draft_entries_with_the_same_number_do_not_collide(make_resid
 
     assert inserted == 2
     assert EconomicLedgerEntry.objects.filter(resident=resident, entry_number=1).count() == 2
+
+
+@pytest.mark.django_db
+def test_same_entry_number_for_two_different_residents_does_not_collide(make_resident: Callable) -> None:
+    """entry_number is not assumed unique company-wide — the uniqueness constraint is per-resident,
+    matching sync_entries's own dedup scope, so two residents never collide on the same number."""
+    a = make_resident(email="a@gahk.dk", economic_account_number=1101)
+    b = make_resident(email="b@gahk.dk", economic_account_number=1102)
+    ledger.sync_entries(a, [_entry(1, 100.0)])
+
+    inserted = ledger.sync_entries(b, [_entry(1, 50.0)])
+
+    assert inserted == 1
+    assert EconomicLedgerEntry.objects.filter(entry_number=1).count() == 2

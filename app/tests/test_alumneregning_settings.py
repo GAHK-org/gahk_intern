@@ -6,8 +6,17 @@ import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
 from django.urls import reverse
+from fpdf import FPDF
 
 from residents.models import AlumneregningSettings
+
+
+def _real_pdf_bytes() -> bytes:
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("helvetica", "", 12)
+    pdf.cell(0, 10, "Kaere alumner")
+    return bytes(pdf.output())
 
 
 @pytest.mark.django_db
@@ -47,7 +56,7 @@ def test_post_saves_a_followup_pdf(make_resident: Callable) -> None:
     acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
     c = Client()
     c.force_login(acc)
-    pdf = SimpleUploadedFile("brev.pdf", b"%PDF-1.4 fake", content_type="application/pdf")
+    pdf = SimpleUploadedFile("brev.pdf", _real_pdf_bytes(), content_type="application/pdf")
 
     c.post(reverse("alumneregning_settings"), {"message_template": "x", "followup_pdf": pdf})
 
@@ -66,4 +75,21 @@ def test_post_rejects_a_non_pdf_followup(make_resident: Callable) -> None:
     ).content.decode()
 
     assert "skal være en PDF-fil" in html
+    assert AlumneregningSettings.get_solo().followup_pdf.name == ""
+
+
+@pytest.mark.django_db
+def test_post_rejects_a_file_merely_named_pdf(make_resident: Callable) -> None:
+    """Extension/content-type alone don't prove it's a real PDF — a broken upload here would
+    otherwise only surface later, as a crash of every alumneregning send that reads it."""
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    c = Client()
+    c.force_login(acc)
+    fake = SimpleUploadedFile("brev.pdf", b"not actually a pdf", content_type="application/pdf")
+
+    html = c.post(
+        reverse("alumneregning_settings"), {"message_template": "x", "followup_pdf": fake}
+    ).content.decode()
+
+    assert "kunne ikke læses som en PDF" in html
     assert AlumneregningSettings.get_solo().followup_pdf.name == ""

@@ -1,3 +1,4 @@
+import io
 import unicodedata
 from collections.abc import Iterator
 
@@ -5,6 +6,8 @@ from django import forms
 from django.conf import settings
 from django.contrib.auth.forms import AuthenticationForm, PasswordResetForm
 from django.core.files.uploadedfile import UploadedFile
+from pypdf import PdfReader
+from pypdf.errors import PyPdfError
 
 from core.uploads import validate_image_upload
 
@@ -169,6 +172,14 @@ class AlumneregningSettingsForm(forms.ModelForm):
             name = (upload.name or "").lower()
             if upload.content_type != "application/pdf" and not name.endswith(".pdf"):
                 raise forms.ValidationError("Følgebrevet skal være en PDF-fil.")
+            # Extension/content-type alone don't prove it's a real PDF — a bad upload here would
+            # otherwise only surface later, as a crash of every alumneregning send that reads it.
+            try:
+                len(PdfReader(io.BytesIO(upload.read())).pages)
+            except PyPdfError as exc:
+                raise forms.ValidationError("Filen kunne ikke læses som en PDF.") from exc
+            finally:
+                upload.seek(0)
         return upload
 
 
