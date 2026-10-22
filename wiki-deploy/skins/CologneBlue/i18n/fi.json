@@ -2,13 +2,13 @@
 	"@metadata": {
 		"authors": [
 			"Crt",
+			"Markus Mikkonen",
 			"McSalama",
 			"Nedergard",
 			"Nike",
 			"Pxos",
 			"Pyscowicz",
-			"Stryn",
-			"Markus Mikkonen"
+			"Stryn"
 		]
 	},
 	"skinname-cologneblue": "Kölnin sininen",
@@ -26,9 +26,5 @@
 	"deletethispage": "Poista tämä sivu",
 	"undeletethispage": "Palauta tämä sivu",
 	"protectthispage": "Suojaa tämä sivu",
-	"unprotectthispage": "Muuta tämän sivun suojausta",
-	"talkpage": "Keskustele tästä sivusta",
-	"articlepage": "Näytä varsinainen sivu",
-	"userpage": "Näytä käyttäjäsivu",
-	"projectpage": "Näytä projektisivu"
+	"unprotectthispage": "Muuta tämän sivun suojausta"
 }

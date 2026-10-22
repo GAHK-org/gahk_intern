@@ -52,7 +52,17 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   resident within 10 minutes count once.
 - The uploader and administrators see statistics on the video's page: views, unique viewers, views
   in the last 7 days and views per day for the last 30 days.
-- In a series, `Næste afsnit` appears in the last 20 seconds and starts by itself 8 seconds after the end.
+- Autoplay: when a video ends, an end card shows what is next and starts it by itself after 8
+  seconds (`Afspil nu` starts it at once, `Annuller` or Escape stays). In a series that is the next
+  episode, and `Næste afsnit` also appears in the last 20 seconds. After a film, or the last
+  episode, it is the most similar film the resident hasn't finished, else the most trending, else
+  the newest. Episodes of other series are not picked. Once every film is finished, it is the film
+  watched longest ago.
+- Autoplay can be switched off in the player, remembered per browser; the end card then waits. After
+  3 autoplays in a row with no key press or click, it asks `Ser du stadig med?` instead.
+- Fullscreen is always the whole player, so the end card shows there too: the video's own fullscreen
+  button is turned into that. On an iPhone, where fullscreen is the system's player, the video
+  leaves fullscreen when it ends if there is something next.
 
 ## Uploading
 

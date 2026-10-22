@@ -1,25 +1,24 @@
 {
 	"@metadata": {
 		"authors": [
+			"Bosogo",
 			"Growingup",
 			"Ztimur",
-			"Викиней"
+			"Викиней",
+			"Элдин беги"
 		]
 	},
+	"cologneblue-desc": "Минималдуу форматтоо менен жөнөкөй көрүнүш",
 	"qbfind": "Табуу",
 	"qbbrowse": "Карап чыгуу",
-	"qbedit": "Оңдоо",
+	"qbedit": "Түзөтүү",
 	"qbpageoptions": "Бул барак",
 	"qbmyoptions": "Барактарым",
 	"faqpage": "Project:КБС",
-	"editthispage": "Бул баракты оңдоо",
+	"editthispage": "Бул баракты түзөтүү",
 	"create-this-page": "Бул баракты түзүү",
 	"deletethispage": "Бул баракты өчүрүү",
 	"undeletethispage": "Баракты калыбына келтирүү",
 	"protectthispage": "Бул баракты коргоо",
-	"unprotectthispage": "Бул барактын коргоосун өзгөртүү",
-	"talkpage": "Бул баракты талкууга алуу",
-	"articlepage": "Макаланы кароо",
-	"userpage": "Катышуучунун барагын кароо",
-	"projectpage": "Долбоор барагын кароо"
+	"unprotectthispage": "Бул барактын коргоосун өзгөртүү"
 }

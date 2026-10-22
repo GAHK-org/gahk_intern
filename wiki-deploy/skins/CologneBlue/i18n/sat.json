@@ -2,7 +2,6 @@
 	"@metadata": {
 		"authors": [
 			"Albinus",
-			"Amire80",
 			"Manik Soren"
 		]
 	},
@@ -16,9 +15,5 @@
 	"create-this-page": "ᱱᱚᱣᱟ ᱥᱟᱦᱴᱟ ᱵᱮᱱᱟᱣᱢᱮ",
 	"deletethispage": "ᱱᱚᱣᱟ ᱥᱟᱦᱴᱟ ᱜᱮᱫᱽ ᱢᱮ",
 	"protectthispage": "ᱱᱚᱣᱟ ᱥᱟᱦᱴᱟ ᱨᱩᱠᱷᱤᱭᱟᱹᱭ ᱢᱮ",
-	"unprotectthispage": "ᱱᱚᱣᱟ ᱥᱟᱦᱴᱟ ᱨᱮᱭᱟᱜ ᱨᱩᱠᱷᱤᱭᱟᱹ ᱵᱚᱫᱚᱞᱢᱮ",
-	"talkpage": "ᱱᱚᱣᱟ ᱥᱟᱦᱴᱟ ᱜᱟᱞᱢᱟᱨᱟᱣ ᱢᱮ",
-	"articlepage": "ᱩᱱᱩᱫᱩᱜ ᱥᱟᱦᱴᱟ ᱧᱮᱞ ᱢᱮ",
-	"userpage": "ᱵᱮᱵᱦᱟᱹᱨᱤᱭᱟᱜ ᱥᱟᱦᱴᱟ ᱧᱮᱞᱢᱮ",
-	"projectpage": "ᱯᱨᱚᱡᱮᱠᱴ ᱥᱟᱦᱴᱟ ᱧᱮᱞᱢᱮ"
+	"unprotectthispage": "ᱱᱚᱣᱟ ᱥᱟᱦᱴᱟ ᱨᱮᱭᱟᱜ ᱨᱩᱠᱷᱤᱭᱟᱹ ᱵᱚᱫᱚᱞᱢᱮ"
 }

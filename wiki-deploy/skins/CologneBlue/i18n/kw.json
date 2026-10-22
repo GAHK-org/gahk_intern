@@ -1,10 +1,10 @@
 {
 	"@metadata": {
 		"authors": [
+			"GwikorFrank",
 			"Kernoweger",
 			"Kw-Moon",
-			"Nrowe",
-			"GwikorFrank"
+			"Nrowe"
 		]
 	},
 	"qbfind": "Kavos",
@@ -17,9 +17,5 @@
 	"deletethispage": "Dilea an folen ma",
 	"undeletethispage": "Andhilea an folen ma",
 	"protectthispage": "Difres an folen ma",
-	"unprotectthispage": "Chanjya difresans an folen ma",
-	"talkpage": "Dadhla an folen ma",
-	"articlepage": "Gweles an folen",
-	"userpage": "Gweles an folen dhevnydhyer",
-	"projectpage": "Gweles folen an ragdres"
+	"unprotectthispage": "Chanjya difresans an folen ma"
 }

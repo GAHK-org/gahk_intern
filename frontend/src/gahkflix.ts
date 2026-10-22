@@ -726,7 +726,16 @@ type FilmConfig = {
   positionUrl: string;
   playUrl: string;
   backUrl: string;
-  next: { url: string; title: string } | null;
+  next: UpNext | null;
+};
+
+type UpNext = {
+  url: string;
+  title: string;
+  kind: "episode" | "film";
+  label: string;
+  description: string;
+  image: string;
 };
 
 const QUALITY_KEY = "gahkflix-quality";
@@ -734,12 +743,23 @@ const QUALITY_KEY = "gahkflix-quality";
 const VIEW_AFTER_SECONDS = 5;
 const SAVE_EVERY_MS = 15000;
 const NEXT_COUNTDOWN_SECONDS = 8;
+const AUTOPLAY_KEY = "gahkflix-autoplay";
+// Autoplays in a row with no input before the player asks "Ser du stadig med?".
+const STILL_WATCHING_AFTER = 3;
 
 function storedQuality(): string | null {
   try {
     return window.localStorage.getItem(QUALITY_KEY);
   } catch {
     return null;
+  }
+}
+
+function storedAutoplay(): boolean {
+  try {
+    return window.localStorage.getItem(AUTOPLAY_KEY) !== "off";
+  } catch {
+    return true;
   }
 }
 
@@ -763,6 +783,13 @@ class Player {
   private next: HTMLAnchorElement;
   private back: HTMLAnchorElement;
   private qualityBar: HTMLElement;
+  private autoplay: HTMLInputElement;
+  private upNext: HTMLElement;
+  private upNextPlay: HTMLButtonElement;
+  private upNextCancel: HTMLButtonElement;
+  private upNextRing: SVGElement;
+  private stillWatching = false;
+  private autoplays = 0;
   private film: FilmConfig | null = null;
   private phase: "intro" | "film" = "intro";
   private filmWanted = false;
@@ -789,6 +816,12 @@ class Player {
     this.next = root.querySelector("[data-flix-next]")!;
     this.back = root.querySelector("[data-flix-back]")!;
     this.qualityBar = root.querySelector("[data-flix-quality]")!;
+    this.autoplay = root.querySelector("[data-flix-autoplay]")!;
+    this.autoplay.checked = storedAutoplay();
+    this.upNext = root.querySelector("[data-flix-upnext]")!;
+    this.upNextPlay = root.querySelector("[data-flix-upnext-play]")!;
+    this.upNextCancel = root.querySelector("[data-flix-upnext-cancel]")!;
+    this.upNextRing = root.querySelector("[data-flix-upnext-ring]")!;
     this.bind();
   }
 
@@ -800,7 +833,7 @@ class Player {
     this.qualityBar.hidden = true;
     this.next.hidden = true;
     this.errorBox.hidden = true;
-    window.clearTimeout(this.countdown);
+    this.hideUpNext();
     const intro = body.dataset.flixIntro;
     if (!intro) {
       this.startFilm();
@@ -873,18 +906,67 @@ class Player {
     if (play) this.tryPlay();
   }
 
-  private savePosition(keepalive = false): void {
-    if (this.phase !== "film" || !this.film || !this.video.duration) return;
+  private savePosition(keepalive = false): Promise<unknown> {
+    if (this.phase !== "film" || !this.film || !this.video.duration) return Promise.resolve();
     this.lastSaved = Date.now();
-    void postJSON(this.film.positionUrl, { position: this.video.currentTime }, keepalive).catch(() => undefined);
+    return postJSON(this.film.positionUrl, { position: this.video.currentTime }, keepalive).catch(() => undefined);
   }
 
-  /** The next episode, in the same element, after the intro again. */
+  /** The end card: the next video, counting down to it unless autoplay is off or nobody seems to be there. */
+  private showUpNext(): void {
+    const next = this.film?.next;
+    if (!next) return;
+    this.next.hidden = true;
+    this.stillWatching = this.autoplay.checked && this.autoplays >= STILL_WATCHING_AFTER;
+    const image = this.upNext.querySelector<HTMLImageElement>("[data-flix-upnext-image]")!;
+    image.hidden = !next.image;
+    if (next.image) image.src = next.image;
+    const text = (name: string, value: string) => {
+      const element = this.upNext.querySelector<HTMLElement>(`[data-flix-upnext-${name}]`)!;
+      element.textContent = value;
+      element.hidden = !value;
+    };
+    text("kicker", this.stillWatching ? "Ser du stadig med?" : next.kind === "episode" ? "Næste afsnit" : "Næste film");
+    text("title", next.title);
+    text("label", next.label);
+    text("description", next.description);
+    this.upNextCancel.textContent = this.stillWatching ? "Stop" : "Annuller";
+    const playLabel = this.upNext.querySelector<HTMLElement>("[data-flix-upnext-play-label]")!;
+    playLabel.textContent = this.stillWatching ? "Fortsæt" : "Afspil nu";
+    const counting = this.autoplay.checked && !this.stillWatching;
+    this.upNextRing.toggleAttribute("hidden", !counting);
+    this.upNext.hidden = false;
+    this.upNext.style.setProperty("--flix-countdown", `${NEXT_COUNTDOWN_SECONDS}s`);
+    this.upNext.classList.toggle("is-counting", counting);
+    this.upNextPlay.focus({ preventScroll: true });
+    if (!counting) return;
+    let seconds = NEXT_COUNTDOWN_SECONDS;
+    const tick = () => {
+      playLabel.textContent = `Afspil nu (${seconds})`;
+      if (seconds-- > 0) {
+        this.countdown = window.setTimeout(tick, 1000);
+        return;
+      }
+      this.autoplays++;
+      void this.playNext();
+    };
+    tick();
+  }
+
+  private hideUpNext(): void {
+    window.clearTimeout(this.countdown);
+    this.upNext.hidden = true;
+    this.upNext.classList.remove("is-counting");
+  }
+
+  /** The next video, in the same element, after the intro again. */
   private async playNext(): Promise<void> {
     const next = this.film?.next;
     if (!next) return;
-    this.savePosition();
+    // Saved first, so the film that just ended counts as watched when the next one picks its own successor.
+    const saved = this.savePosition();
     this.playIntro();
+    await saved;
     try {
       const film = await fetchFilm(next.url);
       history.replaceState(history.state, "", next.url);
@@ -903,7 +985,7 @@ class Player {
   close(): void {
     this.savePosition(true);
     this.closed = true;
-    window.clearTimeout(this.countdown);
+    this.hideUpNext();
     window.clearTimeout(this.idleTimer);
     this.listeners.abort();
     this.video.pause();
@@ -930,23 +1012,50 @@ class Player {
       event.preventDefault();
       void this.playNext();
     });
+    this.upNextPlay.addEventListener("click", () => void this.playNext());
+    this.upNextCancel.addEventListener("click", () => {
+      if (this.stillWatching) this.leave();
+      else this.hideUpNext();
+    });
+    this.autoplay.addEventListener("change", () => {
+      // Let Space go back to pausing the film rather than flipping the switch again.
+      this.autoplay.blur();
+      try {
+        window.localStorage.setItem(AUTOPLAY_KEY, this.autoplay.checked ? "on" : "off");
+      } catch {
+        // Private mode: the choice just is not remembered.
+      }
+      if (!this.upNext.hidden) {
+        this.hideUpNext();
+        this.showUpNext();
+      }
+    });
+    // Anyone pressing anything is still there; a mouse drifting over the screen does not count.
+    for (const name of ["keydown", "pointerdown"]) {
+      document.addEventListener(name, () => (this.autoplays = 0), { capture: true, passive: true, signal });
+    }
 
     video.addEventListener("ended", () => {
       if (this.phase === "intro") {
         this.startFilm();
         return;
       }
-      this.savePosition();
-      if (!this.film?.next) return;
-      let seconds = NEXT_COUNTDOWN_SECONDS;
-      this.next.hidden = false;
-      const tick = () => {
-        this.next.textContent = `Næste afsnit om ${seconds} …`;
-        if (seconds-- <= 0) void this.playNext();
-        else this.countdown = window.setTimeout(tick, 1000);
-      };
-      tick();
+      void this.savePosition();
+      // iOS plays fullscreen in its own player, over the page: leave it, or the end card is never seen.
+      const ios = video as HTMLVideoElement & { webkitDisplayingFullscreen?: boolean; webkitExitFullscreen?: () => void };
+      if (this.film?.next && ios.webkitDisplayingFullscreen) ios.webkitExitFullscreen?.();
+      this.showUpNext();
     });
+
+    // The video's own fullscreen button shows the video alone; make it the whole player, end card and all.
+    document.addEventListener(
+      "fullscreenchange",
+      () => {
+        if (document.fullscreenElement === video) void this.root.requestFullscreen?.().catch(() => undefined);
+      },
+      { signal },
+    );
+    video.addEventListener("play", () => this.hideUpNext());
 
     video.addEventListener("error", () => {
       if (this.closed) return;
@@ -982,7 +1091,9 @@ class Player {
         void postJSON(this.film.viewUrl, {}).catch(() => (this.counted = false));
       }
       if (Date.now() - this.lastSaved > SAVE_EVERY_MS && !video.paused) this.savePosition();
-      if (this.film.next && video.duration && video.duration - now < 20) this.next.hidden = false;
+      if (this.film.next?.kind === "episode" && this.upNext.hidden && video.duration && video.duration - now < 20) {
+        this.next.hidden = false;
+      }
     });
     video.addEventListener("pause", () => this.savePosition());
     window.addEventListener("pagehide", () => this.savePosition(true), { signal });
@@ -1032,6 +1143,8 @@ class Player {
         } else if (this.phase === "film" && (event.key === "ArrowRight" || event.key === "ArrowLeft")) {
           if (event.target === video) return; // the native controls already do it
           video.currentTime = Math.max(0, video.currentTime + (event.key === "ArrowRight" ? 10 : -10));
+        } else if (event.key === "Escape" && !this.upNext.hidden) {
+          this.hideUpNext();
         } else if (event.key === "Escape" && !document.fullscreenElement) {
           this.leave();
         }

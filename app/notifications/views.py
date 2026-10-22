@@ -17,7 +17,7 @@ from django.views.decorators.http import require_POST
 
 from core import push
 from gahkflix import access as gahkflix_access
-from residents.permissions import current_resident
+from residents.permissions import current_resident, is_kitchen
 
 from . import categories, services
 from .categories import IMPORTANCE_CHOICES, Importance
@@ -37,7 +37,7 @@ def _safe(url: str) -> str:
 
 @login_required
 def index(request: HttpRequest) -> HttpResponse:
-    """Every active notification, most important first, then newest. `?visning=kategori` groups
+    """Every active notification, unseen first, then most important, then newest. `?visning=kategori` groups
     them under their category's group instead."""
     resident = current_resident(request)
     view = request.GET.get("visning", "kronologisk")
@@ -124,10 +124,15 @@ def preferences(request: HttpRequest) -> HttpResponse:
         resident=resident
     )
     saved = {p.category: p for p in NotificationPreference.objects.filter(resident=resident)}
+    kitchen = is_kitchen(request)
+
+    def shown(category: categories.Category) -> bool:
+        """The kitchen account only sees the categories it can ever be sent."""
+        return not kitchen or category.key in categories.KITCHEN_CATEGORIES
 
     if request.method == "POST":
         with transaction.atomic():
-            for category in categories.CATEGORIES:
+            for category in filter(shown, categories.CATEGORIES):
                 # A category without an optional in-app row is stored as on whatever is posted.
                 optional = category.in_app and category.in_app_optional
                 in_app = (f"{category.key}__in_app" in request.POST) if optional else True
@@ -158,7 +163,7 @@ def preferences(request: HttpRequest) -> HttpResponse:
         if key == "gahkflix" and not gahkflix_access.request_allowed(request):
             continue
         rows = []
-        for category in leaves:
+        for category in filter(shown, leaves):
             pref = saved.get(category.key)
             rows.append(
                 {
@@ -173,7 +178,8 @@ def preferences(request: HttpRequest) -> HttpResponse:
                     ),
                 }
             )
-        groups.append({"key": key, "name": name, "rows": rows})
+        if rows:
+            groups.append({"key": key, "name": name, "rows": rows})
     return render(
         request,
         "notifications/preferences.html",

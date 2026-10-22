@@ -5,6 +5,7 @@
 			"BroOk",
 			"Grondin",
 			"Martorell",
+			"SMP",
 			"Ssola",
 			"Toniher",
 			"Vriullop",
@@ -12,6 +13,7 @@
 		]
 	},
 	"skinname-cologneblue": "Colònia blava",
+	"cologneblue-desc": "Una aparença lleugera amb format mínim",
 	"qbfind": "Cerca",
 	"qbbrowse": "Navega",
 	"qbedit": "Modifica",
@@ -23,9 +25,5 @@
 	"deletethispage": "Elimina la pàgina",
 	"undeletethispage": "Desfés l'eliminació d'aquesta pàgina",
 	"protectthispage": "Protegeix aquesta pàgina",
-	"unprotectthispage": "Desprotegeix aquesta pàgina",
-	"talkpage": "Discussió",
-	"articlepage": "Mostra la pàgina",
-	"userpage": "Visualitza la pàgina d'usuari",
-	"projectpage": "Visualitza la pàgina del projecte"
+	"unprotectthispage": "Desprotegeix aquesta pàgina"
 }

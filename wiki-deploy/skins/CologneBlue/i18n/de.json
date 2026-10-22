@@ -22,9 +22,5 @@
 	"deletethispage": "Diese Seite löschen",
 	"undeletethispage": "Diese Seite wiederherstellen",
 	"protectthispage": "Seite schützen",
-	"unprotectthispage": "Seitenschutz ändern",
-	"talkpage": "Diese Seite diskutieren",
-	"articlepage": "Inhaltsseite anzeigen",
-	"userpage": "Benutzerseite anzeigen",
-	"projectpage": "Projektseite anzeigen"
+	"unprotectthispage": "Seitenschutz ändern"
 }

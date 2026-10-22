@@ -1,0 +1,10 @@
+{
+	"@metadata": {
+		"authors": [
+			"شاه زمان پټان"
+		]
+	},
+	"action-showrealname": "رښتيني نومونه وگورئ",
+	"right-showrealname": "[[Special:ListUsers]] کې رښتيني نومونه وگورئ",
+	"sru-realname-desc": "[[Special:ListUsers]] ته پراختيا ورکوي؛ ترڅو د هر کارن رښتينی نوم او/يا د کارن نور ځانگړي مالومات هم وښيي"
+}

@@ -2,7 +2,8 @@
 	"@metadata": {
 		"authors": [
 			"Kaffi",
-			"Robby"
+			"Robby",
+			"Volvox"
 		]
 	},
 	"skinname-cologneblue": "Köln Blo",
@@ -19,10 +20,6 @@
 	"create-this-page": "Dës Säit uleeën",
 	"deletethispage": "Dës Säit läschen",
 	"undeletethispage": "Dës Säit restauréieren",
-	"protectthispage": "Dës Säit schützen",
-	"unprotectthispage": "D'Spär vun dëser Säit änneren",
-	"talkpage": "Diskussioun",
-	"articlepage": "Säit",
-	"userpage": "Benotzersäit",
-	"projectpage": "Meta-Text"
+	"protectthispage": "Dës Säit protegéieren",
+	"unprotectthispage": "D'Protektioun vun dëser Säit änneren"
 }

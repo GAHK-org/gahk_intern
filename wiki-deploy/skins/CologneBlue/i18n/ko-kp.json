@@ -1,0 +1,19 @@
+{
+	"@metadata": {
+		"authors": [
+			"Delim"
+		]
+	},
+	"qbfind": "찾기",
+	"qbbrowse": "찾아보기",
+	"qbedit": "편집",
+	"qbpageoptions": "문서 기능",
+	"qbmyoptions": "내 사용자 문서",
+	"faqpage": "Project:FAQ",
+	"editthispage": "이 문서 편집하기",
+	"create-this-page": "이 문서 만들기",
+	"deletethispage": "이 문서 삭제하기",
+	"undeletethispage": "이 문서를 지우기취소",
+	"protectthispage": "이 문서 보호하기",
+	"unprotectthispage": "이 문서의 보호 설정을 바꾸기"
+}

@@ -1,11 +1,11 @@
 {
 	"@metadata": {
 		"authors": [
+			"555",
 			"GoEThe",
 			"Hamilton Abreu",
 			"Luckas",
-			"Vitorvicentevalente",
-			555
+			"Vitorvicentevalente"
 		]
 	},
 	"skinname-cologneblue": "Azul colonial",
@@ -23,9 +23,5 @@
 	"deletethispage": "Eliminar esta página",
 	"undeletethispage": "Restaurar esta página",
 	"protectthispage": "Proteger esta página",
-	"unprotectthispage": "Alterar a proteção desta página",
-	"talkpage": "Discutir esta página",
-	"articlepage": "Ver página de conteúdo",
-	"userpage": "Ver página de utilizador",
-	"projectpage": "Ver página de projeto"
+	"unprotectthispage": "Alterar a proteção desta página"
 }

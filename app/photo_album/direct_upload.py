@@ -30,6 +30,7 @@ is sent with the request as before.
 """
 
 import math
+from datetime import datetime
 from pathlib import Path
 from typing import IO, Any
 from uuid import uuid4
@@ -73,9 +74,12 @@ def _parts(size: int) -> int:
     return max(1, math.ceil(size / _part_size(size)))
 
 
+IMPORT_PREFIX = "photo-album-imports/"
+
+
 def import_key(name: str) -> str:
     """Where an archive to import goes: imports keep their archive under here until they are done."""
-    return f"photo-album-imports/{uuid4()}/{Path(name).name}"
+    return f"{IMPORT_PREFIX}{uuid4()}/{Path(name).name}"
 
 
 def begin(
@@ -227,6 +231,32 @@ def read_into(key: str, target: IO[bytes]) -> None:
         target.write(chunk)
     target.flush()
     target.seek(0)
+
+
+def purge_orphaned_imports(referenced: set[str], *, older_than: datetime) -> list[str]:
+    """Delete the archives under IMPORT_PREFIX that no import refers to and that were stored before
+    `older_than`; returns their keys.
+
+    What leaves one there: an upload completed but never submitted — a browser closed between the
+    two, or a script stopped — and, before views._queue_import learnt to delete it, an import that
+    could not be created. A completed object is not what the bucket's lifecycle rule cleans up.
+    """
+    storage = _storage()
+    if storage is None:
+        return []
+    client = storage.connection.meta.client
+    prefix = storage._normalize_name(IMPORT_PREFIX)
+    orphans = [
+        item["Key"]
+        for page in client.get_paginator("list_objects_v2").paginate(
+            Bucket=storage.bucket_name, Prefix=prefix
+        )
+        for item in page.get("Contents", [])
+        if item["LastModified"] < older_than and item["Key"] not in referenced
+    ]
+    for key in orphans:
+        client.delete_object(Bucket=storage.bucket_name, Key=key)
+    return orphans
 
 
 def delete(key: str) -> None:

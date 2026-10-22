@@ -2,10 +2,11 @@
 	"@metadata": {
 		"authors": [
 			"Rail",
-			"Railfail536"
+			"Railfail536",
+			"WaldiSt"
 		]
 	},
 	"action-showrealname": "podglądu prawdziwych nazwisk",
 	"right-showrealname": "Podgląd prawdziwych imion i nazwisk użytkowników na [[Special:ListUsers|Specjalna:Użytkownicy]]",
-	"sru-realname-desc": "Rozszerza interfejs strony [[Special:ListUsers|Specjalna:Użytkownicy]] o prawdziwe imię i nazwisko użytkownika, oraz/lub inne informacje o nim"
+	"sru-realname-desc": "Rozszerza [[Special:ListUsers]], aby pokazać również prawdziwe imię i nazwisko każdego użytkownika i/lub inne informacje specyficzne dla użytkownika"
 }

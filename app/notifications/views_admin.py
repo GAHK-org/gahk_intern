@@ -100,7 +100,7 @@ def notifications(request: HttpRequest) -> HttpResponse:
     form = BroadcastForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         reached = services.notify(
-            services.everyone(),
+            services.everyone() | services.kitchen(),
             category=form.cleaned_data["category"],
             importance=Importance(form.cleaned_data["importance"]),
             title=form.cleaned_data["title"],

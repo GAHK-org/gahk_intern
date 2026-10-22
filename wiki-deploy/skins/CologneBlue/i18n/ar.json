@@ -12,7 +12,7 @@
 	"cologneblue.css": "/* الأنماط المتراصة CSS المعروضة هنا ستؤثر على مستخدمي واجهة كولون بلو */",
 	"cologneblue.js": "/* أي جافاسكريبت هنا سيتم تحميلها للمستخدمين الذين يستعملون واجهة كولون بلو */",
 	"cologneblue-desc": "واجهة خفيفة بالحد الأدنى من التنسيقات",
-	"qbfind": "جد",
+	"qbfind": "ابحث",
 	"qbbrowse": "تصفح",
 	"qbedit": "عدل",
 	"qbpageoptions": "هذه الصفحة",
@@ -23,9 +23,5 @@
 	"deletethispage": "حذف هذه الصفحة",
 	"undeletethispage": "استرجع هذه الصفحة",
 	"protectthispage": "احم هذه الصفحة",
-	"unprotectthispage": "غير حماية هذه الصفحة",
-	"talkpage": "ناقش هذه الصفحة",
-	"articlepage": "اعرض صفحة المحتوى",
-	"userpage": "طالع صفحة المستخدم",
-	"projectpage": "طالع صفحة المشروع"
+	"unprotectthispage": "غير حماية هذه الصفحة"
 }

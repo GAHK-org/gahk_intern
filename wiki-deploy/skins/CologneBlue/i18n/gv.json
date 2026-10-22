@@ -7,7 +7,7 @@
 	"qbfind": "Fow",
 	"qbbrowse": "Ronsee",
 	"qbedit": "Reagh",
-	"qbpageoptions": "Yn duillag shoh",
+	"qbpageoptions": "Y duillag shoh",
 	"qbmyoptions": "My ghuillagyn",
 	"faqpage": "Project:FC",
 	"editthispage": "Reagh y duillag shoh",
@@ -15,9 +15,5 @@
 	"deletethispage": "Scryss y duillag shoh",
 	"undeletethispage": "Jee-scryss y duillag shoh",
 	"protectthispage": "Coadee yn duillag shoh",
-	"unprotectthispage": "Jee-choadee yn duillag shoh",
-	"talkpage": "Resoon magh y duillag shoh",
-	"articlepage": "Jeeagh er y duillag chummal",
-	"userpage": "Jeeagh er duillag yn ymmydeyr",
-	"projectpage": "Jeeagh er duillag ny shalee"
+	"unprotectthispage": "Ceaghil coadey yn duillag shoh"
 }

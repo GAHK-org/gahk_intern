@@ -37,6 +37,10 @@ AnyUser = AbstractBaseUser | AnonymousUser
 ALL_ROLES = frozenset(Role.values)
 PREVIEW_SESSION_KEY = "preview_roles"
 
+# Pseudo-role of the kitchen-staff account (Resident.is_kitchen). Not a Role choice, so it grants
+# nothing anywhere; it only lets the preview tool show the site as the kitchen sees it.
+KITCHEN = "koekken"
+
 # Attribute the resolved role set is memoised under, on the request's user instance.
 _REAL_ROLES_MEMO = "_gahk_real_roles"
 
@@ -70,6 +74,8 @@ def _load_real_roles(user: Resident) -> frozenset[str]:
     """Read the role set from the DB. Superuser and `administrator` => every role (all-access)."""
     if user.is_superuser:
         return ALL_ROLES
+    if user.is_kitchen:
+        return frozenset({KITCHEN})
     year, month = active_period()
     codes = set(user.role_assignments.filter(year=year, month=month).values_list("role", flat=True))
     if Role.ADMINISTRATOR in codes:
@@ -121,11 +127,22 @@ def effective_roles(request: HttpRequest) -> set[str]:
     preview), otherwise the real roles. Re-verifies `can_preview` against real roles every call."""
     if PREVIEW_SESSION_KEY in request.session and can_preview(request.user):
         raw = request.session.get(PREVIEW_SESSION_KEY) or []
-        previewed = {c for c in raw if c in Role.values}
+        previewed = {c for c in raw if c in Role.values or c == KITCHEN}
         if Role.ADMINISTRATOR in previewed:
             return set(ALL_ROLES)
         return previewed  # may be empty => plain resident
     return real_roles(request.user)
+
+
+def is_kitchen(request: HttpRequest) -> bool:
+    """Whether this request is the kitchen account, or an admin previewing as it. Runs on every
+    request (core.middleware), so it only resolves roles when a preview is set."""
+    user = request.user
+    if not isinstance(user, Resident):
+        return False
+    if user.is_kitchen:
+        return True
+    return PREVIEW_SESSION_KEY in request.session and KITCHEN in effective_roles(request)
 
 
 def has_active_role(user: AnyUser, *roles: str) -> bool:

@@ -1,10 +1,11 @@
 {
 	"@metadata": {
 		"authors": [
+			"Amire80",
 			"Guycn2"
 		]
 	},
+	"action-showrealname": "לראות שמות אמיתיים",
 	"right-showrealname": "צפייה בשמות האמיתיים בדף [[Special:ListUsers|מיוחד:רשימת משתמשים]]",
-	"sru-realname-desc": "הרחבת הדף [[Special:ListUsers|מיוחד:רשימת משתמשים]] כך שיציג את השמות האמיתיים של המשתמשים ו/או פרטים מסוימים לגביהם",
-	"sru-realname-append": "&nbsp;&ndash; $1"
+	"sru-realname-desc": "הרחבת הדף [[Special:ListUsers|מיוחד:רשימת משתמשים]] כך שיציג את השמות האמיתיים של המשתמשים ו/או פרטים מסוימים לגביהם"
 }

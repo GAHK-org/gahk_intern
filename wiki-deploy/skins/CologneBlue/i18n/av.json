@@ -1,26 +1,22 @@
 {
 	"@metadata": {
 		"authors": [
-			"Amire80",
+			"Augustus A C",
 			"Gazimagomedov",
-			"Аль-Гимравий",
-			"Omarov M."
+			"Omarov M.",
+			"Аль-Гимравий"
 		]
 	},
 	"cologneblue-desc": "Бигьаяб куцлъи минималияб форматлъизабигун",
 	"qbfind": "Балагьизе",
-	"qbbrowse": "Балагьизе",
+	"qbbrowse": "Халагьизе",
 	"qbedit": "Хисизабизе",
 	"qbpageoptions": "Гьаб гьумер",
 	"qbmyoptions": "Дир гьумерал",
-	"editthispage": "Гьаб гьумер редактинабизе",
+	"editthispage": "Гьаб гьумер редактине",
 	"create-this-page": "Гьаб гьумер гьабизе",
 	"deletethispage": "Гьаб гьумер гилдизабизе",
 	"undeletethispage": "Гьаб гьумер букӀахъинабизе",
 	"protectthispage": "Гьаб гьумер цӀунизе",
-	"unprotectthispage": "Гьаб гьумералъул цӀуни хисизе",
-	"talkpage": "Гьаб гьумералъул бахӀс",
-	"articlepage": "Контент гьумералъухъ ралагьизе",
-	"userpage": "ГӀахьалчиясул гьумералъухъ ралагьизе",
-	"projectpage": "Проекталъул гьумералъухъ ралагьизе"
+	"unprotectthispage": "Гьаб гьумералъул цӀуни хисизе"
 }

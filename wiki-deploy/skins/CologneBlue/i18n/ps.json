@@ -1,24 +1,24 @@
 {
 	"@metadata": {
 		"authors": [
-			"Ahmed-Najib-Biabani-Ibrahimkhel"
+			"Ahmed-Najib-Biabani-Ibrahimkhel",
+			"شاه زمان پټان"
 		]
 	},
 	"skinname-cologneblue": "شين کلون",
+	"cologneblue.css": "/* دلته ټول سي‌اېس‌اېس به د شين کلون پوښۍ کارنانو ته بار شي */",
+	"cologneblue.js": "/* دلته ټول جاواسکريپټ به د شين کلون پوښۍ کارنانو ته بار شي */",
+	"cologneblue-desc": "يوه سپکه پوښۍ له ډېرې لږې بڼې سره",
 	"qbfind": "موندل",
 	"qbbrowse": "سپړل",
 	"qbedit": "سمول",
 	"qbpageoptions": "همدا مخ",
 	"qbmyoptions": "زما پاڼې",
-	"faqpage": "Project:ډ-ځ-پ",
+	"faqpage": "Project:ډ‌ځ‌پ",
 	"editthispage": "همدا مخ سمول",
 	"create-this-page": "همدا مخ ليکل",
 	"deletethispage": "دا مخ ړنگول",
 	"undeletethispage": "دا مخ ناړنگول",
 	"protectthispage": "همدا مخ ژغورل",
-	"unprotectthispage": "د دې مخ ژغورنه بدلول",
-	"talkpage": "د دې مخ په اړه خبرې اترې کول",
-	"articlepage": "د مخ مېنځپانگه ښکاره کول",
-	"userpage": "د کارن پاڼه کتل",
-	"projectpage": "د پروژې مخ کتل"
+	"unprotectthispage": "د دې مخ ژغورنه بدلول"
 }
