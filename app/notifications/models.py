@@ -16,7 +16,8 @@ import uuid
 
 from django.conf import settings
 from django.db import models
-from django.db.models import Q
+from django.db.models import F, Q
+from django.db.models.lookups import IsNull
 
 from core.clock import current_datetime
 
@@ -38,9 +39,9 @@ class NotificationQuerySet(models.QuerySet["Notification"]):
         return self.filter(seen_at__isnull=True)
 
     def ranked(self) -> "NotificationQuerySet":
-        """Most important first, then newest. `updated_at`, not `created_at`: a grouped notification
-        that just gained a fourth like is news again."""
-        return self.order_by("-importance", "-updated_at", "-pk")
+        """Unseen first, then most important, then newest. `updated_at`, not `created_at`: a grouped
+        notification that just gained a fourth like is news again."""
+        return self.order_by(IsNull(F("seen_at"), True).desc(), "-importance", "-updated_at", "-pk")
 
 
 class Notification(models.Model):
