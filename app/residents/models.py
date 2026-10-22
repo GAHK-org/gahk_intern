@@ -116,12 +116,7 @@ class Resident(AbstractBaseUser, PermissionsMixin):
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="proteges"
     )
     fylgje_raw = models.CharField(max_length=255, blank=True)  # original free-text, kept if unresolved
-    # e-conomic's chart-of-accounts accountNumber for this alumne (F-010 regnskab role; alumneregning
-    # automation). GAHK does not track alumni as e-conomic Customers/debtors — each alumne has their
-    # own GL account instead, and their balance/statement is the sum of that account's entries. Set
-    # by regnskab once; unset for most current residents — only alumni actually billed through
-    # e-conomic have one. (Named economic_customer_number in an earlier version of this feature,
-    # before it was confirmed GAHK uses per-alumne accounts, not e-conomic Customer records.)
+    # e-conomic's chart-of-accounts accountNumber for this alumne (F-010 regnskab role; alumneregning automation).
     economic_account_number = models.PositiveIntegerField(null=True, blank=True, unique=True)
     # profile
     profile_picture = models.FileField(upload_to="profile_pictures/", blank=True)
@@ -357,19 +352,7 @@ class AdminAccessGrant(models.Model):
 
 
 class EconomicLedgerEntry(models.Model):
-    """One posting from e-conomic's own ledger, mirrored locally (F-010 regnskab, alumneregning
-    automation). e-conomic remains the real books; this is GAHK's own permanent, append-only copy of
-    what e-conomic said at sync time — so a balance or a statement can be read from gahk-intern's own
-    data instead of a live API call every time, and the record survives even if e-conomic access ever
-    lapses. Matches how AkEntry/oelkaelder.Transaction already work: entries summed, never edited or
-    deleted — see residents.ledger.sync_entries, which only ever INSERTs.
-
-    is_draft distinguishes e-conomic's two entry id sequences, which are independent and can collide
-    numerically: posted entries have their own entryNumber, draft/journal entries (not yet formally
-    booked — GAHK's regnskab wants these included, not just posted ones, see F-010) have their own
-    journalEntryNumber from a completely separate counter. (entry_number, is_draft) together are the
-    sync key, not entry_number alone.
-    """
+    """One posting from e-conomic's ledger, mirrored locally (F-010 regnskab, alumneregning)."""
 
     resident = models.ForeignKey(Resident, on_delete=models.PROTECT, related_name="economic_entries")
     entry_number = models.PositiveIntegerField()  # e-conomic's entryNumber, or journalEntryNumber if draft
@@ -425,14 +408,7 @@ DEFAULT_ALUMNEREGNING_MESSAGE = (
 
 
 class AlumneregningSettings(models.Model):
-    """The editable-in-the-UI content every alumneregning mail is built from (F-010 regnskab):
-    the message body template and an optional følgebrev (cover letter) PDF, merged in as the
-    statement PDF's first page (residents.statement_pdf.prepend_followup) rather than sent as a
-    separate attachment. Regnskab expects to swap the følgebrev out roughly every 6 months, hence it
-    being editable here rather than baked into the generated statement. Singleton — always pk=1 —
-    because there is exactly one of these at a time, same shape as the legacy system's ID=1
-    `intern_alumne_emailtonew` row it replaces.
-    """
+    """The alumneregning mail body + følgebrev PDF, editable by regnskab (F-010)."""
 
     message_template = models.TextField(default=DEFAULT_ALUMNEREGNING_MESSAGE)
     followup_pdf = models.FileField(upload_to="alumneregning/", blank=True)

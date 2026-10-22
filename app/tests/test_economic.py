@@ -1,12 +1,5 @@
 """residents.economic — the e-conomic REST API client (F-010 regnskab, alumneregning automation).
-
-Mocks requests.get directly rather than hitting the network: these are unit tests of the client's own
-parsing/error-handling, not of e-conomic's API. The client was developed and manually verified against
-the real restapi.e-conomic.com API (GAHK's real company, account 1101) — these tests pin known response
-shapes (including the account-scoped-years-link-is-actually-company-wide quirk, and split fiscal years
-needing an internal URL slug) so a future e-conomic API change is caught here instead of only at
-alumneregning send time.
-"""
+Mocks requests.get; these are unit tests of the client's own parsing/error-handling."""
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -56,9 +49,7 @@ _NO_JOURNALS = FakeResponse(_json={"collection": []})
 
 
 def _no_drafts_fake_get(inner: Callable[..., FakeResponse]) -> Callable[..., FakeResponse]:
-    """Wraps a fake_get so "/journals" short-circuits to no journals (no draft entries found) —
-    for tests that only care about posted entries. get_draft_entries_for_account's own tests cover
-    the draft-matching logic directly."""
+    """Wraps a fake_get so "/journals" short-circuits to no drafts found."""
 
     def fake_get(url: str, **kw: object) -> FakeResponse:
         if url.endswith("/journals"):
@@ -235,11 +226,8 @@ def test_get_draft_entries_matches_account_side_as_is(monkeypatch: pytest.Monkey
 def test_get_draft_entries_negates_amount_when_matched_via_contra_account(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A batch voucher charging many accounts from one shared account only has THIS account as the
-    contraAccount on its line — e-conomic's amount there is from the other account's perspective, so
-    it must be negated to give this account's own (confirmed against the real API: a real "Gæstespisere"
-    batch voucher line showed amount=-255 with contraAccount=4207, and the e-conomic UI's own kontokort
-    for account 4207 showed that same posting as +255)."""
+    """A batch voucher charging many accounts has THIS account only as contraAccount on its line —
+    e-conomic's amount there is from the other account's perspective, so it must be negated."""
     monkeypatch.setattr(
         economic.requests,
         "get",

@@ -1,18 +1,3 @@
-"""e-conomic REST API client for alumneregninger (F-010 regnskab role).
-
-GAHK does not track alumni as e-conomic Customers/debtors (there is exactly one real Customer record
-in GAHK's e-conomic company) — each alumne instead has their own account in the chart of accounts,
-and their balance/statement is the sum of that account's entries. This client is scoped to exactly
-that: looking up an account, and reading its entries. Not a general e-conomic client — e-conomic
-exposes far more (customers, orders, products, suppliers, invoicing, ...) this app has no use for.
-
-Auth is two tokens as HTTP headers (X-AppSecretToken + X-AgreementGrantToken), both "demo" in dev by
-default (settings.ECONOMIC_APP_SECRET_TOKEN/_AGREEMENT_GRANT_TOKEN) — restapi.e-conomic.com
-authenticates "demo"/"demo" against its own public demo company, so this client is exercisable (and
-was developed and tested against the real API) before GAHK's e-conomic account was verified for real
-tokens. See app/.env.example for how real tokens are obtained.
-"""
-
 from __future__ import annotations
 
 import time
@@ -38,25 +23,16 @@ class EconomicApiError(Exception):
 
 
 class EconomicAuthError(EconomicApiError):
-    """401/403 — the AppSecretToken/AgreementGrantToken pair is invalid, expired, or revoked.
-
-    e-conomic's tokens are long-lived, not short-lived OAuth access tokens, so there is no silent
-    refresh to attempt here — the only fix is a human re-running the install/grant flow in
-    e-conomic's developer portal to mint a new AgreementGrantToken. Callers (residents.alumneregning)
-    turn this into an actionable "reconnect e-conomic" message rather than a generic failure.
-    """
+    """401/403 — the AppSecretToken/AgreementGrantToken pair is invalid, expired, or revoked. No
+    silent refresh is possible; needs a human to re-run the grant flow in e-conomic's developer portal."""
 
 
 class EconomicValidationError(EconomicApiError):
-    """400/422 — the request itself was malformed (bad account number, unknown year, ...). Retrying
-    the identical request fails the same way every time; this signals a bug in the caller, not a
-    transient condition, so _get does not retry it the way it retries a 429."""
+    """400/422 — the request itself was malformed; not retried, unlike a 429."""
 
 
 class EconomicRateLimitError(EconomicApiError):
-    """429 — e-conomic's call-cost rate limit was hit and MAX_RATE_LIMIT_RETRIES backoff retries
-    were all still rate-limited. Raised only after _get has already tried to recover; a caller
-    seeing this should wait longer than _get's own backoff before trying again."""
+    """429 — still rate-limited after MAX_RATE_LIMIT_RETRIES backoff retries."""
 
 
 @dataclass(frozen=True)
@@ -68,12 +44,8 @@ class EconomicAccount:
 
 @dataclass(frozen=True)
 class LedgerEntry:
-    """One posting from e-conomic's own ledger touching this account — the raw material
-    residents.ledger mirrors into an immutable local row.
-
-    entry_number is entryNumber for a posted entry or journalEntryNumber for a draft one — two
-    independent e-conomic counters that can collide numerically, which is why is_draft is part of
-    the identity (see EconomicLedgerEntry's uniqueness constraint)."""
+    """One posting from e-conomic's ledger. entry_number is entryNumber (posted) or journalEntryNumber
+    (draft) — two independent counters that can collide, hence is_draft is part of the identity."""
 
     entry_number: int
     is_draft: bool
@@ -134,16 +106,8 @@ def _get(
 
 
 def get_account(account_number: int) -> EconomicAccount:
-    """The account's name and e-conomic's own current balance for it.
-
-    This IS the source of truth for "what does this alumne currently owe" — not a sum we compute
-    ourselves. GAHK's real alumni accounts are type "status" (balance-sheet: Danish e-conomic UI
-    calls this "Balance") and carry a continuous running balance across fiscal periods, so e-conomic's
-    own balance figure is already correct; trusting it also means this code does not need to know or
-    guess an account's type. (An earlier version of this function/get_period_entries assumed every
-    account was `profitAndLoss` — reset to zero each fiscal period — based on account 1101, which
-    turned out not to be representative of GAHK's real per-alumne accounts; see git history.)
-    """
+    """The account's name and e-conomic's own current balance — the source of truth for what an
+    alumne owes, not a sum we compute ourselves (GAHK's accounts carry a continuous running balance)."""
     data = _get(f"{BASE_URL}/accounts/{account_number}").json()
     return EconomicAccount(
         account_number=data["accountNumber"],
@@ -153,20 +117,10 @@ def get_account(account_number: int) -> EconomicAccount:
 
 
 def get_draft_entries_for_account(account_number: int, date_from: date, date_to: date) -> list[LedgerEntry]:
-    """Unposted/draft entries touching this account, dated within [date_from, date_to] — from
-    e-conomic's journals (GAHK has exactly one, "Daglig"/journal 1, but this reads whatever journals
-    exist rather than hardcoding that). Regnskab wants drafts included in a statement, not just
-    formally posted entries (F-010) — e-conomic's own kontokort UI shows them too.
-
-    Matches on EITHER side of the double-entry pair: a draft line's own "account" field is only
-    populated for the side it was originally keyed against (e.g. "Print af billede" against this
-    account directly); a batch voucher charging many residents from one shared income account
-    (e.g. "Gæstespisere" — guest dining) only has this account as the "contraAccount" on its line,
-    never as "account". Missing that side means missing real drafts the e-conomic UI does show —
-    confirmed against the real API/UI together: a batch voucher's charge to one resident showed up
-    only via contraAccount, not account. When matched via contraAccount, the amount is negated to
-    give this account's own perspective (e-conomic's amount there is from the OTHER account's side).
-    """
+    """Unposted/draft entries touching this account, dated within [date_from, date_to] — regnskab
+    wants these on a statement too, not just posted ones. Matches on EITHER side of the double-entry
+    pair: a batch voucher (e.g. "Gæstespisere") only has this account as "contraAccount", never
+    "account" — amount is negated in that case, since e-conomic's amount there is the other side's."""
     entries: list[LedgerEntry] = []
     journals = _get(f"{BASE_URL}/journals", params={"pagesize": 1000}).json()
     for journal in journals.get("collection", []):
@@ -201,29 +155,11 @@ def get_draft_entries_for_account(account_number: int, date_from: date, date_to:
 
 
 def get_entries_in_range(account_number: int, date_from: date, date_to: date) -> list[LedgerEntry]:
-    """Every posting on this account whose own date falls within [date_from, date_to] — e.g. exactly
-    "August 2026", independent of e-conomic's own ~6-month fiscal period boundaries — INCLUDING draft
-    entries not yet formally posted (get_draft_entries_for_account; regnskab wants those included,
-    not just posted ones). This is the period-specific detail shown on a statement; the balance
-    figure (get_account) is separate and NOT derived from these entries, since an alumne can have a
-    nonzero balance with nothing posted in a given range (prior debt carried forward) — see
-    residents.alumneregning.
-
-    e-conomic's periods do not align with calendar months, so [date_from, date_to] can span more than
-    one fiscal period; this reads every period overlapping the range and keeps only entries whose own
-    date is actually inside it. The account-scoped entries URL has to be built from the period's URL
-    id (the "self" link's last path segment, e.g. "2015_6_2016" for the fiscal year e-conomic
-    displays as "2015/2016" — an internal slug, not standard percent-encoding of the display value) —
-    and NOT from the period's own "entries" link, which is the whole-COMPANY entries for that period
-    (confirmed against the real API: it returned 19108 rows, every posting on every account, for an
-    account that only has 124 of its own across its entire ~10-year history), despite being reached
-    from an account-scoped collection.
-
-    pagesize=1000 on the years list itself, not just the entries calls: e-conomic defaults to 20 per
-    page, and a long-lived account can have more than 20 fiscal periods by now (confirmed against the
-    real API — a resident's account had 23) — an unpaginated call silently drops the newest ones,
-    which is exactly backwards: those are the ones a billing range is usually asking about.
-    """
+    """Every posting on this account dated within [date_from, date_to], including drafts. Reads every
+    e-conomic fiscal period overlapping the range (periods don't align to calendar months), building
+    each period's entries URL from its "self" link — NOT its own "entries" link, which is actually the
+    whole company's entries despite looking account-scoped. pagesize=1000 throughout: e-conomic
+    defaults to 20/page and would otherwise silently drop a long-lived account's newest periods."""
     years = _get(f"{BASE_URL}/accounts/{account_number}/accounting-years", params={"pagesize": 1000}).json()
     overlapping = [
         year

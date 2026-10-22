@@ -71,8 +71,7 @@ def overview(request: HttpRequest) -> HttpResponse:
             "leavers": leavers,
             "q": q,
             "results": results,
-            # Alumneregninger send-form defaults: the selected period's calendar month, so picking
-            # "august" above also pre-fills the invoice date range below.
+            # Alumneregninger send-form defaults: the selected period's calendar month.
             "alumneregning_from": date(year, month, 1).isoformat(),
             "alumneregning_to": date(year, month, calendar.monthrange(year, month)[1]).isoformat(),
         },
@@ -81,9 +80,7 @@ def overview(request: HttpRequest) -> HttpResponse:
 
 @role_required("regnskab")
 def set_economic_account_number(request: HttpRequest, pk: int) -> HttpResponse:
-    """Set or clear one resident's e-conomic chart-of-accounts accountNumber, posted inline from a
-    regnskab lookup/leaver row (_rows.html). Redirects back to wherever the row was shown — the
-    leavers list for a given period, or a free-text lookup — rather than always back to the overview."""
+    """Set or clear one resident's e-conomic accountNumber, posted inline from a regnskab row."""
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
@@ -126,11 +123,8 @@ _AUTH_ERROR_MESSAGE = (
 
 @role_required("regnskab")
 def preview_alumneregninger_view(request: HttpRequest) -> HttpResponse:
-    """Shows who would be billed for a chosen period, and the outcome e-conomic would give each of
-    them (ready to send / no entries for that period / failed), with a link to view each one's
-    generated statement PDF — all without sending anything. The regnskab-facing step before actually
-    committing via send_alumneregninger_view, which this page's own form posts to.
-    """
+    """Who would be billed for a chosen period, with a link to each one's statement PDF — a preview,
+    sends nothing."""
     period = _parse_billing_period(request.GET)
     if period is None:
         messages.error(request, "Angiv en gyldig periode — fra-dato skal være før (eller lig med) til-dato.")
@@ -152,8 +146,7 @@ def preview_alumneregninger_view(request: HttpRequest) -> HttpResponse:
 
 @role_required("regnskab")
 def alumneregning_statement_pdf_view(request: HttpRequest, pk: int) -> HttpResponse:
-    """One resident's generated statement PDF for a period, shown inline — what the preview page's
-    "Se PDF" link opens. Same generation path send_alumneregninger_view uses, just not emailed."""
+    """One resident's statement PDF for a period, shown inline."""
     period = _parse_billing_period(request.GET)
     if period is None:
         return HttpResponseNotFound("Ugyldig eller manglende periode.")
@@ -177,17 +170,7 @@ def alumneregning_statement_pdf_view(request: HttpRequest, pk: int) -> HttpRespo
 
 @role_required("regnskab")
 def send_alumneregninger_view(request: HttpRequest) -> HttpResponse:
-    """The "one button": email every billable alumne (e-conomic account number set, lived at GAHK
-    during the period) their statement for the e-conomic fiscal period covering the regnskab-chosen
-    date range's start (e.g. all of August). Reached either directly from the overview page's form,
-    or after reviewing the preview (preview_alumneregninger_view).
-
-    Runs synchronously and renders what happened per alumne — sent / no entries in that e-conomic
-    period / failed — rather than queuing a Celery task. At the volume this runs at (alumni with an
-    account number set, at most monthly) a page load blocking for the duration is simpler to build,
-    run, and debug than a background job with a progress page; revisit as a task (like oelkaelder's
-    own monthly statement mail) if the list grows enough for that to matter.
-    """
+    """The "one button": email every billable alumne their statement for the chosen period."""
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 

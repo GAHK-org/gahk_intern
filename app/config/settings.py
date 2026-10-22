@@ -524,19 +524,11 @@ INDSTILLING_EMAIL = os.environ.get("INDSTILLING_EMAIL", "indstillingen@gahk.dk")
 OELKAELDER_BANK_REG = os.environ.get("OELKAELDER_BANK_REG", "9070")
 OELKAELDER_BANK_ACCOUNT = os.environ.get("OELKAELDER_BANK_ACCOUNT", "1642635456")
 
-# e-conomic REST API (residents.economic) — customer balance/invoices for alumneregninger. Real
-# tokens come from a Developer Agreement app + a per-company AgreementGrantToken (e-conomic's
-# developer portal), which requires MitID Erhverv verification of the developer account — until
-# GAHK has that, both default to "demo" in DEBUG, which authenticates against e-conomic's public
-# demo company (restapi.e-conomic.com) so this feature is developable without real credentials.
-# In production there is no such fallback: an unset token is a 401 from e-conomic, not a silent
-# demo-data response.
+# e-conomic REST API (residents.economic) — account balances for alumneregninger.
 ECONOMIC_APP_SECRET_TOKEN = os.environ.get("ECONOMIC_APP_SECRET_TOKEN", "demo" if DEBUG else "")
 ECONOMIC_AGREEMENT_GRANT_TOKEN = os.environ.get("ECONOMIC_AGREEMENT_GRANT_TOKEN", "demo" if DEBUG else "")
 
-# Sender + bank details for alumneregning mails (residents.alumneregning). The account is GAHK's main
-# kollegium account — distinct from OELKAELDER_BANK_REG/_ACCOUNT above, which is the separate ølkælder
-# till account. Defaults match what the legacy manual process (alumneregning/send_mail.py) used.
+# Sender + bank details for alumneregning mails (residents.alumneregning).
 ALUMNEREGNING_FROM_EMAIL = os.environ.get("ALUMNEREGNING_FROM_EMAIL", "regnskab@gahk.dk")
 ALUMNEREGNING_BANK_REG = os.environ.get("ALUMNEREGNING_BANK_REG", "9070")
 ALUMNEREGNING_BANK_ACCOUNT = os.environ.get("ALUMNEREGNING_BANK_ACCOUNT", "1642410853")

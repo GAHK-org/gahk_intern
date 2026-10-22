@@ -144,10 +144,7 @@ def test_set_economic_account_number_rejects_get(make_resident: Callable) -> Non
 def test_economic_account_number_not_editable_via_django_admin_by_regnskab_alone(
     make_resident: Callable,
 ) -> None:
-    """Resident.has_perm/has_module_perms require an approved Administrator (see residents/models.py)
-    — a plain regnskab-role user has is_staff=True but must NOT be able to reach the Django Admin
-    change form for a Resident (which has no field restriction of its own and would otherwise expose
-    economic_account_number, bypassing the regnskab-gated inline-edit view entirely)."""
+    """A plain regnskab-role user must not reach the Django Admin change form for a Resident."""
     acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
     target = make_resident(email="target@gahk.dk", economic_account_number=4207)
     c = Client()

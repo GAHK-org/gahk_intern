@@ -1,11 +1,5 @@
 """residents.alumneregning — the "one button" billing mail for a chosen period (F-010 regnskab role).
-
-economic.get_account/get_entries_in_range are monkeypatched directly: these tests cover
-alumneregning's own logic (who gets mailed, the generated statement PDF, what happens on failure,
-that a send mirrors entries into the local ledger, the Residency-based eligibility filter, and that
-an alumne with a balance but no new postings still gets billed), not the e-conomic client itself (see
-test_economic.py) or the real API (verified manually during development).
-"""
+economic.get_account/get_entries_in_range are monkeypatched directly."""
 
 import io
 from collections.abc import Callable
@@ -42,8 +36,7 @@ def _entry(number: int, date_str: str, amount: float, is_draft: bool = False) ->
 
 
 def _one_page_pdf(text: str) -> bytes:
-    """A minimal real PDF (not just PDF-looking bytes) — pypdf.PdfReader needs an actual parseable
-    document, unlike the old single-attachment test which could get away with arbitrary bytes."""
+    """A minimal real PDF — pypdf.PdfReader needs an actual parseable document."""
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("helvetica", "", 12)
@@ -122,7 +115,7 @@ def test_skips_residents_without_a_residency_in_the_billed_period(
 
 
 @pytest.mark.django_db
-def test_skips_residents_without_a_customer_number(make_resident: Callable) -> None:
+def test_skips_residents_without_an_account_number(make_resident: Callable) -> None:
     resident = make_resident(email="no-number@gahk.dk")
     _give_residency(resident, 2026, 8, room_index=1)
 

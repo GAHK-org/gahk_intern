@@ -1,19 +1,4 @@
-"""Generates the alumneregning statement PDF attached to each mail (F-010 regnskab role).
-
-Replaces fetching a rendered invoice/kontokort PDF from e-conomic: GAHK tracks alumni via per-person
-chart-of-accounts entries, not e-conomic Customers/Invoices, so there is no e-conomic-rendered PDF to
-fetch for an alumne's statement (see residents.economic.get_account's docstring). This builds the same
-"kontokort" shape the old manual process downloaded — the period's postings (both posted and draft —
-regnskab wants drafts included, not just formally booked entries, see economic.get_entries_in_range),
-each with a running subtotal, plus the account's actual current balance (not derived from the
-postings shown: an alumne can have a nonzero balance with nothing posted in the given period, carried
-forward from before). Draft lines are marked "(kladde)" — unlike a posted entry, e-conomic's own
-draft can still be edited or deleted before it is formally booked.
-
-prepend_followup() then merges in the regnskab-uploaded følgebrev (AlumneregningSettings), if any, as a
-permanent first page ahead of the rendered statement — see residents.alumneregning for where that's
-called from.
-"""
+"""Generates the alumneregning statement PDF attached to each mail (F-010 regnskab role)."""
 
 from __future__ import annotations
 
@@ -35,9 +20,7 @@ def _kr(amount: Decimal) -> str:
 
 
 def prepend_followup(followup_pdf: bytes, statement_pdf: bytes) -> bytes:
-    """Merges the regnskab-uploaded følgebrev in front of the generated statement, producing one PDF —
-    the følgebrev is a permanent first page (updated roughly every 6 months by regnskab), not a second
-    mail attachment, so a recipient sees it before the figures without having to open a second file."""
+    """Merges the regnskab-uploaded følgebrev in front of the generated statement as one PDF."""
     writer = PdfWriter()
     for source in (followup_pdf, statement_pdf):
         for page in PdfReader(io.BytesIO(source)).pages:
@@ -55,8 +38,7 @@ def render(
     date_from: date,
     date_to: date,
 ) -> bytes:
-    """A one-page account statement: the period's postings (if any) with a running subtotal, plus the
-    account's actual current balance from e-conomic."""
+    """The period's postings (if any) with a running subtotal, plus the account's current balance."""
     pdf = FPDF()
     pdf.add_page()
 
@@ -105,9 +87,7 @@ def render(
 
 
 def _render_how_to_read(pdf: FPDF) -> None:
-    """The permanent "how to read your alumneregning" explainer (carried over verbatim from the old
-    følgebrev.pdf's page 3). Baked into every statement rather than left to the optional, freely-edited
-    følgebrev upload, so it's never missing just because nobody attached a følgebrev for a given send."""
+    """The permanent "how to read your alumneregning" explainer, on every statement."""
     pdf.ln(10)
     pdf.set_font("helvetica", "B", 12)
     pdf.cell(0, 8, "HOW TO AFLÆSE DIN ALUMNEREGNING", new_x=XPos.LMARGIN, new_y=YPos.NEXT)

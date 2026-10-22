@@ -1,38 +1,3 @@
-"""Alumneregninger: billing mails to former residents for a chosen period (F-010 regnskab role).
-
-Replaces the old manual flow (alumneregning/send_mail.py in a separate repo): download a combined PDF
-of every debtor's account card from e-conomic, OCR-match pages to names, split, email. GAHK does not
-track alumni as e-conomic Customers — each alumne has their own chart-of-accounts GL account instead
-(residents.forms.EconomicAccountNumberForm sets Resident.economic_account_number), so their statement
-is read directly and deterministically via residents.economic instead of matched by OCR.
-
-What gets sent: a PDF statement generated locally (residents.statement_pdf — NOT fetched from
-e-conomic; GAHK's account-based setup has nothing like a rendered invoice to fetch, see
-economic.get_account's docstring) showing the period's postings (economic.get_entries_in_range), with
-the regnskab-uploaded følgebrev (AlumneregningSettings), if any, merged in as a permanent first page
-(statement_pdf.prepend_followup) — one PDF, not two attachments. The balance quoted in the
-mail is e-conomic's own current balance for the account (economic.get_account) — NOT derived from the
-period's postings: GAHK's real alumni accounts are type "status" (Danish e-conomic UI: "Balance") and
-carry a continuous running balance, so an alumne with nothing posted in the chosen period can still
-have (and should still be told about) an outstanding balance carried forward from before. Everyone
-billable therefore gets mailed, whether or not anything new was posted in the period.
-
-Every fetched entry is still mirrored into the local immutable ledger (residents.ledger) regardless —
-including during a preview (preview_alumneregninger/render_preview_pdf): that is GAHK's own permanent
-audit record of what was read from e-conomic, and a preview reads real data just as a send does, so
-there is no reason for it to skip the mirror.
-
-Who gets mailed: residents with an economic_account_number set AND a Residency falling within
-[date_from, date_to] — i.e. people who actually lived at GAHK during the period being billed, not
-every resident who has ever been given an account number.
-
-The mail body is AlumneregningSettings.message_template (edited in the UI by regnskab, defaults to
-models.DEFAULT_ALUMNEREGNING_MESSAGE), a string.Template filled in with $FORNAVN, $SALDO_LINE (the
-balance sentence, sign-aware — computed here, not editable, since it is derived data rather than
-wording), $REG_NR and $KONTO_NR. safe_substitute(), not substitute(): a typo'd placeholder in a
-regnskab-edited template should render literally, not break every send in the batch.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -48,6 +13,7 @@ from django.db.models import F, QuerySet
 
 from . import economic, ledger, statement_pdf
 from .models import AlumneregningSettings, Residency, Resident
+from .statement_pdf import _kr
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +37,7 @@ class PreviewRow:
 
 @dataclass(frozen=True)
 class PreparedStatement:
-    """Everything a send needs for one alumne except actually emailing it — shared by
-    send_alumneregninger (which mails it) and the regnskab preview (which just shows it)."""
+    """Everything a send needs for one alumne except actually emailing it."""
 
     resident: Resident
     account_number: int
@@ -80,10 +45,6 @@ class PreparedStatement:
     balance: Decimal  # e-conomic's own current balance for the account, not derived from `entries`
     pdf: bytes
     body: str
-
-
-def _kr(amount: Decimal) -> str:
-    return f"{amount:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 def _body(resident: Resident, balance: Decimal, message_template: str) -> str:
@@ -101,9 +62,7 @@ def _body(resident: Resident, balance: Decimal, message_template: str) -> str:
 
 
 def _residents_billable_for(date_from: date, date_to: date) -> QuerySet[Resident]:
-    """Residents eligible for this send: an e-conomic account number set, and a Residency row whose
-    (year, month) falls within [date_from, date_to] — i.e. they actually lived at GAHK at some point
-    during the period being billed."""
+    """Residents with an e-conomic account number and a Residency within [date_from, date_to]."""
     lower = date_from.year * 12 + date_from.month
     upper = date_to.year * 12 + date_to.month
     resident_ids = (
@@ -124,9 +83,7 @@ def _prepare_one(
     date_to: date,
     mail_settings: AlumneregningSettings,
 ) -> PreparedStatement:
-    """Fetches the account's current balance and this period's postings, mirrors the postings into
-    the local ledger, and renders the statement PDF + mail body. Always produces something to send —
-    see the module docstring on why a period with nothing posted still gets mailed."""
+    """Fetches the balance + this period's postings, mirrors them into the ledger, renders the PDF."""
     balance = Decimal(str(economic.get_account(account_number).balance))
     entries = economic.get_entries_in_range(account_number, date_from, date_to)
     if entries:
@@ -166,10 +123,7 @@ def _send_one(
 
 
 def send_alumneregninger(date_from: date, date_to: date) -> list[AlumneregningResult]:
-    """Email every billable resident (see _residents_billable_for) their statement for
-    [date_from, date_to]. Best-effort per resident: one failing (e-conomic error, bad account number)
-    does not stop the rest — reported in the results instead, same as the old script's per-row error
-    printing."""
+    """Email every billable resident their statement. Best-effort: one failing doesn't stop the rest."""
     mail_settings = AlumneregningSettings.get_solo()
     results: list[AlumneregningResult] = []
     for resident in _residents_billable_for(date_from, date_to):
@@ -178,12 +132,8 @@ def send_alumneregninger(date_from: date, date_to: date) -> list[AlumneregningRe
         try:
             results.append(_send_one(resident, account_number, date_from, date_to, mail_settings))
         except economic.EconomicAuthError as exc:
-            # No silent refresh is possible (see EconomicAuthError's docstring) — stop the whole
-            # batch rather than report the same "reconnect e-conomic" failure once per remaining
-            # alumne, and surface it as an exception so the view renders a clear error, not a
-            # results table full of identical rows.
             logger.error("alumneregning: e-conomic access invalid/revoked: %s", exc)
-            raise
+            raise  # affects every remaining alumne equally — stop the batch, don't repeat the error
         except economic.EconomicRateLimitError as exc:
             logger.warning("alumneregning: e-conomic rate limit for resident %s: %s", resident.pk, exc)
             results.append(
@@ -198,10 +148,7 @@ def send_alumneregninger(date_from: date, date_to: date) -> list[AlumneregningRe
 
 
 def preview_alumneregninger(date_from: date, date_to: date) -> list[PreviewRow]:
-    """Who WOULD be billed for [date_from, date_to], and what their statement would say — without
-    sending anything. Same error handling as send_alumneregninger: an auth error aborts immediately
-    (raised, not reported per-row — it affects every alumne equally), a rate limit or other API error
-    is reported per-resident so the rest of the preview still renders."""
+    """Who would be billed for [date_from, date_to] and what their statement would say — sends nothing."""
     mail_settings = AlumneregningSettings.get_solo()
     rows: list[PreviewRow] = []
     for resident in _residents_billable_for(date_from, date_to):
@@ -229,8 +176,7 @@ def preview_alumneregninger(date_from: date, date_to: date) -> list[PreviewRow]:
 
 
 def render_preview_pdf(resident: Resident, date_from: date, date_to: date) -> bytes | None:
-    """The statement PDF for one resident/period — what the regnskab preview's "Se PDF" link shows.
-    None only if the resident has no account number set."""
+    """The statement PDF for one resident/period, or None if they have no account number."""
     if resident.economic_account_number is None:
         return None
     mail_settings = AlumneregningSettings.get_solo()

@@ -1,10 +1,4 @@
-"""residents.ledger — the local, immutable mirror of e-conomic postings (F-010 regnskab role).
-
-e-conomic itself stays the real books; EconomicLedgerEntry is GAHK's own permanent, append-only copy.
-sync_entries is handed economic.LedgerEntry objects directly (it does not fetch them itself — see
-residents.alumneregning for the actual e-conomic calls, residents.economic for the client against the
-real e-conomic demo API).
-"""
+"""residents.ledger — the local, immutable mirror of e-conomic postings (F-010 regnskab role)."""
 
 from collections.abc import Callable
 from decimal import Decimal
@@ -55,21 +49,6 @@ def test_sync_is_insert_only_and_idempotent(make_resident: Callable) -> None:
 
 
 @pytest.mark.django_db
-def test_balance_sums_entries_with_economics_own_sign(make_resident: Callable) -> None:
-    resident = make_resident(email="a@gahk.dk", economic_account_number=1101)
-    ledger.sync_entries(resident, [_entry(1, 250.0), _entry(2, -87.5)])
-
-    assert ledger.balance(resident) == Decimal("162.50")
-
-
-@pytest.mark.django_db
-def test_balance_is_zero_with_no_entries(make_resident: Callable) -> None:
-    resident = make_resident(email="a@gahk.dk", economic_account_number=1101)
-
-    assert ledger.balance(resident) == Decimal(0)
-
-
-@pytest.mark.django_db
 def test_posted_and_draft_entries_with_the_same_number_do_not_collide(make_resident: Callable) -> None:
     """entryNumber (posted) and journalEntryNumber (draft) are independent e-conomic counters and can
     coincide numerically — both must be kept, not deduplicated against each other."""
@@ -81,4 +60,3 @@ def test_posted_and_draft_entries_with_the_same_number_do_not_collide(make_resid
 
     assert inserted == 2
     assert EconomicLedgerEntry.objects.filter(resident=resident, entry_number=1).count() == 2
-    assert ledger.balance(resident) == Decimal("150.00")

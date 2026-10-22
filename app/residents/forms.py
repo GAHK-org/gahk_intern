@@ -128,9 +128,7 @@ class ProfileEditForm(forms.ModelForm):
 
 class EconomicAccountNumberForm(forms.ModelForm):
     """Regnskab sets or clears a resident's e-conomic chart-of-accounts accountNumber (alumneregning
-    automation, F-010 regnskab role). A single-field form rather than adding it to ResidentEditForm:
-    that form is indstilling's general edit surface, and this value is regnskab's own, edited inline
-    from the regnskab lookup/leaver rows instead."""
+    automation, F-010 regnskab role)."""
 
     class Meta:
         model = Resident
@@ -139,10 +137,7 @@ class EconomicAccountNumberForm(forms.ModelForm):
 
 
 class AlumneregningSettingsForm(forms.ModelForm):
-    """Regnskab edits the alumneregning mail body and følgebrev PDF in the UI (F-010), replacing what
-    used to be a hardcoded message.txt + a static følgebrev.pdf in the old repo. The uploaded PDF gets
-    merged in as the statement's first page (residents.statement_pdf.prepend_followup), not sent as a
-    separate attachment."""
+    """Regnskab edits the alumneregning mail body and følgebrev PDF in the UI (F-010)."""
 
     class Meta:
         model = AlumneregningSettings
