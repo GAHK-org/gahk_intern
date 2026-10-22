@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Generate a Mermaid erDiagram from Django models and write it to docs/erd.md.
 
 Exit codes: 0 = no change, 1 = diagram was updated (stage docs/erd.md and recommit).
@@ -15,12 +14,12 @@ OUTPUT = REPO_ROOT / "docs" / "erd.md"
 sys.path.insert(0, str(APP_DIR))
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
-import django  # noqa: E402
+import django
 
 django.setup()
 
-from django.apps import apps  # noqa: E402
-from django.db import models as m  # noqa: E402
+from django.apps import apps
+from django.db import models as m
 
 
 def is_project_app(app_config: object) -> bool:

@@ -128,6 +128,7 @@ The photo album stores and presents photos and videos. Hereafter, "media" means 
 - macOS metadata (`__MACOSX/`, `._*`, `.DS_Store`, `.AppleDouble`) of at most 16 KB, `.DS_Store` of any size, `Thumbs.db` and `desktop.ini` are skipped and listed. An AppleDouble sidecar is not: it is stored with its file, and listed as skipped only when its file is not imported (a folder's, a duplicate's, or one with no file). For a file the album already has, the sidecar is stored with that one if it has none. A larger file that looks like macOS metadata fails the import.
 - Exact duplicates (same folder, same name, same bytes) within the archive are skipped and listed. Imported media is approved immediately and keeps its file time as `file_modified_at` (see Metadata and ordering).
 - An import that stops making progress for 15 minutes, or whose worker is lost, is marked failed (`Importen blev afbrudt undervejs`), and nothing of it is imported.
+- When an import fails — refused, crashed, cut short, or never started — whoever started it gets a system notification with the reason and a link to the import page, which lists every reason: they may have closed the page that was waiting. Not for the import script's System resident.
 - The import job logs what it did — the archive and folder, every skipped file, the result, or every reason it was refused. Administrators see the log on the job's page under `/admin/worker-jobs` for 30 days (a failed job's log for longer).
 
 ### System import and the Dropbox script

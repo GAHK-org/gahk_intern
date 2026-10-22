@@ -1,3 +1,4 @@
+import enum
 import io
 import logging
 import posixpath
@@ -16,7 +17,7 @@ from django.db.models import Q, QuerySet
 from django.utils import timezone
 from zipstream import ZIP_STORED, ZipStream
 
-from . import direct_upload
+from . import direct_upload, notify
 from .dashboard import measure_storage
 from .models import (
     ALBUM_DOWNLOAD_RETENTION,
@@ -84,14 +85,22 @@ DOWNLOAD_INTERRUPTED = "Download blev afbrudt undervejs."
 IMPORT_INTERRUPTED = "Importen blev afbrudt undervejs. Intet er importeret."
 
 
+class Claim(enum.Enum):
+    """What `_claim_job` made of a job's row."""
+
+    CLAIMED = "claimed"  # it is this task's to do
+    NOTHING = "nothing"  # another task has it, or nobody needs doing
+    LOST = "lost"  # this very message's first run died; just closed out as failed
+
+
 def _claim_job(
     rows: "QuerySet[Any]",
     states: type[AlbumDownloadState] | type[AlbumImportState],
     task_id: str | None,
     *,
     interrupted: str,
-) -> bool:
-    """Move a QUEUED download or import to BUILDING for this task; False if there is nothing to do.
+) -> Claim:
+    """Move a QUEUED download or import to BUILDING for this task.
 
     A row `fail_stalled_*` failed while this very message was still waiting in the queue is claimed
     too: with one media slot a job can honestly wait longer than JOB_QUEUED_TOO_LONG. It is told
@@ -115,12 +124,13 @@ def _claim_job(
         error="",
         completed_at=None,
     ):
-        return True
+        return Claim.CLAIMED
     if task_id and rows.filter(state=states.BUILDING, task_id=task_id).update(
         state=states.FAILED, error=interrupted, completed_at=now
     ):
         logger.warning("The worker running this job was lost (killed, out of memory?); marked as failed.")
-    return False
+        return Claim.LOST
+    return Claim.NOTHING
 
 
 def _stalled(
@@ -455,7 +465,10 @@ def _archive(download: AlbumDownload, progress: Progress = no_progress) -> ZipSt
 def build_album_download(self: Task, download_id: int) -> bool:
     """Build an album ZIP into object storage, without occupying a web worker."""
     rows = AlbumDownload.objects.filter(pk=download_id)
-    if not _claim_job(rows, AlbumDownloadState, self.request.id, interrupted=DOWNLOAD_INTERRUPTED):
+    if (
+        _claim_job(rows, AlbumDownloadState, self.request.id, interrupted=DOWNLOAD_INTERRUPTED)
+        is not Claim.CLAIMED
+    ):
         return False
     download = rows.get()
     key = f"photo-album-zips/{download.token}.zip"
@@ -518,6 +531,20 @@ def _discard_archives(imports: "QuerySet[AlbumImport]") -> None:
         album_import.save(update_fields=["archive"])
 
 
+def _tell_import_failed(album_import: AlbumImport, reason: str) -> None:
+    """The notification, never in the way of what the task is doing: a failure to send it is
+    logged, not raised over the import's own outcome."""
+    try:
+        notify.import_failed(album_import, reason)
+    except Exception:
+        logger.warning(
+            "Could not tell %s that import %s failed",
+            album_import.requested_by_id,
+            album_import.pk,
+            exc_info=True,
+        )
+
+
 # How long a finished upload may wait for its import before it counts as abandoned: past the 24 h a
 # ticket is good for (direct_upload.TTL), so no upload that could still be submitted is taken.
 ORPHANED_IMPORT_AFTER = timedelta(days=2)
@@ -551,9 +578,17 @@ def fail_stalled_imports() -> int:
     The ZIPs go FAILED_IMPORT_ARCHIVE_KEPT later, not with the jobs failed here: a worker still
     downloading one from the bucket would lose it, and a job still queued could not be revived.
     """
-    failed = _stalled(AlbumImport.objects.all(), AlbumImportState).update(
+    # Which were running and stopped, and which never started — told apart for the notification.
+    started = dict(_stalled(AlbumImport.objects.all(), AlbumImportState).values_list("pk", "progressed_at"))
+    failed = _stalled(AlbumImport.objects.filter(pk__in=started), AlbumImportState).update(
         state=AlbumImportState.FAILED, error=IMPORT_INTERRUPTED, completed_at=timezone.now()
     )
+    for album_import in AlbumImport.objects.filter(
+        pk__in=started, state=AlbumImportState.FAILED, error=IMPORT_INTERRUPTED
+    ).select_related("requested_by"):
+        _tell_import_failed(
+            album_import, notify.INTERRUPTED if started[album_import.pk] else notify.NEVER_STARTED
+        )
     _discard_archives(
         AlbumImport.objects.filter(
             state=AlbumImportState.FAILED, completed_at__lt=timezone.now() - FAILED_IMPORT_ARCHIVE_KEPT
@@ -566,9 +601,12 @@ def fail_stalled_imports() -> int:
 def process_album_import(self: Task, import_id: int) -> bool:
     """Unpack a stored ZIP outside the web request that received it."""
     rows = AlbumImport.objects.filter(pk=import_id)
-    if not _claim_job(rows, AlbumImportState, self.request.id, interrupted=IMPORT_INTERRUPTED):
-        # Only the one this message just failed as its own dead first run; nothing will run it now.
-        _discard_archives(rows.filter(state=AlbumImportState.FAILED, task_id=self.request.id or "-"))
+    claim = _claim_job(rows, AlbumImportState, self.request.id, interrupted=IMPORT_INTERRUPTED)
+    if claim is Claim.LOST:
+        # This message's own dead first run, just closed out; nothing will run it now.
+        _discard_archives(rows)
+        _tell_import_failed(rows.get(), notify.INTERRUPTED)
+    if claim is not Claim.CLAIMED:
         return False
     album_import = rows.get()
     logger.info(
@@ -620,12 +658,14 @@ def process_album_import(self: Task, import_id: int) -> bool:
         album_import.error = "ZIP-filen blev afvist. Intet er importeret."
         album_import.completed_at = timezone.now()
         album_import.save(update_fields=["state", "errors", "error", "completed_at"])
+        _tell_import_failed(album_import, notify.refused(exc.messages))
         return False
     except Exception as exc:
         album_import.state = AlbumImportState.FAILED
         album_import.error = str(exc)[:255]
         album_import.completed_at = timezone.now()
         album_import.save(update_fields=["state", "error", "completed_at"])
+        _tell_import_failed(album_import, notify.CRASHED)
         raise
     finally:
         if album_import.archive:
