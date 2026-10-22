@@ -1,8 +1,11 @@
 {
 	"@metadata": {
 		"authors": [
-			"Ykhwong"
+			"Ykhwong",
+			"Tensama0415"
 		]
 	},
-	"right-showrealname": "[[Special:ListUsers|특수:사용자 목록]]에서 실명을 봅니다"
+	"action-showrealname": "실명을 보기",
+	"right-showrealname": "[[Special:ListUsers|특수:사용자 목록]]에서 실명을 보기",
+	"sru-realname-desc": "[[Special:ListUsers|특수:사용자 목록]]을 확장하여 각 사용자의 실명 및/또는 다른 사용자 고유의 정보 또한 표시합니다"
 }

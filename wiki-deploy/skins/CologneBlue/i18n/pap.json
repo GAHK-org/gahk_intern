@@ -1,13 +1,21 @@
 {
 	"@metadata": {
 		"authors": [
-			"Sdm1985"
+			"Sdm1985",
+			"Kallmemel"
 		]
 	},
+	"cologneblue-desc": "Un diseño leve ku lay-out minimo",
+	"qbfind": "Haña",
+	"qbbrowse": "Blader",
+	"qbedit": "Editá",
+	"qbpageoptions": "E página aki",
+	"qbmyoptions": "Mi páginanan",
 	"faqpage": "Project:Preguntanan mas Puntrá",
 	"editthispage": "Editá e página aki",
-	"unprotectthispage": "Stop di protehá e página aki",
-	"articlepage": "Wak página di kontenido",
-	"userpage": "Wak página di uzadó",
-	"projectpage": "Wak página di e proyekto"
+	"create-this-page": "Krea página",
+	"deletethispage": "Eliminá página",
+	"undeletethispage": "Restourá página",
+	"protectthispage": "Protehá página",
+	"unprotectthispage": "Kambia protekshon di página"
 }

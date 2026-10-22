@@ -1,0 +1,10 @@
+{
+	"@metadata": {
+		"authors": [
+			"Eleassar"
+		]
+	},
+	"action-showrealname": "ogled pravih imen",
+	"right-showrealname": "Ogled pravih imen na [[Special:ListUsers]]",
+	"sru-realname-desc": "Razširi [[Special:ListUsers]], da prikaže tudi pravo ime vsakega uporabnika in/ali druge podatke uporabnikov"
+}

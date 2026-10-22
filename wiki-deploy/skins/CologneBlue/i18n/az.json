@@ -3,16 +3,18 @@
 		"authors": [
 			"Gulmammad",
 			"Mushviq Abdulla",
+			"NMW03",
+			"Nemoralis",
 			"PPerviz",
 			"PrinceValiant",
 			"Sortilegus",
-			"Vago",
-			"NMW03"
+			"Vago"
 		]
 	},
 	"skinname-cologneblue": "Cologne Blue",
 	"cologneblue.css": "/* Burada yerləşən CSS Cologne Blue skin istifadəçilərinə tətbiq olunur */",
-	"cologneblue.js": "/* Burada Cologne Blue skin istifadəçiləri üçün istənilən JavaScript yüklənəcək */",
+	"cologneblue.js": "/* Buradakı JavaScript Cologne Blue skin istifadəçiləri üçün \nyüklənəcək */",
+	"cologneblue-desc": "Minimum formatlaşdırma ilə yüngül ölçülü dizayn",
 	"qbfind": "Tap",
 	"qbbrowse": "Gözdən keçir",
 	"qbedit": "Redaktə",
@@ -24,9 +26,5 @@
 	"deletethispage": "Bu səhifəni sil",
 	"undeletethispage": "Bu səhifənin silmə əməliyyatını geri qaytar",
 	"protectthispage": "Bu səhifəni mühafizə et",
-	"unprotectthispage": "Bu səhifənin mühafizəsini kənarlaşdır",
-	"talkpage": "Bu səhifəni müzakirə et",
-	"articlepage": "Məzmun səhifəsinə bax",
-	"userpage": "İstifadəçi səhifəsini göstər",
-	"projectpage": "Layihə səhifəsini göstər"
+	"unprotectthispage": "Bu səhifənin mühafizəsini kənarlaşdır"
 }

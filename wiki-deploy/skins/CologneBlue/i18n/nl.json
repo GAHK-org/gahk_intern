@@ -1,9 +1,9 @@
 {
 	"@metadata": {
 		"authors": [
+			"McDutchie",
 			"SPQRobin",
-			"Siebrand",
-			"McDutchie"
+			"Siebrand"
 		]
 	},
 	"skinname-cologneblue": "Keuls blauw",
@@ -21,9 +21,5 @@
 	"deletethispage": "Deze pagina verwijderen",
 	"undeletethispage": "Pagina terugplaatsen",
 	"protectthispage": "Deze pagina beveiligen",
-	"unprotectthispage": "Beveiliging van deze pagina wijzigen",
-	"talkpage": "Overlegpagina",
-	"articlepage": "Pagina bekijken",
-	"userpage": "Gebruikerspagina bekijken",
-	"projectpage": "Projectpagina bekijken"
+	"unprotectthispage": "Beveiliging van deze pagina wijzigen"
 }

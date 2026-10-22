@@ -3,9 +3,11 @@
 		"authors": [
 			"Akoppad",
 			"Anoop rao",
+			"Anzx",
 			"Mana",
 			"Omshivaprakash",
-			"Shushruth"
+			"Shushruth",
+			"~aanzx"
 		]
 	},
 	"qbfind": "ಹುಡುಕು",
@@ -19,9 +21,5 @@
 	"deletethispage": "ಈ ಪುಟವನ್ನು ಅಳಿಸಿ",
 	"undeletethispage": "ಈ ಪುಟವನ್ನು ಅಳಿಸುವಿಕೆಯನ್ನು ರದ್ದುಮಾಡು",
 	"protectthispage": "ಈ ಪುಟವನ್ನು ಸಂರಕ್ಷಿಸಿ",
-	"unprotectthispage": "ಈ ಪುಟದ ರಕ್ಷಣೆಯನ್ನು ಬದಲಾಯಿಸು",
-	"talkpage": "ಈ ಪುಟವನ್ನು ಚರ್ಚಿಸಿ",
-	"articlepage": "ಲೇಖನ ಪುಟವನ್ನು ವೀಕ್ಷಿಸಿ",
-	"userpage": "ಸದಸ್ಯರ ಪುಟವನ್ನು ವೀಕ್ಷಿಸು",
-	"projectpage": "ಯೋಜನೆಯ ಪುಟವನ್ನು ನೋಡು"
+	"unprotectthispage": "ಈ ಪುಟದ ರಕ್ಷಣೆಯನ್ನು ಬದಲಾಯಿಸು"
 }

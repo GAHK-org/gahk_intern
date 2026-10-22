@@ -1,7 +1,7 @@
 <?php
 
 /**
- * @brief Code for the @ref Extensions-ShowRealUsernames.
+ * Code for the @ref Extensions-ShowRealUsernames.
  *
  * @file
  *
@@ -13,8 +13,10 @@
  * @author [RV1971](https://www.mediawiki.org/wiki/User:RV1971)
  */
 
+use MediaWiki\MediaWikiServices;
+
 /**
- * @brief Class implementing the @ref Extensions-ShowRealUsernames.
+ * Class implementing the @ref Extensions-ShowRealUsernames.
  *
  * @ingroup Extensions-ShowRealUsernames
  */
@@ -22,44 +24,46 @@
 class ShowRealUsernames {
 
 	/**
-	 * @brief [SpecialListusersFormatRow]
-	 * (https://www.mediawiki.org/wiki/Manual:Hooks/SpecialListusersFormatRow)
-	 * hook.
+	 * SpecialListusersFormatRow hook handler
+	 * @see https://www.mediawiki.org/wiki/Manual:Hooks/SpecialListusersFormatRow
 	 *
 	 * Augment the display of a row to include the user's real name.
 	 *
-	 * @param[in,out] &$item HTML to be returned. Will be wrapped in
+	 * @param string &$item HTML to be returned. Will be wrapped in
 	 * &lt;li&gt;&lt;/li&gt; after the hook finishes. We assume that $item is
 	 * non-null and begins with an &lt;a&gt; element.
 	 *
 	 * @param stdClass $row Database row object.
 	 *
-	 * @return *bool* Always TRUE.
+	 * @return bool Always TRUE.
 	 */
-
 	public static function onSpecialListusersFormatRow( &$item, $row ) {
-		global $wgShowRealUsernamesFields, $wgShowRealUsernamesInline;
+		$context = RequestContext::getMain();
 
 		if ( $row->user_real_name === ''
-			|| !RequestContext::getMain()->getUser()->isAllowed( 'showrealname' ) ) {
+			|| !$context->getUser()->isAllowed( 'showrealname' ) ) {
 			return true;
 		}
 
-		$values = array();
-		foreach ( $wgShowRealUsernamesFields as $field ) {
+		$showRealUsernamesFields = $context->getConfig()->get( 'ShowRealUsernamesFields' );
+		$showRealUsernamesInline = $context->getConfig()->get( 'ShowRealUsernamesInline' );
+
+		$values = [];
+		foreach ( $showRealUsernamesFields as $field ) {
 			$values[] = htmlspecialchars( $row->$field );
 		}
 
-		$m = array();
+		$m = [];
 		if ( preg_match( '/^(.*?<a\b[^>]*>)([^<]*)(<\/a\b[^>]*>)(.*)$/',
 				$item, $m ) ) {
-			if ( $wgShowRealUsernamesInline ) {
+			$fields = implode( $context->msg( 'pipe-separator' )->text(), $values );
+			if ( $showRealUsernamesInline ) {
 				$item = $m[1]
-					. wfMessage( 'sru-realname-inline', $values )->text()
+					. $context->msg( 'sru-realname-inline', $fields )->text()
 					. "{$m[3]}{$m[4]}";
 			} else {
 				$item = "{$m[1]}{$m[2]}{$m[3]}"
-					. wfMessage( 'sru-realname-append', $values )->text()
+					. $context->msg( 'sru-realname-append', $fields )->text()
 					. $m[4];
 			}
 		}
@@ -68,33 +72,29 @@ class ShowRealUsernames {
 	}
 
 	/**
-	 * @brief [SpecialListusersQueryInfo]
-	 * (https://www.mediawiki.org/wiki/Manual:Hooks/SpecialListusersQueryInfo)
-	 * hook.
+	 * SpecialListusersQueryInfo hook handler
+	 * @see https://www.mediawiki.org/wiki/Manual:Hooks/SpecialListusersQueryInfo
 	 *
 	 * Augment the DB query for each user to also fetch their real
 	 * name and/or other fields.
 	 *
 	 * @param UsersPager $pager The UsersPager instance.
 	 *
-	 * @param[in,out] array &$query The query array to be returned.
+	 * @param array &$query The query array to be returned.
 	 *
-	 * @return *bool* Always TRUE.
+	 * @return bool Always TRUE.
 	 */
+	public static function onSpecialListusersQueryInfo( UsersPager $pager, array &$query ) {
+		$config = MediaWikiServices::getInstance()->getMainConfig();
+		$showRealUsernamesFields = $config->get( 'ShowRealUsernamesFields' );
 
-	public static function onSpecialListusersQueryInfo( UsersPager $pager,
-		array &$query ) {
-
-		global $wgShowRealUsernamesFields;
-
-		// Add extra fields, avoiding duplication.
-		$query['fields'] += array_combine(
-			$wgShowRealUsernamesFields, $wgShowRealUsernamesFields );
+		// Add extra fields.
+		$query['fields'] += array_combine( $showRealUsernamesFields, $showRealUsernamesFields );
 
 		$query['options']['GROUP BY'] = array_merge(
 			(array)$query['options']['GROUP BY'],
 			array_diff(
-				$wgShowRealUsernamesFields,
+				$showRealUsernamesFields,
 				(array)$query['options']['GROUP BY'] ) );
 
 		return true;

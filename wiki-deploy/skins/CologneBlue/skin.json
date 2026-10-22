@@ -10,10 +10,52 @@
 	"license-name": "GPL-2.0-or-later",
 	"type": "skin",
 	"ValidSkinNames": {
-		"cologneblue": "CologneBlue"
+		"cologneblue": {
+			"class": "SkinMustache",
+			"args": [
+				{
+					"name": "cologneblue",
+					"supportsMwHeading": true,
+					"styles": [
+						"skins.cologneblue"
+					],
+					"messages": [
+						"mainpage",
+						"about",
+						"aboutpage",
+						"searcharticle",
+						"searchbutton",
+						"searchsuggest-search",
+						"tooltip-search-go",
+						"tooltip-search-fulltext",
+						"tooltip-search",
+						"searchsuggest-search",
+						"sitetitle",
+						"colon-separator",
+						"sitesubtitle",
+						"tagline",
+						"navigation-heading",
+						"otherlanguages",
+						"qbfind",
+						"qbbrowse",
+						"qbedit",
+						"qbmyoptions",
+						"qbpageoptions"
+					]
+				}
+			]
+		}
 	},
 	"requires": {
-		"MediaWiki": ">= 1.31.0"
+		"MediaWiki": ">= 1.43"
+	},
+	"Hooks": {
+		"SkinTemplateNavigation::Universal": "main"
+	},
+	"HookHandlers": {
+		"main": {
+			"class": "MediaWiki\\Extension\\CologneBlue\\Hooks"
+		}
 	},
 	"MessagesDirs": {
 		"CologneBlue": [
@@ -22,10 +64,24 @@
 	},
 	"ResourceModules": {
 		"skins.cologneblue": {
-			"class": "ResourceLoaderSkinModule",
-			"features": [ "legacy" ],
+			"class": "MediaWiki\\ResourceLoader\\SkinModule",
+			"features": {
+				"elements": true,
+				"interface": true,
+				"content-links": true,
+				"content-links-external": false,
+				"content-media": true,
+				"interface-category": true,
+				"content-tables": true,
+				"i18n-ordered-lists": true,
+				"i18n-headings": true
+			},
+			"lessMessages": [
+				"pipe-separator"
+			],
 			"styles": {
 				"resources/oldshared.css": {},
+				"resources/skins.cologneblue.i18n.less": {},
 				"resources/screen.css": {
 					"media": "screen"
 				},
@@ -41,14 +97,14 @@
 	},
 	"ResourceModuleSkinStyles": {
 		"cologneblue": {
+			"+mediawiki.page.ready": "resources/teleportTarget.less",
 			"+oojs-ui-core.styles": "resources/ooui.less",
 			"+ext.echo.styles.badge": "resources/ext.echo.styles.badge.css",
-			"mediawiki.sectionAnchor": "resources/sectionAnchor.css"
+			"+mediawiki.action.view.filepage": "resources/mediawiki.action.view.filepage.css"
 		}
 	},
-	"AutoloadClasses": {
-		"SkinCologneBlue": "includes/SkinCologneBlue.php",
-		"CologneBlueTemplate": "includes/CologneBlueTemplate.php"
+	"AutoloadNamespaces": {
+		"MediaWiki\\Extension\\CologneBlue\\": "includes/"
 	},
 	"manifest_version": 2
 }

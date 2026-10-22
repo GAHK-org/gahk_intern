@@ -1,15 +1,15 @@
 {
 	"@metadata": {
 		"authors": [
+			"Patriot Kor",
 			"Patriot Kur",
-			"Гусейн",
-			"Amire80",
-			"QeneralĞasım"
+			"QeneralĞasım",
+			"Гусейн"
 		]
 	},
 	"qbfind": "Pəydu karde",
 	"qbbrowse": "Дијә кардеј",
-	"qbedit": "Redaktə kardə",
+	"qbedit": "Sərost bykə",
 	"qbpageoptions": "Im səhifə",
 	"qbmyoptions": "Çımı səhifon",
 	"faqpage": "Project:РАП",
@@ -17,9 +17,5 @@
 	"create-this-page": "Ofəye ım səhifə",
 	"deletethispage": "Im səhifə poz karde",
 	"protectthispage": "Mıdofiyə kardə ım səhifə",
-	"unprotectthispage": "Dəqiş kardə ım səhifə mıdofiyə",
-	"talkpage": "Im səhifə mızokirə kardey",
-	"articlepage": "Diyə kardə bə məzmun səhifə",
-	"userpage": "Diyə kardə bə iştirokəkə səhifə",
-	"projectpage": "Diyə kardə bə naxşə səhifə"
+	"unprotectthispage": "Dəqiş kardə ım səhifə mıdofiyə"
 }

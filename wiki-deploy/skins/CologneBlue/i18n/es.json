@@ -29,9 +29,5 @@
 	"deletethispage": "Borrar esta página",
 	"undeletethispage": "Restaurar esta página",
 	"protectthispage": "Proteger esta página",
-	"unprotectthispage": "Cambiar la protección de esta página",
-	"talkpage": "Discutir esta página",
-	"articlepage": "Ver artículo",
-	"userpage": "Ver página de usuario",
-	"projectpage": "Ver página del proyecto"
+	"unprotectthispage": "Cambiar la protección de esta página"
 }

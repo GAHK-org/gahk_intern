@@ -1,13 +1,13 @@
 {
 	"@metadata": {
 		"authors": [
+			"DDPAT",
+			"Ice bulldog",
 			"Movses",
-			"Piramidion",
-			"DDPAT"
+			"Piramidion"
 		]
 	},
 	"action-showrealname": "перегляд справжніх імен користувачів",
 	"right-showrealname": "Перегляд справжніх імен на [[Special:ListUsers]]",
-	"sru-realname-desc": "Розширює сторінку [[Special:ListUsers]], щоб вона також показувала справжні імена користувачів та/або іншу релевантну інформацію про окремих користувачів",
-	"sru-realname-append": "&nbsp;&ndash; $1"
+	"sru-realname-desc": "Розширює сторінку [[Special:ListUsers]], щоб вона також показувала справжні імена користувачів та/або іншу релевантну інформацію про окремих користувачів"
 }

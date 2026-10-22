@@ -1,16 +1,13 @@
 {
 	"@metadata": {
 		"authors": [
-			"Ibrahima"
+			"Ibrahima",
+			"Ibrahima Malal Sarr"
 		]
 	},
 	"editthispage": "Taƴto ngoo hello",
 	"create-this-page": "Sos ngoo hello",
 	"deletethispage": "Momtu ngoo hello",
 	"protectthispage": "Hisnu ngoo hello",
-	"unprotectthispage": "Waylu kisnugol e ngoo hello",
-	"talkpage": "Yeewtu baɗte ngoo hello",
-	"articlepage": "Yiyto hello loowdi ngoo",
-	"userpage": "Yiyto hello kuutoro",
-	"projectpage": "Yiyto hello eɓɓoore"
+	"unprotectthispage": "Waylu kisnugol e ngoo hello"
 }

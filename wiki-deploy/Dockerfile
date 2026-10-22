@@ -1,20 +1,21 @@
-# GAHK wiki — MediaWiki 1.35 on the official image, plus the parts that are actually ours.
+# GAHK wiki — MediaWiki 1.43 LTS (supported to Dec 2027) on the official image, plus the parts that
+# are actually ours.
 #
-# Why not ship legacy_site/wiki/ wholesale: that tree has been upgraded in place since at least 1.22.
-# RELEASE-NOTES-1.22 is still there; so is includes/AuthPlugin.php, which MediaWiki removed in 1.33;
-# so is includes/installer/Installer.i18n.php, which is absent from the official 1.35 image entirely.
-# Publishing that tree would publish every dead file with it. The official image gives patched 1.35.x
-# core, and only these 8 directories plus LocalSettings.php are genuinely ours — verified with
-# `comm` against the image's own extension/skin lists (CUTOVER.md Phase 5A step 3).
+# Why not ship legacy_site/wiki/ wholesale: that tree has been upgraded in place since at least 1.22,
+# and publishing it would publish every dead file with it. The official image gives patched core;
+# only the directories under extensions/ and skins/ plus LocalSettings.php are ours. The third-party
+# ones are REL1_43 snapshots from gerrit (commit in each gitinfo.json), without their npm/Grunt dev
+# tooling, which is never used at runtime.
 #
-#     docker build -t gahk-wiki:1.35 .
+#     docker build -t gahk-wiki:1.43 .
 #
-# PHP comes from the base image and is currently 8.0.30 — 1.35's composer.json only requires
-# ">=7.3.19", and the official image maintainers ship 8.0. Do not assume 7.4 here. The GahkAuthLogin
-# sources are `php -l` clean on 7.4, 8.0 and 8.1, so they carry through the eventual 1.43 upgrade
-# (which requires 8.1+) unchanged.
+# Pinned to the patch release so a rebuild never changes MediaWiki silently; dependabot bumps it.
+# 1.43.11 ships PHP 8.3.36, which fixes CVE-2026-109618/-109619 ("PHP2Shell").
+#
+# AFTER DEPLOYING A NEW MINOR VERSION, run the schema migration once (back up the DB first):
+#     docker exec -u www-data <container> php maintenance/run.php update --quick
 
-FROM mediawiki:1.35
+FROM mediawiki:1.43.11
 
 # pdo_pgsql: GahkAuthLogin authenticates against the Django app's PostgreSQL (residents_resident)
 # instead of a frozen copy of the retired intern_alumne table, so a password reset in the app takes
@@ -33,7 +34,7 @@ RUN set -eux; \
     php -m | grep -qx 'pdo_pgsql' || { echo 'FATAL: pdo_pgsql did not load'; exit 1; }; \
     php -m | grep -qx 'mysqli'    || { echo 'FATAL: mysqli missing (MediaWiki core needs it)'; exit 1; }
 
-# Extensions and skins NOT bundled with the 1.35 tarball. Everything else your old tree carried is
+# Extensions and skins NOT bundled with the 1.43 tarball. Everything else your old tree carried is
 # bundled, and the image's copies are newer — do not add bundled ones here or you undo its patches.
 COPY extensions/ /var/www/html/extensions/
 COPY skins/      /var/www/html/skins/
@@ -55,6 +56,9 @@ RUN printf '%s\n' \
     && a2enconf gahk-wiki-alias \
     && a2enmod rewrite
 
+# session.upload_progress is disabled as defence in depth against CVE-2026-109619 (it is PHP's own
+# suggested mitigation); MediaWiki never uses it.
+#
 # PHP's upload limits, which the official image leaves at the stock 2M/8M. That is below a single
 # phone photograph, and the way it fails is the problem: PHP over upload_max_filesize discards the
 # FILE and MediaWiki reports "the file you uploaded seems to be empty", while over post_max_size it
@@ -73,9 +77,12 @@ RUN set -eux; \
       'upload_max_filesize = 72M' \
       'post_max_size = 80M' \
       'memory_limit = 256M' \
+      'session.upload_progress.enabled = 0' \
       > /usr/local/etc/php/conf.d/gahk-uploads.ini; \
     php -i | grep -qx 'upload_max_filesize => 72M => 72M' \
-      || { echo 'FATAL: PHP did not pick up gahk-uploads.ini'; exit 1; }
+      || { echo 'FATAL: PHP did not pick up gahk-uploads.ini'; exit 1; }; \
+    php -i | grep -qx 'session.upload_progress.enabled => Off => Off' \
+      || { echo 'FATAL: session.upload_progress is still enabled'; exit 1; }
 
 # User uploads (396 rows in wikiimage). Must be a mounted volume or they vanish on every redeploy.
 VOLUME /var/www/html/images

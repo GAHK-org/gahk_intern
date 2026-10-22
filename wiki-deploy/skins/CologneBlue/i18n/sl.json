@@ -2,10 +2,13 @@
 	"@metadata": {
 		"authors": [
 			"Dbc334",
-			"Janezdrilc",
-			"Eleassar"
+			"Eleassar",
+			"Janezdrilc"
 		]
 	},
+	"skinname-cologneblue": "Kölnska modra",
+	"cologneblue.css": "/* Vsa koda CSS tukaj se bo naložila za uporabnike preobleke Kölnska modra */",
+	"cologneblue.js": "/* Vsa koda JavaScript tukaj se bo naložila za uporabnike preobleke Kölnska modra */",
 	"cologneblue-desc": "Lahka preobleka z minimalnim oblikovanjem",
 	"qbfind": "Poišči",
 	"qbbrowse": "Prebrskaj",
@@ -16,11 +19,7 @@
 	"editthispage": "Uredi stran",
 	"create-this-page": "Ustvari stran",
 	"deletethispage": "Izbriši stran",
-	"undeletethispage": "Obnovi stran",
+	"undeletethispage": "Odizbriši to stran",
 	"protectthispage": "Zaščiti stran",
-	"unprotectthispage": "Spremeni zaščito strani",
-	"talkpage": "Pogovorite se o strani",
-	"articlepage": "Prikaže članek",
-	"userpage": "Prikaži uporabnikovo stran",
-	"projectpage": "Prikaži projektno stran"
+	"unprotectthispage": "Spremeni zaščito strani"
 }
