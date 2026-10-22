@@ -42,7 +42,7 @@ class PreparedStatement:
     resident: Resident
     account_number: int
     entries: list[economic.LedgerEntry]  # this period's postings only — may be empty
-    balance: Decimal  # e-conomic's own current balance for the account, not derived from `entries`
+    balance: Decimal  # e-conomic's posted balance plus the net effect of this period's drafts
     pdf: bytes
     body: str
 
@@ -86,6 +86,11 @@ def _prepare_one(
     """Fetches the balance + this period's postings, mirrors them into the ledger, renders the PDF."""
     balance = Decimal(str(economic.get_account(account_number).balance))
     entries = economic.get_entries_in_range(account_number, date_from, date_to)
+    # e-conomic's own balance is posted-only — it does not reflect draft/unposted entries, which
+    # regnskab wants counted (F-010, see economic.get_draft_entries_for_account). Confirmed against
+    # the real account 4207: get_account().balance was 132.81 while the true current balance, drafts
+    # included, was 214.01 — exactly off by the drafts' own net amount.
+    balance += sum((Decimal(str(entry.amount)) for entry in entries if entry.is_draft), Decimal(0))
     if entries:
         ledger.sync_entries(resident, entries)
 

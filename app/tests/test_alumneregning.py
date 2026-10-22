@@ -100,6 +100,34 @@ def test_sends_mail_even_with_no_new_entries_when_a_balance_carries_forward(
 
 
 @pytest.mark.django_db
+def test_draft_entries_are_added_on_top_of_the_posted_balance(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    """e-conomic's own account balance is posted-only — it does not reflect drafts, which regnskab
+    wants counted too. Confirmed against the real account 4207: get_account() returned 132.81 while
+    the true balance, drafts included, was 214.01 — exactly the drafts' own net amount (81.20)."""
+    resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
+    _give_residency(resident, 2026, 8, room_index=1)
+    monkeypatch.setattr(economic, "get_account", lambda n: _account(132.81))
+    monkeypatch.setattr(
+        economic,
+        "get_entries_in_range",
+        lambda n, f, t: [
+            _entry(1, "2026-08-01", -250.0, is_draft=True),
+            _entry(2, "2026-08-01", 5.0, is_draft=True),
+            _entry(3, "2026-08-01", 255.0, is_draft=True),
+            _entry(4, "2026-08-01", 1.2, is_draft=True),
+            _entry(5, "2026-08-01", 70.0, is_draft=True),
+        ],
+    )
+
+    results = alumneregning.send_alumneregninger(*AUGUST)
+
+    assert "214,01 kr" in results[0].detail
+    assert "214,01 kr" in mail.outbox[0].body
+
+
+@pytest.mark.django_db
 def test_skips_residents_without_a_residency_in_the_billed_period(
     monkeypatch: pytest.MonkeyPatch, make_resident: Callable
 ) -> None:
