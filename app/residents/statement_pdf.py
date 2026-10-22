@@ -109,7 +109,6 @@ def _render_how_to_read(pdf: FPDF) -> None:
     pdf.ln(3)
     pdf.cell(0, 6, "Ved overførsel, husk:", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.cell(0, 6, "- Skriv dit navn", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.cell(0, 6, "- Overfør i hele kroner", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.cell(0, 6, "- Din gæld må ikke overstige 600 kroner.", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.ln(3)
     pdf.cell(
