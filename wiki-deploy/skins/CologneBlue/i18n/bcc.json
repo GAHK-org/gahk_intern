@@ -2,6 +2,7 @@
 	"@metadata": {
 		"authors": [
 			"Baloch Afghanistan",
+			"Moshtank",
 			"Mostafadaneshvar",
 			"RigiMahnoor",
 			"Sultanselim baloch"
@@ -19,9 +20,5 @@
 	"deletethispage": "ای دیمی پاک کورتین",
 	"undeletethispage": "ای دیما پاک مکن",
 	"protectthispage": "ای دیما بسات",
-	"unprotectthispage": "ائ تاکء پروتکشنء ٹگل بدئ",
-	"talkpage": "ای دیما بحث کن",
-	"articlepage": "محتوا صفحه به گند",
-	"userpage": "به گند صفحه کاربر",
-	"projectpage": "به گند صفحه"
+	"unprotectthispage": "ائ تاکء پروتکشنء ٹگل بدئ"
 }

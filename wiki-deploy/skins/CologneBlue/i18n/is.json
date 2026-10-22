@@ -4,6 +4,7 @@
 			"Jóna Þórunn",
 			"S.Örvarr.S",
 			"Snævar",
+			"Stefán Örvar Sigmundsson",
 			"Steinninn",
 			"Sveinn í Felli"
 		]
@@ -11,7 +12,7 @@
 	"skinname-cologneblue": "Kölnarblátt",
 	"cologneblue.css": "/* Allt CSS sem sett er hér mun  hafa áhrif á alla notendur Kölnarblátt-skinnsins. */",
 	"cologneblue.js": "/* Allt JavaScript sem sett er hér mun hafa áhrif á notendur Kölnarblátt-skinnsins. */",
-	"cologneblue-desc": "Létt skinn með lágmarks-sniðum",
+	"cologneblue-desc": "Létt skinn með lágmarkssníðingu",
 	"qbfind": "Finna",
 	"qbbrowse": "Flakka",
 	"qbedit": "Breyta",
@@ -19,13 +20,9 @@
 	"qbmyoptions": "Mínar síður",
 	"faqpage": "Project:Algengar spurningar",
 	"editthispage": "Breyta þessari síðu",
-	"create-this-page": "Skapa þessari síðu",
+	"create-this-page": "Búa til þessa síðu",
 	"deletethispage": "Eyða þessari síðu",
 	"undeletethispage": "Endurvekja þessa síðu",
 	"protectthispage": "Vernda þessa síðu",
-	"unprotectthispage": "Afvernda þessa síðu",
-	"talkpage": "Ræða um þessa síðu",
-	"articlepage": "Sýna núverandi síðu",
-	"userpage": "Skoða notandasíðu",
-	"projectpage": "Skoða verkefnissíðu"
+	"unprotectthispage": "Afvernda þessa síðu"
 }

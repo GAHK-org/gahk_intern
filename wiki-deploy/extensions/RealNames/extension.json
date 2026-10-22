@@ -7,7 +7,7 @@
 	"description": "Displays a user's real name everywhere",
 	"license-name": "BSD-2-Clause",
 	"requires": {
-		"MediaWiki": ">= 1.31.0"
+		"MediaWiki": ">= 1.43.0"
 	},
 	"config": {
 		"RealnamesLinkStyle": "paren-reverse",
@@ -38,12 +38,22 @@
 		},
 		"RealnamesNamespaces": {}
 	},
-	"AutoloadClasses": {
-		"MediaWiki\\Extension\\Realnames\\Realnames": "src/Realnames.php"
+	"AutoloadNamespaces": {
+		"MediaWiki\\Extension\\Realnames\\": "src/"
+	},
+	"HookHandlers": {
+		"main": {
+			"class": "\\MediaWiki\\Extension\\Realnames\\Realnames",
+			"services": [
+				"MainConfig",
+				"ContentLanguage",
+				"UserFactory"
+			]
+		}
 	},
 	"Hooks": {
-		"BeforePageDisplay": "\\MediaWiki\\Extension\\Realnames\\Realnames::hookBeforePageDisplay",
-		"PersonalUrls": "\\MediaWiki\\Extension\\Realnames\\Realnames::hookPersonalUrls"
+		"BeforePageDisplay": "main",
+		"SkinTemplateNavigation::Universal": "main"
 	},
 	"manifest_version": 1
 }

@@ -3,10 +3,11 @@
 		"authors": [
 			"BaRaN6161 TURK",
 			"Hedda",
-			"MuratTheTurkish"
+			"MuratTheTurkish",
+			"SaldırganSincap"
 		]
 	},
 	"action-showrealname": "gerçek adlarını bakın",
 	"right-showrealname": "[[Special:ListUsers|Özel:KullanıcıListesi]] sayfasında gerçek adlarını bakın",
-	"sru-realname-desc": "Her bir kullanıcının gerçek adını ve/veya kullanıcıya özgü bilgileri de göstermek için [[Special:ListUsers|Özel:KullanıcıListesi]]'ni genişletir"
+	"sru-realname-desc": "[[Special:ListUsers]] sayfasını her kullanıcının gerçek adını ve/veya kullanıcıya özgü diğer bilgileri de gösterecek şekilde genişletir"
 }

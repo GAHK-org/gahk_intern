@@ -1,6 +1,10 @@
 {
 	"name": "GahkAuthLogin",
+	"requires": {
+		"MediaWiki": ">= 1.43.0"
+	},
 	"AutoloadNamespaces": {
 		"Gahk\\": "src/"
-	}
+	},
+	"manifest_version": 2
 }

@@ -37,3 +37,15 @@ updates:
     schedule:
       interval: "weekly"
     labels: ["dependencies", "infra"]
+
+  # MediaWiki base image (wiki-deploy/Dockerfile). Patch releases only: a new MediaWiki minor
+  # needs update.php and REL branches of our skins/extensions, so it is a manual upgrade.
+  - package-ecosystem: "docker"
+    directory: "/wiki-deploy"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "infra"]
+    ignore:
+      - dependency-name: "mediawiki"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]

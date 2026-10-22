@@ -6,10 +6,10 @@
 			"Lunacy1911",
 			"NBS",
 			"Okras",
+			"Pacha Tchernof",
 			"Rave",
-			"Александр Сигачёв",
 			"Stjn",
-			"Pacha Tchernof"
+			"Александр Сигачёв"
 		]
 	},
 	"skinname-cologneblue": "Кёльнский синий",
@@ -27,9 +27,5 @@
 	"deletethispage": "Удалить эту страницу",
 	"undeletethispage": "Восстановить эту страницу",
 	"protectthispage": "Защитить эту страницу",
-	"unprotectthispage": "Изменить защиту этой страницы",
-	"talkpage": "Обсудить эту страницу",
-	"articlepage": "Просмотреть статью",
-	"userpage": "Просмотреть страницу участника",
-	"projectpage": "Просмотреть страницу проекта"
+	"unprotectthispage": "Изменить защиту этой страницы"
 }

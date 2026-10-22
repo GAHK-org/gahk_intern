@@ -3,23 +3,20 @@
 		"authors": [
 			"Better",
 			"Crucifunked",
-			"Julio Nepote"
+			"Julio Nepote",
+			"HackerPunki"
 		]
 	},
 	"qbfind": "Alcuentral",
 	"qbbrowse": "Escrucal",
-	"qbedit": "Edital",
-	"qbpageoptions": "Esta páhina",
-	"qbmyoptions": "Las mis páhinas",
-	"faqpage": "Project:FAQ",
-	"editthispage": "Edital esta página",
-	"create-this-page": "Crial esta páhina",
-	"deletethispage": "Esborral esta páhina",
-	"undeletethispage": "Arrecuperal esta páhina",
-	"protectthispage": "Protegel esta página",
-	"unprotectthispage": "Escambial la proteción esta página",
-	"talkpage": "Palral sobri esta páhina",
-	"articlepage": "Vel artícalu",
-	"userpage": "Vel página d'ussuáriu",
-	"projectpage": "Vel página el proyeutu"
+	"qbedit": "Adital",
+	"qbpageoptions": "Esta página",
+	"qbmyoptions": "Las mis páginas",
+	"faqpage": "Project:Custionis más comunis",
+	"editthispage": "Adital esta página",
+	"create-this-page": "Crial esta página",
+	"deletethispage": "Aborral esta página",
+	"undeletethispage": "Arrecuperal esta página",
+	"protectthispage": "Afial esta página",
+	"unprotectthispage": "Mual l'afíu desta página"
 }

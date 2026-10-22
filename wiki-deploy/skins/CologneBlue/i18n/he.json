@@ -1,15 +1,13 @@
 {
 	"@metadata": {
 		"authors": [
+			"Amire80",
 			"Guycn2",
 			"Or",
-			"Rotemliss",
-			"Amire80"
+			"Rotemliss"
 		]
 	},
 	"skinname-cologneblue": "מים כחולים",
-	"cologneblue.css": "/* הסגנונות הנכתבים כאן ישפיעו על העיצוב \"מים כחולים\" בלבד */",
-	"cologneblue.js": "/* כל הסקריפטים הנכתבים כאן ייטענו עבור מי שמשתמש בעיצוב \"מים כחולים\" בלבד */",
 	"cologneblue-desc": "ערכת עיצוב קלילה עם ממשק מינימלי",
 	"qbfind": "למצוא",
 	"qbbrowse": "ניווט",
@@ -22,9 +20,5 @@
 	"deletethispage": "מחיקת הדף הזה",
 	"undeletethispage": "שחזור הדף הזה ממחיקה",
 	"protectthispage": "הפעלת הגנה על הדף הזה",
-	"unprotectthispage": "שינוי ההגנה על הדף הזה",
-	"talkpage": "דיון על הדף הזה",
-	"articlepage": "הצגת דף התוכן",
-	"userpage": "הצגת דף המשתמש",
-	"projectpage": "הצגת דף המיזם"
+	"unprotectthispage": "שינוי ההגנה על הדף הזה"
 }

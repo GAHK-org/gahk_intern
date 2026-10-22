@@ -1,0 +1,10 @@
+{
+	"@metadata": {
+		"authors": [
+			"Wizzard"
+		]
+	},
+	"action-showrealname": "vidieť skutočné mená",
+	"right-showrealname": "Vidieť skutočné mená na stránke [[Special:ListUsers]]",
+	"sru-realname-desc": "Rozširuje stránku [[Special:ListUsers]] tak, aby zobrazovala aj skutočné meno každého používateľa a/alebo ďalšie informácie o používateľovi"
+}

@@ -2,12 +2,13 @@
 	"@metadata": {
 		"authors": [
 			"Ashkan P.",
-			"Kurdbuddha"
+			"Kurdbuddha",
+			"TerranBoy"
 		]
 	},
 	"qbfind": "پیا بکە",
 	"qbbrowse": "بگەرد",
-	"qbedit": "وێراشتە",
+	"qbedit": "دەسکاری",
 	"qbpageoptions": "ئێ لاپەڕەیە",
 	"qbmyoptions": "پەڕەگانم",
 	"faqpage": "پرۆژە:پرسیار و جواو"

@@ -22,9 +22,5 @@
 	"deletethispage": "Șterge această pagină",
 	"undeletethispage": "Recuperează această pagină",
 	"protectthispage": "Protejați această pagină",
-	"unprotectthispage": "Schimbă nivelul de protejare al acestei pagini",
-	"talkpage": "Discutați despre această pagină",
-	"articlepage": "Vizualizați conținutul paginii",
-	"userpage": "Vizualizați pagina utilizatorului",
-	"projectpage": "Vizualizați pagina proiectului"
+	"unprotectthispage": "Schimbă nivelul de protejare al acestei pagini"
 }

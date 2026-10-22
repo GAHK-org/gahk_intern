@@ -1,0 +1,10 @@
+{
+	"@metadata": {
+		"authors": [
+			"Winston Sung"
+		]
+	},
+	"action-showrealname": "gledanje pravih imena",
+	"right-showrealname": "Pogledajte prave imene u [[Special:ListUsers]]",
+	"sru-realname-desc": "Dodaje [[Special:ListUsers]] za vodno prikazivanje pravog imena korisnikâ i/ili drugih korisničkih informacija"
+}

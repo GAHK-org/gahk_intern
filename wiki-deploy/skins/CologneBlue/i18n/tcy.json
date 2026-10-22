@@ -1,12 +1,14 @@
 {
 	"@metadata": {
 		"authors": [
+			"ChiK",
+			"Chidananda Kampa",
 			"NamwikiTL",
 			"VinodSBangera",
 			"Vishwanatha Badikana"
 		]
 	},
-	"qbfind": "ನಾಡ್’ಲೆ",
+	"qbfind": "ನಾಡ್‌ಲೆ",
 	"qbbrowse": "ಬ್ರೌಸ್",
 	"qbedit": "ಸಂಪಾದನೆ ಮಲ್ಪುಲೆ",
 	"qbpageoptions": "ಈ ಪುಟ",
@@ -17,9 +19,5 @@
 	"deletethispage": "ಈ ಪುಟೊನು ದೆತ್ತ್ ಪಾಡ್ಲೆ",
 	"undeletethispage": "ಈ ಪುಟೊ ದೆತ್ತ್‌ ಪಾಡುನವು ರದ್ದಾತ್ಂಡ್",
 	"protectthispage": "ಈ ಪುಟೊನು ಸ೦ರಕ್ಷಿಸಾಲೆ",
-	"unprotectthispage": "ಈ ಪುಟೊತ ರಕ್ಷಣೆನ್ ಬದಲ್‍ಪುಲೆ",
-	"talkpage": "ಪುಟದ ಬಗ್ಗೆ ಚರ್ಚೆ ಮನ್ಪುಲೆ",
-	"articlepage": "ಲೇಖನ ಪುಟೊನು ತೂಲೆ",
-	"userpage": "ಸದಸ್ಯೆರ್ನ ಪುಟೊನು ತೂಲೆ",
-	"projectpage": "ಪ್ರೊಜೆಕ್ಟ್ ಪುಟೊನು ತೂಲೆ"
+	"unprotectthispage": "ಈ ಪುಟೊತ ರಕ್ಷಣೆನ್ ಬದಲ್‍ಪುಲೆ"
 }

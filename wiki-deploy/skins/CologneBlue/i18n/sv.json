@@ -26,9 +26,5 @@
 	"deletethispage": "Radera denna sida",
 	"undeletethispage": "Återställ denna sida",
 	"protectthispage": "Skrivskydda denna sida",
-	"unprotectthispage": "Ändra skyddet på denna sidan",
-	"talkpage": "Diskutera denna sida",
-	"articlepage": "Visa innehållssida",
-	"userpage": "Visa användarsida",
-	"projectpage": "Visa projektsida"
+	"unprotectthispage": "Ändra skyddet på denna sidan"
 }

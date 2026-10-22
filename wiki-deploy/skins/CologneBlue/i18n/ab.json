@@ -2,14 +2,12 @@
 	"@metadata": {
 		"authors": [
 			"Irus",
-			"Temuri rajavi",
-			"Pupsik-ipa"
+			"Pupsik-ipa",
+			"Temuri rajavi"
 		]
 	},
 	"qbfind": "Аԥшаара",
 	"qbedit": "Ариашара",
 	"qbpageoptions": "Ари адаҟьа",
-	"create-this-page": "Ариашара ари адаҟьа",
-	"deletethispage": "Кенҳәияюб астраниция",
-	"undeletethispage": "Юхкенҳәия астраниция"
+	"create-this-page": "Ариашара ари адаҟьа"
 }

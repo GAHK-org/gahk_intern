@@ -4,12 +4,13 @@
 			"Helix84",
 			"Rudko",
 			"Sudo77(new)",
-			"TomášPolonec"
+			"TomášPolonec",
+			"Wizzard"
 		]
 	},
 	"skinname-cologneblue": "Kolínska modrá",
-	"cologneblue.css": "/* Tu umiestnené CSS bude ovplyvňovať používateľov štýlu Kolínska modrá */",
-	"cologneblue.js": "/* Tu sa nachádzajúci JavaScript sa načíta používateľom vzhľadu Kolínska modrá */",
+	"cologneblue.css": "/* CSS umiestnené tu sa načíta používateľom témy vzhľadu Cologne Blue */",
+	"cologneblue.js": "/* JavaScript umiestnený tu sa načíta používateľom témy vzhľadu Cologne Blue */",
 	"cologneblue-desc": "Odľahčený vzhľad s minimálnym formátovaním",
 	"qbfind": "Hľadať",
 	"qbbrowse": "Prehliadať",
@@ -22,9 +23,5 @@
 	"deletethispage": "Vymazať túto stránku",
 	"undeletethispage": "Obnoviť túto stránku",
 	"protectthispage": "Zamknúť túto stránku",
-	"unprotectthispage": "Zmeniť stav ochrany tejto stránky",
-	"talkpage": "Diskusia k stránke",
-	"articlepage": "Zobraziť stránku",
-	"userpage": "Zobraziť stránku používateľa",
-	"projectpage": "Zobraziť projektovú stránku"
+	"unprotectthispage": "Zmeniť stav ochrany tejto stránky"
 }

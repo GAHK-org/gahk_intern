@@ -1,14 +1,14 @@
 {
 	"@metadata": {
 		"authors": [
+			"555",
 			"Cainamarques",
 			"Diego Queiroz",
+			"Eduardo Addad de Oliveira",
+			"Eduardoaddad",
 			"Felipe L. Ewald",
 			"Giro720",
-			"TheEduGobi",
-			555,
-			"Eduardo Addad de Oliveira",
-			"Eduardoaddad"
+			"TheEduGobi"
 		]
 	},
 	"skinname-cologneblue": "Azul Colonial",
@@ -26,9 +26,5 @@
 	"deletethispage": "Excluir esta página",
 	"undeletethispage": "Restaurar esta página",
 	"protectthispage": "Proteger esta página",
-	"unprotectthispage": "Alterar a proteção desta página",
-	"talkpage": "Discutir sobre esta página",
-	"articlepage": "Ver página de conteúdo",
-	"userpage": "Ver página de usuário",
-	"projectpage": "Ver página de projeto"
+	"unprotectthispage": "Alterar a proteção desta página"
 }

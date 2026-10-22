@@ -4,13 +4,15 @@
 			"Aotake",
 			"Fryed-peach",
 			"Ohgi",
+			"しぃ",
 			"青子守歌",
-			"しぃ"
+			"Yaakiyu.jp",
+			"Shirayuki"
 		]
 	},
 	"skinname-cologneblue": "ケルンブルー",
-	"cologneblue.css": "/* ここに記述したCSSは、全てのケルンブルースキン利用者に読み込まれます */",
-	"cologneblue.js": "/* ここに記述したJavaScriptは、全てのケルンブルースキン利用者に読み込まれます */",
+	"cologneblue.css": "/* ここに記述したCSSはケルンブルー外装の利用者に影響します */",
+	"cologneblue.js": "/* ここにあるすべてのJavaScriptは、ケルンブルー外装を使用している利用者に対して読み込まれます */",
 	"cologneblue-desc": "最小限の書式設定しかない軽量な外装",
 	"qbfind": "検索",
 	"qbbrowse": "閲覧",
@@ -23,9 +25,5 @@
 	"deletethispage": "このページを削除",
 	"undeletethispage": "このページを復元",
 	"protectthispage": "このページを保護",
-	"unprotectthispage": "このページの保護を変更",
-	"talkpage": "このページについて話し合う",
-	"articlepage": "本文を表示",
-	"userpage": "利用者ページを表示",
-	"projectpage": "プロジェクトのページを表示"
+	"unprotectthispage": "このページの保護を変更"
 }

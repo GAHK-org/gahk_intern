@@ -7,20 +7,17 @@
 		]
 	},
 	"skinname-cologneblue": "Кёльн такъылыкъ",
-	"qbfind": "Излеу",
+	"cologneblue-desc": "Минимум форматланнган дженгил тема",
+	"qbfind": "Таб",
 	"qbbrowse": "Къарау",
-	"qbedit": "Тюрлендир",
+	"qbedit": "Тюзет",
 	"qbpageoptions": "Бу бет",
 	"qbmyoptions": "Бетлерим",
 	"faqpage": "Project:FAQ",
-	"editthispage": "Бу бетни тюрлендир",
+	"editthispage": "Бу бетни тюзет",
 	"create-this-page": "Бу бетни къура",
 	"deletethispage": "Бу бетни кетер",
 	"undeletethispage": "Бу бетни ызына сал",
 	"protectthispage": "Бу бетни джакъла",
-	"unprotectthispage": "Бу бетни джакълауун тюрлендир",
-	"talkpage": "Бу бетни сюз",
-	"articlepage": "Статьягъа къарау",
-	"userpage": "Къошулуучуну энчи бетине къарау",
-	"projectpage": "Проектни бетине къара"
+	"unprotectthispage": "Бу бетни джакълауун тюрлендир"
 }
