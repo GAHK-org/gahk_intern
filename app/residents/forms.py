@@ -151,7 +151,9 @@ class AlumneregningSettingsForm(forms.ModelForm):
         }
         widgets = {
             "message_template": forms.Textarea(attrs={"rows": 16}),
-            "followup_pdf": forms.ClearableFileInput(attrs={"accept": "application/pdf"}),
+            "followup_pdf": forms.ClearableFileInput(
+                attrs={"accept": "application/pdf", "style": "display:none"}
+            ),
         }
         help_texts = {
             "message_template": (

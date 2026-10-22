@@ -29,10 +29,18 @@
         {{ form.followup_pdf.label }}
       </label>
       {{ form.followup_pdf }}
+      <label for="{{ form.followup_pdf.id_for_label }}" class="btn" style="cursor:pointer">Vælg fil</label>
+      <span id="followup-pdf-filename" class="muted text-sm"></span>
       <p class="muted text-sm mt-1">{{ form.followup_pdf.help_text }}</p>
       {% for error in form.followup_pdf.errors %}<p class="text-red-600 text-sm">{{ error }}</p>{% endfor %}
     </div>
     <button type="submit" class="btn">Gem</button>
     <a href="{% url 'regnskab' %}" class="btn">Tilbage til regnskab</a>
   </form>
+
+  <script>
+    document.getElementById('{{ form.followup_pdf.id_for_label }}').addEventListener('change', function () {
+      document.getElementById('followup-pdf-filename').textContent = this.files[0] ? this.files[0].name : '';
+    });
+  </script>
 {% endblock %}
