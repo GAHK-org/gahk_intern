@@ -12,7 +12,7 @@
   <link rel="manifest" href="{% static 'manifest.json' %}">
   <script src="{% static 'dist/app.js' %}" defer></script>
 </head>
-<body class="{% block body_class %}{% endblock %}" x-data="{ sidebar: false }">
+<body class="{% block body_class %}{% endblock %}" x-data="{ sidebar: false }"{% if user.is_authenticated %} data-mention-lookup="{% url 'mention_lookup' %}"{% endif %}>
   {# Icon sprite: referenced from the sidebar via <use href="#i-…">. Stroke inherits the item colour. #}
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>

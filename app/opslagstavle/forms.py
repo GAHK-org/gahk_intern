@@ -51,6 +51,7 @@ class NoticeForm(forms.ModelForm):
                     "rows": 16,
                     "maxlength": MAX_BODY_CHARS,
                     "placeholder": "Skriv med Markdown. Brug knapperne ovenfor, eller skriv **fed**.",
+                    "data-mentionable": "",
                 }
             ),
         }
@@ -100,7 +101,9 @@ class NoticeCommentForm(forms.ModelForm):
         fields = ["body"]
         labels = {"body": "Kommentar"}
         widgets = {
-            "body": forms.Textarea(attrs={"rows": 3, "placeholder": "Skriv en kommentar…"}),
+            "body": forms.Textarea(
+                attrs={"rows": 3, "placeholder": "Skriv en kommentar…", "data-mentionable": ""}
+            ),
         }
 
     def clean_body(self) -> str:

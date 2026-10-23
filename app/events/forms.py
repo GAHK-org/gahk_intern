@@ -94,7 +94,7 @@ class EventForm(forms.ModelForm):
             "rsvp_deadline_at",
         ]
         widgets = {
-            "description": forms.Textarea(attrs={"rows": 6}),
+            "description": forms.Textarea(attrs={"rows": 6, "data-mentionable": ""}),
             "starts_at": LocalDateTimeInput(),
             "ends_at": LocalDateTimeInput(),
             "rsvp_deadline_at": LocalDateTimeInput(),
@@ -259,7 +259,9 @@ class EventCommentForm(forms.ModelForm):
         fields = ["body"]
         labels = {"body": "Kommentar"}
         widgets = {
-            "body": forms.Textarea(attrs={"rows": 3, "placeholder": "Skriv en kommentar…"}),
+            "body": forms.Textarea(
+                attrs={"rows": 3, "placeholder": "Skriv en kommentar…", "data-mentionable": ""}
+            ),
         }
 
     def clean_body(self) -> str:
