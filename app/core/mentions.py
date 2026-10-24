@@ -47,19 +47,25 @@ def profile_url(pk: int) -> str:
     return reverse("resident_profile", args=[pk])
 
 
-def mentionable() -> QuerySet[Resident]:
-    """Who can be mentioned: residents on the active period's alumneliste."""
+def mentionable(**residency: object) -> QuerySet[Resident]:
+    """Who can be mentioned: residents on the active period's alumneliste. Extra `residency` lookups
+    (e.g. workgroup_id) apply to that same month's row."""
     from residents.models import Resident, active_period
 
     year, month = active_period()
+    # One filter() call: chained filters on a multi-valued relation may each match a different row.
     return Resident.objects.filter(
-        is_active=True, is_kitchen=False, residencies__year=year, residencies__month=month
+        is_active=True,
+        is_kitchen=False,
+        residencies__year=year,
+        residencies__month=month,
+        **{f"residencies__{key}": value for key, value in residency.items()},
     ).distinct()
 
 
 def group_members(group_id: int) -> QuerySet[Resident]:
     """Mentionable residents in embedsgruppe `group_id` this period."""
-    return mentionable().filter(residencies__workgroup_id=group_id)
+    return mentionable(workgroup_id=group_id)
 
 
 def _reached(text: str | None) -> set[int]:

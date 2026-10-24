@@ -324,3 +324,26 @@ def test_a_private_event_description_only_notifies_invitees(
 
     assert Event.objects.exists()
     assert told() == [guests[0].pk]
+
+
+def test_a_group_mention_skips_last_months_members(
+    client: Client, live_here: Callable[..., Resident]
+) -> None:
+    """Group and month must hold for the same residency: someone who was in the group last month
+    and is in another group now is not a member."""
+    group = Workgroup.objects.create(name="Testgruppen")
+    other_group = Workgroup.objects.create(name="Andengruppen")
+    author = live_here("a@gahk.dk")
+    member = live_here("b@gahk.dk", workgroup=group)
+    moved = live_here("c@gahk.dk", workgroup=other_group)
+    year, month = active_period()
+    last_year, last_month = (year, month - 1) if month > 1 else (year - 1, 12)
+    room = Residency.objects.get(resident=moved).room
+    Residency.objects.create(resident=moved, room=room, year=last_year, month=last_month, workgroup=group)
+
+    client.force_login(author)
+    client.post(
+        "/intern/opslagstavle/opret", {"category": Category.NYT, "body": f"@[Testgruppen](g{group.pk})"}
+    )
+
+    assert told() == [member.pk]
