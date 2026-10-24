@@ -13,8 +13,15 @@
       {{ row.oek_ore|kr }}
     </td>
     <td class="whitespace-nowrap">
+      <span id="econ-display-{{ row.resident.pk }}">{{ row.resident.economic_account_number|default:"–" }}</span>
+      <button type="button" class="btn" id="econ-edit-btn-{{ row.resident.pk }}"
+              onclick="document.getElementById('econ-display-{{ row.resident.pk }}').style.display='none';
+                       this.style.display='none';
+                       document.getElementById('econ-form-{{ row.resident.pk }}').style.display='flex';">
+        Rediger
+      </button>
       <form method="post" action="{% url 'regnskab:set_economic_account_number' row.resident.pk %}"
-            class="flex items-center gap-1">
+            class="items-center gap-1" id="econ-form-{{ row.resident.pk }}" style="display:none">
         {% csrf_token %}
         <input type="hidden" name="next" value="{{ request.get_full_path }}">
         <input type="number" name="economic_account_number" min="1" style="width:5rem"
