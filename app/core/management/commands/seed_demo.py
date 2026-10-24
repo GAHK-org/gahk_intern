@@ -290,11 +290,7 @@ class Command(BaseCommand):
             ("ak@gahk.dk", "Astrid", "Krydsen", {}),
             ("oel@gahk.dk", "Ole", "Ølmand", {}),
             ("regnskab@gahk.dk", "Regina", "Regnskab", {}),
-            # account 1101 is a real, working account in e-conomic's public demo company (restapi.
-            # e-conomic.com with the "demo"/"demo" tokens config.settings defaults to under DEBUG) —
-            # used throughout this feature's own development, so a fresh `task seed` lets regnskab
-            # click through the whole alumneregning flow immediately, no manual setup required.
-            ("beboer@gahk.dk", "Bente", "Beboer", {"economic_account_number": 1101}),
+            ("beboer@gahk.dk", "Bente", "Beboer", {}),
         ]
         for email, first, last, extra in fixtures:
             r = self._make_resident(email, first, last, **extra)
@@ -701,6 +697,13 @@ class Command(BaseCommand):
             ("ak@gahk.dk", "AK role"),
             ("oel@gahk.dk", "Ølkælder role"),
             ("regnskab@gahk.dk", "Regnskab role — /intern/regnskab/, alumneregninger"),
-            ("beboer@gahk.dk", "plain resident, e-conomic konto 1101 (test alumneregning on this one)"),
+            ("beboer@gahk.dk", "plain resident"),
         ]:
             self.stdout.write(f"  {email:22} {desc}")
+        self.stdout.write(
+            "\nTo try alumneregninger locally: give a resident an e-conomic kontonr. on the regnskab "
+            "page, then GAHK's real e-conomic credentials need to be in your own .env "
+            '(ECONOMIC_APP_SECRET_TOKEN/ECONOMIC_AGREEMENT_GRANT_TOKEN) — the DEBUG-default "demo" '
+            "tokens hit e-conomic's own public demo company, which has none of GAHK's accounts. Without "
+            "real credentials that resident just shows up as failed, not a crash."
+        )
