@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Alumneregninger - status - GAHK Intern{% endblock %}
+{% block content %}
+  <h1>Alumneregninger</h1>
+  <p class="muted text-sm mb-3">Periode: {{ date_from }} – {{ date_to }}</p>
+  <p class="muted text-sm mb-3">
+    Sendes i baggrunden — {{ done }} af {{ total }} behandlet. Genindlæs siden for at se status opdateret.
+  </p>
+
+  <div class="overflow-x-auto mb-8">
+    <table cellpadding="6" class="text-sm" style="width:100%; border-collapse:collapse">
+      <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec; white-space:nowrap">
+        <th>Navn</th><th>E-mail</th><th>Status</th><th>Detalje</th>
+      </tr></thead>
+      <tbody>
+        {% for resident, send in rows %}
+          <tr style="border-bottom:1px solid #f0f1f4">
+            <td>{{ resident.full_name }}</td>
+            <td>{{ resident.email }}</td>
+            <td class="whitespace-nowrap {% if send.outcome == 'failed' %}text-red-600 font-semibold{% endif %}">
+              {% if not send %}Venter…
+              {% elif send.outcome == 'sent' %}Sendt
+              {% else %}Fejlede{% endif %}
+            </td>
+            <td>{{ send.detail }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="4" class="muted">Ingen alumner boede på kollegiet i perioden med et e-conomic kontonr. sat.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <a href="{% url 'regnskab:overview' %}" class="btn">Tilbage til regnskab</a>
+{% endblock %}
