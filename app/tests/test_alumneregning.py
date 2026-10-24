@@ -398,6 +398,57 @@ def test_one_failure_does_not_stop_the_rest(monkeypatch: pytest.MonkeyPatch, mak
 
 
 @pytest.mark.django_db
+def test_a_long_e_conomic_error_message_does_not_crash_the_batch(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    """AlumneregningSend.detail must hold e-conomic's raw error body verbatim, however long — a
+    CharField(255) here (fixed to TextField) would raise an uncaught DataError on Postgres for any
+    error long enough, aborting every resident after the one that triggered it. Only visible under
+    Postgres (task test:pg) since SQLite does not enforce varchar length."""
+    failing = make_resident(email="fails@gahk.dk", economic_account_number=1, first_name="Fail")
+    _give_residency(failing, 2026, 8, room_index=1)
+    ok = make_resident(email="ok@gahk.dk", economic_account_number=2, first_name="Ok")
+    _give_residency(ok, 2026, 8, room_index=2)
+    long_message = "e-conomic 500 on https://restapi.e-conomic.com/accounts/1: " + "x" * 300
+
+    def get_account(account_number: int) -> economic.EconomicAccount:
+        if account_number == 1:
+            raise economic.EconomicApiError(long_message, status_code=500)
+        return _account(0.0)
+
+    monkeypatch.setattr(economic, "get_account", get_account)
+    _mock_entries(monkeypatch, posted=[_entry(1, "2026-08-01", 0.0)])
+
+    results = alumneregning.send_alumneregninger(*AUGUST)
+
+    by_email = {r.resident.email: r for r in results}
+    assert by_email["fails@gahk.dk"].outcome == "failed"
+    assert by_email["fails@gahk.dk"].detail == long_message
+    assert by_email["ok@gahk.dk"].outcome == "sent"  # not aborted by the long message
+    assert len(mail.outbox) == 1
+    send = AlumneregningSend.objects.get(resident=failing, date_from=AUGUST[0], date_to=AUGUST[1])
+    assert send.detail == long_message
+
+
+@pytest.mark.django_db
+def test_a_404_from_e_conomic_gets_a_friendly_danish_message(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
+    _give_residency(resident, 2026, 8, room_index=1)
+
+    def get_account(account_number: int) -> economic.EconomicAccount:
+        raise economic.EconomicApiError("e-conomic 404 on .../accounts/1101: not found", status_code=404)
+
+    monkeypatch.setattr(economic, "get_account", get_account)
+
+    results = alumneregning.send_alumneregninger(*AUGUST)
+
+    assert results[0].outcome == "failed"
+    assert results[0].detail == "Kontonr. 1101 findes ikke i e-conomic."
+
+
+@pytest.mark.django_db
 def test_auth_error_aborts_the_whole_batch(monkeypatch: pytest.MonkeyPatch, make_resident: Callable) -> None:
     """An invalid/revoked e-conomic connection affects every alumne equally — stop immediately
     rather than report the same "reconnect e-conomic" failure once per remaining alumne."""

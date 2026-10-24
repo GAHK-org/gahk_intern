@@ -52,7 +52,7 @@ class Migration(migrations.Migration):
                     "outcome",
                     models.CharField(choices=[("sent", "Sendt"), ("failed", "Fejlede")], max_length=10),
                 ),
-                ("detail", models.CharField(blank=True, max_length=255)),
+                ("detail", models.TextField(blank=True)),
                 ("sent_at", models.DateTimeField(auto_now=True)),
                 (
                     "resident",

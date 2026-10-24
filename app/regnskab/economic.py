@@ -21,6 +21,10 @@ _BASE_BACKOFF_SECONDS = 1.0
 class EconomicApiError(Exception):
     """A non-2xx response from e-conomic, or the request itself failing (network, timeout, ...)."""
 
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
 
 class EconomicAuthError(EconomicApiError):
     """401/403 — the AppSecretToken/AgreementGrantToken pair is invalid, expired, or revoked. No
@@ -67,10 +71,10 @@ def _headers() -> dict[str, str]:
 def _error_for_status(response: requests.Response, url: str) -> EconomicApiError:
     detail = f"e-conomic {response.status_code} on {url}: {response.text[:200]}"
     if response.status_code in (401, 403):
-        return EconomicAuthError(detail)
+        return EconomicAuthError(detail, status_code=response.status_code)
     if response.status_code in (400, 422):
-        return EconomicValidationError(detail)
-    return EconomicApiError(detail)
+        return EconomicValidationError(detail, status_code=response.status_code)
+    return EconomicApiError(detail, status_code=response.status_code)
 
 
 def _retry_delay_seconds(response: requests.Response, attempt: int) -> float:

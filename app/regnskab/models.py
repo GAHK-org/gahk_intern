@@ -94,7 +94,9 @@ class AlumneregningSend(models.Model):
     date_from = models.DateField()
     date_to = models.DateField()
     outcome = models.CharField(max_length=10, choices=[("sent", "Sendt"), ("failed", "Fejlede")])
-    detail = models.CharField(max_length=255, blank=True)
+    # TextField, not CharField: this can hold a raw e-conomic error body (see
+    # regnskab.economic._error_for_status), whose length is outside our control.
+    detail = models.TextField(blank=True)
     sent_at = models.DateTimeField(auto_now=True)
 
     class Meta:

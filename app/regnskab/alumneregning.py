@@ -169,7 +169,10 @@ def send_alumneregninger(date_from: date, date_to: date) -> list[AlumneregningRe
             )
         except economic.EconomicApiError as exc:
             logger.warning("alumneregning failed for resident %s: %s", resident.pk, exc)
-            result = AlumneregningResult(resident, "failed", str(exc))
+            detail = (
+                f"Kontonr. {account_number} findes ikke i e-conomic." if exc.status_code == 404 else str(exc)
+            )
+            result = AlumneregningResult(resident, "failed", detail)
         AlumneregningSend.objects.update_or_create(
             resident=resident,
             date_from=date_from,
