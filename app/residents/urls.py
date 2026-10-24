@@ -3,37 +3,12 @@
 from django.contrib.auth import views as auth_views
 from django.urls import include, path
 
-from . import views, views_regnskab
+from . import views
 from .forms import EmailAuthenticationForm, ResidentPasswordResetForm
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
-    path("regnskab/", views_regnskab.overview, name="regnskab"),
-    path(
-        "regnskab/<int:pk>/economic-nummer",
-        views_regnskab.set_economic_account_number,
-        name="set_economic_account_number",
-    ),
-    path(
-        "regnskab/alumneregninger/forhaandsvisning",
-        views_regnskab.preview_alumneregninger_view,
-        name="preview_alumneregninger",
-    ),
-    path(
-        "regnskab/alumneregninger/<int:pk>/pdf",
-        views_regnskab.alumneregning_statement_pdf_view,
-        name="alumneregning_statement_pdf",
-    ),
-    path(
-        "regnskab/alumneregninger/send",
-        views_regnskab.send_alumneregninger_view,
-        name="send_alumneregninger",
-    ),
-    path(
-        "regnskab/alumneregninger/indstillinger",
-        views_regnskab.alumneregning_settings_view,
-        name="alumneregning_settings",
-    ),
+    path("regnskab/", include("regnskab.urls")),
     path("alumneliste/", views.directory, name="directory"),
     path("alumneliste/rows", views.directory_rows, name="directory_rows"),
     path("alumneliste/eksport", views.directory_export, name="directory_export"),

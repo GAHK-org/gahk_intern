@@ -13,7 +13,7 @@
       {{ row.oek_ore|kr }}
     </td>
     <td class="whitespace-nowrap">
-      <form method="post" action="{% url 'set_economic_account_number' row.resident.pk %}"
+      <form method="post" action="{% url 'regnskab:set_economic_account_number' row.resident.pk %}"
             class="flex items-center gap-1">
         {% csrf_token %}
         <input type="hidden" name="next" value="{{ request.get_full_path }}">

@@ -11,8 +11,10 @@ from django.conf import settings
 from django.core.mail import EmailMessage
 from django.db.models import F, QuerySet
 
+from residents.models import Residency, Resident
+
 from . import economic, ledger, statement_pdf
-from .models import AlumneregningSettings, Residency, Resident
+from .models import AlumneregningSend, AlumneregningSettings
 from .statement_pdf import _kr
 
 logger = logging.getLogger(__name__)
@@ -41,8 +43,8 @@ class PreparedStatement:
 
     resident: Resident
     account_number: int
-    entries: list[economic.LedgerEntry]  # this period's postings only — may be empty
-    balance: Decimal  # e-conomic's posted balance plus the net effect of this period's drafts
+    entries: list[economic.LedgerEntry]  # this period's postings, for display — may be empty
+    balance: Decimal  # e-conomic's posted balance plus every currently outstanding draft
     pdf: bytes
     body: str
 
@@ -61,7 +63,7 @@ def _body(resident: Resident, balance: Decimal, message_template: str) -> str:
     )
 
 
-def _residents_billable_for(date_from: date, date_to: date) -> QuerySet[Resident]:
+def residents_billable_for(date_from: date, date_to: date) -> QuerySet[Resident]:
     """Residents with an e-conomic account number and a Residency within [date_from, date_to]."""
     lower = date_from.year * 12 + date_from.month
     upper = date_to.year * 12 + date_to.month
@@ -82,17 +84,25 @@ def _prepare_one(
     date_from: date,
     date_to: date,
     mail_settings: AlumneregningSettings,
+    *,
+    persist: bool,
 ) -> PreparedStatement:
-    """Fetches the balance + this period's postings, mirrors them into the ledger, renders the PDF."""
+    """Fetches the balance + this period's postings and renders the PDF. Only mirrors into the local
+    ledger when persist=True — a preview or a PDF view is a read, and should stay one (regnskab.views
+    pass persist=True only from the actual send)."""
+    # get_account first: the cheapest single call, and the one most likely to surface an auth problem
+    # — callers (send_alumneregninger) rely on that to fail fast before any of the heavier calls below.
     balance = Decimal(str(economic.get_account(account_number).balance))
-    entries = economic.get_entries_in_range(account_number, date_from, date_to)
-    # e-conomic's own balance is posted-only — it does not reflect draft/unposted entries, which
-    # regnskab wants counted (F-010, see economic.get_draft_entries_for_account). Confirmed against
-    # the real account 4207: get_account().balance was 132.81 while the true current balance, drafts
-    # included, was 214.01 — exactly off by the drafts' own net amount.
-    balance += sum((Decimal(str(entry.amount)) for entry in entries if entry.is_draft), Decimal(0))
-    if entries:
-        ledger.sync_entries(resident, entries)
+    posted = economic.get_posted_entries_in_range(account_number, date_from, date_to)
+    # Unscoped: a draft dated before date_from is still real, uncounted debt until it is posted or
+    # withdrawn, so the balance (and the local draft mirror) must see every current draft, not just
+    # ones dated in the billed period. Confirmed against the real account 4207: get_account().balance
+    # was 132.81 while the true current balance, drafts included, was 214.01.
+    drafts = economic.get_draft_entries_for_account(account_number)
+    balance += sum((Decimal(str(d.amount)) for d in drafts), Decimal(0))
+    entries = posted + [d for d in drafts if date_from <= date.fromisoformat(d.date) <= date_to]
+    if persist:
+        ledger.sync_entries(resident, posted + drafts)
 
     pdf = statement_pdf.render(resident, account_number, entries, balance, date_from, date_to)
     if mail_settings.followup_pdf:
@@ -109,7 +119,7 @@ def _send_one(
     date_to: date,
     mail_settings: AlumneregningSettings,
 ) -> AlumneregningResult:
-    prepared = _prepare_one(resident, account_number, date_from, date_to, mail_settings)
+    prepared = _prepare_one(resident, account_number, date_from, date_to, mail_settings, persist=True)
 
     email = EmailMessage(
         subject="Alumneregning",
@@ -118,7 +128,11 @@ def _send_one(
         to=[resident.email],
     )
     email.attach(f"alumneregning-{date_from.isoformat()}.pdf", prepared.pdf, "application/pdf")
-    email.send()
+    try:
+        email.send()
+    except Exception as exc:  # SMTP errors, a bad address, etc. must not abort the batch
+        logger.warning("alumneregning: failed to mail resident %s: %s", resident.pk, exc)
+        return AlumneregningResult(resident, "failed", f"Kunne ikke sende mail: {exc}")
     detail = (
         f"{len(prepared.entries)} posteringer, saldo {_kr(prepared.balance)} kr."
         if prepared.entries
@@ -128,27 +142,41 @@ def _send_one(
 
 
 def send_alumneregninger(date_from: date, date_to: date) -> list[AlumneregningResult]:
-    """Email every billable resident their statement. Best-effort: one failing doesn't stop the rest."""
+    """Email every billable resident their statement, skipping anyone already billed for this exact
+    period (AlumneregningSend) — so a retried/duplicate send (the task re-running, the button pressed
+    twice) never bills someone twice. Best-effort: one failing doesn't stop the rest."""
     mail_settings = AlumneregningSettings.get_solo()
+    already_sent = set(
+        AlumneregningSend.objects.filter(date_from=date_from, date_to=date_to, outcome="sent").values_list(
+            "resident_id", flat=True
+        )
+    )
     results: list[AlumneregningResult] = []
-    for resident in _residents_billable_for(date_from, date_to):
+    for resident in residents_billable_for(date_from, date_to):
+        if resident.pk in already_sent:
+            continue
         account_number = resident.economic_account_number
-        assert account_number is not None  # noqa: S101  # nosec B101 — _residents_billable_for filters on it
+        assert account_number is not None  # noqa: S101  # nosec B101 — residents_billable_for filters on it
         try:
-            results.append(_send_one(resident, account_number, date_from, date_to, mail_settings))
+            result = _send_one(resident, account_number, date_from, date_to, mail_settings)
         except economic.EconomicAuthError as exc:
             logger.error("alumneregning: e-conomic access invalid/revoked: %s", exc)
             raise  # affects every remaining alumne equally — stop the batch, don't repeat the error
         except economic.EconomicRateLimitError as exc:
             logger.warning("alumneregning: e-conomic rate limit for resident %s: %s", resident.pk, exc)
-            results.append(
-                AlumneregningResult(
-                    resident, "failed", "E-conomic rate-limit ramt — prøv at sende igen om lidt."
-                )
+            result = AlumneregningResult(
+                resident, "failed", "E-conomic rate-limit ramt — prøv at sende igen om lidt."
             )
         except economic.EconomicApiError as exc:
             logger.warning("alumneregning failed for resident %s: %s", resident.pk, exc)
-            results.append(AlumneregningResult(resident, "failed", str(exc)))
+            result = AlumneregningResult(resident, "failed", str(exc))
+        AlumneregningSend.objects.update_or_create(
+            resident=resident,
+            date_from=date_from,
+            date_to=date_to,
+            defaults={"outcome": result.outcome, "detail": result.detail},
+        )
+        results.append(result)
     return results
 
 
@@ -156,11 +184,13 @@ def preview_alumneregninger(date_from: date, date_to: date) -> list[PreviewRow]:
     """Who would be billed for [date_from, date_to] and what their statement would say — sends nothing."""
     mail_settings = AlumneregningSettings.get_solo()
     rows: list[PreviewRow] = []
-    for resident in _residents_billable_for(date_from, date_to):
+    for resident in residents_billable_for(date_from, date_to):
         account_number = resident.economic_account_number
-        assert account_number is not None  # noqa: S101  # nosec B101 — _residents_billable_for filters on it
+        assert account_number is not None  # noqa: S101  # nosec B101 — residents_billable_for filters on it
         try:
-            prepared = _prepare_one(resident, account_number, date_from, date_to, mail_settings)
+            prepared = _prepare_one(
+                resident, account_number, date_from, date_to, mail_settings, persist=False
+            )
         except economic.EconomicAuthError as exc:
             logger.error("alumneregning preview: e-conomic access invalid/revoked: %s", exc)
             raise
@@ -185,4 +215,7 @@ def render_preview_pdf(resident: Resident, date_from: date, date_to: date) -> by
     if resident.economic_account_number is None:
         return None
     mail_settings = AlumneregningSettings.get_solo()
-    return _prepare_one(resident, resident.economic_account_number, date_from, date_to, mail_settings).pdf
+    prepared = _prepare_one(
+        resident, resident.economic_account_number, date_from, date_to, mail_settings, persist=False
+    )
+    return prepared.pdf

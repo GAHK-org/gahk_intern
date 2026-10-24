@@ -4,7 +4,7 @@
   <h1>Alumneregning-indstillinger</h1>
   <p class="muted mb-4">
     Beskeden og følgebrevet herunder bruges til alle alumneregninger, der sendes fra
-    <a href="{% url 'regnskab' %}">regnskabssiden</a>. Følgebrevet sættes ind som de første side(r) i
+    <a href="{% url 'regnskab:overview' %}">regnskabssiden</a>. Følgebrevet sættes ind som de første side(r) i
     selve regnings-PDF'en — ikke en separat vedhæftning.
   </p>
 
@@ -35,7 +35,7 @@
       {% for error in form.followup_pdf.errors %}<p class="text-red-600 text-sm">{{ error }}</p>{% endfor %}
     </div>
     <button type="submit" class="btn">Gem</button>
-    <a href="{% url 'regnskab' %}" class="btn">Tilbage til regnskab</a>
+    <a href="{% url 'regnskab:overview' %}" class="btn">Tilbage til regnskab</a>
   </form>
 
   <script>

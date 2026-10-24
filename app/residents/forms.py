@@ -1,4 +1,3 @@
-import io
 import unicodedata
 from collections.abc import Iterator
 
@@ -6,12 +5,10 @@ from django import forms
 from django.conf import settings
 from django.contrib.auth.forms import AuthenticationForm, PasswordResetForm
 from django.core.files.uploadedfile import UploadedFile
-from pypdf import PdfReader
-from pypdf.errors import PyPdfError
 
 from core.uploads import validate_image_upload
 
-from .models import AlumneregningSettings, Resident
+from .models import Resident
 
 
 class LocalDateInput(forms.DateInput):
@@ -126,62 +123,6 @@ class ProfileEditForm(forms.ModelForm):
         upload = self.cleaned_data.get("profile_picture")
         if isinstance(upload, UploadedFile):
             return validate_image_upload(upload, settings.PROFILE_PICTURE_MAX_MB)
-        return upload
-
-
-class EconomicAccountNumberForm(forms.ModelForm):
-    """Regnskab sets or clears a resident's e-conomic chart-of-accounts accountNumber (alumneregning
-    automation, F-010 regnskab role)."""
-
-    class Meta:
-        model = Resident
-        fields = ["economic_account_number"]
-        labels = {"economic_account_number": "E-conomic kontonr."}
-
-
-class AlumneregningSettingsForm(forms.ModelForm):
-    """Regnskab edits the alumneregning mail body and følgebrev PDF in the UI (F-010)."""
-
-    class Meta:
-        model = AlumneregningSettings
-        fields = ["message_template", "followup_pdf"]
-        labels = {
-            "message_template": "Besked",
-            "followup_pdf": "Følgebrev (PDF)",
-        }
-        widgets = {
-            "message_template": forms.Textarea(attrs={"rows": 16}),
-            "followup_pdf": forms.ClearableFileInput(
-                attrs={"accept": "application/pdf", "style": "display:none"}
-            ),
-        }
-        help_texts = {
-            "message_template": (
-                "Pladsholdere, der udskiftes automatisk: $FORNAVN, $SALDO_LINE "
-                "(sætningen om gæld/tilgodehavende), $REG_NR, $KONTO_NR."
-            ),
-            "followup_pdf": (
-                "Valgfrit følgebrev, sættes ind som de(n) første side(r) i selve regnings-PDF'en til "
-                "hver alumne — ikke en separat vedhæftning. Lad stå tom for ingen følgebrev. Opdateres "
-                'typisk ca. hvert halve år. "How to aflæse din alumneregning" står altid med bagerst i '
-                "PDF'en, uanset om der er et følgebrev."
-            ),
-        }
-
-    def clean_followup_pdf(self) -> object:
-        upload = self.cleaned_data.get("followup_pdf")
-        if isinstance(upload, UploadedFile):
-            name = (upload.name or "").lower()
-            if upload.content_type != "application/pdf" and not name.endswith(".pdf"):
-                raise forms.ValidationError("Følgebrevet skal være en PDF-fil.")
-            # Extension/content-type alone don't prove it's a real PDF — a bad upload here would
-            # otherwise only surface later, as a crash of every alumneregning send that reads it.
-            try:
-                len(PdfReader(io.BytesIO(upload.read())).pages)
-            except PyPdfError as exc:
-                raise forms.ValidationError("Filen kunne ikke læses som en PDF.") from exc
-            finally:
-                upload.seek(0)
         return upload
 
 

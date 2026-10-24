@@ -1,12 +1,12 @@
-"""residents.ledger — the local, immutable mirror of e-conomic postings (F-010 regnskab role)."""
+"""regnskab.ledger — the local, immutable mirror of e-conomic postings (F-010 regnskab role)."""
 
 from collections.abc import Callable
 from decimal import Decimal
 
 import pytest
 
-from residents import economic, ledger
-from residents.models import EconomicLedgerEntry
+from regnskab import economic, ledger
+from regnskab.models import EconomicLedgerEntry
 
 
 def _entry(
@@ -35,7 +35,7 @@ def test_sync_inserts_new_entries(make_resident: Callable) -> None:
 
 
 @pytest.mark.django_db
-def test_sync_is_insert_only_and_idempotent(make_resident: Callable) -> None:
+def test_sync_is_insert_only_and_idempotent_for_posted_entries(make_resident: Callable) -> None:
     resident = make_resident(email="a@gahk.dk", economic_account_number=1101)
     ledger.sync_entries(resident, [_entry(1, 100.0)])
 
@@ -74,3 +74,29 @@ def test_same_entry_number_for_two_different_residents_does_not_collide(make_res
 
     assert inserted == 1
     assert EconomicLedgerEntry.objects.filter(entry_number=1).count() == 2
+
+
+@pytest.mark.django_db
+def test_a_draft_no_longer_present_is_removed_on_the_next_sync(make_resident: Callable) -> None:
+    """Drafts are mutable in e-conomic (edited, deleted, or formally posted under a new entryNumber) —
+    a sync replaces this resident's mirrored drafts wholesale, so a stale one never lingers."""
+    resident = make_resident(email="a@gahk.dk", economic_account_number=1101)
+    ledger.sync_entries(resident, [_entry(10, 5.0, is_draft=True), _entry(11, 7.0, is_draft=True)])
+
+    # e-conomic now only reports draft 10 — 11 was withdrawn/posted/deleted.
+    ledger.sync_entries(resident, [_entry(10, 5.0, is_draft=True)])
+
+    drafts = EconomicLedgerEntry.objects.filter(resident=resident, is_draft=True)
+    assert [d.entry_number for d in drafts] == [10]
+
+
+@pytest.mark.django_db
+def test_a_posted_draft_leaves_both_the_new_posted_row_and_no_stale_draft(make_resident: Callable) -> None:
+    resident = make_resident(email="a@gahk.dk", economic_account_number=1101)
+    ledger.sync_entries(resident, [_entry(10, 5.0, is_draft=True)])
+
+    # Formally posted: a new, independent entryNumber, is_draft=False — draft 10 no longer exists.
+    ledger.sync_entries(resident, [_entry(99, 5.0, is_draft=False)])
+
+    assert not EconomicLedgerEntry.objects.filter(resident=resident, is_draft=True).exists()
+    assert EconomicLedgerEntry.objects.filter(resident=resident, entry_number=99, is_draft=False).exists()

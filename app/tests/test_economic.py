@@ -1,14 +1,13 @@
-"""residents.economic — the e-conomic REST API client (F-010 regnskab, alumneregning automation).
+"""regnskab.economic — the e-conomic REST API client (F-010 regnskab, alumneregning automation).
 Mocks requests.get; these are unit tests of the client's own parsing/error-handling."""
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
 
 import pytest
 import requests
 
-from residents import economic
+from regnskab import economic
 
 
 @dataclass
@@ -45,20 +44,6 @@ def _years_response(*periods: tuple[str, str, str]) -> FakeResponse:
     )
 
 
-_NO_JOURNALS = FakeResponse(_json={"collection": []})
-
-
-def _no_drafts_fake_get(inner: Callable[..., FakeResponse]) -> Callable[..., FakeResponse]:
-    """Wraps a fake_get so "/journals" short-circuits to no drafts found."""
-
-    def fake_get(url: str, **kw: object) -> FakeResponse:
-        if url.endswith("/journals"):
-            return _NO_JOURNALS
-        return inner(url, **kw)
-
-    return fake_get
-
-
 def test_get_account_parses_fields(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         economic.requests,
@@ -71,7 +56,9 @@ def test_get_account_parses_fields(monkeypatch: pytest.MonkeyPatch) -> None:
     assert account == economic.EconomicAccount(account_number=1101, name="Alumne-Sten", balance=0.0)
 
 
-def test_get_entries_in_range_uses_year_self_link_not_entries_link(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_posted_entries_in_range_uses_year_self_link_not_entries_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The year's own "entries" hyperlink is whole-company, not account-scoped (a real e-conomic API
     quirk) — the client must build the URL from the year's "self" link instead."""
     calls: list[str] = []
@@ -82,9 +69,9 @@ def test_get_entries_in_range_uses_year_self_link_not_entries_link(monkeypatch: 
             return _years_response(("2026", "2026-01-01", "2026-12-31"))
         return FakeResponse(_json={"collection": [{"entryNumber": 1, "date": "2026-08-15", "amount": 100.0}]})
 
-    monkeypatch.setattr(economic.requests, "get", _no_drafts_fake_get(fake_get))
+    monkeypatch.setattr(economic.requests, "get", fake_get)
 
-    entries = economic.get_entries_in_range(1101, date(2026, 8, 1), date(2026, 8, 31))
+    entries = economic.get_posted_entries_in_range(1101, date(2026, 8, 1), date(2026, 8, 31))
 
     assert entries == [
         economic.LedgerEntry(
@@ -102,7 +89,7 @@ def test_get_entries_in_range_uses_year_self_link_not_entries_link(monkeypatch: 
     assert calls[1] == "https://restapi.e-conomic.com/accounts/1101/accounting-years/2026/entries"
 
 
-def test_get_entries_in_range_filters_out_entries_outside_the_range(
+def test_get_posted_entries_in_range_filters_out_entries_outside_the_range(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A fiscal period can be wider than the requested date range (e.g. a 6-month e-conomic period
@@ -122,14 +109,14 @@ def test_get_entries_in_range_filters_out_entries_outside_the_range(
             }
         )
 
-    monkeypatch.setattr(economic.requests, "get", _no_drafts_fake_get(fake_get))
+    monkeypatch.setattr(economic.requests, "get", fake_get)
 
-    entries = economic.get_entries_in_range(1101, date(2026, 8, 1), date(2026, 8, 31))
+    entries = economic.get_posted_entries_in_range(1101, date(2026, 8, 1), date(2026, 8, 31))
 
     assert [e.entry_number for e in entries] == [2]
 
 
-def test_get_entries_in_range_handles_split_fiscal_year_slug(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_posted_entries_in_range_handles_split_fiscal_year_slug(monkeypatch: pytest.MonkeyPatch) -> None:
     """A fiscal year not aligned to the calendar displays as "2015/2016" but its real URL id is an
     e-conomic-internal slug ("2015_6_2016") — pinned here so a format change is caught."""
     calls: list[str] = []
@@ -140,14 +127,14 @@ def test_get_entries_in_range_handles_split_fiscal_year_slug(monkeypatch: pytest
             return _years_response(("2015/2016", "2015-10-01", "2016-03-31"))
         return FakeResponse(_json={"collection": []})
 
-    monkeypatch.setattr(economic.requests, "get", _no_drafts_fake_get(fake_get))
+    monkeypatch.setattr(economic.requests, "get", fake_get)
 
-    economic.get_entries_in_range(1101, date(2015, 11, 1), date(2015, 12, 1))
+    economic.get_posted_entries_in_range(1101, date(2015, 11, 1), date(2015, 12, 1))
 
     assert calls[1] == "https://restapi.e-conomic.com/accounts/1101/accounting-years/2015_6_2016/entries"
 
 
-def test_get_entries_in_range_spans_multiple_overlapping_periods(
+def test_get_posted_entries_in_range_spans_multiple_overlapping_periods(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A requested range crossing an e-conomic fiscal period boundary reads every period it overlaps."""
@@ -161,23 +148,23 @@ def test_get_entries_in_range_spans_multiple_overlapping_periods(
             )
         return FakeResponse(_json={"collection": []})
 
-    monkeypatch.setattr(economic.requests, "get", _no_drafts_fake_get(fake_get))
+    monkeypatch.setattr(economic.requests, "get", fake_get)
 
-    economic.get_entries_in_range(1101, date(2026, 6, 15), date(2026, 7, 15))
+    economic.get_posted_entries_in_range(1101, date(2026, 6, 15), date(2026, 7, 15))
 
-    assert len(calls) == 3  # years list + both overlapping periods' entries (/journals is intercepted)
+    assert len(calls) == 3  # years list + both overlapping periods' entries
 
 
-def test_get_entries_in_range_returns_empty_when_no_period_overlaps(
+def test_get_posted_entries_in_range_returns_empty_when_no_period_overlaps(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         economic.requests,
         "get",
-        _no_drafts_fake_get(lambda url, **kw: _years_response(("2025", "2025-04-01", "2025-09-30"))),
+        lambda url, **kw: _years_response(("2025", "2025-04-01", "2025-09-30")),
     )
 
-    assert economic.get_entries_in_range(1101, date(2026, 10, 1), date(2026, 10, 31)) == []
+    assert economic.get_posted_entries_in_range(1101, date(2026, 10, 1), date(2026, 10, 31)) == []
 
 
 def test_get_draft_entries_matches_account_side_as_is(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -259,7 +246,7 @@ def test_get_draft_entries_negates_amount_when_matched_via_contra_account(
     assert entries[0].amount == 255.0  # negated from e-conomic's -255
 
 
-def test_get_draft_entries_filters_by_date(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_draft_entries_filters_by_date_when_a_range_is_given(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         economic.requests,
         "get",
@@ -294,6 +281,48 @@ def test_get_draft_entries_filters_by_date(monkeypatch: pytest.MonkeyPatch) -> N
     entries = economic.get_draft_entries_for_account(4207, date(2026, 10, 1), date(2026, 10, 31))
 
     assert [e.entry_number for e in entries] == [2]
+
+
+def test_get_draft_entries_with_no_date_range_returns_every_current_draft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Called with no dates (as regnskab.alumneregning does for the balance), every outstanding draft
+    comes back regardless of how old it is — a draft from an earlier period is still real, uncounted
+    debt until it is posted or withdrawn."""
+    monkeypatch.setattr(
+        economic.requests,
+        "get",
+        lambda url, **kw: (
+            FakeResponse(_json={"collection": [{"journalNumber": 1}]})
+            if url.endswith("/journals")
+            else FakeResponse(
+                _json={
+                    "collection": [
+                        {
+                            "journalEntryNumber": 1,
+                            "date": "2020-01-01",  # ancient, still unposted
+                            "text": "x",
+                            "amount": 1.0,
+                            "account": {"accountNumber": 4207},
+                            "voucher": {},
+                        },
+                        {
+                            "journalEntryNumber": 2,
+                            "date": "2026-10-15",
+                            "text": "x",
+                            "amount": 1.0,
+                            "account": {"accountNumber": 4207},
+                            "voucher": {},
+                        },
+                    ]
+                }
+            )
+        ),
+    )
+
+    entries = economic.get_draft_entries_for_account(4207)
+
+    assert [e.entry_number for e in entries] == [1, 2]
 
 
 def test_401_raises_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:

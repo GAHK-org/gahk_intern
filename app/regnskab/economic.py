@@ -116,11 +116,16 @@ def get_account(account_number: int) -> EconomicAccount:
     )
 
 
-def get_draft_entries_for_account(account_number: int, date_from: date, date_to: date) -> list[LedgerEntry]:
-    """Unposted/draft entries touching this account, dated within [date_from, date_to] — regnskab
-    wants these on a statement too, not just posted ones. Matches on EITHER side of the double-entry
-    pair: a batch voucher (e.g. "Gæstespisere") only has this account as "contraAccount", never
-    "account" — amount is negated in that case, since e-conomic's amount there is the other side's."""
+def get_draft_entries_for_account(
+    account_number: int, date_from: date | None = None, date_to: date | None = None
+) -> list[LedgerEntry]:
+    """Unposted/draft entries touching this account — regnskab wants these on a statement too, not
+    just posted ones. date_from/date_to are optional: omit both to get every current draft regardless
+    of date, which is what the account's true current balance needs (a draft from an earlier period
+    that is still unposted is still real, uncounted debt — see alumneregning._prepare_one). Matches on
+    EITHER side of the double-entry pair: a batch voucher (e.g. "Gæstespisere") only has this account
+    as "contraAccount", never "account" — amount is negated in that case, since e-conomic's amount
+    there is the other side's."""
     entries: list[LedgerEntry] = []
     journals = _get(f"{BASE_URL}/journals", params={"pagesize": 1000}).json()
     for journal in journals.get("collection", []):
@@ -135,7 +140,10 @@ def get_draft_entries_for_account(account_number: int, date_from: date, date_to:
             },
         ).json()
         for item in data.get("collection", []):
-            if not (date_from <= date.fromisoformat(item["date"]) <= date_to):
+            item_date = date.fromisoformat(item["date"])
+            if (date_from is not None and item_date < date_from) or (
+                date_to is not None and item_date > date_to
+            ):
                 continue
             is_primary = item.get("account", {}).get("accountNumber") == account_number
             amount = item.get("amount", 0.0) if is_primary else -item.get("amount", 0.0)
@@ -154,10 +162,13 @@ def get_draft_entries_for_account(account_number: int, date_from: date, date_to:
     return entries
 
 
-def get_entries_in_range(account_number: int, date_from: date, date_to: date) -> list[LedgerEntry]:
-    """Every posting on this account dated within [date_from, date_to], including drafts. Reads every
-    e-conomic fiscal period overlapping the range (periods don't align to calendar months), building
-    each period's entries URL from its "self" link — NOT its own "entries" link, which is actually the
+def get_posted_entries_in_range(account_number: int, date_from: date, date_to: date) -> list[LedgerEntry]:
+    """Every POSTED posting on this account dated within [date_from, date_to] — drafts are a separate
+    call (get_draft_entries_for_account), deliberately unscoped by the caller rather than fetched here,
+    since a draft's own date does not bound how long it can sit unposted (regnskab.alumneregning wants
+    every current draft counted, not just ones dated in the billed period). Reads every e-conomic
+    fiscal period overlapping the range (periods don't align to calendar months), building each
+    period's entries URL from its "self" link — NOT its own "entries" link, which is actually the
     whole company's entries despite looking account-scoped. pagesize=1000 throughout: e-conomic
     defaults to 20/page and would otherwise silently drop a long-lived account's newest periods."""
     years = _get(f"{BASE_URL}/accounts/{account_number}/accounting-years", params={"pagesize": 1000}).json()
@@ -189,5 +200,4 @@ def get_entries_in_range(account_number: int, date_from: date, date_to: date) ->
             if date_from <= date.fromisoformat(item["date"]) <= date_to
         )
 
-    entries.extend(get_draft_entries_for_account(account_number, date_from, date_to))
     return entries

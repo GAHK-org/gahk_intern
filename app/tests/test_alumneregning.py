@@ -1,5 +1,6 @@
-"""residents.alumneregning — the "one button" billing mail for a chosen period (F-010 regnskab role).
-economic.get_account/get_entries_in_range are monkeypatched directly."""
+"""regnskab.alumneregning — the "one button" billing mail for a chosen period (F-010 regnskab role).
+economic.get_account/get_posted_entries_in_range/get_draft_entries_for_account are monkeypatched
+directly."""
 
 import io
 from collections.abc import Callable
@@ -12,8 +13,9 @@ from fpdf import FPDF
 from pypdf import PdfReader
 
 from core.models import Room
-from residents import alumneregning, economic
-from residents.models import AlumneregningSettings, EconomicLedgerEntry, Residency, Resident
+from regnskab import alumneregning, economic
+from regnskab.models import AlumneregningSend, AlumneregningSettings, EconomicLedgerEntry
+from residents.models import Residency, Resident
 
 AUGUST = (date(2026, 8, 1), date(2026, 8, 31))
 
@@ -49,6 +51,15 @@ def _give_residency(resident: Resident, year: int, month: int, room_index: int) 
     Residency.objects.create(resident=resident, room=room, year=year, month=month)
 
 
+def _mock_entries(
+    monkeypatch: pytest.MonkeyPatch,
+    posted: list[economic.LedgerEntry] | None = None,
+    drafts: list[economic.LedgerEntry] | None = None,
+) -> None:
+    monkeypatch.setattr(economic, "get_posted_entries_in_range", lambda n, f, t: posted or [])
+    monkeypatch.setattr(economic, "get_draft_entries_for_account", lambda n: drafts or [])
+
+
 @pytest.mark.django_db
 def test_sends_mail_with_generated_pdf_for_the_period(
     monkeypatch: pytest.MonkeyPatch, make_resident: Callable
@@ -56,7 +67,7 @@ def test_sends_mail_with_generated_pdf_for_the_period(
     resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
     _give_residency(resident, 2026, 8, room_index=1)
     monkeypatch.setattr(economic, "get_account", lambda n: _account(250.0))
-    monkeypatch.setattr(economic, "get_entries_in_range", lambda n, f, t: [_entry(1, "2026-08-01", 250.0)])
+    _mock_entries(monkeypatch, posted=[_entry(1, "2026-08-01", 250.0)])
 
     results = alumneregning.send_alumneregninger(*AUGUST)
 
@@ -76,6 +87,9 @@ def test_sends_mail_with_generated_pdf_for_the_period(
     assert content_type == "application/pdf"
     # The balance quoted in the mail came from a row actually mirrored into the local ledger.
     assert EconomicLedgerEntry.objects.filter(resident=resident, entry_number=1).exists()
+    # And a send is recorded — the audit trail / dedup key for a retry.
+    send = AlumneregningSend.objects.get(resident=resident, date_from=AUGUST[0], date_to=AUGUST[1])
+    assert send.outcome == "sent"
 
 
 @pytest.mark.django_db
@@ -87,7 +101,7 @@ def test_sends_mail_even_with_no_new_entries_when_a_balance_carries_forward(
     resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
     _give_residency(resident, 2026, 8, room_index=1)
     monkeypatch.setattr(economic, "get_account", lambda n: _account(600.0))
-    monkeypatch.setattr(economic, "get_entries_in_range", lambda n, f, t: [])  # nothing posted in August
+    _mock_entries(monkeypatch)  # nothing posted or drafted
 
     results = alumneregning.send_alumneregninger(*AUGUST)
 
@@ -109,10 +123,9 @@ def test_draft_entries_are_added_on_top_of_the_posted_balance(
     resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
     _give_residency(resident, 2026, 8, room_index=1)
     monkeypatch.setattr(economic, "get_account", lambda n: _account(132.81))
-    monkeypatch.setattr(
-        economic,
-        "get_entries_in_range",
-        lambda n, f, t: [
+    _mock_entries(
+        monkeypatch,
+        drafts=[
             _entry(1, "2026-08-01", -250.0, is_draft=True),
             _entry(2, "2026-08-01", 5.0, is_draft=True),
             _entry(3, "2026-08-01", 255.0, is_draft=True),
@@ -128,13 +141,29 @@ def test_draft_entries_are_added_on_top_of_the_posted_balance(
 
 
 @pytest.mark.django_db
+def test_a_draft_outside_the_billed_period_still_counts_toward_the_balance(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    """A draft dated before date_from is still real, uncounted debt until it is posted or withdrawn —
+    get_draft_entries_for_account is called unscoped (no dates) for exactly this reason."""
+    resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
+    _give_residency(resident, 2026, 8, room_index=1)
+    monkeypatch.setattr(economic, "get_account", lambda n: _account(100.0))
+    _mock_entries(monkeypatch, drafts=[_entry(1, "2026-01-01", 50.0, is_draft=True)])  # dated in January
+
+    results = alumneregning.send_alumneregninger(*AUGUST)
+
+    assert "150,00 kr" in results[0].detail
+
+
+@pytest.mark.django_db
 def test_skips_residents_without_a_residency_in_the_billed_period(
     monkeypatch: pytest.MonkeyPatch, make_resident: Callable
 ) -> None:
     resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
     _give_residency(resident, 2025, 1, room_index=1)  # lived there, but not in August 2026
     monkeypatch.setattr(economic, "get_account", lambda n: _account(100.0))
-    monkeypatch.setattr(economic, "get_entries_in_range", lambda n, f, t: [_entry(1, "2026-08-01", 100.0)])
+    _mock_entries(monkeypatch, posted=[_entry(1, "2026-08-01", 100.0)])
 
     results = alumneregning.send_alumneregninger(*AUGUST)
 
@@ -154,17 +183,103 @@ def test_skips_residents_without_an_account_number(make_resident: Callable) -> N
 
 
 @pytest.mark.django_db
-def test_sync_is_idempotent_across_sends(monkeypatch: pytest.MonkeyPatch, make_resident: Callable) -> None:
+def test_ledger_sync_is_idempotent_across_sends(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
     resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
     _give_residency(resident, 2026, 8, room_index=1)
+    _give_residency(resident, 2026, 9, room_index=2)
     monkeypatch.setattr(economic, "get_account", lambda n: _account(250.0))
-    monkeypatch.setattr(economic, "get_entries_in_range", lambda n, f, t: [_entry(1, "2026-08-01", 250.0)])
+    _mock_entries(monkeypatch, posted=[_entry(1, "2026-08-01", 250.0)])
 
     alumneregning.send_alumneregninger(*AUGUST)
-    alumneregning.send_alumneregninger(*AUGUST)  # e-conomic returns the same entry again on re-sync
+    # A later send for a DIFFERENT period re-reads the same posted entry (e-conomic returns it again).
+    other_period = (date(2026, 9, 1), date(2026, 9, 30))
+    alumneregning.send_alumneregninger(*other_period)
 
     assert EconomicLedgerEntry.objects.filter(resident=resident).count() == 1  # not duplicated
     assert "250,00 kr" in mail.outbox[1].body  # balance still correct, not doubled to 500
+
+
+@pytest.mark.django_db
+def test_a_resident_already_billed_for_the_exact_period_is_skipped_on_retry(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    """Retrying a send (the task re-run, the button pressed twice) must not bill the same period
+    twice — AlumneregningSend(outcome="sent") is the dedup key."""
+    resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
+    _give_residency(resident, 2026, 8, room_index=1)
+    monkeypatch.setattr(economic, "get_account", lambda n: _account(250.0))
+    _mock_entries(monkeypatch, posted=[_entry(1, "2026-08-01", 250.0)])
+
+    alumneregning.send_alumneregninger(*AUGUST)
+    results = alumneregning.send_alumneregninger(*AUGUST)  # identical period, retried
+
+    assert results == []  # nothing new to report — everyone billable was already sent
+    assert len(mail.outbox) == 1  # not re-mailed
+    assert (
+        AlumneregningSend.objects.filter(resident=resident, date_from=AUGUST[0], date_to=AUGUST[1]).count()
+        == 1
+    )
+
+
+@pytest.mark.django_db
+def test_a_failed_send_is_retried_not_skipped(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
+    _give_residency(resident, 2026, 8, room_index=1)
+    attempts = {"n": 0}
+
+    def get_account(account_number: int) -> economic.EconomicAccount:
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise economic.EconomicApiError("transient e-conomic error")
+        return _account(100.0)
+
+    monkeypatch.setattr(economic, "get_account", get_account)
+    _mock_entries(monkeypatch, posted=[_entry(1, "2026-08-01", 100.0)])
+
+    first = alumneregning.send_alumneregninger(*AUGUST)
+    second = alumneregning.send_alumneregninger(*AUGUST)
+
+    assert first[0].outcome == "failed"
+    assert second[0].outcome == "sent"  # not skipped — only a successful send blocks a retry
+    assert len(mail.outbox) == 1
+
+
+@pytest.mark.django_db
+def test_a_mail_send_error_is_reported_and_does_not_abort_the_batch(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    """An SMTPException (or any other error from the actual send) must not take the whole batch down
+    with it — regnskab.alumneregning's own docstring already claims best-effort for e-conomic errors,
+    and a mail error is no different."""
+    failing = make_resident(email="fails@gahk.dk", economic_account_number=1, first_name="Fail")
+    _give_residency(failing, 2026, 8, room_index=1)
+    ok = make_resident(email="ok@gahk.dk", economic_account_number=2, first_name="Ok")
+    _give_residency(ok, 2026, 8, room_index=2)
+    monkeypatch.setattr(economic, "get_account", lambda n: _account(0.0))
+    _mock_entries(monkeypatch, posted=[_entry(1, "2026-08-01", 0.0)])
+
+    from django.core.mail import EmailMessage
+
+    real_send = EmailMessage.send
+
+    def flaky_send(self: EmailMessage, *args: object, **kwargs: object) -> int:
+        if self.to == ["fails@gahk.dk"]:
+            raise ConnectionRefusedError("smtp connection refused")
+        return real_send(self, *args, **kwargs)
+
+    monkeypatch.setattr(EmailMessage, "send", flaky_send)
+
+    results = alumneregning.send_alumneregninger(*AUGUST)
+
+    by_email = {r.resident.email: r for r in results}
+    assert by_email["fails@gahk.dk"].outcome == "failed"
+    assert "Kunne ikke sende mail" in by_email["fails@gahk.dk"].detail
+    assert by_email["ok@gahk.dk"].outcome == "sent"
+    assert len(mail.outbox) == 1  # only the one that actually sent
 
 
 @pytest.mark.django_db
@@ -174,7 +289,7 @@ def test_credit_balance_gets_the_other_wording(
     resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
     _give_residency(resident, 2026, 8, room_index=1)
     monkeypatch.setattr(economic, "get_account", lambda n: _account(-100.0))
-    monkeypatch.setattr(economic, "get_entries_in_range", lambda n, f, t: [_entry(1, "2026-08-01", -100.0)])
+    _mock_entries(monkeypatch, posted=[_entry(1, "2026-08-01", -100.0)])
 
     alumneregning.send_alumneregninger(*AUGUST)
 
@@ -191,7 +306,7 @@ def test_uses_the_regnskab_edited_message_template(
         pk=1, message_template="Kære $FORNAVN. $SALDO_LINE Konto: $KONTO_NR."
     )
     monkeypatch.setattr(economic, "get_account", lambda n: _account(100.0))
-    monkeypatch.setattr(economic, "get_entries_in_range", lambda n, f, t: [_entry(1, "2026-08-01", 100.0)])
+    _mock_entries(monkeypatch, posted=[_entry(1, "2026-08-01", 100.0)])
 
     alumneregning.send_alumneregninger(*AUGUST)
 
@@ -205,12 +320,14 @@ def test_uses_the_regnskab_edited_message_template(
 def test_unknown_placeholder_in_edited_template_renders_literally(
     monkeypatch: pytest.MonkeyPatch, make_resident: Callable
 ) -> None:
-    """A regnskab typo ($SALDOO) must not break the send for everyone — safe_substitute leaves it as-is."""
+    """A regnskab typo ($SALDOO) must not break the send for everyone — safe_substitute leaves it as-is
+    (AlumneregningSettingsForm.clean_message_template rejects this at edit time, but a row written
+    directly, e.g. a fixture or a pre-validation row, must still not crash a send)."""
     resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
     _give_residency(resident, 2026, 8, room_index=1)
     AlumneregningSettings.objects.create(pk=1, message_template="Saldo: $SALDOO")
     monkeypatch.setattr(economic, "get_account", lambda n: _account(0.0))
-    monkeypatch.setattr(economic, "get_entries_in_range", lambda n, f, t: [_entry(1, "2026-08-01", 0.0)])
+    _mock_entries(monkeypatch, posted=[_entry(1, "2026-08-01", 0.0)])
 
     results = alumneregning.send_alumneregninger(*AUGUST)
 
@@ -227,7 +344,7 @@ def test_followup_pdf_is_merged_in_as_the_first_page(
     mail_settings = AlumneregningSettings.objects.create(pk=1)
     mail_settings.followup_pdf.save("folgebrev.pdf", ContentFile(_one_page_pdf("Kaere alumner")), save=True)
     monkeypatch.setattr(economic, "get_account", lambda n: _account(0.0))
-    monkeypatch.setattr(economic, "get_entries_in_range", lambda n, f, t: [_entry(1, "2026-08-01", 0.0)])
+    _mock_entries(monkeypatch, posted=[_entry(1, "2026-08-01", 0.0)])
 
     alumneregning.send_alumneregninger(*AUGUST)
 
@@ -248,7 +365,7 @@ def test_no_followup_pdf_means_statement_only(
     resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
     _give_residency(resident, 2026, 8, room_index=1)
     monkeypatch.setattr(economic, "get_account", lambda n: _account(0.0))
-    monkeypatch.setattr(economic, "get_entries_in_range", lambda n, f, t: [_entry(1, "2026-08-01", 0.0)])
+    _mock_entries(monkeypatch, posted=[_entry(1, "2026-08-01", 0.0)])
 
     alumneregning.send_alumneregninger(*AUGUST)
 
@@ -270,7 +387,7 @@ def test_one_failure_does_not_stop_the_rest(monkeypatch: pytest.MonkeyPatch, mak
         return _account(0.0)
 
     monkeypatch.setattr(economic, "get_account", get_account)
-    monkeypatch.setattr(economic, "get_entries_in_range", lambda n, f, t: [_entry(1, "2026-08-01", 0.0)])
+    _mock_entries(monkeypatch, posted=[_entry(1, "2026-08-01", 0.0)])
 
     results = alumneregning.send_alumneregninger(*AUGUST)
 
@@ -315,7 +432,7 @@ def test_rate_limit_error_is_reported_and_batch_continues(
         return _account(0.0)
 
     monkeypatch.setattr(economic, "get_account", get_account)
-    monkeypatch.setattr(economic, "get_entries_in_range", lambda n, f, t: [_entry(1, "2026-08-01", 0.0)])
+    _mock_entries(monkeypatch, posted=[_entry(1, "2026-08-01", 0.0)])
 
     results = alumneregning.send_alumneregninger(*AUGUST)
 
@@ -327,13 +444,14 @@ def test_rate_limit_error_is_reported_and_batch_continues(
 
 
 @pytest.mark.django_db
-def test_preview_does_not_send_but_mirrors_entries(
+def test_preview_does_not_send_or_mirror_entries(
     monkeypatch: pytest.MonkeyPatch, make_resident: Callable
 ) -> None:
+    """A preview is a read — it must not write to the local ledger, unlike an actual send."""
     resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
     _give_residency(resident, 2026, 8, room_index=1)
     monkeypatch.setattr(economic, "get_account", lambda n: _account(250.0))
-    monkeypatch.setattr(economic, "get_entries_in_range", lambda n, f, t: [_entry(1, "2026-08-01", 250.0)])
+    _mock_entries(monkeypatch, posted=[_entry(1, "2026-08-01", 250.0)])
 
     rows = alumneregning.preview_alumneregninger(*AUGUST)
 
@@ -342,8 +460,7 @@ def test_preview_does_not_send_but_mirrors_entries(
     assert rows[0].status == "ready"
     assert "250,00 kr" in rows[0].detail
     assert mail.outbox == []  # nothing was sent
-    # A preview still reads real data, so it mirrors into the local ledger same as a send does.
-    assert EconomicLedgerEntry.objects.filter(resident=resident, entry_number=1).exists()
+    assert not EconomicLedgerEntry.objects.filter(resident=resident).exists()  # nor mirrored
 
 
 @pytest.mark.django_db
@@ -353,7 +470,7 @@ def test_preview_reports_balance_even_with_no_entries(
     resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
     _give_residency(resident, 2026, 8, room_index=1)
     monkeypatch.setattr(economic, "get_account", lambda n: _account(600.0))
-    monkeypatch.setattr(economic, "get_entries_in_range", lambda n, f, t: [])
+    _mock_entries(monkeypatch)
 
     rows = alumneregning.preview_alumneregninger(*AUGUST)
 
@@ -379,12 +496,13 @@ def test_preview_auth_error_aborts(monkeypatch: pytest.MonkeyPatch, make_residen
 def test_render_preview_pdf_returns_bytes(monkeypatch: pytest.MonkeyPatch, make_resident: Callable) -> None:
     resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
     monkeypatch.setattr(economic, "get_account", lambda n: _account(250.0))
-    monkeypatch.setattr(economic, "get_entries_in_range", lambda n, f, t: [_entry(1, "2026-08-01", 250.0)])
+    _mock_entries(monkeypatch, posted=[_entry(1, "2026-08-01", 250.0)])
 
     pdf = alumneregning.render_preview_pdf(resident, *AUGUST)
 
     assert pdf is not None
     assert pdf.startswith(b"%PDF-")
+    assert not EconomicLedgerEntry.objects.filter(resident=resident).exists()  # a PDF view is a read too
 
 
 @pytest.mark.django_db
@@ -393,7 +511,7 @@ def test_render_preview_pdf_works_with_no_entries(
 ) -> None:
     resident = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
     monkeypatch.setattr(economic, "get_account", lambda n: _account(600.0))
-    monkeypatch.setattr(economic, "get_entries_in_range", lambda n, f, t: [])
+    _mock_entries(monkeypatch)
 
     pdf = alumneregning.render_preview_pdf(resident, *AUGUST)
 

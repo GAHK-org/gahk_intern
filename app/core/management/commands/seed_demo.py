@@ -65,9 +65,9 @@ from opslagstavle.demo import seed as seed_opslagstavle
 from opslagstavle.models import Notice, NoticeComment, NoticeReaction
 from photo_album.demo import seed as seed_photo_album
 from photo_album.models import Album, Media
+from regnskab.models import AlumneregningSend, EconomicLedgerEntry
 from residents.models import (
     WORKGROUP_ROLE,
-    EconomicLedgerEntry,
     Residency,
     Resident,
     Role,
@@ -165,9 +165,11 @@ WIPE_ORDER: list[type[models.Model]] = [
     GahkflixVideo,
     GahkflixSeries,
     GahkflixTag,
-    # Also before Resident: the local immutable mirror of e-conomic postings (F-010) PROTECTs its
-    # resident — a real audit record should never silently vanish because a Resident row was deleted.
+    # Also before Resident: both PROTECT their resident — audit records (the local immutable mirror
+    # of e-conomic postings, and what was actually billed) should never silently vanish because a
+    # Resident row was deleted.
     EconomicLedgerEntry,
+    AlumneregningSend,
     Resident,
     # Before Workgroup: ArchiveFolder references it with PROTECT (a SET_NULL would silently turn a
     # gated folder into a world-readable one), so the archive has to go first or --fresh cannot run.
@@ -282,13 +284,17 @@ class Command(BaseCommand):
         seen_emails = set()
 
         # Fixed, documented accounts first so devs always have known logins.
-        fixtures = [
+        fixtures: list[tuple[str, str, str, dict[str, object]]] = [
             ("admin@gahk.dk", "Admin", "Istrator", {"is_superuser": True, "is_staff": True}),
             ("formand@gahk.dk", "Frederik", "Formand", {}),
             ("ak@gahk.dk", "Astrid", "Krydsen", {}),
             ("oel@gahk.dk", "Ole", "Ølmand", {}),
             ("regnskab@gahk.dk", "Regina", "Regnskab", {}),
-            ("beboer@gahk.dk", "Bente", "Beboer", {}),
+            # account 1101 is a real, working account in e-conomic's public demo company (restapi.
+            # e-conomic.com with the "demo"/"demo" tokens config.settings defaults to under DEBUG) —
+            # used throughout this feature's own development, so a fresh `task seed` lets regnskab
+            # click through the whole alumneregning flow immediately, no manual setup required.
+            ("beboer@gahk.dk", "Bente", "Beboer", {"economic_account_number": 1101}),
         ]
         for email, first, last, extra in fixtures:
             r = self._make_resident(email, first, last, **extra)
@@ -694,6 +700,7 @@ class Command(BaseCommand):
             ("formand@gahk.dk", "administrator role"),
             ("ak@gahk.dk", "AK role"),
             ("oel@gahk.dk", "Ølkælder role"),
-            ("beboer@gahk.dk", "plain resident"),
+            ("regnskab@gahk.dk", "Regnskab role — /intern/regnskab/, alumneregninger"),
+            ("beboer@gahk.dk", "plain resident, e-conomic konto 1101 (test alumneregning on this one)"),
         ]:
             self.stdout.write(f"  {email:22} {desc}")

@@ -24,7 +24,7 @@
             <td>{{ row.detail }}</td>
             <td class="whitespace-nowrap">
               {% if row.status == 'ready' %}
-                <a href="{% url 'alumneregning_statement_pdf' row.resident.pk %}?fra={{ date_from|date:'Y-m-d' }}&til={{ date_to|date:'Y-m-d' }}"
+                <a href="{% url 'regnskab:alumneregning_statement_pdf' row.resident.pk %}?fra={{ date_from|date:'Y-m-d' }}&til={{ date_to|date:'Y-m-d' }}"
                    target="_blank" rel="noopener">Se PDF</a>
               {% endif %}
             </td>
@@ -37,15 +37,15 @@
   </div>
 
   {% if rows %}
-    <form method="post" action="{% url 'send_alumneregninger' %}"
+    <form method="post" action="{% url 'regnskab:send_alumneregninger' %}"
           onsubmit="return confirm('Send alumneregninger for den valgte periode til alle alumner med et e-conomic kontonr.?');">
       {% csrf_token %}
       <input type="hidden" name="fra" value="{{ date_from|date:'Y-m-d' }}">
       <input type="hidden" name="til" value="{{ date_to|date:'Y-m-d' }}">
       <button type="submit" class="btn">Bekræft og send</button>
-      <a href="{% url 'regnskab' %}" class="btn">Annuller</a>
+      <a href="{% url 'regnskab:overview' %}" class="btn">Annuller</a>
     </form>
   {% else %}
-    <a href="{% url 'regnskab' %}" class="btn">Tilbage til regnskab</a>
+    <a href="{% url 'regnskab:overview' %}" class="btn">Tilbage til regnskab</a>
   {% endif %}
 {% endblock %}

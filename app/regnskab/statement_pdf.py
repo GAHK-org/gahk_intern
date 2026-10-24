@@ -11,8 +11,9 @@ from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 from pypdf import PdfReader, PdfWriter
 
+from residents.models import Resident
+
 from . import economic
-from .models import Resident
 
 
 def _kr(amount: Decimal) -> str:

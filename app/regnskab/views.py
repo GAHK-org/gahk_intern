@@ -1,4 +1,4 @@
-"""Regnskab (accounting) settlement view (F-010 role family).
+"""Regnskab (accounting) settlement + alumneregning views (F-010 role family).
 
 The accounting embedsgruppe settles a moved-out resident's housing deposit. For that they need to see
 what the resident still owes the dorm: AK labour (krydser; negative = behind) and their ølkælder
@@ -14,15 +14,17 @@ from django.contrib import messages
 from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed, HttpResponseNotFound
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 
 from ak.models import AkEntry
+from residents.models import Residency, Resident, prev_period
+from residents.permissions import role_required
+from residents.views import DA_MONTHS, _parse_period, _period_options
 
-from . import alumneregning, economic
+from . import alumneregning, economic, tasks
 from .forms import AlumneregningSettingsForm, EconomicAccountNumberForm
-from .models import AlumneregningSettings, Residency, Resident, prev_period
-from .permissions import role_required
-from .views import DA_MONTHS, _parse_period, _period_options
+from .models import AlumneregningSend, AlumneregningSettings
 
 
 class Row(NamedTuple):
@@ -95,7 +97,7 @@ def set_economic_account_number(request: HttpRequest, pk: int) -> HttpResponse:
     nxt = request.POST.get("next", "")
     if nxt and url_has_allowed_host_and_scheme(nxt, allowed_hosts={request.get_host()}):
         return redirect(nxt)
-    return redirect("regnskab")
+    return redirect("regnskab:overview")
 
 
 def _parse_date(value: str | None) -> date | None:
@@ -128,14 +130,14 @@ def preview_alumneregninger_view(request: HttpRequest) -> HttpResponse:
     period = _parse_billing_period(request.GET)
     if period is None:
         messages.error(request, "Angiv en gyldig periode — fra-dato skal være før (eller lig med) til-dato.")
-        return redirect("regnskab")
+        return redirect("regnskab:overview")
     date_from, date_to = period
 
     try:
         rows = alumneregning.preview_alumneregninger(date_from, date_to)
     except economic.EconomicAuthError:
         messages.error(request, _AUTH_ERROR_MESSAGE + " Ingen forhåndsvisning kunne hentes.")
-        return redirect("regnskab")
+        return redirect("regnskab:overview")
 
     return render(
         request,
@@ -157,7 +159,7 @@ def alumneregning_statement_pdf_view(request: HttpRequest, pk: int) -> HttpRespo
         pdf = alumneregning.render_preview_pdf(resident, date_from, date_to)
     except economic.EconomicAuthError:
         messages.error(request, _AUTH_ERROR_MESSAGE)
-        return redirect("regnskab")
+        return redirect("regnskab:overview")
     except economic.EconomicApiError as exc:
         return HttpResponseNotFound(f"Kunne ikke hente kontoudtog fra e-conomic: {exc}")
     if pdf is None:
@@ -170,26 +172,46 @@ def alumneregning_statement_pdf_view(request: HttpRequest, pk: int) -> HttpRespo
 
 @role_required("regnskab")
 def send_alumneregninger_view(request: HttpRequest) -> HttpResponse:
-    """The "one button": email every billable alumne their statement for the chosen period."""
+    """The "one button": queues the actual send as a background task (hundreds of e-conomic calls and
+    SMTP sends do not belong inside one HTTP request — see tasks.send_alumneregninger_task) and sends
+    regnskab straight to the status page, which shows progress as AlumneregningSend rows appear."""
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
     period = _parse_billing_period(request.POST)
     if period is None:
         messages.error(request, "Angiv en gyldig periode — fra-dato skal være før (eller lig med) til-dato.")
-        return redirect("regnskab")
+        return redirect("regnskab:overview")
     date_from, date_to = period
 
-    try:
-        results = alumneregning.send_alumneregninger(date_from, date_to)
-    except economic.EconomicAuthError:
-        messages.error(request, _AUTH_ERROR_MESSAGE + " Ingen alumneregninger blev sendt.")
-        return redirect("regnskab")
+    tasks.send_alumneregninger_task.delay(date_from.isoformat(), date_to.isoformat())
+    messages.success(
+        request,
+        f"Alumneregninger for {date_from.isoformat()} til {date_to.isoformat()} er sat i kø og sendes i "
+        "baggrunden. Siden herunder opdateres, efterhånden som de bliver sendt.",
+    )
+    status_url = reverse("regnskab:alumneregninger_status")
+    return redirect(f"{status_url}?fra={date_from.isoformat()}&til={date_to.isoformat()}")
+
+
+@role_required("regnskab")
+def alumneregninger_status_view(request: HttpRequest) -> HttpResponse:
+    """Who has (and hasn't yet) been billed for a period — reload to see the background send progress."""
+    period = _parse_billing_period(request.GET)
+    if period is None:
+        messages.error(request, "Angiv en gyldig periode — fra-dato skal være før (eller lig med) til-dato.")
+        return redirect("regnskab:overview")
+    date_from, date_to = period
+
+    billable = list(alumneregning.residents_billable_for(date_from, date_to))
+    sends = {s.resident_id: s for s in AlumneregningSend.objects.filter(date_from=date_from, date_to=date_to)}
+    rows = [(resident, sends.get(resident.pk)) for resident in billable]
+    done = sum(1 for _resident, send in rows if send is not None)
 
     return render(
         request,
-        "regnskab/alumneregninger_sent.html",
-        {"results": results, "date_from": date_from, "date_to": date_to},
+        "regnskab/alumneregninger_status.html",
+        {"rows": rows, "date_from": date_from, "date_to": date_to, "done": done, "total": len(rows)},
     )
 
 
@@ -202,7 +224,7 @@ def alumneregning_settings_view(request: HttpRequest) -> HttpResponse:
         if form.is_valid():
             form.save()
             messages.success(request, "Alumneregning-indstillinger er opdateret.")
-            return redirect("alumneregning_settings")
+            return redirect("regnskab:alumneregning_settings")
         messages.error(request, "Ret fejlene og prøv igen.")
     else:
         form = AlumneregningSettingsForm(instance=instance)
