@@ -427,6 +427,8 @@
   .msg-text a:hover { color:var(--green); }
   .msg-own .msg-text a { color:#fff; text-decoration-color:rgb(255 255 255 / .6); }
   .msg-own .msg-text a:hover { color:#fff; text-decoration-color:#fff; }
+  .msg-text [data-mention] { font-weight:650; text-decoration:none; }
+  .msg-own .msg-text [data-mention] { color:#fff; }
   .msg-line-text { display:flow-root; }
   .msg-bubble .msg-text { display:inline; }
   /* Date and time above the bubble, indented past the 34px avatar + 10px gap so it lines up with the
@@ -740,6 +742,9 @@
   .msg-parent .msg-bubble { max-width:none; padding:0; border-radius:0; background:none;
     color:var(--ink); filter:none; }
   .msg-parent .msg-meta { color:var(--faint); }
+  /* Same for links (and @mentions): .msg-own makes them white for the green bubble. */
+  .msg-parent .msg-text a, .msg-parent .msg-text [data-mention] { color:var(--green-700); text-decoration-color:currentColor; }
+  .msg-parent .msg-text a:hover { color:var(--green); }
   .msg-parent .msg-bubble::after { display:none; }
   .msg-parent .msg-name { display:block; font-size:13.5px; }
   .msg-parent .msg-actions { padding-left:44px; justify-content:flex-start; }
@@ -2540,4 +2545,13 @@
   .pad-when { white-space:nowrap; font-variant-numeric:tabular-nums; }
   .pad-pages { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 18px; border-top:1px solid var(--border); }
   .pad-total td { border-top:1px solid var(--border-strong); }
+
+  /* @mentions: the rendered link (core/mentions.py) and the composer's picker (mention.ts). */
+  [data-mention] { font-weight:600; color:var(--green); text-decoration:none; }
+  a[data-mention]:hover { text-decoration:underline; }
+  .mention-picker { position:fixed; z-index:90; box-sizing:border-box; margin:0; padding:4px; list-style:none; background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--radius-sm); box-shadow:var(--shadow); max-height:260px; overflow:auto; overscroll-behavior:contain; }
+  .mention-picker li { display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:6px; cursor:pointer; font-size:14px; color:var(--ink); }
+  .mention-picker li[aria-selected="true"], .mention-picker li:hover { background:var(--green-050); }
+  .mention-picker img { width:22px; height:22px; border-radius:50%; object-fit:cover; }
+  .mention-picker small { margin-left:auto; color:var(--faint); font-size:12px; }
 }

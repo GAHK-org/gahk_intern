@@ -124,6 +124,13 @@ they would get a 403 on opening. Acting on your own content never notifies you.
   overview; the day before a draft is deleted, its uploader (Høj) and the administrators (Høj) are
   warned once. While GAHKFlix is behind its rollout gate, its group is hidden
   on the settings page for residents outside it, and none of them are notified.
+- **@mentions** (`mentions`, Høj) → a resident named with `@` in a post, comment, Den Hurtige message
+  or reply, event description or comment, repair or repair note, if they are on this month's alumneliste and can open the thing.
+  Naming an embedsgruppe tells everyone in it this month. A resident named directly is told that and
+  not that their group was named, and a mention replaces the new-post, new-event, reply or room
+  notification they would otherwise also have got. Editing a notice or an event only notifies
+  residents the edit newly reaches. See
+  [mentions.md](mentions.md).
 
 ## In-app notifications
 

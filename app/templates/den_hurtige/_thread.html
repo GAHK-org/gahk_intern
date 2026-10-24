@@ -137,7 +137,7 @@
       {% endcomment %}
       <label class="sr-only" for="id_comment_{{ post.pk }}">Svar</label>
       <input type="text" id="id_comment_{{ post.pk }}" name="content"
-             maxlength="{{ max_content_chars }}" placeholder="Svar…" enterkeyhint="send">
+             maxlength="{{ max_content_chars }}" placeholder="Svar…" enterkeyhint="send" data-mentionable>
       <button type="submit" class="composer-send" title="Send" aria-label="Send">&uarr;</button>
       {% comment %}
         Feedback that the photo attached, and the only way to take it back off. A hidden file input

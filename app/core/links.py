@@ -32,6 +32,8 @@ from django.utils.html import escape
 from django.utils.safestring import SafeString, mark_safe
 from linkify_it import LinkifyIt
 
+from .mentions import MENTION_RE, is_group, profile_url
+
 # Characters of link TEXT a reader is shown. Roughly a chat bubble's width at the message font, so
 # a shortened link is one line rather than the four an unshortened one wraps to.
 MAX_LINK_TEXT = 42
@@ -107,9 +109,30 @@ def linkify(text: str | None) -> SafeString:
     """
     if not text:
         return mark_safe("")  # nosec — a literal empty string
-    matches = _LINKIFY.match(text)
+    # Mentions are split out first so the URL scanner never sees a token, then each piece goes
+    # through the same escape-then-build discipline as a link.
+    out: list[str] = []
+    cursor = 0
+    for match in MENTION_RE.finditer(text):
+        out.extend(_linkified(text[cursor : match.start()]))
+        name = escape(match.group(1))
+        if is_group(match):  # an embedsgruppe has no page of its own to link to
+            out.append(f'<span data-mention="group">@{name}</span>')
+        else:
+            href = escape(profile_url(int(match.group(3))))
+            out.append(f'<a data-mention="resident" href="{href}">@{name}</a>')
+        cursor = match.end()
+    out.extend(_linkified(text[cursor:]))
+    # ruff S308 and bandit flag mark_safe, and they are right to. What is being marked is a list of
+    # escape() results and tags built above from escaped pieces; see the docstring.
+    return mark_safe("".join(out))  # noqa: S308  # nosec
+
+
+def _linkified(text: str) -> list[str]:
+    """`text` as escaped HTML pieces with its URLs as links. Not safe on its own — see `linkify`."""
+    matches = _LINKIFY.match(text) if text else None
     if not matches:
-        return mark_safe(escape(text))  # noqa: S308  # nosec — escape() output only
+        return [escape(text)]
 
     out: list[str] = []
     cursor = 0
@@ -128,6 +151,4 @@ def linkify(text: str | None) -> SafeString:
         )
         cursor = match.last_index
     out.append(escape(text[cursor:]))
-    # ruff S308 and bandit flag mark_safe, and they are right to. What is being marked is a list of
-    # escape() results and tags built above from escaped pieces; see the docstring.
-    return mark_safe("".join(out))  # noqa: S308  # nosec
+    return out

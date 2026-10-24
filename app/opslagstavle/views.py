@@ -261,7 +261,8 @@ def create(request: HttpRequest) -> HttpResponse:
             notice.author = current_resident(request)
             notice.save()
             sync_images(notice)
-        services.notify_new_notice(notice)
+        mentioned = services.notify_mentions_in_notice(notice)
+        services.notify_new_notice(notice, skip=mentioned)
         live.notice_created(notice)
         messages.success(request, "Opslaget er slået op.")
         return redirect("opslagstavle:detail", pk=notice.pk)
@@ -274,6 +275,7 @@ def edit(request: HttpRequest, pk: int) -> HttpResponse:
     notice = get_object_or_404(_visible(request), pk=pk)
     if not can_edit(request, notice):
         raise PermissionDenied
+    old_body = notice.body
     form = NoticeForm(request.POST or None, instance=notice, events_allowed=events_allowed(request))
     if request.method == "POST" and form.is_valid():
         with transaction.atomic():
@@ -283,6 +285,7 @@ def edit(request: HttpRequest, pk: int) -> HttpResponse:
             notice.edited_at = timezone.now()
             notice.save()
             sync_images(notice)
+        services.notify_mentions_in_notice(notice, old_body)
         live.notice_changed(notice.pk)
         messages.success(request, "Opslaget er opdateret.")
         return redirect("opslagstavle:detail", pk=notice.pk)

@@ -88,6 +88,7 @@ GROUPS: tuple[tuple[str, str], ...] = (
     ("events", "Begivenheder"),
     ("repairs", "Reparationer"),
     ("gahkflix", "GAHKFlix"),
+    ("mentions", "Nævnt"),
     ("system", "System"),
     ("general", "Generelt"),
 )
@@ -101,6 +102,7 @@ GROUP_ICONS: dict[str, str] = {
     "events": "calendar",
     "repairs": "wrench",
     "gahkflix": "film",
+    "mentions": "users",
 }
 
 # The two catch-alls — see "Before adding a category" in the module docstring. Most features that
@@ -122,6 +124,7 @@ GAHKFLIX_CAST = "gahkflix.cast"
 GAHKFLIX_UPLOADS = "gahkflix.uploads"
 GAHKFLIX_APPROVALS = "gahkflix.approvals"
 GAHKFLIX_DRAFTS = "gahkflix.drafts"
+MENTIONS = "mentions"
 
 # The prefix of a Den Hurtige room's category. One category per room, generated from the channel
 # registry below, so adding a channel gives it a settings toggle without touching this file.
@@ -210,6 +213,13 @@ def _build() -> tuple[Category, ...]:
             "gahkflix",
             "Ugentligt overblik over upublicerede kladder, og besked dagen før en slettes. Til administratorer.",
             in_app_optional=False,
+        ),
+        Category(
+            MENTIONS,
+            "Når du bliver nævnt",
+            "mentions",
+            "Når nogen nævner dig eller din embedsgruppe med @ i et opslag, en kommentar, Den Hurtige, en begivenhed eller en reparation.",
+            importance=Importance.HOEJ,
         ),
         Category(
             SYSTEM,
