@@ -10,8 +10,8 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.tokens import default_token_generator
 from django.core.mail import send_mail
 from django.db import transaction
-from django.db.models import Q, QuerySet
-from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
+from django.db.models import Count, Q, QuerySet
+from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -19,6 +19,7 @@ from django.utils.encoding import force_bytes
 from django.utils.http import url_has_allowed_host_and_scheme, urlsafe_base64_encode
 
 from core.danish import MONTHS
+from core.mentions import mentionable
 from core.models import Cleaning, Room, Workgroup
 
 from .forms import ProfileEditForm, ResidentEditForm
@@ -751,6 +752,33 @@ def profile(request: HttpRequest, pk: int) -> HttpResponse:
         request,
         "residents/profile.html",
         {"subject": resident, "residency": residency, "recent_notices": recent_notices, "badges": badges},
+    )
+
+
+@login_required
+def mention_lookup(request: HttpRequest) -> JsonResponse:
+    """The @-mention picker's suggestions: residents on the active alumneliste matching `q`, and the
+    embedsgrupper with members on it."""
+    query = (request.GET.get("q") or "").strip()
+    residents = mentionable()
+    year, month = active_period()
+    # One filter() call, so the count below counts this period's members, not every month's.
+    groups = Workgroup.objects.filter(
+        residency__year=year,
+        residency__month=month,
+        residency__resident__is_active=True,
+        residency__resident__is_kitchen=False,
+    )
+    for word in query.split()[:4]:
+        residents = residents.filter(Q(first_name__icontains=word) | Q(last_name__icontains=word))
+        groups = groups.filter(name__icontains=word)
+    found = residents.order_by("first_name", "last_name")[:8]
+    found_groups = groups.annotate(members=Count("residency__resident", distinct=True)).order_by("name")[:4]
+    return JsonResponse(
+        {
+            "residents": [{"id": r.pk, "name": r.full_name, "avatar": r.avatar_url} for r in found],
+            "groups": [{"id": g.pk, "name": g.name, "members": g.members} for g in found_groups],
+        }
     )
 
 

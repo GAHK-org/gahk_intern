@@ -26,6 +26,7 @@ deadline is for — but it is the thing to revisit first if people complain.
 
 import datetime
 import logging
+from collections.abc import Collection
 from dataclasses import dataclass
 
 from django.db import transaction
@@ -34,6 +35,7 @@ from django.db.models import QuerySet
 from core import push
 from core.clock import current_datetime
 from core.markdown import plain_text
+from core.mentions import notify_mentions, to_plain
 from notifications import categories
 from notifications import services as notifications
 from residents.models import Residency, Resident, active_period
@@ -268,10 +270,28 @@ def _when(event: Event) -> str:
     return f"{event.starts_at:%d.%m} kl. {event.starts_at:%H.%M}"
 
 
-def notify_new_event(event: Event) -> None:
-    """A new event goes to everyone who may see it — that is the point of leaving Facebook."""
+def notify_mentions_in_description(
+    event: Event, actor: Resident, old_description: str | None = None
+) -> set[int]:
+    """Tell residents newly @-mentioned in the description. After sync_invites, because on a private
+    event the invite list decides who may be told. Hosts are added back: they are not on their own
+    guest list."""
+    hosts = {event.organiser_id, *event.co_organisers.values_list("pk", flat=True)}
+    return notify_mentions(
+        event.description,
+        actor=actor,
+        where=f"i {event.title}",
+        url=_url(event),
+        audience=_audience(event) | access.allowed_residents(Resident.objects.filter(pk__in=hosts)),
+        old_text=old_description,
+    )
+
+
+def notify_new_event(event: Event, skip: Collection[int] = ()) -> None:
+    """A new event goes to everyone who may see it — that is the point of leaving Facebook. `skip` is
+    who was just told they are mentioned in it."""
     notifications.notify(
-        _audience(event),
+        _audience(event).exclude(pk__in=skip),
         category=categories.EVENTS_NEW,
         title=event.title,
         body=push.preview(f"{_when(event)} · {plain_text(event.description)}"),
@@ -329,12 +349,21 @@ def notify_new_comment(comment: EventComment) -> None:
     """
     event = comment.event
     hosts = {event.organiser_id, *event.co_organisers.values_list("pk", flat=True)}
+    # Hosts are added back to the mention audience: they are not on their own private guest list.
+    mentioned = notify_mentions(
+        comment.body,
+        actor=comment.author,
+        where=f"på {event.title}",
+        url=_url(event),
+        audience=_audience(event) | access.allowed_residents(Resident.objects.filter(pk__in=hosts)),
+    )
+    hosts -= mentioned
     hosts.discard(comment.author_id)
     if not hosts:
         return
     # The title always carries the event, so a photo-only comment still has something to say; the
     # glyph is what tells the reader there is a picture.
-    body = push.preview(f"{event.title}: {comment.body or '📷 Billede'}")
+    body = push.preview(f"{event.title}: {to_plain(comment.body) or '📷 Billede'}")
     for host_id in access.allowed_residents(Resident.objects.filter(pk__in=hosts)).values_list(
         "pk", flat=True
     ):

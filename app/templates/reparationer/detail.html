@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load text_extras %}
 {% block title %}{{ task.title }} - Reparationer{% endblock %}
 {% block content_width %}max-w-2xl{% endblock %}
 
@@ -18,7 +19,7 @@
     <p class="chip chip-quiet">Ansvarlig: {{ task.get_responsible_display }}</p>
     {% if task.archived_at %}<p class="chip chip-quiet">Arkiveret {{ task.archived_at|date:"j. M Y" }}</p>{% endif %}
     {% if task.location %}<p class="muted">{{ task.location }}</p>{% endif %}
-    {% if task.description %}<p>{{ task.description|linebreaksbr }}</p>{% endif %}
+    {% if task.description %}<p>{{ task.description|links|linebreaksbr }}</p>{% endif %}
     <p class="muted text-sm">
       Meldt af {{ task.reported_by.first_name }} {{ task.reported_by.last_name }}
       · {{ task.created_at|date:"j. M Y, H:i" }}
@@ -80,7 +81,7 @@
   <div class="board-list mb-4">
     {% for comment in comments %}
       <div class="card-flat card-pad">
-        <p>{{ comment.body|linebreaksbr }}</p>
+        <p>{{ comment.body|links|linebreaksbr }}</p>
         <p class="muted text-sm">
           {{ comment.author.first_name }} {{ comment.author.last_name }} · {{ comment.created_at|date:"j. M Y, H:i" }}
           {% if comment.can_delete %}

@@ -21,7 +21,7 @@
   <div class="overflow-x-auto mb-8">
     <table cellpadding="6" class="text-sm" style="width:100%; border-collapse:collapse">
       <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec; white-space:nowrap">
-        <th>Navn</th><th>Værelse ({{ prior_label }})</th><th>AK</th><th>Ølkælder</th>
+        <th>Navn</th><th>Værelse ({{ prior_label }})</th><th>AK</th><th>Ølkælder</th><th>E-conomic kontonr.</th>
       </tr></thead>
       <tbody>{% include "regnskab/_rows.html" with rows=leavers %}</tbody>
     </table>
@@ -36,13 +36,38 @@
   </form>
 
   {% if q %}
-    <div class="overflow-x-auto">
+    <div class="overflow-x-auto mb-8">
       <table cellpadding="6" class="text-sm" style="width:100%; border-collapse:collapse">
         <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec; white-space:nowrap">
-          <th>Navn</th><th>Værelse</th><th>AK</th><th>Ølkælder</th>
+          <th>Navn</th><th>Værelse</th><th>AK</th><th>Ølkælder</th><th>E-conomic kontonr.</th>
         </tr></thead>
         <tbody>{% include "regnskab/_rows.html" with rows=results %}</tbody>
       </table>
     </div>
   {% endif %}
+
+  <div style="border-top:1px solid #e6e8ec; margin-top:2rem; padding-top:1.5rem">
+    <h2>Alumneregninger</h2>
+    <p class="muted text-sm mb-3">
+      Viser en forhåndsvisning af, hvem der vil modtage en e-mail med en genereret kontoudskrift
+      (posteringer i den valgte periode, samt den aktuelle saldo fra e-conomic) — alumner med et
+      e-conomic kontonr. ovenfor, der boede på kollegiet i perioden. Alle med en saldo får en
+      regning, også hvis der ikke er nye posteringer i netop denne periode. Selve afsendelsen sker
+      først efter du har set forhåndsvisningen.
+    </p>
+    <form method="get" action="{% url 'regnskab:preview_alumneregninger' %}" class="flex flex-wrap items-end gap-2">
+      <div>
+        <label for="fra" class="font-semibold block text-sm">Fra</label>
+        <input type="date" id="fra" name="fra" value="{{ alumneregning_from }}" required>
+      </div>
+      <div>
+        <label for="til" class="font-semibold block text-sm">Til</label>
+        <input type="date" id="til" name="til" value="{{ alumneregning_to }}" required>
+      </div>
+      <button type="submit" class="btn">Lav Alumneregninger</button>
+    </form>
+    <p class="text-sm mt-2">
+      <a href="{% url 'regnskab:alumneregning_settings' %}">Rediger besked og følgebrev →</a>
+    </p>
+  </div>
 {% endblock %}

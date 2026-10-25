@@ -34,9 +34,11 @@ import nh3
 from django.conf import settings
 from django.utils.safestring import SafeString, mark_safe
 from markdown_it import MarkdownIt
+from markdown_it.rules_inline import StateInline
 from markdown_it.token import Token
 
 from .links import shorten, title_for
+from .mentions import MENTION_RE, is_group, profile_url
 
 # The "default" preset — NOT "commonmark" or "gfm-like", both of which set html=True to be
 # spec-compliant. `default` gives tables and strikethrough, which the værelsesrunde results post
@@ -83,13 +85,16 @@ ALLOWED_TAGS = {
     "tr",
     "th",
     "td",
+    "span",  # only as a group @mention — see _mention
 }
 
 # No "*" bucket at all, unlike cms/sanitize.py: that means no style, no class, no id, and no event
 # handlers. `style` and `class` are the CSS-injection and break-the-layout surface, and `.prose-gahk`
 # already styles everything a post can contain.
 ALLOWED_ATTRS = {
-    "a": {"href", "title"},
+    # `data-mention` only ever as "resident" or "group" — see _filter_attribute.
+    "a": {"href", "title", "data-mention"},
+    "span": {"data-mention"},
     "img": {"src", "alt", "title"},
     "th": {"colspan", "rowspan", "scope"},
     "td": {"colspan", "rowspan"},
@@ -156,9 +161,41 @@ def _shorten_autolinks(state: object) -> None:
 _MD.core.ruler.push("shorten_autolinks", _shorten_autolinks)
 
 
-def _local_images_only(tag: str, attr: str, value: str) -> str | None:
-    """nh3 attribute filter: drop an image source that is not one of ours."""
+def _mention(state: StateInline, silent: bool) -> bool:
+    """markdown-it inline rule: `@[Navn](42)` becomes a link to resident 42's profile, and
+    `@[Gruppe](g55)` a highlighted span.
+
+    Runs before `link`, which would otherwise read the same token as `@` plus a link to "42".
+    """
+    if state.src[state.pos] != "@" or state.linkLevel > 0:
+        return False
+    match = MENTION_RE.match(state.src, state.pos, state.posMax)
+    if match is None:
+        return False
+    if not silent:
+        if is_group(match):  # an embedsgruppe has no page of its own to link to
+            state.push("html_inline", "", 0).content = '<span data-mention="group">'
+            state.push("text", "", 0).content = f"@{match.group(1)}"
+            state.push("html_inline", "", 0).content = "</span>"
+        else:
+            link = state.push("link_open", "a", 1)
+            link.attrs = {"href": profile_url(int(match.group(3))), "data-mention": "resident"}
+            link.markup = "mention"
+            state.push("text", "", 0).content = f"@{match.group(1)}"
+            state.push("link_close", "a", -1)
+    state.pos = match.end()
+    return True
+
+
+_MD.inline.ruler.before("link", "mention", _mention)
+
+
+def _filter_attribute(tag: str, attr: str, value: str) -> str | None:
+    """nh3 attribute filter: drop an image source that is not one of ours, and any mention marker
+    but the two _mention writes."""
     if tag == "img" and attr == "src" and not value.startswith(_LOCAL_IMAGE_PREFIXES):
+        return None
+    if attr == "data-mention" and value not in ("resident", "group"):
         return None
     return value
 
@@ -176,7 +213,7 @@ def _clean(html: str) -> str:
         # nofollow as well as noopener/noreferrer: these links are resident-authored, so the board
         # should not pass the kollegium's search-engine standing to whatever anyone links to.
         link_rel="noopener noreferrer nofollow",
-        attribute_filter=_local_images_only,
+        attribute_filter=_filter_attribute,
     )
 
 
@@ -240,7 +277,7 @@ def image_sources(source: str) -> list[str]:
     """The images `source` will actually render, in document order.
 
     Filtered to our own origins, because that is what survives the sanitiser (see
-    `_local_images_only`) — so a caller counting these counts what a reader will see, not what the
+    `_filter_attribute`) — so a caller counting these counts what a reader will see, not what the
     author typed. Used by opslagstavlen to decide whether a post has enough pictures to be worth
     collapsing in the feed.
     """

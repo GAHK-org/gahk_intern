@@ -3,18 +3,19 @@
 from django.contrib.auth import views as auth_views
 from django.urls import include, path
 
-from . import views, views_regnskab
+from . import views
 from .forms import EmailAuthenticationForm, ResidentPasswordResetForm
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
-    path("regnskab/", views_regnskab.overview, name="regnskab"),
+    path("regnskab/", include("regnskab.urls")),
     path("alumneliste/", views.directory, name="directory"),
     path("alumneliste/rows", views.directory_rows, name="directory_rows"),
     path("alumneliste/eksport", views.directory_export, name="directory_export"),
     path("alumneliste/naeste-maaned", views.next_month_list, name="next_month_list"),
     path("beboer/<int:pk>/rediger", views.edit_resident, name="edit_resident"),
     path("beboer/<int:pk>/profil", views.profile, name="resident_profile"),
+    path("beboere/naevn", views.mention_lookup, name="mention_lookup"),
     path("beboer/min-profil/rediger", views.edit_profile, name="edit_profile"),
     path("stamtree/", views.stamtree, name="stamtree"),
     path("notifikationer/", include("notifications.urls")),
