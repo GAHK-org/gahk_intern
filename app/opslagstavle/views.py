@@ -29,7 +29,7 @@ from core.emoji import EMOJI_SHORTLIST
 from core.markdown import image_sources, render_markdown
 from core.reactions import CREATED, apply_toggle, reaction_rows
 from core.uploads import attached_image, validate_image_upload
-from residents.permissions import current_resident
+from residents.permissions import current_resident, is_kitchen
 
 from . import live, services
 from .access import (
@@ -89,10 +89,17 @@ def _decorate(notices: list[Notice], request: HttpRequest) -> list[Notice]:
 REACTIONS = Prefetch("reactions", queryset=NoticeReaction.objects.select_related("author"))
 
 
-def _list_queryset() -> NoticeQuerySet:
+def _visible(request: HttpRequest) -> NoticeQuerySet:
+    """The posts this reader may see: all of them, except that the kitchen account sees only its own."""
+    if is_kitchen(request):
+        return Notice.objects.filter(author=current_resident(request))
+    return Notice.objects.all()
+
+
+def _list_queryset(request: HttpRequest) -> NoticeQuerySet:
     """The columns and relations every listing needs. `prefetch_related("reactions")` is what keeps
     the reaction rows from being an N+1 across a page of posts."""
-    return Notice.objects.select_related("author", "pinned_by").prefetch_related(REACTIONS)
+    return _visible(request).select_related("author", "pinned_by").prefetch_related(REACTIONS)
 
 
 @access_required
@@ -109,7 +116,7 @@ def board(request: HttpRequest) -> HttpResponse:
     if selected not in Category.values:
         selected = ""  # an unknown category shows everything rather than 404ing
 
-    qs = _list_queryset()
+    qs = _list_queryset(request)
     if selected:
         qs = qs.filter(category=selected)
 
@@ -130,7 +137,7 @@ def board(request: HttpRequest) -> HttpResponse:
             "quick_emoji": EMOJI_SHORTLIST,
             # The newest post that existed when this page was drawn, whatever the filter: the cursor
             # a reconnecting board hands live_cards to learn what it missed (`?siden=`).
-            "newest_pk": Notice.objects.aggregate(newest=Max("pk"))["newest"] or 0,
+            "newest_pk": _visible(request).aggregate(newest=Max("pk"))["newest"] or 0,
             # Tells the trial group the board is not live yet, so they do not read the quiet as
             # nobody caring. Disappears on its own when ACCESS_ROLES is set to None.
             "limited_rollout": is_limited(),
@@ -151,7 +158,8 @@ def events_allowed(request: HttpRequest) -> bool:
     """
     from events.access import request_allowed
 
-    return request_allowed(request)
+    # Begivenheder is closed to the kitchen account by core.middleware, which the gate cannot see.
+    return request_allowed(request) and not is_kitchen(request)
 
 
 @access_required
@@ -163,7 +171,7 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
 
 def _detail_context(request: HttpRequest, pk: int) -> dict[str, object]:
     """Everything the detail page draws, shared with `live_detail` so the two cannot differ."""
-    notice = get_object_or_404(_list_queryset().prefetch_related("comments__author"), pk=pk)
+    notice = get_object_or_404(_list_queryset(request).prefetch_related("comments__author"), pk=pk)
     _decorate([notice], request)
     comments = list(notice.comments.all())
     for comment in comments:
@@ -212,11 +220,11 @@ def live_cards(request: HttpRequest) -> HttpResponse:
     if not request_allowed(request):
         return HttpResponse(status=204)
     ids = [int(raw) for raw in request.GET.getlist("id") if raw.isdigit()][:MAX_LIVE_CARDS]
-    notices = _decorate(list(_list_queryset().filter(pk__in=ids)), request)
+    notices = _decorate(list(_list_queryset(request).filter(pk__in=ids)), request)
     since = request.GET.get("siden", "")
     new_since: list[int] | None = None
     if since.isdigit():
-        newer = Notice.objects.filter(pk__gt=int(since))
+        newer = _visible(request).filter(pk__gt=int(since))
         category = request.GET.get("kategori") or ""
         if category in Category.values:
             newer = newer.filter(category=category)
@@ -253,7 +261,8 @@ def create(request: HttpRequest) -> HttpResponse:
             notice.author = current_resident(request)
             notice.save()
             sync_images(notice)
-        services.notify_new_notice(notice)
+        mentioned = services.notify_mentions_in_notice(notice)
+        services.notify_new_notice(notice, skip=mentioned)
         live.notice_created(notice)
         messages.success(request, "Opslaget er slået op.")
         return redirect("opslagstavle:detail", pk=notice.pk)
@@ -263,9 +272,10 @@ def create(request: HttpRequest) -> HttpResponse:
 @access_required
 def edit(request: HttpRequest, pk: int) -> HttpResponse:
     """The author fixes their own typos. Moderators may delete but never rewrite — see access.py."""
-    notice = get_object_or_404(Notice, pk=pk)
+    notice = get_object_or_404(_visible(request), pk=pk)
     if not can_edit(request, notice):
         raise PermissionDenied
+    old_body = notice.body
     form = NoticeForm(request.POST or None, instance=notice, events_allowed=events_allowed(request))
     if request.method == "POST" and form.is_valid():
         with transaction.atomic():
@@ -275,6 +285,7 @@ def edit(request: HttpRequest, pk: int) -> HttpResponse:
             notice.edited_at = timezone.now()
             notice.save()
             sync_images(notice)
+        services.notify_mentions_in_notice(notice, old_body)
         live.notice_changed(notice.pk)
         messages.success(request, "Opslaget er opdateret.")
         return redirect("opslagstavle:detail", pk=notice.pk)
@@ -284,7 +295,7 @@ def edit(request: HttpRequest, pk: int) -> HttpResponse:
 @require_POST
 @access_required
 def delete(request: HttpRequest, pk: int) -> HttpResponseRedirect:
-    notice = get_object_or_404(Notice, pk=pk)
+    notice = get_object_or_404(_visible(request), pk=pk)
     if not can_delete(request, notice):
         raise PermissionDenied
     notice_pk = notice.pk  # delete() clears it
@@ -307,7 +318,7 @@ def toggle_pin(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     """
     if not can_moderate(request):
         raise PermissionDenied
-    notice = get_object_or_404(Notice, pk=pk)
+    notice = get_object_or_404(_visible(request), pk=pk)
 
     if notice.is_pinned:
         notice.pinned_at = None
@@ -345,7 +356,7 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     messages have to arrive TOGETHER or the picture appears to have silently not counted. Django's
     message framework carries both through the redirect.
     """
-    notice = get_object_or_404(Notice, pk=pk)
+    notice = get_object_or_404(_visible(request), pk=pk)
     form = NoticeCommentForm(request.POST)
     # NOTICE_IMAGE_MAX_MB, so a comment photo and a post photo share one ceiling.
     image = attached_image(request, settings.NOTICE_IMAGE_MAX_MB)
@@ -391,7 +402,7 @@ def toggle_reaction(request: HttpRequest, pk: int) -> HttpResponse:
     form and lose anything half-typed in it. A NEW reaction tells the post's author (grouped, see
     services.notify_reaction); changing or clearing one tells nobody.
     """
-    notice = get_object_or_404(Notice, pk=pk)
+    notice = get_object_or_404(_visible(request), pk=pk)
     resident = current_resident(request)
     form = ReactionForm(request.POST)
     if form.is_valid():

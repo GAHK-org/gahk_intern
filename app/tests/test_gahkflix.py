@@ -593,7 +593,22 @@ def test_the_player_config_for_the_overlay(admin: Resident) -> None:
     assert config["title"] == "Gangen · S1:A1" and config["subtitle"] == "En"
     assert config["streams"] == {"hd": reverse("gahkflix:stream", args=[first.pk, "hd"])}
     assert config["startAt"] == 120.0
-    assert config["next"] == {"url": reverse("gahkflix:play", args=[second.pk]), "title": "To"}
+    assert {key: config["next"][key] for key in ("url", "title", "kind", "label")} == {
+        "url": reverse("gahkflix:play", args=[second.pk]),
+        "title": "To",
+        "kind": "episode",
+        "label": "Gangen · S1:A2",
+    }
+    assert config["next"]["image"].startswith(reverse("gahkflix:picture", args=[second.pk, "banner"]))
+    # After the last episode, a film.
+    film = make_video(admin, title="Revy", description="ord " * 100)
+    last = client.get(reverse("gahkflix:play", args=[second.pk]), {"format": "json"}).json()["next"]
+    assert (last["url"], last["kind"], last["label"]) == (
+        reverse("gahkflix:play", args=[film.pk]),
+        "film",
+        "",
+    )
+    assert len(last["description"]) <= 202 and last["description"].endswith(" …")
     assert (
         client.get(reverse("gahkflix:play", args=[first.pk]), {"format": "json", "t": "0"}).json()["startAt"]
         == 0
@@ -1026,6 +1041,37 @@ def test_series_episodes_and_next_episode(admin: Resident) -> None:
     assert services.next_episode(second) == later
     assert services.next_episode(later) is None
     assert services.series_cover(series) == first
+
+
+def test_up_next_is_the_next_episode_else_a_film_not_yet_watched(admin: Resident, admin2: Resident) -> None:
+    series = Series.objects.create(title="Gangen", created_by=admin)
+    first = make_video(admin, title="En", series=series, season=1, episode=1, days_old=9)
+    second = make_video(admin, title="To", series=series, season=1, episode=2, days_old=9)
+    revy = make_video(admin, title="Revy", days_old=5)
+    revy2 = make_video(admin, title="Revy 2", days_old=4)
+    sketch = make_video(
+        admin, title="Sketch", series=Series.objects.create(title="Sketches", created_by=admin)
+    )
+    old = make_video(admin, title="Gammel", days_old=20)
+    jul = make_video(admin, title="Jul")
+    for video in (second, revy, revy2, sketch):
+        services.apply_changes(video, {"tags": ["revy"]}, admin)
+
+    assert services.up_next(first, admin) == second
+    assert services.up_next(second, admin) in (revy, revy2)  # similar, outside the series
+    assert services.up_next(revy, admin) == revy2  # the other series' episode is passed over
+    services.save_position(revy2, admin, 600.0)
+    assert services.up_next(revy, admin) == jul  # nothing similar left, nothing trending: the newest
+    services.record_view(old, admin2)
+    assert services.up_next(revy, admin) == old  # trending before newest
+    assert services.up_next(revy, admin2) == revy2  # someone else's watching doesn't count
+    now = timezone.now()
+    for hours, video in [(3, revy2), (2, revy), (1, old), (0, jul)]:
+        services.save_position(video, admin, 600.0, now=now - timedelta(hours=hours))
+    # All seen: the film watched longest ago, never the one just played.
+    assert services.up_next(revy, admin) == revy2
+    assert services.up_next(revy2, admin) == revy
+    assert services.up_next(second, admin) == revy2
 
 
 def test_series_rules(open_gate: None, plain: Resident, make_resident: Callable[..., Resident]) -> None:

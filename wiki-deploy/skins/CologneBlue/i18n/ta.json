@@ -1,6 +1,7 @@
 {
 	"@metadata": {
 		"authors": [
+			"Fahimrazick",
 			"Jayarathina",
 			"Shanmugamp7",
 			"Surya Prakash.S.A.",
@@ -12,17 +13,13 @@
 	"qbfind": "கண்டுபிடி",
 	"qbbrowse": "உலவு",
 	"qbedit": "தொகு",
-	"qbpageoptions": "பக்க விருப்பத் தேர்வுகள்",
-	"qbmyoptions": "என் விருப்பத்தேர்வுகள்",
+	"qbpageoptions": "இப்பக்கம்",
+	"qbmyoptions": "எனது பக்கங்கள்",
 	"faqpage": "Project:அடிக்கடி கேட்கப்படும் கேள்விகள்",
 	"editthispage": "இப்பக்கத்தைத் தொகு",
 	"create-this-page": "இப்பக்கத்தை உருவாக்கு",
 	"deletethispage": "இப்பக்கத்தை நீக்கு",
 	"undeletethispage": "அழித்த பக்கத்தை மறுபடியும் கொண்டு வா",
 	"protectthispage": "இப்பக்கத்தைக் காக்கவும்",
-	"unprotectthispage": "இப்பக்கத்தின் காப்பை மாற்று",
-	"talkpage": "இப்பக்கம்பற்றிக் கலந்துரையாடு",
-	"articlepage": "உள்ளடக்கப் பக்கத்தைப் பார்",
-	"userpage": "பயனர் பக்கத்தைப் பார்",
-	"projectpage": "திட்டப் பக்கத்தைப் பார்"
+	"unprotectthispage": "இப்பக்கத்தின் காப்பை மாற்று"
 }

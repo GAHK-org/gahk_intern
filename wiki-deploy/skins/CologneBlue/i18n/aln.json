@@ -4,7 +4,8 @@
 			"Ammartivari",
 			"Bresta",
 			"Cradel",
-			"Dardan"
+			"Dardan",
+			"Vanished 456321456"
 		]
 	},
 	"cologneblue.css": "/* CSS i vendosun këtu ka me i prekë shfrytëzuesit e dukjes Cologne Blue */",
@@ -19,9 +20,5 @@
 	"create-this-page": "Krijo kët faqe",
 	"deletethispage": "Fshije kët faqe",
 	"protectthispage": "Mbroje këtë faqe",
-	"unprotectthispage": "Hiq mbrojtjen nga kjo faqe",
-	"talkpage": "Bisedo këtë faqe",
-	"articlepage": "Shiko artikullin",
-	"userpage": "Shiko faqen e përdoruesit",
-	"projectpage": "Shiko faqen e projektit"
+	"unprotectthispage": "Hiq mbrojtjen nga kjo faqe"
 }

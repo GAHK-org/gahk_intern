@@ -1,0 +1,19 @@
+{
+	"@metadata": {
+		"authors": [
+			"Winston Sung"
+		]
+	},
+	"qbfind": "尋",
+	"qbbrowse": "浏览",
+	"qbedit": "编辑",
+	"qbpageoptions": "迭只页面",
+	"qbmyoptions": "我个页面",
+	"faqpage": "Project:FAQ",
+	"editthispage": "编辑该只页面",
+	"create-this-page": "建箇頁",
+	"deletethispage": "刪箇頁",
+	"undeletethispage": "还原箇页",
+	"protectthispage": "保护该个页面",
+	"unprotectthispage": "更改此页个保护"
+}

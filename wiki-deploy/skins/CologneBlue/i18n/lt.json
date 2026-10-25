@@ -4,6 +4,7 @@
 			"Eitvys200",
 			"Homo",
 			"Hugo.arg",
+			"Nokeoo",
 			"Perkunas",
 			"Zygimantus"
 		]
@@ -21,9 +22,5 @@
 	"deletethispage": "Ištrinti šį puslapį",
 	"undeletethispage": "Atkurti šį puslapį",
 	"protectthispage": "Rakinti šį puslapį",
-	"unprotectthispage": "Keisti šio puslapio apsaugą",
-	"talkpage": "Aptarti šį puslapį",
-	"articlepage": "Rodyti turinio puslapį",
-	"userpage": "Rodyti naudotojo puslapį",
-	"projectpage": "Rodyti projekto puslapį"
+	"unprotectthispage": "Keisti šio puslapio apsaugą"
 }

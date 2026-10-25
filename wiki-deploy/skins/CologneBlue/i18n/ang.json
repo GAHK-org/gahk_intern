@@ -2,8 +2,9 @@
 	"@metadata": {
 		"authors": [
 			"Gott wisst",
+			"Heahwrita",
 			"Wōdenhelm",
-			"Heahwrita"
+			"Rocioun"
 		]
 	},
 	"qbfind": "Find",
@@ -12,14 +13,10 @@
 	"qbpageoptions": "Þes tramet",
 	"qbmyoptions": "Mine trametas",
 	"faqpage": "Project:FAQ",
-	"editthispage": "Adiht þisne tramet",
+	"editthispage": "Adihtan þisne tramet",
 	"create-this-page": "Scypp þisne tramet",
 	"deletethispage": "Forleos þisne tramet",
 	"undeletethispage": "Undo þa forleosunge þisses trametes",
 	"protectthispage": "Beorg þisne tramet",
-	"unprotectthispage": "Andwend þæt gebeorg þisses trametes",
-	"talkpage": "Sprec ymbe þisne tramet",
-	"articlepage": "Seoh innunge tramet",
-	"userpage": "Seoh brucendtramet",
-	"projectpage": "Seoh weorces tramet"
+	"unprotectthispage": "Andwend þæt gebeorg þisses trametes"
 }

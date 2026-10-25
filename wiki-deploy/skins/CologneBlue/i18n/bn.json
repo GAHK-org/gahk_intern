@@ -6,10 +6,12 @@
 			"Bellayet",
 			"Nasir8891",
 			"Zaheen",
-			"আফতাবুজ্জামান"
+			"আফতাবুজ্জামান",
+			"খাত্তাব হাসান"
 		]
 	},
 	"skinname-cologneblue": "কলোন ব্লু",
+	"cologneblue-desc": "ন্যূনতম বিন্যাসসহ একটি লাইটওয়েট আবরণ",
 	"qbfind": "অনুসন্ধান",
 	"qbbrowse": "ব্রাউজ",
 	"qbedit": "সম্পাদনা",
@@ -21,9 +23,5 @@
 	"deletethispage": "এই পাতাটি অপসারণ করুন",
 	"undeletethispage": "পাতাটি পুনরুদ্ধার করুন",
 	"protectthispage": "এই পাতাটি সুরক্ষিত করুন",
-	"unprotectthispage": "এই পাতার সুরক্ষা পরিবর্তন করুন",
-	"talkpage": "আলোচনা করুন",
-	"articlepage": "বিষয়বস্তুর পাতাটি দেখুন",
-	"userpage": "ব্যবহারকারীর পাতা দেখুন",
-	"projectpage": "প্রকল্প পাতাটি দেখুন"
+	"unprotectthispage": "এই পাতার সুরক্ষা পরিবর্তন করুন"
 }

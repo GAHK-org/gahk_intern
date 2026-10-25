@@ -7,6 +7,7 @@
 			"Narazeni"
 		]
 	},
+	"skinname-cologneblue": "კელნიშ ლენი",
 	"qbfind": "დოგორი",
 	"qbbrowse": "დათვალიერება",
 	"qbedit": "რედაქტირაფა",
@@ -18,9 +19,5 @@
 	"deletethispage": "დოლასი თე ხასჷლა",
 	"undeletethispage": "თე ხასჷლაშ კჷნ ეიონწყუალა",
 	"protectthispage": "ხასილაშ თხილუა",
-	"unprotectthispage": "დოთირე ღე ხასჷლაშ თხილუაშ დონე",
-	"talkpage": "მოჩამილი ხასჷლაშ სხუნუა",
-	"articlepage": "სტატიის ნახვა",
-	"userpage": "მახვარებუშ ხასჷლაშ ძირაფა",
-	"projectpage": "პროექტიშ ხასჷლაშ ძირაფა"
+	"unprotectthispage": "დოთირე ღე ხასჷლაშ თხილუაშ დონე"
 }

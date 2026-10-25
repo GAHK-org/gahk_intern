@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Split a full phpMyAdmin export of `gahk_dk` into its app half and its MediaWiki half.
 
 one.com's MySQL host (`gahk.dk.mysql.service.one.com`) only resolves inside their hosting network, so

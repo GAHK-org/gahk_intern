@@ -17,9 +17,5 @@
 	"deletethispage": "Delete this page",
 	"undeletethispage": "Undelete this page",
 	"protectthispage": "Protect this page",
-	"unprotectthispage": "Change protection of this page",
-	"talkpage": "Discuss this page",
-	"articlepage": "View content page",
-	"userpage": "View user page",
-	"projectpage": "View project page"
+	"unprotectthispage": "Change protection of this page"
 }

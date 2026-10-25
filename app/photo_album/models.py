@@ -804,7 +804,11 @@ class AlbumImport(models.Model):
     )
     folder = models.CharField(max_length=10)
     archive_name = models.CharField(max_length=255)
-    archive = models.FileField(upload_to=album_import_path, storage=get_photo_album_storage)
+    # 500, like Media's files: the key is "photo-album-imports/<uuid>/<the ZIP's name>". At Django's
+    # default of 100, "Generalforsamlingen oktober 2006-Therese.zip" (44 characters) made it 101, and
+    # every attempt to start its import was a 500. Django shortens a name to fit when it stores the
+    # file itself; an archive sent straight to the bucket arrives with its key already chosen.
+    archive = models.FileField(upload_to=album_import_path, storage=get_photo_album_storage, max_length=500)
     token = models.UUIDField(default=uuid4, unique=True, editable=False)
     task_id = models.CharField(max_length=36, blank=True)
     state = models.CharField(max_length=10, choices=AlbumImportState.choices, default=AlbumImportState.QUEUED)

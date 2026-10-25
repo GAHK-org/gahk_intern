@@ -3,7 +3,8 @@
 		"authors": [
 			"Kaszeba",
 			"Kirsan",
-			"Warszk"
+			"Warszk",
+			"Terrus38"
 		]
 	},
 	"qbfind": "Nalézë",
@@ -12,13 +13,9 @@
 	"qbpageoptions": "Òptacëje starnë",
 	"qbmyoptions": "Mòje òptacëje",
 	"faqpage": "Project:FAQ",
-	"editthispage": "Editëjë nã starnã",
+	"editthispage": "Edituj nã starnã",
 	"create-this-page": "Ùsadzë nã starnã",
 	"deletethispage": "Rëmôj nã starnã",
 	"protectthispage": "Zazychrëjë nã starnã",
-	"unprotectthispage": "Òdzychrëjë nã starnã",
-	"talkpage": "Diskùsjô starnë",
-	"articlepage": "Starna artikla",
-	"userpage": "Wëskrzëni starnã brëkòwnika",
-	"projectpage": "Wëskrzëni stranã ùdbë"
+	"unprotectthispage": "Òdzychrëjë nã starnã"
 }

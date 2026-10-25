@@ -1,12 +1,12 @@
 {
 	"@metadata": {
 		"authors": [
+			"Balyozxane",
 			"Bangin",
 			"Bikarhêner",
 			"George Animal",
 			"Ghybu",
-			"Gomada",
-			"Balyozxane"
+			"Gomada"
 		]
 	},
 	"qbfind": "Bibîne",
@@ -20,9 +20,5 @@
 	"deletethispage": "Vê rûpelê jê bibe",
 	"undeletethispage": "Jêbirina vê rûpelê paşve hilde",
 	"protectthispage": "Vê rûpelê biparêze",
-	"unprotectthispage": "Parastina vê rûpelê biguhêre",
-	"talkpage": "Vê rûpelê gotûbêj bike",
-	"articlepage": "Li rûpela naverokê binêre",
-	"userpage": "Li rûpela bikarhêner binêre",
-	"projectpage": "Li rûpela projeyê binêre"
+	"unprotectthispage": "Parastina vê rûpelê biguhêre"
 }

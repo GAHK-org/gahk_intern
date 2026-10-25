@@ -3,24 +3,20 @@
 		"authors": [
 			"Akapochtli",
 			"Fluence",
-			"Taresi",
-			"Languaeditor"
+			"Languaeditor",
+			"Taresi"
 		]
 	},
 	"qbfind": "Xiktemo",
 	"qbbrowse": "Xitlatepotztoca",
 	"qbedit": "Xikpatla",
-	"qbpageoptions": "Inīn tlaīxtli",
+	"qbpageoptions": "Inin tlahcuilolamatl",
 	"qbmyoptions": "Notlahcuilolamauh",
 	"faqpage": "Project:FAQ",
 	"editthispage": "Xicpatla inin tlahcuilolamatl",
-	"create-this-page": "Xicchīhua inīn tlaīxtli",
-	"deletethispage": "Xicpolo inīn tlaīxtli",
-	"undeletethispage": "Xicmāquīxti inīn tlaīxtli",
+	"create-this-page": "Ticchihuaz inin tlahcuilolamatl",
+	"deletethispage": "Xicpolo inin tlahcuilolamatl",
+	"undeletethispage": "Occepa tiquixtiz inin tlahcuilolamatl",
 	"protectthispage": "Xikmanawi ni tlahkwilolamatl",
-	"unprotectthispage": "Xicpatla inīn tlaīxtli ītlapiyaliz",
-	"talkpage": "Xictlahto inīn tlaīxtli ītechcopa",
-	"articlepage": "Xikitta tlahkwilolamatl",
-	"userpage": "Xikitta tekitiketl itlahkwilolamaw",
-	"projectpage": "Xiquitta tlachīhualiztli zāzanilli"
+	"unprotectthispage": "Xicpatla inin tlahcuilolamatl itlapiyaliz"
 }

@@ -1,6 +1,7 @@
 {
 	"@metadata": {
 		"authors": [
+			"Juwan",
 			"Robin van der Vliet"
 		]
 	},
@@ -8,6 +9,5 @@
 	"editthispage": "o ante e lipu ni",
 	"deletethispage": "o weka e lipu ni",
 	"protectthispage": "mi taso o ken ante e lipu ni",
-	"unprotectthispage": "jan ale o ken ante e lipu ni",
-	"talkpage": "Talk page"
+	"unprotectthispage": "jan ale o ken ante e lipu ni"
 }

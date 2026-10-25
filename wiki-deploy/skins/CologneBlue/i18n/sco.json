@@ -1,25 +1,22 @@
 {
 	"@metadata": {
 		"authors": [
+			"CiphriusKane",
 			"John Reid",
 			"OchAyeTheNoo"
 		]
 	},
 	"cologneblue-desc": "Ae lichtweicht skin wi minimal formattin",
-	"qbfind": "Fynd",
+	"qbfind": "Find",
 	"qbbrowse": "Brouse",
-	"qbedit": "Eidit",
+	"qbedit": "Edit",
 	"qbpageoptions": "This page",
 	"qbmyoptions": "Ma pages",
 	"faqpage": "Project:ASS",
 	"editthispage": "Eedit this page",
 	"create-this-page": "Creaut this page",
-	"deletethispage": "Delyte this page",
-	"undeletethispage": "Ondelyte this page",
+	"deletethispage": "Delete this page",
+	"undeletethispage": "Undelete this page",
 	"protectthispage": "Fend this page",
-	"unprotectthispage": "Chynge fend fer this page",
-	"talkpage": "Blether ower this page",
-	"articlepage": "Leuk at content page",
-	"userpage": "See the uiser page",
-	"projectpage": "See waurk page"
+	"unprotectthispage": "Chynge fend fer this page"
 }

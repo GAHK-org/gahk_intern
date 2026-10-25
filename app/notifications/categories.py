@@ -88,6 +88,7 @@ GROUPS: tuple[tuple[str, str], ...] = (
     ("events", "Begivenheder"),
     ("repairs", "Reparationer"),
     ("gahkflix", "GAHKFlix"),
+    ("mentions", "Nævnt"),
     ("system", "System"),
     ("general", "Generelt"),
 )
@@ -101,6 +102,7 @@ GROUP_ICONS: dict[str, str] = {
     "events": "calendar",
     "repairs": "wrench",
     "gahkflix": "film",
+    "mentions": "users",
 }
 
 # The two catch-alls — see "Before adding a category" in the module docstring. Most features that
@@ -122,6 +124,7 @@ GAHKFLIX_CAST = "gahkflix.cast"
 GAHKFLIX_UPLOADS = "gahkflix.uploads"
 GAHKFLIX_APPROVALS = "gahkflix.approvals"
 GAHKFLIX_DRAFTS = "gahkflix.drafts"
+MENTIONS = "mentions"
 
 # The prefix of a Den Hurtige room's category. One category per room, generated from the channel
 # registry below, so adding a channel gives it a settings toggle without touching this file.
@@ -212,6 +215,13 @@ def _build() -> tuple[Category, ...]:
             in_app_optional=False,
         ),
         Category(
+            MENTIONS,
+            "Når du bliver nævnt",
+            "mentions",
+            "Når nogen nævner dig eller din embedsgruppe med @ i et opslag, en kommentar, Den Hurtige, en begivenhed eller en reparation.",
+            importance=Importance.HOEJ,
+        ),
+        Category(
             SYSTEM,
             "Systembeskeder",
             "system",
@@ -231,6 +241,20 @@ def _build() -> tuple[Category, ...]:
 CATEGORIES: tuple[Category, ...] = _build()
 
 BY_KEY: dict[str, Category] = {c.key: c for c in CATEGORIES}
+
+# What the kitchen account (residents.permissions.KITCHEN) can be sent; its settings page shows only
+# these. Its own channel, replies and reactions to its posts, comments on its opslag, broadcasts.
+KITCHEN_CATEGORIES = frozenset(
+    {
+        chat_room_key(channels.KITCHEN_CHANNEL),
+        CHAT_REPLIES,
+        CHAT_LIKES,
+        POSTS_REPLIES,
+        POSTS_LIKES,
+        SYSTEM,
+        GENERAL,
+    }
+)
 
 GROUP_NAMES: dict[str, str] = dict(GROUPS)
 

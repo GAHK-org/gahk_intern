@@ -694,6 +694,26 @@ def test_index_lists_own_active_rows_most_important_first_then_newest(
     assert reverse("notifications:open", args=[response.context["rows"][0].pk]) in html
 
 
+def test_unseen_come_first_then_most_important_then_newest(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """A seen Kritisk sinks below an unseen Lav: what is new is what people open the bell for."""
+    a = make_resident(email="a@gahk.dk")
+    now = timezone.now()
+    make_notification(a, title="set kritisk", importance=Importance.KRITISK, seen_at=now, updated_at=now)
+    make_notification(a, title="set ny", seen_at=now, updated_at=now)
+    make_notification(a, title="ny lav", importance=Importance.LAV, updated_at=now)
+    make_notification(
+        a, title="gammel høj", importance=Importance.HOEJ, updated_at=now - datetime.timedelta(days=1)
+    )
+    make_notification(a, title="gammel", updated_at=now - datetime.timedelta(hours=2))
+    client.force_login(a)
+
+    expected = ["gammel høj", "gammel", "ny lav", "set kritisk", "set ny"]
+    assert [r.title for r in client.get(reverse("notifications:index")).context["rows"]] == expected
+    assert [r.title for r in client.get(reverse("notifications:dropdown")).context["rows"]] == expected
+
+
 def test_index_by_category_groups_in_display_order(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:

@@ -245,7 +245,10 @@ def store_upload(
     media.save()
     from .tasks import queue_derivatives
 
-    transaction.on_commit(lambda: queue_derivatives(media))
+    # Robust: a job that cannot be queued is logged, not raised. The upload is committed by then, and
+    # the item simply waits as PENDING for the nightly `process_pending_media` to queue it. Raised,
+    # it broke whatever committed it — and an import took it for its own failure (_store_import).
+    transaction.on_commit(lambda: queue_derivatives(media), robust=True)
     return UploadOutcome(media=media, also_in=also_in)
 
 
@@ -796,12 +799,27 @@ def _store_import(
     lock: bool = False,
     progress: Progress = no_progress,
 ) -> tuple[list[Album], int]:
-    """Pass two: create the albums and store the files, all or nothing."""
+    """Pass two: create the albums and store the files, all or nothing.
+
+    The files written are deleted again only if the transaction did NOT commit. Django runs the
+    on_commit callbacks inside `atomic().__exit__`, after the COMMIT, so an error raised by one of
+    them came out of this block just like a failed import: once, a derivative job that could not be
+    queued (a broker connection shared across a fork) had the files of a committed import deleted —
+    albums and media rows in place, every original gone.
+    """
     written: list[str] = []
     added = 0
     albums: dict[tuple[str, ...], Album] = {}
+    committed = False
+
+    def mark_committed() -> None:
+        nonlocal committed
+        committed = True
+
     try:
         with transaction.atomic():
+            # First of this transaction's callbacks, so it has run before any other can raise.
+            transaction.on_commit(mark_committed)
             root = plan.existing_root
             if root is None:
                 root = Album(folder=folder, name=plan.root_name)
@@ -852,6 +870,8 @@ def _store_import(
                 root.manually_locked_at = timezone.now()
                 root.save(update_fields=["manually_locked_at"])
     except Exception:
+        if committed:
+            raise
         from .storage import get_photo_album_storage
 
         storage = get_photo_album_storage()

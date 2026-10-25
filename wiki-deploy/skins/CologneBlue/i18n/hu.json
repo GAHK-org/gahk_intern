@@ -22,9 +22,5 @@
 	"deletethispage": "Lap törlése",
 	"undeletethispage": "Lap helyreállítása",
 	"protectthispage": "Lapvédelem",
-	"unprotectthispage": "A lap védelmének módosítása",
-	"talkpage": "A lappal kapcsolatos megbeszélés",
-	"articlepage": "Szócikk megtekintése",
-	"userpage": "Felhasználó lapjának megtekintése",
-	"projectpage": "Projektlap megtekintése"
+	"unprotectthispage": "A lap védelmének módosítása"
 }

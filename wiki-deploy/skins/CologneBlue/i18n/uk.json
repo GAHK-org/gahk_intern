@@ -4,11 +4,12 @@
 			"AS",
 			"Ahonc",
 			"Alex Khimich",
-			"AtUkr",
-			"Dim Grits",
-			"Mykola Swarnyk",
 			"Andriy.v",
-			"DDPAT"
+			"AtUkr",
+			"DDPAT",
+			"Dim Grits",
+			"Ice bulldog",
+			"Mykola Swarnyk"
 		]
 	},
 	"skinname-cologneblue": "Кельнське синє",
@@ -26,9 +27,5 @@
 	"deletethispage": "Вилучити цю сторінку",
 	"undeletethispage": "Відновити цю сторінку",
 	"protectthispage": "Захистити цю сторінку",
-	"unprotectthispage": "Змінити захист цієї сторінки",
-	"talkpage": "Обговорити цю сторінку",
-	"articlepage": "Переглянути статтю",
-	"userpage": "Переглянути сторінку користувача",
-	"projectpage": "Переглянути сторінку проєкту"
+	"unprotectthispage": "Змінити захист цієї сторінки"
 }

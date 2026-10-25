@@ -2,8 +2,8 @@
 	"@metadata": {
 		"authors": [
 			"Jeblad",
-			"Skuolfi",
-			"Kimberli Mäkäräinen (WMNO)"
+			"Kimberli Mäkäräinen (WMNO)",
+			"Skuolfi"
 		]
 	},
 	"qbfind": "Oza",
@@ -14,9 +14,5 @@
 	"editthispage": "Rievdat dán siiddu",
 	"deletethispage": "Sihko dán siiddu",
 	"protectthispage": "Suodjal dán siiddu",
-	"unprotectthispage": "Rievdat dán siiddu suodjalusa",
-	"talkpage": "Ságastala dán siiddu birra",
-	"articlepage": "Geahča sisdoalu",
-	"userpage": "Čájet geavaheaddjesiiddu",
-	"projectpage": "Čájet prošeaktasiiddu"
+	"unprotectthispage": "Rievdat dán siiddu suodjalusa"
 }

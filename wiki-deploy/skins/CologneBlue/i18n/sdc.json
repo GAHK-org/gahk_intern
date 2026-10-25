@@ -2,8 +2,8 @@
 	"@metadata": {
 		"authors": [
 			"Antofa",
-			"Felis",
-			"F Samaritani"
+			"F Samaritani",
+			"Felis"
 		]
 	},
 	"qbfind": "Acciappa",
@@ -17,9 +17,5 @@
 	"deletethispage": "Canzella chistha pàgina",
 	"undeletethispage": "No canzellà chistha pàgina",
 	"protectthispage": "Prutiggi chistha pàgina",
-	"unprotectthispage": "Ibbrucca chistha pàgina",
-	"talkpage": "Pàgina di dischussioni",
-	"articlepage": "Vedi la bozi",
-	"userpage": "Visuarizza la pàgina utenti",
-	"projectpage": "Visuarizza la pàgina di saivvìziu"
+	"unprotectthispage": "Ibbrucca chistha pàgina"
 }

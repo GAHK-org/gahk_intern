@@ -4,16 +4,14 @@
 			"Gothicspeaker"
 		]
 	},
-	"qbfind": "𐌱𐌹𐌲𐌹𐍄",
-	"qbedit": "𐌹𐌽𐌼𐌰𐌹𐌳𐌴𐌹",
+	"qbfind": "𐌱𐌹𐌲𐌹𐍄𐌰𐌽",
+	"qbedit": "𐌹𐌽𐌼𐌰𐌹𐌳𐌾𐌰𐌽",
 	"qbpageoptions": "𐍃𐌰 𐌻𐌰𐌿𐍆𐍃",
-	"qbmyoptions": "𐌼𐌴𐌹𐌽𐌰𐌹 𐌻𐌰𐌿𐌱𐍉𐍃",
-	"editthispage": "𐌹𐌽𐌼𐌰𐌹𐌳𐌴𐌹 𐌸𐌰𐌽𐌰 𐌻𐌰𐌿𐍆",
-	"create-this-page": "𐍃𐌺𐌰𐍀𐌴𐌹 𐌸𐌰𐌽𐌰 𐌻𐌰𐌿𐍆",
-	"deletethispage": "𐍆𐍂𐌰𐌵𐌹𐍃𐍄𐌴𐌹 𐌸𐌰𐌼𐌼𐌰 𐌻𐌰𐌿𐌱𐌰",
-	"undeletethispage": "𐌽𐌰𐍃𐌴𐌹 𐌸𐌰𐌽𐌰 𐌻𐌰𐌿𐍆",
-	"protectthispage": "𐍆𐍂𐌹𐌸 𐌸𐌰𐌽𐌰 𐌻𐌰𐌿𐍆",
-	"unprotectthispage": "𐌹𐌽𐌼𐌰𐌹𐌳𐌴𐌹 𐌼𐌿𐌽𐌳 𐌸𐌹𐍃 𐌻𐌰𐌿𐌱𐌹𐍃",
-	"talkpage": "𐍂𐍉𐌳𐌴𐌹 𐌱𐌹 𐌸𐌰𐌽𐌰 𐌻𐌰𐌿𐍆",
-	"projectpage": "𐌰𐌽𐌳𐌷𐌿𐌻𐌴𐌹 𐍆𐌰𐌿𐍂𐌰𐍅𐌰𐌿𐍂𐍀𐌰𐌻𐌰𐌿𐍆"
+	"qbmyoptions": "𐌻𐌰𐌿𐌱𐍉𐍃 𐌼𐌴𐌹𐌽𐌰𐌹",
+	"editthispage": "𐌸𐌰𐌽𐌰 𐌻𐌰𐌿𐍆 𐌹𐌽𐌼𐌰𐌹𐌳𐌾𐌰𐌽",
+	"create-this-page": "𐌸𐌰𐌽𐌰 𐌻𐌰𐌿𐍆 𐌲𐌰𐍅𐌰𐌿𐍂𐌺𐌾𐌰𐌽",
+	"deletethispage": "𐌸𐌰𐌼𐌼𐌰 𐌻𐌰𐌿𐌱𐌰 𐍆𐍂𐌰𐌵𐌹𐍃𐍄𐌾𐌰𐌽",
+	"undeletethispage": "𐌸𐌰𐌽𐌰 𐌻𐌰𐌿𐍆 𐌽𐌰𐍃𐌾𐌰𐌽",
+	"protectthispage": "𐌸𐌰𐌼𐌼𐌰 𐌻𐌰𐌿𐌱𐌰 𐌱𐌰𐌹𐍂𐌲𐌰𐌽",
+	"unprotectthispage": "𐌹𐌽𐌼𐌰𐌹𐌳𐌴𐌹 𐌼𐌿𐌽𐌳 𐌸𐌹𐍃 𐌻𐌰𐌿𐌱𐌹𐍃"
 }

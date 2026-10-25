@@ -12,7 +12,7 @@
   <link rel="manifest" href="{% static 'manifest.json' %}">
   <script src="{% static 'dist/app.js' %}" defer></script>
 </head>
-<body class="{% block body_class %}{% endblock %}" x-data="{ sidebar: false }">
+<body class="{% block body_class %}{% endblock %}" x-data="{ sidebar: false }"{% if user.is_authenticated %} data-mention-lookup="{% url 'mention_lookup' %}"{% endif %}>
   {# Icon sprite: referenced from the sidebar via <use href="#i-…">. Stroke inherits the item colour. #}
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>
@@ -96,10 +96,12 @@
 
     <header class="topbar">
       <button class="hamburger" @click="sidebar = !sidebar" aria-label="Menu">☰</button>
-      <form class="topsearch" method="get" action="/intern/alumneliste/" role="search">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-        <input type="search" name="q" placeholder="Søg beboer, studie, e-mail…" aria-label="Søg beboer">
-      </form>
+      {% if "koekken" not in effective_roles %}{# searches the alumneliste, which the kitchen account cannot open #}
+        <form class="topsearch" method="get" action="/intern/alumneliste/" role="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input type="search" name="q" placeholder="Søg beboer, studie, e-mail…" aria-label="Søg beboer">
+        </form>
+      {% endif %}
       <div class="topright">
         <a href="/" class="btn-top" title="Til GAHK-forsiden">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
@@ -124,7 +126,9 @@
               <span class="sr-only">Min konto</span>
             </button>
             <div id="user-menu-panel" class="user-menu-panel" role="menu" x-show="open" x-cloak>
-              <a role="menuitem" href="{% url 'resident_profile' user.pk %}">Min profil</a>
+              {% if "koekken" not in effective_roles %}{# the kitchen account has no profile page #}
+                <a role="menuitem" href="{% url 'resident_profile' user.pk %}">Min profil</a>
+              {% endif %}
               <a role="menuitem" href="{% url 'notifications:preferences' %}">Notifikationsindstillinger</a>
               <a role="menuitem" href="/intern/admin/password-change">Skift kodeord</a>
               <form method="post" action="/intern/admin/logout">

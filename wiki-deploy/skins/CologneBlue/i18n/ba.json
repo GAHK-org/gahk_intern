@@ -4,25 +4,22 @@
 			"Assele",
 			"Haqmar",
 			"Sagan",
+			"З. ӘЙЛЕ",
 			"Ләйсән"
 		]
 	},
 	"skinname-cologneblue": "Кёльн һағышы",
-	"cologneblue-desc": "Минималь форматлау булған еңел тема.",
+	"cologneblue-desc": "Форматлау аҙ булған еңел биҙәлеш тема.",
 	"qbfind": "Эҙләү",
 	"qbbrowse": "Байҡарға",
 	"qbedit": "Үҙгәртергә",
 	"qbpageoptions": "Был бит",
 	"qbmyoptions": "Биттәрем",
 	"faqpage": "Project:ЙБҺ",
-	"editthispage": "Был мәҡәләне үҙгәртергә",
+	"editthispage": "Был битте үҙгәртергә",
 	"create-this-page": "Был битте яһарға",
 	"deletethispage": "Был битте юйырға",
-	"undeletethispage": "Юйылған битте ҡабат тергеҙеү",
+	"undeletethispage": "Был битте ҡабат тергеҙергә",
 	"protectthispage": "Был битте һаҡларға",
-	"unprotectthispage": "Был биттең һаҡлауын үҙгәртергә",
-	"talkpage": "Фекер алышыу",
-	"articlepage": "Мәҡәләне ҡарап сығырға",
-	"userpage": "Ҡулланыусы битен ҡарарға",
-	"projectpage": "Проект битен ҡарарға"
+	"unprotectthispage": "Был биттең һаҡлауын үҙгәртергә"
 }

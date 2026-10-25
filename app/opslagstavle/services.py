@@ -21,11 +21,14 @@ from typing import TYPE_CHECKING
 
 from core import push
 from core.markdown import plain_text
+from core.mentions import notify_mentions, to_plain
 from notifications import categories, services
 
 from . import access
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from residents.models import Resident
 
     from .models import Notice, NoticeComment
@@ -38,21 +41,38 @@ def notice_url(notice: "Notice") -> str:
 
 
 def _author_can_open(notice: "Notice") -> bool:
-    """Whether the post's author can still open the board (rollout gate, or moved out)."""
+    """Whether the post's author can still open the board (rollout gate, or moved out). The kitchen
+    account is not in everyone(), but can always open its own posts."""
+    if notice.author.is_kitchen:
+        return notice.author.is_active
     return access.allowed_residents(services.everyone()).filter(pk=notice.author_id).exists()
 
 
-def notify_new_notice(notice: "Notice") -> None:
+def notify_mentions_in_notice(notice: "Notice", old_body: str | None = None) -> set[int]:
+    """Tell residents newly @-mentioned in a post. `old_body` on an edit, so a fix-up of a typo does
+    not re-notify everyone the post already named."""
+    return notify_mentions(
+        notice.body,
+        actor=notice.author,
+        where="i et opslag",
+        url=notice_url(notice),
+        audience=access.allowed_residents(services.everyone()),
+        old_text=old_body,
+    )
+
+
+def notify_new_notice(notice: "Notice", skip: "Collection[int]" = ()) -> None:
     """Announce a new post to everyone who can open the board, except its author.
 
     The body is `plain_text`, not the raw Markdown: a lock screen showing `**Vigtigt**` and
     `[link](https://…)` is the difference between a notification people read and one they dismiss.
-    The author is the title, matching Den Hurtige and the card itself.
+    The author is the title, matching Den Hurtige and the card itself. `skip` is who was just told
+    they are mentioned in it.
     """
     # Narrowed to people who can open the board: while the rollout gate is on, notifying a resident
     # who would get a 403 on tapping is worse than not notifying them.
     services.notify(
-        access.allowed_residents(services.everyone()),
+        access.allowed_residents(services.everyone()).exclude(pk__in=skip),
         category=categories.POSTS_NEW,
         title=notice.author.full_name,
         body=push.preview(plain_text(notice.body)),
@@ -62,8 +82,17 @@ def notify_new_notice(notice: "Notice") -> None:
 
 
 def notify_new_comment(comment: "NoticeComment") -> None:
-    """Tell the post's author someone replied — and nobody else."""
+    """Tell the post's author someone replied, and anyone the comment @-mentions."""
     notice = comment.notice
+    mentioned = notify_mentions(
+        comment.body,
+        actor=comment.author,
+        where="i en kommentar",
+        url=notice_url(notice),
+        audience=access.allowed_residents(services.everyone()),
+    )
+    if notice.author_id in mentioned:
+        return  # already told, more specifically
     if not _author_can_open(notice):
         return  # the author can no longer open the board (rollout gate, or moved out)
     services.notify_grouped(
@@ -74,7 +103,7 @@ def notify_new_comment(comment: "NoticeComment") -> None:
         verb="svarede",
         # `or "📷 Billede"`: a photo-only comment has no text, and push.preview("") is "" — which on
         # a lock screen reads as a notification that failed to load.
-        body=push.preview(comment.body) or "📷 Billede",
+        body=push.preview(to_plain(comment.body)) or "📷 Billede",
         url=notice_url(notice),
     )
 

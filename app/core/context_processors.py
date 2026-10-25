@@ -11,7 +11,7 @@ from events.access import roles_allowed as events_allowed
 from gahkflix.access import roles_allowed as gahkflix_allowed
 from opslagstavle.access import roles_allowed as opslagstavle_allowed
 from photo_album.access import roles_allowed as photo_album_allowed
-from residents.permissions import CMS_EDITOR_ROLES, can_preview, effective_roles
+from residents.permissions import CMS_EDITOR_ROLES, KITCHEN, can_preview, effective_roles
 
 # Public site nav, matching the legacy gahk.dk menu (labels + order)
 NAV_LEGACY = [
@@ -46,6 +46,17 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     """Internal menu grouped into sidebar sections, built from the *effective* role set: base items for
     every resident plus each embedsgruppe's admin tools. Each item is (url, label, icon); empty sections
     are dropped. Honors the preview override (roles come from effective_roles)."""
+    if KITCHEN in roles:  # the kitchen account sees only what core.middleware.KitchenAccountGate lets through
+        return [
+            (
+                "Køkkenet",
+                [
+                    ("/intern/den-hurtige/koekken/", "Den Hurtige", "flash"),
+                    ("/intern/opslagstavle/", "Mine opslag", "board"),
+                    ("/intern/reparationer/", "Reparationer", "wrench"),
+                ],
+            )
+        ]
     oversigt: list[NavItem] = [
         ("/intern/", "Dashboard", "dashboard"),
         (f"/intern/beboer/{user_pk}/profil", "Min profil", "users"),

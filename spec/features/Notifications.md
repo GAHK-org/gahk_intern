@@ -81,8 +81,8 @@ resident has to act on. Their push and vibration can be turned off. `gahkflix.ne
 Four levels: **Lav**, **Normal**, **Høj**, **Kritisk**. Each category has a default; a call may raise
 it. "Someone reacted to your message" is the typical Lav.
 
-- In the dropdown and on the page, the most important come first and are marked: Høj and Kritisk get
-  a coloured left border and a level label, Kritisk also a tinted background.
+- In the dropdown and on the page, the unseen come first, then the most important. Høj and Kritisk
+  get a coloured left border and a level label, Kritisk also a tinted background.
 - **Kritisk overrides every preference** — in-app (where the category has an in-app row), push and
   vibration — so a resident gets it even with the category turned off. The push uses `requireInteraction`, so it stays on screen until
   dismissed.
@@ -124,13 +124,21 @@ they would get a 403 on opening. Acting on your own content never notifies you.
   overview; the day before a draft is deleted, its uploader (Høj) and the administrators (Høj) are
   warned once. While GAHKFlix is behind its rollout gate, its group is hidden
   on the settings page for residents outside it, and none of them are notified.
+- **@mentions** (`mentions`, Høj) → a resident named with `@` in a post, comment, Den Hurtige message
+  or reply, event description or comment, repair or repair note, if they are on this month's alumneliste and can open the thing.
+  Naming an embedsgruppe tells everyone in it this month. A resident named directly is told that and
+  not that their group was named, and a mention replaces the new-post, new-event, reply or room
+  notification they would otherwise also have got. Editing a notice or an event only notifies
+  residents the edit newly reaches. See
+  [mentions.md](mentions.md).
 
 ## In-app notifications
 
 ### The dropdown
 
 A button with an unseen-count badge in the top bar opens a dropdown (loaded with htmx on click) with
-the **10** most important, then most recent, active in-app notifications, and a link to the page.
+the **10** first active in-app notifications — unseen first, then most important, then most
+recent — and a link to the page.
 
 ### The notifications page — `/intern/notifikationer/`
 
@@ -140,8 +148,9 @@ Lists all active in-app notifications, in two views:
 - `?visning=kategori` — one section per group, in the group order above. A row whose category has
   since been retired is listed under Generelt rather than erroring.
 
-Both are ordered **importance first, then most recently updated**. `updated_at`, not `created_at`: a
-grouped notification that gains another like is news again, so it moves back up and becomes unseen.
+Both are ordered **unseen first, then importance, then most recently updated**. `updated_at`, not
+`created_at`: a grouped notification that gains another like is news again, so it moves back up and
+becomes unseen.
 
 ### Seen / unseen
 

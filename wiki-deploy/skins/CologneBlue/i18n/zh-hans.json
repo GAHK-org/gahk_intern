@@ -1,11 +1,12 @@
 {
 	"@metadata": {
 		"authors": [
+			"FakeGreenHand",
 			"Liangent",
+			"LittlePaw365",
 			"Liuxinyu970226",
 			"Xiaomingyan",
-			"Yfdyh000",
-			"FakeGreenHand"
+			"Yfdyh000"
 		]
 	},
 	"skinname-cologneblue": "科隆香水蓝",
@@ -18,14 +19,10 @@
 	"qbpageoptions": "该页面",
 	"qbmyoptions": "我的页面",
 	"faqpage": "Project:常见问题",
-	"editthispage": "编辑本页",
-	"create-this-page": "创建本页",
-	"deletethispage": "删除本页",
+	"editthispage": "编辑该页",
+	"create-this-page": "创建该页",
+	"deletethispage": "删除该页",
 	"undeletethispage": "还原本页",
-	"protectthispage": "保护本页",
-	"unprotectthispage": "更改本页的保护",
-	"talkpage": "讨论本页",
-	"articlepage": "查看内容页面",
-	"userpage": "查看用户页面",
-	"projectpage": "查看项目页面"
+	"protectthispage": "保护此页",
+	"unprotectthispage": "更改本页的保护"
 }

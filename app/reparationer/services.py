@@ -22,11 +22,12 @@ from typing import TYPE_CHECKING
 
 from django.db.models import Q, QuerySet
 
+from core.mentions import notify_mentions
 from notifications import categories, services
 from residents.models import Resident, Role, RoleAssignment, active_period
 
 if TYPE_CHECKING:
-    from .models import RepairTask
+    from .models import RepairComment, RepairTask
 
 BOARD_URL = "/intern/reparationer/"
 
@@ -56,6 +57,25 @@ def notify_new_task(task: "RepairTask") -> None:
         body=task.title,
         url=task_url(task),
         exclude=task.reported_by_id,
+    )
+    # Reparationer is open to every resident, so the whole kollegium is the audience.
+    notify_mentions(
+        task.description,
+        actor=task.reported_by,
+        where="i en reparation",
+        url=task_url(task),
+        audience=services.everyone(),
+    )
+
+
+def notify_new_comment(comment: "RepairComment") -> None:
+    """A note only notifies the residents it @-mentions."""
+    notify_mentions(
+        comment.body,
+        actor=comment.author,
+        where="i en note på en reparation",
+        url=task_url(comment.task),
+        audience=services.everyone(),
     )
 
 

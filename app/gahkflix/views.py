@@ -50,6 +50,7 @@ from .models import (
     key_of,
 )
 from .storage import STREAM_URL_TTL, get_video_storage, presigned_post, signed_url, stored_size
+from .templatetags.gahkflix import picture_url
 from .uploads import UploadTicket, max_upload_bytes
 
 logger = logging.getLogger(__name__)
@@ -398,12 +399,32 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
 
 
 QUALITY_LABELS = {"fullhd": "Full HD", "hd": "HD"}
+UP_NEXT_DESCRIPTION = 200
 
 
-def _player_config(video: Video, start_at: float) -> dict[str, Any]:
+def _up_next(following: Video | None) -> dict[str, Any] | None:
+    """The end card's video: what it is, and a picture of it."""
+    if following is None:
+        return None
+    description = following.description
+    if len(description) > UP_NEXT_DESCRIPTION:
+        description = description[:UP_NEXT_DESCRIPTION].rsplit(" ", 1)[0] + " …"
+    label = ""
+    if following.series:
+        label = " · ".join(filter(None, [following.series.title, following.episode_label]))
+    return {
+        "url": reverse("gahkflix:play", args=[following.pk]),
+        "title": following.title,
+        "kind": "episode" if following.series else "film",
+        "label": label,
+        "description": description,
+        "image": picture_url(following, "banner") or picture_url(following, "thumbnail"),
+    }
+
+
+def _player_config(video: Video, start_at: float, resident: Resident) -> dict[str, Any]:
     """Everything the player needs for one film: the play page renders it, the overlay fetches it."""
     assert video.file is not None  # noqa: S101  # nosec B101 — play() checks
-    following = services.next_episode(video)
     play_url = reverse("gahkflix:play", args=[video.pk])
     if video.series:
         title = f"{video.series.title} · {video.episode_label}" if video.episode_label else video.series.title
@@ -420,11 +441,7 @@ def _player_config(video: Video, start_at: float) -> dict[str, Any]:
         "positionUrl": reverse("gahkflix:position", args=[video.pk]),
         "playUrl": play_url,
         "backUrl": reverse("gahkflix:detail", args=[video.pk]),
-        "next": (
-            {"url": reverse("gahkflix:play", args=[following.pk]), "title": following.title}
-            if following
-            else None
-        ),
+        "next": _up_next(services.up_next(video, resident)),
     }
 
 
@@ -441,8 +458,11 @@ def play(request: HttpRequest, pk: int) -> HttpResponse:
         messages.error(request, "Videoen er ikke færdigbehandlet endnu.")
         return redirect("gahkflix:detail", video.pk)
     start = request.GET.get("t", "")
-    resume = services.resume_position(video, current_resident(request))
-    config = _player_config(video, float(start) if start.replace(".", "", 1).isdecimal() else resume)
+    resident = current_resident(request)
+    resume = services.resume_position(video, resident)
+    config = _player_config(
+        video, float(start) if start.replace(".", "", 1).isdecimal() else resume, resident
+    )
     if wants_json:
         return JsonResponse(config)
     return _render(request, "gahkflix/play.html", {"video": video, "player": config})

@@ -8,6 +8,7 @@
   them. Everything the drag binds is delegated from this root (reparationer.ts), so nothing needs
   re-arming afterwards; a drag in progress holds the refresh back with data-live-busy.
 {% endcomment %}
+{% load text_extras %}
 <div class="kanban" id="js-kanban" data-kanban data-live="reparationer" data-live-region
      data-can-move="{% if can_move %}1{% else %}0{% endif %}"
      data-can-manage="{% if can_manage %}1{% else %}0{% endif %}">
@@ -26,7 +27,7 @@
                data-move-url="{% url 'reparationer:set_status' task.pk %}">
             <h3><a href="{% url 'reparationer:detail' task.pk %}">{{ task.title }}</a></h3>
             {% if task.location %}<p class="muted">{{ task.location }}</p>{% endif %}
-            {% if task.description %}<p>{{ task.description|linebreaksbr }}</p>{% endif %}
+            {% if task.description %}<p>{{ task.description|links|linebreaksbr }}</p>{% endif %}
             <p class="chip chip-quiet">Ansvarlig: {{ task.get_responsible_display }}</p>
             <p class="muted">
               Meldt af {{ task.reported_by.first_name }} · {{ task.created_at|date:"j. M" }}

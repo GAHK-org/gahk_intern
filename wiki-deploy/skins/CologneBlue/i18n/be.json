@@ -2,12 +2,12 @@
 	"@metadata": {
 		"authors": [
 			"Artsiom91",
+			"Maksim L.",
 			"Mechanizatar",
 			"Mienski",
 			"Yury Tarasievich",
 			"Хомелка",
-			"Чаховіч Уладзіслаў",
-			"Maksim L."
+			"Чаховіч Уладзіслаў"
 		]
 	},
 	"skinname-cologneblue": "Сіні Кёльн",
@@ -23,9 +23,5 @@
 	"deletethispage": "Выдаліць гэту старонку",
 	"undeletethispage": "Аднавіць гэту старонку",
 	"protectthispage": "Пачаць ахоўваць гэтую старонку",
-	"unprotectthispage": "Змяніць ахову гэтай старонкі",
-	"talkpage": "Размовы пра гэтую старонку",
-	"articlepage": "Паказаць старонку змесціва",
-	"userpage": "Паказаць старонку ўдзельніка",
-	"projectpage": "Паказаць старонку праекта"
+	"unprotectthispage": "Змяніць ахову гэтай старонкі"
 }

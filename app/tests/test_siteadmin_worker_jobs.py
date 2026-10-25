@@ -43,6 +43,7 @@ from residents.views_admin import (
     _plan,
     _queue,
     _running,
+    _schedules,
     _task_argument_id,
     _task_types,
 )
@@ -157,6 +158,43 @@ def test_schedules_are_described_in_words_where_they_have_a_usual_shape() -> Non
     assert _plan(thrice) == "Hver dag kl. 06:30, 12:30 og 18:30"
     assert _plan(interval) == "Hvert 10. minut"
     assert _plan(hourly) == "Hver time"
+
+
+@pytest.mark.django_db
+def test_the_next_run_is_read_in_the_schedules_own_time_zone() -> None:
+    """The database gives last_run_at back in UTC; read there, a crontab put yesterday's 17:00 run
+    at 17:00 UTC (19:00 here) and called every entry late."""
+
+    def entry(name: str, last_run_at: datetime, **fields: str) -> None:
+        crontab = CrontabSchedule.objects.create(timezone=settings.TIME_ZONE, **fields)
+        PeriodicTask.objects.create(name=name, task=NOTIFY, crontab=crontab, last_run_at=last_run_at)
+
+    entry(
+        "remind-rsvp-deadlines", datetime(2026, 10, 20, 17, 0, 0, 53000, tzinfo=LOCAL), minute="0", hour="17"
+    )
+    entry(
+        "apply-ak-monthly-assessment",
+        datetime(2026, 10, 1, 4, 10, 1, tzinfo=LOCAL),
+        minute="10",
+        hour="4",
+        day_of_month="1",
+    )
+    entry("purge-expired-applications", datetime(2026, 10, 19, 3, 20, 2, tzinfo=LOCAL), minute="20", hour="3")
+    every = IntervalSchedule.objects.create(every=10, period=IntervalSchedule.MINUTES)
+    PeriodicTask.objects.create(
+        name="every", task=NOTIFY, interval=every, last_run_at=datetime(2026, 10, 21, 11, 55, tzinfo=LOCAL)
+    )
+
+    stuck, interval, daily, monthly = _schedules([], datetime(2026, 10, 21, 10, 0, tzinfo=UTC))  # 12:00 here
+
+    assert (stuck.title, stuck.next_run_at, stuck.overdue) == (
+        "purge-expired-applications",
+        datetime(2026, 10, 20, 3, 20, tzinfo=LOCAL),
+        True,
+    )
+    assert (interval.next_run_at, interval.overdue) == (datetime(2026, 10, 21, 12, 5, tzinfo=LOCAL), False)
+    assert (daily.next_run_at, daily.overdue) == (datetime(2026, 10, 21, 17, 0, tzinfo=LOCAL), False)
+    assert (monthly.next_run_at, monthly.overdue) == (datetime(2026, 11, 1, 4, 10, tzinfo=LOCAL), False)
 
 
 # ---- against the tables ----
