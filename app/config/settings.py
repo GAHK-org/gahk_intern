@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     "photo_album",
     "notifications",
     "gahkflix",
+    "regnskab",
 ]
 
 MIDDLEWARE = [
@@ -523,6 +524,15 @@ INDSTILLING_EMAIL = os.environ.get("INDSTILLING_EMAIL", "indstillingen@gahk.dk")
 # Ølkælder bank account shown on the member's saldo page (where to transfer money to top up).
 OELKAELDER_BANK_REG = os.environ.get("OELKAELDER_BANK_REG", "9070")
 OELKAELDER_BANK_ACCOUNT = os.environ.get("OELKAELDER_BANK_ACCOUNT", "1642635456")
+
+# e-conomic REST API (regnskab.economic) — account balances for alumneregninger.
+ECONOMIC_APP_SECRET_TOKEN = os.environ.get("ECONOMIC_APP_SECRET_TOKEN", "demo" if DEBUG else "")
+ECONOMIC_AGREEMENT_GRANT_TOKEN = os.environ.get("ECONOMIC_AGREEMENT_GRANT_TOKEN", "demo" if DEBUG else "")
+
+# Sender + bank details for alumneregning mails (regnskab.alumneregning).
+ALUMNEREGNING_FROM_EMAIL = os.environ.get("ALUMNEREGNING_FROM_EMAIL", "regnskab@gahk.dk")
+ALUMNEREGNING_BANK_REG = os.environ.get("ALUMNEREGNING_BANK_REG", "9070")
+ALUMNEREGNING_BANK_ACCOUNT = os.environ.get("ALUMNEREGNING_BANK_ACCOUNT", "1642410853")
 
 # Front-page visit counter: server-side secret for HMAC-hashing visitor IPs (F-002/F-011).
 VISIT_COUNTER_HMAC_KEY = os.environ.get("VISIT_COUNTER_HMAC_KEY", "dev-hmac-key")

@@ -116,6 +116,8 @@ class Resident(AbstractBaseUser, PermissionsMixin):
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="proteges"
     )
     fylgje_raw = models.CharField(max_length=255, blank=True)  # original free-text, kept if unresolved
+    # e-conomic's chart-of-accounts accountNumber for this alumne (F-010 regnskab role; alumneregning automation).
+    economic_account_number = models.PositiveIntegerField(null=True, blank=True, unique=True)
     # profile
     profile_picture = models.FileField(upload_to="profile_pictures/", blank=True)
     # A small square copy of profile_picture, made by the worker (residents.tasks). Every avatar on

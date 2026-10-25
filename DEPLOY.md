@@ -57,6 +57,8 @@ VAPID_ADMIN_EMAIL=autosvar@gahk.dk                # real address: push services 
 S3_BUCKET=…  S3_LOCATION=fsn1  S3_ACCESS_KEY=…  S3_SECRET_KEY=…   # media object storage — see §4c
 AWS_REQUEST_CHECKSUM_CALCULATION=when_required    # ⚠ required with the above — see §4c
 AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
+ECONOMIC_APP_SECRET_TOKEN=…  ECONOMIC_AGREEMENT_GRANT_TOKEN=…   # e-conomic API, alumneregning — unset = every call 401s (no "demo" fallback outside DEBUG)
+ALUMNEREGNING_FROM_EMAIL=regnskab@gahk.dk         # ⚠ must be an alias of SMTP_USER — see above
 ```
 Store real values in Coolify's secret manager / a vault — not in git.
 

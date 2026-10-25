@@ -92,6 +92,7 @@ erDiagram
         string study
         int sponsor_id FK
         string fylgje_raw
+        int economic_account_number
         string profile_picture
         string profile_thumbnail
         text bio
@@ -853,6 +854,37 @@ erDiagram
         datetime created_at
     }
 
+    regnskab_EconomicLedgerEntry {
+        int id PK
+        int resident_id FK
+        int entry_number
+        bool is_draft
+        date date
+        string text
+        decimal amount
+        string entry_type
+        int voucher_number
+        date due_date
+        datetime synced_at
+    }
+
+    regnskab_AlumneregningSettings {
+        int id PK
+        text message_template
+        string followup_pdf
+        datetime updated_at
+    }
+
+    regnskab_AlumneregningSend {
+        int id PK
+        int resident_id FK
+        date date_from
+        date date_to
+        string outcome
+        string detail
+        datetime sent_at
+    }
+
     core_PushSubscription }o--|| residents_Resident : "user"
     residents_Resident }o--|o residents_Resident : "sponsor"
     residents_Residency }o--|| residents_Resident : "resident"
@@ -963,6 +995,8 @@ erDiagram
     gahkflix_ChangeRequest }o--|| residents_Resident : "requested_by"
     gahkflix_ChangeVote }o--|| gahkflix_ChangeRequest : "request"
     gahkflix_ChangeVote }o--|| residents_Resident : "voter"
+    regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
+    regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
 ```
 
 ## admissions
@@ -1851,6 +1885,47 @@ erDiagram
     photo_album_FeaturedMedia }o--|| photo_album_Media : "media"
 ```
 
+## regnskab
+
+```mermaid
+erDiagram
+    regnskab_EconomicLedgerEntry {
+        int id PK
+        int resident_id FK
+        int entry_number
+        bool is_draft
+        date date
+        string text
+        decimal amount
+        string entry_type
+        int voucher_number
+        date due_date
+        datetime synced_at
+    }
+
+    regnskab_AlumneregningSettings {
+        int id PK
+        text message_template
+        string followup_pdf
+        datetime updated_at
+    }
+
+    regnskab_AlumneregningSend {
+        int id PK
+        int resident_id FK
+        date date_from
+        date date_to
+        string outcome
+        string detail
+        datetime sent_at
+    }
+
+    residents_Resident { }
+
+    regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
+    regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
+```
+
 ## reparationer
 
 ```mermaid
@@ -1902,6 +1977,7 @@ erDiagram
         string study
         int sponsor_id FK
         string fylgje_raw
+        int economic_account_number
         string profile_picture
         string profile_thumbnail
         text bio
