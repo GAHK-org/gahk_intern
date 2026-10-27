@@ -655,8 +655,11 @@ PROFILE_PICTURE_MAX_MB = int(os.environ.get("PROFILE_PICTURE_MAX_MB", "5"))
 # modern phone photo legitimately arrives at 10-15 MB, and a clip from the same phone is an order of
 # magnitude larger again. Its own settings for the same reason the *_MAX_MB above are separate —
 # each feature caps its own uploads, so an ops change for one cannot silently change another.
+# A camera RAW file is a third: a 45-megapixel sensor's data is 50-120 MB. The import script's
+# videos have no ceiling at all (photo_album.uploads.size_limit).
 PHOTO_ALBUM_IMAGE_MAX_MB = int(os.environ.get("PHOTO_ALBUM_IMAGE_MAX_MB", "50"))
-PHOTO_ALBUM_VIDEO_MAX_MB = int(os.environ.get("PHOTO_ALBUM_VIDEO_MAX_MB", "1000"))
+PHOTO_ALBUM_RAW_MAX_MB = int(os.environ.get("PHOTO_ALBUM_RAW_MAX_MB", "200"))
+PHOTO_ALBUM_VIDEO_MAX_MB = int(os.environ.get("PHOTO_ALBUM_VIDEO_MAX_MB", "3072"))
 
 # A local copy of the album's thumbnails and HD images (photo_album.cache), so the grid does not
 # bounce every tile off S3. Empty turns it off; production sets it to a volume so a redeploy starts

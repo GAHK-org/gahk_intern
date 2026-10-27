@@ -919,6 +919,8 @@ interface MediaDetail {
   kind: "image" | "video"
   title: string
   filename: string
+  // A camera RAW file: what "Download original" fetches is the sensor's data, not a picture
+  raw: boolean
   full: string
   album: string
   albumUrl: string
@@ -1159,6 +1161,7 @@ if (gallery && dialog) {
       mobileDate.textContent = detail.capturedAt || detail.approximateDate || detail.uploadedAt
       download.href = detail.downloadUrl
       menuDownload.href = detail.downloadUrl
+      download.textContent = menuDownload.textContent = detail.raw ? "Download original (RAW)" : "Download original"
       deleteForm.hidden = !detail.deleteUrl
       deleteForm.action = detail.deleteUrl
       menuDeleteForm.hidden = !detail.deleteUrl

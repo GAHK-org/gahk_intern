@@ -12,6 +12,9 @@ FROM python:3.13-slim AS app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 COPY --from=ghcr.io/astral-sh/uv:0.8 /uv /uvx /bin/
+# exiv2 (the photo album's metadata copying) links against the system's Expat XML parser, which the
+# slim image leaves out.
+RUN apt-get update && apt-get install -y --no-install-recommends libexpat1 && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 # Install prod deps only (no dev group) into /app/.venv from the lockfile, using the image's Python 3.13.
 COPY pyproject.toml uv.lock ./

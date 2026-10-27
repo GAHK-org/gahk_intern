@@ -15,7 +15,7 @@ class AlbumAdmin(admin.ModelAdmin):
 @admin.register(Media)
 class MediaAdmin(admin.ModelAdmin):
     list_display = ("filename", "album", "status", "derivative_state", "added_at")
-    list_filter = ("status", "derivative_state")
+    list_filter = ("status", "derivative_state", "is_raw")
     search_fields = ("filename", "title", "sha256")
     readonly_fields = ("uuid", "sha256", "sort_at")
     raw_id_fields = ("album", "requested_by", "approved_by", "deleted_by")

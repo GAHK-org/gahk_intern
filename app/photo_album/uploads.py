@@ -14,6 +14,10 @@ the original is served from our origin as it was uploaded.
 
 Both the content type and the extension are checked, for the reason given there too: the content
 type is a hint the client controls, and the extension is what the file is ultimately served as.
+
+**Camera RAW** is taken too: the sensor's data as the camera saved it (CR2, NEF, ARW, DNG, …). It is
+stored and downloaded exactly as it came, like every original; the viewer and the grid get JPEGs
+decoded from it with LibRaw (photo_album.raw).
 """
 
 import logging
@@ -29,6 +33,8 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from PIL import Image
 from pillow_heif import register_heif_opener
+
+from . import raw
 
 register_heif_opener()
 
@@ -52,6 +58,29 @@ IMAGE_TYPES_BY_EXTENSION = {
     ".tiff": "image/tiff",
     ".bmp": "image/bmp",
 }
+# The RAW formats of the cameras people actually own, all of which LibRaw reads. There is no
+# registered content type for any of them; these are the ones the freedesktop.org MIME database uses.
+RAW_TYPES_BY_EXTENSION = {
+    ".3fr": "image/x-hasselblad-3fr",
+    ".arw": "image/x-sony-arw",
+    ".cr2": "image/x-canon-cr2",
+    ".cr3": "image/x-canon-cr3",
+    ".crw": "image/x-canon-crw",
+    ".dng": "image/x-adobe-dng",
+    ".erf": "image/x-epson-erf",
+    ".iiq": "image/x-phaseone-iiq",
+    ".mrw": "image/x-minolta-mrw",
+    ".nef": "image/x-nikon-nef",
+    ".nrw": "image/x-nikon-nrw",
+    ".orf": "image/x-olympus-orf",
+    ".pef": "image/x-pentax-pef",
+    ".raf": "image/x-fuji-raf",
+    ".rw2": "image/x-panasonic-rw2",
+    ".rwl": "image/x-leica-rwl",
+    ".sr2": "image/x-sony-sr2",
+    ".srf": "image/x-sony-srf",
+    ".srw": "image/x-samsung-srw",
+}
 VIDEO_TYPES_BY_EXTENSION = {
     ".mp4": "video/mp4",
     ".m4v": "video/x-m4v",
@@ -68,7 +97,8 @@ VIDEO_TYPES_BY_EXTENSION = {
     ".wmv": "video/x-ms-wmv",
     ".ogv": "video/ogg",
 }
-IMAGE_EXTENSIONS = frozenset(IMAGE_TYPES_BY_EXTENSION)
+RAW_EXTENSIONS = frozenset(RAW_TYPES_BY_EXTENSION)
+IMAGE_EXTENSIONS = frozenset(IMAGE_TYPES_BY_EXTENSION) | RAW_EXTENSIONS
 VIDEO_EXTENSIONS = frozenset(VIDEO_TYPES_BY_EXTENSION)
 # Every content type a browser has been seen to send for those extensions — the canonical ones plus
 # the aliases. Browsers disagree about HEIC, AVI and MTS, and some send nothing at all, so the
@@ -90,7 +120,12 @@ VIDEO_CONTENT_TYPES = frozenset(
 # What a browser sends when it has no idea. Accepted, like an empty type, when the extension is known.
 UNKNOWN_CONTENT_TYPES = frozenset({"", "application/octet-stream", "binary/octet-stream"})
 
-EXTENSION_HELP = "JPEG, PNG, GIF, WebP, HEIC, AVIF, TIFF, BMP, MP4, MOV, M4V, WebM, AVI, MKV, 3GP, MTS, MPEG, WMV eller OGV"
+EXTENSION_HELP = (
+    "JPEG, PNG, GIF, WebP, HEIC, AVIF, TIFF, BMP, RAW (CR2, CR3, NEF, ARW, DNG, RAF, ORF, RW2 m.fl.), "
+    "MP4, MOV, M4V, WebM, AVI, MKV, 3GP, MTS, MPEG, WMV eller OGV"
+)
+# For the file picker: `image/*` alone hides RAW files on Windows, which knows no type for them.
+UPLOAD_ACCEPT = ",".join(["image/*", "video/*", *sorted(IMAGE_EXTENSIONS | VIDEO_EXTENSIONS)])
 
 
 def _extension(upload: Any) -> str:  # noqa: ANN401 — an UploadedFile
@@ -103,13 +138,37 @@ def is_video(upload: Any) -> bool:  # noqa: ANN401 — an UploadedFile
     return content_type in VIDEO_CONTENT_TYPES or _extension(upload) in VIDEO_EXTENSIONS
 
 
+def is_raw(upload: Any) -> bool:  # noqa: ANN401 — an UploadedFile, a File or a stored FieldFile
+    """Whether this is a camera RAW file, which only its extension says: no two systems agree on its
+    content type."""
+    return _extension(upload) in RAW_EXTENSIONS
+
+
 def content_type_for(name: str) -> str:
     """The content type a file with this name is stored as, or "" for one the album does not take."""
     extension = Path(name.lower()).suffix
-    return IMAGE_TYPES_BY_EXTENSION.get(extension) or VIDEO_TYPES_BY_EXTENSION.get(extension, "")
+    return (
+        IMAGE_TYPES_BY_EXTENSION.get(extension)
+        or RAW_TYPES_BY_EXTENSION.get(extension)
+        or VIDEO_TYPES_BY_EXTENSION.get(extension, "")
+    )
 
 
-def check_media_upload(upload: Any) -> str | None:  # noqa: ANN401 — an UploadedFile
+def size_limit(name: str, *, limit_video_size: bool = True) -> int | None:
+    """The most bytes the album stores for a file of this name; None for no limit.
+
+    The import script (`limit_video_size=False`) brings the archive's old videos in whatever their
+    size: they are history, and were never going to be recorded again at a smaller one.
+    """
+    extension = Path(name.lower()).suffix
+    if extension in VIDEO_EXTENSIONS:
+        return settings.PHOTO_ALBUM_VIDEO_MAX_MB * 1024 * 1024 if limit_video_size else None
+    if extension in RAW_EXTENSIONS:
+        return settings.PHOTO_ALBUM_RAW_MAX_MB * 1024 * 1024
+    return settings.PHOTO_ALBUM_IMAGE_MAX_MB * 1024 * 1024
+
+
+def check_media_upload(upload: Any, *, limit_video_size: bool = True) -> str | None:  # noqa: ANN401 — an UploadedFile
     """Return a Danish error message, or None when the album is willing to store `upload`.
 
     This is the cheap check — names, types and size. `check_media_content` is the one that opens it.
@@ -126,14 +185,19 @@ def check_media_upload(upload: Any) -> str | None:  # noqa: ANN401 — an Upload
     # An empty or "don't know" content type is accepted only when the extension already vouched for
     # the file: some browsers send none for HEIC and for .mov. A *wrong* one still fails, so an
     # image/png header on a .svg name — or on a .mp4 name — cannot get through.
-    if content_type not in UNKNOWN_CONTENT_TYPES and content_type not in allowed_types:
+    #
+    # A RAW name is the exception: every system has its own name for each RAW type, or none
+    # (image/x-canon-cr2, image/x-dcraw, image/tiff for a DNG, …), so any image/ type will do. What
+    # it is stored and served as comes from the extension, and LibRaw must decode it all the same.
+    raw_claim = extension in RAW_EXTENSIONS and content_type.startswith("image/")
+    if content_type not in UNKNOWN_CONTENT_TYPES and content_type not in allowed_types and not raw_claim:
         return f"Filens indhold passer ikke til filtypen (tilladt: {EXTENSION_HELP})."
 
-    maximum = settings.PHOTO_ALBUM_VIDEO_MAX_MB if video else settings.PHOTO_ALBUM_IMAGE_MAX_MB
+    maximum = size_limit(getattr(upload, "name", "") or "", limit_video_size=limit_video_size)
     size = getattr(upload, "size", 0) or 0
-    if size > maximum * 1024 * 1024:
+    if maximum is not None and size > maximum:
         kind = "Videoen" if video else "Billedet"
-        return f"{kind} er for stor{'' if video else 't'} (over {maximum} MB)."
+        return f"{kind} er for stor{'' if video else 't'} (over {maximum // (1024 * 1024)} MB)."
     return None
 
 
@@ -145,7 +209,7 @@ def check_media_content(upload: Any) -> str | None:  # noqa: ANN401 — an Uploa
     checked, which covers every byte of the compressed pixels without inflating them into memory.
     Other images are decoded (JPEGs at a reduced scale, which is enough to hit a truncated or
     corrupt stream and costs a fraction of a full decode); Pillow has no cheaper check for them. A
-    video must give ffmpeg one decodable frame.
+    video must give ffmpeg one decodable frame, and a RAW file must give LibRaw its sensor data.
     """
     if is_video(upload):
         return (
@@ -153,6 +217,10 @@ def check_media_content(upload: Any) -> str | None:  # noqa: ANN401 — an Uploa
             if _video_decodes(upload)
             else "Videoen kunne ikke læses — filen er ødelagt eller ikke en video."
         )
+    if is_raw(upload):
+        with local_copy(upload) as path:
+            readable = raw.unpacks(path)
+        return None if readable else "RAW-filen kunne ikke læses — filen er ødelagt eller ikke en RAW-fil."
     try:
         upload.seek(0)
         with Image.open(upload) as image:

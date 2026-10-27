@@ -21,8 +21,9 @@ lists each one after every run: why, and a link to its copy (not-on-server.json 
 for the script). Delete a copy once you have dealt with it; it is then listed apart and not fetched
 again. What is kept:
 
-- Files the server would refuse — anything but photos and videos it accepts, files over its size
-  limits or too deep — are kept out of the ZIP, so the rest of the album gets in, and saved to
+- Files the server would refuse — anything but photos (camera RAW files included) and videos it
+  accepts, photos over its size limits (videos have none for this script), files too deep — are
+  kept out of the ZIP, so the rest of the album gets in, and saved to
   <work-dir>/<year>/<album>/invalid/ (mirroring the Dropbox folder) to be looked at and fixed. So
   is a file the server refuses on reading it, after which the rest is sent again.
 - Metadata (.DS_Store, AppleDouble sidecars, Thumbs.db, …) is sent with the album. The server keeps
@@ -537,22 +538,32 @@ class Rules:
     image_extensions: frozenset[str]
     video_extensions: frozenset[str]
     image_max_bytes: int
-    video_max_bytes: int
+    # None: no limit — the server takes this script's videos whatever their size.
+    video_max_bytes: int | None
     max_sub_album_levels: int
     macos_metadata_max_bytes: int
     macos_metadata_any_size: frozenset[str]
+    # Camera RAW files (also among the image extensions), which have a limit of their own.
+    raw_extensions: frozenset[str] = frozenset()
+    raw_max_bytes: int = 0
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> "Rules":
+        video_max_mb = data["videoMaxMb"]
         return cls(
             image_extensions=frozenset(data["imageExtensions"]),
             video_extensions=frozenset(data["videoExtensions"]),
             image_max_bytes=int(data["imageMaxMb"]) * 1024 * 1024,
-            video_max_bytes=int(data["videoMaxMb"]) * 1024 * 1024,
+            video_max_bytes=None
+            if video_max_mb is None
+            else int(video_max_mb) * 1024 * 1024,
             max_sub_album_levels=int(data["maxSubAlbumLevels"]),
             macos_metadata_max_bytes=int(data["macosMetadataMaxBytes"]),
             # Absent from servers older than the .DS_Store exception, which had no such names.
             macos_metadata_any_size=frozenset(data.get("macosMetadataAnySize", [])),
+            # Absent from servers older than RAW files, which took none.
+            raw_extensions=frozenset(data.get("rawExtensions", [])),
+            raw_max_bytes=int(data.get("rawMaxMb", 0)) * 1024 * 1024,
         )
 
 
@@ -1088,7 +1099,10 @@ def classify(path: tuple[str, ...], size: int, rules: Rules) -> tuple[str, str]:
     if name.lower() in WINDOWS_METADATA_FILES:
         return "metadata", "Windows system file"
     extension = PurePosixPath(name).suffix.lower()
-    if extension in rules.image_extensions:
+    limit: int | None
+    if extension in rules.raw_extensions:
+        limit = rules.raw_max_bytes
+    elif extension in rules.image_extensions:
         limit = rules.image_max_bytes
     elif extension in rules.video_extensions:
         limit = rules.video_max_bytes
@@ -1097,7 +1111,7 @@ def classify(path: tuple[str, ...], size: int, rules: Rules) -> tuple[str, str]:
             "invalid",
             f"not a photo or video the album accepts ({extension or 'no extension'})",
         )
-    if size > limit:
+    if limit is not None and size > limit:
         return "invalid", f"{human_size(size)} is over the {human_size(limit)} limit"
     return "media", ""
 
