@@ -1635,8 +1635,10 @@ def test_album_detail_query_count_does_not_grow_with_the_number_of_photos(
 
     # One more than before the album tree: the page now lists the album's sub-albums. One more again
     # for the album's tags (a root album has no ancestors to inherit any from, so no query for those),
-    # and one for the notification bell's unseen count, which base.html draws on every page.
-    with django_assert_num_queries(11):  # type: ignore[operator]
+    # and one for the notification bell's unseen count, which base.html draws on every page. Three
+    # for merging (photo_album.merge): whether one is under way, how the administrator's last one
+    # into this album went, and the albums beside it to offer.
+    with django_assert_num_queries(14):  # type: ignore[operator]
         client.get(url)
 
 

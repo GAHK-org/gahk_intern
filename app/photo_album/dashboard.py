@@ -677,11 +677,15 @@ ORPHAN_AFTER = timedelta(days=1)
 ORPHAN_KEYS_KEPT = 50
 
 
-def _referenced_keys() -> set[str]:
-    """Every file a media row points at, the binned ones' too."""
-    keys: set[str] = set()
-    for row in Media.objects.values_list("original", "high_definition", "thumbnail", "sidecar").iterator():
-        keys.update(name for name in row if name)
+def _referenced_keys() -> dict[str, str]:
+    """Every file a media row points at, the binned ones' too, and the album (its id) it is in now.
+
+    Not always the album in the key: an item merged into another album keeps its key (merge.py).
+    """
+    keys: dict[str, str] = {}
+    rows = Media.objects.values_list("album_id", "original", "high_definition", "thumbnail", "sidecar")
+    for album_id, *names in rows.iterator():
+        keys.update((name, str(album_id)) for name in names if name)
     return keys
 
 
@@ -698,7 +702,7 @@ def measure_storage() -> StorageReport:
         entry = totals.setdefault(category, {"objects": 0, "bytes": 0})
         entry["objects"] += 1
         entry["bytes"] += stored.size
-        if not stored.current or (album := _album_of(stored.key)) is None:
+        if not stored.current or (album := referenced.get(stored.key) or _album_of(stored.key)) is None:
             continue
         by_album[album] = by_album.get(album, 0) + stored.size
         if stored.key not in referenced and stored.modified < settled_before:
