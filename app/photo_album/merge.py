@@ -1,10 +1,11 @@
-"""Merging one album into another beside it — an administrator's tool.
+"""Merging one album into another in the same folder — an administrator's tool.
 
 Everything in `source` — its media, its sub-albums, its tags — moves to `target`, and `source` goes;
-`target` keeps its name, its place and its address. The two lie side by side, root albums of one
-folder or sub-albums of one album, so nothing changes depth: a sub-album of `source` moves under
-`target` whole, unless `target` has one of the same name, which the two are then merged into in
-the same way, all the way down.
+`target` keeps its name, its place and its address. Any album of the folder can be merged into any
+other, root or sub-album, but not into one of its own sub-albums: merged into its own root, a
+sub-album is flattened into it. A sub-album of `source` moves under `target` whole, at whatever depth
+that puts it (MAX_ALBUM_DEPTH permitting), unless `target` has one of the same name, which the two
+are then merged into in the same way, all the way down.
 
 An item `target` already holds is not kept twice. It is a duplicate only if the originals are the
 same byte for byte — the hash finds the candidates, the bytes decide — and, when both copies have an
@@ -28,13 +29,14 @@ from dataclasses import dataclass, field
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import CharField, Value
+from django.db.models import CharField, F, Max, Value
 from django.db.models.fields.files import FieldFile
 from django.db.models.functions import Concat, Substr
 
 from residents.models import Resident
 
 from .models import (
+    MAX_ALBUM_DEPTH,
     Album,
     AlbumDownload,
     AlbumImport,
@@ -45,6 +47,7 @@ from .models import (
     Media,
     MediaStatus,
     MediaView,
+    locked_album_ids,
 )
 from .services import Progress, hash_original, no_progress, settle_dates
 from .storage import get_photo_album_storage
@@ -74,55 +77,98 @@ class Comparison:
     )  # storage key -> bytes, None if unreadable
 
 
-def check(target: Album, source: Album) -> list[tuple[Album, Album]]:
-    """The albums to merge, pair by pair, `target` and `source` first. Raises ValidationError."""
+@dataclass
+class MergePlan:
+    """What merging `source` into `target` does to the albums, worked out before anything changes."""
+
+    # (album kept, album merged into it and deleted): `target` and `source` first, then the
+    # sub-albums of the same name below them, each before its own sub-albums.
+    pairs: list[tuple[Album, Album]] = field(default_factory=list)
+    # (sub-album of a merged album with no namesake, the kept album it moves under, whole).
+    moves: list[tuple[Album, Album]] = field(default_factory=list)
+
+
+def plan(target: Album, source: Album) -> MergePlan:
+    """How `source` would be merged into `target`. Raises ValidationError if it cannot be."""
     if target.pk == source.pk:
-        raise ValidationError("Et album kan ikke flettes med sig selv.")
-    if target.parent_id != source.parent_id or target.folder != source.folder:
-        raise ValidationError(
-            "Kun albummer side om side kan flettes: to albummer i samme mappe, "
-            "eller to underalbummer af samme album."
-        )
+        raise ValidationError("Et album kan ikke flettes ind i sig selv.")
+    if target.folder != source.folder:
+        raise ValidationError("Kun albummer i samme mappe kan flettes.")
+    if source.pk in target.ancestor_ids:
+        raise ValidationError(f"{source.name} kan ikke flettes ind i et af sine egne underalbummer.")
     if target.is_locked() or source.is_locked():
         raise ValidationError("Begge albummer skal være låst op, før de kan flettes.")
-    pairs = _pairs(target, source)
-    for pair in pairs[1:]:
+    result = MergePlan()
+    _plan(target, source, source, result)
+    for pair in result.pairs[1:]:
         for album in pair:
             if album.is_locked():
                 raise ValidationError(
                     f"Underalbummet {album.name} er låst. Lås det op, før albummerne flettes."
                 )
-    return pairs
+    for child, under in result.moves:
+        deepest = child.subtree().aggregate(deepest=Max("depth"))["deepest"]
+        if deepest + under.depth + 1 - child.depth > MAX_ALBUM_DEPTH:
+            raise ValidationError(
+                f"Underalbummet {child.name} ville komme til at ligge for dybt: "
+                f"albummer kan højst ligge {MAX_ALBUM_DEPTH + 1} niveauer dybt."
+            )
+    return result
 
 
-def _pairs(target: Album, source: Album) -> list[tuple[Album, Album]]:
-    # Lower-cased as the database's unique constraint on sibling names is (models.Album.Meta).
-    by_name = {child.name.lower(): child for child in target.children.all()}
-    pairs = [(target, source)]
+def _plan(target: Album, source: Album, top: Album, result: MergePlan) -> None:
+    result.pairs.append((target, source))
+    # Lower-cased as the database's unique constraint on sibling names is (models.Album.Meta). Never
+    # `top`, the album being merged: merged into the album above it, it is one of its sub-albums.
+    by_name = {child.name.lower(): child for child in target.children.exclude(pk=top.pk)}
     for child in source.children.order_by("pk"):
         if (match := by_name.get(child.name.lower())) is not None:
-            pairs.extend(_pairs(match, child))
-    return pairs
+            _plan(match, child, top, result)
+        else:
+            result.moves.append((child, target))
 
 
-def merge_candidates(album: Album) -> list[tuple[Album, bool]]:
-    """The albums `album` could be merged with — those beside it — each with whether it is locked."""
-    if album.parent_id is None:
-        siblings = Album.objects.filter(folder=album.folder, parent__isnull=True)
-    else:
-        siblings = Album.objects.filter(parent_id=album.parent_id)
-    return [(other, other.is_locked()) for other in siblings.exclude(pk=album.pk).order_by("name")]
+def label(album: Album) -> str:
+    """An album by its names from the folder down — "Sommerfest › Lørdag" — which tells it from the
+    album it is merged into even when the two share a name."""
+    return " › ".join(album.display_path())
+
+
+@dataclass
+class Candidate:
+    album: Album
+    path: list[str]  # its names from the folder down: ["Sommerfest", "Lørdag"]
+    locked: bool
+
+
+def merge_candidates(album: Album) -> list[Candidate]:
+    """The albums that could be merged into `album`: the others in its folder, but not those above it.
+
+    Two queries whatever the folder holds: its albums, and their lock states all at once.
+    """
+    albums = list(Album.objects.filter(folder=album.folder))
+    excluded = {album.pk, *album.ancestor_ids}
+    if all(other.pk in excluded for other in albums):
+        return []
+    names = {other.pk: other.name for other in albums}
+    locked = locked_album_ids(albums)
+    candidates = [
+        Candidate(other, [names[pk] for pk in [*other.ancestor_ids, other.pk]], other.pk in locked)
+        for other in albums
+        if other.pk not in excluded
+    ]
+    return sorted(candidates, key=lambda candidate: [name.lower() for name in candidate.path])
 
 
 def request_merge(target: Album, source: Album, *, by: Resident) -> AlbumMerge:
     """Queue the merge of `source` into `target`, once the transaction commits. Raises
     ValidationError for albums that cannot be merged, or while another merge in the folder runs."""
-    check(target, source)
+    plan(target, source)
     if AlbumMerge.objects.filter(state__in=AlbumMerge.ACTIVE_STATES, target__folder=target.folder).exists():
         raise ValidationError(
             f"Der er allerede en fletning i gang i mappen {target.folder}. Vent, til den er færdig."
         )
-    job = AlbumMerge.objects.create(target=target, source=source, source_name=source.name, requested_by=by)
+    job = AlbumMerge.objects.create(target=target, source=source, source_path=label(source), requested_by=by)
     from .tasks import process_album_merge
 
     def enqueue() -> None:
@@ -135,7 +181,7 @@ def request_merge(target: Album, source: Album, *, by: Resident) -> AlbumMerge:
 
 def merge_albums(target: Album, source: Album, progress: Progress = no_progress) -> MergeResult:
     """Merge `source` into `target`. Raises ValidationError for albums that cannot be merged."""
-    return apply(target, source, compare(check(target, source), progress))
+    return apply(target, source, compare(plan(target, source).pairs, progress))
 
 
 # --- Reading the files ------------------------------------------------------------------------
@@ -210,7 +256,7 @@ def _read(stored: FieldFile) -> bytes | None:
 def apply(target: Album, source: Album, comparison: Comparison) -> MergeResult:
     """Merge `source` into `target` in one transaction, with what `compare` found out.
 
-    The albums are checked again, locked: anything may have changed while the files were read. An
+    The albums are planned again, locked: anything may have changed while the files were read. An
     item or a sub-album that arrived meanwhile was not compared, so it is moved as it is.
     """
     result = MergeResult()
@@ -223,43 +269,40 @@ def apply(target: Album, source: Album, comparison: Comparison) -> MergeResult:
         if len(albums) < 2:
             raise ValidationError("Et af albummerne findes ikke længere.")
         target, source = albums[target.pk], albums[source.pk]
-        check(target, source)
-        _merge(target, source, comparison, result, unused)
+        merge_plan = plan(target, source)
+        # Out of the way of the sub-albums moving in beside them until they are deleted below — the
+        # one merged into its own parent above all — under a name no album can have ("/").
+        for _, merged in merge_plan.pairs:
+            Album.objects.filter(pk=merged.pk).update(name=f"/fletning/{merged.pk}")
+        for kept, merged in merge_plan.pairs:
+            _merge_media(kept, merged, comparison, result, unused)
+        for album, under in merge_plan.moves:
+            _move(album, under=under)
+        for kept, merged in merge_plan.pairs:
+            kept.tags.add(*merged.tags.all())
+            AlbumDownload.objects.filter(album=merged).update(album=kept)
+            # An import's albums are what its status page lists, and what tells the import script
+            # which albums it made: it made this one too, now.
+            for album_import in AlbumImport.objects.filter(album_ids__contains=[merged.pk]):
+                album_import.album_ids = list(
+                    dict.fromkeys(kept.pk if pk == merged.pk else pk for pk in album_import.album_ids)
+                )
+                album_import.save(update_fields=["album_ids"])
+        for _, merged in reversed(merge_plan.pairs):  # each after its own sub-albums
+            merged.delete()
+        result.albums_merged, result.albums_moved = len(merge_plan.pairs) - 1, len(merge_plan.moves)
         settle_dates(target)
         transaction.on_commit(lambda: _delete_stored(unused))
     return result
 
 
-def _merge(
-    target: Album, source: Album, comparison: Comparison, result: MergeResult, unused: list[str]
-) -> None:
-    _merge_media(target, source, comparison, result, unused)
-    by_name = {child.name.lower(): child for child in target.children.all()}
-    for child in source.children.order_by("pk"):
-        if (match := by_name.get(child.name.lower())) is not None:
-            _merge(match, child, comparison, result, unused)
-            result.albums_merged += 1
-        else:
-            _move(child, under=target)
-            result.albums_moved += 1
-    target.tags.add(*source.tags.all())
-    AlbumDownload.objects.filter(album=source).update(album=target)
-    # An import's albums are what its status page lists, and what tells the import script which
-    # albums it made: it made this one too, now.
-    for album_import in AlbumImport.objects.filter(album_ids__contains=[source.pk]):
-        album_import.album_ids = list(
-            dict.fromkeys(target.pk if pk == source.pk else pk for pk in album_import.album_ids)
-        )
-        album_import.save(update_fields=["album_ids"])
-    source.delete()
-
-
 def _move(album: Album, *, under: Album) -> None:
-    """Move `album` and its subtree under `under`, beside it at the same depth: only paths change."""
-    old, new = album.path, f"{under.path}{album.pk}/"
+    """Move `album` and its subtree under `under`: their paths and depths, nothing else."""
+    old, new, deeper = album.path, f"{under.path}{album.pk}/", under.depth + 1 - album.depth
     Album.objects.filter(pk=album.pk).update(parent=under)
     Album.objects.filter(path__startswith=old).update(
-        path=Concat(Value(new), Substr("path", len(old) + 1), output_field=CharField())
+        path=Concat(Value(new), Substr("path", len(old) + 1), output_field=CharField()),
+        depth=F("depth") + deeper,
     )
 
 
@@ -365,6 +408,19 @@ def _delete_stored(keys: list[str]) -> None:
 
 def _count(number: int, one: str, many: str) -> str:
     return f"{number} {one if number == 1 else many}"
+
+
+def contents(album: Album) -> str:
+    """'12 medier og 2 underalbummer', counting everything below it; the bin's items too, as they
+    move as well."""
+    media = Media.objects.filter(album__path__startswith=album.path).count()
+    albums = Album.objects.filter(path__startswith=album.path).count() - 1
+    if not media and not albums:
+        return "Tomt"
+    parts = [_count(media, "medie", "medier")] if media else []
+    if albums:
+        parts.append(_count(albums, "underalbum", "underalbummer"))
+    return " og ".join(parts)
 
 
 def describe(result: dict[str, int]) -> str:

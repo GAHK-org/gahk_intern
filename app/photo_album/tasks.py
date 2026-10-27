@@ -704,10 +704,10 @@ def process_album_merge(self: Task, merge_id: int) -> bool:
     if _claim_job(rows, AlbumMergeState, self.request.id, interrupted=MERGE_INTERRUPTED) is not Claim.CLAIMED:
         return False
     job = rows.select_related("target", "source").get()
-    logger.info("Merging %s into %s for %s.", job.source_name, job.target, job.requested_by)
+    logger.info("Merging %s into %s for %s.", job.source_path, merge.label(job.target), job.requested_by)
     try:
         if job.source is None:
-            raise ValidationError(f"{job.source_name} findes ikke længere.")
+            raise ValidationError(f"{job.source_path} findes ikke længere.")
         result = merge.merge_albums(job.target, job.source, progress=JobProgress(rows))
     except ValidationError as exc:
         # Refused, not crashed: an album was locked or moved meanwhile, and nothing was merged.
@@ -725,7 +725,9 @@ def process_album_merge(self: Task, merge_id: int) -> bool:
         raise
     # By update, not save: the merge deleted the source album, which the row in memory still names.
     rows.update(state=AlbumMergeState.READY, result=asdict(result), error="", completed_at=timezone.now())
-    logger.info("Merged %s into %s: %s.", job.source_name, job.target, merge.describe(asdict(result)))
+    logger.info(
+        "Merged %s into %s: %s.", job.source_path, merge.label(job.target), merge.describe(asdict(result))
+    )
     return True
 
 

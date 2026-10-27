@@ -663,7 +663,7 @@ erDiagram
         int id PK
         int target_id FK
         int source_id FK
-        string source_name
+        string source_path
         int requested_by_id FK
         string task_id
         string state
@@ -1904,7 +1904,7 @@ erDiagram
         int id PK
         int target_id FK
         int source_id FK
-        string source_name
+        string source_path
         int requested_by_id FK
         string task_id
         string state
