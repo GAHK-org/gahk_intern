@@ -382,9 +382,13 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
     can_merge = merge_job is None and access.can_merge_album(request, album)
     if merge_job is None and access.is_administrator(request):
         # How the administrator's own merge into this album went, for a day after.
-        merge_job = album.merges.filter(
-            requested_by=resident, completed_at__gte=timezone.now() - MERGE_NOTICE_SHOWN_FOR
-        ).first()
+        merge_job = (
+            album.merges.filter(
+                requested_by=resident, completed_at__gte=timezone.now() - MERGE_NOTICE_SHOWN_FOR
+            )
+            .select_related("target")
+            .first()
+        )
     return render(
         request,
         "photo_album/detail.html",
@@ -417,6 +421,7 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
             "variants": DownloadVariant.choices,
             "merge_job": merge_job,
             "merge_summary": merge.describe(merge_job.result) if merge_job is not None else "",
+            "merge_target": merge.label(merge_job.target) if merge_job is not None else "",
             "merge_options": merge.merge_candidates(album) if can_merge else [],
         },
     )
@@ -525,22 +530,51 @@ MERGE_NOTICE_SHOWN_FOR = timedelta(days=1)
 
 
 @login_required
-@require_POST
 def merge_album(request: HttpRequest, pk: int) -> HttpResponse:
-    """Merge the chosen album beside this one into it, in the background (photo_album.merge)."""
+    """Merge the album chosen into this one, which is kept: first a page saying what will happen —
+    which album goes, which stays, and where each sub-album ends up — then, posted from it, the
+    merge itself, in the background (photo_album.merge)."""
     target = get_object_or_404(Album, pk=pk)
     if not access.can_merge_album(request, target):
         raise PermissionDenied
-    form = AlbumMergeForm(request.POST)
+    form = AlbumMergeForm(request.POST if request.method == "POST" else request.GET)
     if not form.is_valid():
         _form_error_messages(request, form)
         return redirect("photo_album:detail", target.pk)
+    source = form.cleaned_data["source"]
+    if request.method != "POST":
+        try:
+            merge_plan = merge.plan(target, source)
+        except ValidationError as exc:
+            _error_messages(request, exc)
+            return redirect("photo_album:detail", target.pk)
+        return render(
+            request,
+            "photo_album/merge_confirm.html",
+            {
+                "target": target,
+                "source": source,
+                "target_label": merge.label(target),
+                "source_label": merge.label(source),
+                "target_contents": merge.contents(target),
+                "source_contents": merge.contents(source),
+                "merged": [
+                    (merged.display_path(), kept.display_path()) for kept, merged in merge_plan.pairs[1:]
+                ],
+                "moved": [(album.name, under.display_path()) for album, under in merge_plan.moves],
+            },
+        )
     try:
-        job = merge.request_merge(target, form.cleaned_data["source"], by=current_resident(request))
+        job = merge.request_merge(target, source, by=current_resident(request))
     except ValidationError as exc:
         _error_messages(request, exc)
     else:
-        messages.success(request, f"{job.source_name} flettes ind i {target.name}. Det kan tage lidt tid.")
+        kept = merge.label(target)
+        messages.success(
+            request,
+            f"{job.source_path} flettes ind i {kept}. {kept} beholdes, og {job.source_path} forsvinder, "
+            "når fletningen er færdig.",
+        )
     return redirect("photo_album:detail", target.pk)
 
 
@@ -551,7 +585,11 @@ def merge_status(request: HttpRequest, pk: int) -> HttpResponse:
     the page — the merged album's, as the other one is gone."""
     job = get_object_or_404(AlbumMerge.objects.select_related("target"), pk=pk)
     if job.is_active:
-        return render(request, "photo_album/_merge_notice.html", {"merge_job": job})
+        return render(
+            request,
+            "photo_album/_merge_notice.html",
+            {"merge_job": job, "merge_target": merge.label(job.target)},
+        )
     response = HttpResponse(status=204)
     response["HX-Redirect"] = reverse("photo_album:detail", args=[job.target_id])
     return response

@@ -2011,6 +2011,18 @@
    .album-menu-panel { position:absolute; z-index:20; top:calc(100% + 6px); right:0; display:grid !important; gap:8px; width:max-content; min-width:200px; max-width:min(320px, calc(100vw - 32px)); padding:12px; border:1px solid var(--border); border-radius:8px; background:var(--surface); box-shadow:0 12px 28px rgb(0 0 0 / .16); }
    .album-menu-panel p, .album-menu-panel label { margin:0; color:var(--muted); font-size:13px; }
    .album-menu-panel .btn-link { justify-self:start; }
+   .album-merge-sides { display:grid; grid-template-columns:minmax(0, 1fr) auto minmax(0, 1fr); gap:12px; align-items:stretch; margin:16px 0 24px; }
+   .album-merge-side { margin:0; }
+   .album-merge-side h2 { margin:0 0 4px; overflow-wrap:anywhere; }
+   .album-merge-side p { margin:0 0 4px; }
+   .album-merge-gone { border-style:dashed; opacity:.85; }
+   .album-merge-kept { border-color:var(--green); }
+   .album-merge-arrow { align-self:center; margin:0; color:var(--muted); font-size:28px; }
+   .album-merge-steps { margin:8px 0 16px; padding-left:20px; }
+   .album-merge-steps li { margin-bottom:6px; }
+   .album-merge-actions { display:flex; flex-wrap:wrap; align-items:center; gap:16px; margin-top:16px; }
+   .album-merge-button { max-width:100%; white-space:normal; text-align:left; overflow-wrap:anywhere; }
+   @media (max-width:720px) { .album-merge-sides { grid-template-columns:1fr; }.album-merge-arrow { justify-self:center; transform:rotate(90deg); } }
    .album-menu-choice { display:grid; gap:4px; margin:0; padding:0; border:0; }
    .album-menu-choice label { display:flex; align-items:center; gap:6px; color:var(--ink); }
    .album-lock-status { justify-content:flex-start; margin:-14px 0 20px; }.album-lock-status a { color:inherit; }

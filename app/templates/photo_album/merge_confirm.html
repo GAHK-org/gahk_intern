@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Flet {{ source_label }} ind i {{ target_label }} | Fotoalbum{% endblock %}
+{% block content %}
+{% comment %}Albums by their path in the folder (merge.label) throughout: the one merged may share its name with the one kept — its own parent, say.{% endcomment %}
+<section class="album-merge-confirm">
+	<nav class="album-breadcrumbs" aria-label="Albumsti"><a class="album-back" href="{% url 'photo_album:index' %}">Fotoalbum</a><a class="album-back" href="{% url 'photo_album:index' %}?folder={{ target.folder|urlencode }}">{{ target.folder }}</a><a class="album-back" href="{% url 'photo_album:detail' target.pk %}">{{ target.name }}</a></nav>
+	<h1>Flet {{ source_label }} ind i {{ target_label }}</h1>
+	<div class="album-merge-sides">
+		<article class="card album-merge-side album-merge-gone">
+			<p class="album-eyebrow">Flettes ind og forsvinder</p>
+			<h2>{{ source_label }}</h2>
+			<p class="muted">I mappen {{ source.folder }}</p>
+			<p>{{ source_contents }}</p>
+		</article>
+		<p class="album-merge-arrow" aria-hidden="true">→</p>
+		<article class="card album-merge-side album-merge-kept">
+			<p class="album-eyebrow">Beholdes</p>
+			<h2>{{ target_label }}</h2>
+			<p class="muted">I mappen {{ target.folder }}</p>
+			<p>{{ target_contents }}</p>
+		</article>
+	</div>
+	<h2>Det sker</h2>
+	<ul class="album-merge-steps">
+		<li>Medierne i {{ source_label }} flyttes til {{ target_label }}, også dem i papirkurven, og albummets tags følger med. Et medie, {{ target_label }} allerede har med præcis samme indhold, gemmes kun én gang.</li>
+		{% for merged_path, kept_path in merged %}<li>Underalbummet {{ merged_path|join:" › " }} flettes ind i {{ kept_path|join:" › " }}, som har samme navn.</li>{% endfor %}
+		{% for name, under_path in moved %}<li>Underalbummet {{ name }} flyttes ind under {{ under_path|join:" › " }}.</li>{% endfor %}
+		<li>Bagefter slettes {{ source_label }}{% if merged %} og de underalbummer, der er flettet ind{% endif %}. {{ target_label }} beholder sit navn og sin adresse.</li>
+	</ul>
+	<p class="muted">Fletningen sker i baggrunden og kan ikke fortrydes. Imens kan der ikke uploades til albummerne.</p>
+	<form class="album-merge-actions" method="post">{% csrf_token %}<input type="hidden" name="source" value="{{ source.pk }}"><button class="btn album-merge-button" type="submit">Flet {{ source_label }} ind i {{ target_label }}</button><a class="btn-link" href="{% url 'photo_album:detail' target.pk %}">Annuller</a></form>
+</section>
+{% endblock %}

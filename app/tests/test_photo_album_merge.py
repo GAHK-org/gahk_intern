@@ -26,6 +26,7 @@ from photo_album.models import (
     MediaStatus,
     MediaView,
     Tag,
+    locked_album_ids,
 )
 from photo_album.services import store_upload
 from photo_album.storage import get_photo_album_storage
@@ -274,22 +275,31 @@ def test_the_copy_kept_has_the_tags_views_and_dashboard_days_of_both(
 
 
 @pytest.mark.django_db
-def test_only_albums_side_by_side_can_be_merged() -> None:
+def test_any_album_in_the_folder_can_be_merged_but_not_into_one_of_its_own_sub_albums() -> None:
     fest, other_year = (
         Album.objects.create(folder="2014", name="Fest"),
         Album.objects.create(folder="2015", name="Fest"),
     )
-    beside = Album.objects.create(folder="2014", name="Gallafest")
-    under_fest = Album.objects.create(folder="2014", name="Aften", parent=fest)
-    under_beside = Album.objects.create(folder="2014", name="Nat", parent=beside)
+    gallafest = Album.objects.create(folder="2014", name="Gallafest")
+    evening = Album.objects.create(folder="2014", name="Aften", parent=fest)
+    night = Album.objects.create(folder="2014", name="Nat", parent=gallafest)
+    late = Album.objects.create(folder="2014", name="Sent", parent=night)
 
-    for target, source in ((fest, other_year), (fest, under_beside), (under_fest, under_beside)):
-        with pytest.raises(ValidationError, match="side om side"):
-            merge.check(target, source)
-    with pytest.raises(ValidationError, match="sig selv"):
-        merge.check(fest, fest)
-    merge.check(fest, beside)
-    merge.check(under_fest, Album.objects.create(folder="2014", name="Morgen", parent=fest))
+    with pytest.raises(ValidationError, match="samme mappe"):
+        merge.plan(fest, other_year)
+    with pytest.raises(ValidationError, match="ind i sig selv"):
+        merge.plan(fest, fest)
+    for target, source in ((evening, fest), (late, gallafest), (late, night)):
+        with pytest.raises(ValidationError, match="ind i et af sine egne underalbummer"):
+            merge.plan(target, source)
+    for target, source in (
+        (fest, gallafest),  # root into root
+        (evening, night),  # sub-album into sub-album
+        (fest, night),  # sub-album into another root
+        (evening, gallafest),  # root into sub-album
+        (gallafest, late),  # sub-album into its own root
+    ):
+        merge.plan(target, source)
 
 
 @pytest.mark.django_db
@@ -298,7 +308,7 @@ def test_both_albums_and_every_sub_album_merged_by_name_must_be_unlocked() -> No
     source.manually_locked_at = timezone.now()
     source.save(update_fields=["manually_locked_at"])
     with pytest.raises(ValidationError, match="Begge albummer"):
-        merge.check(target, source)
+        merge.plan(target, source)
 
     source.manually_locked_at = None
     source.save(update_fields=["manually_locked_at"])
@@ -307,12 +317,85 @@ def test_both_albums_and_every_sub_album_merged_by_name_must_be_unlocked() -> No
     moved_whole = Album.objects.create(folder="2014", name="Nat", parent=source)
     moved_whole.manually_locked_at = timezone.now()
     moved_whole.save(update_fields=["manually_locked_at"])
-    merge.check(target, source)  # a locked sub-album that only moves is no obstacle
+    merge.plan(target, source)  # a locked sub-album that only moves is no obstacle
 
     namesake.manually_locked_at = timezone.now()
     namesake.save(update_fields=["manually_locked_at"])
     with pytest.raises(ValidationError, match="Underalbummet aften er låst"):
-        merge.check(target, source)
+        merge.plan(target, source)
+
+
+@pytest.mark.django_db
+def test_a_sub_album_merged_into_its_own_root_is_flattened_into_it(uploader: Resident) -> None:
+    """The import descends through folders holding one folder, but not when that folder sits beside
+    files: "Generalforsamlingen 2006" holding photos and "Generalforsamlingen 2006" again."""
+    root = Album.objects.create(folder="2006", name="Generalforsamlingen 2006")
+    nested = Album.objects.create(folder="2006", name="Generalforsamlingen 2006", parent=root)
+    again = Album.objects.create(folder="2006", name="generalforsamlingen 2006", parent=nested)
+    beside = Album.objects.create(folder="2006", name="Fest", parent=root)
+    in_root = _item(root, "a.jpg", jpeg_bytes(), uploader)
+    in_nested = _item(nested, "b.jpg", jpeg_bytes(), uploader)
+
+    result = merge.merge_albums(root, nested)
+
+    assert not Album.objects.filter(pk=nested.pk).exists()
+    assert set(root.media.all()) == {in_root, in_nested}
+    again.refresh_from_db()
+    # Its own namesake below it is not the album it merges into, but one more level, moved up.
+    assert (again.parent_id, again.path, again.depth) == (root.pk, f"{root.path}{again.pk}/", 1)
+    assert set(root.children.all()) == {beside, again}
+    assert (result.albums_merged, result.albums_moved) == (0, 1)
+
+
+@pytest.mark.django_db
+def test_a_sub_album_of_another_root_moves_up_with_everything_below_it(uploader: Resident) -> None:
+    fest = Album.objects.create(folder="2014", name="Fest")
+    gallafest = Album.objects.create(folder="2014", name="Gallafest")
+    night = Album.objects.create(folder="2014", name="Nat", parent=gallafest)
+    late = Album.objects.create(folder="2014", name="Sent", parent=night)
+    later = Album.objects.create(folder="2014", name="Senere", parent=late)
+    item = _item(later, "a.jpg", jpeg_bytes(), uploader)
+
+    merge.merge_albums(fest, night)
+
+    late.refresh_from_db()
+    later.refresh_from_db()
+    assert (late.parent_id, late.path, late.depth) == (fest.pk, f"{fest.path}{late.pk}/", 1)
+    assert (later.path, later.depth) == (f"{fest.path}{late.pk}/{later.pk}/", 2)
+    assert set(fest.subtree_media()) == {item}
+    assert not gallafest.subtree().exclude(pk=gallafest.pk).exists()
+
+
+@pytest.mark.django_db
+def test_nothing_may_end_up_deeper_than_five_levels() -> None:
+    deep = Album.objects.create(folder="2014", name="Fest")
+    for name in ("1", "2", "3"):
+        deep = Album.objects.create(folder="2014", name=name, parent=deep)
+    gallafest = Album.objects.create(folder="2014", name="Gallafest")
+    night = Album.objects.create(folder="2014", name="Nat", parent=gallafest)
+    Album.objects.create(folder="2014", name="Sent", parent=night)
+
+    merge.plan(deep, night)  # Sent moves to depth 4, the deepest there is
+    with pytest.raises(ValidationError, match="Underalbummet Nat ville komme til at ligge for dybt"):
+        merge.plan(deep, gallafest)  # Nat to depth 4, and Sent below it to 5
+
+
+@pytest.mark.django_db
+def test_the_locks_of_a_whole_folder_are_known_in_one_query(
+    uploader: Resident, django_assert_num_queries: Callable[..., Any]
+) -> None:
+    fest, gallafest = _albums("Fest", "Gallafest")
+    evening = Album.objects.create(folder="2014", name="Aften", parent=fest)
+    night = Album.objects.create(folder="2014", name="Nat", parent=gallafest)
+    _item(night, "a.jpg", jpeg_bytes(), uploader, added_at=timezone.now() - timedelta(days=200))
+    _item(evening, "b.jpg", jpeg_bytes(), uploader)
+    albums = list(Album.objects.filter(folder="2014"))
+
+    with django_assert_num_queries(1):
+        locked = locked_album_ids(albums)
+
+    assert locked == {album.pk for album in Album.objects.filter(folder="2014") if album.is_locked()}
+    assert locked == {gallafest.pk, night.pk}
 
 
 # --- From the album page ------------------------------------------------------------------------
@@ -323,40 +406,118 @@ def test_only_an_administrator_is_offered_the_merge_and_may_make_it(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
     target, source = _albums("Sommerfest", "Sommerfest 2")
+    evening = Album.objects.create(folder="2014", name="Aften", parent=source)
+    locked = Album.objects.create(folder="2014", name="Julefrokost", manually_locked_at=timezone.now())
+    url = reverse("photo_album:merge_album", args=[target.pk])
     client.force_login(make_resident(email="foto@gahk.dk", roles=(Role.FOTO,)))
-    assert "Flet med" not in client.get(reverse("photo_album:detail", args=[target.pk])).content.decode()
-    response = client.post(reverse("photo_album:merge_album", args=[target.pk]), {"source": source.pk})
-    assert response.status_code == 403
+    assert (
+        "Flet et album ind"
+        not in client.get(reverse("photo_album:detail", args=[target.pk])).content.decode()
+    )
+    assert client.get(url, {"source": source.pk}).status_code == 403
+    assert client.post(url, {"source": source.pk}).status_code == 403
 
     client.force_login(make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,)))
     page = client.get(reverse("photo_album:detail", args=[target.pk])).content.decode()
-    assert "Flet med" in page
-    assert f'<option value="{source.pk}">Sommerfest 2</option>' in page
+    assert "Det valgte album flettes ind i <strong>Sommerfest</strong> og forsvinder." in page
+    assert (
+        f'<option value="{locked.pk}" disabled>Julefrokost (låst)</option>'
+        f'<option value="{source.pk}">Sommerfest 2</option>'
+        f'<option value="{evening.pk}">Sommerfest 2 › Aften</option></select>'
+    ) in page
+    # From a sub-album, everything in the folder but the albums above it.
+    page = client.get(reverse("photo_album:detail", args=[evening.pk])).content.decode()
+    assert f'<option value="{target.pk}">Sommerfest</option>' in page
+    assert f'<option value="{source.pk}">' not in page
 
 
 @pytest.mark.django_db
-def test_an_administrator_merges_from_the_album_page_and_is_told_how_it_went(
+def test_an_administrator_sees_what_will_happen_merges_and_is_told_how_it_went(
     client: Client,
     make_resident: Callable[..., Resident],
     uploader: Resident,
     django_capture_on_commit_callbacks: Callable[..., Any],
 ) -> None:
     target, source = _albums("Sommerfest", "Sommerfest 2")
+    Album.objects.create(folder="2014", name="Aften", parent=target)
+    Album.objects.create(folder="2014", name="aften", parent=source)
+    Album.objects.create(folder="2014", name="Nat", parent=source)
     same = jpeg_bytes()
     _item(target, "a.jpg", same, uploader)
     _item(source, "a.jpg", same, uploader)
     _item(source, "b.jpg", jpeg_bytes(), uploader)
     client.force_login(make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,)))
+    url = reverse("photo_album:merge_album", args=[target.pk])
+
+    confirm = client.get(url, {"source": source.pk}).content.decode()
+
+    assert AlbumMerge.objects.count() == 0  # nothing yet
+    assert "<h1>Flet Sommerfest 2 ind i Sommerfest</h1>" in confirm
+    assert "Flettes ind og forsvinder</p>\n\t\t\t<h2>Sommerfest 2</h2>" in confirm
+    assert "Beholdes</p>\n\t\t\t<h2>Sommerfest</h2>" in confirm
+    assert "<p>2 medier og 2 underalbummer</p>" in confirm
+    assert (
+        "Underalbummet Sommerfest 2 › aften flettes ind i Sommerfest › Aften, som har samme navn." in confirm
+    )
+    assert "Underalbummet Nat flyttes ind under Sommerfest." in confirm
+    assert "Sommerfest beholder sit navn og sin adresse." in confirm
+    assert ">Flet Sommerfest 2 ind i Sommerfest</button>" in confirm
 
     with django_capture_on_commit_callbacks(execute=True):  # the merge runs eagerly in the tests
-        response = client.post(reverse("photo_album:merge_album", args=[target.pk]), {"source": source.pk})
+        response = client.post(url, {"source": source.pk})
 
     assert response["Location"] == reverse("photo_album:detail", args=[target.pk])
     job = AlbumMerge.objects.get()
-    assert (job.state, job.source_id, job.source_name) == (AlbumMergeState.READY, None, "Sommerfest 2")
+    assert (job.state, job.source_id, job.source_path) == (AlbumMergeState.READY, None, "Sommerfest 2")
     assert not Album.objects.filter(pk=source.pk).exists()
     page = client.get(response["Location"]).content.decode()
-    assert "Sommerfest 2 er flettet ind i albummet: 1 medie flyttet hertil, 1 dublet gemt én gang." in page
+    assert (
+        "<strong>Sommerfest 2</strong> er flettet ind i <strong>Sommerfest</strong>: 1 medie flyttet hertil, "
+        "1 dublet gemt én gang, 1 underalbum flettet med et af samme navn, 1 underalbum flyttet hertil."
+    ) in page
+
+
+@pytest.mark.django_db
+def test_an_album_merged_into_one_of_the_same_name_is_told_apart_by_its_path(
+    client: Client,
+    make_resident: Callable[..., Resident],
+    django_capture_on_commit_callbacks: Callable[..., Any],
+) -> None:
+    root = Album.objects.create(folder="2006", name="Generalforsamling")
+    nested = Album.objects.create(folder="2006", name="Generalforsamling", parent=root)
+    client.force_login(make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,)))
+    url = reverse("photo_album:merge_album", args=[root.pk])
+
+    confirm = client.get(url, {"source": nested.pk}).content.decode()
+
+    assert "<h1>Flet Generalforsamling › Generalforsamling ind i Generalforsamling</h1>" in confirm
+    assert "Bagefter slettes Generalforsamling › Generalforsamling." in confirm
+
+    with django_capture_on_commit_callbacks(execute=True):
+        response = client.post(url, {"source": nested.pk})
+    page = client.get(response["Location"]).content.decode()
+
+    assert AlbumMerge.objects.get().source_path == "Generalforsamling › Generalforsamling"
+    assert (
+        "<strong>Generalforsamling › Generalforsamling</strong> er flettet ind i <strong>Generalforsamling</strong>"
+        in page
+    )
+
+
+@pytest.mark.django_db
+def test_albums_that_cannot_be_merged_are_turned_back_before_the_confirmation(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    target = Album.objects.create(folder="2014", name="Sommerfest")
+    other_year = Album.objects.create(folder="2015", name="Sommerfest")
+    client.force_login(make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,)))
+
+    response = client.get(
+        reverse("photo_album:merge_album", args=[target.pk]), {"source": other_year.pk}, follow=True
+    )
+
+    assert response.redirect_chain == [(reverse("photo_album:detail", args=[target.pk]), 302)]
+    assert "Kun albummer i samme mappe kan flettes." in response.content.decode()
 
 
 @pytest.mark.django_db
@@ -368,7 +529,7 @@ def test_while_a_merge_runs_neither_album_takes_uploads_and_the_page_says_so(
     under_source = Album.objects.create(folder="2014", name="Aften", parent=source)
     administrator = make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,))
     job = AlbumMerge.objects.create(
-        target=target, source=source, source_name=source.name, requested_by=administrator
+        target=target, source=source, source_path=source.name, requested_by=administrator
     )
     client.force_login(make_resident(email="r@gahk.dk"))
     request = client.get(reverse("photo_album:detail", args=[beside.pk])).wsgi_request
@@ -380,7 +541,8 @@ def test_while_a_merge_runs_neither_album_takes_uploads_and_the_page_says_so(
         True,
     ]
     page = client.get(reverse("photo_album:detail", args=[source.pk])).content.decode()
-    assert "Sommerfest 2 flettes ind i" in page
+    assert "<strong>Sommerfest 2</strong> flettes ind i" in page
+    assert "Sommerfest beholdes, og Sommerfest 2 forsvinder, når fletningen er færdig." in page
     assert f'hx-get="{reverse("photo_album:merge_status", args=[job.pk])}"' in page
 
     with pytest.raises(ValidationError, match="allerede en fletning i gang i mappen 2014"):
@@ -403,7 +565,7 @@ def test_a_merge_refused_by_the_time_it_runs_fails_with_why_and_changes_nothing(
     job = AlbumMerge.objects.create(
         target=target,
         source=source,
-        source_name=source.name,
+        source_path=source.name,
         requested_by=make_resident(email="admin@gahk.dk"),
     )
     target.manually_locked_at = timezone.now()  # locked after the merge was asked for
@@ -426,7 +588,7 @@ def test_a_merge_no_worker_is_coming_back_to_is_failed(make_resident: Callable[.
     job = AlbumMerge.objects.create(
         target=target,
         source=source,
-        source_name=source.name,
+        source_path=source.name,
         requested_by=make_resident(email="admin@gahk.dk"),
     )
     AlbumMerge.objects.filter(pk=job.pk).update(

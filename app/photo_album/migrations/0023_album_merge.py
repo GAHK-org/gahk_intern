@@ -21,7 +21,7 @@ class Migration(migrations.Migration):
                         auto_created=True, primary_key=True, serialize=False, verbose_name="ID"
                     ),
                 ),
-                ("source_name", models.CharField(max_length=140)),
+                ("source_path", models.CharField(max_length=800)),
                 ("task_id", models.CharField(blank=True, max_length=36)),
                 (
                     "state",

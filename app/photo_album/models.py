@@ -305,7 +305,7 @@ class Album(models.Model):
     `path` is the materialised path of primary keys, root first — "/12/34/56/" for album 56 under 34
     under 12. Keys rather than names, so renaming never touches it, and an album only ever moves when
     the album above it is merged into another (photo_album.merge), which rewrites the moved
-    subtree's paths in one UPDATE; `save` refuses any other move. It is what makes the two questions
+    subtree's paths and depths in one UPDATE; `save` refuses any other move. It is what makes the two questions
     the album page asks cheap:
     "everything in this subtree" is one indexed prefix scan (`path LIKE '/12/34/%'`), and "the
     ancestors of this album" is just the path read back. The names along the way — the breadcrumb,
@@ -773,6 +773,24 @@ class Media(models.Model):
         return self.derivative_state == DerivativeState.READY and bool(self.thumbnail)
 
 
+def locked_album_ids(albums: list[Album], now: datetime | None = None) -> set[int]:
+    """Which of `albums` are locked, by their own lock or one above them: `Album.is_locked` for many
+    at once, in one query. `albums` must hold every one's ancestors too — whole trees, a folder."""
+    by_id = {album.pk: album for album in albums}
+    activity: dict[int, datetime] = {}
+    newest = (
+        Media.objects.filter(album_id__in=by_id, status=MediaStatus.APPROVED, deleted_at__isnull=True)
+        .values_list("album_id")
+        .annotate(newest=Max("added_at"))
+    )
+    for album_id, added_at in newest:
+        for pk in [*by_id[album_id].ancestor_ids, album_id]:  # it is activity in each subtree above
+            if pk in by_id and (pk not in activity or added_at > activity[pk]):
+                activity[pk] = added_at
+    own = {album.pk for album in albums if album._own_lock(activity.get(album.pk), now) is not None}
+    return {album.pk for album in albums if own & {*album.ancestor_ids, album.pk}}
+
+
 class DownloadVariant(models.TextChoices):
     ORIGINAL = "original", "Originaler"
     HIGH_DEFINITION = "hd", "Komprimeret (HD)"
@@ -871,13 +889,15 @@ class AlbumImport(models.Model):
 
 class AlbumMerge(models.Model):
     """An administrator's merge of `source` into `target`, done by a background worker
-    (photo_album.merge). On success `source` is gone, so its name is kept here for the notice."""
+    (photo_album.merge). On success `source` is gone, so where it was is kept here for the notice."""
 
     target = models.ForeignKey(Album, on_delete=models.CASCADE, related_name="merges")
     source = models.ForeignKey(
         Album, null=True, blank=True, on_delete=models.SET_NULL, related_name="merged_into"
     )
-    source_name = models.CharField(max_length=140)
+    # Its names from the folder down ("Sommerfest › Lørdag"): an album may share its name with the
+    # one it is merged into, its own parent above all, and five levels of names are long.
+    source_path = models.CharField(max_length=800)
     requested_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="album_merges"
     )
