@@ -168,7 +168,7 @@ def folder_year(folder: str) -> int | None:
 
 def folder_year_window(folder: str) -> tuple[datetime, datetime] | None:
     """[start, end) of the dates a year folder's items can have: its year, FOLDER_YEAR_SLACK_MONTHS
-    either side. None for a folder that is not a year."""
+    either side. None for NO_YEAR_FOLDER, which is not one."""
     year = folder_year(folder)
     if year is None:
         return None
@@ -182,9 +182,9 @@ def believable_date(moment: datetime, folder: str, *, file_time: bool) -> bool:
 
     In a year folder it must fall in that year, give or take FOLDER_YEAR_SLACK_MONTHS — for 2004,
     from 1 July 2003 up to 1 July 2005: the Dropbox archive stamps every file with the day it was
-    uploaded there in 2022, and an old camera with a flat battery starts again in 2001. Elsewhere
-    only a file time has a floor — a scanned print may honestly say 1975 in its metadata, but no
-    file was saved then.
+    uploaded there in 2022, and an old camera with a flat battery starts again in 2001. In
+    NO_YEAR_FOLDER only a file time has a floor — a scanned print may honestly say 1975 in its
+    metadata, but no file was saved then.
     """
     window = folder_year_window(folder)
     if window is not None:
@@ -240,9 +240,15 @@ def validate_album_name(value: str) -> None:
         raise ValidationError("Ugyldigt albumnavn.")
 
 
+# The one folder that is not a year — for what has no year to go by: a scanned print, a poster, a
+# series of portraits — listed after the years. It replaced "Andet", whose albums were deleted.
+NO_YEAR_FOLDER = "Uden årstal"
+FOLDER_MAX_LENGTH = 20  # a year is four
+
+
 def validate_folder(value: str) -> None:
-    if value != "Andet" and not (len(value) == 4 and value.isdecimal()):
-        raise ValidationError("Mappen skal være et årstal eller Andet.")
+    if normalize_name(value) != NO_YEAR_FOLDER and not (len(value) == 4 and value.isdecimal()):
+        raise ValidationError(f"Mappen skal være et årstal eller {NO_YEAR_FOLDER}.")
 
 
 TAG_MAX_LENGTH = 30
@@ -315,7 +321,9 @@ class Album(models.Model):
     folder it belongs to.
     """
 
-    folder = models.CharField(max_length=10, verbose_name="Mappe", validators=[validate_folder])
+    folder = models.CharField(
+        max_length=FOLDER_MAX_LENGTH, verbose_name="Mappe", validators=[validate_folder]
+    )
     name = models.CharField(max_length=140, verbose_name="Albumnavn", validators=[validate_album_name])
     parent = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.PROTECT, related_name="children", editable=False
@@ -368,6 +376,7 @@ class Album(models.Model):
         update_fields: Iterable[str] | None = None,
     ) -> None:
         self.name = normalize_name(self.name)
+        self.folder = normalize_name(self.folder)
         creating = self._state.adding
         if (
             not creating
@@ -427,6 +436,7 @@ class Album(models.Model):
     def clean(self) -> None:
         super().clean()
         self.name = normalize_name(self.name)
+        self.folder = normalize_name(self.folder)
 
     def _remember_stored_values(self, fields: Iterable[str] | None = None) -> None:
         """Note what is stored, to tell a move or a folder change from a plain save.
@@ -849,7 +859,7 @@ class AlbumImport(models.Model):
     requested_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="album_imports"
     )
-    folder = models.CharField(max_length=10)
+    folder = models.CharField(max_length=FOLDER_MAX_LENGTH)
     archive_name = models.CharField(max_length=255)
     # 500, like Media's files: the key is "photo-album-imports/<uuid>/<the ZIP's name>". At Django's
     # default of 100, "Generalforsamlingen oktober 2006-Therese.zip" (44 characters) made it 101, and

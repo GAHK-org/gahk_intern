@@ -22,6 +22,7 @@ from django.utils import timezone
 
 from photo_album import dashboard
 from photo_album.models import (
+    NO_YEAR_FOLDER,
     Album,
     AlbumImport,
     AlbumImportState,
@@ -89,11 +90,11 @@ def admin_client(client: Client, make_resident: Callable[..., Resident]) -> Clie
 
 @pytest.fixture
 def archive(make_resident: Callable[..., Resident]) -> dict[str, Media]:
-    """2004 with a sub-album, and Andet: an item of every kind of date, one binned."""
+    """2004 with a sub-album, and the folder without a year: an item of every kind of date, one binned."""
     resident = make_resident(email="foto@gahk.dk")
     fest = Album.objects.create(folder="2004", name="Fest")
     aften = Album.objects.create(folder="2004", name="Aften", parent=fest)
-    andet = Album.objects.create(folder="Andet", name="Diverse")
+    andet = Album.objects.create(folder=NO_YEAR_FOLDER, name="Diverse")
     Album.objects.create(folder="2004", name="Tom")
     items = {
         "captured": _item(fest, resident, "IMG_1.JPG", captured_at=local(2004, 6, 12, 20)),
@@ -157,11 +158,11 @@ def test_it_counts_how_every_item_is_dated(archive: dict[str, Media]) -> None:
     assert (view.counts.total, view.counts.videos, view.counts.photos) == (9, 1, 8)
     assert (view.counts.file_time, view.counts.estimated, view.counts.without_own_date) == (2, 3, 4)
     assert (view.roots, view.sub_albums, view.empty_albums) == (3, 1, 1)
-    assert view.counts.outside == 1  # the reset camera; nothing in Andet has a window
+    assert view.counts.outside == 1  # the reset camera; nothing without a year has a window
     assert view.rejected_file_times == 1  # the 2022 file time
 
     folders = {row.folder: row for row in view.folders}
-    assert [row.folder for row in view.folders] == ["2004", "Andet"]  # years newest first, then the rest
+    assert [row.folder for row in view.folders] == ["2004", NO_YEAR_FOLDER]  # years newest first, then it
     assert (folders["2004"].roots, folders["2004"].sub_albums, folders["2004"].counts.total) == (2, 1, 7)
     assert round(folders["2004"].counts.captured_percent) == 29  # 2 of 7
     assert folders["2004"].bytes is None  # not measured yet
@@ -200,7 +201,7 @@ def test_the_overview_sums_the_dating_up_and_the_dating_page_has_the_rest(
     assert [row.media for row in by_file_time["outside"].items] == [archive["rejected"]]
     estimated = admin_client.get(reverse(DATES), {"kilde": "album_year"}).context
     assert [row.media for row in estimated["undated"].items] == [archive["album_year"]]
-    in_andet = admin_client.get(reverse(DATES), {"mappe": "Andet"}).context
+    in_andet = admin_client.get(reverse(DATES), {"mappe": NO_YEAR_FOLDER}).context
     assert [row.media for row in in_andet["undated"].items] == [archive["added"]]
     assert in_andet["outside"].page.paginator.count == 0
     assert [row.label for row in in_andet["album_rows"]] == ["Diverse"]

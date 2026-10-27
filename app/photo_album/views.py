@@ -62,6 +62,7 @@ from .forms import (
 )
 from .models import (
     MAX_ALBUM_DEPTH,
+    NO_YEAR_FOLDER,
     Album,
     AlbumDownload,
     AlbumDownloadState,
@@ -99,8 +100,16 @@ CACHED_FILE_CACHE_CONTROL = "private, max-age=86400"
 
 
 def album_folder_options() -> list[str]:
-    folders = Album.objects.order_by("folder").values_list("folder", flat=True).distinct()
-    return ["Andet", *(folder for folder in folders if folder != "Andet")]
+    """The folders to offer: the years that have albums and this year's, newest first, then
+    NO_YEAR_FOLDER — as the album index lists them."""
+    folders = set(Album.objects.order_by("folder").values_list("folder", flat=True).distinct())
+    years = folders - {NO_YEAR_FOLDER} | {default_folder()}
+    return [*sorted(years, reverse=True), NO_YEAR_FOLDER]
+
+
+def default_folder() -> str:
+    """This year's: where a new album most likely belongs."""
+    return str(timezone.localdate().year)
 
 
 def _token_import_resident(request: HttpRequest) -> Resident | None:
@@ -279,14 +288,12 @@ def _tiles_response(request: HttpRequest, media_page: MediaPage, **context: obje
 
 @login_required
 def index(request: HttpRequest) -> HttpResponse:
-    folder = request.GET.get("folder", "")
+    folder = normalize_name(request.GET.get("folder", ""))
     albums = Album.objects.filter(parent__isnull=True)
     if folder:
         albums = albums.filter(folder=folder)
-    # "Andet" first, then the years newest first.
-    ordered = sorted(
-        albums.order_by("name"), key=lambda album: (album.folder != "Andet", _negated(album.folder))
-    )
+    # The years newest first, then NO_YEAR_FOLDER.
+    ordered = sorted(albums.order_by("name"), key=lambda album: _negated(album.folder))
     _summarise(ordered)
     return render(
         request,
@@ -302,8 +309,8 @@ def index(request: HttpRequest) -> HttpResponse:
     )
 
 
-def _negated(folder: str) -> tuple[int, str]:
-    return (-int(folder), "") if folder.isdecimal() else (0, folder)
+def _negated(folder: str) -> tuple[bool, int]:
+    return (False, -int(folder)) if folder.isdecimal() else (True, 0)
 
 
 @login_required
@@ -449,6 +456,7 @@ def create_album(request: HttpRequest) -> HttpResponse:
             "form": form,
             "title": "Opret album",
             "folder_options": album_folder_options(),
+            "default_folder": default_folder(),
         },
     )
 
@@ -898,6 +906,7 @@ def import_zip(request: HttpRequest) -> HttpResponse:
             "skipped": job.skipped if job and job.state == AlbumImportState.READY else [],
             "errors": job.errors if job and job.state == AlbumImportState.FAILED else [],
             "folder_options": album_folder_options(),
+            "default_folder": default_folder(),
             "max_sub_album_levels": MAX_ALBUM_DEPTH,
         },
     )
@@ -1128,7 +1137,8 @@ def system_albums(request: HttpRequest) -> JsonResponse:
     """
     if _token_import_resident(request) is None:
         raise PermissionDenied
-    roots = Album.objects.filter(parent__isnull=True, folder=request.GET.get("folder", "")).order_by("name")
+    folder = normalize_name(request.GET.get("folder", ""))
+    roots = Album.objects.filter(parent__isnull=True, folder=folder).order_by("name")
     return JsonResponse(
         {
             "albums": [
