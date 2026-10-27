@@ -78,6 +78,8 @@ from .models import (
 from .storage import PhotoAlbumS3Storage, get_photo_album_storage
 from .uploads import (
     IMAGE_EXTENSIONS,
+    RAW_EXTENSIONS,
+    UPLOAD_ACCEPT,
     VIDEO_EXTENSIONS,
     check_media_content,
     check_media_upload,
@@ -391,6 +393,7 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
             "album_locked": album.is_locked(),
             "locked_by": album.locked_by,
             "can_upload": access.can_upload(request, album),
+            "upload_accept": UPLOAD_ACCEPT,
             "can_lock": access.can_lock_album(request, album),
             "can_unlock": access.can_unlock_album(request, album),
             "can_rename": access.can_rename_album(request, album),
@@ -1033,6 +1036,8 @@ def system_albums(request: HttpRequest) -> JsonResponse:
     Also the rules an archive is checked against, so the script can refuse an album from its
     Dropbox listing before downloading gigabytes the import would turn down. They are this server's
     own, so the script never carries a copy that drifts; the import itself still checks everything.
+    The RAW extensions are among the image ones too, for a script from before RAW had a limit of
+    its own; videos from the script have none (`videoMaxMb` null).
     """
     if _token_import_resident(request) is None:
         raise PermissionDenied
@@ -1045,9 +1050,11 @@ def system_albums(request: HttpRequest) -> JsonResponse:
             ],
             "rules": {
                 "imageExtensions": sorted(IMAGE_EXTENSIONS),
+                "rawExtensions": sorted(RAW_EXTENSIONS),
                 "videoExtensions": sorted(VIDEO_EXTENSIONS),
                 "imageMaxMb": settings.PHOTO_ALBUM_IMAGE_MAX_MB,
-                "videoMaxMb": settings.PHOTO_ALBUM_VIDEO_MAX_MB,
+                "rawMaxMb": settings.PHOTO_ALBUM_RAW_MAX_MB,
+                "videoMaxMb": None,
                 # Folder levels allowed below the album the archive becomes.
                 "maxSubAlbumLevels": MAX_ALBUM_DEPTH,
                 "macosMetadataMaxBytes": services.MACOS_METADATA_MAX_BYTES,
@@ -1339,6 +1346,7 @@ def media_detail(request: HttpRequest, pk: int) -> JsonResponse:
             "kind": "video" if media.content_type.startswith("video/") else "image",
             "title": media.title,
             "filename": media.display_name,
+            "raw": media.is_raw,
             "full": media.high_definition.url if media.has_derivatives else "",
             "album": " / ".join(media.album.display_path()),
             "albumUrl": reverse("photo_album:detail", args=[media.album_id]),
@@ -1558,7 +1566,7 @@ def serve_media(request: HttpRequest, path: str) -> HttpResponseBase:
 def download_original(request: HttpRequest, pk: int) -> HttpResponseBase:
     """Redirect straight to the bucket when the original is on S3, rather than streaming it here.
 
-    A video is up to PHOTO_ALBUM_VIDEO_MAX_MB (1 GB): reading that through the app server on its way from
+    A video is up to PHOTO_ALBUM_VIDEO_MAX_MB (3 GB): reading that through the app server on its way from
     S3 to the browser ties up one of a handful of sync workers for as long as the slowest client's
     connection takes, for no reason — the bytes never need to pass through this process at all. The
     streaming branch below only runs under the test suite, which forces plain FileSystemStorage

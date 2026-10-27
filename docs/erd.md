@@ -597,6 +597,7 @@ erDiagram
         string thumbnail
         string sidecar
         string content_type
+        bool is_raw
         string derivative_state
         int derivative_attempts
         datetime derivative_started_at
@@ -881,7 +882,7 @@ erDiagram
         date date_from
         date date_to
         string outcome
-        string detail
+        text detail
         datetime sent_at
     }
 
@@ -1782,6 +1783,7 @@ erDiagram
         string thumbnail
         string sidecar
         string content_type
+        bool is_raw
         string derivative_state
         int derivative_attempts
         datetime derivative_started_at
@@ -1916,7 +1918,7 @@ erDiagram
         date date_from
         date date_to
         string outcome
-        string detail
+        text detail
         datetime sent_at
     }
 
