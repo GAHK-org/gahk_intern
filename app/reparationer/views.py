@@ -331,6 +331,7 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     comment.task = task
     comment.author = current_resident(request)
     comment.save()
+    services.notify_new_comment(comment)
     live.task_changed(task.pk)  # the card's note count
     return redirect("reparationer:detail", pk=task.pk)
 

@@ -72,7 +72,9 @@ class RepairTaskForm(forms.ModelForm):
         labels = {"title": "Hvad er der galt?", "description": "Beskrivelse"}
         widgets = {
             "title": forms.TextInput(attrs={"placeholder": "F.eks. Utæt vandhane"}),
-            "description": forms.Textarea(attrs={"rows": 5, "placeholder": "Beskriv problemet…"}),
+            "description": forms.Textarea(
+                attrs={"rows": 5, "placeholder": "Beskriv problemet…", "data-mentionable": ""}
+            ),
         }
 
     def __init__(self, *args: object, **kwargs: object) -> None:
@@ -91,7 +93,9 @@ class RepairCommentForm(forms.ModelForm):
         model = RepairComment
         fields = ["body"]
         labels = {"body": "Note"}
-        widgets = {"body": forms.Textarea(attrs={"rows": 3, "placeholder": "Skriv en note…"})}
+        widgets = {
+            "body": forms.Textarea(attrs={"rows": 3, "placeholder": "Skriv en note…", "data-mentionable": ""})
+        }
 
     def clean_body(self) -> str:
         body = (self.cleaned_data.get("body") or "").strip()

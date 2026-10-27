@@ -65,7 +65,14 @@ from opslagstavle.demo import seed as seed_opslagstavle
 from opslagstavle.models import Notice, NoticeComment, NoticeReaction
 from photo_album.demo import seed as seed_photo_album
 from photo_album.models import Album, Media
-from residents.models import WORKGROUP_ROLE, Residency, Resident, Role, RoleAssignment
+from regnskab.models import AlumneregningSend, EconomicLedgerEntry
+from residents.models import (
+    WORKGROUP_ROLE,
+    Residency,
+    Resident,
+    Role,
+    RoleAssignment,
+)
 from rooms.models import (
     KvotientApplication,
     KvotientPriority,
@@ -158,6 +165,11 @@ WIPE_ORDER: list[type[models.Model]] = [
     GahkflixVideo,
     GahkflixSeries,
     GahkflixTag,
+    # Also before Resident: both PROTECT their resident — audit records (the local immutable mirror
+    # of e-conomic postings, and what was actually billed) should never silently vanish because a
+    # Resident row was deleted.
+    EconomicLedgerEntry,
+    AlumneregningSend,
     Resident,
     # Before Workgroup: ArchiveFolder references it with PROTECT (a SET_NULL would silently turn a
     # gated folder into a world-readable one), so the archive has to go first or --fresh cannot run.
@@ -272,7 +284,7 @@ class Command(BaseCommand):
         seen_emails = set()
 
         # Fixed, documented accounts first so devs always have known logins.
-        fixtures = [
+        fixtures: list[tuple[str, str, str, dict[str, object]]] = [
             ("admin@gahk.dk", "Admin", "Istrator", {"is_superuser": True, "is_staff": True}),
             ("formand@gahk.dk", "Frederik", "Formand", {}),
             ("ak@gahk.dk", "Astrid", "Krydsen", {}),
@@ -684,6 +696,14 @@ class Command(BaseCommand):
             ("formand@gahk.dk", "administrator role"),
             ("ak@gahk.dk", "AK role"),
             ("oel@gahk.dk", "Ølkælder role"),
+            ("regnskab@gahk.dk", "Regnskab role — /intern/regnskab/, alumneregninger"),
             ("beboer@gahk.dk", "plain resident"),
         ]:
             self.stdout.write(f"  {email:22} {desc}")
+        self.stdout.write(
+            "\nTo try alumneregninger locally: give a resident an e-conomic kontonr. on the regnskab "
+            "page, then GAHK's real e-conomic credentials need to be in your own .env "
+            '(ECONOMIC_APP_SECRET_TOKEN/ECONOMIC_AGREEMENT_GRANT_TOKEN) — the DEBUG-default "demo" '
+            "tokens hit e-conomic's own public demo company, which has none of GAHK's accounts. Without "
+            "real credentials that resident just shows up as failed, not a crash."
+        )

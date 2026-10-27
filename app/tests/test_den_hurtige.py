@@ -1668,7 +1668,10 @@ def test_the_channel_picker_costs_one_query(client: Client, make_resident: Calla
     counting = [
         q
         for q in captured.captured_queries
-        if "COUNT" in q["sql"].upper()
+        # "COUNT(" (the aggregate call), not bare "COUNT" — a plain column/table fetch can contain
+        # that substring incidentally (e.g. Resident.economic_account_number: "...ACCOUNT_NUMBER..."
+        # upper-cased contains "COUNT") without running any extra aggregate query.
+        if "COUNT(" in q["sql"].upper()
         and "den_hurtige_quickcomment" not in q["sql"]
         and "notifications_notification" not in q["sql"]
     ]

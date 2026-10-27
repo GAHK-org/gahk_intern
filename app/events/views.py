@@ -408,7 +408,8 @@ def create(request: HttpRequest) -> HttpResponse:
     # After the event exists, because an invite needs something to point at. The notification then
     # reads the finished guest list, which is what decides who hears about a private event at all.
     services.sync_invites(event, list(form.cleaned_data["invitees"]), invited_by=resident)
-    services.notify_new_event(event)
+    mentioned = services.notify_mentions_in_description(event, resident)
+    services.notify_new_event(event, skip=mentioned)
     messages.success(request, "Begivenheden er oprettet.")
     return redirect("events:detail", pk=event.pk)
 
@@ -430,6 +431,7 @@ def edit(request: HttpRequest, pk: int) -> HttpResponse:
     # event as it was" cannot be read off `event` afterwards. A plain tuple rather than a re-read,
     # because this module never touches Event.objects (see the docstring).
     before = services.significant_fields(event)
+    old_description = event.description
     form = EventForm(request.POST, request.FILES, instance=event, organiser=event.organiser)
     if not form.is_valid():
         return render(request, "events/form.html", {"form": form, "event": event})
@@ -445,6 +447,7 @@ def edit(request: HttpRequest, pk: int) -> HttpResponse:
     else:
         updated.save()
     services.sync_invites(updated, list(form.cleaned_data["invitees"]), invited_by=current_resident(request))
+    services.notify_mentions_in_description(updated, current_resident(request), old_description)
     live.event_changed(updated.pk)
     messages.success(request, "Begivenheden er opdateret.")
     return redirect("events:detail", pk=event.pk)
