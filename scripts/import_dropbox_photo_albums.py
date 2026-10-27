@@ -22,9 +22,9 @@ Nothing the server took is kept on this disk, and everything it did not take is 
 Dropbox that is not in the photo album can be gone through by hand. <work-dir>/NOT-ON-SERVER.md
 lists each one after every run: why, and a link to its copy (not-on-server.json is the same list
 for the script). Delete a copy once you have dealt with it; it is then listed apart and not fetched
-again. A file moved out of the archive to /til_intern_drev (move_dropbox_non_media.py) is struck
-off, and its copy deleted: by that script as it moves it, or by the next run here that finds it
-there. A file deleted from Dropbox stays listed, as its copy may be the last. What is kept:
+again. A file moved out of the archive to /til_intern_drev (by move_dropbox_non_media.py, or by
+hand) is struck off by the next run that finds it there, and its copy deleted. A file deleted from
+Dropbox stays listed, as its copy may be the last. What is kept:
 
 - Files the server would refuse — anything but photos (camera RAW files included) and videos it
   accepts, photos over its size limits (videos have none for this script), files too deep — are
@@ -316,7 +316,7 @@ class Ledger:
     Written out as NOT-ON-SERVER.md after every run, for a person to go through. A copy deleted
     there is one dealt with: it is listed apart, and not fetched again. A file the server takes
     later (--retry-invalid, --send-dates, --retry-failed) is struck off, and its copy deleted; so is
-    one moved out of the archive to INTERN_DREV (move_dropbox_non_media.py, or seen moved by a run).
+    one a run finds moved out of the archive to INTERN_DREV (move_dropbox_non_media.py).
     """
 
     def __init__(self, work_dir: Path, *, read_only: bool = False) -> None:
@@ -366,17 +366,16 @@ class Ledger:
         """The server has it now: strike it off, and delete the copy."""
         self._strike(dropbox_path)
 
-    def moved_out(self, dropbox_path: str) -> bool:
+    def moved_out(self, dropbox_path: str) -> None:
         """It is no longer in the archive but in INTERN_DREV: strike it off, and delete the copy,
-        which Dropbox does not need. Whether it was on the list."""
-        return self._strike(dropbox_path)
+        which Dropbox does not need."""
+        self._strike(dropbox_path)
 
-    def _strike(self, dropbox_path: str) -> bool:
+    def _strike(self, dropbox_path: str) -> None:
         key = self._key(dropbox_path)
         entry = self.files.pop(key) if key is not None else None
         if entry and (copy := self.copy(entry)) and not self.read_only:
             copy.unlink(missing_ok=True)
-        return entry is not None
 
     def album(
         self,
