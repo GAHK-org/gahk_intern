@@ -693,7 +693,7 @@ Encoding: connection charset is utf8mb3 — check per-table charsets, watch lati
 **Carve out the `wiki*`-prefixed tables** — they belong to MediaWiki (MariaDB), not the Postgres ETL.
 
 To start a photo-album import over (a botched Dropbox folder, say), `python manage.py
-delete_photo_album --album <id>` or `--folder <yyyy|Andet>` deletes the tree, its media and its
+delete_photo_album --album <id>` or `--folder <yyyy|'Uden årstal'>` deletes the tree, its media and its
 stored files, locks or not. It asks for a typed confirmation code and refuses anything from
 2026-10-01 on (`PHOTO_ALBUM_DELETE_PROTECTED_FROM` moves that date, never into the future), so
 albums in real use are never at risk. Run it with `docker exec -it` — it needs a terminal.

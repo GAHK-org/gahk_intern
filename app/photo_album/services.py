@@ -1600,8 +1600,8 @@ def settle_dates(album: Album) -> int:
     a camera or a scanner numbered them in. An album where none has a date takes the middle date of
     its parent album's items (then the grandparent's, and so on). Failing that, the item keeps its
     upload time if that falls in the folder's year — this year's album, uploaded this year — and
-    otherwise goes to the start of the year. In "Andet", which has no year, it keeps its upload
-    time. Every approximation is marked as one in `Media.date_source`.
+    otherwise goes to the start of the year. In NO_YEAR_FOLDER, which has no year, it keeps its
+    upload time. Every approximation is marked as one in `Media.date_source`.
 
     Only dates inside the album's year are approximated from: a capture date outside it is still
     that item's own date, but a camera whose clock reset to 2001 must not pull its neighbours along.

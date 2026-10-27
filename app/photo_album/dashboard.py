@@ -24,6 +24,7 @@ from django.db.models.functions import ExtractYear
 from django.utils import timezone
 
 from .models import (
+    NO_YEAR_FOLDER,
     PURGE_AFTER,
     STORAGE_MEDIA_VARIANTS,
     Album,
@@ -90,7 +91,7 @@ TIERS = (
     Tier(
         "added",
         "Ingen dato",
-        "Intet at gå ud fra: vises ved uploadtidspunktet, hvor det passer med albummets år (eller i Andet).",
+        f"Intet at gå ud fra: vises ved uploadtidspunktet, hvor det passer med albummets år (eller i {NO_YEAR_FOLDER}).",
     ),
 )
 TIER_KEYS = tuple(tier.key for tier in TIERS)
