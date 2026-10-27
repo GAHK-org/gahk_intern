@@ -2444,10 +2444,12 @@ def year_folders(
 
 
 def in_a_year_folder(path: str, root: str) -> bool:
-    """Whether a Dropbox path below `root` is in one of its year folders (or Andet)."""
+    """Whether a Dropbox path below `root` is in one of its year folders (or OTHER_FOLDER)."""
     rest = path[len(root.rstrip("/")) + 1 :]
     folder, separator, _ = rest.partition("/")
-    return bool(separator) and (bool(YEAR.fullmatch(folder)) or folder == OTHER_FOLDER)
+    return bool(separator) and (
+        bool(YEAR.fullmatch(folder)) or same_path(folder) == OTHER_FOLDER
+    )
 
 
 def album_folders(
