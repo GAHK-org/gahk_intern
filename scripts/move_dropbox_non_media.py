@@ -17,7 +17,7 @@ What stays:
 
 - Photos and videos, by extension: everything the photo album takes, camera RAW files included,
   whatever their size. Not by asking the server, as import_dropbox_photo_albums.py does: one that
-  does not take RAW files yet would have every one of them moved archive.out.
+  does not take RAW files yet would have every one of them moved out.
 - Sidecars: macOS's AppleDouble files (._name, .AppleDouble/name, __MACOSX/), XMP (.xmp), video
   thumbnails (.thm) and iPhone edits (.aae).
 - Other metadata: .DS_Store and every other hidden file, Thumbs.db, desktop.ini, and photo programs'
@@ -28,8 +28,11 @@ The AppleDouble sidecar of a file that moves goes with it: it is that file's, no
 
 Nothing is overwritten: a file that already has something at its new path stays where it is and is
 reported. Everything printed, every move among it, is appended to <work-dir>/til_intern_drev.log.
-The import's NOT-ON-SERVER.md still lists what moved, with the copies it keeps, until those copies
-are deleted.
+
+What moved is struck off the import's list of what is not on the server (<work-dir>/not-on-server.json
+and NOT-ON-SERVER.md), and the copy the import kept of it is deleted: Dropbox has it, at its new
+place. Not while import_dropbox_photo_albums.py runs: both write that list. (A file moved some other
+way is struck off by the import's next run that finds it in /til_intern_drev.)
 
 Setup: the DROPBOX_* variables of import_dropbox_photo_albums.py, whose Dropbox access this uses.
 
@@ -100,6 +103,7 @@ METADATA_FILES = frozenset(
 )
 # How often a move Dropbox is too busy for is tried again (it locks a folder while writing to it).
 BUSY_RETRIES = 5
+GONE = "it is no longer there"
 LOG = "til_intern_drev.log"
 
 Path_ = tuple[str, ...]  # a file's path below the archive's root, folder by folder
@@ -245,13 +249,38 @@ def move_file(client: dropbox.Dropbox, move: Move) -> str | None:
             if write is not None and write.is_conflict():
                 return f"something is already at {move.target}"
             if error.is_from_lookup() and error.get_from_lookup().is_not_found():
-                return "it is no longer there"
+                return GONE
             return f"Dropbox refused: {error}"
-        except (
-            archive.AlbumFailed
-        ) as failure:  # what with_dropbox_retries gives up with
+        # What with_dropbox_retries gives up with.
+        except archive.AlbumFailed as failure:
             return failure.summary
     return "Dropbox stayed too busy to move it"
+
+
+def is_at(client: dropbox.Dropbox, path: str) -> bool:
+    """Whether Dropbox has something at `path`."""
+    try:
+        archive.with_dropbox_retries(
+            f"look for {path}", lambda: client.files_get_metadata(path)
+        )
+    except (ApiError, archive.AlbumFailed):
+        return False
+    return True
+
+
+def strike_off(work_dir: Path, moved: list[str]) -> None:
+    """Strike the files moved off the import's list of what is not on the server, if there is one,
+    and delete the copies it kept of them."""
+    ledger = archive.Ledger(work_dir)
+    if ledger.new or not moved:
+        return
+    struck = sum(ledger.moved_out(source) for source in moved)
+    ledger.save()
+    archive.out.info(
+        f"  {struck} of them struck off {ledger.path}, the copies kept of them deleted."
+    )
+    if struck:
+        archive.report_not_on_server(ledger)
 
 
 def main() -> int:
@@ -260,7 +289,7 @@ def main() -> int:
         "--source-root", default="/GAHK billeder", help="the photo archive"
     )
     parser.add_argument(
-        "--target-root", default="/til_intern_drev", help="where the rest goes"
+        "--target-root", default=archive.INTERN_DREV, help="where the rest goes"
     )
     parser.add_argument(
         "--path",
@@ -284,7 +313,7 @@ def main() -> int:
         "--work-dir",
         type=Path,
         default=Path(".dropbox-photo-album-import"),
-        help="where the log goes",
+        help="where the log and the import's list of what is not on the server are",
     )
     args = parser.parse_args()
 
@@ -328,24 +357,33 @@ def main() -> int:
         return 0
 
     archive.out.heading("Moving …")
-    moved, failed = 0, 0
-    for move in moves:
-        try:
-            why_not = move_file(client, move)
-        except (
-            archive.Fatal
-        ) as exc:  # a rejected token: nothing after it would move either
-            archive.out.error(f"✗ {exc}")
-            failed = len(moves) - moved
-            break
-        if why_not is None:
-            archive.out.info(f"  moved {move.source} → {move.target}")
-            moved += 1
-        else:
-            archive.out.warn(f"  ✗ not moved: {move.source}: {why_not}")
-            failed += 1
-    archive.out.heading("Summary")
-    archive.out.ok(f"  {moved} file(s) moved to {target_root}.")
+    arrived: list[
+        str
+    ] = []  # the sources now at their target, struck off the import's list below
+    failed = 0
+    try:
+        for move in moves:
+            try:
+                why_not = move_file(client, move)
+            except (
+                archive.Fatal
+            ) as exc:  # a rejected token: nothing after it would move either
+                archive.out.error(f"✗ {exc}")
+                failed = len(moves) - len(arrived)
+                break
+            if why_not is None:
+                archive.out.info(f"  moved {move.source} → {move.target}")
+                arrived.append(move.source)
+            elif why_not == GONE and is_at(client, move.target):
+                archive.out.info(f"  moved already: {move.source} → {move.target}")
+                arrived.append(move.source)
+            else:
+                archive.out.warn(f"  ✗ not moved: {move.source}: {why_not}")
+                failed += 1
+    finally:  # what moved has moved, even if the run stops half-way
+        archive.out.heading("Summary")
+        archive.out.ok(f"  {len(arrived)} file(s) moved to {target_root}.")
+        strike_off(args.work_dir, arrived)
     if failed:
         archive.out.error(
             f"  ✗ {failed} not moved (see above, or {args.work_dir / LOG})."

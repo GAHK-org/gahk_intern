@@ -22,7 +22,9 @@ Nothing the server took is kept on this disk, and everything it did not take is 
 Dropbox that is not in the photo album can be gone through by hand. <work-dir>/NOT-ON-SERVER.md
 lists each one after every run: why, and a link to its copy (not-on-server.json is the same list
 for the script). Delete a copy once you have dealt with it; it is then listed apart and not fetched
-again. What is kept:
+again. A file moved out of the archive to /til_intern_drev (move_dropbox_non_media.py) is struck
+off, and its copy deleted: by that script as it moves it, or by the next run here that finds it
+there. A file deleted from Dropbox stays listed, as its copy may be the last. What is kept:
 
 - Files the server would refuse — anything but photos (camera RAW files included) and videos it
   accepts, photos over its size limits (videos have none for this script), files too deep — are
@@ -282,6 +284,9 @@ OVERVIEW = "NOT-ON-SERVER.md"
 # <work-dir>/<year>/NOT_IN_AN_ALBUM, those beside the years in the Dropbox root in <work-dir>/NOT_IN_A_YEAR.
 NOT_IN_AN_ALBUM = "_not-in-an-album"
 NOT_IN_A_YEAR = "_not-in-a-year-folder"
+# Where move_dropbox_non_media.py moves what is not photos, videos or metadata, at the same path below
+# it as in the archive. What has moved there is struck off the list.
+INTERN_DREV = "/til_intern_drev"
 FAILED_ZIP = "failed.zip"  # <work-dir>/<year>/<album>/: what of a failed album is not in invalid/
 DOWNLOAD = "download.partial"  # <work-dir>/: a single file on its way from Dropbox
 # Why a file is not on the server, in the order the overview lists them.
@@ -310,7 +315,8 @@ class Ledger:
 
     Written out as NOT-ON-SERVER.md after every run, for a person to go through. A copy deleted
     there is one dealt with: it is listed apart, and not fetched again. A file the server takes
-    later (--retry-invalid, --send-dates, --retry-failed) is struck off, and its copy deleted.
+    later (--retry-invalid, --send-dates, --retry-failed) is struck off, and its copy deleted; so is
+    one moved out of the archive to INTERN_DREV (move_dropbox_non_media.py, or seen moved by a run).
     """
 
     def __init__(self, work_dir: Path, *, read_only: bool = False) -> None:
@@ -332,6 +338,13 @@ class Ledger:
     def get(self, dropbox_path: str) -> dict[str, Any] | None:
         return self.files.get(same_path(dropbox_path))
 
+    def _key(self, dropbox_path: str) -> str | None:
+        """The list's key for a Dropbox path, which ignores case as Dropbox does."""
+        key = same_path(dropbox_path)
+        if key in self.files:
+            return key
+        return next((each for each in self.files if each.lower() == key.lower()), None)
+
     def copy(self, entry: dict[str, Any]) -> Path | None:
         return self.work_dir / entry["copy"] if entry.get("copy") else None
 
@@ -351,9 +364,19 @@ class Ledger:
 
     def on_server(self, dropbox_path: str) -> None:
         """The server has it now: strike it off, and delete the copy."""
-        entry = self.files.pop(same_path(dropbox_path), None)
+        self._strike(dropbox_path)
+
+    def moved_out(self, dropbox_path: str) -> bool:
+        """It is no longer in the archive but in INTERN_DREV: strike it off, and delete the copy,
+        which Dropbox does not need. Whether it was on the list."""
+        return self._strike(dropbox_path)
+
+    def _strike(self, dropbox_path: str) -> bool:
+        key = self._key(dropbox_path)
+        entry = self.files.pop(key) if key is not None else None
         if entry and (copy := self.copy(entry)) and not self.read_only:
             copy.unlink(missing_ok=True)
+        return entry is not None
 
     def album(
         self,
@@ -2421,6 +2444,13 @@ def year_folders(
     return found, outside
 
 
+def in_a_year_folder(path: str, root: str) -> bool:
+    """Whether a Dropbox path below `root` is in one of its year folders (or Andet)."""
+    rest = path[len(root.rstrip("/")) + 1 :]
+    folder, separator, _ = rest.partition("/")
+    return bool(separator) and (bool(YEAR.fullmatch(folder)) or folder == OTHER_FOLDER)
+
+
 def album_folders(
     client: dropbox.Dropbox, year_path: str
 ) -> tuple[list[Any], list[Any]]:
@@ -2471,8 +2501,11 @@ def keep_outside(
     where: str,
 ) -> None:
     """Keep a copy of what lies in `parent` outside its album (or year) folders — `entries`, files
-    and folders — in `here`, at its path below `parent`, and list it: the server never sees it."""
+    and folders — in `here`, at its path below `parent`, and list it: the server never sees it.
+
+    Returns the files there, or None if a folder among them could not be listed."""
     files: list[Any] = []
+    complete = True
     for entry in entries:
         if isinstance(entry, dropbox.files.FileMetadata):
             files.append(entry)
@@ -2485,6 +2518,7 @@ def keep_outside(
                 ]
             except AlbumFailed as failure:
                 out.failure(entry.path_display, failure.summary, failure.details)
+                complete = False
     cut = len(parent.rstrip("/")) + 1
     known = 0
     for entry in sorted(files, key=lambda each: each.path_display):
@@ -2513,6 +2547,85 @@ def keep_outside(
     if known:
         out.info(f"  {known} file(s) {where}, kept on an earlier run")
     ledger.save()
+    return files if complete else None
+
+
+def files_below(client: dropbox.Dropbox, path: str) -> list[str] | None:
+    """The Dropbox path of every file below `path`: none if there is no such folder, None if it
+    could not be listed."""
+    try:
+        return [
+            entry.path_display
+            for entry in list_folder(client, path, recursive=True)
+            if isinstance(entry, dropbox.files.FileMetadata)
+        ]
+    except AlbumFailed as failure:
+        cause = failure.__cause__
+        if (
+            isinstance(cause, ApiError)
+            and cause.error.is_path()
+            and cause.error.get_path().is_not_found()
+        ):
+            return []
+        out.warn(f"  {failure.summary}")
+        return None
+
+
+def strike_moved(
+    client: dropbox.Dropbox,
+    ledger: Ledger,
+    options: Options,
+    listed: Collection[str] | None,
+    *,
+    below: str,
+    root: str,
+    covers: Callable[[str], bool] = lambda path: True,
+) -> None:
+    """Strike off the list what Dropbox no longer has below `below` but has at the same place in
+    INTERN_DREV — moved out of the archive by move_dropbox_non_media.py — and delete its copy.
+
+    `listed` is every file below `below` now, None if not all of it could be listed (then nothing
+    is struck off), and `covers` says which of the list's paths it covers. A file gone from Dropbox
+    altogether stays on the list: its copy here may be the last there is.
+    """
+    if listed is None:
+        return
+    there = {same_path(path).lower() for path in listed}
+    prefix = same_path(below).rstrip("/").lower() + "/"
+    gone = [
+        path
+        for path in ledger.files
+        if path.lower().startswith(prefix)
+        and covers(path)
+        and path.lower() not in there
+    ]
+    if not gone:
+        return
+    cut = len(root.rstrip("/"))
+    if options.dry_run:
+        out.info(
+            f"  {len(gone)} file(s) on the list of what is not on the server are no longer in"
+            f" {below}; a run strikes off those moved to {INTERN_DREV}"
+        )
+        return
+    moved_to = files_below(client, INTERN_DREV + below.rstrip("/")[cut:])
+    if moved_to is None:
+        return
+    arrived = {same_path(path).lower() for path in moved_to}
+    moved = [path for path in gone if (INTERN_DREV + path[cut:]).lower() in arrived]
+    for path in moved:
+        ledger.moved_out(path)
+    ledger.save()
+    if moved:
+        out.info(
+            f"  {len(moved)} file(s) moved to {INTERN_DREV} since: struck off the list of what is"
+            " not on the server, their copies here deleted"
+        )
+    if missing := len(gone) - len(moved):
+        out.warn(
+            f"  {missing} file(s) on the list of what is not on the server are gone from Dropbox"
+            " (not moved there): their copies here are kept, and listed"
+        )
 
 
 def local_files(folder: Path, *, finder: bool = False) -> list[Path]:
@@ -2800,7 +2913,7 @@ def main() -> int:
         _, rules = server.albums(OTHER_FOLDER)
         out.info(f"Reading {args.dropbox_root} in Dropbox …")
         found, outside = year_folders(client, args.dropbox_root, selected)
-        keep_outside(
+        beside_years = keep_outside(
             client,
             ledger,
             options,
@@ -2809,6 +2922,17 @@ def main() -> int:
             here=args.work_dir / NOT_IN_A_YEAR,
             rules=rules,
             where="in the Dropbox root, not in a year folder",
+        )
+        strike_moved(
+            client,
+            ledger,
+            options,
+            None
+            if beside_years is None
+            else [entry.path_display for entry in beside_years],
+            below=args.dropbox_root,
+            root=args.dropbox_root,
+            covers=lambda path: not in_a_year_folder(path, args.dropbox_root),
         )
         for year in found:
             year_path = f"{args.dropbox_root}/{year}"
@@ -2827,6 +2951,18 @@ def main() -> int:
                 rules=rules,
                 where="in the year folder, not in an album folder",
             )
+            if any(
+                path.lower().startswith(f"{same_path(year_path).lower()}/")
+                for path in ledger.files
+            ):
+                strike_moved(
+                    client,
+                    ledger,
+                    options,
+                    files_below(client, year_path),
+                    below=year_path,
+                    root=args.dropbox_root,
+                )
             for entry in albums:
                 album_path = f"{year_path}/{entry.name}"
                 out.heading(f"{year}/{entry.name}")
