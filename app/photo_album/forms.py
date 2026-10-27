@@ -19,6 +19,18 @@ class AlbumNameForm(forms.Form):
     name = forms.CharField(max_length=140, label="Navn", validators=[validate_album_name])
 
 
+class AlbumMergeForm(forms.Form):
+    """The album to merge into this one; which albums may be is merge.check's to say."""
+
+    source = forms.ModelChoiceField(
+        queryset=Album.objects.all(),
+        error_messages={
+            "required": "Vælg det album, der skal flettes ind.",
+            "invalid_choice": "Det album findes ikke længere.",
+        },
+    )
+
+
 class DownloadForm(forms.Form):
     variant = forms.ChoiceField(choices=DownloadVariant.choices, required=False)
 
