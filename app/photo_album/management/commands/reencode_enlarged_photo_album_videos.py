@@ -3,7 +3,7 @@ from typing import Any
 from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError, CommandParser
 
-from photo_album.models import DerivativeState, Media, validate_folder
+from photo_album.models import DerivativeState, Media, normalize_name, validate_folder
 from photo_album.services import HIGH_DEFINITION_SIZE, is_video_media, stored_video_dimensions
 from photo_album.tasks import reencode_enlarged_video
 
@@ -17,7 +17,7 @@ class Command(BaseCommand):
     )
 
     def add_arguments(self, parser: CommandParser) -> None:
-        parser.add_argument("--year", help="Only albums in this folder: a year, or Andet.")
+        parser.add_argument("--year", help="Only albums in this folder: a year, or 'Uden årstal'.")
         parser.add_argument("--dry-run", action="store_true", help="List them, queue nothing.")
 
     def handle(self, *args: Any, **options: Any) -> None:  # noqa: ANN401
@@ -27,7 +27,7 @@ class Command(BaseCommand):
             .select_related("album")
             .order_by("album__folder", "pk")
         )
-        if year := options["year"]:
+        if year := normalize_name(options["year"] or ""):
             try:
                 validate_folder(year)
             except ValidationError as exc:

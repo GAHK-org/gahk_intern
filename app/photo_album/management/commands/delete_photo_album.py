@@ -25,7 +25,7 @@ from storages.backends.s3 import S3Storage
 from storages.utils import clean_name
 
 from photo_album.cache import HIGH_DEFINITION, THUMBNAIL
-from photo_album.models import Album, AlbumDownload, Media
+from photo_album.models import Album, AlbumDownload, Media, normalize_name
 from photo_album.storage import get_photo_album_storage
 
 # Nothing created or uploaded on or after this date is deleted here. PHOTO_ALBUM_DELETE_PROTECTED_FROM
@@ -102,7 +102,7 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser: CommandParser) -> None:
         scope = parser.add_mutually_exclusive_group(required=True)
-        scope.add_argument("--folder", help="Delete every album in this folder, e.g. 2019 or Andet.")
+        scope.add_argument("--folder", help="Delete every album in this folder, e.g. 2019 or 'Uden årstal'.")
         scope.add_argument(
             "--album", type=int, help="Delete this album (root or sub-album) and its sub-albums."
         )
@@ -189,7 +189,7 @@ class Command(BaseCommand):
             if album is None:
                 raise CommandError(f"There is no album {options['album']}.")
             return f"album {album.pk} “{album.name}” with its sub-albums", album.subtree()
-        folder = options["folder"]
+        folder = normalize_name(options["folder"])
         albums = Album.objects.filter(folder=folder)
         if not albums.exists():
             raise CommandError(f"There are no albums in folder {folder!r}.")

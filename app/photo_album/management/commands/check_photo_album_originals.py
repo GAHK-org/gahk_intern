@@ -5,7 +5,7 @@ from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError, CommandParser
 from django.db import transaction
 
-from photo_album.models import Album, Media, validate_folder
+from photo_album.models import Album, Media, normalize_name, validate_folder
 from photo_album.services import _delete_files
 from photo_album.storage import get_photo_album_storage
 
@@ -19,14 +19,14 @@ class Command(BaseCommand):
     )
 
     def add_arguments(self, parser: CommandParser) -> None:
-        parser.add_argument("--year", help="Only albums in this folder: a year, or Andet.")
+        parser.add_argument("--year", help="Only albums in this folder: a year, or 'Uden årstal'.")
         parser.add_argument(
             "--delete", action="store_true", help="Remove what is found. Without it, only list."
         )
 
     def handle(self, *args: Any, **options: Any) -> None:  # noqa: ANN401
         media = Media.objects.select_related("album").order_by("album__path", "pk")
-        if year := options["year"]:
+        if year := normalize_name(options["year"] or ""):
             try:
                 validate_folder(year)
             except ValidationError as exc:
