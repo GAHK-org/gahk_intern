@@ -4,8 +4,8 @@ The high-definition copy is a new JPEG, and Pillow writes nothing into one but t
 downloaded as "Komprimeret (HD)" came without its capture date, camera, lens, place or keywords, so
 a photo library it was imported into dated it by the day of the download. exiv2 copies them from
 the original, maker notes included: it knows each camera maker's notes well enough to move them
-without breaking the offsets inside them. (A video's copy keeps its metadata through ffmpeg, see
-services._encode_video.)
+without breaking the offsets inside them. (A JPEG's or a GIF's comment Pillow carries over itself,
+and exiv2 keeps it; a video's copy keeps its metadata through ffmpeg, see services._encode_video.)
 
 exiv2 reads every format the album takes but BMP and GIF, which have nothing to copy, and RAW
 files above all, whose metadata Pillow cannot read at all — so `carrier` hands Pillow a JPEG with
@@ -25,34 +25,42 @@ logger = logging.getLogger(__name__)
 # photo. Its errors still reach the log.
 exiv2.LogMsg.setLevel(exiv2.LogMsg.Level.error)
 
-# The tags of a TIFF's or a RAW file's first directory that say something about the photo. The rest
-# describe how that file stores its pixels — its width, compression, strips, colour filter, a DNG's
-# private data — which is untrue of the JPEG, and would mislead whatever reads it.
+# The tags of a photo's first directory that describe how its file stores the pixels — its width,
+# compression, strips, colour encoding, a DNG's colour matrices and private data — by the sections
+# exiv2 sorts them into. They are untrue of the JPEG, and would mislead whatever reads it. Every
+# other tag there is the photo's own and is kept, tags exiv2 does not know among them: an old
+# Olympus put its white balance and scene mode in that directory.
+_STORAGE_SECTIONS = frozenset(
+    {"ImageStructure", "RecordingOffset", "ImageCharacteristics", "TIFF&PM6", "AdobeOPI", "DngTags"}
+)
+# ...but these, among them, are about the photo,
 _PHOTO_TAGS = frozenset(
     {
-        "ImageDescription",
-        "Make",
-        "Model",
         "Orientation",
         "XResolution",
         "YResolution",
         "ResolutionUnit",
-        "Software",
-        "DateTime",
-        "DateTimeOriginal",
-        "Artist",
-        "HostComputer",
-        "Copyright",
-        "Rating",
-        "RatingPercent",
-        "XPTitle",
-        "XPComment",
-        "XPAuthor",
-        "XPKeywords",
-        "XPSubject",
+        "DocumentName",
+        "PageName",
+        "UniqueCameraModel",
+        "LocalizedCameraModel",
         "CameraSerialNumber",
-        "ExifTag",
-        "GPSTag",
+        "LensInfo",
+        "OriginalRawFileName",
+        "CameraLabel",
+    }
+)
+# ...and these, elsewhere, are not: a RAW file's other pictures and colour filter, and the tags that
+# hold the XMP, the IPTC and the colour profile, which the copy holds in places of their own.
+_STORAGE_TAGS = frozenset(
+    {
+        "SubIFDs",
+        "CFARepeatPatternDim",
+        "CFAPattern",
+        "XMLPacket",
+        "IPTCNAA",
+        "ImageResources",
+        "InterColorProfile",
     }
 )
 
@@ -89,9 +97,9 @@ def copy_metadata(source: bytes, jpeg: bytes, size: tuple[int, int]) -> bytes:
 
 def _describe_copy(exif: exiv2.ExifData, xmp: exiv2.XmpData, size: tuple[int, int]) -> None:
     width, height = size
-    for key in [datum.key() for datum in exif if datum.groupName() == "Image"]:
-        if key.removeprefix("Exif.Image.") not in _PHOTO_TAGS:
-            exif.erase(exif.findKey(exiv2.ExifKey(key)))
+    for key in [exiv2.ExifKey(datum.key()) for datum in exif if datum.groupName() == "Image"]:
+        if _describes_storage(key):
+            exif.erase(exif.findKey(key))
     exiv2.ExifThumb(exif).erase()
     for key, value in (
         ("Exif.Image.Orientation", 1),
@@ -109,6 +117,13 @@ def _describe_copy(exif: exiv2.ExifData, xmp: exiv2.XmpData, size: tuple[int, in
     ):
         if key in xmp:
             xmp[key] = str(value)
+
+
+def _describes_storage(key: exiv2.ExifKey) -> bool:
+    name = key.tagName()
+    if name in _STORAGE_TAGS:
+        return True
+    return exiv2.ExifTags.sectionName(key) in _STORAGE_SECTIONS and name not in _PHOTO_TAGS
 
 
 def carrier(source: bytes) -> bytes:

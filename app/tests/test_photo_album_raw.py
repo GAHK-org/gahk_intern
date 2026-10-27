@@ -38,11 +38,12 @@ def _upload(make_resident: Callable[..., Resident], name: str, content: bytes) -
 
 
 def _exif_photo(**tags: object) -> bytes:
-    """A 2400x1200 JPEG with a camera's EXIF (a GPS position among it), XMP, IPTC and a colour
-    profile, turned on its side by its orientation tag."""
+    """A 2400x1200 JPEG with a camera's EXIF (a GPS position among it), XMP, IPTC, a comment and a
+    colour profile, turned on its side by its orientation tag. Its white balance is in the first
+    directory, not the EXIF one, as an old Olympus wrote it."""
     image = Image.new("RGB", (2400, 1200), "teal")
     exif = image.getexif()
-    exif.update({271: "Canon", 272: "EOS 5D", 274: 6, 305: "Firmware 1.1.1", **tags})
+    exif.update({271: "Canon", 272: "EOS 5D", 274: 6, 305: "Firmware 1.1.1", 0xA403: 1, **tags})
     exif.get_ifd(0x8769).update({36867: "2004:05:06 07:08:09", 0xA434: "EF 50mm f/1.8"})
     exif.get_ifd(0x8825).update({1: "N", 2: (55.0, 40.0, 33.6), 3: "E", 4: (12.0, 34.0, 6.48)})
     xmp = (
@@ -52,7 +53,7 @@ def _exif_photo(**tags: object) -> bytes:
         b"</rdf:Description></rdf:RDF></x:xmpmeta>"
     )
     output = BytesIO()
-    image.save(output, format="JPEG", exif=exif, xmp=xmp, icc_profile=SRGB)
+    image.save(output, format="JPEG", exif=exif, xmp=xmp, icc_profile=SRGB, comment=b"Taget p\xe5 2. sal")
     # IPTC's keywords and byline, as a Photoshop APP13 segment just after the JPEG's start.
     dataset = b"\x1c\x02\x19" + len(b"fest").to_bytes(2, "big") + b"fest"
     dataset += b"\x1c\x02\x50" + len(b"Fotogruppen").to_bytes(2, "big") + b"Fotogruppen"
@@ -169,6 +170,7 @@ def test_the_hd_copy_of_a_photo_keeps_its_exif_iptc_and_xmp(make_resident: Calla
         exif = copy.getexif()
         assert (exif[271], exif[272], exif[305]) == ("Canon", "EOS 5D", "Firmware 1.1.1")
         assert exif[274] == 1  # already upright: turning it again would put it on its side
+        assert exif[0xA403] == 1
         photo = exif.get_ifd(0x8769)
         assert photo[36867] == "2004:05:06 07:08:09"
         assert photo[0xA434] == "EF 50mm f/1.8"
@@ -179,6 +181,7 @@ def test_the_hd_copy_of_a_photo_keeps_its_exif_iptc_and_xmp(make_resident: Calla
         iptc = IptcImagePlugin.getiptcinfo(copy) or {}
         assert iptc[(2, 25)] == b"fest"
         assert iptc[(2, 80)] == b"Fotogruppen"
+        assert copy.info["comment"].rstrip(b"\0") == b"Taget p\xe5 2. sal"
     with Image.open(media.thumbnail) as thumbnail:
         assert not thumbnail.getexif()
 
@@ -214,7 +217,9 @@ def test_the_hd_copy_of_a_raw_file_keeps_its_exif_but_not_how_the_raw_stores_its
         exif = copy.getexif()
         assert (exif[271], exif[272], exif[274]) == ("Canon", "EOS 5D", 1)
         assert exif.get_ifd(0x8769)[36867] == "2004:05:06 07:08:09"
-        # Its sensor's width, its compression, its strips, its colour filter, DNG's own tags
+        assert exif[50708] == "Canon EOS 5D"  # DNG's own name for the camera
+        # Its sensor's width, its compression, its strips, its colour filter, DNG's version and
+        # colour matrix
         for tag in (256, 257, 259, 273, 279, 33422, 50706, 50721):
             assert tag not in exif
 
