@@ -130,22 +130,32 @@ def backfill_hashes(*, limit: int = 0, until: datetime | None = None) -> HashBac
     for media in (queue[:limit] if limit else queue).iterator():
         if until is not None and timezone.now() >= until:
             break
-        digest = hashlib.sha256()
-        size = 0
         try:
-            with media.original.open("rb") as original:
-                while chunk := original.read(1024 * 1024):
-                    digest.update(chunk)
-                    size += len(chunk)
+            hash_original(media)
         except OSError as exc:
             result.unreadable.append(f"{media.pk} ({media.original.name}): {exc}")
-            logger.warning("Could not read media %s (%s) to hash it: %s", media.pk, media.original.name, exc)
-            Media.objects.filter(pk=media.pk).update(hash_failed_at=timezone.now())
             continue
-        Media.objects.filter(pk=media.pk).update(sha256=digest.hexdigest(), size=size, hash_failed_at=None)
         result.hashed += 1
     result.remaining = missing.count()
     return result
+
+
+def hash_original(media: Media) -> None:
+    """Read `media`'s stored original to record its SHA-256 and size. Raises OSError if it cannot,
+    after noting when (`hash_failed_at`)."""
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with media.original.open("rb") as original:
+            while chunk := original.read(1024 * 1024):
+                digest.update(chunk)
+                size += len(chunk)
+    except OSError as exc:
+        logger.warning("Could not read media %s (%s) to hash it: %s", media.pk, media.original.name, exc)
+        Media.objects.filter(pk=media.pk).update(hash_failed_at=timezone.now())
+        raise
+    media.sha256, media.size, media.hash_failed_at = digest.hexdigest(), size, None
+    Media.objects.filter(pk=media.pk).update(sha256=media.sha256, size=size, hash_failed_at=None)
 
 
 @dataclass

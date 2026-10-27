@@ -41,7 +41,13 @@ def is_administrator(request: HttpRequest) -> bool:
 
 
 def can_upload(request: HttpRequest, album: Album) -> bool:
-    return not album.is_locked()
+    """Not into a locked album, nor into one being merged, which is about to move or to go."""
+    return not album.is_locked() and album.active_merge() is None
+
+
+def can_merge_album(request: HttpRequest, album: Album) -> bool:
+    """Merging another album into this one (photo_album.merge): administrators only."""
+    return is_administrator(request) and not album.is_locked()
 
 
 def can_rename_album(request: HttpRequest, album: Album) -> bool:
