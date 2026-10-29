@@ -1,0 +1,19 @@
+{% comment %}
+  A post's album, drawn the way the photo album draws itself: the mosaic its index leads with (one
+  large picture and up to six small, the album's newest, all the way down its sub-albums) under the
+  dark band with the album's name in the album pages' serif (opslagstavle.attachments). Fewer
+  pictures than the mosaic has room for get a layout of their own (album-embed-n1 … n6), rather than
+  the index's dark empty cells.
+
+  One link, to the album, reversed by URL name when it is drawn. In the composer (`compose`) it
+  opens a new tab, so following it does not lose the draft.
+{% endcomment %}
+<a class="album-timeline-card album-embed album-embed-n{{ widget.pictures|length }}" href="{{ widget.url }}"{% if compose %} target="_blank" rel="noopener"{% endif %}>
+  <span class="album-timeline-mosaic" aria-hidden="true">{% for picture in widget.pictures %}<span><img src="{{ picture }}" alt="" loading="lazy" decoding="async"></span>{% endfor %}</span>
+  <span class="album-timeline-label">
+    <span class="album-eyebrow">Fotoalbum · {{ widget.place }}</span>
+    <strong>{{ widget.album.name }}</strong>
+    <span>{{ widget.counts }}</span>
+    <span class="album-timeline-go">Se albummet →</span>
+  </span>
+</a>

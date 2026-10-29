@@ -62,6 +62,7 @@ from oelkaelder.models import (
     TransactionItem,
 )
 from opslagstavle.demo import seed as seed_opslagstavle
+from opslagstavle.demo import seed_attachments as seed_opslagstavle_attachments
 from opslagstavle.models import Notice, NoticeComment, NoticeReaction
 from photo_album.demo import seed as seed_photo_album
 from photo_album.models import Album, Media
@@ -234,6 +235,8 @@ class Command(BaseCommand):
             seed_arkiv(residents, self.now, self.rng)
             seed_photo_album(residents, self.now, self.rng)
             seed_gahkflix(residents, self.now, self.rng)
+            # After both: these posts carry an album and a film seeded just above.
+            seed_opslagstavle_attachments(residents, self.now)
             seed_den_hurtige(residents, self.now, self.rng)
             # Last: its rows link to the events, opslag and Den Hurtige posts seeded above.
             seed_notifications(residents, self.now, self.rng)

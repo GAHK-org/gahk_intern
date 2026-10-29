@@ -31,7 +31,7 @@ from core.reactions import CREATED, apply_toggle, reaction_rows
 from core.uploads import attached_image, validate_image_upload
 from residents.permissions import current_resident, is_kitchen
 
-from . import live, services
+from . import attachments, live, services
 from .access import (
     access_required,
     can_delete,
@@ -78,6 +78,9 @@ def _decorate(notices: list[Notice], request: HttpRequest) -> list[Notice]:
         images = image_sources(notice.body)
         notice.image_count = len(images)  # type: ignore[attr-defined]
         notice.thumbnail = images[0] if len(images) > 1 else ""  # type: ignore[attr-defined]
+    # The album's and the film's own widgets, as this reader may see them: for the whole page at
+    # once, so they cost the same few queries however many posts carry one.
+    attachments.attach(request, notices)
     return notices
 
 
@@ -99,7 +102,12 @@ def _visible(request: HttpRequest) -> NoticeQuerySet:
 def _list_queryset(request: HttpRequest) -> NoticeQuerySet:
     """The columns and relations every listing needs. `prefetch_related("reactions")` is what keeps
     the reaction rows from being an N+1 across a page of posts."""
-    return _visible(request).select_related("author", "pinned_by").prefetch_related(REACTIONS)
+    return (
+        _visible(request)
+        # The album and the film a post carries, for their widgets (opslagstavle.attachments).
+        .select_related("author", "pinned_by", "album", "video__file", "video__series")
+        .prefetch_related(REACTIONS)
+    )
 
 
 @access_required
@@ -253,8 +261,15 @@ def live_detail(request: HttpRequest, pk: int) -> HttpResponse:
 @access_required
 def create(request: HttpRequest) -> HttpResponse:
     """Compose on its own page, not inline: title + category + Markdown + toolbar + preview is a
-    form, and an inline composer on a paginated list would lose a long draft on any navigation."""
-    form = NoticeForm(request.POST or None, events_allowed=events_allowed(request))
+    form, and an inline composer on a paginated list would lose a long draft on any navigation.
+
+    `?album=` or `?video=` is "Del på opslagstavlen" on that album's or film's page: the composer
+    opens with it attached and the cursor in the text.
+    """
+    shared = attachments.shared(request) if request.method == "GET" else {}
+    form = _notice_form(request, initial=shared)
+    if shared:
+        form.fields["body"].widget.attrs["autofocus"] = True
     if request.method == "POST" and form.is_valid():
         with transaction.atomic():
             notice = form.save(commit=False)
@@ -266,7 +281,7 @@ def create(request: HttpRequest) -> HttpResponse:
         live.notice_created(notice)
         messages.success(request, "Opslaget er slået op.")
         return redirect("opslagstavle:detail", pk=notice.pk)
-    return render(request, "opslagstavle/form.html", {"form": form, "notice": None})
+    return _form_page(request, form, None)
 
 
 @access_required
@@ -276,7 +291,7 @@ def edit(request: HttpRequest, pk: int) -> HttpResponse:
     if not can_edit(request, notice):
         raise PermissionDenied
     old_body = notice.body
-    form = NoticeForm(request.POST or None, instance=notice, events_allowed=events_allowed(request))
+    form = _notice_form(request, instance=notice)
     if request.method == "POST" and form.is_valid():
         with transaction.atomic():
             notice = form.save(commit=False)
@@ -289,7 +304,39 @@ def edit(request: HttpRequest, pk: int) -> HttpResponse:
         live.notice_changed(notice.pk)
         messages.success(request, "Opslaget er opdateret.")
         return redirect("opslagstavle:detail", pk=notice.pk)
-    return render(request, "opslagstavle/form.html", {"form": form, "notice": notice})
+    return _form_page(request, form, notice)
+
+
+def _notice_form(request: HttpRequest, **kwargs: object) -> NoticeForm:
+    """The composer's form, with the fields this reader may use: each linked feature has its own gate."""
+    return NoticeForm(
+        request.POST or None,
+        events_allowed=events_allowed(request),
+        albums_allowed=attachments.albums_allowed(request),
+        videos_allowed=attachments.videos_allowed(request),
+        **kwargs,
+    )
+
+
+def _form_page(request: HttpRequest, form: NoticeForm, notice: Notice | None) -> HttpResponse:
+    album, video = (form[name].value() if name in form.fields else None for name in ("album", "video"))
+    return render(
+        request,
+        "opslagstavle/form.html",
+        {"form": form, "notice": notice, **_attachments_context(request, album, video)},
+    )
+
+
+def _attachments_context(request: HttpRequest, album: object, video: object) -> dict[str, object]:
+    """What the composer's attachments block draws (_attachments.html): the widgets for the album
+    and the film it holds, and which of the two the reader may attach at all."""
+    album_widget, video_widget = attachments.widgets(request, album, video)
+    return {
+        "album_widget": album_widget,
+        "video_widget": video_widget,
+        "albums_allowed": attachments.albums_allowed(request),
+        "videos_allowed": attachments.videos_allowed(request),
+    }
 
 
 @require_POST
@@ -436,10 +483,42 @@ def preview(request: HttpRequest) -> HttpResponse:
     a second allowlist, and the first time they disagreed the author would see one thing and the
     board would show another — the classic "the preview kept my HTML, the saved post stripped it"
     bug. Going through core.markdown makes the preview byte-identical to the save by construction,
-    and there is a test asserting exactly that.
+    and there is a test asserting exactly that. The album's and the film's widgets come from the
+    same opslagstavle.attachments as the post's.
     """
     return render(
-        request, "opslagstavle/_preview.html", {"html": render_markdown(request.POST.get("body", ""))}
+        request,
+        "opslagstavle/_preview.html",
+        {
+            "html": render_markdown(request.POST.get("body", "")),
+            **_attachments_context(request, request.POST.get("album"), request.POST.get("video")),
+        },
+    )
+
+
+@access_required
+def attachments_block(request: HttpRequest) -> HttpResponse:
+    """The composer's attachments, re-drawn when an album or a film is picked or removed.
+
+    `?album=` and `?video=` are what it should now hold. Anything the reader may not attach is
+    dropped rather than refused: the block is drawn as it will be saved.
+    """
+    return render(
+        request,
+        "opslagstavle/_attachments.html",
+        _attachments_context(request, request.GET.get("album"), request.GET.get("video")),
+    )
+
+
+@access_required
+def attach_choices(request: HttpRequest, kind: str) -> HttpResponse:
+    """The picker's list: the newest albums or films, or those matching `?q=` as it is typed."""
+    query = request.GET.get("q", "").strip()[:100]
+    find = attachments.album_choices if kind == attachments.ALBUM else attachments.video_choices
+    return render(
+        request,
+        "opslagstavle/_attach_choices.html",
+        {"kind": kind, "query": query, "choices": find(request, query)},
     )
 
 

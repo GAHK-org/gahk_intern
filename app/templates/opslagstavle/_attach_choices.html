@@ -1,0 +1,20 @@
+{% comment %}
+  The picker's list (views.attach_choices): the newest albums or films, or those matching what is
+  typed. Picking one re-draws the composer's attachments with it, keeping the other one the composer
+  holds (hx-include), and opslagstavle.ts closes the picker.
+{% endcomment %}
+{% for choice in choices %}
+  <button type="button" class="board-choice is-{{ kind }}" data-attach-pick
+          hx-get="{% url 'opslagstavle:attachments' %}?{{ kind }}={{ choice.pk }}"
+          hx-include="{% if kind == 'album' %}#id_video{% else %}#id_album{% endif %}"
+          hx-target="#js-attachments" hx-swap="outerHTML">
+    <span class="board-choice-img">{% if choice.picture %}<img src="{{ choice.picture }}" alt="" loading="lazy" decoding="async">{% endif %}</span>
+    <span class="board-choice-text"><strong>{{ choice.title }}</strong><small>{{ choice.detail }}</small></span>
+  </button>
+{% empty %}
+  <p class="board-choice-none">
+    {% if query %}Ingen {% if kind == "album" %}albummer{% else %}videoer{% endif %} matcher «{{ query }}».
+    {% elif kind == "album" %}Der er ingen albummer endnu.
+    {% else %}Der er ingen udgivne videoer endnu.{% endif %}
+  </p>
+{% endfor %}
