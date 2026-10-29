@@ -40,19 +40,6 @@ def notice_url(notice: "Notice") -> str:
     return f"{BOARD_URL}{notice.pk}"
 
 
-def gist(notice: "Notice") -> str:
-    """What a notification quotes of a post: its text, as plain text, else what it carries — an
-    album or a film can be a whole post ("📷 Julefrokost 2026")."""
-    text = push.preview(plain_text(notice.body))
-    if text:
-        return text
-    if notice.album is not None:
-        return f"📷 {notice.album.name}"
-    if notice.video is not None:
-        return f"🎬 {notice.video.title}"
-    return ""
-
-
 def _author_can_open(notice: "Notice") -> bool:
     """Whether the post's author can still open the board (rollout gate, or moved out). The kitchen
     account is not in everyone(), but can always open its own posts."""
@@ -88,7 +75,7 @@ def notify_new_notice(notice: "Notice", skip: "Collection[int]" = ()) -> None:
         access.allowed_residents(services.everyone()).exclude(pk__in=skip),
         category=categories.POSTS_NEW,
         title=notice.author.full_name,
-        body=gist(notice),
+        body=push.preview(plain_text(notice.body)),
         url=notice_url(notice),
         exclude=notice.author_id,
     )
@@ -131,6 +118,6 @@ def notify_reaction(notice: "Notice", reactor: "Resident", emoji: str) -> None:
         group_key=f"posts.likes:{notice.pk}",
         actor=reactor,
         verb="reagerede på dit opslag",
-        body=f"{emoji} {gist(notice)}".strip(),
+        body=f"{emoji} {push.preview(plain_text(notice.body))}".strip(),
         url=notice_url(notice),
     )

@@ -433,8 +433,6 @@ erDiagram
         datetime pinned_at
         int pinned_by_id FK
         int event_id FK
-        int album_id FK
-        int video_id FK
     }
 
     opslagstavle_NoticeComment {
@@ -948,8 +946,6 @@ erDiagram
     opslagstavle_Notice }o--|| residents_Resident : "author"
     opslagstavle_Notice }o--|o residents_Resident : "pinned_by"
     opslagstavle_Notice }o--|o events_Event : "event"
-    opslagstavle_Notice }o--|o photo_album_Album : "album"
-    opslagstavle_Notice }o--|o gahkflix_Video : "video"
     opslagstavle_NoticeComment }o--|| opslagstavle_Notice : "notice"
     opslagstavle_NoticeComment }o--|| residents_Resident : "author"
     opslagstavle_NoticeReaction }o--|| opslagstavle_Notice : "notice"
@@ -1744,8 +1740,6 @@ erDiagram
         datetime pinned_at
         int pinned_by_id FK
         int event_id FK
-        int album_id FK
-        int video_id FK
     }
 
     opslagstavle_NoticeComment {
@@ -1777,17 +1771,11 @@ erDiagram
 
     events_Event { }
 
-    gahkflix_Video { }
-
-    photo_album_Album { }
-
     residents_Resident { }
 
     opslagstavle_Notice }o--|| residents_Resident : "author"
     opslagstavle_Notice }o--|o residents_Resident : "pinned_by"
     opslagstavle_Notice }o--|o events_Event : "event"
-    opslagstavle_Notice }o--|o photo_album_Album : "album"
-    opslagstavle_Notice }o--|o gahkflix_Video : "video"
     opslagstavle_NoticeComment }o--|| opslagstavle_Notice : "notice"
     opslagstavle_NoticeComment }o--|| residents_Resident : "author"
     opslagstavle_NoticeReaction }o--|| opslagstavle_Notice : "notice"
