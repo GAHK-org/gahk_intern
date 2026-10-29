@@ -68,9 +68,22 @@
         </div>
         {{ form.body }}
         {% if form.body.errors %}<p class="errorlist text-sm">{{ form.body.errors|striptags }}</p>{% endif %}
+        {% comment %}
+          The cards the post will show for the albums and videos it links to, re-drawn by the server
+          a moment after typing stops (views.link_previews), so a pasted link shows its card at once.
+          The toolbar dispatches `input` too (opslagstavle.ts), so a link it inserts counts as typing.
+        {% endcomment %}
+        <div id="js-link-previews"
+             hx-post="{% url 'opslagstavle:link_previews' %}"
+             hx-trigger="input delay:600ms from:#{{ form.body.id_for_label }}"
+             hx-include="#{{ form.body.id_for_label }}"
+             hx-swap="innerHTML">
+          {% include "opslagstavle/_previews.html" with compose=True %}
+        </div>
         <p class="muted text-sm mt-1">
           Du kan skrive med Markdown: <code>**fed**</code>, <code>## overskrift</code>,
           <code>- punkt</code>, <code>[tekst](adresse)</code> og tabeller.
+          Et link til et fotoalbum{% if videos_allowed %} eller en video på GAHKFlix{% endif %} bliver vist med billeder.
         </p>
       </div>
 

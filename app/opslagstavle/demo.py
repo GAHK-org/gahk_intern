@@ -11,6 +11,8 @@ Two of these posts exist for a reason beyond looking realistic:
   * one is **years old**, because the board has no retention: the demo should show that a genuinely
     old opslag is still sitting there, still rendering and still paginating, rather than that
     something is about to remove it.
+  * two link to a photo album and a GAHKFlix film (`seed_shares`, run after those are seeded), so
+    the cards for them are visible too.
 
 No *uploaded* images: this project has no Pillow, and `_seed_room_conditions` sets no photos for the
 same reason. The multi-image post references files already in `static/legacy/` instead.
@@ -124,3 +126,27 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
             NoticeReaction.objects.create(notice=notice, author=resident, emoji=rng.choice(EMOJI))
 
     return len(created) + 1
+
+
+def seed_shares(residents: list[Resident], now: datetime) -> int:
+    """Posts about a demo album and a demo film, which show them as cards (opslagstavle.previews).
+
+    Separate from `seed` because it needs the photo album and GAHKFlix seeded first; seed_demo runs
+    it after both. Returns the number of notices made.
+    """
+    from django.urls import reverse
+
+    from gahkflix.models import Video
+    from photo_album.models import Album
+
+    shares = []
+    if (album := Album.objects.filter(parent__isnull=True, name="Sommerfest").first()) is not None:
+        url = reverse("photo_album:detail", args=[album.pk])
+        shares.append(f"Billederne fra sommerfesten ligger oppe nu 📸\n\n[{album.name}]({url})")
+    if (film := Video.objects.filter(title="Revy", published_at__isnull=False).first()) is not None:
+        url = reverse("gahkflix:detail", args=[film.pk])
+        shares.append(f"Årets revy kan ses på GAHKFlix. Tak til alle, der var med!\n\n[{film.title}]({url})")
+    for i, body in enumerate(shares):
+        notice = Notice.objects.create(author=residents[i % len(residents)], category=Category.NYT, body=body)
+        Notice.objects.filter(pk=notice.pk).update(created_at=now - timedelta(hours=2 + i))
+    return len(shares)

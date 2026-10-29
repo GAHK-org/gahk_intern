@@ -24,6 +24,8 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   2015` or `2015`), length, quality, views and unique viewers, description, credits (each linking to
   that person's cast page), tags, the series' episodes by season, `Mere som denne` (videos sharing
   tags or cast) and `Hent`: HD, Full HD (when there is one) or the original, each with its size.
+- A published video's page has `Del på opslagstavlen`, which opens a new post with a link to the
+  video. A post that links to a video shows it as a card (see opslagstavle.md).
 - Series pages list the published episodes by season and episode. The timeline lists every video by
   its release date (else its upload), grouped by year and month, with a jump to each year; a video
   known only by its year comes after that year's months, under `Uden måned`.

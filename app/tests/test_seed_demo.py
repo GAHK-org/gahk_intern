@@ -70,6 +70,9 @@ def test_seed_demo_fills_the_board_including_the_two_awkward_cases() -> None:
     assert Notice.objects.filter(created_at__lt=old).exists(), "no archive post in the demo board"
     # Every category represented, so the filter chips are all reachable in the demo.
     assert len({n.category for n in Notice.objects.all()}) >= 5
+    # Posts linking to a demo album and a demo film, so their cards show without anyone posting one.
+    assert Notice.objects.filter(body__contains="/intern/fotoalbum/").exists()
+    assert Notice.objects.filter(body__contains="/intern/gahkflix/v/").exists()
     assert not hasattr(Notice.objects, "expired"), (
         "retention was removed from opslagstavlen; a reinstated expired() needs the spec updated too"
     )

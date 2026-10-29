@@ -284,6 +284,24 @@ def image_sources(source: str) -> list[str]:
     return [src for src in _image_srcs(source) if src.startswith(_LOCAL_IMAGE_PREFIXES)]
 
 
+def link_hrefs(source: str) -> list[str]:
+    """Every link `href` in `source`, in document order: written links and bare URLs alike.
+
+    Not @mentions: those link to a person the author picked, not to an address they wrote. Walks the
+    token stream like `_image_srcs`, so an address in a code block is not a link. Used by
+    opslagstavlen to find the albums and videos a post links to (opslagstavle.previews).
+    """
+    hrefs: list[str] = []
+    for token in _MD.parse(source or ""):
+        for child in token.children or ():
+            if child.type != "link_open" or child.markup == "mention":
+                continue
+            href = child.attrGet("href")
+            if isinstance(href, str):
+                hrefs.append(href)
+    return hrefs
+
+
 def extract_image_names(source: str) -> set[str]:
     """The storage names of every *uploaded* image `source` embeds.
 

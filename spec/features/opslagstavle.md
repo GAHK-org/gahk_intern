@@ -44,7 +44,8 @@ disputes Inspektionen exists to settle.
 
 `/intern/opslagstavle/` (board), `<pk>` (permalink), `opret`, `<pk>/rediger`, `<pk>/slet`,
 `<pk>/fastgoer`, `<pk>/kommentar`, `kommentar/<pk>/slet`, `<pk>/reaktion`, `forhaandsvisning`,
-`billede`, `abonner`. Namespaced `opslagstavle:`.
+`forhaandsvisning/kort`, `billede`, `abonner`. `opret?album=<pk>` and `opret?video=<pk>` open the
+composer with a link to that album or video. Namespaced `opslagstavle:`.
 
 ## Data model
 
@@ -88,6 +89,24 @@ page is a tracking pixel that hands a third party the IP and read-time of every 
 the post.
 
 **Rendered on read; only the Markdown source is stored.** See "rejected" below.
+
+## Albums and videos in a post
+
+A post that links to a photo album or a GAHKFlix video shows it as a card under the text: an album's
+newest four pictures in a row (the album page's order, sub-albums included), its name, where it lives
+and how many items it holds; a video's thumbnail with its length, title, series and release date.
+
+- Any link counts, written (`[tekst](adresse)`) or pasted, relative or with the site's own host. A
+  link in code does not, nor one to another site.
+- The feed shows the first card a reader may see; the post's page shows up to four. The same album
+  linked twice is one card.
+- Each card follows its feature's rules for the reader: albums for every resident; a video only for
+  those GAHKFlix's rollout gate lets in, and a draft only for its uploader and the administrators,
+  marked `Kladde`. Counts and pictures are of approved, unbinned items, so everyone sees the same
+  album card. The kitchen account sees no cards.
+- `Del på opslagstavlen` on an album's or a published video's page opens the composer with a link to
+  it, named after it, and the cursor above it.
+- The composer shows the cards under the text as it is typed, and the preview tab shows them too.
 
 ## Retention
 
@@ -212,6 +231,13 @@ that is a bad trade.
 **Markdown in comments.** Deferred, not refused. Keeping it to the post body confines the
 embedded-image lifecycle to one model and the compose toolbar to one purpose. Allowing it later is a
 template change and a test.
+
+**A field on the post for its album or video**, like `event`. Rejected: a link is what the author
+already has, a post can be about two albums, and posts written before the cards existed get them
+too. The cards are drawn from the album or video itself, never from the link's text.
+
+**A card in place of the link inside the text.** Rejected: the feed shows the first 40 words of a
+post, and a card cut in half by that would be worse than one under it.
 
 **A `CheckConstraint` that `pinned_by` is set iff `pinned_at` is.** Rejected: `pinned_by` is
 `SET_NULL`, so deleting the resident who pinned a post would violate it and make the delete fail.
