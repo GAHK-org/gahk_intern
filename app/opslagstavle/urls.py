@@ -15,6 +15,10 @@ urlpatterns = [
     path("opret", views.create, name="create"),
     # Before <int:pk>, so these fixed segments are never read as a post id.
     path("forhaandsvisning", views.preview, name="preview"),
+    # The composer's album and film: the block it draws them in, and the picker's two lists.
+    path("vedhaeft", views.attachments_block, name="attachments"),
+    path("vedhaeft/album", views.attach_choices, {"kind": "album"}, name="attach_albums"),
+    path("vedhaeft/video", views.attach_choices, {"kind": "video"}, name="attach_videos"),
     path("billede", views.upload_image, name="upload_image"),
     path("kommentar/<int:pk>/slet", views.delete_comment, name="delete_comment"),
     # What a live signal re-fetches: fragments, never pages (see views.live_cards).

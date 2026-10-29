@@ -1,0 +1,32 @@
+{% load gahkflix %}
+{% comment %}
+  A post's film, drawn the way GAHKFlix draws itself: a small version of its hero, dark, with the
+  film's banner, the red wordmark and the white play button (opslagstavle.attachments; the styles are
+  gahkflix.css's `.flix-embed`).
+
+  The title is the link to the film's page, stretched over the whole widget; `Afspil` is the one
+  control above it and opens the player. Both are reversed by URL name when drawn. `Mere info` only
+  looks like a button: it sits under the stretched link, so a tap on it opens the film's page like
+  the rest of the widget, and a screen reader hears one link to the page rather than two.
+
+  In the composer (`compose`) the links open a new tab, so following one does not lose the draft.
+{% endcomment %}
+<div class="flix-embed{% if widget.progress %} has-progress{% endif %}">
+  {% if widget.picture %}<img class="flix-embed-img" src="{{ widget.picture }}" alt="" loading="lazy" decoding="async">{% endif %}
+  <span class="flix-embed-logo" aria-hidden="true">GAHKFLIX</span>
+  <div class="flix-embed-body">
+    {% if widget.video.series %}<span class="flix-embed-kicker"><b aria-hidden="true">G</b>{{ widget.video.series.title }}</span>{% endif %}
+    <a class="flix-embed-title" href="{{ widget.url }}"{% if compose %} target="_blank" rel="noopener"{% endif %}>{{ widget.video.title }}</a>
+    <span class="flix-embed-meta">
+      {% if widget.state %}<span class="flix-state is-binned">{{ widget.state }}</span>{% endif %}
+      {% for item in widget.meta %}<span>{{ item }}</span>{% endfor %}
+      <span class="flix-embed-quality">{% if widget.full_hd %}Full HD{% else %}HD{% endif %}</span>
+    </span>
+    {% if widget.video.description %}<p class="flix-embed-desc">{{ widget.video.description }}</p>{% endif %}
+    <span class="flix-embed-actions">
+      <a class="flix-btn flix-btn-play" href="{{ widget.play_url }}"{% if compose %} target="_blank" rel="noopener"{% endif %} aria-label="{% if widget.resumes %}Fortsæt{% else %}Afspil{% endif %} {{ widget.video.title }}"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l12-7.5z"/></svg>{% if widget.resumes %}Fortsæt{% else %}Afspil{% endif %}</a>
+      <span class="flix-btn flix-btn-info" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9.5"/><path d="M12 11v6M12 7.5v.5"/></svg>Mere info</span>
+    </span>
+  </div>
+  {% if widget.progress %}<span class="flix-progress" role="img" aria-label="{{ widget.progress|percent }} % set"><span style="width:{{ widget.progress|percent }}%"></span></span>{% endif %}
+</div>

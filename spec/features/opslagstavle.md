@@ -44,12 +44,13 @@ disputes Inspektionen exists to settle.
 
 `/intern/opslagstavle/` (board), `<pk>` (permalink), `opret`, `<pk>/rediger`, `<pk>/slet`,
 `<pk>/fastgoer`, `<pk>/kommentar`, `kommentar/<pk>/slet`, `<pk>/reaktion`, `forhaandsvisning`,
-`billede`, `abonner`. Namespaced `opslagstavle:`.
+`billede`, `abonner`, `vedhaeft`, `vedhaeft/album`, `vedhaeft/video`. `opret?album=<pk>` and
+`opret?video=<pk>` open the composer with that album or film attached. Namespaced `opslagstavle:`.
 
 ## Data model
 
 `Notice` (author, title, category, Markdown body, `created_at`, `edited_at`, `pinned_at`,
-`pinned_by`, `event`), `NoticeComment`, `NoticeReaction`, `NoticeImage`. Category is a fixed
+`pinned_by`, `event`, `album`, `video`), `NoticeComment`, `NoticeReaction`, `NoticeImage`. Category is a fixed
 `TextChoices` set with ASCII values (they appear in `?kategori=`) and Danish labels.
 
 **Pinning is a nullable timestamp, not a boolean.** One column answers three questions: is it
@@ -88,6 +89,31 @@ page is a tracking pixel that hands a third party the IP and read-time of every 
 the post.
 
 **Rendered on read; only the Markdown source is stored.** See "rejected" below.
+
+## Albums and films in a post
+
+A post can carry a photo album and a GAHKFlix film, shown under the text as each feature's own
+widget rather than as links:
+
+- **The album** as the photo album's mosaic tile: its newest seven pictures (sub-albums included, in
+  the album page's order), the folder and parent albums, the name in the album pages' serif, how many
+  pictures and videos it holds, and `Se albummet →`. Fewer pictures get a layout that fills the tile.
+- **The film** as a small GAHKFlix hero: the banner, the red wordmark, series, title, episode, release
+  date, length, quality and description, `Afspil` (the player) and `Mere info` (the film's page), and
+  the reader's red progress bar. On a phone the words go under the banner.
+- A post may be only an album or a film, with no text. Its notifications then quote what it carries
+  (`📷 Julefrokost 2026`).
+- In the composer, `Vedhæft` opens a picker for an album or a published film: the newest first,
+  searched by name (and a film's series) as you type. The widgets show in the composer as they will in
+  the post, each with `Fjern`. `Del på opslagstavlen` on an album's page or a published film's page
+  opens the composer with it attached and the cursor in the text.
+- Each widget follows its feature's rules for the reader. Albums for every resident, counting and
+  showing only approved, unbinned items, so everyone sees the same tile. Films only for those
+  GAHKFlix's rollout gate lets in, who alone can attach one. The kitchen account sees and attaches
+  neither.
+- Only a published film can be attached. One binned afterwards shows only for GAHKFlix's
+  administrators, marked `I papirkurven`. A deleted album or a film purged from the bin leaves the
+  post without its widget.
 
 ## Retention
 
@@ -212,6 +238,11 @@ that is a bad trade.
 **Markdown in comments.** Deferred, not refused. Keeping it to the post body confines the
 embedded-image lifecycle to one model and the compose toolbar to one purpose. Allowing it later is a
 template change and a test.
+
+**Links in the text for albums and films.** Rejected for references on the post (`album`, `video`):
+every link in a widget is worked out when the page is drawn, so posts keep pointing at the right
+pages however the photo album or GAHKFlix change their addresses, which a link written into the
+Markdown would not. One of each per post, like `event`.
 
 **A `CheckConstraint` that `pinned_by` is set iff `pinned_at` is.** Rejected: `pinned_by` is
 `SET_NULL`, so deleting the resident who pinned a post would violate it and make the delete fail.

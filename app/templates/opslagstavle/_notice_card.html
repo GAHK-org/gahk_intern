@@ -210,6 +210,15 @@
     </div>
   {% endif %}
 
+  {% comment %}
+    The film and the album the post carries, drawn as GAHKFlix and the photo album draw themselves
+    (opslagstavle.attachments). Not links in the text: references, whose links are reversed here,
+    and only those this reader may see. Each is positioned, and comes after the stretched permalink,
+    so its own links stay clickable in the feed.
+  {% endcomment %}
+  {% if notice.video_widget %}{% include "opslagstavle/_video_widget.html" with widget=notice.video_widget %}{% endif %}
+  {% if notice.album_widget %}{% include "opslagstavle/_album_widget.html" with widget=notice.album_widget %}{% endif %}
+
   <div class="notice-foot">
     {% include "opslagstavle/_reactions.html" with reactions=notice.reaction_rows %}
     {% if not full %}

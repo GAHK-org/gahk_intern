@@ -147,7 +147,9 @@ class Notice(AuthoredByResident):
     category = models.CharField(
         max_length=20, choices=Category.choices, default=Category.NYT, verbose_name="Kategori"
     )
+    # Blank only when an album or a film is attached, which then is the post (forms.NoticeForm.clean).
     body = models.TextField(
+        blank=True,
         verbose_name="Indhold",
         help_text="Markdown. Kun kilden gemmes — HTML dannes når opslaget vises.",
     )
@@ -197,6 +199,34 @@ class Notice(AuthoredByResident):
         on_delete=models.SET_NULL,
         related_name="notices",
         verbose_name="Begivenhed",
+    )
+
+    # "This post is about that album / that film": shown under the text as the photo album's or
+    # GAHKFlix's own widget (opslagstavle.attachments), never as a link in the text.
+    #
+    # REFERENCES, NOT ADDRESSES. The widget's links are reversed when it is drawn, so a post keeps
+    # pointing at its album and its film however their pages' URLs change, which a link written into
+    # the Markdown would not.
+    #
+    # String references and SET_NULL for the reasons `event` gives: neither app is imported here, and
+    # an album merged into another or a film purged from the bin takes its widget with it, never the
+    # post. Only a published film can be attached (forms.NoticeForm); one binned afterwards is drawn
+    # only for those who may still see it.
+    album = models.ForeignKey(
+        "photo_album.Album",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="notices",
+        verbose_name="Fotoalbum",
+    )
+    video = models.ForeignKey(
+        "gahkflix.Video",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="notices",
+        verbose_name="Video",
     )
 
     objects = NoticeQuerySet.as_manager()

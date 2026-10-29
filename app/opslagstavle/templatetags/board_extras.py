@@ -1,9 +1,14 @@
-"""Template filters for opslagstavlen."""
+"""Template filters for opslagstavlen, and the tag other features use to link into it."""
+
+from typing import Any
 
 from django import template
+from django.db.models import Model
 from django.utils.safestring import SafeString
 
 from core.markdown import render_markdown
+from opslagstavle.access import request_allowed
+from opslagstavle.attachments import share_url
 
 register = template.Library()
 
@@ -25,3 +30,16 @@ def markdown_text_only_filter(value: str | None) -> SafeString:
     renders everything.
     """
     return render_markdown(value, with_images=False)
+
+
+@register.simple_tag(takes_context=True)
+def board_share_url(context: dict[str, Any], obj: Model) -> str:
+    """ "Del på opslagstavlen" for an album or a film: the composer, with it attached.
+
+    "" for a reader the board's rollout gate keeps out, so the album's and the film's pages never
+    offer a button that answers 403.
+    """
+    request = context.get("request")
+    if request is None or not request_allowed(request):
+        return ""
+    return share_url(obj)

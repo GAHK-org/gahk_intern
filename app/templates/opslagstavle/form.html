@@ -17,8 +17,15 @@
     {% if form.non_field_errors %}
       <div class="errorlist">{{ form.non_field_errors }}</div>
     {% endif %}
+    {% for field in form.hidden_fields %}
+      {% if field.errors %}<p class="errorlist text-sm">{{ field.label }}: {{ field.errors|striptags }}</p>{% endif %}
+    {% endfor %}
 
-    {% for field in form %}
+    {% comment %}
+      Visible fields only: the album and the film are hidden fields, drawn by _attachments.html below
+      with the widgets they stand for.
+    {% endcomment %}
+    {% for field in form.visible_fields %}
       {% if field.name != 'body' %}
         <div class="mb-3">
           <label for="{{ field.id_for_label }}" class="font-semibold block mb-1">{{ field.label }}</label>
@@ -88,9 +95,47 @@
       </div>
     </div>
 
+    {% comment %}
+      The album and the film the post carries, drawn as the post will show them, and the buttons that
+      open the pickers below the form (outside it, so Enter in a picker's search never posts).
+    {% endcomment %}
+    {% include "opslagstavle/_attachments.html" %}
+
     <div class="flex items-center gap-3 mt-4">
       <button type="submit" class="btn">{% if notice %}Gem ændringer{% else %}Slå op{% endif %}</button>
       <a href="{% if notice %}{% url 'opslagstavle:detail' notice.pk %}{% else %}{% url 'opslagstavle:board' %}{% endif %}">Annullér</a>
     </div>
   </form>
+
+  {% comment %}
+    The pickers. A search lists what matches as it is typed (views.attach_choices); opening one loads
+    the newest (the `attach-open` event, opslagstavle.ts), and picking one re-draws the attachments
+    block above and closes it. Native <dialog>: Escape and focus are the browser's.
+  {% endcomment %}
+  {% if albums_allowed %}
+    <dialog class="board-picker" id="js-attach-album" aria-labelledby="attach-album-title">
+      <div class="board-picker-head">
+        <h2 id="attach-album-title">Vælg et fotoalbum</h2>
+        <button type="button" class="board-picker-close" data-attach-close aria-label="Luk">&times;</button>
+      </div>
+      <input type="search" name="q" class="board-picker-search" placeholder="Søg efter et album …" autocomplete="off"
+             aria-label="Søg efter et album"
+             hx-get="{% url 'opslagstavle:attach_albums' %}" hx-trigger="input changed delay:250ms, search, attach-open"
+             hx-target="#js-attach-album-results" hx-sync="this:replace">
+      <div class="board-picker-results" id="js-attach-album-results" aria-live="polite"></div>
+    </dialog>
+  {% endif %}
+  {% if videos_allowed %}
+    <dialog class="board-picker is-video" id="js-attach-video" aria-labelledby="attach-video-title">
+      <div class="board-picker-head">
+        <h2 id="attach-video-title"><b aria-hidden="true">GAHKFLIX</b>Vælg en video</h2>
+        <button type="button" class="board-picker-close" data-attach-close aria-label="Luk">&times;</button>
+      </div>
+      <input type="search" name="q" class="board-picker-search" placeholder="Søg efter en titel eller serie …" autocomplete="off"
+             aria-label="Søg efter en video"
+             hx-get="{% url 'opslagstavle:attach_videos' %}" hx-trigger="input changed delay:250ms, search, attach-open"
+             hx-target="#js-attach-video-results" hx-sync="this:replace">
+      <div class="board-picker-results" id="js-attach-video-results" aria-live="polite"></div>
+    </dialog>
+  {% endif %}
 {% endblock %}

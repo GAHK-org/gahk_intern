@@ -147,4 +147,50 @@ function csrfToken(): string {
   return document.querySelector<HTMLInputElement>('input[name="csrfmiddlewaretoken"]')?.value ?? "";
 }
 
-if (root) init(root);
+/** The composer's pickers for an album and a film (form.html's <dialog>s).
+ *
+ * Opening one empties its search and fires `attach-open`, which its hx-trigger answers with the
+ * newest albums or films. Picking one is an htmx request that re-draws the attachments block
+ * (views.attachments_block); this only closes the dialog once it has. Clicking the backdrop closes
+ * it too, as Escape does by itself.
+ */
+function initPickers(): void {
+  document.addEventListener("click", (event) => {
+    const target = event.target as Element;
+    const opener = target.closest<HTMLElement>("[data-attach-open]");
+    if (opener) {
+      const dialog = document.getElementById(`js-attach-${opener.dataset.attachOpen}`);
+      if (!(dialog instanceof HTMLDialogElement)) return;
+      const search = dialog.querySelector<HTMLInputElement>("input[type='search']");
+      dialog.showModal();
+      if (search) {
+        search.value = "";
+        search.focus();
+        search.dispatchEvent(new Event("attach-open"));
+      }
+      return;
+    }
+    if (target.closest("[data-attach-close]")) {
+      target.closest("dialog")?.close();
+      return;
+    }
+    // A click on the backdrop lands on the dialog itself, outside its box.
+    if (target instanceof HTMLDialogElement && target.matches(".board-picker")) {
+      const box = target.getBoundingClientRect();
+      const { clientX: x, clientY: y } = event as MouseEvent;
+      if (x < box.left || x > box.right || y < box.top || y > box.bottom) target.close();
+    }
+  });
+  document.body.addEventListener("htmx:afterRequest", (event) => {
+    const detail = (event as CustomEvent<{ elt: Element; successful: boolean }>).detail;
+    if (detail.successful && detail.elt.matches("[data-attach-pick]")) {
+      detail.elt.closest("dialog")?.close();
+      document.getElementById("id_body")?.focus();
+    }
+  });
+}
+
+if (root) {
+  init(root);
+  initPickers();
+}
