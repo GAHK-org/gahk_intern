@@ -121,8 +121,8 @@ class Resident(AbstractBaseUser, PermissionsMixin):
     # profile
     profile_picture = models.FileField(upload_to="profile_pictures/", blank=True)
     # A small square copy of profile_picture, made by the worker (residents.tasks). Every avatar on
-    # the site draws this; only the profile page's "open in viewer" link reaches the original. See
-    # avatar_url.
+    # the site draws this, from the server's disk (residents.apps); only the profile page's "open in
+    # viewer" link reaches the original, on the bucket. See avatar_url.
     profile_thumbnail = models.FileField(upload_to="profile_pictures/thumbnails/", blank=True, editable=False)
     bio = models.TextField(max_length=500, blank=True)
     facebook_link = models.URLField(blank=True)

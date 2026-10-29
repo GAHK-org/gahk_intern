@@ -881,7 +881,7 @@ erDiagram
         date date_from
         date date_to
         string outcome
-        string detail
+        text detail
         datetime sent_at
     }
 
@@ -1916,7 +1916,7 @@ erDiagram
         date date_from
         date date_to
         string outcome
-        string detail
+        text detail
         datetime sent_at
     }
 

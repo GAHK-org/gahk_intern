@@ -1,4 +1,5 @@
-"""The local disk copy of live Den Hurtige and opslagstavle photos (core.media.register_cacheable).
+"""The local disk copy of live Den Hurtige and opslagstavle photos, and of every avatar
+(core.media.register_cacheable).
 
 A live message's photo, and a recent or pinned opslag's, is served from the server's own disk. Once
 archived (a Den Hurtige message past expires_at, an opslag older than NOTICE_IMAGE_CACHE_DAYS) it is
@@ -12,6 +13,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from django.core.cache import cache
 from django.core.files.base import ContentFile
 from django.http import FileResponse
 from django.test import Client
@@ -202,3 +204,53 @@ def test_a_comments_photo_goes_by_the_comments_own_age(
 
     NoticeComment.objects.filter(pk=comment.pk).update(created_at=timezone.now() - timedelta(days=31))
     assert not _served_from_cache(client, comment.image.url)
+
+
+# --- avatars: every profile thumbnail, with no lookup -----------------------------------------------
+
+
+def _with_avatar(resident: Resident, capture: Callable) -> Resident:
+    """A picture and its thumbnail, made by the worker as after an upload (Celery runs eagerly)."""
+    cache.clear()  # the once-an-hour key names the resident and the picture, and both repeat
+    with capture(execute=True):
+        resident.profile_picture.save("mig.jpg", ContentFile(jpeg_bytes()), save=True)
+    resident.refresh_from_db()
+    assert resident.profile_thumbnail
+    return resident
+
+
+@pytest.mark.django_db
+def test_an_avatar_is_served_from_the_local_copy_and_the_original_is_not(
+    client: Client,
+    make_resident: Callable[..., Resident],
+    cache_dir: Path,
+    django_capture_on_commit_callbacks: Callable,
+) -> None:
+    resident = _with_avatar(make_resident(), django_capture_on_commit_callbacks)
+    client.force_login(resident)
+
+    assert resident.avatar_url == resident.profile_thumbnail.url
+    assert _served_from_cache(client, resident.avatar_url)
+    assert (cache_dir / resident.profile_thumbnail.name).is_file()
+    assert not _served_from_cache(client, resident.profile_picture.url)
+
+
+@pytest.mark.django_db
+def test_a_replaced_avatar_is_dropped_from_the_local_copy(
+    client: Client,
+    make_resident: Callable[..., Resident],
+    cache_dir: Path,
+    django_capture_on_commit_callbacks: Callable,
+) -> None:
+    resident = _with_avatar(make_resident(), django_capture_on_commit_callbacks)
+    client.force_login(resident)
+    old = resident.profile_thumbnail.name
+    assert _served_from_cache(client, resident.avatar_url)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        resident.profile_picture.save("ny.jpg", ContentFile(jpeg_bytes()), save=True)
+
+    assert not (cache_dir / old).exists()
+    resident.refresh_from_db()
+    assert resident.profile_thumbnail.name not in {"", old}
+    assert _served_from_cache(client, resident.avatar_url)
