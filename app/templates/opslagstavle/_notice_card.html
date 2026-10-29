@@ -210,6 +210,20 @@
     </div>
   {% endif %}
 
+  {% comment %}
+    The albums and videos the post links to, as cards (opslagstavle.previews). The feed shows the
+    first only, for the reason it collapses a gallery: a post with three films must not push every
+    other post off the screen. Its own page shows them all. Each card is a real link to the album or
+    the film, so in the feed it is raised above the stretched permalink (see .notice-preview).
+  {% endcomment %}
+  {% if notice.previews %}
+    {% if full %}
+      {% include "opslagstavle/_previews.html" with previews=notice.previews %}
+    {% else %}
+      {% include "opslagstavle/_previews.html" with previews=notice.previews|slice:":1" %}
+    {% endif %}
+  {% endif %}
+
   <div class="notice-foot">
     {% include "opslagstavle/_reactions.html" with reactions=notice.reaction_rows %}
     {% if not full %}

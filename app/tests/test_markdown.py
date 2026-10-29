@@ -13,7 +13,7 @@ payload. Asserting the escaped form pins down which of the two defences did the 
 import pytest
 from django.utils.safestring import SafeString
 
-from core.markdown import extract_image_names, image_sources, plain_text, render_markdown
+from core.markdown import extract_image_names, image_sources, link_hrefs, plain_text, render_markdown
 
 # --- formatting that must work -------------------------------------------------------------------
 
@@ -339,6 +339,23 @@ def test_image_sources_includes_static_but_extract_names_does_not() -> None:
 
     assert image_sources(src) == ["/static/legacy/x.png"]
     assert extract_image_names(src) == set()
+
+
+def test_link_hrefs_finds_written_and_bare_links_in_order() -> None:
+    source = "Se [albummet](/intern/fotoalbum/12), gahk.dk/intern/gahkflix/v/3 og <https://dr.dk>."
+
+    assert link_hrefs(source) == [
+        "/intern/fotoalbum/12",
+        "http://gahk.dk/intern/gahkflix/v/3",
+        "https://dr.dk",
+    ]
+
+
+def test_link_hrefs_skips_mentions_and_code() -> None:
+    """A mention links to a profile the author picked, and an address in code is a sample."""
+    source = "@[Bo Beboer](42) skrev `https://gahk.dk/intern/fotoalbum/1`\n\n    https://gahk.dk/x"
+
+    assert link_hrefs(source) == []
 
 
 def test_rendering_without_images_keeps_the_text() -> None:

@@ -15,6 +15,7 @@ urlpatterns = [
     path("opret", views.create, name="create"),
     # Before <int:pk>, so these fixed segments are never read as a post id.
     path("forhaandsvisning", views.preview, name="preview"),
+    path("forhaandsvisning/kort", views.link_previews, name="link_previews"),
     path("billede", views.upload_image, name="upload_image"),
     path("kommentar/<int:pk>/slet", views.delete_comment, name="delete_comment"),
     # What a live signal re-fetches: fragments, never pages (see views.live_cards).

@@ -1,0 +1,32 @@
+{% comment %}
+  The cards for the albums and videos a post links to (opslagstavle.previews), under its text. Each
+  card is one link, to the album or to the film's page. In the composer (`compose`) it opens a new
+  tab, so following it does not lose the draft.
+
+  The pictures are decorative (alt=""): the words beside them say what the card is. A state
+  ("Kladde") is only ever on a card its reader may see despite it — the uploader's own draft.
+{% endcomment %}
+{% if previews %}
+  <div class="notice-previews">
+    {% for preview in previews %}
+      <a class="notice-preview is-{{ preview.kind }}" href="{{ preview.url }}"{% if compose %} target="_blank" rel="noopener"{% endif %}>
+        <span class="notice-preview-media{% if not preview.pictures %} is-blank{% endif %}">
+          {% for picture in preview.pictures %}
+            <img src="{{ picture }}" alt="" loading="lazy" decoding="async">
+          {% empty %}
+            <span class="notice-preview-blank" aria-hidden="true"><svg class="ni"><use href="#i-{% if preview.kind == 'video' %}film{% else %}photo{% endif %}"></use></svg></span>
+          {% endfor %}
+          {% if preview.kind == "video" %}
+            <span class="notice-preview-play" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l10.5-6.5z"/></svg></span>
+            {% if preview.duration %}<span class="notice-preview-duration">{{ preview.duration }}</span>{% endif %}
+          {% endif %}
+        </span>
+        <span class="notice-preview-body">
+          <span class="notice-preview-kicker">{{ preview.kicker }}</span>
+          <span class="notice-preview-title">{{ preview.title }}</span>
+          <span class="notice-preview-details">{% if preview.state %}<span class="notice-preview-state">{{ preview.state }}</span>{% endif %}{{ preview.details|join:" · " }}</span>
+        </span>
+      </a>
+    {% endfor %}
+  </div>
+{% endif %}
