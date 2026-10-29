@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import CastMember, ChangeRequest, ChangeVote, Series, Tag, Video, VideoFile
+from .models import CastMember, ChangeRequest, ChangeVote, Series, Tag, Video, VideoEvent, VideoFile
 
 
 class CastInline(admin.TabularInline):
@@ -18,6 +18,19 @@ class FileInline(admin.TabularInline):
     fk_name = "video"
 
 
+class EventInline(admin.TabularInline):
+    """The history, to read: it is only ever written by what it records."""
+
+    model = VideoEvent
+    extra = 0
+    fields = ("created_at", "kind", "actor", "request", "changes")
+    readonly_fields = fields
+    can_delete = False
+
+    def has_add_permission(self, request: object, obj: object = None) -> bool:
+        return False
+
+
 @admin.register(Video)
 class VideoAdmin(admin.ModelAdmin):
     list_display = ("title", "uploaded_by", "series", "created_at", "published_at", "deleted_at")
@@ -26,7 +39,7 @@ class VideoAdmin(admin.ModelAdmin):
     raw_id_fields = ("uploaded_by", "deleted_by", "series", "file", "thumbnail_frame", "banner_frame")
     readonly_fields = ("uuid",)
     autocomplete_fields = ("tags",)
-    inlines = (CastInline, FileInline)
+    inlines = (CastInline, FileInline, EventInline)
 
 
 @admin.register(Series)

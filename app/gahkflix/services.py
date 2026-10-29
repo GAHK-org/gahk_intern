@@ -20,14 +20,15 @@ from uuid import uuid4
 from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile, File
 from django.db import IntegrityError, transaction
-from django.db.models import Count, F, Max, Q, QuerySet, Sum
+from django.db.models import Avg, Count, F, Max, Q, QuerySet, Sum
 from django.db.models.functions import Coalesce, Lower, TruncDate
 from django.utils import timezone
 
 from photo_album.models import validate_tag_name
 from residents.models import Resident
 
-from . import encoding, notify
+from . import dating, encoding, notify
+from .dating import DatePrecision, DateSource, PartialDate
 from .models import (
     BIN_RETENTION,
     DRAFT_REMINDER_AFTER,
@@ -43,6 +44,7 @@ from .models import (
     Series,
     Tag,
     Video,
+    VideoEvent,
     VideoFile,
     VideoFrame,
     VideoSubtitle,
@@ -92,7 +94,7 @@ def _file_keys(video_file: VideoFile) -> list[str | None]:
 
 def _delete_keys(keys: Iterable[str | None]) -> None:
     """Delete stored files once the transaction that stopped referring to them has committed."""
-    present = [key for key in keys if key]
+    present = list(dict.fromkeys(key for key in keys if key))
     if not present:
         return
 
@@ -108,6 +110,35 @@ def _delete_keys(keys: Iterable[str | None]) -> None:
             cache.discard(key)
 
     transaction.on_commit(delete)
+
+
+# --- History ------------------------------------------------------------------------------------
+
+
+def record_event(
+    video: Video,
+    kind: str,
+    actor: Resident | None = None,
+    *,
+    changes: dict[str, Any] | None = None,
+    request: ChangeRequest | None = None,
+) -> VideoEvent:
+    """A line in the video's history (VideoEvent)."""
+    return VideoEvent.objects.create(
+        video=video, kind=kind, actor=actor, changes=changes or {}, request=request
+    )
+
+
+def _event_pictures(changes: dict[str, Any]) -> list[str]:
+    """The keys of the pictures a line of history names: each picture's before and after."""
+    keys = []
+    for kind in PICTURE_KINDS:
+        entry = changes.get(kind)
+        for side in ("before", "after"):
+            picture = entry.get(side) if isinstance(entry, dict) else None
+            if isinstance(picture, dict) and picture.get("key"):
+                keys.append(picture["key"])
+    return keys
 
 
 # --- Tags ---------------------------------------------------------------------------------------
@@ -145,6 +176,20 @@ def pending_upload(resident: Resident) -> VideoFile | None:
         VideoFile.objects.filter(uploaded_by=resident, state__in=(FileState.QUEUED, FileState.PROCESSING))
         .select_related("video")
         .first()
+    )
+
+
+def queue_ahead(video_file: VideoFile) -> int:
+    """How many uploads are processed before this one, which waits its turn: the one being processed
+    and those waiting since before it. Encodes run one at a time (tasks.py); the media worker's
+    other jobs, the photo album's, are not counted."""
+    earlier = Q(created_at__lt=video_file.created_at) | Q(
+        created_at=video_file.created_at, pk__lt=video_file.pk
+    )
+    return (
+        VideoFile.objects.filter(Q(state=FileState.PROCESSING) | (Q(state=FileState.QUEUED) & earlier))
+        .exclude(pk=video_file.pk)
+        .count()
     )
 
 
@@ -265,6 +310,12 @@ def commit_upload(ticket: UploadTicket, resident: Resident, stored_size: int | N
         )
         video_file.original.name = ticket.key
         video_file.save()
+        record_event(
+            video,
+            VideoEvent.Kind.NEW_VERSION if ticket.video is not None else VideoEvent.Kind.UPLOADED,
+            resident,
+            changes={"file": ticket.name, "size": ticket.size},
+        )
         from .tasks import process_video_file
 
         transaction.on_commit(lambda: process_video_file.delay(video_file.pk))
@@ -313,14 +364,22 @@ def _fail(video_file: VideoFile, reason: str, *, delete_original: bool = False) 
     if delete_original:
         get_video_storage().delete(key_of(video_file.original))
     logger.warning("Video file %s (%s) failed: %s", video_file.pk, video_file.original_name, reason)
-    notify.processing_failed(video_file.video, reason)
+    record_failure(video_file, reason)
     return False
+
+
+def record_failure(video_file: VideoFile, reason: str) -> None:
+    """Tell the uploader an upload could not be processed, and put it in the video's history."""
+    record_event(
+        video_file.video, VideoEvent.Kind.FAILED, changes={"file": video_file.original_name, "error": reason}
+    )
+    notify.processing_failed(video_file.video, reason)
 
 
 def _store_frames(video: Video, frames: list[tuple[float, Path]]) -> list[VideoFrame]:
     """Replace the video's candidate frames with a new batch. Pictures already cut from the old
     ones are files of their own, so they stay."""
-    batch = (video.frames.aggregate(latest=Max("batch"))["latest"] or 0) + 1
+    batch = frame_batch(video) + 1
     stored = []
     for at, path in frames:
         frame = VideoFrame(video=video, at_seconds=at, batch=batch)
@@ -440,19 +499,40 @@ def process_file(video_file: VideoFile, rng: random.Random | None = None) -> boo
         )  # fmt: skip
         video = Video.objects.select_for_update().get(pk=video.pk)
         previous = video.file
+        dated = video.release
         video.file = video_file
-        update = ["file"]
-        if not video.recorded_on_manual:
-            moment = video_file.recorded_at or video_file.file_modified_at
-            video.recorded_on = timezone.localdate(moment) if moment else video.recorded_on
-            update.append("recorded_on")
-        video.save(update_fields=update)
+        video.save(update_fields=["file", *_date_from_file(video, video_file, info)])
+        changes: dict[str, Any] = {"file": video_file.original_name, "replaced": previous is not None}
+        if video.release != dated:
+            changes["released_on"] = {
+                "before": dated.iso() if dated else None,
+                "after": video.release.iso() if video.release else None,
+            }
+        record_event(video, VideoEvent.Kind.PROCESSED, changes=changes)
         if previous is not None and previous.pk != video_file.pk:
             _delete_keys(_file_keys(previous))
             previous.delete()
     logger.info("Video file %s ready: %s, %.0f s", video_file.pk, plan, info.duration or 0)
     notify.processed(video, revision=previous is not None)
     return True
+
+
+def _date_from_file(video: Video, video_file: VideoFile, info: encoding.Probe) -> list[str]:
+    """Guess the film's release date from its new file (dating.guess), unless it was set by hand.
+    Returns the fields it changed."""
+    if video.release_source == DateSource.MANUAL:
+        return []
+    found = dating.guess(
+        name=video_file.original_name,
+        recorded_at=info.recorded_at,
+        tags=info.date_tags,
+        modified_at=video_file.file_modified_at,
+    )
+    if found is None:
+        return []
+    video.released_on, video.release_precision = found.date.start, found.date.precision
+    video.release_source = found.source
+    return ["released_on", "release_precision", "release_source"]
 
 
 def redraw_frames(video: Video, rng: random.Random | None = None) -> int:
@@ -474,8 +554,13 @@ def redraw_frames(video: Video, rng: random.Random | None = None) -> int:
         return len(_store_frames(video, frames))
 
 
+def frame_batch(video: Video) -> int:
+    """The number of the newest batch of frames; 0 before the first."""
+    return video.frames.aggregate(latest=Max("batch"))["latest"] or 0
+
+
 def current_frames(video: Video) -> list[VideoFrame]:
-    latest = video.frames.aggregate(latest=Max("batch"))["latest"]
+    latest = frame_batch(video)
     return list(video.frames.filter(batch=latest)) if latest else []
 
 
@@ -528,6 +613,90 @@ def store_picture(video: Video, kind: str, data: bytes) -> str:
     return get_video_storage().save(picture_path(video, f"{kind}.jpg"), ContentFile(data))
 
 
+@dataclass(frozen=True)
+class PastPicture:
+    """A thumbnail or banner the video has had, as a line of its history names it."""
+
+    kind: str
+    key: str
+    frame: int | None
+    # The picture this one is a copy of, when it was brought back; else its own key.
+    origin: str
+    event: VideoEvent
+    side: str  # "before" or "after"
+
+    @property
+    def ref(self) -> str:
+        """What a form sends to bring it back: the line of history and the side of it."""
+        return f"{self.event.pk}-{self.side}"
+
+
+def pictures_named(event: VideoEvent, kind: str) -> list[PastPicture]:
+    """The thumbnails (or banners) a line of history names: the one after the change, then before."""
+    entry = event.changes.get(kind)
+    found = []
+    for side in ("after", "before"):
+        picture = entry.get(side) if isinstance(entry, dict) else None
+        if isinstance(picture, dict) and picture.get("key"):
+            key = picture["key"]
+            found.append(
+                PastPicture(kind, key, picture.get("frame"), picture.get("from") or key, event, side)
+            )
+    return found
+
+
+def _all_named(video: Video, kind: str) -> list[PastPicture]:
+    return [
+        picture
+        for event in video.events.filter(kind=VideoEvent.Kind.EDITED)
+        for picture in pictures_named(event, kind)
+    ]
+
+
+def _in_use(video: Video, kind: str, named: list[PastPicture]) -> set[str]:
+    current = key_of(getattr(video, kind))
+    return {current} | {picture.origin for picture in named if picture.key == current}
+
+
+def pictures_in_use(video: Video, kind: str) -> set[str]:
+    """The thumbnail (or banner) the video has now, as the origins a PastPicture may have: its own
+    key and, when it was brought back, that of the picture it is a copy of."""
+    return _in_use(video, kind, _all_named(video, kind))
+
+
+def past_pictures(video: Video, kind: str) -> list[PastPicture]:
+    """The thumbnails (or banners) the video has had other than the one it has now, the latest
+    first, each once: a picture brought back is the same picture as the one it is a copy of."""
+    named = _all_named(video, kind)
+    seen = _in_use(video, kind, named)
+    found = []
+    for picture in named:
+        if picture.origin not in seen:
+            seen.add(picture.origin)
+            found.append(picture)
+    return found
+
+
+def past_picture(video: Video, kind: str, ref: str) -> PastPicture:
+    """The earlier picture a form names (PastPicture.ref). Raises ValidationError."""
+    event_id, _, side = ref.partition("-")
+    event = video.events.filter(
+        kind=VideoEvent.Kind.EDITED, pk=int(event_id) if event_id.isdecimal() else 0
+    ).first()
+    for picture in pictures_named(event, kind) if event else []:
+        if picture.side == side and picture.key != key_of(getattr(video, kind)):
+            return picture
+    raise ValidationError("Det billede findes ikke længere.")
+
+
+def copy_of(picture: PastPicture) -> bytes:
+    """An earlier picture's bytes, to store again under a key of its own (store_picture): a
+    picture proposed for approval is deleted if the proposal is turned down."""
+    with get_video_storage().open(picture.key, "rb") as stored:
+        data: bytes = stored.read()
+    return data
+
+
 @dataclass
 class Outcome:
     """What an edit did: applied straight away, became (part of) a proposal, or changed nothing."""
@@ -542,11 +711,23 @@ class Outcome:
 
 
 def set_picture(
-    video: Video, kind: str, key: str, frame: VideoFrame | None, resident: Resident, *, needs_approval: bool
+    video: Video,
+    kind: str,
+    key: str,
+    frame: VideoFrame | None,
+    resident: Resident,
+    *,
+    needs_approval: bool,
+    origin: str = "",
 ) -> Outcome:
+    """Make a stored picture the thumbnail or the banner. `origin` is the earlier picture it is a
+    copy of, when one is brought back (PastPicture.origin)."""
     if kind not in PICTURE_KINDS:
         raise ValueError(kind)
-    change = {kind: {"key": key, "frame": frame.pk if frame else None}}
+    picture: dict[str, Any] = {"key": key, "frame": frame.pk if frame else None}
+    if origin:
+        picture["from"] = origin
+    change = {kind: picture}
     try:
         if needs_approval:
             return Outcome(proposal=propose(video, change, resident))
@@ -564,7 +745,7 @@ def set_picture(
 # A video's editable details as one plain, JSON-ready dict. The edit form produces one, a proposal
 # stores the part of one that differs, and applying either goes through `apply_changes`.
 
-DETAIL_FIELDS = ("title", "description", "recorded_on", "series", "season", "episode", "cast", "tags")
+DETAIL_FIELDS = ("title", "description", "released_on", "series", "season", "episode", "cast", "tags")
 
 
 def cast_list(video: Video) -> list[dict[str, Any]]:
@@ -578,7 +759,7 @@ def snapshot(video: Video) -> dict[str, Any]:
     return {
         "title": video.title,
         "description": video.description,
-        "recorded_on": video.recorded_on.isoformat() if video.recorded_on else None,
+        "released_on": release.iso() if (release := video.release) else None,
         "series": video.series_id,
         "season": video.season,
         "episode": video.episode,
@@ -638,46 +819,68 @@ def _replace_cast(video: Video, cast: list[dict[str, Any]]) -> set[int]:
     return seen - before
 
 
-def apply_changes(video: Video, changes: dict[str, Any], resident: Resident) -> list[str]:
-    """Write `changes` to the video, as an edit or an approved proposal. Returns notes on anything
-    that could not be applied as asked. Call inside a transaction."""
+def apply_changes(
+    video: Video, changes: dict[str, Any], resident: Resident, *, request: ChangeRequest | None = None
+) -> list[str]:
+    """Write `changes` to the video, as an edit or as the proposal `request` once it is approved,
+    and add what changed to the video's history. Returns notes on anything that could not be
+    applied as asked. Call inside a transaction.
+
+    A picture replaced is kept, not deleted: the history names it, so it can be brought back.
+    """
+    details_before = snapshot(video) if any(key in DETAIL_FIELDS for key in changes) else {}
+    pictures_before = {
+        kind: {"key": key_of(getattr(video, kind)), "frame": getattr(video, f"{kind}_frame_id")}
+        for kind in PICTURE_KINDS
+        if kind in changes
+    }
     notes: list[str] = []
     fields: list[str] = []
     for name in ("title", "description", "season", "episode"):
         if name in changes:
             setattr(video, name, changes[name])
             fields.append(name)
-    if "recorded_on" in changes:
-        value = changes["recorded_on"]
-        video.recorded_on = date.fromisoformat(value) if value else None
-        video.recorded_on_manual = bool(value)
-        fields += ["recorded_on", "recorded_on_manual"]
+    if "released_on" in changes:
+        # Set by hand now: a new version of the file is no longer dated over it. Cleared, it is.
+        release = PartialDate.parse(changes["released_on"])
+        video.released_on = release.start if release else None
+        video.release_precision = release.precision if release else DatePrecision.DAY
+        video.release_source = DateSource.MANUAL if release else ""
+        fields += ["released_on", "release_precision", "release_source"]
     if "series" in changes:
         series = Series.objects.filter(pk=changes["series"]).first() if changes["series"] else None
         if changes["series"] and series is None:
             notes.append("Serien findes ikke længere, så videoen er ikke lagt i den.")
         video.series = series
         fields.append("series")
-    replaced: list[str] = []
-    for kind in PICTURE_KINDS:
-        if kind in changes:
-            replaced.append(getattr(video, kind).name)
-            getattr(video, kind).name = changes[kind]["key"]
-            frame_id = changes[kind].get("frame")
-            setattr(
-                video,
-                f"{kind}_frame",
-                VideoFrame.objects.filter(pk=frame_id, video=video).first() if frame_id else None,
-            )
-            fields += [kind, f"{kind}_frame"]
+    for kind in pictures_before:
+        getattr(video, kind).name = changes[kind]["key"]
+        frame_id = changes[kind].get("frame")
+        setattr(
+            video,
+            f"{kind}_frame",
+            VideoFrame.objects.filter(pk=frame_id, video=video).first() if frame_id else None,
+        )
+        fields += [kind, f"{kind}_frame"]
     if fields:
         video.save(update_fields=fields)
-    _delete_keys(replaced)
     if "tags" in changes:
         video.tags.set([tag_named(name) for name in changes["tags"]])
     if "cast" in changes:
         added = _replace_cast(video, changes["cast"])
         transaction.on_commit(lambda: notify.credited(video, added, resident))
+    # As it came out, which is not always as asked: a series deleted meanwhile, a name resolved.
+    details_after = snapshot(video) if details_before else {}
+    history = {
+        key: {"before": details_before[key], "after": details_after[key]}
+        for key in DETAIL_FIELDS
+        if key in changes and _comparable(key, details_before[key]) != _comparable(key, details_after[key])
+    }
+    history.update(
+        {kind: {"before": before, "after": changes[kind]} for kind, before in pictures_before.items()}
+    )
+    if history:
+        record_event(video, VideoEvent.Kind.EDITED, resident, changes=history, request=request)
     return notes
 
 
@@ -736,11 +939,12 @@ def missing_for_publishing(video: Video) -> list[str]:
     return missing
 
 
-def publish(video: Video) -> None:
+def publish(video: Video, resident: Resident) -> None:
     if missing := missing_for_publishing(video):
         raise ValidationError(missing)
     video.published_at = _now()
     video.save(update_fields=["published_at"])
+    record_event(video, VideoEvent.Kind.PUBLISHED, resident)
     credited = list(video.cast.exclude(resident=None).values_list("resident_id", flat=True))
 
     def announce() -> None:
@@ -855,7 +1059,7 @@ def _carry_out(change: ChangeRequest) -> list[str]:
     if change.video is not None:
         if change.video.is_binned:
             return ["Videoen er slettet, så ændringen er ikke gennemført."]
-        return apply_changes(change.video, change.changes, change.requested_by)
+        return apply_changes(change.video, change.changes, change.requested_by, request=change)
     assert change.series is not None  # noqa: S101  # nosec B101 — the check constraint
     return _apply_series(change.series, change.changes)
 
@@ -888,16 +1092,18 @@ def bin_video(video: Video, resident: Resident, *, closing: ChangeRequest | None
     video.deleted_at = _now()
     video.deleted_by = resident
     video.save(update_fields=["deleted_at", "deleted_by"])
+    record_event(video, VideoEvent.Kind.BINNED, resident, request=closing)
     for change in video.change_requests.filter(state=ChangeRequest.State.OPEN).exclude(
         pk=closing.pk if closing else 0
     ):
         _close(change, ChangeRequest.State.WITHDRAWN, "Videoen blev slettet.")
 
 
-def restore(video: Video) -> None:
+def restore(video: Video, resident: Resident) -> None:
     video.deleted_at = None
     video.deleted_by = None
     video.save(update_fields=["deleted_at", "deleted_by"])
+    record_event(video, VideoEvent.Kind.RESTORED, resident)
 
 
 def delete_permanently(video: Video) -> None:
@@ -908,6 +1114,8 @@ def delete_permanently(video: Video) -> None:
     keys += [frame.image.name for frame in video.frames.all()]
     for change in video.change_requests.filter(state=ChangeRequest.State.OPEN):
         keys += _pending_pictures(change.changes)
+    for changes in video.events.filter(kind=VideoEvent.Kind.EDITED).values_list("changes", flat=True):
+        keys += _event_pictures(changes)
     with transaction.atomic():
         Video.objects.filter(pk=video.pk).update(file=None, thumbnail_frame=None, banner_frame=None)
         video.delete()
@@ -999,7 +1207,8 @@ ORPHAN_SANITY_MINIMUM = 20
 
 
 def referenced_keys() -> set[str]:
-    """Every stored file a GAHKFlix row refers to, including pictures proposed in open requests."""
+    """Every stored file a GAHKFlix row refers to, including pictures proposed in open requests
+    and the earlier pictures a video's history names."""
     keys: set[str] = set()
     for fields in (
         VideoFile.objects.values_list("original", "full_hd", "hd"),
@@ -1011,6 +1220,8 @@ def referenced_keys() -> set[str]:
             keys.update(key for key in row if key)
     for change in ChangeRequest.objects.filter(state=ChangeRequest.State.OPEN):
         keys.update(_pending_pictures(change.changes))
+    for changes in VideoEvent.objects.filter(kind=VideoEvent.Kind.EDITED).values_list("changes", flat=True):
+        keys.update(_event_pictures(changes))
     return keys
 
 
@@ -1073,28 +1284,75 @@ def _watch(video: Video, resident: Resident) -> Watch:
         return Watch.objects.get(video=video, resident=resident)
 
 
-def record_view(video: Video, resident: Resident, now: datetime | None = None) -> bool:
-    """Count a view (the player asks once a few seconds have actually played). One statement, so
-    two tabs reporting at once cannot both count."""
+def open_viewing(video: Video, resident: Resident, now: datetime | None = None) -> ViewEvent:
+    """The player has opened the video for the resident: go on with their viewing of it if they
+    left it short of the end less than VIEW_DEDUPE_WINDOW ago, else begin a new one."""
     moment = now or _now()
+    viewing = (
+        ViewEvent.objects.filter(
+            video=video, resident=resident, finished=False, active_at__gte=moment - VIEW_DEDUPE_WINDOW
+        )
+        .order_by("-active_at", "-pk")
+        .first()
+    )
+    if viewing is None:
+        return ViewEvent.objects.create(video=video, resident=resident, opened_at=moment, active_at=moment)
+    ViewEvent.objects.filter(pk=viewing.pk).update(active_at=moment)
+    return viewing
+
+
+def record_view(
+    video: Video, resident: Resident, now: datetime | None = None, *, viewing: ViewEvent | None = None
+) -> bool:
+    """Count a view (the player asks once a few seconds have actually played). One statement, so
+    two tabs reporting at once cannot both count. `viewing` is the player's (open_viewing): one
+    that has counted already is not counted again."""
+    moment = now or _now()
+    if viewing is not None and viewing.viewed_at is not None:
+        return False
     watch = _watch(video, resident)
     counted = (
         Watch.objects.filter(pk=watch.pk)
         .filter(Q(last_viewed_at__isnull=True) | Q(last_viewed_at__lt=moment - VIEW_DEDUPE_WINDOW))
         .update(views=F("views") + 1, last_viewed_at=moment)
     )
-    if counted:
-        ViewEvent.objects.create(video=video, resident=resident, viewed_at=moment)
+    if counted and viewing is not None:
+        ViewEvent.objects.filter(pk=viewing.pk).update(viewed_at=moment, active_at=moment)
+    elif counted:
+        ViewEvent.objects.create(
+            video=video, resident=resident, opened_at=moment, viewed_at=moment, active_at=moment
+        )
     return bool(counted)
 
 
-def save_position(video: Video, resident: Resident, position: float, now: datetime | None = None) -> Watch:
+# Seconds of play one report may add to a viewing whose film has no known length.
+MAX_REPORTED = 4 * 60 * 60.0
+
+
+def save_position(
+    video: Video,
+    resident: Resident,
+    position: float,
+    now: datetime | None = None,
+    *,
+    viewing: ViewEvent | None = None,
+    watched: float = 0.0,
+) -> Watch:
+    """Where the resident is in the video; and, for the player's `viewing`, the seconds of it that
+    have played since its last report (`watched`) and whether it has now reached the end."""
     watch = _watch(video, resident)
     duration = video.duration or 0
     watch.position = max(0.0, min(position, duration or position))
     watch.finished = bool(duration) and (duration - watch.position <= max(5.0, duration * FINISHED_MARGIN))
     watch.position_at = now or _now()
     watch.save(update_fields=["position", "finished", "position_at"])
+    if viewing is not None:
+        # One report adds no more than the whole film, whatever a player says.
+        played = max(0.0, min(watched, duration or MAX_REPORTED))
+        changes: dict[str, Any] = {"watched": F("watched") + played, "active_at": watch.position_at}
+        if watch.finished:
+            changes["finished"] = True
+        ViewEvent.objects.filter(pk=viewing.pk).update(**changes)
     return watch
 
 
@@ -1150,14 +1408,41 @@ class ViewStats:
     viewers: int
     views_last_week: int
     days: list[tuple[date, int]]
+    # How often the player was opened on it, a view or not.
+    opened: int = 0
+    # The views whose playing time was measured — every one since the player has reported it — of
+    # them those that reached the end, and the seconds an average one played.
+    measured: int = 0
+    finished: int = 0
+    average_watched: float | None = None
+    duration: float | None = None
 
     @property
     def peak(self) -> int:
         return max((n for _day, n in self.days), default=0)
 
+    @property
+    def finished_share(self) -> int | None:
+        """The share of the measured views that reached the end, in per cent."""
+        return round(100 * self.finished / self.measured) if self.measured else None
+
+    @property
+    def average_share(self) -> int | None:
+        """How much of the film an average view played, in per cent."""
+        if self.average_watched is None or not self.duration:
+            return None
+        return round(100 * min(self.average_watched / self.duration, 1))
+
 
 def view_stats(video: Video, days: int = 30, now: datetime | None = None) -> ViewStats:
     totals = video.watches.filter(views__gt=0).aggregate(views=Coalesce(Sum("views"), 0), viewers=Count("pk"))
+    measured = Q(viewed_at__isnull=False, watched__gt=0)
+    viewings = video.view_events.aggregate(
+        opened=Count("pk"),
+        measured=Count("pk", filter=measured),
+        finished=Count("pk", filter=measured & Q(finished=True)),
+        average_watched=Avg("watched", filter=measured),
+    )
     today = timezone.localdate(now or _now())
     first = today - timedelta(days=days - 1)
     per_day = dict(
@@ -1176,6 +1461,8 @@ def view_stats(video: Video, days: int = 30, now: datetime | None = None) -> Vie
         viewers=totals["viewers"],
         views_last_week=sum(n for day, n in series if day > today - timedelta(days=7)),
         days=series,
+        duration=video.duration,
+        **viewings,
     )
 
 
@@ -1325,16 +1612,19 @@ def similar(video: Video, limit: int = 12) -> list[Video]:
 
 
 def sort_date_ordering() -> list[Any]:
-    return [Coalesce("recorded_on", TruncDate("created_at")).desc(), "-pk"]
+    return [Coalesce("released_on", TruncDate("created_at")).desc(), "-pk"]
 
 
-def timeline() -> list[tuple[int, list[tuple[int, list[Video]]]]]:
-    """Every published video by year and month of its date, newest first."""
-    years: dict[int, dict[int, list[Video]]] = defaultdict(lambda: defaultdict(list))
+def timeline() -> list[tuple[int, list[tuple[int | None, list[Video]]]]]:
+    """Every published video by year and month of its date, newest first. A video dated only to
+    its year comes after that year's months (month None)."""
+    years: dict[int, dict[int | None, list[Video]]] = defaultdict(lambda: defaultdict(list))
     for video in published().order_by(*sort_date_ordering()):
-        day = video.display_date
-        years[day.year][day.month].append(video)
-    return [(year, list(months.items())) for year, months in years.items()]
+        years[video.display_date.year][video.display_month].append(video)
+    return [
+        (year, sorted(months.items(), key=lambda item: 0 if item[0] is None else -item[0]))
+        for year, months in years.items()
+    ]
 
 
 def credits_of(resident: Resident) -> QuerySet[Video]:

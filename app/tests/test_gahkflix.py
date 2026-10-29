@@ -4,10 +4,11 @@ browsing and the pages. The encode tests run the real ffmpeg on a one-second cli
 import hashlib
 import json
 import os
+import re
 import secrets
 import subprocess
 from collections.abc import Callable, Iterator
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
@@ -21,16 +22,20 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.formats import date_format
 
-from gahkflix import access, encoding, services, tasks
+from gahkflix import access, dating, encoding, services, tasks
+from gahkflix.dating import DatePrecision, DateSource, PartialDate
 from gahkflix.models import (
     CastMember,
     ChangeRequest,
     FileState,
     Series,
     Video,
+    VideoEvent,
     VideoFile,
     VideoFrame,
+    ViewEvent,
     original_key,
 )
 from gahkflix.storage import get_video_storage
@@ -183,13 +188,17 @@ def notified(resident: Resident, category: str) -> list[Notification]:
 
 
 def details(video: Video, **changes: Any) -> dict[str, str]:  # noqa: ANN401
-    """The edit form's POST for `video`, with `changes` on top."""
+    """The edit form's POST for `video`, with `changes` on top (released_on as "2015-03-12",
+    "2015-03" or "2015")."""
     current = services.snapshot(video)
     current.update(changes)
+    year, month, day = [*(current["released_on"] or "").split("-"), "", "", ""][:3]
     return {
         "title": current["title"],
         "description": current["description"],
-        "recorded_on": current["recorded_on"] or "",
+        "released_year": year,
+        "released_month": month.lstrip("0"),
+        "released_day": day.lstrip("0"),
         "series": str(current["series"] or ""),
         "season": str(current["season"] or ""),
         "episode": str(current["episode"] or ""),
@@ -255,7 +264,8 @@ def test_upload_is_encoded_and_offers_frames(
     assert video_file.hd and not video_file.full_hd  # a 320x240 source is never upscaled
     assert video_file.duration == pytest.approx(1.0, abs=0.2)
     # The container says 2021-06-05; the browser's lastModified (2020) is only the fallback.
-    assert video.recorded_on == date(2021, 6, 5)
+    assert video.release == dating.PartialDate(date(2021, 6, 5), DatePrecision.DAY)
+    assert video.release_source == DateSource.METADATA
     assert 1 <= video.frames.count() <= 10
     assert notified(admin, categories.GAHKFLIX_UPLOADS)
 
@@ -426,11 +436,38 @@ def test_season_and_episode_titles_of_drafts_you_cannot_see(
 
 
 def test_one_upload_at_a_time(admin: Resident) -> None:
+    upload_page = client_for(admin).get(reverse("gahkflix:upload")).content.decode()
+    assert "Én video ad gangen" in upload_page
     video = make_video(admin, published=False)
     VideoFile.objects.filter(video=video).update(state=FileState.PROCESSING)
     response = upload(client_for(admin), other_clip())
     assert response.status_code == 409
     assert "behandles" in response.json()["error"]
+    # Where Upload would be, the header says why it is not.
+    page = client_for(admin).get(reverse("gahkflix:home")).content.decode()
+    assert "⏳ Behandles" in page and "Du kan uploade én video ad gangen" in page
+
+
+def test_an_upload_waiting_its_turn_says_so(admin: Resident, admin2: Resident) -> None:
+    encoding_now = make_video(admin2, title="Andens revy", published=False)
+    VideoFile.objects.filter(video=encoding_now).update(state=FileState.PROCESSING, progress=40)
+    waiting = make_video(admin, title="Min revy", published=False)
+    VideoFile.objects.filter(video=waiting).update(state=FileState.QUEUED, progress=0)
+    Video.objects.filter(pk=waiting.pk).update(file=None)  # a first upload: nothing plays yet
+    client = client_for(admin)
+    status = reverse("gahkflix:status", args=[waiting.pk])
+    assert client.get(status).json()["ahead"] == 1
+
+    edit = client.get(reverse("gahkflix:edit", args=[waiting.pk])).content.decode()
+    assert "Videoen venter i kø" in edit and "I kø · 1 video foran" in edit
+    upload_page = client.get(reverse("gahkflix:upload")).content.decode()
+    assert "Din video venter i kø" in upload_page and "1 video foran den" in upload_page
+    assert "I kø · 1 foran" in upload_page and "0 %" not in upload_page
+    assert "⏳ I kø" in upload_page
+
+    VideoFile.objects.filter(video=encoding_now).update(state=FileState.READY)
+    assert client.get(status).json()["ahead"] == 0
+    assert "I kø · den næste" in client.get(reverse("gahkflix:mine")).content.decode()
 
 
 def test_the_same_file_is_refused_before_it_is_sent(admin: Resident, member: Resident) -> None:
@@ -637,13 +674,13 @@ def test_edits_within_30_days_apply_directly(
                 title="Revy 2026 – director's cut",
                 cast=cast,
                 tags=["revy", "Jul"],
-                recorded_on="2026-03-01",
+                released_on="2026-03-01",
             ),
         )
     assert response.status_code == 302
     video.refresh_from_db()
     assert video.title == "Revy 2026 – director's cut"
-    assert video.recorded_on == date(2026, 3, 1) and video.recorded_on_manual
+    assert video.released_on == date(2026, 3, 1) and video.release_source == DateSource.MANUAL
     assert [(m.resident, m.name, m.role) for m in video.cast.all()] == [
         (member, member.full_name, "Hamlet"),
         (None, "Hans Gæst", ""),
@@ -727,6 +764,355 @@ def test_episode_numbers_are_unique_within_a_series(admin: Resident) -> None:
     )
     assert response.status_code == 200
     assert "findes allerede" in response.content.decode()
+
+
+def test_publishing_saves_what_was_typed_first(
+    admin: Resident, admin2: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+) -> None:
+    """The publish button belongs to the details form: a draft is never published under the title
+    it had before, while the one typed is lost."""
+    video = make_video(admin, title="revy_final_v3", published=False)
+    client = client_for(admin)
+    edit = client.get(reverse("gahkflix:edit", args=[video.pk])).content.decode()
+    assert f'data-flix-details="{video.pk}"' in edit and 'form="flix-details"' in edit
+    publish = reverse("gahkflix:publish", args=[video.pk])
+
+    refused = client.post(publish, details(video, title="Revyen", season="2"))  # a season, but no series
+    assert refused.status_code == 200 and "data-flix-bound" in refused.content.decode()
+    video.refresh_from_db()
+    assert video.is_draft and video.title == "revy_final_v3"
+
+    with django_capture_on_commit_callbacks(execute=True):
+        assert client.post(publish, details(video, title="Revyen")).status_code == 302
+    video.refresh_from_db()
+    assert video.is_published and video.title == "Revyen"
+    [announced] = notified(admin2, categories.GAHKFLIX_NEW)
+    assert announced.title == "Ny på GAHKFlix: Revyen"
+    kinds = list(video.events.order_by("pk").values_list("kind", flat=True))
+    assert kinds == [VideoEvent.Kind.EDITED, VideoEvent.Kind.PUBLISHED]
+
+
+def test_new_frames_are_drawn_without_leaving_the_page(
+    admin: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+) -> None:
+    client = client_for(admin)
+    with django_capture_on_commit_callbacks(execute=True):
+        upload(client, mp4_bytes())
+    video = Video.objects.get()
+    response = client.post(reverse("gahkflix:new_frames", args=[video.pk]) + "?format=json")
+    assert response.json() == {"batch": 1}  # the batch to wait past
+    # Drawn already: Celery runs its jobs at once in the tests. The page polls for this.
+    assert client.get(reverse("gahkflix:status", args=[video.pk])).json()["batch"] == 2
+    assert services.frame_batch(video) == 2 and len(services.current_frames(video)) >= 1
+
+
+def test_a_series_made_from_the_edit_page_is_picked(admin: Resident) -> None:
+    video = make_video(admin, published=False)
+    client = client_for(admin)
+    assert "data-flix-series-dialog" in client.get(reverse("gahkflix:edit", args=[video.pk])).content.decode()
+    # The dialog: created, and handed back to be picked.
+    create = reverse("gahkflix:series_create") + "?format=json"
+    created = client.post(create, {"title": "Gangen", "description": ""})
+    assert created.status_code == 201
+    assert created.json() == {"id": Series.objects.get(title="Gangen").pk, "title": "Gangen"}
+    clash = client.post(create, {"title": "gangen", "description": ""})
+    assert clash.status_code == 400 and "findes allerede" in clash.json()["error"]
+    # Without the dialog: a page of its own, then back to the edit page with the series picked.
+    edit = reverse("gahkflix:edit", args=[video.pk])
+    back = client.post(
+        reverse("gahkflix:series_create"), {"title": "Sketches", "description": "", "next": edit}
+    )
+    sketches = Series.objects.get(title="Sketches")
+    assert back["Location"] == f"{edit}?serie={sketches.pk}"
+    assert client.get(back["Location"]).context["form"]["series"].value() == sketches.pk
+
+
+# --- The release date ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("released_on", "label"),
+    [("2015", "2015"), ("2015-03", "marts 2015"), ("2015-03-12", "12. marts 2015")],
+)
+def test_a_release_date_needs_only_its_year(admin: Resident, released_on: str, label: str) -> None:
+    video = make_video(admin, published=False)
+    client = client_for(admin)
+    response = client.post(reverse("gahkflix:edit", args=[video.pk]), details(video, released_on=released_on))
+    assert response.status_code == 302
+    video.refresh_from_db()
+    assert services.snapshot(video)["released_on"] == released_on
+    assert video.release_source == DateSource.MANUAL
+    assert label in client.get(reverse("gahkflix:detail", args=[video.pk])).content.decode()
+    # The edit page shows what is known, and leaves the rest empty.
+    form = client.get(reverse("gahkflix:edit", args=[video.pk])).context["form"]
+    assert [form[name].value() for name in ("released_year", "released_month", "released_day")] == [
+        int(part) if part else None for part in [*released_on.split("-"), None, None][:3]
+    ]
+
+
+@pytest.mark.parametrize(
+    ("posted", "field", "message"),
+    [
+        ({"released_year": "2015", "released_day": "12"}, "released_day", "Vælg også måneden"),
+        ({"released_month": "3"}, "released_year", "Skriv også året"),
+        (
+            {"released_year": "2015", "released_month": "2", "released_day": "30"},
+            "released_day",
+            "Der er ingen 30. februar i 2015.",
+        ),
+        ({"released_year": str(date.today().year + 2)}, "released_year", "fremtiden"),
+    ],
+)
+def test_a_release_date_that_cannot_be(
+    admin: Resident, posted: dict[str, str], field: str, message: str
+) -> None:
+    from gahkflix.forms import VideoDetailsForm
+
+    video = make_video(admin, published=False)
+    blank = {"released_year": "", "released_month": "", "released_day": ""}
+    form = VideoDetailsForm({**details(video), **blank, **posted}, video=video)
+    assert not form.is_valid()
+    assert message in " ".join(form.errors[field])
+
+
+def test_a_cleared_release_date_falls_back_to_the_upload(admin: Resident) -> None:
+    video = make_video(admin, published=False)
+    services.apply_changes(video, {"released_on": "2015-03"}, admin)
+    services.apply_changes(video, {"released_on": None}, admin)
+    video.refresh_from_db()
+    assert (video.released_on, video.release_source) == (None, "")
+    assert video.date_label == date_format(timezone.localdate(video.created_at), "j. F Y")
+
+
+def test_the_timeline_files_a_film_known_only_by_its_year_after_the_months(admin: Resident) -> None:
+    for title, released_on in (("Forårsfest", "2015-03-12"), ("Revyen", "2015"), ("Nytår", "2015-01")):
+        services.apply_changes(make_video(admin, title=title), {"released_on": released_on}, admin)
+    [(year, months)] = services.timeline()
+    assert year == 2015
+    assert [(month, [video.title for video in videos]) for month, videos in months] == [
+        (3, ["Forårsfest"]),
+        (1, ["Nytår"]),
+        (None, ["Revyen"]),
+    ]
+    page = client_for(admin).get(reverse("gahkflix:timeline")).content.decode()
+    assert page.index("Marts") < page.index("Januar") < page.index("Uden måned")
+
+
+def test_a_proposed_release_date_reads_as_a_date(admin: Resident, admin2: Resident) -> None:
+    video = make_video(admin, days_old=40)
+    change = services.propose(video, {"released_on": "2015-03"}, admin)
+    page = client_for(admin2).get(reverse("gahkflix:request", args=[change.pk])).content.decode()
+    assert "Udgivelsesdato" in page and "marts 2015" in page
+
+
+def test_a_date_set_by_hand_is_not_guessed_over_by_a_new_version(
+    admin: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+) -> None:
+    client = client_for(admin)
+    with django_capture_on_commit_callbacks(execute=True):
+        upload(client, mp4_bytes())
+    video = Video.objects.get()
+    client.post(reverse("gahkflix:edit", args=[video.pk]), details(video, released_on="1999"))
+    with django_capture_on_commit_callbacks(execute=True):
+        upload(client, other_clip(), name="Revy 2009.mp4", video=video)
+    video.refresh_from_db()
+    assert video.file is not None and video.file.original_name == "Revy 2009.mp4"
+    assert services.snapshot(video)["released_on"] == "1999"
+
+
+_MAY_2009 = datetime(2009, 5, 12, 20, 0, tzinfo=UTC)
+_EXPORTED = datetime(2021, 6, 5, 14, 30, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("name", "recorded_at", "tags", "expected"),
+    [
+        # A whole date in the name: phones, Dropbox's camera uploads, the Danish way.
+        ("VID_20150312_183045.mp4", None, {}, ("2015-03-12", DateSource.NAME)),
+        ("2015-03-12 18.30.45.mov", _EXPORTED, {}, ("2015-03-12", DateSource.NAME)),
+        ("Revy 12.03.2015.mp4", None, {}, ("2015-03-12", DateSource.NAME)),
+        # A year in the name, and the camera's clock in that year: the clock's day.
+        ("Revy 2009.mp4", _MAY_2009, {}, ("2009-05-12", DateSource.METADATA)),
+        # The clock in another year is the day it was exported: the name's year.
+        ("Revy 2009.mp4", _EXPORTED, {}, ("2009", DateSource.NAME)),
+        ("Julefrokost (2014) final.mkv", None, {}, ("2014", DateSource.NAME)),
+        # A camera's file counter is not a year.
+        ("IMG_1999.MOV", None, {}, ("2020-09-13", DateSource.MODIFIED)),
+        ("1920x1080 eksport.mp4", None, {}, ("2020-09-13", DateSource.MODIFIED)),
+        # The tags: an AVI's ICRD, an MP4's ©day, written all sorts of ways.
+        ("film.avi", None, {"date": "2008-11-20"}, ("2008-11-20", DateSource.METADATA)),
+        ("film.avi", None, {"date": "2009:05:12 14:30:00"}, ("2009-05-12", DateSource.METADATA)),
+        ("film.mp4", None, {"date": "2015-03"}, ("2015-03", DateSource.METADATA)),
+        ("film.mp4", None, {"date": "Tue May 12 14:30:00 2009"}, ("2009", DateSource.METADATA)),
+        ("film.mp4", _MAY_2009, {"date": "2009"}, ("2009-05-12", DateSource.METADATA)),
+        ("film.mp4", _EXPORTED, {"year": "2012"}, ("2012", DateSource.METADATA)),
+        (
+            "film.mkv",
+            None,
+            {"date_released": "2016", "date_recorded": "2015-12-24"},
+            ("2016", DateSource.METADATA),
+        ),
+        # The camera's clock alone.
+        ("film.mp4", _EXPORTED, {}, ("2021-06-05", DateSource.METADATA)),
+    ],
+)
+def test_the_release_date_is_guessed_from_the_file(
+    name: str, recorded_at: datetime | None, tags: dict[str, str], expected: tuple[str, str]
+) -> None:
+    modified = datetime(2020, 9, 13, 12, 0, tzinfo=UTC)
+    found = dating.guess(name=name, recorded_at=recorded_at, tags=tags, modified_at=modified)
+    assert found is not None
+    assert (found.date.iso(), found.source) == expected
+
+
+def test_no_guess_without_anything_to_go_by() -> None:
+    assert dating.guess(name="film.mp4", recorded_at=None, tags={"date": "0000"}, modified_at=None) is None
+    assert PartialDate.parse("2015-02-30") is None and PartialDate.parse("15") is None
+    assert PartialDate.parse("2015-03") == PartialDate(date(2015, 3, 1), DatePrecision.MONTH)
+
+
+# --- History ------------------------------------------------------------------------------------
+
+
+def test_the_history_says_who_did_what_and_when(
+    admin: Resident, admin2: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+) -> None:
+    client = client_for(admin)
+    with django_capture_on_commit_callbacks(execute=True):
+        upload(client, mp4_bytes())
+    video = Video.objects.get()
+    client.post(
+        reverse("gahkflix:edit", args=[video.pk]),
+        details(video, title="Revyen", released_on="2015", tags=["revy"]),
+    )
+    frame = video.frames.first()
+    assert frame is not None
+    for kind in ("thumbnail", "banner"):
+        client.post(reverse("gahkflix:choose_picture", args=[video.pk]), {"kind": kind, "frame": frame.pk})
+    with django_capture_on_commit_callbacks(execute=True):
+        client.post(reverse("gahkflix:publish", args=[video.pk]))
+    services.bin_video(video, admin2)
+    client_for(admin2).post(reverse("gahkflix:restore", args=[video.pk]))
+
+    assert list(video.events.order_by("created_at", "pk").values_list("kind", "actor")) == [
+        (VideoEvent.Kind.UPLOADED, admin.pk),
+        (VideoEvent.Kind.PROCESSED, None),
+        (VideoEvent.Kind.EDITED, admin.pk),
+        (VideoEvent.Kind.EDITED, admin.pk),
+        (VideoEvent.Kind.EDITED, admin.pk),
+        (VideoEvent.Kind.PUBLISHED, admin.pk),
+        (VideoEvent.Kind.BINNED, admin2.pk),
+        (VideoEvent.Kind.RESTORED, admin2.pk),
+    ]
+    # The worker dated it from the file; the uploader changed only what they changed.
+    assert video.events.get(kind=VideoEvent.Kind.PROCESSED).changes["released_on"] == {
+        "before": None,
+        "after": "2021-06-05",
+    }
+    details_edit = video.events.filter(kind=VideoEvent.Kind.EDITED).order_by("pk").first()
+    assert details_edit is not None
+    assert details_edit.changes == {
+        "title": {"before": "revy", "after": "Revyen"},
+        "released_on": {"before": "2021-06-05", "after": "2015"},
+        "tags": {"before": [], "after": ["revy"]},
+    }
+    page = client.get(reverse("gahkflix:history", args=[video.pk])).content.decode()
+    assert f"<b>{admin.full_name}</b> uploadede videoen: revy.mp4" in page
+    assert "5. juni 2021" in page and "2021-06-05" not in page  # dates as people write them
+    assert f"<b>{admin2.full_name}</b> lagde videoen i papirkurven" in page
+    assert "før GAHKFlix begyndte at gemme historik" not in page
+
+
+def test_an_approved_proposal_is_in_the_history_as_the_proposers(
+    admin: Resident, admin2: Resident, member: Resident
+) -> None:
+    video = make_video(member, days_old=40)
+    change = services.propose(video, {"title": "Ny titel"}, member)
+    services.vote(change, admin, approve=True)
+    edit = video.events.get(kind=VideoEvent.Kind.EDITED)
+    assert (edit.actor, edit.request, edit.changes) == (
+        member,
+        change,
+        {"title": {"before": "Revy 2026", "after": "Ny titel"}},
+    )
+    page = client_for(member).get(reverse("gahkflix:history", args=[video.pk])).content.decode()
+    assert "som en anden administrator godkendte" in page
+    assert "før GAHKFlix begyndte at gemme historik" in page  # made by make_video, not uploaded
+
+
+def test_only_the_uploader_and_administrators_see_the_history(
+    open_gate: None, plain: Resident, admin: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    video = make_video(plain)
+    url = reverse("gahkflix:history", args=[video.pk])
+    assert client_for(plain).get(url).status_code == 200
+    assert client_for(admin).get(url).status_code == 200
+    assert client_for(make_resident(email="anden@gahk.dk")).get(url).status_code == 404
+
+
+def test_an_earlier_picture_is_kept_and_can_be_brought_back(
+    admin: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+) -> None:
+    video = make_video(admin, published=False)
+    first = video.thumbnail.name
+    client = client_for(admin)
+    choose = reverse("gahkflix:choose_picture", args=[video.pk])
+    own = SimpleUploadedFile("mig.jpg", jpeg_bytes(size=(800, 450)), "image/jpeg")
+    with django_capture_on_commit_callbacks(execute=True):
+        client.post(choose, {"kind": "thumbnail", "picture": own})
+    video.refresh_from_db()
+    second = video.thumbnail.name
+    storage = get_video_storage()
+    # Kept, not deleted: the history names it, so the sweep leaves it be.
+    assert second != first and storage.exists(first) and first in services.referenced_keys()
+    [earlier] = services.past_pictures(video, "thumbnail")
+    assert earlier.key == first
+    assert earlier.ref in client.get(reverse("gahkflix:edit", args=[video.pk])).content.decode()
+    shown = client.get(
+        reverse("gahkflix:history_picture", args=[video.pk, earlier.event.pk, "thumbnail", earlier.side])
+    )
+    assert shown.status_code == 200
+
+    with django_capture_on_commit_callbacks(execute=True):
+        assert client.post(choose, {"kind": "thumbnail", "previous": earlier.ref}).status_code == 302
+    video.refresh_from_db()
+    # A copy under a key of its own, the same picture in it.
+    assert video.thumbnail.name not in (first, second)
+    with video.thumbnail.open("rb") as now, storage.open(first, "rb") as before:
+        assert now.read() == before.read()
+    # The copy stands for the picture it was brought back from, which is not offered again.
+    assert [picture.key for picture in services.past_pictures(video, "thumbnail")] == [second]
+    history = client.get(reverse("gahkflix:history", args=[video.pk])).content.decode()
+    offered = re.findall(r'name="previous" value="([^"]+)"', history)
+    assert offered and {services.past_picture(video, "thumbnail", ref).key for ref in offered} == {second}
+    client.post(choose, {"kind": "thumbnail", "previous": "999-before"})
+    video.refresh_from_db()
+    assert storage.exists(video.thumbnail.name)
+
+    keys = [first, second, video.thumbnail.name]
+    with django_capture_on_commit_callbacks(execute=True):
+        services.delete_permanently(video)
+    assert not any(storage.exists(key) for key in keys)
+
+
+def test_bringing_an_old_picture_back_after_30_days_is_a_proposal(
+    admin: Resident, admin2: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+) -> None:
+    video = make_video(admin, days_old=40)
+    first = video.thumbnail.name
+    replacement = services.store_picture(video, "thumbnail", jpeg_bytes(size=(640, 360)))
+    services.set_picture(video, "thumbnail", replacement, None, admin, needs_approval=False)
+    [earlier] = services.past_pictures(video, "thumbnail")
+    client_for(admin).post(
+        reverse("gahkflix:choose_picture", args=[video.pk]), {"kind": "thumbnail", "previous": earlier.ref}
+    )
+    change = ChangeRequest.objects.get()
+    proposed = change.changes["thumbnail"]
+    assert proposed["from"] == first and proposed["key"] not in (first, replacement)
+    with django_capture_on_commit_callbacks(execute=True):
+        services.vote(change, admin2, approve=False)
+    storage = get_video_storage()
+    assert storage.exists(first) and not storage.exists(proposed["key"])
 
 
 # --- Deleting -----------------------------------------------------------------------------------
@@ -984,6 +1370,76 @@ def test_resume_where_you_stopped(admin: Resident) -> None:
         reverse("gahkflix:position", args=[video.pk]), {"position": "nan"}, content_type="application/json"
     )
     assert bad.status_code == 400
+
+
+def test_a_viewing_from_opening_the_player_to_the_end(admin: Resident) -> None:
+    video = make_video(admin, duration=600)
+    client = client_for(admin)
+
+    def report(name: str, data: dict[str, Any]) -> Any:  # noqa: ANN401 — the response
+        return client.post(
+            reverse(f"gahkflix:{name}", args=[video.pk]), data, content_type="application/json"
+        )
+
+    viewing = client.get(reverse("gahkflix:play", args=[video.pk]), {"format": "json"}).json()["viewing"]
+    assert ViewEvent.objects.get(pk=viewing).viewed_at is None  # opened, not a view yet
+    assert report("record_view", {"viewing": viewing}).json() == {"counted": True}
+    assert report("record_view", {"viewing": viewing}).json() == {"counted": False}  # one view, once
+    report("position", {"position": 120, "viewing": viewing, "watched": 115})
+    report("position", {"position": 598, "viewing": viewing, "watched": 300})
+    row = ViewEvent.objects.get(pk=viewing)
+    assert (row.watched, row.finished) == (415, True)
+
+    # Watched to the end, so opened again it is a new viewing — not a new view within 10 minutes.
+    again = client.get(reverse("gahkflix:play", args=[video.pk]), {"format": "json"}).json()["viewing"]
+    assert again != viewing
+    assert report("record_view", {"viewing": again}).json() == {"counted": False}
+    report("position", {"position": 30, "viewing": again, "watched": 30})
+
+    stats = services.view_stats(video)
+    assert (stats.opened, stats.views, stats.measured, stats.finished) == (2, 1, 1, 1)
+    assert (stats.average_watched, stats.average_share, stats.finished_share) == (415, 69, 100)
+    page = client.get(reverse("gahkflix:detail", args=[video.pk])).content.decode()
+    assert "Åbnet i afspilleren" in page and "Gennemsnitlig set tid" in page and "69 % af videoen" in page
+
+
+def test_opening_the_player_again_soon_goes_on_with_the_same_viewing(admin: Resident) -> None:
+    video = make_video(admin, duration=600)
+    now = timezone.now()
+    first = services.open_viewing(video, admin, now)
+    services.save_position(video, admin, 100, now + timedelta(minutes=2), viewing=first, watched=100)
+    assert services.open_viewing(video, admin, now + timedelta(minutes=11)) == first
+    assert services.open_viewing(video, admin, now + timedelta(minutes=30)) != first
+
+
+def test_the_player_reports_only_on_its_own_viewing(admin: Resident, admin2: Resident) -> None:
+    video = make_video(admin, duration=600)
+    someone_elses = services.open_viewing(video, admin2)
+    own = services.open_viewing(video, admin)
+    client = client_for(admin)
+    url = reverse("gahkflix:position", args=[video.pk])
+    client.post(
+        url, {"position": 10, "viewing": someone_elses.pk, "watched": 50}, content_type="application/json"
+    )
+    client.post(url, {"position": 10, "viewing": own.pk, "watched": 99999}, content_type="application/json")
+    someone_elses.refresh_from_db()
+    own.refresh_from_db()
+    assert (someone_elses.watched, own.watched) == (0, 600)  # and no report adds more than the film
+    bad = client.post(url, {"position": 10, "watched": -5}, content_type="application/json")
+    assert bad.status_code == 400
+    # A draft's uploader trying it out is not a viewing.
+    draft = make_video(admin, published=False)
+    assert client.get(reverse("gahkflix:play", args=[draft.pk]), {"format": "json"}).json()["viewing"] is None
+
+
+def test_views_from_before_their_time_was_measured(admin: Resident) -> None:
+    video = make_video(admin, duration=600)
+    services.record_view(video, admin)  # as every view before the player reported its viewings
+    viewing = services.open_viewing(video, admin, timezone.now() + timedelta(hours=1))
+    stats = services.view_stats(video)
+    assert (stats.opened, stats.views, stats.measured, stats.average_watched) == (2, 1, 0, None)
+    assert stats.finished_share is None and stats.average_share is None
+    assert viewing.viewed_at is None
 
 
 # --- Browsing -----------------------------------------------------------------------------------
@@ -1299,6 +1755,29 @@ def test_probe_reads_rotation_duration_and_date() -> None:
     assert probe.duration == 62.5
     assert probe.has_audio and probe.has_video
     assert probe.recorded_at is not None and probe.recorded_at.date() == date(2025, 12, 24)
+
+
+def test_probe_reads_the_date_tags() -> None:
+    with TemporaryDirectory() as directory:
+        target = Path(directory) / "gammel.mp4"
+        subprocess.run(
+            [
+                imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-f", "lavfi", "-i", "testsrc=duration=1:size=160x120:rate=5",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-metadata", "date=2009", str(target),
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )  # fmt: skip
+        assert encoding.probe(target).date_tags == {"date": "2009"}
+    avi = """
+Input #0, avi, from 'gammel.avi':
+  Metadata:
+    DATE            : 2009-05-12
+    encoder         : Lavf58.29.100
+  Duration: 00:00:03.00, start: 0.000000, bitrate: 1500 kb/s
+"""
+    assert encoding.parse_probe(avi).date_tags == {"date": "2009-05-12"}
 
 
 def test_probe_lists_the_sound_and_subtitle_tracks() -> None:

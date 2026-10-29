@@ -38,7 +38,8 @@
           <input type="search" name="q" value="{{ query|default:'' }}" placeholder="Titler, personer, tags" aria-label="Søg på GAHKFlix" autocomplete="off">
         </form>
         {% if pending_upload %}
-          <a class="flix-pill flix-pill-ghost" href="{% url 'gahkflix:edit' pending_upload.video_id %}" title="Din video behandles">⏳ Behandles</a>
+          {# Upload is not offered meanwhile: one video at a time. Said here, where Upload would be. #}
+          <a class="flix-pill flix-pill-ghost" href="{% url 'gahkflix:edit' pending_upload.video_id %}" title="{{ pending_upload.video.title }} {% if pending_upload.state == 'queued' %}venter i kø{% else %}behandles{% endif %}. Du kan uploade én video ad gangen: den næste, når denne er færdigbehandlet.">⏳ {% if pending_upload.state == "queued" %}I kø{% else %}Behandles{% endif %}</a>
         {% else %}
           <a class="flix-pill flix-pill-red" href="{% url 'gahkflix:upload' %}">+ Upload</a>
         {% endif %}

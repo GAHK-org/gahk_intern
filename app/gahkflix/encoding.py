@@ -113,6 +113,8 @@ class Probe:
     recorded_at: datetime | None
     audio: list[AudioStream] = field(default_factory=list)
     subtitles: list[SubtitleStream] = field(default_factory=list)
+    # The tags that say when the film is from (dating.DATE_TAGS), by lower-cased name, as written.
+    date_tags: dict[str, str] = field(default_factory=dict)
 
     @property
     def audio_stream(self) -> int | None:
@@ -140,6 +142,10 @@ _STREAM = re.compile(
     re.MULTILINE,
 )
 _TITLE = re.compile(r"^\s+title\s*:\s*(?P<title>.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+_DATE_TAG = re.compile(
+    r"^\s+(?P<key>date_released|date_recorded|date|year)\s*:\s*(?P<value>.+?)\s*$",
+    re.MULTILINE | re.IGNORECASE,
+)
 _LAYOUT_CHANNELS = {"mono": 1, "stereo": 2, "downmix": 2, "quad": 4, "hexagonal": 6, "octagonal": 8}
 
 
@@ -206,7 +212,15 @@ def parse_probe(output: str) -> Probe:
         recorded_at=_recorded_at(output),
         audio=audio,
         subtitles=subtitles,
+        date_tags=_date_tags(output),
     )
+
+
+def _date_tags(output: str) -> dict[str, str]:
+    tags: dict[str, str] = {}
+    for match in _DATE_TAG.finditer(output):
+        tags.setdefault(match["key"].lower(), match["value"])
+    return tags
 
 
 def _recorded_at(output: str) -> datetime | None:
