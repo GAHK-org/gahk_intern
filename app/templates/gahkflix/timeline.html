@@ -12,7 +12,7 @@
           <h2>{{ year }}</h2>
           {% for month, videos in months %}
             <div class="flix-month">
-              <h3>{{ videos.0.display_date|date:"F" }}</h3>
+              <h3>{% if month %}{{ videos.0.display_date|date:"F"|capfirst }}{% else %}Uden måned{% endif %}</h3>
               <div class="flix-grid">{% for video in videos %}{% include "gahkflix/_card.html" %}{% endfor %}</div>
             </div>
           {% endfor %}

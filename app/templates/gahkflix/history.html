@@ -1,0 +1,73 @@
+{% extends "gahkflix/base.html" %}
+{% load gahkflix %}
+{% block title %}Historik: {{ video.title }} – GAHKFlix{% endblock %}
+{% block content %}
+  <div class="flix-page flix-page-narrow" style="max-width:1000px">
+    <p><a class="muted" href="{% if can_edit %}{% url 'gahkflix:edit' video.pk %}{% else %}{% url 'gahkflix:detail' video.pk %}{% endif %}">← {{ video.title }}</a></p>
+    <h1 class="flix-page-title">Historik</h1>
+    <p class="muted" style="margin-top:-8px">Alt, der er sket med videoen, det nyeste først. Kun uploaderen og administratorerne kan se den.{% if can_edit %} Et billede, videoen har haft, kan gendannes herfra.{% endif %}</p>
+
+    <ol class="flix-history">
+      {% for item in events %}
+        {% with event=item.event %}
+          <li class="flix-panel flix-history-item">
+            <p class="flix-history-when"><time datetime="{{ event.created_at|date:'c' }}">{{ event.created_at|date:"j. F Y \k\l. H.i" }}</time></p>
+            <p class="flix-history-what">
+              {% with who=event.actor.full_name|default:"En tidligere beboer" file=event.changes.file %}
+                {% if event.kind == "uploaded" %}<b>{{ who }}</b> uploadede videoen{% if file %}: {{ file }}{% if event.changes.size %} ({{ event.changes.size|filesizeformat }}){% endif %}{% endif %}.
+                {% elif event.kind == "new_version" %}<b>{{ who }}</b> uploadede en ny version af filen{% if file %}: {{ file }}{% if event.changes.size %} ({{ event.changes.size|filesizeformat }}){% endif %}{% endif %}.
+                {% elif event.kind == "processed" %}{% if event.changes.replaced %}Den nye version, {{ file }}, er færdigbehandlet og afspilles nu.{% else %}{{ file|default:"Filen" }} er færdigbehandlet.{% endif %}
+                {% elif event.kind == "failed" %}{{ file|default:"Filen" }} kunne ikke behandles: {{ event.changes.error }}
+                {% elif event.kind == "edited" %}<b>{{ who }}</b> ændrede videoen{% if event.request %} — et forslag, som en anden administrator godkendte{% if is_administrator %} (<a href="{% url 'gahkflix:request' event.request_id %}">se forslaget</a>){% endif %}{% endif %}.
+                {% elif event.kind == "published" %}<b>{{ who }}</b> udgav videoen.
+                {% elif event.kind == "binned" %}<b>{{ who }}</b> lagde videoen i papirkurven{% if event.request %}, da to andre administratorer havde godkendt det{% if is_administrator %} (<a href="{% url 'gahkflix:request' event.request_id %}">se anmodningen</a>){% endif %}{% endif %}.
+                {% elif event.kind == "restored" %}<b>{{ who }}</b> hentede videoen tilbage fra papirkurven.
+                {% endif %}
+              {% endwith %}
+            </p>
+            {% if item.rows %}
+              <table class="flix-table">
+                <thead><tr><th></th><th>Før</th><th>Efter</th></tr></thead>
+                <tbody>
+                  {% for row in item.rows %}
+                    <tr>
+                      <th>{{ row.label }}</th>
+                      {% if row.picture %}
+                        <td>{% include "gahkflix/_history_picture.html" with picture=row.before side="before" %}</td>
+                        <td>{% include "gahkflix/_history_picture.html" with picture=row.after side="after" %}</td>
+                      {% else %}
+                        <td style="white-space:pre-line">{{ row.before }}</td><td style="white-space:pre-line">{{ row.after }}</td>
+                      {% endif %}
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            {% endif %}
+          </li>
+        {% endwith %}
+      {% empty %}
+        <li class="flix-empty">Der er ikke sket noget med videoen endnu.</li>
+      {% endfor %}
+    </ol>
+    {% if predates_history %}
+      <p class="muted">Videoen blev uploadet, før GAHKFlix begyndte at gemme historik, så her er kun det, der er sket siden.</p>
+    {% endif %}
+
+    {% if requests %}
+      <h2 class="flix-section-title">Forslag og anmodninger</h2>
+      <table class="flix-table">
+        <thead><tr><th>Hvad</th><th>Fra</th><th>Hvornår</th><th>Status</th></tr></thead>
+        <tbody>
+          {% for change in requests %}
+            <tr>
+              <td><a href="{% url 'gahkflix:request' change.pk %}">{{ change.get_kind_display }}</a></td>
+              <td>{{ change.requested_by.full_name }}</td>
+              <td>{{ change.created_at|date:"j. M Y" }}</td>
+              <td>{{ change.get_state_display }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+{% endblock %}

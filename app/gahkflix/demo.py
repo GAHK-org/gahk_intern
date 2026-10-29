@@ -91,7 +91,7 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> None:
             ]
             services.apply_changes(video, {"tags": tags, "cast": cast}, uploader)
             video.refresh_from_db()
-            services.publish(video)
+            services.publish(video, uploader)
             moment = now - timedelta(days=days)
             Video.objects.filter(pk=video.pk).update(created_at=moment, published_at=moment)
             for viewer in rng.sample(residents, min(len(residents), 2 + index * 2)):

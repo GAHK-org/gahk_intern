@@ -3,10 +3,13 @@ from typing import Any
 
 from django import forms
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 
+from core.danish import MONTHS
 from photo_album.models import validate_tag_name
 from residents.models import Resident
 
+from .dating import FIRST_YEAR, PartialDate
 from .models import Series, Video, normalize_name
 
 MAX_CREDITS = 100
@@ -17,14 +20,39 @@ NUMBER_ATTRS = {"inputmode": "numeric", "pattern": "[0-9]*", "autocomplete": "of
 
 
 class VideoDetailsForm(forms.Form):
-    """A video's details as one form. Cast and tags arrive as JSON from their editors (gahkflix.ts)."""
+    """A video's details as one form. Cast and tags arrive as JSON from their editors (gahkflix.ts).
+
+    The release date is three fields, of which only the year is needed: a month and a day nobody
+    knows are left out rather than made up (dating.py).
+    """
 
     title = forms.CharField(max_length=200, label="Titel")
     description = forms.CharField(
         widget=forms.Textarea(attrs={"rows": 5}), required=False, label="Beskrivelse"
     )
-    recorded_on = forms.DateField(
-        required=False, label="Optaget", widget=forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d")
+    released_year = forms.IntegerField(
+        min_value=FIRST_YEAR,
+        required=False,
+        label="År",
+        widget=forms.TextInput(
+            attrs={**NUMBER_ATTRS, "maxlength": 4, "placeholder": "År", "aria-label": "År"}
+        ),
+    )
+    released_month = forms.TypedChoiceField(
+        choices=[("", "Måned"), *((number, MONTHS[number]) for number in range(1, 13))],
+        coerce=int,
+        empty_value=None,
+        required=False,
+        label="Måned",
+        widget=forms.Select(attrs={"aria-label": "Måned"}),
+    )
+    released_day = forms.TypedChoiceField(
+        choices=[("", "Dag"), *((number, f"{number}.") for number in range(1, 32))],
+        coerce=int,
+        empty_value=None,
+        required=False,
+        label="Dag",
+        widget=forms.Select(attrs={"aria-label": "Dag"}),
     )
     series = forms.ModelChoiceField(
         queryset=Series.objects.all(), required=False, label="Serie", empty_label="Ingen serie"
@@ -48,7 +76,18 @@ class VideoDetailsForm(forms.Form):
 
     def __init__(self, *args: Any, video: Video, **kwargs: Any) -> None:  # noqa: ANN401
         self.video = video
+        self.release: PartialDate | None = None
         super().__init__(*args, **kwargs)
+
+    @staticmethod
+    def release_initial(value: str | None) -> dict[str, int | None]:
+        """The three date fields for a release date as services.snapshot has it ("2015-03")."""
+        release = PartialDate.parse(value)
+        return {
+            "released_year": release.year if release else None,
+            "released_month": release.month if release else None,
+            "released_day": release.day if release else None,
+        }
 
     def clean_title(self) -> str:
         title = normalize_name(self.cleaned_data["title"].strip())
@@ -97,8 +136,29 @@ class VideoDetailsForm(forms.Form):
             raise ValidationError(f"Højst {MAX_TAGS} tags.")
         return sorted(names.values(), key=str.lower)
 
+    def clean_released_year(self) -> int | None:
+        year: int | None = self.cleaned_data["released_year"]
+        if year is not None and year > timezone.localdate().year + 1:
+            raise ValidationError("Året ligger for langt ude i fremtiden.")
+        return year
+
+    def _clean_release(self, data: dict[str, Any]) -> None:
+        year, month, day = (data.get(f"released_{part}") for part in ("year", "month", "day"))
+        if day and not month:
+            self.add_error("released_day", "Vælg også måneden, eller lad dagen stå tom.")
+        elif (month or day) and not year:
+            if "released_year" not in self.errors:
+                self.add_error("released_year", "Skriv også året.")
+        elif year:
+            try:
+                self.release = PartialDate.of(year, month, day)
+            except ValueError:
+                # Only a day its month does not have gets here: a day comes with a month (above).
+                self.add_error("released_day", f"Der er ingen {day}. {MONTHS[month or 0]} i {year}.")
+
     def clean(self) -> dict[str, Any]:
         data = super().clean() or {}
+        self._clean_release(data)
         series, season, episode = data.get("series"), data.get("season"), data.get("episode")
         if series is None and (season or episode):
             raise ValidationError("Vælg en serie for at angive sæson og afsnit.")
@@ -118,7 +178,7 @@ class VideoDetailsForm(forms.Form):
         return {
             "title": data["title"],
             "description": data["description"].strip(),
-            "recorded_on": data["recorded_on"].isoformat() if data["recorded_on"] else None,
+            "released_on": self.release.iso() if self.release else None,
             "series": data["series"].pk if data["series"] else None,
             "season": data["season"],
             "episode": data["episode"],

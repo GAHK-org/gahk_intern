@@ -14,7 +14,7 @@
             <h3><a href="{% url 'gahkflix:edit' video.pk %}">{{ video.title }}</a></h3>
             <p>Uploadet af <a href="{% url 'resident_profile' video.uploaded_by_id %}">{{ video.uploaded_by.full_name }}</a> {{ video.created_at|date:"j. F Y" }} · slettes {{ video.draft_deleted_on|date:"j. F Y" }}</p>
             {% with latest=video.latest_file %}
-              <p>{% if latest.is_pending %}<span class="flix-state">Behandles · {{ latest.progress }} %</span>{% elif latest.state == "failed" %}<span class="flix-state is-failed">Mislykkedes</span> {{ latest.error }}{% elif not video.has_pictures %}Mangler miniature eller banner.{% else %}Klar til at blive udgivet.{% endif %}</p>
+              <p>{% if latest.is_pending %}{% file_state latest %}{% elif latest.state == "failed" %}<span class="flix-state is-failed">Mislykkedes</span> {{ latest.error }}{% elif not video.has_pictures %}Mangler miniature eller banner.{% else %}Klar til at blive udgivet.{% endif %}</p>
             {% endwith %}
           </div>
           <a class="flix-btn flix-btn-small flix-btn-quiet" href="{% url 'gahkflix:edit' video.pk %}">Åbn</a>

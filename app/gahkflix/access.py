@@ -136,6 +136,11 @@ def can_view_stats(request: HttpRequest, video: Video) -> bool:
     return _owns_or_administers(request, video)
 
 
+def can_view_history(request: HttpRequest, video: Video) -> bool:
+    """The uploader and the administrators — of a binned video too, as can_see allows."""
+    return _owns_or_administers(request, video)
+
+
 def can_vote(request: HttpRequest, change: ChangeRequest) -> bool:
     """An administrator other than the one who asked, once per request."""
     resident = current_resident(request)

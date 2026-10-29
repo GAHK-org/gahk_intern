@@ -1,7 +1,11 @@
-{% comment %} Views of one video, for its uploader and the administrators: three figures and a month by day. {% endcomment %}
+{% comment %} Views of one video, for its uploader and the administrators: six figures and a month by day. {% endcomment %}
+{% load gahkflix %}
 <div class="flix-stats">
   <div class="flix-stats-head">
-    <div class="flix-stat"><span>Visninger i alt</span><b>{{ stats.views }}</b></div>
+    <div class="flix-stat"><span>Åbnet i afspilleren</span><b>{{ stats.opened }}</b><small>også dem, der ikke blev til en visning</small></div>
+    <div class="flix-stat"><span>Visninger i alt</span><b>{{ stats.views }}</b><small>set i mindst 5 sekunder</small></div>
+    <div class="flix-stat"><span>Set til ende</span><b>{{ stats.finished }}</b>{% if stats.finished_share is not None %}<small>{{ stats.finished_share }} % af {% if stats.measured < stats.views %}de målte {% endif %}visninger</small>{% endif %}</div>
+    <div class="flix-stat"><span>Gennemsnitlig set tid</span><b>{% if stats.average_watched %}{{ stats.average_watched|duration }}{% else %}–{% endif %}</b>{% if stats.average_share is not None %}<small>{{ stats.average_share }} % af videoen pr. visning</small>{% endif %}</div>
     <div class="flix-stat"><span>Forskellige seere</span><b>{{ stats.viewers }}</b></div>
     <div class="flix-stat"><span>Visninger de sidste 7 dage</span><b>{{ stats.views_last_week }}</b></div>
   </div>

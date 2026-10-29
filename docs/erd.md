@@ -739,8 +739,9 @@ erDiagram
         int uploaded_by_id FK
         datetime created_at
         datetime published_at
-        date recorded_on
-        bool recorded_on_manual
+        date released_on
+        string release_precision
+        string release_source
         int series_id FK
         int season
         int episode
@@ -828,7 +829,11 @@ erDiagram
         int id PK
         int video_id FK
         int resident_id FK
+        datetime opened_at
         datetime viewed_at
+        datetime active_at
+        float watched
+        bool finished
     }
 
     gahkflix_ChangeRequest {
@@ -852,6 +857,16 @@ erDiagram
         bool approve
         string comment
         datetime created_at
+    }
+
+    gahkflix_VideoEvent {
+        int id PK
+        int video_id FK
+        string kind
+        int actor_id FK
+        datetime created_at
+        json changes
+        int request_id FK
     }
 
     regnskab_EconomicLedgerEntry {
@@ -881,7 +896,7 @@ erDiagram
         date date_from
         date date_to
         string outcome
-        string detail
+        text detail
         datetime sent_at
     }
 
@@ -995,6 +1010,9 @@ erDiagram
     gahkflix_ChangeRequest }o--|| residents_Resident : "requested_by"
     gahkflix_ChangeVote }o--|| gahkflix_ChangeRequest : "request"
     gahkflix_ChangeVote }o--|| residents_Resident : "voter"
+    gahkflix_VideoEvent }o--|| gahkflix_Video : "video"
+    gahkflix_VideoEvent }o--|o residents_Resident : "actor"
+    gahkflix_VideoEvent }o--|o gahkflix_ChangeRequest : "request"
     regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
 ```
@@ -1403,8 +1421,9 @@ erDiagram
         int uploaded_by_id FK
         datetime created_at
         datetime published_at
-        date recorded_on
-        bool recorded_on_manual
+        date released_on
+        string release_precision
+        string release_source
         int series_id FK
         int season
         int episode
@@ -1492,7 +1511,11 @@ erDiagram
         int id PK
         int video_id FK
         int resident_id FK
+        datetime opened_at
         datetime viewed_at
+        datetime active_at
+        float watched
+        bool finished
     }
 
     gahkflix_ChangeRequest {
@@ -1516,6 +1539,16 @@ erDiagram
         bool approve
         string comment
         datetime created_at
+    }
+
+    gahkflix_VideoEvent {
+        int id PK
+        int video_id FK
+        string kind
+        int actor_id FK
+        datetime created_at
+        json changes
+        int request_id FK
     }
 
     residents_Resident { }
@@ -1543,6 +1576,9 @@ erDiagram
     gahkflix_ChangeRequest }o--|| residents_Resident : "requested_by"
     gahkflix_ChangeVote }o--|| gahkflix_ChangeRequest : "request"
     gahkflix_ChangeVote }o--|| residents_Resident : "voter"
+    gahkflix_VideoEvent }o--|| gahkflix_Video : "video"
+    gahkflix_VideoEvent }o--|o residents_Resident : "actor"
+    gahkflix_VideoEvent }o--|o gahkflix_ChangeRequest : "request"
 ```
 
 ## notifications
@@ -1916,7 +1952,7 @@ erDiagram
         date date_from
         date date_to
         string outcome
-        string detail
+        text detail
         datetime sent_at
     }
 
