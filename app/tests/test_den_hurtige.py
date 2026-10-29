@@ -35,10 +35,11 @@ from den_hurtige.models import (
     DURATION_CHOICES,
     QUICK_EMOJI,
     QuickComment,
+    QuickCommentReaction,
     QuickPost,
     QuickReaction,
 )
-from den_hurtige.views import ARCHIVE_PAGE, channel_counts, posts_for, reactions_for
+from den_hurtige.views import ARCHIVE_PAGE, REPLY_PREVIEW, channel_counts, posts_for, reactions_for
 from notifications import categories
 from notifications.models import Notification, NotificationPreference
 from residents.models import Resident, Role
@@ -1034,11 +1035,12 @@ def test_the_feed_marks_messages_as_swipe_targets_but_not_the_thread_parent(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
     """frontend/src/feed.ts finds swipeable messages by [data-msg-swipe], and reaches the gesture's
-    effect through the controls rendered beside it — the "N svar" anchor and the delete form —
-    rather than by building a request of its own. This pins that contract from the template side.
+    effect through what is rendered with them — data-reply-* for a right swipe (answer from the
+    composer) and the delete form for a left one — rather than by deciding for itself what a
+    message allows. This pins that contract from the template side.
 
-    The thread parent must NOT carry it: it is rendered inside the panel a right-swipe opens, so
-    swiping it would re-open the thread being read."""
+    The thread parent must NOT carry it: it is rendered inside the panel, where a right swipe means
+    "back to the feed", and the panel has its own reply box."""
     author = make_resident(email="a@gahk.dk")
     post = QuickPost.objects.create(author=author, content="Kaffe om fem")
     client.force_login(author)
@@ -1046,14 +1048,16 @@ def test_the_feed_marks_messages_as_swipe_targets_but_not_the_thread_parent(
     feed_body = client.get(FEED_URL).content.decode()
 
     assert "data-msg-swipe" in feed_body
-    assert 'class="msg-hint msg-hint-thread"' in feed_body
+    assert 'class="msg-hint msg-hint-reply"' in feed_body
     assert 'class="msg-hint msg-hint-del"' in feed_body  # own message, so delete is reachable
-    assert 'class="msg-replies"' in feed_body
+    assert f'data-reply-url="{FEED_URL}{post.pk}/kommentar"' in feed_body
+    assert 'class="msg-reply"' in feed_body
 
     parent_body = client.get(f"{FEED_URL}{post.pk}/traad").content.decode()
 
     assert "data-msg-swipe" not in parent_body
     assert "msg-hint" not in parent_body
+    assert "data-reply-url" not in parent_body
 
 
 def test_the_end_of_a_run_is_marked_for_the_avatar_and_the_tail(
@@ -1399,7 +1403,7 @@ def test_the_reply_form_accepts_files(client: Client, make_resident: Callable[..
     silently lost — the kind of thing no server-side test would otherwise notice.
 
     Reads the THREAD now, not the feed: replies moved into the side panel, so the feed carries a
-    "N svar" link and no reply form at all."""
+    reply preview and no reply form at all."""
     user = make_resident(email="a@gahk.dk")
     post = QuickPost.objects.create(author=user, content="Kaffe")
     client.force_login(user)
@@ -2125,16 +2129,19 @@ def test_the_add_reaction_button_spells_itself_out_on_an_untouched_message(
 # --- thread panel --------------------------------------------------------------------------------
 
 
-def test_the_feed_no_longer_loads_replies(client: Client, make_resident: Callable[..., Resident]) -> None:
-    """The feed prefetched comments__author for every post on every poll — loading every reply of
-    every message, five seconds apart, in order to render the number "3".
+def test_the_feed_loads_only_the_newest_replies_of_each_message(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The feed shows a preview of each thread — its newest replies — and must not slide back into
+    loading every reply of every message on every poll, which it once did to print the number "3".
 
-    This is the guard that stops it creeping back: it asserts the poll touches the comment table
-    ZERO times, and that no reply text reaches the feed at all."""
+    So: ONE query selects replies, however many messages there are (views.LATEST_REPLIES, a window
+    function), and it brings back the newest REPLY_PREVIEW of each and nothing older."""
     author = make_resident(email="a@gahk.dk")
     for n in range(3):
         post = QuickPost.objects.create(author=author, content=f"Besked {n}")
-        QuickComment.objects.create(post=post, author=author, content=f"Hemmeligt svar {n}")
+        for k in ("gammelt", "nyere", "nyeste"):
+            QuickComment.objects.create(post=post, author=author, content=f"Svar {n} {k}")
     client.force_login(author)
     client.get(FEED_URL + "opslag")  # warm
 
@@ -2142,12 +2149,37 @@ def test_the_feed_no_longer_loads_replies(client: Client, make_resident: Callabl
         body = client.get(FEED_URL + "opslag").content.decode()
 
     # FROM, not a bare table-name match: the reply-count annotate LEFT JOINs the comment table into
-    # the posts query, which is the whole point. What must not exist is a query that SELECTS the
-    # replies themselves.
+    # the posts query. What is counted here is queries that SELECT the replies themselves.
     loaded = [q for q in captured.captured_queries if 'FROM "den_hurtige_quickcomment"' in q["sql"]]
-    assert loaded == [], "the feed is loading replies again"
-    assert "Hemmeligt svar 0" not in body
-    assert "1 svar" in body  # the count, not the replies
+    assert len(loaded) == 1, loaded
+    assert REPLY_PREVIEW == 2  # the fixture above is written for two
+    for n in range(3):
+        assert f"Svar {n} nyeste" in body
+        assert f"Svar {n} nyere" in body
+        assert f"Svar {n} gammelt" not in body, "older replies stay in the thread panel"
+    assert "3 svar" in body  # the count is of all of them
+
+
+def test_the_reply_preview_reads_oldest_first_and_offers_the_rest(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The slice is taken newest-first and turned round, so the preview reads down into the newest
+    reply the way the conversation does — and says that there is more when there is."""
+    author = make_resident(email="a@gahk.dk")
+    long_thread = QuickPost.objects.create(author=author, content="Lang tråd")
+    for k in ("først", "så", "til sidst"):
+        QuickComment.objects.create(post=long_thread, author=author, content=f"Svar {k}")
+    short_thread = QuickPost.objects.create(author=author, content="Kort tråd")
+    QuickComment.objects.create(post=short_thread, author=author, content="Eneste svar")
+    client.force_login(author)
+
+    body = client.get(FEED_URL).content.decode()
+
+    assert body.index("Svar så") < body.index("Svar til sidst")
+    long_preview = body.split(f'id="msg-{long_thread.pk}"')[1].split("</article>")[0]
+    short_preview = body.split(f'id="msg-{short_thread.pk}"')[1].split("</article>")[0]
+    assert "Se alle" in long_preview
+    assert "Se alle" not in short_preview, "nothing more to see than what is shown"
 
 
 def test_the_reply_count_costs_no_extra_query_per_message(
@@ -2173,11 +2205,13 @@ def test_the_reply_count_costs_no_extra_query_per_message(
     assert len(counted) == 1, counted
 
 
-def test_the_feed_shows_a_reply_count_and_no_reply_form(
+def test_the_feed_shows_the_thread_under_its_message_and_no_reply_form(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
-    """Replies live in the panel now. The feed carries a link and nothing else — the reply form
-    used to be rendered inline on every single message, open or not."""
+    """The newest replies are previewed under their message, inside a link to the thread — and there
+    is still no reply FORM per message, which once rendered on every message, open or not. Answering
+    from the feed goes through the one composer at the bottom (data-reply-* and frontend/src/
+    feed.ts), so nothing per message has to hold a text box."""
     author = make_resident(email="a@gahk.dk")
     post = QuickPost.objects.create(author=author, content="Boremaskine?")
     for text in ("Ja", "Kom forbi"):
@@ -2188,19 +2222,16 @@ def test_the_feed_shows_a_reply_count_and_no_reply_form(
 
     assert "2 svar" in body
     assert f'href="{FEED_URL}{post.pk}/traad"' in body
+    assert "Kom forbi" in body
     assert "reply-form" not in body
-    assert "Kom forbi" not in body
 
 
 def test_a_message_with_replies_is_marked_differently_from_one_without(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
-    """The two states of the "Svar" link must not render as the same object with different words.
-
-    They did. Both were `class="msg-replies"` and nothing else, so a thread on the feed was
-    distinguishable only by reading the row — which is not how anyone scans a chat. `.has-replies`
-    now carries a pill (styles.css) and the speech-bubble glyph, and the empty state carries
-    neither, so the difference survives in the markup where a test can see it.
+    """A thread must be visible on the feed without reading the action row — and a message with no
+    replies must not pretend to have one. The thread is the preview block, with the speech-bubble
+    glyph and the count; the "Svar" action is on both, because answering is offered either way.
 
     Asserted on ONE feed containing both messages rather than on two requests: what matters is
     that they differ from each other in the same view, which is the thing a reader compares.
@@ -2208,23 +2239,21 @@ def test_a_message_with_replies_is_marked_differently_from_one_without(
     author = make_resident(email="a@gahk.dk")
     threaded = QuickPost.objects.create(author=author, content="Boremaskine?")
     QuickComment.objects.create(post=threaded, author=author, content="Ja")
-    QuickPost.objects.create(author=author, content="Ingen svar her")
+    lonely = QuickPost.objects.create(author=author, content="Ingen svar her")
     client.force_login(author)
 
     body = client.get(FEED_URL).content.decode()
+    with_thread = body.split(f'id="msg-{threaded.pk}"')[1].split("</article>")[0]
+    without = body.split(f'id="msg-{lonely.pk}"')[1].split("</article>")[0]
 
-    assert 'class="msg-replies has-replies"' in body
-    assert 'class="msg-replies"' in body  # the other message, unmarked
-
-    # The glyph rides in the marked state ONLY, and each anchor is sliced out to ask that of it.
-    # Counting "#i-chat" across a span of the page cannot answer it: every message also renders a
-    # .msg-hint that references the same sprite symbol for the swipe gesture.
-    anchors = dict(re.findall(r'<a class="msg-replies( has-replies)?"(.*?)</a>', body, re.DOTALL))
-    assert set(anchors) == {" has-replies", ""}, "expected one marked and one unmarked message"
-    assert "#i-chat" in anchors[" has-replies"]
-    assert "#i-chat" not in anchors[""]
-    # And the count still reads as one unbroken string, which is what the icon must not split.
-    assert "1 svar" in anchors[" has-replies"]
+    assert 'class="thread-preview"' in with_thread
+    assert 'class="thread-preview"' not in without
+    assert 'class="msg-reply"' in with_thread
+    assert 'class="msg-reply"' in without
+    # The glyph and the count ride in the preview, and the count stays one unbroken string.
+    preview = with_thread.split('class="thread-preview"')[1]
+    assert "#i-chat" in preview
+    assert "1 svar" in preview
 
 
 def test_the_thread_panel_lives_outside_the_polled_region(
@@ -2242,7 +2271,7 @@ def test_the_thread_panel_lives_outside_the_polled_region(
     polled = client.get(FEED_URL + "opslag").content.decode()
     page = client.get(FEED_URL).content.decode()
 
-    # The CONTAINER, not the string: every "N svar" link in the feed legitimately carries
+    # The CONTAINER, not the string: every reply preview in the feed legitimately carries
     # hx-target="#js-thread", which is how it reaches a container outside its own swap.
     assert 'id="js-thread"' not in polled, "the panel is inside the region that gets morphed"
     assert 'id="js-thread"' in page
@@ -2478,7 +2507,7 @@ def test_a_thread_in_a_restricted_channel_is_404(
 def test_the_thread_page_stands_alone_without_htmx(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
-    """The "N svar" anchor has a real href, so the thread works with no JavaScript at all — that is
+    """The reply preview has a real href, so the thread works with no JavaScript at all — that is
     what keeps the no-JS path the old <details> had."""
     author = make_resident(email="a@gahk.dk")
     post = QuickPost.objects.create(author=author, content="Boremaskine?")
@@ -2784,11 +2813,12 @@ def test_the_archive_renders_no_control_that_would_write(
 def test_an_archived_message_links_to_its_thread_like_any_other(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
-    """The replies are in the side panel, not inlined under the message.
+    """The archive draws the same reply preview the live feed does, linking to the same panel.
 
-    They were briefly inlined behind a <details>, which meant a reader had to learn a second control
-    to open the same conversation one screen higher up. What makes an archived thread safe is that
-    the PANEL refuses writes (no reply form, no reactions, no poll), not that the link is missing."""
+    The thread was briefly inlined in full behind a <details>, which meant a reader had to learn a
+    second control to open the same conversation one screen higher up. What makes an archived
+    thread safe is that the PANEL refuses writes (no reply form, no reactions, no poll), and that
+    the message offers no "Svar" — not that the conversation is hidden."""
     author = make_resident(email="a@gahk.dk")
     post = archived_post(author, "Hvem har min boremaskine")
     QuickComment.objects.create(post=post, author=author, content="Den staar i kaelderen")
@@ -2798,7 +2828,8 @@ def test_an_archived_message_links_to_its_thread_like_any_other(
 
     assert "1 svar" in body
     assert f"/intern/den-hurtige/{post.pk}/traad" in body
-    assert "Den staar i kaelderen" not in body, "the chunk counts replies, it does not carry them"
+    assert "Den staar i kaelderen" in body, "the preview, as on the live feed"
+    assert "data-reply-url" not in body, "nothing in the archive can be answered"
 
     panel = client.get(f"{FEED_URL}{post.pk}/traad", HTTP_HX_REQUEST="true").content.decode()
     assert "Den staar i kaelderen" in panel
@@ -3605,3 +3636,365 @@ def test_the_authors_name_links_to_their_profile(
     body = client.get(FEED_URL).content.decode()
 
     assert f'href="{reverse("resident_profile", args=[author.pk])}">{author.full_name}</a>' in body
+
+
+# --- replies as a conversation: bubbles, reactions, and answering from the feed --------------------
+
+
+def reply_to(
+    post: QuickPost, author: Resident, content: str = "Svar", *, minutes_ago: float = 0
+) -> QuickComment:
+    """A reply written `minutes_ago` — created_at is auto_now_add, so it is forced afterwards."""
+    reply = QuickComment.objects.create(post=post, author=author, content=content)
+    if minutes_ago:
+        QuickComment.objects.filter(pk=reply.pk).update(
+            created_at=timezone.now() - timedelta(minutes=minutes_ago)
+        )
+        reply.refresh_from_db()
+    return reply
+
+
+def react_to_reply(client: Client, reply: QuickComment, emoji: str) -> object:
+    return client.post(f"{FEED_URL}svar/{reply.pk}/reaktion", {"emoji": emoji})
+
+
+def from_composer(client: Client, post: QuickPost, data: dict) -> object:
+    """A reply sent by the feed's composer, as frontend/src/feed.ts sends it."""
+    return client.post(
+        f"{FEED_URL}{post.pk}/kommentar", data, HTTP_HX_REQUEST="true", HTTP_HX_TARGET="js-composer"
+    )
+
+
+def test_a_reply_takes_one_reaction_per_person_like_a_message(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The message's toggle, one level down (core.reactions.apply_toggle): a new emoji replaces
+    yours, the same one clears it, and only the reply's own row is sent back."""
+    author = make_resident(email="a@gahk.dk")
+    reader = make_resident(email="b@gahk.dk")
+    post = QuickPost.objects.create(author=author, content="Boremaskine?")
+    reply = reply_to(post, author, "Den står i kælderen")
+    client.force_login(reader)
+
+    first = react_to_reply(client, reply, THUMB)
+    assert first.status_code == 200
+    assert f'id="reactions-svar-{reply.pk}"' in first.content.decode()
+    assert list(QuickCommentReaction.objects.values_list("emoji", flat=True)) == [THUMB]
+
+    react_to_reply(client, reply, "🎉")
+    assert list(QuickCommentReaction.objects.values_list("emoji", flat=True)) == ["🎉"]
+
+    react_to_reply(client, reply, "🎉")
+    assert not QuickCommentReaction.objects.exists()
+    assert not QuickReaction.objects.exists(), "the message's own reactions are a different table"
+
+
+def test_a_reply_and_a_message_with_the_same_pk_keep_separate_reaction_rows(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """Both rows can be on screen at once — the thread panel draws the message above its replies —
+    and every id inside a row is suffixed with its key, so "7" and "svar-7" must never meet."""
+    author = make_resident(email="a@gahk.dk")
+    post = QuickPost.objects.create(author=author, content="Kaffe")
+    reply = reply_to(post, author)
+    QuickComment.objects.filter(pk=reply.pk).update(id=post.pk)
+    client.force_login(author)
+
+    panel = client.get(f"{FEED_URL}{post.pk}/traad", HTTP_HX_REQUEST="true").content.decode()
+
+    assert panel.count(f'id="reactions-{post.pk}"') == 1
+    assert panel.count(f'id="reactions-svar-{post.pk}"') == 1
+    assert f'hx-post="{FEED_URL}svar/{post.pk}/reaktion"' in panel
+    assert f'hx-post="{FEED_URL}{post.pk}/reaktion"' in panel
+
+
+def test_reacting_to_a_reply_tells_the_reply_author_and_nobody_else(
+    client: Client, make_resident: Callable[..., Resident], pushes: list
+) -> None:
+    """It is about what THEY wrote, so it is addressed to them and not to the message's author —
+    under the same low-importance category as reactions to messages, grouped per reply."""
+    author = make_resident(email="a@gahk.dk")
+    replier = make_resident(email="b@gahk.dk")
+    reactor = make_resident(email="c@gahk.dk", first_name="Magnus", last_name="Pedersen")
+    for user in (author, replier, reactor):
+        subscribe(user, f"https://push.example/{user.pk}")
+    post = QuickPost.objects.create(author=author, content="Boremaskine?")
+    reply = reply_to(post, replier, "Den står i kælderen")
+    pushes.clear()
+
+    client.force_login(reactor)
+    react_to_reply(client, reply, THUMB)
+
+    [(recipients, payload)] = pushes
+    assert recipients == [replier.pk]
+    assert payload["head"] == "Magnus Pedersen reagerede på dit svar"
+    assert payload["body"] == f"{THUMB} Den står i kælderen"
+    assert payload["url"] == f"{FEED_URL}?traad={post.pk}"
+    row = Notification.objects.get(recipient=replier)
+    assert row.category == categories.CHAT_LIKES
+    assert row.group_key == f"chat.likes.svar:{reply.pk}"
+    assert not Notification.objects.filter(recipient=author, category=categories.CHAT_LIKES).exists()
+
+
+def test_reacting_to_your_own_reply_notifies_nobody(
+    client: Client, make_resident: Callable[..., Resident], pushes: list
+) -> None:
+    author = make_resident(email="a@gahk.dk")
+    subscribe(author, "https://push.example/author")
+    post = QuickPost.objects.create(author=author, content="Kaffe")
+    reply = reply_to(post, author)
+    client.force_login(author)
+
+    react_to_reply(client, reply, THUMB)
+
+    assert QuickCommentReaction.objects.count() == 1
+    assert pushes == []
+    assert not Notification.objects.filter(category=categories.CHAT_LIKES).exists()
+
+
+def test_a_reply_in_an_archived_or_deleted_thread_cannot_be_reacted_to(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The message's rules, because the reply is resolved through its message: nothing is written,
+    and the row comes back read-only — the panel drew it that way already, so this is a stale page."""
+    author = make_resident(email="a@gahk.dk")
+    old = archived_post(author, "Gammel")
+    gone = aged(author, "Fortrudt")
+    old_reply = reply_to(old, author)
+    gone_reply = reply_to(gone, author)
+    client.force_login(author)
+    client.post(f"{FEED_URL}{gone.pk}/slet")  # past the grace period: a tombstone that keeps its replies
+
+    for reply in (old_reply, gone_reply):
+        response = react_to_reply(client, reply, THUMB)
+        assert response.status_code == 200
+        assert "emoji-picker" not in response.content.decode()
+    assert not QuickCommentReaction.objects.exists()
+
+
+def test_a_reply_in_a_restricted_channel_cannot_be_reacted_to(
+    client: Client, make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Addressed by the reply's own pk, which says nothing about its channel — so the message's
+    channel check runs first, and a guessed pk answers 404 like the message's endpoints do."""
+    secret = Channel("internt", "Internt", "flash", "", roles=(Role.INSPEKTION,))
+    monkeypatch.setattr(channels, "CHANNELS", (*channels.CHANNELS, secret))
+    monkeypatch.setattr(channels, "BY_SLUG", {c.slug: c for c in channels.CHANNELS})
+    author = make_resident(email="a@gahk.dk")
+    post = QuickPost.objects.create(author=author, content="Fortroligt", channel="internt")
+    reply = reply_to(post, author)
+    client.force_login(make_resident(email="b@gahk.dk"))
+
+    assert react_to_reply(client, reply, THUMB).status_code == 404
+    assert not QuickCommentReaction.objects.exists()
+
+
+def test_a_reply_reaction_goes_with_its_reply(make_resident: Callable[..., Resident]) -> None:
+    author = make_resident(email="a@gahk.dk")
+    post = QuickPost.objects.create(author=author, content="Kaffe")
+    reply = reply_to(post, author)
+    QuickCommentReaction.objects.create(comment=reply, author=author, emoji=THUMB)
+
+    post.delete()
+
+    assert not QuickCommentReaction.objects.exists()
+
+
+def test_the_thread_draws_replies_as_chat_bubbles_in_runs(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The same shape as the feed: a burst from one person is one run (the name once, at its start;
+    the avatar and the tail at its end), and your own replies are marked for the right-hand side."""
+    author = make_resident(email="a@gahk.dk", first_name="Anders", last_name="Kjær")
+    helper = make_resident(email="b@gahk.dk", first_name="Bente", last_name="Lund")
+    post = QuickPost.objects.create(author=author, content="Boremaskine?")
+    first = reply_to(post, helper, "Jeg har en", minutes_ago=10)
+    second = reply_to(post, helper, "Den står i kælderen", minutes_ago=9)
+    mine = reply_to(post, author, "Tak!", minutes_ago=5)
+    client.force_login(author)
+
+    panel = client.get(f"{FEED_URL}{post.pk}/traad", HTTP_HX_REQUEST="true").content.decode()
+
+    def bubble(reply: QuickComment) -> str:
+        return panel.split(f'id="svar-{reply.pk}"')[0].rsplit("<article", 1)[1]
+
+    assert "msg-grouped" not in bubble(first) and "msg-tail" not in bubble(first)
+    assert "msg-grouped" in bubble(second) and "msg-tail" in bubble(second)
+    assert "msg-own" in bubble(mine) and "msg-own" not in bubble(first)
+    assert panel.count("Bente Lund</a>") == 1, "the name once per run"
+
+
+def test_a_reply_shows_its_photo_and_its_reactions_inside_the_thread(
+    client: Client, make_resident: Callable[..., Resident], settings: object, tmp_path: Path
+) -> None:
+    settings.MEDIA_ROOT = tmp_path  # type: ignore[attr-defined]
+    author = make_resident(email="a@gahk.dk")
+    helper = make_resident(email="b@gahk.dk")
+    post = QuickPost.objects.create(author=author, content="Hvilken pære?")
+    image = SimpleUploadedFile("paere.jpg", bytes.fromhex("ffd8ff") + b"x" * 512, content_type="image/jpeg")
+    reply = QuickComment.objects.create(post=post, author=helper, content="Den her", image=image)
+    QuickCommentReaction.objects.create(comment=reply, author=author, emoji=THUMB)
+    client.force_login(author)
+
+    panel = client.get(f"{FEED_URL}{post.pk}/traad", HTTP_HX_REQUEST="true").content.decode()
+    article = panel.split(f'id="svar-{reply.pk}"')[1].split("</article>")[0]
+
+    assert 'class="msg-bubble"' in article
+    assert 'class="msg-image"' in article.split('class="msg-actions"')[0], "the photo is in the bubble"
+    assert f'{THUMB} <span class="n">1</span>' in article
+    assert 'aria-pressed="true"' in article, "it is mine"
+    assert f'id="picker-svar-{reply.pk}"' in article
+
+
+def test_an_archived_thread_draws_reply_reactions_read_only(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    author = make_resident(email="a@gahk.dk")
+    post = archived_post(author, "Gammel")
+    reply = reply_to(post, author)
+    QuickCommentReaction.objects.create(comment=reply, author=author, emoji=THUMB)
+    client.force_login(author)
+
+    panel = client.get(f"{FEED_URL}{post.pk}/traad", HTTP_HX_REQUEST="true").content.decode()
+
+    assert "emoji-picker" not in panel
+    assert "reaction is-static" in panel, "the count is still there, as a fact rather than a button"
+
+
+def test_a_thread_costs_the_same_queries_however_many_replies_have_reactions(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """Replies with their authors, then their reactions with theirs: two queries for the replies
+    whether there are two of them or ten, with reactions or without (views._thread_replies)."""
+    author = make_resident(email="a@gahk.dk")
+    small = QuickPost.objects.create(author=author, content="Lille")
+    for _ in range(2):
+        reply_to(small, author)
+    big = QuickPost.objects.create(author=author, content="Stor")
+    for n in range(10):
+        reply = reply_to(big, make_resident(email=f"r{n}@gahk.dk"))
+        QuickCommentReaction.objects.create(comment=reply, author=author, emoji=THUMB)
+    client.force_login(author)
+    client.get(f"{FEED_URL}{small.pk}/traad", HTTP_HX_REQUEST="true")  # warm
+
+    def cost(post: QuickPost) -> int:
+        with CaptureQueriesContext(connection) as captured:
+            client.get(f"{FEED_URL}{post.pk}/traad", HTTP_HX_REQUEST="true")
+        return len(captured.captured_queries)
+
+    assert cost(small) == cost(big)
+
+
+def test_a_message_with_replies_ends_its_run(make_resident: Callable[..., Resident]) -> None:
+    """Its preview is drawn under it, between it and the next message, so the two cannot be joined
+    into one shape however close together they were written."""
+    author = make_resident(email="a@gahk.dk")
+    threaded = QuickPost.objects.create(author=author, content="Først")
+    reply_to(threaded, author)
+    QuickPost.objects.create(author=author, content="Lige efter")
+    request = RequestFactory().get(FEED_URL)
+    request.user = author
+
+    first, second = _messages(posts_for(request, channels.DEFAULT))
+
+    assert first.group_end is True
+    assert second.grouped is False
+
+
+def test_the_preview_quotes_a_reply_without_links_inside_its_own_link(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The whole preview is the link into the thread, and a link inside a link is invalid HTML that
+    a browser untangles by breaking the outer one apart — so a mention reads as @Name and a URL as
+    its short text there (|plain), while the thread itself still links both."""
+    author = make_resident(email="a@gahk.dk")
+    post = QuickPost.objects.create(author=author, content="Hvem ved det?")
+    reply_to(post, author, f"@[Anders Hansen]({author.pk}) se https://example.com/vaskeri")
+    client.force_login(author)
+
+    body = client.get(FEED_URL).content.decode()
+    preview = body.split('class="thread-preview"')[1].split("</a>")[0]
+
+    assert "@Anders Hansen se example.com/vaskeri" in preview
+    assert "<a " not in preview
+
+
+def test_a_reply_from_the_feed_composer_is_answered_with_a_status(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """The composer is not looking at the thread, so it gets no reply list — just whether the reply
+    was stored (201) and any messages as JSON. "Underret alle" travels with it like from the panel."""
+    author = make_resident(email="a@gahk.dk")
+    helper = make_resident(email="b@gahk.dk")
+    post = QuickPost.objects.create(author=author, content="Boremaskine?")
+    client.force_login(helper)
+
+    response = from_composer(client, post, {"content": "Jeg har en", "notify": "alle", "duration": ""})
+
+    assert response.status_code == 201
+    assert response.json() == {"messages": []}
+    reply = QuickComment.objects.get()
+    assert (reply.post_id, reply.author_id, reply.content) == (post.pk, helper.pk, "Jeg har en")
+    assert reply.notify_everyone is True
+
+
+def test_a_refused_reply_from_the_composer_says_why_and_stores_nothing(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    author = make_resident(email="a@gahk.dk")
+    live = QuickPost.objects.create(author=author, content="Kaffe")
+    old = archived_post(author, "Gammel")
+    client.force_login(author)
+
+    empty = from_composer(client, live, {"content": "   "})
+    late = from_composer(client, old, {"content": "For sent"})
+
+    assert empty.status_code == 422
+    assert empty.json()["messages"] == [
+        {"level": "error", "text": "Skriv et svar, eller vedhæft et billede."}
+    ]
+    assert late.status_code == 422
+    assert "arkiveret" in late.json()["messages"][0]["text"]
+    assert not QuickComment.objects.exists()
+
+
+def test_a_reply_from_the_composer_keeps_its_text_when_the_photo_is_refused(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """Stored, so 201 — but the warning about the photo comes with it, for the composer to show."""
+    author = make_resident(email="a@gahk.dk")
+    post = QuickPost.objects.create(author=author, content="Kaffe")
+    client.force_login(author)
+    bad = SimpleUploadedFile(
+        "evil.svg", b"<svg xmlns='http://www.w3.org/2000/svg'/>", content_type="image/svg+xml"
+    )
+
+    response = from_composer(client, post, {"content": "Her", "image": bad})
+
+    assert response.status_code == 201
+    [note] = response.json()["messages"]
+    assert note["level"] == "warning"
+    assert "Billedet blev ikke gemt" in note["text"]
+    assert QuickComment.objects.get().content == "Her"
+
+
+def test_only_a_message_that_can_be_answered_offers_the_composer_a_target(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """data-reply-* is the composer's whole permission: present on a live message, absent on a
+    tombstone, whose right swipe opens the thread it left behind instead."""
+    author = make_resident(email="a@gahk.dk")
+    live = QuickPost.objects.create(author=author, content="Kaffe")
+    gone = aged(author, "Fortrudt")
+    reply_to(gone, author, "Svar der bliver")
+    client.force_login(author)
+    client.post(f"{FEED_URL}{gone.pk}/slet")
+
+    body = client.get(FEED_URL).content.decode()
+    live_msg = body.split(f'id="msg-{live.pk}"')[1].split(">")[0]
+    tombstone = body.split(f'id="msg-{gone.pk}"')[1].split("</article>")[0]
+
+    assert f'data-reply-url="{FEED_URL}{live.pk}/kommentar"' in live_msg
+    assert "data-reply-url" not in tombstone
+    assert "msg-hint-thread" in tombstone and "msg-hint-reply" not in tombstone
+    assert "Svar der bliver" in tombstone, "the preview of the replies it kept"

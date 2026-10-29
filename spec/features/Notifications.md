@@ -27,7 +27,7 @@ Features decide **who** is told and **with what wording**; they call
 |---|---|---|---|
 | Den Hurtige | `chat.room.<slug>` — one per room: Den Hurtige, TV-Rezz, G. A. Sportsmann, GAHKroom, M.H.G.A | Normal | **no — push only** |
 | Den Hurtige | `chat.replies` — replies to your message | Normal | yes |
-| Den Hurtige | `chat.likes` — reactions to your message | Lav | yes |
+| Den Hurtige | `chat.likes` — reactions to your message or reply | Lav | yes |
 | Opslagstavlen | `posts.new` | Normal | yes |
 | Opslagstavlen | `posts.replies` — comments on your post | Normal | yes |
 | Opslagstavlen | `posts.likes` — reactions to your post | Lav | yes |
@@ -101,6 +101,8 @@ they would get a 403 on opening. Acting on your own content never notifies you.
     the room is notified too (except the replier and the author, who already got the reply).
   - A reaction → grouped `chat.likes` to the message's author only, and **only when a reaction is
     created** — changing or removing an emoji never notifies.
+  - A reaction on a reply → the same, to the **reply's** author (not the message's), grouped per
+    reply: "Bente reagerede på dit svar".
 - **Opslagstavlen**
   - A new post → `posts.new` to everyone who can open the board, except the author. The body is
     the post as plain text, not Markdown.

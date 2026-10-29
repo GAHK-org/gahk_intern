@@ -1,9 +1,11 @@
-{% load text_extras %}
 {% comment %}
   Just the replies. Swapped on its own by create_comment (see views._comment_response), which is
   why the reply FORM is not in here: the form carries data-morph-skip so the panel's poll cannot
   wipe half-typed text, and a swap that replaced the form would skip it and leave the sent text
   sitting in the box. Keeping the form outside this fragment is what lets it reset itself.
+
+  `replies` comes from views._thread_replies: oldest first, marked into runs, each with its reaction
+  row. Each one is a chat bubble (_reply.html).
 {% endcomment %}
 <div class="thread-replies" id="js-replies-{{ post.pk }}">
   {% if messages %}
@@ -17,24 +19,9 @@
     </ul>
   {% endif %}
 
-  {% for comment in post.comments.all %}
-    <div class="reply">
-      <a class="reply-name author-link" href="{% url 'resident_profile' comment.author_id %}">{{ comment.author.full_name }}</a>
-      <span class="msg-meta">{{ comment.created_at|date:"H:i" }}</span>
-      {% comment %}
-        Guarded because a reply may be a photo with no caption: an empty <div> still occupies its
-        line-height, which left a blank line between the byline and the picture.
-      {% endcomment %}
-      {% if comment.content %}<div class="msg-text">{{ comment.content|links }}</div>{% endif %}
-      {% if comment.image %}
-        {# data-viewer: a bare <img> is what a long press can save. See _message.html. #}
-        <a href="{{ comment.image.url }}" target="_blank" rel="noopener" class="msg-image"
-           data-viewer data-name="{{ comment.image.name|basename }}">
-          <img src="{{ comment.image.url }}" alt="" loading="lazy">
-        </a>
-      {% endif %}
-    </div>
+  {% for reply in replies %}
+    {% include "den_hurtige/_reply.html" %}
   {% empty %}
-    <p class="thread-empty muted">Ingen svar endnu. Skriv det første.</p>
+    <p class="thread-empty muted">{% if read_only %}Ingen svar.{% else %}Ingen svar endnu. Skriv det første.{% endif %}</p>
   {% endfor %}
 </div>

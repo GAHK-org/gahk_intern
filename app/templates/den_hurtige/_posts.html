@@ -3,10 +3,10 @@
   den_hurtige:feed_items for the 5s poll. Keep it self-contained: it is morphed into #js-feed
   wholesale, so anything outside this file will not refresh.
 
-  Replies are NOT here. Each message carries a "N svar" link into den_hurtige:thread, which opens
-  the side panel (#js-thread, a sibling of the polled region — see feed.html). That is what let the
-  feed query stop prefetching every reply of every message every five seconds; it now annotates a
-  count instead. See views._active_posts.
+  Replies are NOT here in full. Each message carries a preview of its newest replies, linking into
+  den_hurtige:thread, which opens the side panel (#js-thread, a sibling of the polled region — see
+  feed.html). The poll fetches at most views.REPLY_PREVIEW replies per message, in one query, plus
+  a count; the panel fetches a whole thread when somebody opens one. See views._active_posts.
 
   Oldest first — the newest message sits directly above the composer, as in any chat.
 {% endcomment %}

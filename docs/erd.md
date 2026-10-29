@@ -422,6 +422,14 @@ erDiagram
         datetime created_at
     }
 
+    den_hurtige_QuickCommentReaction {
+        int id PK
+        int comment_id FK
+        int author_id FK
+        string emoji
+        datetime created_at
+    }
+
     opslagstavle_Notice {
         int id PK
         string author_embedsgruppe
@@ -881,7 +889,7 @@ erDiagram
         date date_from
         date date_to
         string outcome
-        string detail
+        text detail
         datetime sent_at
     }
 
@@ -927,6 +935,8 @@ erDiagram
     den_hurtige_QuickComment }o--|| residents_Resident : "author"
     den_hurtige_QuickReaction }o--|| den_hurtige_QuickPost : "post"
     den_hurtige_QuickReaction }o--|| residents_Resident : "author"
+    den_hurtige_QuickCommentReaction }o--|| den_hurtige_QuickComment : "comment"
+    den_hurtige_QuickCommentReaction }o--|| residents_Resident : "author"
     opslagstavle_Notice }o--|| residents_Resident : "author"
     opslagstavle_Notice }o--|o residents_Resident : "pinned_by"
     opslagstavle_Notice }o--|o events_Event : "event"
@@ -1296,6 +1306,14 @@ erDiagram
         datetime created_at
     }
 
+    den_hurtige_QuickCommentReaction {
+        int id PK
+        int comment_id FK
+        int author_id FK
+        string emoji
+        datetime created_at
+    }
+
     residents_Resident { }
 
     den_hurtige_QuickPost }o--|| residents_Resident : "author"
@@ -1303,6 +1321,8 @@ erDiagram
     den_hurtige_QuickComment }o--|| residents_Resident : "author"
     den_hurtige_QuickReaction }o--|| den_hurtige_QuickPost : "post"
     den_hurtige_QuickReaction }o--|| residents_Resident : "author"
+    den_hurtige_QuickCommentReaction }o--|| den_hurtige_QuickComment : "comment"
+    den_hurtige_QuickCommentReaction }o--|| residents_Resident : "author"
 ```
 
 ## events
@@ -1916,7 +1936,7 @@ erDiagram
         date date_from
         date date_to
         string outcome
-        string detail
+        text detail
         datetime sent_at
     }
 

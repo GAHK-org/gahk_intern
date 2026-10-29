@@ -261,6 +261,39 @@
         page it is on — there is no client state to fall out of sync.
       {% endcomment %}
       <input type="hidden" name="kanal" value="{{ channel.slug }}">
+
+      {% comment %}
+        REPLYING FROM THE FEED. Hidden until "Svar" (or a right swipe) on a message turns this
+        composer into an answer to it — frontend/src/feed.ts fills in who and what from the
+        message's data-reply-* attributes, sends the text to that message's reply endpoint instead
+        of creating a post, and turns the composer back afterwards. The thread is never opened:
+        the answer appears in the message's reply preview, where everybody else sees it too.
+
+        The duration sheet is skipped while this is showing. A reply has no lifetime of its own (it
+        lives as long as its message, see models.QuickComment), so there is nothing to ask.
+
+        "Underret alle" is the thread's own checkbox, and `disabled` whenever this bar is hidden so a
+        post never carries it. "Åbn tråden" is the way into the whole conversation from here; it
+        takes whatever has been typed along into the thread's own reply box.
+
+        A grid item of its own (grid-area "reply", styles.css), because every child of .composer is
+        placed by name — see the note on the duration sheet below for what an unplaced one does.
+      {% endcomment %}
+      <div class="composer-reply" id="js-composer-reply" hidden>
+        <div class="composer-reply-head">
+          <svg class="ni" aria-hidden="true"><use href="#i-reply"></use></svg>
+          <span class="composer-reply-quote">Svar til <b data-reply-slot="name"></b>: <span class="composer-reply-text" data-reply-slot="text"></span></span>
+          <button type="button" class="composer-reply-cancel" data-reply-cancel aria-label="Annullér svar">&times;</button>
+        </div>
+        <div class="composer-reply-foot">
+          <label class="composer-reply-notify">
+            <input type="checkbox" name="notify" value="alle" disabled> Underret alle
+          </label>
+          <button type="button" class="composer-reply-open" data-reply-open>Åbn tråden ›</button>
+        </div>
+        <p class="composer-reply-error" data-reply-error role="alert" hidden></p>
+      </div>
+
       <label class="composer-attach" for="id_image" title="Vedhæft billede">
         <span aria-hidden="true">📎</span>
         <span class="sr-only">Vedhæft billede</span>
