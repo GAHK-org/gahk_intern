@@ -40,22 +40,12 @@ class NoticeForm(forms.ModelForm):
         model = Notice
         # Explicit, which kills mass-assignment: pinned_at/pinned_by/author/edited_at are set by the
         # views that are allowed to set them, never by whatever arrives in the POST body.
-        fields = ["category", "body", "event", "album", "video"]
-        labels = {
-            "category": "Kategori",
-            "body": "Indhold",
-            "event": "Handler om",
-            "album": "Fotoalbum",
-            "video": "Video",
-        }
+        fields = ["category", "body", "event"]
+        labels = {"category": "Kategori", "body": "Indhold", "event": "Handler om"}
         help_texts = {
             "event": "Valgfrit. Knytter opslaget til en begivenhed, så folk kan gå direkte til tilmeldingen.",
         }
         widgets = {
-            # Set by the composer's picker (templates/opslagstavle/_attachments.html), which draws the
-            # album's or the film's own widget in their place.
-            "album": forms.HiddenInput,
-            "video": forms.HiddenInput,
             "body": forms.Textarea(
                 attrs={
                     "rows": 16,
@@ -66,14 +56,7 @@ class NoticeForm(forms.ModelForm):
             ),
         }
 
-    def __init__(
-        self,
-        *args: object,
-        events_allowed: bool = True,
-        albums_allowed: bool = True,
-        videos_allowed: bool = True,
-        **kwargs: object,
-    ) -> None:
+    def __init__(self, *args: object, events_allowed: bool = True, **kwargs: object) -> None:
         """Bind the event choices HERE, never at class level.
 
         Two reasons, and the first is the ordinary one: the queryset depends on "now", so a
@@ -89,22 +72,8 @@ class NoticeForm(forms.ModelForm):
         rollout gate, and offering somebody a list of events they cannot open is at best confusing;
         removing it also means a POST naming one is ignored rather than merely unrendered, which is
         the difference between a hidden control and an absent one.
-
-        The album and the film follow the same rules for the same reasons: removed for a reader who
-        cannot open the photo album or GAHKFlix, and a film only from those everyone with access
-        sees (opslagstavle.attachments.attachable_videos), plus the one a post already carries.
         """
         super().__init__(*args, **kwargs)  # type: ignore[arg-type]
-        # The text may be left out when an album or a film says it all; `clean` asks for one of them.
-        self.fields["body"].required = False
-        if not albums_allowed:
-            del self.fields["album"]
-        if videos_allowed:
-            from .attachments import attachable_videos
-
-            self.fields["video"].queryset = attachable_videos(self.instance.video_id)  # type: ignore[attr-defined]
-        else:
-            del self.fields["video"]
         if not events_allowed:
             del self.fields["event"]
             return
@@ -119,18 +88,11 @@ class NoticeForm(forms.ModelForm):
         that.
         """
         body = (self.cleaned_data.get("body") or "").strip()
+        if not body:
+            raise forms.ValidationError("Skriv et indhold.")
         if len(body) > MAX_BODY_CHARS:
             raise forms.ValidationError(f"Opslaget må højst fylde {MAX_BODY_CHARS} tegn.")
         return body
-
-    def clean(self) -> dict[str, object]:
-        """Text, an album or a film: a post needs one of them. "Her er billederne" adds nothing an
-        album's own widget does not say, so the album may be the whole post."""
-        cleaned = super().clean() or {}
-        attached = cleaned.get("album") or cleaned.get("video")
-        if not cleaned.get("body") and not attached and "body" not in self.errors:
-            self.add_error("body", "Skriv et indhold, eller vedhæft et album eller en video.")
-        return cleaned
 
 
 class NoticeCommentForm(forms.ModelForm):

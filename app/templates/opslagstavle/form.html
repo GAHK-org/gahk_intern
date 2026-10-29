@@ -17,15 +17,8 @@
     {% if form.non_field_errors %}
       <div class="errorlist">{{ form.non_field_errors }}</div>
     {% endif %}
-    {% for field in form.hidden_fields %}
-      {% if field.errors %}<p class="errorlist text-sm">{{ field.label }}: {{ field.errors|striptags }}</p>{% endif %}
-    {% endfor %}
 
-    {% comment %}
-      Visible fields only: the album and the film are hidden fields, drawn by _attachments.html below
-      with the widgets they stand for.
-    {% endcomment %}
-    {% for field in form.visible_fields %}
+    {% for field in form %}
       {% if field.name != 'body' %}
         <div class="mb-3">
           <label for="{{ field.id_for_label }}" class="font-semibold block mb-1">{{ field.label }}</label>
@@ -79,6 +72,35 @@
           Du kan skrive med Markdown: <code>**fed**</code>, <code>## overskrift</code>,
           <code>- punkt</code>, <code>[tekst](adresse)</code> og tabeller.
         </p>
+
+        {% comment %}
+          The albums and films the body embeds (`![Julefrokost 2026](album:12)`), drawn as the post
+          will draw them and re-drawn by the server a moment after typing stops (views.embedded). The
+          buttons open the pickers below the form, which put an embed in the body at the cursor; the
+          toolbar's and the pickers' insertions dispatch `input`, so they count as typing.
+        {% endcomment %}
+        <div class="board-embeds" id="js-embedded"
+             hx-post="{% url 'opslagstavle:embedded' %}"
+             hx-trigger="input delay:500ms from:#{{ form.body.id_for_label }}"
+             hx-include="#{{ form.body.id_for_label }}"
+             hx-swap="innerHTML">
+          {% include "opslagstavle/_embedded.html" %}
+        </div>
+        {% if albums_allowed or videos_allowed %}
+          <div class="board-embed-buttons">
+            <span>Indsæt</span>
+            {% if albums_allowed %}
+              <button type="button" class="board-embed-button is-album" data-embed-open="album">
+                <svg class="ni" aria-hidden="true"><use href="#i-photo"></use></svg>Fotoalbum
+              </button>
+            {% endif %}
+            {% if videos_allowed %}
+              <button type="button" class="board-embed-button is-video" data-embed-open="video">
+                <b aria-hidden="true">G</b>Video fra GAHKFlix
+              </button>
+            {% endif %}
+          </div>
+        {% endif %}
       </div>
 
       {% comment %}
@@ -95,12 +117,6 @@
       </div>
     </div>
 
-    {% comment %}
-      The album and the film the post carries, drawn as the post will show them, and the buttons that
-      open the pickers below the form (outside it, so Enter in a picker's search never posts).
-    {% endcomment %}
-    {% include "opslagstavle/_attachments.html" %}
-
     <div class="flex items-center gap-3 mt-4">
       <button type="submit" class="btn">{% if notice %}Gem ændringer{% else %}Slå op{% endif %}</button>
       <a href="{% if notice %}{% url 'opslagstavle:detail' notice.pk %}{% else %}{% url 'opslagstavle:board' %}{% endif %}">Annullér</a>
@@ -108,34 +124,35 @@
   </form>
 
   {% comment %}
-    The pickers. A search lists what matches as it is typed (views.attach_choices); opening one loads
-    the newest (the `attach-open` event, opslagstavle.ts), and picking one re-draws the attachments
-    block above and closes it. Native <dialog>: Escape and focus are the browser's.
+    The pickers, outside the form so Enter in a search never posts it. A search lists what matches
+    as it is typed (views.embed_choices); opening one loads the newest (the `embed-open` event,
+    opslagstavle.ts), and picking one embeds it in the body. Native <dialog>: Escape and focus are
+    the browser's.
   {% endcomment %}
   {% if albums_allowed %}
-    <dialog class="board-picker" id="js-attach-album" aria-labelledby="attach-album-title">
+    <dialog class="board-picker" id="js-embed-album" aria-labelledby="embed-album-title">
       <div class="board-picker-head">
-        <h2 id="attach-album-title">Vælg et fotoalbum</h2>
-        <button type="button" class="board-picker-close" data-attach-close aria-label="Luk">&times;</button>
+        <h2 id="embed-album-title">Vælg et fotoalbum</h2>
+        <button type="button" class="board-picker-close" data-embed-close aria-label="Luk">&times;</button>
       </div>
       <input type="search" name="q" class="board-picker-search" placeholder="Søg efter et album …" autocomplete="off"
              aria-label="Søg efter et album"
-             hx-get="{% url 'opslagstavle:attach_albums' %}" hx-trigger="input changed delay:250ms, search, attach-open"
-             hx-target="#js-attach-album-results" hx-sync="this:replace">
-      <div class="board-picker-results" id="js-attach-album-results" aria-live="polite"></div>
+             hx-get="{% url 'opslagstavle:embed_albums' %}" hx-trigger="input changed delay:250ms, search, embed-open"
+             hx-target="#js-embed-album-results" hx-sync="this:replace">
+      <div class="board-picker-results" id="js-embed-album-results" aria-live="polite"></div>
     </dialog>
   {% endif %}
   {% if videos_allowed %}
-    <dialog class="board-picker is-video" id="js-attach-video" aria-labelledby="attach-video-title">
+    <dialog class="board-picker is-video" id="js-embed-video" aria-labelledby="embed-video-title">
       <div class="board-picker-head">
-        <h2 id="attach-video-title"><b aria-hidden="true">GAHKFLIX</b>Vælg en video</h2>
-        <button type="button" class="board-picker-close" data-attach-close aria-label="Luk">&times;</button>
+        <h2 id="embed-video-title"><b aria-hidden="true">GAHKFLIX</b>Vælg en video</h2>
+        <button type="button" class="board-picker-close" data-embed-close aria-label="Luk">&times;</button>
       </div>
       <input type="search" name="q" class="board-picker-search" placeholder="Søg efter en titel eller serie …" autocomplete="off"
              aria-label="Søg efter en video"
-             hx-get="{% url 'opslagstavle:attach_videos' %}" hx-trigger="input changed delay:250ms, search, attach-open"
-             hx-target="#js-attach-video-results" hx-sync="this:replace">
-      <div class="board-picker-results" id="js-attach-video-results" aria-live="polite"></div>
+             hx-get="{% url 'opslagstavle:embed_videos' %}" hx-trigger="input changed delay:250ms, search, embed-open"
+             hx-target="#js-embed-video-results" hx-sync="this:replace">
+      <div class="board-picker-results" id="js-embed-video-results" aria-live="polite"></div>
     </dialog>
   {% endif %}
 {% endblock %}

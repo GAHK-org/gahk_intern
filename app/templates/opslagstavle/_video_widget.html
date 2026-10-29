@@ -1,7 +1,7 @@
 {% load gahkflix %}
 {% comment %}
   A post's film, drawn the way GAHKFlix draws itself: a small version of its hero, dark, with the
-  film's banner, the red wordmark and the white play button (opslagstavle.attachments; the styles are
+  film's banner, the red wordmark and the white play button (opslagstavle.embeds; the styles are
   gahkflix.css's `.flix-embed`).
 
   The title is the link to the film's page, stretched over the whole widget; `Afspil` is the one
@@ -18,7 +18,7 @@
     {% if widget.video.series %}<span class="flix-embed-kicker"><b aria-hidden="true">G</b>{{ widget.video.series.title }}</span>{% endif %}
     <a class="flix-embed-title" href="{{ widget.url }}"{% if compose %} target="_blank" rel="noopener"{% endif %}>{{ widget.video.title }}</a>
     <span class="flix-embed-meta">
-      {% if widget.state %}<span class="flix-state is-binned">{{ widget.state }}</span>{% endif %}
+      {% if widget.state %}<span class="flix-state {% if widget.video.is_binned %}is-binned{% else %}is-draft{% endif %}">{{ widget.state }}</span>{% endif %}
       {% for item in widget.meta %}<span>{{ item }}</span>{% endfor %}
       <span class="flix-embed-quality">{% if widget.full_hd %}Full HD{% else %}HD{% endif %}</span>
     </span>

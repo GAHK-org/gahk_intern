@@ -1591,24 +1591,24 @@
   }
   .notice-gallery-count { @apply text-sm; }
 
-  /* The composer's album and film (opslagstavle/_attachments.html): the widgets as the post will
-     show them, a "Fjern" on each, and the buttons that open the pickers. */
-  .board-attachments { display: grid; gap: 10px; margin-top: 14px; }
-  .board-attachment { position: relative; }
-  .board-attachment > .album-embed, .board-attachment > .flix-embed { margin-top: 0; }
-  .board-attachment-remove { position: absolute; top: 10px; right: 10px; z-index: 2; padding: 5px 12px;
+  /* The composer's embeds (opslagstavle/_embedded.html): the widgets as the post will show them, a
+     "Fjern" on each, and the buttons that open the pickers. */
+  .board-embeds { display: grid; gap: 10px; margin-top: 14px; }
+  .board-embed { position: relative; }
+  .board-embed > .album-embed, .board-embed > .flix-embed { margin-top: 0; }
+  .board-embed-remove { position: absolute; top: 10px; right: 10px; z-index: 2; padding: 5px 12px;
     border: 0; border-radius: 999px; background: rgb(0 0 0 / .62); color: #fff; font-size: 13px;
     font-weight: 600; cursor: pointer; }
-  .board-attachment-remove:hover { background: rgb(0 0 0 / .82); }
-  .board-attach-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px;
-    color: var(--muted); }
-  .board-attach { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px 6px 8px;
+  .board-embed-remove:hover { background: rgb(0 0 0 / .82); }
+  .board-embed-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px;
+    font-size: 14px; color: var(--muted); }
+  .board-embed-button { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px 6px 8px;
     border: 1px solid var(--border-strong); border-radius: 999px; background: var(--surface);
     color: var(--ink); font-size: 14px; font-weight: 600; cursor: pointer; }
-  .board-attach:hover { border-color: var(--green-100); background: var(--green-050); }
-  .board-attach .ni { width: 20px; height: 20px; stroke: var(--brass); fill: none; }
+  .board-embed-button:hover { border-color: var(--green-100); background: var(--green-050); }
+  .board-embed-button .ni { width: 20px; height: 20px; stroke: var(--brass); fill: none; }
   /* GAHKFlix's red G on its black, as on the film's own kicker. */
-  .board-attach.is-video b { display: inline-grid; place-items: center; width: 20px; height: 20px;
+  .board-embed-button.is-video b { display: inline-grid; place-items: center; width: 20px; height: 20px;
     border-radius: 4px; background: #141414; color: #e50914; font-family: "Bebas Neue", Impact,
     "Arial Narrow Bold", sans-serif; font-size: 17px; font-weight: 400; line-height: 1; }
 
@@ -2004,7 +2004,10 @@
       album's own newest pictures. Fewer than seven get a layout that fills the tile instead of the
       index's dark empty cells: n1 one picture, n2 two halves, n3 one large and two, n4 four, n5 one
       large and four, n6 six. On a phone everything from three up is one large and two, as above. */
-   .album-embed { margin:10px 0 0; box-shadow:none; }
+   .album-embed { margin:10px 0 0; box-shadow:none; line-height:1.35; }
+   /* Drawn inside a post's text (core.embeds), where .prose-gahk styles every link and picture. */
+   .prose-gahk .album-embed { color:#fffdf7; text-decoration:none; }
+   .prose-gahk .album-embed img { max-width:none; margin:0; border-radius:0; }
    .album-embed-n1 .album-timeline-mosaic { grid-template-columns:1fr; }
    .album-embed-n2 .album-timeline-mosaic, .album-embed-n4 .album-timeline-mosaic { grid-template-columns:repeat(2, 1fr); }
    .album-embed-n3 .album-timeline-mosaic, .album-embed-n6 .album-timeline-mosaic { grid-template-columns:repeat(3, 1fr); }

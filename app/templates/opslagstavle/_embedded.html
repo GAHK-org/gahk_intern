@@ -1,0 +1,11 @@
+{% comment %}
+  The widgets the composer's body embeds (views.embedded), drawn as the post will draw them, under
+  the textarea. Re-drawn as the body is typed; "Fjern" takes the embed out of the text again
+  (opslagstavle.ts), which re-draws this.
+{% endcomment %}
+{% for reference, widget in embedded %}
+  <div class="board-embed">
+    {{ widget }}
+    <button type="button" class="board-embed-remove" data-embed-remove="{{ reference }}">Fjern</button>
+  </div>
+{% endfor %}

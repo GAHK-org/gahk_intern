@@ -6,7 +6,5 @@
   source through this template silently becomes stored XSS.
 {% endcomment %}
 <div class="board-body prose-gahk">
-  {% if html %}{{ html }}{% elif not album_widget and not video_widget %}<p class="muted">Der er ikke skrevet noget endnu.</p>{% endif %}
+  {% if html %}{{ html }}{% else %}<p class="muted">Der er ikke skrevet noget endnu.</p>{% endif %}
 </div>
-{% if video_widget %}{% include "opslagstavle/_video_widget.html" with widget=video_widget compose=True %}{% endif %}
-{% if album_widget %}{% include "opslagstavle/_album_widget.html" with widget=album_widget compose=True %}{% endif %}

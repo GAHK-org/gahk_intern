@@ -147,30 +147,61 @@ function csrfToken(): string {
   return document.querySelector<HTMLInputElement>('input[name="csrfmiddlewaretoken"]')?.value ?? "";
 }
 
-/** The composer's pickers for an album and a film (form.html's <dialog>s).
+/** Put an embed (`![Julefrokost 2026](album:12)`) in the body at the cursor, on a paragraph of its
+ * own: an embed is drawn as a widget after the paragraph it is in, so one alone is drawn exactly
+ * where it was put. */
+function insertEmbed(area: HTMLTextAreaElement, markdown: string): void {
+  const before = area.value.slice(0, area.selectionStart);
+  const after = area.value.slice(area.selectionEnd);
+  const lead = before === "" || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
+  const trail = after.startsWith("\n\n") ? "" : after.startsWith("\n") ? "\n" : "\n\n";
+  insert(area, `${lead}${markdown}${trail}`, lead.length + markdown.length);
+}
+
+/** Take every embed of `reference` (`album:12`) out of the body, with the blank line it leaves. */
+function removeEmbed(area: HTMLTextAreaElement, reference: string): void {
+  const escaped = reference.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const embed = new RegExp(`!\\[(?:\\\\.|[^\\]\\\\])*\\]\\(${escaped}\\)`, "g");
+  area.value = area.value.replace(embed, "").replace(/\n{3,}/g, "\n\n").trim();
+  area.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+/** The composer's pickers for an album and a film (form.html's <dialog>s), and "Fjern" on the
+ * widgets under the textarea (_embedded.html).
  *
- * Opening one empties its search and fires `attach-open`, which its hx-trigger answers with the
- * newest albums or films. Picking one is an htmx request that re-draws the attachments block
- * (views.attachments_block); this only closes the dialog once it has. Clicking the backdrop closes
- * it too, as Escape does by itself.
+ * Opening a picker empties its search and fires `embed-open`, which its hx-trigger answers with the
+ * newest albums or films. Picking one embeds it in the body, where the cursor was, and the widgets
+ * under the textarea re-draw on the `input` that fires. Clicking the backdrop closes a picker, as
+ * Escape does by itself.
  */
-function initPickers(): void {
+function initEmbeds(area: HTMLTextAreaElement): void {
   document.addEventListener("click", (event) => {
     const target = event.target as Element;
-    const opener = target.closest<HTMLElement>("[data-attach-open]");
+    const opener = target.closest<HTMLElement>("[data-embed-open]");
     if (opener) {
-      const dialog = document.getElementById(`js-attach-${opener.dataset.attachOpen}`);
+      const dialog = document.getElementById(`js-embed-${opener.dataset.embedOpen}`);
       if (!(dialog instanceof HTMLDialogElement)) return;
       const search = dialog.querySelector<HTMLInputElement>("input[type='search']");
       dialog.showModal();
       if (search) {
         search.value = "";
         search.focus();
-        search.dispatchEvent(new Event("attach-open"));
+        search.dispatchEvent(new Event("embed-open"));
       }
       return;
     }
-    if (target.closest("[data-attach-close]")) {
+    const pick = target.closest<HTMLElement>("[data-embed-pick]");
+    if (pick) {
+      pick.closest("dialog")?.close();
+      insertEmbed(area, pick.dataset.embed ?? "");
+      return;
+    }
+    const remove = target.closest<HTMLElement>("[data-embed-remove]");
+    if (remove) {
+      removeEmbed(area, remove.dataset.embedRemove ?? "");
+      return;
+    }
+    if (target.closest("[data-embed-close]")) {
       target.closest("dialog")?.close();
       return;
     }
@@ -181,16 +212,10 @@ function initPickers(): void {
       if (x < box.left || x > box.right || y < box.top || y > box.bottom) target.close();
     }
   });
-  document.body.addEventListener("htmx:afterRequest", (event) => {
-    const detail = (event as CustomEvent<{ elt: Element; successful: boolean }>).detail;
-    if (detail.successful && detail.elt.matches("[data-attach-pick]")) {
-      detail.elt.closest("dialog")?.close();
-      document.getElementById("id_body")?.focus();
-    }
-  });
 }
 
 if (root) {
   init(root);
-  initPickers();
+  const area = root.querySelector<HTMLTextAreaElement>("textarea[name='body']");
+  if (area) initEmbeds(area);
 }

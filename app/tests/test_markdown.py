@@ -13,7 +13,7 @@ payload. Asserting the escaped form pins down which of the two defences did the 
 import pytest
 from django.utils.safestring import SafeString
 
-from core.markdown import extract_image_names, image_sources, plain_text, render_markdown
+from core.markdown import embed_references, extract_image_names, image_sources, plain_text, render_markdown
 
 # --- formatting that must work -------------------------------------------------------------------
 
@@ -359,3 +359,69 @@ def test_rendering_without_images_still_sanitises() -> None:
 
     assert "&lt;script&gt;" in html
     assert "<script>" not in html
+
+
+# --- embeds (core.embeds) --------------------------------------------------------------------------
+#
+# `![Julefrokost 2026](album:12)`: the renderer is handed the widgets, by reference, and puts each
+# where its embed stands. The widgets here stand in for what opslagstavle.embeds draws.
+
+WIDGETS = {"album:12": '<a class="widget">ALBUM</a>', "video:3": '<div class="widget">VIDEO</div>'}
+
+
+def test_an_embed_alone_in_its_paragraph_becomes_its_widget() -> None:
+    html = render_markdown("Før\n\n![Julefrokost 2026](album:12)\n\nEfter", embeds=WIDGETS)
+
+    assert html.index("<p>Før</p>") < html.index(WIDGETS["album:12"]) < html.index("<p>Efter</p>")
+    assert "album:12" not in html.replace(WIDGETS["album:12"], "")
+
+
+def test_an_embed_in_a_sentence_is_drawn_after_its_paragraph() -> None:
+    """A widget is a block, and a block inside a <p> is not HTML."""
+    html = render_markdown("Se ![Revy](video:3) her.", embeds=WIDGETS)
+
+    assert html.index("<p>Se  her.</p>") < html.index(WIDGETS["video:3"])
+
+
+def test_an_embed_without_a_widget_shows_its_name() -> None:
+    assert render_markdown("![Julefrokost 2026](album:12)").strip() == "<p>Julefrokost 2026</p>"
+    assert render_markdown("![Revy](video:9)", embeds=WIDGETS).strip() == "<p>Revy</p>"
+
+
+def test_an_excerpt_leaves_out_the_embeds_it_has_widgets_for() -> None:
+    html = render_markdown(
+        "Tekst\n\n![Julefrokost 2026](album:12)\n\n![Andet](album:99)", embeds=WIDGETS, place_embeds=False
+    )
+
+    assert "ALBUM" not in html and "Julefrokost" not in html
+    assert "<p>Andet</p>" in html
+
+
+def test_an_embed_in_code_is_code_and_in_a_heading_its_name() -> None:
+    html = render_markdown("`![x](album:12)`\n\n## ![Overskrift](album:12)", embeds=WIDGETS)
+
+    assert "<code>![x](album:12)</code>" in html
+    assert "<h2>Overskrift</h2>" in html
+    assert "ALBUM" not in html
+
+
+def test_text_cannot_pass_for_a_widgets_marker() -> None:
+    """The marker a widget takes the place of carries a nonce drawn per render."""
+    html = render_markdown("gahk-embed--0\n\ngahk-embed-0-0", embeds=WIDGETS)
+
+    assert "ALBUM" not in html and "VIDEO" not in html
+
+
+def test_an_unknown_kind_is_an_ordinary_image() -> None:
+    """Not ours, so not embeddable, and not a local image either: the sanitiser drops it."""
+    assert "img" not in render_markdown("![x](poll:1)", embeds=WIDGETS)
+
+
+def test_plain_text_names_an_embed_with_its_icon() -> None:
+    assert plain_text("Billeder!\n\n![Julefrokost 2026](album:12)") == "Billeder!\n📷 Julefrokost 2026"
+
+
+def test_embed_references_lists_them_in_order() -> None:
+    source = "![a](video:3)\n\n```\n![x](album:1)\n```\n\n![b](album:12) og ![c](album:12)"
+
+    assert embed_references(source) == ["video:3", "album:12", "album:12"]

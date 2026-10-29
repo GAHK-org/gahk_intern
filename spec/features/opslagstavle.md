@@ -44,13 +44,13 @@ disputes Inspektionen exists to settle.
 
 `/intern/opslagstavle/` (board), `<pk>` (permalink), `opret`, `<pk>/rediger`, `<pk>/slet`,
 `<pk>/fastgoer`, `<pk>/kommentar`, `kommentar/<pk>/slet`, `<pk>/reaktion`, `forhaandsvisning`,
-`billede`, `abonner`, `vedhaeft`, `vedhaeft/album`, `vedhaeft/video`. `opret?album=<pk>` and
-`opret?video=<pk>` open the composer with that album or film attached. Namespaced `opslagstavle:`.
+`billede`, `abonner`, `indlejret`, `indlejr/album`, `indlejr/video`. `opret?album=<pk>` and
+`opret?video=<pk>` open the composer with that album or film embedded. Namespaced `opslagstavle:`.
 
 ## Data model
 
 `Notice` (author, title, category, Markdown body, `created_at`, `edited_at`, `pinned_at`,
-`pinned_by`, `event`, `album`, `video`), `NoticeComment`, `NoticeReaction`, `NoticeImage`. Category is a fixed
+`pinned_by`, `event`), `NoticeComment`, `NoticeReaction`, `NoticeImage`. Category is a fixed
 `TextChoices` set with ASCII values (they appear in `?kategori=`) and Danish labels.
 
 **Pinning is a nullable timestamp, not a boolean.** One column answers three questions: is it
@@ -92,28 +92,30 @@ the post.
 
 ## Albums and films in a post
 
-A post can carry a photo album and a GAHKFlix film, shown under the text as each feature's own
-widget rather than as links:
+A post can embed photo albums and GAHKFlix films in its text, each drawn as its feature's own
+widget where it stands:
 
-- **The album** as the photo album's mosaic tile: its newest seven pictures (sub-albums included, in
+- **An album** as the photo album's mosaic tile: its newest seven pictures (sub-albums included, in
   the album page's order), the folder and parent albums, the name in the album pages' serif, how many
   pictures and videos it holds, and `Se albummet →`. Fewer pictures get a layout that fills the tile.
-- **The film** as a small GAHKFlix hero: the banner, the red wordmark, series, title, episode, release
+- **A film** as a small GAHKFlix hero: the banner, the red wordmark, series, title, episode, release
   date, length, quality and description, `Afspil` (the player) and `Mere info` (the film's page), and
   the reader's red progress bar. On a phone the words go under the banner.
-- A post may be only an album or a film, with no text. Its notifications then quote what it carries
-  (`📷 Julefrokost 2026`).
-- In the composer, `Vedhæft` opens a picker for an album or a published film: the newest first,
-  searched by name (and a film's series) as you type. The widgets show in the composer as they will in
-  the post, each with `Fjern`. `Del på opslagstavlen` on an album's page or a published film's page
-  opens the composer with it attached and the cursor in the text.
+- In the text an embed is `![Julefrokost 2026](album:12)`: a reference, not an address. An embed
+  in the middle of a sentence is drawn right after its paragraph. The feed shows the text and the
+  first widget under it; the post's own page draws up to ten, each where it stands.
+- In the composer, `Indsæt` → `Fotoalbum` / `Video fra GAHKFlix` opens a picker of the newest albums
+  or published films, searched by name (and series) as you type; picking one puts its embed at the
+  cursor. The widgets show under the text as they will in the post, each with `Fjern`, and the
+  preview tab draws them in place. `Del på opslagstavlen` on an album's page or a published film's
+  page opens the composer with it embedded and the cursor above it.
 - Each widget follows its feature's rules for the reader. Albums for every resident, counting and
   showing only approved, unbinned items, so everyone sees the same tile. Films only for those
-  GAHKFlix's rollout gate lets in, who alone can attach one. The kitchen account sees and attaches
-  neither.
-- Only a published film can be attached. One binned afterwards shows only for GAHKFlix's
-  administrators, marked `I papirkurven`. A deleted album or a film purged from the bin leaves the
-  post without its widget.
+  GAHKFlix's rollout gate lets in, and only while they may see the film: a draft for its uploader and
+  the administrators (`Kladde`), a binned one for the administrators (`I papirkurven`). The kitchen
+  account gets none.
+- Where no widget can be drawn (the reader may not see it, it is gone, or past the ten) the name it
+  was embedded under stands in its place. A notification shows `📷 Julefrokost 2026`.
 
 ## Retention
 
@@ -239,10 +241,13 @@ that is a bad trade.
 embedded-image lifecycle to one model and the compose toolbar to one purpose. Allowing it later is a
 template change and a test.
 
-**Links in the text for albums and films.** Rejected for references on the post (`album`, `video`):
-every link in a widget is worked out when the page is drawn, so posts keep pointing at the right
-pages however the photo album or GAHKFlix change their addresses, which a link written into the
-Markdown would not. One of each per post, like `event`.
+**A column on the post for each kind of widget.** Rejected for embeds in the body: a post can then
+hold any number of them, of any kind, wherever they belong in the text, and a new kind of widget is
+an entry in a registry (core.embeds, opslagstavle.embeds) rather than a migration.
+
+**Links to the album's or the film's page as the embed.** Rejected for references (`album:12`): every
+link in a widget is reversed when it is drawn, so posts keep pointing at the right pages however the
+photo album or GAHKFlix change their addresses, which a stored address would not.
 
 **A `CheckConstraint` that `pinned_by` is set iff `pinned_at` is.** Rejected: `pinned_by` is
 `SET_NULL`, so deleting the resident who pinned a post would violate it and make the delete fail.
