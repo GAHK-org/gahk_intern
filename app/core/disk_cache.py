@@ -3,8 +3,8 @@ the extra round trip to the bucket shows.
 
 The mechanics only; WHAT is worth caching is the caller's call. photo_album.cache keeps the album's
 thumbnails and HD images, and core.media keeps the image attachments of live Den Hurtige messages
-and recent opslag. Each gives this module its own directory and byte budget, and nothing here knows
-what is in them.
+and recent opslag, and the profile thumbnails every avatar draws. Each gives this module its own
+directory and byte budget, and nothing here knows what is in them.
 
   * A copy is fetched on the first ask and is whole or absent. It is written to a `.partial-` file
     and renamed into place, so a reader never sees half a file and two requests racing for one key

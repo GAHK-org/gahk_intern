@@ -25,7 +25,8 @@ feed and a fresh opslag are read by most of the house within hours, and each of 
 302 to the bucket. A prefix registered with `register_cacheable` is served from a local disk copy
 (core.disk_cache) while its owner says the file is live, and goes back to the redirect once it is
 archived: an old file is read rarely enough that a copy on this disk would only take room from the
-live ones. See register_cacheable.
+live ones. Profile thumbnails are registered the same way, all of them: every avatar on a page was
+a redirect of its own. See register_cacheable.
 """
 
 import mimetypes

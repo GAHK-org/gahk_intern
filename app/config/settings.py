@@ -665,10 +665,10 @@ PHOTO_ALBUM_CACHE_DIR = os.environ.get("PHOTO_ALBUM_CACHE_DIR", "")
 PHOTO_ALBUM_CACHE_THUMBNAIL_MB = int(os.environ.get("PHOTO_ALBUM_CACHE_THUMBNAIL_MB", "2048"))
 PHOTO_ALBUM_CACHE_HD_MB = int(os.environ.get("PHOTO_ALBUM_CACHE_HD_MB", "3072"))
 
-# The same kind of local copy for Den Hurtige's and opslagstavlen's image attachments (core.media,
-# core.disk_cache). It defaults to the photo album's directory, so the production volume and the
-# dev setups already configured for that one work for this too; the copies go in a subdirectory of
-# their own. Empty turns it off.
+# The same kind of local copy for Den Hurtige's and opslagstavlen's image attachments and for the
+# profile thumbnails every avatar draws (core.media, core.disk_cache). It defaults to the photo
+# album's directory, so the production volume and the dev setups already configured for that one
+# work for this too; the copies go in a subdirectory of their own. Empty turns it off.
 MEDIA_CACHE_DIR = os.environ.get("MEDIA_CACHE_DIR", PHOTO_ALBUM_CACHE_DIR)
 MEDIA_CACHE_ATTACHMENTS_MB = int(os.environ.get("MEDIA_CACHE_ATTACHMENTS_MB", "2048"))
 # Only images people are still looking at are copied; an ARCHIVED one is served by a redirect to
