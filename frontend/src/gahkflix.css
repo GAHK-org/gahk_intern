@@ -421,7 +421,7 @@ body.flix-play, body.flix-player-open { overflow: hidden; background: #000; }
 .flix-history-restore { margin-top: 6px; }
 
 /* --- GAHKFlix elsewhere: a film in a post on opslagstavlen ---------------------------------------
-   templates/opslagstavle/_video_widget.html. The hero at the size of a post: the banner, the hero's
+   templates/opslagstavle/_gahkflix_widget.html. The hero at the size of a post: the banner, the hero's
    gradient, the red wordmark, the kicker with its red G, and the hero's own buttons. Wide, the words
    sit over the banner as on the hero; on a phone they go under it, where a 16:9 banner leaves no
    room beside them. The title is the link, stretched over the widget; Afspil is lifted above it. */

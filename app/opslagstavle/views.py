@@ -259,7 +259,7 @@ def create(request: HttpRequest) -> HttpResponse:
     """Compose on its own page, not inline: title + category + Markdown + toolbar + preview is a
     form, and an inline composer on a paginated list would lose a long draft on any navigation.
 
-    `?album=` or `?video=` is "Del på opslagstavlen" on that album's or film's page: the body starts
+    `?album=` or `?gahkflix=` is "Del på opslagstavlen" on that album's or film's page: the body starts
     with it embedded, below an empty line, and the cursor sits in that line for the text.
     """
     shared = embeds.shared_body(request) if request.method == "GET" else ""

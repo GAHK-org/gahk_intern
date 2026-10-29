@@ -24,7 +24,7 @@ import re
 # name. A new kind of widget is a name here and a renderer in opslagstavle.embeds.
 KINDS: dict[str, str] = {
     "album": "📷",
-    "video": "🎬",
+    "gahkflix": "🎬",
 }
 
 # A key of at most 18 digits: anything longer is no row's key, and Postgres refuses to compare it.

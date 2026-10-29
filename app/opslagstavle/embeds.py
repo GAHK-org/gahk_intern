@@ -190,10 +190,10 @@ def _references(body: str) -> list[str]:
 
 
 def shared_body(request: HttpRequest) -> str:
-    """What "Del på opslagstavlen" starts a post with (`?album=` or `?video=` on the composer): the
+    """What "Del på opslagstavlen" starts a post with (`?album=` or `?gahkflix=` on the composer): the
     embed, below an empty line for the text. "" when there is nothing the reader may share."""
     for name, kind in KINDS.items():
-        key = _key(request.GET.get(name, ""))
+        key = _key(name, request.GET.get(name, ""))
         if key is None or not kind.allowed(request):
             continue
         if (title := kind.shareable(request, key)) is not None:
@@ -203,13 +203,13 @@ def shared_body(request: HttpRequest) -> str:
 
 def share_url(obj: Model) -> str:
     """The composer, with an album or a film embedded ("Del på opslagstavlen")."""
-    name = {"photo_album.album": "album", "gahkflix.video": "video"}[obj._meta.label_lower]
+    name = {"photo_album.album": "album", "gahkflix.video": "gahkflix"}[obj._meta.label_lower]
     return f"{reverse('opslagstavle:create')}?{name}={obj.pk}"
 
 
-def _key(value: str) -> int | None:
+def _key(name: str, value: str) -> int | None:
     """A key from the querystring, read the way an embed's is: digits, and no bigger than a row's."""
-    embed = embed_syntax.parse(f"album:{value}")
+    embed = embed_syntax.parse(f"{name}:{value}")
     return embed[1] if embed is not None else None
 
 
@@ -403,7 +403,7 @@ def _video_choices(request: HttpRequest, query: str) -> list[Choice]:
                     [video.series.title if video.series else "", video.date_label, duration(video.duration)],
                 )
             ),
-            markdown=embed_syntax.markdown("video", video.pk, video.title),
+            markdown=embed_syntax.markdown("gahkflix", video.pk, video.title),
             picture=picture_url(video, "thumbnail"),
         )
         for video in videos[:CHOICES]
@@ -426,9 +426,9 @@ KINDS: dict[str, Kind] = {
         choices=_album_choices,
         shareable=_album_shareable,
     ),
-    "video": Kind(
-        name="video",
-        template="opslagstavle/_video_widget.html",
+    "gahkflix": Kind(
+        name="gahkflix",
+        template="opslagstavle/_gahkflix_widget.html",
         allowed=videos_allowed,
         widgets=_video_widgets,
         choices=_video_choices,

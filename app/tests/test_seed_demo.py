@@ -72,7 +72,7 @@ def test_seed_demo_fills_the_board_including_the_two_awkward_cases() -> None:
     assert len({n.category for n in Notice.objects.all()}) >= 5
     # Posts embedding a demo album and a demo film, so their widgets show without anyone posting one.
     assert Notice.objects.filter(body__contains="](album:").exists()
-    assert Notice.objects.filter(body__contains="](video:").exists()
+    assert Notice.objects.filter(body__contains="](gahkflix:").exists()
     assert not hasattr(Notice.objects, "expired"), (
         "retention was removed from opslagstavlen; a reinstated expired() needs the spec updated too"
     )

@@ -142,7 +142,7 @@ def seed_embeds(residents: list[Resident], now: datetime) -> int:
     if (film := Video.objects.published().filter(title="Revy").first()) is not None:
         bodies.append(
             "Årets revy kan nu ses på GAHKFlix. Tak til alle, der var med! 🎭\n\n"
-            + markdown("video", film.pk, film.title)
+            + markdown("gahkflix", film.pk, film.title)
         )
     if (album := Album.objects.filter(parent__isnull=True, name="Sommerfest").first()) is not None:
         bodies.append(markdown("album", album.pk, album.name))

@@ -95,7 +95,7 @@
               </button>
             {% endif %}
             {% if videos_allowed %}
-              <button type="button" class="board-embed-button is-video" data-embed-open="video">
+              <button type="button" class="board-embed-button is-gahkflix" data-embed-open="gahkflix">
                 <b aria-hidden="true">G</b>Video fra GAHKFlix
               </button>
             {% endif %}
@@ -143,16 +143,16 @@
     </dialog>
   {% endif %}
   {% if videos_allowed %}
-    <dialog class="board-picker is-video" id="js-embed-video" aria-labelledby="embed-video-title">
+    <dialog class="board-picker is-gahkflix" id="js-embed-gahkflix" aria-labelledby="embed-gahkflix-title">
       <div class="board-picker-head">
-        <h2 id="embed-video-title"><b aria-hidden="true">GAHKFLIX</b>Vælg en video</h2>
+        <h2 id="embed-gahkflix-title"><b aria-hidden="true">GAHKFLIX</b>Vælg en video</h2>
         <button type="button" class="board-picker-close" data-embed-close aria-label="Luk">&times;</button>
       </div>
       <input type="search" name="q" class="board-picker-search" placeholder="Søg efter en titel eller serie …" autocomplete="off"
              aria-label="Søg efter en video"
-             hx-get="{% url 'opslagstavle:embed_videos' %}" hx-trigger="input changed delay:250ms, search, embed-open"
-             hx-target="#js-embed-video-results" hx-sync="this:replace">
-      <div class="board-picker-results" id="js-embed-video-results" aria-live="polite"></div>
+             hx-get="{% url 'opslagstavle:embed_gahkflix' %}" hx-trigger="input changed delay:250ms, search, embed-open"
+             hx-target="#js-embed-gahkflix-results" hx-sync="this:replace">
+      <div class="board-picker-results" id="js-embed-gahkflix-results" aria-live="polite"></div>
     </dialog>
   {% endif %}
 {% endblock %}

@@ -1608,7 +1608,7 @@
   .board-embed-button:hover { border-color: var(--green-100); background: var(--green-050); }
   .board-embed-button .ni { width: 20px; height: 20px; stroke: var(--brass); fill: none; }
   /* GAHKFlix's red G on its black, as on the film's own kicker. */
-  .board-embed-button.is-video b { display: inline-grid; place-items: center; width: 20px; height: 20px;
+  .board-embed-button.is-gahkflix b { display: inline-grid; place-items: center; width: 20px; height: 20px;
     border-radius: 4px; background: #141414; color: #e50914; font-family: "Bebas Neue", Impact,
     "Arial Narrow Bold", sans-serif; font-size: 17px; font-weight: 400; line-height: 1; }
 
@@ -1647,17 +1647,17 @@
   .board-choice.is-album strong { font-family: Georgia, serif; font-size: 16.5px; font-weight: 700; }
   .board-choice-text small { color: var(--muted); font-size: 12.5px; }
   .board-choice-none { padding: 18px 10px; margin: 0; color: var(--muted); text-align: center; }
-  .board-picker.is-video { background: #141414; color: #e5e5e5; }
-  .board-picker.is-video .board-picker-head h2 { display: flex; align-items: baseline; gap: 10px;
+  .board-picker.is-gahkflix { background: #141414; color: #e5e5e5; }
+  .board-picker.is-gahkflix .board-picker-head h2 { display: flex; align-items: baseline; gap: 10px;
     font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 18px; font-weight: 800; }
-  .board-picker.is-video .board-picker-head b { font-family: "Bebas Neue", Impact, "Arial Narrow Bold",
+  .board-picker.is-gahkflix .board-picker-head b { font-family: "Bebas Neue", Impact, "Arial Narrow Bold",
     sans-serif; font-size: 26px; font-weight: 400; color: #e50914; letter-spacing: .02em; }
-  .board-picker.is-video .board-picker-close:hover,
-  .board-picker.is-video .board-choice:hover,
-  .board-picker.is-video .board-choice:focus-visible { background: #2a2a2a; }
-  .board-picker.is-video .board-picker-search { border-color: #3a3a3a; background: #2a2a2a; color: #fff; }
-  .board-picker.is-video .board-choice-img { width: 96px; height: 54px; border-radius: 4px; background: #2a2a2a; }
-  .board-picker.is-video .board-choice-text small, .board-picker.is-video .board-choice-none { color: #a3a3a3; }
+  .board-picker.is-gahkflix .board-picker-close:hover,
+  .board-picker.is-gahkflix .board-choice:hover,
+  .board-picker.is-gahkflix .board-choice:focus-visible { background: #2a2a2a; }
+  .board-picker.is-gahkflix .board-picker-search { border-color: #3a3a3a; background: #2a2a2a; color: #fff; }
+  .board-picker.is-gahkflix .board-choice-img { width: 96px; height: 54px; border-radius: 4px; background: #2a2a2a; }
+  .board-picker.is-gahkflix .board-choice-text small, .board-picker.is-gahkflix .board-choice-none { color: #a3a3a3; }
   .notice-head { @apply flex items-start justify-between gap-3; flex-wrap: nowrap; }
   .notice-headline { flex: 1; min-width: 0; }
   .notice-tags { @apply flex flex-wrap items-center gap-2; margin-bottom: 6px; }
