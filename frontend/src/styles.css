@@ -498,14 +498,14 @@
        * The reply preview is NOT in this row and is never hidden: it is the evidence a
          conversation exists at all, and a message with replies ends its run anyway
          (views.mark_runs).
-       * Only the picker's SUMMARY is hidden, never a <details>. Hiding a <details> stops its panel
-         from opening at all, which would make the who-reacted panels of the pills that ARE still
-         visible silently do nothing on a hold.
+       * Only .emoji-picker is hidden, NEVER .who-picker. The who-reacted panels belong to the
+         pills that are still visible, and hiding a <details> stops its panel from opening at all --
+         holding a pill would silently do nothing.
        * The delete control is not in this row any more (see below), so hiding the row does not
          take it with it. */
   .msg:not(.msg-tail) .msg-actions { margin-top:0; }
   .msg:not(.msg-tail):not([data-actions-open]) .msg-reply,
-  .msg:not(.msg-tail):not([data-actions-open]) .emoji-picker > summary { display:none; }
+  .msg:not(.msg-tail):not([data-actions-open]) .emoji-picker { display:none; }
   /* Only when there is actually something in it -- `.is-empty` is the server's flag for "no
      reactions", so this puts the gap back for pills without reintroducing it for the empty row. */
   .msg:not(.msg-tail) .reactions:not(.is-empty) { margin-top:3px; }
