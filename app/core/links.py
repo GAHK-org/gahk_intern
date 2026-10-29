@@ -31,6 +31,7 @@ import re
 from django.utils.html import escape
 from django.utils.safestring import SafeString, mark_safe
 from linkify_it import LinkifyIt
+from linkify_it.main import Match
 
 from .mentions import MENTION_RE, is_group, profile_url
 
@@ -44,6 +45,9 @@ MAX_LINK_TEXT = 42
 _LINKIFY = LinkifyIt()
 
 _SCHEME = re.compile(r"^[a-z][a-z0-9+.\-]*://", re.IGNORECASE)
+# What may become a link, matching core.markdown's ALLOWED_URL_SCHEMES. linkify-it does not emit
+# `javascript:` today; the allowlist is there so that it still could not matter if it ever did.
+_ALLOWED_SCHEMES = ("http", "https", "mailto")
 _WWW = re.compile(r"^www\.", re.IGNORECASE)
 
 
@@ -128,9 +132,35 @@ def linkify(text: str | None) -> SafeString:
     return mark_safe("".join(out))  # noqa: S308  # nosec
 
 
+def _urls(text: str) -> list[Match]:
+    """The URLs the scanner finds in `text` that may become links (see _ALLOWED_SCHEMES)."""
+    matches = _LINKIFY.match(text) if text else None
+    return [m for m in matches or () if m.url.split(":", 1)[0].lower() in _ALLOWED_SCHEMES]
+
+
+def shorten_urls(text: str | None) -> str:
+    """`text` with every URL in it replaced by what a link to it shows (`shorten`) — and no link.
+
+    For author text that is QUOTED rather than shown: Den Hurtige's reply previews, which sit inside
+    the link that opens their thread (a link inside a link is invalid HTML), and the message named in
+    the bar above the composer while it is being answered. Same scanner and scheme allowlist as
+    `linkify`, so a URL reads the same quoted as it does in the message itself. Plain text in, plain
+    text out: the caller escapes it like any other string.
+    """
+    if not text:
+        return ""
+    out: list[str] = []
+    cursor = 0
+    for match in _urls(text):
+        out.extend((text[cursor : match.index], shorten(match.url)))
+        cursor = match.last_index
+    out.append(text[cursor:])
+    return "".join(out)
+
+
 def _linkified(text: str) -> list[str]:
     """`text` as escaped HTML pieces with its URLs as links. Not safe on its own — see `linkify`."""
-    matches = _LINKIFY.match(text) if text else None
+    matches = _urls(text)
     if not matches:
         return [escape(text)]
 
@@ -138,10 +168,6 @@ def _linkified(text: str) -> list[str]:
     cursor = 0
     for match in matches:
         url = match.url
-        # A scheme allowlist, matching core.markdown's ALLOWED_URL_SCHEMES. linkify-it does not
-        # emit `javascript:` today; this is here so that it still could not matter if it ever did.
-        if url.split(":", 1)[0].lower() not in ("http", "https", "mailto"):
-            continue
         title = title_for(url)
         out.append(escape(text[cursor : match.index]))
         out.append(

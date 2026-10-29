@@ -458,7 +458,7 @@
      avatar it was supposed to appear beside, and a trash can that never clears the bubble. */
   .msg-hint { position:absolute; top:0; bottom:0; width:32px; display:grid; place-items:center;
     opacity:0; pointer-events:none; font-size:17px; line-height:1; }
-  .msg-hint-thread { left:6px; color:var(--green-700); }
+  .msg-hint-thread, .msg-hint-reply { left:6px; color:var(--green-700); }
   .msg-hint-del { right:6px; color:var(--neg); }
   /* Same reason as .channel-picker .ni: <use> clones the symbol into a shadow tree that inherits
      from THIS svg, so without these the icon renders as a filled black blob. */
@@ -469,7 +469,7 @@
   .msg-releasing { transition:translate .18s cubic-bezier(.22, .61, .36, 1); }
   @media (prefers-reduced-motion:reduce) { .msg-releasing { transition:none; } }
 
-  /* Reactions, the "N svar" link and the message's clock share one line. Indented past the avatar
+  /* Reactions and the "Svar" action share one line. Indented past the avatar
      so the row lines up with the bubble rather than with the circle beside it. */
   .msg-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:4px;
     padding-left:44px; }
@@ -480,8 +480,8 @@
   /* Separator lives on the expiry, so hiding the expiry takes its dot with it. */
   .msg-expiry::before { content:"· "; }
 
-  /* MID-RUN MESSAGES CARRY ONLY THE REACTIONS THEY ALREADY HAVE. The picker, the "N svar" link and
-     the clock all move to the run's last message.
+  /* MID-RUN MESSAGES CARRY ONLY THE REACTIONS THEY ALREADY HAVE. The picker and the "Svar" action
+     move to the run's last message.
 
      This is not tidying, it is the other half of the grouping. The action row is rendered per
      message and costs about 22px, so a run of three drew bubble, row, bubble, row, bubble -- the
@@ -489,21 +489,23 @@
      joined up. Collapsing them is what makes a burst from one person read as one block.
 
      Nothing becomes unreachable, which is the condition for doing this at all:
-       * The "N svar" anchor is HIDDEN, not removed, so a right-swipe on a mid-run message still
-         clicks it (see fireSwipe in feed.ts) and opens that message's own thread.
-       * The thread panel renders its message with a full reaction row (`bare` keeps it -- see
-         _message.html), so reacting to one message of a burst lives there.
-       * Only .emoji-picker is hidden, NEVER .who-picker. The who-reacted panels belong to the
-         pills that are still visible, and hiding a <details> stops its panel from opening at all --
-         holding a pill would silently do nothing.
+       * TAPPING THE BUBBLE brings them back for that message (data-actions-open, set by feed.ts;
+         tapping anywhere else puts them away). This used to be the thread panel's job -- a
+         right-swipe opened the thread, whose copy of the message had a full row -- and the swipe
+         now answers the message instead, so the bubble itself had to become the way in. It is
+         also the only way to react to a reply in the middle of a run in a thread.
+       * A right-swipe answers any message, mid-run or not (see fireSwipe in feed.ts).
+       * The reply preview is NOT in this row and is never hidden: it is the evidence a
+         conversation exists at all, and a message with replies ends its run anyway
+         (views.mark_runs).
+       * Only the picker's SUMMARY is hidden, never a <details>. Hiding a <details> stops its panel
+         from opening at all, which would make the who-reacted panels of the pills that ARE still
+         visible silently do nothing on a hold.
        * The delete control is not in this row any more (see below), so hiding the row does not
          take it with it. */
   .msg:not(.msg-tail) .msg-actions { margin-top:0; }
-  /* `.has-replies` is on the anchor whenever the message actually has replies. A bare "Svar" is
-     only an affordance and the swipe covers it, but "3 svar" is the single piece of evidence that
-     a conversation exists at all -- hiding that would bury threads on mid-run messages. */
-  .msg:not(.msg-tail) .msg-replies:not(.has-replies),
-  .msg:not(.msg-tail) .emoji-picker { display:none; }
+  .msg:not(.msg-tail):not([data-actions-open]) .msg-reply,
+  .msg:not(.msg-tail):not([data-actions-open]) .emoji-picker > summary { display:none; }
   /* Only when there is actually something in it -- `.is-empty` is the server's flag for "no
      reactions", so this puts the gap back for pills without reintroducing it for the empty row. */
   .msg:not(.msg-tail) .reactions:not(.is-empty) { margin-top:3px; }
@@ -633,55 +635,68 @@
   .who-tip[hidden] { display:none; }
   .emoji-other input { width:100%; padding:5px 8px; text-align:center; }
 
-  /* The way into a thread. Was a <details> summary that unfolded the replies in place; it is now a
-     link to den_hurtige:thread, which htmx turns into the side panel.
+  /* "Svar": answer this message from the feed's composer (frontend/src/feed.ts). It used to be the
+     way into the thread too, as "Svar" or a "3 svar" pill in this same row; the thread now has the
+     reply preview under the message for that (.thread-preview below), so this is only the action
+     and stays quiet. --muted rather than --faint because it is an interactive control: --faint
+     (#8A9188) is 2.97:1 on the ground, under the 4.5:1 a 12.5px link needs, and --muted is 5.08:1.
 
-     TWO STATES, AND THE POINT IS THE DISTANCE BETWEEN THEM. Both used to be this rule alone --
-     12.5px, 600, --green-700 -- so "Svar" and "3 svar" were the same object with different words
-     in it, tucked in a row beside the reaction pills. On a feed the difference did not register:
-     a message with a conversation hanging off it looked exactly like one with nothing.
-
-     So the empty state RECEDES and the full state becomes a pill. Half the new contrast comes
-     from the retreat, which is what keeps the feed quiet -- most messages have no replies, and
-     those now cost the eye almost nothing. --muted rather than --faint for it: this is an
-     interactive control, and --faint (#8A9188) lands at 2.97:1 on --paper, under the 4.5:1 a
-     12.5px link needs. --muted clears it at 5.08:1 and still reads as the quieter of the two.
-
-     No extra height either way. The action row is rendered on EVERY message (see .msg-actions
-     above), so the signal is free where a reply bar of its own would have cost ~22px a thread. */
-  .msg-replies { min-width:0; font-size:12.5px; font-weight:600; color:var(--muted);
-    text-decoration:none; padding:2px 0; white-space:nowrap; }
-  .msg-replies:hover { text-decoration:underline; }
-
-  /* There is a conversation here. Deliberately NOT the same shape as the pills it sits beside:
-     a reaction is white with a --border-strong outline and one you joined is --green-050, so a
-     --green-100 fill inside a full-strength --green border is a step past both, and the speech
-     bubble is a glyph nothing else in the row carries. --green-700 on --green-100 is 8:1.
-
-     Tinted rather than a solid --green fill, which was the other candidate. Saturation buys
-     little in a scan -- contrast against the neighbours is what the eye finds, and that is
-     already won -- while a solid block repeated down a busy channel is exactly the congestion
-     this is trying to avoid. If it needs to shout, this is the one declaration to change.
-
-     It survives on mid-run messages, where .msg:not(.msg-tail) hides the bare "Svar" and the
-     emoji picker: a burst of five messages shows the pill on whichever ones have threads and
-     nothing on the rest, which is the only reason that collapse is safe to do at all.
-
-     line-height:1 and 4px of vertical padding are copied off .reaction on purpose, not chosen:
-     it makes the pill exactly as tall as the reaction pills it shares the row with (13px/1 + 8 + 2
-     against 12.5px/1 + 8 + 2), so on any message carrying reactions the row does not grow by a
-     pixel. Inheriting the body's 1.5 would have made this the tallest thing in the row and pushed
-     every threaded message open. On a message with a thread and NO reactions the row still gains
-     about 7px over the plain text it replaces -- the only height this costs anywhere. */
-  .msg-replies.has-replies { display:inline-flex; align-items:center; gap:5px;
-    padding:4px 9px 4px 8px; border-radius:999px; font-weight:650; line-height:1;
-    background:var(--green-100); border:1px solid var(--green); color:var(--green-700); }
-  /* No underline on a pill -- the fill is the affordance. Lighten instead, the way .reaction does
-     the reverse, so hover reads as "liftable" rather than as text. */
-  .msg-replies.has-replies:hover { text-decoration:none; background:var(--green-050); }
+     line-height:1 and 4px of vertical padding are .reaction's, so it is exactly as tall as the
+     pills it shares the row with and a message carrying reactions does not grow by a pixel. */
+  .msg-reply { display:inline-flex; align-items:center; gap:4px; min-width:0; padding:4px 2px;
+    font-size:12.5px; font-weight:600; line-height:1; color:var(--muted); text-decoration:none;
+    white-space:nowrap; }
+  .msg-reply:hover { color:var(--green-700); }
   /* Same reason as .msg-hint .ni: <use> clones the symbol into a shadow tree inheriting from THIS
      svg, so without these it paints as a filled black blob. */
-  .msg-replies .ni { width:14px; height:14px; flex:none; stroke:currentColor; fill:none; }
+  .msg-reply .ni, .thread-preview .ni { width:14px; height:14px; flex:none; stroke:currentColor;
+    fill:none; }
+
+  /* --- the thread, previewed under its message (den_hurtige/_message.html) -------------------
+     The newest replies as small bubbles hanging off the message they answer, joined to it by a
+     rule down the side, with "N svar" above them. It is one link (it opens the thread panel), and
+     everything in it is drawn rather than interactive.
+
+     Indented past the avatar like the action row, so the replies hang under the BUBBLE; on your
+     own messages it is mirrored onto the right edge with them, rule and all, so it never sits under
+     the other side of the screen from the message it belongs to. The bubbles keep their avatars
+     on the left either way: they are other people's words, mostly, and read like it.
+
+     The mini bubbles are white on the feed's --sunken ground like the real ones, smaller and with
+     a lighter shadow, so they read as the conversation's echo rather than as messages of the feed.
+     Your own replies take the green tint, not the full green, for the same reason. */
+  .thread-preview { display:flex; flex-direction:column; align-items:flex-start; gap:4px;
+    width:fit-content; max-width:min(86%, 460px); margin:5px 0 2px 44px; padding:1px 0 2px 10px;
+    border-left:2px solid var(--green-100); color:var(--ink); text-decoration:none;
+    -webkit-tap-highlight-color:transparent; }
+  .msg-own .thread-preview { margin-left:auto; padding:1px 10px 2px 0; border-left:0;
+    border-right:2px solid var(--green-100); align-items:flex-end; }
+  .thread-preview-head { display:inline-flex; align-items:center; gap:5px; font-size:12.5px;
+    font-weight:650; line-height:1.2; color:var(--green-700); }
+  .thread-preview-all { font-weight:600; color:var(--muted); }
+  .thread-preview:hover .thread-preview-head { text-decoration:underline; }
+  .preview-reply { display:flex; align-items:flex-end; gap:6px; max-width:100%; min-width:0; }
+  .preview-avatar { flex:none; width:22px; height:22px; border-radius:50%; overflow:hidden;
+    display:grid; place-items:center; background:var(--brass); color:#fff;
+    font-size:9.5px; font-weight:700; line-height:1; }
+  .preview-bubble { display:flex; flex-direction:column; min-width:0; padding:4px 10px 5px;
+    border-radius:14px; border-bottom-left-radius:4px; background:var(--surface);
+    box-shadow:0 1px 1.5px rgba(24, 40, 30, .1); font-size:13.5px; line-height:1.3; }
+  .preview-reply.is-own .preview-bubble { background:var(--green-050); }
+  .thread-preview:hover .preview-bubble { background:var(--surface-2); }
+  .thread-preview:hover .preview-reply.is-own .preview-bubble { background:var(--green-100); }
+  .preview-name { font-size:11.5px; font-weight:650; color:var(--green-700); white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis; }
+  /* Two lines and an ellipsis: a preview is for recognising the conversation, and the panel has
+     the rest. The -webkit- trio is the only line clamp every browser here supports. */
+  .preview-text { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2;
+    overflow:hidden; overflow-wrap:anywhere; }
+  /* Archived: the same cooler material as the archived bubbles above them (see .msg-archived). */
+  .msg-archived .preview-bubble { background:#E6E3DA; box-shadow:none; }
+  .msg-archived .preview-reply.is-own .preview-bubble { background:#DCE3DD; }
+
+  /* An avatar that is a photo rather than initials (_avatar.html), in any of the round boxes. */
+  .avatar-img { width:100%; aspect-ratio:1; object-fit:cover; border-radius:50%; display:block; }
 
   /* --- thread side panel (den_hurtige/_thread.html) -------------------------------------------
      Feed and panel side by side. #js-feed keeps every declaration it already had -- its
@@ -722,7 +737,12 @@
   /* One close control per breakpoint: an × on a docked desktop panel, a back arrow on a
      full-screen phone view. Both are rendered; the wrong one is hidden. */
   .thread-back { display:none; }
-  .thread-body { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:8px 0; }
+  /* The replies are chat bubbles (_reply.html, drawn by the .msg rules above), so the body they
+     scroll in takes the feed's --sunken ground, for the reason #js-feed gives: a white bubble on
+     --paper has no visible edge. Bled to the panel's edges the way #js-feed bleeds to the gutters --
+     the panel's padding is 0 30px 0 20px here and 0 18px on a phone, where this is restated. */
+  .thread-body { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain;
+    background:var(--sunken); margin:0 -30px 0 -20px; padding:8px 30px 14px 20px; }
   /* The message the thread hangs off. Rendered by the same partial as the feed's messages, with
      `bare` set, so it never drifts from them -- but it is NOT a chat bubble. It is the subject of
      the panel, the one thing every reply below it refers to, so it reads as a heading: full width,
@@ -748,13 +768,24 @@
   .msg-parent .msg-bubble::after { display:none; }
   .msg-parent .msg-name { display:block; font-size:13.5px; }
   .msg-parent .msg-actions { padding-left:44px; justify-content:flex-start; }
-  .thread-replies { display:flex; flex-direction:column; }
+  .thread-replies { display:flex; flex-direction:column; padding-top:2px; }
+  /* In a thread nearly every reply ends a run of its own -- people take turns -- so the feed's
+     spelled-out "Reagér" would be printed under almost every bubble. Just the glyph here, and with
+     no outline until it is pointed at; the pills themselves are unchanged. */
+  .thread-reply .msg-actions { margin-top:2px; }
+  .thread-reply .reactions .reaction-add .add-label { display:none; }
+  .thread-reply .reactions.is-empty .reaction-add { border-color:transparent; background:none;
+    color:var(--muted); padding:3px 7px; }
+  .thread-reply .reactions.is-empty .reaction-add:hover { border-color:var(--green);
+    background:var(--green-050); color:var(--green-700); }
   /* Pinned under the scroller rather than trailing the last reply. The base .reply-form rules
      below are shared with opslagstavlen's inline comment forms, which still want the indent, so
-     the panel overrides rather than changes them. */
+     the panel overrides rather than changes them. Shaped like the feed's composer -- a rounded box
+     and a round send button -- so writing in a thread feels like writing in the chat it is. */
   .thread-panel .reply-form { flex:none; margin:0; padding:10px 0;
     border-top:1px solid var(--border); }
-  .thread-panel .reply-form .composer-send { width:34px; height:34px; font-size:16px; }
+  .thread-panel .reply-form input[type=text] { border-radius:18px; padding:8px 14px; }
+  .thread-panel .reply-form .composer-send { width:36px; height:36px; font-size:16px; }
   /* "Underret alle" onto its own line rather than competing with the input for width: at phone
      width the three controls plus the label left the text box about nine characters wide. */
   .thread-panel .reply-form .reply-notify { flex-basis:100%; margin:6px 0 0 28px; }
@@ -780,7 +811,10 @@
   @media (prefers-reduced-motion:reduce) { .thread-releasing { transition:none; } }
   /* Widen the shell so two columns fit; .chat-shell is the components-layer replacement for the
      max-w-3xl utility feed.html used to set (a utility would out-specify this rule). */
-  .chat-page .chat-shell { max-width:48rem; }
+  /* Glides rather than jumps: opening a thread on a desktop widens the shell by a third, and an
+     instant change moved the whole feed sideways under the reader's eyes. */
+  .chat-page .chat-shell { max-width:48rem; transition:max-width .2s ease-out; }
+  @media (prefers-reduced-motion:reduce) { .chat-page .chat-shell { transition:none; } }
   body.chat-page:has(.thread-panel) .chat-shell { max-width:70rem; }
 
   /* --- the archive, which is this same feed scrolled up (den_hurtige/_archive_chunk.html) -----
@@ -820,7 +854,7 @@
      an empty flex box still spends its margin. In the live feed the row always holds something --
      the reaction picker and the "Svar" affordance are always drawn -- so this case only exists
      here, where both of those are deliberately absent. */
-  .msg-archived .msg-actions:not(:has(.reaction, .msg-replies)) { display:none; }
+  .msg-archived .msg-actions:not(:has(.reaction, .msg-reply)) { display:none; }
 
   /* A TOMBSTONE — the bubble left behind when a message past DELETE_GRACE is deleted. Drawn as an
      outline so it reads as an absence while still holding the message's place; nothing else on the
@@ -838,7 +872,7 @@
   .tombstone-label { color:var(--muted); font-style:italic; }
   .msg-tombstone .msg-name { color:var(--muted); font-weight:400; }
   /* Same empty-row collapse as the archive: a tombstone never has a reaction row. */
-  .msg-tombstone .msg-actions:not(:has(.reaction, .msg-replies)) { display:none; }
+  .msg-tombstone .msg-actions:not(:has(.reaction, .msg-reply)) { display:none; }
 
   /* THE LIVE FEED ALWAYS FILLS THE SCREEN, so scrolling back down puts the archive entirely out
      of sight. Without this a channel holding one short message left the reader unable to get away
@@ -958,7 +992,9 @@
 
   /* The standalone thread page (den_hurtige/thread.html), which is NOT the chat shell. */
   .thread-crumb { font-size:13px; margin:0 0 10px; }
-  .thread-page { padding:16px 18px; }
+  /* The feed's ground, not the card's white: the replies on it are white chat bubbles now, and a
+     white bubble on white has no edge (see #js-feed). */
+  .thread-page { padding:16px 18px; background:var(--sunken); }
   .reply { margin:7px 0 0 2px; padding-left:10px; border-left:2px solid var(--border); }
   .reply-name { font-weight:650; font-size:13px; }
   .reply .msg-text { font-size:14px; }
@@ -1007,6 +1043,49 @@
      under the text field rather than under the icon. */
   .reply-form .file-note { flex-basis:100%; padding-left:28px; margin-top:4px; }
 
+  /* --- replying from the feed (the bar above the composer, feed.html; frontend/src/feed.ts) ----
+     The composer is a grid placed by area name, so the bar gets a row of its own only while it is
+     showing (.is-replying). Declared in every template rather than left as an empty row: an empty
+     `auto` track is 0px tall but still opens a row gap above the input, 8px of nothing. */
+  .composer.is-replying { grid-template-areas:"reply reply reply reply" "attach main duration send"; }
+  .composer-reply { grid-area:reply; display:flex; flex-direction:column; gap:3px; min-width:0;
+    padding:6px 6px 6px 10px; border-radius:10px; border-left:3px solid var(--green);
+    background:var(--surface); box-shadow:var(--shadow-sm); }
+  .composer-reply[hidden] { display:none; }
+  .composer-reply-head { display:flex; align-items:center; gap:7px; min-width:0; }
+  .composer-reply-head .ni { width:16px; height:16px; flex:none; stroke:var(--green); fill:none; }
+  /* One line: who, then as much of what they wrote as fits. */
+  .composer-reply-quote { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; font-size:13px; line-height:1.35; color:var(--muted); }
+  .composer-reply-quote b { color:var(--green-700); font-weight:650; }
+  .composer-reply-cancel { flex:none; width:28px; height:28px; border:0; border-radius:50%;
+    background:none; color:var(--muted); font-size:20px; line-height:1; cursor:pointer; }
+  .composer-reply-cancel:hover { background:var(--sunken); color:var(--ink); }
+  .composer-reply-foot { display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:0 6px 0 23px; }
+  /* The base `label` rule makes every label a bold block with margins; this one is a quiet inline
+     checkbox, like the thread's own .reply-notify. */
+  .composer-reply-notify { display:inline-flex; align-items:center; gap:5px; margin:0;
+    font-size:12.5px; font-weight:500; color:var(--muted); }
+  .composer-reply-notify input { width:auto; }
+  .composer-reply-open { border:0; background:none; padding:2px 0; font:inherit; font-size:12.5px;
+    font-weight:650; color:var(--green-700); cursor:pointer; white-space:nowrap; }
+  .composer-reply-open:hover { text-decoration:underline; }
+  .composer-reply-error { margin:0 0 0 23px; font-size:12.5px; color:var(--neg); }
+  .composer-reply-error.is-warning { color:var(--brass-ink); }
+  .composer-reply-error[hidden] { display:none; }
+  /* The message being answered, ringed while the bar names it, so it is clear on the feed WHICH
+     message the bar means -- the quote is one line, and two messages can start the same way. An
+     outline, not a border or a shadow: it takes no space and the bubble's own drop-shadow filter
+     stays as it is. */
+  .msg[data-replying] .msg-bubble { outline:2px solid var(--green); outline-offset:2px; }
+  /* The message a thread was opened from, picked out for a moment when the reader comes back from
+     it, so the eye lands where it left. Background only, which creates no stacking context -- .msg
+     must not have one (see the .pop block). Set and cleared by feed.ts. */
+  @keyframes msg-flash { from { background-color:var(--green-100); } }
+  .msg[data-flash] { animation:msg-flash 1.4s ease-out; border-radius:14px; }
+  @media (prefers-reduced-motion:reduce) { .msg[data-flash] { animation:none; } }
+
   /* Grid rather than a flex row so the duration can move to its own line on a narrow screen —
      inline, its "30 minutter" select was eating ~40% of the width and squeezing the message box
      down to a third of the bar. */
@@ -1030,6 +1109,8 @@
   .composer-attach { margin:0; cursor:pointer; font-size:19px; line-height:1; padding:8px 2px; }
   .composer-attach input { display:none; }
   .composer-file { font-size:12px; color:var(--muted); padding:3px 4px 0; }
+  /* What a reply sent from here left behind: stored, but the photo was not (feed.ts). */
+  .composer-file.is-warning { color:var(--brass-ink); }
   .composer-duration { margin:0; }
   .composer-duration select { width:auto; padding:5px 8px; border-radius:999px;
     background:var(--surface-2); }
@@ -1062,6 +1143,9 @@
     .msg-actions { gap:8px; margin-top:3px; padding-left:35px; }
     .msg-own .msg-actions { padding-left:0; }
     .msg-parent .msg-actions { padding-left:35px; }
+    /* Tracks the avatar too, like the action row; your own messages stay mirrored to the right. */
+    .thread-preview { margin-left:35px; max-width:calc(100% - 35px); }
+    .msg-own .thread-preview { margin-left:auto; }
     .reaction, .reaction-add { padding:3px 8px; font-size:12.5px; }
     /* Bottom sheet on a phone: easier to reach one-handed than a centred box, and anchoring to the
        bottom keeps it out of the way of the emoji keyboard the free-text field opens. */
@@ -1076,7 +1160,7 @@
       max-height:62dvh; border-radius:16px 16px 0 0; padding:14px 16px calc(16px + env(safe-area-inset-bottom)); }
     .emoji-grid { grid-template-columns:repeat(8, 1fr); gap:4px; }
     .emoji-choice { font-size:25px; padding:8px 4px; }
-    .msg-replies { font-size:12px; }
+    .msg-reply { font-size:12px; }
 
     /* Full-screen thread on a phone -- by HIDING the feed, not by covering it.
        An overlay would need position:fixed and a z-index, i.e. a stacking context, and no ancestor
@@ -1092,6 +1176,7 @@
     .chat:has(.thread-panel) > .composer { display:none; }
     .thread-panel { flex:1 1 100%; border-left:0; padding:0 18px;
       margin:0 -18px; --thread-from:100%; }
+    .thread-body { margin:0 -18px; padding:6px 18px 12px; }
     /* Back arrow instead of the ×: this is a whole screen, so it reads as "back to the messages". */
     .thread-back { display:block; }
     .thread-x { display:none; }
@@ -1125,6 +1210,9 @@
       grid-template-areas:"duration duration duration"
                           "attach main send"; }
     .composer-duration { justify-self:start; }
+    /* The duration row is not there to ask while replying (feed.ts skips the sheet for a reply), so
+       the bar takes its place above the input rather than adding a row of its own. */
+    .composer.is-replying { grid-template-areas:"reply reply reply" "attach main send"; }
     /* Belt and braces on top of the reorder: a floor under the inset, so nothing lands flush
        against a bar even where env() reports nothing.
 

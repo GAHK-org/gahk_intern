@@ -24,6 +24,12 @@
   serves both.
 {% endcomment %}
 {% comment %}
+  `item` is the message (QuickPost) OR the reply (QuickComment) the row belongs to. Both carry
+  `reaction_url`, the toggle endpoint a tap posts to, and `reaction_key`, the suffix on every id in
+  here: a message's is its pk and a reply's is "svar-<pk>", so a thread panel holding message 7 and
+  reply 7 side by side still has one #reactions-7 and one #reactions-svar-7.
+{% endcomment %}
+{% comment %}
   `archived` turns this row read-only: the pills stop being buttons and the picker is not rendered
   at all. Both halves are needed and neither is cosmetic — a disabled-looking pill that still
   carried hx-post would still write on a keyboard Enter, and a picker with nothing behind it invites
@@ -35,11 +41,15 @@
   intact — who reacted is a fact about the archive and is exactly what somebody reading it back
   wants.
 {% endcomment %}
-<div class="reactions{% if not reactions %} is-empty{% endif %}{% if archived %} is-archived{% endif %}" id="reactions-{{ post.pk }}">
+{% comment %}
+  Read once: a row renders its URL and its id suffix on every pill and every picker button.
+{% endcomment %}
+{% with key=item.reaction_key toggle_url=item.reaction_url %}
+<div class="reactions{% if not reactions %} is-empty{% endif %}{% if archived %} is-archived{% endif %}" id="reactions-{{ key }}">
   {% for r in reactions %}
     {% if archived %}
       <span class="reaction is-static{% if r.mine %} is-mine{% endif %}"
-            data-who="who-{{ post.pk }}-{{ forloop.counter }}"
+            data-who="who-{{ key }}-{{ forloop.counter }}"
             aria-label="{{ r.emoji }} {{ r.count }}">{{ r.emoji }} <span class="n">{{ r.count }}</span></span>
     {% else %}
     {% comment %}
@@ -54,11 +64,11 @@
       readers; everyone else discovers it by hovering, which is the thing itself.
     {% endcomment %}
     <button type="button" class="reaction{% if r.mine %} is-mine{% endif %}"
-            data-who="who-{{ post.pk }}-{{ forloop.counter }}"
+            data-who="who-{{ key }}-{{ forloop.counter }}"
             aria-haspopup="dialog"
-            hx-post="{% url 'den_hurtige:toggle_reaction' post.pk %}"
+            hx-post="{{ toggle_url }}"
             hx-vals='{"emoji": "{{ r.emoji }}"}'
-            hx-target="#reactions-{{ post.pk }}" hx-swap="outerHTML"
+            hx-target="#reactions-{{ key }}" hx-swap="outerHTML"
             aria-pressed="{% if r.mine %}true{% else %}false{% endif %}"
             aria-label="{{ r.emoji }} {{ r.count }}">{{ r.emoji }} <span class="n">{{ r.count }}</span></button>
     {% endif %}
@@ -77,7 +87,7 @@
     in feed.ts, which key off `details.pop[open]`, cover them with no new code.
   {% endcomment %}
   {% for r in reactions %}
-    <details class="pop who-picker" id="who-{{ post.pk }}-{{ forloop.counter }}">
+    <details class="pop who-picker" id="who-{{ key }}-{{ forloop.counter }}">
       <summary class="sr-only">Hvem reagerede med {{ r.emoji }}</summary>
       <div class="pop-backdrop"></div>
       <div class="pop-panel">
@@ -109,7 +119,7 @@
     than the button that fills it.
   {% endcomment %}
   {% if not archived %}
-  <details class="pop emoji-picker" id="picker-{{ post.pk }}">
+  <details class="pop emoji-picker" id="picker-{{ key }}">
     <summary class="reaction reaction-add" title="Tilføj reaktion" aria-label="Tilføj reaktion">☺<span aria-hidden="true">+</span><span class="add-label"> Reagér</span></summary>
     <div class="pop-backdrop"></div>
     <div class="pop-panel">
@@ -117,20 +127,21 @@
       <div class="emoji-grid">
         {% for e in quick_emoji %}
           <button type="button" class="emoji-choice"
-                  hx-post="{% url 'den_hurtige:toggle_reaction' post.pk %}"
+                  hx-post="{{ toggle_url }}"
                   hx-vals='{"emoji": "{{ e }}"}'
-                  hx-target="#reactions-{{ post.pk }}" hx-swap="outerHTML"
+                  hx-target="#reactions-{{ key }}" hx-swap="outerHTML"
                   aria-label="Reagér med {{ e }}">{{ e }}</button>
         {% endfor %}
       </div>
       <form class="emoji-other"
-            hx-post="{% url 'den_hurtige:toggle_reaction' post.pk %}"
-            hx-target="#reactions-{{ post.pk }}" hx-swap="outerHTML">
-        <label class="sr-only" for="emoji-{{ post.pk }}">Anden emoji</label>
-        <input type="text" id="emoji-{{ post.pk }}" name="emoji" maxlength="32"
+            hx-post="{{ toggle_url }}"
+            hx-target="#reactions-{{ key }}" hx-swap="outerHTML">
+        <label class="sr-only" for="emoji-{{ key }}">Anden emoji</label>
+        <input type="text" id="emoji-{{ key }}" name="emoji" maxlength="32"
                autocomplete="off" enterkeyhint="send" placeholder="Anden emoji…">
       </form>
     </div>
   </details>
   {% endif %}
 </div>
+{% endwith %}
