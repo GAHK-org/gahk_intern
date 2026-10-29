@@ -79,7 +79,7 @@ def embed(thing: Album | Video) -> str:
     """The Markdown that embeds an album or a film, as the picker writes it."""
     if isinstance(thing, Album):
         return embed_syntax.markdown("album", thing.pk, thing.name)
-    return embed_syntax.markdown("video", thing.pk, thing.title)
+    return embed_syntax.markdown("gahkflix", thing.pk, thing.title)
 
 
 def photo(into: Album, owner: Resident, minute: int, **fields: object) -> Media:
@@ -401,9 +401,9 @@ def test_sharing_an_album_starts_a_post_with_it_embedded(beboer: Resident) -> No
 def test_sharing_a_film_starts_a_post_with_it_embedded(beboer: Resident, videos_open: None) -> None:
     film = make_video(beboer, title="Revy 2009")
 
-    html = client_for(beboer).get(BOARD + f"opret?video={film.pk}").content.decode()
+    html = client_for(beboer).get(BOARD + f"opret?gahkflix={film.pk}").content.decode()
 
-    assert f"![Revy 2009](video:{film.pk})" in textarea(html)[1]
+    assert f"![Revy 2009](gahkflix:{film.pk})" in textarea(html)[1]
     assert '<div class="flix-embed">' in html
 
 
@@ -430,7 +430,7 @@ def test_sharing_nothing_embeddable_opens_an_empty_composer(beboer: Resident, qu
 def test_a_draft_cannot_be_shared(beboer: Resident, videos_open: None) -> None:
     draft = make_video(beboer, published=False)
 
-    html = client_for(beboer).get(BOARD + f"opret?video={draft.pk}").content.decode()
+    html = client_for(beboer).get(BOARD + f"opret?gahkflix={draft.pk}").content.decode()
 
     assert textarea(html)[1].strip() == ""
 
@@ -440,10 +440,10 @@ def test_the_composer_offers_what_the_reader_may_embed(beboer: Resident, member:
     fotogruppen = client_for(member).get(BOARD + "opret").content.decode()
 
     assert 'data-embed-open="album"' in plain
-    assert 'data-embed-open="video"' not in plain
-    assert 'id="js-embed-video"' not in plain
-    assert 'data-embed-open="video"' in fotogruppen
-    assert 'id="js-embed-video"' in fotogruppen
+    assert 'data-embed-open="gahkflix"' not in plain
+    assert 'id="js-embed-gahkflix"' not in plain
+    assert 'data-embed-open="gahkflix"' in fotogruppen
+    assert 'id="js-embed-gahkflix"' in fotogruppen
 
 
 def test_the_album_picker_lists_the_newest_and_finds_by_name(beboer: Resident) -> None:
@@ -472,19 +472,19 @@ def test_the_film_picker_lists_published_films_only(beboer: Resident, videos_ope
     binned = make_video(beboer, title="Væk", deleted_at=timezone.now())
     client = client_for(beboer)
 
-    listed = client.get(BOARD + "indlejr/video").content.decode()
-    by_series = client.get(BOARD + "indlejr/video", {"q": "gang"}).content.decode()
+    listed = client.get(BOARD + "indlejr/gahkflix").content.decode()
+    by_series = client.get(BOARD + "indlejr/gahkflix", {"q": "gang"}).content.decode()
 
-    assert f"(video:{film.pk})" in listed
-    assert f"(video:{draft.pk})" not in listed
-    assert f"(video:{binned.pk})" not in listed
-    assert f"(video:{film.pk})" in by_series
+    assert f"(gahkflix:{film.pk})" in listed
+    assert f"(gahkflix:{draft.pk})" not in listed
+    assert f"(gahkflix:{binned.pk})" not in listed
+    assert f"(gahkflix:{film.pk})" in by_series
 
 
 def test_no_film_picker_for_a_reader_gahkflix_keeps_out(beboer: Resident, member: Resident) -> None:
     make_video(member, title="Revy")
 
-    assert "Revy" not in client_for(beboer).get(BOARD + "indlejr/video").content.decode()
+    assert "Revy" not in client_for(beboer).get(BOARD + "indlejr/gahkflix").content.decode()
 
 
 def test_the_composer_draws_the_widgets_the_body_embeds(beboer: Resident) -> None:
@@ -512,7 +512,7 @@ def test_the_preview_tab_draws_the_widgets_where_they_stand(beboer: Resident) ->
 
 
 @pytest.mark.parametrize(
-    ("method", "url"), [("get", "indlejr/album"), ("get", "indlejr/video"), ("post", "indlejret")]
+    ("method", "url"), [("get", "indlejr/album"), ("get", "indlejr/gahkflix"), ("post", "indlejret")]
 )
 def test_the_composer_endpoints_are_for_residents(client: Client, method: str, url: str) -> None:
     response = getattr(client, method)(BOARD + url)
@@ -550,6 +550,7 @@ def test_a_published_film_offers_to_share_it_and_a_draft_does_not(
     client = client_for(beboer)
 
     assert (
-        f'href="{BOARD}opret?video={film.pk}"' in client.get(f"/intern/gahkflix/v/{film.pk}").content.decode()
+        f'href="{BOARD}opret?gahkflix={film.pk}"'
+        in client.get(f"/intern/gahkflix/v/{film.pk}").content.decode()
     )
     assert "Del på opslagstavlen" not in client.get(f"/intern/gahkflix/v/{draft.pk}").content.decode()

@@ -366,7 +366,7 @@ def test_rendering_without_images_still_sanitises() -> None:
 # `![Julefrokost 2026](album:12)`: the renderer is handed the widgets, by reference, and puts each
 # where its embed stands. The widgets here stand in for what opslagstavle.embeds draws.
 
-WIDGETS = {"album:12": '<a class="widget">ALBUM</a>', "video:3": '<div class="widget">VIDEO</div>'}
+WIDGETS = {"album:12": '<a class="widget">ALBUM</a>', "gahkflix:3": '<div class="widget">VIDEO</div>'}
 
 
 def test_an_embed_alone_in_its_paragraph_becomes_its_widget() -> None:
@@ -378,14 +378,14 @@ def test_an_embed_alone_in_its_paragraph_becomes_its_widget() -> None:
 
 def test_an_embed_in_a_sentence_is_drawn_after_its_paragraph() -> None:
     """A widget is a block, and a block inside a <p> is not HTML."""
-    html = render_markdown("Se ![Revy](video:3) her.", embeds=WIDGETS)
+    html = render_markdown("Se ![Revy](gahkflix:3) her.", embeds=WIDGETS)
 
-    assert html.index("<p>Se  her.</p>") < html.index(WIDGETS["video:3"])
+    assert html.index("<p>Se  her.</p>") < html.index(WIDGETS["gahkflix:3"])
 
 
 def test_an_embed_without_a_widget_shows_its_name() -> None:
     assert render_markdown("![Julefrokost 2026](album:12)").strip() == "<p>Julefrokost 2026</p>"
-    assert render_markdown("![Revy](video:9)", embeds=WIDGETS).strip() == "<p>Revy</p>"
+    assert render_markdown("![Revy](gahkflix:9)", embeds=WIDGETS).strip() == "<p>Revy</p>"
 
 
 def test_an_excerpt_leaves_out_the_embeds_it_has_widgets_for() -> None:
@@ -422,6 +422,6 @@ def test_plain_text_names_an_embed_with_its_icon() -> None:
 
 
 def test_embed_references_lists_them_in_order() -> None:
-    source = "![a](video:3)\n\n```\n![x](album:1)\n```\n\n![b](album:12) og ![c](album:12)"
+    source = "![a](gahkflix:3)\n\n```\n![x](album:1)\n```\n\n![b](album:12) og ![c](album:12)"
 
-    assert embed_references(source) == ["video:3", "album:12", "album:12"]
+    assert embed_references(source) == ["gahkflix:3", "album:12", "album:12"]

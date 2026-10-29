@@ -44,8 +44,8 @@ disputes Inspektionen exists to settle.
 
 `/intern/opslagstavle/` (board), `<pk>` (permalink), `opret`, `<pk>/rediger`, `<pk>/slet`,
 `<pk>/fastgoer`, `<pk>/kommentar`, `kommentar/<pk>/slet`, `<pk>/reaktion`, `forhaandsvisning`,
-`billede`, `abonner`, `indlejret`, `indlejr/album`, `indlejr/video`. `opret?album=<pk>` and
-`opret?video=<pk>` open the composer with that album or film embedded. Namespaced `opslagstavle:`.
+`billede`, `abonner`, `indlejret`, `indlejr/album`, `indlejr/gahkflix`. `opret?album=<pk>` and
+`opret?gahkflix=<pk>` open the composer with that album or film embedded. Namespaced `opslagstavle:`.
 
 ## Data model
 

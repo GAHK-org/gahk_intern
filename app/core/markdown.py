@@ -378,7 +378,7 @@ def plain_text(source: str | None) -> str:
 
 
 def embed_references(source: str | None) -> list[str]:
-    """What `source` embeds where a widget can go (core.embeds), in order: `album:12`, `video:7`."""
+    """What `source` embeds where a widget can go (core.embeds), in order: `album:12`, `gahkflix:7`."""
     env: dict[str, Any] = {}
     _MD.parse(source or "", env)
     return list(env.get("found", []))
