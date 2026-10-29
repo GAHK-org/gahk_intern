@@ -1,0 +1,17 @@
+{% comment %}
+  The picker's list (views.embed_choices): the newest albums or films, or those matching what is
+  typed. Picking one puts its Markdown (`![Julefrokost 2026](album:12)`) in the body at the cursor,
+  on a line of its own, and closes the picker (opslagstavle.ts).
+{% endcomment %}
+{% for choice in choices %}
+  <button type="button" class="board-choice is-{{ kind }}" data-embed-pick data-embed="{{ choice.markdown }}">
+    <span class="board-choice-img">{% if choice.picture %}<img src="{{ choice.picture }}" alt="" loading="lazy" decoding="async">{% endif %}</span>
+    <span class="board-choice-text"><strong>{{ choice.title }}</strong><small>{{ choice.detail }}</small></span>
+  </button>
+{% empty %}
+  <p class="board-choice-none">
+    {% if query %}Ingen {% if kind == "album" %}albummer{% else %}videoer{% endif %} matcher «{{ query }}».
+    {% elif kind == "album" %}Der er ingen albummer endnu.
+    {% else %}Der er ingen udgivne videoer endnu.{% endif %}
+  </p>
+{% endfor %}

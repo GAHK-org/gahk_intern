@@ -28,15 +28,20 @@ can put on a page.
 """
 
 import re
+import secrets
+from collections.abc import Mapping
+from typing import Any
 from urllib.parse import unquote
 
 import nh3
 from django.conf import settings
 from django.utils.safestring import SafeString, mark_safe
 from markdown_it import MarkdownIt
+from markdown_it.rules_core import StateCore
 from markdown_it.rules_inline import StateInline
 from markdown_it.token import Token
 
+from . import embeds as embed_syntax
 from .links import shorten, title_for
 from .mentions import MENTION_RE, is_group, profile_url
 
@@ -190,6 +195,108 @@ def _mention(state: StateInline, silent: bool) -> bool:
 _MD.inline.ruler.before("link", "mention", _mention)
 
 
+def _embed_of(token: Token) -> tuple[str, int] | None:
+    if token.type != "image":
+        return None
+    source = token.attrGet("src")
+    return embed_syntax.parse(source) if isinstance(source, str) else None
+
+
+def _name_of(token: Token, kind: str, *, plain: bool) -> Token:
+    """The text an embed leaves where no widget is drawn: the name it was embedded under, with the
+    kind's icon in plain text (a notification: "📷 Julefrokost 2026")."""
+    name = token.content or kind
+    text = Token("text", "", 0)
+    text.content = f"{embed_syntax.KINDS[kind]} {name}" if plain else name
+    return text
+
+
+def _is_blank(children: list[Token]) -> bool:
+    return all(child.type in ("softbreak", "hardbreak") or not child.content.strip() for child in children)
+
+
+def _trimmed(children: list[Token]) -> list[Token]:
+    """Without the line breaks and spaces an embed taken out of its line leaves at either end."""
+    while children and _is_blank(children[:1]):
+        children = children[1:]
+    while children and _is_blank(children[-1:]):
+        children = children[:-1]
+    return children
+
+
+def _embeds(state: StateCore) -> None:
+    """markdown-it core rule: put each feature's widget where the body embeds it (core.embeds).
+
+    The widgets come from whoever renders, in `env["embeds"]` (reference → HTML), because they are
+    drawn for a reader, from rows this module never sees. Each one the reader gets is lifted out of
+    its paragraph and placed right after it, as a block of its own (a widget inside a <p> is not
+    HTML), behind a marker that render_markdown swaps for the widget once nh3 is done: nh3 would
+    strip the widget's markup, which is the renderer's own and not the author's. The marker carries
+    a nonce drawn per render, so text an author writes can never be taken for one.
+
+    Every other embed, or every one when there are no widgets (plain text, a page that draws none),
+    leaves its name as text. `env["place"] = False` leaves out the ones that have widgets instead:
+    the feed shows those under its excerpt. Only embeds in a paragraph are widgets; in a heading or a
+    table cell there is no room for one. `env["found"]` collects them in order (embed_references).
+    """
+    env = state.env
+    widgets: Mapping[str, str] | None = env.get("embeds")
+    place = env.get("place", True)
+    plain = env.get("plain", False)
+    found: list[str] = env.setdefault("found", [])
+    placed: list[tuple[str, str]] = env.setdefault("placed", [])
+    tokens = state.tokens
+    out: list[Token] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        paragraph = (
+            token.type == "paragraph_open"
+            and index + 2 < len(tokens)
+            and tokens[index + 1].type == "inline"
+            and tokens[index + 2].type == "paragraph_close"
+        )
+        inline = tokens[index + 1] if paragraph else token if token.type == "inline" else None
+        if inline is None or not any(_embed_of(child) for child in inline.children or ()):
+            out.append(token)
+            index += 1
+            continue
+        lifted: list[str] = []
+        kept: list[Token] = []
+        for child in inline.children or ():
+            embed = _embed_of(child)
+            if embed is None:
+                kept.append(child)
+                continue
+            reference = embed_syntax.reference(*embed)
+            if paragraph:
+                found.append(reference)
+                if not plain and widgets is not None and reference in widgets:
+                    if place:
+                        lifted.append(reference)
+                    continue
+            kept.append(_name_of(child, embed[0], plain=plain))
+        inline.children = _trimmed(kept)
+        if not paragraph:
+            out.append(token)
+            index += 1
+            continue
+        if not _is_blank(inline.children):
+            out.extend(tokens[index : index + 3])
+        for reference in lifted:
+            marker = f"gahk-embed-{env.get('nonce', '')}-{len(placed)}"
+            placed.append((marker, reference))
+            block = Token("html_block", "", 0)
+            block.content = f"{marker}\n"
+            block.block = True
+            out.append(block)
+        index += 3
+    state.tokens = out
+
+
+_MD.core.ruler.push("embeds", _embeds)
+
+
 def _filter_attribute(tag: str, attr: str, value: str) -> str | None:
     """nh3 attribute filter: drop an image source that is not one of ours, and any mention marker
     but the two _mention writes."""
@@ -217,7 +324,13 @@ def _clean(html: str) -> str:
     )
 
 
-def render_markdown(source: str | None, *, with_images: bool = True) -> SafeString:
+def render_markdown(
+    source: str | None,
+    *,
+    with_images: bool = True,
+    embeds: Mapping[str, str] | None = None,
+    place_embeds: bool = True,
+) -> SafeString:
     """Render `source` to sanitized HTML, safe to output unescaped.
 
     The only function in the project that marks resident-authored content safe. Nothing else may —
@@ -229,6 +342,11 @@ def render_markdown(source: str | None, *, with_images: bool = True) -> SafeStri
     without them and shows one thumbnail instead. Stripping after the sanitiser is safe for the same
     reason `_SRCLESS_IMG` is — by then nh3 has normalised the markup, so this never sees author
     input, only tags nh3 itself emitted.
+
+    `embeds` are the widgets for what the body embeds (core.embeds), by reference: HTML the caller
+    drew from its own templates, never author input, which is why it is put in after nh3 rather than
+    through it. Each takes the place of its embed (see _embeds); an embed without one shows its name.
+    `place_embeds=False` leaves out the embeds that have widgets, for a feed that shows them apart.
     """
     if not source:
         return mark_safe("")  # nosec — a literal empty string
@@ -237,9 +355,14 @@ def render_markdown(source: str | None, *, with_images: bool = True) -> SafeStri
     # has just come out of `_clean` — nh3 with the allowlist above — on top of markdown-it running
     # with html=False. This is the single chokepoint every resident-authored body passes through, and
     # concentrating the risk in one reviewed line (and nowhere else) is the design.
-    cleaned = _SRCLESS_IMG.sub("", _clean(_demote_h1(_MD.render(source))))
+    env: dict[str, Any] = {"embeds": embeds, "place": place_embeds, "nonce": secrets.token_hex(8)}
+    cleaned = _SRCLESS_IMG.sub("", _clean(_demote_h1(_MD.render(source, env))))
     if not with_images:
         cleaned = _ANY_IMG.sub("", cleaned)
+    # The widgets go in last, into the markers _embeds left: after nh3, and after the image strip
+    # above, both of which are for the author's markup and would take the widgets' own apart.
+    for marker, reference in env.get("placed", []):
+        cleaned = cleaned.replace(marker, (embeds or {})[reference])
     return mark_safe(cleaned)  # noqa: S308  # nosec
 
 
@@ -251,7 +374,14 @@ def plain_text(source: str | None) -> str:
     """
     if not source:
         return ""
-    return nh3.clean(_MD.render(source), tags=set()).strip()
+    return nh3.clean(_MD.render(source, {"plain": True}), tags=set()).strip()
+
+
+def embed_references(source: str | None) -> list[str]:
+    """What `source` embeds where a widget can go (core.embeds), in order: `album:12`, `gahkflix:7`."""
+    env: dict[str, Any] = {}
+    _MD.parse(source or "", env)
+    return list(env.get("found", []))
 
 
 def _image_srcs(source: str) -> list[str]:

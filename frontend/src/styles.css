@@ -1590,6 +1590,74 @@
     border: 1px solid var(--border);
   }
   .notice-gallery-count { @apply text-sm; }
+
+  /* The composer's embeds (opslagstavle/_embedded.html): the widgets as the post will show them, a
+     "Fjern" on each, and the buttons that open the pickers. */
+  .board-embeds { display: grid; gap: 10px; margin-top: 14px; }
+  .board-embed { position: relative; }
+  .board-embed > .album-embed, .board-embed > .flix-embed { margin-top: 0; }
+  .board-embed-remove { position: absolute; top: 10px; right: 10px; z-index: 2; padding: 5px 12px;
+    border: 0; border-radius: 999px; background: rgb(0 0 0 / .62); color: #fff; font-size: 13px;
+    font-weight: 600; cursor: pointer; }
+  .board-embed-remove:hover { background: rgb(0 0 0 / .82); }
+  .board-embed-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px;
+    font-size: 14px; color: var(--muted); }
+  .board-embed-button { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px 6px 8px;
+    border: 1px solid var(--border-strong); border-radius: 999px; background: var(--surface);
+    color: var(--ink); font-size: 14px; font-weight: 600; cursor: pointer; }
+  .board-embed-button:hover { border-color: var(--green-100); background: var(--green-050); }
+  .board-embed-button .ni { width: 20px; height: 20px; stroke: var(--brass); fill: none; }
+  /* GAHKFlix's red G on its black, as on the film's own kicker. */
+  .board-embed-button.is-gahkflix b { display: inline-grid; place-items: center; width: 20px; height: 20px;
+    border-radius: 4px; background: #141414; color: #e50914; font-family: "Bebas Neue", Impact,
+    "Arial Narrow Bold", sans-serif; font-size: 17px; font-weight: 400; line-height: 1; }
+
+  /* The pickers (form.html): a search over the albums or the films, newest first. The film's picker
+     is GAHKFlix-dark, as everything of GAHKFlix's is. */
+  /* margin:auto puts back the centring the browser gives a modal dialog, which the reset's margin:0
+     takes away. */
+  .board-picker { width: min(540px, calc(100vw - 24px)); max-height: min(620px, calc(100dvh - 48px));
+    margin: auto; padding: 0; overflow: hidden; border: 0; border-radius: 14px; background: var(--surface);
+    color: var(--ink); box-shadow: 0 24px 60px rgb(0 0 0 / .28); }
+  .board-picker[open] { display: flex; flex-direction: column; }
+  .board-picker::backdrop { background: rgb(20 28 23 / .5); }
+  .board-picker-head { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 16px 14px 10px 18px; }
+  .board-picker-head h2 { margin: 0; font-family: Georgia, serif; font-size: 20px; }
+  .board-picker-close { width: 34px; height: 34px; border: 0; border-radius: 50%; background: transparent;
+    color: inherit; font-size: 24px; line-height: 1; cursor: pointer; }
+  .board-picker-close:hover { background: var(--surface-2); }
+  /* width:auto, stretched by the column: the site's inputs are 100% wide, which with these margins
+     made the dialog scroll sideways once the search took focus. */
+  .board-picker-search { align-self: stretch; width: auto; min-width: 0; margin: 0 18px 10px;
+    padding: 9px 12px; border: 1px solid var(--border-strong); border-radius: 10px; font-size: 15px; }
+  .board-picker-results { flex: 1; display: grid; align-content: start; gap: 2px; min-height: 120px;
+    overflow: auto; padding: 0 10px 12px; }
+  .board-choice { display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px; border: 0;
+    border-radius: 10px; background: transparent; color: inherit; font: inherit; text-align: left;
+    cursor: pointer; }
+  .board-choice:hover, .board-choice:focus-visible { background: var(--green-050); outline: none; }
+  .board-choice-img { flex: none; width: 56px; height: 56px; overflow: hidden; border-radius: 8px;
+    background: var(--sunken); }
+  .board-choice-img img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .board-choice-text { display: grid; gap: 2px; min-width: 0; }
+  .board-choice-text strong, .board-choice-text small { overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+  .board-choice-text strong { font-weight: 650; }
+  .board-choice.is-album strong { font-family: Georgia, serif; font-size: 16.5px; font-weight: 700; }
+  .board-choice-text small { color: var(--muted); font-size: 12.5px; }
+  .board-choice-none { padding: 18px 10px; margin: 0; color: var(--muted); text-align: center; }
+  .board-picker.is-gahkflix { background: #141414; color: #e5e5e5; }
+  .board-picker.is-gahkflix .board-picker-head h2 { display: flex; align-items: baseline; gap: 10px;
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 18px; font-weight: 800; }
+  .board-picker.is-gahkflix .board-picker-head b { font-family: "Bebas Neue", Impact, "Arial Narrow Bold",
+    sans-serif; font-size: 26px; font-weight: 400; color: #e50914; letter-spacing: .02em; }
+  .board-picker.is-gahkflix .board-picker-close:hover,
+  .board-picker.is-gahkflix .board-choice:hover,
+  .board-picker.is-gahkflix .board-choice:focus-visible { background: #2a2a2a; }
+  .board-picker.is-gahkflix .board-picker-search { border-color: #3a3a3a; background: #2a2a2a; color: #fff; }
+  .board-picker.is-gahkflix .board-choice-img { width: 96px; height: 54px; border-radius: 4px; background: #2a2a2a; }
+  .board-picker.is-gahkflix .board-choice-text small, .board-picker.is-gahkflix .board-choice-none { color: #a3a3a3; }
   .notice-head { @apply flex items-start justify-between gap-3; flex-wrap: nowrap; }
   .notice-headline { flex: 1; min-width: 0; }
   .notice-tags { @apply flex flex-wrap items-center gap-2; margin-bottom: 6px; }
@@ -1932,6 +2000,31 @@
      .album-timeline-label strong { font-size:24px; }
    }
    @media (prefers-reduced-motion:reduce) { .album-timeline-mosaic img { transition:none; } }
+   /* A post's album on opslagstavlen (opslagstavle/_album_widget.html): the tile above, with the
+      album's own newest pictures. Fewer than seven get a layout that fills the tile instead of the
+      index's dark empty cells: n1 one picture, n2 two halves, n3 one large and two, n4 four, n5 one
+      large and four, n6 six. On a phone everything from three up is one large and two, as above. */
+   .album-embed { margin:10px 0 0; box-shadow:none; line-height:1.35; }
+   /* Drawn inside a post's text (core.embeds), where .prose-gahk styles every link and picture. */
+   .prose-gahk .album-embed { color:#fffdf7; text-decoration:none; }
+   .prose-gahk .album-embed img { max-width:none; margin:0; border-radius:0; }
+   .album-embed-n1 .album-timeline-mosaic { grid-template-columns:1fr; }
+   .album-embed-n2 .album-timeline-mosaic, .album-embed-n4 .album-timeline-mosaic { grid-template-columns:repeat(2, 1fr); }
+   .album-embed-n3 .album-timeline-mosaic, .album-embed-n6 .album-timeline-mosaic { grid-template-columns:repeat(3, 1fr); }
+   .album-embed-n5 .album-timeline-mosaic { grid-template-columns:repeat(4, 1fr); }
+   .album-embed-n1 .album-timeline-mosaic > span:first-child { grid-column:auto; }
+   .album-embed-n2 .album-timeline-mosaic > span { grid-row:span 2; grid-column:auto; }
+   .album-embed-n4 .album-timeline-mosaic > span:first-child,
+   .album-embed-n6 .album-timeline-mosaic > span:first-child { grid-row:auto; grid-column:auto; }
+   @media (max-width:720px) {
+     /* Taller than the index's 92 px rows: on a phone the band would otherwise cover most of them,
+        and on the board the pictures are the point. */
+     .album-embed .album-timeline-mosaic { grid-template-rows:repeat(2, 118px); }
+     .album-embed-n4 .album-timeline-mosaic, .album-embed-n5 .album-timeline-mosaic,
+     .album-embed-n6 .album-timeline-mosaic { grid-template-columns:repeat(3, 1fr); }
+     .album-embed-n4 .album-timeline-mosaic > span:first-child,
+     .album-embed-n6 .album-timeline-mosaic > span:first-child { grid-row:span 2; grid-column:span 2; }
+   }
    .album-folder { border-top:1px solid var(--border); padding-top:16px; }
    .album-folder h2 { display:flex; align-items:center; gap:8px; margin:0 0 12px; font-size:16px; }
    .album-folder h2 svg, .album-subtitle svg { width:19px; height:19px; color:var(--brass); fill:none; stroke:currentColor; }

@@ -147,4 +147,75 @@ function csrfToken(): string {
   return document.querySelector<HTMLInputElement>('input[name="csrfmiddlewaretoken"]')?.value ?? "";
 }
 
-if (root) init(root);
+/** Put an embed (`![Julefrokost 2026](album:12)`) in the body at the cursor, on a paragraph of its
+ * own: an embed is drawn as a widget after the paragraph it is in, so one alone is drawn exactly
+ * where it was put. */
+function insertEmbed(area: HTMLTextAreaElement, markdown: string): void {
+  const before = area.value.slice(0, area.selectionStart);
+  const after = area.value.slice(area.selectionEnd);
+  const lead = before === "" || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
+  const trail = after.startsWith("\n\n") ? "" : after.startsWith("\n") ? "\n" : "\n\n";
+  insert(area, `${lead}${markdown}${trail}`, lead.length + markdown.length);
+}
+
+/** Take every embed of `reference` (`album:12`) out of the body, with the blank line it leaves. */
+function removeEmbed(area: HTMLTextAreaElement, reference: string): void {
+  const escaped = reference.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const embed = new RegExp(`!\\[(?:\\\\.|[^\\]\\\\])*\\]\\(${escaped}\\)`, "g");
+  area.value = area.value.replace(embed, "").replace(/\n{3,}/g, "\n\n").trim();
+  area.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+/** The composer's pickers for an album and a film (form.html's <dialog>s), and "Fjern" on the
+ * widgets under the textarea (_embedded.html).
+ *
+ * Opening a picker empties its search and fires `embed-open`, which its hx-trigger answers with the
+ * newest albums or films. Picking one embeds it in the body, where the cursor was, and the widgets
+ * under the textarea re-draw on the `input` that fires. Clicking the backdrop closes a picker, as
+ * Escape does by itself.
+ */
+function initEmbeds(area: HTMLTextAreaElement): void {
+  document.addEventListener("click", (event) => {
+    const target = event.target as Element;
+    const opener = target.closest<HTMLElement>("[data-embed-open]");
+    if (opener) {
+      const dialog = document.getElementById(`js-embed-${opener.dataset.embedOpen}`);
+      if (!(dialog instanceof HTMLDialogElement)) return;
+      const search = dialog.querySelector<HTMLInputElement>("input[type='search']");
+      dialog.showModal();
+      if (search) {
+        search.value = "";
+        search.focus();
+        search.dispatchEvent(new Event("embed-open"));
+      }
+      return;
+    }
+    const pick = target.closest<HTMLElement>("[data-embed-pick]");
+    if (pick) {
+      pick.closest("dialog")?.close();
+      insertEmbed(area, pick.dataset.embed ?? "");
+      return;
+    }
+    const remove = target.closest<HTMLElement>("[data-embed-remove]");
+    if (remove) {
+      removeEmbed(area, remove.dataset.embedRemove ?? "");
+      return;
+    }
+    if (target.closest("[data-embed-close]")) {
+      target.closest("dialog")?.close();
+      return;
+    }
+    // A click on the backdrop lands on the dialog itself, outside its box.
+    if (target instanceof HTMLDialogElement && target.matches(".board-picker")) {
+      const box = target.getBoundingClientRect();
+      const { clientX: x, clientY: y } = event as MouseEvent;
+      if (x < box.left || x > box.right || y < box.top || y > box.bottom) target.close();
+    }
+  });
+}
+
+if (root) {
+  init(root);
+  const area = root.querySelector<HTMLTextAreaElement>("textarea[name='body']");
+  if (area) initEmbeds(area);
+}
