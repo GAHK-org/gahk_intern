@@ -52,8 +52,9 @@ ran and how it went, and what is scheduled next. Under Administration → Worker
 
 ## Retention
 
-- Successful jobs are kept for 30 days. Any other job is kept until there are more than 1000 of the
-  same type and status; then the oldest beyond the 1000 go once they are 60 days old.
+- Successful jobs are kept for 35 days, so the monthly summary can count a whole month. Any other
+  job is kept until there are more than 1000 of the same type and status; then the oldest beyond the
+  1000 go once they are 60 days old.
 
 ## Decisions
 

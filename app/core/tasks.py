@@ -14,7 +14,9 @@ from django.db.models.functions import RowNumber
 from django.utils import timezone
 
 from config.celery import app as celery_app
-from residents.models import Resident, active_period
+from residents.admin_access import approvers
+
+from . import admin_summary
 
 # How long a delivered broker message is kept before being swept.
 #
@@ -32,8 +34,9 @@ from residents.models import Resident, active_period
 BROKER_MESSAGE_RETENTION = datetime.timedelta(days=1)
 
 # How long a SUCCESSFUL job is kept on the worker-jobs page: its result (celery_taskmeta) and its
-# log (core/worker_logs.py) alike.
-WORKER_JOB_RETENTION = datetime.timedelta(days=30)
+# log (core/worker_logs.py) alike. Longer than any month, so the monthly summary on the 1st
+# (core.admin_summary) still counts the whole of a 31-day month, even sent a few days late.
+WORKER_JOB_RETENTION = datetime.timedelta(days=35)
 
 # Any other job — failed, revoked, or stuck as started by a worker that died — is one somebody may
 # need to look into, so it is kept far longer, and only a pile of the same goes: per task and status,
@@ -77,28 +80,15 @@ def task_time_limit(task_name: str) -> datetime.timedelta:
 
 
 @shared_task
-def send_admin_dummy_notification() -> int:
-    """Send the temporary twice-daily worker notification to current administrators."""
-    year, month = active_period()
-    recipients = set(
-        Resident.objects.filter(
-            is_active=True,
-            role_assignments__role="administrator",
-            role_assignments__year=year,
-            role_assignments__month=month,
-        ).values_list("email", flat=True)
-    )
-    recipients.update(
-        Resident.objects.filter(is_active=True, is_superuser=True).values_list("email", flat=True)
-    )
+def send_admin_monthly_summary() -> int:
+    """Mail everyone with Django-admin access the summary of the month that just ended
+    (core.admin_summary). Returns how many mails were sent: one, or none without recipients."""
+    recipients = sorted(approvers().values_list("email", flat=True))
     if not recipients:
+        logger.warning("Nobody has Django-admin access to send the monthly summary to.")
         return 0
-    return send_mail(
-        "Celery-testnotifikation",
-        "Dette er den planlagte testnotifikation fra Celery-worker'en.",
-        settings.DEFAULT_FROM_EMAIL,
-        sorted(recipients),
-    )
+    subject, body = admin_summary.compose()
+    return send_mail(subject, body, settings.DEFAULT_FROM_EMAIL, recipients)
 
 
 @shared_task
