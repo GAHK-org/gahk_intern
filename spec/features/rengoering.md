@@ -1,0 +1,161 @@
+# Feature: Søndagsrengøring — cleaning rotas, sign-off and inspection
+
+**Unnumbered on purpose**, like `opslagstavle.md`: `F-001`–`F-015` are legacy-parity documents with a
+PHP "Source file(s)" header, and this feature has no legacy counterpart. The sections follow the
+F-xxx layout so it reads the same way.
+
+- **App:** `rengoering` (new), mounted at `/intern/rengoering/` from `residents/urls.py`, namespace `rengoering:`
+- **Replaces:** the printed rota on varme trappe (sign + time when done, Inspektionen signs at 22.00)
+  and the standalone prototype in `hackathon/rengoering-server/` (one real round on 1/11/2026).
+- **Access control:** logged-in residents for their *own* assignments; `Role.INSPEKTION` (via the
+  monthly `RoleAssignment`s) and superusers/`administrator` for everything else. Enforced per view with
+  `role_required` / `request_has_role` and per object (ownership), see *Access*.
+- **Out of scope (first pass):** køkkenrengøring (the data model leaves room for it, see `CleaningArea.kind`),
+  hovedrengøring, notifications (phase 5), any link to AK-krydser.
+
+## Purpose
+Every Sunday each alumne on the rota cleans one area (hall, a floor, læsesal, a staircase) by 22.00.
+They record when they were done; a member of Inspektionen walks the house at 22.00 with a checklist
+and approves each area or records *mangler*, which the alumne must fix by 22.00 the next day, after
+which Inspektionen re-checks. Inspektionen also plans the rota for each semester (e.g. "E26":
+26 Sundays, every 5th a (*)-uge with extra tasks).
+
+## Routes
+| Name | URL (under `/intern/rengoering/`) | Method | Access | Purpose |
+|---|---|---|---|---|
+| `mine` | `` | GET | resident | "Min rengøring": next assignment with task list, upcoming ones, own history |
+| `assignment` | `vagt/<pk>` | GET | owner or manager | one assignment: tasks, sign-off, inspections, mangler + deadline |
+| `sign_off` | `vagt/<pk>/taget` | POST | owner (manager on behalf) | "Jeg har taget min rengøring" → `signed_off_at = now` |
+| `mark_fixed` | `vagt/<pk>/udbedret` | POST | owner | "Mangler er udbedret" on the open Mangler inspection |
+| `edit_assignment` | `vagt/<pk>/rediger` | GET/POST | manager | swap resident, toggle (*)-uge, clear sign-off |
+| `inspect` | `tjek/` → `tjek/<yyyy-mm-dd>` | GET | manager | mobile walk view for one Sunday (the prototype's UX) |
+| `inspect_toggle` | `tjek/vagt/<pk>/opgave/<task_pk>` | POST | manager | tick/untick a task (htmx/fetch autosave) |
+| `inspect_note` | `tjek/vagt/<pk>/note` | POST | manager | autosave the note |
+| `inspect_decide` | `tjek/vagt/<pk>/afgoer` | POST | manager | Godkendt / Mangler (+ deadline) for the current round |
+| `overview` | `oversigt/[<rota_pk>]` | GET | manager | Sundays × areas status grid for a rota |
+| `area_history` | `historik/omraade/<slug>` | GET | manager | all assignments + outcomes for one area |
+| `resident_history` | `historik/beboer/<pk>` | GET | manager | one resident's assignments + outcomes, with counts |
+| `rotas` | `lister/` | GET | manager | list of rotas |
+| `rota_create` | `lister/opret` | GET/POST | manager | generate a rota (form → preview → save) |
+| `rota_import` | `lister/importer` | GET/POST | manager | paste / CSV (/ PDF) → name matching → save |
+| `rota_detail` | `lister/<pk>` | GET | manager | the rota as a grid; cells link to `edit_assignment` |
+| `rota_replace` | `lister/<pk>/erstat` | POST | manager | "replace X by Y from date D" (moving out) |
+
+Areas and task lists are edited in the **Django admin** (`rengoering.CleaningArea` with an inline of
+`CleaningTask`, ordered), gated to Inspektionen with the same `has_*_permission` pattern as
+`cms.admin.ContentEditorAdmin`. That is a sortable nested list with no new UI. A custom editor can come
+later if the admin turns out to be too clunky on a phone.
+
+## Data model
+```
+CleaningArea   name, slug (unique), description ("Deles af 3 alumner"), order, is_active,
+               kind = TextChoices(SOENDAG="soendag")      # later: KOEKKEN, with its own deadline rules
+               import_aliases (text, one per line)        # "Stuen, Gang, Toilet" from the PDF headers
+CleaningTask   area FK(CASCADE), zone ("Toilet og bad"), group ("Håndvask"), text, star_only (bool),
+               order, is_active                           # deactivate, never delete, once inspected
+Rota           name ("E26"), start_date (a Sunday), created_by, created_at
+CleaningAssignment
+               rota FK(CASCADE), area FK(PROTECT), date, resident FK(SET_NULL, null = "Ingen på listen"),
+               is_star_week, signed_off_at (null), signed_off_by (null; ≠ resident when done on behalf),
+               comment (the PDF's "Kommentar" column)
+               UNIQUE(area, date)                         # two rotas can never both claim a Sunday
+Inspection     assignment FK(CASCADE), round (1 = Sunday, 2+ = opfølgning), inspector FK(SET_NULL),
+               checked_tasks M2M CleaningTask, note, outcome ("" while in progress | GODKENDT | MANGLER),
+               missing (JSON [{zone, text}], frozen on decision), started_at, decided_at,
+               deadline (MANGLER only), fixed_at (alumne pressed "udbedret")
+               UNIQUE(assignment, round)
+```
+- **`Inspection.missing` is a snapshot.** It is written when a round is decided, so history keeps
+  saying what was missing after Inspektionen edits or deactivates tasks. The live ticks
+  (`checked_tasks`) are only needed while the round is in progress.
+- **Zone and group are plain strings on the task**, not models. They exist only to group the checklist
+  on screen (`{% regroup %}`), so separate models would add joins and admin forms for nothing.
+- **Star weeks live on the assignment**, not as a formula on the rota. Generation sets them from a
+  cadence (every *n*th Sunday), and import copies the PDF's `*` column. One field covers both, plus
+  manual exceptions.
+- **No `RotaMember` table.** The order of residents per area is an input to the generator. After
+  that, the assignments are the source of truth, so later edits (swaps, moving out) never disagree
+  with stored rotation data.
+- **Status is derived, not stored** (`CleaningAssignment.status`, computed from the date, the sign-off
+  and the latest inspection): `kommende` → `afventer` (→ `ikke_taget` after 22.00) → `taget` → `godkendt` | `mangler` →
+  `udbedret` (waiting for re-check) → `godkendt` | `mangler` (new round) …, plus `overskredet` when a
+  Mangler deadline passes without a later Godkendt. A stored status could drift from the rows it
+  summarises.
+- **Køkkenrengøring later:** a new `kind` plus kind-specific rules in `services` (dates that aren't
+  Sundays, other deadlines). Nothing here assumes Sunday except the generator and the defaults.
+  (`origin/feature/kitchen-duty` is køkkenvagter, a different thing, and does not overlap.)
+- **`core.Cleaning` / `Residency.cleaning`** (the legacy monthly "rengøring" column in the alumneliste)
+  is left alone. See open questions.
+
+## Business rules
+- **Generation:** for each chosen area, take an ordered list of residents and the start Sunday, the
+  number of weeks and the star cadence. Week *i* gets `residents[i % len]`, and `is_star_week = (i+1) % n == 0`
+  (E26: n = 5 → 29/11, 3/1, 7/2, 14/3, 18/4). Show a preview grid before saving. Saving is one
+  transaction and fails as a whole on a UNIQUE(area, date) clash, naming the clash.
+- **Import:** parse `pdftotext -layout` output (area header line, `Dato | Hvem | Stjerne | …` header,
+  `dd/mm/yyyy  Name  [*]` rows) or CSV `område;dato;navn;stjerne`. Area headers are matched against
+  `CleaningArea.name` + `import_aliases`. Names are matched against residents with a `Residency` in the
+  rota's months: exact full name → unique first name → first name + last-name prefix/initial
+  ("William P", "Tobias Hermann") → otherwise *unmatched* / *ambiguous* (with candidates). The match
+  step shows one row per **distinct** name with a dropdown, unresolved ones first. Save is disabled
+  until every name is resolved or explicitly set to "Ingen". Parsed rows are kept in the session
+  between the steps.
+- **Sign-off:** own assignment, from the Sunday 00:00 (local) onward, and only while there is no
+  decided round 1. Signing after 22.00 is allowed but shown as late. Undo is allowed until inspected.
+- **Inspection:** the checklist shows the area's active tasks, and `star_only` tasks only when
+  `is_star_week`. "Godkend" ticks all visible tasks and decides GODKENDT. "Mangler" decides MANGLER
+  with the note. Missing tasks are the visible ones minus `checked_tasks`, frozen into `missing`. Default deadline: 22.00 the
+  day after the inspection evening (an inspection decided before 06.00 counts as the previous
+  evening), editable. A follow-up is round + 1 and starts from the previous round's ticks. Inspecting
+  is allowed whether or not the alumne signed off: "ikke taget" is a fact shown next to the outcome,
+  not a separate outcome.
+- **"Kopiér mangler"** stays as in the prototype: it builds the message (missing tasks per zone + note +
+  deadline) for Den Hurtige/SMS until phase 5 sends it.
+- **Rating:** keep **Godkendt / Mangler**. The checklist already records *what* was missing, and
+  history gives counts that matter for repeat offenders (mangler, re-checks needed, deadlines
+  overskredet, ikke taget). A 1–5 score would be subjective across inspectors and nobody acts on it.
+
+## Access
+| Who | May |
+|---|---|
+| any logged-in resident | see **their own** assignments, task lists, inspections, mangler; sign off; mark fixed |
+| Inspektionen (active month) / `administrator` / superuser | everything: rotas, import, edits, inspect, overview, history, admin for areas/tasks |
+
+- Another resident's assignment → **404** (not 403), so existence isn't confirmed. The same applies
+  to sign-off/fixed POSTs.
+- Manager views use `role_required(Role.INSPEKTION, Role.ADMINISTRATOR)`. Superuser and administrator
+  already resolve to all roles in `real_roles`. Effective roles are used, so the preview tool works.
+- An Inspektion assignment from a **previous** month grants nothing (time-bound roles), and this is tested.
+
+## Outputs & side effects
+- Dashboard card "Din næste rengøring" (area, date, (*)-uge, signed-off state, open mangler + deadline).
+- Sidebar: "Min rengøring" for everyone, "Rengøringstjek" for managers.
+- No email/push in the first pass. Phase 5 adds a `rengoering` category in `notifications.categories`
+  and `notify(...)` calls.
+
+## Seed & management commands
+- `manage.py load_cleaning_areas`: idempotent upsert of the 9 areas and their tasks from
+  `rengoering/areas_data.py` (transcribed from the prototype's `AREAS`, incl. PDF header aliases).
+  Run by `task seed` and usable in prod.
+- `manage.py import_cleaning_rota <file> --name E26 [--dry-run]`: the same parser and matcher as the
+  UI. Prints unresolved names and refuses to save until they are resolved (`--map "William P=<email>"`).
+  The real E26 file is **not** committed.
+- `seed_demo` (via `rengoering/demo.py`, like the other apps): areas + a generated rota over demo
+  residents, with past Sundays in every state (godkendt, mangler, udbedret, overskredet, ikke taget).
+
+## Open questions
+1. **Should residents see the whole rota** (who has what this Sunday)? The paper list is public on
+   varme trappe. The brief says own-only, so that's the default. Showing names without inspection
+   outcomes would be harmless and handy for swaps.
+2. **Swaps:** should alumner be able to propose/accept a swap themselves, or does Inspektionen do it
+   (as assumed here)?
+3. **`Residency.cleaning`:** what are the real legacy `intern_alumne_cleaning` names? If they are the
+   areas ("2. sal"…), the generator could pre-fill each area's people from the alumneliste.
+4. **Rollout gate:** ship behind a `core.rollout.Gate` (Inspektionen-only "Under test") for a round or
+   two, then open it to everyone?
+5. **Deadline edge cases:** is "22.00 the day after the inspection" right when the check happens late
+   (e.g. Monday)? Should follow-up rounds get the same +1 day?
+6. **Consequences** (Den Gyldne Bog): do repeated mangler/overskredet lead to AK-krydser or similar? If
+   so, that's a later link to `ak`, not part of this feature.
+7. **PDF upload** needs `poppler-utils` in the Docker image (not there today) or a pure-Python parser.
+   Worth it, or is pasting enough?
