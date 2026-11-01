@@ -13,7 +13,15 @@ from django.utils.text import slugify
 from residents.models import Resident, active_period
 
 from .areas_data import AREAS
-from .models import AssignmentStatus, CleaningArea, CleaningAssignment, CleaningTask, Inspection, Rota
+from .models import (
+    AssignmentStatus,
+    CleaningArea,
+    CleaningAssignment,
+    CleaningTask,
+    Inspection,
+    Rota,
+    default_fix_deadline,
+)
 
 STAR_PREFIX = "*"
 
@@ -261,3 +269,140 @@ def group_tasks(tasks: Iterable[CleaningTask]) -> TaskGroups:
             groups.append((task.group, []))
         groups[-1][1].append(task)
     return zones
+
+
+# ---- inspection ----
+
+
+class RoundClosed(Exception):
+    """The assignment was approved; reopen the decision before changing its ticks."""
+
+
+def checked_ids(a: CleaningAssignment) -> set[int]:
+    """What the checklist starts from: the round in progress, else the last decided round (so a
+    follow-up starts from where the Sunday check left off)."""
+    current = a.current_round() or a.latest_decided()
+    return set(current.checked_tasks.values_list("pk", flat=True)) if current else set()
+
+
+@transaction.atomic
+def save_round(a: CleaningAssignment, inspector: Resident, task_ids: Iterable[int], note: str) -> Inspection:
+    """Store the ticks and note of the round being worked on, opening one if needed: round 1 on the
+    Sunday, round n+1 after a Mangler. An approved assignment is closed (RoundClosed)."""
+    current = a.current_round()
+    if current is None:
+        latest = a.latest_decided()
+        if latest and latest.outcome == Inspection.Outcome.GODKENDT:
+            raise RoundClosed
+        current = Inspection.objects.create(
+            assignment=a, round=(latest.round + 1) if latest else 1, inspector=inspector
+        )
+        a.forget_rounds()
+    current.inspector = inspector
+    current.note = note
+    current.save(update_fields=["inspector", "note"])
+    visible = set(visible_tasks(a).values_list("pk", flat=True))
+    current.checked_tasks.set(visible & set(task_ids))
+    return current
+
+
+@transaction.atomic
+def decide(
+    a: CleaningAssignment,
+    inspector: Resident,
+    outcome: str,
+    task_ids: Iterable[int],
+    note: str,
+    deadline: datetime.datetime | None = None,
+    now: datetime.datetime | None = None,
+) -> Inspection:
+    """Godkendt or Mangler for the round in progress. Godkendt ticks everything; Mangler freezes the
+    unticked tasks into `missing` and sets the fix deadline (22.00 the next day unless given)."""
+    now = now or timezone.now()
+    tasks = list(visible_tasks(a))
+    if outcome == Inspection.Outcome.GODKENDT:
+        task_ids = [t.pk for t in tasks]
+    current = save_round(a, inspector, task_ids, note)
+    ticked = set(current.checked_tasks.values_list("pk", flat=True))
+    current.outcome = outcome
+    current.decided_at = now
+    current.missing = [{"zone": t.zone, "text": t.text} for t in tasks if t.pk not in ticked]
+    current.deadline = (
+        (deadline or default_fix_deadline(now)) if outcome == Inspection.Outcome.MANGLER else None
+    )
+    current.save(update_fields=["outcome", "decided_at", "missing", "deadline"])
+    return current
+
+
+def reopen(a: CleaningAssignment) -> bool:
+    """Undo the last decision (a mis-tap), as long as no later round has started."""
+    if a.current_round():
+        return False
+    latest = a.latest_decided()
+    if latest is None:
+        return False
+    latest.outcome = ""
+    latest.decided_at = latest.deadline = latest.fixed_at = None
+    latest.missing = []
+    latest.save(update_fields=["outcome", "decided_at", "deadline", "fixed_at", "missing"])
+    return True
+
+
+def inspection_dates() -> list[datetime.date]:
+    return list(CleaningAssignment.objects.order_by("date").values_list("date", flat=True).distinct())
+
+
+def default_inspection_date(today: datetime.date | None = None) -> datetime.date | None:
+    """The latest day with assignments that is not in the future — on a Monday you are still
+    following up Sunday's mangler — else the first one coming up."""
+    today = today or timezone.localdate()
+    dates = inspection_dates()
+    past = [d for d in dates if d <= today]
+    if past:
+        return past[-1]
+    return dates[0] if dates else None
+
+
+# ---- history ----
+
+
+@dataclass
+class Record:
+    """How one resident (or area) has done — what Inspektionen looks at for repeat offenders."""
+
+    total: int = 0  # Sundays that have been
+    approved_first_time: int = 0
+    with_mangler: int = 0
+    late: int = 0  # a mangler deadline passed before it was fixed
+    not_signed_off: int = 0
+
+
+def record(assignments: Iterable[CleaningAssignment], now: datetime.datetime | None = None) -> Record:
+    now = now or timezone.now()
+    today = timezone.localdate(now)
+    r = Record()
+    for a in assignments:
+        if a.date > today:
+            continue
+        r.total += 1
+        rounds = [i for i in a.rounds() if i.outcome]
+        if rounds and rounds[0].outcome == Inspection.Outcome.GODKENDT:
+            r.approved_first_time += 1
+        if any(i.outcome == Inspection.Outcome.MANGLER for i in rounds):
+            r.with_mangler += 1
+        if any(
+            _was_late(i, rounds[n + 1] if n + 1 < len(rounds) else None, now) for n, i in enumerate(rounds)
+        ):
+            r.late += 1
+        if not a.signed_off_at:
+            r.not_signed_off += 1
+    return r
+
+
+def _was_late(i: Inspection, following: Inspection | None, now: datetime.datetime) -> bool:
+    """A mangler round is late when it was not resolved by its deadline. Resolved = the alumne
+    pressed "udbedret", or else the next round was decided (Inspektionen re-checked unprompted)."""
+    if i.outcome != Inspection.Outcome.MANGLER or not i.deadline:
+        return False
+    resolved = i.fixed_at or (following.decided_at if following else None) or now
+    return resolved > i.deadline

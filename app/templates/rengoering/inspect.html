@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Rengøringstjek - GAHK Intern{% endblock %}
+{% block content_width %}max-w-2xl{% endblock %}
+
+{% comment %}
+  Inspektionen's walk at 22.00, on a phone — the prototype's layout (rengoering-server/index.html):
+  one collapsible card per area with big tap targets. Every tick and note is saved as you go by
+  frontend/src/rengoering.ts (the form's "Gem" button is the no-script fallback). Godkend/Mangler
+  decide the round; a follow-up after Mangler is a new round that starts from the old ticks.
+{% endcomment %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Inspektionen · Søndagsrengøring</p>
+      <h1>Rengøringstjek</h1>
+    </div>
+    <a class="btn btn-secondary" href="{% if day %}{% url 'rengoering:overview_day' day|date:'Y-m-d' %}{% else %}{% url 'rengoering:overview' %}{% endif %}">Oversigt</a>
+  </div>
+
+  {% if not day %}
+    <p class="card muted">Der er ingen rengøringslister endnu. <a href="{% url 'rengoering:rota_create' %}">Opret en →</a></p>
+  {% else %}
+    {% include "rengoering/_week_nav.html" with view="rengoering:inspect" %}
+
+    <div class="rg-summary">
+      <span><b>{{ approved }} / {{ items|length }}</b> godkendt</span>
+      <span class="rg-bar"><i style="width:{% widthratio approved items|length 100 %}%"></i></span>
+    </div>
+
+    {% for it in items %}
+      {% with a=it.a %}
+        <details class="rg-check" id="{{ a.area.slug }}" data-status="{{ it.status }}"{% if open_area == a.area.slug %} open{% endif %}>
+          <summary>
+            <span class="rg-check-name">{{ a.area.name }}</span>
+            <span class="chip {{ it.chip }}" data-pill>{{ it.status.label }}</span>
+            <span class="rg-check-who">
+              {% if a.resident %}{{ a.resident.full_name }}{% else %}Ingen på listen{% endif %}
+              · {% if a.signed_off_at %}taget {{ a.signed_off_at|date:"H.i" }}{% if a.signed_off_at > a.done_by %} (sent){% endif %}{% else %}ikke krydset af{% endif %}
+            </span>
+            <span class="rg-bar rg-bar-mini"><i data-bar style="width:{% widthratio it.done it.total 100 %}%"></i></span>
+          </summary>
+
+          <form method="post" action="{% url 'rengoering:inspect_save' a.pk %}" class="rg-check-body" data-rg-check
+                data-total="{{ it.total }}" data-area="{{ a.area.name }}" data-date="{{ a.date|date:'j/n/Y' }}"
+                data-name="{{ a.resident.first_name|default:'' }}">
+            {% csrf_token %}
+            {% if it.latest and it.latest.outcome == "mangler" and not it.current %}
+              <p class="rg-followup">Opfølgning: mangler fra {{ it.latest.decided_at|date:"j/n H.i" }}{% if it.latest.fixed_at %}, meldt udbedret {{ it.latest.fixed_at|date:"j/n H.i" }}{% endif %}. Ret afkrydsningerne og afgør igen.</p>
+            {% endif %}
+            {% for zone, groups in it.zones %}
+              {% if it.zones|length > 1 %}<div class="rg-zone">{{ zone }}</div>{% endif %}
+              {% for group, tasks in groups %}
+                <div class="rg-group">{{ group }}</div>
+                {% for t in tasks %}
+                  <label class="rg-item{% if t.star_only %} is-star{% endif %}" data-zone="{{ zone }}">
+                    <input type="checkbox" name="task" value="{{ t.pk }}"{% if t.pk in it.checked %} checked{% endif %}{% if it.closed %} disabled{% endif %}>
+                    <span>{% if t.star_only %}<span class="rg-star" title="Kun i (*)-uger">*</span> {% endif %}{{ t.text }}</span>
+                  </label>
+                {% endfor %}
+              {% endfor %}
+            {% endfor %}
+
+            <label for="note-{{ a.pk }}">Noter om mangler</label>
+            <textarea id="note-{{ a.pk }}" name="note" rows="3" placeholder="Fx: risten i baderummet ikke renset"{% if it.closed %} disabled{% endif %}>{{ it.note }}</textarea>
+
+            {% if not it.closed %}
+              <label for="deadline-{{ a.pk }}" class="text-sm">Frist ved mangler</label>
+              <input type="datetime-local" id="deadline-{{ a.pk }}" name="deadline" value="{{ default_deadline }}">
+            {% endif %}
+
+            <div class="rg-actions">
+              {% if not it.closed %}
+                <button type="submit" name="action" value="godkend" class="btn">Godkend</button>
+                <button type="submit" name="action" value="mangler" class="btn btn-danger">Mangler</button>
+                <button type="submit" name="action" value="gem" class="btn btn-secondary" data-nojs>Gem</button>
+                <button type="button" class="btn btn-secondary" data-copy hidden>Kopiér mangler</button>
+              {% endif %}
+              {% if it.can_reopen %}
+                <button type="submit" name="action" value="fortryd" class="btn-link">Fortryd afgørelsen</button>
+              {% endif %}
+              <a class="btn-link" href="{% url 'rengoering:assignment' a.pk %}">Detaljer</a>
+              <span class="muted text-sm" data-saved aria-live="polite"></span>
+            </div>
+            <textarea class="rg-copy-fallback" data-copy-fallback hidden readonly aria-label="Besked om mangler"></textarea>
+          </form>
+        </details>
+      {% endwith %}
+    {% endfor %}
+  {% endif %}
+{% endblock %}

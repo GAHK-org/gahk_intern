@@ -162,6 +162,10 @@ class CleaningAssignment(models.Model):
         """Inspections in round order. Sorted in Python so a prefetch_related("inspections") is used."""
         return sorted(self.inspections.all(), key=lambda i: i.round)
 
+    def forget_rounds(self) -> None:
+        """Drop a prefetched `inspections` after adding a round, so rounds() sees it."""
+        getattr(self, "_prefetched_objects_cache", {}).pop("inspections", None)
+
     def latest_decided(self) -> "Inspection | None":
         decided = [i for i in self.rounds() if i.outcome]
         return decided[-1] if decided else None

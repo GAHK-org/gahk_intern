@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Rengøringsoversigt - GAHK Intern{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Inspektionen · Søndagsrengøring</p>
+      <h1>Oversigt</h1>
+    </div>
+    <div class="flex gap-2">
+      {% if day %}<a class="btn" href="{% url 'rengoering:inspect' day|date:'Y-m-d' %}">Tjek denne søndag</a>{% endif %}
+      <a class="btn btn-secondary" href="{% url 'rengoering:history' %}">Historik</a>
+    </div>
+  </div>
+
+  {% if not day %}
+    <p class="card muted">Der er ingen rengøringslister endnu.</p>
+  {% else %}
+    {% include "rengoering/_week_nav.html" with view="rengoering:overview_day" %}
+    <div class="card-flat">
+      <table class="rg-table">
+        <thead><tr><th>Område</th><th>Alumne</th><th>Taget</th><th>Status</th><th>Noter</th></tr></thead>
+        <tbody>
+          {% for cell in cells %}
+            {% with a=cell.assignment %}
+              <tr>
+                <td><a href="{% url 'rengoering:area_history' a.area.slug %}">{{ a.area.name }}</a></td>
+                <td>{% if a.resident %}<a href="{% url 'rengoering:resident_history' a.resident.pk %}">{{ a.resident.full_name }}</a>{% else %}<span class="muted">Ingen</span>{% endif %}</td>
+                <td>{% if a.signed_off_at %}{{ a.signed_off_at|date:"j/n H.i" }}{% else %}<span class="muted">—</span>{% endif %}</td>
+                <td><a href="{% url 'rengoering:assignment' a.pk %}"><span class="chip {{ cell.chip }}">{{ cell.status.label }}</span></a></td>
+                <td class="text-sm">{% with r=a.latest_decided %}{% if r and r.outcome == "mangler" %}{{ r.missing|length }} mangler{% if r.note %} · {{ r.note|truncatechars:80 }}{% endif %}{% endif %}{% endwith %}</td>
+              </tr>
+            {% endwith %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+{% endblock %}

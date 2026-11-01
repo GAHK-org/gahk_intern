@@ -26,7 +26,7 @@ from rengoering.models import (
     at_deadline_hour,
     default_fix_deadline,
 )
-from rengoering.services import RotaClash, load_areas, next_for, plan_rota, save_rota, visible_tasks
+from rengoering.services import RotaClash, load_areas, next_for, plan_rota, record, save_rota, visible_tasks
 from residents.models import Residency, Resident, Role, RoleAssignment, active_period
 
 pytestmark = pytest.mark.django_db
@@ -459,3 +459,172 @@ def test_an_open_mangler_outranks_the_next_sunday(areas: list[CleaningArea], tri
     assert next_for(trio[0]) == old
     old.inspections.update(fixed_at=timezone.now())
     assert next_for(trio[0]) == rota.assignments.get(date=last_week + datetime.timedelta(weeks=1))
+
+
+# ---- inspection, overview, history (phase 4) ----
+
+TJEK = "/intern/rengoering/tjek/"
+
+
+def save_url(a: CleaningAssignment) -> str:
+    return f"{TJEK}vagt/{a.pk}"
+
+
+@pytest.fixture
+def sunday(areas: list[CleaningArea], trio: list[Resident]) -> CleaningAssignment:
+    """Wilma's Sunday on Sal, stuen — a past Sunday, so the walk is open."""
+    stuen = CleaningArea.objects.get(slug="sal-stuen")
+    rota = save_rota("E26", plan_rota(SUNDAY, 6, 5, {stuen: trio}), None)
+    return rota.assignments.get(date=SUNDAY)
+
+
+def fresh(a: CleaningAssignment) -> CleaningAssignment:
+    return CleaningAssignment.objects.prefetch_related("inspections").get(pk=a.pk)
+
+
+def test_autosave_opens_round_one_and_keeps_only_visible_tasks(
+    sunday: CleaningAssignment, inspektor: Resident
+) -> None:
+    star = sunday.area.tasks.filter(star_only=True).first()
+    some = list(visible_tasks(sunday).values_list("pk", flat=True)[:3])
+    assert star and star.pk not in some
+    r = as_user(inspektor).post(
+        save_url(sunday),
+        {"task": [*some, star.pk], "note": "  hår i afløbet ", "action": "gem"},
+        headers={"x-requested-with": "XMLHttpRequest"},
+    )
+    assert r.json() == {"ok": True, "done": 3}  # the star task is not on this week's list
+    i = Inspection.objects.get(assignment=sunday)
+    assert (i.round, i.outcome, i.note, i.inspector) == (1, "", "hår i afløbet", inspektor)
+
+
+def test_godkend_ticks_everything(sunday: CleaningAssignment, inspektor: Resident) -> None:
+    r = as_user(inspektor).post(save_url(sunday), {"action": "godkend"})
+    assert r.url == f"{TJEK}{SUNDAY.isoformat()}?aaben=sal-stuen#sal-stuen"
+    i = Inspection.objects.get(assignment=sunday)
+    assert i.outcome == "godkendt" and i.missing == [] and i.deadline is None
+    assert i.checked_tasks.count() == visible_tasks(sunday).count()
+    assert fresh(sunday).status() == AssignmentStatus.GODKENDT
+    # approved is closed: a stray autosave is refused, not a new round
+    r = as_user(inspektor).post(
+        save_url(sunday), {"action": "gem"}, headers={"x-requested-with": "XMLHttpRequest"}
+    )
+    assert r.json()["ok"] is False and Inspection.objects.count() == 1
+
+
+def test_mangler_freezes_what_was_missing_then_a_follow_up_approves(
+    sunday: CleaningAssignment, inspektor: Resident, trio: list[Resident]
+) -> None:
+    tasks = list(visible_tasks(sunday))
+    ticked = [t.pk for t in tasks[1:]]
+    c = as_user(inspektor)
+    c.post(save_url(sunday), {"action": "mangler", "task": ticked, "note": "Toiletpapir", "deadline": ""})
+    first = Inspection.objects.get(assignment=sunday)
+    assert first.missing == [{"zone": tasks[0].zone, "text": tasks[0].text}]
+    assert timezone.localtime(first.deadline).hour == 22  # type: ignore[arg-type]
+    # the task list is edited afterwards; history still says what was missing
+    CleaningTask.objects.filter(pk=tasks[0].pk).update(text="omdøbt")
+    first.refresh_from_db()
+    assert first.missing[0]["text"] == tasks[0].text
+    # the alumne reports it fixed, Inspektionen re-checks: round 2, starting from round 1's ticks
+    as_user(trio[0]).post(vagt(sunday, "udbedret"))
+    page = c.get(f"{TJEK}{SUNDAY.isoformat()}").content.decode()
+    assert "Opfølgning" in page
+    c.post(save_url(sunday), {"action": "godkend"})
+    rounds = list(Inspection.objects.filter(assignment=sunday).order_by("round"))
+    assert [(i.round, i.outcome) for i in rounds] == [(1, "mangler"), (2, "godkendt")]
+    assert fresh(sunday).status() == AssignmentStatus.GODKENDT
+
+
+def test_mangler_takes_an_explicit_deadline(sunday: CleaningAssignment, inspektor: Resident) -> None:
+    as_user(inspektor).post(save_url(sunday), {"action": "mangler", "deadline": "2026-11-03T18:00"})
+    i = Inspection.objects.get(assignment=sunday)
+    assert i.deadline == local(datetime.date(2026, 11, 3), 18)
+
+
+def test_a_mis_tapped_decision_can_be_undone(sunday: CleaningAssignment, inspektor: Resident) -> None:
+    c = as_user(inspektor)
+    c.post(save_url(sunday), {"action": "godkend"})
+    c.post(save_url(sunday), {"action": "fortryd"})
+    i = Inspection.objects.get(assignment=sunday)
+    assert (i.outcome, i.decided_at) == ("", None)
+    assert fresh(sunday).status() == AssignmentStatus.IKKE_TAGET  # back to how it was before
+
+
+def test_inspection_page_hides_star_tasks_outside_star_weeks(
+    sunday: CleaningAssignment, inspektor: Resident
+) -> None:
+    star_text = sunday.area.tasks.filter(star_only=True).first().text  # type: ignore[union-attr]
+    page = as_user(inspektor).get(f"{TJEK}{SUNDAY.isoformat()}").content.decode()
+    assert "Sal, stuen" in page and "Wilma" in page and star_text not in page
+    star_sunday = SUNDAY + datetime.timedelta(weeks=4)
+    assert CleaningAssignment.objects.get(date=star_sunday).is_star_week
+    assert star_text in as_user(inspektor).get(f"{TJEK}{star_sunday.isoformat()}").content.decode()
+
+
+def test_tjek_defaults_to_the_latest_sunday_not_in_the_future(
+    sunday: CleaningAssignment, inspektor: Resident
+) -> None:
+    r = as_user(inspektor).get(TJEK)
+    latest = max(
+        d for d in CleaningAssignment.objects.values_list("date", flat=True) if d <= timezone.localdate()
+    )
+    assert r.url == f"{TJEK}{latest.isoformat()}"
+    assert as_user(inspektor).get(f"{TJEK}ikke-en-dato").status_code == 404
+
+
+def test_history_counts_repeat_offences(
+    sunday: CleaningAssignment, inspektor: Resident, trio: list[Resident]
+) -> None:
+    c = as_user(inspektor)
+    c.post(save_url(sunday), {"action": "mangler", "deadline": "2026-11-02T22:00"})  # never fixed
+    page = c.get("/intern/rengoering/historik/").content.decode()
+    assert "Wilma" in page and "Amalie" not in page  # only Sundays that have been
+    r = record([fresh(sunday)], now=local(SUNDAY + datetime.timedelta(days=2), 12))  # deadline has passed
+    assert (r.total, r.with_mangler, r.late, r.not_signed_off, r.approved_first_time) == (1, 1, 1, 1, 0)
+    assert c.get(f"/intern/rengoering/historik/beboer/{trio[0].pk}").status_code == 200
+    assert c.get("/intern/rengoering/historik/omraade/sal-stuen").status_code == 200
+    assert "Wilma" in c.get(f"/intern/rengoering/oversigt/{SUNDAY.isoformat()}").content.decode()
+
+
+def test_a_re_check_before_the_deadline_is_not_late(sunday: CleaningAssignment, inspektor: Resident) -> None:
+    c = as_user(inspektor)
+    c.post(save_url(sunday), {"action": "mangler", "deadline": "2099-01-01T22:00"})
+    c.post(save_url(sunday), {"action": "godkend"})  # re-checked without the alumne pressing "udbedret"
+    assert record([fresh(sunday)]).late == 0
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        TJEK,
+        TJEK + "2026-11-01",
+        "/intern/rengoering/oversigt/",
+        "/intern/rengoering/historik/",
+        "/intern/rengoering/historik/omraade/sal-stuen",
+        "/intern/rengoering/historik/beboer/{me}",
+    ],
+)
+def test_inspection_pages_are_for_inspektionen_only(
+    url: str, sunday: CleaningAssignment, trio: list[Resident]
+) -> None:
+    wilma = trio[0]
+    assert as_user(wilma).get(url.format(me=wilma.pk)).status_code == 403  # not even her own history
+
+
+def test_a_beboer_cannot_inspect_even_their_own_sunday(
+    sunday: CleaningAssignment, trio: list[Resident]
+) -> None:
+    assert as_user(trio[0]).post(save_url(sunday), {"action": "godkend"}).status_code == 403
+    assert not Inspection.objects.exists()
+
+
+def test_last_months_inspektion_cannot_inspect(
+    sunday: CleaningAssignment, make_resident: Callable[..., Resident]
+) -> None:
+    old = make_resident(email="gammel@gahk.dk")
+    year, month = active_period()
+    prev = (year, month - 1) if month > 1 else (year - 1, 12)
+    RoleAssignment.objects.create(resident=old, role=Role.INSPEKTION, year=prev[0], month=prev[1])
+    assert as_user(old).post(save_url(sunday), {"action": "godkend"}).status_code == 403
+    assert as_user(old).get(TJEK).status_code == 403

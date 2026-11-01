@@ -2,21 +2,25 @@
 Inspektionen/administrators plan and inspect."""
 
 import datetime
+from dataclasses import dataclass
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.db.models import Count, Max, Min
-from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect
+from django.db.models import Count, Max, Min, QuerySet
+from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from django.views.decorators.http import require_POST
 
+from residents.models import Resident
 from residents.permissions import current_resident
 
 from . import services
 from .access import assignment_for, can_manage, manage_required
 from .forms import AssignmentForm, ReplaceForm, RotaForm
-from .models import CleaningAssignment, Rota
+from .models import AssignmentStatus, CleaningArea, CleaningAssignment, Inspection, Rota, default_fix_deadline
 
 # Where a sign-off/"udbedret" button may send you back to — a fixed set, never a URL from the form.
 RETURN_TO = {"mine": "rengoering:mine", "dashboard": "dashboard"}
@@ -30,9 +34,11 @@ def _back(request: HttpRequest, a: CleaningAssignment) -> HttpResponseRedirect:
 def detail_context(a: CleaningAssignment, now: datetime.datetime) -> dict[str, object]:
     """Everything the assignment block (_assignment.html) shows; shared by Min rengøring and the
     assignment page."""
+    status = a.status(now)
     return {
         "a": a,
-        "status": a.status(now),
+        "status": status,
+        "chip": services.STATUS_CHIP[status],
         "zones": services.group_tasks(services.visible_tasks(a)),
         "rounds": [i for i in a.rounds() if i.outcome],
         "can_sign_off": services.can_sign_off(a, now),
@@ -197,3 +203,218 @@ def edit_assignment(request: HttpRequest, pk: int) -> HttpResponse:
         messages.success(request, "Vagten er gemt.")
         return redirect("rengoering:rota_detail", pk=assignment.rota_id)
     return render(request, "rengoering/assignment_form.html", {"form": form, "assignment": assignment})
+
+
+# ---- inspection (Inspektionen, on a phone) ----
+
+
+def _day(day: str) -> datetime.date:
+    try:
+        return datetime.date.fromisoformat(day)
+    except ValueError:
+        raise Http404 from None
+
+
+def _week_nav(day: datetime.date) -> dict[str, object]:
+    dates = services.inspection_dates()
+    return {
+        "day": day,
+        "prev_day": next((d for d in reversed(dates) if d < day), None),
+        "next_day": next((d for d in dates if d > day), None),
+        "default_day": services.default_inspection_date(),
+    }
+
+
+def _on(day: datetime.date) -> "list[CleaningAssignment]":
+    return list(
+        CleaningAssignment.objects.filter(date=day)
+        .select_related("area", "rota", "resident", "signed_off_by")
+        .prefetch_related("inspections")
+        .order_by("area__order", "area__name")
+    )
+
+
+@manage_required
+def inspect_index(request: HttpRequest) -> HttpResponse:
+    day = services.default_inspection_date()
+    if day is None:
+        return render(request, "rengoering/inspect.html", {"items": [], "day": None})
+    return redirect("rengoering:inspect", day=day.isoformat())
+
+
+@dataclass
+class InspectItem:
+    """One area's card on the inspection walk."""
+
+    a: CleaningAssignment
+    status: AssignmentStatus
+    zones: services.TaskGroups
+    checked: set[int]  # task ids ticked in the round in progress (else the last decided one)
+    done: int
+    total: int
+    current: Inspection | None  # the undecided round, if one is open
+    latest: Inspection | None  # the last decided round
+
+    @property
+    def chip(self) -> str:
+        return services.STATUS_CHIP[self.status]
+
+    @property
+    def closed(self) -> bool:
+        """Approved, with no round open: the checklist is read-only until the decision is undone."""
+        return (
+            self.current is None
+            and self.latest is not None
+            and self.latest.outcome == Inspection.Outcome.GODKENDT
+        )
+
+    @property
+    def can_reopen(self) -> bool:
+        return self.current is None and self.latest is not None
+
+    @property
+    def note(self) -> str:
+        shown = self.current or self.latest
+        return shown.note if shown else ""
+
+
+@manage_required
+def inspect(request: HttpRequest, day: str) -> HttpResponse:
+    date = _day(day)
+    now = timezone.now()
+    items = []
+    for a in _on(date):
+        tasks = list(services.visible_tasks(a))
+        checked = services.checked_ids(a)
+        items.append(
+            InspectItem(
+                a=a,
+                status=a.status(now),
+                zones=services.group_tasks(tasks),
+                checked=checked,
+                done=len(checked & {t.pk for t in tasks}),
+                total=len(tasks),
+                current=a.current_round(),
+                latest=a.latest_decided(),
+            )
+        )
+    approved = sum(1 for i in items if i.status == AssignmentStatus.GODKENDT)
+    return render(
+        request,
+        "rengoering/inspect.html",
+        _week_nav(date)
+        | {
+            "items": items,
+            "approved": approved,
+            "is_star_week": any(i.a.is_star_week for i in items),
+            "open_area": request.GET.get("aaben", ""),
+            "default_deadline": timezone.localtime(default_fix_deadline(now)).strftime("%Y-%m-%dT%H:%M"),
+        },
+    )
+
+
+def _task_ids(request: HttpRequest) -> list[int]:
+    return [int(v) for v in request.POST.getlist("task") if v.isdigit()]
+
+
+def _deadline(request: HttpRequest) -> datetime.datetime | None:
+    raw = parse_datetime(request.POST.get("deadline", ""))
+    if raw is None:
+        return None
+    return raw if timezone.is_aware(raw) else timezone.make_aware(raw)
+
+
+@manage_required
+@require_POST
+def inspect_save(request: HttpRequest, pk: int) -> HttpResponse:
+    """One endpoint for the area's form: autosave ("gem", what the page's script posts on every tick
+    and keystroke), the two decisions, and undoing a decision."""
+    a = assignment_for(request, pk)
+    me = current_resident(request)
+    action = request.POST.get("action", "gem")
+    note = request.POST.get("note", "").strip()
+    try:
+        if action == "godkend":
+            services.decide(a, me, Inspection.Outcome.GODKENDT, [], note)
+        elif action == "mangler":
+            services.decide(a, me, Inspection.Outcome.MANGLER, _task_ids(request), note, _deadline(request))
+        elif action == "fortryd":
+            services.reopen(a)
+        else:
+            current = services.save_round(a, me, _task_ids(request), note)
+            if request.headers.get("x-requested-with") == "XMLHttpRequest":
+                return JsonResponse({"ok": True, "done": current.checked_tasks.count()})
+    except services.RoundClosed:
+        if request.headers.get("x-requested-with") == "XMLHttpRequest":
+            return JsonResponse({"ok": False, "error": "Allerede godkendt. Fortryd først."})
+        messages.error(request, "Rengøringen er allerede godkendt. Fortryd afgørelsen først.")
+    url = reverse("rengoering:inspect", kwargs={"day": a.date.isoformat()})
+    return redirect(f"{url}?aaben={a.area.slug}#{a.area.slug}")
+
+
+# ---- overview + history (Inspektionen) ----
+
+
+@manage_required
+def overview(request: HttpRequest, day: str = "") -> HttpResponse:
+    date = _day(day) if day else services.default_inspection_date()
+    if date is None:
+        return render(request, "rengoering/overview.html", {"cells": [], "day": None})
+    now = timezone.now()
+    cells = [services.Cell(a, a.status(now)) for a in _on(date)]
+    return render(
+        request,
+        "rengoering/overview.html",
+        _week_nav(date) | {"cells": cells, "is_star_week": any(c.assignment.is_star_week for c in cells)},
+    )
+
+
+def _past(qs: "QuerySet[CleaningAssignment]") -> "QuerySet[CleaningAssignment]":
+    return (
+        qs.filter(date__lte=timezone.localdate())
+        .select_related("area", "resident")
+        .prefetch_related("inspections")
+        .order_by("-date")
+    )
+
+
+@manage_required
+def history(request: HttpRequest) -> HttpResponse:
+    """Everyone who has had a Sunday, worst record first — the repeat-offender list."""
+    by_resident: dict[Resident, list[CleaningAssignment]] = {}
+    for a in _past(CleaningAssignment.objects.filter(resident__isnull=False)):
+        by_resident.setdefault(a.resident, []).append(a)  # type: ignore[arg-type]
+    now = timezone.now()
+    rows = [(r, services.record(items, now)) for r, items in by_resident.items()]
+    rows.sort(key=lambda row: (-row[1].late, -row[1].with_mangler, -row[1].not_signed_off, row[0].first_name))
+    areas = CleaningArea.objects.filter(assignments__isnull=False).distinct()
+    return render(request, "rengoering/history.html", {"rows": rows, "areas": areas})
+
+
+def _history_page(
+    request: HttpRequest, title: str, qs: "QuerySet[CleaningAssignment]", **extra: object
+) -> HttpResponse:
+    now = timezone.now()
+    items = list(_past(qs))
+    return render(
+        request,
+        "rengoering/history_detail.html",
+        {
+            "title": title,
+            "cells": [services.Cell(a, a.status(now)) for a in items],
+            "record": services.record(items, now),
+        }
+        | extra,
+    )
+
+
+@manage_required
+def area_history(request: HttpRequest, slug: str) -> HttpResponse:
+    area = get_object_or_404(CleaningArea, slug=slug)
+    return _history_page(request, area.name, area.assignments.all(), by_area=True)
+
+
+@manage_required
+def resident_history(request: HttpRequest, pk: int) -> HttpResponse:
+    resident = get_object_or_404(Resident, pk=pk)
+    return _history_page(request, resident.full_name, resident.cleaning_assignments.all(), by_area=False)

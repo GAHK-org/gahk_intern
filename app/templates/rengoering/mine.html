@@ -11,7 +11,7 @@
   </div>
 
   {% if next %}
-    {% include "rengoering/_assignment.html" with a=next.a status=next.status zones=next.zones rounds=next.rounds can_sign_off=next.can_sign_off can_undo_sign_off=next.can_undo_sign_off can_mark_fixed=next.can_mark_fixed next="mine" show_tasks=True open_tasks=True %}
+    {% include "rengoering/_assignment.html" with a=next.a status=next.status chip=next.chip zones=next.zones rounds=next.rounds can_sign_off=next.can_sign_off can_undo_sign_off=next.can_undo_sign_off can_mark_fixed=next.can_mark_fixed next="mine" show_tasks=True open_tasks=True %}
   {% else %}
     <p class="card muted">Du står ikke på en rengøringsliste lige nu.</p>
   {% endif %}

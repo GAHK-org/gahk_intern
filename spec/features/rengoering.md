@@ -29,16 +29,15 @@ which Inspektionen re-checks. Inspektionen also plans the rota for each semester
 | `mark_fixed` | `vagt/<pk>/udbedret` | POST | owner | "Mangler er udbedret" on the open Mangler inspection |
 | `edit_assignment` | `vagt/<pk>/rediger` | GET/POST | manager | swap resident, toggle (*)-uge, clear sign-off |
 | `inspect` | `tjek/` → `tjek/<yyyy-mm-dd>` | GET | manager | mobile walk view for one Sunday (the prototype's UX) |
-| `inspect_toggle` | `tjek/vagt/<pk>/opgave/<task_pk>` | POST | manager | tick/untick a task (htmx/fetch autosave) |
-| `inspect_note` | `tjek/vagt/<pk>/note` | POST | manager | autosave the note |
-| `inspect_decide` | `tjek/vagt/<pk>/afgoer` | POST | manager | Godkendt / Mangler (+ deadline) for the current round |
-| `overview` | `oversigt/[<rota_pk>]` | GET | manager | Sundays × areas status grid for a rota |
+| `inspect_save` | `tjek/vagt/<pk>` | POST | manager | the area's form: `action=gem` (autosave of ticks + note, JSON for `fetch`), `godkend`, `mangler` (+ deadline), `fortryd` (undo the last decision) |
+| `overview` | `oversigt/[<yyyy-mm-dd>]` | GET | manager | one Sunday: every area, who, when taken, status, mangler |
+| `history` | `historik/` | GET | manager | every resident's record, worst first (repeat offenders) |
 | `area_history` | `historik/omraade/<slug>` | GET | manager | all assignments + outcomes for one area |
 | `resident_history` | `historik/beboer/<pk>` | GET | manager | one resident's assignments + outcomes, with counts |
 | `rotas` | `lister/` | GET | manager | list of rotas |
 | `rota_create` | `lister/opret` | GET/POST | manager | generate a rota (form → preview → save) |
 | `rota_import` | `lister/importer` | GET/POST | manager | paste / CSV (/ PDF) → name matching → save |
-| `rota_detail` | `lister/<pk>` | GET | manager | the rota as a grid; cells link to `edit_assignment` |
+| `rota_detail` | `lister/<pk>` | GET | manager | the rota as a Sundays × areas grid with statuses; cells link to `edit_assignment` |
 | `rota_replace` | `lister/<pk>/erstat` | POST | manager | "replace X by Y from date D" (moving out) |
 | `rota_delete` | `lister/<pk>/slet` | POST | manager | delete a rota, only while nothing is signed off or inspected |
 
@@ -110,6 +109,14 @@ Inspection     assignment FK(CASCADE), round (1 = Sunday, 2+ = opfølgning), ins
   evening), editable. A follow-up is round + 1 and starts from the previous round's ticks. Inspecting
   is allowed whether or not the alumne signed off: "ikke taget" is a fact shown next to the outcome,
   not a separate outcome.
+- **One endpoint per area form.** Autosave posts the *whole* form (all ticks + note), not one task at
+  a time, so saves landing out of order can never leave a half-ticked list. Without JavaScript the
+  "Gem" button does the same.
+- **Undo** ("Fortryd afgørelsen") reopens the last decided round as long as no later round exists.
+  It is there for mis-taps on a phone. An approved assignment is otherwise closed: autosave is refused.
+- **History counts** per resident/area: Sundays, approved the first time, with mangler, *late* (a
+  Mangler round not resolved by its deadline, where resolved means the alumne pressed "udbedret" or
+  the next round was decided) and not signed off.
 - **"Kopiér mangler"** stays as in the prototype: it builds the message (missing tasks per zone + note +
   deadline) for Den Hurtige/SMS until phase 5 sends it.
 - **Rating:** keep **Godkendt / Mangler**. The checklist already records *what* was missing, and

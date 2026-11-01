@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Rengøringshistorik - GAHK Intern{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow"><a href="{% url 'rengoering:overview' %}">Oversigt</a></p>
+      <h1>Historik</h1>
+    </div>
+  </div>
+
+  <p class="muted text-sm">Dårligste først: overskredne frister, så mangler, så rengøringer der ikke blev krydset af.</p>
+  <div class="card-flat">
+    <table class="rg-table">
+      <thead><tr><th>Alumne</th><th>Søndage</th><th>Godkendt 1. gang</th><th>Mangler</th><th>Frist overskredet</th><th>Ikke krydset af</th></tr></thead>
+      <tbody>
+        {% for resident, r in rows %}
+          <tr>
+            <td><a href="{% url 'rengoering:resident_history' resident.pk %}">{{ resident.full_name }}</a></td>
+            <td>{{ r.total }}</td>
+            <td>{{ r.approved_first_time }}</td>
+            <td>{% if r.with_mangler %}<span class="chip chip-neg">{{ r.with_mangler }}</span>{% else %}0{% endif %}</td>
+            <td>{% if r.late %}<span class="chip chip-neg">{{ r.late }}</span>{% else %}0{% endif %}</td>
+            <td>{{ r.not_signed_off }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="6" class="muted">Ingen rengøringer endnu.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if areas %}
+    <h2 class="mt-6">Pr. område</h2>
+    <ul class="rg-list">
+      {% for area in areas %}<li><a href="{% url 'rengoering:area_history' area.slug %}">{{ area.name }}</a></li>{% endfor %}
+    </ul>
+  {% endif %}
+{% endblock %}

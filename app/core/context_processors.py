@@ -113,6 +113,7 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     if "indstilling" in roles:
         administration.append(("/optagelse/listansoegninger", "Ansøgninger", "inbox"))
     if not set(roles).isdisjoint(RENGOERING_ROLES):  # inspektion/administrator
+        administration.append(("/intern/rengoering/tjek/", "Rengøringstjek", "inspect"))
         administration.append(("/intern/rengoering/lister/", "Rengøringslister", "list"))
     if not set(roles).isdisjoint(CMS_EDITOR_ROLES):  # administrator/indstilling/inspektion/pr
         administration.append(("/django-admin/cms/", "Rediger indhold", "edit"))

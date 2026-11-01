@@ -5,7 +5,7 @@
 <div class="card-flat rg-assignment">
   <div class="card-head">
     <h2>{{ a.area.name }} · {{ a.date|date:"l j. F" }}</h2>
-    <span class="chip {% if status == 'godkendt' %}{% elif status == 'mangler' or status == 'overskredet' or status == 'ikke_taget' %}chip-neg{% elif status == 'taget' or status == 'udbedret' %}chip-brass{% else %}chip-quiet{% endif %}">{{ status.label }}</span>
+    <span class="chip {{ chip }}">{{ status.label }}</span>
   </div>
   <div class="card-pad">
     <p class="muted text-sm">
