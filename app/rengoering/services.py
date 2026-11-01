@@ -13,7 +13,7 @@ from django.utils.text import slugify
 from residents.models import Resident, active_period
 
 from .areas_data import AREAS
-from .models import AssignmentStatus, CleaningArea, CleaningAssignment, CleaningTask, Rota
+from .models import AssignmentStatus, CleaningArea, CleaningAssignment, CleaningTask, Inspection, Rota
 
 STAR_PREFIX = "*"
 
@@ -205,3 +205,59 @@ def grid(
             cells.append(Cell(a, a.status(now) if a.pk else AssignmentStatus.KOMMENDE) if a else None)
         rows.append(GridRow(day, any(c and c.assignment.is_star_week for c in cells), cells))
     return areas, rows
+
+
+# ---- the alumne's side ----
+
+# How far back an unresolved mangler keeps outranking the next Sunday on "Min rengøring" and the
+# dashboard. Long enough to cover a missed deadline being chased; short enough that one old miss
+# does not sit at the top of the page for the rest of the semester.
+OPEN_MANGLER_WINDOW = datetime.timedelta(days=14)
+
+
+def mine(resident: Resident) -> "QuerySet[CleaningAssignment]":
+    return resident.cleaning_assignments.select_related("area", "rota").prefetch_related("inspections")
+
+
+def next_for(resident: Resident, now: datetime.datetime | None = None) -> CleaningAssignment | None:
+    """What the alumne should look at first: a recent mangler still to fix, else the next Sunday."""
+    now = now or timezone.now()
+    today = timezone.localdate(now)
+    recent = mine(resident).filter(
+        date__gte=today - OPEN_MANGLER_WINDOW, inspections__outcome=Inspection.Outcome.MANGLER
+    )
+    for a in recent.distinct().order_by("date"):
+        if a.status(now) in (AssignmentStatus.MANGLER, AssignmentStatus.OVERSKREDET):
+            return a
+    return mine(resident).filter(date__gte=today).order_by("date").first()
+
+
+def can_sign_off(a: CleaningAssignment, now: datetime.datetime | None = None) -> bool:
+    """From the day itself, until the cleaning has been judged."""
+    now = now or timezone.now()
+    return not a.signed_off_at and timezone.localdate(now) >= a.date and a.latest_decided() is None
+
+
+def can_undo_sign_off(a: CleaningAssignment) -> bool:
+    return bool(a.signed_off_at) and a.latest_decided() is None
+
+
+def can_mark_fixed(a: CleaningAssignment) -> bool:
+    latest = a.latest_decided()
+    return latest is not None and latest.outcome == Inspection.Outcome.MANGLER and not latest.fixed_at
+
+
+TaskGroups = list[tuple[str, list[tuple[str, list[CleaningTask]]]]]
+
+
+def group_tasks(tasks: Iterable[CleaningTask]) -> TaskGroups:
+    """[(zone, [(group, [task, ...]), ...]), ...] in task order — the checklist's shape on screen."""
+    zones: TaskGroups = []
+    for task in tasks:
+        if not zones or zones[-1][0] != task.zone:
+            zones.append((task.zone, []))
+        groups = zones[-1][1]
+        if not groups or groups[-1][0] != task.group:
+            groups.append((task.group, []))
+        groups[-1][1].append(task)
+    return zones

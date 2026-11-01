@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Min rengøring - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Søndagsrengøring</p>
+      <h1>Min rengøring</h1>
+    </div>
+  </div>
+
+  {% if next %}
+    {% include "rengoering/_assignment.html" with a=next.a status=next.status zones=next.zones rounds=next.rounds can_sign_off=next.can_sign_off can_undo_sign_off=next.can_undo_sign_off can_mark_fixed=next.can_mark_fixed next="mine" show_tasks=True open_tasks=True %}
+  {% else %}
+    <p class="card muted">Du står ikke på en rengøringsliste lige nu.</p>
+  {% endif %}
+
+  {% if upcoming %}
+    <h2 class="mt-6">Kommende</h2>
+    <ul class="rg-list">
+      {% for a in upcoming %}
+        <li><a href="{% url 'rengoering:assignment' a.pk %}">{{ a.date|date:"j/n/Y" }} · {{ a.area.name }}</a>{% if a.is_star_week %} <span class="chip chip-brass">(*)-uge</span>{% endif %}</li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  {% if history %}
+    <h2 class="mt-6">Tidligere</h2>
+    <ul class="rg-list">
+      {% for cell in history %}
+        <li><a href="{% url 'rengoering:assignment' cell.assignment.pk %}">{{ cell.assignment.date|date:"j/n/Y" }} · {{ cell.assignment.area.name }}</a> <span class="chip {{ cell.chip }}">{{ cell.status.label }}</span></li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+  <p class="muted text-sm mt-6">Vil du bytte en søndag? Aftal det med en anden alumne og sig det til Inspektionen.</p>
+{% endblock %}

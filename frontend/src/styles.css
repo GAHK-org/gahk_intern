@@ -2570,4 +2570,16 @@
   .rg-star { color:var(--brass-ink); font-weight:800; }
   .rg-area-slots { border:1px solid var(--border); border-radius:var(--radius-sm); padding:10px 12px; }
   .rg-area-slots select { padding:4px 6px; }
+  .rg-assignment { margin-bottom:12px; }
+  .rg-mangler { margin:12px 0; padding:12px 14px; border-radius:var(--radius-sm); background:var(--neg-bg); border:1px solid #e7c7c3; }
+  .rg-mangler p { margin:0 0 6px; }
+  .rg-mangler ul { margin:0 0 6px; padding-left:18px; list-style:disc; }
+  .rg-note { white-space:normal; font-style:italic; }
+  .rg-ok { margin:12px 0; color:var(--green-700); font-weight:600; }
+  .rg-tasks summary { cursor:pointer; }
+  .rg-tasks ul { margin:0 0 8px; padding-left:18px; list-style:disc; }
+  .rg-zone { font-size:12px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--brass); margin:14px 0 4px; }
+  .rg-group { font-weight:600; margin:8px 0 2px; }
+  .rg-list { margin:0; padding:0; list-style:none; }
+  .rg-list li { padding:8px 0; border-bottom:1px solid var(--border); }
 }

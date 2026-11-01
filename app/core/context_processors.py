@@ -95,6 +95,7 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     grupper: list[NavItem] = [
         ("/intern/ak/", "AK-krydser", "check"),
         ("/intern/oelkaelder/min-saldo", "Ølkælder", "beer"),
+        ("/intern/rengoering/", "Min rengøring", "check"),
     ]
     if "ak" in roles:
         grupper.append(("/intern/ak/admin", "AK-oversigt", "check"))

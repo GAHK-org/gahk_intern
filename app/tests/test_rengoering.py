@@ -26,7 +26,7 @@ from rengoering.models import (
     at_deadline_hour,
     default_fix_deadline,
 )
-from rengoering.services import RotaClash, load_areas, plan_rota, save_rota, visible_tasks
+from rengoering.services import RotaClash, load_areas, next_for, plan_rota, save_rota, visible_tasks
 from residents.models import Residency, Resident, Role, RoleAssignment, active_period
 
 pytestmark = pytest.mark.django_db
@@ -339,3 +339,123 @@ def test_rota_pages_are_for_inspektionen_only(
     for manager in (admin, superuser):
         assert as_user(manager).get(url).status_code in (200, 405)
     assert Client().get(url).status_code == 302  # anonymous → login
+
+
+# ---- the alumne's side (phase 3) ----
+
+MINE = "/intern/rengoering/"
+
+
+@pytest.fixture
+def today_rota(areas: list[CleaningArea], trio: list[Resident]) -> Rota:
+    """A rota whose first Sunday is today — whatever weekday the suite runs on, so sign-off is open."""
+    stuen = CleaningArea.objects.get(slug="sal-stuen")
+    return save_rota("E26", plan_rota(timezone.localdate(), 6, 5, {stuen: trio}), None)
+
+
+def vagt(a: CleaningAssignment, action: str = "") -> str:
+    return f"/intern/rengoering/vagt/{a.pk}" + (f"/{action}" if action else "")
+
+
+def test_a_resident_sees_only_their_own_assignments(today_rota: Rota, trio: list[Resident]) -> None:
+    wilma, amalie, _ = trio
+    hers = today_rota.assignments.filter(resident=wilma).first()
+    other = today_rota.assignments.filter(resident=amalie).first()
+    assert hers and other
+    c = as_user(wilma)
+    assert c.get(vagt(hers)).status_code == 200
+    # someone else's: 404 for looking, signing off and "udbedret" alike
+    assert c.get(vagt(other)).status_code == 404
+    assert c.post(vagt(other, "taget")).status_code == 404
+    assert c.post(vagt(other, "udbedret")).status_code == 404
+    other.refresh_from_db()
+    assert other.signed_off_at is None
+    page = c.get(MINE).content.decode()
+    assert "Sal, stuen" in page and amalie.first_name not in page
+
+
+def test_sign_off_records_the_time_and_can_be_undone_until_inspected(
+    today_rota: Rota, trio: list[Resident], inspektor: Resident
+) -> None:
+    a = today_rota.assignments.get(date=timezone.localdate())
+    c = as_user(trio[0])
+    assert c.post(vagt(a, "taget"), {"next": "mine"}).url == MINE
+    a.refresh_from_db()
+    assert a.signed_off_at is not None and a.signed_off_by == trio[0]
+    c.post(vagt(a, "taget"), {"undo": "1"})
+    a.refresh_from_db()
+    assert a.signed_off_at is None
+    c.post(vagt(a, "taget"))
+    Inspection.objects.create(assignment=a, outcome=Inspection.Outcome.GODKENDT, decided_at=timezone.now())
+    c.post(vagt(a, "taget"), {"undo": "1"})
+    a.refresh_from_db()
+    assert a.signed_off_at is not None  # judged: the sign-off is history now
+
+
+def test_sign_off_is_not_open_before_the_day(today_rota: Rota, trio: list[Resident]) -> None:
+    later = today_rota.assignments.get(date=timezone.localdate() + datetime.timedelta(weeks=3))
+    assert later.resident == trio[0]
+    as_user(trio[0]).post(vagt(later, "taget"))
+    later.refresh_from_db()
+    assert later.signed_off_at is None
+
+
+def test_inspektionen_may_sign_off_on_behalf(
+    today_rota: Rota, trio: list[Resident], inspektor: Resident
+) -> None:
+    a = today_rota.assignments.get(date=timezone.localdate())
+    as_user(inspektor).post(vagt(a, "taget"))
+    a.refresh_from_db()
+    assert a.signed_off_by == inspektor and a.resident == trio[0]
+
+
+def test_mark_fixed_only_by_the_alumne_and_only_on_mangler(
+    today_rota: Rota, trio: list[Resident], inspektor: Resident
+) -> None:
+    a = today_rota.assignments.get(date=timezone.localdate())
+    c = as_user(trio[0])
+    c.post(vagt(a, "udbedret"))  # nothing to fix yet
+    assert not Inspection.objects.exists()
+    now = timezone.now()
+    r1 = Inspection.objects.create(
+        assignment=a,
+        inspector=inspektor,
+        outcome=Inspection.Outcome.MANGLER,
+        decided_at=now,
+        deadline=default_fix_deadline(now),
+        missing=[{"zone": "Toilet og bad", "text": "Håndsæbe fyldt op"}],
+    )
+    page = c.get(MINE).content.decode()
+    assert "Håndsæbe fyldt op" in page and "Mangler er udbedret" in page
+    assert as_user(inspektor).post(vagt(a, "udbedret")).status_code == 404  # not the alumne
+    c.post(vagt(a, "udbedret"))
+    r1.refresh_from_db()
+    assert r1.fixed_at is not None
+    a = CleaningAssignment.objects.get(pk=a.pk)
+    assert a.status() == AssignmentStatus.UDBEDRET
+
+
+def test_dashboard_shows_the_next_cleaning(
+    today_rota: Rota, trio: list[Resident], make_resident: Callable[..., Resident]
+) -> None:
+    page = as_user(trio[1]).get("/intern/").content.decode()
+    assert "Sal, stuen" in page and "Min rengøring" in page
+    nobody = make_resident(email="ingen@gahk.dk")
+    assert as_user(nobody).get("/intern/").status_code == 200
+    assert as_user(nobody).get(MINE).status_code == 200
+
+
+def test_an_open_mangler_outranks_the_next_sunday(areas: list[CleaningArea], trio: list[Resident]) -> None:
+    stuen = CleaningArea.objects.get(slug="sal-stuen")
+    last_week = timezone.localdate() - datetime.timedelta(weeks=1)
+    rota = save_rota("E26", plan_rota(last_week, 4, 0, {stuen: [trio[0]]}), None)
+    old = rota.assignments.get(date=last_week)
+    Inspection.objects.create(
+        assignment=old,
+        outcome=Inspection.Outcome.MANGLER,
+        decided_at=timezone.now(),
+        deadline=timezone.now() + datetime.timedelta(hours=3),
+    )
+    assert next_for(trio[0]) == old
+    old.inspections.update(fixed_at=timezone.now())
+    assert next_for(trio[0]) == rota.assignments.get(date=last_week + datetime.timedelta(weeks=1))

@@ -1,0 +1,61 @@
+{% comment %}
+  One assignment as the alumne sees it: what, when, sign-off, mangler, and the task list.
+  Context: rengoering.views.detail_context, plus `next` (where the buttons return to).
+{% endcomment %}
+<div class="card-flat rg-assignment">
+  <div class="card-head">
+    <h2>{{ a.area.name }} · {{ a.date|date:"l j. F" }}</h2>
+    <span class="chip {% if status == 'godkendt' %}{% elif status == 'mangler' or status == 'overskredet' or status == 'ikke_taget' %}chip-neg{% elif status == 'taget' or status == 'udbedret' %}chip-brass{% else %}chip-quiet{% endif %}">{{ status.label }}</span>
+  </div>
+  <div class="card-pad">
+    <p class="muted text-sm">
+      {% if a.is_star_week %}<span class="chip chip-brass">(*)-uge</span> Husk også (*)-opgaverne. {% endif %}
+      Skal være taget senest kl. 22.00.{% if a.comment %} · {{ a.comment }}{% endif %}
+    </p>
+
+    {% for r in rounds %}
+      {% if r.outcome == "mangler" %}
+        <div class="rg-mangler">
+          <p class="font-semibold">Mangler{% if r.round > 1 %} (opfølgning {{ r.round|add:"-1" }}){% endif %} · udbedres inden {{ r.deadline|date:"l j/n \k\l. H.i" }}</p>
+          {% if r.missing %}
+            <ul>{% for m in r.missing %}<li>{% if m.zone %}<span class="muted">{{ m.zone }}:</span> {% endif %}{{ m.text }}</li>{% endfor %}</ul>
+          {% endif %}
+          {% if r.note %}<p class="rg-note">{{ r.note|linebreaksbr }}</p>{% endif %}
+          {% if r.fixed_at %}<p class="muted text-sm">Meldt udbedret {{ r.fixed_at|date:"j/n H.i" }}.</p>{% endif %}
+        </div>
+      {% elif r.outcome == "godkendt" %}
+        <p class="rg-ok">Godkendt {{ r.decided_at|date:"j/n H.i" }}{% if r.note %} · {{ r.note }}{% endif %}</p>
+      {% endif %}
+    {% endfor %}
+
+    <div class="flex flex-wrap gap-2 mt-3">
+      {% if can_sign_off %}
+        <form method="post" action="{% url 'rengoering:sign_off' a.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{{ next }}">
+          <button type="submit" class="btn">Jeg har taget min rengøring</button></form>
+      {% elif a.signed_off_at %}
+        <span class="muted">Taget {{ a.signed_off_at|date:"j/n \k\l. H.i" }}{% if a.signed_off_at > a.done_by %} (efter kl. 22){% endif %}</span>
+        {% if can_undo_sign_off %}
+          <form method="post" action="{% url 'rengoering:sign_off' a.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{{ next }}"><input type="hidden" name="undo" value="1">
+            <button type="submit" class="btn-link">Fortryd</button></form>
+        {% endif %}
+      {% endif %}
+      {% if can_mark_fixed and a.resident_id == user.pk %}
+        <form method="post" action="{% url 'rengoering:mark_fixed' a.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{{ next }}">
+          <button type="submit" class="btn">Mangler er udbedret</button></form>
+      {% endif %}
+    </div>
+
+    {% if show_tasks %}
+      <details class="rg-tasks mt-4"{% if open_tasks %} open{% endif %}>
+        <summary class="font-semibold">Opgaver</summary>
+        {% for zone, groups in zones %}
+          {% if zones|length > 1 %}<h3 class="rg-zone">{{ zone }}</h3>{% endif %}
+          {% for group, tasks in groups %}
+            <p class="rg-group">{{ group }}</p>
+            <ul>{% for t in tasks %}<li>{% if t.star_only %}<span class="rg-star" title="Kun i (*)-uger">*</span> {% endif %}{{ t.text }}</li>{% endfor %}</ul>
+          {% endfor %}
+        {% endfor %}
+      </details>
+    {% endif %}
+  </div>
+</div>
