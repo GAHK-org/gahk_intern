@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Rengøringslister - GAHK Intern{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Inspektionen · Søndagsrengøring</p>
+      <h1>Rengøringslister</h1>
+    </div>
+    <div class="flex gap-2">
+      <a href="{% url 'rengoering:rota_create' %}" class="btn">Ny liste</a>
+    </div>
+  </div>
+
+  <div class="card-flat">
+    <table class="rg-table">
+      <thead><tr><th>Navn</th><th>Periode</th><th>Vagter</th></tr></thead>
+      <tbody>
+        {% for rota in rotas %}
+          <tr>
+            <td><a href="{% url 'rengoering:rota_detail' rota.pk %}">{{ rota.name }}</a></td>
+            <td>{% if rota.first %}{{ rota.first|date:"j/n/Y" }} – {{ rota.last|date:"j/n/Y" }}{% endif %}</td>
+            <td>{{ rota.n }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="3" class="muted">Ingen lister endnu.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted text-sm mt-3">Områder og opgavelister redigeres under <a href="/django-admin/rengoering/cleaningarea/">Rediger områder</a>.</p>
+{% endblock %}

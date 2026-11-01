@@ -14,6 +14,7 @@ import pytest
 from django.test import Client
 from django.utils import timezone
 
+from core.models import Room
 from rengoering.areas_data import AREAS
 from rengoering.models import (
     AssignmentStatus,
@@ -25,8 +26,8 @@ from rengoering.models import (
     at_deadline_hour,
     default_fix_deadline,
 )
-from rengoering.services import load_areas, visible_tasks
-from residents.models import Resident, Role, RoleAssignment, active_period
+from rengoering.services import RotaClash, load_areas, plan_rota, save_rota, visible_tasks
+from residents.models import Residency, Resident, Role, RoleAssignment, active_period
 
 pytestmark = pytest.mark.django_db
 
@@ -174,3 +175,167 @@ def test_area_admin_is_for_inspektionen_only(
     prev = (year, month - 1) if month > 1 else (year - 1, 12)
     RoleAssignment.objects.create(resident=old, role=Role.INSPEKTION, year=prev[0], month=prev[1])
     assert as_user(old).get(AREA_ADMIN).status_code == 403
+
+
+# ---- rotas (phase 2) ----
+
+ROTAS = "/intern/rengoering/lister/"
+
+
+def live_here(*people: Resident) -> None:
+    """Put residents on the active month's alumneliste, which is who a rota may be made of."""
+    year, month = active_period()
+    for i, person in enumerate(people, start=1):
+        room, _ = Room.objects.get_or_create(
+            legacy_index=i, number=i, defaults={"floor": "stuen", "side": "mod gaden"}
+        )
+        Residency.objects.create(resident=person, room=room, year=year, month=month)
+
+
+@pytest.fixture
+def trio(make_resident: Callable[..., Resident]) -> list[Resident]:
+    people = [
+        make_resident(email=f"{n.lower()}@gahk.dk", first_name=n) for n in ("Wilma", "Amalie", "Isabella")
+    ]
+    live_here(*people)
+    return people
+
+
+def test_plan_rotates_people_and_marks_every_fifth_sunday(
+    areas: list[CleaningArea], trio: list[Resident]
+) -> None:
+    stuen = CleaningArea.objects.get(slug="sal-stuen")
+    planned = plan_rota(SUNDAY, 26, 5, {stuen: trio})
+    assert [a.resident for a in planned[:4]] == [trio[0], trio[1], trio[2], trio[0]]
+    stars = [a.date for a in planned if a.is_star_week]
+    # E26's (*)-uger, as on the printed list
+    assert stars[:3] == [datetime.date(2026, 11, 29), datetime.date(2027, 1, 3), datetime.date(2027, 2, 7)]
+    assert len(stars) == 5
+    assert not any(a.is_star_week for a in plan_rota(SUNDAY, 10, 0, {stuen: trio}))
+
+
+def test_save_rota_refuses_a_taken_sunday_as_a_whole(areas: list[CleaningArea], trio: list[Resident]) -> None:
+    stuen = CleaningArea.objects.get(slug="sal-stuen")
+    hall = CleaningArea.objects.get(slug="hall-og-vindfang")
+    save_rota("E26", plan_rota(SUNDAY, 4, 5, {stuen: trio}), None)
+    overlapping = plan_rota(SUNDAY + datetime.timedelta(weeks=3), 4, 5, {stuen: trio, hall: trio})
+    with pytest.raises(RotaClash):
+        save_rota("F27", overlapping, None)
+    assert not Rota.objects.filter(name="F27").exists()  # nothing half-saved
+    assert CleaningAssignment.objects.count() == 4
+
+
+def test_create_rota_previews_then_saves(
+    areas: list[CleaningArea], trio: list[Resident], inspektor: Resident
+) -> None:
+    stuen = CleaningArea.objects.get(slug="sal-stuen")
+    data = {"name": "E26", "start_date": "2026-11-01", "weeks": "6", "star_every": "5"}
+    data |= {f"area_{stuen.pk}_{i}": str(p.pk) for i, p in enumerate(trio)}
+    c = as_user(inspektor)
+    preview = c.post(ROTAS + "opret", data)
+    assert preview.status_code == 200 and "Forhåndsvisning" in preview.content.decode()
+    assert not Rota.objects.exists()
+    saved = c.post(ROTAS + "opret", data | {"save": "1"})
+    rota = Rota.objects.get(name="E26")
+    assert saved.url == f"{ROTAS}{rota.pk}"
+    assert rota.assignments.count() == 6
+    assert list(rota.assignments.filter(is_star_week=True).values_list("date", flat=True)) == [
+        datetime.date(2026, 11, 29)
+    ]
+    assert c.get(saved.url).status_code == 200
+
+
+def test_create_rota_wants_a_sunday(
+    areas: list[CleaningArea], trio: list[Resident], inspektor: Resident
+) -> None:
+    stuen = CleaningArea.objects.get(slug="sal-stuen")
+    data = {
+        "name": "E26",
+        "start_date": "2026-11-02",
+        "weeks": "6",
+        "star_every": "5",
+        f"area_{stuen.pk}_0": trio[0].pk,
+    }
+    r = as_user(inspektor).post(ROTAS + "opret", data | {"save": "1"})
+    assert "Vælg en søndag" in r.content.decode()
+    assert not Rota.objects.exists()
+
+
+def test_replace_resident_skips_inspected_sundays(
+    areas: list[CleaningArea],
+    trio: list[Resident],
+    inspektor: Resident,
+    make_resident: Callable[..., Resident],
+) -> None:
+    stuen = CleaningArea.objects.get(slug="sal-stuen")
+    rota = save_rota("E26", plan_rota(SUNDAY, 9, 5, {stuen: trio}), None)
+    wilma = trio[0]
+    first = rota.assignments.get(date=SUNDAY)
+    Inspection.objects.create(assignment=first, outcome=Inspection.Outcome.GODKENDT)
+    newcomer = make_resident(email="ny@gahk.dk", first_name="Ny")
+    live_here(newcomer)
+    r = as_user(inspektor).post(
+        f"{ROTAS}{rota.pk}/erstat", {"old": wilma.pk, "new": newcomer.pk, "from_date": "2026-11-01"}
+    )
+    assert r.status_code == 302
+    assert rota.assignments.filter(resident=wilma).get() == first  # history kept
+    assert rota.assignments.filter(resident=newcomer).count() == 2
+
+
+def test_rota_can_only_be_deleted_before_it_is_used(
+    areas: list[CleaningArea], trio: list[Resident], inspektor: Resident
+) -> None:
+    stuen = CleaningArea.objects.get(slug="sal-stuen")
+    rota = save_rota("E26", plan_rota(SUNDAY, 3, 5, {stuen: trio}), None)
+    rota.assignments.filter(date=SUNDAY).update(signed_off_at=timezone.now())
+    as_user(inspektor).post(f"{ROTAS}{rota.pk}/slet")
+    assert Rota.objects.filter(pk=rota.pk).exists()
+    rota.assignments.update(signed_off_at=None)
+    as_user(inspektor).post(f"{ROTAS}{rota.pk}/slet")
+    assert not Rota.objects.filter(pk=rota.pk).exists()
+
+
+def test_edit_assignment_swaps_and_clears_sign_off(
+    areas: list[CleaningArea], trio: list[Resident], inspektor: Resident
+) -> None:
+    stuen = CleaningArea.objects.get(slug="sal-stuen")
+    rota = save_rota("E26", plan_rota(SUNDAY, 3, 5, {stuen: trio}), None)
+    a = rota.assignments.get(date=SUNDAY)
+    a.signed_off_at = timezone.now()
+    a.save()
+    r = as_user(inspektor).post(
+        f"/intern/rengoering/vagt/{a.pk}/rediger",
+        {"resident": trio[2].pk, "is_star_week": "on", "comment": "byttet", "clear_sign_off": "on"},
+    )
+    assert r.status_code == 302
+    a.refresh_from_db()
+    assert (a.resident, a.is_star_week, a.comment, a.signed_off_at) == (trio[2], True, "byttet", None)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        ROTAS,
+        ROTAS + "opret",
+        ROTAS + "{rota}",
+        ROTAS + "{rota}/erstat",
+        "/intern/rengoering/vagt/{a}/rediger",
+    ],
+)
+def test_rota_pages_are_for_inspektionen_only(
+    url: str,
+    areas: list[CleaningArea],
+    trio: list[Resident],
+    make_resident: Callable[..., Resident],
+) -> None:
+    stuen = CleaningArea.objects.get(slug="sal-stuen")
+    rota = save_rota("E26", plan_rota(SUNDAY, 3, 5, {stuen: trio}), None)
+    url = url.format(rota=rota.pk, a=rota.assignments.first().pk)  # type: ignore[union-attr]
+    # Wilma is ON this rota and still may not plan it
+    assert as_user(trio[0]).get(url).status_code in (403, 404, 405)
+    assert as_user(trio[0]).post(url).status_code in (403, 404)
+    admin = make_resident(email="adm@gahk.dk", roles=(Role.ADMINISTRATOR,))
+    superuser = make_resident(email="su@gahk.dk", is_superuser=True)
+    for manager in (admin, superuser):
+        assert as_user(manager).get(url).status_code in (200, 405)
+    assert Client().get(url).status_code == 302  # anonymous → login

@@ -1,0 +1,33 @@
+{% comment %}
+  Sundays × areas. Context: areas, rows (rengoering.services.grid), link (bool: cells link to the
+  assignment editor — off for an unsaved preview).
+{% endcomment %}
+<div class="rg-grid-wrap">
+  <table class="rg-grid">
+    <thead>
+      <tr>
+        <th>Søndag</th>
+        {% for area in areas %}<th>{{ area.name }}</th>{% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+        <tr{% if row.is_star_week %} class="is-star"{% endif %}>
+          <th scope="row">{{ row.date|date:"j/n/Y" }}{% if row.is_star_week %} <span class="rg-star" title="(*)-uge">*</span>{% endif %}</th>
+          {% for cell in row.cells %}
+            <td>
+              {% if cell %}
+                {% with a=cell.assignment %}
+                  {% if link %}<a href="{% url 'rengoering:edit_assignment' a.pk %}">{% endif %}
+                  {% if a.resident %}{{ a.resident.first_name }} {{ a.resident.last_name|first }}.{% else %}<span class="muted">Ingen</span>{% endif %}
+                  {% if link %}</a>{% endif %}
+                  {% if link and cell.status != "kommende" %}<span class="chip {{ cell.chip }}">{{ cell.status.label }}</span>{% endif %}
+                {% endwith %}
+              {% endif %}
+            </td>
+          {% endfor %}
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Ny rengøringsliste - GAHK Intern{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Inspektionen · Søndagsrengøring</p>
+      <h1>Ny rengøringsliste</h1>
+    </div>
+  </div>
+
+  <form method="post" class="card-flat card-pad">
+    {% csrf_token %}
+    {% if form.non_field_errors %}<div class="errorlist mb-3">{{ form.non_field_errors }}</div>{% endif %}
+    <div class="grid gap-3 sm:grid-cols-4">
+      {% for field in form %}{% if not field.name|slice:":5" == "area_" %}
+        <div>
+          <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+          {{ field }}
+          {% if field.help_text %}<p class="muted text-sm mt-1">{{ field.help_text }}</p>{% endif %}
+          {% if field.errors %}<p class="errorlist text-sm">{{ field.errors|striptags }}</p>{% endif %}
+        </div>
+      {% endif %}{% endfor %}
+    </div>
+
+    <h2 class="mt-6">Alumner pr. område</h2>
+    <p class="muted text-sm">I den rækkefølge de skal tage rengøringen. Første søndag går til nr. 1, næste til nr. 2 osv. Områder uden alumner kommer ikke med på listen.</p>
+    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 mt-3">
+      {% for area, slots in form.area_rows %}
+        <fieldset class="rg-area-slots">
+          <legend class="font-semibold">{{ area.name }}</legend>
+          {% for slot in slots %}
+            <div class="flex items-center gap-2 mt-1">
+              <span class="muted text-sm w-4">{{ forloop.counter }}</span>
+              {{ slot }}
+            </div>
+          {% endfor %}
+        </fieldset>
+      {% endfor %}
+    </div>
+
+    <div class="flex gap-2 mt-6">
+      <button type="submit" class="btn btn-secondary">Vis forhåndsvisning</button>
+      {% if preview %}<button type="submit" name="save" value="1" class="btn">Gem listen</button>{% endif %}
+      <a href="{% url 'rengoering:rotas' %}" class="btn btn-secondary">Afbryd</a>
+    </div>
+  </form>
+
+  {% if preview %}
+    <h2 class="mt-6">Forhåndsvisning</h2>
+    {% include "rengoering/_grid.html" with areas=preview.0 rows=preview.1 link=False %}
+  {% endif %}
+{% endblock %}

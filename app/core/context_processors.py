@@ -11,6 +11,7 @@ from events.access import roles_allowed as events_allowed
 from gahkflix.access import roles_allowed as gahkflix_allowed
 from opslagstavle.access import roles_allowed as opslagstavle_allowed
 from photo_album.access import roles_allowed as photo_album_allowed
+from rengoering.access import MANAGE_ROLES as RENGOERING_ROLES
 from residents.permissions import CMS_EDITOR_ROLES, KITCHEN, can_preview, effective_roles
 
 # Public site nav, matching the legacy gahk.dk menu (labels + order)
@@ -110,6 +111,8 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     administration: list[NavItem] = []
     if "indstilling" in roles:
         administration.append(("/optagelse/listansoegninger", "Ansøgninger", "inbox"))
+    if not set(roles).isdisjoint(RENGOERING_ROLES):  # inspektion/administrator
+        administration.append(("/intern/rengoering/lister/", "Rengøringslister", "list"))
     if not set(roles).isdisjoint(CMS_EDITOR_ROLES):  # administrator/indstilling/inspektion/pr
         administration.append(("/django-admin/cms/", "Rediger indhold", "edit"))
     if "administrator" in roles:

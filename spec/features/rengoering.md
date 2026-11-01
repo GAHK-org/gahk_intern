@@ -40,6 +40,7 @@ which Inspektionen re-checks. Inspektionen also plans the rota for each semester
 | `rota_import` | `lister/importer` | GET/POST | manager | paste / CSV (/ PDF) → name matching → save |
 | `rota_detail` | `lister/<pk>` | GET | manager | the rota as a grid; cells link to `edit_assignment` |
 | `rota_replace` | `lister/<pk>/erstat` | POST | manager | "replace X by Y from date D" (moving out) |
+| `rota_delete` | `lister/<pk>/slet` | POST | manager | delete a rota, only while nothing is signed off or inspected |
 
 Areas and task lists are edited in the **Django admin** (`rengoering.CleaningArea` with an inline of
 `CleaningTask`, ordered), gated to Inspektionen with the same `has_*_permission` pattern as

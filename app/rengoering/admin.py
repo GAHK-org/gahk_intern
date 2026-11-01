@@ -5,12 +5,10 @@ Django permission bits, so every check is the role check."""
 from django.contrib import admin
 from django.http import HttpRequest
 
-from residents.models import Role
 from residents.permissions import has_active_role
 
+from .access import MANAGE_ROLES
 from .models import CleaningArea, CleaningTask
-
-MANAGE_ROLES = (Role.INSPEKTION, Role.ADMINISTRATOR)
 
 
 class _InspektionOnly:
