@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.db import IntegrityError
 from django.db.models import Count, Max, Min, QuerySet
 from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -17,9 +18,9 @@ from django.views.decorators.http import require_POST
 from residents.models import Resident
 from residents.permissions import current_resident
 
-from . import services
+from . import importing, services
 from .access import assignment_for, can_manage, manage_required
-from .forms import AssignmentForm, ReplaceForm, RotaForm
+from .forms import AssignmentForm, ImportForm, MatchForm, ReplaceForm, RotaForm
 from .models import AssignmentStatus, CleaningArea, CleaningAssignment, Inspection, Rota, default_fix_deadline
 
 # Where a sign-off/"udbedret" button may send you back to — a fixed set, never a URL from the form.
@@ -418,3 +419,80 @@ def area_history(request: HttpRequest, slug: str) -> HttpResponse:
 def resident_history(request: HttpRequest, pk: int) -> HttpResponse:
     resident = get_object_or_404(Resident, pk=pk)
     return _history_page(request, resident.full_name, resident.cleaning_assignments.all(), by_area=False)
+
+
+# ---- import (Inspektionen) ----
+
+IMPORT_SESSION_KEY = "rengoering_import"
+
+
+@manage_required
+def rota_import(request: HttpRequest) -> HttpResponse:
+    """Two steps. 1: paste/upload the printed rota; it is parsed and kept in the session. 2: settle
+    every name on it — pre-set where it matched one resident — then save it as a rota."""
+    if request.GET.get("nulstil"):
+        request.session.pop(IMPORT_SESSION_KEY, None)
+        return redirect("rengoering:rota_import")
+    pending = request.session.get(IMPORT_SESSION_KEY)
+
+    if request.method == "POST" and request.POST.get("step") == "laes":
+        form = ImportForm(request.POST, request.FILES)
+        if form.is_valid():
+            parsed = importing.parse(form.cleaned_data["source"])
+            areas = list(CleaningArea.objects.filter(is_active=True, kind=CleaningArea.Kind.SOENDAG))
+            by_header = importing.match_areas([r.header for r in parsed.rows], areas)
+            rows = [r for r in parsed.rows if by_header[r.header]]
+            if not rows:
+                form.add_error(None, "Fandt ingen rækker for kendte områder i listen.")
+            else:
+                request.session[IMPORT_SESSION_KEY] = {
+                    "name": form.cleaned_data["name"],
+                    "rows": [[by_header[r.header].pk, r.date.isoformat(), r.name, r.star] for r in rows],  # type: ignore[union-attr]
+                    "skipped": [h for h, a in by_header.items() if a is None],
+                    "errors": parsed.errors,
+                }
+                return redirect("rengoering:rota_import")
+        return render(request, "rengoering/import.html", {"form": form})
+
+    if not pending:
+        return render(request, "rengoering/import.html", {"form": ImportForm()})
+
+    people = list(services.rota_residents())
+    names = list(dict.fromkeys(name for _, _, name, _ in pending["rows"] if name))
+    matches = [importing.match_name(n, people) for n in names]
+    match_form = MatchForm(matches, people, request.POST or None)
+    if request.method == "POST" and match_form.is_valid():
+        area_by_pk = {a.pk: a for a in CleaningArea.objects.all()}
+        planned = [
+            CleaningAssignment(
+                area=area_by_pk[area_id],
+                date=datetime.date.fromisoformat(day),
+                resident=match_form.resolved()[name] if name else None,
+                is_star_week=star,
+            )
+            for area_id, day, name, star in pending["rows"]
+        ]
+        try:
+            rota = services.save_rota(pending["name"], planned, current_resident(request))
+        except services.RotaClash as clash:
+            match_form.add_error(None, f"Disse søndage ligger allerede på en anden liste: {clash}")
+        except IntegrityError:
+            match_form.add_error(None, "Listen indeholder det samme område på samme dato to gange.")
+        else:
+            request.session.pop(IMPORT_SESSION_KEY, None)
+            messages.success(request, f"Rengøringslisten {rota.name} er importeret.")
+            return redirect("rengoering:rota_detail", pk=rota.pk)
+    days = sorted({day for _, day, _, _ in pending["rows"]})
+    return render(
+        request,
+        "rengoering/import.html",
+        {
+            "pending": pending,
+            "match_form": match_form,
+            "n_rows": len(pending["rows"]),
+            "n_areas": len({area_id for area_id, _, _, _ in pending["rows"]}),
+            "first_day": datetime.date.fromisoformat(days[0]),
+            "last_day": datetime.date.fromisoformat(days[-1]),
+            "unresolved": sum(1 for m in matches if not m.resident),
+        },
+    )

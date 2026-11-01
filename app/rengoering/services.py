@@ -24,6 +24,12 @@ from .models import (
 )
 
 STAR_PREFIX = "*"
+# slugify() drops letters it cannot fold to ASCII, which made "Læsesalen" "lsesalen".
+DANISH_FOLD = str.maketrans({"æ": "ae", "ø": "oe", "å": "aa", "Æ": "Ae", "Ø": "Oe", "Å": "Aa"})
+
+
+def area_slug(name: str) -> str:
+    return slugify(name.translate(DANISH_FOLD))
 
 
 def visible_tasks(assignment: CleaningAssignment) -> "QuerySet[CleaningTask]":
@@ -45,7 +51,7 @@ def load_areas(reset: bool = False) -> tuple[int, int]:
     areas_created = tasks_created = 0
     for order, (name, description, aliases, zones) in enumerate(AREAS):
         area, created = CleaningArea.objects.get_or_create(
-            slug=slugify(name),
+            slug=area_slug(name),
             defaults={
                 "name": name,
                 "description": description,

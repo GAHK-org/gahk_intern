@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Importér rengøringsliste - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow"><a href="{% url 'rengoering:rotas' %}">Rengøringslister</a></p>
+      <h1>Importér en rengøringsliste</h1>
+    </div>
+  </div>
+
+  {% if not pending %}
+    <form method="post" enctype="multipart/form-data" class="card-flat card-pad">
+      {% csrf_token %}
+      <input type="hidden" name="step" value="laes">
+      {% if form.non_field_errors %}<div class="errorlist mb-3">{{ form.non_field_errors }}</div>{% endif %}
+      {% for field in form %}
+        <div class="mb-3">
+          <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+          {{ field }}
+          {% if field.help_text %}<p class="muted text-sm mt-1">{{ field.help_text }}</p>{% endif %}
+          {% if field.errors %}<p class="errorlist text-sm">{{ field.errors|striptags }}</p>{% endif %}
+        </div>
+      {% endfor %}
+      <div class="flex gap-2">
+        <button type="submit" class="btn">Læs listen</button>
+        <a href="{% url 'rengoering:rotas' %}" class="btn btn-secondary">Afbryd</a>
+      </div>
+    </form>
+  {% else %}
+    <div class="card">
+      <p class="mt-0"><b>{{ pending.name }}</b>: {{ n_rows }} søndage på {{ n_areas }} områder, {{ first_day|date:"j/n/Y" }} – {{ last_day|date:"j/n/Y" }}.</p>
+      {% if pending.skipped %}<p class="muted text-sm">Sprunget over (ikke søndagsrengøring): {{ pending.skipped|join:", " }}.</p>{% endif %}
+      {% if pending.errors %}<p class="errorlist text-sm">Linjer der ikke kunne læses: {{ pending.errors|join:" " }}</p>{% endif %}
+    </div>
+
+    <form method="post" class="card-flat">
+      {% csrf_token %}
+      <input type="hidden" name="step" value="gem">
+      <div class="card-head">
+        <h2>Hvem er hvem?</h2>
+        {% if unresolved %}<span class="chip chip-neg">{{ unresolved }} skal vælges</span>{% else %}<span class="chip">Alle fundet</span>{% endif %}
+      </div>
+      {% if match_form.non_field_errors %}<div class="errorlist card-pad">{{ match_form.non_field_errors }}</div>{% endif %}
+      <table class="rg-table">
+        <thead><tr><th>På listen</th><th>Beboer</th></tr></thead>
+        <tbody>
+          {% for m, field in match_form.rows %}
+            <tr>
+              <td>
+                {{ m.name }}
+                {% if m.state == "flere" %}<span class="chip chip-brass">flere mulige</span>{% elif m.state == "ingen" %}<span class="chip chip-neg">ikke fundet</span>{% endif %}
+              </td>
+              <td>{{ field }}{% if field.errors %}<p class="errorlist text-sm">{{ field.errors|striptags }}</p>{% endif %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="card-pad flex gap-2">
+        <button type="submit" class="btn">Gem listen</button>
+        <a href="{% url 'rengoering:rota_import' %}?nulstil=1" class="btn btn-secondary">Start forfra</a>
+      </div>
+    </form>
+  {% endif %}
+{% endblock %}

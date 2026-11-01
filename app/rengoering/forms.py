@@ -1,6 +1,7 @@
 """Forms for planning rotas and editing single assignments (Inspektionen only)."""
 
 import datetime
+import subprocess
 from typing import Any, cast
 
 from django import forms
@@ -9,6 +10,7 @@ from django.forms.boundfield import BoundField
 
 from residents.models import Resident
 
+from . import importing
 from .models import CleaningArea, CleaningAssignment, Rota
 from .services import rota_residents
 
@@ -122,3 +124,96 @@ class ReplaceForm(forms.Form):
         new = cast(ResidentChoiceField, self.fields["new"])
         old.queryset = Resident.objects.filter(cleaning_assignments__rota=rota).distinct()
         new.queryset = rota_residents()
+
+
+# ---- import ----
+
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+
+
+class ImportForm(forms.Form):
+    """Step 1: the printed rota, pasted or uploaded."""
+
+    name = forms.CharField(label="Navn", max_length=50, help_text='Fx "E26".')
+    text = forms.CharField(
+        label="Indsæt listen",
+        required=False,
+        widget=forms.Textarea(attrs={"rows": 12, "class": "font-mono text-sm"}),
+        help_text="Teksten fra PDF'en (pdftotext -layout) eller CSV: område;dato;navn;stjerne.",
+    )
+    file = forms.FileField(label="…eller upload en fil", required=False)
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self.fields["file"].help_text = (
+            "PDF, CSV eller tekst."
+            if importing.pdftotext_available()
+            else "CSV eller tekst (PDF kræver pdftotext på serveren)."
+        )
+
+    clean_name = RotaForm.clean_name
+
+    def clean(self) -> dict[str, Any]:
+        cleaned = super().clean() or {}
+        upload = cleaned.get("file")
+        text = (cleaned.get("text") or "").strip()
+        if upload:
+            if upload.size > MAX_UPLOAD_BYTES:
+                raise forms.ValidationError("Filen er for stor (højst 5 MB).")
+            data = upload.read()
+            if upload.name.lower().endswith(".pdf"):
+                try:
+                    text = importing.pdf_to_text(data)
+                except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+                    raise forms.ValidationError(f"PDF'en kunne ikke læses: {exc}") from exc
+            else:
+                text = _decode(data)
+        if not text:
+            raise forms.ValidationError("Indsæt listen eller upload en fil.")
+        cleaned["source"] = text
+        return cleaned
+
+
+def _decode(data: bytes) -> str:
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data.decode("cp1252", errors="replace")  # an Excel CSV saved on Windows
+
+
+INGEN = "ingen"
+
+
+class MatchForm(forms.Form):
+    """Step 2: one dropdown per distinct name on the list, pre-set when it matched one resident."""
+
+    def __init__(
+        self, matches: list[importing.NameMatch], people: list[Resident], *args: object, **kwargs: object
+    ) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self.matches = matches
+        everyone = [(str(p.pk), p.full_name) for p in people]
+        for i, m in enumerate(matches):
+            likely = [(str(p.pk), p.full_name) for p in m.candidates]
+            choices: list[tuple[str, object]] = [("", "— vælg —"), (INGEN, "Ingen på listen")]
+            if likely:
+                choices.append(("Mulige", likely))
+            choices.append(("Alle beboere", everyone))
+            self.fields[f"navn_{i}"] = forms.ChoiceField(
+                label=m.name,
+                choices=choices,
+                initial=str(m.resident.pk) if m.resident else "",
+                error_messages={"required": "Vælg hvem det er (eller Ingen)."},
+            )
+        self.people = {str(p.pk): p for p in people}
+
+    def rows(self) -> list[tuple[importing.NameMatch, BoundField]]:
+        return [(m, self[f"navn_{i}"]) for i, m in enumerate(self.matches)]
+
+    def resolved(self) -> dict[str, Resident | None]:
+        return {
+            m.name: None
+            if self.cleaned_data[f"navn_{i}"] == INGEN
+            else self.people[self.cleaned_data[f"navn_{i}"]]
+            for i, m in enumerate(self.matches)
+        }

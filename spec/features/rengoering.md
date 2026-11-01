@@ -95,11 +95,14 @@ Inspection     assignment FK(CASCADE), round (1 = Sunday, 2+ = opfølgning), ins
 - **Import:** parse `pdftotext -layout` output (area header line, `Dato | Hvem | Stjerne | …` header,
   `dd/mm/yyyy  Name  [*]` rows) or CSV `område;dato;navn;stjerne`. Area headers are matched against
   `CleaningArea.name` + `import_aliases`. Names are matched against residents with a `Residency` in the
-  rota's months: exact full name → unique first name → first name + last-name prefix/initial
-  ("William P", "Tobias Hermann") → otherwise *unmatched* / *ambiguous* (with candidates). The match
-  step shows one row per **distinct** name with a dropdown, unresolved ones first. Save is disabled
-  until every name is resolved or explicitly set to "Ingen". Parsed rows are kept in the session
-  between the steps.
+  active month or later (`importing.match_name`): full name → the whole thing as a first name
+  ("Anton Claes") → first name + start of the last name or one of its words ("William P",
+  "Gustav Skovsager") → the first name alone if it is unique ("Wilma"). The first rule with exactly
+  one hit wins. Otherwise the name is *flere mulige* (with candidates) or *ikke fundet*. The match
+  step shows one dropdown per **distinct** name, and nothing is saved until every one is set to a
+  resident or to "Ingen". Parsed rows are kept in the session between the steps. Format detection:
+  the PDF's rows start with a date and CSV rows don't (counting commas fails on "Stuen, Gang, Toilet").
+  Upload accepts PDF (only if `pdftotext` is on the server), CSV or text, up to 5 MB.
 - **Sign-off:** own assignment, from the Sunday 00:00 (local) onward, and only while there is no
   decided round 1. Signing after 22.00 is allowed but shown as late. Undo is allowed until inspected.
 - **Inspection:** the checklist shows the area's active tasks, and `star_only` tasks only when
@@ -143,13 +146,19 @@ Inspection     assignment FK(CASCADE), round (1 = Sunday, 2+ = opfølgning), ins
 
 ## Seed & management commands
 - `manage.py load_cleaning_areas`: idempotent upsert of the 9 areas and their tasks from
-  `rengoering/areas_data.py` (transcribed from the prototype's `AREAS`, incl. PDF header aliases).
+  `rengoering/areas_data.py` (generated from the prototype's `AREAS`, incl. PDF header aliases).
+  Existing areas are left as edited; `--reset` replaces their task lists (old tasks deactivated).
   Run by `task seed` and usable in prod.
-- `manage.py import_cleaning_rota <file> --name E26 [--dry-run]`: the same parser and matcher as the
-  UI. Prints unresolved names and refuses to save until they are resolved (`--map "William P=<email>"`).
-  The real E26 file is **not** committed.
+- `manage.py import_cleaning_rota <file> --name E26 [--dry-run] [--map "William P=<email>"] [--map "Kim="]`:
+  the same parser and matcher as the UI. Prints unresolved names with their candidates and saves
+  nothing until each is settled (`NAVN=` = Ingen). The real E26 file is **not** committed.
 - `seed_demo` (via `rengoering/demo.py`, like the other apps): areas + a generated rota over demo
   residents, with past Sundays in every state (godkendt, mangler, udbedret, overskredet, ikke taget).
+
+## Decisions taken for the first pass
+Questions 1, 3 and 4 below went unanswered when the plan was approved, so these defaults apply. Each
+is a small change to revisit: residents see only their own assignments, `Residency.cleaning` is not
+used, and there is no rollout gate.
 
 ## Open questions
 1. **Should residents see the whole rota** (who has what this Sunday)? The paper list is public on

@@ -8,14 +8,18 @@ Most of what is worth testing is two kinds of rule:
 """
 
 import datetime
+import io
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
+from django.core.management import CommandError, call_command
 from django.test import Client
 from django.utils import timezone
 
 from core.models import Room
 from rengoering.areas_data import AREAS
+from rengoering.importing import match_areas, match_name, parse
 from rengoering.models import (
     AssignmentStatus,
     CleaningArea,
@@ -628,3 +632,194 @@ def test_last_months_inspektion_cannot_inspect(
     RoleAssignment.objects.create(resident=old, role=Role.INSPEKTION, year=prev[0], month=prev[1])
     assert as_user(old).post(save_url(sunday), {"action": "godkend"}).status_code == 403
     assert as_user(old).get(TJEK).status_code == 403
+
+
+# ---- import (phase 5) ----
+
+# The shape `pdftotext -layout` makes of the printed list — fake names, real layout. The last area
+# is a køkkenrengøring, which this feature skips.
+LAYOUT = """Stuen, Gang, Toilet
+Dato         Hvem       Stjerne   Taget   Kommentar   Godkendt
+01/11/2026   Wilma
+08/11/2026   Amalie
+15/11/2026   Isabella
+22/11/2026   Wilma P
+29/11/2026   Anton      *
+06/12/2026
+Varme trappe + Musik
+Dato         Hvem             Stjerne   Taget   Kommentar   Godkendt
+01/11/2026   Tobias Hermann
+08/11/2026   Kim
+Kolde køkken
+Dato         Hvem       Stjerne   Taget   Kommentar   Godkendt
+01/11/2026   Wilma
+"""
+
+
+def test_parse_layout_text_reads_dates_names_and_stars() -> None:
+    parsed = parse(LAYOUT)
+    assert parsed.errors == []
+    stuen = [r for r in parsed.rows if r.header == "Stuen, Gang, Toilet"]
+    assert [r.name for r in stuen] == ["Wilma", "Amalie", "Isabella", "Wilma P", "Anton", ""]
+    assert [r.date for r in stuen if r.star] == [datetime.date(2026, 11, 29)]
+    assert {r.header for r in parsed.rows} == {"Stuen, Gang, Toilet", "Varme trappe + Musik", "Kolde køkken"}
+
+
+def test_parse_csv() -> None:
+    parsed = parse("område;dato;navn;stjerne\nSal, stuen;01/11/2026;Wilma;\nSal, stuen;2026-11-29;Amalie;*\n")
+    assert [(r.header, r.date, r.name, r.star) for r in parsed.rows] == [
+        ("Sal, stuen", datetime.date(2026, 11, 1), "Wilma", False),
+        ("Sal, stuen", datetime.date(2026, 11, 29), "Amalie", True),
+    ]
+    assert parse("område;dato;navn\nSal, stuen;31/02/2026;Wilma\n").errors  # no such date
+
+
+def test_area_headers_match_names_and_aliases(areas: list[CleaningArea]) -> None:
+    found = match_areas(["Stuen, Gang, Toilet", "varme trappe + musik", "Læsesalen", "Kolde køkken"], areas)
+    assert {h: a.slug if a else None for h, a in found.items()} == {
+        "Stuen, Gang, Toilet": "sal-stuen",
+        "varme trappe + musik": "varme-trappe",
+        "Læsesalen": "laesesalen",
+        "Kolde køkken": None,
+    }
+
+
+@pytest.fixture
+def house(make_resident: Callable[..., Resident]) -> dict[str, Resident]:
+    people = {
+        "wilma": ("Wilma", "Holm"),
+        "william_p": ("William", "Pedersen"),
+        "william_s": ("William", "Svendsen"),
+        "tobias_h": ("Tobias", "Hermann"),
+        "tobias_k": ("Tobias", "Krog"),
+        "anton_c": ("Anton Claes", "Berg"),
+        "anton_m": ("Anton", "Mosquera Diaz"),
+        "anton_x": ("Anton", "Xu"),
+        "gustav": ("Gustav", "Bach Skovsager"),
+    }
+    return {
+        key: make_resident(email=f"{key}@gahk.dk", first_name=first, last_name=last)
+        for key, (first, last) in people.items()
+    }
+
+
+@pytest.mark.parametrize(
+    ("name", "expected", "state"),
+    [
+        ("Wilma", "wilma", "match"),  # the only Wilma
+        ("william p", "william_p", "match"),  # initial of the last name, any case
+        ("Tobias Hermann", "tobias_h", "match"),  # full name
+        ("Anton Claes", "anton_c", "match"),  # a two-word first name
+        ("Anton Mosquera", "anton_m", "match"),  # start of a two-word last name
+        ("Gustav Skovsager", "gustav", "match"),  # a later word of the last name
+        ("William", None, "flere"),  # two Williams: choose by hand
+        ("Anton", None, "flere"),
+        ("Kim", None, "ingen"),
+    ],
+)
+def test_match_name(name: str, expected: str | None, state: str, house: dict[str, Resident]) -> None:
+    m = match_name(name, list(house.values()))
+    assert m.state == state
+    assert m.resident == (house[expected] if expected else None)
+    if state == "flere":
+        assert len(m.candidates) >= 2
+
+
+IMPORT = "/intern/rengoering/lister/importer"
+
+
+def test_import_matches_names_then_saves_after_they_are_settled(
+    areas: list[CleaningArea], house: dict[str, Resident], inspektor: Resident
+) -> None:
+    live_here(*house.values())
+    c = as_user(inspektor)
+    r = c.post(IMPORT, {"step": "laes", "name": "E26", "text": LAYOUT})
+    assert r.status_code == 302
+    page = c.get(IMPORT).content.decode()
+    assert "Kolde køkken" in page  # reported as skipped
+    assert "flere mulige" in page and "ikke fundet" in page  # Anton, Kim
+    assert "Wilma P" in page and "Tobias Hermann" in page
+
+    names = ["Wilma", "Amalie", "Isabella", "Wilma P", "Anton", "Tobias Hermann", "Kim"]
+    picks = {
+        "Wilma": house["wilma"].pk,
+        "Amalie": "ingen",
+        "Isabella": "ingen",
+        "Wilma P": house["wilma"].pk,
+        "Anton": house["anton_x"].pk,
+        "Tobias Hermann": house["tobias_h"].pk,
+    }
+    # Kim left unchosen → nothing is saved
+    data = {"step": "gem"} | {f"navn_{i}": str(picks.get(n, "")) for i, n in enumerate(names)}
+    r = c.post(IMPORT, data)
+    assert r.status_code == 200 and not Rota.objects.exists()
+    data[f"navn_{names.index('Kim')}"] = "ingen"
+    r = c.post(IMPORT, data)
+    rota = Rota.objects.get(name="E26")
+    assert r.url == f"{ROTAS}{rota.pk}"
+    assert rota.assignments.count() == 8  # 6 + 2; the køkken row skipped
+    star = rota.assignments.get(is_star_week=True)
+    assert (star.date, star.resident) == (datetime.date(2026, 11, 29), house["anton_x"])
+    assert rota.assignments.get(area__slug="sal-stuen", date=datetime.date(2026, 12, 6)).resident is None
+    assert c.get(IMPORT).status_code == 200  # the session is cleared: back at step 1
+
+
+def test_import_is_for_inspektionen_only(areas: list[CleaningArea], beboer: Resident) -> None:
+    c = as_user(beboer)
+    assert c.get(IMPORT).status_code == 403
+    assert c.post(IMPORT, {"step": "laes", "name": "E26", "text": LAYOUT}).status_code == 403
+
+
+def test_import_command_refuses_unresolved_names_and_takes_a_map(
+    areas: list[CleaningArea], house: dict[str, Resident], tmp_path: Path
+) -> None:
+    live_here(*house.values())
+    src = tmp_path / "liste.txt"
+    src.write_text(LAYOUT, encoding="utf-8")
+    with pytest.raises(CommandError):
+        call_command(
+            "import_cleaning_rota", str(src), "--name", "E26", stdout=io.StringIO(), stderr=io.StringIO()
+        )
+    assert not Rota.objects.exists()
+    call_command(
+        "import_cleaning_rota",
+        str(src),
+        "--name",
+        "E26",
+        "--dry-run",
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+    )
+    assert not Rota.objects.exists()
+    call_command(
+        "import_cleaning_rota",
+        str(src),
+        "--name",
+        "E26",
+        "--map",
+        "Amalie=",
+        "--map",
+        "Isabella=",
+        "--map",
+        "Anton=anton_x@gahk.dk",
+        "--map",
+        "Kim=",
+        "--map",
+        "Wilma P=wilma@gahk.dk",
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+    )
+    assert Rota.objects.get(name="E26").assignments.count() == 8
+
+
+def test_seed_demo_puts_every_state_on_screen(db: None) -> None:
+    call_command("seed_demo", "--fresh", "--force", "--residents", "40", verbosity=0, stdout=io.StringIO())
+    rota = Rota.objects.get(name="Demo")
+    now = timezone.now()
+    statuses = {
+        a.status(now) for a in rota.assignments.prefetch_related("inspections").select_related("area")
+    }
+    assert {AssignmentStatus.GODKENDT, AssignmentStatus.MANGLER, AssignmentStatus.KOMMENDE} <= statuses
+    demo = Resident.objects.get(email="beboer@gahk.dk")
+    assert next_for(demo, now).status(now) == AssignmentStatus.MANGLER  # type: ignore[union-attr]
+    assert "Mangler er udbedret" in as_user(demo).get("/intern/").content.decode()
