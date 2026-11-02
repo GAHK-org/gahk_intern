@@ -783,6 +783,22 @@ def test_a_swap_moves_both_sundays_when_accepted(
     assert "Wilma Beboer gav" in record and "til Amalie Beboer" in record
 
 
+def test_a_swap_can_cross_areas(
+    ahead: Rota, trio: list[Resident], make_resident: Callable[..., Resident]
+) -> None:
+    """A swap trades two Sundays, not places in a rotation: Sal, stuen for Læsesalen is fine."""
+    wilma = trio[0]
+    lars = make_resident(email="lars@gahk.dk", first_name="Lars")
+    live_here(lars)
+    laesesalen = make_assignment(
+        ahead, CleaningArea.objects.get(slug="laesesalen"), lars, week(ahead, 1).date
+    )
+    ask(as_user(wilma), week(ahead, 0), lars)
+    answer(as_user(lars), SwapRequest.objects.get(), "accepter", laesesalen)
+    laesesalen.refresh_from_db()
+    assert week(ahead, 0).resident == lars and laesesalen.resident == wilma
+
+
 def test_a_sunday_can_be_taken_over_for_nothing(ahead: Rota, trio: list[Resident]) -> None:
     wilma, amalie, _ = trio
     ask(as_user(wilma), week(ahead, 0), amalie)
