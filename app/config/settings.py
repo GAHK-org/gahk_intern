@@ -375,9 +375,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "oelkaelder.tasks.send_monthly_statements",
         "schedule": crontab(minute=10, hour=6, day_of_month=1),
     },
-    "send-admin-dummy-notification": {
-        "task": "core.tasks.send_admin_dummy_notification",
-        "schedule": crontab(minute=0, hour="8,16"),
+    # The month that just ended, to everyone with Django-admin access. In the day, after the night's
+    # sweeps and the AK charge: people read it.
+    "email-admin-monthly-summary": {
+        "task": "core.tasks.send_admin_monthly_summary",
+        "schedule": crontab(minute=5, hour=9, day_of_month=1),
     },
 }
 
@@ -665,10 +667,10 @@ PHOTO_ALBUM_CACHE_DIR = os.environ.get("PHOTO_ALBUM_CACHE_DIR", "")
 PHOTO_ALBUM_CACHE_THUMBNAIL_MB = int(os.environ.get("PHOTO_ALBUM_CACHE_THUMBNAIL_MB", "2048"))
 PHOTO_ALBUM_CACHE_HD_MB = int(os.environ.get("PHOTO_ALBUM_CACHE_HD_MB", "3072"))
 
-# The same kind of local copy for Den Hurtige's and opslagstavlen's image attachments (core.media,
-# core.disk_cache). It defaults to the photo album's directory, so the production volume and the
-# dev setups already configured for that one work for this too; the copies go in a subdirectory of
-# their own. Empty turns it off.
+# The same kind of local copy for Den Hurtige's and opslagstavlen's image attachments and for the
+# profile thumbnails every avatar draws (core.media, core.disk_cache). It defaults to the photo
+# album's directory, so the production volume and the dev setups already configured for that one
+# work for this too; the copies go in a subdirectory of their own. Empty turns it off.
 MEDIA_CACHE_DIR = os.environ.get("MEDIA_CACHE_DIR", PHOTO_ALBUM_CACHE_DIR)
 MEDIA_CACHE_ATTACHMENTS_MB = int(os.environ.get("MEDIA_CACHE_ATTACHMENTS_MB", "2048"))
 # Only images people are still looking at are copied; an ARCHIVED one is served by a redirect to
