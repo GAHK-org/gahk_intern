@@ -634,6 +634,52 @@ def test_last_months_inspektion_cannot_inspect(
     assert as_user(old).get(TJEK).status_code == 403
 
 
+@pytest.fixture
+def outgoing(make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch) -> Resident:
+    """September's Inspektion, with October — the month after the generalforsamling — active."""
+    monkeypatch.setattr("residents.permissions.active_period", lambda: (2026, 10))
+    old = make_resident(email="gammel@gahk.dk", first_name="Gorm")
+    RoleAssignment.objects.create(resident=old, role=Role.INSPEKTION, year=2026, month=9)
+    return old
+
+
+def test_the_outgoing_inspektion_still_inspects_in_the_handover_month(
+    sunday: CleaningAssignment, outgoing: Resident
+) -> None:
+    c = as_user(outgoing)
+    assert c.get(TJEK + "2026-11-01").status_code == 200
+    for url in [
+        "/intern/rengoering/oversigt/",
+        "/intern/rengoering/historik/",
+        f"/intern/rengoering/vagt/{sunday.pk}",
+    ]:
+        assert c.get(url).status_code == 200, url
+    assert c.post(save_url(sunday), {"action": "godkend"}).status_code == 302
+    assert fresh(sunday).status() == AssignmentStatus.GODKENDT
+    nav = c.get(TJEK + "2026-11-01").content.decode()
+    assert "Rengøringstjek" in nav and "Rengøringslister" not in nav
+
+
+def test_the_outgoing_inspektion_does_not_plan_rotas(sunday: CleaningAssignment, outgoing: Resident) -> None:
+    c = as_user(outgoing)
+    assert c.get(ROTAS).status_code == 403
+    assert c.get(f"/intern/rengoering/vagt/{sunday.pk}/rediger").status_code == 403
+
+
+@pytest.mark.parametrize("active", [(2026, 5), (2026, 11)])
+def test_the_exception_ends_with_the_handover_month(
+    active: tuple[int, int],
+    sunday: CleaningAssignment,
+    make_resident: Callable[..., Resident],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("residents.permissions.active_period", lambda: active)
+    old = make_resident(email="gammel@gahk.dk")
+    prev = (active[0], active[1] - 1)  # April's or October's Inspektion
+    RoleAssignment.objects.create(resident=old, role=Role.INSPEKTION, year=prev[0], month=prev[1])
+    assert as_user(old).get(TJEK).status_code == 403
+
+
 # ---- import (phase 5) ----
 
 # The shape `pdftotext -layout` makes of the printed list — fake names, real layout. The last area

@@ -19,7 +19,7 @@
   </div>
 
   {% if not day %}
-    <p class="card muted">Der er ingen rengøringslister endnu. <a href="{% url 'rengoering:rota_create' %}">Opret en →</a></p>
+    <p class="card muted">Der er ingen rengøringslister endnu.{% if manager %} <a href="{% url 'rengoering:rota_create' %}">Opret en →</a>{% endif %}</p>
   {% else %}
     {% include "rengoering/_week_nav.html" with view="rengoering:inspect" %}
 

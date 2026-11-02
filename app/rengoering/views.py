@@ -19,7 +19,7 @@ from residents.models import Resident
 from residents.permissions import current_resident
 
 from . import importing, services
-from .access import assignment_for, can_manage, manage_required
+from .access import assignment_for, can_manage, inspect_required, manage_required
 from .forms import AssignmentForm, ImportForm, MatchForm, ReplaceForm, RotaForm
 from .models import AssignmentStatus, CleaningArea, CleaningAssignment, Inspection, Rota, default_fix_deadline
 
@@ -235,11 +235,13 @@ def _on(day: datetime.date) -> "list[CleaningAssignment]":
     )
 
 
-@manage_required
+@inspect_required
 def inspect_index(request: HttpRequest) -> HttpResponse:
     day = services.default_inspection_date()
     if day is None:
-        return render(request, "rengoering/inspect.html", {"items": [], "day": None})
+        return render(
+            request, "rengoering/inspect.html", {"items": [], "day": None, "manager": can_manage(request)}
+        )
     return redirect("rengoering:inspect", day=day.isoformat())
 
 
@@ -279,7 +281,7 @@ class InspectItem:
         return shown.note if shown else ""
 
 
-@manage_required
+@inspect_required
 def inspect(request: HttpRequest, day: str) -> HttpResponse:
     date = _day(day)
     now = timezone.now()
@@ -325,7 +327,7 @@ def _deadline(request: HttpRequest) -> datetime.datetime | None:
     return raw if timezone.is_aware(raw) else timezone.make_aware(raw)
 
 
-@manage_required
+@inspect_required
 @require_POST
 def inspect_save(request: HttpRequest, pk: int) -> HttpResponse:
     """One endpoint for the area's form: autosave ("gem", what the page's script posts on every tick
@@ -356,7 +358,7 @@ def inspect_save(request: HttpRequest, pk: int) -> HttpResponse:
 # ---- overview + history (Inspektionen) ----
 
 
-@manage_required
+@inspect_required
 def overview(request: HttpRequest, day: str = "") -> HttpResponse:
     date = _day(day) if day else services.default_inspection_date()
     if date is None:
@@ -379,7 +381,7 @@ def _past(qs: "QuerySet[CleaningAssignment]") -> "QuerySet[CleaningAssignment]":
     )
 
 
-@manage_required
+@inspect_required
 def history(request: HttpRequest) -> HttpResponse:
     """Everyone who has had a Sunday, worst record first — the repeat-offender list."""
     by_resident: dict[Resident, list[CleaningAssignment]] = {}
@@ -409,13 +411,13 @@ def _history_page(
     )
 
 
-@manage_required
+@inspect_required
 def area_history(request: HttpRequest, slug: str) -> HttpResponse:
     area = get_object_or_404(CleaningArea, slug=slug)
     return _history_page(request, area.name, area.assignments.all(), by_area=True)
 
 
-@manage_required
+@inspect_required
 def resident_history(request: HttpRequest, pk: int) -> HttpResponse:
     resident = get_object_or_404(Resident, pk=pk)
     return _history_page(request, resident.full_name, resident.cleaning_assignments.all(), by_area=False)

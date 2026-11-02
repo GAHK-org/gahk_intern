@@ -8,8 +8,9 @@ F-xxx layout so it reads the same way.
 - **Replaces:** the printed rota on varme trappe (sign + time when done, Inspektionen signs at 22.00)
   and the standalone prototype in `hackathon/rengoering-server/` (one real round on 1/11/2026).
 - **Access control:** logged-in residents for their *own* assignments; `Role.INSPEKTION` (via the
-  monthly `RoleAssignment`s) and superusers/`administrator` for everything else. Enforced per view with
-  `role_required` / `request_has_role` and per object (ownership), see *Access*.
+  monthly `RoleAssignment`s) and superusers/`administrator` for everything else, plus the outgoing
+  Inspektion's inspection in the handover months (April, October). Enforced per view with
+  `role_required` / `request_has_role` / `inspect_required` and per object (ownership), see *Access*.
 - **Out of scope (first pass):** køkkenrengøring (the data model leaves room for it, see `CleaningArea.kind`),
   hovedrengøring, notifications (phase 5), any link to AK-krydser.
 
@@ -24,16 +25,16 @@ which Inspektionen re-checks. Inspektionen also plans the rota for each semester
 | Name | URL (under `/intern/rengoering/`) | Method | Access | Purpose |
 |---|---|---|---|---|
 | `mine` | `` | GET | resident | "Min rengøring": next assignment with task list, upcoming ones, own history |
-| `assignment` | `vagt/<pk>` | GET | owner or manager | one assignment: tasks, sign-off, inspections, mangler + deadline |
-| `sign_off` | `vagt/<pk>/taget` | POST | owner (manager on behalf) | "Jeg har taget min rengøring" → `signed_off_at = now` |
+| `assignment` | `vagt/<pk>` | GET | owner or inspector | one assignment: tasks, sign-off, inspections, mangler + deadline |
+| `sign_off` | `vagt/<pk>/taget` | POST | owner (inspector on behalf) | "Jeg har taget min rengøring" → `signed_off_at = now` |
 | `mark_fixed` | `vagt/<pk>/udbedret` | POST | owner | "Mangler er udbedret" on the open Mangler inspection |
 | `edit_assignment` | `vagt/<pk>/rediger` | GET/POST | manager | swap resident, toggle (*)-uge, clear sign-off |
-| `inspect` | `tjek/` → `tjek/<yyyy-mm-dd>` | GET | manager | mobile walk view for one Sunday (the prototype's UX) |
-| `inspect_save` | `tjek/vagt/<pk>` | POST | manager | the area's form: `action=gem` (autosave of ticks + note, JSON for `fetch`), `godkend`, `mangler` (+ deadline), `fortryd` (undo the last decision) |
-| `overview` | `oversigt/[<yyyy-mm-dd>]` | GET | manager | one Sunday: every area, who, when taken, status, mangler |
-| `history` | `historik/` | GET | manager | every resident's record, worst first (repeat offenders) |
-| `area_history` | `historik/omraade/<slug>` | GET | manager | all assignments + outcomes for one area |
-| `resident_history` | `historik/beboer/<pk>` | GET | manager | one resident's assignments + outcomes, with counts |
+| `inspect` | `tjek/` → `tjek/<yyyy-mm-dd>` | GET | inspector | mobile walk view for one Sunday (the prototype's UX) |
+| `inspect_save` | `tjek/vagt/<pk>` | POST | inspector | the area's form: `action=gem` (autosave of ticks + note, JSON for `fetch`), `godkend`, `mangler` (+ deadline), `fortryd` (undo the last decision) |
+| `overview` | `oversigt/[<yyyy-mm-dd>]` | GET | inspector | one Sunday: every area, who, when taken, status, mangler |
+| `history` | `historik/` | GET | inspector | every resident's record, worst first (repeat offenders) |
+| `area_history` | `historik/omraade/<slug>` | GET | inspector | all assignments + outcomes for one area |
+| `resident_history` | `historik/beboer/<pk>` | GET | inspector | one resident's assignments + outcomes, with counts |
 | `rotas` | `lister/` | GET | manager | list of rotas |
 | `rota_create` | `lister/opret` | GET/POST | manager | generate a rota (form → preview → save) |
 | `rota_import` | `lister/importer` | GET/POST | manager | paste / CSV (/ PDF) → name matching → save |
@@ -130,13 +131,21 @@ Inspection     assignment FK(CASCADE), round (1 = Sunday, 2+ = opfølgning), ins
 | Who | May |
 |---|---|
 | any logged-in resident | see **their own** assignments, task lists, inspections, mangler; sign off; mark fixed |
-| Inspektionen (active month) / `administrator` / superuser | everything: rotas, import, edits, inspect, overview, history, admin for areas/tasks |
+| Inspektionen (active month) / `administrator` / superuser — "manager" | everything: rotas, import, edits, inspect, overview, history, admin for areas/tasks |
+| the outgoing Inspektion, in April and October only — with the managers, "inspector" | inspect, sign off on someone's behalf, overview, history, and the assignment pages those link to. Not rotas, import, edits or admin |
 
 - Another resident's assignment → **404** (not 403), so existence isn't confirmed. The same applies
   to sign-off/fixed POSTs.
 - Manager views use `role_required(Role.INSPEKTION, Role.ADMINISTRATOR)`. Superuser and administrator
   already resolve to all roles in `real_roles`. Effective roles are used, so the preview tool works.
 - An Inspektion assignment from a **previous** month grants nothing (time-bound roles), and this is tested.
+  The one exception is the **handover after a generalforsamling**. The GF in March and September
+  elects a new Inspektion, which gets the role the month after (April, October) but starts
+  inspecting the month after that (May, November). So while April or October is the active month,
+  whoever held Inspektion in March or September keeps the inspection views (`access.can_inspect`,
+  `HANDOVER_MONTHS`). The new Inspektion keeps everything the role gives them, the walk included, so
+  they can shadow it. A role preview switches the exception off along with the roles. Tested both
+  ways, including that it ends when May or November becomes the active month.
 
 ## Outputs & side effects
 - Dashboard card "Din næste rengøring" (area, date, (*)-uge, signed-off state, open mangler + deadline).

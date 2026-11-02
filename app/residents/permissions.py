@@ -43,6 +43,8 @@ KITCHEN = "koekken"
 
 # Attribute the resolved role set is memoised under, on the request's user instance.
 _REAL_ROLES_MEMO = "_gahk_real_roles"
+# ...and the active period it was resolved against, for checks that need the month as well.
+_PERIOD_MEMO = "_gahk_active_period"
 
 # Roles allowed to edit CMS / frontpage content (Django admin cms.* models, and the sidebar link to
 # it). Single source of truth, shared by cms.admin and the navigation. administrator has full access;
@@ -76,7 +78,7 @@ def _load_real_roles(user: Resident) -> frozenset[str]:
         return ALL_ROLES
     if user.is_kitchen:
         return frozenset({KITCHEN})
-    year, month = active_period()
+    year, month = user_period(user)
     codes = set(user.role_assignments.filter(year=year, month=month).values_list("role", flat=True))
     if Role.ADMINISTRATOR in codes:
         return ALL_ROLES
@@ -110,11 +112,22 @@ def real_roles(user: AnyUser) -> set[str]:
     return set(cached)  # a copy: a caller mutating the result must not poison the memo
 
 
+def user_period(user: Resident) -> tuple[int, int]:
+    """`active_period()`, memoised on the user instance the same way as `real_roles` (one request),
+    so a check that needs the month as well as the roles does not look it up a second time."""
+    cached = getattr(user, _PERIOD_MEMO, None)
+    if cached is None:
+        cached = active_period()
+        setattr(user, _PERIOD_MEMO, cached)
+    return cached
+
+
 def forget_real_roles(user: AnyUser) -> None:
     """Drop the memo so the next `real_roles` re-reads the DB. Needed only by code that changes the
     *current* user's roles and must observe the change within the same request."""
-    if hasattr(user, _REAL_ROLES_MEMO):
-        delattr(user, _REAL_ROLES_MEMO)
+    for memo in (_REAL_ROLES_MEMO, _PERIOD_MEMO):
+        if hasattr(user, memo):
+            delattr(user, memo)
 
 
 def can_preview(user: AnyUser) -> bool:
