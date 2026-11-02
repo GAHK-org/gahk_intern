@@ -146,6 +146,9 @@ Inspection     assignment FK(CASCADE), round (1 = Sunday, 2+ = opfølgning), ins
   `HANDOVER_MONTHS`). The new Inspektion keeps everything the role gives them, the walk included, so
   they can shadow it. A role preview switches the exception off along with the roles. Tested both
   ways, including that it ends when May or November becomes the active month.
+  Confirmed with the requester: both Inspektioner may inspect in the overlapping month, and a
+  re-check that falls after the month ends (a mangler from the last Sunday of April checked in early
+  May) passes to the new Inspektion.
 
 ## Outputs & side effects
 - Dashboard card "Din næste rengøring" (area, date, (*)-uge, signed-off state, open mangler + deadline).
