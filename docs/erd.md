@@ -881,8 +881,76 @@ erDiagram
         date date_from
         date date_to
         string outcome
-        string detail
+        text detail
         datetime sent_at
+    }
+
+    rengoering_CleaningArea {
+        int id PK
+        string name
+        string slug
+        string description
+        string kind
+        int order
+        bool is_active
+        text import_aliases
+    }
+
+    rengoering_CleaningTask {
+        int id PK
+        int area_id FK
+        string zone
+        string group
+        string text
+        bool star_only
+        int order
+        bool is_active
+    }
+
+    rengoering_Rota {
+        int id PK
+        string name
+        date start_date
+        int created_by_id FK
+        datetime created_at
+    }
+
+    rengoering_CleaningAssignment {
+        int id PK
+        int rota_id FK
+        int area_id FK
+        date date
+        int resident_id FK
+        bool is_star_week
+        datetime signed_off_at
+        int signed_off_by_id FK
+        string comment
+    }
+
+    rengoering_Inspection {
+        int id PK
+        int assignment_id FK
+        int round
+        int inspector_id FK
+        text note
+        string outcome
+        json missing
+        datetime started_at
+        datetime decided_at
+        datetime deadline
+        datetime fixed_at
+    }
+
+    rengoering_SwapRequest {
+        int id PK
+        int assignment_id FK
+        int requester_id FK
+        int recipient_id FK
+        string message
+        string state
+        int given_back_id FK
+        datetime created_at
+        datetime answered_at
     }
 
     core_PushSubscription }o--|| residents_Resident : "user"
@@ -997,6 +1065,19 @@ erDiagram
     gahkflix_ChangeVote }o--|| residents_Resident : "voter"
     regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
+    rengoering_CleaningTask }o--|| rengoering_CleaningArea : "area"
+    rengoering_Rota }o--|o residents_Resident : "created_by"
+    rengoering_CleaningAssignment }o--|| rengoering_Rota : "rota"
+    rengoering_CleaningAssignment }o--|| rengoering_CleaningArea : "area"
+    rengoering_CleaningAssignment }o--|o residents_Resident : "resident"
+    rengoering_CleaningAssignment }o--|o residents_Resident : "signed_off_by"
+    rengoering_Inspection }o--|| rengoering_CleaningAssignment : "assignment"
+    rengoering_Inspection }o--|o residents_Resident : "inspector"
+    rengoering_Inspection }o--o{ rengoering_CleaningTask : "checked_tasks"
+    rengoering_SwapRequest }o--|| rengoering_CleaningAssignment : "assignment"
+    rengoering_SwapRequest }o--|| residents_Resident : "requester"
+    rengoering_SwapRequest }o--|| residents_Resident : "recipient"
+    rengoering_SwapRequest }o--|o rengoering_CleaningAssignment : "given_back"
 ```
 
 ## admissions
@@ -1916,7 +1997,7 @@ erDiagram
         date date_from
         date date_to
         string outcome
-        string detail
+        text detail
         datetime sent_at
     }
 
@@ -1924,6 +2005,95 @@ erDiagram
 
     regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
+```
+
+## rengoering
+
+```mermaid
+erDiagram
+    rengoering_CleaningArea {
+        int id PK
+        string name
+        string slug
+        string description
+        string kind
+        int order
+        bool is_active
+        text import_aliases
+    }
+
+    rengoering_CleaningTask {
+        int id PK
+        int area_id FK
+        string zone
+        string group
+        string text
+        bool star_only
+        int order
+        bool is_active
+    }
+
+    rengoering_Rota {
+        int id PK
+        string name
+        date start_date
+        int created_by_id FK
+        datetime created_at
+    }
+
+    rengoering_CleaningAssignment {
+        int id PK
+        int rota_id FK
+        int area_id FK
+        date date
+        int resident_id FK
+        bool is_star_week
+        datetime signed_off_at
+        int signed_off_by_id FK
+        string comment
+    }
+
+    rengoering_Inspection {
+        int id PK
+        int assignment_id FK
+        int round
+        int inspector_id FK
+        text note
+        string outcome
+        json missing
+        datetime started_at
+        datetime decided_at
+        datetime deadline
+        datetime fixed_at
+    }
+
+    rengoering_SwapRequest {
+        int id PK
+        int assignment_id FK
+        int requester_id FK
+        int recipient_id FK
+        string message
+        string state
+        int given_back_id FK
+        datetime created_at
+        datetime answered_at
+    }
+
+    residents_Resident { }
+
+    rengoering_CleaningTask }o--|| rengoering_CleaningArea : "area"
+    rengoering_Rota }o--|o residents_Resident : "created_by"
+    rengoering_CleaningAssignment }o--|| rengoering_Rota : "rota"
+    rengoering_CleaningAssignment }o--|| rengoering_CleaningArea : "area"
+    rengoering_CleaningAssignment }o--|o residents_Resident : "resident"
+    rengoering_CleaningAssignment }o--|o residents_Resident : "signed_off_by"
+    rengoering_Inspection }o--|| rengoering_CleaningAssignment : "assignment"
+    rengoering_Inspection }o--|o residents_Resident : "inspector"
+    rengoering_Inspection }o--o{ rengoering_CleaningTask : "checked_tasks"
+    rengoering_SwapRequest }o--|| rengoering_CleaningAssignment : "assignment"
+    rengoering_SwapRequest }o--|| residents_Resident : "requester"
+    rengoering_SwapRequest }o--|| residents_Resident : "recipient"
+    rengoering_SwapRequest }o--|o rengoering_CleaningAssignment : "given_back"
 ```
 
 ## reparationer
