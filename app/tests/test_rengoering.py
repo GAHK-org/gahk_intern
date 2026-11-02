@@ -31,7 +31,15 @@ from rengoering.models import (
     default_fix_deadline,
 )
 from rengoering.services import RotaClash, load_areas, next_for, plan_rota, record, save_rota, visible_tasks
-from residents.models import Residency, Resident, Role, RoleAssignment, active_period
+from residents.models import (
+    Residency,
+    Resident,
+    Role,
+    RoleAssignment,
+    active_period,
+    next_period,
+    prev_period,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -284,6 +292,32 @@ def test_replace_resident_skips_inspected_sundays(
     assert r.status_code == 302
     assert rota.assignments.filter(resident=wilma).get() == first  # history kept
     assert rota.assignments.filter(resident=newcomer).count() == 2
+
+
+def test_a_newcomer_on_next_months_list_can_take_over(
+    areas: list[CleaningArea],
+    trio: list[Resident],
+    inspektor: Resident,
+    make_resident: Callable[..., Resident],
+) -> None:
+    """Indstillingen prepares next month's alumneliste ahead of time, so the one moving in can be put
+    on the departing alumne's Sundays before they arrive. Last month's alumner cannot."""
+    stuen = CleaningArea.objects.get(slug="sal-stuen")
+    rota = save_rota("E26", plan_rota(SUNDAY, 9, 5, {stuen: trio}), None)
+    year, month = next_period()
+    newcomer = make_resident(email="ny@gahk.dk", first_name="Ny")
+    room = Room.objects.create(legacy_index=99, number=99, floor="stuen", side="mod gaden")
+    Residency.objects.create(resident=newcomer, room=room, year=year, month=month)
+    gone = make_resident(email="flyttet@gahk.dk", first_name="Flyttet")
+    year, month = prev_period()
+    Residency.objects.create(resident=gone, room=room, year=year, month=month)
+
+    c = as_user(inspektor)
+    page = c.get(f"{ROTAS}{rota.pk}").content.decode()
+    assert "Ny Beboer" in page and "Flyttet Beboer" not in page
+    data = {"old": trio[0].pk, "new": newcomer.pk, "from_date": "2026-11-01"}
+    assert c.post(f"{ROTAS}{rota.pk}/erstat", data).status_code == 302
+    assert rota.assignments.filter(resident=newcomer).count() == 3
 
 
 def test_rota_can_only_be_deleted_before_it_is_used(
