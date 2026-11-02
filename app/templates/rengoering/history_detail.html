@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} - Rengøringshistorik - GAHK Intern{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow"><a href="{% url 'rengoering:history' %}">Historik</a></p>
+      <h1>{{ title }}</h1>
+    </div>
+  </div>
+
+  <div class="glance">
+    <span class="g"><span class="gk">Søndage</span> <b>{{ record.total }}</b></span>
+    <span class="g"><span class="gk">Godkendt 1. gang</span> <b>{{ record.approved_first_time }}</b></span>
+    <span class="g"><span class="gk">Mangler</span> <b>{{ record.with_mangler }}</b></span>
+    <span class="g"><span class="gk">Frist overskredet</span> <b>{{ record.late }}</b></span>
+    <span class="g"><span class="gk">Ikke krydset af</span> <b>{{ record.not_signed_off }}</b></span>
+  </div>
+
+  <div class="card-flat">
+    <table class="rg-table">
+      <thead><tr><th>Dato</th><th>{% if by_area %}Alumne{% else %}Område{% endif %}</th><th>Status</th><th>Hvad manglede</th></tr></thead>
+      <tbody>
+        {% for cell in cells %}
+          {% with a=cell.assignment %}
+            <tr>
+              <td><a href="{% url 'rengoering:assignment' a.pk %}">{{ a.date|date:"j/n/Y" }}</a>{% if a.is_star_week %} <span class="rg-star">*</span>{% endif %}</td>
+              <td>{% if by_area %}{% if a.resident %}<a href="{% url 'rengoering:resident_history' a.resident.pk %}">{{ a.resident.full_name }}</a>{% else %}<span class="muted">Ingen</span>{% endif %}{% else %}<a href="{% url 'rengoering:area_history' a.area.slug %}">{{ a.area.name }}</a>{% endif %}</td>
+              <td><span class="chip {{ cell.chip }}">{{ cell.status.label }}</span></td>
+              <td class="text-sm">
+                {% for r in a.rounds %}{% if r.outcome == "mangler" %}
+                  <div>{% for m in r.missing %}{{ m.text }}{% if not forloop.last %}; {% endif %}{% endfor %}{% if r.note %} <span class="muted">· {{ r.note|truncatechars:100 }}</span>{% endif %}</div>
+                {% endif %}{% endfor %}
+              </td>
+            </tr>
+          {% endwith %}
+        {% empty %}
+          <tr><td colspan="4" class="muted">Ingen søndage endnu.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

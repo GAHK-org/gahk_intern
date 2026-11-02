@@ -66,6 +66,8 @@ from opslagstavle.models import Notice, NoticeComment, NoticeReaction
 from photo_album.demo import seed as seed_photo_album
 from photo_album.models import Album, Media
 from regnskab.models import AlumneregningSend, EconomicLedgerEntry
+from rengoering.demo import seed as seed_rengoering
+from rengoering.models import Rota
 from residents.models import (
     WORKGROUP_ROLE,
     Residency,
@@ -123,6 +125,7 @@ ROOM_CRITERIA = [
 
 # Deletion order: children before parents so PROTECT FKs don't block the wipe.
 WIPE_ORDER: list[type[models.Model]] = [
+    Rota,  # its assignments and inspections go with it; the areas are not demo data and stay
     Rsvp,
     EventInvite,
     CalendarFeedToken,
@@ -235,6 +238,7 @@ class Command(BaseCommand):
             seed_photo_album(residents, self.now, self.rng)
             seed_gahkflix(residents, self.now, self.rng)
             seed_den_hurtige(residents, self.now, self.rng)
+            seed_rengoering(residents, self.now, self.rng)
             # Last: its rows link to the events, opslag and Den Hurtige posts seeded above.
             seed_notifications(residents, self.now, self.rng)
 

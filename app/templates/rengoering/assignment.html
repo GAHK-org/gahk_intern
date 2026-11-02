@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}{{ a.area.name }} {{ a.date|date:"j/n" }} - Rengøring - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow"><a href="{% url 'rengoering:mine' %}">Min rengøring</a></p>
+      <h1>{% if a.resident %}{{ a.resident.full_name }}{% else %}Ingen på listen{% endif %}</h1>
+    </div>
+    {% if manager %}
+      <div class="flex gap-2">
+        <a class="btn btn-secondary" href="{% url 'rengoering:edit_assignment' a.pk %}">Rediger</a>
+      </div>
+    {% endif %}
+  </div>
+  {% include "rengoering/_assignment.html" with next="" show_tasks=True %}
+{% endblock %}

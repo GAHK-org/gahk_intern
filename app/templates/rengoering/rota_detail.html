@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}{{ rota.name }} - Rengøringslister - GAHK Intern{% endblock %}
+{% block content_width %}max-w-7xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow"><a href="{% url 'rengoering:rotas' %}">Rengøringslister</a></p>
+      <h1>{{ rota.name }}</h1>
+    </div>
+  </div>
+
+  <p class="muted text-sm">Tryk på et navn for at bytte, ændre (*)-uge eller fjerne en afkrydsning.</p>
+  {% include "rengoering/_grid.html" with link=True %}
+
+  <section class="card">
+    <h2 class="mt-0">Erstat en alumne</h2>
+    <p class="muted text-sm">Fx ved udflytning. Søndage der allerede er tjekket bliver ikke ændret.</p>
+    <form method="post" action="{% url 'rengoering:rota_replace' rota.pk %}" class="grid gap-3 sm:grid-cols-4 items-end">
+      {% csrf_token %}
+      {% for field in replace_form %}
+        <div><label for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}</div>
+      {% endfor %}
+      <div><button type="submit" class="btn">Erstat</button></div>
+    </form>
+  </section>
+
+  {% if deletable %}
+    <form method="post" action="{% url 'rengoering:rota_delete' rota.pk %}" onsubmit="return confirm('Slet listen {{ rota.name|escapejs }}?')">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-danger">Slet listen</button>
+    </form>
+  {% endif %}
+{% endblock %}

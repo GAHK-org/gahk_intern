@@ -2554,4 +2554,57 @@
   .mention-picker li[aria-selected="true"], .mention-picker li:hover { background:var(--green-050); }
   .mention-picker img { width:22px; height:22px; border-radius:50%; object-fit:cover; }
   .mention-picker small { margin-left:auto; color:var(--faint); font-size:12px; }
+
+  /* ---- Søndagsrengøring (rotas, Min rengøring, the inspection walk) ------------------------------
+     The rota grid scrolls sideways on a phone rather than squeezing nine areas into 360px. */
+  .rg-table { width:100%; border-collapse:collapse; }
+  .rg-table th, .rg-table td { padding:10px 18px; border-bottom:1px solid var(--border); text-align:left; }
+  .rg-table tr:last-child td { border-bottom:0; }
+  .rg-grid-wrap { overflow-x:auto; border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); margin:12px 0; }
+  .rg-grid { border-collapse:collapse; font-size:13px; min-width:100%; }
+  .rg-grid th, .rg-grid td { padding:6px 10px; border-bottom:1px solid var(--border); white-space:nowrap; vertical-align:top; }
+  .rg-grid thead th { position:sticky; top:0; background:var(--surface-2); font-size:12px; }
+  .rg-grid tbody th { font-variant-numeric:tabular-nums; font-weight:600; }
+  .rg-grid tr.is-star { background:var(--warn-bg); }
+  .rg-grid td .chip { margin-left:4px; font-size:11px; padding:0 7px; }
+  .rg-star { color:var(--brass-ink); font-weight:800; }
+  .rg-area-slots { border:1px solid var(--border); border-radius:var(--radius-sm); padding:10px 12px; }
+  .rg-area-slots select { padding:4px 6px; }
+  .rg-assignment { margin-bottom:12px; }
+  .rg-mangler { margin:12px 0; padding:12px 14px; border-radius:var(--radius-sm); background:var(--neg-bg); border:1px solid #e7c7c3; }
+  .rg-mangler p { margin:0 0 6px; }
+  .rg-mangler ul { margin:0 0 6px; padding-left:18px; list-style:disc; }
+  .rg-note { white-space:normal; font-style:italic; }
+  .rg-ok { margin:12px 0; color:var(--green-700); font-weight:600; }
+  .rg-tasks summary { cursor:pointer; }
+  .rg-tasks ul { margin:0 0 8px; padding-left:18px; list-style:disc; }
+  .rg-zone { font-size:12px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--brass); margin:14px 0 4px; }
+  .rg-group { font-weight:600; margin:8px 0 2px; }
+  .rg-list { margin:0; padding:0; list-style:none; }
+  .rg-swap > summary { cursor:pointer; font-weight:600; }
+  .rg-list form.inline { display:inline; margin-left:8px; }
+  .rg-list li { padding:8px 0; border-bottom:1px solid var(--border); }
+  /* The inspection walk: one card per area, big tap targets, progress bar in the summary. */
+  .rg-weeknav { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0 0 12px; }
+  .rg-weeknav-label { flex:1; text-align:center; font-weight:650; }
+  .rg-summary { display:flex; align-items:center; gap:12px; margin:0 0 12px; font-size:14px; }
+  .rg-bar { flex:1; height:8px; border-radius:999px; background:var(--sunken); overflow:hidden; }
+  .rg-bar i { display:block; height:100%; background:var(--green); transition:width .2s; }
+  .rg-check { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); margin:0 0 10px; }
+  .rg-check[data-status="godkendt"] { border-color:var(--green-100); }
+  .rg-check[data-status="mangler"], .rg-check[data-status="overskredet"] { border-color:#e7c7c3; }
+  .rg-check > summary { display:grid; grid-template-columns:1fr auto; gap:4px 10px; padding:14px 16px; cursor:pointer; list-style:none; }
+  .rg-check > summary::-webkit-details-marker { display:none; }
+  .rg-check-name { font-weight:700; font-size:16px; }
+  .rg-check-who { grid-column:1 / -1; font-size:13px; color:var(--muted); }
+  .rg-bar-mini { grid-column:1 / -1; height:4px; }
+  .rg-check-body { padding:0 16px 16px; border-top:1px solid var(--border); }
+  .rg-item { display:flex; gap:12px; align-items:flex-start; margin:0; padding:10px 0; font-weight:400; border-bottom:1px solid var(--border); cursor:pointer; }
+  .rg-item input { width:22px; height:22px; flex:none; margin-top:1px; accent-color:var(--green); }
+  .rg-item.done span { color:var(--muted); }
+  .rg-check .rg-group { margin:12px 0 0; font-size:13px; }
+  .rg-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:14px; }
+  .rg-actions .btn { min-height:44px; }
+  .rg-followup { margin:12px 0 0; padding:10px 12px; border-radius:var(--radius-sm); background:var(--warn-bg); font-size:14px; }
+  .rg-copy-fallback { margin-top:10px; font-size:13px; min-height:160px; }
 }

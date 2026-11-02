@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Rediger vagt - GAHK Intern{% endblock %}
+{% block content_width %}max-w-2xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow"><a href="{% url 'rengoering:rota_detail' assignment.rota_id %}">{{ assignment.rota.name }}</a></p>
+      <h1>{{ assignment.area.name }} · {{ assignment.date|date:"j. F Y" }}</h1>
+    </div>
+  </div>
+
+  <form method="post" class="card-flat card-pad">
+    {% csrf_token %}
+    {% if assignment.signed_off_at %}
+      <p class="muted">Taget {{ assignment.signed_off_at|date:"j/n H:i" }}{% if assignment.signed_off_by and assignment.signed_off_by_id != assignment.resident_id %} (afkrydset af {{ assignment.signed_off_by.full_name }}){% endif %}.</p>
+    {% endif %}
+    {% for field in form %}
+      <div class="mb-3">
+        {% if field.field.widget.input_type == "checkbox" %}
+          <label class="flex items-center gap-2">{{ field }} {{ field.label }}</label>
+        {% else %}
+          <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+          {{ field }}
+        {% endif %}
+        {% if field.errors %}<p class="errorlist text-sm">{{ field.errors|striptags }}</p>{% endif %}
+      </div>
+    {% endfor %}
+    <div class="flex gap-2">
+      <button type="submit" class="btn">Gem</button>
+      <a href="{% url 'rengoering:rota_detail' assignment.rota_id %}" class="btn btn-secondary">Afbryd</a>
+    </div>
+  </form>
+{% endblock %}

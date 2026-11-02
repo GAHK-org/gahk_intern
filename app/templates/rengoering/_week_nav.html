@@ -1,0 +1,7 @@
+{% comment %} Prev/next Sunday with assignments. Context: day, prev_day, next_day, default_day, view (url name taking `day`), is_star_week. {% endcomment %}
+<nav class="rg-weeknav" aria-label="Vælg søndag">
+  {% if prev_day %}<a class="btn btn-secondary" href="{% url view prev_day|date:'Y-m-d' %}" aria-label="Forrige søndag">‹</a>{% else %}<span class="btn btn-secondary" aria-disabled="true">‹</span>{% endif %}
+  <span class="rg-weeknav-label">{{ day|date:"l j. F Y" }}{% if is_star_week %} <span class="chip chip-brass">(*)-uge</span>{% endif %}</span>
+  {% if next_day %}<a class="btn btn-secondary" href="{% url view next_day|date:'Y-m-d' %}" aria-label="Næste søndag">›</a>{% else %}<span class="btn btn-secondary" aria-disabled="true">›</span>{% endif %}
+  {% if default_day and default_day != day %}<a class="btn-link" href="{% url view default_day|date:'Y-m-d' %}">Seneste søndag</a>{% endif %}
+</nav>

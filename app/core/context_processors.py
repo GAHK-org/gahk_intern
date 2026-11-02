@@ -11,6 +11,8 @@ from events.access import roles_allowed as events_allowed
 from gahkflix.access import roles_allowed as gahkflix_allowed
 from opslagstavle.access import roles_allowed as opslagstavle_allowed
 from photo_album.access import roles_allowed as photo_album_allowed
+from rengoering.access import MANAGE_ROLES as RENGOERING_ROLES
+from rengoering.access import can_inspect as can_inspect_rengoering
 from residents.permissions import CMS_EDITOR_ROLES, KITCHEN, can_preview, effective_roles
 
 # Public site nav, matching the legacy gahk.dk menu (labels + order)
@@ -42,7 +44,7 @@ NavItem = tuple[str, str, str]  # (url, label, icon-key from the base.html sprit
 NavSection = tuple[str, list[NavItem]]
 
 
-def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
+def _nav_intern(roles: Collection[str], user_pk: int, rengoering_handover: bool = False) -> list[NavSection]:
     """Internal menu grouped into sidebar sections, built from the *effective* role set: base items for
     every resident plus each embedsgruppe's admin tools. Each item is (url, label, icon); empty sections
     are dropped. Honors the preview override (roles come from effective_roles)."""
@@ -94,6 +96,7 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     grupper: list[NavItem] = [
         ("/intern/ak/", "AK-krydser", "check"),
         ("/intern/oelkaelder/min-saldo", "Ølkælder", "beer"),
+        ("/intern/rengoering/", "Min rengøring", "check"),
     ]
     if "ak" in roles:
         grupper.append(("/intern/ak/admin", "AK-oversigt", "check"))
@@ -110,6 +113,11 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     administration: list[NavItem] = []
     if "indstilling" in roles:
         administration.append(("/optagelse/listansoegninger", "Ansøgninger", "inbox"))
+    if not set(roles).isdisjoint(RENGOERING_ROLES):  # inspektion/administrator
+        administration.append(("/intern/rengoering/tjek/", "Rengøringstjek", "inspect"))
+        administration.append(("/intern/rengoering/lister/", "Rengøringslister", "list"))
+    elif rengoering_handover:  # last month's Inspektion, still inspecting (rengoering.access)
+        administration.append(("/intern/rengoering/tjek/", "Rengøringstjek", "inspect"))
     if not set(roles).isdisjoint(CMS_EDITOR_ROLES):  # administrator/indstilling/inspektion/pr
         administration.append(("/django-admin/cms/", "Rediger indhold", "edit"))
     if "administrator" in roles:
@@ -176,7 +184,7 @@ def navigation(request: HttpRequest) -> dict[str, object]:
     authed = request.user.is_authenticated
     roles = effective_roles(request) if authed else set()
     previewer = can_preview(request.user) if authed else False
-    nav_intern = _nav_intern(roles, request.user.pk or 0) if authed else []
+    nav_intern = _nav_intern(roles, request.user.pk or 0, can_inspect_rengoering(request)) if authed else []
     ctx: dict[str, object] = {
         "nav_legacy": NAV_LEGACY,
         "nav_public": NAV_PUBLIC,

@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Min rengøring - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Søndagsrengøring</p>
+      <h1>Min rengøring</h1>
+    </div>
+    {% if inspector %}
+      <div class="flex gap-2">
+        <a class="btn" href="{% url 'rengoering:inspect_index' %}">Rengøringstjek</a>
+        {% if manager %}<a class="btn btn-secondary" href="{% url 'rengoering:rotas' %}">Rengøringslister</a>{% endif %}
+      </div>
+    {% endif %}
+  </div>
+
+  {% if incoming %}
+    <h2>Vil du bytte?</h2>
+    {% for item in incoming %}
+      {% with req=item.req %}
+        <div class="card-flat card-pad mb-3 rg-swap-request">
+          <p><strong>{{ req.requester.full_name }}</strong> spørger, om du vil tage <strong>{{ req.assignment.area.name }} {{ req.assignment.date|date:"l j/n" }}</strong>{% if req.assignment.is_star_week %} <span class="chip chip-brass">(*)-uge</span>{% endif %}.</p>
+          {% if req.message %}<p class="rg-note">{{ req.message }}</p>{% endif %}
+          {% if item.live %}
+            <form method="post" action="{% url 'rengoering:swap_answer' req.pk %}" class="flex flex-wrap gap-2 items-end mt-2">{% csrf_token %}
+              <div><label for="give-back-{{ req.pk }}">Giv tilbage</label>
+                <select name="give_back" id="give-back-{{ req.pk }}">
+                  <option value="">Ingen, jeg tager den bare</option>
+                  {% for o in item.options %}<option value="{{ o.pk }}">{{ o.area.name }} {{ o.date|date:"j/n" }}{% if o.is_star_week %} (*){% endif %}</option>{% endfor %}
+                </select>
+              </div>
+              <button type="submit" name="action" value="accepter" class="btn">Ja, byt</button>
+              <button type="submit" name="action" value="afvis" class="btn btn-secondary">Nej tak</button>
+            </form>
+          {% else %}
+            <p class="muted text-sm">Søndagen kan ikke byttes længere.</p>
+            <form method="post" action="{% url 'rengoering:swap_answer' req.pk %}">{% csrf_token %}<button type="submit" name="action" value="afvis" class="btn-link">Fjern</button></form>
+          {% endif %}
+        </div>
+      {% endwith %}
+    {% endfor %}
+  {% endif %}
+
+  {% if next %}
+    {% include "rengoering/_assignment.html" with a=next.a status=next.status chip=next.chip zones=next.zones rounds=next.rounds can_sign_off=next.can_sign_off can_undo_sign_off=next.can_undo_sign_off can_mark_fixed=next.can_mark_fixed swap_form=next.swap_form open_swap=next.open_swap swaps=next.swaps next="mine" show_tasks=True open_tasks=True %}
+  {% else %}
+    <p class="card muted">Du står ikke på en rengøringsliste lige nu.</p>
+  {% endif %}
+
+  {% if outgoing %}
+    <h2 class="mt-6">Du har spurgt</h2>
+    <ul class="rg-list">
+      {% for req in outgoing %}
+        <li>{{ req.assignment.date|date:"j/n" }} · {{ req.assignment.area.name }} → {{ req.recipient.full_name }}
+          <form method="post" action="{% url 'rengoering:swap_answer' req.pk %}" class="inline">{% csrf_token %}<input type="hidden" name="action" value="traek"><button type="submit" class="btn-link">Træk tilbage</button></form></li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  {% if upcoming %}
+    <h2 class="mt-6">Kommende</h2>
+    <ul class="rg-list">
+      {% for a in upcoming %}
+        <li><a href="{% url 'rengoering:assignment' a.pk %}">{{ a.date|date:"j/n/Y" }} · {{ a.area.name }}</a>{% if a.is_star_week %} <span class="chip chip-brass">(*)-uge</span>{% endif %}</li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  {% if history %}
+    <h2 class="mt-6">Tidligere</h2>
+    <ul class="rg-list">
+      {% for cell in history %}
+        <li><a href="{% url 'rengoering:assignment' cell.assignment.pk %}">{{ cell.assignment.date|date:"j/n/Y" }} · {{ cell.assignment.area.name }}</a> <span class="chip {{ cell.chip }}">{{ cell.status.label }}</span></li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+  <p class="muted text-sm mt-6">Vil du bytte en søndag? Åbn den og tryk "Byt søndagen".</p>
+{% endblock %}

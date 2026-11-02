@@ -22,6 +22,8 @@
     </span>
   </div>
 
+  {% include "rengoering/_next_card.html" %}
+
   <div class="grid2">
     <div class="card-flat">
       <div class="card-head"><h2>Begivenheder på GAHK</h2>{% if agenda is not None %}<a href="{% url 'events:calendar' %}">Åbn kalenderen →</a>{% endif %}</div>
@@ -58,6 +60,7 @@
           <a href="/intern/alumneliste/"><svg><use href="#i-list"></use></svg>Alumneliste</a>
           <a href="/intern/ak/"><svg><use href="#i-check"></use></svg>Mine AK-krydser</a>
           <a href="/intern/oelkaelder/min-saldo"><svg><use href="#i-beer"></use></svg>Min ølkælder-saldo</a>
+          <a href="/intern/rengoering/"><svg><use href="#i-check"></use></svg>Min rengøring</a>
           {% if "oelkaelder" in roles %}<a href="/intern/oelkaelder/admin"><svg><use href="#i-beer"></use></svg>Ølkælder-admin</a>{% endif %}
           {% if "ak" in roles %}<a href="/intern/ak/admin"><svg><use href="#i-check"></use></svg>AK-oversigt</a>{% endif %}
           {% if "indstilling" in roles %}<a href="/optagelse/listansoegninger"><svg><use href="#i-inbox"></use></svg>Ansøgninger</a>{% endif %}
