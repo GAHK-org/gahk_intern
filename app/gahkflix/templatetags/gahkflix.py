@@ -5,7 +5,7 @@ from django import template
 from django.urls import reverse
 
 from gahkflix import access, services
-from gahkflix.models import Video, VideoFrame, key_of
+from gahkflix.models import FileState, Video, VideoFile, VideoFrame, key_of
 
 register = template.Library()
 
@@ -28,6 +28,16 @@ def picture_url(video: Video | None, kind: str = "thumbnail") -> str:
 @register.simple_tag
 def frame_url(frame: VideoFrame) -> str:
     return f"{reverse('gahkflix:frame', args=[frame.video_id, frame.pk])}?v={_version(key_of(frame.image))}"
+
+
+@register.simple_tag
+def past_picture_url(picture: services.PastPicture | None) -> str:
+    """A thumbnail or banner the video had before, as a line of its history names it."""
+    if picture is None:
+        return ""
+    event = picture.event
+    url = reverse("gahkflix:history_picture", args=[event.video_id, event.pk, picture.kind, picture.side])
+    return f"{url}?v={_version(picture.key)}"
 
 
 @register.filter
@@ -53,6 +63,19 @@ def get_item(mapping: dict[Any, Any] | None, key: object) -> Any:  # noqa: ANN40
 @register.filter
 def percent(fraction: float | None) -> int:
     return round((fraction or 0) * 100)
+
+
+@register.filter
+def queue_ahead(video_file: VideoFile | None) -> int:
+    """How many uploads are processed before this waiting one (services.queue_ahead)."""
+    return services.queue_ahead(video_file) if video_file is not None else 0
+
+
+@register.inclusion_tag("gahkflix/_file_state.html")
+def file_state(video_file: VideoFile | None) -> dict[str, Any]:
+    """An upload being processed, as a list shows it: waiting its turn, or how far it has come."""
+    queued = video_file is not None and video_file.state == FileState.QUEUED
+    return {"file": video_file, "queued": queued, "ahead": queue_ahead(video_file) if queued else 0}
 
 
 @register.inclusion_tag("gahkflix/_credits_strip.html", takes_context=True)

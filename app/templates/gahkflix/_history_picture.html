@@ -1,0 +1,11 @@
+{% comment %} One side of a picture's change in the history: `picture` (a PastPicture, or None), `side`, and `row.restorable`. {% endcomment %}
+{% load gahkflix %}
+{% if picture %}
+  <img src="{% past_picture_url picture %}" alt="{% if side == 'before' %}Før{% else %}Efter{% endif %}" loading="lazy">
+  {% if side in row.restorable %}
+    <form method="post" action="{% url 'gahkflix:choose_picture' video.pk %}" class="flix-history-restore">{% csrf_token %}
+      <input type="hidden" name="previous" value="{{ picture.ref }}">
+      <button class="flix-btn flix-btn-small flix-btn-quiet" type="submit" name="kind" value="{{ picture.kind }}">Gendan</button>
+    </form>
+  {% endif %}
+{% else %}—{% endif %}

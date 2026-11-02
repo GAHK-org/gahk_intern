@@ -45,6 +45,10 @@ urlpatterns = [
     path("v/<int:pk>/slet", views.delete, name="delete"),
     path("v/<int:pk>/anmod-om-sletning", views.request_deletion, name="request_deletion"),
     path("v/<int:pk>/gendan", views.restore, name="restore"),
+    path("v/<int:pk>/historik", views.history, name="history"),
+    path(
+        "v/<int:pk>/historik/<int:event>/<str:kind>/<str:side>", views.history_picture, name="history_picture"
+    ),
     path("v/<int:pk>/visning", views.record_view, name="record_view"),
     path("v/<int:pk>/position", views.save_position, name="position"),
 ]

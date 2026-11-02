@@ -16,7 +16,7 @@ from celery.exceptions import SoftTimeLimitExceeded
 from django.db.models import F, Q
 from django.utils import timezone
 
-from . import notify, services
+from . import services
 from .models import FileState, Video, VideoFile
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ def _give_up(video_file: VideoFile, reason: str) -> None:
     VideoFile.objects.filter(pk=video_file.pk).update(
         state=FileState.FAILED, error=reason, completed_at=timezone.now()
     )
-    notify.processing_failed(video_file.video, reason)
+    services.record_failure(video_file, reason)
 
 
 @shared_task(bind=True, time_limit=PROCESS_TIME_LIMIT, soft_time_limit=PROCESS_SOFT_TIME_LIMIT)
