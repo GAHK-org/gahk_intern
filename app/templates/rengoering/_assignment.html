@@ -1,6 +1,7 @@
 {% comment %}
   One assignment as the alumne sees it: what, when, sign-off, mangler, and the task list.
-  Context: rengoering.views.detail_context, plus `next` (where the buttons return to).
+  Context: rengoering.views.detail_context, plus `next` (where the buttons return to). The swap
+  parts (swap_form, open_swap, swaps) are passed on explicitly by the includes that nest the context.
 {% endcomment %}
 <div class="card-flat rg-assignment">
   <div class="card-head">
@@ -44,6 +45,28 @@
           <button type="submit" class="btn">Mangler er udbedret</button></form>
       {% endif %}
     </div>
+
+    {% if open_swap %}
+      <div class="rg-swap mt-3 flex flex-wrap gap-2 items-center">
+        <span class="muted text-sm">Du har spurgt {{ open_swap.recipient.full_name }}, om de vil tage søndagen.</span>
+        <form method="post" action="{% url 'rengoering:swap_answer' open_swap.pk %}">{% csrf_token %}<input type="hidden" name="action" value="traek">
+          <button type="submit" class="btn-link">Træk tilbage</button></form>
+      </div>
+    {% elif swap_form %}
+      <details class="rg-swap mt-3">
+        <summary>Byt søndagen</summary>
+        <form method="post" action="{% url 'rengoering:swap_request' a.pk %}" class="grid gap-2 sm:grid-cols-3 items-end mt-2">{% csrf_token %}<input type="hidden" name="next" value="{{ next }}">
+          {% for field in swap_form %}
+            <div><label for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}</div>
+          {% endfor %}
+          <div><button type="submit" class="btn btn-secondary">Spørg</button></div>
+        </form>
+        <p class="muted text-sm mt-1">De vælger selv, om de giver dig en af deres søndage tilbage. Søndagen er din, indtil de siger ja.</p>
+      </details>
+    {% endif %}
+    {% for s in swaps %}
+      <p class="muted text-sm mt-2">Byttet {{ s.answered_at|date:"j/n" }}: {{ s.requester.full_name }} gav {{ s.assignment.date|date:"j/n" }} til {{ s.recipient.full_name }}{% if s.given_back %} mod {{ s.given_back.date|date:"j/n" }}{% endif %}.</p>
+    {% endfor %}
 
     {% if show_tasks %}
       <details class="rg-tasks mt-4"{% if open_tasks %} open{% endif %}>

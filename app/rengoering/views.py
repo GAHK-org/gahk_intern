@@ -20,8 +20,16 @@ from residents.permissions import current_resident
 
 from . import importing, services
 from .access import assignment_for, can_inspect, can_manage, inspect_required, manage_required
-from .forms import AssignmentForm, ImportForm, MatchForm, ReplaceForm, RotaForm
-from .models import AssignmentStatus, CleaningArea, CleaningAssignment, Inspection, Rota, default_fix_deadline
+from .forms import AssignmentForm, ImportForm, MatchForm, ReplaceForm, RotaForm, SwapForm
+from .models import (
+    AssignmentStatus,
+    CleaningArea,
+    CleaningAssignment,
+    Inspection,
+    Rota,
+    SwapRequest,
+    default_fix_deadline,
+)
 
 # Where a sign-off/"udbedret" button may send you back to — a fixed set, never a URL from the form.
 RETURN_TO = {"mine": "rengoering:mine", "dashboard": "dashboard"}
@@ -32,11 +40,20 @@ def _back(request: HttpRequest, a: CleaningAssignment) -> HttpResponseRedirect:
     return redirect(target) if target else redirect("rengoering:assignment", pk=a.pk)
 
 
-def detail_context(a: CleaningAssignment, now: datetime.datetime) -> dict[str, object]:
-    """Everything the assignment block (_assignment.html) shows; shared by Min rengøring and the
-    assignment page."""
+def detail_context(
+    a: CleaningAssignment, now: datetime.datetime, me: Resident | None = None
+) -> dict[str, object]:
+    """Everything the assignment block (_assignment.html) shows; shared by Min rengøring, the
+    dashboard and the assignment page. `me` is who is looking: only the alumne whose Sunday it is
+    gets the swap form."""
     status = a.status(now)
+    mine = me is not None and a.resident_id == me.pk
+    open_swap = services.open_swap(a) if mine else None
+    can_swap = mine and services.can_swap(a, timezone.localdate(now))
     return {
+        "swap_form": SwapForm(me) if can_swap and me is not None and not open_swap else None,
+        "open_swap": open_swap,
+        "swaps": list(services.swaps_of(a)),
         "a": a,
         "status": status,
         "chip": services.STATUS_CHIP[status],
@@ -66,7 +83,9 @@ def mine(request: HttpRequest) -> HttpResponse:
         request,
         "rengoering/mine.html",
         {
-            "next": detail_context(nxt, now) if nxt else None,
+            "next": detail_context(nxt, now, me) if nxt else None,
+            "incoming": _incoming(me, now),
+            "outgoing": services.outgoing_swaps(me),
             "upcoming": upcoming,
             "history": history,
             "inspector": can_inspect(request),
@@ -81,7 +100,7 @@ def assignment(request: HttpRequest, pk: int) -> HttpResponse:
     return render(
         request,
         "rengoering/assignment.html",
-        detail_context(a, timezone.now()) | {"manager": can_manage(request)},
+        detail_context(a, timezone.now(), current_resident(request)) | {"manager": can_manage(request)},
     )
 
 
@@ -118,6 +137,82 @@ def mark_fixed(request: HttpRequest, pk: int) -> HttpResponse:
         latest.save(update_fields=["fixed_at"])
         messages.success(request, "Tak! Inspektionen tjekker det igen.")
     return _back(request, a)
+
+
+# ---- swaps between alumner ----
+
+
+@dataclass
+class Incoming:
+    req: SwapRequest
+    live: bool
+    options: list[CleaningAssignment]
+
+
+def _incoming(me: Resident, now: datetime.datetime) -> list[Incoming]:
+    today = timezone.localdate(now)
+    out = []
+    for req in services.incoming_swaps(me):
+        live = services.is_live(req, today)
+        out.append(Incoming(req, live, services.give_back_options(req, today) if live else []))
+    return out
+
+
+def _dm(day: datetime.date) -> str:
+    return f"{day.day}/{day.month}"
+
+
+@login_required
+@require_POST
+def swap_request(request: HttpRequest, pk: int) -> HttpResponse:
+    """Ask another alumne to take this Sunday. Only the alumne whose Sunday it is."""
+    me = current_resident(request)
+    a = assignment_for(request, pk)
+    if a.resident_id != me.pk:
+        raise Http404
+    form = SwapForm(me, request.POST)
+    if not form.is_valid():
+        messages.error(request, "Vælg hvem du vil bytte med.")
+        return _back(request, a)
+    recipient = form.cleaned_data["recipient"]
+    try:
+        services.request_swap(a, me, recipient, form.cleaned_data["message"])
+    except services.SwapError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, f"{recipient.full_name} er spurgt. Søndagen er din, indtil de siger ja.")
+    return _back(request, a)
+
+
+@login_required
+@require_POST
+def swap_answer(request: HttpRequest, pk: int) -> HttpResponse:
+    """The recipient accepts (with a Sunday back, or none) or declines; the requester withdraws.
+    Anyone else gets a 404, Inspektionen included: they change Sundays by editing them."""
+    me = current_resident(request)
+    req = get_object_or_404(
+        SwapRequest.objects.select_related("assignment__area", "requester", "recipient"), pk=pk
+    )
+    action = request.POST.get("action", "")
+    try:
+        if action == "accepter" and req.recipient_id == me.pk:
+            give_back = None
+            if (pick := request.POST.get("give_back", "")).isdigit():
+                give_back = get_object_or_404(CleaningAssignment, pk=int(pick), resident=me)
+            services.accept_swap(req, give_back)
+            back = f" og {req.requester.first_name} tager din {_dm(give_back.date)}" if give_back else ""
+            messages.success(request, f"Byttet: du tager {_dm(req.assignment.date)}{back}.")
+        elif action == "afvis" and req.recipient_id == me.pk:
+            services.close_swap(req, SwapRequest.State.AFVIST)
+            messages.success(request, "Anmodningen er afvist.")
+        elif action == "traek" and req.requester_id == me.pk:
+            services.close_swap(req, SwapRequest.State.TRUKKET)
+            messages.success(request, "Anmodningen er trukket tilbage.")
+        else:
+            raise Http404
+    except services.SwapError as exc:
+        messages.error(request, str(exc))
+    return redirect("rengoering:mine")
 
 
 # ---- rotas (Inspektionen) ----

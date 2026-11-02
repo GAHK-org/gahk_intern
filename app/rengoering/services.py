@@ -20,6 +20,7 @@ from .models import (
     CleaningTask,
     Inspection,
     Rota,
+    SwapRequest,
     default_fix_deadline,
 )
 
@@ -259,6 +260,153 @@ def can_undo_sign_off(a: CleaningAssignment) -> bool:
 def can_mark_fixed(a: CleaningAssignment) -> bool:
     latest = a.latest_decided()
     return latest is not None and latest.outcome == Inspection.Outcome.MANGLER and not latest.fixed_at
+
+
+# ---- swaps between alumner ----
+
+
+class SwapError(Exception):
+    """Why a swap cannot be asked for or go through, in words for the alumne."""
+
+
+def can_swap(a: CleaningAssignment, today: datetime.date | None = None) -> bool:
+    """A Sunday can change hands until it has started to count: from today on, not ticked off, and
+    never inspected."""
+    today = today or timezone.localdate()
+    return bool(a.resident_id) and a.date >= today and not a.signed_off_at and not a.rounds()
+
+
+def swap_candidates(me: Resident) -> "QuerySet[Resident]":
+    """Who an alumne can ask: anyone who could be put on a rota, except themself."""
+    return rota_residents().exclude(pk=me.pk).exclude(is_kitchen=True)
+
+
+def open_swap(a: CleaningAssignment) -> SwapRequest | None:
+    return a.swap_requests.filter(state=SwapRequest.State.AFVENTER).select_related("recipient").first()
+
+
+def is_live(req: SwapRequest, today: datetime.date | None = None) -> bool:
+    """An open request that can still be accepted: the Sunday is still the requester's and open."""
+    return (
+        req.state == SwapRequest.State.AFVENTER
+        and req.assignment.resident_id == req.requester_id
+        and can_swap(req.assignment, today)
+    )
+
+
+def _clashes_on(resident: Resident, day: datetime.date, besides: CleaningAssignment | None) -> bool:
+    """Whether `resident` already has a Sunday on `day` other than `besides` (which they give away)."""
+    qs = CleaningAssignment.objects.filter(resident=resident, date=day)
+    if besides is not None:
+        qs = qs.exclude(pk=besides.pk)
+    return qs.exists()
+
+
+def give_back_options(req: SwapRequest, today: datetime.date | None = None) -> list[CleaningAssignment]:
+    """The recipient's Sundays they could give the requester in return: open ones, on a day the
+    requester is free, and not one that would leave the recipient with two on the requester's day."""
+    out = []
+    for a in mine(req.recipient).filter(date__gte=today or timezone.localdate()).order_by("date"):
+        if not can_swap(a, today) or open_swap(a):
+            continue
+        if _clashes_on(req.requester, a.date, besides=req.assignment):
+            continue
+        if _clashes_on(req.recipient, req.assignment.date, besides=a):
+            continue
+        out.append(a)
+    return out
+
+
+def request_swap(
+    a: CleaningAssignment, requester: Resident, recipient: Resident, message: str = ""
+) -> SwapRequest:
+    if a.resident_id != requester.pk:
+        raise SwapError("Det er ikke din søndag.")
+    if not can_swap(a):
+        raise SwapError("Søndagen kan ikke byttes længere.")
+    if not swap_candidates(requester).filter(pk=recipient.pk).exists():
+        raise SwapError("Du kan ikke bytte med den alumne.")
+    if open_swap(a):
+        raise SwapError("Du har allerede bedt nogen om at bytte den søndag. Træk den tilbage først.")
+    return SwapRequest.objects.create(assignment=a, requester=requester, recipient=recipient, message=message)
+
+
+def accept_swap(
+    req: SwapRequest, give_back: CleaningAssignment | None, now: datetime.datetime | None = None
+) -> None:
+    """Move both Sundays in one transaction, after checking again that each is still open and that
+    nobody ends up with two on one day. Other open requests for either Sunday lapse."""
+    now = now or timezone.now()
+    today = timezone.localdate(now)
+    with transaction.atomic():
+        req = (
+            SwapRequest.objects.select_for_update()
+            .select_related("assignment", "requester", "recipient")
+            .get(pk=req.pk)
+        )
+        ids = [req.assignment_id] + ([give_back.pk] if give_back else [])
+        locked = {a.pk: a for a in CleaningAssignment.objects.select_for_update().filter(pk__in=ids)}
+        mine_a = locked[req.assignment_id]
+        theirs = locked.get(give_back.pk) if give_back else None
+        req.assignment = mine_a
+        if req.state != SwapRequest.State.AFVENTER:
+            raise SwapError("Anmodningen er ikke åben længere.")
+        if not is_live(req, today):
+            raise SwapError("Søndagen kan ikke byttes længere.")
+        if theirs is not None:
+            if theirs.resident_id != req.recipient_id or not can_swap(theirs, today):
+                raise SwapError("Den søndag du vil give tilbage, kan ikke byttes.")
+            if _clashes_on(req.requester, theirs.date, besides=mine_a):
+                raise SwapError(f"{req.requester.first_name} har allerede en rengøring den dag.")
+        if _clashes_on(req.recipient, mine_a.date, besides=theirs):
+            raise SwapError("Du har allerede en rengøring den dag.")
+        mine_a.resident = req.recipient
+        mine_a.save(update_fields=["resident"])
+        if theirs is not None:
+            theirs.resident = req.requester
+            theirs.save(update_fields=["resident"])
+        SwapRequest.objects.filter(Q(assignment__in=ids), state=SwapRequest.State.AFVENTER).exclude(
+            pk=req.pk
+        ).update(state=SwapRequest.State.BORTFALDET, answered_at=now)
+        req.state = SwapRequest.State.ACCEPTERET
+        req.given_back = theirs
+        req.answered_at = now
+        req.save(update_fields=["state", "given_back", "answered_at"])
+
+
+def close_swap(req: SwapRequest, state: str, now: datetime.datetime | None = None) -> None:
+    """Decline (the recipient) or withdraw (the requester) an open request."""
+    if req.state != SwapRequest.State.AFVENTER:
+        raise SwapError("Anmodningen er ikke åben længere.")
+    req.state = state
+    req.answered_at = now or timezone.now()
+    req.save(update_fields=["state", "answered_at"])
+
+
+def outgoing_swaps(me: Resident) -> "QuerySet[SwapRequest]":
+    return (
+        SwapRequest.objects.filter(requester=me, state=SwapRequest.State.AFVENTER)
+        .select_related("assignment__area", "recipient")
+        .order_by("assignment__date")
+    )
+
+
+def swaps_of(a: CleaningAssignment) -> "QuerySet[SwapRequest]":
+    """Accepted swaps that moved this Sunday, either way — the record Inspektionen sees."""
+    return (
+        SwapRequest.objects.filter(Q(assignment=a) | Q(given_back=a), state=SwapRequest.State.ACCEPTERET)
+        .select_related("requester", "recipient", "assignment", "given_back")
+        .order_by("answered_at")
+    )
+
+
+def incoming_swaps(me: Resident) -> "QuerySet[SwapRequest]":
+    return (
+        SwapRequest.objects.filter(recipient=me, state=SwapRequest.State.AFVENTER)
+        .select_related("assignment__area", "requester")
+        .prefetch_related("assignment__inspections")
+        .order_by("assignment__date")
+    )
 
 
 TaskGroups = list[tuple[str, list[tuple[str, list[CleaningTask]]]]]

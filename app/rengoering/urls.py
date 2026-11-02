@@ -11,6 +11,8 @@ urlpatterns = [
     path("vagt/<int:pk>", views.assignment, name="assignment"),
     path("vagt/<int:pk>/taget", views.sign_off, name="sign_off"),
     path("vagt/<int:pk>/udbedret", views.mark_fixed, name="mark_fixed"),
+    path("vagt/<int:pk>/byt", views.swap_request, name="swap_request"),
+    path("bytte/<int:pk>", views.swap_answer, name="swap_answer"),
     path("tjek/", views.inspect_index, name="inspect_index"),
     # Before tjek/<day>, so the fixed segment is never read as a date (mirrors reparationer/urls.py).
     path("tjek/vagt/<int:pk>", views.inspect_save, name="inspect_save"),

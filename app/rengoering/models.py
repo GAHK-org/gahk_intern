@@ -226,3 +226,48 @@ class Inspection(models.Model):
 
     def __str__(self) -> str:
         return f"{self.assignment} — runde {self.round}: {self.get_outcome_display() or 'i gang'}"
+
+
+class SwapRequest(models.Model):
+    """An alumne asks another to take one of their Sundays — in exchange for one of the other's
+    Sundays, chosen when they accept, or for nothing ("jeg tager den bare"). Accepted, it moves the
+    residents on both assignments at once (services.accept_swap); the row stays as the record of who
+    swapped what, which the assignment page shows Inspektionen."""
+
+    class State(models.TextChoices):
+        AFVENTER = "afventer", "Afventer svar"
+        ACCEPTERET = "accepteret", "Accepteret"
+        AFVIST = "afvist", "Afvist"
+        TRUKKET = "trukket", "Trukket tilbage"
+        # Another request for the same Sunday was accepted first.
+        BORTFALDET = "bortfaldet", "Bortfaldet"
+
+    assignment = models.ForeignKey(CleaningAssignment, on_delete=models.CASCADE, related_name="swap_requests")
+    requester = models.ForeignKey("residents.Resident", on_delete=models.CASCADE, related_name="+")
+    recipient = models.ForeignKey(
+        "residents.Resident", on_delete=models.CASCADE, related_name="cleaning_swap_requests"
+    )
+    message = models.CharField("Besked", max_length=255, blank=True)
+    state = models.CharField(max_length=10, choices=State.choices, default=State.AFVENTER)
+    # The recipient's Sunday that went to the requester in return; null = taken over for nothing.
+    given_back = models.ForeignKey(
+        CleaningAssignment, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(default=timezone.now)
+    answered_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            # One open request per Sunday: asking a second alumne means withdrawing the first.
+            models.UniqueConstraint(
+                fields=["assignment"],
+                condition=models.Q(state="afventer"),
+                name="uniq_open_swap_per_assignment",
+            ),
+        ]
+        verbose_name = "bytteanmodning"
+        verbose_name_plural = "bytteanmodninger"
+
+    def __str__(self) -> str:
+        return f"{self.assignment}: {self.requester} → {self.recipient} ({self.get_state_display()})"

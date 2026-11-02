@@ -28,6 +28,8 @@ which Inspektionen re-checks. Inspektionen also plans the rota for each semester
 | `assignment` | `vagt/<pk>` | GET | owner or inspector | one assignment: tasks, sign-off, inspections, mangler + deadline |
 | `sign_off` | `vagt/<pk>/taget` | POST | owner (inspector on behalf) | "Jeg har taget min rengøring" → `signed_off_at = now` |
 | `mark_fixed` | `vagt/<pk>/udbedret` | POST | owner | "Mangler er udbedret" on the open Mangler inspection |
+| `swap_request` | `vagt/<pk>/byt` | POST | owner | ask another alumne to take this Sunday (`recipient`, optional `message`) |
+| `swap_answer` | `bytte/<pk>` | POST | recipient / requester | `action=accepter` (+ `give_back`: one of the recipient's Sundays, or empty), `afvis` (recipient), `traek` (requester) |
 | `edit_assignment` | `vagt/<pk>/rediger` | GET/POST | manager | swap resident, toggle (*)-uge, clear sign-off |
 | `inspect` | `tjek/` → `tjek/<yyyy-mm-dd>` | GET | inspector | mobile walk view for one Sunday (the prototype's UX) |
 | `inspect_save` | `tjek/vagt/<pk>` | POST | inspector | the area's form: `action=gem` (autosave of ticks + note, JSON for `fetch`), `godkend`, `mangler` (+ deadline), `fortryd` (undo the last decision) |
@@ -65,6 +67,11 @@ Inspection     assignment FK(CASCADE), round (1 = Sunday, 2+ = opfølgning), ins
                missing (JSON [{zone, text}], frozen on decision), started_at, decided_at,
                deadline (MANGLER only), fixed_at (alumne pressed "udbedret")
                UNIQUE(assignment, round)
+SwapRequest    assignment FK(CASCADE; the requester's Sunday), requester, recipient, message,
+               state (AFVENTER | ACCEPTERET | AFVIST | TRUKKET | BORTFALDET), given_back FK(SET_NULL;
+               the recipient's Sunday that went the other way, null = taken over for nothing),
+               created_at, answered_at
+               UNIQUE(assignment) WHERE state = AFVENTER   # one open request per Sunday
 ```
 - **`Inspection.missing` is a snapshot.** It is written when a round is decided, so history keeps
   saying what was missing after Inspektionen edits or deactivates tasks. The live ticks
@@ -123,6 +130,21 @@ Inspection     assignment FK(CASCADE), round (1 = Sunday, 2+ = opfølgning), ins
   the next round was decided) and not signed off.
 - **"Kopiér mangler"** stays as in the prototype: it builds the message (missing tasks per zone + note +
   deadline) for Den Hurtige/SMS until phase 5 sends it.
+- **Swaps between alumner:** an alumne asks another to take one of their Sundays (from the
+  assignment or the dashboard card: "Byt søndagen"). The recipient answers on "Min rengøring", where
+  the dashboard points them: **accept** with one of their own Sundays to give back, or none ("jeg
+  tager den bare"), or **decline**. The requester can withdraw while it is open. The requester never
+  sees the other alumne's Sundays, so own-only holds. Who may be asked: anyone `rota_residents()`
+  allows (this month's list or a later one), except the kitchen account. A Sunday can change hands
+  while it is open: today or later, not ticked off, never inspected (`services.can_swap`).
+  Accepting moves both residents in one transaction and checks it all again first. The
+  Sunday must still be the requester's (Inspektionen may have edited it in the meantime), and
+  nobody may end up with two Sundays on one date. The recipient only gets offered Sundays that pass
+  those checks. Other open requests for either Sunday lapse (`bortfaldet`). The accepted request stays as the
+  record, shown on both assignments' pages ("Byttet 3/11: Wilma gav 8/11 til Amalie mod 15/11"), and
+  Inspektionen sees the new names everywhere else. Inspektionen does not answer requests: they
+  still change any Sunday directly with `edit_assignment`. No notification yet (later phase); the
+  dashboard shows "N alumner vil bytte rengøring med dig".
 - **Rating:** keep **Godkendt / Mangler**. The checklist already records *what* was missing, and
   history gives counts that matter for repeat offenders (mangler, re-checks needed, deadlines
   overskredet, ikke taget). A 1–5 score would be subjective across inspectors and nobody acts on it.
@@ -176,8 +198,8 @@ used, and there is no rollout gate.
 1. **Should residents see the whole rota** (who has what this Sunday)? The paper list is public on
    varme trappe. The brief says own-only, so that's the default. Showing names without inspection
    outcomes would be harmless and handy for swaps.
-2. **Swaps:** should alumner be able to propose/accept a swap themselves, or does Inspektionen do it
-   (as assumed here)?
+2. ~~**Swaps:** should alumner swap themselves?~~ Decided: yes, see *Business rules*. Still open:
+   a notification to the recipient once notifications land.
 3. **`Residency.cleaning`:** what are the real legacy `intern_alumne_cleaning` names? If they are the
    areas ("2. sal"…), the generator could pre-fill each area's people from the alumneliste.
 4. **Rollout gate:** ship behind a `core.rollout.Gate` (Inspektionen-only "Under test") for a round or

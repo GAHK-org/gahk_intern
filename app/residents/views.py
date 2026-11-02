@@ -48,7 +48,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     from ak.services import ensure_previous_month_charged
     from events import access as events_access
     from events.agenda import agenda
-    from rengoering.services import next_for
+    from rengoering.services import incoming_swaps, next_for
     from rengoering.views import detail_context
 
     ensure_previous_month_charged()
@@ -69,7 +69,9 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             # The kollegium's own calendar; empty for anyone the events rollout gate keeps out.
             "agenda": agenda(me) if events_access.request_allowed(request) else None,
             # The next søndagsrengøring, or a mangler to fix — None for anyone not on a rota.
-            "next_cleaning": detail_context(next_cleaning, now) if next_cleaning else None,
+            "next_cleaning": detail_context(next_cleaning, now, me) if next_cleaning else None,
+            # Requests from other alumner to take one of their Sundays, waiting for an answer.
+            "cleaning_swaps": incoming_swaps(me).count(),
         },
     )
 

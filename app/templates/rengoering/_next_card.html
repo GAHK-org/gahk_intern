@@ -1,5 +1,8 @@
 {% comment %} Dashboard card: the alumne's next cleaning, or a mangler to fix. Context: next_cleaning (detail_context). {% endcomment %}
+{% if cleaning_swaps %}
+  <p class="card-flat card-pad mb-4"><a href="{% url 'rengoering:mine' %}">{% if cleaning_swaps == 1 %}En alumne vil{% else %}{{ cleaning_swaps }} alumner vil{% endif %} bytte rengøring med dig →</a></p>
+{% endif %}
 {% if next_cleaning %}
-  {% include "rengoering/_assignment.html" with a=next_cleaning.a status=next_cleaning.status chip=next_cleaning.chip rounds=next_cleaning.rounds can_sign_off=next_cleaning.can_sign_off can_undo_sign_off=next_cleaning.can_undo_sign_off can_mark_fixed=next_cleaning.can_mark_fixed next="dashboard" show_tasks=False %}
+  {% include "rengoering/_assignment.html" with a=next_cleaning.a status=next_cleaning.status chip=next_cleaning.chip rounds=next_cleaning.rounds can_sign_off=next_cleaning.can_sign_off can_undo_sign_off=next_cleaning.can_undo_sign_off can_mark_fixed=next_cleaning.can_mark_fixed swap_form=next_cleaning.swap_form open_swap=next_cleaning.open_swap swaps=next_cleaning.swaps next="dashboard" show_tasks=False %}
   <p class="text-sm mt-2 mb-4"><a href="{% url 'rengoering:mine' %}">Se opgaverne og dine rengøringer →</a></p>
 {% endif %}

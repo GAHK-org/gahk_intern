@@ -12,7 +12,7 @@ from residents.models import Resident
 
 from . import importing
 from .models import CleaningArea, CleaningAssignment, Rota
-from .services import rota_residents
+from .services import rota_residents, swap_candidates
 
 # How many people an area's rotation can have. The wiki's areas are shared by 3-4 alumner; two spare
 # slots cover an odd semester without the form growing a JavaScript "add row" button.
@@ -124,6 +124,24 @@ class ReplaceForm(forms.Form):
         new = cast(ResidentChoiceField, self.fields["new"])
         old.queryset = Resident.objects.filter(cleaning_assignments__rota=rota).distinct()
         new.queryset = rota_residents()
+
+
+class SwapForm(forms.Form):
+    """An alumne asks another to take one of their Sundays."""
+
+    recipient = ResidentChoiceField(
+        label="Hvem", queryset=Resident.objects.none(), empty_label="— vælg alumne —"
+    )
+    message = forms.CharField(
+        label="Besked",
+        max_length=255,
+        required=False,
+        widget=forms.TextInput(attrs={"placeholder": "Valgfri"}),
+    )
+
+    def __init__(self, me: Resident, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        cast(ResidentChoiceField, self.fields["recipient"]).queryset = swap_candidates(me)
 
 
 # ---- import ----

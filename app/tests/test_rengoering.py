@@ -27,6 +27,7 @@ from rengoering.models import (
     CleaningTask,
     Inspection,
     Rota,
+    SwapRequest,
     at_deadline_hour,
     default_fix_deadline,
 )
@@ -409,7 +410,8 @@ def test_a_resident_sees_only_their_own_assignments(today_rota: Rota, trio: list
     other.refresh_from_db()
     assert other.signed_off_at is None
     page = c.get(MINE).content.decode()
-    assert "Sal, stuen" in page and amalie.first_name not in page
+    # Amalie's name is in the swap dropdown (the alumneliste is public), her Sundays are not
+    assert "Sal, stuen" in page and f'href="{vagt(other)}"' not in page
 
 
 def test_sign_off_records_the_time_and_can_be_undone_until_inspected(
@@ -735,6 +737,140 @@ def test_min_rengoering_links_the_outgoing_inspektion_to_the_walk_only(
     assert TJEK_BUTTON in page and LISTER_BUTTON not in page
 
 
+# ---- swaps between alumner ----
+
+
+@pytest.fixture
+def ahead(areas: list[CleaningArea], trio: list[Resident]) -> Rota:
+    """Six coming Sundays on Sal, stuen: Wilma has weeks 0 and 3, Amalie 1 and 4, Isabella 2 and 5."""
+    today = timezone.localdate()
+    start = today + datetime.timedelta(days=(6 - today.weekday()) % 7 or 7)
+    stuen = CleaningArea.objects.get(slug="sal-stuen")
+    return save_rota("F27", plan_rota(start, 6, 0, {stuen: trio}), None)
+
+
+def week(rota: Rota, n: int) -> CleaningAssignment:
+    return rota.assignments.filter(area__slug="sal-stuen").order_by("date")[n]
+
+
+def ask(c: Client, a: CleaningAssignment, who: Resident) -> int:
+    return c.post(vagt(a, "byt"), {"recipient": who.pk, "message": "Jeg er ude at rejse"}).status_code
+
+
+def answer(c: Client, req: SwapRequest, action: str, give_back: CleaningAssignment | None = None) -> int:
+    data = {"action": action, "give_back": give_back.pk if give_back else ""}
+    return c.post(f"/intern/rengoering/bytte/{req.pk}", data).status_code
+
+
+def test_a_swap_moves_both_sundays_when_accepted(
+    ahead: Rota, trio: list[Resident], inspektor: Resident
+) -> None:
+    wilma, amalie, _ = trio
+    hers, back = week(ahead, 0), week(ahead, 1)
+    assert ask(as_user(wilma), hers, amalie) == 302
+    req = SwapRequest.objects.get()
+    assert week(ahead, 0).resident == wilma  # hers until Amalie says yes
+
+    page = as_user(amalie).get("/intern/rengoering/").content.decode()
+    assert "Wilma Beboer" in page and "Jeg er ude at rejse" in page
+    assert "bytte rengøring med dig" in as_user(amalie).get("/intern/").content.decode()
+
+    assert answer(as_user(amalie), req, "accepter", back) == 302
+    assert week(ahead, 0).resident == amalie and week(ahead, 1).resident == wilma
+    req.refresh_from_db()
+    assert req.state == SwapRequest.State.ACCEPTERET and req.given_back == back
+    record = as_user(inspektor).get(vagt(hers)).content.decode()
+    assert "Wilma Beboer gav" in record and "til Amalie Beboer" in record
+
+
+def test_a_sunday_can_be_taken_over_for_nothing(ahead: Rota, trio: list[Resident]) -> None:
+    wilma, amalie, _ = trio
+    ask(as_user(wilma), week(ahead, 0), amalie)
+    answer(as_user(amalie), SwapRequest.objects.get(), "accepter")
+    assert ahead.assignments.filter(resident=amalie).count() == 3
+    assert ahead.assignments.filter(resident=wilma).count() == 1
+
+
+def test_declining_and_withdrawing_leave_the_sundays_alone(ahead: Rota, trio: list[Resident]) -> None:
+    wilma, amalie, isabella = trio
+    hers = week(ahead, 0)
+    ask(as_user(wilma), hers, amalie)
+    assert ask(as_user(wilma), hers, isabella) == 302  # refused: one open request per Sunday
+    req = SwapRequest.objects.get()
+    answer(as_user(amalie), req, "afvis")
+    ask(as_user(wilma), hers, isabella)
+    answer(as_user(wilma), SwapRequest.objects.get(state=SwapRequest.State.AFVENTER), "traek")
+    states = set(SwapRequest.objects.values_list("state", flat=True))
+    assert states == {SwapRequest.State.AFVIST, SwapRequest.State.TRUKKET}
+    assert week(ahead, 0).resident == wilma
+
+
+def test_only_the_two_alumner_may_answer(ahead: Rota, trio: list[Resident], inspektor: Resident) -> None:
+    wilma, amalie, isabella = trio
+    ask(as_user(wilma), week(ahead, 0), amalie)
+    req = SwapRequest.objects.get()
+    assert answer(as_user(isabella), req, "accepter") == 404
+    assert answer(as_user(inspektor), req, "accepter") == 404  # Inspektionen edits the Sunday instead
+    assert answer(as_user(wilma), req, "accepter") == 404  # not your own request
+    assert answer(as_user(amalie), req, "traek") == 404  # only the one who asked withdraws
+    # nor can anyone ask on someone else's behalf, or give back a Sunday that is not theirs
+    assert ask(as_user(isabella), week(ahead, 0), amalie) == 404
+    assert answer(as_user(amalie), req, "accepter", week(ahead, 2)) == 404
+    assert week(ahead, 0).resident == wilma and req.state == SwapRequest.State.AFVENTER
+
+
+def test_a_sunday_that_has_counted_cannot_be_swapped(ahead: Rota, trio: list[Resident]) -> None:
+    wilma, amalie, _ = trio
+    signed, inspected = week(ahead, 0), week(ahead, 3)
+    signed.signed_off_at = timezone.now()
+    signed.save()
+    Inspection.objects.create(assignment=inspected)  # Inspektionen has started on it
+    for a in (signed, inspected):
+        ask(as_user(wilma), a, amalie)
+    assert not SwapRequest.objects.exists()
+
+
+def test_accepting_checks_again_that_the_sunday_is_still_open(
+    ahead: Rota, trio: list[Resident], inspektor: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    wilma, amalie, _ = trio
+    ask(as_user(wilma), week(ahead, 0), amalie)
+    req = SwapRequest.objects.get()
+    # Wilma moves out and Inspektionen gives her Sundays to a newcomer before Amalie answers.
+    newcomer = make_resident(email="ny@gahk.dk", first_name="Ny")
+    live_here(newcomer)
+    as_user(inspektor).post(
+        f"{ROTAS}{ahead.pk}/erstat",
+        {"old": wilma.pk, "new": newcomer.pk, "from_date": str(week(ahead, 0).date)},
+    )
+    assert "kan ikke byttes længere" in as_user(amalie).get("/intern/rengoering/").content.decode()
+    answer(as_user(amalie), req, "accepter")
+    assert week(ahead, 0).resident == newcomer
+    req.refresh_from_db()
+    assert req.state == SwapRequest.State.AFVENTER
+
+
+def test_nobody_ends_up_with_two_cleanings_on_one_sunday(ahead: Rota, trio: list[Resident]) -> None:
+    wilma, amalie, _ = trio
+    laesesalen = CleaningArea.objects.get(slug="laesesalen")
+    # Amalie already cleans Læsesalen on Wilma's first Sunday: she cannot take it as well
+    busy = make_assignment(ahead, laesesalen, amalie, week(ahead, 0).date)
+    ask(as_user(wilma), week(ahead, 0), amalie)
+    answer(as_user(amalie), SwapRequest.objects.get(), "accepter")
+    assert week(ahead, 0).resident == wilma
+    SwapRequest.objects.update(state=SwapRequest.State.TRUKKET)
+    busy.delete()
+
+    # She cleans Læsesalen on Wilma's second Sunday instead
+    make_assignment(ahead, laesesalen, amalie, week(ahead, 3).date)
+
+    # Amalie asks Wilma instead; Wilma may give back her first Sunday, not the one Amalie is busy on
+    ask(as_user(amalie), week(ahead, 1), wilma)
+    page = as_user(wilma).get("/intern/rengoering/").content.decode()
+    assert f'<option value="{week(ahead, 0).pk}"' in page
+    assert f'<option value="{week(ahead, 3).pk}"' not in page
+
+
 # ---- import (phase 5) ----
 
 # The shape `pdftotext -layout` makes of the printed list — fake names, real layout. The last area
@@ -923,4 +1059,5 @@ def test_seed_demo_puts_every_state_on_screen(db: None) -> None:
     assert {AssignmentStatus.GODKENDT, AssignmentStatus.MANGLER, AssignmentStatus.KOMMENDE} <= statuses
     demo = Resident.objects.get(email="beboer@gahk.dk")
     assert next_for(demo, now).status(now) == AssignmentStatus.MANGLER  # type: ignore[union-attr]
-    assert "Mangler er udbedret" in as_user(demo).get("/intern/").content.decode()
+    dashboard = as_user(demo).get("/intern/").content.decode()
+    assert "Mangler er udbedret" in dashboard and "bytte rengøring med dig" in dashboard

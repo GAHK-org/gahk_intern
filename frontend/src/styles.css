@@ -2581,6 +2581,8 @@
   .rg-zone { font-size:12px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--brass); margin:14px 0 4px; }
   .rg-group { font-weight:600; margin:8px 0 2px; }
   .rg-list { margin:0; padding:0; list-style:none; }
+  .rg-swap > summary { cursor:pointer; font-weight:600; }
+  .rg-list form.inline { display:inline; margin-left:8px; }
   .rg-list li { padding:8px 0; border-bottom:1px solid var(--border); }
   /* The inspection walk: one card per area, big tap targets, progress bar in the summary. */
   .rg-weeknav { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0 0 12px; }

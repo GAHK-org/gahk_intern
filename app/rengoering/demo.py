@@ -8,7 +8,8 @@ few Sundays ago, so every state is on screen on a fresh checkout without waiting
     repeat-offender ordering all have something to show;
   * the latest Sunday half-walked: some areas decided, one with ticks in progress, some untouched;
   * `beboer@gahk.dk` with an open mangler on the latest Sunday, so the dashboard card and "Min
-    rengøring" show the mangler, the deadline and the "udbedret" button straight away.
+    rengøring" show the mangler, the deadline and the "udbedret" button straight away, and a
+    request from another alumne to swap one of the coming Sundays, waiting for an answer.
 
 No real names: the actual E26 list is imported with `import_cleaning_rota` and stays out of git.
 """
@@ -16,6 +17,7 @@ No real names: the actual E26 list is imported with `import_cleaning_rota` and s
 import datetime
 import random
 
+from django.db.models import QuerySet
 from django.utils import timezone
 
 from residents.models import Resident
@@ -25,6 +27,7 @@ from .models import (
     CleaningAssignment,
     CleaningTask,
     Inspection,
+    SwapRequest,
     at_deadline_hour,
     default_fix_deadline,
 )
@@ -115,6 +118,9 @@ def seed(residents: list[Resident], now: datetime.datetime, rng: random.Random) 
             first.save(update_fields=["fixed_at"])  # waiting for the re-check
         # else: never fixed — past its deadline (overskredet)
 
+    if demo:
+        _ask_demo_to_swap(rota.assignments.filter(date__gt=last_sunday), demo)
+
 
 def _sign_off(a: CleaningAssignment, when: datetime.datetime) -> None:
     a.signed_off_at = when
@@ -150,3 +156,18 @@ def _decide(
     )
     i.checked_tasks.set([t for t in tasks if t not in missing])
     return i
+
+
+def _ask_demo_to_swap(coming: "QuerySet[CleaningAssignment]", demo: Resident) -> None:
+    """Someone in another area asks the demo login to take their next Sunday."""
+    busy = set(coming.filter(resident=demo).values_list("date", flat=True))
+    theirs = (
+        coming.exclude(resident=demo).exclude(resident=None).exclude(date__in=busy).order_by("date").first()
+    )
+    if theirs and theirs.resident:
+        SwapRequest.objects.create(
+            assignment=theirs,
+            requester=theirs.resident,
+            recipient=demo,
+            message="Jeg er hjemme hos mine forældre den weekend. Vil du bytte?",
+        )
