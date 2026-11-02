@@ -8,6 +8,12 @@
       <p class="eyebrow">Søndagsrengøring</p>
       <h1>Min rengøring</h1>
     </div>
+    {% if inspector %}
+      <div class="flex gap-2">
+        <a class="btn" href="{% url 'rengoering:inspect_index' %}">Rengøringstjek</a>
+        {% if manager %}<a class="btn btn-secondary" href="{% url 'rengoering:rotas' %}">Rengøringslister</a>{% endif %}
+      </div>
+    {% endif %}
   </div>
 
   {% if next %}

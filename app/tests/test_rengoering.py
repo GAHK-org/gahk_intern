@@ -680,6 +680,27 @@ def test_the_exception_ends_with_the_handover_month(
     assert as_user(old).get(TJEK).status_code == 403
 
 
+# The buttons, not the sidebar's entries for the same pages.
+TJEK_BUTTON = 'class="btn" href="/intern/rengoering/tjek/"'
+LISTER_BUTTON = 'class="btn btn-secondary" href="/intern/rengoering/lister/"'
+
+
+def test_min_rengoering_links_inspektionen_to_their_pages(
+    sunday: CleaningAssignment, inspektor: Resident, trio: list[Resident]
+) -> None:
+    page = as_user(inspektor).get("/intern/rengoering/").content.decode()
+    assert TJEK_BUTTON in page and LISTER_BUTTON in page
+    page = as_user(trio[0]).get("/intern/rengoering/").content.decode()
+    assert TJEK_BUTTON not in page and LISTER_BUTTON not in page
+
+
+def test_min_rengoering_links_the_outgoing_inspektion_to_the_walk_only(
+    sunday: CleaningAssignment, outgoing: Resident
+) -> None:
+    page = as_user(outgoing).get("/intern/rengoering/").content.decode()
+    assert TJEK_BUTTON in page and LISTER_BUTTON not in page
+
+
 # ---- import (phase 5) ----
 
 # The shape `pdftotext -layout` makes of the printed list — fake names, real layout. The last area

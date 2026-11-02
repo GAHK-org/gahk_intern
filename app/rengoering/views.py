@@ -19,7 +19,7 @@ from residents.models import Resident
 from residents.permissions import current_resident
 
 from . import importing, services
-from .access import assignment_for, can_manage, inspect_required, manage_required
+from .access import assignment_for, can_inspect, can_manage, inspect_required, manage_required
 from .forms import AssignmentForm, ImportForm, MatchForm, ReplaceForm, RotaForm
 from .models import AssignmentStatus, CleaningArea, CleaningAssignment, Inspection, Rota, default_fix_deadline
 
@@ -65,7 +65,13 @@ def mine(request: HttpRequest) -> HttpResponse:
     return render(
         request,
         "rengoering/mine.html",
-        {"next": detail_context(nxt, now) if nxt else None, "upcoming": upcoming, "history": history},
+        {
+            "next": detail_context(nxt, now) if nxt else None,
+            "upcoming": upcoming,
+            "history": history,
+            "inspector": can_inspect(request),
+            "manager": can_manage(request),
+        },
     )
 
 
