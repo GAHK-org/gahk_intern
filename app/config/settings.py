@@ -375,9 +375,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "oelkaelder.tasks.send_monthly_statements",
         "schedule": crontab(minute=10, hour=6, day_of_month=1),
     },
-    "send-admin-dummy-notification": {
-        "task": "core.tasks.send_admin_dummy_notification",
-        "schedule": crontab(minute=0, hour="8,16"),
+    # The month that just ended, to everyone with Django-admin access. In the day, after the night's
+    # sweeps and the AK charge: people read it.
+    "email-admin-monthly-summary": {
+        "task": "core.tasks.send_admin_monthly_summary",
+        "schedule": crontab(minute=5, hour=9, day_of_month=1),
     },
 }
 
