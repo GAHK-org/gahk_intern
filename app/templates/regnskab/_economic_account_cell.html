@@ -1,0 +1,22 @@
+{% comment %}
+  One resident's e-conomic kontonr.: the number, and a "Rediger" button that swaps it for an inline
+  form posting to regnskab:set_economic_account_number. Comes back to this page after saving.
+{% endcomment %}
+    <td class="whitespace-nowrap">
+      <span>{{ resident.economic_account_number|default:"–" }}</span>
+      {# Finds its number and form by position, not id: the same resident can be in two tables at once. #}
+      <button type="button" class="btn"
+              onclick="this.previousElementSibling.style.display='none';
+                       this.style.display='none';
+                       this.nextElementSibling.style.display='flex';">
+        Rediger
+      </button>
+      <form method="post" action="{% url 'regnskab:set_economic_account_number' resident.pk %}"
+            class="items-center gap-1" style="display:none">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+        <input type="number" name="economic_account_number" min="1" style="width:5rem"
+               value="{{ resident.economic_account_number|default_if_none:'' }}" placeholder="–">
+        <button type="submit" class="btn">Gem</button>
+      </form>
+    </td>

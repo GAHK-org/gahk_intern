@@ -55,6 +55,29 @@
       regning, også hvis der ikke er nye posteringer i netop denne periode. Selve afsendelsen sker
       først efter du har set forhåndsvisningen.
     </p>
+    {% if missing_account_numbers %}
+      <div class="mb-4">
+        <p class="text-sm text-red-600 font-semibold mb-2">
+          Mangler e-conomic kontonr. ({{ missing_account_numbers|length }}) — alumneregninger for
+          {{ period_label }} kan først laves, når alle herunder har et.
+        </p>
+        <div class="overflow-x-auto">
+          <table cellpadding="6" class="text-sm" style="width:100%; border-collapse:collapse">
+            <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec; white-space:nowrap">
+              <th>Navn</th><th>E-conomic kontonr.</th>
+            </tr></thead>
+            <tbody>
+              {% for resident in missing_account_numbers %}
+                <tr style="border-bottom:1px solid #f0f1f4">
+                  <td>{{ resident.full_name }}<br><span class="muted text-xs">{{ resident.email }}</span></td>
+                  {% include "regnskab/_economic_account_cell.html" %}
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
     <form method="get" action="{% url 'regnskab:preview_alumneregninger' %}" class="flex flex-wrap items-end gap-2">
       <div>
         <label for="fra" class="font-semibold block text-sm">Fra</label>
