@@ -37,12 +37,16 @@
   </div>
 
   {% if rows %}
-    <form method="post" action="{% url 'regnskab:send_alumneregninger' %}"
-          onsubmit="return confirm('Send alumneregninger for den valgte periode til alle alumner med et e-conomic kontonr.?');">
+    <form method="post" action="{% url 'regnskab:send_alumneregninger' %}" x-data="{ busy: false }"
+          @pageshow.window="busy = false"
+          @submit="if (!confirm('Send alumneregninger for den valgte periode til alle alumner med et e-conomic kontonr.?')) { $event.preventDefault(); return; } busy = true">
       {% csrf_token %}
       <input type="hidden" name="fra" value="{{ date_from|date:'Y-m-d' }}">
       <input type="hidden" name="til" value="{{ date_to|date:'Y-m-d' }}">
-      <button type="submit" class="btn">Bekræft og send</button>
+      <button type="submit" class="btn" :disabled="busy" :aria-busy="busy">
+        <span class="spinner" x-show="busy" x-cloak></span>
+        <span x-text="busy ? 'Sender…' : 'Bekræft og send'">Bekræft og send</span>
+      </button>
       <a href="{% url 'regnskab:overview' %}" class="btn">Annuller</a>
     </form>
   {% else %}
