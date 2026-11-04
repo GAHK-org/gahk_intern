@@ -62,6 +62,8 @@ def overview(request: HttpRequest) -> HttpResponse:
     # held a room the month before but not this month — Residency is per-month, so this is a set diff.
     year, month = _parse_period(request)
     py, pm = prev_period((year, month))
+    alumneregning_from = date(year, month, 1)
+    alumneregning_to = date(year, month, calendar.monthrange(year, month)[1])
 
     prior = Residency.objects.filter(year=py, month=pm).select_related("resident", "room")
     still_here = set(Residency.objects.filter(year=year, month=month).values_list("resident_id", flat=True))
@@ -98,8 +100,12 @@ def overview(request: HttpRequest) -> HttpResponse:
             "results": results,
             "alumni": alumni,
             # Alumneregninger send-form defaults: the selected period's calendar month.
-            "alumneregning_from": date(year, month, 1).isoformat(),
-            "alumneregning_to": date(year, month, calendar.monthrange(year, month)[1]).isoformat(),
+            "alumneregning_from": alumneregning_from.isoformat(),
+            "alumneregning_to": alumneregning_to.isoformat(),
+            # Who has to get a kontonr. before alumneregninger for that month can be made.
+            "missing_account_numbers": alumneregning.residents_missing_account_number(
+                alumneregning_from, alumneregning_to
+            ),
         },
     )
 
@@ -141,6 +147,22 @@ def _parse_billing_period(source: dict) -> tuple[date, date] | None:
     return date_from, date_to
 
 
+def _missing_account_numbers(request: HttpRequest, date_from: date, date_to: date) -> HttpResponse | None:
+    """A redirect back to the overview if anyone in the period lacks an e-conomic kontonr., else None.
+    Alumneregninger are all or nothing: a resident without a number would otherwise just be left out."""
+    missing = list(alumneregning.residents_missing_account_number(date_from, date_to))
+    if not missing:
+        return None
+    names = ", ".join(r.full_name for r in missing[:5])
+    more = f" og {len(missing) - 5} flere" if len(missing) > 5 else ""
+    messages.error(
+        request,
+        f"Alumneregninger kan først laves, når alle i perioden har et e-conomic kontonr. "
+        f"Mangler: {names}{more}.",
+    )
+    return redirect(f"{reverse('regnskab:overview')}?period={date_from.year}-{date_from.month}")
+
+
 _AUTH_ERROR_MESSAGE = (
     "E-conomic-adgangen er udløbet eller blevet tilbagekaldt. Kontakt en administrator for at "
     "genoprette forbindelsen (nyt AgreementGrantToken via e-conomics udviklerportal)."
@@ -156,6 +178,8 @@ def preview_alumneregninger_view(request: HttpRequest) -> HttpResponse:
         messages.error(request, "Angiv en gyldig periode — fra-dato skal være før (eller lig med) til-dato.")
         return redirect("regnskab:overview")
     date_from, date_to = period
+    if blocked := _missing_account_numbers(request, date_from, date_to):
+        return blocked
 
     try:
         rows = alumneregning.preview_alumneregninger(date_from, date_to)
@@ -207,6 +231,8 @@ def send_alumneregninger_view(request: HttpRequest) -> HttpResponse:
         messages.error(request, "Angiv en gyldig periode — fra-dato skal være før (eller lig med) til-dato.")
         return redirect("regnskab:overview")
     date_from, date_to = period
+    if blocked := _missing_account_numbers(request, date_from, date_to):
+        return blocked
 
     tasks.send_alumneregninger_task.delay(date_from.isoformat(), date_to.isoformat())
     messages.success(

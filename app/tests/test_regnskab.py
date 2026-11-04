@@ -12,7 +12,7 @@ from django.utils import timezone
 from ak.models import AkEntry
 from core.models import Room, Workgroup
 from oelkaelder.models import Deposit, Shopper
-from regnskab import economic
+from regnskab import alumneregning, economic, tasks
 from residents.models import Residency, Resident, RoleAssignment, prev_period
 from residents.views import _sync_month_roles
 
@@ -108,8 +108,10 @@ def test_a_search_replaces_the_list_of_alumni(make_resident: Callable) -> None:
     c.force_login(acc)
 
     html = c.get(reverse("regnskab:overview"), {"q": "Lea"}).content.decode()
-    assert "Alle alumner på listen" not in html
-    assert "Sta Yer" not in html
+    search = html.split("Slå en beboer op")[1].split("Alumneregninger")[0]
+    assert "Alle alumner på listen" not in search
+    assert "Lea Ver" in search
+    assert "Sta Yer" not in search  # still in "Mangler e-conomic kontonr." below, just not here
 
 
 @pytest.mark.django_db
@@ -506,3 +508,74 @@ def test_regnskab_workgroup_grants_role(make_resident: Callable) -> None:
     _sync_month_roles(r.id, wg, 2026, 8, is_admin=False)
 
     assert RoleAssignment.objects.filter(resident=r, role="regnskab", year=2026, month=8).exists()
+
+
+def _alumne_in_august(email: str, number: int | None, room: int) -> Resident:
+    alumne = Resident.objects.create(
+        email=email, first_name=email.partition("@")[0], economic_account_number=number
+    )
+    Residency.objects.create(
+        resident=alumne,
+        year=2026,
+        month=8,
+        room=Room.objects.create(legacy_index=room, number=room, floor="stuen", side="mod gaden"),
+    )
+    return alumne
+
+
+@pytest.mark.django_db
+def test_the_overview_lists_who_is_missing_a_kontonr(make_resident: Callable) -> None:
+    _alumne_in_august("harnumber@gahk.dk", 1101, 1)
+    missing = _alumne_in_august("nonumber@gahk.dk", None, 2)
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    c = Client()
+    c.force_login(acc)
+
+    html = c.get(reverse("regnskab:overview"), {"period": "2026-8"}).content.decode()
+    section = html.split("Alumneregninger")[1]
+
+    assert "Mangler e-conomic kontonr. (1)" in section
+    assert "nonumber@gahk.dk" in section
+    assert "harnumber@gahk.dk" not in section
+    assert reverse("regnskab:set_economic_account_number", args=[missing.pk]) in section
+
+
+@pytest.mark.django_db
+def test_nothing_is_missing_when_everyone_has_a_kontonr(make_resident: Callable) -> None:
+    _alumne_in_august("harnumber@gahk.dk", 1101, 1)
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    c = Client()
+    c.force_login(acc)
+
+    html = c.get(reverse("regnskab:overview"), {"period": "2026-8"}).content.decode()
+    assert "Mangler e-conomic kontonr." not in html
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("method", ["preview", "send"])
+def test_alumneregninger_are_refused_while_anyone_lacks_a_kontonr(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable, method: str
+) -> None:
+    _alumne_in_august("harnumber@gahk.dk", 1101, 1)
+    _alumne_in_august("nonumber@gahk.dk", None, 2)
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    queued: list[tuple[str, str]] = []
+    monkeypatch.setattr(tasks.send_alumneregninger_task, "delay", lambda *a: queued.append(a))
+    monkeypatch.setattr(
+        alumneregning, "preview_alumneregninger", lambda *a: pytest.fail("preview built anyway")
+    )
+    c = Client()
+    c.force_login(acc)
+
+    period = {"fra": "2026-08-01", "til": "2026-08-31"}
+    if method == "preview":
+        response = c.get(reverse("regnskab:preview_alumneregninger"), period)
+    else:
+        response = c.post(reverse("regnskab:send_alumneregninger"), period)
+
+    assert response.status_code == 302
+    assert response.url == f"{reverse('regnskab:overview')}?period=2026-8"
+    assert not queued
+    html = c.get(response.url).content.decode()
+    assert "først laves, når alle i perioden har et e-conomic kontonr." in html
+    assert "nonumber" in html

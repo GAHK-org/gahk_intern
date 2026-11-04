@@ -63,8 +63,8 @@ def _body(resident: Resident, balance: Decimal, message_template: str) -> str:
     )
 
 
-def residents_billable_for(date_from: date, date_to: date) -> QuerySet[Resident]:
-    """Residents with an e-conomic account number and a Residency within [date_from, date_to]."""
+def residents_in_period(date_from: date, date_to: date) -> QuerySet[Resident]:
+    """Residents with a Residency within [date_from, date_to], with or without an account number."""
     lower = date_from.year * 12 + date_from.month
     upper = date_to.year * 12 + date_to.month
     resident_ids = (
@@ -73,9 +73,18 @@ def residents_billable_for(date_from: date, date_to: date) -> QuerySet[Resident]
         .values_list("resident_id", flat=True)
         .distinct()
     )
-    return Resident.objects.filter(pk__in=resident_ids, economic_account_number__isnull=False).order_by(
-        "first_name", "last_name"
-    )
+    return Resident.objects.filter(pk__in=resident_ids).order_by("first_name", "last_name")
+
+
+def residents_billable_for(date_from: date, date_to: date) -> QuerySet[Resident]:
+    """Residents with an e-conomic account number and a Residency within [date_from, date_to]."""
+    return residents_in_period(date_from, date_to).filter(economic_account_number__isnull=False)
+
+
+def residents_missing_account_number(date_from: date, date_to: date) -> QuerySet[Resident]:
+    """Residents in the period with no e-conomic account number. Alumneregninger are not made while
+    there are any (regnskab.views), so nobody who lived here goes unbilled without anyone noticing."""
+    return residents_in_period(date_from, date_to).filter(economic_account_number__isnull=True)
 
 
 def _prepare_one(
