@@ -3,9 +3,7 @@
 from collections.abc import Callable
 
 import pytest
-from django.db import connection
 from django.test import Client
-from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
@@ -79,65 +77,6 @@ def test_lookup_finds_any_resident(make_resident: Callable) -> None:
     # The stayer is not a leaver, so finding them proves the free lookup works.
     html = c.get(reverse("regnskab:overview"), {"q": "Sta"}).content.decode()
     assert "Sta Yer" in html
-
-
-@pytest.mark.django_db
-def test_every_alumne_on_the_list_is_shown_without_searching(make_resident: Callable) -> None:
-    _setup_leaver_and_stayer(make_resident)
-    Resident.objects.filter(email="stay@gahk.dk").update(economic_account_number=4207)
-    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
-    c = Client()
-    c.force_login(acc)
-
-    alumni = c.get(reverse("regnskab:overview")).content.decode().split("Slå en beboer op")[1]
-    alumni = alumni.split("Alumneregninger")[0]
-
-    assert "Sta Yer" in alumni  # on this month's list
-    assert "004" in alumni  # their room this month
-    assert "4207" in alumni  # their kontonr., with the inline form to change it
-    stayer = Resident.objects.get(email="stay@gahk.dk")
-    assert reverse("regnskab:set_economic_account_number", args=[stayer.pk]) in alumni
-    assert "Lea Ver" not in alumni  # moved out, so a leaver, not on the list
-
-
-@pytest.mark.django_db
-def test_a_search_replaces_the_list_of_alumni(make_resident: Callable) -> None:
-    _setup_leaver_and_stayer(make_resident)
-    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
-    c = Client()
-    c.force_login(acc)
-
-    html = c.get(reverse("regnskab:overview"), {"q": "Lea"}).content.decode()
-    search = html.split("Slå en beboer op")[1].split("Alumneregninger")[0]
-    assert "Alle alumner på listen" not in search
-    assert "Lea Ver" in search
-    assert "Sta Yer" not in search  # still in "Mangler e-conomic kontonr." below, just not here
-
-
-@pytest.mark.django_db
-def test_the_list_of_alumni_costs_the_same_queries_however_long_it_is(make_resident: Callable) -> None:
-    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
-    c = Client()
-    c.force_login(acc)
-    now = timezone.localtime()
-
-    def add_alumne(n: int) -> None:
-        resident = make_resident(email=f"alumne{n}@gahk.dk")
-        room = Room.objects.create(legacy_index=100 + n, number=100 + n, floor="1", side="mod gaden")
-        Residency.objects.create(resident=resident, year=now.year, month=now.month, room=room)
-        AkEntry.objects.create(resident=resident, delta=-1)
-        Deposit.objects.create(shopper=Shopper.objects.create(resident=resident), amount_ore=100)
-
-    def queries() -> int:
-        with CaptureQueriesContext(connection) as captured:
-            c.get(reverse("regnskab:overview"))
-        return len(captured)
-
-    add_alumne(0)
-    few = queries()
-    for n in range(1, 6):
-        add_alumne(n)
-    assert queries() == few
 
 
 @pytest.mark.django_db

@@ -7,20 +7,17 @@ as raw krydser and accounting converts it by their own rules.
 """
 
 import calendar
-from collections import defaultdict
 from datetime import date
 from typing import NamedTuple
 
 from django.contrib import messages
-from django.db.models import Q, Sum
+from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed, HttpResponseNotFound
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 
 from ak.models import AkEntry
-from oelkaelder.models import Shopper
-from oelkaelder.services import bulk_balances
 from residents.models import Residency, Resident, prev_period
 from residents.permissions import role_required
 from residents.views import DA_MONTHS, _parse_period, _period_options
@@ -37,23 +34,9 @@ class Row(NamedTuple):
     oek_ore: int  # negative = owes the ølkælder
 
 
-def _rows(residents: list[tuple[Resident, int | None]]) -> list[Row]:
-    """Rows for many (resident, room) pairs at once: one AK query and three ølkælder queries in all,
-    instead of four or more per resident. The full alumneliste is over a hundred people."""
-    ids = [resident.pk for resident, _room in residents]
-    ak = dict(
-        AkEntry.objects.filter(resident_id__in=ids)
-        .order_by()
-        .values("resident_id")
-        .annotate(total=Sum("delta"))
-        .values_list("resident_id", "total")
-    )
-    shoppers = list(Shopper.objects.filter(resident_id__in=ids))
-    balances = bulk_balances(shoppers)
-    oek: dict[int, int] = defaultdict(int)
-    for shopper in shoppers:
-        oek[shopper.resident_id] += balances[shopper.pk]
-    return [Row(resident, room, ak.get(resident.pk) or 0, oek[resident.pk]) for resident, room in residents]
+def _row(resident: Resident, room: int | None) -> Row:
+    oek_ore = sum((a.balance_ore for a in resident.shopper_accounts.all()), 0)
+    return Row(resident, room, AkEntry.balance_for(resident), oek_ore)
 
 
 @role_required("regnskab")
@@ -68,14 +51,8 @@ def overview(request: HttpRequest) -> HttpResponse:
     prior = Residency.objects.filter(year=py, month=pm).select_related("resident", "room")
     still_here = set(Residency.objects.filter(year=year, month=month).values_list("resident_id", flat=True))
     leavers = sorted(
-        _rows([(r.resident, r.room.number) for r in prior if r.resident_id not in still_here]),
+        (_row(r.resident, r.room.number) for r in prior if r.resident_id not in still_here),
         key=lambda row: row.resident.full_name,
-    )
-
-    # Everyone on the selected month's list, so regnskab can see and set kontonr. without searching.
-    current = Residency.objects.filter(year=year, month=month).select_related("resident", "room")
-    alumni = sorted(
-        _rows([(r.resident, r.room.number) for r in current]), key=lambda row: row.resident.full_name
     )
 
     # Free lookup of any resident (current or former) by name/email.
@@ -85,7 +62,7 @@ def overview(request: HttpRequest) -> HttpResponse:
         found = Resident.objects.filter(
             Q(first_name__icontains=q) | Q(last_name__icontains=q) | Q(email__icontains=q)
         ).order_by("first_name", "last_name")[:50]
-        results = _rows([(r, None) for r in found])
+        results = [_row(r, None) for r in found]
 
     return render(
         request,
@@ -98,7 +75,6 @@ def overview(request: HttpRequest) -> HttpResponse:
             "leavers": leavers,
             "q": q,
             "results": results,
-            "alumni": alumni,
             # Alumneregninger send-form defaults: the selected period's calendar month.
             "alumneregning_from": alumneregning_from.isoformat(),
             "alumneregning_to": alumneregning_to.isoformat(),
