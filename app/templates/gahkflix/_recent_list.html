@@ -9,7 +9,7 @@
         <h3><a href="{% if video.is_draft %}{% url 'gahkflix:edit' video.pk %}{% else %}{% url 'gahkflix:detail' video.pk %}{% endif %}">{{ video.title }}</a></h3>
         {% with latest=video.latest_file %}
           <p>
-            {% if latest.is_pending %}<span class="flix-state">Behandles · {{ latest.progress }} %</span>
+            {% if latest.is_pending %}{% file_state latest %}
             {% elif latest.state == "failed" %}<span class="flix-state is-failed">Mislykkedes</span>
             {% elif video.is_draft %}<span class="flix-state is-draft">Ikke udgivet</span>
             {% else %}<span class="flix-state">Udgivet</span>{% endif %}

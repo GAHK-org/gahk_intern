@@ -37,7 +37,7 @@ from core.media import REDIRECT_CACHE_CONTROL
 from residents.models import Resident
 from residents.permissions import current_resident
 
-from . import access, cache, services
+from . import access, cache, dating, services
 from .forms import DeletionRequestForm, SeriesForm, VideoDetailsForm, VoteForm
 from .models import (
     CastMember,
@@ -46,7 +46,9 @@ from .models import (
     Series,
     Tag,
     Video,
+    VideoEvent,
     VideoFrame,
+    ViewEvent,
     key_of,
 )
 from .storage import STREAM_URL_TTL, get_video_storage, presigned_post, signed_url, stored_size
@@ -65,6 +67,9 @@ PICTURES = {
     "thumbnail": ("Miniature", "Den nye miniature", "Miniaturen"),
     "banner": ("Banner", "Det nye banner", "Banneret"),
 }
+# How many of the thumbnails and the banners a video had before the edit page offers to bring back;
+# the history has every one.
+PAST_PICTURES_SHOWN = 6
 
 
 def _json_body(request: HttpRequest) -> dict[str, Any]:
@@ -184,18 +189,27 @@ def series_detail(request: HttpRequest, pk: int) -> HttpResponse:
 
 @access.access_required
 def series_create(request: HttpRequest) -> HttpResponse:
+    """A new series. The edit page's dialog asks for JSON (`?format=json`) and picks the series
+    itself; coming from a page of its own, the edit page is sent back with it picked (`?serie=`)."""
     form = SeriesForm(request.POST or None)
+    wants_json = request.GET.get("format") == "json"
     if request.method == "POST" and form.is_valid():
         series = form.save(commit=False)
         series.created_by = current_resident(request)
         series.save()
+        if wants_json:
+            return JsonResponse({"id": series.pk, "title": series.title}, status=201)
+        back = request.POST.get("next", "")
+        if back.startswith("/intern/gahkflix/"):
+            messages.success(request, f"Serien {series.title} er oprettet og valgt herunder. Husk at gemme.")
+            return redirect(f"{back}?{urlencode({'serie': series.pk})}")
         messages.success(
             request, f"Serien {series.title} er oprettet. Læg dine videoer i den fra deres redigeringsside."
         )
-        back = request.POST.get("next", "")
-        if back.startswith("/intern/gahkflix/"):
-            return redirect(back)
         return redirect("gahkflix:series", series.pk)
+    if wants_json:
+        errors = " ".join(str(message) for field in form.errors.values() for message in field)
+        return JsonResponse({"error": errors or "Serien kunne ikke oprettes."}, status=400)
     return _render(request, "gahkflix/series_form.html", {"form": form, "next": request.GET.get("next", "")})
 
 
@@ -394,6 +408,7 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
             "stats": services.view_stats(video) if access.can_view_stats(request, video) else None,
             "can_edit": access.can_edit(request, video),
             "can_restore": access.can_restore(request, video),
+            "can_view_history": access.can_view_history(request, video),
         },
     )
 
@@ -463,6 +478,9 @@ def play(request: HttpRequest, pk: int) -> HttpResponse:
     config = _player_config(
         video, float(start) if start.replace(".", "", 1).isdecimal() else resume, resident
     )
+    # Opened in the player: a viewing for the statistics, which the player reports on. A draft's
+    # uploader trying it out is not one.
+    config["viewing"] = services.open_viewing(video, resident).pk if video.is_published else None
     if wants_json:
         return JsonResponse(config)
     return _render(request, "gahkflix/play.html", {"video": video, "player": config})
@@ -559,26 +577,39 @@ def frame_image(request: HttpRequest, pk: int, frame: int) -> HttpResponseBase:
     return _picture_response(key_of(get_object_or_404(VideoFrame, pk=frame, video=video).image))
 
 
+def _viewing(request: HttpRequest, video: Video, data: dict[str, Any]) -> ViewEvent | None:
+    """The viewing the player reports on (`viewing` in its config), if it is the reader's own."""
+    pk = data.get("viewing")
+    if not isinstance(pk, int) or isinstance(pk, bool):
+        return None
+    return ViewEvent.objects.filter(pk=pk, video=video, resident=current_resident(request)).first()
+
+
 @access.access_required
 @require_POST
 def record_view(request: HttpRequest, pk: int) -> JsonResponse:
     video = _visible_video(request, pk)
     if not video.is_published:
         return JsonResponse({"counted": False})
-    return JsonResponse({"counted": services.record_view(video, current_resident(request))})
+    viewing = _viewing(request, video, _json_body(request))
+    return JsonResponse({"counted": services.record_view(video, current_resident(request), viewing=viewing)})
 
 
 @access.access_required
 @require_POST
 def save_position(request: HttpRequest, pk: int) -> JsonResponse:
     video = _visible_video(request, pk)
+    data = _json_body(request)
     try:
-        position = float(_json_body(request).get("position", request.POST.get("position", 0)))
+        position = float(data.get("position", request.POST.get("position", 0)))
+        watched = float(data.get("watched", 0) or 0)
     except (TypeError, ValueError):
         return _error("Ugyldig position.")
-    if not math.isfinite(position) or position < 0:
+    if not all(math.isfinite(value) and value >= 0 for value in (position, watched)):
         return _error("Ugyldig position.")
-    watch = services.save_position(video, current_resident(request), position)
+    watch = services.save_position(
+        video, current_resident(request), position, viewing=_viewing(request, video, data), watched=watched
+    )
     return JsonResponse({"position": watch.position, "finished": watch.finished})
 
 
@@ -683,7 +714,7 @@ def upload_commit(request: HttpRequest) -> JsonResponse:
 
 @access.access_required
 def status(request: HttpRequest, pk: int) -> JsonResponse:
-    """What the edit page polls while the file is processed."""
+    """What the edit page polls while the file is processed, or new frames are drawn."""
     video = _visible_video(request, pk)
     if not access.can_edit(request, video):
         raise Http404("no such video")
@@ -693,8 +724,11 @@ def status(request: HttpRequest, pk: int) -> JsonResponse:
             "state": latest.state if latest else "",
             "progress": latest.progress if latest else 0,
             "error": latest.error if latest else "",
+            # While it waits its turn: how many go before it.
+            "ahead": services.queue_ahead(latest) if latest and latest.state == FileState.QUEUED else 0,
             "live": video.file_id is not None,
             "frames": len(services.current_frames(video)),
+            "batch": services.frame_batch(video),
         }
     )
 
@@ -746,25 +780,35 @@ def _report(request: HttpRequest, outcome: services.Outcome) -> None:
 @access.access_required
 def edit(request: HttpRequest, pk: int) -> HttpResponse:
     video = _editable(request, pk)
-    resident = current_resident(request)
-    needs_approval = access.edit_needs_approval(video)
     if request.method == "POST":
         form = VideoDetailsForm(request.POST, video=video)
         if form.is_valid():
             try:
-                outcome = services.edit_video(video, form.details(), resident, needs_approval=needs_approval)
+                outcome = services.edit_video(
+                    video,
+                    form.details(),
+                    current_resident(request),
+                    needs_approval=access.edit_needs_approval(video),
+                )
             except ValidationError as exc:
                 for message in exc.messages:
                     messages.error(request, message)
             else:
                 _report(request, outcome)
                 return redirect("gahkflix:edit", video.pk)
-    else:
-        initial = services.snapshot(video)
-        # The editors (gahkflix.ts) read and write these two as JSON in their hidden inputs.
-        initial["cast"] = json.dumps(initial["cast"], ensure_ascii=False)
-        initial["tags"] = json.dumps(initial["tags"], ensure_ascii=False)
-        form = VideoDetailsForm(initial=initial, video=video)
+        return _edit_page(request, video, form)
+    initial = services.snapshot(video)
+    initial.update(VideoDetailsForm.release_initial(initial.pop("released_on")))
+    # The editors (gahkflix.ts) read and write these two as JSON in their hidden inputs.
+    initial["cast"] = json.dumps(initial["cast"], ensure_ascii=False)
+    initial["tags"] = json.dumps(initial["tags"], ensure_ascii=False)
+    # A series just created on a page of its own (series_create), picked, to be saved with the rest.
+    if (created := request.GET.get("serie", "")).isdecimal() and Series.objects.filter(pk=created).exists():
+        initial["series"] = int(created)
+    return _edit_page(request, video, VideoDetailsForm(initial=initial, video=video))
+
+
+def _edit_page(request: HttpRequest, video: Video, form: VideoDetailsForm) -> HttpResponse:
     latest = video.files.order_by("-created_at", "-pk").first()
     now = timezone.now()
     return _render(
@@ -775,10 +819,15 @@ def edit(request: HttpRequest, pk: int) -> HttpResponse:
             "form": form,
             "latest_file": latest,
             "frames": services.current_frames(video),
-            "needs_approval": needs_approval,
+            "needs_approval": access.edit_needs_approval(video),
             "open_edit": services.open_request(video, ChangeRequest.Kind.EDIT),
             "open_delete": services.open_request(video, ChangeRequest.Kind.DELETE),
             "missing": services.missing_for_publishing(video) if video.is_draft else [],
+            "past_pictures": [
+                picture
+                for kind in PICTURES
+                for picture in services.past_pictures(video, kind)[:PAST_PICTURES_SHOWN]
+            ],
             "can_upload_revision": access.can_upload_revision(request, video),
             "can_delete": access.can_delete_directly(request, video),
             "can_request_deletion": access.can_request_deletion(request, video),
@@ -794,12 +843,14 @@ def edit(request: HttpRequest, pk: int) -> HttpResponse:
 @access.access_required
 @require_POST
 def choose_picture(request: HttpRequest, pk: int) -> HttpResponse:
-    """Use a frame, a moment picked in the player, or an uploaded picture as the thumbnail or the banner."""
+    """Use a frame, a moment picked in the player, an uploaded picture or one the video had before
+    as the thumbnail or the banner."""
     video = _editable(request, pk)
     kind = request.POST.get("kind", "")
     if kind not in PICTURES:
         return HttpResponseBadRequest("unknown picture")
     frame = None
+    origin = ""
     try:
         if frame_id := request.POST.get("frame", ""):
             frame = get_object_or_404(
@@ -811,6 +862,13 @@ def choose_picture(request: HttpRequest, pk: int) -> HttpResponse:
             data = services.picture_at(video, float(at), kind)
         elif (upload_file := request.FILES.get("picture")) is not None:
             data = services.picture_from_upload(upload_file, kind)
+        elif ref := request.POST.get("previous", ""):
+            # One the video had before, as its history names it.
+            earlier = services.past_picture(video, kind, ref)
+            data, origin = services.copy_of(earlier), earlier.origin
+            frame = (
+                VideoFrame.objects.filter(pk=earlier.frame, video=video).first() if earlier.frame else None
+            )
         else:
             messages.error(request, "Vælg et billede.")
             return redirect("gahkflix:edit", video.pk)
@@ -822,6 +880,7 @@ def choose_picture(request: HttpRequest, pk: int) -> HttpResponse:
             frame,
             current_resident(request),
             needs_approval=access.edit_needs_approval(video),
+            origin=origin,
         )
     except ValidationError as exc:
         for message in exc.messages:
@@ -829,6 +888,8 @@ def choose_picture(request: HttpRequest, pk: int) -> HttpResponse:
         return redirect("gahkflix:edit", video.pk)
     if outcome.proposal is not None:
         messages.info(request, f"{PICTURES[kind][1]} er sendt til godkendelse.")
+    elif origin:
+        messages.success(request, f"{PICTURES[kind][2]} er sat tilbage til et tidligere billede.")
     else:
         messages.success(request, f"{PICTURES[kind][2]} er skiftet.")
     return redirect(f"{reverse('gahkflix:edit', args=[video.pk])}#billeder")
@@ -837,31 +898,140 @@ def choose_picture(request: HttpRequest, pk: int) -> HttpResponse:
 @access.access_required
 @require_POST
 def new_frames(request: HttpRequest, pk: int) -> HttpResponse:
+    """Ten new frames to pick from, drawn by the worker. The edit page asks for JSON (`?format=json`):
+    the batch there is now, to wait for the next one and swap it in without reloading."""
     video = _editable(request, pk)
+    wants_json = request.GET.get("format") == "json"
     if video.file is None:
+        if wants_json:
+            return _error("Videoen er ikke færdigbehandlet endnu.", 409)
         messages.error(request, "Videoen er ikke færdigbehandlet endnu.")
-    else:
-        from .tasks import redraw_frames
+        return redirect(f"{reverse('gahkflix:edit', args=[video.pk])}#billeder")
+    from .tasks import redraw_frames
 
-        redraw_frames.delay(video.pk)
-        messages.info(request, "Der findes 10 nye billeder. Genindlæs siden om et øjeblik.")
+    batch = services.frame_batch(video)
+    redraw_frames.delay(video.pk)
+    if wants_json:
+        return JsonResponse({"batch": batch})
+    messages.info(
+        request, "Der tages 10 nye billeder fra videoen. Genindlæs siden om et øjeblik for at se dem."
+    )
     return redirect(f"{reverse('gahkflix:edit', args=[video.pk])}#billeder")
 
 
 @access.access_required
 @require_POST
 def publish(request: HttpRequest, pk: int) -> HttpResponse:
+    """Publish a draft. The edit page sends its details along (the button belongs to that form), and
+    what is typed there is saved first: a draft is never published under what it said before."""
     video = _editable(request, pk)
     if not video.is_draft:
         return redirect("gahkflix:detail", video.pk)
+    resident = current_resident(request)
+    if "title" in request.POST:
+        form = VideoDetailsForm(request.POST, video=video)
+        if not form.is_valid():
+            return _edit_page(request, video, form)
+        try:
+            saved = services.edit_video(
+                video, form.details(), resident, needs_approval=access.edit_needs_approval(video)
+            )
+        except ValidationError as exc:
+            for message in exc.messages:
+                messages.error(request, message)
+            return _edit_page(request, video, form)
+        for note in saved.notes:
+            messages.warning(request, note)
+        video.refresh_from_db()
     try:
-        services.publish(video)
+        services.publish(video, resident)
     except ValidationError as exc:
         for message in exc.messages:
             messages.error(request, message)
         return redirect("gahkflix:edit", video.pk)
     messages.success(request, f"{video.title} er udgivet.")
     return redirect("gahkflix:detail", video.pk)
+
+
+# --- History ------------------------------------------------------------------------------------
+
+
+def _change_rows(
+    event: VideoEvent, series_names: dict[int, str], in_use: dict[str, set[str]] | None
+) -> list[dict[str, Any]]:
+    """What a line of history changed, as rows of (what, before, after). A picture other than the
+    one in use now (services.pictures_in_use) can be brought back from its row, by a reader who may
+    edit the video (`in_use` given)."""
+    rows: list[dict[str, Any]] = []
+    for key, entry in event.changes.items():
+        if not isinstance(entry, dict) or "after" not in entry:
+            continue  # what the line says about itself: the file, the error
+        if key in PICTURES:
+            sides = {picture.side: picture for picture in services.pictures_named(event, key)}
+            rows.append(
+                {
+                    "label": DETAIL_LABELS[key],
+                    "picture": True,
+                    "before": sides.get("before"),
+                    "after": sides.get("after"),
+                    "restorable": [
+                        side
+                        for side, picture in sides.items()
+                        if in_use is not None and picture.origin not in in_use[key]
+                    ],
+                }
+            )
+            continue
+        rows.append(
+            {
+                "label": DETAIL_LABELS.get(key, key),
+                "before": _shown(key, entry.get("before"), series_names),
+                "after": _shown(key, entry["after"], series_names),
+            }
+        )
+    return rows
+
+
+@access.access_required
+def history(request: HttpRequest, pk: int) -> HttpResponse:
+    """Everything that happened to a video: who changed what, and when, with every picture it had."""
+    video = _visible_video(request, pk)
+    if not access.can_view_history(request, video):
+        raise Http404("no such video")
+    can_edit = access.can_edit(request, video)
+    in_use = {kind: services.pictures_in_use(video, kind) for kind in PICTURES} if can_edit else None
+    series_names = dict(Series.objects.values_list("pk", "title"))
+    events = list(video.events.select_related("actor", "request"))
+    requests = video.change_requests.select_related("requested_by")
+    if not access.is_administrator(request):
+        # What other administrators asked or decided about it is theirs to read.
+        requests = requests.filter(requested_by=current_resident(request))
+    return _render(
+        request,
+        "gahkflix/history.html",
+        {
+            "video": video,
+            "events": [
+                {"event": event, "rows": _change_rows(event, series_names, in_use)} for event in events
+            ],
+            # A video uploaded before there was a history has only what happened since.
+            "predates_history": not any(event.kind == VideoEvent.Kind.UPLOADED for event in events),
+            "requests": requests,
+            "can_edit": can_edit,
+        },
+    )
+
+
+@access.access_required
+def history_picture(request: HttpRequest, pk: int, event: int, kind: str, side: str) -> HttpResponseBase:
+    video = _visible_video(request, pk)
+    if not access.can_view_history(request, video) or kind not in PICTURES:
+        raise Http404("no such picture")
+    line = get_object_or_404(VideoEvent, pk=event, video=video)
+    for picture in services.pictures_named(line, kind):
+        if picture.side == side:
+            return _picture_response(picture.key)
+    raise Http404("no such picture")
 
 
 # --- Deleting -----------------------------------------------------------------------------------
@@ -905,7 +1075,7 @@ def restore(request: HttpRequest, pk: int) -> HttpResponse:
     video = get_object_or_404(Video, pk=pk)
     if not access.can_restore(request, video):
         raise PermissionDenied
-    services.restore(video)
+    services.restore(video, current_resident(request))
     messages.success(request, f"{video.title} er gendannet.")
     return redirect("gahkflix:bin")
 
@@ -1033,6 +1203,35 @@ def request_picture(request: HttpRequest, pk: int, kind: str) -> HttpResponseBas
     return _picture_response(proposed["key"])
 
 
+# What each detail is called where a change to it is shown: a proposal, the history.
+DETAIL_LABELS = {
+    "title": "Titel",
+    "description": "Beskrivelse",
+    "released_on": "Udgivelsesdato",
+    "series": "Serie",
+    "season": "Sæson",
+    "episode": "Afsnit",
+    "cast": "Medvirkende",
+    "tags": "Tags",
+    **{kind: names[0] for kind, names in PICTURES.items()},
+}
+
+
+def _shown(key: str, value: Any, series_names: dict[int, str]) -> str:  # noqa: ANN401 — any detail value
+    """A detail's value (as services.snapshot has it) for people to read."""
+    if value in (None, "", []):
+        return "—"
+    if key == "series":
+        return series_names.get(value, "(slettet serie)")
+    if key == "cast":
+        return ", ".join(f"{m['name']} ({m['role']})" if m.get("role") else m["name"] for m in value)
+    if key == "tags":
+        return ", ".join(f"#{name}" for name in value)
+    if key == "released_on":
+        return dating.label(value) or str(value)
+    return str(value)
+
+
 def describe(change: ChangeRequest) -> list[dict[str, Any]]:
     """A proposal as rows of (what, before, after) for people to judge."""
     if change.kind == ChangeRequest.Kind.DELETE:
@@ -1043,36 +1242,13 @@ def describe(change: ChangeRequest) -> list[dict[str, Any]]:
         current = services.snapshot(change.video)
     else:
         return []
-    labels = {
-        "title": "Titel",
-        "description": "Beskrivelse",
-        "recorded_on": "Optaget",
-        "series": "Serie",
-        "season": "Sæson",
-        "episode": "Afsnit",
-        "cast": "Medvirkende",
-        "tags": "Tags",
-        **{kind: names[0] for kind, names in PICTURES.items()},
-    }
     series_names = dict(Series.objects.values_list("pk", "title"))
-
-    def shown(key: str, value: Any) -> str:  # noqa: ANN401
-        if value in (None, "", []):
-            return "—"
-        if key == "series":
-            return series_names.get(value, "(slettet serie)")
-        if key == "cast":
-            return ", ".join(f"{m['name']} ({m['role']})" if m.get("role") else m["name"] for m in value)
-        if key == "tags":
-            return ", ".join(f"#{name}" for name in value)
-        return str(value)
-
     rows = []
     for key, value in change.changes.items():
         if key in PICTURES:
             rows.append(
                 {
-                    "label": labels[key],
+                    "label": DETAIL_LABELS[key],
                     "picture": True,
                     "before": reverse("gahkflix:picture", args=[change.video_id, key])
                     if change.video_id
@@ -1083,9 +1259,9 @@ def describe(change: ChangeRequest) -> list[dict[str, Any]]:
             continue
         rows.append(
             {
-                "label": labels.get(key, key),
-                "before": shown(key, current.get(key)),
-                "after": shown(key, value),
+                "label": DETAIL_LABELS.get(key, key),
+                "before": _shown(key, current.get(key), series_names),
+                "after": _shown(key, value, series_names),
             }
         )
     return rows
