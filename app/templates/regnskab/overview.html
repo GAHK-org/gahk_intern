@@ -44,6 +44,16 @@
         <tbody>{% include "regnskab/_rows.html" with rows=results %}</tbody>
       </table>
     </div>
+  {% else %}
+    <p class="muted text-sm mb-3">Alle alumner på listen i <strong>{{ period_label }}</strong> ({{ alumni|length }}).</p>
+    <div class="overflow-x-auto mb-8">
+      <table cellpadding="6" class="text-sm" style="width:100%; border-collapse:collapse">
+        <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec; white-space:nowrap">
+          <th>Navn</th><th>Værelse</th><th>AK</th><th>Ølkælder</th><th>E-conomic kontonr.</th>
+        </tr></thead>
+        <tbody>{% include "regnskab/_rows.html" with rows=alumni %}</tbody>
+      </table>
+    </div>
   {% endif %}
 
   <div style="border-top:1px solid #e6e8ec; margin-top:2rem; padding-top:1.5rem">
