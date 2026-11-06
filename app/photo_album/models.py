@@ -207,6 +207,13 @@ class AlbumImportState(models.TextChoices):
     FAILED = "failed", "Mislykkedes"
 
 
+class AlbumMergeState(models.TextChoices):
+    QUEUED = "queued", "I kø"
+    BUILDING = "building", "Fletter"
+    READY = "ready", "Flettet"
+    FAILED = "failed", "Mislykkedes"
+
+
 def normalize_name(value: str) -> str:
     """NFC, so the "å" a Mac sends (a + combining ring) and the one Windows sends are one name."""
     return unicodedata.normalize("NFC", value)
@@ -296,8 +303,10 @@ class Album(models.Model):
     """One node of an album tree. A root album sits in a folder; a sub-album has a parent.
 
     `path` is the materialised path of primary keys, root first — "/12/34/56/" for album 56 under 34
-    under 12. Keys rather than names, so renaming never touches it, and albums are never moved, so it
-    is written once and never again. It is what makes the two questions the album page asks cheap:
+    under 12. Keys rather than names, so renaming never touches it, and an album only ever moves when
+    the album above it is merged into another (photo_album.merge), which rewrites the moved
+    subtree's paths and depths in one UPDATE; `save` refuses any other move. It is what makes the two questions
+    the album page asks cheap:
     "everything in this subtree" is one indexed prefix scan (`path LIKE '/12/34/%'`), and "the
     ancestors of this album" is just the path read back. The names along the way — the breadcrumb,
     the folder names inside a downloaded ZIP — are always looked up fresh, never stored.
@@ -578,6 +587,23 @@ class Album(models.Model):
         )
         return (now or timezone.now()) < deadline
 
+    # --- Merging --------------------------------------------------------------------------------
+
+    def active_merge(self) -> "AlbumMerge | None":
+        """The merge under way of this album or of one above it (photo_album.merge), if any.
+
+        Cached like the lock state: the album page and its upload check both ask.
+        """
+        if "merge" not in self._lock_cache:
+            lineage = [*self.ancestor_ids, self.pk]
+            self._lock_cache["merge"] = (
+                AlbumMerge.objects.filter(state__in=AlbumMerge.ACTIVE_STATES)
+                .filter(Q(target_id__in=lineage) | Q(source_id__in=lineage))
+                .select_related("target")
+                .first()
+            )
+        return self._lock_cache["merge"]
+
 
 class Media(models.Model):
     album = models.ForeignKey(Album, on_delete=models.CASCADE, related_name="media")
@@ -747,6 +773,24 @@ class Media(models.Model):
         return self.derivative_state == DerivativeState.READY and bool(self.thumbnail)
 
 
+def locked_album_ids(albums: list[Album], now: datetime | None = None) -> set[int]:
+    """Which of `albums` are locked, by their own lock or one above them: `Album.is_locked` for many
+    at once, in one query. `albums` must hold every one's ancestors too — whole trees, a folder."""
+    by_id = {album.pk: album for album in albums}
+    activity: dict[int, datetime] = {}
+    newest = (
+        Media.objects.filter(album_id__in=by_id, status=MediaStatus.APPROVED, deleted_at__isnull=True)
+        .values_list("album_id")
+        .annotate(newest=Max("added_at"))
+    )
+    for album_id, added_at in newest:
+        for pk in [*by_id[album_id].ancestor_ids, album_id]:  # it is activity in each subtree above
+            if pk in by_id and (pk not in activity or added_at > activity[pk]):
+                activity[pk] = added_at
+    own = {album.pk for album in albums if album._own_lock(activity.get(album.pk), now) is not None}
+    return {album.pk for album in albums if own & {*album.ancestor_ids, album.pk}}
+
+
 class DownloadVariant(models.TextChoices):
     ORIGINAL = "original", "Originaler"
     HIGH_DEFINITION = "hd", "Komprimeret (HD)"
@@ -841,6 +885,43 @@ class AlbumImport(models.Model):
 
     class Meta:
         ordering = ["-created_at", "-pk"]
+
+
+class AlbumMerge(models.Model):
+    """An administrator's merge of `source` into `target`, done by a background worker
+    (photo_album.merge). On success `source` is gone, so where it was is kept here for the notice."""
+
+    target = models.ForeignKey(Album, on_delete=models.CASCADE, related_name="merges")
+    source = models.ForeignKey(
+        Album, null=True, blank=True, on_delete=models.SET_NULL, related_name="merged_into"
+    )
+    # Its names from the folder down ("Sommerfest › Lørdag"): an album may share its name with the
+    # one it is merged into, its own parent above all, and five levels of names are long.
+    source_path = models.CharField(max_length=800)
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="album_merges"
+    )
+    task_id = models.CharField(max_length=36, blank=True)
+    state = models.CharField(max_length=10, choices=AlbumMergeState.choices, default=AlbumMergeState.QUEUED)
+    # What it did (merge.MergeResult): {"moved", "duplicates", "sidecars_kept", "albums_merged",
+    # "albums_moved"}.
+    result = models.JSONField(default=dict, blank=True)
+    error = models.CharField(max_length=255, blank=True)
+    # How far the worker has got ({"step", "done", "total"}) and when it last moved on — what
+    # `fail_stalled_*` tells a slow job from a dead one by. See JOB_STALLED_AFTER.
+    progress = models.JSONField(default=dict, blank=True)
+    progressed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    ACTIVE_STATES = (AlbumMergeState.QUEUED, AlbumMergeState.BUILDING)
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
+
+    @property
+    def is_active(self) -> bool:
+        return self.state in self.ACTIVE_STATES
 
 
 class MediaView(models.Model):
