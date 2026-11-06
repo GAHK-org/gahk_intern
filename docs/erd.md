@@ -597,6 +597,7 @@ erDiagram
         string thumbnail
         string sidecar
         string content_type
+        bool is_raw
         string derivative_state
         int derivative_attempts
         datetime derivative_started_at
@@ -1818,6 +1819,7 @@ erDiagram
         string thumbnail
         string sidecar
         string content_type
+        bool is_raw
         string derivative_state
         int derivative_attempts
         datetime derivative_started_at

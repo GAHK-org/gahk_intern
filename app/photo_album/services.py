@@ -32,6 +32,7 @@ from PIL import ExifTags, Image, ImageFile, ImageOps, ImageSequence, IptcImagePl
 
 from residents.models import Resident
 
+from . import file_metadata, raw
 from .models import (
     MAX_ALBUM_DEPTH,
     MEDIA_VIEW_DEDUPE_WINDOW,
@@ -56,8 +57,10 @@ from .uploads import (
     check_media_content,
     check_media_upload,
     content_type_for,
+    is_raw,
     is_video,
     parse_video_creation_time,
+    size_limit,
 )
 
 logger = logging.getLogger(__name__)
@@ -229,6 +232,7 @@ def store_upload(
         approved_by=resident if status == MediaStatus.APPROVED else None,
         approved_at=timezone.now() if status == MediaStatus.APPROVED else None,
         content_type=content_type_for(filename) or getattr(uploaded_file, "content_type", "") or "",
+        is_raw=is_raw(uploaded_file),
         metadata=extract_metadata(uploaded_file),
         captured_at=extract_captured_at(uploaded_file),
         file_modified_at=file_modified_at,
@@ -581,11 +585,11 @@ def _plan_import(
     *,
     merge: bool = False,
     root_name: str = "",
+    limit_video_size: bool = True,
     progress: Progress = no_progress,
 ) -> _ImportPlan:
     """Pass one: read, check and extract everything, collecting EVERY reason to refuse the import."""
     plan = _ImportPlan(root_name=normalize_name(root_name or Path(archive_name or "album.zip").stem))
-    maximum_bytes = max(settings.PHOTO_ALBUM_IMAGE_MAX_MB, settings.PHOTO_ALBUM_VIDEO_MAX_MB) * 1024 * 1024
     candidates: list[tuple[zipfile.ZipInfo, str, PurePosixPath]] = []
     # Member name -> its AppleDouble sidecar (the sidecar's own member name, and its bytes). Kept
     # with that file; listed as skipped, below, only when the file is not imported.
@@ -667,7 +671,7 @@ def _plan_import(
                 plan.errors.append(f'Mappen "{folder_name}": {" ".join(exc.messages)}')
 
         upload = SimpleNamespace(name=path.name, content_type="", size=member.file_size)
-        if error := check_media_upload(upload):
+        if error := check_media_upload(upload, limit_video_size=limit_video_size):
             plan.errors.append(f"{name}: {error}")
             continue
         target = workdir / f"{index}{Path(path.name).suffix.lower()}"
@@ -676,7 +680,8 @@ def _plan_import(
                 zip_archive,
                 member,
                 target,
-                maximum_bytes,
+                # A file with no limit may still be no larger than its header says.
+                size_limit(path.name, limit_video_size=limit_video_size) or member.file_size,
                 partial(progress, "checking", index, len(candidates)),
             )
         except (OSError, RuntimeError, zipfile.BadZipFile, EOFError) as exc:
@@ -762,6 +767,9 @@ def import_zip_album(
     import does not descend through single folders. A retry of a few files from one sub-album would
     otherwise be named after that sub-album rather than merged into the album it belongs to.
 
+    A video from the import script may be of any size (uploads.size_limit); from anyone else, it is
+    held to PHOTO_ALBUM_VIDEO_MAX_MB as an upload is.
+
     `progress` is told how far each pass has got, as ("checking" | "storing", done, total).
 
     Returns the albums (root first), the log of files deliberately left out and how many were
@@ -779,6 +787,7 @@ def import_zip_album(
                     Path(directory),
                     merge=merge,
                     root_name=root_name,
+                    limit_video_size=not is_import_script(resident),
                     progress=progress,
                 )
         except zipfile.BadZipFile as exc:
@@ -1004,25 +1013,42 @@ def image_variants(uploaded_file: File, filename: str) -> Variants | None:
     """Build the viewer and grid JPEGs for one image, or None if it cannot be decoded.
 
     An animated GIF keeps its animation in the viewer: its high-definition variant is a GIF, not a
-    JPEG of the first frame. The grid thumbnail is still a JPEG of the first frame.
+    JPEG of the first frame. The grid thumbnail is still a JPEG of the first frame. A RAW file is
+    decoded by LibRaw (raw.decode).
+
+    The viewer JPEG carries the original's EXIF, IPTC and XMP (file_metadata.copy_metadata), as it
+    is what "Komprimeret (HD)" downloads. The thumbnail does not: nobody downloads it, and a camera's
+    metadata can weigh more than the thumbnail itself.
     """
     try:
         uploaded_file.seek(0)
-        with Image.open(uploaded_file) as source:
-            if source.format == "GIF" and getattr(source, "is_animated", False):
-                high_definition = _animated_gif_variant(source, uploaded_file, filename, HIGH_DEFINITION_SIZE)
-                source.seek(0)
-                first_frame = source.convert("RGB")
-                return Variants(high_definition, _jpeg_variant(first_frame, filename, THUMBNAIL_SIZE))
-            # The colour profile only means something for an RGB source. A CMYK or greyscale profile
-            # attached to the RGB JPEG we write would make browsers render it in nonsense colours.
-            icc_profile = source.info.get("icc_profile") if source.mode in {"RGB", "RGBA", "RGBX"} else None
-            # Let libjpeg decode at a reduced scale where it can: a 48-megapixel phone photo is
-            # decoded at an eighth of the work, and is still larger than the viewer size.
-            source.draft("RGB", (HIGH_DEFINITION_SIZE, HIGH_DEFINITION_SIZE))
-            image = ImageOps.exif_transpose(source).convert("RGB")
+        if is_raw(uploaded_file):
+            original = uploaded_file.read()
+            # LibRaw's picture is sRGB, which is what a JPEG without a colour profile is taken to be.
+            image, icc_profile = raw.decode(original, HIGH_DEFINITION_SIZE), None
+        else:
+            with Image.open(uploaded_file) as source:
+                if source.format == "GIF" and getattr(source, "is_animated", False):
+                    high_definition = _animated_gif_variant(
+                        source, uploaded_file, filename, HIGH_DEFINITION_SIZE
+                    )
+                    source.seek(0)
+                    first_frame = source.convert("RGB")
+                    return Variants(high_definition, _jpeg_variant(first_frame, filename, THUMBNAIL_SIZE))
+                # The colour profile only means something for an RGB source. A CMYK or greyscale
+                # profile attached to the RGB JPEG we write would make browsers render it in nonsense
+                # colours.
+                icc_profile = (
+                    source.info.get("icc_profile") if source.mode in {"RGB", "RGBA", "RGBX"} else None
+                )
+                # Let libjpeg decode at a reduced scale where it can: a 48-megapixel phone photo is
+                # decoded at an eighth of the work, and is still larger than the viewer size.
+                source.draft("RGB", (HIGH_DEFINITION_SIZE, HIGH_DEFINITION_SIZE))
+                image = ImageOps.exif_transpose(source).convert("RGB")
+            uploaded_file.seek(0)
+            original = uploaded_file.read()
         return Variants(
-            _jpeg_variant(image, filename, HIGH_DEFINITION_SIZE, icc_profile),
+            _jpeg_variant(image, filename, HIGH_DEFINITION_SIZE, icc_profile, metadata_from=original),
             _jpeg_variant(image, filename, THUMBNAIL_SIZE, icc_profile),
         )
     except (ImportError, OSError, ValueError, SyntaxError, Image.DecompressionBombError):
@@ -1032,8 +1058,15 @@ def image_variants(uploaded_file: File, filename: str) -> Variants | None:
 
 
 def _jpeg_variant(
-    image: Image.Image, filename: str, maximum_dimension: int, icc_profile: bytes | None = None
+    image: Image.Image,
+    filename: str,
+    maximum_dimension: int,
+    icc_profile: bytes | None = None,
+    *,
+    metadata_from: bytes | None = None,
 ) -> ContentFile:
+    """`image` as a JPEG of at most `maximum_dimension` pixels, with the metadata of the file
+    `metadata_from` when given."""
     variant = image.copy()
     variant.thumbnail((maximum_dimension, maximum_dimension))
     output = BytesIO()
@@ -1041,7 +1074,10 @@ def _jpeg_variant(
     if icc_profile:
         options["icc_profile"] = icc_profile
     variant.save(output, **options)
-    return ContentFile(output.getvalue(), name=f"{Path(filename).stem}.jpg")
+    data = output.getvalue()
+    if metadata_from is not None:
+        data = file_metadata.copy_metadata(metadata_from, data, variant.size)
+    return ContentFile(data, name=f"{Path(filename).stem}.jpg")
 
 
 def _animated_gif_variant(
@@ -1110,6 +1146,25 @@ def _copy_to_disk(uploaded_file: File, directory: Path, filename: str) -> Path:
 HIGH_DEFINITION_VIDEO_SCALE = (
     f"scale='min({HIGH_DEFINITION_SIZE},iw)':'min({HIGH_DEFINITION_SIZE},ih)'"
     ":force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2"
+)
+
+# The video's own metadata — when and where it was recorded, the camera — carried into its copy.
+# ffmpeg copies a little of it by itself, but leaves out the recording time (`creation_time`, which
+# only an explicit -map_metadata keeps) and everything an iPhone writes as a QuickTime key
+# (com.apple.quicktime.location.ISO6709, .make, .model, .creationdate), which an MP4 only holds with
+# use_metadata_tags. That also writes the source's container brands as keys of their own, so those
+# three are dropped: the MP4 has its own.
+KEEP_VIDEO_METADATA = (
+    "-map_metadata",
+    "0",
+    "-metadata",
+    "major_brand=",
+    "-metadata",
+    "minor_version=",
+    "-metadata",
+    "compatible_brands=",
+    "-movflags",
+    "+faststart+use_metadata_tags",
 )
 
 # Subtitle formats that are text, so can be carried into the MP4 as its own text format (mov_text).
@@ -1188,8 +1243,7 @@ def _encode_video(ffmpeg: str, source: Path, directory: Path, filename: str) -> 
         "23",
         "-c:a",
         "aac",
-        "-movflags",
-        "+faststart",
+        *KEEP_VIDEO_METADATA,
         str(high_definition),
     )
     _add_text_subtitles(ffmpeg, source, high_definition, probe, filename)
@@ -1241,8 +1295,7 @@ def _add_text_subtitles(
             "copy",
             "-c:s",
             "mov_text",
-            "-movflags",
-            "+faststart",
+            *KEEP_VIDEO_METADATA,
             str(with_subtitles),
         )
     except subprocess.CalledProcessError as exc:
@@ -1348,11 +1401,19 @@ def ffmpeg_failure(exc: subprocess.CalledProcessError) -> str:
     return f"ffmpeg exited with {exc.returncode}: {said or 'no message'}"
 
 
+def _open_for_metadata(uploaded_file: File) -> ImageFile.ImageFile:
+    """Pillow's view of a file, for its metadata. Pillow cannot open a RAW file, so it is given a
+    JPEG carrying the RAW file's metadata instead (file_metadata.carrier)."""
+    uploaded_file.seek(0)
+    if is_raw(uploaded_file):
+        return Image.open(BytesIO(file_metadata.carrier(uploaded_file.read())))
+    return Image.open(uploaded_file)
+
+
 def extract_metadata(uploaded_file: File) -> dict[str, str]:
     """Read EXIF when Pillow is available; unsupported files remain valid uploads."""
     try:
-        uploaded_file.seek(0)
-        exif = Image.open(uploaded_file).getexif()
+        exif = _open_for_metadata(uploaded_file).getexif()
         values = {
             ExifTags.TAGS.get(key, str(key)): value
             for key, value in {**dict(exif.items()), **_exif_ifd(exif)}.items()
@@ -1380,8 +1441,7 @@ def extract_captured_at(uploaded_file: File) -> datetime | None:
     and Picasa), and where some editors leave it after dropping the EXIF block.
     """
     try:
-        uploaded_file.seek(0)
-        with Image.open(uploaded_file) as image:
+        with _open_for_metadata(uploaded_file) as image:
             return _exif_captured_at(image.getexif()) or _xmp_captured_at(image) or _iptc_captured_at(image)
     except (ImportError, OSError, TypeError, ValueError):
         return None
