@@ -219,10 +219,12 @@ a.flix-chip:hover { border-color: #fff; }
 }
 
 .flix-stats { padding: 14px 18px; border-radius: 6px; background: var(--flix-surface); border: 1px solid #2c2c2c; }
-.flix-stats-head { display: flex; flex-wrap: wrap; gap: 22px; margin-bottom: 14px; }
-.flix-stat { display: flex; flex-direction: column-reverse; }
-.flix-stat b { display: block; font-size: 26px; font-weight: 600; color: #fff; }
+.flix-stats-head { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 16px 22px; margin-bottom: 14px; }
+/* The figure first, then what it is, then what to make of it. */
+.flix-stat { display: flex; flex-direction: column; }
+.flix-stat b { order: -1; display: block; font-size: 26px; font-weight: 600; color: #fff; }
 .flix-stat span { font-size: 12px; color: var(--flix-muted); }
+.flix-stat small { margin-top: 2px; font-size: 12px; color: var(--flix-faint); }
 .flix-chart { margin: 4px 0 0; }
 .flix-chart figcaption { font-size: 13px; color: var(--flix-muted); margin-bottom: 8px; }
 .flix-chart-plot { position: relative; padding-top: 14px; }
@@ -307,6 +309,18 @@ body.flix-play, body.flix-player-open { overflow: hidden; background: #000; }
 .flix input:focus, .flix textarea:focus, .flix select:focus { outline: 2px solid #fff; outline-offset: 0; border-color: #fff; }
 .flix .errorlist { list-style: none; margin: 6px 0 0; padding: 0; color: #ff8a8f; font-size: 14px; }
 .flix-form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0 14px; }
+/* The release date: day, month and year side by side, only the year needed. */
+.flix-date { min-width: 0; margin: 0; padding: 0; border: 0; }
+.flix-date legend { margin: 14px 0 6px; padding: 0; font-size: 14px; font-weight: 700; color: #ddd; }
+.flix-date-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr) minmax(0, 1.2fr); gap: 8px; max-width: 440px; }
+/* What was typed and put back after the page reloaded, not saved yet. */
+.flix-unsaved { margin: 10px 0 4px; padding: 10px 12px; border-radius: 4px; background: #2b2410; border: 1px solid #5b4a10; color: #f1dc8f; font-size: 14px; }
+.flix-unsaved[hidden] { display: none; }
+.flix-unsaved button { margin-left: 4px; padding: 0; border: 0; background: none; color: #fff; font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
+.flix-dialog { width: min(480px, calc(100vw - 32px)); box-sizing: border-box; padding: 22px; border: 1px solid #333; border-radius: 8px; background: var(--flix-surface); color: var(--flix-ink); box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+.flix-dialog::backdrop { background: rgba(0,0,0,.7); }
+.flix-dialog h2 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+.flix-dialog p { font-size: 14px; margin: 4px 0 0; }
 .flix-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 18px; }
 .flix-two { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 0 22px; align-items: start; }
 @media (max-width: 960px) { .flix-two { grid-template-columns: 1fr; } }
@@ -384,7 +398,7 @@ body.flix-play, body.flix-player-open { overflow: hidden; background: #000; }
 .flix-year { scroll-margin-top: 130px; }
 .flix-year > h2 { font-size: clamp(28px, 4vw, 52px); font-weight: 800; color: #fff; margin: 34px 0 6px; }
 .flix-month { margin: 14px 0 22px; }
-.flix-month h3 { font-size: 15px; font-weight: 700; color: var(--flix-muted); text-transform: capitalize; margin-bottom: 10px; }
+.flix-month h3 { font-size: 15px; font-weight: 700; color: var(--flix-muted); margin-bottom: 10px; }
 
 .flix-people { display: flex; flex-wrap: wrap; gap: 8px; }
 .flix-person { display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px 4px 4px; border-radius: 999px; background: var(--flix-surface-2); text-decoration: none; font-size: 14px; }
@@ -393,3 +407,12 @@ body.flix-play, body.flix-player-open { overflow: hidden; background: #000; }
 .flix-person-head { display: flex; align-items: center; gap: 18px; margin-bottom: 22px; }
 .flix-person-head img, .flix-person-head .flix-initials { width: 84px; height: 84px; font-size: 28px; border-radius: 50%; object-fit: cover; }
 .flix-empty { padding: 40px 0; color: var(--flix-muted); font-size: 16px; }
+
+/* --- A video's history ------------------------------------------------------------------------- */
+.flix-history { list-style: none; margin: 0; padding: 0; }
+.flix-history-item { margin-bottom: 12px; padding: 14px 18px; }
+.flix-history-item > .flix-history-when { margin: 0; font-size: 13px; color: var(--flix-faint); }
+.flix-history-item > .flix-history-what { margin: 2px 0 0; font-size: 15px; color: var(--flix-ink); }
+.flix-history .flix-table { margin-top: 10px; table-layout: fixed; }
+.flix-history .flix-table th:first-child { width: 120px; }
+.flix-history-restore { margin-top: 6px; }

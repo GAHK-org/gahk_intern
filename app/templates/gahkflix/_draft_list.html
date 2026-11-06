@@ -8,7 +8,7 @@
       <div>
         <h3><a href="{% url 'gahkflix:edit' video.pk %}">{{ video.title }}</a></h3>
         {% with latest=video.latest_file %}
-          {% if latest.is_pending %}<p><span class="flix-state">Behandles · {{ latest.progress }} %</span></p>
+          {% if latest.is_pending %}<p>{% file_state latest %}</p>
           {% elif latest.state == "failed" %}<p><span class="flix-state is-failed">Mislykkedes</span> {{ latest.error }}</p>
           {% else %}<p><span class="flix-state is-draft">Ikke udgivet</span>{% if not video.has_pictures %} Mangler miniature eller banner.{% endif %}</p>{% endif %}
           <p>{{ latest.original_name }} · uploadet {{ video.created_at|date:"j. F Y" }} · slettes {{ video.draft_deleted_on|date:"j. F Y" }}, hvis den ikke er udgivet inden.</p>

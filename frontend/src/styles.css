@@ -51,6 +51,12 @@
   .btn-secondary:hover { background:var(--surface-2); border-color:var(--faint); color:var(--ink); }
   .btn-danger { background:var(--neg-bg); border-color:#e7c7c3; color:var(--neg); }
   .btn-danger:hover { background:#f0d7d3; color:var(--neg); }
+  /* A small busy ring for a .btn whose request takes a while (regnskab's alumneregninger). Takes the
+     button's text colour, so it reads on any variant. */
+  .spinner { flex:none; width:14px; height:14px; box-sizing:border-box; border:2px solid currentColor; border-top-color:transparent; border-radius:50%; animation:spinner-spin .8s linear infinite; }
+  @keyframes spinner-spin { to { rotate:360deg; } }
+  @media (prefers-reduced-motion:reduce) { .spinner { animation-duration:2.4s; } }
+  .btn[aria-busy="true"] { cursor:progress; opacity:.85; }
   :focus-visible { outline:2px solid var(--green); outline-offset:2px; border-radius:8px; }
 
   .chip { display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:650; line-height:1.4;
