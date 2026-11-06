@@ -39,6 +39,13 @@ storing only files it does not have (the same name with other content is a diffe
 kept). The album has to be unlocked on the site first. What the server took is deleted; what is
 still invalid stays.
 
+--rename-albums goes through the imported albums the server named after a folder inside their
+Dropbox folder — it descends through every level holding one folder and no files, so
+"2014/GAHK Color Run", holding only "101GOPRO/" (and metadata), became an album "101GOPRO". For each
+it offers: skip (ask again next time), keep the leaf folder's name, use the parent folder's name,
+join the folder names with a space, or a name of your own; and renames the album on the server,
+locked or not. It needs no Dropbox access, and remembers every answer but "skip".
+
 --send-dates sends the AppleDouble sidecars saved in each imported album's metadata/ folder (the old
 file server's record of every file's own dates) to the server, which keeps each with its photo and
 dates the album's photos by them, as an import now does itself. For albums imported before the
@@ -59,6 +66,7 @@ Usage:
     uv run scripts/import_dropbox_photo_albums.py --retry-failed --year 2019  # send failed albums again
     uv run scripts/import_dropbox_photo_albums.py --retry-invalid .dropbox-photo-album-import/2019/Sommerfest
     uv run scripts/import_dropbox_photo_albums.py --send-dates --year-range 2001-2006
+    uv run scripts/import_dropbox_photo_albums.py --rename-albums --year 2014   # --dry-run lists them
     uv run scripts/import_dropbox_photo_albums.py --overview   # NOT-ON-SERVER.md again, after a clean-up
 
 Resuming: progress is saved in <work-dir>/state.json after every step, so stopping (Ctrl-C, a lost
@@ -238,6 +246,11 @@ class State:
             **entry,
             "at": datetime.now(UTC).isoformat(timespec="seconds"),
         }
+        self._write()
+
+    def update(self, key: str, **changes: object) -> None:
+        """Change some fields of an entry, keeping the rest — its time included."""
+        self.albums[key] = {**self.albums[key], **changes}
         self._write()
 
     def drop(self, key: str) -> None:
@@ -770,6 +783,25 @@ class Server:
                 f"    … {what}: HTTP {response.status_code}; retrying in {wait}s ({busy}/{RETRIES - 1})"
             )
             time.sleep(wait)
+
+    def rename(self, folder: str, album: str, name: str) -> dict[str, Any]:
+        """Rename the root album `album` in `folder` (locked or not); returns it as it is now."""
+        response = self._request(
+            "POST",
+            f"{self.endpoint}/omdoeb",
+            what=f"rename {folder}/{album}",
+            data={"folder": folder, "album": album, "name": name},
+            timeout=60,
+        )
+        if response.status_code == 404 and "errors" not in response.text:
+            raise Fatal(
+                f"{self.endpoint}/omdoeb does not exist. Is the server running a version that renames albums?"
+            )
+        if response.status_code != 200:
+            raise AlbumFailed(
+                f"The server did not rename {folder}/{album}:", form_errors(response)
+            )
+        return dict(response.json())
 
     def send_dates(self, archive: bytes, folder: str, album: str) -> dict[str, Any]:
         """Send an album's sidecars (photo_album.services.apply_sidecars); returns what it did."""
@@ -2128,6 +2160,188 @@ def send_dates(
     return 0
 
 
+# --- Renaming albums named after a folder inside the album folder --------------------------------
+
+
+@dataclass
+class Misnamed:
+    """An imported album the server named after a folder inside its Dropbox folder.
+
+    The server descends through every level that holds one folder and no files, and names the album
+    after where it stops: "2014/GAHK Color Run", holding a ._.DS_Store and "101GOPRO/", became an
+    album "101GOPRO" — nothing on the site says where the videos are from.
+    """
+
+    album_path: str  # the Dropbox folder, the state's key
+    year: str
+    # From the Dropbox folder down to the one the album is named after: ("GAHK Color Run", "101GOPRO").
+    folders: tuple[str, ...]
+    album: str  # its name on the server
+
+    @property
+    def choices(self) -> dict[str, tuple[str, str | None]]:
+        """Answer -> (what it does, the name it gives; None to leave the name be)."""
+        leaf, parent = self.folders[-1], self.folders[0]
+        return {
+            "1": ("Skip — ask again next time", None),
+            "2": (f"Keep the leaf folder name: {leaf}", leaf),
+            "3": (f"Use the parent folder name: {parent}", parent),
+            "4": (
+                f"Join the folder names: {' '.join(self.folders)}",
+                " ".join(self.folders),
+            ),
+            "5": ("Enter a custom name", None),
+        }
+
+
+def misnamed_albums(state: State, work_dir: Path, selected: set[str]) -> list[Misnamed]:
+    """The imported albums whose name is not their Dropbox folder's, and not settled yet.
+
+    The folders in between come from the album's album.json (its `prefix`: the folders the server
+    descended through); without one, only the outer folder and the name are known.
+    """
+    found = []
+    for album_path, entry in sorted(state.albums.items()):
+        year, folder_name = PurePosixPath(album_path).parts[-2:]
+        album = entry.get("album") or folder_name
+        if (
+            entry.get("status") != "imported"
+            or entry.get("nameSettled")
+            or (selected and year not in selected)
+            or same_name(album) == same_name(folder_name)
+        ):
+            continue
+        prefix: tuple[str, ...] = ()
+        try:
+            manifest = json.loads(
+                (work_dir / year / folder_name / "album.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            prefix = tuple(manifest["prefix"])
+        except (OSError, ValueError, KeyError):
+            pass
+        if not prefix or same_name(prefix[-1]) != same_name(album):
+            prefix = (album,)
+        found.append(Misnamed(album_path, year, (folder_name, *prefix), album))
+    return found
+
+
+def choose_name(case: Misnamed) -> str | None:
+    """Ask what the album is to be called. None: skip it for now."""
+    out.info(f"  In Dropbox: {' / '.join(case.folders)}")
+    out.info(f"  On the site: {case.year} / {case.album}")
+    for key, (label, _) in case.choices.items():
+        out.info(f"    {key}) {label}")
+    while True:
+        answer = input("  Choose 1-5: ").strip()
+        if answer not in case.choices:
+            print("  Answer 1, 2, 3, 4 or 5.")
+            continue
+        if answer == "1":
+            return None
+        if answer == "5":
+            custom = input("  New name (empty to go back): ").strip()
+            if not custom:
+                continue
+            return custom
+        return case.choices[answer][1]
+
+
+def renamed_paths(paths: list[str], old: str, new: str) -> list[str]:
+    """The state's album paths ("101GOPRO / Sub") with the root renamed."""
+    return [
+        new + path[len(old) :] if path == old or path.startswith(f"{old} / ") else path
+        for path in paths
+    ]
+
+
+def rename_albums(
+    server: Server, state: State, options: Options, selected: set[str]
+) -> int:
+    """--rename-albums: go through the imported albums named after a folder inside their Dropbox
+    folder, ask what each is to be called, and rename it on the server — locked or not. The answer
+    is remembered: an album kept or renamed is not asked about again; a skipped one is.
+
+    The new name is written to state.json and the album's album.json too, which --retry-invalid
+    and --send-dates find the album by."""
+    cases = misnamed_albums(state, options.work_dir, selected)
+    if not cases:
+        out.info("No imported album is named after a folder inside its Dropbox folder.")
+        return 0
+    out.info(f"{len(cases)} album(s) named after a folder inside their Dropbox folder.")
+    if options.dry_run:
+        for case in cases:
+            out.info(
+                f"  {case.year}/{' / '.join(case.folders)}  ->  on the site: {case.album}"
+            )
+        return 0
+    if not sys.stdin.isatty():
+        die("--rename-albums asks about each album; run it in a terminal.")
+    on_server: dict[str, set[str]] = {}
+    results = {"renamed": 0, "kept": 0, "skipped": 0, "missing": 0}
+    for case in cases:
+        out.heading(f"{case.year}/{case.folders[0]}")
+        if case.year not in on_server:
+            on_server[case.year], _ = server.albums(case.year)
+        if same_name(case.album) not in on_server[case.year]:
+            out.warn(
+                f'  There is no album "{case.album}" in {case.year} on the site any more (renamed or deleted there?) — skipped.'
+            )
+            results["missing"] += 1
+            continue
+        while True:
+            name = choose_name(case)
+            if name is None:
+                out.info("  Skipped; you will be asked again next time.")
+                results["skipped"] += 1
+                break
+            if name == case.album:
+                state.update(case.album_path, nameSettled=True)
+                out.ok(f'  ✓ Kept as "{name}".')
+                results["kept"] += 1
+                break
+            try:
+                renamed = server.rename(case.year, case.album, name)
+            except AlbumFailed as failure:
+                out.error(f"  ✗ {failure.summary}")
+                for line in failure.details:
+                    out.error(f"      {line}")
+                continue  # ask again: another name may do
+            new = renamed["name"]
+            entry = state.get(case.album_path)
+            state.update(
+                case.album_path,
+                album=new,
+                albums=renamed_paths(entry.get("albums", []), case.album, new),
+                renamedFrom=case.album,
+                nameSettled=True,
+            )
+            manifest_path = (
+                options.work_dir / case.year / case.folders[0] / "album.json"
+            )
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                pass
+            else:
+                manifest["album"] = new
+                manifest_path.write_text(
+                    json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+                )
+            on_server[case.year].discard(same_name(case.album))
+            on_server[case.year].add(same_name(new))
+            out.ok(f'  ✓ Renamed "{case.album}" to "{new}".')
+            results["renamed"] += 1
+            break
+    out.heading("Summary")
+    out.info(
+        f"  {results['renamed']} renamed, {results['kept']} kept, {results['skipped']} skipped"
+        + (f", {results['missing']} not on the site" if results["missing"] else "")
+    )
+    return 0
+
+
 # --- Helpers ------------------------------------------------------------------------------------
 
 
@@ -2449,6 +2663,13 @@ def main() -> int:
         help="send the sidecars saved for albums already imported, so the server dates their photos by them",
     )
     parser.add_argument(
+        "--rename-albums",
+        action="store_true",
+        help="go through the imported albums the server named after a folder inside their Dropbox"
+        " folder (2014/GAHK Color Run became 101GOPRO), and rename each as you choose;"
+        " needs no Dropbox access",
+    )
+    parser.add_argument(
         "--overview",
         action="store_true",
         help=f"write {OVERVIEW} again from what is known, after you have dealt with some files;"
@@ -2475,9 +2696,9 @@ def main() -> int:
     ):
         die(f"Not a year: {', '.join(invalid)}")
 
-    if args.send_dates and args.retry_invalid:
+    if sum(map(bool, (args.send_dates, args.retry_invalid, args.rename_albums))) > 1:
         die(
-            "--send-dates and --retry-invalid are two different runs; pass one of them."
+            "--send-dates, --retry-invalid and --rename-albums are different runs; pass one of them."
         )
     if args.retry_invalid:
         album_dir = args.retry_invalid
@@ -2519,6 +2740,17 @@ def main() -> int:
             return 2
         finally:
             report_not_on_server(ledger)
+    if args.rename_albums:
+        try:
+            return rename_albums(server, state, options, selected)
+        except KeyboardInterrupt:
+            out.error(
+                "\n✗ Stopped. What you answered is saved; run the same command again for the rest."
+            )
+            return 130
+        except Fatal as exc:
+            out.failure("renaming albums", str(exc), [])
+            return 2
     if args.send_dates:
         try:
             return send_dates(server, ledger, options, state, selected)

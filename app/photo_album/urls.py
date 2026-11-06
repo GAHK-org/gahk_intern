@@ -17,6 +17,7 @@ urlpatterns = [
     path("importer-zip/system/albummer", views.system_albums, name="system_albums"),
     path("importer-zip/system/upload", views.system_import_upload, name="system_import_upload"),
     path("importer-zip/system/datoer", views.system_sidecar_dates, name="system_sidecar_dates"),
+    path("importer-zip/system/omdoeb", views.system_rename_album, name="system_rename_album"),
     path("importer-zip/<uuid:token>/status", views.import_zip_status, name="import_zip_status"),
     path("downloads", views.downloads, name="downloads"),
     path("downloads/<uuid:token>", views.download_album_archive, name="download_album_archive"),
