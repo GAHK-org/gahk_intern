@@ -42,7 +42,7 @@ dependencies = [
     "requests>=2.32", # e-conomic REST API client (residents.economic) for alumneregning automation
     "fpdf2>=2.8", # renders alumneregning statement PDFs from the local ledger; pure Python, no
     # system binary (unlike wkhtmltopdf/weasyprint), so the Docker image needs no extra packages
-    "pypdf>=6.21.2", # merges the regnskab-uploaded følgebrev PDF in front of the generated alumneregning
+    "pypdf>=6.21.4,<7", # merges the regnskab-uploaded følgebrev PDF in front of the generated alumneregning
     # statement into one PDF; pure Python, no system binary
     "rawpy>=0.27", # LibRaw: decodes camera RAW files (CR2, NEF, ARW, DNG, …) for the photo album's copies
     # exiv2: copies EXIF/IPTC/XMP into the photo album's HD copies and reads RAW files' metadata. Its
