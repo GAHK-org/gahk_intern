@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 import functools
 import logging
 import zoneinfo
@@ -31,19 +31,19 @@ from . import admin_summary
 # A day is long enough to be no help to a worker (a message is acknowledged within seconds of being
 # taken) and short enough to keep the table small; it exists only so an operator looking into a
 # failure this morning still has the rows in front of them.
-BROKER_MESSAGE_RETENTION = datetime.timedelta(days=1)
+BROKER_MESSAGE_RETENTION = dt.timedelta(days=1)
 
 # How long a SUCCESSFUL job is kept on the worker-jobs page: its result (celery_taskmeta) and its
 # log (core/worker_logs.py) alike. Longer than any month, so the monthly summary on the 1st
 # (core.admin_summary) still counts the whole of a 31-day month, even sent a few days late.
-WORKER_JOB_RETENTION = datetime.timedelta(days=35)
+WORKER_JOB_RETENTION = dt.timedelta(days=35)
 
 # Any other job — failed, revoked, or stuck as started by a worker that died — is one somebody may
 # need to look into, so it is kept far longer, and only a pile of the same goes: per task and status,
 # the newest UNSUCCESSFUL_JOBS_KEPT are always kept, and of those beyond them, the ones older than
 # UNSUCCESSFUL_JOB_RETENTION are purged. 1500 revoked notify_admin_access_request jobs lose their
 # oldest 500 once those are 60 days old; 300 failed ones of the same task are another pile, and stay.
-UNSUCCESSFUL_JOB_RETENTION = datetime.timedelta(days=60)
+UNSUCCESSFUL_JOB_RETENTION = dt.timedelta(days=60)
 UNSUCCESSFUL_JOBS_KEPT = 1000
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,7 @@ _FAILURE = "FAILURE"
 
 # How far past its hard time limit a job Celery still has as running must be before it is taken
 # for lost. At the limit the worker kills it and records the failure itself; this is its moment to.
-LOST_JOB_GRACE = datetime.timedelta(minutes=10)
+LOST_JOB_GRACE = dt.timedelta(minutes=10)
 LOST_JOB_TRACEBACK = (
     "WorkerLostError: the job never finished. Its worker was killed outright (out of memory, a "
     "redeploy) and nothing recorded the end, so core.tasks.close_lost_jobs closed it."
@@ -72,11 +72,11 @@ def _task_registry() -> Mapping[str, Any]:
     return celery_app.tasks
 
 
-def task_time_limit(task_name: str) -> datetime.timedelta:
+def task_time_limit(task_name: str) -> dt.timedelta:
     """How long a job of this task may run before the worker kills it: its own hard limit, or the
     global one."""
     task = _task_registry().get(task_name)
-    return datetime.timedelta(seconds=getattr(task, "time_limit", None) or settings.CELERY_TASK_TIME_LIMIT)
+    return dt.timedelta(seconds=getattr(task, "time_limit", None) or settings.CELERY_TASK_TIME_LIMIT)
 
 
 @shared_task
@@ -189,7 +189,7 @@ def close_lost_jobs() -> int:
                 " WHERE task_id = %s AND status = %s",
                 [
                     _FAILURE,
-                    ended_at.astimezone(datetime.UTC).replace(tzinfo=None),
+                    ended_at.astimezone(dt.UTC).replace(tzinfo=None),
                     LOST_JOB_TRACEBACK,
                     task_id,
                     _STARTED,
@@ -223,7 +223,7 @@ def purge_worker_job_results() -> int:
     """
     if "celery_taskmeta" not in connection.introspection.table_names():
         return 0
-    now = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+    now = dt.datetime.now(dt.UTC).replace(tzinfo=None)
     with connection.cursor() as cursor:
         cursor.execute(
             "DELETE FROM celery_taskmeta WHERE status = %s AND date_done < %s",

@@ -9,7 +9,7 @@ refusal, and a view's write arriving on a subscribed socket. Those are transacti
 consumer reads the database from a worker thread, which cannot see an uncommitted test transaction.
 """
 
-import datetime
+import datetime as dt
 import json
 from collections.abc import Callable
 from types import SimpleNamespace
@@ -590,7 +590,7 @@ EVENTS = "/intern/begivenheder/"
 
 
 def make_event(organiser: Resident, **extra: object) -> Event:
-    starts = (timezone.now() + datetime.timedelta(days=3)).replace(second=0, microsecond=0)
+    starts = (timezone.now() + dt.timedelta(days=3)).replace(second=0, microsecond=0)
     return Event.objects.create(organiser=organiser, title="Fællesspisning", starts_at=starts, **extra)
 
 

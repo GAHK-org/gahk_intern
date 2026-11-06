@@ -11,7 +11,7 @@ the query away, because the two things worth pinning — which rows are chosen, 
 compared as naive local time — are exactly what a mock would assume rather than test.
 """
 
-import datetime
+import datetime as dt
 import zoneinfo
 
 import pytest
@@ -33,7 +33,7 @@ KOMBU_TABLE = """
 """
 
 
-def _insert(visible: bool, age: datetime.timedelta) -> None:
+def _insert(visible: bool, age: dt.timedelta) -> None:
     """A message taken `age` ago, stamped the way kombu stamps it: the worker's naive local time."""
     local_now = timezone.localtime(timezone=zoneinfo.ZoneInfo(settings.TIME_ZONE)).replace(tzinfo=None)
     stamp = local_now - age
@@ -54,8 +54,8 @@ def test_the_sweep_is_a_noop_when_the_transport_is_not_the_database() -> None:
 
 @pytest.mark.django_db
 def test_only_delivered_messages_past_the_retention_window_are_swept() -> None:
-    old = BROKER_MESSAGE_RETENTION + datetime.timedelta(hours=1)
-    recent = datetime.timedelta(minutes=5)
+    old = BROKER_MESSAGE_RETENTION + dt.timedelta(hours=1)
+    recent = dt.timedelta(minutes=5)
     with connection.cursor() as cursor:
         cursor.execute(KOMBU_TABLE)
     _insert(visible=False, age=old)  # delivered and past the window — the only one that may go
@@ -75,6 +75,6 @@ def test_the_cutoff_is_read_in_the_workers_zone_not_utc() -> None:
     25 hours ago in local time looked only 23 or 24 hours old, and was kept a day too long."""
     with connection.cursor() as cursor:
         cursor.execute(KOMBU_TABLE)
-    _insert(visible=False, age=BROKER_MESSAGE_RETENTION + datetime.timedelta(minutes=30))
+    _insert(visible=False, age=BROKER_MESSAGE_RETENTION + dt.timedelta(minutes=30))
 
     assert purge_delivered_broker_messages.run() == 1

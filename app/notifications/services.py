@@ -20,7 +20,7 @@ Delivery runs after commit on a background thread (core.push.send_many); rows ar
 so the dropdown is right the moment the request returns.
 """
 
-import datetime
+import datetime as dt
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -40,10 +40,10 @@ from .categories import Importance
 from .models import Notification, NotificationPreference, NotificationSettings
 
 # The TTL of anything that does not bring its own. A Den Hurtige message brings its expiry.
-DEFAULT_TTL = datetime.timedelta(days=7)
+DEFAULT_TTL = dt.timedelta(days=7)
 
 
-def _default_expiry(now: datetime.datetime) -> datetime.datetime:
+def _default_expiry(now: dt.datetime) -> dt.datetime:
     """`now` plus DEFAULT_TTL as elapsed time: exactly seven times 24 hours.
 
     `now` is local time (core.clock.current_datetime), and Python adds a timedelta to an aware
@@ -51,7 +51,7 @@ def _default_expiry(now: datetime.datetime) -> datetime.datetime:
     hour more or less than seven days — longer than the TTL handed to the push service. In UTC there
     is no such change.
     """
-    return now.astimezone(datetime.UTC) + DEFAULT_TTL
+    return now.astimezone(dt.UTC) + DEFAULT_TTL
 
 
 # How many actors a grouped row remembers. Only the first two are ever named; the rest are a count,
@@ -178,7 +178,7 @@ def notify(
     url: str,
     body: str = "",
     importance: Importance | None = None,
-    expires_at: datetime.datetime | None = None,
+    expires_at: dt.datetime | None = None,
     exclude: int | None = None,
     background: bool = True,
 ) -> int:
@@ -266,7 +266,7 @@ def notify_grouped(
     url: str,
     body: str = "",
     importance: Importance | None = None,
-    expires_at: datetime.datetime | None = None,
+    expires_at: dt.datetime | None = None,
     background: bool = True,
 ) -> Notification | None:
     """Tell ONE resident, folding into their existing row for `group_key` if there is one.
@@ -364,7 +364,7 @@ def unseen_count(resident_id: int) -> int:
     return Notification.objects.filter(recipient_id=resident_id).visible().unseen().count()
 
 
-def purge_expired(older_than: datetime.timedelta = datetime.timedelta(days=30)) -> int:
+def purge_expired(older_than: dt.timedelta = dt.timedelta(days=30)) -> int:
     """Delete rows whose TTL ran out more than `older_than` ago. They stop showing at expiry; they
     are kept that long after only so the admin statistics have a month to count."""
     deleted, _ = Notification.objects.filter(expires_at__lt=current_datetime() - older_than).delete()

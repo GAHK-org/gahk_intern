@@ -3,7 +3,7 @@ mass-mailer are structurally gone; this provides the legitimate admin screens, c
 monthly embedsgruppe roles."""
 
 import ast
-import datetime
+import datetime as dt
 import io
 import json
 import pickle  # nosec B403: _ResultUnpickler rejects every global/class lookup.
@@ -85,9 +85,9 @@ JOB_STATES = {
 }
 JOB_PERIODS = {
     "": ("Alt gemt", None),
-    "24h": ("Seneste 24 timer", datetime.timedelta(hours=24)),
-    "7d": ("Seneste 7 dage", datetime.timedelta(days=7)),
-    "30d": ("Seneste 30 dage", datetime.timedelta(days=30)),
+    "24h": ("Seneste 24 timer", dt.timedelta(hours=24)),
+    "7d": ("Seneste 7 dage", dt.timedelta(days=7)),
+    "30d": ("Seneste 30 dage", dt.timedelta(days=30)),
 }
 # Sort key -> label and ORDER BY clause over _history's output columns. The clauses are interpolated
 # into SQL, so they must stay literals here, and the request value only ever selects a key.
@@ -109,11 +109,11 @@ def _read(sql: str, params: Mapping[str, Any] | None = None) -> list[tuple[Any, 
         return []
 
 
-def _format_duration(duration: datetime.timedelta | None) -> str:
+def _format_duration(duration: dt.timedelta | None) -> str:
     """'45 ms', '3,2 sek.', '2 min. 3 sek.' or '1 t. 5 min.'; '' when there is no duration."""
     if duration is None:
         return ""
-    milliseconds = max(0, duration // datetime.timedelta(milliseconds=1))
+    milliseconds = max(0, duration // dt.timedelta(milliseconds=1))
     if milliseconds < 1000:
         return f"{milliseconds} ms"
     if milliseconds < 60_000:
@@ -125,7 +125,7 @@ def _format_duration(duration: datetime.timedelta | None) -> str:
     return f"{hours} t. {minutes} min."
 
 
-def _between(start: datetime.datetime | None, end: datetime.datetime | None) -> str:
+def _between(start: dt.datetime | None, end: dt.datetime | None) -> str:
     return _format_duration(end - start) if start and end else ""
 
 
@@ -160,9 +160,9 @@ class Job(_TaskName):
     id: str
     task: str = UNKNOWN_TASK
     status: str = ""
-    sent_at: datetime.datetime | None = None
-    started_at: datetime.datetime | None = None
-    finished_at: datetime.datetime | None = None
+    sent_at: dt.datetime | None = None
+    started_at: dt.datetime | None = None
+    finished_at: dt.datetime | None = None
     queue: str = ""
     worker: str = ""
     retries: int = 0
@@ -177,8 +177,8 @@ class Job(_TaskName):
     result: str | None = None
     traceback: str = ""
     # Set on a running job: how long it has run, and how long it may.
-    elapsed: datetime.timedelta | None = None
-    time_limit: datetime.timedelta | None = None
+    elapsed: dt.timedelta | None = None
+    time_limit: dt.timedelta | None = None
 
     @property
     def state_label(self) -> str:
@@ -223,7 +223,7 @@ class Job(_TaskName):
             return 0
         return min(100, int(self.elapsed / self.time_limit * 100))
 
-    def run(self, now: datetime.datetime) -> None:
+    def run(self, now: dt.datetime) -> None:
         """Mark it as running since `started_at`, measured against its time limit."""
         if self.started_at:
             self.elapsed = now - self.started_at
@@ -430,7 +430,7 @@ class QueueGroup(_TaskName):
     jobs: list[Job] = field(default_factory=list)
 
     @property
-    def oldest_sent_at(self) -> datetime.datetime | None:
+    def oldest_sent_at(self) -> dt.datetime | None:
         return self.jobs[0].sent_at if self.jobs else None
 
     @property
@@ -447,7 +447,7 @@ class Queue:
         return sum(group.count for group in self.groups)
 
     @property
-    def oldest_sent_at(self) -> datetime.datetime | None:
+    def oldest_sent_at(self) -> dt.datetime | None:
         return min((group.oldest_sent_at for group in self.groups if group.oldest_sent_at), default=None)
 
 
@@ -506,7 +506,7 @@ def _queue() -> Queue:
 # ---- what runs ----
 
 
-def _running(now: datetime.datetime) -> list[Job]:
+def _running(now: dt.datetime) -> list[Job]:
     """Every job Celery has as STARTED, oldest first — including any whose worker died under it."""
     rows = _read(
         """
@@ -545,16 +545,16 @@ class DaySummary:
 
     succeeded: int = 0
     failed: int = 0
-    last_failure_at: datetime.datetime | None = None
-    average_runtime: datetime.timedelta | None = None
+    last_failure_at: dt.datetime | None = None
+    average_runtime: dt.timedelta | None = None
 
     @property
     def average(self) -> str:
         return _format_duration(self.average_runtime)
 
 
-def _day_summary(now: datetime.datetime) -> DaySummary:
-    since = now - datetime.timedelta(hours=24)
+def _day_summary(now: dt.datetime) -> DaySummary:
+    since = now - dt.timedelta(hours=24)
     summary = DaySummary()
     rows = _read(
         """
@@ -564,7 +564,7 @@ def _day_summary(now: datetime.datetime) -> DaySummary:
         GROUP BY status
         """,
         # Naive UTC, like the column, so the comparison can use its index.
-        {"since": since.astimezone(datetime.UTC).replace(tzinfo=None)},
+        {"since": since.astimezone(dt.UTC).replace(tzinfo=None)},
     )
     for status, count, last_at in rows:
         if status == "SUCCESS":
@@ -577,7 +577,7 @@ def _day_summary(now: datetime.datetime) -> DaySummary:
     return summary
 
 
-def _live_context(now: datetime.datetime, queue: Queue | None = None) -> dict[str, object]:
+def _live_context(now: dt.datetime, queue: Queue | None = None) -> dict[str, object]:
     """What the top of the page shows and refreshes on its own: the tiles, what runs and the queue."""
     running = _running(now)
     return {
@@ -596,7 +596,7 @@ def _live_context(now: datetime.datetime, queue: Queue | None = None) -> dict[st
 class Bucket:
     """One hour of the activity chart, with its bars' heights as percentages of the chart."""
 
-    hour: datetime.datetime
+    hour: dt.datetime
     succeeded: int
     failed: int
     succeeded_height: float = 0
@@ -611,7 +611,7 @@ class Bucket:
     @property
     def span(self) -> str:
         local = timezone.localtime(self.hour)
-        return f"{local:%H}:00–{local + datetime.timedelta(hours=1):%H}:00"
+        return f"{local:%H}:00–{local + dt.timedelta(hours=1):%H}:00"
 
 
 @dataclass
@@ -638,13 +638,13 @@ def _nice_ceiling(value: int) -> int:
         step *= 10
 
 
-def _activity(now: datetime.datetime) -> Activity:
+def _activity(now: dt.datetime) -> Activity:
     """Finished jobs per hour over the last ACTIVITY_HOURS hours, the current one included.
 
     Bucketed by the UTC hour: Copenhagen is a whole number of hours from UTC, so they are its hours too.
     """
-    current = now.astimezone(datetime.UTC).replace(minute=0, second=0, microsecond=0)
-    first = current - datetime.timedelta(hours=ACTIVITY_HOURS - 1)
+    current = now.astimezone(dt.UTC).replace(minute=0, second=0, microsecond=0)
+    first = current - dt.timedelta(hours=ACTIVITY_HOURS - 1)
     rows = _read(
         """
         SELECT date_trunc('hour', date_done) AT TIME ZONE 'UTC', status, count(*)
@@ -657,7 +657,7 @@ def _activity(now: datetime.datetime) -> Activity:
     counts = {(hour, status): count for hour, status, count in rows}
     buckets = [
         Bucket(hour=hour, succeeded=counts.get((hour, "SUCCESS"), 0), failed=counts.get((hour, "FAILURE"), 0))
-        for hour in (first + datetime.timedelta(hours=offset) for offset in range(ACTIVITY_HOURS))
+        for hour in (first + dt.timedelta(hours=offset) for offset in range(ACTIVITY_HOURS))
     ]
     scale = _nice_ceiling(max((bucket.succeeded + bucket.failed for bucket in buckets), default=0))
     for bucket in buckets:
@@ -672,10 +672,10 @@ class TaskType(_TaskName):
 
     task: str
     counts: dict[str, int] = field(default_factory=dict)
-    last_at: datetime.datetime | None = None
+    last_at: dt.datetime | None = None
     last_status: str = ""
     queued: int = 0
-    average_runtime: datetime.timedelta | None = None
+    average_runtime: dt.timedelta | None = None
 
     @property
     def total(self) -> int:
@@ -774,7 +774,7 @@ class JobFilters:
         if since := JOB_PERIODS[self.period][1]:
             # Naive UTC, like the column, so the comparison can use its index.
             clauses.append("result.date_done >= %(since)s")
-            params["since"] = datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - since
+            params["since"] = dt.datetime.now(dt.UTC).replace(tzinfo=None) - since
         if not self.include_children:
             clauses.append("coalesce(job.parent_id, '') = ''")
         return " AND ".join(clauses) or "TRUE", params
@@ -789,7 +789,7 @@ _HISTORY_FROM = """
 """
 
 
-def _history(filters: JobFilters, now: datetime.datetime, *, limit: int, offset: int) -> list[Job]:
+def _history(filters: JobFilters, now: dt.datetime, *, limit: int, offset: int) -> list[Job]:
     """One page of jobs, filtered, sorted and paged in SQL so every option reaches the whole table
     and a fan-out of sub-jobs cannot crowd the parent jobs out of a fixed window."""
     where, params = filters.where()
@@ -905,7 +905,7 @@ def _plan(task: PeriodicTask) -> str:
 
 # Beat stores last_run_at when it syncs, every few minutes, so a next run a little in the past is
 # Beat being behind on its bookkeeping, not Beat being down.
-OVERDUE_AFTER = datetime.timedelta(minutes=5)
+OVERDUE_AFTER = dt.timedelta(minutes=5)
 
 
 @dataclass
@@ -913,14 +913,14 @@ class Schedule(_TaskName):
     title: str
     task: str
     plan: str
-    last_run_at: datetime.datetime | None
-    next_run_at: datetime.datetime | None
+    last_run_at: dt.datetime | None
+    next_run_at: dt.datetime | None
     total_run_count: int
     overdue: bool
     last: TaskType | None
 
 
-def _next_run(task: PeriodicTask, now: datetime.datetime) -> datetime.datetime:
+def _next_run(task: PeriodicTask, now: dt.datetime) -> dt.datetime:
     """When Beat sends the entry next, worked out as Beat does. A crontab matches its hours against
     last_run_at in whatever zone it is handed, so it is read in the schedule's own zone: in the UTC
     the database gives back, a daily 17:00 run came next at 17:00 UTC the same day, long past. The
@@ -932,7 +932,7 @@ def _next_run(task: PeriodicTask, now: datetime.datetime) -> datetime.datetime:
     return now + schedule.remaining_estimate((task.last_run_at or now).astimezone(tz))
 
 
-def _schedules(types: list[TaskType], now: datetime.datetime) -> list[Schedule]:
+def _schedules(types: list[TaskType], now: dt.datetime) -> list[Schedule]:
     """Beat's enabled entries, each with when it runs next and how its task last ended."""
     by_task = {task_type.task: task_type for task_type in types}
     schedules = []
@@ -955,14 +955,14 @@ def _schedules(types: list[TaskType], now: datetime.datetime) -> list[Schedule]:
                 last=by_task.get(task.task),
             )
         )
-    far = now + datetime.timedelta(days=3650)
+    far = now + dt.timedelta(days=3650)
     return sorted(schedules, key=lambda schedule: (schedule.next_run_at or far, schedule.title))
 
 
 # ---- one job ----
 
 
-def _job_details(task_id: str, now: datetime.datetime) -> tuple[Job, WorkerJobLog | None] | None:
+def _job_details(task_id: str, now: dt.datetime) -> tuple[Job, WorkerJobLog | None] | None:
     """One job from all three places — the result, the newest delivery of its message (a retry is
     republished under the same id), and the worker's record — or None when none has it."""
     result_rows = _read(
@@ -1247,11 +1247,11 @@ def dev_clock_set(request: HttpRequest) -> HttpResponseRedirect:
     elif action == "advance":
         base = current_date()  # the current effective date (override or real)
         year, month = (base.year + 1, 1) if base.month == 12 else (base.year, base.month + 1)
-        clock.simulated_date = datetime.date(year, month, 1)
+        clock.simulated_date = dt.date(year, month, 1)
         clock.save(update_fields=["simulated_date"])
     elif action == "set":
         try:
-            clock.simulated_date = datetime.date.fromisoformat(request.POST["date"])
+            clock.simulated_date = dt.date.fromisoformat(request.POST["date"])
             clock.save(update_fields=["simulated_date"])
         except (KeyError, ValueError):
             pass

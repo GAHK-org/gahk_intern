@@ -15,7 +15,7 @@ The two that matter most:
 """
 
 import ast
-import datetime
+import datetime as dt
 from collections.abc import Callable
 from pathlib import Path
 
@@ -142,7 +142,7 @@ def make_event(organiser: Resident, **extra: object) -> Event:
     """
     defaults: dict = {
         "title": "Fællesspisning",
-        "starts_at": (timezone.now() + datetime.timedelta(days=3)).replace(second=0, microsecond=0),
+        "starts_at": (timezone.now() + dt.timedelta(days=3)).replace(second=0, microsecond=0),
     }
     defaults.update(extra)
     return Event.objects.create(organiser=organiser, **defaults)
@@ -239,7 +239,7 @@ def test_an_anonymous_visitor_is_sent_to_the_login_page(client: Client) -> None:
 
 def test_a_resident_creates_an_event(client: Client, beboer: Resident, pushes: list) -> None:
     client.force_login(beboer)
-    when = timezone.localtime(timezone.now() + datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M")
+    when = timezone.localtime(timezone.now() + dt.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M")
 
     response = client.post(
         EVENTS + "opret",
@@ -260,7 +260,7 @@ def test_a_resident_creates_an_event(client: Client, beboer: Resident, pushes: l
 
 def test_an_event_cannot_start_in_the_past(client: Client, beboer: Resident) -> None:
     client.force_login(beboer)
-    when = timezone.localtime(timezone.now() - datetime.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M")
+    when = timezone.localtime(timezone.now() - dt.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M")
 
     client.post(
         EVENTS + "opret",
@@ -277,8 +277,8 @@ def test_an_organiser_can_set_a_svarfrist_from_the_form(client: Client, beboer: 
     unreachable from the UI while every service-level test still passed.
     """
     client.force_login(beboer)
-    start = timezone.now() + datetime.timedelta(days=4)
-    deadline = start - datetime.timedelta(days=1)
+    start = timezone.now() + dt.timedelta(days=4)
+    deadline = start - dt.timedelta(days=1)
 
     client.post(
         EVENTS + "opret",
@@ -301,7 +301,7 @@ def test_a_svarfrist_after_the_start_is_refused(client: Client, beboer: Resident
     """Refused rather than ignored: answers close at the start regardless, so such a deadline would
     show "svar inden lørdag" on a page whose answers actually shut on Friday."""
     client.force_login(beboer)
-    start = timezone.now() + datetime.timedelta(days=4)
+    start = timezone.now() + dt.timedelta(days=4)
 
     client.post(
         EVENTS + "opret",
@@ -309,9 +309,7 @@ def test_a_svarfrist_after_the_start_is_refused(client: Client, beboer: Resident
             "title": "Frist efter start",
             "visibility": Visibility.AABENT,
             "starts_at": timezone.localtime(start).strftime("%Y-%m-%dT%H:%M"),
-            "rsvp_deadline_at": timezone.localtime(start + datetime.timedelta(hours=1)).strftime(
-                "%Y-%m-%dT%H:%M"
-            ),
+            "rsvp_deadline_at": timezone.localtime(start + dt.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"),
         },
     )
 
@@ -320,14 +318,14 @@ def test_a_svarfrist_after_the_start_is_refused(client: Client, beboer: Resident
 
 def test_the_end_must_come_after_the_start(client: Client, beboer: Resident) -> None:
     client.force_login(beboer)
-    start = timezone.now() + datetime.timedelta(days=2)
+    start = timezone.now() + dt.timedelta(days=2)
     client.post(
         EVENTS + "opret",
         {
             "title": "Bagvendt",
             "visibility": Visibility.AABENT,
             "starts_at": timezone.localtime(start).strftime("%Y-%m-%dT%H:%M"),
-            "ends_at": timezone.localtime(start - datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"),
+            "ends_at": timezone.localtime(start - dt.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"),
         },
     )
     assert not Event.objects.exists()
@@ -363,7 +361,7 @@ def test_moving_the_start_bumps_sequence_and_notifies(
     client.force_login(beboer)
     pushes.clear()
 
-    moved = timezone.localtime(event.starts_at + datetime.timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M")
+    moved = timezone.localtime(event.starts_at + dt.timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M")
     client.post(
         f"{EVENTS}{event.pk}/rediger",
         {"title": event.title, "starts_at": moved, "visibility": Visibility.AABENT},
@@ -587,16 +585,16 @@ def test_the_capacity_cannot_be_lowered_below_the_seated_count(
 
 
 def test_answers_are_open_just_before_the_deadline(beboer: Resident) -> None:
-    deadline = timezone.now() + datetime.timedelta(days=1)
+    deadline = timezone.now() + dt.timedelta(days=1)
     event = make_event(beboer, rsvp_deadline_at=deadline)
-    just_before = deadline - datetime.timedelta(microseconds=1)
+    just_before = deadline - dt.timedelta(microseconds=1)
 
     assert services.answers_locked(event, now=just_before) is False
 
 
 def test_answers_are_closed_at_the_deadline_instant(beboer: Resident) -> None:
     """`<=`: Danish "svarfrist kl. 18.00" reads as *senest* 18.00."""
-    deadline = timezone.now() + datetime.timedelta(days=1)
+    deadline = timezone.now() + dt.timedelta(days=1)
     event = make_event(beboer, rsvp_deadline_at=deadline)
 
     assert services.answers_locked(event, now=deadline) is True
@@ -605,7 +603,7 @@ def test_answers_are_closed_at_the_deadline_instant(beboer: Resident) -> None:
 def test_an_event_without_a_deadline_closes_when_it_starts(beboer: Resident) -> None:
     """The only defensible implicit rule, and what makes answers_locked total — there is no state
     in which this feature is open forever."""
-    event = make_event(beboer, starts_at=timezone.now() + datetime.timedelta(hours=1))
+    event = make_event(beboer, starts_at=timezone.now() + dt.timedelta(hours=1))
 
     assert services.answers_locked(event) is False
     assert services.answers_locked(event, now=event.starts_at) is True
@@ -614,7 +612,7 @@ def test_an_event_without_a_deadline_closes_when_it_starts(beboer: Resident) -> 
 def test_the_service_refuses_a_late_answer_even_when_the_view_is_bypassed(beboer: Resident) -> None:
     """set_answer is the authority — not the view, and not the form. The same transition is
     reachable from five places."""
-    event = make_event(beboer, rsvp_deadline_at=timezone.now() - datetime.timedelta(minutes=1))
+    event = make_event(beboer, rsvp_deadline_at=timezone.now() - dt.timedelta(minutes=1))
 
     with pytest.raises(services.RsvpClosed):
         services.set_answer(event.pk, beboer, Answer.JA)
@@ -623,7 +621,7 @@ def test_the_service_refuses_a_late_answer_even_when_the_view_is_bypassed(beboer
 def test_a_locked_event_renders_no_answer_form(client: Client, beboer: Resident) -> None:
     """The POST target must be ABSENT, not disabled. A greyed-out button with a live endpoint
     behind it is a lie, so this asserts the URL is gone rather than that an attribute is present."""
-    event = make_event(beboer, rsvp_deadline_at=timezone.now() - datetime.timedelta(minutes=1))
+    event = make_event(beboer, rsvp_deadline_at=timezone.now() - dt.timedelta(minutes=1))
     client.force_login(beboer)
 
     body = client.get(f"{EVENTS}{event.pk}").content.decode()
@@ -644,7 +642,7 @@ def test_nobody_can_change_their_answer_after_the_deadline(beboer: Resident, oth
     event = make_event(beboer, capacity=1)
     services.set_answer(event.pk, beboer, Answer.JA)
     services.set_answer(event.pk, other, Answer.JA)
-    Event.objects.filter(pk=event.pk).update(rsvp_deadline_at=timezone.now() - datetime.timedelta(minutes=1))
+    Event.objects.filter(pk=event.pk).update(rsvp_deadline_at=timezone.now() - dt.timedelta(minutes=1))
 
     with pytest.raises(services.RsvpClosed):
         services.set_answer(event.pk, beboer, Answer.NEJ)  # the seated person tries to drop out
@@ -661,7 +659,7 @@ def test_the_seating_is_stable_across_reads_once_locked(beboer: Resident, other:
     event = make_event(beboer, capacity=1)
     services.set_answer(event.pk, beboer, Answer.JA)
     services.set_answer(event.pk, other, Answer.JA)
-    Event.objects.filter(pk=event.pk).update(rsvp_deadline_at=timezone.now() - datetime.timedelta(minutes=1))
+    Event.objects.filter(pk=event.pk).update(rsvp_deadline_at=timezone.now() - dt.timedelta(minutes=1))
     event.refresh_from_db()
 
     first = [r.resident_id for r in services.seated(event)]
@@ -749,27 +747,27 @@ def test_an_event_is_kept_for_a_week_after_it_is_held() -> None:
     failing one by one. This is the one that has to be edited deliberately — which is the point:
     widening retention is a decision about whether this feature has an archive, not a tuning knob.
     """
-    assert RETENTION_AFTER_END == datetime.timedelta(days=7)
+    assert RETENTION_AFTER_END == dt.timedelta(days=7)
 
 
 def test_an_event_survives_until_the_window_is_up(beboer: Resident) -> None:
     now = timezone.now()
-    ended = now - RETENTION_AFTER_END + datetime.timedelta(hours=1)  # an hour short of the cutoff
-    make_event(beboer, starts_at=ended - datetime.timedelta(hours=3), ends_at=ended)
+    ended = now - RETENTION_AFTER_END + dt.timedelta(hours=1)  # an hour short of the cutoff
+    make_event(beboer, starts_at=ended - dt.timedelta(hours=3), ends_at=ended)
 
     assert Event.objects.purge_expired() == 0
 
 
 def test_an_event_is_gone_once_the_window_is_up(beboer: Resident) -> None:
     now = timezone.now()
-    ended = now - RETENTION_AFTER_END - datetime.timedelta(hours=1)  # an hour past it
-    make_event(beboer, starts_at=ended - datetime.timedelta(hours=3), ends_at=ended)
+    ended = now - RETENTION_AFTER_END - dt.timedelta(hours=1)  # an hour past it
+    make_event(beboer, starts_at=ended - dt.timedelta(hours=3), ends_at=ended)
 
     assert Event.objects.purge_expired() == 1
 
 
 def test_retention_falls_back_to_the_start_when_there_is_no_end(beboer: Resident) -> None:
-    make_event(beboer, starts_at=timezone.now() - RETENTION_AFTER_END - datetime.timedelta(hours=1))
+    make_event(beboer, starts_at=timezone.now() - RETENTION_AFTER_END - dt.timedelta(hours=1))
     assert Event.objects.purge_expired() == 1
 
 
@@ -777,11 +775,11 @@ def test_a_cancelled_event_is_kept_for_its_own_grace_period(beboer: Resident) ->
     """It never happens, so the held-and-done rule would either purge it the moment its start
     passed or hold it to a date that means nothing. Thirty days is what lets subscribed calendars
     poll and pick up STATUS:CANCELLED."""
-    event = make_event(beboer, starts_at=timezone.now() + datetime.timedelta(days=9))
-    Event.objects.filter(pk=event.pk).update(cancelled_at=timezone.now() - datetime.timedelta(days=29))
+    event = make_event(beboer, starts_at=timezone.now() + dt.timedelta(days=9))
+    Event.objects.filter(pk=event.pk).update(cancelled_at=timezone.now() - dt.timedelta(days=29))
     assert Event.objects.purge_expired() == 0
 
-    Event.objects.filter(pk=event.pk).update(cancelled_at=timezone.now() - datetime.timedelta(days=31))
+    Event.objects.filter(pk=event.pk).update(cancelled_at=timezone.now() - dt.timedelta(days=31))
     assert Event.objects.purge_expired() == 1
 
 
@@ -794,12 +792,12 @@ def test_purging_takes_the_answers_and_the_image_with_it(
     """A bulk queryset delete never calls Model.delete(), which is why the file cleanup is a
     post_delete signal. See core.files."""
 
-    event = make_event(beboer, starts_at=timezone.now() + datetime.timedelta(hours=1))
+    event = make_event(beboer, starts_at=timezone.now() + dt.timedelta(hours=1))
     services.set_answer(event.pk, other, Answer.JA)
     event.image.save("plakat.png", SimpleUploadedFile("plakat.png", b"x", "image/png"), save=True)
     stored = event.image.storage
     name = event.image.name
-    stale = timezone.now() - RETENTION_AFTER_END - datetime.timedelta(hours=1)
+    stale = timezone.now() - RETENTION_AFTER_END - dt.timedelta(hours=1)
     Event.objects.filter(pk=event.pk).update(starts_at=stale)
 
     with django_capture_on_commit_callbacks(execute=True):
@@ -812,7 +810,7 @@ def test_purging_takes_the_answers_and_the_image_with_it(
 def test_the_list_purges_on_the_way_past(client: Client, beboer: Resident) -> None:
     """Traffic does the cleanup; the cron covers the quiet weeks. The den_hurtige idiom, and the
     backstop for a cron that has silently stopped."""
-    stale = timezone.now() - RETENTION_AFTER_END - datetime.timedelta(hours=1)
+    stale = timezone.now() - RETENTION_AFTER_END - dt.timedelta(hours=1)
     make_event(beboer, starts_at=stale)
     client.force_login(beboer)
 
@@ -822,8 +820,8 @@ def test_the_list_purges_on_the_way_past(client: Client, beboer: Resident) -> No
 
 
 def test_the_list_shows_only_what_is_coming(client: Client, beboer: Resident) -> None:
-    make_event(beboer, title="Snart", starts_at=timezone.now() + datetime.timedelta(days=1))
-    make_event(beboer, title="Lige overstået", starts_at=timezone.now() - datetime.timedelta(hours=2))
+    make_event(beboer, title="Snart", starts_at=timezone.now() + dt.timedelta(days=1))
+    make_event(beboer, title="Lige overstået", starts_at=timezone.now() - dt.timedelta(hours=2))
     client.force_login(beboer)
 
     body = client.get(EVENTS).content.decode()
@@ -841,7 +839,7 @@ def test_a_new_event_notifies_everyone_but_the_organiser(
     subscribe(beboer, "https://push.example/a")
     subscribe(other, "https://push.example/b")
     client.force_login(beboer)
-    when = timezone.localtime(timezone.now() + datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M")
+    when = timezone.localtime(timezone.now() + dt.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M")
 
     client.post(
         EVENTS + "opret",
@@ -857,7 +855,7 @@ def test_the_notification_links_to_the_event_not_the_list(
 ) -> None:
     subscribe(other, "https://push.example/b")
     client.force_login(beboer)
-    when = timezone.localtime(timezone.now() + datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M")
+    when = timezone.localtime(timezone.now() + dt.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M")
 
     client.post(
         EVENTS + "opret",
@@ -879,7 +877,7 @@ def test_a_resident_without_a_phone_still_hears_about_a_new_event(
     pushed because there is no device to push to."""
     _residency(other)
     client.force_login(beboer)
-    when = timezone.localtime(timezone.now() + datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M")
+    when = timezone.localtime(timezone.now() + dt.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M")
 
     client.post(EVENTS + "opret", {"title": "Fest", "starts_at": when, "visibility": Visibility.AABENT})
 
@@ -1535,12 +1533,12 @@ def test_a_private_event_notifies_only_its_invitees(
 # --- the four-invitee minimum ----------------------------------------------------------------------
 
 
-def _local(naive: datetime.datetime) -> datetime.datetime:
+def _local(naive: dt.datetime) -> dt.datetime:
     """A wall-clock time in Europe/Copenhagen, as an aware datetime."""
     return timezone.make_aware(naive)
 
 
-def _future_month_first() -> datetime.date:
+def _future_month_first() -> dt.date:
     """The 1st of a month two ahead of today.
 
     Far enough that nothing placed in it is near `RETENTION_AFTER_END`, which is what makes a date
@@ -1548,10 +1546,10 @@ def _future_month_first() -> datetime.date:
     date stops existing a week after that date passes, and the test then fails for a reason
     unrelated to what it is testing.
     """
-    return (timezone.localdate().replace(day=1) + datetime.timedelta(days=62)).replace(day=1)
+    return (timezone.localdate().replace(day=1) + dt.timedelta(days=62)).replace(day=1)
 
 
-def _month_with_trailing_padding() -> tuple[datetime.date, datetime.date]:
+def _month_with_trailing_padding() -> tuple[dt.date, dt.date]:
     """A month safely in the future whose grid runs past its own end, and the first padding day.
 
     DERIVED, NOT HARDCODED, and the reason is a trap worth naming: `calendar()` calls
@@ -1567,8 +1565,8 @@ def _month_with_trailing_padding() -> tuple[datetime.date, datetime.date]:
     """
     first = _future_month_first()
     for _ in range(12):
-        next_first = (first + datetime.timedelta(days=32)).replace(day=1)
-        last_day = next_first - datetime.timedelta(days=1)
+        next_first = (first + dt.timedelta(days=32)).replace(day=1)
+        last_day = next_first - dt.timedelta(days=1)
         if last_day.weekday() != 6:  # Sunday-ending months fill the last row exactly
             return first, next_first
         first = next_first
@@ -1600,7 +1598,7 @@ def test_an_invite_only_event_needs_four_invitees(
     for who in guests:
         _residency(who)
     client.force_login(beboer)
-    when = timezone.localtime(timezone.now() + datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M")
+    when = timezone.localtime(timezone.now() + dt.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M")
 
     too_few = client.post(
         EVENTS + "opret",
@@ -1712,7 +1710,7 @@ def test_an_event_in_a_padding_day_actually_appears_there(client: Client, beboer
     make_event(
         beboer,
         title="I paddingen",
-        starts_at=_local(datetime.datetime.combine(padding_day, datetime.time(19, 0))),
+        starts_at=_local(dt.datetime.combine(padding_day, dt.time(19, 0))),
     )
     client.force_login(beboer)
 
@@ -1739,15 +1737,13 @@ def test_tapping_a_day_lists_that_days_events(client: Client, beboer: Resident) 
     originally pinned both events to September 2026 and began failing a week later, when
     `calendar()`'s purge deleted them before the view could render them.
     """
-    day = _future_month_first() + datetime.timedelta(days=11)  # the 12th; the 13th stays in-month
-    neighbour = day + datetime.timedelta(days=1)
-    make_event(
-        beboer, title="Den dag", starts_at=_local(datetime.datetime.combine(day, datetime.time(19, 0)))
-    )
+    day = _future_month_first() + dt.timedelta(days=11)  # the 12th; the 13th stays in-month
+    neighbour = day + dt.timedelta(days=1)
+    make_event(beboer, title="Den dag", starts_at=_local(dt.datetime.combine(day, dt.time(19, 0))))
     make_event(
         beboer,
         title="En anden dag",
-        starts_at=_local(datetime.datetime.combine(neighbour, datetime.time(19, 0))),
+        starts_at=_local(dt.datetime.combine(neighbour, dt.time(19, 0))),
     )
     client.force_login(beboer)
 
@@ -1763,7 +1759,7 @@ def test_a_quiet_day_says_so_rather_than_rendering_nothing(client: Client, beboe
 
     response = client.get(f"{EVENTS}kalender?maaned=2026-09&dag=2026-09-12")
 
-    assert response.context["chosen_day"] == datetime.date(2026, 9, 12)
+    assert response.context["chosen_day"] == dt.date(2026, 9, 12)
     assert "Der sker ikke noget den dag" in response.content.decode()
 
 
@@ -1797,7 +1793,7 @@ def test_a_day_in_the_padding_can_still_be_opened(client: Client, beboer: Reside
     make_event(
         beboer,
         title="I paddingen",
-        starts_at=_local(datetime.datetime.combine(padding_day, datetime.time(19, 0))),
+        starts_at=_local(dt.datetime.combine(padding_day, dt.time(19, 0))),
     )
     client.force_login(beboer)
 
@@ -1811,12 +1807,12 @@ def test_a_private_event_is_absent_from_the_day_panel_for_an_outsider(
 ) -> None:
     """The panel reads the same `by_day` the grid does, so it inherits visible_to — but a leak here
     would be a leak with the title spelled out in full, which the grid's dots are not."""
-    day = _future_month_first() + datetime.timedelta(days=11)
+    day = _future_month_first() + dt.timedelta(days=11)
     make_private(
         beboer,
         [],
         title="Hemmelig fest",
-        starts_at=_local(datetime.datetime.combine(day, datetime.time(19, 0))),
+        starts_at=_local(dt.datetime.combine(day, dt.time(19, 0))),
     )
     client.force_login(other)
 
@@ -1832,7 +1828,7 @@ def test_a_private_event_is_absent_from_the_day_panel_for_an_outsider(
 def test_a_private_event_is_absent_from_the_calendar_for_an_outsider(
     client: Client, beboer: Resident, other: Resident
 ) -> None:
-    when = timezone.now() + datetime.timedelta(days=3)
+    when = timezone.now() + dt.timedelta(days=3)
     make_private(beboer, [], title="Hemmelig fest", starts_at=when)
     client.force_login(other)
 
@@ -1850,7 +1846,7 @@ def test_a_private_event_is_absent_from_the_calendar_for_an_outsider(
 # form, a push, or a line in anybody's .ics.
 
 
-def _celebrant(make_resident: Callable[..., Resident], born: datetime.date, **extra: object) -> Resident:
+def _celebrant(make_resident: Callable[..., Resident], born: dt.date, **extra: object) -> Resident:
     """A resident on this month's list with a date of birth. Both halves are needed: `birthdays`
     only considers the active residency list, which conftest.make_resident does not create."""
     extra.setdefault("email", f"f{born:%m%d}{next(_room_seq)}@gahk.dk")
@@ -1865,7 +1861,7 @@ def test_a_birthday_is_a_note_on_the_day_not_an_event(
     """The whole point of the feature, in one assertion pair: the name is on the calendar, and
     nothing was written to Event. If this ever fails the other way round, birthdays have acquired
     an organiser, an RSVP form, a push audience and a VEVENT in sixty subscribed calendars."""
-    _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
+    _celebrant(make_resident, dt.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
     client.force_login(beboer)
 
     response = client.get(f"{EVENTS}kalender?maaned=2026-09")
@@ -1877,7 +1873,7 @@ def test_a_birthday_is_a_note_on_the_day_not_an_event(
 def test_the_birthday_lands_in_its_own_cell(
     client: Client, beboer: Resident, make_resident: Callable[..., Resident]
 ) -> None:
-    _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
+    _celebrant(make_resident, dt.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
     client.force_login(beboer)
 
     weeks = client.get(f"{EVENTS}kalender?maaned=2026-09").context["weeks"]
@@ -1888,7 +1884,7 @@ def test_the_birthday_lands_in_its_own_cell(
         for cell in week
         if cell["birthdays"]
     }
-    assert marked == {datetime.date(2026, 9, 12): ["Mette"]}
+    assert marked == {dt.date(2026, 9, 12): ["Mette"]}
 
 
 def test_an_alumne_is_not_on_the_calendar(
@@ -1896,7 +1892,7 @@ def test_an_alumne_is_not_on_the_calendar(
 ) -> None:
     """The directory holds every resident the ETL has ever imported. Without the residency filter a
     calendar belonging to sixty people would carry several hundred names a year."""
-    make_resident(email="gammel@gahk.dk", first_name="Fraflyttet", birthday=datetime.date(1994, 9, 12))
+    make_resident(email="gammel@gahk.dk", first_name="Fraflyttet", birthday=dt.date(1994, 9, 12))
     client.force_login(beboer)
 
     response = client.get(f"{EVENTS}kalender?maaned=2026-09")
@@ -1922,7 +1918,7 @@ def test_the_calendar_flags_exactly_the_people_on_the_active_alumneliste(
     from residents.models import Residency, active_period
     from residents.views import _directory_rows
 
-    born = datetime.date(2001, 9, 12)
+    born = dt.date(2001, 9, 12)
     here = _celebrant(make_resident, born, first_name="Nuvaerende", last_name="Beboer")
     make_resident(email="aldrig@gahk.dk", first_name="Aldrig", birthday=born)
     gone = _celebrant(make_resident, born, first_name="Fraflyttet", last_name="Person")
@@ -1967,7 +1963,7 @@ def test_a_birthday_in_a_padding_day_appears_there_too(
     """Same rule the events already follow: August 2026's grid runs to 6 September, so the query
     covers the GRID's span. A name that shows up only after you click through to the next month is
     a name the calendar failed to tell you about."""
-    _celebrant(make_resident, datetime.date(2001, 9, 1), first_name="Padding", last_name="Person")
+    _celebrant(make_resident, dt.date(2001, 9, 1), first_name="Padding", last_name="Person")
     client.force_login(beboer)
 
     body = client.get(f"{EVENTS}kalender?maaned=2026-08").content.decode()
@@ -1978,7 +1974,7 @@ def test_a_birthday_in_a_padding_day_appears_there_too(
 def test_the_day_panel_names_the_celebrant_and_the_age(
     client: Client, beboer: Resident, make_resident: Callable[..., Resident]
 ) -> None:
-    _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
+    _celebrant(make_resident, dt.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
     client.force_login(beboer)
 
     response = client.get(f"{EVENTS}kalender?maaned=2026-09&dag=2026-09-12")
@@ -1994,7 +1990,7 @@ def test_a_day_with_only_a_birthday_does_not_say_nothing_happens(
 ) -> None:
     """A flag on the cell and "der sker ikke noget den dag" underneath it reads as a bug — which is
     why the empty message tests BOTH lists rather than the events' own {% empty %} clause."""
-    _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
+    _celebrant(make_resident, dt.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
     client.force_login(beboer)
 
     body = client.get(f"{EVENTS}kalender?maaned=2026-09&dag=2026-09-12").content.decode()
@@ -2006,7 +2002,7 @@ def test_a_day_with_neither_still_says_nothing_happens(
     client: Client, beboer: Resident, make_resident: Callable[..., Resident]
 ) -> None:
     """The other half of the pair — the message has to survive the extra condition."""
-    _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
+    _celebrant(make_resident, dt.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
     client.force_login(beboer)
 
     body = client.get(f"{EVENTS}kalender?maaned=2026-09&dag=2026-09-13").content.decode()
@@ -2019,7 +2015,7 @@ def test_a_birthday_only_day_can_still_be_tapped_open(
 ) -> None:
     """On a phone the flag is the entire marking, so a marked cell that does not open is a cell
     that looks broken. The tap link used to be rendered only for days carrying events."""
-    _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
+    _celebrant(make_resident, dt.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
     client.force_login(beboer)
 
     body = client.get(f"{EVENTS}kalender?maaned=2026-09").content.decode()
@@ -2032,7 +2028,7 @@ def test_a_birthday_never_reaches_a_subscribed_calendar(
 ) -> None:
     """The .ics feed is the one place where "it is only a note" stops being a rendering detail: an
     entry that lands there is copied into Google and Apple and outlives anything done here."""
-    _celebrant(make_resident, datetime.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
+    _celebrant(make_resident, dt.date(2001, 9, 12), first_name="Mette", last_name="Hansen")
 
     body = client.get(_feed_url(beboer)).content.decode()
 
@@ -2045,7 +2041,7 @@ def test_an_unbelievable_birth_year_shows_no_age(
 ) -> None:
     """The legacy import carried a few placeholder years. "Fylder 126" on the kollegium's calendar
     is worse than saying nothing about the age at all — the name still shows."""
-    _celebrant(make_resident, datetime.date(1900, 9, 12), first_name="Gammel", last_name="Data")
+    _celebrant(make_resident, dt.date(1900, 9, 12), first_name="Gammel", last_name="Data")
     client.force_login(beboer)
 
     response = client.get(f"{EVENTS}kalender?maaned=2026-09&dag=2026-09-12")
@@ -2062,17 +2058,17 @@ def test_an_unbelievable_birth_year_shows_no_age(
 
 @pytest.mark.parametrize(
     ("year", "expected"),
-    [(2024, datetime.date(2024, 2, 29)), (2026, datetime.date(2026, 3, 1))],
+    [(2024, dt.date(2024, 2, 29)), (2026, dt.date(2026, 3, 1))],
 )
 def test_the_29th_of_february_is_celebrated_on_the_1st_of_march_in_ordinary_years(
-    year: int, expected: datetime.date
+    year: int, expected: dt.date
 ) -> None:
     """Three years in four the date names no day at all, and `date(year, 2, 29)` raises rather than
     saying so — so the alternative to deciding is dropping somebody off the calendar for three
     years running and never noticing. Danish practice is 1 March."""
     from residents.birthdays import celebrated_on
 
-    assert celebrated_on(datetime.date(2004, 2, 29), year) == expected
+    assert celebrated_on(dt.date(2004, 2, 29), year) == expected
 
 
 def test_a_span_that_crosses_new_year_finds_birthdays_on_both_sides(
@@ -2082,14 +2078,14 @@ def test_a_span_that_crosses_new_year_finds_birthdays_on_both_sides(
     which is why the lookup asks per year IN THE SPAN rather than per date of birth."""
     from residents.birthdays import in_span
 
-    _celebrant(make_resident, datetime.date(2001, 12, 30), first_name="Decem", last_name="Ber")
-    _celebrant(make_resident, datetime.date(2002, 1, 2), first_name="Janu", last_name="Ar")
+    _celebrant(make_resident, dt.date(2001, 12, 30), first_name="Decem", last_name="Ber")
+    _celebrant(make_resident, dt.date(2002, 1, 2), first_name="Janu", last_name="Ar")
 
-    found = in_span(datetime.date(2026, 12, 28), datetime.date(2027, 1, 3))
+    found = in_span(dt.date(2026, 12, 28), dt.date(2027, 1, 3))
 
     assert {day: [b.resident.first_name for b in bs] for day, bs in found.items()} == {
-        datetime.date(2026, 12, 30): ["Decem"],
-        datetime.date(2027, 1, 2): ["Janu"],
+        dt.date(2026, 12, 30): ["Decem"],
+        dt.date(2027, 1, 2): ["Janu"],
     }
 
 
@@ -2147,8 +2143,8 @@ def test_newlines_in_a_description_become_escaped_n(beboer: Resident) -> None:
 def test_a_summer_and_a_winter_event_both_land_on_the_right_utc_hour(beboer: Resident) -> None:
     """The test that justifies emitting no VTIMEZONE. 17.00 local is 15:00Z in July (CEST) and
     16:00Z in January (CET); a hand-rolled VTIMEZONE is where this normally goes wrong."""
-    summer = make_event(beboer, starts_at=_local(datetime.datetime(2026, 7, 15, 17, 0)), title="Sommer")
-    winter = make_event(beboer, starts_at=_local(datetime.datetime(2027, 1, 15, 17, 0)), title="Vinter")
+    summer = make_event(beboer, starts_at=_local(dt.datetime(2026, 7, 15, 17, 0)), title="Sommer")
+    winter = make_event(beboer, starts_at=_local(dt.datetime(2027, 1, 15, 17, 0)), title="Vinter")
 
     assert "DTSTART:20260715T150000Z" in icalendar_mod.one_event(summer)
     assert "DTSTART:20270115T160000Z" in icalendar_mod.one_event(winter)
@@ -2361,7 +2357,7 @@ def test_deleting_a_resident_deletes_their_token(beboer: Resident) -> None:
 def test_the_reminder_goes_only_to_people_who_have_not_answered(
     beboer: Resident, other: Resident, third: Resident, pushes: list
 ) -> None:
-    event = make_event(beboer, rsvp_deadline_at=timezone.now() + datetime.timedelta(hours=2))
+    event = make_event(beboer, rsvp_deadline_at=timezone.now() + dt.timedelta(hours=2))
     for who in (beboer, other, third):
         _residency(who)
         subscribe(who, f"https://push.example/{who.pk}")
@@ -2382,7 +2378,7 @@ def test_the_reminder_is_personal_and_expires_at_the_deadline(
     """A reminder is moot once the deadline has passed, so it leaves the bell then and the push
     service is told to drop it rather than deliver it late. The count is everyone REACHED, in-app
     or push — third has no phone and still counts."""
-    deadline = (timezone.now() + datetime.timedelta(hours=2)).replace(microsecond=0)
+    deadline = (timezone.now() + dt.timedelta(hours=2)).replace(microsecond=0)
     event = make_event(beboer, rsvp_deadline_at=deadline)
     for who in (other, third):
         _residency(who)
@@ -2405,7 +2401,7 @@ def test_running_the_reminder_twice_sends_one_reminder(
 ) -> None:
     """Claimed with a conditional UPDATE whose rowcount decides, so two overlapping cron runs send
     one reminder between them. DEPLOY.md §4b requires every scheduled command to be idempotent."""
-    event = make_event(beboer, rsvp_deadline_at=timezone.now() + datetime.timedelta(hours=2))
+    event = make_event(beboer, rsvp_deadline_at=timezone.now() + dt.timedelta(hours=2))
     for who in (beboer, other):
         _residency(who)
     subscribe(other, "https://push.example/other")
@@ -2421,7 +2417,7 @@ def test_running_the_reminder_twice_sends_one_reminder(
 def test_the_reminder_is_claimed_before_it_is_sent(beboer: Resident, other: Resident) -> None:
     """Order matters: a crash between claim and send costs one reminder, and the other order would
     push the whole house twice."""
-    event = make_event(beboer, rsvp_deadline_at=timezone.now() + datetime.timedelta(hours=2))
+    event = make_event(beboer, rsvp_deadline_at=timezone.now() + dt.timedelta(hours=2))
     services.send_deadline_reminder(event)
 
     event.refresh_from_db()
@@ -2429,21 +2425,21 @@ def test_the_reminder_is_claimed_before_it_is_sent(beboer: Resident, other: Resi
 
 
 def test_a_cancelled_event_sends_no_reminder(beboer: Resident) -> None:
-    event = make_event(beboer, rsvp_deadline_at=timezone.now() + datetime.timedelta(hours=2))
+    event = make_event(beboer, rsvp_deadline_at=timezone.now() + dt.timedelta(hours=2))
     services.cancel(event)
 
     assert services.events_needing_reminder() == []
 
 
 def test_a_deadline_outside_the_window_sends_nothing_yet(beboer: Resident) -> None:
-    make_event(beboer, rsvp_deadline_at=timezone.now() + datetime.timedelta(days=5))
+    make_event(beboer, rsvp_deadline_at=timezone.now() + dt.timedelta(days=5))
     assert services.events_needing_reminder() == []
 
 
 def test_a_private_events_reminder_stays_with_its_invitees(
     beboer: Resident, other: Resident, third: Resident, pushes: list
 ) -> None:
-    event = make_private(beboer, [other], rsvp_deadline_at=timezone.now() + datetime.timedelta(hours=2))
+    event = make_private(beboer, [other], rsvp_deadline_at=timezone.now() + dt.timedelta(hours=2))
     for who in (other, third):
         _residency(who)
         subscribe(who, f"https://push.example/{who.pk}")
@@ -2460,7 +2456,7 @@ def test_the_lazy_backstop_sends_a_missed_reminder_on_page_load(
 ) -> None:
     """The AK idiom. A missed purge is wrong for nobody for months; a missed reminder is
     unrecoverable — the deadline passes and nobody learns why the event was under-attended."""
-    event = make_event(beboer, rsvp_deadline_at=timezone.now() + datetime.timedelta(hours=2))
+    event = make_event(beboer, rsvp_deadline_at=timezone.now() + dt.timedelta(hours=2))
     for who in (beboer, other):
         _residency(who)
     subscribe(other, "https://push.example/other")
@@ -2479,7 +2475,7 @@ def test_the_backstop_never_breaks_the_page(
     client: Client, beboer: Resident, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A page load must never fail because push is misconfigured."""
-    make_event(beboer, rsvp_deadline_at=timezone.now() + datetime.timedelta(hours=2))
+    make_event(beboer, rsvp_deadline_at=timezone.now() + dt.timedelta(hours=2))
 
     def explode(*args: object, **kwargs: object) -> None:
         raise RuntimeError("push is down")
@@ -2502,7 +2498,7 @@ def test_the_command_delivers_inline(
 
     from django.core.management import call_command
 
-    event = make_event(beboer, rsvp_deadline_at=timezone.now() + datetime.timedelta(hours=2))
+    event = make_event(beboer, rsvp_deadline_at=timezone.now() + dt.timedelta(hours=2))
     for who in (beboer, other):
         _residency(who)
     subscribe(other, "https://push.example/other")
@@ -2523,7 +2519,7 @@ def test_the_command_delivers_inline(
 def test_the_command_dry_run_changes_nothing(beboer: Resident, pushes: list) -> None:
     from django.core.management import call_command
 
-    event = make_event(beboer, rsvp_deadline_at=timezone.now() + datetime.timedelta(hours=2))
+    event = make_event(beboer, rsvp_deadline_at=timezone.now() + dt.timedelta(hours=2))
     pushes.clear()
 
     call_command("remind_rsvp_deadlines", "--dry-run")

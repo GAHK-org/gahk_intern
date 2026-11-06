@@ -111,17 +111,21 @@ lookup tables `intern_alumne_workgroup` / `intern_alumne_cleaning` (directory ba
 class Room(models.Model):
     # legacy "vaerelse_id" 0..61 index AND the 3-digit room number coexist in the old code (delt.php);
     # we keep both so kvotient (vaerelse_id) and the directory (room number) both map cleanly.
-    legacy_index = models.PositiveSmallIntegerField(unique=True)   # 0..61 (kvotient vaerelse_id)
-    number = models.PositiveSmallIntegerField(unique=True)          # 1..N (003, 101, … as int)
-    floor = models.CharField(max_length=20)                         # "stuen", "1. sal", …
-    side = models.CharField(max_length=20)                          # "mod gaden" / "mod gården"
-    note = models.CharField(max_length=40, blank=True)              # "(røvhullet)", "(fængslet)", …
+    legacy_index = models.PositiveSmallIntegerField(
+        unique=True
+    )  # 0..61 (kvotient vaerelse_id)
+    number = models.PositiveSmallIntegerField(unique=True)  # 1..N (003, 101, … as int)
+    floor = models.CharField(max_length=20)  # "stuen", "1. sal", …
+    side = models.CharField(max_length=20)  # "mod gaden" / "mod gården"
+    note = models.CharField(max_length=40, blank=True)  # "(røvhullet)", "(fængslet)", …
 
-class Workgroup(models.Model):    # intern_alumne_workgroup
+
+class Workgroup(models.Model):  # intern_alumne_workgroup
     legacy_id = models.PositiveIntegerField(unique=True)
     name = models.CharField(max_length=100, unique=True)
 
-class Cleaning(models.Model):     # intern_alumne_cleaning
+
+class Cleaning(models.Model):  # intern_alumne_cleaning
     legacy_id = models.PositiveIntegerField(unique=True)
     name = models.CharField(max_length=100, unique=True)
 ```
@@ -140,16 +144,20 @@ source). `Workgroup`/`Cleaning` loaded from their legacy tables (utf8mb3) preser
 class ResidentManager(BaseUserManager):
     def create_user(self, email, password=None, **extra):
         user = self.model(email=self.normalize_email(email), **extra)
-        user.set_password(password)          # uses the configured hashers
+        user.set_password(password)  # uses the configured hashers
         user.save(using=self._db)
         return user
+
     def create_superuser(self, email, password, **extra):
         extra.update(is_staff=True, is_superuser=True)
         return self.create_user(email, password, **extra)
 
+
 class Resident(AbstractBaseUser, PermissionsMixin):
     # --- identity / login ---
-    email = models.EmailField(unique=True)            # was intern_alumne.email (text) — now the login id
+    email = models.EmailField(
+        unique=True
+    )  # was intern_alumne.email (text) — now the login id
     first_name = models.CharField(max_length=100)
     last_name = models.CharField(max_length=100)
     phone = models.CharField(max_length=40, blank=True)
@@ -159,12 +167,21 @@ class Resident(AbstractBaseUser, PermissionsMixin):
     birthday = models.DateField(null=True, blank=True)
     move_in_date = models.DateField(null=True, blank=True)
     move_out_date = models.DateField(null=True, blank=True)
-    study = models.CharField(max_length=255, blank=True)     # free text today (F-012 canonicalisation = open Q)
+    study = models.CharField(
+        max_length=255, blank=True
+    )  # free text today (F-012 canonicalisation = open Q)
 
     # --- lineage (fylgje / sponsor) ---
-    sponsor = models.ForeignKey("self", null=True, blank=True,
-                                on_delete=models.SET_NULL, related_name="proteges")
-    fylgje_raw = models.CharField(max_length=255, blank=True)  # original free-text, kept when unresolved
+    sponsor = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="proteges",
+    )
+    fylgje_raw = models.CharField(
+        max_length=255, blank=True
+    )  # original free-text, kept when unresolved
 
     # --- network access flag (alumneliste) ---
     is_network_closed = models.BooleanField(default=False)
@@ -172,7 +189,9 @@ class Resident(AbstractBaseUser, PermissionsMixin):
 
     # --- Django auth ---
     is_active = models.BooleanField(default=True)
-    is_staff = models.BooleanField(default=False)   # = member of any admin role group (set during ETL)
+    is_staff = models.BooleanField(
+        default=False
+    )  # = member of any admin role group (set during ETL)
     date_joined = models.DateTimeField(default=timezone.now)
 
     objects = ResidentManager()
@@ -196,16 +215,27 @@ weak until each user logs in.
 ```python
 # residents/models.py
 class Residency(models.Model):
-    resident = models.ForeignKey(Resident, on_delete=models.CASCADE, related_name="residencies")
-    room = models.ForeignKey("core.Room", on_delete=models.PROTECT, related_name="residencies")
-    workgroup = models.ForeignKey("core.Workgroup", null=True, blank=True, on_delete=models.SET_NULL)
-    cleaning = models.ForeignKey("core.Cleaning", null=True, blank=True, on_delete=models.SET_NULL)
-    year = models.PositiveSmallIntegerField()    # decoded from monthNumber
-    month = models.PositiveSmallIntegerField()   # 1..12, decoded from monthNumber
+    resident = models.ForeignKey(
+        Resident, on_delete=models.CASCADE, related_name="residencies"
+    )
+    room = models.ForeignKey(
+        "core.Room", on_delete=models.PROTECT, related_name="residencies"
+    )
+    workgroup = models.ForeignKey(
+        "core.Workgroup", null=True, blank=True, on_delete=models.SET_NULL
+    )
+    cleaning = models.ForeignKey(
+        "core.Cleaning", null=True, blank=True, on_delete=models.SET_NULL
+    )
+    year = models.PositiveSmallIntegerField()  # decoded from monthNumber
+    month = models.PositiveSmallIntegerField()  # 1..12, decoded from monthNumber
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["resident", "year", "month"],
-                                               name="uniq_resident_month")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["resident", "year", "month"], name="uniq_resident_month"
+            )
+        ]
         indexes = [models.Index(fields=["year", "month"])]
 ```
 
@@ -265,8 +295,10 @@ class Application(models.Model):
     type = models.CharField(max_length=20, choices=Type.choices)
     full_name = models.CharField(max_length=255)
     email = models.EmailField()
-    age = models.CharField(max_length=50, blank=True)          # free-text today; keep faithful
-    gender = models.CharField(max_length=10, choices=Gender.choices, blank=True)  # legacy stored only a `female` bool
+    age = models.CharField(max_length=50, blank=True)  # free-text today; keep faithful
+    gender = models.CharField(
+        max_length=10, choices=Gender.choices, blank=True
+    )  # legacy stored only a `female` bool
     # tour-only
     study_year = models.CharField(max_length=255, blank=True)
     year_left = models.CharField(max_length=255, blank=True)
@@ -277,14 +309,23 @@ class Application(models.Model):
     # shared
     heard_about_us = models.CharField(max_length=255, blank=True)
     motivation = models.TextField(blank=True)
-    submitted_at = models.DateTimeField()                      # from epoch `timestamp`
-    received_by = models.ForeignKey("residents.Resident", null=True, blank=True,
-                                    on_delete=models.SET_NULL, related_name="applications_received")
-    received_at = models.DateTimeField(null=True, blank=True)  # NEW (legacy had no timestamp for this)
+    submitted_at = models.DateTimeField()  # from epoch `timestamp`
+    received_by = models.ForeignKey(
+        "residents.Resident",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="applications_received",
+    )
+    received_at = models.DateTimeField(
+        null=True, blank=True
+    )  # NEW (legacy had no timestamp for this)
 
     class Meta:
-        indexes = [models.Index(fields=["type", "submitted_at"]),
-                   models.Index(fields=["received_by"])]
+        indexes = [
+            models.Index(fields=["type", "submitted_at"]),
+            models.Index(fields=["received_by"]),
+        ]
 ```
 
 ### 6.2 ETL mapping — Admissions
@@ -318,24 +359,33 @@ columns, and the **slug↔page-id coupling living in `routes.php`** (F-006). Cle
 
 ```python
 # cms/models.py
-class Page(models.Model):                      # gahk_page
-    menu_category = models.PositiveSmallIntegerField(default=0)   # was menuCat (nav highlighting)
-    slug = models.SlugField(max_length=80, unique=True, blank=True)  # NEW — replaces routes.php mapping
+class Page(models.Model):  # gahk_page
+    menu_category = models.PositiveSmallIntegerField(
+        default=0
+    )  # was menuCat (nav highlighting)
+    slug = models.SlugField(
+        max_length=80, unique=True, blank=True
+    )  # NEW — replaces routes.php mapping
     header = models.CharField(max_length=255)
-    body = models.TextField(blank=True)          # was `text` (mediumtext HTML); sanitized on save (see below)
+    body = models.TextField(
+        blank=True
+    )  # was `text` (mediumtext HTML); sanitized on save (see below)
     background_image = models.CharField(max_length=255, blank=True)  # was bgpic
 
-class NewsItem(models.Model):                   # gahk_news
+
+class NewsItem(models.Model):  # gahk_news
     title = models.CharField(max_length=255)
-    body = models.TextField(blank=True)          # was `text`; sanitized
-    published_at = models.DateTimeField()        # from epoch `timestamp`
+    body = models.TextField(blank=True)  # was `text`; sanitized
+    published_at = models.DateTimeField()  # from epoch `timestamp`
 
-class PylonEvent(models.Model):                 # gahk_pylon_calendar
-    title = models.CharField(max_length=255)     # was `name`
-    description = models.TextField(blank=True)   # sanitized
-    starts_on = models.DateField()               # from day/month/year (the displayed date)
 
-class Event(models.Model):                       # NEW — replaces the hard-coded array in begivenheder.php
+class PylonEvent(models.Model):  # gahk_pylon_calendar
+    title = models.CharField(max_length=255)  # was `name`
+    description = models.TextField(blank=True)  # sanitized
+    starts_on = models.DateField()  # from day/month/year (the displayed date)
+
+
+class Event(models.Model):  # NEW — replaces the hard-coded array in begivenheder.php
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     starts_on = models.DateField()

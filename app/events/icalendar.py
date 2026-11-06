@@ -27,7 +27,7 @@ already do correctly, so DST stops being our problem. The cost is that the raw f
 when you are debugging it.
 """
 
-import datetime
+import datetime as dt
 
 from core.markdown import plain_text
 
@@ -47,7 +47,7 @@ FOLD_LIMIT = 75
 # Retention now keeps an event a WEEK past its end, so this is what puts last Tuesday's dinner in
 # your calendar rather than leaving a hole where it was. Anything older than the retention window
 # is already deleted, so the 90 days is a ceiling rather than a promise.
-FEED_LOOKBACK = datetime.timedelta(days=90)
+FEED_LOOKBACK = dt.timedelta(days=90)
 
 
 def _escape(value: str) -> str:
@@ -87,8 +87,8 @@ def _fold(line: str) -> list[str]:
     return [out[0], *(" " + part for part in out[1:])]
 
 
-def _utc(moment: datetime.datetime) -> str:
-    return moment.astimezone(datetime.UTC).strftime("%Y%m%dT%H%M%SZ")
+def _utc(moment: dt.datetime) -> str:
+    return moment.astimezone(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def _vevent(event: Event, *, tentative: bool = False) -> list[str]:

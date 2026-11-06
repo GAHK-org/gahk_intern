@@ -32,7 +32,7 @@ rather than in review: RSVPs go with the event, so there is no record of who cam
 is deliberate. If the house wants a record, that is opslagstavlen's job.
 """
 
-import datetime
+import datetime as dt
 import secrets
 from typing import Any
 
@@ -56,18 +56,18 @@ from core.files import delete_attached_files
 # Still short enough that the shape holds: no archive, no history pagination, no "tidligere
 # begivenheder" tab. A week is a tail, not a record. If this ever grows past a month, that is the
 # point to admit an archive is being built and design one on purpose.
-RETENTION_AFTER_END = datetime.timedelta(days=7)
+RETENTION_AFTER_END = dt.timedelta(days=7)
 
 # A cancelled event gets its own, longer clock. It never happens, so RETENTION_AFTER_END would
 # either purge it the moment its start passed or hold it to a date that no longer means anything.
 # Thirty days is what gives every subscribed calendar time to poll and pick up STATUS:CANCELLED;
 # purging sooner leaves the event sitting in people's calendars with no way left to retract it.
-CANCELLED_GRACE = datetime.timedelta(days=30)
+CANCELLED_GRACE = dt.timedelta(days=30)
 
 # An event with no end time is two hours long as far as a calendar is concerned. Not zero: a VEVENT
 # carrying neither DTEND nor DURATION is an instant, which every client renders as a one-minute
 # sliver you cannot read. See events.icalendar.
-ASSUMED_DURATION = datetime.timedelta(hours=2)
+ASSUMED_DURATION = dt.timedelta(hours=2)
 
 # An invite-only event needs this many invitees BESIDES the organiser, so the smallest private event
 # is five people. It keeps the feature from quietly becoming a DM channel.
@@ -110,7 +110,7 @@ class Answer(models.TextChoices):
     # third value here.
 
 
-def _ended_before(moment: datetime.datetime) -> models.Q:
+def _ended_before(moment: dt.datetime) -> models.Q:
     """Q for "this event was over before `moment`", treating a missing end as the start.
 
     A pair of plain field lookups rather than an annotated Coalesce over (ends_at, starts_at).
@@ -124,11 +124,11 @@ def _ended_before(moment: datetime.datetime) -> models.Q:
 
 
 class EventQuerySet(models.QuerySet["Event"]):
-    def upcoming(self, now: datetime.datetime | None = None) -> "EventQuerySet":
+    def upcoming(self, now: dt.datetime | None = None) -> "EventQuerySet":
         """Not yet finished. The list view's whole world — see the retention note above."""
         return self.exclude(_ended_before(now or current_datetime())).order_by("starts_at")
 
-    def expired(self, now: datetime.datetime | None = None) -> "EventQuerySet":
+    def expired(self, now: dt.datetime | None = None) -> "EventQuerySet":
         """Past retention: held and a day gone, or cancelled and a month gone.
 
         Two clocks, because a cancelled event never happens (see CANCELLED_GRACE).
@@ -137,7 +137,7 @@ class EventQuerySet(models.QuerySet["Event"]):
         held_and_done = models.Q(cancelled_at__isnull=True) & _ended_before(moment - RETENTION_AFTER_END)
         return self.filter(held_and_done | models.Q(cancelled_at__lt=moment - CANCELLED_GRACE))
 
-    def purge_expired(self, now: datetime.datetime | None = None) -> int:
+    def purge_expired(self, now: dt.datetime | None = None) -> int:
         """Delete what retention is done with. Returns the number of events removed.
 
         Attached images go with the rows through the post_delete receiver below — which is a signal
@@ -251,7 +251,7 @@ class Event(models.Model):
         return f"{self.title} ({self.starts_at:%d.%m.%Y})"
 
     @property
-    def effective_end(self) -> datetime.datetime:
+    def effective_end(self) -> dt.datetime:
         """When this is over, for retention and for "er den forbi?"."""
         return self.ends_at or self.starts_at
 

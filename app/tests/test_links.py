@@ -11,7 +11,7 @@ visible AS TEXT, not merely that a tag is absent. An absence-only assertion pass
 reason the day somebody makes the escaping conditional.
 """
 
-import datetime
+import datetime as dt
 from collections.abc import Callable
 
 import pytest
@@ -264,7 +264,7 @@ def test_a_pasted_link_is_clickable_and_short_on_every_surface(
     event = Event.objects.create(
         organiser=author,
         title="Fællesspisning",
-        starts_at=(timezone.now() + datetime.timedelta(days=3)).replace(second=0, microsecond=0),
+        starts_at=(timezone.now() + dt.timedelta(days=3)).replace(second=0, microsecond=0),
         description=f"Tilmelding på {_url('begivenhed')}",
     )
     EventComment.objects.create(event=event, author=author, body=f"Er det {_url('begivenhed-svar')}?")

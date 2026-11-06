@@ -17,7 +17,7 @@ fan-out — which matters, because "one payload per group, not per resident" is 
 The transport itself (what `_dispatch` does with a device) is test_push.py's.
 """
 
-import datetime
+import datetime as dt
 import importlib
 import uuid
 from collections.abc import Callable
@@ -393,9 +393,7 @@ def test_the_default_ttl_is_seven_days(pushes: Recorded, two: tuple[Resident, Re
     services.notify([a.pk], category=categories.GENERAL, title="t", url=TARGET)
 
     row = Notification.objects.get()
-    assert (
-        before + datetime.timedelta(days=7) <= row.expires_at <= timezone.now() + datetime.timedelta(days=7)
-    )
+    assert before + dt.timedelta(days=7) <= row.expires_at <= timezone.now() + dt.timedelta(days=7)
     ttl = pushes[0][2]
     assert 7 * 24 * 3600 - 60 <= ttl <= 7 * 24 * 3600
 
@@ -406,7 +404,7 @@ def test_a_chat_message_lives_exactly_as_long_as_the_message(
     """A time-limited Den Hurtige message: its notification must not outlive it, on the device or in
     the app."""
     a, _b = two
-    expires = timezone.now() + datetime.timedelta(hours=2)
+    expires = timezone.now() + dt.timedelta(hours=2)
 
     services.notify(
         [a.pk], category=categories.chat_room_key("generelt"), title="t", url="/x/", expires_at=expires
@@ -426,7 +424,7 @@ def test_an_already_expired_notification_is_not_sent(
         category=categories.GENERAL,
         title="t",
         url=TARGET,
-        expires_at=timezone.now() - datetime.timedelta(seconds=1),
+        expires_at=timezone.now() - dt.timedelta(seconds=1),
     )
 
     assert reached == 0
@@ -437,7 +435,7 @@ def test_an_already_expired_notification_is_not_sent(
 def test_an_expired_row_leaves_the_lists_at_once(make_resident: Callable[..., Resident]) -> None:
     """Expiry is a comparison, not a sweep — no waiting for the nightly purge."""
     a = make_resident(email="a@gahk.dk")
-    make_notification(a, title="gammel", expires_at=timezone.now() - datetime.timedelta(seconds=1))
+    make_notification(a, title="gammel", expires_at=timezone.now() - dt.timedelta(seconds=1))
     make_notification(a, title="ny")
 
     assert list(Notification.objects.filter(recipient=a).visible().values_list("title", flat=True)) == ["ny"]
@@ -450,15 +448,15 @@ def test_an_expired_row_leaves_the_lists_at_once(make_resident: Callable[..., Re
 @pytest.mark.parametrize(
     "local_now",
     [
-        datetime.datetime(2026, 10, 20, 12, 0),  # the week before winter time (25 October 2026)
-        datetime.datetime(2027, 3, 24, 12, 0),  # the week before summer time (28 March 2027)
+        dt.datetime(2026, 10, 20, 12, 0),  # the week before winter time (25 October 2026)
+        dt.datetime(2027, 3, 24, 12, 0),  # the week before summer time (28 March 2027)
     ],
 )
 def test_the_ttl_is_seven_days_across_a_change_of_clock(
     pushes: Recorded,
     two: tuple[Resident, Resident],
     monkeypatch: pytest.MonkeyPatch,
-    local_now: datetime.datetime,
+    local_now: dt.datetime,
 ) -> None:
     """Seven days of elapsed time, not seven days on the wall clock, which are an hour off across
     a change to or from summer time. Pinned to such weeks, so it does not depend on today's date."""
@@ -472,7 +470,7 @@ def test_the_ttl_is_seven_days_across_a_change_of_clock(
     )
 
     for row in Notification.objects.all():
-        assert row.expires_at - now == datetime.timedelta(days=7)
+        assert row.expires_at - now == dt.timedelta(days=7)
 
 
 @pytest.mark.parametrize(
@@ -596,7 +594,7 @@ def test_an_expired_group_is_revived_with_a_fresh_actor_list(
     bente = make_resident(email="b@gahk.dk", first_name="Bente", last_name="Bo")
     kwargs = {"category": categories.CHAT_LIKES, "group_key": "chat.likes:1", "verb": "v", "url": TARGET}
     services.notify_grouped(author.pk, actor=anders, **kwargs)  # type: ignore[arg-type]
-    Notification.objects.update(expires_at=timezone.now() - datetime.timedelta(minutes=1))
+    Notification.objects.update(expires_at=timezone.now() - dt.timedelta(minutes=1))
 
     services.notify_grouped(author.pk, actor=bente, **kwargs)  # type: ignore[arg-type]
 
@@ -631,7 +629,7 @@ def test_grouped_respects_preferences(pushes: Recorded, make_resident: Callable[
 def test_mark_seen_stamps_only_what_was_unseen(make_resident: Callable[..., Resident]) -> None:
     """Re-marking must not move the "seen at" of something seen yesterday."""
     a = make_resident(email="a@gahk.dk")
-    earlier = timezone.now() - datetime.timedelta(days=1)
+    earlier = timezone.now() - dt.timedelta(days=1)
     old = make_notification(a, seen_at=earlier)
     make_notification(a)
 
@@ -651,7 +649,7 @@ def test_unseen_count_is_the_residents_own_visible_unseen_rows(
     make_notification(a)
     make_notification(a, seen_at=timezone.now())
     make_notification(a, in_app=False)  # push only
-    make_notification(a, expires_at=timezone.now() - datetime.timedelta(seconds=1))
+    make_notification(a, expires_at=timezone.now() - dt.timedelta(seconds=1))
     make_notification(b)
 
     assert services.unseen_count(a.pk) == 2
@@ -673,12 +671,10 @@ def test_index_lists_own_active_rows_most_important_first_then_newest(
     """A cancelled event outranks a newer like — the ordering importance levels exist for."""
     a = make_resident(email="a@gahk.dk")
     now = timezone.now()
-    make_notification(a, title="gammel", updated_at=now - datetime.timedelta(hours=2))
+    make_notification(a, title="gammel", updated_at=now - dt.timedelta(hours=2))
     make_notification(a, title="ny", updated_at=now)
-    make_notification(
-        a, title="aflyst", importance=Importance.HOEJ, updated_at=now - datetime.timedelta(days=1)
-    )
-    make_notification(a, title="udløbet", expires_at=now - datetime.timedelta(seconds=1))
+    make_notification(a, title="aflyst", importance=Importance.HOEJ, updated_at=now - dt.timedelta(days=1))
+    make_notification(a, title="udløbet", expires_at=now - dt.timedelta(seconds=1))
     make_notification(make_resident(email="b@gahk.dk"), title="andres")
     client.force_login(a)
 
@@ -704,9 +700,9 @@ def test_unseen_come_first_then_most_important_then_newest(
     make_notification(a, title="set ny", seen_at=now, updated_at=now)
     make_notification(a, title="ny lav", importance=Importance.LAV, updated_at=now)
     make_notification(
-        a, title="gammel høj", importance=Importance.HOEJ, updated_at=now - datetime.timedelta(days=1)
+        a, title="gammel høj", importance=Importance.HOEJ, updated_at=now - dt.timedelta(days=1)
     )
-    make_notification(a, title="gammel", updated_at=now - datetime.timedelta(hours=2))
+    make_notification(a, title="gammel", updated_at=now - dt.timedelta(hours=2))
     client.force_login(a)
 
     expected = ["gammel høj", "gammel", "ny lav", "set kritisk", "set ny"]
@@ -749,7 +745,7 @@ def test_the_dropdown_shows_the_ten_newest(client: Client, make_resident: Callab
     a = make_resident(email="a@gahk.dk")
     now = timezone.now()
     for i in range(12):
-        make_notification(a, title=f"n{i}", updated_at=now - datetime.timedelta(minutes=i))
+        make_notification(a, title=f"n{i}", updated_at=now - dt.timedelta(minutes=i))
     client.force_login(a)
 
     response = client.get(reverse("notifications:dropdown"))
@@ -1183,8 +1179,8 @@ def test_purge_deletes_only_rows_long_expired(make_resident: Callable[..., Resid
     """Rows stop showing at expiry, but are kept 30 days longer for the admin statistics."""
     a = make_resident(email="a@gahk.dk")
     now = timezone.now()
-    make_notification(a, title="lang tid", expires_at=now - datetime.timedelta(days=31))
-    make_notification(a, title="for nylig", expires_at=now - datetime.timedelta(days=1))
+    make_notification(a, title="lang tid", expires_at=now - dt.timedelta(days=31))
+    make_notification(a, title="for nylig", expires_at=now - dt.timedelta(days=1))
     make_notification(a, title="aktiv")
 
     assert services.purge_expired() == 1
@@ -1193,7 +1189,7 @@ def test_purge_deletes_only_rows_long_expired(make_resident: Callable[..., Resid
 
 def test_the_purge_task_runs_the_purge(make_resident: Callable[..., Resident]) -> None:
     a = make_resident(email="a@gahk.dk")
-    make_notification(a, expires_at=timezone.now() - datetime.timedelta(days=60))
+    make_notification(a, expires_at=timezone.now() - dt.timedelta(days=60))
 
     assert tasks.purge_expired_notifications() == 1
     assert not Notification.objects.exists()

@@ -17,7 +17,7 @@ notifications.services — which reads each resident's settings and calls `send`
 devices that are left. Features do not call this module directly any more.
 """
 
-import datetime
+import datetime as dt
 import json
 import logging
 import threading
@@ -193,7 +193,7 @@ def _run_in_background(fn: Callable[[], object]) -> None:
     transaction.on_commit(lambda: threading.Thread(target=runner, daemon=True).start())
 
 
-def ttl_until(expires_at: datetime.datetime) -> int:
+def ttl_until(expires_at: dt.datetime) -> int:
     """Seconds from now until `expires_at`, clamped to what a push service accepts. 0 = already
     expired, which the caller should take as "do not push"."""
     remaining = int((expires_at - current_datetime()).total_seconds())

@@ -8,7 +8,7 @@ PyMySQL. Connecting with charset utf8mb4 lets MariaDB transcode each column from
 from __future__ import annotations  # PyMySQL's Connection isn't subscriptable at runtime; defer annots
 
 import contextlib
-import datetime
+import datetime as dt
 import os
 from collections.abc import Generator
 from typing import Any
@@ -58,12 +58,12 @@ def decode_month_number(mn: int | None) -> tuple[int, int] | None:
     return year, month
 
 
-def epoch_to_dt(ts: int | None) -> datetime.datetime | None:
+def epoch_to_dt(ts: int | None) -> dt.datetime | None:
     """Legacy int epoch -> aware datetime (Europe/Copenhagen). None/0/garbage -> None."""
     if not ts:
         return None
     try:
-        return datetime.datetime.fromtimestamp(int(ts), tz=timezone.get_current_timezone())
+        return dt.datetime.fromtimestamp(int(ts), tz=timezone.get_current_timezone())
     except (ValueError, OSError, OverflowError):
         return None
 
