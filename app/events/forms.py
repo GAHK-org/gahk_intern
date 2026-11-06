@@ -10,7 +10,7 @@ the form's job on create AND on edit — the create-only version is the obvious 
 own test.
 """
 
-import datetime
+import datetime as dt
 
 from django import forms
 from django.conf import settings
@@ -192,14 +192,14 @@ class EventForm(forms.ModelForm):
             return validate_image_upload(upload, settings.EVENT_IMAGE_MAX_MB)
         return upload
 
-    def clean_ends_at(self) -> datetime.datetime | None:
+    def clean_ends_at(self) -> dt.datetime | None:
         end = self.cleaned_data.get("ends_at")
         start = self.cleaned_data.get("starts_at")
         if end and start and end <= start:
             raise forms.ValidationError("Sluttidspunktet skal ligge efter starten.")
         return end
 
-    def clean_rsvp_deadline_at(self) -> datetime.datetime | None:
+    def clean_rsvp_deadline_at(self) -> dt.datetime | None:
         """A deadline after the start is refused rather than quietly ignored.
 
         `answers_locked` closes at the start regardless, so such a deadline has no effect at all —
@@ -215,8 +215,8 @@ class EventForm(forms.ModelForm):
             )
         return deadline
 
-    def clean_starts_at(self) -> datetime.datetime:
-        start: datetime.datetime = self.cleaned_data["starts_at"]
+    def clean_starts_at(self) -> dt.datetime:
+        start: dt.datetime = self.cleaned_data["starts_at"]
         # Only on CREATE. An existing event may legitimately be edited while it is running, or just
         # after — fixing the location of tonight's dinner at 18.05 must not be refused because the
         # start is now in the past.

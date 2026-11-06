@@ -1,7 +1,7 @@
 """Shared presentational template filters. Colors themselves live in the global CSS (.amount-pos /
 .amount-neg); this only maps a signed value to the right semantic class."""
 
-import datetime
+import datetime as dt
 
 from django import template
 from django.utils.timesince import timesince, timeuntil
@@ -28,16 +28,16 @@ def dict_get(mapping: dict[object, object] | None, key: object) -> object:
 
 
 @register.filter
-def ago(value: datetime.datetime | None, now: datetime.datetime) -> str:
+def ago(value: dt.datetime | None, now: dt.datetime) -> str:
     """`timesince`, but "under et minut" where it would say "0 minutter"."""
     if value is None:
         return ""
-    return "under et minut" if abs(now - value) < datetime.timedelta(minutes=1) else timesince(value, now)
+    return "under et minut" if abs(now - value) < dt.timedelta(minutes=1) else timesince(value, now)
 
 
 @register.filter
-def ahead(value: datetime.datetime | None, now: datetime.datetime) -> str:
+def ahead(value: dt.datetime | None, now: dt.datetime) -> str:
     """`timeuntil`, but "under et minut" where it would say "0 minutter"."""
     if value is None:
         return ""
-    return "under et minut" if abs(value - now) < datetime.timedelta(minutes=1) else timeuntil(value, now)
+    return "under et minut" if abs(value - now) < dt.timedelta(minutes=1) else timeuntil(value, now)

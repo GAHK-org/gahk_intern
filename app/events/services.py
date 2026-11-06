@@ -24,7 +24,7 @@ person on the list. That is a product decision, not an oversight — "listen er 
 deadline is for — but it is the thing to revisit first if people complain.
 """
 
-import datetime
+import datetime as dt
 import logging
 from collections.abc import Collection
 from dataclasses import dataclass
@@ -46,7 +46,7 @@ from .models import Answer, Event, EventComment, EventInvite, Rsvp, Visibility
 logger = logging.getLogger(__name__)
 
 # How long before the deadline the reminder goes out.
-REMINDER_LEAD = datetime.timedelta(hours=24)
+REMINDER_LEAD = dt.timedelta(hours=24)
 
 
 class RsvpClosed(Exception):
@@ -62,7 +62,7 @@ class RsvpOutcome:
     promoted: Resident | None = None
 
 
-def answers_locked(event: Event, now: datetime.datetime | None = None) -> bool:
+def answers_locked(event: Event, now: dt.datetime | None = None) -> bool:
     """Whether replies are final.
 
     Reads core.clock rather than timezone.now, so a test — or a developer locally — can fast-forward
@@ -378,7 +378,7 @@ def notify_new_comment(comment: EventComment) -> None:
         )
 
 
-def events_needing_reminder(now: datetime.datetime | None = None) -> list[Event]:
+def events_needing_reminder(now: dt.datetime | None = None) -> list[Event]:
     """Events whose deadline falls inside the reminder window and which have not been reminded."""
     moment = now or current_datetime()
     return list(
@@ -411,7 +411,7 @@ def deadline_reminder_audience(event: Event) -> QuerySet[Resident]:
     return access.allowed_residents(Resident.objects.filter(pk__in=targets, is_active=True))
 
 
-def send_deadline_reminder(event: Event, now: datetime.datetime | None = None) -> int:
+def send_deadline_reminder(event: Event, now: dt.datetime | None = None) -> int:
     """Claim the event, then send. Returns the number of residents reached (in-app or push).
 
     CLAIMED FIRST, with a conditional UPDATE whose rowcount decides: exactly one runner can turn

@@ -1,7 +1,7 @@
 """@mentions (core/mentions.py): residents and embedsgrupper named in posts and comments across
 opslagstavlen, Den Hurtige, Reparationer and begivenheder."""
 
-import datetime
+import datetime as dt
 from collections.abc import Callable
 
 import pytest
@@ -253,7 +253,7 @@ def test_a_private_event_only_notifies_mentioned_invitees_and_hosts(
     event = Event.objects.create(
         organiser=host,
         title="Middag",
-        starts_at=(timezone.now() + datetime.timedelta(days=3)).replace(second=0, microsecond=0),
+        starts_at=(timezone.now() + dt.timedelta(days=3)).replace(second=0, microsecond=0),
         visibility=Visibility.KUN_INVITEREDE,
     )
     EventInvite.objects.create(event=event, resident=guest, invited_by=host)
@@ -282,7 +282,7 @@ def test_an_event_description_mention_notifies_on_create_and_on_edit(
     client: Client, live_here: Callable[..., Resident]
 ) -> None:
     host, first, second, other = (live_here(f"{n}@gahk.dk") for n in "abcd")
-    when = timezone.localtime(timezone.now() + datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M")
+    when = timezone.localtime(timezone.now() + dt.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M")
     data = {"title": "Filmaften", "location": "TV-stuen", "starts_at": when, "visibility": Visibility.AABENT}
 
     client.force_login(host)
@@ -308,7 +308,7 @@ def test_a_private_event_description_only_notifies_invitees(
 ) -> None:
     host, outsider = live_here("host@gahk.dk"), live_here("out@gahk.dk")
     guests = [live_here(f"g{n}@gahk.dk") for n in range(MIN_INVITEES)]
-    when = timezone.localtime(timezone.now() + datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M")
+    when = timezone.localtime(timezone.now() + dt.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M")
 
     client.force_login(host)
     client.post(

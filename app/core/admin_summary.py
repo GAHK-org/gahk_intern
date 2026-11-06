@@ -9,7 +9,7 @@ It replaced a test mail sent twice a day only to prove Beat and the worker were 
 production. The summary arriving on the 1st proves the same, and has something in it worth reading.
 """
 
-import datetime
+import datetime as dt
 from collections import Counter
 
 from django.conf import settings
@@ -23,13 +23,13 @@ from residents.models import AdminAccessGrant, Resident, Role, RoleAssignment, a
 UNKNOWN_TASK = "(ukendt)"
 
 
-def previous_month(today: datetime.date) -> tuple[datetime.date, datetime.date]:
+def previous_month(today: dt.date) -> tuple[dt.date, dt.date]:
     """The first day of the month before `today`'s, and the first day of `today`'s."""
     end = today.replace(day=1)
-    return (end - datetime.timedelta(days=1)).replace(day=1), end
+    return (end - dt.timedelta(days=1)).replace(day=1), end
 
 
-def compose(today: datetime.date | None = None) -> tuple[str, str]:
+def compose(today: dt.date | None = None) -> tuple[str, str]:
     """The subject and body of the summary for the month before `today`."""
     start, end = previous_month(today or timezone.localdate())
     month = date_format(start, "F Y")
@@ -45,7 +45,7 @@ def compose(today: datetime.date | None = None) -> tuple[str, str]:
     return f"Månedsoversigt for {month}", "\n".join(lines)
 
 
-def _jobs(start: datetime.date, end: datetime.date) -> list[str]:
+def _jobs(start: dt.date, end: dt.date) -> list[str]:
     lines = ["BAGGRUNDSJOB"]
     rows = _job_counts(start, end)
     if rows is None:
@@ -70,7 +70,7 @@ def _jobs(start: datetime.date, end: datetime.date) -> list[str]:
     return lines
 
 
-def _job_counts(start: datetime.date, end: datetime.date) -> list[tuple[str | None, str, int]] | None:
+def _job_counts(start: dt.date, end: dt.date) -> list[tuple[str | None, str, int]] | None:
     """(task, status, count) of the jobs that ended between local midnight on `start` and on `end`;
     None when there is no result table (a result backend other than the database).
 
@@ -89,9 +89,9 @@ def _job_counts(start: datetime.date, end: datetime.date) -> list[tuple[str | No
         return cursor.fetchall()
 
 
-def _access(start: datetime.date, end: datetime.date, month: str) -> list[str]:
+def _access(start: dt.date, end: dt.date, month: str) -> list[str]:
     year, period_month = active_period()
-    period = date_format(datetime.date(year, period_month, 1), "F Y")
+    period = date_format(dt.date(year, period_month, 1), "F Y")
     holders = (
         RoleAssignment.objects.filter(year=year, month=period_month, resident__is_active=True)
         .select_related("resident")
@@ -149,14 +149,14 @@ def _most_first(item: tuple[str, int]) -> tuple[int, str]:
     return -item[1], item[0]
 
 
-def _midnight(day: datetime.date) -> datetime.datetime:
+def _midnight(day: dt.date) -> dt.datetime:
     """Local midnight at the start of `day`, aware."""
-    return timezone.make_aware(datetime.datetime.combine(day, datetime.time.min))
+    return timezone.make_aware(dt.datetime.combine(day, dt.time.min))
 
 
-def _utc_midnight(day: datetime.date) -> datetime.datetime:
+def _utc_midnight(day: dt.date) -> dt.datetime:
     """Local midnight at the start of `day` as Celery's `date_done` holds it: naive UTC."""
-    return _midnight(day).astimezone(datetime.UTC).replace(tzinfo=None)
+    return _midnight(day).astimezone(dt.UTC).replace(tzinfo=None)
 
 
 def _number(value: int) -> str:

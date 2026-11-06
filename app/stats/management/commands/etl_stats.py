@@ -5,7 +5,7 @@ is NOT migrated — it was operational dedup state; the new front-page counter s
 HMAC-hashed IPs. Legacy date format is "dd/mm-YYYY".
 """
 
-import datetime
+import datetime as dt
 
 from django.core.management.base import BaseCommand
 from django.db import transaction
@@ -25,7 +25,7 @@ class Command(BaseCommand):
             try:
                 # Legacy value is a pure date ("dd/mm-yyyy"); we take .date() immediately, so the
                 # timezone is irrelevant and adding tzinfo would be noise (hence the suppression).
-                d = datetime.datetime.strptime((r["dato"] or "").strip(), "%d/%m-%Y").date()  # noqa: DTZ007
+                d = dt.datetime.strptime((r["dato"] or "").strip(), "%d/%m-%Y").date()  # noqa: DTZ007
             except ValueError:
                 bad += 1
                 continue

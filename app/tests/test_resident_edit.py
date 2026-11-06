@@ -1,6 +1,6 @@
 """Indstilling can edit a resident's core data (name, e-mail, phone, dates, studie, fylgje)."""
 
-import datetime
+import datetime as dt
 from collections.abc import Callable
 
 import pytest
@@ -84,8 +84,8 @@ def test_edit_form_prefills_dates_in_iso(make_resident: Callable) -> None:
     Django would render "01.01.2000", the browser would drop it, and saving would wipe the date."""
     r = make_resident(
         email="x@gahk.dk",
-        birthday=datetime.date(2000, 1, 1),
-        move_in_date=datetime.date(2021, 8, 1),
+        birthday=dt.date(2000, 1, 1),
+        move_in_date=dt.date(2021, 8, 1),
     )
     ind = make_resident(email="ind@gahk.dk", roles=("indstilling",))
     c = Client()

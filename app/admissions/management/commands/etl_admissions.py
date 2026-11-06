@@ -7,7 +7,7 @@ day/month/year/timestamp quartet -> a single aware `submitted_at`, and `received
 (`purge_applications`), not applied here, so the stats history is preserved.
 """
 
-import datetime
+import datetime as dt
 
 from django.core.management.base import BaseCommand
 from django.db import transaction
@@ -42,9 +42,9 @@ class Command(BaseCommand):
                 # fall back to day/month/year at midnight if the epoch is junk
                 try:
                     submitted = timezone.make_aware(
-                        datetime.datetime.combine(
-                            datetime.date(int(r["year"]), int(r["month"]), max(int(r["day"]), 1)),
-                            datetime.time(),
+                        dt.datetime.combine(
+                            dt.date(int(r["year"]), int(r["month"]), max(int(r["day"]), 1)),
+                            dt.time(),
                         )
                     )
                 except (ValueError, TypeError):

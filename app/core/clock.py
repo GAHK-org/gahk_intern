@@ -22,7 +22,7 @@ sets the clock twice in one process does. A `.update()` on the queryset bypasses
 those, as it bypasses every signal; write through `save()`.
 """
 
-import datetime
+import datetime as dt
 
 from django.conf import settings
 from django.core.signals import request_started
@@ -33,7 +33,7 @@ from django.utils import timezone
 # sentinel would not work at all: None is itself a legitimate cached answer — "the row exists and
 # says use the real clock" — so conflating it with "not looked yet" would re-query on every call in
 # the commonest case there is.
-_memo: dict[str, datetime.date | None] = {}
+_memo: dict[str, dt.date | None] = {}
 
 
 def clear_cache(**_kwargs: object) -> None:
@@ -44,7 +44,7 @@ def clear_cache(**_kwargs: object) -> None:
 request_started.connect(clear_cache, dispatch_uid="core.clock")
 
 
-def _override() -> datetime.date | None:
+def _override() -> dt.date | None:
     if not settings.DEBUG:
         # Before the cache on purpose: in production this never touches the DB and never needs
         # clearing, so the whole mechanism above is dead weight there rather than a code path.
@@ -56,14 +56,14 @@ def _override() -> datetime.date | None:
     return _memo["date"]
 
 
-def current_date() -> datetime.date:
+def current_date() -> dt.date:
     """Today's date, or the dev override when one is set under DEBUG."""
     return _override() or timezone.localdate()
 
 
-def current_datetime() -> datetime.datetime:
+def current_datetime() -> dt.datetime:
     """Now, or midnight (local tz) of the dev override date when one is set under DEBUG."""
     override = _override()
     if override is None:
         return timezone.localtime()
-    return timezone.make_aware(datetime.datetime.combine(override, datetime.time()))
+    return timezone.make_aware(dt.datetime.combine(override, dt.time()))

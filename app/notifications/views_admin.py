@@ -5,7 +5,7 @@ Mounted under /admin/ in the siteadmin namespace (residents/urls_admin.py) next 
 administrator tools, and gated the same way: @role_required("administrator").
 """
 
-import datetime
+import datetime as dt
 
 from django import forms
 from django.contrib import messages
@@ -59,7 +59,7 @@ def _stats() -> dict[str, object]:
     now = current_datetime()
     windows = []
     for days in WINDOWS:
-        rows = Notification.objects.filter(created_at__gte=now - datetime.timedelta(days=days))
+        rows = Notification.objects.filter(created_at__gte=now - dt.timedelta(days=days))
         totals = rows.aggregate(
             total=Count("pk"),
             seen=Count("pk", filter=Q(seen_at__isnull=False)),

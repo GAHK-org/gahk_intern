@@ -5,7 +5,7 @@ VISIT_COUNTER_HMAC_KEY) — never raw — and counts are kept indefinitely. A 30
 hashed IP mirrors the legacy `counter()` behaviour. Failures never break the page.
 """
 
-import datetime
+import datetime as dt
 import hashlib
 import hmac
 import logging
@@ -20,7 +20,7 @@ from django.utils import timezone
 from .models import DailyVisitCount, VisitTally
 
 logger = logging.getLogger(__name__)
-DEDUP_WINDOW = datetime.timedelta(minutes=30)
+DEDUP_WINDOW = dt.timedelta(minutes=30)
 
 
 class FrontPageVisitCounterMiddleware:

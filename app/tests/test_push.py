@@ -13,7 +13,7 @@ replaced them is below — one row per device, upserted on the endpoint, scoped 
 """
 
 import base64
-import datetime
+import datetime as dt
 import json
 from collections.abc import Callable
 from io import StringIO
@@ -337,19 +337,19 @@ def test_send_many_with_nothing_to_send_starts_no_thread(
 
 
 def test_ttl_until_counts_the_seconds_left() -> None:
-    remaining = push.ttl_until(timezone.now() + datetime.timedelta(hours=2))
+    remaining = push.ttl_until(timezone.now() + dt.timedelta(hours=2))
 
     assert 7190 <= remaining <= 7200
 
 
 def test_ttl_until_is_zero_for_the_past() -> None:
     """Zero is "do not push": an expired message must not arrive on a lock screen."""
-    assert push.ttl_until(timezone.now() - datetime.timedelta(minutes=1)) == 0
+    assert push.ttl_until(timezone.now() - dt.timedelta(minutes=1)) == 0
 
 
 def test_ttl_until_is_clamped_to_what_the_push_service_accepts() -> None:
     """FCM rejects a TTL above four weeks outright — the whole push, not just the TTL."""
-    assert push.ttl_until(timezone.now() + datetime.timedelta(days=365)) == push.MAX_TTL_SECONDS
+    assert push.ttl_until(timezone.now() + dt.timedelta(days=365)) == push.MAX_TTL_SECONDS
 
 
 # --- the subscribe endpoint ---------------------------------------------------------------------

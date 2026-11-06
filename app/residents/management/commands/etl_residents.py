@@ -11,7 +11,7 @@ Applies the decided transforms (02-schema-etl.md §5, 99-index.md F-010):
 Idempotent (keyed on preserved PKs). Run `seed_rooms` first.
 """
 
-import datetime
+import datetime as dt
 from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError
@@ -32,8 +32,8 @@ FLAG_TO_ROLE = [
 ]
 
 
-def _date(value: datetime.datetime | datetime.date | None) -> datetime.date | None:
-    return value if isinstance(value, datetime.date) else None
+def _date(value: dt.datetime | dt.date | None) -> dt.date | None:
+    return value if isinstance(value, dt.date) else None
 
 
 class Command(BaseCommand):

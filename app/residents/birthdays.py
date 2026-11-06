@@ -27,7 +27,7 @@ alumneliste, both of which any logged-in resident can read. This shows the day, 
 makes, to exactly that audience.
 """
 
-import datetime
+import datetime as dt
 from dataclasses import dataclass
 
 from .models import Resident, active_period
@@ -46,7 +46,7 @@ class Birthday:
     """
 
     resident: Resident
-    day: datetime.date
+    day: dt.date
     turning: int | None  # age reached that day, or None when the birth year is not usable
 
     @property
@@ -61,7 +61,7 @@ def _is_leap(year: int) -> bool:
     return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
 
 
-def celebrated_on(born: datetime.date, year: int) -> datetime.date:
+def celebrated_on(born: dt.date, year: int) -> dt.date:
     """Which day of `year` a date of birth falls on.
 
     29 FEBRUARY IS THE WHOLE REASON THIS IS A FUNCTION. Three years in four it names no day at all,
@@ -70,11 +70,11 @@ def celebrated_on(born: datetime.date, year: int) -> datetime.date:
     practice is to celebrate on 1 March, which is the answer this gives.
     """
     if born.month == 2 and born.day == 29 and not _is_leap(year):
-        return datetime.date(year, 3, 1)
-    return datetime.date(year, born.month, born.day)
+        return dt.date(year, 3, 1)
+    return dt.date(year, born.month, born.day)
 
 
-def _turning(born: datetime.date, day: datetime.date) -> int | None:
+def _turning(born: dt.date, day: dt.date) -> int | None:
     age = day.year - born.year
     return age if 0 < age < MAX_BELIEVABLE_AGE else None
 
@@ -97,7 +97,7 @@ def residents_with_birthdays() -> list[Resident]:
     )
 
 
-def in_span(first: datetime.date, last: datetime.date) -> dict[datetime.date, list[Birthday]]:
+def in_span(first: dt.date, last: dt.date) -> dict[dt.date, list[Birthday]]:
     """Every birthday falling between `first` and `last` inclusive, keyed by the day it lands on.
 
     Asked per YEAR IN THE SPAN rather than per date of birth, because a calendar grid's padding
@@ -107,7 +107,7 @@ def in_span(first: datetime.date, last: datetime.date) -> dict[datetime.date, li
     One query however long the span; the rest is a couple of dates per resident.
     """
     years = range(first.year, last.year + 1)
-    found: dict[datetime.date, list[Birthday]] = {}
+    found: dict[dt.date, list[Birthday]] = {}
     for resident in residents_with_birthdays():
         born = resident.birthday
         if born is None:  # excluded by the queryset; narrows the type for the checker

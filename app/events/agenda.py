@@ -4,7 +4,7 @@ Upcoming events the resident may see, plus the mærkedage in the same window. Re
 Google Calendar, so the front page shows the kollegium's own calendar.
 """
 
-import datetime
+import datetime as dt
 from dataclasses import dataclass
 
 from django.urls import reverse
@@ -17,12 +17,12 @@ from . import access, maerkedage
 
 # How many events the card lists, and how far ahead a mærkedag is announced.
 AGENDA_EVENTS = 6
-MAERKEDAG_LOOKAHEAD = datetime.timedelta(days=30)
+MAERKEDAG_LOOKAHEAD = dt.timedelta(days=30)
 
 
 @dataclass(frozen=True)
 class AgendaItem:
-    day: datetime.date
+    day: dt.date
     title: str
     time: str = ""  # "18.00"; empty for an all-day mærkedag
     url: str = ""

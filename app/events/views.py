@@ -11,7 +11,7 @@ TWO RULES THIS MODULE MUST KEEP, both of which have their own test:
 """
 
 import calendar as calendar_module
-import datetime
+import datetime as dt
 
 from django.conf import settings
 from django.contrib import messages
@@ -57,9 +57,9 @@ def _my_state(event: Event, resident: Resident) -> str | None:
     return "kommer" if any(r.pk == mine.pk for r in coming) else "venteliste"
 
 
-def _as_datetime(day: datetime.date) -> datetime.datetime:
+def _as_datetime(day: dt.date) -> dt.datetime:
     """Local midnight on `day`, as an aware datetime for comparing against starts_at."""
-    return timezone.make_aware(datetime.datetime.combine(day, datetime.time()))
+    return timezone.make_aware(dt.datetime.combine(day, dt.time()))
 
 
 def _requested_month(request: HttpRequest) -> tuple[int, int]:
@@ -76,11 +76,11 @@ def _requested_month(request: HttpRequest) -> tuple[int, int]:
     return today.year, today.month
 
 
-def _month_param(day: datetime.date) -> str:
+def _month_param(day: dt.date) -> str:
     return f"{day.year}-{day.month:02d}"
 
 
-def _requested_day(request: HttpRequest, span: tuple[datetime.date, datetime.date]) -> datetime.date | None:
+def _requested_day(request: HttpRequest, span: tuple[dt.date, dt.date]) -> dt.date | None:
     """`?dag=YYYY-MM-DD`, the day whose events are spelled out under the grid. None if absent.
 
     This is what makes the calendar usable on a phone: seven columns wide enough to read leave no
@@ -92,30 +92,30 @@ def _requested_day(request: HttpRequest, span: tuple[datetime.date, datetime.dat
     heading and a list for a date nowhere on the page, which reads as a rendering bug.
     """
     try:
-        day = datetime.date.fromisoformat(request.GET.get("dag", ""))
+        day = dt.date.fromisoformat(request.GET.get("dag", ""))
     except ValueError:
         return None
     return day if span[0] <= day <= span[1] else None
 
 
-def _weeks_of(first: datetime.date) -> list[list[datetime.date]]:
+def _weeks_of(first: dt.date) -> list[list[dt.date]]:
     """The whole Monday-to-Sunday weeks that a month occupies, padding included."""
     # Monday first, as a Danish calendar is printed.
     return calendar_module.Calendar(firstweekday=0).monthdatescalendar(first.year, first.month)
 
 
-def _grid_span(first: datetime.date) -> tuple[datetime.date, datetime.date]:
+def _grid_span(first: dt.date) -> tuple[dt.date, dt.date]:
     """First and last day the grid actually SHOWS — which is what the query has to cover."""
     weeks = _weeks_of(first)
     return weeks[0][0], weeks[-1][-1]
 
 
 def _month_grid(
-    first: datetime.date,
-    by_day: dict[datetime.date, list[Event]],
-    chosen: datetime.date | None = None,
-    birthdays: dict[datetime.date, list[birthdays_mod.Birthday]] | None = None,
-    marked_days: dict[datetime.date, list[maerkedage.Maerkedag]] | None = None,
+    first: dt.date,
+    by_day: dict[dt.date, list[Event]],
+    chosen: dt.date | None = None,
+    birthdays: dict[dt.date, list[birthdays_mod.Birthday]] | None = None,
+    marked_days: dict[dt.date, list[maerkedage.Maerkedag]] | None = None,
 ) -> list[list[dict[str, object]]]:
     """The month as whole Monday-to-Sunday weeks, padded into the neighbouring months.
 
@@ -545,8 +545,8 @@ def calendar(request: HttpRequest) -> HttpResponse:
     Event.objects.purge_expired()
     resident = current_resident(request)
     year, month = _requested_month(request)
-    first = datetime.date(year, month, 1)
-    last = datetime.date(year + (month == 12), month % 12 + 1, 1)
+    first = dt.date(year, month, 1)
+    last = dt.date(year + (month == 12), month % 12 + 1, 1)
 
     # The GRID's span, not the month's. The grid pads out to whole weeks, so late August shows the
     # first days of September — and querying the month would render those cells empty while the
@@ -558,13 +558,13 @@ def calendar(request: HttpRequest) -> HttpResponse:
         access.visible_to(resident)
         .filter(
             starts_at__gte=_as_datetime(grid_first),
-            starts_at__lt=_as_datetime(grid_last + datetime.timedelta(days=1)),
+            starts_at__lt=_as_datetime(grid_last + dt.timedelta(days=1)),
         )
         .select_related("organiser")
         .prefetch_related("rsvps")
         .order_by("starts_at")
     )
-    by_day: dict[datetime.date, list[Event]] = {}
+    by_day: dict[dt.date, list[Event]] = {}
     for event in events:
         event.my_state = _my_state(event, resident)  # type: ignore[attr-defined]
         by_day.setdefault(timezone.localtime(event.starts_at).date(), []).append(event)
@@ -586,7 +586,7 @@ def calendar(request: HttpRequest) -> HttpResponse:
             "weeks": _month_grid(first, by_day, chosen, birthdays, marked_days),
             "month_label": f"{MONTHS[month].capitalize()} {year}",
             "this_month": _month_param(first),
-            "prev": _month_param(first - datetime.timedelta(days=1)),
+            "prev": _month_param(first - dt.timedelta(days=1)),
             "next": _month_param(last),
             "today": current_date(),
             "weekdays": WEEKDAYS_SHORT,
@@ -659,6 +659,6 @@ def _touch(feed_token: CalendarFeedToken) -> None:
     that is being *used* visible in the data.
     """
     now = current_datetime()
-    if feed_token.last_used_at and now - feed_token.last_used_at < datetime.timedelta(hours=1):
+    if feed_token.last_used_at and now - feed_token.last_used_at < dt.timedelta(hours=1):
         return
     CalendarFeedToken.objects.filter(pk=feed_token.pk).update(last_used_at=now)

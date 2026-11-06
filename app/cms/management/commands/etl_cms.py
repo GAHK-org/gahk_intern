@@ -5,7 +5,7 @@ News/pylon dates rebuilt from their day/month/year (+ epoch). Content is importe
 own copy and there is no runtime editing (F-006), so it stays code/fixture-managed afterwards.
 """
 
-import datetime
+import datetime as dt
 from typing import Any
 
 from django.core.management.base import BaseCommand
@@ -34,12 +34,12 @@ SLUG_BY_PAGE_ID = {
 }
 
 
-def _date_from_ymd(row: dict[str, Any]) -> datetime.date | None:
+def _date_from_ymd(row: dict[str, Any]) -> dt.date | None:
     try:
-        return datetime.date(int(row["year"]), int(row["month"]), max(int(row["day"]), 1))
+        return dt.date(int(row["year"]), int(row["month"]), max(int(row["day"]), 1))
     except (ValueError, TypeError):
-        dt = epoch_to_dt(row.get("timestamp"))
-        return dt.date() if dt else None
+        timestamp = epoch_to_dt(row.get("timestamp"))
+        return timestamp.date() if timestamp else None
 
 
 class Command(BaseCommand):
@@ -67,11 +67,7 @@ class Command(BaseCommand):
                 d = _date_from_ymd(n)
                 from django.utils import timezone
 
-                published = (
-                    timezone.make_aware(datetime.datetime.combine(d, datetime.time()))
-                    if d
-                    else timezone.now()
-                )
+                published = timezone.make_aware(dt.datetime.combine(d, dt.time())) if d else timezone.now()
             NewsItem.objects.update_or_create(
                 id=n["id"],
                 defaults={

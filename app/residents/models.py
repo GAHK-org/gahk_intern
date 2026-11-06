@@ -7,7 +7,8 @@ privileges come from the *current month's* assignments, not a static table — s
 """
 
 import logging
-from typing import Any
+from collections.abc import Collection
+from typing import TYPE_CHECKING, Any
 
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.core.cache import cache
@@ -17,6 +18,9 @@ from django.dispatch import receiver
 from django.utils import timezone
 
 from core.files import delete_attached_files, delete_files_after_commit
+
+if TYPE_CHECKING:
+    from django.db.models.fetch_modes import FetchMode
 
 
 class Role(models.TextChoices):
@@ -173,7 +177,16 @@ class Resident(AbstractBaseUser, PermissionsMixin):
     # Until the worker has made it, avatars draw the original, as they did before #177.
 
     @classmethod
-    def from_db(cls, db: str | None, field_names: Any, values: Any) -> "Resident":  # noqa: ANN401
+    def from_db(
+        cls,
+        db: str | None,
+        field_names: Collection[str],
+        values: Collection[Any],
+        *,
+        fetch_mode: FetchMode | None = None,
+    ) -> "Resident":
+        # Django 5.2's runtime base method does not accept the newer stub-only argument.
+        del fetch_mode
         instance = super().from_db(db, field_names, values)
         # Raw from __dict__ so a deferred field is not fetched just to remember it; absent means
         # "unknown", and an unknown picture is never treated as changed.

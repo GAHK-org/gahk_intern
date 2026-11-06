@@ -327,24 +327,24 @@ def test_end_round_leaves_contested_rooms_for_resolution(make_resident: Callable
 def test_dev_clock_override_only_applies_under_debug() -> None:
     """The simulated clock is honoured only when DEBUG; in prod (DEBUG=False) it is ignored, so it
     can never shift production's sense of 'now'."""
-    import datetime
+    import datetime as dt
 
     from django.test import override_settings
 
     from core.clock import current_date
     from core.models import DevClock
 
-    DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": datetime.date(2030, 3, 15)})
+    DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": dt.date(2030, 3, 15)})
 
     with override_settings(DEBUG=True):
-        assert current_date() == datetime.date(2030, 3, 15)
+        assert current_date() == dt.date(2030, 3, 15)
     with override_settings(DEBUG=False):
-        assert current_date() != datetime.date(2030, 3, 15)  # real clock
+        assert current_date() != dt.date(2030, 3, 15)  # real clock
 
 
 @pytest.mark.django_db
 def test_dev_clock_shifts_active_period(make_resident: Callable) -> None:
-    import datetime
+    import datetime as dt
 
     from django.test import override_settings
 
@@ -353,7 +353,7 @@ def test_dev_clock_shifts_active_period(make_resident: Callable) -> None:
 
     r = Room.objects.create(legacy_index=80, number=80, floor="stuen", side="mod gaden")
     Residency.objects.create(resident=make_resident(email="ap@gahk.dk"), room=r, year=2030, month=5)
-    DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": datetime.date(2030, 6, 1)})
+    DevClock.objects.update_or_create(pk=1, defaults={"simulated_date": dt.date(2030, 6, 1)})
     with override_settings(DEBUG=True):
         assert active_period() == (2030, 5)  # the May list is the latest that has started by June
 
