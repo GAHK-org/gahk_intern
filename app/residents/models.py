@@ -183,7 +183,7 @@ class Resident(AbstractBaseUser, PermissionsMixin):
         field_names: Collection[str],
         values: Collection[Any],
         *,
-        fetch_mode: FetchMode | None = None,
+        fetch_mode: "FetchMode | None" = None,
     ) -> "Resident":
         # Django 5.2's runtime base method does not accept the newer stub-only argument.
         del fetch_mode
