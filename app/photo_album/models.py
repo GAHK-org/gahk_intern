@@ -612,6 +612,9 @@ class Media(models.Model):
         upload_to=album_sidecar_path, storage=get_photo_album_storage, max_length=500, blank=True
     )
     content_type = models.CharField(max_length=100, blank=True)
+    # A camera RAW file (CR2, NEF, ARW, DNG, …; uploads.RAW_EXTENSIONS): its viewer and grid copies
+    # are decoded by LibRaw, and its original is the sensor's data rather than a picture to look at.
+    is_raw = models.BooleanField(default=False)
     derivative_state = models.CharField(
         max_length=10, choices=DerivativeState.choices, default=DerivativeState.READY
     )

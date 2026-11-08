@@ -6,6 +6,7 @@ so the old `b"bytes"` stand-ins are refused. These are tiny but genuine files.
 
 import functools
 import itertools
+import struct
 import subprocess
 from io import BytesIO
 from pathlib import Path
@@ -42,6 +43,81 @@ def heic_bytes(size: tuple[int, int] = (64, 48), colour: str = "red") -> bytes:
     output = BytesIO()
     from_pillow(Image.new("RGB", size, colour)).save(output)
     return output.getvalue()
+
+
+def dng_bytes(
+    size: tuple[int, int] = (64, 48),
+    *,
+    orientation: int = 1,
+    captured: str = "2004:05:06 07:08:09",
+    make: str = "Canon",
+    model: str = "EOS 5D",
+) -> bytes:
+    """A camera RAW file: a DNG of a flat colour behind a Bayer filter, 12 bits in 16, with the
+    camera, the orientation and the capture time a camera writes into one. LibRaw decodes it; Pillow
+    cannot open it, as it cannot open any RAW file."""
+    width, height = size
+    rows = struct.pack("<2H", 3000, 1500) * (width // 2) + struct.pack("<2H", 1500, 800) * (width // 2)
+    pixels = rows * (height // 2)
+    srgb_from_xyz = [3240, -1537, -499, -969, 1876, 42, 56, -204, 1057]  # in thousandths
+    Value = bytes | list[int | str]
+    main: list[tuple[int, int, Value]] = [  # (tag, TIFF type, value); "exif" and "pixels" are offsets
+        (254, 4, [0]),  # the main image
+        (256, 4, [width]),
+        (257, 4, [height]),
+        (258, 3, [16]),
+        (259, 3, [1]),  # uncompressed
+        (262, 3, [32803]),  # a colour filter array
+        (271, 2, make.encode() + b"\0"),
+        (272, 2, model.encode() + b"\0"),
+        (273, 4, ["pixels"]),
+        (274, 3, [orientation]),
+        (277, 3, [1]),
+        (278, 4, [height]),
+        (279, 4, [len(pixels)]),
+        (284, 3, [1]),
+        (33421, 3, [2, 2]),  # the filter's pattern: 2x2,
+        (33422, 1, bytes([0, 1, 1, 2])),  # red, green, green, blue
+        (34665, 4, ["exif"]),
+        (50706, 1, bytes([1, 4, 0, 0])),  # DNG 1.4
+        (50708, 2, f"{make} {model}".encode() + b"\0"),
+        (50717, 4, [4095]),  # white level
+        (50721, 10, [*srgb_from_xyz]),  # colour matrix
+        (50778, 3, [21]),  # under D65
+    ]
+    exif: list[tuple[int, int, Value]] = [(36867, 2, captured.encode() + b"\0")]
+
+    def directory(entries: list[tuple[int, int, Value]], start: int, at: dict[str, int]) -> bytes:
+        """An IFD written at `start`, followed by the values too long to fit in it."""
+        end = start + 2 + 12 * len(entries) + 4
+        table, overflow = struct.pack("<H", len(entries)), b""
+        for tag, kind, value in entries:
+            if isinstance(value, bytes):
+                count, data = len(value), value
+            elif kind == 10:  # signed rationals
+                count, data = len(value), b"".join(struct.pack("<2i", int(v), 1000) for v in value)
+            else:
+                numbers = [at[v] if isinstance(v, str) else v for v in value]
+                count, data = (
+                    len(numbers),
+                    b"".join(struct.pack("<H" if kind == 3 else "<I", v) for v in numbers),
+                )
+            if len(data) <= 4:
+                table += struct.pack("<HHI", tag, kind, count) + data.ljust(4, b"\0")
+            else:
+                overflow += b"\0" * (len(overflow) % 2)
+                table += struct.pack("<HHII", tag, kind, count, end + len(overflow))
+                overflow += data
+        return table + struct.pack("<I", 0) + overflow
+
+    at = {"exif": 0, "pixels": 0}
+    for _ in range(2):  # the offsets depend on the lengths before them, which do not depend on them
+        first = directory(main, 8, at)
+        at["exif"] = 8 + len(first) + len(first) % 2
+        second = directory(exif, at["exif"], at)
+        at["pixels"] = at["exif"] + len(second) + len(second) % 2
+    header = b"II*\0" + struct.pack("<I", 8)
+    return (header + first).ljust(at["exif"], b"\0") + second.ljust(at["pixels"] - at["exif"], b"\0") + pixels
 
 
 @functools.cache
