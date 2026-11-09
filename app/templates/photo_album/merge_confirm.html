@@ -3,7 +3,7 @@
 {% block content %}
 {% comment %}Albums by their path in the folder (merge.label) throughout: the one merged may share its name with the one kept — its own parent, say.{% endcomment %}
 <section class="album-merge-confirm">
-	<nav class="album-breadcrumbs" aria-label="Albumsti"><a class="album-back" href="{% url 'photo_album:index' %}">Fotoalbum</a><a class="album-back" href="{% url 'photo_album:index' %}?folder={{ target.folder|urlencode }}">{{ target.folder }}</a><a class="album-back" href="{% url 'photo_album:detail' target.pk %}">{{ target.name }}</a></nav>
+	<nav class="album-breadcrumbs" aria-label="Albumsti"><a class="album-back" href="{% url 'photo_album:index' %}">Fotoalbum</a><a class="album-back" href="{% url 'photo_album:index' %}?folder={{ source.folder|urlencode }}">{{ source.folder }}</a><a class="album-back" href="{% url 'photo_album:detail' source.pk %}">{{ source.name }}</a></nav>
 	<h1>Flet {{ source_label }} ind i {{ target_label }}</h1>
 	<div class="album-merge-sides">
 		<article class="card album-merge-side album-merge-gone">
@@ -28,6 +28,6 @@
 		<li>Bagefter slettes {{ source_label }}{% if merged %} og de underalbummer, der er flettet ind{% endif %}. {{ target_label }} beholder sit navn og sin adresse.</li>
 	</ul>
 	<p class="muted">Fletningen sker i baggrunden og kan ikke fortrydes. Imens kan der ikke uploades til albummerne.</p>
-	<form class="album-merge-actions" method="post">{% csrf_token %}<input type="hidden" name="source" value="{{ source.pk }}"><button class="btn album-merge-button" type="submit">Flet {{ source_label }} ind i {{ target_label }}</button><a class="btn-link" href="{% url 'photo_album:detail' target.pk %}">Annuller</a></form>
+	<form class="album-merge-actions" method="post">{% csrf_token %}<input type="hidden" name="target" value="{{ target.pk }}"><button class="btn album-merge-button" type="submit">Flet {{ source_label }} ind i {{ target_label }}</button><a class="btn-link" href="{% url 'photo_album:detail' source.pk %}">Annuller</a></form>
 </section>
 {% endblock %}

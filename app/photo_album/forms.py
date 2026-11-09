@@ -20,12 +20,12 @@ class AlbumNameForm(forms.Form):
 
 
 class AlbumMergeForm(forms.Form):
-    """The album to merge into this one; which albums may be is merge.check's to say."""
+    """The album to merge this one into, which is kept; which albums may be is merge.plan's to say."""
 
-    source = forms.ModelChoiceField(
+    target = forms.ModelChoiceField(
         queryset=Album.objects.all(),
         error_messages={
-            "required": "Vælg det album, der skal flettes ind.",
+            "required": "Vælg det album, det skal flettes ind i.",
             "invalid_choice": "Det album findes ikke længere.",
         },
     )

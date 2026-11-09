@@ -46,7 +46,7 @@ def can_upload(request: HttpRequest, album: Album) -> bool:
 
 
 def can_merge_album(request: HttpRequest, album: Album) -> bool:
-    """Merging another album into this one (photo_album.merge): administrators only."""
+    """Merging this album into another, which is kept (photo_album.merge): administrators only."""
     return is_administrator(request) and not album.is_locked()
 
 

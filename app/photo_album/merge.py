@@ -141,13 +141,13 @@ class Candidate:
     locked: bool
 
 
-def merge_candidates(album: Album) -> list[Candidate]:
-    """The albums that could be merged into `album`: the others in its folder, but not those above it.
+def merge_targets(album: Album) -> list[Candidate]:
+    """The albums `album` could be merged into: the others in its folder, but not its own sub-albums.
 
     Two queries whatever the folder holds: its albums, and their lock states all at once.
     """
     albums = list(Album.objects.filter(folder=album.folder))
-    excluded = {album.pk, *album.ancestor_ids}
+    excluded = {other.pk for other in albums if other.path.startswith(album.path)}
     if all(other.pk in excluded for other in albums):
         return []
     names = {other.pk: other.name for other in albums}

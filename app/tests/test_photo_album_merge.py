@@ -407,28 +407,32 @@ def test_only_an_administrator_is_offered_the_merge_and_may_make_it(
 ) -> None:
     target, source = _albums("Sommerfest", "Sommerfest 2")
     evening = Album.objects.create(folder="2014", name="Aften", parent=source)
+    party = Album.objects.create(folder="2014", name="Fest", parent=target)
     locked = Album.objects.create(folder="2014", name="Julefrokost", manually_locked_at=timezone.now())
-    url = reverse("photo_album:merge_album", args=[target.pk])
+    url = reverse("photo_album:merge_album", args=[source.pk])
     client.force_login(make_resident(email="foto@gahk.dk", roles=(Role.FOTO,)))
-    assert (
-        "Flet et album ind"
-        not in client.get(reverse("photo_album:detail", args=[target.pk])).content.decode()
-    )
-    assert client.get(url, {"source": source.pk}).status_code == 403
-    assert client.post(url, {"source": source.pk}).status_code == 403
+    assert "Flet ind i" not in client.get(reverse("photo_album:detail", args=[source.pk])).content.decode()
+    assert client.get(url, {"target": target.pk}).status_code == 403
+    assert client.post(url, {"target": target.pk}).status_code == 403
 
+    # From the album that goes, the albums it could go into: the folder's others, not its own.
     client.force_login(make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,)))
-    page = client.get(reverse("photo_album:detail", args=[target.pk])).content.decode()
-    assert "Det valgte album flettes ind i <strong>Sommerfest</strong> og forsvinder." in page
+    page = client.get(reverse("photo_album:detail", args=[source.pk])).content.decode()
     assert (
-        f'<option value="{locked.pk}" disabled>Julefrokost (låst)</option>'
-        f'<option value="{source.pk}">Sommerfest 2</option>'
-        f'<option value="{evening.pk}">Sommerfest 2 › Aften</option></select>'
+        "<strong>Sommerfest 2</strong> flettes ind i det album, du vælger, og forsvinder. "
+        "Det valgte album beholder sit navn."
     ) in page
-    # From a sub-album, everything in the folder but the albums above it.
+    assert (
+        '<option value="">Vælg album</option>'
+        f'<option value="{locked.pk}" disabled>Julefrokost (låst)</option>'
+        f'<option value="{target.pk}">Sommerfest</option>'
+        f'<option value="{party.pk}">Sommerfest › Fest</option></select>'
+    ) in page
+    assert f'<option value="{evening.pk}">' not in page
+    # From a sub-album, the albums above it too: merged into its own root, it is flattened there.
     page = client.get(reverse("photo_album:detail", args=[evening.pk])).content.decode()
+    assert f'<option value="{source.pk}">Sommerfest 2</option>' in page
     assert f'<option value="{target.pk}">Sommerfest</option>' in page
-    assert f'<option value="{source.pk}">' not in page
 
 
 @pytest.mark.django_db
@@ -447,9 +451,9 @@ def test_an_administrator_sees_what_will_happen_merges_and_is_told_how_it_went(
     _item(source, "a.jpg", same, uploader)
     _item(source, "b.jpg", jpeg_bytes(), uploader)
     client.force_login(make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,)))
-    url = reverse("photo_album:merge_album", args=[target.pk])
+    url = reverse("photo_album:merge_album", args=[source.pk])
 
-    confirm = client.get(url, {"source": source.pk}).content.decode()
+    confirm = client.get(url, {"target": target.pk}).content.decode()
 
     assert AlbumMerge.objects.count() == 0  # nothing yet
     assert "<h1>Flet Sommerfest 2 ind i Sommerfest</h1>" in confirm
@@ -462,11 +466,13 @@ def test_an_administrator_sees_what_will_happen_merges_and_is_told_how_it_went(
     assert "Underalbummet Nat flyttes ind under Sommerfest." in confirm
     assert "Sommerfest beholder sit navn og sin adresse." in confirm
     assert ">Flet Sommerfest 2 ind i Sommerfest</button>" in confirm
+    cancel = reverse("photo_album:detail", args=[source.pk])
+    assert f'<a class="btn-link" href="{cancel}">Annuller</a>' in confirm  # back where it started
 
     with django_capture_on_commit_callbacks(execute=True):  # the merge runs eagerly in the tests
-        response = client.post(url, {"source": source.pk})
+        response = client.post(url, {"target": target.pk})
 
-    assert response["Location"] == reverse("photo_album:detail", args=[target.pk])
+    assert response["Location"] == reverse("photo_album:detail", args=[target.pk])  # the one kept
     job = AlbumMerge.objects.get()
     assert (job.state, job.source_id, job.source_path) == (AlbumMergeState.READY, None, "Sommerfest 2")
     assert not Album.objects.filter(pk=source.pk).exists()
@@ -486,15 +492,15 @@ def test_an_album_merged_into_one_of_the_same_name_is_told_apart_by_its_path(
     root = Album.objects.create(folder="2006", name="Generalforsamling")
     nested = Album.objects.create(folder="2006", name="Generalforsamling", parent=root)
     client.force_login(make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,)))
-    url = reverse("photo_album:merge_album", args=[root.pk])
+    url = reverse("photo_album:merge_album", args=[nested.pk])
 
-    confirm = client.get(url, {"source": nested.pk}).content.decode()
+    confirm = client.get(url, {"target": root.pk}).content.decode()
 
     assert "<h1>Flet Generalforsamling › Generalforsamling ind i Generalforsamling</h1>" in confirm
     assert "Bagefter slettes Generalforsamling › Generalforsamling." in confirm
 
     with django_capture_on_commit_callbacks(execute=True):
-        response = client.post(url, {"source": nested.pk})
+        response = client.post(url, {"target": root.pk})
     page = client.get(response["Location"]).content.decode()
 
     assert AlbumMerge.objects.get().source_path == "Generalforsamling › Generalforsamling"
@@ -513,10 +519,10 @@ def test_albums_that_cannot_be_merged_are_turned_back_before_the_confirmation(
     client.force_login(make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,)))
 
     response = client.get(
-        reverse("photo_album:merge_album", args=[target.pk]), {"source": other_year.pk}, follow=True
+        reverse("photo_album:merge_album", args=[other_year.pk]), {"target": target.pk}, follow=True
     )
 
-    assert response.redirect_chain == [(reverse("photo_album:detail", args=[target.pk]), 302)]
+    assert response.redirect_chain == [(reverse("photo_album:detail", args=[other_year.pk]), 302)]
     assert "Kun albummer i samme mappe kan flettes." in response.content.decode()
 
 

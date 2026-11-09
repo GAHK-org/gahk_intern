@@ -422,7 +422,7 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
             "merge_job": merge_job,
             "merge_summary": merge.describe(merge_job.result) if merge_job is not None else "",
             "merge_target": merge.label(merge_job.target) if merge_job is not None else "",
-            "merge_options": merge.merge_candidates(album) if can_merge else [],
+            "merge_options": merge.merge_targets(album) if can_merge else [],
         },
     )
 
@@ -531,23 +531,23 @@ MERGE_NOTICE_SHOWN_FOR = timedelta(days=1)
 
 @login_required
 def merge_album(request: HttpRequest, pk: int) -> HttpResponse:
-    """Merge the album chosen into this one, which is kept: first a page saying what will happen —
+    """Merge this album into the one chosen, which is kept: first a page saying what will happen —
     which album goes, which stays, and where each sub-album ends up — then, posted from it, the
-    merge itself, in the background (photo_album.merge)."""
-    target = get_object_or_404(Album, pk=pk)
-    if not access.can_merge_album(request, target):
+    merge itself, in the background (photo_album.merge). The kept album's page follows it."""
+    source = get_object_or_404(Album, pk=pk)
+    if not access.can_merge_album(request, source):
         raise PermissionDenied
     form = AlbumMergeForm(request.POST if request.method == "POST" else request.GET)
     if not form.is_valid():
         _form_error_messages(request, form)
-        return redirect("photo_album:detail", target.pk)
-    source = form.cleaned_data["source"]
+        return redirect("photo_album:detail", source.pk)
+    target = form.cleaned_data["target"]
     if request.method != "POST":
         try:
             merge_plan = merge.plan(target, source)
         except ValidationError as exc:
             _error_messages(request, exc)
-            return redirect("photo_album:detail", target.pk)
+            return redirect("photo_album:detail", source.pk)
         return render(
             request,
             "photo_album/merge_confirm.html",
@@ -568,13 +568,13 @@ def merge_album(request: HttpRequest, pk: int) -> HttpResponse:
         job = merge.request_merge(target, source, by=current_resident(request))
     except ValidationError as exc:
         _error_messages(request, exc)
-    else:
-        kept = merge.label(target)
-        messages.success(
-            request,
-            f"{job.source_path} flettes ind i {kept}. {kept} beholdes, og {job.source_path} forsvinder, "
-            "når fletningen er færdig.",
-        )
+        return redirect("photo_album:detail", source.pk)
+    kept = merge.label(target)
+    messages.success(
+        request,
+        f"{job.source_path} flettes ind i {kept}. {kept} beholdes, og {job.source_path} forsvinder, "
+        "når fletningen er færdig.",
+    )
     return redirect("photo_album:detail", target.pk)
 
 
