@@ -228,6 +228,7 @@ CELERY_TASK_ROUTES = {
     "photo_album.tasks.build_media_derivatives": {"queue": "media"},
     "photo_album.tasks.build_album_download": {"queue": "media"},
     "photo_album.tasks.process_album_import": {"queue": "media"},
+    "photo_album.tasks.process_album_merge": {"queue": "media"},
     "photo_album.tasks.backfill_media_hashes": {"queue": "media"},
     "photo_album.tasks.reencode_enlarged_video": {"queue": "media"},
     "photo_album.tasks.settle_media_dates": {"queue": "media"},
@@ -299,6 +300,11 @@ CELERY_BEAT_SCHEDULE = {
     "fail-stalled-photo-album-imports": {
         "task": "photo_album.tasks.fail_stalled_imports",
         "schedule": crontab(minute="10-59/15"),
+    },
+    # And for album merges, which the album page is waiting on.
+    "fail-stalled-photo-album-merges": {
+        "task": "photo_album.tasks.fail_stalled_merges",
+        "schedule": crontab(minute="7-59/15"),
     },
     # Sends again a GAHKFlix encode whose worker stopped reporting (gahkflix.tasks.recover_stalled).
     "recover-stalled-gahkflix-encodes": {
