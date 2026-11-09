@@ -55,7 +55,13 @@
       regning, også hvis der ikke er nye posteringer i netop denne periode. Selve afsendelsen sker
       først efter du har set forhåndsvisningen.
     </p>
-    <form method="get" action="{% url 'regnskab:preview_alumneregninger' %}" class="flex flex-wrap items-end gap-2">
+    {% comment %}
+      Building the preview fetches every alumne's entries from e-conomic before the page answers, which
+      takes minutes, so the button says it is working rather than looking like nothing happened.
+    {% endcomment %}
+    <div x-data="{ busy: false }" @pageshow.window="busy = false">
+    <form method="get" action="{% url 'regnskab:preview_alumneregninger' %}" class="flex flex-wrap items-end gap-2"
+          @submit="busy = true">
       <div>
         <label for="fra" class="font-semibold block text-sm">Fra</label>
         <input type="date" id="fra" name="fra" value="{{ alumneregning_from }}" required>
@@ -64,8 +70,16 @@
         <label for="til" class="font-semibold block text-sm">Til</label>
         <input type="date" id="til" name="til" value="{{ alumneregning_to }}" required>
       </div>
-      <button type="submit" class="btn">Lav Alumneregninger</button>
+      <button type="submit" class="btn" :disabled="busy" :aria-busy="busy">
+        <span class="spinner" x-show="busy" x-cloak></span>
+        <span x-text="busy ? 'Laver alumneregninger…' : 'Lav Alumneregninger'">Lav Alumneregninger</span>
+      </button>
     </form>
+    <p class="muted text-sm mt-2" x-show="busy" x-cloak role="status">
+      Henter posteringer fra e-conomic og laver en kontoudskrift til hver alumne. Det kan tage et par
+      minutter — luk ikke siden.
+    </p>
+    </div>
     <p class="text-sm mt-2">
       <a href="{% url 'regnskab:alumneregning_settings' %}">Rediger besked og følgebrev →</a>
     </p>

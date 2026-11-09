@@ -228,6 +228,7 @@ CELERY_TASK_ROUTES = {
     "photo_album.tasks.build_media_derivatives": {"queue": "media"},
     "photo_album.tasks.build_album_download": {"queue": "media"},
     "photo_album.tasks.process_album_import": {"queue": "media"},
+    "photo_album.tasks.process_album_merge": {"queue": "media"},
     "photo_album.tasks.backfill_media_hashes": {"queue": "media"},
     "photo_album.tasks.reencode_enlarged_video": {"queue": "media"},
     "photo_album.tasks.settle_media_dates": {"queue": "media"},
@@ -299,6 +300,11 @@ CELERY_BEAT_SCHEDULE = {
     "fail-stalled-photo-album-imports": {
         "task": "photo_album.tasks.fail_stalled_imports",
         "schedule": crontab(minute="10-59/15"),
+    },
+    # And for album merges, which the album page is waiting on.
+    "fail-stalled-photo-album-merges": {
+        "task": "photo_album.tasks.fail_stalled_merges",
+        "schedule": crontab(minute="7-59/15"),
     },
     # Sends again a GAHKFlix encode whose worker stopped reporting (gahkflix.tasks.recover_stalled).
     "recover-stalled-gahkflix-encodes": {
@@ -375,9 +381,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "oelkaelder.tasks.send_monthly_statements",
         "schedule": crontab(minute=10, hour=6, day_of_month=1),
     },
-    "send-admin-dummy-notification": {
-        "task": "core.tasks.send_admin_dummy_notification",
-        "schedule": crontab(minute=0, hour="8,16"),
+    # The month that just ended, to everyone with Django-admin access. In the day, after the night's
+    # sweeps and the AK charge: people read it.
+    "email-admin-monthly-summary": {
+        "task": "core.tasks.send_admin_monthly_summary",
+        "schedule": crontab(minute=5, hour=9, day_of_month=1),
     },
 }
 
@@ -655,8 +663,11 @@ PROFILE_PICTURE_MAX_MB = int(os.environ.get("PROFILE_PICTURE_MAX_MB", "5"))
 # modern phone photo legitimately arrives at 10-15 MB, and a clip from the same phone is an order of
 # magnitude larger again. Its own settings for the same reason the *_MAX_MB above are separate —
 # each feature caps its own uploads, so an ops change for one cannot silently change another.
+# A camera RAW file is a third: a 45-megapixel sensor's data is 50-120 MB. The import script's
+# videos have no ceiling at all (photo_album.uploads.size_limit).
 PHOTO_ALBUM_IMAGE_MAX_MB = int(os.environ.get("PHOTO_ALBUM_IMAGE_MAX_MB", "50"))
-PHOTO_ALBUM_VIDEO_MAX_MB = int(os.environ.get("PHOTO_ALBUM_VIDEO_MAX_MB", "1000"))
+PHOTO_ALBUM_RAW_MAX_MB = int(os.environ.get("PHOTO_ALBUM_RAW_MAX_MB", "200"))
+PHOTO_ALBUM_VIDEO_MAX_MB = int(os.environ.get("PHOTO_ALBUM_VIDEO_MAX_MB", "3072"))
 
 # A local copy of the album's thumbnails and HD images (photo_album.cache), so the grid does not
 # bounce every tile off S3. Empty turns it off; production sets it to a volume so a redeploy starts
@@ -665,10 +676,10 @@ PHOTO_ALBUM_CACHE_DIR = os.environ.get("PHOTO_ALBUM_CACHE_DIR", "")
 PHOTO_ALBUM_CACHE_THUMBNAIL_MB = int(os.environ.get("PHOTO_ALBUM_CACHE_THUMBNAIL_MB", "2048"))
 PHOTO_ALBUM_CACHE_HD_MB = int(os.environ.get("PHOTO_ALBUM_CACHE_HD_MB", "3072"))
 
-# The same kind of local copy for Den Hurtige's and opslagstavlen's image attachments (core.media,
-# core.disk_cache). It defaults to the photo album's directory, so the production volume and the
-# dev setups already configured for that one work for this too; the copies go in a subdirectory of
-# their own. Empty turns it off.
+# The same kind of local copy for Den Hurtige's and opslagstavlen's image attachments and for the
+# profile thumbnails every avatar draws (core.media, core.disk_cache). It defaults to the photo
+# album's directory, so the production volume and the dev setups already configured for that one
+# work for this too; the copies go in a subdirectory of their own. Empty turns it off.
 MEDIA_CACHE_DIR = os.environ.get("MEDIA_CACHE_DIR", PHOTO_ALBUM_CACHE_DIR)
 MEDIA_CACHE_ATTACHMENTS_MB = int(os.environ.get("MEDIA_CACHE_ATTACHMENTS_MB", "2048"))
 # Only images people are still looking at are copied; an ARCHIVED one is served by a redirect to

@@ -31,9 +31,11 @@ from django.db.models.fields.files import FieldFile
 from django.db.models.functions import Lower
 from django.template.defaultfilters import filesizeformat
 from django.utils import timezone
+from django.utils.formats import date_format
 
 from photo_album.models import TAG_MAX_LENGTH, validate_tag_name
 
+from .dating import DatePrecision, DateSource, PartialDate
 from .storage import get_video_storage
 
 # The windows in the spec, all counted from the upload (Video.created_at).
@@ -203,9 +205,14 @@ class Video(models.Model):
     # The upload. Every time window in the policy (module docstring) runs from here.
     created_at = models.DateTimeField(auto_now_add=True)
     published_at = models.DateTimeField(null=True, blank=True)
-    # The film's own date: read from the file when it is processed, overridable by hand.
-    recorded_on = models.DateField(null=True, blank=True, verbose_name="Optaget")
-    recorded_on_manual = models.BooleanField(default=False)
+    # The film's own date, as much of it as is known: a day, a month or a year (dating.py), stored
+    # as its first day. Guessed when the file is processed, unless it was set by hand.
+    released_on = models.DateField(null=True, blank=True, verbose_name="Udgivelsesdato")
+    release_precision = models.CharField(
+        max_length=5, choices=DatePrecision.choices, default=DatePrecision.DAY
+    )
+    # Where it came from; "" when there is none.
+    release_source = models.CharField(max_length=8, choices=DateSource.choices, blank=True)
     series = models.ForeignKey(
         Series, null=True, blank=True, on_delete=models.PROTECT, related_name="videos", verbose_name="Serie"
     )
@@ -281,9 +288,27 @@ class Video(models.Model):
         return timezone.localdate(self.created_at) + timedelta(days=DRAFT_TTL_DAYS)
 
     @property
+    def release(self) -> PartialDate | None:
+        return PartialDate(self.released_on, self.release_precision) if self.released_on else None
+
+    @property
     def display_date(self) -> date:
-        """The date the timeline files it under: when it was recorded, else when it was uploaded."""
-        return self.recorded_on or timezone.localdate(self.created_at)
+        """The date it is sorted by: its release date (the first day of what is known), else the
+        day it was uploaded."""
+        return self.released_on or timezone.localdate(self.created_at)
+
+    @property
+    def date_label(self) -> str:
+        """ "12. marts 2015", "marts 2015" or "2015" — no more than is known."""
+        if (release := self.release) is not None:
+            return release.label()
+        return date_format(timezone.localdate(self.created_at), "j. F Y")
+
+    @property
+    def display_month(self) -> int | None:
+        """The month the timeline files it under; None when only the year is known."""
+        release = self.release
+        return release.month if release is not None else self.display_date.month
 
     @property
     def episode_label(self) -> str:
@@ -470,11 +495,26 @@ class Watch(models.Model):
 
 
 class ViewEvent(models.Model):
-    """One counted view, kept for trending and the per-day statistics."""
+    """One viewing: a resident opening a video in the player, and what came of it.
+
+    It counts as a view (`viewed_at`) once a few seconds have played, unless the same resident's
+    last view of the video was less than VIEW_DEDUPE_WINDOW before. Opening the player again within
+    that window of leaving it, short of the end, goes on with the same viewing. Kept for trending
+    and the statistics: how often a video is opened, how long it plays, and whether it is watched
+    to the end.
+    """
 
     video = models.ForeignKey(Video, on_delete=models.CASCADE, related_name="view_events")
     resident = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
-    viewed_at = models.DateTimeField(default=timezone.now)
+    opened_at = models.DateTimeField(default=timezone.now)
+    # When it counted as a view; null while it has not.
+    viewed_at = models.DateTimeField(null=True, blank=True)
+    # The player's last report on it.
+    active_at = models.DateTimeField(default=timezone.now)
+    # Seconds of the film that actually played: skipping ahead adds nothing, watching again adds.
+    watched = models.FloatField(default=0)
+    # Whether it reached the end (the point where a video counts as watched; services.FINISHED_MARGIN).
+    finished = models.BooleanField(default=False)
 
     class Meta:
         indexes = [models.Index(fields=["viewed_at", "video"], name="gahkflix_view_time_idx")]
@@ -559,3 +599,42 @@ class ChangeVote(models.Model):
     class Meta:
         ordering = ["created_at", "pk"]
         constraints = [models.UniqueConstraint(fields=["request", "voter"], name="uniq_gahkflix_vote")]
+
+
+class VideoEvent(models.Model):
+    """One line of a video's history: what happened to it, when, and who did it.
+
+    An edit carries each detail it changed as {"before": …, "after": …}, as services.snapshot has
+    them, and a new thumbnail or banner both pictures, each as {"key", "frame"} (and "from": the
+    picture it is a copy of, when an old one was brought back). The pictures a video has had stay
+    stored as long as the video does, so any of them can be brought back.
+    """
+
+    class Kind(models.TextChoices):
+        UPLOADED = "uploaded", "Uploadet"
+        NEW_VERSION = "new_version", "Ny version uploadet"
+        PROCESSED = "processed", "Færdigbehandlet"
+        FAILED = "failed", "Kunne ikke behandles"
+        EDITED = "edited", "Ændret"
+        PUBLISHED = "published", "Udgivet"
+        BINNED = "binned", "Lagt i papirkurven"
+        RESTORED = "restored", "Hentet tilbage fra papirkurven"
+
+    video = models.ForeignKey(Video, on_delete=models.CASCADE, related_name="events")
+    kind = models.CharField(max_length=12, choices=Kind.choices)
+    # Who did it; null for what the worker did, and for a resident since deleted.
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(default=timezone.now)
+    changes = models.JSONField(default=dict, blank=True)
+    # The request this carried out, when other administrators had to agree to it.
+    request = models.ForeignKey(
+        ChangeRequest, null=True, blank=True, on_delete=models.SET_NULL, related_name="events"
+    )
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
+
+    def __str__(self) -> str:
+        return f"{self.get_kind_display()}: {self.video}"

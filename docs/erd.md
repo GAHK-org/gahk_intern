@@ -605,6 +605,7 @@ erDiagram
         string thumbnail
         string sidecar
         string content_type
+        bool is_raw
         string derivative_state
         int derivative_attempts
         datetime derivative_started_at
@@ -664,6 +665,23 @@ erDiagram
         datetime progressed_at
         datetime created_at
         datetime completed_at
+    }
+
+    photo_album_AlbumMerge {
+        int id PK
+        int target_id FK
+        int source_id FK
+        string source_path
+        int requested_by_id FK
+        string task_id
+        string state
+        json result
+        string error
+        json progress
+        datetime progressed_at
+        datetime created_at
+        datetime completed_at
+        datetime notice_closed_at
     }
 
     photo_album_MediaView {
@@ -747,8 +765,9 @@ erDiagram
         int uploaded_by_id FK
         datetime created_at
         datetime published_at
-        date recorded_on
-        bool recorded_on_manual
+        date released_on
+        string release_precision
+        string release_source
         int series_id FK
         int season
         int episode
@@ -836,7 +855,11 @@ erDiagram
         int id PK
         int video_id FK
         int resident_id FK
+        datetime opened_at
         datetime viewed_at
+        datetime active_at
+        float watched
+        bool finished
     }
 
     gahkflix_ChangeRequest {
@@ -860,6 +883,16 @@ erDiagram
         bool approve
         string comment
         datetime created_at
+    }
+
+    gahkflix_VideoEvent {
+        int id PK
+        int video_id FK
+        string kind
+        int actor_id FK
+        datetime created_at
+        json changes
+        int request_id FK
     }
 
     regnskab_EconomicLedgerEntry {
@@ -976,6 +1009,9 @@ erDiagram
     photo_album_AlbumDownload }o--|o photo_album_Album : "album"
     photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
     photo_album_AlbumImport }o--|| residents_Resident : "requested_by"
+    photo_album_AlbumMerge }o--|| photo_album_Album : "target"
+    photo_album_AlbumMerge }o--|o photo_album_Album : "source"
+    photo_album_AlbumMerge }o--|| residents_Resident : "requested_by"
     photo_album_MediaView }o--|| photo_album_Media : "media"
     photo_album_MediaView }o--|| residents_Resident : "resident"
     photo_album_FeaturedMedia }o--|| photo_album_Media : "media"
@@ -1005,6 +1041,9 @@ erDiagram
     gahkflix_ChangeRequest }o--|| residents_Resident : "requested_by"
     gahkflix_ChangeVote }o--|| gahkflix_ChangeRequest : "request"
     gahkflix_ChangeVote }o--|| residents_Resident : "voter"
+    gahkflix_VideoEvent }o--|| gahkflix_Video : "video"
+    gahkflix_VideoEvent }o--|o residents_Resident : "actor"
+    gahkflix_VideoEvent }o--|o gahkflix_ChangeRequest : "request"
     regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
 ```
@@ -1423,8 +1462,9 @@ erDiagram
         int uploaded_by_id FK
         datetime created_at
         datetime published_at
-        date recorded_on
-        bool recorded_on_manual
+        date released_on
+        string release_precision
+        string release_source
         int series_id FK
         int season
         int episode
@@ -1512,7 +1552,11 @@ erDiagram
         int id PK
         int video_id FK
         int resident_id FK
+        datetime opened_at
         datetime viewed_at
+        datetime active_at
+        float watched
+        bool finished
     }
 
     gahkflix_ChangeRequest {
@@ -1536,6 +1580,16 @@ erDiagram
         bool approve
         string comment
         datetime created_at
+    }
+
+    gahkflix_VideoEvent {
+        int id PK
+        int video_id FK
+        string kind
+        int actor_id FK
+        datetime created_at
+        json changes
+        int request_id FK
     }
 
     residents_Resident { }
@@ -1563,6 +1617,9 @@ erDiagram
     gahkflix_ChangeRequest }o--|| residents_Resident : "requested_by"
     gahkflix_ChangeVote }o--|| gahkflix_ChangeRequest : "request"
     gahkflix_ChangeVote }o--|| residents_Resident : "voter"
+    gahkflix_VideoEvent }o--|| gahkflix_Video : "video"
+    gahkflix_VideoEvent }o--|o residents_Resident : "actor"
+    gahkflix_VideoEvent }o--|o gahkflix_ChangeRequest : "request"
 ```
 
 ## notifications
@@ -1802,6 +1859,7 @@ erDiagram
         string thumbnail
         string sidecar
         string content_type
+        bool is_raw
         string derivative_state
         int derivative_attempts
         datetime derivative_started_at
@@ -1863,6 +1921,23 @@ erDiagram
         datetime completed_at
     }
 
+    photo_album_AlbumMerge {
+        int id PK
+        int target_id FK
+        int source_id FK
+        string source_path
+        int requested_by_id FK
+        string task_id
+        string state
+        json result
+        string error
+        json progress
+        datetime progressed_at
+        datetime created_at
+        datetime completed_at
+        datetime notice_closed_at
+    }
+
     photo_album_MediaView {
         int id PK
         int media_id FK
@@ -1900,6 +1975,9 @@ erDiagram
     photo_album_AlbumDownload }o--|o photo_album_Album : "album"
     photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
     photo_album_AlbumImport }o--|| residents_Resident : "requested_by"
+    photo_album_AlbumMerge }o--|| photo_album_Album : "target"
+    photo_album_AlbumMerge }o--|o photo_album_Album : "source"
+    photo_album_AlbumMerge }o--|| residents_Resident : "requested_by"
     photo_album_MediaView }o--|| photo_album_Media : "media"
     photo_album_MediaView }o--|| residents_Resident : "resident"
     photo_album_FeaturedMedia }o--|| photo_album_Media : "media"

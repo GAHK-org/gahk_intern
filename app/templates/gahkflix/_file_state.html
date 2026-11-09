@@ -1,0 +1,2 @@
+{% comment %} An upload being processed, in a list (the file_state tag): waiting its turn, or how far it has come. {% endcomment %}
+{% if queued %}<span class="flix-state">I kø · {% if ahead %}{{ ahead }} foran{% else %}den næste{% endif %}</span>{% else %}<span class="flix-state">Behandles · {{ file.progress }} %</span>{% endif %}
