@@ -659,6 +659,23 @@ erDiagram
         datetime completed_at
     }
 
+    photo_album_AlbumMerge {
+        int id PK
+        int target_id FK
+        int source_id FK
+        string source_path
+        int requested_by_id FK
+        string task_id
+        string state
+        json result
+        string error
+        json progress
+        datetime progressed_at
+        datetime created_at
+        datetime completed_at
+        datetime notice_closed_at
+    }
+
     photo_album_MediaView {
         int id PK
         int media_id FK
@@ -982,6 +999,9 @@ erDiagram
     photo_album_AlbumDownload }o--|o photo_album_Album : "album"
     photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
     photo_album_AlbumImport }o--|| residents_Resident : "requested_by"
+    photo_album_AlbumMerge }o--|| photo_album_Album : "target"
+    photo_album_AlbumMerge }o--|o photo_album_Album : "source"
+    photo_album_AlbumMerge }o--|| residents_Resident : "requested_by"
     photo_album_MediaView }o--|| photo_album_Media : "media"
     photo_album_MediaView }o--|| residents_Resident : "resident"
     photo_album_FeaturedMedia }o--|| photo_album_Media : "media"
@@ -1881,6 +1901,23 @@ erDiagram
         datetime completed_at
     }
 
+    photo_album_AlbumMerge {
+        int id PK
+        int target_id FK
+        int source_id FK
+        string source_path
+        int requested_by_id FK
+        string task_id
+        string state
+        json result
+        string error
+        json progress
+        datetime progressed_at
+        datetime created_at
+        datetime completed_at
+        datetime notice_closed_at
+    }
+
     photo_album_MediaView {
         int id PK
         int media_id FK
@@ -1918,6 +1955,9 @@ erDiagram
     photo_album_AlbumDownload }o--|o photo_album_Album : "album"
     photo_album_AlbumDownload }o--|| residents_Resident : "requested_by"
     photo_album_AlbumImport }o--|| residents_Resident : "requested_by"
+    photo_album_AlbumMerge }o--|| photo_album_Album : "target"
+    photo_album_AlbumMerge }o--|o photo_album_Album : "source"
+    photo_album_AlbumMerge }o--|| residents_Resident : "requested_by"
     photo_album_MediaView }o--|| photo_album_Media : "media"
     photo_album_MediaView }o--|| residents_Resident : "resident"
     photo_album_FeaturedMedia }o--|| photo_album_Media : "media"
