@@ -18,7 +18,8 @@ const zipImportJob = document.querySelector<HTMLElement>("[data-album-import-job
 document.querySelectorAll<HTMLElement>("[data-album-folder-selector]").forEach((selector) => {
   const choice = selector.querySelector<HTMLSelectElement>("[data-album-folder-choice]")!
   const input = selector.querySelector<HTMLInputElement>("[data-album-folder-input]")!
-  const currentValue = selector.dataset.currentValue ?? "Andet"
+  // The form's folder, or this year's (the server fills it in); one not offered is typed in.
+  const currentValue = selector.dataset.currentValue ?? choice.options[0]?.value ?? ""
   choice.value = Array.from(choice.options).some((option) => option.value === currentValue)
     ? currentValue
     : "__new__"
