@@ -18,7 +18,15 @@ from django.utils.formats import date_format
 from PIL import ExifTags, Image
 
 from photo_album import services
-from photo_album.models import Album, DateSource, DerivativeState, Media, MediaStatus, believable_date
+from photo_album.models import (
+    NO_YEAR_FOLDER,
+    Album,
+    DateSource,
+    DerivativeState,
+    Media,
+    MediaStatus,
+    believable_date,
+)
 from photo_album.services import (
     Variants,
     appledouble_dates,
@@ -153,8 +161,8 @@ def test_an_appledouble_sidecar_gives_its_files_dates() -> None:
         (local(2003, 7, 27, 19, 5), "2002", True, False),  # when the 2002 albums went onto the server
         (local(2022, 3, 1), "2004", True, False),  # the day the archive went into Dropbox
         (local(2001, 1, 5), "2004", False, False),  # a camera whose clock had reset
-        (local(1975, 6, 1), "Andet", False, True),  # a scanned print says when it was taken
-        (local(1985, 6, 1), "Andet", True, False),  # but no file was saved then
+        (local(1975, 6, 1), NO_YEAR_FOLDER, False, True),  # a scanned print says when it was taken
+        (local(1985, 6, 1), NO_YEAR_FOLDER, True, False),  # but no file was saved then
     ],
 )
 def test_which_dates_are_believed(moment: datetime, folder: str, file_time: bool, believed: bool) -> None:
@@ -210,11 +218,11 @@ def test_an_album_without_dates_borrows_its_parents_then_its_years(
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("folder", ["Andet", str(timezone.localdate().year)])
+@pytest.mark.parametrize("folder", [NO_YEAR_FOLDER, str(timezone.localdate().year)])
 def test_the_upload_time_stands_where_it_could_be_true(
     folder: str, make_resident: Callable[..., Resident]
 ) -> None:
-    """In Andet there is no year to go by, and in this year's album an upload from this year is a
+    """Without a year there is none to go by, and in this year's album an upload from this year is a
     better guess than New Year's Day."""
     resident = make_resident()
     album = Album.objects.create(folder=folder, name="Billeder")
@@ -494,7 +502,7 @@ def test_the_viewer_and_the_grid_say_a_date_is_approximate(
     filed = _item(album, resident, "IMG_0.JPG", file_modified_at=local(2004, 9, 18))
     elsewhere = Album.objects.create(folder="2004", name="Scannet")
     yearly = _item(elsewhere, resident, "scan.jpg")
-    uploaded = _item(Album.objects.create(folder="Andet", name="Diverse"), resident, "meme.png")
+    uploaded = _item(Album.objects.create(folder=NO_YEAR_FOLDER, name="Diverse"), resident, "meme.png")
     for each in Album.objects.all():
         settle_dates(each)
     client.force_login(resident)

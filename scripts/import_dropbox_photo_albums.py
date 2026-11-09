@@ -8,6 +8,9 @@
 # ///
 """Import the photo archive in Dropbox (/GAHK billeder/<year>/<album>) into the photo album.
 
+A folder named "Uden årstal" beside the years is imported in the same way, into the server's folder
+of that name for albums without a year (--year "Uden årstal" to import only it).
+
 One album at a time: list it in Dropbox, check it against the server's own import rules, download it
 as a ZIP, send it straight to the server's bucket in parts and start the import, wait for the
 result, delete the ZIP. Sub-folders
@@ -19,10 +22,13 @@ Nothing the server took is kept on this disk, and everything it did not take is 
 Dropbox that is not in the photo album can be gone through by hand. <work-dir>/NOT-ON-SERVER.md
 lists each one after every run: why, and a link to its copy (not-on-server.json is the same list
 for the script). Delete a copy once you have dealt with it; it is then listed apart and not fetched
-again. What is kept:
+again. A file moved out of the archive to /til_intern_drev (by move_dropbox_non_media.py, or by
+hand) is struck off by the next run that finds it there, and its copy deleted. A file deleted from
+Dropbox stays listed, as its copy may be the last. What is kept:
 
-- Files the server would refuse — anything but photos and videos it accepts, files over its size
-  limits or too deep — are kept out of the ZIP, so the rest of the album gets in, and saved to
+- Files the server would refuse — anything but photos (camera RAW files included) and videos it
+  accepts, photos over its size limits (videos have none for this script), files too deep — are
+  kept out of the ZIP, so the rest of the album gets in, and saved to
   <work-dir>/<year>/<album>/invalid/ (mirroring the Dropbox folder) to be looked at and fixed. So
   is a file the server refuses on reading it, after which the rest is sent again.
 - Metadata (.DS_Store, AppleDouble sidecars, Thumbs.db, …) is sent with the album. The server keeps
@@ -38,6 +44,13 @@ to their album. The server adds them to it rather than refusing an album that al
 storing only files it does not have (the same name with other content is a different photo and is
 kept). The album has to be unlocked on the site first. What the server took is deleted; what is
 still invalid stays.
+
+--rename-albums goes through the imported albums the server named after a folder inside their
+Dropbox folder — it descends through every level holding one folder and no files, so
+"2014/GAHK Color Run", holding only "101GOPRO/" (and metadata), became an album "101GOPRO". For each
+it offers: skip (ask again next time), keep the leaf folder's name, use the parent folder's name,
+join the folder names with a space, or a name of your own; and renames the album on the server,
+locked or not. It needs no Dropbox access, and remembers every answer but "skip".
 
 --send-dates sends the AppleDouble sidecars saved in each imported album's metadata/ folder (the old
 file server's record of every file's own dates) to the server, which keeps each with its photo and
@@ -59,6 +72,7 @@ Usage:
     uv run scripts/import_dropbox_photo_albums.py --retry-failed --year 2019  # send failed albums again
     uv run scripts/import_dropbox_photo_albums.py --retry-invalid .dropbox-photo-album-import/2019/Sommerfest
     uv run scripts/import_dropbox_photo_albums.py --send-dates --year-range 2001-2006
+    uv run scripts/import_dropbox_photo_albums.py --rename-albums --year 2014   # --dry-run lists them
     uv run scripts/import_dropbox_photo_albums.py --overview   # NOT-ON-SERVER.md again, after a clean-up
 
 Resuming: progress is saved in <work-dir>/state.json after every step, so stopping (Ctrl-C, a lost
@@ -98,7 +112,9 @@ from dropbox.exceptions import (
 )
 
 YEAR = re.compile(r"^\d{4}$")
-OTHER_FOLDER = "Andet"  # the server's one non-year folder
+# The server's one folder that is not a year (photo_album.models.NO_YEAR_FOLDER): a Dropbox folder of
+# that name beside the years is imported into it. Compared in NFC, as Dropbox may decompose the "å".
+OTHER_FOLDER = "Uden årstal"
 CHUNK_SIZE = 1024 * 1024
 RETRIES = 5
 # A server that does not answer at all (down, restarting, its proxy finding nothing behind it) is tried
@@ -240,6 +256,11 @@ class State:
         }
         self._write()
 
+    def update(self, key: str, **changes: object) -> None:
+        """Change some fields of an entry, keeping the rest — its time included."""
+        self.albums[key] = {**self.albums[key], **changes}
+        self._write()
+
     def drop(self, key: str) -> None:
         if self.albums.pop(key, None) is not None:
             self._write()
@@ -263,6 +284,9 @@ OVERVIEW = "NOT-ON-SERVER.md"
 # <work-dir>/<year>/NOT_IN_AN_ALBUM, those beside the years in the Dropbox root in <work-dir>/NOT_IN_A_YEAR.
 NOT_IN_AN_ALBUM = "_not-in-an-album"
 NOT_IN_A_YEAR = "_not-in-a-year-folder"
+# Where move_dropbox_non_media.py moves what is not photos, videos or metadata, at the same path below
+# it as in the archive. What has moved there is struck off the list.
+INTERN_DREV = "/til_intern_drev"
 FAILED_ZIP = "failed.zip"  # <work-dir>/<year>/<album>/: what of a failed album is not in invalid/
 DOWNLOAD = "download.partial"  # <work-dir>/: a single file on its way from Dropbox
 # Why a file is not on the server, in the order the overview lists them.
@@ -291,7 +315,8 @@ class Ledger:
 
     Written out as NOT-ON-SERVER.md after every run, for a person to go through. A copy deleted
     there is one dealt with: it is listed apart, and not fetched again. A file the server takes
-    later (--retry-invalid, --send-dates, --retry-failed) is struck off, and its copy deleted.
+    later (--retry-invalid, --send-dates, --retry-failed) is struck off, and its copy deleted; so is
+    one a run finds moved out of the archive to INTERN_DREV (move_dropbox_non_media.py).
     """
 
     def __init__(self, work_dir: Path, *, read_only: bool = False) -> None:
@@ -313,6 +338,13 @@ class Ledger:
     def get(self, dropbox_path: str) -> dict[str, Any] | None:
         return self.files.get(same_path(dropbox_path))
 
+    def _key(self, dropbox_path: str) -> str | None:
+        """The list's key for a Dropbox path, which ignores case as Dropbox does."""
+        key = same_path(dropbox_path)
+        if key in self.files:
+            return key
+        return next((each for each in self.files if each.lower() == key.lower()), None)
+
     def copy(self, entry: dict[str, Any]) -> Path | None:
         return self.work_dir / entry["copy"] if entry.get("copy") else None
 
@@ -332,7 +364,16 @@ class Ledger:
 
     def on_server(self, dropbox_path: str) -> None:
         """The server has it now: strike it off, and delete the copy."""
-        entry = self.files.pop(same_path(dropbox_path), None)
+        self._strike(dropbox_path)
+
+    def moved_out(self, dropbox_path: str) -> None:
+        """It is no longer in the archive but in INTERN_DREV: strike it off, and delete the copy,
+        which Dropbox does not need."""
+        self._strike(dropbox_path)
+
+    def _strike(self, dropbox_path: str) -> None:
+        key = self._key(dropbox_path)
+        entry = self.files.pop(key) if key is not None else None
         if entry and (copy := self.copy(entry)) and not self.read_only:
             copy.unlink(missing_ok=True)
 
@@ -524,22 +565,32 @@ class Rules:
     image_extensions: frozenset[str]
     video_extensions: frozenset[str]
     image_max_bytes: int
-    video_max_bytes: int
+    # None: no limit — the server takes this script's videos whatever their size.
+    video_max_bytes: int | None
     max_sub_album_levels: int
     macos_metadata_max_bytes: int
     macos_metadata_any_size: frozenset[str]
+    # Camera RAW files (also among the image extensions), which have a limit of their own.
+    raw_extensions: frozenset[str] = frozenset()
+    raw_max_bytes: int = 0
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> "Rules":
+        video_max_mb = data["videoMaxMb"]
         return cls(
             image_extensions=frozenset(data["imageExtensions"]),
             video_extensions=frozenset(data["videoExtensions"]),
             image_max_bytes=int(data["imageMaxMb"]) * 1024 * 1024,
-            video_max_bytes=int(data["videoMaxMb"]) * 1024 * 1024,
+            video_max_bytes=None
+            if video_max_mb is None
+            else int(video_max_mb) * 1024 * 1024,
             max_sub_album_levels=int(data["maxSubAlbumLevels"]),
             macos_metadata_max_bytes=int(data["macosMetadataMaxBytes"]),
             # Absent from servers older than the .DS_Store exception, which had no such names.
             macos_metadata_any_size=frozenset(data.get("macosMetadataAnySize", [])),
+            # Absent from servers older than RAW files, which took none.
+            raw_extensions=frozenset(data.get("rawExtensions", [])),
+            raw_max_bytes=int(data.get("rawMaxMb", 0)) * 1024 * 1024,
         )
 
 
@@ -770,6 +821,25 @@ class Server:
                 f"    … {what}: HTTP {response.status_code}; retrying in {wait}s ({busy}/{RETRIES - 1})"
             )
             time.sleep(wait)
+
+    def rename(self, folder: str, album: str, name: str) -> dict[str, Any]:
+        """Rename the root album `album` in `folder` (locked or not); returns it as it is now."""
+        response = self._request(
+            "POST",
+            f"{self.endpoint}/omdoeb",
+            what=f"rename {folder}/{album}",
+            data={"folder": folder, "album": album, "name": name},
+            timeout=60,
+        )
+        if response.status_code == 404 and "errors" not in response.text:
+            raise Fatal(
+                f"{self.endpoint}/omdoeb does not exist. Is the server running a version that renames albums?"
+            )
+        if response.status_code != 200:
+            raise AlbumFailed(
+                f"The server did not rename {folder}/{album}:", form_errors(response)
+            )
+        return dict(response.json())
 
     def send_dates(self, archive: bytes, folder: str, album: str) -> dict[str, Any]:
         """Send an album's sidecars (photo_album.services.apply_sidecars); returns what it did."""
@@ -1056,7 +1126,10 @@ def classify(path: tuple[str, ...], size: int, rules: Rules) -> tuple[str, str]:
     if name.lower() in WINDOWS_METADATA_FILES:
         return "metadata", "Windows system file"
     extension = PurePosixPath(name).suffix.lower()
-    if extension in rules.image_extensions:
+    limit: int | None
+    if extension in rules.raw_extensions:
+        limit = rules.raw_max_bytes
+    elif extension in rules.image_extensions:
         limit = rules.image_max_bytes
     elif extension in rules.video_extensions:
         limit = rules.video_max_bytes
@@ -1065,7 +1138,7 @@ def classify(path: tuple[str, ...], size: int, rules: Rules) -> tuple[str, str]:
             "invalid",
             f"not a photo or video the album accepts ({extension or 'no extension'})",
         )
-    if size > limit:
+    if limit is not None and size > limit:
         return "invalid", f"{human_size(size)} is over the {human_size(limit)} limit"
     return "media", ""
 
@@ -2128,6 +2201,188 @@ def send_dates(
     return 0
 
 
+# --- Renaming albums named after a folder inside the album folder --------------------------------
+
+
+@dataclass
+class Misnamed:
+    """An imported album the server named after a folder inside its Dropbox folder.
+
+    The server descends through every level that holds one folder and no files, and names the album
+    after where it stops: "2014/GAHK Color Run", holding a ._.DS_Store and "101GOPRO/", became an
+    album "101GOPRO" — nothing on the site says where the videos are from.
+    """
+
+    album_path: str  # the Dropbox folder, the state's key
+    year: str
+    # From the Dropbox folder down to the one the album is named after: ("GAHK Color Run", "101GOPRO").
+    folders: tuple[str, ...]
+    album: str  # its name on the server
+
+    @property
+    def choices(self) -> dict[str, tuple[str, str | None]]:
+        """Answer -> (what it does, the name it gives; None to leave the name be)."""
+        leaf, parent = self.folders[-1], self.folders[0]
+        return {
+            "1": ("Skip — ask again next time", None),
+            "2": (f"Keep the leaf folder name: {leaf}", leaf),
+            "3": (f"Use the parent folder name: {parent}", parent),
+            "4": (
+                f"Join the folder names: {' '.join(self.folders)}",
+                " ".join(self.folders),
+            ),
+            "5": ("Enter a custom name", None),
+        }
+
+
+def misnamed_albums(state: State, work_dir: Path, selected: set[str]) -> list[Misnamed]:
+    """The imported albums whose name is not their Dropbox folder's, and not settled yet.
+
+    The folders in between come from the album's album.json (its `prefix`: the folders the server
+    descended through); without one, only the outer folder and the name are known.
+    """
+    found = []
+    for album_path, entry in sorted(state.albums.items()):
+        year, folder_name = PurePosixPath(album_path).parts[-2:]
+        album = entry.get("album") or folder_name
+        if (
+            entry.get("status") != "imported"
+            or entry.get("nameSettled")
+            or (selected and year not in selected)
+            or same_name(album) == same_name(folder_name)
+        ):
+            continue
+        prefix: tuple[str, ...] = ()
+        try:
+            manifest = json.loads(
+                (work_dir / year / folder_name / "album.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            prefix = tuple(manifest["prefix"])
+        except (OSError, ValueError, KeyError):
+            pass
+        if not prefix or same_name(prefix[-1]) != same_name(album):
+            prefix = (album,)
+        found.append(Misnamed(album_path, year, (folder_name, *prefix), album))
+    return found
+
+
+def choose_name(case: Misnamed) -> str | None:
+    """Ask what the album is to be called. None: skip it for now."""
+    out.info(f"  In Dropbox: {' / '.join(case.folders)}")
+    out.info(f"  On the site: {case.year} / {case.album}")
+    for key, (label, _) in case.choices.items():
+        out.info(f"    {key}) {label}")
+    while True:
+        answer = input("  Choose 1-5: ").strip()
+        if answer not in case.choices:
+            print("  Answer 1, 2, 3, 4 or 5.")
+            continue
+        if answer == "1":
+            return None
+        if answer == "5":
+            custom = input("  New name (empty to go back): ").strip()
+            if not custom:
+                continue
+            return custom
+        return case.choices[answer][1]
+
+
+def renamed_paths(paths: list[str], old: str, new: str) -> list[str]:
+    """The state's album paths ("101GOPRO / Sub") with the root renamed."""
+    return [
+        new + path[len(old) :] if path == old or path.startswith(f"{old} / ") else path
+        for path in paths
+    ]
+
+
+def rename_albums(
+    server: Server, state: State, options: Options, selected: set[str]
+) -> int:
+    """--rename-albums: go through the imported albums named after a folder inside their Dropbox
+    folder, ask what each is to be called, and rename it on the server — locked or not. The answer
+    is remembered: an album kept or renamed is not asked about again; a skipped one is.
+
+    The new name is written to state.json and the album's album.json too, which --retry-invalid
+    and --send-dates find the album by."""
+    cases = misnamed_albums(state, options.work_dir, selected)
+    if not cases:
+        out.info("No imported album is named after a folder inside its Dropbox folder.")
+        return 0
+    out.info(f"{len(cases)} album(s) named after a folder inside their Dropbox folder.")
+    if options.dry_run:
+        for case in cases:
+            out.info(
+                f"  {case.year}/{' / '.join(case.folders)}  ->  on the site: {case.album}"
+            )
+        return 0
+    if not sys.stdin.isatty():
+        die("--rename-albums asks about each album; run it in a terminal.")
+    on_server: dict[str, set[str]] = {}
+    results = {"renamed": 0, "kept": 0, "skipped": 0, "missing": 0}
+    for case in cases:
+        out.heading(f"{case.year}/{case.folders[0]}")
+        if case.year not in on_server:
+            on_server[case.year], _ = server.albums(case.year)
+        if same_name(case.album) not in on_server[case.year]:
+            out.warn(
+                f'  There is no album "{case.album}" in {case.year} on the site any more (renamed or deleted there?) — skipped.'
+            )
+            results["missing"] += 1
+            continue
+        while True:
+            name = choose_name(case)
+            if name is None:
+                out.info("  Skipped; you will be asked again next time.")
+                results["skipped"] += 1
+                break
+            if name == case.album:
+                state.update(case.album_path, nameSettled=True)
+                out.ok(f'  ✓ Kept as "{name}".')
+                results["kept"] += 1
+                break
+            try:
+                renamed = server.rename(case.year, case.album, name)
+            except AlbumFailed as failure:
+                out.error(f"  ✗ {failure.summary}")
+                for line in failure.details:
+                    out.error(f"      {line}")
+                continue  # ask again: another name may do
+            new = renamed["name"]
+            entry = state.get(case.album_path)
+            state.update(
+                case.album_path,
+                album=new,
+                albums=renamed_paths(entry.get("albums", []), case.album, new),
+                renamedFrom=case.album,
+                nameSettled=True,
+            )
+            manifest_path = (
+                options.work_dir / case.year / case.folders[0] / "album.json"
+            )
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                pass
+            else:
+                manifest["album"] = new
+                manifest_path.write_text(
+                    json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+                )
+            on_server[case.year].discard(same_name(case.album))
+            on_server[case.year].add(same_name(new))
+            out.ok(f'  ✓ Renamed "{case.album}" to "{new}".')
+            results["renamed"] += 1
+            break
+    out.heading("Summary")
+    out.info(
+        f"  {results['renamed']} renamed, {results['kept']} kept, {results['skipped']} skipped"
+        + (f", {results['missing']} not on the site" if results["missing"] else "")
+    )
+    return 0
+
+
 # --- Helpers ------------------------------------------------------------------------------------
 
 
@@ -2173,7 +2428,7 @@ def year_folders(
         entry.name
         for entry in entries
         if isinstance(entry, dropbox.files.FolderMetadata)
-        and (YEAR.fullmatch(entry.name) or entry.name == OTHER_FOLDER)
+        and (YEAR.fullmatch(entry.name) or same_path(entry.name) == OTHER_FOLDER)
     )
     outside = [
         entry
@@ -2181,10 +2436,20 @@ def year_folders(
         if not (isinstance(entry, dropbox.files.FolderMetadata) and entry.name in found)
     ]
     if selected:
-        if missing := selected - set(found):
+        wanted = {same_path(name) for name in selected}
+        if missing := wanted - {same_path(name) for name in found}:
             raise Fatal(f"Not found in {root}: {', '.join(sorted(missing))}")
-        found = [name for name in found if name in selected]
+        found = [name for name in found if same_path(name) in wanted]
     return found, outside
+
+
+def in_a_year_folder(path: str, root: str) -> bool:
+    """Whether a Dropbox path below `root` is in one of its year folders (or OTHER_FOLDER)."""
+    rest = path[len(root.rstrip("/")) + 1 :]
+    folder, separator, _ = rest.partition("/")
+    return bool(separator) and (
+        bool(YEAR.fullmatch(folder)) or same_path(folder) == OTHER_FOLDER
+    )
 
 
 def album_folders(
@@ -2237,8 +2502,11 @@ def keep_outside(
     where: str,
 ) -> None:
     """Keep a copy of what lies in `parent` outside its album (or year) folders — `entries`, files
-    and folders — in `here`, at its path below `parent`, and list it: the server never sees it."""
+    and folders — in `here`, at its path below `parent`, and list it: the server never sees it.
+
+    Returns the files there, or None if a folder among them could not be listed."""
     files: list[Any] = []
+    complete = True
     for entry in entries:
         if isinstance(entry, dropbox.files.FileMetadata):
             files.append(entry)
@@ -2251,6 +2519,7 @@ def keep_outside(
                 ]
             except AlbumFailed as failure:
                 out.failure(entry.path_display, failure.summary, failure.details)
+                complete = False
     cut = len(parent.rstrip("/")) + 1
     known = 0
     for entry in sorted(files, key=lambda each: each.path_display):
@@ -2279,6 +2548,85 @@ def keep_outside(
     if known:
         out.info(f"  {known} file(s) {where}, kept on an earlier run")
     ledger.save()
+    return files if complete else None
+
+
+def files_below(client: dropbox.Dropbox, path: str) -> list[str] | None:
+    """The Dropbox path of every file below `path`: none if there is no such folder, None if it
+    could not be listed."""
+    try:
+        return [
+            entry.path_display
+            for entry in list_folder(client, path, recursive=True)
+            if isinstance(entry, dropbox.files.FileMetadata)
+        ]
+    except AlbumFailed as failure:
+        cause = failure.__cause__
+        if (
+            isinstance(cause, ApiError)
+            and cause.error.is_path()
+            and cause.error.get_path().is_not_found()
+        ):
+            return []
+        out.warn(f"  {failure.summary}")
+        return None
+
+
+def strike_moved(
+    client: dropbox.Dropbox,
+    ledger: Ledger,
+    options: Options,
+    listed: Collection[str] | None,
+    *,
+    below: str,
+    root: str,
+    covers: Callable[[str], bool] = lambda path: True,
+) -> None:
+    """Strike off the list what Dropbox no longer has below `below` but has at the same place in
+    INTERN_DREV — moved out of the archive by move_dropbox_non_media.py — and delete its copy.
+
+    `listed` is every file below `below` now, None if not all of it could be listed (then nothing
+    is struck off), and `covers` says which of the list's paths it covers. A file gone from Dropbox
+    altogether stays on the list: its copy here may be the last there is.
+    """
+    if listed is None:
+        return
+    there = {same_path(path).lower() for path in listed}
+    prefix = same_path(below).rstrip("/").lower() + "/"
+    gone = [
+        path
+        for path in ledger.files
+        if path.lower().startswith(prefix)
+        and covers(path)
+        and path.lower() not in there
+    ]
+    if not gone:
+        return
+    cut = len(root.rstrip("/"))
+    if options.dry_run:
+        out.info(
+            f"  {len(gone)} file(s) on the list of what is not on the server are no longer in"
+            f" {below}; a run strikes off those moved to {INTERN_DREV}"
+        )
+        return
+    moved_to = files_below(client, INTERN_DREV + below.rstrip("/")[cut:])
+    if moved_to is None:
+        return
+    arrived = {same_path(path).lower() for path in moved_to}
+    moved = [path for path in gone if (INTERN_DREV + path[cut:]).lower() in arrived]
+    for path in moved:
+        ledger.moved_out(path)
+    ledger.save()
+    if moved:
+        out.info(
+            f"  {len(moved)} file(s) moved to {INTERN_DREV} since: struck off the list of what is"
+            " not on the server, their copies here deleted"
+        )
+    if missing := len(gone) - len(moved):
+        out.warn(
+            f"  {missing} file(s) on the list of what is not on the server are gone from Dropbox"
+            " (not moved there): their copies here are kept, and listed"
+        )
 
 
 def local_files(folder: Path, *, finder: bool = False) -> list[Path]:
@@ -2406,7 +2754,10 @@ def main() -> int:
     parser.add_argument("--dropbox-root", default="/GAHK billeder")
     years = parser.add_mutually_exclusive_group()
     years.add_argument(
-        "--year", action="append", default=[], help="only this year folder (repeatable)"
+        "--year",
+        action="append",
+        default=[],
+        help="only this year folder, or 'Uden årstal' (repeatable)",
     )
     years.add_argument(
         "--year-range", type=year_range, help="only these years, e.g. 2001-2004"
@@ -2449,6 +2800,13 @@ def main() -> int:
         help="send the sidecars saved for albums already imported, so the server dates their photos by them",
     )
     parser.add_argument(
+        "--rename-albums",
+        action="store_true",
+        help="go through the imported albums the server named after a folder inside their Dropbox"
+        " folder (2014/GAHK Color Run became 101GOPRO), and rename each as you choose;"
+        " needs no Dropbox access",
+    )
+    parser.add_argument(
         "--overview",
         action="store_true",
         help=f"write {OVERVIEW} again from what is known, after you have dealt with some files;"
@@ -2471,13 +2829,15 @@ def main() -> int:
     )
     selected = args.year_range or set(args.year)
     if invalid := sorted(
-        year for year in selected if not YEAR.fullmatch(year) and year != OTHER_FOLDER
+        year
+        for year in selected
+        if not YEAR.fullmatch(year) and same_path(year) != OTHER_FOLDER
     ):
         die(f"Not a year: {', '.join(invalid)}")
 
-    if args.send_dates and args.retry_invalid:
+    if sum(map(bool, (args.send_dates, args.retry_invalid, args.rename_albums))) > 1:
         die(
-            "--send-dates and --retry-invalid are two different runs; pass one of them."
+            "--send-dates, --retry-invalid and --rename-albums are different runs; pass one of them."
         )
     if args.retry_invalid:
         album_dir = args.retry_invalid
@@ -2519,6 +2879,17 @@ def main() -> int:
             return 2
         finally:
             report_not_on_server(ledger)
+    if args.rename_albums:
+        try:
+            return rename_albums(server, state, options, selected)
+        except KeyboardInterrupt:
+            out.error(
+                "\n✗ Stopped. What you answered is saved; run the same command again for the rest."
+            )
+            return 130
+        except Fatal as exc:
+            out.failure("renaming albums", str(exc), [])
+            return 2
     if args.send_dates:
         try:
             return send_dates(server, ledger, options, state, selected)
@@ -2543,7 +2914,7 @@ def main() -> int:
         _, rules = server.albums(OTHER_FOLDER)
         out.info(f"Reading {args.dropbox_root} in Dropbox …")
         found, outside = year_folders(client, args.dropbox_root, selected)
-        keep_outside(
+        beside_years = keep_outside(
             client,
             ledger,
             options,
@@ -2552,6 +2923,17 @@ def main() -> int:
             here=args.work_dir / NOT_IN_A_YEAR,
             rules=rules,
             where="in the Dropbox root, not in a year folder",
+        )
+        strike_moved(
+            client,
+            ledger,
+            options,
+            None
+            if beside_years is None
+            else [entry.path_display for entry in beside_years],
+            below=args.dropbox_root,
+            root=args.dropbox_root,
+            covers=lambda path: not in_a_year_folder(path, args.dropbox_root),
         )
         for year in found:
             year_path = f"{args.dropbox_root}/{year}"
@@ -2570,6 +2952,18 @@ def main() -> int:
                 rules=rules,
                 where="in the year folder, not in an album folder",
             )
+            if any(
+                path.lower().startswith(f"{same_path(year_path).lower()}/")
+                for path in ledger.files
+            ):
+                strike_moved(
+                    client,
+                    ledger,
+                    options,
+                    files_below(client, year_path),
+                    below=year_path,
+                    root=args.dropbox_root,
+                )
             for entry in albums:
                 album_path = f"{year_path}/{entry.name}"
                 out.heading(f"{year}/{entry.name}")
