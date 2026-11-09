@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -21,6 +22,11 @@ logger = logging.getLogger(__name__)
 
 Outcome = Literal["sent", "failed"]
 PreviewStatus = Literal["ready", "failed"]
+
+
+class AccountNameMismatch(Exception):
+    """The e-conomic account is named for someone other than the resident it is set on — most likely a
+    mistyped kontonr., which would otherwise mail one alumne another's balance under their own name."""
 
 
 @dataclass(frozen=True)
@@ -63,6 +69,24 @@ def _body(resident: Resident, balance: Decimal, message_template: str) -> str:
     )
 
 
+def _words(name: str) -> set[str]:
+    return set(re.findall(r"\w+", name.casefold()))
+
+
+def account_name_matches(resident: Resident, account_name: str) -> bool:
+    """Every word of the resident's first and last name is in the e-conomic account's name. Lenient on
+    purpose — middle names, initials and word order may differ — but a different person's account fails."""
+    wanted = _words(f"{resident.first_name} {resident.last_name}")
+    return bool(wanted) and wanted <= _words(account_name)
+
+
+def mismatch_message(resident: Resident, account_number: int, account_name: str) -> str:
+    return (
+        f'Kontonr. {account_number} hedder "{account_name}" i e-conomic, ikke {resident.full_name}. '
+        "Tjek nummeret, eller ret navnet i e-conomic."
+    )
+
+
 def residents_in_period(date_from: date, date_to: date) -> QuerySet[Resident]:
     """Residents with a Residency within [date_from, date_to], with or without an account number."""
     lower = date_from.year * 12 + date_from.month
@@ -101,7 +125,10 @@ def _prepare_one(
     pass persist=True only from the actual send)."""
     # get_account first: the cheapest single call, and the one most likely to surface an auth problem
     # — callers (send_alumneregninger) rely on that to fail fast before any of the heavier calls below.
-    balance = Decimal(str(economic.get_account(account_number).balance))
+    account = economic.get_account(account_number)
+    if not account_name_matches(resident, account.name):
+        raise AccountNameMismatch(mismatch_message(resident, account_number, account.name))
+    balance = Decimal(str(account.balance))
     posted = economic.get_posted_entries_in_range(account_number, date_from, date_to)
     # Unscoped: a draft dated before date_from is still real, uncounted debt until it is posted or
     # withdrawn, so the balance (and the local draft mirror) must see every current draft, not just
@@ -171,6 +198,9 @@ def send_alumneregninger(date_from: date, date_to: date) -> list[AlumneregningRe
         except economic.EconomicAuthError as exc:
             logger.error("alumneregning: e-conomic access invalid/revoked: %s", exc)
             raise  # affects every remaining alumne equally — stop the batch, don't repeat the error
+        except AccountNameMismatch as exc:
+            logger.warning("alumneregning: account name mismatch for resident %s: %s", resident.pk, exc)
+            result = AlumneregningResult(resident, "failed", str(exc))
         except economic.EconomicRateLimitError as exc:
             logger.warning("alumneregning: e-conomic rate limit for resident %s: %s", resident.pk, exc)
             result = AlumneregningResult(
@@ -206,6 +236,9 @@ def preview_alumneregninger(date_from: date, date_to: date) -> list[PreviewRow]:
         except economic.EconomicAuthError as exc:
             logger.error("alumneregning preview: e-conomic access invalid/revoked: %s", exc)
             raise
+        except AccountNameMismatch as exc:
+            rows.append(PreviewRow(resident, "failed", str(exc)))
+            continue
         except economic.EconomicRateLimitError:
             rows.append(PreviewRow(resident, "failed", "E-conomic rate-limit ramt — prøv igen om lidt."))
             continue
@@ -223,7 +256,8 @@ def preview_alumneregninger(date_from: date, date_to: date) -> list[PreviewRow]:
 
 
 def render_preview_pdf(resident: Resident, date_from: date, date_to: date) -> bytes | None:
-    """The statement PDF for one resident/period, or None if they have no account number."""
+    """The statement PDF for one resident/period, or None if they have no account number. Raises
+    AccountNameMismatch if the account is named for someone else."""
     if resident.economic_account_number is None:
         return None
     mail_settings = AlumneregningSettings.get_solo()

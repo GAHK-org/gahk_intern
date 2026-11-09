@@ -86,24 +86,60 @@ def overview(request: HttpRequest) -> HttpResponse:
     )
 
 
+def _lookup_account_name(account_number: int) -> tuple[str | None, str]:
+    """(the account's name in e-conomic, "") or (None, why it could not be looked up)."""
+    try:
+        return economic.get_account(account_number).name, ""
+    except economic.EconomicAuthError:
+        return None, _AUTH_ERROR_MESSAGE
+    except economic.EconomicApiError as exc:
+        if exc.status_code == 404:
+            return None, f"Kontonr. {account_number} findes ikke i e-conomic."
+        return None, f"Kunne ikke slå kontonr. {account_number} op i e-conomic: {exc}"
+
+
 @role_required("regnskab")
-def set_economic_account_number(request: HttpRequest, pk: int) -> HttpResponse:
-    """Set or clear one resident's e-conomic accountNumber, posted inline from a regnskab row."""
-    if request.method != "POST":
-        return HttpResponseNotAllowed(["POST"])
-
+def edit_economic_account_number(request: HttpRequest, pk: int) -> HttpResponse:
+    """Regnskab sees a resident's data but can change only their e-conomic kontonr., on its own page
+    with a deliberate "Gem" (not inline in a table, where a stray click could change it). A new number
+    is looked up in e-conomic first and only saved if the account there carries the resident's name."""
     resident = get_object_or_404(Resident, pk=pk)
-    form = EconomicAccountNumberForm(request.POST, instance=resident)
-    if form.is_valid():
-        form.save()
-        messages.success(request, f"E-conomic kontonr. for {resident.full_name} er opdateret.")
-    else:
-        messages.error(request, f"Kunne ikke gemme e-conomic kontonr. for {resident.full_name}.")
+    nxt = request.GET.get("next", "")
+    if not url_has_allowed_host_and_scheme(nxt, allowed_hosts={request.get_host()}):
+        nxt = ""
+    lookup_error = ""
+    account_name = None
 
-    nxt = request.POST.get("next", "")
-    if nxt and url_has_allowed_host_and_scheme(nxt, allowed_hosts={request.get_host()}):
-        return redirect(nxt)
-    return redirect("regnskab:overview")
+    if request.method == "POST":
+        form = EconomicAccountNumberForm(request.POST, instance=resident)
+        if form.is_valid():
+            number = form.cleaned_data["economic_account_number"]
+            if number is not None:
+                account_name, lookup_error = _lookup_account_name(number)
+                if account_name is not None and not alumneregning.account_name_matches(
+                    resident, account_name
+                ):
+                    lookup_error = alumneregning.mismatch_message(resident, number, account_name)
+            if not lookup_error:
+                form.save()
+                messages.success(request, f"E-conomic kontonr. for {resident.full_name} er gemt.")
+                return redirect(nxt or "regnskab:overview")
+    else:
+        form = EconomicAccountNumberForm(instance=resident)
+        if resident.economic_account_number is not None:
+            account_name, lookup_error = _lookup_account_name(resident.economic_account_number)
+
+    return render(
+        request,
+        "regnskab/edit_economic_account_number.html",
+        {
+            "form": form,
+            "resident": resident,
+            "account_name": account_name,
+            "lookup_error": lookup_error,
+            "next": nxt,
+        },
+    )
 
 
 def _parse_date(value: str | None) -> date | None:
@@ -184,6 +220,8 @@ def alumneregning_statement_pdf_view(request: HttpRequest, pk: int) -> HttpRespo
     except economic.EconomicAuthError:
         messages.error(request, _AUTH_ERROR_MESSAGE)
         return redirect("regnskab:overview")
+    except alumneregning.AccountNameMismatch as exc:
+        return HttpResponseNotFound(str(exc))
     except economic.EconomicApiError as exc:
         return HttpResponseNotFound(f"Kunne ikke hente kontoudtog fra e-conomic: {exc}")
     if pdf is None:

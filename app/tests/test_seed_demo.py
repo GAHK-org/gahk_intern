@@ -34,6 +34,9 @@ def test_seed_demo_populates_and_is_idempotent() -> None:
     assert "administrator" in real_roles(formand)
     assert formand.check_password("demo1234")
 
+    # Every alumne has an e-conomic kontonr., so alumneregninger aren't blocked out of the box.
+    assert not Resident.objects.filter(economic_account_number__isnull=True).exists()
+
     # Derived ølkælder balance is computable (no crash, integer øre).
     shopper = Shopper.objects.first()
     assert isinstance(shopper.balance_ore, int)

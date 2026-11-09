@@ -15,6 +15,13 @@ from residents.models import Residency, Resident, RoleAssignment, prev_period
 from residents.views import _sync_month_roles
 
 
+@pytest.fixture(autouse=True)
+def _any_account_name_matches(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The e-conomic mocks here use placeholder account names; the name check itself is tested in
+    test_economic_account_number.py."""
+    monkeypatch.setattr(alumneregning, "account_name_matches", lambda resident, name: True)
+
+
 def _setup_leaver_and_stayer(make_resident: Callable) -> None:
     """A leaver (present last month, gone this month) with AK debt + ØK balance, plus a current stayer."""
     now = timezone.localtime()
@@ -91,64 +98,6 @@ def test_view_is_regnskab_gated(make_resident: Callable) -> None:
     admin_c = Client()
     admin_c.force_login(admin)  # administrator implies every role
     assert admin_c.get(reverse("regnskab:overview")).status_code == 200
-
-
-@pytest.mark.django_db
-def test_set_economic_account_number_updates_resident(make_resident: Callable) -> None:
-    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
-    target = make_resident(email="target@gahk.dk")
-    c = Client()
-    c.force_login(acc)
-
-    response = c.post(
-        reverse("regnskab:set_economic_account_number", args=[target.pk]),
-        {"economic_account_number": "1101", "next": reverse("regnskab:overview")},
-    )
-
-    target.refresh_from_db()
-    assert target.economic_account_number == 1101
-    assert response.status_code == 302
-    assert response.url == reverse("regnskab:overview")
-
-
-@pytest.mark.django_db
-def test_set_economic_account_number_can_be_cleared(make_resident: Callable) -> None:
-    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
-    target = make_resident(email="target@gahk.dk", economic_account_number=1101)
-    c = Client()
-    c.force_login(acc)
-
-    c.post(reverse("regnskab:set_economic_account_number", args=[target.pk]), {"economic_account_number": ""})
-
-    target.refresh_from_db()
-    assert target.economic_account_number is None
-
-
-@pytest.mark.django_db
-def test_set_economic_account_number_requires_regnskab_role(make_resident: Callable) -> None:
-    plain = make_resident(email="plain@gahk.dk")
-    target = make_resident(email="target@gahk.dk")
-    c = Client()
-    c.force_login(plain)
-
-    response = c.post(
-        reverse("regnskab:set_economic_account_number", args=[target.pk]),
-        {"economic_account_number": "1101"},
-    )
-
-    assert response.status_code == 403
-    target.refresh_from_db()
-    assert target.economic_account_number is None
-
-
-@pytest.mark.django_db
-def test_set_economic_account_number_rejects_get(make_resident: Callable) -> None:
-    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
-    target = make_resident(email="target@gahk.dk")
-    c = Client()
-    c.force_login(acc)
-
-    assert c.get(reverse("regnskab:set_economic_account_number", args=[target.pk])).status_code == 405
 
 
 @pytest.mark.django_db
@@ -476,7 +425,7 @@ def test_the_overview_lists_who_is_missing_a_kontonr(make_resident: Callable) ->
     assert "Mangler e-conomic kontonr. (1)" in section
     assert "nonumber@gahk.dk" in section
     assert "harnumber@gahk.dk" not in section
-    assert reverse("regnskab:set_economic_account_number", args=[missing.pk]) in section
+    assert reverse("regnskab:edit_economic_account_number", args=[missing.pk]) in section
 
 
 @pytest.mark.django_db
