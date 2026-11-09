@@ -9,7 +9,7 @@ from string import Template
 from typing import Literal
 
 from django.conf import settings
-from django.core.mail import EmailMessage
+from django.core.mail import EmailMessage, get_connection
 from django.db.models import F, QuerySet
 
 from residents.models import Residency, Resident
@@ -162,6 +162,9 @@ def _send_one(
         body=prepared.body,
         from_email=f"Regnskabsgruppen <{settings.ALUMNEREGNING_FROM_EMAIL}>",
         to=[resident.email],
+        connection=None
+        if settings.ALUMNEREGNING_SEND_MAIL
+        else get_connection("django.core.mail.backends.console.EmailBackend"),
     )
     email.attach(f"alumneregning-{date_from.isoformat()}.pdf", prepared.pdf, "application/pdf")
     try:
@@ -174,6 +177,8 @@ def _send_one(
         if prepared.entries
         else f"Ingen nye posteringer, saldo (videreført) {_kr(prepared.balance)} kr."
     )
+    if not settings.ALUMNEREGNING_SEND_MAIL:
+        detail += " Ikke mailet (test, ALUMNEREGNING_SEND_MAIL er slået fra): kun skrevet i loggen."
     return AlumneregningResult(resident, "sent", detail)
 
 

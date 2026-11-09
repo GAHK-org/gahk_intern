@@ -539,6 +539,9 @@ ECONOMIC_AGREEMENT_GRANT_TOKEN = os.environ.get("ECONOMIC_AGREEMENT_GRANT_TOKEN"
 
 # Sender + bank details for alumneregning mails (regnskab.alumneregning).
 ALUMNEREGNING_FROM_EMAIL = os.environ.get("ALUMNEREGNING_FROM_EMAIL", "regnskab@gahk.dk")
+# Off, alumneregninger are written to the console instead of mailed, whatever EMAIL_BACKEND says: a
+# local .env with real SMTP must not bill real (or seeded @gahk.dk) addresses from a dev machine.
+ALUMNEREGNING_SEND_MAIL = os.environ.get("ALUMNEREGNING_SEND_MAIL", "0" if DEBUG else "1") == "1"
 ALUMNEREGNING_BANK_REG = os.environ.get("ALUMNEREGNING_BANK_REG", "9070")
 ALUMNEREGNING_BANK_ACCOUNT = os.environ.get("ALUMNEREGNING_BANK_ACCOUNT", "1642410853")
 

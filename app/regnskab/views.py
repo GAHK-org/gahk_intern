@@ -10,6 +10,7 @@ import calendar
 from datetime import date
 from typing import NamedTuple
 
+from django.conf import settings
 from django.contrib import messages
 from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed, HttpResponseNotFound
@@ -254,6 +255,12 @@ def send_alumneregninger_view(request: HttpRequest) -> HttpResponse:
         f"Alumneregninger for {date_from.isoformat()} til {date_to.isoformat()} er sat i kø og sendes i "
         "baggrunden. Siden herunder opdateres, efterhånden som de bliver sendt.",
     )
+    if not settings.ALUMNEREGNING_SEND_MAIL:
+        messages.warning(
+            request,
+            "Testtilstand: alumneregningerne bliver ikke mailet til nogen, kun skrevet i loggen "
+            "(ALUMNEREGNING_SEND_MAIL er slået fra, som altid lokalt).",
+        )
     status_url = reverse("regnskab:alumneregninger_status")
     return redirect(f"{status_url}?fra={date_from.isoformat()}&til={date_to.isoformat()}")
 

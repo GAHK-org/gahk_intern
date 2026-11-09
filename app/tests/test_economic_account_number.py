@@ -195,3 +195,18 @@ def test_an_alumneregning_is_sent_when_the_names_match(
 
     assert result.outcome == "sent"
     assert len(mail.outbox) == 1
+
+
+@pytest.mark.django_db
+def test_with_send_mail_off_nothing_is_mailed_and_the_status_says_so(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable, settings: object
+) -> None:
+    """Locally (DEBUG) alumneregninger only go to the console, whatever EMAIL_BACKEND the .env sets."""
+    settings.ALUMNEREGNING_SEND_MAIL = False  # type: ignore[attr-defined]
+    _anna_in_august(make_resident, 4207)
+    _accounts(monkeypatch, {4207: "Anna Jensen"})
+
+    [result] = alumneregning.send_alumneregninger(*AUGUST)
+
+    assert not mail.outbox
+    assert "Ikke mailet" in result.detail
