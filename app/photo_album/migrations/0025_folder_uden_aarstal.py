@@ -7,7 +7,7 @@ import photo_album.models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("photo_album", "0023_album_merge"),
+        ("photo_album", "0024_albummerge_notice_closed_at"),
     ]
 
     operations = [
