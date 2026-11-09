@@ -8,6 +8,9 @@
 # ///
 """Import the photo archive in Dropbox (/GAHK billeder/<year>/<album>) into the photo album.
 
+A folder named "Uden årstal" beside the years is imported in the same way, into the server's folder
+of that name for albums without a year (--year "Uden årstal" to import only it).
+
 One album at a time: list it in Dropbox, check it against the server's own import rules, download it
 as a ZIP, send it straight to the server's bucket in parts and start the import, wait for the
 result, delete the ZIP. Sub-folders
@@ -107,7 +110,9 @@ from dropbox.exceptions import (
 )
 
 YEAR = re.compile(r"^\d{4}$")
-OTHER_FOLDER = "Andet"  # the server's one non-year folder
+# The server's one folder that is not a year (photo_album.models.NO_YEAR_FOLDER): a Dropbox folder of
+# that name beside the years is imported into it. Compared in NFC, as Dropbox may decompose the "å".
+OTHER_FOLDER = "Uden årstal"
 CHUNK_SIZE = 1024 * 1024
 RETRIES = 5
 # A server that does not answer at all (down, restarting, its proxy finding nothing behind it) is tried
@@ -2401,7 +2406,7 @@ def year_folders(
         entry.name
         for entry in entries
         if isinstance(entry, dropbox.files.FolderMetadata)
-        and (YEAR.fullmatch(entry.name) or entry.name == OTHER_FOLDER)
+        and (YEAR.fullmatch(entry.name) or same_path(entry.name) == OTHER_FOLDER)
     )
     outside = [
         entry
@@ -2409,9 +2414,10 @@ def year_folders(
         if not (isinstance(entry, dropbox.files.FolderMetadata) and entry.name in found)
     ]
     if selected:
-        if missing := selected - set(found):
+        wanted = {same_path(name) for name in selected}
+        if missing := wanted - {same_path(name) for name in found}:
             raise Fatal(f"Not found in {root}: {', '.join(sorted(missing))}")
-        found = [name for name in found if name in selected]
+        found = [name for name in found if same_path(name) in wanted]
     return found, outside
 
 
@@ -2634,7 +2640,10 @@ def main() -> int:
     parser.add_argument("--dropbox-root", default="/GAHK billeder")
     years = parser.add_mutually_exclusive_group()
     years.add_argument(
-        "--year", action="append", default=[], help="only this year folder (repeatable)"
+        "--year",
+        action="append",
+        default=[],
+        help="only this year folder, or 'Uden årstal' (repeatable)",
     )
     years.add_argument(
         "--year-range", type=year_range, help="only these years, e.g. 2001-2004"
@@ -2706,7 +2715,9 @@ def main() -> int:
     )
     selected = args.year_range or set(args.year)
     if invalid := sorted(
-        year for year in selected if not YEAR.fullmatch(year) and year != OTHER_FOLDER
+        year
+        for year in selected
+        if not YEAR.fullmatch(year) and same_path(year) != OTHER_FOLDER
     ):
         die(f"Not a year: {', '.join(invalid)}")
 

@@ -17,7 +17,15 @@ from django.utils import timezone
 from PIL import ExifTags, Image
 
 from photo_album import access
-from photo_album.models import Album, AlbumImport, AlbumImportState, DerivativeState, Media, MediaStatus
+from photo_album.models import (
+    NO_YEAR_FOLDER,
+    Album,
+    AlbumImport,
+    AlbumImportState,
+    DerivativeState,
+    Media,
+    MediaStatus,
+)
 from photo_album.services import (
     MAX_DERIVATIVE_ATTEMPTS,
     build_derivatives,
@@ -69,8 +77,8 @@ def test_album_create_and_zip_import_offer_existing_or_new_folders(
     assert '<select id="folder-choice"' in import_content
     assert '<option value="2025">2025</option>' in create_content
     assert '<option value="2025">2025</option>' in import_content
-    assert '<option value="__new__">Ny mappe...</option>' in create_content
-    assert '<option value="__new__">Ny mappe...</option>' in import_content
+    assert '<option value="__new__">Et andet år …</option>' in create_content
+    assert '<option value="__new__">Et andet år …</option>' in import_content
     assert 'name="folder" type="text"' in create_content
     assert 'name="folder" type="text"' in import_content
     assert 'name="name"' in create_content
@@ -625,20 +633,22 @@ def test_upload_returns_json_for_the_queued_browser_uploader(
 
 
 @pytest.mark.django_db
-def test_folder_index_filters_albums_and_sorts_andet_first(
+def test_folder_index_filters_albums_and_lists_the_years_newest_first_then_the_one_without(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
     resident = make_resident()
-    andet = Album.objects.create(folder="Andet", name="Andet album")
+    no_year = Album.objects.create(folder=NO_YEAR_FOLDER, name="Portrætter")
+    older = Album.objects.create(folder="2004", name="Gammelt album")
     year = Album.objects.create(folder="2026", name="Årsalbum")
     client.force_login(resident)
 
-    index = client.get(reverse("photo_album:index"))
-    folder = client.get(reverse("photo_album:index"), {"folder": "Andet"})
+    index = client.get(reverse("photo_album:index")).content.decode()
+    # A Mac's decomposed "å" finds it too.
+    folder = client.get(reverse("photo_album:index"), {"folder": "Uden a\u030arstal"}).content.decode()
 
-    assert index.content.decode().index(andet.name) < index.content.decode().index(year.name)
-    assert andet.name in folder.content.decode()
-    assert year.name not in folder.content.decode()
+    assert index.index(year.name) < index.index(older.name) < index.index(no_year.name)
+    assert no_year.name in folder
+    assert year.name not in folder
 
 
 @pytest.mark.django_db
