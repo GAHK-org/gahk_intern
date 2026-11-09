@@ -31,6 +31,7 @@ urlpatterns = [
     path("<int:pk>/slet", views.delete_album, name="delete_album"),
     path("<int:pk>/flet-ind", views.merge_album, name="merge_album"),
     path("fletning/<int:pk>", views.merge_status, name="merge_status"),
+    path("fletning/<int:pk>/luk", views.close_merge_notice, name="close_merge_notice"),
     path("<int:pk>/laas", views.lock_album, name="lock_album"),
     path("<int:pk>/laas-op", views.unlock_album, name="unlock_album"),
     path("<int:pk>/upload", views.upload, name="upload"),

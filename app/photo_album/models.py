@@ -913,6 +913,9 @@ class AlbumMerge(models.Model):
     progressed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    # When its administrator closed the notice of how it went, which otherwise stays on the kept
+    # album's page for views.MERGE_NOTICE_SHOWN_FOR.
+    notice_closed_at = models.DateTimeField(null=True, blank=True)
 
     ACTIVE_STATES = (AlbumMergeState.QUEUED, AlbumMergeState.BUILDING)
 

@@ -673,6 +673,7 @@ erDiagram
         datetime progressed_at
         datetime created_at
         datetime completed_at
+        datetime notice_closed_at
     }
 
     photo_album_MediaView {
@@ -1914,6 +1915,7 @@ erDiagram
         datetime progressed_at
         datetime created_at
         datetime completed_at
+        datetime notice_closed_at
     }
 
     photo_album_MediaView {

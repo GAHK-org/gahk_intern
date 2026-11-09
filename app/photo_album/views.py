@@ -384,7 +384,9 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
         # How the administrator's own merge into this album went, for a day after.
         merge_job = (
             album.merges.filter(
-                requested_by=resident, completed_at__gte=timezone.now() - MERGE_NOTICE_SHOWN_FOR
+                requested_by=resident,
+                completed_at__gte=timezone.now() - MERGE_NOTICE_SHOWN_FOR,
+                notice_closed_at__isnull=True,
             )
             .select_related("target")
             .first()
@@ -525,7 +527,8 @@ def delete_album(request: HttpRequest, pk: int) -> HttpResponse:
     return redirect("photo_album:index")
 
 
-# How long the album page tells the administrator who merged another album into it how that went.
+# How long the album page tells the administrator who merged another album into it how that went,
+# unless they close the notice sooner (close_merge_notice).
 MERGE_NOTICE_SHOWN_FOR = timedelta(days=1)
 
 
@@ -576,6 +579,19 @@ def merge_album(request: HttpRequest, pk: int) -> HttpResponse:
         "når fletningen er færdig.",
     )
     return redirect("photo_album:detail", target.pk)
+
+
+@login_required
+@require_POST
+def close_merge_notice(request: HttpRequest, pk: int) -> HttpResponse:
+    """Close the notice of how a merge went, for good. Only its administrator sees it, so only they
+    can close it; a merge still running keeps its notice, which says uploads must wait."""
+    job = get_object_or_404(AlbumMerge, pk=pk, requested_by=current_resident(request))
+    if not job.is_active:
+        AlbumMerge.objects.filter(pk=job.pk).update(notice_closed_at=timezone.now())
+    if request.headers.get("HX-Request"):
+        return HttpResponse("")  # htmx removes the notice itself
+    return redirect("photo_album:detail", job.target_id)
 
 
 @login_required

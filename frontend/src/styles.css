@@ -2034,6 +2034,12 @@
    .album-lock-status { justify-content:flex-start; margin:-14px 0 20px; }.album-lock-status a { color:inherit; }
    .album-lock-note { color:var(--muted); font-size:13px; }
    .album-download-notice p { margin:0; }
+   .album-merge-notice { position:relative; }
+   .album-merge-notice p { margin:0; }
+   .album-notice-close { position:absolute; top:8px; right:8px; margin:0; }
+   .album-notice-close + p { padding-right:32px; }
+   .album-notice-close button { width:32px; height:32px; padding:0; border:0; border-radius:50%; background:transparent; color:var(--muted); font-size:25px; line-height:1; cursor:pointer; }
+   .album-notice-close button:hover, .album-notice-close button:focus-visible { color:inherit; background:var(--border); }
    .album-children { margin-bottom:24px; }.album-children h2 { margin:0 0 10px; font-size:16px; }
    .album-create-sub input { min-width:0; }
    .album-scope { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 18px; }

@@ -527,6 +527,59 @@ def test_albums_that_cannot_be_merged_are_turned_back_before_the_confirmation(
 
 
 @pytest.mark.django_db
+def test_the_administrator_closes_the_notice_of_how_it_went_for_good(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    target = Album.objects.create(folder="2014", name="Sommerfest")
+    administrator = make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,))
+    job = AlbumMerge.objects.create(
+        target=target,
+        source_path="Sommerfest 2",
+        requested_by=administrator,
+        state=AlbumMergeState.READY,
+        result={"moved": 2},
+        completed_at=timezone.now(),
+    )
+    page_url = reverse("photo_album:detail", args=[target.pk])
+    close_url = reverse("photo_album:close_merge_notice", args=[job.pk])
+
+    client.force_login(make_resident(email="other@gahk.dk", roles=(Role.ADMINISTRATOR,)))
+    assert client.post(close_url).status_code == 404  # not their merge, nor their notice
+
+    client.force_login(administrator)
+    page = client.get(page_url).content.decode()
+    assert "er flettet ind i <strong>Sommerfest</strong>: 2 medier flyttet hertil." in page
+    assert f'hx-post="{close_url}" hx-target="closest .album-merge-notice" hx-swap="delete"' in page
+
+    closed = client.post(close_url, HTTP_HX_REQUEST="true")  # htmx takes the notice off itself
+
+    assert (closed.status_code, closed.content) == (200, b"")
+    assert "er flettet ind i" not in client.get(page_url).content.decode()
+    assert client.post(close_url)["Location"] == page_url  # without JavaScript, the page again
+
+
+@pytest.mark.django_db
+def test_a_merge_still_running_keeps_its_notice(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    target, source = _albums("Sommerfest", "Sommerfest 2")
+    administrator = make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,))
+    job = AlbumMerge.objects.create(
+        target=target, source=source, source_path=source.name, requested_by=administrator
+    )
+    client.force_login(administrator)
+
+    assert (
+        "album-notice-close"
+        not in client.get(reverse("photo_album:detail", args=[target.pk])).content.decode()
+    )
+    client.post(reverse("photo_album:close_merge_notice", args=[job.pk]))
+
+    job.refresh_from_db()
+    assert job.notice_closed_at is None
+
+
+@pytest.mark.django_db
 def test_while_a_merge_runs_neither_album_takes_uploads_and_the_page_says_so(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
