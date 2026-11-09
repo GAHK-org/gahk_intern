@@ -153,6 +153,22 @@ class DirectUploadSignForm(forms.Form):
     part_number = forms.IntegerField(min_value=1, required=False)
 
 
+class SystemAlbumRenameForm(forms.Form):
+    """The import script renaming a root album it imported: `album` in `folder` becomes `name`."""
+
+    folder = forms.CharField(max_length=10)
+    album = forms.CharField(max_length=140)
+    name = forms.CharField(max_length=140, validators=[validate_album_name])
+
+    def clean_folder(self) -> str:
+        folder = str(self.cleaned_data["folder"])
+        try:
+            validate_folder(folder)
+        except ValidationError as exc:
+            raise ValidationError(exc.messages) from exc
+        return folder
+
+
 class SystemSidecarDatesForm(ZipAlbumImportForm):
     """The import script's sidecars for an album already imported, paths relative to `album`."""
 

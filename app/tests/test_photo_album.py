@@ -1353,7 +1353,7 @@ def test_album_with_media_can_be_renamed_but_not_deleted(
     Media.objects.create(
         album=album, title="photo", original="a", high_definition="b", thumbnail="c", requested_by=resident
     )
-    rename_album(album, "Nyt navn")
+    rename_album(album, "Nyt navn", by=resident)
     album.refresh_from_db()
     assert album.name == "Nyt navn"
     with pytest.raises(ValidationError, match="tomt"):
