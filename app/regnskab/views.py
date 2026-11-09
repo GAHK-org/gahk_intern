@@ -160,20 +160,18 @@ def _parse_billing_period(source: dict) -> tuple[date, date] | None:
     return date_from, date_to
 
 
-def _missing_account_numbers(request: HttpRequest, date_from: date, date_to: date) -> HttpResponse | None:
-    """A redirect back to the overview if anyone in the period lacks an e-conomic kontonr., else None.
-    Alumneregninger are all or nothing: a resident without a number would otherwise just be left out."""
+def _warn_missing_account_numbers(request: HttpRequest, date_from: date, date_to: date) -> None:
+    """Warns, without stopping anything, about everyone in the period with no e-conomic kontonr.:
+    they get no alumneregning, and should not be left out without regnskab noticing."""
     missing = list(alumneregning.residents_missing_account_number(date_from, date_to))
     if not missing:
-        return None
+        return
     names = ", ".join(r.full_name for r in missing[:5])
     more = f" og {len(missing) - 5} flere" if len(missing) > 5 else ""
-    messages.error(
+    messages.warning(
         request,
-        f"Alumneregninger kan først laves, når alle i perioden har et e-conomic kontonr. "
-        f"Mangler: {names}{more}.",
+        f"{len(missing)} i perioden har intet e-conomic kontonr. og får ingen alumneregning: {names}{more}.",
     )
-    return redirect(f"{reverse('regnskab:overview')}?period={date_from.year}-{date_from.month}")
 
 
 _AUTH_ERROR_MESSAGE = (
@@ -191,8 +189,7 @@ def preview_alumneregninger_view(request: HttpRequest) -> HttpResponse:
         messages.error(request, "Angiv en gyldig periode — fra-dato skal være før (eller lig med) til-dato.")
         return redirect("regnskab:overview")
     date_from, date_to = period
-    if blocked := _missing_account_numbers(request, date_from, date_to):
-        return blocked
+    _warn_missing_account_numbers(request, date_from, date_to)
 
     try:
         rows = alumneregning.preview_alumneregninger(date_from, date_to)
@@ -246,8 +243,7 @@ def send_alumneregninger_view(request: HttpRequest) -> HttpResponse:
         messages.error(request, "Angiv en gyldig periode — fra-dato skal være før (eller lig med) til-dato.")
         return redirect("regnskab:overview")
     date_from, date_to = period
-    if blocked := _missing_account_numbers(request, date_from, date_to):
-        return blocked
+    _warn_missing_account_numbers(request, date_from, date_to)
 
     tasks.send_alumneregninger_task.delay(date_from.isoformat(), date_to.isoformat())
     messages.success(

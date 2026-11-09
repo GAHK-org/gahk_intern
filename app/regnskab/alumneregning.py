@@ -106,8 +106,8 @@ def residents_billable_for(date_from: date, date_to: date) -> QuerySet[Resident]
 
 
 def residents_missing_account_number(date_from: date, date_to: date) -> QuerySet[Resident]:
-    """Residents in the period with no e-conomic account number. Alumneregninger are not made while
-    there are any (regnskab.views), so nobody who lived here goes unbilled without anyone noticing."""
+    """Residents in the period with no e-conomic account number, who get no alumneregning. regnskab.views
+    lists and warns about them, so nobody who lived here goes unbilled without anyone noticing."""
     return residents_in_period(date_from, date_to).filter(economic_account_number__isnull=True)
 
 

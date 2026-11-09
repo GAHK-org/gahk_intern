@@ -441,7 +441,7 @@ def test_nothing_is_missing_when_everyone_has_a_kontonr(make_resident: Callable)
 
 @pytest.mark.django_db
 @pytest.mark.parametrize("method", ["preview", "send"])
-def test_alumneregninger_are_refused_while_anyone_lacks_a_kontonr(
+def test_alumneregninger_go_ahead_with_a_warning_when_someone_lacks_a_kontonr(
     monkeypatch: pytest.MonkeyPatch, make_resident: Callable, method: str
 ) -> None:
     _alumne_in_august("harnumber@gahk.dk", 1101, 1)
@@ -449,21 +449,16 @@ def test_alumneregninger_are_refused_while_anyone_lacks_a_kontonr(
     acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
     queued: list[tuple[str, str]] = []
     monkeypatch.setattr(tasks.send_alumneregninger_task, "delay", lambda *a: queued.append(a))
-    monkeypatch.setattr(
-        alumneregning, "preview_alumneregninger", lambda *a: pytest.fail("preview built anyway")
-    )
+    monkeypatch.setattr(alumneregning, "preview_alumneregninger", lambda *a: [])
     c = Client()
     c.force_login(acc)
 
     period = {"fra": "2026-08-01", "til": "2026-08-31"}
     if method == "preview":
-        response = c.get(reverse("regnskab:preview_alumneregninger"), period)
+        html = c.get(reverse("regnskab:preview_alumneregninger"), period).content.decode()
     else:
         response = c.post(reverse("regnskab:send_alumneregninger"), period)
+        assert queued == [("2026-08-01", "2026-08-31")]
+        html = c.get(response.url).content.decode()
 
-    assert response.status_code == 302
-    assert response.url == f"{reverse('regnskab:overview')}?period=2026-8"
-    assert not queued
-    html = c.get(response.url).content.decode()
-    assert "først laves, når alle i perioden har et e-conomic kontonr." in html
-    assert "nonumber" in html
+    assert "1 i perioden har intet e-conomic kontonr. og får ingen alumneregning: nonumber" in html
