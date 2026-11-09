@@ -3,7 +3,14 @@ import zipfile
 from django import forms
 from django.core.exceptions import ValidationError
 
-from .models import Album, DownloadVariant, validate_album_name, validate_folder
+from .models import (
+    FOLDER_MAX_LENGTH,
+    Album,
+    DownloadVariant,
+    normalize_name,
+    validate_album_name,
+    validate_folder,
+)
 from .uploads import validate_media_upload
 
 
@@ -17,6 +24,18 @@ class AlbumNameForm(forms.Form):
     """Naming a sub-album, or renaming any album — the folder comes from the tree, not the form."""
 
     name = forms.CharField(max_length=140, label="Navn", validators=[validate_album_name])
+
+
+class AlbumMergeForm(forms.Form):
+    """The album to merge this one into, which is kept; which albums may be is merge.plan's to say."""
+
+    target = forms.ModelChoiceField(
+        queryset=Album.objects.all(),
+        error_messages={
+            "required": "Vælg det album, det skal flettes ind i.",
+            "invalid_choice": "Det album findes ikke længere.",
+        },
+    )
 
 
 class DownloadForm(forms.Form):
@@ -58,15 +77,19 @@ class MediaUploadForm(forms.Form):
     title = forms.CharField(max_length=255, required=False, label="Titel")
 
 
+def _clean_folder(value: object) -> str:
+    """A folder as it is stored: a year, or NO_YEAR_FOLDER in NFC, however a Mac spelled its "å"."""
+    folder = normalize_name(str(value))
+    validate_folder(folder)
+    return folder
+
+
 class ZipAlbumImportForm(forms.Form):
-    folder = forms.CharField(max_length=10, label="Mappe")
+    folder = forms.CharField(max_length=FOLDER_MAX_LENGTH, label="Mappe")
     archive = forms.FileField(label="ZIP-fil")
 
     def clean_folder(self) -> str:
-        folder = self.cleaned_data["folder"]
-        if folder != "Andet" and not (len(folder) == 4 and folder.isdecimal()):
-            raise ValidationError("Mappen skal være et årstal eller Andet.")
-        return folder
+        return _clean_folder(self.cleaned_data["folder"])
 
     def clean_archive(self) -> object:
         archive = self.cleaned_data["archive"]
@@ -114,12 +137,15 @@ class DirectZipImportForm(forms.Form):
     """An import of an archive already in the bucket: the upload's ticket and the ETags of its
     parts, in order, instead of the file."""
 
-    folder = forms.CharField(max_length=10, label="Mappe", validators=[validate_folder])
+    folder = forms.CharField(max_length=FOLDER_MAX_LENGTH, label="Mappe")
     album = forms.CharField(max_length=140, required=False, validators=[validate_album_name])
     ticket = forms.CharField()
     # The import script's parts, which the server completes the upload from; a browser's Uppy
     # completes its own and sends none.
     parts = forms.JSONField(required=False)
+
+    def clean_folder(self) -> str:
+        return _clean_folder(self.cleaned_data["folder"])
 
     def clean_parts(self) -> list[str]:
         parts = self.cleaned_data["parts"]
@@ -156,17 +182,12 @@ class DirectUploadSignForm(forms.Form):
 class SystemAlbumRenameForm(forms.Form):
     """The import script renaming a root album it imported: `album` in `folder` becomes `name`."""
 
-    folder = forms.CharField(max_length=10)
+    folder = forms.CharField(max_length=FOLDER_MAX_LENGTH)
     album = forms.CharField(max_length=140)
     name = forms.CharField(max_length=140, validators=[validate_album_name])
 
     def clean_folder(self) -> str:
-        folder = str(self.cleaned_data["folder"])
-        try:
-            validate_folder(folder)
-        except ValidationError as exc:
-            raise ValidationError(exc.messages) from exc
-        return folder
+        return _clean_folder(self.cleaned_data["folder"])
 
 
 class SystemSidecarDatesForm(ZipAlbumImportForm):

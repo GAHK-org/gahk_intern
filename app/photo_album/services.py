@@ -130,22 +130,32 @@ def backfill_hashes(*, limit: int = 0, until: datetime | None = None) -> HashBac
     for media in (queue[:limit] if limit else queue).iterator():
         if until is not None and timezone.now() >= until:
             break
-        digest = hashlib.sha256()
-        size = 0
         try:
-            with media.original.open("rb") as original:
-                while chunk := original.read(1024 * 1024):
-                    digest.update(chunk)
-                    size += len(chunk)
+            hash_original(media)
         except OSError as exc:
             result.unreadable.append(f"{media.pk} ({media.original.name}): {exc}")
-            logger.warning("Could not read media %s (%s) to hash it: %s", media.pk, media.original.name, exc)
-            Media.objects.filter(pk=media.pk).update(hash_failed_at=timezone.now())
             continue
-        Media.objects.filter(pk=media.pk).update(sha256=digest.hexdigest(), size=size, hash_failed_at=None)
         result.hashed += 1
     result.remaining = missing.count()
     return result
+
+
+def hash_original(media: Media) -> None:
+    """Read `media`'s stored original to record its SHA-256 and size. Raises OSError if it cannot,
+    after noting when (`hash_failed_at`)."""
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with media.original.open("rb") as original:
+            while chunk := original.read(1024 * 1024):
+                digest.update(chunk)
+                size += len(chunk)
+    except OSError as exc:
+        logger.warning("Could not read media %s (%s) to hash it: %s", media.pk, media.original.name, exc)
+        Media.objects.filter(pk=media.pk).update(hash_failed_at=timezone.now())
+        raise
+    media.sha256, media.size, media.hash_failed_at = digest.hexdigest(), size, None
+    Media.objects.filter(pk=media.pk).update(sha256=media.sha256, size=size, hash_failed_at=None)
 
 
 @dataclass
@@ -1590,8 +1600,8 @@ def settle_dates(album: Album) -> int:
     a camera or a scanner numbered them in. An album where none has a date takes the middle date of
     its parent album's items (then the grandparent's, and so on). Failing that, the item keeps its
     upload time if that falls in the folder's year — this year's album, uploaded this year — and
-    otherwise goes to the start of the year. In "Andet", which has no year, it keeps its upload
-    time. Every approximation is marked as one in `Media.date_source`.
+    otherwise goes to the start of the year. In NO_YEAR_FOLDER, which has no year, it keeps its
+    upload time. Every approximation is marked as one in `Media.date_source`.
 
     Only dates inside the album's year are approximated from: a capture date outside it is still
     that item's own date, but a camera whose clock reset to 2001 must not pull its neighbours along.

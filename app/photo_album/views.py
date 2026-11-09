@@ -43,9 +43,10 @@ from core.media import REDIRECT_CACHE_CONTROL
 from residents.models import Resident
 from residents.permissions import current_resident
 
-from . import access, cache, direct_upload, featured, services
+from . import access, cache, direct_upload, featured, merge, services
 from .forms import (
     AlbumForm,
+    AlbumMergeForm,
     AlbumNameForm,
     DirectUploadSignForm,
     DirectZipImportForm,
@@ -61,11 +62,13 @@ from .forms import (
 )
 from .models import (
     MAX_ALBUM_DEPTH,
+    NO_YEAR_FOLDER,
     Album,
     AlbumDownload,
     AlbumDownloadState,
     AlbumImport,
     AlbumImportState,
+    AlbumMerge,
     DateSource,
     DerivativeState,
     DownloadVariant,
@@ -97,8 +100,16 @@ CACHED_FILE_CACHE_CONTROL = "private, max-age=86400"
 
 
 def album_folder_options() -> list[str]:
-    folders = Album.objects.order_by("folder").values_list("folder", flat=True).distinct()
-    return ["Andet", *(folder for folder in folders if folder != "Andet")]
+    """The folders to offer: the years that have albums and this year's, newest first, then
+    NO_YEAR_FOLDER — as the album index lists them."""
+    folders = set(Album.objects.order_by("folder").values_list("folder", flat=True).distinct())
+    years = folders - {NO_YEAR_FOLDER} | {default_folder()}
+    return [*sorted(years, reverse=True), NO_YEAR_FOLDER]
+
+
+def default_folder() -> str:
+    """This year's: where a new album most likely belongs."""
+    return str(timezone.localdate().year)
 
 
 def _token_import_resident(request: HttpRequest) -> Resident | None:
@@ -277,14 +288,12 @@ def _tiles_response(request: HttpRequest, media_page: MediaPage, **context: obje
 
 @login_required
 def index(request: HttpRequest) -> HttpResponse:
-    folder = request.GET.get("folder", "")
+    folder = normalize_name(request.GET.get("folder", ""))
     albums = Album.objects.filter(parent__isnull=True)
     if folder:
         albums = albums.filter(folder=folder)
-    # "Andet" first, then the years newest first.
-    ordered = sorted(
-        albums.order_by("name"), key=lambda album: (album.folder != "Andet", _negated(album.folder))
-    )
+    # The years newest first, then NO_YEAR_FOLDER.
+    ordered = sorted(albums.order_by("name"), key=lambda album: _negated(album.folder))
     _summarise(ordered)
     return render(
         request,
@@ -300,8 +309,8 @@ def index(request: HttpRequest) -> HttpResponse:
     )
 
 
-def _negated(folder: str) -> tuple[int, str]:
-    return (-int(folder), "") if folder.isdecimal() else (0, folder)
+def _negated(folder: str) -> tuple[bool, int]:
+    return (False, -int(folder)) if folder.isdecimal() else (True, 0)
 
 
 @login_required
@@ -376,6 +385,19 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
     children = list(album.children.order_by("name"))
     _summarise(children)
     resident = current_resident(request)
+    merge_job = album.active_merge()
+    can_merge = merge_job is None and access.can_merge_album(request, album)
+    if merge_job is None and access.is_administrator(request):
+        # How the administrator's own merge into this album went, for a day after.
+        merge_job = (
+            album.merges.filter(
+                requested_by=resident,
+                completed_at__gte=timezone.now() - MERGE_NOTICE_SHOWN_FOR,
+                notice_closed_at__isnull=True,
+            )
+            .select_related("target")
+            .first()
+        )
     return render(
         request,
         "photo_album/detail.html",
@@ -406,6 +428,10 @@ def detail(request: HttpRequest, pk: int) -> HttpResponse:
             and not album.media.exists(),
             "download_job": AlbumDownload.objects.filter(album=album, requested_by=resident).first(),
             "variants": DownloadVariant.choices,
+            "merge_job": merge_job,
+            "merge_summary": merge.describe(merge_job.result) if merge_job is not None else "",
+            "merge_target": merge.label(merge_job.target) if merge_job is not None else "",
+            "merge_options": merge.merge_targets(album) if can_merge else [],
         },
     )
 
@@ -432,11 +458,12 @@ def create_album(request: HttpRequest) -> HttpResponse:
             "form": form,
             "title": "Opret album",
             "folder_options": album_folder_options(),
+            "default_folder": default_folder(),
         },
     )
 
 
-def _form_error_messages(request: HttpRequest, form: AlbumNameForm) -> None:
+def _form_error_messages(request: HttpRequest, form: AlbumNameForm | AlbumMergeForm) -> None:
     for errors in form.errors.values():
         for error in errors:
             messages.error(request, str(error))
@@ -506,6 +533,90 @@ def delete_album(request: HttpRequest, pk: int) -> HttpResponse:
     if album.parent_id is not None:
         return redirect("photo_album:detail", album.parent_id)
     return redirect("photo_album:index")
+
+
+# How long the album page tells the administrator who merged another album into it how that went,
+# unless they close the notice sooner (close_merge_notice).
+MERGE_NOTICE_SHOWN_FOR = timedelta(days=1)
+
+
+@login_required
+def merge_album(request: HttpRequest, pk: int) -> HttpResponse:
+    """Merge this album into the one chosen, which is kept: first a page saying what will happen —
+    which album goes, which stays, and where each sub-album ends up — then, posted from it, the
+    merge itself, in the background (photo_album.merge). The kept album's page follows it."""
+    source = get_object_or_404(Album, pk=pk)
+    if not access.can_merge_album(request, source):
+        raise PermissionDenied
+    form = AlbumMergeForm(request.POST if request.method == "POST" else request.GET)
+    if not form.is_valid():
+        _form_error_messages(request, form)
+        return redirect("photo_album:detail", source.pk)
+    target = form.cleaned_data["target"]
+    if request.method != "POST":
+        try:
+            merge_plan = merge.plan(target, source)
+        except ValidationError as exc:
+            _error_messages(request, exc)
+            return redirect("photo_album:detail", source.pk)
+        return render(
+            request,
+            "photo_album/merge_confirm.html",
+            {
+                "target": target,
+                "source": source,
+                "target_label": merge.label(target),
+                "source_label": merge.label(source),
+                "target_contents": merge.contents(target),
+                "source_contents": merge.contents(source),
+                "merged": [
+                    (merged.display_path(), kept.display_path()) for kept, merged in merge_plan.pairs[1:]
+                ],
+                "moved": [(album.name, under.display_path()) for album, under in merge_plan.moves],
+            },
+        )
+    try:
+        job = merge.request_merge(target, source, by=current_resident(request))
+    except ValidationError as exc:
+        _error_messages(request, exc)
+        return redirect("photo_album:detail", source.pk)
+    kept = merge.label(target)
+    messages.success(
+        request,
+        f"{job.source_path} flettes ind i {kept}. {kept} beholdes, og {job.source_path} forsvinder, "
+        "når fletningen er færdig.",
+    )
+    return redirect("photo_album:detail", target.pk)
+
+
+@login_required
+@require_POST
+def close_merge_notice(request: HttpRequest, pk: int) -> HttpResponse:
+    """Close the notice of how a merge went, for good. Only its administrator sees it, so only they
+    can close it; a merge still running keeps its notice, which says uploads must wait."""
+    job = get_object_or_404(AlbumMerge, pk=pk, requested_by=current_resident(request))
+    if not job.is_active:
+        AlbumMerge.objects.filter(pk=job.pk).update(notice_closed_at=timezone.now())
+    if request.headers.get("HX-Request"):
+        return HttpResponse("")  # htmx removes the notice itself
+    return redirect("photo_album:detail", job.target_id)
+
+
+@login_required
+@require_GET
+def merge_status(request: HttpRequest, pk: int) -> HttpResponse:
+    """The album page's merge notice, which asks again until the merge is done, and then reloads
+    the page — the merged album's, as the other one is gone."""
+    job = get_object_or_404(AlbumMerge.objects.select_related("target"), pk=pk)
+    if job.is_active:
+        return render(
+            request,
+            "photo_album/_merge_notice.html",
+            {"merge_job": job, "merge_target": merge.label(job.target)},
+        )
+    response = HttpResponse(status=204)
+    response["HX-Redirect"] = reverse("photo_album:detail", args=[job.target_id])
+    return response
 
 
 @login_required
@@ -811,6 +922,7 @@ def import_zip(request: HttpRequest) -> HttpResponse:
             "skipped": job.skipped if job and job.state == AlbumImportState.READY else [],
             "errors": job.errors if job and job.state == AlbumImportState.FAILED else [],
             "folder_options": album_folder_options(),
+            "default_folder": default_folder(),
             "max_sub_album_levels": MAX_ALBUM_DEPTH,
         },
     )
@@ -1041,7 +1153,8 @@ def system_albums(request: HttpRequest) -> JsonResponse:
     """
     if _token_import_resident(request) is None:
         raise PermissionDenied
-    roots = Album.objects.filter(parent__isnull=True, folder=request.GET.get("folder", "")).order_by("name")
+    folder = normalize_name(request.GET.get("folder", ""))
+    roots = Album.objects.filter(parent__isnull=True, folder=folder).order_by("name")
     return JsonResponse(
         {
             "albums": [
