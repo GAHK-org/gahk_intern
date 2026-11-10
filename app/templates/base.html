@@ -168,7 +168,7 @@
       <div class="content {% block content_width %}max-w-5xl{% endblock %} mx-auto">
         {% if messages %}
           {% for m in messages %}
-            <p class="card {% if m.tags == 'error' %}border-red-400{% else %}border-emerald-400{% endif %}">{{ m }}</p>
+            <p class="card {% if m.tags == 'error' %}border-red-400{% elif m.tags == 'warning' %}border-amber-400{% else %}border-emerald-400{% endif %}">{{ m }}</p>
           {% endfor %}
         {% endif %}
         {% block content %}{% endblock %}
