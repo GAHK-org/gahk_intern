@@ -312,6 +312,14 @@ class Command(BaseCommand):
             seen_emails.add(email)
             residents.append(self._make_resident(email, first, last))
 
+        # An e-conomic kontonr. for every alumne, numbered from 4201 like GAHK's real alumne accounts,
+        # except two in the current month (residents[-1] has none, see _seed_residencies), so the
+        # regnskab page's "Mangler e-conomic kontonr." list has someone on it to try setting one for.
+        without_number = residents[-3:-1] if len(residents) > len(fixtures) + 2 else []
+        for i, r in enumerate(residents):
+            r.economic_account_number = None if r in without_number else 4201 + i
+        Resident.objects.bulk_update(residents, ["economic_account_number"])
+
         # Lineage: give most residents a sponsor (fylgje) picked from someone created earlier.
         for i, r in enumerate(residents):
             if i > 4 and self.rng.random() < 0.8:
@@ -704,9 +712,10 @@ class Command(BaseCommand):
         ]:
             self.stdout.write(f"  {email:22} {desc}")
         self.stdout.write(
-            "\nTo try alumneregninger locally: give a resident an e-conomic kontonr. on the regnskab "
-            "page, then GAHK's real e-conomic credentials need to be in your own .env "
+            "\nTo try alumneregninger locally: set an e-conomic kontonr. for the two residents the "
+            "regnskab page lists as missing one (everyone else has 4201 and up). GAHK's real e-conomic "
+            "credentials also need to be in your own .env "
             '(ECONOMIC_APP_SECRET_TOKEN/ECONOMIC_AGREEMENT_GRANT_TOKEN) — the DEBUG-default "demo" '
             "tokens hit e-conomic's own public demo company, which has none of GAHK's accounts. Without "
-            "real credentials that resident just shows up as failed, not a crash."
+            "real credentials the residents just show up as failed, not a crash."
         )

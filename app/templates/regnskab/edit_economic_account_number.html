@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}E-conomic kontonr. for {{ resident.full_name }} - GAHK Intern{% endblock %}
+{% block content %}
+  <h1>E-conomic kontonr.</h1>
+  <p class="muted mb-4">
+    Regnskab kan kun ændre kontonummeret her. Øvrige oplysninger ændres af indstillingen under
+    "Rediger beboer".
+  </p>
+
+  <div class="card mb-4" style="max-width:640px">
+    <table cellpadding="4" class="text-sm">
+      <tr><th class="text-left pr-4">Navn</th><td>{{ resident.full_name }}</td></tr>
+      <tr><th class="text-left pr-4">E-mail</th><td>{{ resident.email }}</td></tr>
+      <tr><th class="text-left pr-4">Telefon</th><td>{{ resident.phone|default:"–" }}</td></tr>
+      <tr><th class="text-left pr-4">Studie</th><td>{{ resident.study|default:"–" }}</td></tr>
+      <tr><th class="text-left pr-4">Indflyttet</th><td>{{ resident.move_in_date|date:"j. F Y"|default:"–" }}</td></tr>
+      <tr><th class="text-left pr-4">Fraflyttet</th><td>{{ resident.move_out_date|date:"j. F Y"|default:"–" }}</td></tr>
+    </table>
+  </div>
+
+  <form method="post" class="card" style="max-width:640px">
+    {% csrf_token %}
+    {% with field=form.economic_account_number %}
+      <div class="mb-3">
+        <label for="{{ field.id_for_label }}" class="font-semibold block mb-1">{{ field.label }}</label>
+        {{ field }}
+        {% if field.errors %}<p class="text-red-600 text-sm mt-1">{{ field.errors|striptags }}</p>{% endif %}
+        {% if lookup_error %}
+          <p class="text-red-600 text-sm mt-1">{{ lookup_error }}</p>
+        {% elif account_name %}
+          <p class="text-sm mt-1">Hedder i e-conomic: <strong>{{ account_name }}</strong></p>
+        {% endif %}
+        <p class="muted text-sm mt-1">
+          Nummeret slås op i e-conomic, før det gemmes, og gemmes kun, hvis kontoen dér har beboerens navn.
+          Lad feltet stå tomt for at fjerne nummeret.
+        </p>
+      </div>
+    {% endwith %}
+    <div class="flex items-center gap-3 mt-4">
+      <button type="submit" class="btn">Gem</button>
+      <a href="{% if next %}{{ next }}{% else %}{% url 'regnskab:overview' %}{% endif %}">Annullér</a>
+    </div>
+  </form>
+{% endblock %}
