@@ -1602,10 +1602,10 @@
   .board-embeds { display: grid; gap: 10px; margin-top: 14px; }
   .board-embed { position: relative; }
   .board-embed > .album-embed, .board-embed > .flix-embed { margin-top: 0; }
-  .board-embed-remove { position: absolute; top: 10px; right: 10px; z-index: 2; padding: 5px 12px;
-    border: 0; border-radius: 999px; background: rgb(0 0 0 / .62); color: #fff; font-size: 13px;
-    font-weight: 600; cursor: pointer; }
-  .board-embed-remove:hover { background: rgb(0 0 0 / .82); }
+  .board-embed-actions { position: absolute; top: 10px; right: 10px; z-index: 2; display: flex; gap: 6px; }
+  .board-embed-action { padding: 5px 12px; border: 0; border-radius: 999px; background: rgb(0 0 0 / .62);
+    color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .board-embed-action:hover { background: rgb(0 0 0 / .82); }
   .board-embed-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px;
     font-size: 14px; color: var(--muted); }
   .board-embed-button { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px 6px 8px;
@@ -1664,6 +1664,44 @@
   .board-picker.is-gahkflix .board-picker-search { border-color: #3a3a3a; background: #2a2a2a; color: #fff; }
   .board-picker.is-gahkflix .board-choice-img { width: 96px; height: 54px; border-radius: 4px; background: #2a2a2a; }
   .board-picker.is-gahkflix .board-choice-text small, .board-picker.is-gahkflix .board-choice-none { color: #a3a3a3; }
+
+  /* "Vælg billeder" (opslagstavle/_embed_pictures.html): the picks in a strip, in order, over the
+     album's pictures; each picked one in the grid wears its place. Once seven are picked the rest
+     fade, since another would not fit the mosaic. */
+  .board-pictures { width: min(760px, calc(100vw - 24px)); max-height: min(760px, calc(100dvh - 48px)); }
+  .board-pictures-body { flex: 1; min-height: 160px; overflow: auto; padding: 0 18px 12px; }
+  .board-pictures-picked { position: sticky; top: 0; z-index: 1; padding: 4px 0 12px;
+    border-bottom: 1px solid var(--border); background: var(--surface); }
+  .board-pictures-picked-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .board-pictures-picked-head strong { font-size: 15px; }
+  .board-pictures-clear { padding: 0; border: 0; background: none; color: var(--muted); font-size: 14px;
+    text-decoration: underline; cursor: pointer; }
+  .board-pictures-auto, .board-pictures-hint { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  .board-pictures-strip { display: flex; gap: 6px; margin-top: 8px; }
+  .board-pictures-strip:empty { display: none; }
+  .board-pictures-strip .board-picture { width: 64px; flex: none; }
+  /* The first pick is the mosaic's large picture. */
+  .board-pictures-strip .board-picture:first-child { width: 132px; aspect-ratio: auto; }
+  .board-pictures-album { margin: 14px 0 8px; font-family: Georgia, serif; font-size: 16px; font-weight: 700; }
+  .board-pictures-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 6px; }
+  .board-picture { position: relative; aspect-ratio: 1; padding: 0; overflow: hidden; border: 0;
+    border-radius: 8px; background: var(--sunken); cursor: pointer; }
+  .board-picture img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .board-picture:focus-visible { outline: 3px solid var(--green-100); outline-offset: 2px; }
+  .board-picture-video { position: absolute; left: 6px; bottom: 6px; padding: 1px 6px; border-radius: 4px;
+    background: rgb(0 0 0 / .62); color: #fff; font-size: 11px; }
+  .board-picture[data-place]::before { content: ""; position: absolute; inset: 0; border: 3px solid var(--brass);
+    border-radius: 8px; }
+  .board-picture[data-place]::after { content: attr(data-place); position: absolute; top: 6px; right: 6px;
+    display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--brass);
+    color: #fff; font-size: 13px; font-weight: 700; line-height: 1; }
+  .board-pictures-grid.is-full .board-picture:not([data-place]) { opacity: .4; cursor: not-allowed; }
+  .board-pictures-more { grid-column: 1 / -1; justify-self: center; margin-top: 6px; padding: 7px 16px;
+    border: 1px solid var(--border-strong); border-radius: 999px; background: var(--surface); color: var(--ink);
+    font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .board-pictures-foot { display: flex; justify-content: flex-end; align-items: center; gap: 14px;
+    padding: 12px 18px; border-top: 1px solid var(--border); }
+  .board-pictures-cancel { padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
   .notice-head { @apply flex items-start justify-between gap-3; flex-wrap: nowrap; }
   .notice-headline { flex: 1; min-width: 0; }
   .notice-tags { @apply flex flex-wrap items-center gap-2; margin-bottom: 6px; }

@@ -75,10 +75,11 @@ def album(name: str = "Julefrokost 2026", **fields: object) -> Album:
     return Album.objects.create(folder="2026", name=name, **fields)
 
 
-def embed(thing: Album | Video) -> str:
-    """The Markdown that embeds an album or a film, as the picker writes it."""
+def embed(thing: Album | Video, *featured: Media) -> str:
+    """The Markdown that embeds an album or a film, as the picker writes it, with the album's picked
+    pictures as `Vælg billeder` writes them."""
     if isinstance(thing, Album):
-        return embed_syntax.markdown("album", thing.pk, thing.name)
+        return embed_syntax.markdown("album", thing.pk, thing.name, tuple(each.pk for each in featured))
     return embed_syntax.markdown("gahkflix", thing.pk, thing.title)
 
 
@@ -225,6 +226,83 @@ def test_an_album_that_is_gone_leaves_its_name(beboer: Resident) -> None:
     assert "<p>Julefrokost 2026</p>" in text
 
 
+def thumbnail(media: Media) -> str:
+    return f"/{media.thumbnail.name}"
+
+
+def test_an_album_shows_the_pictures_picked_for_it_in_their_order(beboer: Resident) -> None:
+    party = album()
+    shots = [photo(party, beboer, minute) for minute in range(4)]
+    notice = post(beboer, embed(party, shots[0], shots[2]))
+
+    [widget] = album_widgets(body_of(client_for(beboer).get(f"{BOARD}{notice.pk}").content.decode()))
+
+    # Only those, the first the large one, and the tile laid out for two.
+    assert pictures(widget) == [thumbnail(shots[0]), thumbnail(shots[2])]
+    assert "album-embed-n2" in widget
+    assert "4 billeder" in widget
+
+
+def test_picks_are_passed_over_once_the_widget_may_not_show_them(beboer: Resident) -> None:
+    party = album()
+    under = album("Natten", parent=party)
+    elsewhere = album("Andet")
+    kept = photo(party, beboer, 0)
+    from_below = photo(under, beboer, 1)
+    binned = photo(party, beboer, 2, deleted_at=timezone.now())
+    pending = photo(party, beboer, 3, status=MediaStatus.PENDING)
+    building = photo(party, beboer, 4, derivative_state=DerivativeState.PENDING)
+    not_its_own = photo(elsewhere, beboer, 5)
+    notice = post(beboer, embed(party, binned, from_below, pending, building, not_its_own, kept))
+
+    [widget] = album_widgets(body_of(client_for(beboer).get(f"{BOARD}{notice.pk}").content.decode()))
+
+    assert pictures(widget) == [thumbnail(from_below), thumbnail(kept)]
+
+
+def test_a_picture_picked_twice_is_shown_once(beboer: Resident) -> None:
+    """Typed by hand, `album:84/512,513,512`: the album is still drawn, with each picture once, and
+    the composer's buttons find the embed by what was typed."""
+    party = album()
+    first, second = photo(party, beboer, 0), photo(party, beboer, 1)
+    source = f"album:{party.pk}/{first.pk},{second.pk},{first.pk}"
+    client = client_for(beboer)
+    notice = post(beboer, f"![Fest]({source})")
+
+    [widget] = album_widgets(body_of(client.get(f"{BOARD}{notice.pk}").content.decode()))
+    drawn = client.post(BOARD + "indlejret", {"body": f"![Fest]({source})"}).content.decode()
+
+    assert pictures(widget) == [thumbnail(first), thumbnail(second)]
+    assert f'data-embed-remove="{source}"' in drawn
+    url = f"{BOARD}indlejr/album/{party.pk}/billeder?valgt={first.pk},{second.pk}"
+    assert f'data-embed-feature="{source}" data-url="{url}"' in drawn
+
+
+def test_with_none_of_its_picks_left_an_album_shows_its_newest_again(beboer: Resident) -> None:
+    party = album()
+    gone = photo(party, beboer, 0)
+    newest = photo(party, beboer, 1)
+    notice = post(beboer, embed(party, gone))
+    gone.delete()
+
+    [widget] = album_widgets(body_of(client_for(beboer).get(f"{BOARD}{notice.pk}").content.decode()))
+
+    assert pictures(widget) == [thumbnail(newest)]
+
+
+def test_one_album_embedded_twice_can_show_two_sets(beboer: Resident) -> None:
+    party = album()
+    first, second = photo(party, beboer, 0), photo(party, beboer, 1)
+    notice = post(beboer, f"{embed(party, first)}\n\nOg resten:\n\n{embed(party)}")
+
+    widgets = album_widgets(body_of(client_for(beboer).get(f"{BOARD}{notice.pk}").content.decode()))
+
+    assert [pictures(widget) for widget in widgets] == [
+        [thumbnail(first)],
+        [thumbnail(second), thumbnail(first)],
+    ]
+
+
 # --- the film's widget ----------------------------------------------------------------------------
 
 
@@ -331,7 +409,8 @@ def test_widgets_cost_the_same_queries_however_many_posts_embed_one(
     def embedding(notice: Notice, n: int) -> None:
         party = album(f"Album {n}")
         photo(party, beboer, n)
-        notice.body = f"{embed(party)}\n\n{embed(make_video(beboer, title=f'Film {n}'))}"
+        picked = embed_syntax.markdown("album", party.pk, party.name, (photo(party, beboer, n + 10).pk,))
+        notice.body = f"{embed(party)}\n\n{picked}\n\n{embed(make_video(beboer, title=f'Film {n}'))}"
         notice.save()
 
     def board_queries() -> int:
@@ -512,13 +591,110 @@ def test_the_preview_tab_draws_the_widgets_where_they_stand(beboer: Resident) ->
 
 
 @pytest.mark.parametrize(
-    ("method", "url"), [("get", "indlejr/album"), ("get", "indlejr/gahkflix"), ("post", "indlejret")]
+    ("method", "url"),
+    [
+        ("get", "indlejr/album"),
+        ("get", "indlejr/gahkflix"),
+        ("get", "indlejr/album/1/billeder"),
+        ("post", "indlejret"),
+    ],
 )
 def test_the_composer_endpoints_are_for_residents(client: Client, method: str, url: str) -> None:
     response = getattr(client, method)(BOARD + url)
 
     assert response.status_code == 302
     assert response["Location"].startswith("/intern/admin/login")
+
+
+def test_an_albums_widget_in_the_composer_offers_to_pick_its_pictures(
+    beboer: Resident, videos_open: None
+) -> None:
+    party = album()
+    shot = photo(party, beboer, 0)
+    film = make_video(beboer)
+
+    drawn = (
+        client_for(beboer)
+        .post(BOARD + "indlejret", {"body": f"{embed(party)}\n\n{embed(party, shot)}\n\n{embed(film)}"})
+        .content.decode()
+    )
+
+    url = f"{BOARD}indlejr/album/{party.pk}/billeder"
+    assert f'data-embed-feature="album:{party.pk}" data-url="{url}"' in drawn
+    assert f'data-embed-feature="album:{party.pk}/{shot.pk}" data-url="{url}?valgt={shot.pk}"' in drawn
+    assert drawn.count("data-embed-feature") == 2  # a film has nothing to pick
+    assert f'data-embed-remove="gahkflix:{film.pk}"' in drawn
+
+
+def test_picking_pictures_lists_what_the_widget_may_show_newest_first(beboer: Resident) -> None:
+    party = album()
+    under = album("Natten", parent=party)
+    older = photo(party, beboer, 0)
+    newer = photo(under, beboer, 1, content_type="video/mp4")
+    photo(party, beboer, 2, deleted_at=timezone.now())
+    photo(party, beboer, 3, status=MediaStatus.PENDING)
+    photo(album("Andet"), beboer, 4)
+
+    html = client_for(beboer).get(f"{BOARD}indlejr/album/{party.pk}/billeder").content.decode()
+
+    listed = re.findall(r'data-picture-pick="(\d+)"', html)
+    assert listed == [str(newer.pk), str(older.pk)]
+    assert html.count("board-picture-video") == 1
+    assert "Valgt <span data-pictures-count>0</span> af 7" in html
+    assert "Vis flere" not in html
+
+
+def test_picking_pictures_shows_those_picked_in_their_order(beboer: Resident) -> None:
+    party = album()
+    first, second, third = (photo(party, beboer, minute) for minute in range(3))
+    gone = photo(party, beboer, 3, deleted_at=timezone.now())
+    picked = f"{third.pk},{gone.pk},{first.pk}"
+
+    html = (
+        client_for(beboer)
+        .get(f"{BOARD}indlejr/album/{party.pk}/billeder", {"valgt": picked})
+        .content.decode()
+    )
+
+    assert re.findall(r'data-picture-picked="(\d+)"', html) == [str(third.pk), str(first.pk)]
+    assert "Valgt <span data-pictures-count>2</span> af 7" in html
+    assert str(second.pk) not in re.findall(r'data-picture-picked="(\d+)"', html)
+
+
+def test_picking_pictures_pages_through_a_big_album(
+    beboer: Resident, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(embeds, "PICTURES_PAGE", 2)
+    party = album()
+    shots = [photo(party, beboer, minute) for minute in range(5)]
+    client = client_for(beboer)
+    url = f"{BOARD}indlejr/album/{party.pk}/billeder"
+
+    first = client.get(url).content.decode()
+    third = client.get(url, {"side": "3"}).content.decode()
+
+    assert re.findall(r'data-picture-pick="(\d+)"', first) == [str(shots[4].pk), str(shots[3].pk)]
+    assert f'hx-get="{url}?side=2"' in first
+    # A later page is only the pictures, for the place of "Vis flere".
+    assert re.findall(r'data-picture-pick="(\d+)"', third) == [str(shots[0].pk)]
+    assert "data-pictures-picked" not in third and "Vis flere" not in third
+
+
+@pytest.mark.parametrize("query", [{"side": "0"}, {"side": "x"}, {"side": "-1"}])
+def test_picking_pictures_refuses_what_is_no_page(beboer: Resident, query: dict[str, str]) -> None:
+    party = album()
+
+    assert client_for(beboer).get(f"{BOARD}indlejr/album/{party.pk}/billeder", query).status_code == 404
+
+
+def test_no_pictures_to_pick_for_an_album_that_is_gone_or_for_the_kitchen(
+    beboer: Resident, make_resident: Callable[..., Resident]
+) -> None:
+    party = album()
+    kitchen = make_resident(email="koekken@gahk.dk", is_kitchen=True)
+
+    assert client_for(beboer).get(f"{BOARD}indlejr/album/{party.pk + 1}/billeder").status_code == 404
+    assert client_for(kitchen).get(f"{BOARD}indlejr/album/{party.pk}/billeder").status_code == 404
 
 
 # --- "Del på opslagstavlen" -------------------------------------------------------------------------

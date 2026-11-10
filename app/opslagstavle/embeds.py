@@ -9,6 +9,10 @@ ANOTHER KIND OF WIDGET is an entry in KINDS below (how to find what it shows, wh
 it, what the composer's picker lists) and its name and icon in core.embeds.KINDS. Nothing about a
 post's schema changes.
 
+AN ALBUM'S PICTURES are its newest, or those the author picked (core.embeds: `album:12/88,91,95`),
+in `Vælg billeder` on its widget in the composer. A pick that is gone, unapproved, binned or not in
+the album is passed over, and with none left the album shows its newest again.
+
 EVERY WIDGET IS DRAWN FOR ITS READER, by its feature's rules: an album for anyone who may open the
 photo album; a film only for those GAHKFlix's rollout gate lets in, and only while they may see it
 (a draft for its uploader and the administrators, a binned one for the administrators, each marked
@@ -16,8 +20,8 @@ as such). The kitchen account, which can open neither, gets none. Where no widge
 name the author embedded it under stands in its place (core.markdown).
 
 A FIXED NUMBER OF QUERIES PER PAGE, however many posts embed however many albums and films: the
-albums, their pictures and their counts in three queries for the whole page, the films and the
-reader's progress in two.
+albums, their pictures, their counts and the picked pictures in four queries for the whole page, the
+films and the reader's progress in two.
 
 The photo album and GAHKFlix are imported inside the functions, as opslagstavle.forms does with
 events: neither depends on the board, and loading the board's models should not depend on them.
@@ -39,18 +43,24 @@ from django.urls import reverse
 from django.utils.safestring import SafeString
 
 from core import embeds as embed_syntax
+from core.embeds import Embed
 from core.markdown import embed_references
 from residents.permissions import current_resident, effective_roles, is_kitchen
 
 from .models import Notice
 
 if TYPE_CHECKING:
-    from gahkflix.models import Video
-    from photo_album.models import Album
+    from django.db.models import QuerySet
 
-# The album widget is the photo album index's mosaic: one large picture and six small (three on a
-# phone, where the CSS hides the rest).
-MOSAIC = 7
+    from gahkflix.models import Video
+    from photo_album.models import Album, Media
+
+# The album widget is the photo album index's mosaic: one large picture and six small (on a phone
+# one large and two small, where the CSS hides the rest). As many as an author may pick.
+MOSAIC = embed_syntax.FEATURING["album"]
+
+# How many of an album's pictures `Vælg billeder` lists at a time.
+PICTURES_PAGE = 48
 
 # How many albums or films the composer's picker lists at a time.
 CHOICES = 20
@@ -63,7 +73,8 @@ _EARLIEST = datetime.min.replace(tzinfo=UTC)
 
 # (path, items, of them videos) per album, and (path, sort_at, pk, thumbnail) per picture.
 Counts = list[tuple[str, int, int]]
-Pictures = list[tuple[str, datetime | None, int, str]]
+Row = tuple[str, datetime | None, int, str]
+Pictures = list[Row]
 
 
 @dataclass
@@ -107,6 +118,26 @@ class Choice:
     picture: str = ""
 
 
+@dataclass
+class Drawn:
+    """A widget under the composer's text (_embedded.html)."""
+
+    reference: str
+    html: SafeString
+    # `Vælg billeder`: the picker of what it shows, with what is picked now. "" for a film.
+    featuring_url: str = ""
+
+
+@dataclass
+class Picture:
+    """One of an album's pictures in `Vælg billeder`."""
+
+    pk: int
+    url: str
+    name: str
+    video: bool
+
+
 @dataclass(frozen=True)
 class Kind:
     """One kind of widget: what core.embeds calls it, and everything the board needs to draw it."""
@@ -115,12 +146,14 @@ class Kind:
     template: str
     # Whether this reader gets these widgets at all, and may embed one.
     allowed: Callable[[HttpRequest], bool]
-    # The widgets for these keys that this reader may see, by key.
-    widgets: Callable[[HttpRequest, set[int]], dict[int, object]]
+    # The widgets for these embeds that this reader may see, by embed.
+    widgets: Callable[[HttpRequest, set[Embed]], dict[Embed, object]]
     # The picker's list: the newest, or those matching what is typed.
     choices: Callable[[HttpRequest, str], list[Choice]]
     # The name "Del på opslagstavlen" embeds it under, or None for what may not be shared.
     shareable: Callable[[HttpRequest, int], str | None]
+    # The URL name of the composer's picker of what the widget shows (core.embeds.FEATURING), if any.
+    featuring: str = ""
 
 
 def counts_label(images: int, videos: int) -> str:
@@ -148,11 +181,23 @@ def attach(request: HttpRequest, notices: Iterable[Notice]) -> None:
         notice.first_embed = next(iter(mine.values()), "")  # type: ignore[attr-defined]
 
 
-def for_body(request: HttpRequest, body: str, *, compose: bool = False) -> list[tuple[str, SafeString]]:
+def for_body(request: HttpRequest, body: str, *, compose: bool = False) -> list[Drawn]:
     """The widgets `body` embeds, in order, as this reader would see them."""
     references = _references(body)
     drawn = rendered(request, references, compose=compose)
-    return [(reference, drawn[reference]) for reference in references if reference in drawn]
+    out = []
+    for reference in references:
+        embed = embed_syntax.parse(reference)
+        if embed is None or reference not in drawn:
+            continue
+        featuring = KINDS[embed.kind].featuring
+        url = ""
+        if featuring:
+            url = reverse(featuring, args=[embed.key])
+            if embed.featured:
+                url += f"?valgt={','.join(map(str, embed.featured))}"
+        out.append(Drawn(reference, drawn[reference], url))
+    return out
 
 
 def rendered(
@@ -163,19 +208,20 @@ def rendered(
     `compose` is for the composer: there a widget's links open a new tab, so following one does not
     lose the draft.
     """
-    keys: dict[str, set[int]] = defaultdict(set)
+    # Two sources can name one embed (`album:12/88,88` and `album:12/88`): drawn once, under each.
+    sources: dict[Embed, list[str]] = defaultdict(list)
     for reference in references:
         if (embed := embed_syntax.parse(reference)) is not None:
-            keys[embed[0]].add(embed[1])
+            sources[embed].append(reference)
     out: dict[str, SafeString] = {}
-    for name, wanted in keys.items():
-        kind = KINDS.get(name)
-        if kind is None or not kind.allowed(request):
+    for name, kind in KINDS.items():
+        wanted = {embed for embed in sources if embed.kind == name}
+        if not wanted or not kind.allowed(request):
             continue
-        for key, widget in kind.widgets(request, wanted).items():
-            out[embed_syntax.reference(name, key)] = render_to_string(
-                kind.template, {"widget": widget, "compose": compose}
-            )
+        for embed, widget in kind.widgets(request, wanted).items():
+            html = render_to_string(kind.template, {"widget": widget, "compose": compose})
+            for reference in sources[embed]:
+                out[reference] = html
     return out
 
 
@@ -210,7 +256,7 @@ def share_url(obj: Model) -> str:
 def _key(name: str, value: str) -> int | None:
     """A key from the querystring, read the way an embed's is: digits, and no bigger than a row's."""
     embed = embed_syntax.parse(f"{name}:{value}")
-    return embed[1] if embed is not None else None
+    return embed.key if embed is not None and not embed.featured else None
 
 
 # --- the photo album ------------------------------------------------------------------------------
@@ -222,52 +268,80 @@ def albums_allowed(request: HttpRequest) -> bool:
     return not is_kitchen(request) and access.roles_allowed(effective_roles(request))
 
 
-def _album_widgets(request: HttpRequest, keys: set[int]) -> dict[int, object]:
-    """The newest pictures of each album and everything under it, and how many items it holds.
+def _album_widgets(request: HttpRequest, wanted: set[Embed]) -> dict[Embed, object]:
+    """Each album's picked pictures, else the newest of it and everything under it, and how many
+    items it holds.
 
     What every reader sees (approved and not binned), so the widget is the same for everyone, in
-    the album page's own order. Three queries, however many albums.
+    the album page's own order. Four queries, however many albums: three without picks.
     """
     from photo_album.models import Album
     from photo_album.storage import get_photo_album_storage
 
-    albums = list(Album.objects.filter(pk__in=keys))
+    albums = {album.pk: album for album in Album.objects.filter(pk__in={embed.key for embed in wanted})}
     if not albums:
         return {}
-    counts, newest = _contents(albums, MOSAIC)
-    names = _ancestor_names(albums)
+    counts, newest = _contents(list(albums.values()), MOSAIC)
+    picked = _shown_pictures(
+        list(albums.values()), {pk for embed in wanted if embed.key in albums for pk in embed.featured}
+    )
+    names = _ancestor_names(list(albums.values()))
     storage = get_photo_album_storage()
-    return {
-        album.pk: AlbumWidget(
+    widgets: dict[Embed, object] = {}
+    for embed in wanted:
+        if (album := albums.get(embed.key)) is None:
+            continue
+        mine = [picked[pk] for pk in embed.featured if pk in picked and picked[pk][0].startswith(album.path)]
+        widgets[embed] = AlbumWidget(
             album=album,
             url=reverse("photo_album:detail", args=[album.pk]),
             place=_place(album, names),
-            pictures=[storage.url(row[3]) for row in _newest(album, newest, MOSAIC)],
+            pictures=[storage.url(row[3]) for row in mine or _newest(album, newest, MOSAIC)],
             counts=counts_label(*_tally(album, counts)),
         )
-        for album in albums
-    }
+    return widgets
+
+
+def _shown(albums: list["Album"]) -> "QuerySet[Media]":
+    """What every reader sees of these albums and everything under them: approved, not binned."""
+    from photo_album.models import Media, MediaStatus
+
+    return Media.objects.filter(
+        reduce(operator.or_, (Q(album__path__startswith=album.path) for album in albums)),
+        status=MediaStatus.APPROVED,
+        deleted_at__isnull=True,
+    )
+
+
+def _with_pictures(media: "QuerySet[Media]") -> "QuerySet[Media]":
+    """Those with a thumbnail to show: built, and not empty."""
+    from photo_album.models import DerivativeState
+
+    return media.filter(derivative_state=DerivativeState.READY).exclude(thumbnail="")
+
+
+def _shown_pictures(albums: list["Album"], pks: set[int]) -> dict[int, Row]:
+    """Of `pks`, those a widget for one of `albums` may show, by pk. One query, none without any."""
+    if not pks:
+        return {}
+    rows = _with_pictures(_shown(albums).filter(pk__in=pks)).values_list(
+        "album__path", "sort_at", "pk", "thumbnail"
+    )
+    return {row[2]: row for row in rows}
 
 
 def _contents(albums: list["Album"], per_album: int) -> tuple[Counts, Pictures]:
     """How many items every album in the subtrees holds, and each one's newest `per_album` built
     pictures. Per album, and added up by `path` prefix afterwards (_tally, _newest): a subtree's
     newest few are among those of its albums, so one query serves every widget on the page."""
-    from photo_album.models import DerivativeState, Media, MediaStatus
-
-    shown = Media.objects.filter(
-        reduce(operator.or_, (Q(album__path__startswith=album.path) for album in albums)),
-        status=MediaStatus.APPROVED,
-        deleted_at__isnull=True,
-    )
+    shown = _shown(albums)
     counts = list(
         shown.order_by()
         .values_list("album__path")
         .annotate(total=Count("pk"), moving=Count("pk", filter=Q(content_type__startswith="video/")))
     )
     newest = list(
-        shown.filter(derivative_state=DerivativeState.READY)
-        .exclude(thumbnail="")
+        _with_pictures(shown)
         .annotate(
             rank=Window(
                 RowNumber(),
@@ -346,6 +420,54 @@ def _album_shareable(request: HttpRequest, key: int) -> str | None:
     return Album.objects.filter(pk=key).values_list("name", flat=True).first()
 
 
+def album_featuring(key: int, page: int, picked: str) -> dict[str, object] | None:
+    """What `Vælg billeder` on an album's widget shows (views.embed_album_pictures), or None for an
+    album that is gone.
+
+    Every picture the widget may show, a page at a time and newest first, as the widget picks them:
+    the first seven are what it shows without picks. On the first page, also those picked now
+    (`picked`, as the embed holds them: "88,91,95"), in their order, while it may still show them.
+    """
+    from photo_album.models import Album
+
+    album = Album.objects.filter(pk=key).first()
+    if album is None:
+        return None
+    pictures = _with_pictures(_shown([album]))
+    rows = list(
+        pictures.order_by(F("sort_at").desc(nulls_last=True), "-pk")[
+            (page - 1) * PICTURES_PAGE : page * PICTURES_PAGE + 1
+        ]
+    )
+    context: dict[str, object] = {
+        "album": album,
+        "pictures": _pictures(rows[:PICTURES_PAGE]),
+        "next_page": page + 1 if len(rows) > PICTURES_PAGE else None,
+        "mosaic": MOSAIC,
+    }
+    if page == 1:
+        embed = embed_syntax.parse(f"album:{key}/{picked}") if picked else None
+        wanted = embed.featured if embed is not None else ()
+        by_pk = {media.pk: media for media in pictures.filter(pk__in=wanted)} if wanted else {}
+        context["picked"] = _pictures([by_pk[pk] for pk in wanted if pk in by_pk])
+    return context
+
+
+def _pictures(media: Iterable["Media"]) -> list[Picture]:
+    from photo_album.storage import get_photo_album_storage
+
+    storage = get_photo_album_storage()
+    return [
+        Picture(
+            pk=each.pk,
+            url=storage.url(each.thumbnail.name),
+            name=each.display_name,
+            video=each.content_type.startswith("video/"),
+        )
+        for each in media
+    ]
+
+
 # --- GAHKFlix -------------------------------------------------------------------------------------
 
 
@@ -357,7 +479,7 @@ def videos_allowed(request: HttpRequest) -> bool:
     return not is_kitchen(request) and access.request_allowed(request)
 
 
-def _video_widgets(request: HttpRequest, keys: set[int]) -> dict[int, object]:
+def _video_widgets(request: HttpRequest, wanted: set[Embed]) -> dict[Embed, object]:
     """The films this reader may see, with their pictures and how far they are into them. Two
     queries: the films, and the progress."""
     from gahkflix import access, services
@@ -366,11 +488,13 @@ def _video_widgets(request: HttpRequest, keys: set[int]) -> dict[int, object]:
 
     shown = [
         video
-        for video in Video.objects.filter(pk__in=keys).select_related("file", "series")
+        for video in Video.objects.filter(pk__in={embed.key for embed in wanted}).select_related(
+            "file", "series"
+        )
         if access.can_see(request, video)
     ]
     progress = services.progress_by_video(current_resident(request), shown) if shown else {}
-    return {
+    widgets = {
         video.pk: VideoWidget(
             video=video,
             url=reverse("gahkflix:detail", args=[video.pk]),
@@ -383,6 +507,7 @@ def _video_widgets(request: HttpRequest, keys: set[int]) -> dict[int, object]:
         )
         for video in shown
     }
+    return {embed: widgets[embed.key] for embed in wanted if embed.key in widgets}
 
 
 def _video_choices(request: HttpRequest, query: str) -> list[Choice]:
@@ -425,6 +550,7 @@ KINDS: dict[str, Kind] = {
         widgets=_album_widgets,
         choices=_album_choices,
         shareable=_album_shareable,
+        featuring="opslagstavle:embed_album_pictures",
     ),
     "gahkflix": Kind(
         name="gahkflix",

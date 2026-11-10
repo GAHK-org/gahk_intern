@@ -13,6 +13,7 @@ payload. Asserting the escaped form pins down which of the two defences did the 
 import pytest
 from django.utils.safestring import SafeString
 
+from core import embeds as embed_syntax
 from core.markdown import embed_references, extract_image_names, image_sources, plain_text, render_markdown
 
 # --- formatting that must work -------------------------------------------------------------------
@@ -425,3 +426,38 @@ def test_embed_references_lists_them_in_order() -> None:
     source = "![a](gahkflix:3)\n\n```\n![x](album:1)\n```\n\n![b](album:12) og ![c](album:12)"
 
     assert embed_references(source) == ["gahkflix:3", "album:12", "album:12"]
+
+
+def test_an_embed_can_name_what_it_features() -> None:
+    """`album:12/88,91`: the pictures its widget leads with, in order. The source is the reference."""
+    assert embed_syntax.parse("album:12/88,91") == embed_syntax.Embed("album", 12, (88, 91))
+    assert embed_syntax.reference("album", 12, (88, 91)) == "album:12/88,91"
+    assert embed_syntax.markdown("album", 12, "Fest", (88,)) == "![Fest](album:12/88)"
+    assert embed_references("![a](album:12/88,91)") == ["album:12/88,91"]
+
+
+@pytest.mark.parametrize(
+    ("source", "featured"),
+    [
+        ("album:12/88,91,88", (88, 91)),  # one picked twice
+        ("album:12/" + ",".join(str(n) for n in range(1, 10)), tuple(range(1, 8))),  # more than fit
+        ("album:12/88,abc,,091,91", (88, 91)),  # what is no key
+        ("album:12/", ()),
+        ("gahkflix:3/4", ()),  # a film features nothing
+    ],
+)
+def test_featuring_what_no_widget_shows_is_passed_over(source: str, featured: tuple[int, ...]) -> None:
+    """The author still meant the album (or the film): it is drawn with what can be read of the rest."""
+    embed = embed_syntax.parse(source)
+
+    assert embed is not None
+    assert embed.featured == featured
+
+
+def test_a_widget_is_found_by_its_source_as_written() -> None:
+    """Not by the reference written anew, so the composer finds the embed in the text by it."""
+    source = "album:12/88,88"
+    html = render_markdown(f"![Fest]({source})", embeds={source: WIDGETS["album:12"]})
+
+    assert html.strip() == WIDGETS["album:12"]
+    assert embed_references(f"![Fest]({source})") == [source]

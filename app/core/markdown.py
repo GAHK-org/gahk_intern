@@ -195,7 +195,7 @@ def _mention(state: StateInline, silent: bool) -> bool:
 _MD.inline.ruler.before("link", "mention", _mention)
 
 
-def _embed_of(token: Token) -> tuple[str, int] | None:
+def _embed_of(token: Token) -> embed_syntax.Embed | None:
     if token.type != "image":
         return None
     source = token.attrGet("src")
@@ -268,14 +268,14 @@ def _embeds(state: StateCore) -> None:
             if embed is None:
                 kept.append(child)
                 continue
-            reference = embed_syntax.reference(*embed)
+            reference = str(child.attrGet("src"))  # as written: core.embeds keys widgets by it
             if paragraph:
                 found.append(reference)
                 if not plain and widgets is not None and reference in widgets:
                     if place:
                         lifted.append(reference)
                     continue
-            kept.append(_name_of(child, embed[0], plain=plain))
+            kept.append(_name_of(child, embed.kind, plain=plain))
         inline.children = _trimmed(kept)
         if not paragraph:
             out.append(token)

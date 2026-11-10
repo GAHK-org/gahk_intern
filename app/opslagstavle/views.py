@@ -20,7 +20,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Max, Prefetch
-from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
+from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
@@ -483,6 +483,22 @@ def embedded(request: HttpRequest) -> HttpResponse:
     return render(
         request, "opslagstavle/_embedded.html", {"embedded": embeds.for_body(request, body, compose=True)}
     )
+
+
+@access_required
+def embed_album_pictures(request: HttpRequest, pk: int) -> HttpResponse:
+    """`Vælg billeder` on an album's widget in the composer (form.html): the pictures its mosaic may
+    show, `?side=` a page at a time, and on the first page those picked now (`?valgt=88,91`)."""
+    page = request.GET.get("side", "1")
+    context = (
+        embeds.album_featuring(pk, int(page), request.GET.get("valgt", ""))
+        if embeds.albums_allowed(request) and page.isdecimal() and 0 < int(page) < 10_000
+        else None
+    )
+    if context is None:
+        raise Http404
+    template = "_embed_pictures.html" if "picked" in context else "_embed_pictures_page.html"
+    return render(request, f"opslagstavle/{template}", context)
 
 
 @access_required

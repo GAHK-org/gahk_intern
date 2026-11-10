@@ -44,7 +44,7 @@ disputes Inspektionen exists to settle.
 
 `/intern/opslagstavle/` (board), `<pk>` (permalink), `opret`, `<pk>/rediger`, `<pk>/slet`,
 `<pk>/fastgoer`, `<pk>/kommentar`, `kommentar/<pk>/slet`, `<pk>/reaktion`, `forhaandsvisning`,
-`billede`, `abonner`, `indlejret`, `indlejr/album`, `indlejr/gahkflix`. `opret?album=<pk>` and
+`billede`, `abonner`, `indlejret`, `indlejr/album`, `indlejr/album/<pk>/billeder`, `indlejr/gahkflix`. `opret?album=<pk>` and
 `opret?gahkflix=<pk>` open the composer with that album or film embedded. Namespaced `opslagstavle:`.
 
 ## Data model
@@ -96,8 +96,9 @@ A post can embed photo albums and GAHKFlix films in its text, each drawn as its 
 widget where it stands:
 
 - **An album** as the photo album's mosaic tile: its newest seven pictures (sub-albums included, in
-  the album page's order), the folder and parent albums, the name in the album pages' serif, how many
-  pictures and videos it holds, and `Se albummet →`. Fewer pictures get a layout that fills the tile.
+  the album page's order) or the ones the author picked, the folder and parent albums, the name in
+  the album pages' serif, how many pictures and videos it holds, and `Se albummet →`. Fewer pictures
+  get a layout that fills the tile.
 - **A film** as a small GAHKFlix hero: the banner, the red wordmark, series, title, episode, release
   date, length, quality and description, `Afspil` (the player) and `Mere info` (the film's page), and
   the reader's red progress bar. On a phone the words go under the banner.
@@ -109,6 +110,13 @@ widget where it stands:
   cursor. The widgets show under the text as they will in the post, each with `Fjern`, and the
   preview tab draws them in place. `Del på opslagstavlen` on an album's page or a published film's
   page opens the composer with it embedded and the cursor above it.
+- `Vælg billeder` on an album's widget in the composer picks its pictures: every picture the tile may
+  show, newest first, a page at a time; picking one adds it, picking it again takes it out, and each
+  wears its place. The first is the large one, and a phone shows the first three. `Gem` writes them
+  into the embed, `![Julefrokost 2026](album:12/88,91,95)`; with none picked (`Ryd`) the album shows
+  its newest again. A pick that is later binned, unapproved or gone is passed over, and with none
+  left the tile shows the newest. So is whatever a hand-edited list gets wrong (a picture twice, more
+  than seven, something that is no picture): the album is still drawn.
 - Each widget follows its feature's rules for the reader. Albums for every resident, counting and
   showing only approved, unbinned items, so everyone sees the same tile. Films only for those
   GAHKFlix's rollout gate lets in, and only while they may see the film: a draft for its uploader and

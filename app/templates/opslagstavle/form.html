@@ -141,6 +141,22 @@
              hx-target="#js-embed-album-results" hx-sync="this:replace">
       <div class="board-picker-results" id="js-embed-album-results" aria-live="polite"></div>
     </dialog>
+    {% comment %}
+      "Vælg billeder" on an album's widget: which pictures its mosaic shows. The body is the album's
+      pictures (views.embed_album_pictures), loaded as it opens; "Gem" writes the picks into that
+      embed in the text (opslagstavle.ts).
+    {% endcomment %}
+    <dialog class="board-picker board-pictures" id="js-embed-pictures" aria-labelledby="embed-pictures-title">
+      <div class="board-picker-head">
+        <h2 id="embed-pictures-title">Vælg billeder</h2>
+        <button type="button" class="board-picker-close" data-embed-close aria-label="Luk">&times;</button>
+      </div>
+      <div class="board-pictures-body" id="js-embed-pictures-body"></div>
+      <div class="board-pictures-foot">
+        <button type="button" class="board-pictures-cancel" data-embed-close>Annullér</button>
+        <button type="button" class="btn" data-pictures-save>Gem</button>
+      </div>
+    </dialog>
   {% endif %}
   {% if videos_allowed %}
     <dialog class="board-picker is-gahkflix" id="js-embed-gahkflix" aria-labelledby="embed-gahkflix-title">
