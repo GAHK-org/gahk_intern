@@ -1,19 +1,24 @@
 """The intranet at the root of intern.gahk.dk, where it lived at gahk.dk/intern/ before.
 
 What has to keep working across the move: old /intern/ and /nyintern/ addresses (stored notification
-targets, Markdown links, bookmarks forwarded by gahk.dk) and the session (host-only now, under new
-cookie names, with the old ".gahk.dk" pair deleted).
+targets, Markdown links, bookmarks forwarded by gahk.dk), the session (host-only now, under new
+cookie names, with the old ".gahk.dk" pair deleted), and stored data that spelled the old address.
 """
 
+import importlib
 import re
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from django.apps import apps
 from django.conf import settings
 from django.test import Client
 from django.urls import reverse
+from django.utils import timezone
 
+from notifications.models import Notification
+from oelkaelder.models import Warning
 from residents.models import Resident
 
 pytestmark = pytest.mark.django_db
@@ -150,3 +155,57 @@ def test_the_frontend_reads_the_renamed_csrf_cookie() -> None:
     source = (Path(settings.BASE_DIR).parent / "frontend" / "src" / "htmx-csrf.ts").read_text()
     match = re.search(r'const CSRF_COOKIE = "([^"]+)"', source)
     assert match and match.group(1) == settings.CSRF_COOKIE_NAME
+
+
+# --- stored data ---------------------------------------------------------------------------------
+
+
+def _migration(app: str, name: str) -> object:
+    return importlib.import_module(f"{app}.migrations.{name}")
+
+
+def test_stored_notification_targets_lose_the_intern_prefix(make_resident: Callable[..., Resident]) -> None:
+    resident = make_resident(email="beboer@gahk.dk")
+    urls = ["/intern/den-hurtige/?traad=4", "/intern/", "/notifikationer/", "https://example.org/intern/x"]
+    for url in urls:
+        Notification.objects.create(recipient=resident, title=url, url=url, expires_at=timezone.now())
+    migration = _migration("notifications", "0003_urls_without_intern_prefix")
+
+    migration.strip_intern_prefix(apps, None)  # type: ignore[attr-defined]
+    stored = dict(Notification.objects.values_list("title", "url"))
+    assert [stored[u] for u in urls] == [
+        "/den-hurtige/?traad=4",
+        "/",
+        "/notifikationer/",
+        "https://example.org/intern/x",
+    ]
+
+    migration.add_intern_prefix(apps, None)  # type: ignore[attr-defined]
+    stored = dict(Notification.objects.values_list("title", "url"))
+    assert [stored[u] for u in urls] == [
+        "/intern/den-hurtige/?traad=4",
+        "/intern/",
+        "/intern/notifikationer/",
+        "https://example.org/intern/x",
+    ]
+
+
+def test_the_debt_warnings_name_the_intranet_host() -> None:
+    Warning.objects.all().delete()
+    warning = Warning.objects.create(
+        threshold_ore=0,
+        message="Saldoen ses på Gahk.dk/intern. Eller www.GAHK.dk/intern/oelkaelder. Ikke gahk.dk/internat.",
+    )
+    migration = _migration("oelkaelder", "0007_warning_messages_name_intern_host")
+
+    migration.to_intern_host(apps, None)  # type: ignore[attr-defined]
+    warning.refresh_from_db()
+    assert warning.message == (
+        "Saldoen ses på intern.gahk.dk. Eller intern.gahk.dk/oelkaelder. Ikke gahk.dk/internat."
+    )
+
+    migration.to_intern_path(apps, None)  # type: ignore[attr-defined]
+    warning.refresh_from_db()
+    assert warning.message == (
+        "Saldoen ses på gahk.dk/intern. Eller gahk.dk/intern/oelkaelder. Ikke gahk.dk/internat."
+    )
