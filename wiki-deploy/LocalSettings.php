@@ -45,7 +45,8 @@ $wgMetaNamespace = "Gahk_Wiki";
 
 $wgScriptPath = "/wiki";
 
-# Coolify/Traefik routes gahk.dk/wiki here with a `stripprefix` middleware, so Apache receives
+# Coolify/Traefik routes intern.gahk.dk/wiki here with a `stripprefix` middleware (gahk.dk/wiki until the
+# intranet moved to intern.gahk.dk; gahk.dk now redirects /wiki there), so Apache receives
 # "/index.php/Forside" while $wgScript is still "/wiki/index.php". MediaWiki extracts the page title
 # by matching REQUEST_URI against the pattern "$wgScript/$1" (WebRequest::getPathInfo, via
 # PathRouter). After the strip that match fails, so *every* path-style URL resolves to no title at
@@ -66,8 +67,9 @@ $wgScriptPath = "/wiki";
 # query-style URLs. Moving the wiki to wiki.gahk.dk would remove the problem entirely.
 $wgArticlePath = "/wiki/index.php?title=$1";
 
-## The protocol and server name to use in fully-qualified URLs
-$wgServer = gahkEnv('MW_SERVER', 'https://gahk.dk');
+## The protocol and server name to use in fully-qualified URLs. The wiki lives beside the intranet,
+## on its host; gahk.dk is the public site on other hosting.
+$wgServer = gahkEnv('MW_SERVER', 'https://intern.gahk.dk');
 
 ## The relative URL path to the skins directory
 $wgStylePath = "$wgScriptPath/skins";

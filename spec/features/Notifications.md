@@ -140,7 +140,7 @@ A button with an unseen-count badge in the top bar opens a dropdown (loaded with
 the **10** first active in-app notifications — unseen first, then most important, then most
 recent — and a link to the page.
 
-### The notifications page — `/intern/notifikationer/`
+### The notifications page — `/notifikationer/`
 
 Lists all active in-app notifications, in two views:
 
@@ -157,11 +157,16 @@ becomes unseen.
 A notification is marked seen when it is clicked — in the app or as a push.
 
 - Unseen items have a dot and a highlighted background.
-- Clicking an item goes through `/intern/notifikationer/<pk>/`, which marks it seen and redirects
+- Clicking an item goes through `/notifikationer/<pk>/`, which marks it seen and redirects
   to its target.
 - A push names its fan-out (`batch`), not a row, because one payload is shared by every recipient.
-  Tapping it goes through `/intern/notifikationer/aabn/<batch>/`, which finds the tapping resident's
+  Tapping it goes through `/notifikationer/aabn/<batch>/`, which finds the tapping resident's
   own row in that batch, marks it seen and redirects — this works for push-only rows too.
+- A push's links (target, open-link, icon) are absolute, on the intranet's own host
+  (intern.gahk.dk). A service worker resolves a relative link against its own origin, and workers
+  installed while the intranet lived at gahk.dk/intern/ still hold subscriptions.
+- Rows stored before that move point at `/intern/…`; a migration dropped the prefix, and the old
+  prefix still redirects to the same page.
 - "Markér alle som set" on the page marks everything seen.
 - Redirect targets must be paths on this site (`services.is_site_path`, Django's
   `url_has_allowed_host_and_scheme`), so a stored or broadcast link can never become an open
@@ -182,7 +187,7 @@ three people on it reads "3 personer reagerede på din besked".
 
 Grouped: replies and reactions on Den Hurtige and Opslagstavlen, and comments on events.
 
-## Settings page — `/intern/notifikationer/indstillinger`
+## Settings page — `/notifikationer/indstillinger`
 
 Personal settings for each resident. **They apply to the resident, not the device**: what you get
 told is chosen once, and every device you have subscribed follows it.
@@ -216,7 +221,7 @@ The resident is prompted to subscribe in three places:
 
 The widget asks the server for the device's state, because the browser can only say that *some*
 subscription exists: *subscribed for you*, *subscribed for another resident* (a shared browser —
-subscribing takes it over), or *not subscribed*. Endpoint: `POST /intern/notifikationer/enhed`
+subscribing takes it over), or *not subscribed*. Endpoint: `POST /notifikationer/enhed`
 (subscribe / unsubscribe / status). Unsubscribing is scoped to the resident, so one person cannot
 remove another's phone by replaying its endpoint.
 
@@ -248,7 +253,7 @@ Administrators only.
 
 ## Routes
 
-`/intern/notifikationer/` (page), `seneste` (dropdown), `set` (mark all seen, POST),
+`/notifikationer/` (page), `seneste` (dropdown), `set` (mark all seen, POST),
 `indstillinger` (settings), `enhed` (device subscription, POST), `<pk>/` (open an item),
 `aabn/<uuid>/` (open a push). Namespaced `notifications:`. Admin: `siteadmin:notifications` and
 `siteadmin:notification_device_cancel`. The sidebar has a **Notifikationer** entry.

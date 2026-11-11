@@ -75,7 +75,7 @@ server read sidecars; the copies it kept are deleted here. It needs no Dropbox a
 locked albums, and is safe to run again.
 
 Setup:
-    export PHOTO_ALBUM_IMPORT_URL=https://<host>/intern/fotoalbum/importer-zip/system
+    export PHOTO_ALBUM_IMPORT_URL=https://intern.gahk.dk/fotoalbum/importer-zip/system
     export PHOTO_ALBUM_IMPORT_TOKEN=<the server's PHOTO_ALBUM_IMPORT_TOKEN>
     export DROPBOX_ACCESS_TOKEN=<token>
     # ...or, for a run longer than a short-lived access token lasts:

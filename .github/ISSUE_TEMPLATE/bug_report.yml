@@ -11,7 +11,7 @@ body:
     attributes:
       label: What happened?
       description: Describe the bug and what you expected instead.
-      placeholder: When I open /intern/ the calendar is blank, but it should show events.
+      placeholder: When I open the dashboard the calendar is blank, but it should show events.
     validations:
       required: true
 
@@ -21,7 +21,7 @@ body:
       label: Steps to reproduce
       placeholder: |
         1. Log in as a resident
-        2. Go to /intern/
+        2. Go to https://intern.gahk.dk/
         3. See ...
     validations:
       required: true
@@ -50,8 +50,8 @@ body:
     id: env
     attributes:
       label: Environment
-      description: Where did you see this? (prod gahk.dk, local dev, which browser, logged in as which role)
-      placeholder: prod gahk.dk, Chrome, logged in as beboer
+      description: Where did you see this? (prod intern.gahk.dk, local dev, which browser, logged in as which role)
+      placeholder: prod intern.gahk.dk, Chrome, logged in as beboer
 
   - type: textarea
     id: logs

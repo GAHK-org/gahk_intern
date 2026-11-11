@@ -6,6 +6,13 @@ stays a separate **PHP + MariaDB** app on the same box. No SPA/API — one monol
 
 > Items marked **[you]** need your accounts/credentials (GitHub, Hetzner, Punktum dk) — I can't do them from here.
 
+**Two hosts.** This app is the intranet at the **root of `intern.gahk.dk`** (it used to be
+`gahk.dk/intern/`; `/intern/…` and `/nyintern/…` still answer here with a 308 to the same page at the
+root, query string kept). The public site **gahk.dk** is a separate app, `gahk_web`, on Hetzner
+Webhosting — its own runbook is gahk_web's `DEPLOY.md`. This app still holds the website's content
+and pushes it there; gahk.dk forwards its old intranet paths (`/intern/…`, `/admin/…`, `/media/…`,
+`/wiki/…`, …) to intern.gahk.dk. Cutover order: §7.
+
 ## 1. Local
 Prereqs: [`uv`](https://docs.astral.sh/uv/) (Python deps) + [`go-task`](https://taskfile.dev) + Node + Docker.
 ```
@@ -40,7 +47,10 @@ All are read from the environment (F-013); rotate everything at cutover (scope �
 ```
 DJANGO_SECRET_KEY=<64+ random chars>
 DJANGO_DEBUG=0
-DJANGO_ALLOWED_HOSTS=www.gahk.dk,gahk.dk
+DJANGO_ALLOWED_HOSTS=intern.gahk.dk
+CSRF_TRUSTED_ORIGINS=https://intern.gahk.dk
+SITE_URL=https://intern.gahk.dk                    # absolute links in mail and push payloads (default when DJANGO_DEBUG=0)
+PUBLIC_SITE_URL=https://gahk.dk                    # the public site, for "Til GAHK-forsiden" (default)
 DATABASE_URL=postgres://gahk:<pw>@postgres:5432/gahk
 VISIT_COUNTER_HMAC_KEY=<random>
 SMTP_HOST=send.one.com  SMTP_USER=…  SMTP_PASSWORD=…  SMTP_PORT=587
@@ -70,6 +80,12 @@ is not configured. **Rotating the pair invalidates every existing subscription**
 would have to press the button again — settle on one pair before residents start subscribing.
 Push also requires HTTPS, which Traefik already terminates; on iOS the site must be added to the
 home screen before notifications are available at all.
+
+Push is bound to the **origin**. Subscriptions made while the intranet lived at gahk.dk/intern/ keep
+receiving (payload links are absolute, on `SITE_URL`, so a tap opens intern.gahk.dk), until gahk.dk's
+self-unregistering `/sw.js` removes the old worker. Residents then re-enable push on
+intern.gahk.dk, and iPhone users add the home-screen app again from intern.gahk.dk — an app
+installed from gahk.dk is a different app (its manifest id changed with the origin).
 
 **Email — verify the senders, don't assume.** one.com authenticates as `SMTP_USER` and rejects any
 From address that account is not itself or an alias of:
@@ -412,7 +428,7 @@ Arkiv and GAHKFlix send files **straight from the browser to Hetzner** (`arkiv/u
 for a ZIP on the import page and for any photo or video of 8 MB or more
 (`photo_album/direct_upload.py`): the proxy cuts an upload that takes more than a minute (§4). They
 share the bucket, so the one rule below covers all three. Those requests are cross-origin, from
-`https://gahk.dk` to `https://<bucket>.<loc>.your-objectstorage.com`, so the bucket has to say the
+`https://intern.gahk.dk` to `https://<bucket>.<loc>.your-objectstorage.com`, so the bucket has to say the
 origin is allowed or the browser refuses to send them. Without the rule the photo album falls back
 to posting the file through the app as before, which works for anything that goes in within the
 minute; Arkiv and GAHKFlix have no such fallback.
@@ -426,7 +442,7 @@ docker exec <web> python manage.py shell -c "
 from django.core.files.storage import storages
 s = storages['default']; c = s.connection.meta.client
 c.put_bucket_cors(Bucket=s.bucket_name, CORSConfiguration={'CORSRules': [
-  {'AllowedOrigins': ['https://gahk.dk', 'https://www.gahk.dk'],
+  {'AllowedOrigins': ['https://intern.gahk.dk', 'https://gahk.dk', 'https://www.gahk.dk'],
    'AllowedMethods': ['POST', 'PUT', 'DELETE'],
    'AllowedHeaders': ['*'],
    'ExposeHeaders': ['ETag'],
@@ -439,7 +455,9 @@ print(c.get_bucket_cors(Bucket=s.bucket_name)['CORSRules'])"
 (`@uppy/aws-s3`) starts and completes itself; `PUT` for their parts; `DELETE` to abort one that
 failed or was cancelled. The server signs each of those requests for the one key it chose
 (`photo_album/direct_upload.py`). `ETag` must be exposed: Uppy reads each part's ETag to complete
-the upload. Only those origins. **Reading needs no
+the upload. Only those origins. **Add `https://intern.gahk.dk` before the switch to intern.gahk.dk
+(§7)** — uploads from the new host fail until it is there; drop the two gahk.dk origins once the
+switch is done, since gahk.dk no longer runs this app. **Reading needs no
 CORS** — a download is a top-level navigation to a redirect, not a `fetch`. Widening
 `AllowedMethods` to `GET` or `AllowedOrigins` to `*` would let any page on the internet script
 requests against the bucket with a stolen presigned URL; there is no reason to.
@@ -540,8 +558,8 @@ resident's photograph. Now only `core.media.PUBLIC_PREFIXES` — just `cms/` —
 `cms/` is the exception because `cms.CmsImage` uploads are embedded in `Page.body`, `NewsItem.body`
 and `Event.description`, which the logged-out front page renders; `body_media` rewrites only the
 *legacy* `/public/…` paths to `/static/legacy/`, so it never moves these off `/media/`. Every other
-prefix was checked individually and is reachable only from `/intern/` — including `oel/` and
-`public/`, which look public and are not (ølkælder lives under `/intern/oelkaelder/`, and
+prefix was checked individually and is reachable only from the intranet — including `oel/` and
+`public/`, which look public and are not (ølkælder lives under `/oelkaelder/`, and
 `relocate_media` copies only ølkælder and værelsestjek legacy images into `media/public/`).
 
 **If a front-page image ever goes missing, this list is the first thing to check.** The gate is a
@@ -661,7 +679,7 @@ Two endpoints, both in `app/core/health.py`:
 - **`/healthz`** — liveness only; `web`'s Docker healthcheck in `docker-compose.prod.yml` uses it,
   and Coolify shows that status. It checks nothing beyond the process answering, because Traefik
   drops an unhealthy container from routing: a dead worker must not take the site down with it.
-- **`/health`** — for an external uptime monitor (point it at `https://gahk.dk/health` and alert on
+- **`/health`** — for an external uptime monitor (point it at `https://intern.gahk.dk/health` and alert on
   anything but 200). It returns 503 if the database or the S3 bucket is unreachable, or if any of
   `default`, `media` and `beat` has not sent a heartbeat for 2 minutes. The JSON body names the
   failing check; the reason is in `web`'s log. Renaming a worker's `-n` in the compose file means
@@ -703,16 +721,42 @@ albums in real use are never at risk. Run it with `docker exec -it` — it needs
   Split the `wiki*` tables into their **own MariaDB database** on the new box.
 - **Upgrade to the current LTS (1.43, supported to Dec 2027)**. MediaWiki upgrades span at most two LTS
   releases at a time, so if the current install is old this is **multi-step**; then stay on the LTS track.
-- Serve behind the same proxy at `wiki.gahk.dk` or `/wiki`. Confirm open Q: is wiki login standalone or
-  SSO'd to the members area? (Separate `wiki`-prefixed user tables imply standalone; verify LocalSettings.)
+- Served at **`intern.gahk.dk/wiki`**: the same Coolify/Traefik route with the `stripprefix`
+  middleware as before, on the new host (`Host(`intern.gahk.dk`) && PathPrefix(`/wiki`)`), and
+  `MW_SERVER=https://intern.gahk.dk` in the wiki's environment (`wiki-deploy/LocalSettings.php`).
+  gahk.dk/wiki/… redirects there (gahk_web). The intranet's sidebar links to the relative `/wiki/`, so
+  it follows by itself. Wiki login is standalone (GahkAuthLogin reads the residents table directly).
 
-## 7. DNS cutover (.dk via Punktum dk) **[you]**
-1. A **day ahead**, lower the A-record TTL (e.g. 300s).
-2. Repoint the **A record** to the Hetzner IP. **Leave MX on one.com** (email untouched).
-3. Serve **301 redirects** for any changed URLs to protect SEO. The rewrite **preserves** the public URLs
-   (`/`, `/faciliteter`, `/faciliteter/vaerelse`, `/kollegielivet/historie`, `/optagelse`, `/pylon`→ n/a, `/wiki`).
-4. **Rollback** = repoint the A record back. Registrar transfer is optional/separate (MitID + auth code).
-5. Confirm **who the registrant of record is** early — often the slowest item.
+## 7. DNS and the switch to intern.gahk.dk (.dk via Punktum dk) **[you]**
+Records: **`intern.gahk.dk` A/AAAA → the Coolify VM**; **`gahk.dk` and `www.gahk.dk` → Hetzner
+Webhosting** (gahk_web, see its `DEPLOY.md`). **Leave MX on one.com** (email untouched).
+
+Order — gahk.dk must already serve the public site and forward the old intranet paths when it
+moves, and this version must follow right behind it:
+1. A **day ahead**, lower the TTL of the gahk.dk A record (e.g. 300 s). Create `intern.gahk.dk`
+   pointing at the Coolify VM; add the domain to this app in Coolify (and the wiki's route, §6) so
+   Let's Encrypt issues its certificate. Add `https://intern.gahk.dk` to the bucket's CORS rule (§4c).
+2. **gahk_web live first:** installed on the webhost, published to from here, and checked through
+   the webhost's own address.
+3. **DNS switch:** repoint gahk.dk (+ www) to Hetzner Webhosting.
+4. **Deploy this version** straight after, with the env of §2 (`DJANGO_ALLOWED_HOSTS`,
+   `CSRF_TRUSTED_ORIGINS`, `SITE_URL`, `PUBLIC_SITE_URL`). Between 3 and 4, links forwarded from
+   gahk.dk land on the old version, which still expects `/intern/` — keep the gap short.
+5. Verify: `https://gahk.dk/intern/` → 308 to `https://intern.gahk.dk/`, a `https://gahk.dk/kalender/<token>.ics`
+   feed still answers, `https://intern.gahk.dk/health` is 200 (move the uptime monitor there, §4e),
+   one upload to Arkiv works (CORS).
+6. **Rollback** = repoint gahk.dk back to the VM and redeploy the previous image with the old env.
+   Registrar transfer is optional/separate (MitID + auth code). Confirm **who the registrant of
+   record is** early — often the slowest item.
+
+Everyone is logged out once (the session cookie is host-only and renamed; the old `.gahk.dk` one is
+deleted on the first request). Afterwards, tell residents and update by hand:
+- Push and the iPhone home-screen app must be re-enabled on intern.gahk.dk (§2, Web Push).
+- The ølkælder till's bookmark (`https://intern.gahk.dk/oelkaelder/…`) and the kitchen account's
+  (`https://intern.gahk.dk/den-hurtige/koekken/`). The redirect covers them, but a redirect is one
+  more thing that can break.
+- The Dropbox import script's `PHOTO_ALBUM_IMPORT_URL` → `https://intern.gahk.dk/fotoalbum/importer-zip/system`.
+  A 308 keeps its POST working, but update it anyway.
 
 ## 8. Cutover checklist
 - [ ] Fresh GitHub repo, CI green, Dependabot on.
@@ -742,8 +786,9 @@ albums in real use are never at risk. Run it with `docker exec -it` — it needs
       delete `phpinfo.php`, pull & archive access logs).
 - [ ] MediaWiki migrated + upgraded to 1.43, reachable behind the proxy.
 - [ ] Staging smoke-tested; behavioural diff vs the live PHP site on key pages.
-- [ ] Lower A TTL → repoint A → verify → keep MX on one.com.
-- [ ] 301s live for any changed URLs.
+- [ ] `intern.gahk.dk` live in Coolify, env set, bucket CORS updated; gahk_web live; then gahk.dk
+      repointed (§7) → verify → keep MX on one.com.
+- [ ] Uptime monitor on `https://intern.gahk.dk/health`; till, kitchen and Dropbox-script URLs updated.
 
 ## 9. Notes
 - Python: **dev is 3.14, prod image pins 3.13** (Django 5.2's supported range; psycopg wheels).
