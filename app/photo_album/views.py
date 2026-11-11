@@ -1056,7 +1056,7 @@ def system_import_zip(request: HttpRequest) -> JsonResponse:
     # it is not edited by accident. Fotogruppen can unlock an album that does need a change.
     # An album that already exists is added to rather than refused, so the script can send the files
     # an earlier attempt left out, the parts of a big album and files new in Dropbox. A locked album
-    # is still refused, unless the script imported it itself (services.imported_by_import_script).
+    # is still refused, unless one of the script's imports made it (services.imported_by_import_script).
     album_import = _queue_import(form, resident, stored=stored, lock=True, merge=True)
     return JsonResponse(
         {

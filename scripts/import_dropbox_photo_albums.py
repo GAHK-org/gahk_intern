@@ -22,14 +22,17 @@ An album of more than --part-size (5 GB), or more than Dropbox will ZIP (20 GB o
 downloaded file by file and sent in parts of at most that size, one after another, all to the same
 album: the server needs about twice an archive's size free on its disk while it imports it. Each
 photo goes in the same part as its AppleDouble sidecar. A part that fails stops the album; once
-the first part is in, the album is on the server and the rest goes on the next run.
+the first part is in, the album is on the server, and whatever fails after that, the rest goes on
+the next run.
 
 Every run also looks again at the albums imported on earlier runs, by Dropbox's listing alone —
 nothing of them is downloaded — and sends what is new: a file whose path or content the script has
 not sent before, so one added, renamed, moved or edited in Dropbox since. A file deleted in Dropbox
 stays on the server. <work-dir>/<year>/<album>/synced.json is what the script has dealt with of each
 album; for an album imported before it was kept, new is what Dropbox has had since the album was
-imported, once. The server adds to an album the script imported itself, locked as it is.
+imported, once. The server adds to an album the script made, locked as it is, keeping the time of
+its lock. An album no longer on the server under its name — renamed, merged into another or deleted
+on the site — is not sent to (it would make a new album of the old name); the run says so.
 
 Nothing the server took is kept on this disk, and everything it did not take is — so every file in
 Dropbox that is not in the photo album can be gone through by hand. <work-dir>/NOT-ON-SERVER.md
@@ -108,7 +111,7 @@ import time
 import unicodedata
 import zipfile
 from collections import defaultdict
-from collections.abc import Callable, Collection, Iterator
+from collections.abc import Callable, Collection, Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -1505,7 +1508,8 @@ def import_album(
     def sync(since: str | None) -> str:
         return sync_album(
             client, server, state, ledger, options,
-            year=year, folder_name=folder_name, album_path=album_path, rules=rules, listing=listing, since=since,
+            year=year, folder_name=folder_name, album_path=album_path, rules=rules, listing=listing,
+            since=since, existing=existing,
         )  # fmt: skip
 
     if previous.get("status") == "imported":
@@ -1515,6 +1519,7 @@ def import_album(
         try:
             job = wait_for_job(server, options, previous["statusUrl"])
         except AlbumFailed as failure:
+            (album_dir / SENDING).unlink(missing_ok=True)  # it took none of them
             if not previous.get("onServer"):
                 raise
             partly_sent(
@@ -1523,7 +1528,8 @@ def import_album(
             return "partial"
         fetch_what_the_server_left(client, job, previous, folder, options=options)
         result = imported(state, album_path, previous.get("album"), job, folder)
-        settle_sending(album_dir, listing)
+        settle_sending(album_dir)
+        existing.add(same_name(previous.get("album") or folder_name))
         # And the rest of an album sent in parts, or what is new since it was sent.
         update = sync(since=previous.get("at"))
         return result if update == "done" else update
@@ -1626,6 +1632,8 @@ def import_album(
             )
 
         def submitted(status_url: str, sent: Outgoing) -> None:
+            # Dropbox's ZIP holds the folder as it was listed, but what was kept out.
+            write_sending(album_dir, listing, listing)
             state.set(
                 album_path,
                 status="submitted",
@@ -1645,8 +1653,10 @@ def import_album(
         # What the album holds now, for a later run to tell what is new: the folder as Dropbox
         # listed it. A file added while it was downloaded is sent again then, and found there.
         write_synced(album_dir, recorded(listing))
+        (album_dir / SENDING).unlink(missing_ok=True)
         return result
     except (AlbumFailed, requests.RequestException, ValueError) as error:
+        (album_dir / SENDING).unlink(missing_ok=True)
         failure = (
             error
             if isinstance(error, AlbumFailed)
@@ -1939,13 +1949,19 @@ def imported(
     folder: Folder,
 ) -> str:
     kept_out = len(waiting(folder.dir))
+    # Added to an album already there: it keeps its settled name, and its sub-albums of before.
+    earlier = carried(state, album_path, album) if job.get("merged") else {}
+    albums = [entry["path"] for entry in job.get("albums", [])]
     state.set(
         album_path,
-        status="imported",
-        album=album,
-        albums=[entry["path"] for entry in job.get("albums", [])],
-        skipped=job.get("skipped", []),
-        keptOut=kept_out,
+        **{
+            **earlier,
+            "status": "imported",
+            "album": album,
+            "albums": list(dict.fromkeys([*earlier.get("albums", []), *albums])),
+            "skipped": job.get("skipped", []),
+            "keptOut": kept_out,
+        },
     )
     folder.ledger.album_imported(album_path)
     folder.ledger.save()
@@ -1956,6 +1972,21 @@ def imported(
             f"  {kept_out} file(s) were kept out and wait in {folder.dir / 'invalid'}."
         )
     return "imported"
+
+
+def carried(state: State, album_path: str, album: str | None) -> dict[str, Any]:
+    """What an album's entry in state.json keeps while the script adds to the album: how its name was
+    settled (--rename-albums), and the sub-albums imported so far."""
+    entry = state.get(album_path)
+    if not album or same_name(
+        entry.get("album") or PurePosixPath(album_path).name
+    ) != same_name(album):
+        return {}
+    return {
+        key: entry[key]
+        for key in ("nameSettled", "renamedFrom", "albums")
+        if key in entry
+    }
 
 
 def report_job(job: dict[str, Any], album: str | None) -> None:
@@ -2057,7 +2088,8 @@ def split_into_parts(
 ) -> list[list[tuple[str, ...]]]:
     """The plan's media in parts of at most `limit` bytes, in path order, each photo's AppleDouble
     sidecar in the same part (the server keeps it with the photo only when both come together), and
-    the rest of the metadata in the first. A file bigger than `limit` is a part of its own."""
+    the rest of the metadata in the first, counted in its size. Every part holds a photo or video;
+    one bigger than `limit` is a part of its own."""
     media = sorted(plan.media)
     media_paths = set(media)
     with_file: dict[tuple[str, ...], list[tuple[str, ...]]] = defaultdict(list)
@@ -2066,20 +2098,20 @@ def split_into_parts(
         target = sidecar_target(path)
         (with_file[target] if target in media_paths else loose).append(path)
     parts: list[list[tuple[str, ...]]] = []
-    current: list[tuple[str, ...]] = []
-    size = 0
+    current = list(loose)
+    size = sum(sizes[path] for path in loose)
+    with_media = False  # a part of metadata alone the server would refuse
     for path in media:
         group = [path, *with_file[path]]
         group_size = sum(sizes[each] for each in group)
-        if current and size + group_size > limit:
+        if with_media and size + group_size > limit:
             parts.append(current)
             current, size = [], 0
         current += group
         size += group_size
+        with_media = True
     if current:
         parts.append(current)
-    if loose:
-        parts = [[*parts[0], *loose], *parts[1:]] if parts else [loose]
     return parts
 
 
@@ -2210,88 +2242,117 @@ def send_files(
     is `on_server` already, and the server adds the rest to it, locked as it is. Kept-out files are
     copied to invalid/. After each part, its files join `synced`, and the album is imported.
 
-    Raises PartlySent once the album is on the server and a part fails; AlbumFailed before.
+    Once the album is on the server, any failure raises PartlySent: the album stays imported, and
+    what was not sent goes on a later run. Before, it raises what it met.
     """
-    keep_out(client, plan, listing, folder, options)
-    synced.update({shown(path): content_hash(listing[path]) for path in plan.invalid})
-    write_synced(folder.dir, synced)
-    if not plan.media:
-        if on_server:
-            return
-        raise AlbumFailed(
-            f"Nothing in it the server accepts. Its {plan.total_files} file(s) are in Dropbox,"
-            f" the kept-out ones in {folder.dir / 'invalid'}; fix those and send them with --retry-invalid.",
-            kept=folder.dir,
+    try:
+        keep_out(client, plan, listing, folder, options)
+        synced.update(
+            {shown(path): content_hash(listing[path]) for path in plan.invalid}
         )
-    sizes = {path: listing[path].size for path in [*plan.media, *plan.metadata]}
-    parts = split_into_parts(plan, sizes, options.part_bytes)
-    target_dir = options.work_dir / year
-    target_dir.mkdir(parents=True, exist_ok=True)
-    for index, members in enumerate(parts, 1):
-        label = f"part {index} of {len(parts)}" if len(parts) > 1 else "the files"
-        out.info(
-            f"  Downloading {label} from Dropbox: {len(members)} file(s),"
-            f" {human_size(sum(sizes[path] for path in members))} …"
-        )
-        archive = target_dir / f"{plan.name.replace('/', '_')} - del {index}.zip"
-        try:
-            outgoing = build_part(
-                client, members, listing, archive, plan, folder, options
-            )
-
-            def submitted(
-                status_url: str, sent: Outgoing, on_server: bool = on_server
-            ) -> None:
-                (folder.dir / SENDING).write_text(
-                    json.dumps(
-                        sorted(shown(path) for path in sent.members.values()),
-                        ensure_ascii=False,
-                    ),
-                    encoding="utf-8",
-                )
-                state.set(
-                    album_path,
-                    status="submitted",
-                    album=plan.name,
-                    statusUrl=status_url,
-                    prefix=list(plan.prefix),
-                    byName=True,
-                    # The album is on the server whatever becomes of this part.
-                    onServer=on_server,
-                )
-
-            job, sent = send(
-                server, options, outgoing, plan, folder, year=year, submitted=submitted
-            )
-            keep_what_the_server_left(job, sent, folder)
-        except AlbumFailed as failure:
-            # That part is not on the server.
-            (folder.dir / SENDING).unlink(missing_ok=True)
-            if on_server:
-                raise PartlySent(
-                    failure.summary, failure.details, kept=folder.dir
-                ) from failure
-            raise
-        finally:
-            archive.unlink(missing_ok=True)  # Dropbox still has its files
-        # What the server refused is kept in invalid/ by now: dealt with, as are the rest.
-        synced.update({shown(path): content_hash(listing[path]) for path in members})
         write_synced(folder.dir, synced)
-        (folder.dir / SENDING).unlink(missing_ok=True)
-        imported(state, album_path, plan.name, job, folder)
-        on_server = True
+        if not plan.media:
+            if on_server:
+                return
+            raise AlbumFailed(
+                f"Nothing in it the server accepts. Its {plan.total_files} file(s) are in Dropbox,"
+                f" the kept-out ones in {folder.dir / 'invalid'}; fix those and send them with --retry-invalid.",
+                kept=folder.dir,
+            )
+        sizes = {path: listing[path].size for path in [*plan.media, *plan.metadata]}
+        parts = split_into_parts(plan, sizes, options.part_bytes)
+        target_dir = options.work_dir / year
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for index, members in enumerate(parts, 1):
+            label = f"part {index} of {len(parts)}" if len(parts) > 1 else "the files"
+            out.info(
+                f"  Downloading {label} from Dropbox: {len(members)} file(s),"
+                f" {human_size(sum(sizes[path] for path in members))} …"
+            )
+            archive = target_dir / f"{plan.name.replace('/', '_')} - del {index}.zip"
+            try:
+                outgoing = build_part(
+                    client, members, listing, archive, plan, folder, options
+                )
+
+                def submitted(
+                    status_url: str, sent: Outgoing, on_server: bool = on_server
+                ) -> None:
+                    write_sending(folder.dir, listing, sent.members.values())
+                    state.set(
+                        album_path,
+                        **carried(state, album_path, plan.name),
+                        status="submitted",
+                        album=plan.name,
+                        statusUrl=status_url,
+                        prefix=list(plan.prefix),
+                        byName=True,
+                        # The album is on the server whatever becomes of this part.
+                        onServer=on_server,
+                    )
+
+                job, sent = send(
+                    server,
+                    options,
+                    outgoing,
+                    plan,
+                    folder,
+                    year=year,
+                    submitted=submitted,
+                )
+                keep_what_the_server_left(job, sent, folder)
+            except (AlbumFailed, requests.RequestException, ValueError):
+                # Not on the server, or not known to be: its files go again (the server skips
+                # those it has).
+                (folder.dir / SENDING).unlink(missing_ok=True)
+                raise
+            finally:
+                archive.unlink(missing_ok=True)  # Dropbox still has its files
+            # What the server refused is kept in invalid/ by now: dealt with, as are the rest.
+            synced.update(
+                {shown(path): content_hash(listing[path]) for path in members}
+            )
+            write_synced(folder.dir, synced)
+            (folder.dir / SENDING).unlink(missing_ok=True)
+            imported(state, album_path, plan.name, job, folder)
+            on_server = True
+    except (AlbumFailed, requests.RequestException, ValueError) as error:
+        if not on_server:
+            raise
+        failure = (
+            error
+            if isinstance(error, AlbumFailed)
+            else AlbumFailed(f"Unexpected answer: {error}")
+        )
+        raise PartlySent(failure.summary, failure.details, kept=folder.dir) from error
 
 
-def settle_sending(album_dir: Path, listing: Listing) -> None:
-    """The files of a part the server was importing when an earlier run stopped, now imported."""
+def write_sending(
+    album_dir: Path, listing: Listing, paths: Iterable[tuple[str, ...]]
+) -> None:
+    """Note the files of an archive the server is importing, as they were when it was made: for a
+    run that stops before it is done, the next to record them (settle_sending)."""
+    album_dir.mkdir(parents=True, exist_ok=True)
+    (album_dir / SENDING).write_text(
+        json.dumps(
+            {shown(path): content_hash(listing[path]) for path in paths},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def settle_sending(album_dir: Path) -> None:
+    """Record the files of an archive the server was importing when an earlier run stopped, now
+    imported, as they were when it was sent."""
     try:
         sent = json.loads((album_dir / SENDING).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return
-    synced = read_synced(album_dir) or {}
-    by_key = {shown(path): entry for path, entry in listing.items()}
-    synced.update({key: content_hash(by_key[key]) for key in sent if key in by_key})
-    write_synced(album_dir, synced)
+    if isinstance(sent, dict):
+        synced = read_synced(album_dir) or {}
+        synced.update({str(key): str(value) for key, value in sent.items()})
+        write_synced(album_dir, synced)
     (album_dir / SENDING).unlink(missing_ok=True)
 
 
@@ -2308,6 +2369,7 @@ def sync_album(
     rules: Rules,
     listing: Listing,
     since: str | None,
+    existing: set[str],
 ) -> str:
     """Send what is new in an album folder imported on an earlier run: files whose path or content
     the script has not dealt with (synced.json) — added, renamed, moved or edited in Dropbox since,
@@ -2356,6 +2418,16 @@ def sync_album(
         )
         out.ok(f'  ✓ Imported on an earlier run as "{year}/{name}"{changed}.')
         return "done"
+    if same_name(name) not in existing:
+        # Renamed, merged into another or deleted on the site: sent by name, they would make an
+        # album of their own under the old one.
+        out.warn(
+            f'  Imported on an earlier run as "{year}/{name}", but no album of that name is on the'
+            f" server now (renamed, merged into another or deleted on the site), so the"
+            f" {plan.files} file(s) new in Dropbox are not sent. If the album has a new name, put it"
+            f' as its "album" in {options.work_dir / "state.json"} and in {folder.dir / "album.json"}.'
+        )
+        return "gone"
     out.info(
         f'  Imported on an earlier run as "{year}/{name}"; new or changed in Dropbox since:'
     )
@@ -2400,7 +2472,12 @@ def partly_sent(
     """A part failed of what was added to an album on the server: the album stays imported, so the
     next run sends what was not sent, and the failure goes to the failure log."""
     if state.get(album_path).get("status") != "imported":
-        state.set(album_path, status="imported", album=album)
+        state.set(
+            album_path,
+            **carried(state, album_path, album),
+            status="imported",
+            album=album,
+        )
     out.failure(album_path, failure.summary, failure.details)
     out.warn("  The album is on the server; what was not sent goes on the next run.")
 
@@ -3532,12 +3609,13 @@ def main() -> int:
                         "an album of that name is on the server already, so the folder was not"
                         " sent; its files were not compared with the album's",
                     )
-                if result == "imported":
+                if result in {"imported", "updated", "partial"}:
                     existing.add(
                         same_name(state.get(album_path).get("album") or entry.name)
                     )
-                    if count := state.get(album_path).get("keptOut"):
-                        kept_out.append((args.work_dir / year / entry.name, count))
+                    album_dir = args.work_dir / year / entry.name
+                    if count := len(waiting(album_dir)):
+                        kept_out.append((album_dir, count))
                 results.setdefault(result, []).append(f"{year}/{entry.name}")
     except KeyboardInterrupt:
         out.error(
@@ -3567,6 +3645,7 @@ def main() -> int:
         "updated": "imported earlier, with files new in Dropbox sent now",
         "would update": "imported earlier, with files new in Dropbox to send (dry run)",
         "partial": "partly sent; the rest goes on the next run",
+        "gone": "imported earlier, but no album of its name on the server now: new files not sent",
         "done": "imported on an earlier run, nothing new",
         "exists": "already on the server",
         "declined": "skipped by you",

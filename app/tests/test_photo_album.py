@@ -32,6 +32,7 @@ from photo_album.services import (
     delete,
     extract_captured_at,
     extract_metadata,
+    import_zip_album,
     pending_derivatives,
     purge_expired,
     reject,
@@ -423,6 +424,7 @@ def test_system_import_adds_to_a_locked_album_the_import_script_made() -> None:
     script adds them to the album it imported and locked itself, which stays locked."""
     _system_import(("Fest/first.jpg", jpeg_bytes()), ("Fest/Lørdag/second.jpg", jpeg_bytes()))
     assert Album.objects.get(name="Fest").is_locked()
+    locked_at = Album.objects.get(name="Fest").manually_locked_at
 
     album_import, status = _system_import(
         ("new.jpg", jpeg_bytes()),
@@ -436,7 +438,8 @@ def test_system_import_adds_to_a_locked_album_the_import_script_made() -> None:
     assert (status["merged"], status["locked"]) == (True, True)
     assert _tree() == [("Fest", None), ("Lørdag", "Fest"), ("Søndag", "Fest")]
     assert Media.objects.count() == 5
-    assert Album.objects.get(name="Fest").is_locked()
+    # Still locked, from when it was first: the six months to lift it do not start again.
+    assert Album.objects.get(name="Fest").manually_locked_at == locked_at
 
 
 @pytest.mark.django_db
@@ -465,6 +468,47 @@ def test_system_import_refuses_to_add_to_a_locked_album_someone_else_made(
     assert refused.errors == ['Albummet "Lørdag" er låst. Lås det op, før der tilføjes flere filer.']
     assert accepted.state == AlbumImportState.READY
     assert Media.objects.count() == 3
+
+    # Taking an import does not make it the script's: locked again by it, it refuses the next.
+    assert Album.objects.get(name="Fest").is_locked()
+    again, _ = _system_import(("Fest/newer.jpg", jpeg_bytes()))
+    assert again.errors == ['Albummet "Fest" er låst. Lås det op, før der tilføjes flere filer.']
+
+
+@pytest.mark.django_db
+def test_an_album_locked_while_its_import_runs_takes_none_of_it(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """Found open when the archive was read, locked before its files are stored: the import is
+    refused all the same, files for the album itself and for its sub-albums alike."""
+    resident = make_resident()
+    fest = Album.objects.create(folder="2026", name="Fest")
+    lordag = Album.objects.create(folder="2026", name="Lørdag", parent=fest)
+    upload_media(album=lordag, uploaded_file=image_upload("first.jpg"), resident=resident, approved=True)
+
+    def lock(album: Album, stage: str) -> Callable[[str, int, int], None]:
+        def progress(at: str, done: int, total: int) -> None:
+            if at == stage:
+                Album.objects.filter(pk=album.pk).update(manually_locked_at=timezone.now())
+
+        return progress
+
+    # The album itself, read when the import began, is read again before its files are stored.
+    cases: list[tuple[Album, str, tuple[str, ...]]] = [
+        (fest, "checking", ("Fest/new.jpg",)),
+        (lordag, "storing", ("Fest/new.jpg", "Fest/Lørdag/new.jpg")),
+    ]
+    for album, stage, members in cases:
+        Album.objects.filter(pk__in=[fest.pk, lordag.pk]).update(manually_locked_at=None)
+        with pytest.raises(ValueError, match="Albummet er låst"):
+            import_zip_album(
+                archive=_zip_upload(*((member, jpeg_bytes()) for member in members)),
+                folder="2026",
+                resident=resident,
+                merge=True,
+                progress=lock(album, stage),
+            )
+    assert Media.objects.count() == 1
 
 
 @pytest.mark.django_db
