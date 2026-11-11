@@ -8,7 +8,7 @@
       <h1>Goddag, {{ user.first_name }}</h1>
     </div>
     <div class="head-actions">
-      <a class="btn" href="/intern/soegvaerelse/">
+      <a class="btn" href="{% url 'soegvaerelse:soeg' %}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21V9l9-6 9 6v12"/></svg>Søg værelse</a>
     </div>
   </div>
@@ -55,16 +55,16 @@
       <div class="card-head"><h2>Genveje</h2></div>
       <div class="card-pad">
         <div class="quick">
-          <a href="/intern/alumneliste/"><svg><use href="#i-list"></use></svg>Alumneliste</a>
-          <a href="/intern/ak/"><svg><use href="#i-check"></use></svg>Mine AK-krydser</a>
-          <a href="/intern/oelkaelder/min-saldo"><svg><use href="#i-beer"></use></svg>Min ølkælder-saldo</a>
-          {% if "oelkaelder" in roles %}<a href="/intern/oelkaelder/admin"><svg><use href="#i-beer"></use></svg>Ølkælder-admin</a>{% endif %}
-          {% if "ak" in roles %}<a href="/intern/ak/admin"><svg><use href="#i-check"></use></svg>AK-oversigt</a>{% endif %}
-          {% if "indstilling" in roles %}<a href="/optagelse/listansoegninger"><svg><use href="#i-inbox"></use></svg>Ansøgninger</a>{% endif %}
+          <a href="{% url 'directory' %}"><svg><use href="#i-list"></use></svg>Alumneliste</a>
+          <a href="{% url 'ak:index' %}"><svg><use href="#i-check"></use></svg>Mine AK-krydser</a>
+          <a href="{% url 'oelkaelder:my' %}"><svg><use href="#i-beer"></use></svg>Min ølkælder-saldo</a>
+          {% if "oelkaelder" in roles %}<a href="{% url 'oelkaelder:admin' %}"><svg><use href="#i-beer"></use></svg>Ølkælder-admin</a>{% endif %}
+          {% if "ak" in roles %}<a href="{% url 'ak:overview' %}"><svg><use href="#i-check"></use></svg>AK-oversigt</a>{% endif %}
+          {% if "indstilling" in roles %}<a href="{% url 'admissions:list' %}"><svg><use href="#i-inbox"></use></svg>Ansøgninger</a>{% endif %}
         </div>
         <div class="kv" style="margin-top:14px"><span class="l">WiFi-kode</span><span class="r"><span class="code">{{ wifi_password|default:"(sæt WIFI_PASSWORD)" }}</span></span></div>
         <div class="kv"><span class="l">Fælleskalender</span><span class="r">{{ calendar_user|default:"(ikke sat)" }}{% if calendar_password %} / {{ calendar_password }}{% endif %}</span></div>
-        <div class="kv"><span class="l">Konto</span><span class="r"><a href="/intern/admin/password-change">Skift kodeord →</a></span></div>
+        <div class="kv"><span class="l">Konto</span><span class="r"><a href="{% url 'password_change' %}">Skift kodeord →</a></span></div>
       </div>
     </div>
   </div>

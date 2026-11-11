@@ -58,10 +58,10 @@ def _links(now: datetime) -> tuple[str, str, str, str, str, str]:
     event_title = events[0].title if events else "Fællesspisning"
     other_title = events[1].title if len(events) > 1 else "Brætspilsaften"
     notice = Notice.objects.order_by("-created_at").first()
-    notice_url = f"/intern/opslagstavle/{notice.pk}" if notice else "/intern/opslagstavle/"
+    notice_url = reverse("opslagstavle:detail", args=[notice.pk]) if notice else reverse("opslagstavle:board")
     post = QuickPost.objects.order_by("-created_at").first()
     if post is None:
-        return event_url, event_title, other_title, notice_url, "/intern/den-hurtige/", ""
+        return event_url, event_title, other_title, notice_url, reverse("den_hurtige:feed"), ""
     channel = channels.lookup(post.channel) or channels.DEFAULT
     return (
         event_url,
@@ -88,7 +88,7 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
                 Importance.KRITISK,
                 "Vandet lukkes torsdag kl. 9-12",
                 "VVS'eren skifter stigrør i opgang B. Fyld en kande inden.",
-                "/intern/",
+                reverse("dashboard"),
                 timedelta(minutes=25),
             ),
             _Row(
@@ -142,7 +142,7 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
                 Importance.NORMAL,
                 "Ny reparation meldt ind",
                 "Dryppende vandhane i køkken 2.",
-                "/intern/reparationer/",
+                reverse("reparationer:board"),
                 timedelta(days=50),
                 seen=True,
                 expired=True,

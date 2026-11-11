@@ -11,6 +11,7 @@ import pytest
 from django.contrib.auth.hashers import identify_hasher
 from django.core import mail
 from django.test import Client
+from django.urls import reverse
 from django.utils import timezone
 
 from admissions.models import Application
@@ -27,6 +28,17 @@ def test_session_cookie_domain_supports_site_hosts(
     configured = run_path(config_settings.__file__)
 
     assert configured["SESSION_COOKIE_DOMAIN"] == domain
+
+
+def test_production_defaults_name_both_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DJANGO_DEBUG", "0")
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
+    monkeypatch.delenv("SITE_URL", raising=False)
+    monkeypatch.delenv("PUBLIC_SITE_URL", raising=False)
+    configured = run_path(config_settings.__file__)
+
+    assert configured["SITE_URL"] == "https://intern.gahk.dk"
+    assert configured["PUBLIC_SITE_URL"] == "https://gahk.dk"
 
 
 # ---------------------------------------------------------------- auth (F-014)
@@ -59,7 +71,7 @@ def test_password_reset_is_case_insensitive(make_resident: Callable) -> None:
     email__iexact) — a capital first letter must still receive the reset link."""
     make_resident(email="reset@gahk.dk", password="hemmelig")  # usable password → eligible for reset
     mail.outbox = []
-    resp = Client().post("/intern/admin/password-reset", {"email": "Reset@gahk.dk"})
+    resp = Client().post("/admin/password-reset", {"email": "Reset@gahk.dk"})
     assert resp.status_code == 302  # redirects to the "done" page
     assert len(mail.outbox) == 1  # reset link sent despite the capital
     assert "reset@gahk.dk" in mail.outbox[0].to
@@ -75,7 +87,7 @@ def test_reset_reaches_a_resident_who_never_set_a_password() -> None:
     r.set_unusable_password()  # exactly what the alumneliste's add_new does
     r.save()
     mail.outbox = []
-    resp = Client().post("/intern/admin/password-reset", {"email": "ny@gahk.dk"})
+    resp = Client().post("/admin/password-reset", {"email": "ny@gahk.dk"})
     assert resp.status_code == 302
     assert len(mail.outbox) == 1
     assert mail.outbox[0].to == ["ny@gahk.dk"]
@@ -89,7 +101,7 @@ def test_reset_still_ignores_deactivated_residents() -> None:
     r.set_unusable_password()
     r.save()
     mail.outbox = []
-    assert Client().post("/intern/admin/password-reset", {"email": "ude@gahk.dk"}).status_code == 302
+    assert Client().post("/admin/password-reset", {"email": "ude@gahk.dk"}).status_code == 302
     assert mail.outbox == []  # no link for a deactivated account
 
 
@@ -434,7 +446,7 @@ def test_my_balance_shows_account_statement(make_resident: Callable) -> None:
 
     c = Client()
     c.force_login(r)
-    html = c.get("/intern/oelkaelder/min-saldo").content.decode()
+    html = c.get("/oelkaelder/min-saldo").content.decode()
     assert "Kontoudtog" in html
     assert "2× Øl" in html and "-30,00 kr" in html  # purchase debit (signed)
     assert "Indbetaling" in html and "50,00 kr" in html  # deposit credit
@@ -591,7 +603,7 @@ def test_dashboard_shows_shared_calendar_credentials(
     monkeypatch.setenv("GOOGLE_CALENDAR_PASSWORD", "dummy-pw")
     c = Client()
     c.force_login(make_resident(email="d@gahk.dk"))
-    h = c.get("/intern/").content.decode()
+    h = c.get("/").content.decode()
     assert "gahkkalender@gmail.com" in h and "dummy-pw" in h  # both shown to logged-in residents
 
 
@@ -602,9 +614,9 @@ def test_oelkaelder_kiosk_gate_uses_forwarded_ip() -> None:
     with override_settings(DEBUG=False, OELKAELDER_KIOSK_IPS=["130.225.243.26"]):
         c = Client()
         # Traefik appends the real client IP as the last X-Forwarded-For hop.
-        ok = c.get("/intern/oelkaelder/", HTTP_X_FORWARDED_FOR="130.225.243.26")
+        ok = c.get("/oelkaelder/", HTTP_X_FORWARDED_FOR="130.225.243.26")
         assert ok.status_code == 200  # kiosk open from the dorm egress IP
-        blocked = c.get("/intern/oelkaelder/", HTTP_X_FORWARDED_FOR="203.0.113.9")
+        blocked = c.get("/oelkaelder/", HTTP_X_FORWARDED_FOR="203.0.113.9")
         assert blocked.status_code == 403  # any other IP is denied
 
 
@@ -648,7 +660,7 @@ def test_room_photo_over_max_is_rejected(make_resident: Callable) -> None:
     img = SimpleUploadedFile("p.jpg", b"x" * 2048, content_type="image/jpeg")
     with override_settings(ROOM_PHOTO_MAX_MB=0):  # cap 0 → any file counts as "too big"
         c.post(
-            f"/intern/vaerelsestjek/besvar/{rm.number}",
+            f"/vaerelsestjek/besvar/{rm.number}",
             {"score_floor": "3", "comment_floor": "", "image_floor": img},
         )
     s = RoomConditionScore.objects.get(criterion__code="floor")
@@ -681,7 +693,7 @@ def test_room_inspection_refuses_an_svg_photo(
     evil = SimpleUploadedFile(filename, b"<svg xmlns='http://www.w3.org/2000/svg'/>", content_type)
 
     c.post(
-        f"/intern/vaerelsestjek/besvar/{rm.number}",
+        f"/vaerelsestjek/besvar/{rm.number}",
         {"score_floor": "3", "comment_floor": "", "image_floor": evil},
     )
 
@@ -715,42 +727,15 @@ def test_body_media_rewrites_relative_and_absolute_legacy_urls() -> None:
 
 # ---------------------------------------------------------------- visit counter (F-002/F-011)
 @pytest.mark.django_db
-def test_frontpage_counter_hashes_and_dedups() -> None:
+def test_the_dashboard_is_not_counted_as_a_front_page_visit(make_resident: Callable) -> None:
+    """The intranet dashboard is at "/" on intern.gahk.dk; the public front page, and its visit count,
+    live on gahk.dk now."""
     from stats.models import DailyVisitCount, VisitTally
 
     c = Client()
-    c.get("/")
-    c.get("/")  # same IP within the 30-min window → counted once
-    assert VisitTally.objects.count() == 1
-    assert VisitTally.objects.first().count == 1
-    assert DailyVisitCount.objects.get(date=timezone.localdate()).count == 1
-    assert len(VisitTally.objects.first().ip_hash) == 64  # HMAC-SHA256 hex, not a raw IP
-
-
-@pytest.mark.django_db
-def test_events_news_page_and_forside_teaser() -> None:
-    from datetime import timedelta
-
-    from cms.models import Event, NewsItem
-
-    # localdate(), not date.today(): the views split upcoming from past on `timezone.localdate()`,
-    # and a test that builds its data on the system clock instead is asking a different question
-    # than the code answers. They agree in Europe/Copenhagen, so this has never been a live bug —
-    # but it is the difference between a fixture that tracks the code's clock and one that drifts.
-    today = timezone.localdate()
-    Event.objects.create(title="Mathildefest", starts_on=today + timedelta(days=14))
-    Event.objects.create(title="Gammel skovtur", starts_on=today - timedelta(days=400))
-    NewsItem.objects.create(title="Åbent hus", body="<p>Kom forbi</p>", published_at=timezone.now())
-    c = Client()
-
-    page = c.get("/begivenheder/").content.decode()
-    assert page.count("Mathildefest")  # upcoming event listed
-    assert "Åbent hus" in page and "Kom forbi" in page  # news rendered
-    assert "Gammel skovtur" in page  # past event listed
-
-    home = c.get("/").content.decode()
-    assert "Mathildefest" in home and "Åbent hus" in home  # forside teaser
-    assert "/begivenheder/" in home  # link to the full page + nav
+    c.force_login(make_resident(email="m@gahk.dk"))
+    assert c.get("/").status_code == 200
+    assert not VisitTally.objects.exists() and not DailyVisitCount.objects.exists()
 
 
 @pytest.mark.django_db
@@ -770,7 +755,7 @@ def test_statistik_renders_charts(make_resident: Callable) -> None:
     DailyVisitCount.objects.create(date=date.today(), count=5)
     c = Client()
     c.force_login(make_resident(email="m@gahk.dk"))
-    h = c.get("/intern/statistik/").content.decode()
+    h = c.get("/statistik/").content.decode()
     assert 'id="stats-data"' in h  # chart data embedded via json_script
     for cid in ("chart-applications", "chart-heard", "chart-visits"):
         assert f'id="{cid}"' in h  # the three chart canvases
@@ -779,34 +764,31 @@ def test_statistik_renders_charts(make_resident: Callable) -> None:
 
 # ---------------------------------------------------------------- public/auth separation
 @pytest.mark.django_db
-def test_public_window_has_no_internal_tools() -> None:
-    html = Client().get("/").content.decode()
-    for label in ("Alumneliste", "AK-krydser", "Ølkælder-admin"):
-        assert label not in html
+def test_the_root_is_the_intranet_and_asks_a_stranger_to_log_in() -> None:
+    response = Client().get("/")
+    assert response.status_code == 302
+    assert response.headers["Location"].startswith(reverse("login"))
 
 
 @pytest.mark.django_db
-def test_slashless_legacy_urls_redirect_instead_of_404() -> None:
-    """The catch-all CMS pattern matches slashless paths owned by real apps, which suppresses
-    Django's APPEND_SLASH. Those URLs are live on the PHP site (/optagelse returns 200) and
-    bookmarked by residents (/nyintern), so they must 301 rather than 404 after the cutover."""
-    from cms.models import Page
-
+def test_slashless_urls_redirect_instead_of_404() -> None:
+    """With no CMS catch-all in front of them, Django's APPEND_SLASH handles slashless app URLs
+    again, query string included. The old /intern and /nyintern prefixes go to the root."""
     c = Client()
-    for path in ("/optagelse", "/nyintern", "/begivenheder"):
+    for path in ("/optagelse", "/begivenheder"):
         r = c.get(path)
         assert r.status_code == 301, f"{path} should redirect, got {r.status_code}"
         assert r.headers["Location"] == f"{path}/"
-
-    # The query string survives the redirect.
     r = c.get("/optagelse?type=fremleje")
     assert r.status_code == 301
     assert r.headers["Location"] == "/optagelse/?type=fremleje"
 
-    # A real CMS page still renders directly, and a genuinely unknown slug still 404s.
-    Page.objects.create(header="Faciliteter", slug="faciliteter", body="<p>hej</p>")
-    assert c.get("/faciliteter").status_code == 200
-    assert c.get("/findes-ikke").status_code == 404
+    for path in ("/intern", "/nyintern"):
+        r = c.get(path)
+        assert r.status_code == 308 and r.headers["Location"] == "/"
+
+    # The public site's pages are not served here any more.
+    assert c.get("/faciliteter").status_code == 404
 
 
 @pytest.mark.django_db
@@ -822,24 +804,24 @@ def test_vaerelsestjek_is_open_to_every_resident(make_resident: Callable) -> Non
     c = Client()
     c.force_login(plain)
 
-    assert c.get("/intern/vaerelsestjek/").status_code == 200
-    assert c.get(f"/intern/vaerelsestjek/besvar/{rm.number}").status_code == 200
+    assert c.get("/vaerelsestjek/").status_code == 200
+    assert c.get(f"/vaerelsestjek/besvar/{rm.number}").status_code == 200
 
-    c.post(f"/intern/vaerelsestjek/besvar/{rm.number}", {"score_vindue": "4", "comment_vindue": "Fin"})
+    c.post(f"/vaerelsestjek/besvar/{rm.number}", {"score_vindue": "4", "comment_vindue": "Fin"})
 
     cond = RoomCondition.objects.get(room=rm, is_current=True)
     assert cond.resident == plain  # the writer is recorded, so the history stays attributable
     assert cond.scores.get(criterion__code="vindue").score == 4
-    assert c.get(f"/intern/vaerelsestjek/se/{rm.number}").status_code == 200
+    assert c.get(f"/vaerelsestjek/se/{rm.number}").status_code == 200
 
-    assert c.get("/intern/vaerelsestjek/akoverview").status_code == 403  # still AK-only
-    nav = c.get("/intern/").context["nav_intern"]
+    assert c.get("/vaerelsestjek/akoverview").status_code == 403  # still AK-only
+    nav = c.get("/").context["nav_intern"]
     assert "Værelsestjek" in [label for _sec, items in nav for _u, label, _i in items]
 
 
 @pytest.mark.django_db
 def test_vaerelsestjek_still_requires_login() -> None:
-    assert Client().get("/intern/vaerelsestjek/").status_code in (301, 302)
+    assert Client().get("/vaerelsestjek/").status_code in (301, 302)
 
 
 def test_room_criterion_score_scale_matches_legacy() -> None:
@@ -884,7 +866,7 @@ def test_vaerelsestjek_shows_legend_and_drops_out_of_range(make_resident: Callab
     c = Client()
     c.force_login(make_resident(email="tjek@gahk.dk"))
 
-    html = c.get(f"/intern/vaerelsestjek/besvar/{rm.number}").content.decode()
+    html = c.get(f"/vaerelsestjek/besvar/{rm.number}").content.decode()
 
     assert "Huller" in html  # the legend is back
     assert "Nymalet/pæn stand,<br>" in html  # multi-line legends keep their rungs
@@ -894,7 +876,7 @@ def test_vaerelsestjek_shows_legend_and_drops_out_of_range(make_resident: Callab
     assert html.index("Kontakter") < html.index("Gardiner") < html.index("Vægge")
 
     r = c.post(
-        f"/intern/vaerelsestjek/besvar/{rm.number}",
+        f"/vaerelsestjek/besvar/{rm.number}",
         {"score_walls": "9", "comment_walls": "Store revner", "score_curtains": "1"},
         follow=True,
     )
@@ -925,13 +907,13 @@ def test_vaerelsestjek_history_prefills_without_mutating_the_old_report(make_res
     c = Client()
     c.force_login(who)
 
-    assert 'value="5"' in c.get(f"/intern/vaerelsestjek/besvar/{rm.number}").content.decode()
+    assert 'value="5"' in c.get(f"/vaerelsestjek/besvar/{rm.number}").content.decode()
 
-    html = c.get(f"/intern/vaerelsestjek/besvar/{rm.number}?rapport={old.pk}").content.decode()
+    html = c.get(f"/vaerelsestjek/besvar/{rm.number}?rapport={old.pk}").content.decode()
     assert 'value="2"' in html and "Gammel note" in html  # prefilled from the old report
     assert "tidligere rapport" in html  # …and says so
 
-    c.post(f"/intern/vaerelsestjek/besvar/{rm.number}", {"score_walls": "3"})
+    c.post(f"/vaerelsestjek/besvar/{rm.number}", {"score_walls": "3"})
     old.refresh_from_db()
     assert old.scores.get().score == 2  # the old report is untouched
     assert old.is_current is False
@@ -958,19 +940,19 @@ def test_ak_overview_matrix_and_export_align_scores_with_headers(make_resident: 
     c = Client()
     c.force_login(make_resident(email="ak-matrix@gahk.dk", roles=("ak",)))
 
-    html = c.get("/intern/vaerelsestjek/akoverview").content.decode()
+    html = c.get("/vaerelsestjek/akoverview").content.decode()
     assert "Alfa" in html and "Beta" in html and "Zeta" in html
 
-    csv_resp = c.get("/intern/vaerelsestjek/akoverview", {"format": "csv"})
+    csv_resp = c.get("/vaerelsestjek/akoverview", {"format": "csv"})
     assert csv_resp["Content-Type"].startswith("text/csv")
     lines = csv_resp.content.decode("utf-8-sig").strip().splitlines()
     assert lines[0].split(",")[3:] == ["Alfa", "Beta", "Zeta"]
     # Zeta's 5 must land in Zeta's column, not shift left into the unscored Beta
     assert lines[1].split(",")[3:] == ["1", "", "5"]
 
-    xlsx = c.get("/intern/vaerelsestjek/akoverview", {"format": "xlsx"})
+    xlsx = c.get("/vaerelsestjek/akoverview", {"format": "xlsx"})
     assert "spreadsheetml.sheet" in xlsx["Content-Type"]
-    assert c.get("/intern/vaerelsestjek/akoverview").status_code == 200
+    assert c.get("/vaerelsestjek/akoverview").status_code == 200
 
 
 @pytest.mark.django_db
@@ -1011,10 +993,10 @@ def test_vaerelsestjek_templates_leak_no_template_syntax(make_resident: Callable
     c.force_login(make_resident(email="leak@gahk.dk", roles=("ak",)))
 
     for path in (
-        "/intern/vaerelsestjek/",
-        f"/intern/vaerelsestjek/se/{rm.number}",
-        f"/intern/vaerelsestjek/besvar/{rm.number}",
-        "/intern/vaerelsestjek/akoverview",
+        "/vaerelsestjek/",
+        f"/vaerelsestjek/se/{rm.number}",
+        f"/vaerelsestjek/besvar/{rm.number}",
+        "/vaerelsestjek/akoverview",
     ):
         html = c.get(path).content.decode()
         for marker in ("{#", "#}", "{% comment", "{{", "{%"):
@@ -1034,7 +1016,7 @@ def test_vaerelsestjek_overview_renders_all_five_floor_plans(make_resident: Call
     c = Client()
     c.force_login(make_resident(email="plan@gahk.dk"))
 
-    html = c.get("/intern/vaerelsestjek/").content.decode()
+    html = c.get("/vaerelsestjek/").content.decode()
 
     plans = re.findall(r'src="([^"]*image/intern/[^"]*)"', html)
     assert len(plans) == 5, f"expected five floor plans, got {plans}"
@@ -1090,11 +1072,11 @@ def test_room_clash_warning_is_indstilling_only(make_resident: Callable) -> None
 
     plain = Client()
     plain.force_login(a)
-    assert "Værelseskonflikt" not in plain.get("/intern/alumneliste/").content.decode()
+    assert "Værelseskonflikt" not in plain.get("/alumneliste/").content.decode()
 
     ind = Client()
     ind.force_login(make_resident(email="clash-ind@gahk.dk", roles=("indstilling",)))
-    html = ind.get("/intern/alumneliste/").content.decode()
+    html = ind.get("/alumneliste/").content.decode()
     assert "Værelseskonflikt" in html and "098" in html
 
 
@@ -1104,13 +1086,13 @@ def test_cms_admin_link_in_sidebar_for_editor_roles(make_resident: Callable) -> 
     for role in (Role.ADMINISTRATOR, Role.INDSTILLING, Role.INSPEKTION, Role.PR):
         c = Client()
         c.force_login(make_resident(email=f"navcms-{role.value}@gahk.dk", roles=[role]))
-        nav = c.get("/intern/").context["nav_intern"]
+        nav = c.get("/").context["nav_intern"]
         labels = [label for _sec, items in nav for _u, label, _i in items]
         assert "Rediger indhold" in labels, f"{role} should see the CMS link"
 
     plain = Client()
     plain.force_login(make_resident(email="navcms-plain@gahk.dk", roles=[Role.AK]))
-    nav = plain.get("/intern/").context["nav_intern"]
+    nav = plain.get("/").context["nav_intern"]
     labels = [label for _sec, items in nav for _u, label, _i in items]
     assert "Rediger indhold" not in labels
 
@@ -1140,16 +1122,16 @@ def test_alumneliste_default_sort_is_alphabetical_and_sortable(make_resident: Ca
     c = Client()
     c.force_login(make_resident(email="viewer-sort@gahk.dk"))
 
-    default = c.get("/intern/alumneliste/").content.decode()
+    default = c.get("/alumneliste/").content.decode()
     assert default.index("Aaron A") < default.index("Zoe Z")  # alphabetical, not by room (201 vs 001)
 
-    by_room = c.get("/intern/alumneliste/", {"sort": "vaerelse", "dir": "asc"}).content.decode()
+    by_room = c.get("/alumneliste/", {"sort": "vaerelse", "dir": "asc"}).content.decode()
     assert by_room.index("Zoe Z") < by_room.index("Aaron A")  # room 001 before 201
 
-    name_desc = c.get("/intern/alumneliste/", {"sort": "navn", "dir": "desc"}).content.decode()
+    name_desc = c.get("/alumneliste/", {"sort": "navn", "dir": "desc"}).content.decode()
     assert name_desc.index("Zoe Z") < name_desc.index("Aaron A")  # reversed
 
-    bad = c.get("/intern/alumneliste/", {"sort": "'; DROP", "dir": "sideways"}).content.decode()
+    bad = c.get("/alumneliste/", {"sort": "'; DROP", "dir": "sideways"}).content.decode()
     assert bad.index("Aaron A") < bad.index("Zoe Z")  # junk sort falls back to name asc, no crash
 
     # No unrendered Django template syntax leaks onto the page (a multi-line {# #} would render verbatim).
@@ -1173,7 +1155,7 @@ def test_directory_rows_fragment_has_sortable_headers(make_resident: Callable) -
     c = Client()
     c.force_login(make_resident(email="viewer-frag@gahk.dk"))
 
-    html = c.get("/intern/alumneliste/rows", {"sort": "navn", "dir": "asc"}).content.decode()
+    html = c.get("/alumneliste/rows", {"sort": "navn", "dir": "asc"}).content.decode()
     assert "Frag Menter" in html  # rows present
     assert "sort=vaerelse" in html  # a sortable header link is present
     assert 'name="sort"' in html and 'value="navn"' in html  # hidden sort state for the search box

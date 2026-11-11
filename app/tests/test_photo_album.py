@@ -1036,7 +1036,7 @@ def test_serve_media_redirects_anonymous_requests_to_login(
     response = client.get(media.thumbnail.url)
 
     assert response.status_code == 302
-    assert response.headers["Location"].startswith("/intern/admin/login")
+    assert response.headers["Location"].startswith("/admin/login")
 
 
 @pytest.mark.django_db

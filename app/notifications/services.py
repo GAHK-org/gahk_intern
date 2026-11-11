@@ -12,7 +12,7 @@ KRITISK overrides every setting: the in-app row (where the category has one) and
 out, vibrating. That is what the level is for, and the only reason an administrator would pick it.
 
 ONE PUSH PAYLOAD PER FAN-OUT, NOT PER RECIPIENT. Every row of one `notify` call shares a `batch`
-UUID, and the payload's open-link carries it: /intern/notifikationer/aabn/<batch>/ marks the
+UUID, and the payload's open-link carries it: /notifikationer/aabn/<batch>/ marks the
 *requesting* resident's row seen and redirects to its url. So a dorm-wide message is still one
 payload (or two: one vibrating, one silent), not a hundred.
 

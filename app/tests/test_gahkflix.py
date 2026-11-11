@@ -220,11 +220,11 @@ def test_gate_admits_administrators_and_fotogruppen_only(
 
 def test_sidebar_entry_follows_the_gate(admin: Resident, plain: Resident) -> None:
     def urls(resident: Resident) -> list[str]:
-        nav = client_for(resident).get("/intern/").context["nav_intern"]
+        nav = client_for(resident).get("/").context["nav_intern"]
         return [url for _section, items in nav for url, _label, _icon in items]
 
-    assert "/intern/gahkflix/" in urls(admin)
-    assert "/intern/gahkflix/" not in urls(plain)
+    assert "/gahkflix/" in urls(admin)
+    assert "/gahkflix/" not in urls(plain)
 
 
 def test_opening_the_gate_lets_every_resident_in(open_gate: None, plain: Resident) -> None:
@@ -236,9 +236,7 @@ def test_every_resident_is_let_in_with_debug_on(settings: Any, plain: Resident, 
     settings.DEBUG = True
     client = client_for(plain)
     assert client.get(reverse("gahkflix:home")).status_code == 200
-    assert "/intern/gahkflix/" in [
-        url for _s, items in client.get("/intern/").context["nav_intern"] for url, *_ in items
-    ]
+    assert "/gahkflix/" in [url for _s, items in client.get("/").context["nav_intern"] for url, *_ in items]
     # Inside, a resident is still a resident: none of the administrators' pages.
     assert client.get(reverse("gahkflix:drafts")).status_code == 403
     assert plain in access.audience(Resident.objects.all())

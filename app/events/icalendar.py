@@ -29,15 +29,15 @@ when you are debugging it.
 
 import datetime
 
+from django.conf import settings
+from django.urls import reverse
+
 from core.markdown import plain_text
 
 from .models import ASSUMED_DURATION, Event
 
-# The domain in every UID. A constant, never request.get_host(): a client keys on the UID, so the
-# same event must present the same one in the download and in every resident's feed, forever. Taking
-# it from the request would make localhost, staging and production three different events to the
-# same phone.
-ICAL_DOMAIN = "gahk.dk"
+# The UID's domain is events.models.ICAL_UID_DOMAIN and never changes. The URL below is a different
+# thing: where the event can be opened, which follows the site (SITE_URL, intern.gahk.dk).
 
 # RFC 5545 §3.1: 75 octets, excluding the CRLF.
 FOLD_LIMIT = 75
@@ -117,7 +117,7 @@ def _vevent(event: Event, *, tentative: bool = False) -> list[str]:
         f"DTEND:{_utc(event.ends_at or event.starts_at + ASSUMED_DURATION)}",
         f"SUMMARY:{_escape(event.title)}",
         f"SEQUENCE:{event.sequence}",
-        f"URL:https://{ICAL_DOMAIN}/intern/begivenheder/{event.pk}",
+        f"URL:{settings.SITE_URL.rstrip('/')}{reverse('events:detail', args=[event.pk])}",
         f"CREATED:{_utc(event.created_at)}",
         f"LAST-MODIFIED:{_utc(stamp)}",
     ]

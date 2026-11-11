@@ -19,6 +19,8 @@ a thing, and a tap should land on what it is about.
 
 from typing import TYPE_CHECKING
 
+from django.urls import reverse
+
 from core import push
 from core.markdown import plain_text
 from core.mentions import notify_mentions, to_plain
@@ -33,11 +35,9 @@ if TYPE_CHECKING:
 
     from .models import Notice, NoticeComment
 
-BOARD_URL = "/intern/opslagstavle/"
-
 
 def notice_url(notice: "Notice") -> str:
-    return f"{BOARD_URL}{notice.pk}"
+    return reverse("opslagstavle:detail", args=[notice.pk])
 
 
 def _author_can_open(notice: "Notice") -> bool:

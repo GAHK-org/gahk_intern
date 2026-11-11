@@ -4,8 +4,10 @@ from collections.abc import Collection
 
 from django.conf import settings
 from django.http import HttpRequest
+from django.urls import reverse
 
 from arkiv.access import roles_allowed as arkiv_allowed
+from core.middleware import kitchen_home
 from den_hurtige.access import roles_allowed as den_hurtige_allowed
 from events.access import roles_allowed as events_allowed
 from gahkflix.access import roles_allowed as gahkflix_allowed
@@ -13,7 +15,7 @@ from opslagstavle.access import roles_allowed as opslagstavle_allowed
 from photo_album.access import roles_allowed as photo_album_allowed
 from residents.permissions import CMS_EDITOR_ROLES, KITCHEN, can_preview, effective_roles
 
-# Public site nav, matching the legacy gahk.dk menu (labels + order)
+# Public site nav, matching the legacy gahk.dk menu (labels + order). Paths on PUBLIC_SITE_URL.
 NAV_LEGACY = [
     ("/", "Hjem"),
     ("/kollegielivet/historie", "Historie"),
@@ -51,15 +53,15 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
             (
                 "Køkkenet",
                 [
-                    ("/intern/den-hurtige/koekken/", "Den Hurtige", "flash"),
-                    ("/intern/opslagstavle/", "Mine opslag", "board"),
-                    ("/intern/reparationer/", "Reparationer", "wrench"),
+                    (kitchen_home(), "Den Hurtige", "flash"),
+                    (reverse("opslagstavle:board"), "Mine opslag", "board"),
+                    (reverse("reparationer:board"), "Reparationer", "wrench"),
                 ],
             )
         ]
     oversigt: list[NavItem] = [
-        ("/intern/", "Dashboard", "dashboard"),
-        (f"/intern/beboer/{user_pk}/profil", "Min profil", "users"),
+        (reverse("dashboard"), "Dashboard", "dashboard"),
+        (reverse("resident_profile", args=[user_pk]), "Min profil", "users"),
     ]
     # No "Notifikationer" here: the bell in the topbar is the one place for them, and their settings
     # are in the avatar menu beside it (base.html). The sidebar is for features.
@@ -73,48 +75,48 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     # sidebar would go on advertising a page that answers 403, and the next person to close a gate
     # would have no reason to look in this file. The call is a dict lookup against a role set.
     if den_hurtige_allowed(roles):
-        oversigt.append(("/intern/den-hurtige/", "Den Hurtige", "flash"))
+        oversigt.append((reverse("den_hurtige:feed"), "Den Hurtige", "flash"))
     if opslagstavle_allowed(roles):
-        oversigt.append(("/intern/opslagstavle/", "Opslagstavle", "board"))
+        oversigt.append((reverse("opslagstavle:board"), "Opslagstavle", "board"))
     if events_allowed(roles):
-        oversigt.append(("/intern/begivenheder/", "Begivenheder", "calendar"))
+        oversigt.append((reverse("events:index"), "Begivenheder", "calendar"))
     # Alumneliste stays here; Stamtræ and Statistik moved to Ressourcer (see below).
-    oversigt.append(("/intern/alumneliste/", "Alumneliste", "list"))
+    oversigt.append((reverse("directory"), "Alumneliste", "list"))
     if photo_album_allowed(roles):
-        oversigt.append(("/intern/fotoalbum/", "Fotoalbum", "photo"))
+        oversigt.append((reverse("photo_album:index"), "Fotoalbum", "photo"))
     # Still gated to administrators and Fotogruppen (gahkflix.access.ACCESS_ROLES).
     if gahkflix_allowed(roles):
-        oversigt.append(("/intern/gahkflix/", "GAHKFlix", "film"))
+        oversigt.append((reverse("gahkflix:home"), "GAHKFlix", "film"))
     vaerelser: list[NavItem] = [
-        ("/intern/soegvaerelse/", "Søg værelse", "house"),
-        ("/intern/vaerelsestjek/", "Værelsestjek", "inspect"),  # open to every resident
+        (reverse("soegvaerelse:soeg"), "Søg værelse", "house"),
+        (reverse("vaerelsestjek:overview"), "Værelsestjek", "inspect"),  # open to every resident
     ]
     if "indstilling" in roles:
-        vaerelser.append(("/intern/soegvaerelse/admin", "Værelsesudbud", "offer"))
+        vaerelser.append((reverse("soegvaerelse:admin"), "Værelsesudbud", "offer"))
     grupper: list[NavItem] = [
-        ("/intern/ak/", "AK-krydser", "check"),
-        ("/intern/oelkaelder/min-saldo", "Ølkælder", "beer"),
+        (reverse("ak:index"), "AK-krydser", "check"),
+        (reverse("oelkaelder:my"), "Ølkælder", "beer"),
     ]
     if "ak" in roles:
-        grupper.append(("/intern/ak/admin", "AK-oversigt", "check"))
+        grupper.append((reverse("ak:overview"), "AK-oversigt", "check"))
     if "oelkaelder" in roles:
         # Salgsoverblik / Personoversigt are sub-pages reached from Ølkælder-admin, not separate nav items.
-        grupper.append(("/intern/oelkaelder/admin", "Ølkælder-admin", "beer"))
+        grupper.append((reverse("oelkaelder:admin"), "Ølkælder-admin", "beer"))
     if "regnskab" in roles:
-        grupper.append(("/intern/regnskab/", "Regnskab", "receipt"))
+        grupper.append((reverse("regnskab:overview"), "Regnskab", "receipt"))
     # Open to every resident, same as Opslagstavlen: reporting a repair needs no role. Reppergruppen
     # manages the board once inside — see reparationer.views.MANAGE_ROLES.
     vaerktoejer: list[NavItem] = [
-        ("/intern/reparationer/", "Reparationer", "wrench"),
+        (reverse("reparationer:board"), "Reparationer", "wrench"),
     ]
     administration: list[NavItem] = []
     if "indstilling" in roles:
-        administration.append(("/optagelse/listansoegninger", "Ansøgninger", "inbox"))
+        administration.append((reverse("admissions:list"), "Ansøgninger", "inbox"))
     if not set(roles).isdisjoint(CMS_EDITOR_ROLES):  # administrator/indstilling/inspektion/pr
         administration.append(("/django-admin/cms/", "Rediger indhold", "edit"))
     if "administrator" in roles:
-        administration.append(("/admin/", "Site-admin", "gear"))
-        administration.append(("/admin/roles", "Roller", "users"))
+        administration.append((reverse("siteadmin:home"), "Site-admin", "gear"))
+        administration.append((reverse("siteadmin:roles"), "Roller", "users"))
     # Stamtræ and Statistik sit here rather than under Oversigt, which they used to. Oversigt is
     # what is happening NOW — the dashboard, your own profile, the three feeds, who lives here — and
     # you open those to see whether anything has changed. These are reference: nothing in them
@@ -128,13 +130,13 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     # The two UNCONDITIONAL entries lead and the gated one follows, so the top of the section does
     # not move depending on who is reading it.
     ressourcer: list[NavItem] = [
-        ("/intern/stamtree/", "Stamtræ", "tree"),
-        ("/intern/statistik/", "Statistik", "chart"),
+        (reverse("stamtree"), "Stamtræ", "tree"),
+        (reverse("stats:index"), "Statistik", "chart"),
     ]
     # Conditional on the rollout gate, like Den Hurtige / Opslagstavlen / Begivenheder above — open
     # today, and kept conditional for the reason given up there.
     if arkiv_allowed(roles):
-        ressourcer.append(("/intern/arkiv/", "Arkiv", "archive"))
+        ressourcer.append((reverse("arkiv:root"), "Arkiv", "archive"))
     ressourcer += [
         (settings.WIKI_URL, "Wiki", "book"),
         (settings.FEEDBACK_URL, "Fejl & ønsker", "bug"),
@@ -155,9 +157,10 @@ def _active_nav_url(sections: list[NavSection], path: str) -> str:
     """Which sidebar item to highlight for `path` — the longest one that is a prefix of it.
 
     base.html used to compare `request.path == url`, which broke as soon as a nav destination grew
-    sub-pages: /intern/den-hurtige/i-byen/ is a real page under the "Den Hurtige" item but is not
-    that item's URL, so nothing lit up. Longest-prefix keeps the more specific item winning where
-    two nest (/intern/ak/ vs /intern/ak/admin) — the behaviour exact matching already had.
+    sub-pages: /den-hurtige/i-byen/ is a real page under the "Den Hurtige" item but is not that
+    item's URL, so nothing lit up. Longest-prefix keeps the more specific item winning where two
+    nest (/ak/ vs /ak/admin) — the behaviour exact matching already had. The Dashboard, at "/", is
+    a prefix of everything and so only wins where nothing more specific does.
 
     External links (the wiki, the feedback form) are skipped: they are never the current page, and
     an https:// prefix could not match a path anyway.
@@ -178,8 +181,11 @@ def navigation(request: HttpRequest) -> dict[str, object]:
     previewer = can_preview(request.user) if authed else False
     nav_intern = _nav_intern(roles, request.user.pk or 0) if authed else []
     ctx: dict[str, object] = {
-        "nav_legacy": NAV_LEGACY,
-        "nav_public": NAV_PUBLIC,
+        # The public site's menu, for the few public-looking pages still rendered here (optagelse,
+        # the CSRF failure page). Its pages live on gahk.dk now, so the links go there.
+        "nav_legacy": [(settings.PUBLIC_SITE_URL + url, label) for url, label in NAV_LEGACY],
+        "nav_public": [(settings.PUBLIC_SITE_URL + url, label) for url, label in NAV_PUBLIC],
+        "public_site_url": settings.PUBLIC_SITE_URL,
         "nav_intern": nav_intern,
         "active_nav_url": _active_nav_url(nav_intern, request.path),
         "effective_roles": sorted(roles),

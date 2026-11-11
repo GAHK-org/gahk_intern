@@ -646,9 +646,9 @@ def test_soegvaerelse_pages_leak_no_template_syntax(make_resident: Callable) -> 
     ind = make_resident(email="leak-ind@gahk.dk", roles=("indstilling",))
 
     checks = [
-        (r, "/intern/soegvaerelse/"),
-        (r, "/intern/soegvaerelse/mine"),
-        (ind, "/intern/soegvaerelse/admin"),
+        (r, "/soegvaerelse/"),
+        (r, "/soegvaerelse/mine"),
+        (ind, "/soegvaerelse/admin"),
     ]
     for user, path in checks:
         c = Client()

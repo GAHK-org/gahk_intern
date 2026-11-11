@@ -9,7 +9,7 @@ from django.urls import reverse
 
 from residents.models import Resident
 
-LOGIN = "/intern/admin/login"
+LOGIN = "/admin/login"
 
 
 @pytest.mark.django_db
@@ -67,11 +67,11 @@ def test_an_inactive_account_is_logged_as_such(
 def test_a_stale_login_form_goes_back_to_a_fresh_one(caplog: pytest.LogCaptureFixture) -> None:
     c = Client(enforce_csrf_checks=True)
     with caplog.at_level(logging.WARNING, logger="residents.auth"):
-        response = c.post(f"{LOGIN}?next=/intern/den-hurtige/", {"username": "a@gahk.dk", "password": "x"})
+        response = c.post(f"{LOGIN}?next=/den-hurtige/", {"username": "a@gahk.dk", "password": "x"})
 
     assert response.status_code == 302
-    assert response["Location"] == f"{LOGIN}?next=%2Fintern%2Fden-hurtige%2F"
-    assert "CSRF refused POST /intern/admin/login" in caplog.text
+    assert response["Location"] == f"{LOGIN}?next=%2Fden-hurtige%2F"
+    assert "CSRF refused POST /admin/login" in caplog.text
     assert "Siden var udløbet" in c.get(response["Location"]).content.decode()
 
 

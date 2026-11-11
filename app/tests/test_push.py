@@ -7,7 +7,7 @@ grouping — is notifications.services' business and lives in test_notifications
 own test module asserts its audience.
 
 Push used to be per-feature topics (a `wants_<feature>` column per device and a subscribe endpoint
-per feature). That is gone: a device subscribes ONCE, at /intern/notifikationer/enhed, and what it
+per feature). That is gone: a device subscribes ONCE, at /notifikationer/enhed, and what it
 is told follows the resident's settings. The tests that pinned per-topic consent went with it; what
 replaced them is below — one row per device, upserted on the endpoint, scoped to the session.
 """
@@ -86,22 +86,36 @@ def _post(client: Client, url: str, body: str) -> Any:  # noqa: ANN401 - the tes
 def test_payload_carries_every_key_the_service_worker_reads() -> None:
     """app/templates/sw.js reads these by name. `open` is the notifications app's open-link (marks
     the row seen, then redirects); `url` stays as the fallback for a payload without one."""
-    payload = push._payload(
-        "Anders", "kaffe?", "/intern/den-hurtige/", open_url="/intern/notifikationer/aabn/x/", tag="t"
-    )
+    payload = push._payload("Anders", "kaffe?", "/den-hurtige/", open_url="/notifikationer/aabn/x/", tag="t")
 
     assert set(payload) == {"head", "body", "icon", "url", "open", "tag", "vibrate", "importance"}
     assert payload["head"] == "Anders"
-    assert payload["url"] == "/intern/den-hurtige/"
-    assert payload["open"] == "/intern/notifikationer/aabn/x/"
+    assert payload["url"] == push.absolute("/den-hurtige/")
+    assert payload["open"] == push.absolute("/notifikationer/aabn/x/")
     assert payload["tag"] == "t"
     assert str(payload["icon"]).endswith("icons/icon-192x192.png")
+
+
+def test_payload_urls_name_the_intranet_host(settings: object) -> None:
+    """A worker registered while the intranet lived at gahk.dk/intern/ still holds its push
+    subscription, and resolves a relative URL against gahk.dk — the public site on other hosting
+    now. So url, open-link and icon go out absolute, on SITE_URL."""
+    settings.SITE_URL = "https://intern.gahk.dk"  # type: ignore[attr-defined]
+    payload = push._payload("h", "b", "/den-hurtige/", open_url="/notifikationer/aabn/x/")
+
+    assert payload["url"] == "https://intern.gahk.dk/den-hurtige/"
+    assert payload["open"] == "https://intern.gahk.dk/notifikationer/aabn/x/"
+    assert str(payload["icon"]).startswith("https://intern.gahk.dk/static/")
+    # An address that already names a host, or none at all, is left alone.
+    assert push.absolute("https://example.org/x") == "https://example.org/x"
+    assert push.absolute("//example.org/x") == "//example.org/x"
+    assert push._payload("h", "b", "/")["open"] == ""
 
 
 def test_payload_defaults_stand_alone_vibrate_and_normal_importance() -> None:
     """No tag = the banner stacks rather than replaces; vibration and NORMAL are the defaults a
     caller that knows nothing about the resident's settings gets."""
-    payload = push._payload("h", "b", "/intern/")
+    payload = push._payload("h", "b", "/")
 
     assert payload["open"] == ""
     assert payload["tag"] == ""
@@ -201,10 +215,10 @@ def test_dispatch_sends_the_payload_as_json_with_the_given_ttl(
     calls: list[tuple[str, int]] = []
     monkeypatch.setattr(push, "_send", lambda sub, body, ttl=push.TTL_SECONDS: calls.append((body, ttl)))
 
-    push._dispatch(PushSubscription.objects.all(), {"head": "Hej", "url": "/intern/"}, ttl=900)
+    push._dispatch(PushSubscription.objects.all(), {"head": "Hej", "url": "/"}, ttl=900)
 
     assert len(calls) == 1
-    assert json.loads(calls[0][0]) == {"head": "Hej", "url": "/intern/"}
+    assert json.loads(calls[0][0]) == {"head": "Hej", "url": "/"}
     assert calls[0][1] == 900
 
 
@@ -359,7 +373,7 @@ def test_subscribe_requires_login(client: Client, subscribe_url: str) -> None:
     response = _post(client, subscribe_url, _body())
 
     assert response.status_code == 302
-    assert "/intern/admin/login" in response["Location"]
+    assert "/admin/login" in response["Location"]
     assert not PushSubscription.objects.exists()
 
 
@@ -566,7 +580,7 @@ def test_send_test_push_reports_each_device(
 
     assert "accepted by the push service" in out.getvalue()
     assert "FAILED (410)" in out.getvalue()
-    assert bodies[0]["url"] == "/intern/notifikationer/"
+    assert bodies[0]["url"] == push.absolute("/notifikationer/")
     # Diagnostic, not delivery: a dead endpoint is reported, not cleaned up.
     assert PushSubscription.objects.count() == 2
 

@@ -142,7 +142,7 @@ def test_dashboard_links_each_picture_to_its_album(
     item = _image(album, resident, captured_at=datetime(2024, 10, 13, 10, tzinfo=UTC))
     client.force_login(resident)
 
-    page = client.get("/intern/").content.decode()
+    page = client.get("/").content.decode()
     link = f"{reverse('photo_album:detail', args=[album.pk])}?media={item.pk}"
     assert "Dagens billeder" in page and "På denne dag" in page
     assert page.count(link) == 2  # featured, and on this day
@@ -153,7 +153,7 @@ def test_dashboard_has_no_strip_without_photos(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
     client.force_login(make_resident())
-    assert "Dagens billeder" not in client.get("/intern/").content.decode()
+    assert "Dagens billeder" not in client.get("/").content.decode()
 
 
 @pytest.fixture

@@ -704,7 +704,7 @@ class Command(BaseCommand):
             ("formand@gahk.dk", "administrator role"),
             ("ak@gahk.dk", "AK role"),
             ("oel@gahk.dk", "Ølkælder role"),
-            ("regnskab@gahk.dk", "Regnskab role — /intern/regnskab/, alumneregninger"),
+            ("regnskab@gahk.dk", "Regnskab role — /regnskab/, alumneregninger"),
             ("beboer@gahk.dk", "plain resident"),
         ]:
             self.stdout.write(f"  {email:22} {desc}")

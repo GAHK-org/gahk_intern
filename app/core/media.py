@@ -80,10 +80,10 @@ REDIRECT_CACHE_CONTROL = f"private, max-age={REDIRECT_MAX_AGE}"
 # /static/legacy/, so it never redirects these away from /media/.
 #
 # THE ØLKÆLDER TILL IS THE SECOND ENTRY, AND IT IS THE CASE THIS LIST GOT WRONG ONCE.
-# "Everything else is reached from /intern/ only" was the original reasoning, and it is true of the
+# "Everything else is reached from the intranet only" was the original reasoning, and it is true of the
 # URL and false of the CLIENT: oelkaelder.views.shop is gated on the till's LAN IP and takes no
 # login at all (settings.OELKAELDER_KIOSK_IPS), so the iPad behind the bar is an ANONYMOUS client
-# rendering /intern/oelkaelder/. Gating oel/ blanked every product tile on the till while every
+# rendering /oelkaelder/. Gating oel/ blanked every product tile on the till while every
 # logged-in browser looked fine — the failure is invisible to whoever is testing. Product photos are
 # pictures of beer and crisps, they were public by URL on the legacy site, and anyone who can see
 # them is already standing at the till, so publishing them costs nothing.

@@ -29,7 +29,7 @@ from residents.models import Residency, Resident, Role, active_period
 
 pytestmark = pytest.mark.django_db
 
-ROOT_URL = "/intern/arkiv/"
+ROOT_URL = "/arkiv/"
 
 
 @pytest.fixture(autouse=True)
@@ -251,7 +251,7 @@ def test_browsing_a_folder_you_may_not_see_is_a_404_not_a_403(
     private = ArchiveFolder.objects.create(name="Regnskab", workgroup=regnskab)
     outsider = resident_in("a@gahk.dk", fest)
 
-    response = login(outsider).get(f"/intern/arkiv/mappe/{private.pk}/")
+    response = login(outsider).get(f"/arkiv/mappe/{private.pk}/")
 
     assert response.status_code == 404
 
@@ -273,7 +273,7 @@ def test_a_member_can_browse_their_groups_folder(resident_in: Callable, workgrou
     folder = ArchiveFolder.objects.create(name="Regnskab", workgroup=regnskab)
     member = resident_in("a@gahk.dk", regnskab)
 
-    response = login(member).get(f"/intern/arkiv/mappe/{folder.pk}/")
+    response = login(member).get(f"/arkiv/mappe/{folder.pk}/")
 
     assert response.status_code == 200
     assert "Regnskab" in response.content.decode()
@@ -328,7 +328,7 @@ def test_a_file_is_downloadable_by_someone_who_can_see_its_folder(
     file = make_file(folder)
     resident = resident_in("a@gahk.dk", None)
 
-    response = login(resident).get(f"/intern/arkiv/fil/{file.pk}/hent")
+    response = login(resident).get(f"/arkiv/fil/{file.pk}/hent")
 
     assert response.status_code == 200
     assert b"".join(response.streaming_content) == b"pdfbytes"
@@ -344,7 +344,7 @@ def test_downloading_a_file_from_a_folder_you_cannot_see_is_a_404(
     file = make_file(folder)
     outsider = resident_in("a@gahk.dk", fest)
 
-    assert login(outsider).get(f"/intern/arkiv/fil/{file.pk}/hent").status_code == 404
+    assert login(outsider).get(f"/arkiv/fil/{file.pk}/hent").status_code == 404
 
 
 def test_a_file_listing_shows_only_visible_files(
@@ -357,7 +357,7 @@ def test_a_file_listing_shows_only_visible_files(
     make_file(private, name="hemmeligt.pdf", body=b"other")
     outsider = resident_in("a@gahk.dk", fest)
 
-    body = login(outsider).get(f"/intern/arkiv/mappe/{public.pk}/").content.decode()
+    body = login(outsider).get(f"/arkiv/mappe/{public.pk}/").content.decode()
 
     assert "fest.jpg" in body
     assert "hemmeligt.pdf" not in body
@@ -384,10 +384,10 @@ def test_a_soft_deleted_file_is_gone_from_the_listing_and_the_download(
 
     client = login(resident)
 
-    body = client.get(f"/intern/arkiv/mappe/{folder.pk}/").content.decode()
-    assert f"/intern/arkiv/fil/{file.pk}/hent" not in body
-    assert f"/intern/arkiv/fil/{file.pk}/miniature" not in body
-    assert client.get(f"/intern/arkiv/fil/{file.pk}/hent").status_code == 404
+    body = client.get(f"/arkiv/mappe/{folder.pk}/").content.decode()
+    assert f"/arkiv/fil/{file.pk}/hent" not in body
+    assert f"/arkiv/fil/{file.pk}/miniature" not in body
+    assert client.get(f"/arkiv/fil/{file.pk}/hent").status_code == 404
 
 
 # --- content addressing -----------------------------------------------------------------------------
@@ -948,7 +948,7 @@ def test_every_resident_can_upload_to_the_shared_root(resident_in: Callable) -> 
     shared_root = ArchiveFolder.objects.get(parent=None, name="Fælles dokumenter")
     resident = resident_in("a@gahk.dk", None)
 
-    body = login(resident).get(f"/intern/arkiv/mappe/{shared_root.pk}/").content.decode()
+    body = login(resident).get(f"/arkiv/mappe/{shared_root.pk}/").content.decode()
 
     assert "data-arkiv-upload" in body, "no upload control on the shared root"
 
@@ -960,12 +960,10 @@ def test_a_group_root_offers_upload_to_its_members_only(resident_in: Callable, w
     regnskab, fest = workgroups
     folder = ArchiveFolder.objects.get(parent=None, name=regnskab.name)
 
-    member_body = (
-        login(resident_in("m@gahk.dk", regnskab)).get(f"/intern/arkiv/mappe/{folder.pk}/").content.decode()
-    )
+    member_body = login(resident_in("m@gahk.dk", regnskab)).get(f"/arkiv/mappe/{folder.pk}/").content.decode()
     assert "data-arkiv-upload" in member_body
 
-    assert login(resident_in("o@gahk.dk", fest)).get(f"/intern/arkiv/mappe/{folder.pk}/").status_code == 404
+    assert login(resident_in("o@gahk.dk", fest)).get(f"/arkiv/mappe/{folder.pk}/").status_code == 404
 
 
 # --- upload -------------------------------------------------------------------------------------
@@ -981,7 +979,7 @@ def begin(client: Client, folder: ArchiveFolder, body: bytes, name: str = "fest.
     import json
 
     return client.post(
-        f"/intern/arkiv/mappe/{folder.pk}/upload/start",
+        f"/arkiv/mappe/{folder.pk}/upload/start",
         data=json.dumps(
             {"sha256": digest_of(body), "name": name, "size": len(body), "content_type": "image/jpeg"}
         ),
@@ -993,7 +991,7 @@ def commit(client: Client, folder: ArchiveFolder, body: bytes, name: str = "fest
     import json
 
     return client.post(
-        f"/intern/arkiv/mappe/{folder.pk}/upload/faerdig",
+        f"/arkiv/mappe/{folder.pk}/upload/faerdig",
         data=json.dumps({"sha256": digest_of(body), "name": name}),
         content_type="application/json",
     )
@@ -1004,7 +1002,7 @@ def send(client: Client, folder: ArchiveFolder, body: bytes, name: str = "fest.j
     from django.core.files.uploadedfile import SimpleUploadedFile
 
     return client.post(
-        f"/intern/arkiv/mappe/{folder.pk}/upload/direkte",
+        f"/arkiv/mappe/{folder.pk}/upload/direkte",
         {"sha256": digest_of(body), "file": SimpleUploadedFile(name, body, "image/jpeg")},
     )
 
@@ -1051,7 +1049,7 @@ def test_the_size_recorded_is_the_stores_not_the_clients(resident_in: Callable, 
     begin(client, folder, body)
     send(client, folder, body)
     client.post(
-        f"/intern/arkiv/mappe/{folder.pk}/upload/faerdig",
+        f"/arkiv/mappe/{folder.pk}/upload/faerdig",
         data=json.dumps({"sha256": digest_of(body), "name": "fest.jpg"}),
         content_type="application/json",
     )
@@ -1119,7 +1117,7 @@ def test_a_bad_hash_is_refused_before_it_can_shape_a_key(resident_in: Callable, 
 
     for bad in ("../../etc/passwd", "", "zz" * 32, "abc"):
         response = client.post(
-            f"/intern/arkiv/mappe/{folder.pk}/upload/start",
+            f"/arkiv/mappe/{folder.pk}/upload/start",
             data=json.dumps({"sha256": bad, "name": "x.jpg", "size": 10}),
             content_type="application/json",
         )
@@ -1135,7 +1133,7 @@ def test_an_oversized_file_is_refused_at_begin(resident_in: Callable, media_tmp:
     client = login(resident_in("a@gahk.dk", None))
 
     response = client.post(
-        f"/intern/arkiv/mappe/{folder.pk}/upload/start",
+        f"/arkiv/mappe/{folder.pk}/upload/start",
         data=json.dumps({"sha256": digest_of(b"x"), "name": "stor.mov", "size": MAX_UPLOAD_BYTES + 1}),
         content_type="application/json",
     )
@@ -1147,14 +1145,14 @@ def test_upload_requires_post(resident_in: Callable, media_tmp: Path) -> None:
     folder = ArchiveFolder.objects.create(name="Billeder")
     client = login(resident_in("a@gahk.dk", None))
 
-    assert client.get(f"/intern/arkiv/mappe/{folder.pk}/upload/start").status_code == 405
+    assert client.get(f"/arkiv/mappe/{folder.pk}/upload/start").status_code == 405
 
 
 # --- creating subfolders ----------------------------------------------------------------------------
 
 
 def new_folder(client: Client, parent: ArchiveFolder, name: str) -> object:
-    return client.post(f"/intern/arkiv/mappe/{parent.pk}/ny-mappe", {"name": name})
+    return client.post(f"/arkiv/mappe/{parent.pk}/ny-mappe", {"name": name})
 
 
 def test_anyone_who_can_write_can_make_a_subfolder(resident_in: Callable) -> None:
@@ -1231,7 +1229,7 @@ def test_creating_a_folder_requires_post(resident_in: Callable) -> None:
     parent = ArchiveFolder.objects.create(name="Billeder")
     client = login(resident_in("a@gahk.dk", None))
 
-    assert client.get(f"/intern/arkiv/mappe/{parent.pk}/ny-mappe").status_code == 405
+    assert client.get(f"/arkiv/mappe/{parent.pk}/ny-mappe").status_code == 405
 
 
 # --- deleting files ---------------------------------------------------------------------------------
@@ -1247,7 +1245,7 @@ def test_a_file_can_be_removed_and_the_bytes_stay(resident_in: Callable, media_t
     file = make_file(folder)
     client = login(resident_in("a@gahk.dk", None))
 
-    response = client.post(f"/intern/arkiv/fil/{file.pk}/fjern")
+    response = client.post(f"/arkiv/fil/{file.pk}/fjern")
 
     file.refresh_from_db()
     assert response.status_code == 302
@@ -1261,13 +1259,13 @@ def test_a_removed_file_leaves_the_listing_and_the_download(resident_in: Callabl
     folder = ArchiveFolder.objects.create(name="Billeder")
     file = make_file(folder)
     client = login(resident_in("a@gahk.dk", None))
-    client.post(f"/intern/arkiv/fil/{file.pk}/fjern")
+    client.post(f"/arkiv/fil/{file.pk}/fjern")
 
-    body = client.get(f"/intern/arkiv/mappe/{folder.pk}/").content.decode()
+    body = client.get(f"/arkiv/mappe/{folder.pk}/").content.decode()
     # By link, not by name: the confirmation message names the file too, so a bare name check would
     # pass or fail on the wording rather than on the listing.
-    assert f"/intern/arkiv/fil/{file.pk}/hent" not in body
-    assert client.get(f"/intern/arkiv/fil/{file.pk}/hent").status_code == 404
+    assert f"/arkiv/fil/{file.pk}/hent" not in body
+    assert client.get(f"/arkiv/fil/{file.pk}/hent").status_code == 404
 
 
 def test_someone_who_did_not_upload_it_may_still_remove_it(resident_in: Callable, media_tmp: Path) -> None:
@@ -1280,7 +1278,7 @@ def test_someone_who_did_not_upload_it_may_still_remove_it(resident_in: Callable
     ArchiveFile.objects.filter(pk=file.pk).update(uploaded_by=uploader)
     someone_else = resident_in("other@gahk.dk", None)
 
-    login(someone_else).post(f"/intern/arkiv/fil/{file.pk}/fjern")
+    login(someone_else).post(f"/arkiv/fil/{file.pk}/fjern")
 
     file.refresh_from_db()
     assert file.deleted_at is not None
@@ -1295,7 +1293,7 @@ def test_removing_a_file_you_cannot_see_is_a_404(
     file = make_file(folder)
     outsider = login(resident_in("o@gahk.dk", fest))
 
-    assert outsider.post(f"/intern/arkiv/fil/{file.pk}/fjern").status_code == 404
+    assert outsider.post(f"/arkiv/fil/{file.pk}/fjern").status_code == 404
     file.refresh_from_db()
     assert file.deleted_at is None
 
@@ -1305,7 +1303,7 @@ def test_removing_a_file_requires_post(resident_in: Callable, media_tmp: Path) -
     file = make_file(folder)
     client = login(resident_in("a@gahk.dk", None))
 
-    assert client.get(f"/intern/arkiv/fil/{file.pk}/fjern").status_code == 405
+    assert client.get(f"/arkiv/fil/{file.pk}/fjern").status_code == 405
 
 
 def test_removing_one_of_two_rows_sharing_bytes_keeps_the_object(
@@ -1320,7 +1318,7 @@ def test_removing_one_of_two_rows_sharing_bytes_keeps_the_object(
     make_file(b, name="kopi.jpg", body=b"same")
     client = login(resident_in("a@gahk.dk", None))
 
-    client.post(f"/intern/arkiv/fil/{first.pk}/fjern")
+    client.post(f"/arkiv/fil/{first.pk}/fjern")
 
     assert get_store().exists(first.key)
     assert unreferenced_keys({first.sha256}) == set()
@@ -1336,7 +1334,7 @@ def test_the_controls_appear_only_where_you_can_write(
     make_file(folder)
     member = login(resident_in("m@gahk.dk", regnskab))
 
-    body = member.get(f"/intern/arkiv/mappe/{folder.pk}/").content.decode()
+    body = member.get(f"/arkiv/mappe/{folder.pk}/").content.decode()
 
     assert "ny-mappe" in body
     assert "fjern" in body
@@ -1376,7 +1374,7 @@ def test_a_file_without_a_preview_renders_the_file_icon(resident_in: Callable, m
     make_file(folder, name="referat.pdf")
     client = login(resident_in("a@gahk.dk", None))
 
-    body = client.get(f"/intern/arkiv/mappe/{folder.pk}/").content.decode()
+    body = client.get(f"/arkiv/mappe/{folder.pk}/").content.decode()
 
     assert "#i-file" in body
     assert "arkiv-thumb" not in body
@@ -1397,7 +1395,7 @@ def test_a_preview_is_served_and_cached_hard(resident_in: Callable, media_tmp: P
     ArchiveFile.objects.filter(pk=file.pk).update(has_thumbnail=True, content_type="image/jpeg")
     client = login(resident_in("a@gahk.dk", None))
 
-    response = client.get(f"/intern/arkiv/fil/{file.pk}/miniature")
+    response = client.get(f"/arkiv/fil/{file.pk}/miniature")
 
     assert response.status_code == 200
     assert b"".join(response.streaming_content) == b"thumbbytes"
@@ -1422,7 +1420,7 @@ def test_a_preview_obeys_the_same_access_rules_as_the_file(
 
     outsider = login(resident_in("o@gahk.dk", fest))
 
-    assert outsider.get(f"/intern/arkiv/fil/{file.pk}/miniature").status_code == 404
+    assert outsider.get(f"/arkiv/fil/{file.pk}/miniature").status_code == 404
 
 
 def test_a_row_claiming_a_preview_it_does_not_have_404s(resident_in: Callable, media_tmp: Path) -> None:
@@ -1433,7 +1431,7 @@ def test_a_row_claiming_a_preview_it_does_not_have_404s(resident_in: Callable, m
     ArchiveFile.objects.filter(pk=file.pk).update(has_thumbnail=True)
     client = login(resident_in("a@gahk.dk", None))
 
-    assert client.get(f"/intern/arkiv/fil/{file.pk}/miniature").status_code == 404
+    assert client.get(f"/arkiv/fil/{file.pk}/miniature").status_code == 404
 
 
 def test_upload_sets_the_flag_only_when_a_preview_actually_arrived(
@@ -1461,7 +1459,7 @@ def test_begin_offers_both_derived_sizes_for_images_only(resident_in: Callable, 
 
     def plan_for(content_type: str, name: str) -> object:
         return client.post(
-            f"/intern/arkiv/mappe/{folder.pk}/upload/start",
+            f"/arkiv/mappe/{folder.pk}/upload/start",
             data=json.dumps(
                 {"sha256": digest_of(name.encode()), "name": name, "size": 10, "content_type": content_type}
             ),
@@ -1492,7 +1490,7 @@ def test_begin_does_not_ask_for_a_size_the_store_already_has(resident_in: Callab
     get_store().save(thumbnail_key(sha), BytesIO(b"already here"))
 
     plan = client.post(
-        f"/intern/arkiv/mappe/{folder.pk}/upload/start",
+        f"/arkiv/mappe/{folder.pk}/upload/start",
         data=json.dumps({"sha256": sha, "name": "fest.jpg", "size": 10, "content_type": "image/jpeg"}),
         content_type="application/json",
     ).json()["derived"]
@@ -1518,7 +1516,7 @@ def test_both_derived_legs_land_under_their_own_prefixes(resident_in: Callable, 
     send(client, folder, body)
     for kind, blob in (("thumbnail", b"thumb"), ("preview", b"biggerpreview")):
         client.post(
-            f"/intern/arkiv/mappe/{folder.pk}/upload/direkte",
+            f"/arkiv/mappe/{folder.pk}/upload/direkte",
             {"sha256": sha, "derived": kind, "file": SimpleUploadedFile(f"{kind}.jpg", blob)},
         )
     commit(client, folder, body)
@@ -1548,7 +1546,7 @@ def test_a_browser_that_makes_only_the_thumbnail_still_gets_a_usable_file(
     begin(client, folder, body)
     send(client, folder, body)
     client.post(
-        f"/intern/arkiv/mappe/{folder.pk}/upload/direkte",
+        f"/arkiv/mappe/{folder.pk}/upload/direkte",
         {"sha256": sha, "derived": "thumbnail", "file": SimpleUploadedFile("t.jpg", b"thumb")},
     )
     commit(client, folder, body)
@@ -1558,7 +1556,7 @@ def test_a_browser_that_makes_only_the_thumbnail_still_gets_a_usable_file(
     assert file.has_preview is False, "claimed a preview that was never uploaded"
 
     # And the viewer still works, on the original.
-    response = client.get(f"/intern/arkiv/fil/{file.pk}/stor")
+    response = client.get(f"/arkiv/fil/{file.pk}/stor")
     assert response.status_code == 200
     assert b"".join(response.streaming_content) == body
 
@@ -1571,7 +1569,7 @@ def test_an_unknown_derived_size_is_refused(resident_in: Callable, media_tmp: Pa
     client = login(resident_in("a@gahk.dk", None))
 
     response = client.post(
-        f"/intern/arkiv/mappe/{folder.pk}/upload/direkte",
+        f"/arkiv/mappe/{folder.pk}/upload/direkte",
         {
             "sha256": digest_of(b"x"),
             "derived": "../../../etc",
@@ -1594,7 +1592,7 @@ def test_an_oversized_derived_image_is_refused(resident_in: Callable, media_tmp:
     client = login(resident_in("a@gahk.dk", None))
 
     response = client.post(
-        f"/intern/arkiv/mappe/{folder.pk}/upload/direkte",
+        f"/arkiv/mappe/{folder.pk}/upload/direkte",
         {
             "sha256": digest_of(b"x"),
             "derived": kind,
@@ -1723,7 +1721,7 @@ def test_the_viewer_gets_the_large_preview_not_the_thumbnail(resident_in: Callab
     ArchiveFile.objects.filter(pk=file.pk).update(has_preview=True, content_type="image/jpeg")
     client = login(resident_in("a@gahk.dk", None))
 
-    response = client.get(f"/intern/arkiv/fil/{file.pk}/stor")
+    response = client.get(f"/arkiv/fil/{file.pk}/stor")
 
     assert response.status_code == 200
     assert b"".join(response.streaming_content) == b"bigpreviewbytes"
@@ -1742,7 +1740,7 @@ def test_a_file_with_no_preview_yet_falls_back_to_the_original(
     ArchiveFile.objects.filter(pk=file.pk).update(has_preview=False, content_type="image/jpeg")
     client = login(resident_in("a@gahk.dk", None))
 
-    response = client.get(f"/intern/arkiv/fil/{file.pk}/stor")
+    response = client.get(f"/arkiv/fil/{file.pk}/stor")
 
     assert response.status_code == 200
     assert b"".join(response.streaming_content) == b"theoriginalbytes"
@@ -1758,7 +1756,7 @@ def test_the_preview_obeys_the_same_access_rules_as_the_file(
     ArchiveFile.objects.filter(pk=file.pk).update(has_preview=True, content_type="image/jpeg")
     client = login(resident_in("outsider@gahk.dk", None))
 
-    assert client.get(f"/intern/arkiv/fil/{file.pk}/stor").status_code == 404
+    assert client.get(f"/arkiv/fil/{file.pk}/stor").status_code == 404
 
 
 def test_selected_files_come_back_as_one_zip(resident_in: Callable, media_tmp: Path) -> None:
@@ -1771,7 +1769,7 @@ def test_selected_files_come_back_as_one_zip(resident_in: Callable, media_tmp: P
     two = make_file(folder, name="to.jpg", body=b"second file bytes")
     client = login(resident_in("a@gahk.dk", None))
 
-    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [one.pk, two.pk]})
+    response = client.post(f"/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [one.pk, two.pk]})
 
     assert response.status_code == 200
     assert response.headers["Content-Type"] == "application/zip"
@@ -1798,7 +1796,7 @@ def test_the_zip_cannot_be_used_to_reach_a_file_you_cannot_see(
     theirs = make_file(secret, name="budget.pdf", body=b"secret")
     client = login(resident_in("outsider@gahk.dk", None))
 
-    response = client.post(f"/intern/arkiv/mappe/{shared.pk}/hent-valgte", {"ids": [mine.pk, theirs.pk]})
+    response = client.post(f"/arkiv/mappe/{shared.pk}/hent-valgte", {"ids": [mine.pk, theirs.pk]})
 
     body = zipfile.ZipFile(BytesIO(b"".join(response.streaming_content)))
     assert body.namelist() == ["ferie.jpg"]
@@ -1816,7 +1814,7 @@ def test_a_selection_over_the_size_cap_is_refused_with_a_message(
     ArchiveFile.objects.filter(pk=big.pk).update(size=MAX_SELECTED_BYTES + 1)
     client = login(resident_in("a@gahk.dk", None))
 
-    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [big.pk]}, follow=True)
+    response = client.post(f"/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [big.pk]}, follow=True)
 
     assert response.status_code == 200
     assert "Grænsen for samlet download" in response.content.decode()
@@ -1829,7 +1827,7 @@ def test_an_empty_selection_says_so_rather_than_sending_an_empty_zip(
     make_file(folder, name="en.jpg")
     client = login(resident_in("a@gahk.dk", None))
 
-    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {}, follow=True)
+    response = client.post(f"/arkiv/mappe/{folder.pk}/hent-valgte", {}, follow=True)
 
     assert "Vælg mindst én fil" in response.content.decode()
 
@@ -1842,7 +1840,7 @@ def test_zipping_from_a_folder_you_cannot_see_is_a_404(
     file = make_file(folder)
     client = login(resident_in("outsider@gahk.dk", None))
 
-    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [file.pk]})
+    response = client.post(f"/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [file.pk]})
 
     assert response.status_code == 404
 
@@ -1853,7 +1851,7 @@ def test_the_zip_route_refuses_a_get(resident_in: Callable, media_tmp: Path) -> 
     folder = ArchiveFolder.objects.create(name="Billeder")
     client = login(resident_in("a@gahk.dk", None))
 
-    assert client.get(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte").status_code == 405
+    assert client.get(f"/arkiv/mappe/{folder.pk}/hent-valgte").status_code == 405
 
 
 def test_a_row_whose_object_vanished_is_skipped_not_fatal(resident_in: Callable, media_tmp: Path) -> None:
@@ -1870,7 +1868,7 @@ def test_a_row_whose_object_vanished_is_skipped_not_fatal(resident_in: Callable,
     get_store().delete(gone.key)
     client = login(resident_in("a@gahk.dk", None))
 
-    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [good.pk, gone.pk]})
+    response = client.post(f"/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [good.pk, gone.pk]})
 
     body = zipfile.ZipFile(BytesIO(b"".join(response.streaming_content)))
     assert body.namelist() == ["her.jpg"]
@@ -1925,7 +1923,7 @@ def test_the_zip_is_left_in_the_store_as_an_object(resident_in: Callable, media_
     two = make_file(folder, name="to.jpg", body=b"second file bytes")
     client = login(resident_in("a@gahk.dk", None))
 
-    client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [one.pk, two.pk]})
+    client.post(f"/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [one.pk, two.pk]})
 
     key = selection_key([(one.name, one.sha256), (two.name, two.sha256)])
     store = get_store()
@@ -1950,7 +1948,7 @@ def test_the_same_selection_is_not_rebuilt(resident_in: Callable, media_tmp: Pat
     client = login(resident_in("a@gahk.dk", None))
 
     get_store().save(selection_key([(one.name, one.sha256)]), BytesIO(b"a previously built zip"))
-    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [one.pk]})
+    response = client.post(f"/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [one.pk]})
 
     assert b"".join(response.streaming_content) == b"a previously built zip"
 
@@ -1991,7 +1989,7 @@ def test_a_selection_you_cannot_fully_see_names_a_different_zip(
     theirs = make_file(secret, name="budget.pdf", body=b"secret")
     client = login(resident_in("outsider@gahk.dk", None))
 
-    response = client.post(f"/intern/arkiv/mappe/{shared.pk}/hent-valgte", {"ids": [mine.pk, theirs.pk]})
+    response = client.post(f"/arkiv/mappe/{shared.pk}/hent-valgte", {"ids": [mine.pk, theirs.pk]})
 
     body = zipfile.ZipFile(BytesIO(b"".join(response.streaming_content)))
     assert body.namelist() == ["ferie.jpg"]
@@ -2018,7 +2016,7 @@ def test_the_zip_is_redirected_to_when_there_is_a_bucket(
     signed = "https://bucket.fsn1.your-objectstorage.com/arkiv-zip/xx?sig=abc"
     monkeypatch.setattr(LocalArchiveStore, "download_url", lambda self, key, **kw: signed, raising=False)
 
-    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [one.pk]})
+    response = client.post(f"/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [one.pk]})
 
     assert response.status_code == 302
     assert response.headers["Location"] == signed
@@ -2039,7 +2037,7 @@ def test_the_response_echoes_the_pages_token_so_the_button_can_reset(
     client = login(resident_in("a@gahk.dk", None))
 
     response = client.post(
-        f"/intern/arkiv/mappe/{folder.pk}/hent-valgte",
+        f"/arkiv/mappe/{folder.pk}/hent-valgte",
         {"ids": [one.pk], "done_token": "abc123"},
     )
 
@@ -2062,9 +2060,7 @@ def test_a_token_that_could_steer_a_header_is_dropped(
     one = make_file(folder, name="en.jpg", body=b"bytes")
     client = login(resident_in("a@gahk.dk", None))
 
-    response = client.post(
-        f"/intern/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [one.pk], "done_token": bad}
-    )
+    response = client.post(f"/arkiv/mappe/{folder.pk}/hent-valgte", {"ids": [one.pk], "done_token": bad})
 
     assert ZIP_DONE_COOKIE not in response.cookies
     assert response.status_code == 200  # and the download itself is unaffected
@@ -2123,11 +2119,11 @@ def test_a_photo_folder_renders_tiles_and_a_document_folder_renders_rows(
     make_file(docs, name="referat.pdf")
     client = login(resident_in("a@gahk.dk", None))
 
-    gallery = client.get(f"/intern/arkiv/mappe/{photos.pk}/").content.decode()
+    gallery = client.get(f"/arkiv/mappe/{photos.pk}/").content.decode()
     assert 'class="arkiv-grid"' in gallery
     assert "arkiv-tile-img" in gallery
 
-    listing = client.get(f"/intern/arkiv/mappe/{docs.pk}/").content.decode()
+    listing = client.get(f"/arkiv/mappe/{docs.pk}/").content.decode()
     assert 'class="arkiv-list"' in listing
     assert "arkiv-tile-img" not in listing
 
@@ -2157,7 +2153,7 @@ def test_a_folder_downloads_with_its_subfolders_and_their_paths(
     make_file(deeper, name="oprydning.jpg", body=b"deep")
     client = login(resident_in("a@gahk.dk", None))
 
-    response = client.post(f"/intern/arkiv/mappe/{top.pk}/hent-alt")
+    response = client.post(f"/arkiv/mappe/{top.pk}/hent-alt")
 
     body = zipfile.ZipFile(BytesIO(b"".join(response.streaming_content)))
     assert sorted(body.namelist()) == [
@@ -2184,7 +2180,7 @@ def test_a_folder_download_leaves_out_a_subfolder_you_cannot_see(
     make_file(secret, name="budget.pdf", body=b"secret")
     client = login(resident_in("outsider@gahk.dk", None))
 
-    response = client.post(f"/intern/arkiv/mappe/{top.pk}/hent-alt")
+    response = client.post(f"/arkiv/mappe/{top.pk}/hent-alt")
 
     body = zipfile.ZipFile(BytesIO(b"".join(response.streaming_content)))
     assert body.namelist() == ["alle.jpg"]
@@ -2199,7 +2195,7 @@ def test_downloading_a_folder_you_cannot_see_is_a_404(
     make_file(folder)
     client = login(resident_in("outsider@gahk.dk", None))
 
-    assert client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-alt").status_code == 404
+    assert client.post(f"/arkiv/mappe/{folder.pk}/hent-alt").status_code == 404
 
 
 def test_an_empty_folder_is_not_downloadable(resident_in: Callable, media_tmp: Path) -> None:
@@ -2207,7 +2203,7 @@ def test_an_empty_folder_is_not_downloadable(resident_in: Callable, media_tmp: P
     folder = ArchiveFolder.objects.create(name="Tom")
     client = login(resident_in("a@gahk.dk", None))
 
-    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-alt", follow=True)
+    response = client.post(f"/arkiv/mappe/{folder.pk}/hent-alt", follow=True)
 
     assert "Mappen er tom" in response.content.decode()
 
@@ -2227,7 +2223,7 @@ def test_the_same_folder_zipped_twice_is_one_object(resident_in: Callable, media
 
     key = selection_key([(f"2026/{one.name}", one.sha256)])
     get_store().save(key, BytesIO(b"a previously built zip"))
-    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/hent-alt")
+    response = client.post(f"/arkiv/mappe/{folder.pk}/hent-alt")
 
     assert b"".join(response.streaming_content) == b"a previously built zip"
 
@@ -2237,7 +2233,7 @@ def test_an_empty_folder_can_be_removed(resident_in: Callable, media_tmp: Path) 
     folder = ArchiveFolder.objects.create(parent=parent, name="Tastefejl")
     client = login(resident_in("a@gahk.dk", None))
 
-    client.post(f"/intern/arkiv/mappe/{folder.pk}/fjern")
+    client.post(f"/arkiv/mappe/{folder.pk}/fjern")
 
     folder.refresh_from_db()
     assert folder.deleted_at is not None
@@ -2252,7 +2248,7 @@ def test_the_name_is_free_again_immediately(resident_in: Callable, media_tmp: Pa
     folder = ArchiveFolder.objects.create(parent=parent, name="Sommerfest")
     client = login(resident_in("a@gahk.dk", None))
 
-    client.post(f"/intern/arkiv/mappe/{folder.pk}/fjern")
+    client.post(f"/arkiv/mappe/{folder.pk}/fjern")
     again = ArchiveFolder.objects.create(parent=parent, name="Sommerfest")
 
     assert again.pk != folder.pk
@@ -2271,7 +2267,7 @@ def test_a_folder_with_anything_in_it_is_refused(
         ArchiveFolder.objects.create(parent=folder, name="Loerdag")
     client = login(resident_in("a@gahk.dk", None))
 
-    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/fjern", follow=True)
+    response = client.post(f"/arkiv/mappe/{folder.pk}/fjern", follow=True)
 
     assert "øm den først" in response.content.decode()
     folder.refresh_from_db()
@@ -2290,7 +2286,7 @@ def test_a_subfolder_you_cannot_see_still_blocks_the_delete(
     ArchiveFolder.objects.create(parent=folder, name="Regnskab", workgroup=regnskab)
     client = login(resident_in("outsider@gahk.dk", None))
 
-    response = client.post(f"/intern/arkiv/mappe/{folder.pk}/fjern", follow=True)
+    response = client.post(f"/arkiv/mappe/{folder.pk}/fjern", follow=True)
 
     body = response.content.decode()
     assert "Mappen er ikke tom" in body
@@ -2305,7 +2301,7 @@ def test_a_root_needs_inspektionen(resident_in: Callable, media_tmp: Path) -> No
     root = ArchiveFolder.objects.create(name="Billeder")
     client = login(resident_in("a@gahk.dk", None))
 
-    assert client.post(f"/intern/arkiv/mappe/{root.pk}/fjern").status_code == 403
+    assert client.post(f"/arkiv/mappe/{root.pk}/fjern").status_code == 403
     root.refresh_from_db()
     assert root.deleted_at is None
 
@@ -2315,4 +2311,4 @@ def test_removing_a_folder_requires_post(resident_in: Callable, media_tmp: Path)
     folder = ArchiveFolder.objects.create(parent=parent, name="Tom")
     client = login(resident_in("a@gahk.dk", None))
 
-    assert client.get(f"/intern/arkiv/mappe/{folder.pk}/fjern").status_code == 405
+    assert client.get(f"/arkiv/mappe/{folder.pk}/fjern").status_code == 405

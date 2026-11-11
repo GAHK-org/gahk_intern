@@ -1,7 +1,7 @@
 // Web Push: this device's subscription. No-op on every page without a [data-push] element.
 //
 // A device subscribes ONCE, for everything. What it is then told is the resident's notification
-// settings (/intern/notifikationer/indstillinger), which are per person and live on the server.
+// settings (/notifikationer/indstillinger), which are per person and live on the server.
 // It used to be one button per feature, each recording a per-topic consent on the device, which
 // made what a phone received depend on which pages its owner had happened to visit.
 //

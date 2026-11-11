@@ -43,7 +43,7 @@
         {% else %}
           <a class="flix-pill flix-pill-red" href="{% url 'gahkflix:upload' %}">+ Upload</a>
         {% endif %}
-        <a class="flix-pill flix-pill-ghost" href="/intern/" title="Tilbage til GAHK Intern">↩ Intern</a>
+        <a class="flix-pill flix-pill-ghost" href="{% url 'dashboard' %}" title="Tilbage til GAHK Intern">↩ Intern</a>
       </div>
       <button class="flix-menu" type="button" aria-label="Menu" aria-expanded="false" data-flix-menu>☰</button>
     </header>
@@ -60,7 +60,7 @@
 
   {% block footer %}
     <footer class="flix-footer">
-      GAHKFlix · film fra G. A. Hagemanns Kollegium · <a href="/intern/">Tilbage til GAHK Intern</a>
+      GAHKFlix · film fra G. A. Hagemanns Kollegium · <a href="{% url 'dashboard' %}">Tilbage til GAHK Intern</a>
     </footer>
   {% endblock %}
 </body>
