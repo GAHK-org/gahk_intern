@@ -127,45 +127,75 @@ function caretRect(target: Field): { left: number; top: number; bottom: number }
   return { left, top, bottom: top + lineHeight };
 }
 
-/** The part of the viewport the reader can actually see — smaller than the window while a phone's
- * keyboard is up. */
-function visibleArea(): { left: number; top: number; right: number; bottom: number } {
+type Box = { left: number; top: number; right: number; bottom: number };
+
+/** The part of the page the reader can actually see, in DOCUMENT coordinates — smaller than the
+ * window while a phone's keyboard is up. */
+function visibleArea(): Box {
   const vv = window.visualViewport;
-  if (!vv) return { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
-  return { left: vv.offsetLeft, top: vv.offsetTop, right: vv.offsetLeft + vv.width, bottom: vv.offsetTop + vv.height };
+  if (!vv) {
+    const { scrollX: x, scrollY: y } = window;
+    return { left: x, top: y, right: x + window.innerWidth, bottom: y + window.innerHeight };
+  }
+  return { left: vv.pageLeft, top: vv.pageTop, right: vv.pageLeft + vv.width, bottom: vv.pageTop + vv.height };
+}
+
+/** Keeps the highlighted option in view by scrolling the list alone; scrollIntoView would also
+ * scroll the page on iOS. */
+function revealActive(): void {
+  const item = list.querySelector<HTMLElement>('[aria-selected="true"]');
+  if (!item) return;
+  if (item.offsetTop < list.scrollTop) list.scrollTop = item.offsetTop;
+  else if (item.offsetTop + item.offsetHeight > list.scrollTop + list.clientHeight)
+    list.scrollTop = item.offsetTop + item.offsetHeight - list.clientHeight;
 }
 
 /** Under the caret's line if it fits, else above it (Den Hurtige's composer sits at the very
- * bottom), always clamped inside the visible area. */
+ * bottom), always clamped inside the visible area.
+ *
+ * Positioned absolutely in document coordinates, not position:fixed. With the keyboard up, iOS
+ * scrolls even Den Hurtige's locked page (scrollY ≈ 400), and a fixed element then stays put
+ * while getBoundingClientRect follows the scroll — the list landed that far above the field,
+ * off screen. Document coordinates agree on every browser. */
 function place(): void {
   if (!field || list.hidden) return;
   const area = visibleArea();
-  const box = field.getBoundingClientRect();
+  const { scrollX: sx, scrollY: sy } = window;
+  const rect = field.getBoundingClientRect();
+  const box = { left: rect.left + sx, top: rect.top + sy, right: rect.right + sx, bottom: rect.bottom + sy, width: rect.width };
   if (box.bottom < area.top || box.top > area.bottom) {
     close(); // the field itself scrolled away
     return;
   }
-  const caret = caretRect(field);
+  const caretView = caretRect(field);
+  const caret = { left: caretView.left + sx, top: caretView.top + sy, bottom: caretView.bottom + sy };
   // The caret line may be scrolled out of a tall field; anchor to the field's visible part then.
   const lineTop = Math.min(Math.max(caret.top, box.top), box.bottom);
   const lineBottom = Math.min(Math.max(caret.bottom, box.top), box.bottom);
 
   const width = Math.min(Math.max(box.width, 220), 320, area.right - area.left - 2 * EDGE);
-  list.style.width = `${width}px`;
-  list.style.left = `${Math.min(Math.max(caret.left, area.left + EDGE), area.right - width - EDGE)}px`;
+  const left = Math.min(Math.max(caret.left, area.left + EDGE), area.right - width - EDGE);
 
   const below = area.bottom - lineBottom - GAP - EDGE;
   const above = lineTop - area.top - GAP - EDGE;
+  list.style.width = `${width}px`;
   list.style.maxHeight = `${MAX_HEIGHT}px`;
   const wanted = Math.min(list.scrollHeight + 2, MAX_HEIGHT);
+  let top: number;
   if (below >= wanted || below >= above) {
-    list.style.maxHeight = `${Math.max(below, 0)}px`;
-    list.style.top = `${lineBottom + GAP}px`;
+    list.style.maxHeight = `${Math.min(Math.max(below, 0), MAX_HEIGHT)}px`;
+    top = lineBottom + GAP;
   } else {
-    list.style.maxHeight = `${above}px`;
-    list.style.top = `${lineTop - GAP - Math.min(wanted, above)}px`;
+    list.style.maxHeight = `${Math.min(above, MAX_HEIGHT)}px`;
+    top = lineTop - GAP - Math.min(wanted, above);
   }
-  list.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+  // Wherever the list's containing block starts, measured rather than assumed.
+  list.style.left = "0px";
+  list.style.top = "0px";
+  const origin = list.getBoundingClientRect();
+  list.style.left = `${left - (origin.left + sx)}px`;
+  list.style.top = `${top - (origin.top + sy)}px`;
+  revealActive();
 }
 
 async function search(target: Field, q: string): Promise<void> {

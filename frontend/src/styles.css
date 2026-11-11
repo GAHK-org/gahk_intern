@@ -2573,7 +2573,7 @@
   /* @mentions: the rendered link (core/mentions.py) and the composer's picker (mention.ts). */
   [data-mention] { font-weight:600; color:var(--green); text-decoration:none; }
   a[data-mention]:hover { text-decoration:underline; }
-  .mention-picker { position:fixed; z-index:90; box-sizing:border-box; margin:0; padding:4px; list-style:none; background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--radius-sm); box-shadow:var(--shadow); max-height:260px; overflow:auto; overscroll-behavior:contain; }
+  .mention-picker { position:absolute; top:0; left:0; z-index:90; box-sizing:border-box; margin:0; padding:4px; list-style:none; background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--radius-sm); box-shadow:var(--shadow); max-height:260px; overflow:auto; overscroll-behavior:contain; }
   .mention-picker li { display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:6px; cursor:pointer; font-size:14px; color:var(--ink); }
   .mention-picker li[aria-selected="true"], .mention-picker li:hover { background:var(--green-050); }
   .mention-picker img { width:22px; height:22px; border-radius:50%; object-fit:cover; }
