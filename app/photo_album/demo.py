@@ -9,7 +9,7 @@ from django.utils.text import slugify
 
 from residents.models import Resident
 
-from .models import Album, Media
+from .models import NO_YEAR_FOLDER, Album, Media
 from .services import add_tag, upload_media
 
 ALBUMS = [
@@ -26,13 +26,13 @@ ALBUMS = [
     ("2025", "Studietur/Berlin", 5),
     ("2025", "Studietur/Berlin/Museer", 3),
     ("2025", "Studietur/Prag", 4),
-    ("Andet", "Hverdagsglimt", 6),
-    ("Andet", "Fælleskøkken", 6),
-    ("Andet", "Sport", 2),
-    ("Andet", "Sport/Fodbold", 4),
-    ("Andet", "Sport/Fodbold/Pokalfinale", 5),
-    ("Andet", "Sport/Badminton", 3),
-    ("Andet", "Paginationstest", 60),
+    (NO_YEAR_FOLDER, "Hverdagsglimt", 6),
+    (NO_YEAR_FOLDER, "Fælleskøkken", 6),
+    (NO_YEAR_FOLDER, "Sport", 2),
+    (NO_YEAR_FOLDER, "Sport/Fodbold", 4),
+    (NO_YEAR_FOLDER, "Sport/Fodbold/Pokalfinale", 5),
+    (NO_YEAR_FOLDER, "Sport/Badminton", 3),
+    (NO_YEAR_FOLDER, "Paginationstest", 60),
 ]
 # Tags on albums apply to everything below them, so these are spread over every level of the trees
 # above: the timeline's tag filter then has direct, inherited and combined hits to show.
@@ -45,9 +45,9 @@ ALBUM_TAGS = {
     ("2025", "Studietur/Berlin"): ["berlin"],
     ("2025", "Studietur/Berlin/Museer"): ["museum"],
     ("2025", "Studietur/Prag"): ["prag"],
-    ("Andet", "Sport"): ["sport"],
-    ("Andet", "Sport/Fodbold"): ["fodbold"],
-    ("Andet", "Sport/Fodbold/Pokalfinale"): ["pokal.2025"],
+    (NO_YEAR_FOLDER, "Sport"): ["sport"],
+    (NO_YEAR_FOLDER, "Sport/Fodbold"): ["fodbold"],
+    (NO_YEAR_FOLDER, "Sport/Fodbold/Pokalfinale"): ["pokal.2025"],
 }
 # (folder, album path, image index) -> the item's own tags.
 MEDIA_TAGS = {
@@ -63,11 +63,11 @@ MEDIA_TAGS = {
     ("2025", "Studietur/Berlin", 1): ["mad"],
     ("2025", "Studietur/Berlin/Museer", 0): ["arkitektur", "kunst"],
     ("2025", "Studietur/Prag", 3): ["natur", "arkitektur"],
-    ("Andet", "Hverdagsglimt", 0): ["morgenkaffe"],
-    ("Andet", "Hverdagsglimt", 5): ["oprydning", "fælleskøkken"],
-    ("Andet", "Fælleskøkken", 1): ["mad", "fælleskøkken"],
-    ("Andet", "Sport/Fodbold/Pokalfinale", 4): ["gruppebillede", "sejr"],
-    ("Andet", "Sport/Badminton", 0): ["badminton"],
+    (NO_YEAR_FOLDER, "Hverdagsglimt", 0): ["morgenkaffe"],
+    (NO_YEAR_FOLDER, "Hverdagsglimt", 5): ["oprydning", "fælleskøkken"],
+    (NO_YEAR_FOLDER, "Fælleskøkken", 1): ["mad", "fælleskøkken"],
+    (NO_YEAR_FOLDER, "Sport/Fodbold/Pokalfinale", 4): ["gruppebillede", "sejr"],
+    (NO_YEAR_FOLDER, "Sport/Badminton", 0): ["badminton"],
 }
 COLOURS = ["#dd6b43", "#1f6c64", "#d8a32f", "#315b8d", "#8a4e70", "#517544"]
 DIMENSIONS = [(1600, 900), (900, 1600), (1200, 800), (1000, 1000), (1600, 1067), (1067, 1600)]
@@ -80,13 +80,19 @@ CAPTIONS = [
     "Oprydning dagen derpå",
 ]
 LIFECYCLE_MEDIA = [
-    ("Andet", "Testdata: sletning", "Uploadet for 40 minutter", timedelta(minutes=40), None),
-    ("Andet", "Testdata: sletning", "Uploadet for 14 dage", timedelta(days=14), None),
-    ("Andet", "Testdata: sletning", "Uploadet for 31 dage", timedelta(days=31), None),
-    ("Andet", "Papirkurv: nylig", "Uploadet for 25 minutter", timedelta(minutes=25), timedelta(minutes=5)),
-    ("Andet", "Papirkurv: nylig", "Uploadet for 12 dage", timedelta(days=12), timedelta(days=2)),
+    (NO_YEAR_FOLDER, "Testdata: sletning", "Uploadet for 40 minutter", timedelta(minutes=40), None),
+    (NO_YEAR_FOLDER, "Testdata: sletning", "Uploadet for 14 dage", timedelta(days=14), None),
+    (NO_YEAR_FOLDER, "Testdata: sletning", "Uploadet for 31 dage", timedelta(days=31), None),
     (
-        "Andet",
+        NO_YEAR_FOLDER,
+        "Papirkurv: nylig",
+        "Uploadet for 25 minutter",
+        timedelta(minutes=25),
+        timedelta(minutes=5),
+    ),
+    (NO_YEAR_FOLDER, "Papirkurv: nylig", "Uploadet for 12 dage", timedelta(days=12), timedelta(days=2)),
+    (
+        NO_YEAR_FOLDER,
         "Papirkurv: gammel",
         "Uploadet for 45 dage - i papirkurven i 31 dage",
         timedelta(days=45),

@@ -168,7 +168,7 @@ def folder_year(folder: str) -> int | None:
 
 def folder_year_window(folder: str) -> tuple[datetime, datetime] | None:
     """[start, end) of the dates a year folder's items can have: its year, FOLDER_YEAR_SLACK_MONTHS
-    either side. None for a folder that is not a year."""
+    either side. None for NO_YEAR_FOLDER, which is not one."""
     year = folder_year(folder)
     if year is None:
         return None
@@ -182,9 +182,9 @@ def believable_date(moment: datetime, folder: str, *, file_time: bool) -> bool:
 
     In a year folder it must fall in that year, give or take FOLDER_YEAR_SLACK_MONTHS — for 2004,
     from 1 July 2003 up to 1 July 2005: the Dropbox archive stamps every file with the day it was
-    uploaded there in 2022, and an old camera with a flat battery starts again in 2001. Elsewhere
-    only a file time has a floor — a scanned print may honestly say 1975 in its metadata, but no
-    file was saved then.
+    uploaded there in 2022, and an old camera with a flat battery starts again in 2001. In
+    NO_YEAR_FOLDER only a file time has a floor — a scanned print may honestly say 1975 in its
+    metadata, but no file was saved then.
     """
     window = folder_year_window(folder)
     if window is not None:
@@ -204,6 +204,13 @@ class AlbumImportState(models.TextChoices):
     QUEUED = "queued", "I kø"
     BUILDING = "building", "Importerer"
     READY = "ready", "Klar"
+    FAILED = "failed", "Mislykkedes"
+
+
+class AlbumMergeState(models.TextChoices):
+    QUEUED = "queued", "I kø"
+    BUILDING = "building", "Fletter"
+    READY = "ready", "Flettet"
     FAILED = "failed", "Mislykkedes"
 
 
@@ -233,9 +240,15 @@ def validate_album_name(value: str) -> None:
         raise ValidationError("Ugyldigt albumnavn.")
 
 
+# The one folder that is not a year — for what has no year to go by: a scanned print, a poster, a
+# series of portraits — listed after the years. It replaced "Andet", whose albums were deleted.
+NO_YEAR_FOLDER = "Uden årstal"
+FOLDER_MAX_LENGTH = 20  # a year is four
+
+
 def validate_folder(value: str) -> None:
-    if value != "Andet" and not (len(value) == 4 and value.isdecimal()):
-        raise ValidationError("Mappen skal være et årstal eller Andet.")
+    if normalize_name(value) != NO_YEAR_FOLDER and not (len(value) == 4 and value.isdecimal()):
+        raise ValidationError(f"Mappen skal være et årstal eller {NO_YEAR_FOLDER}.")
 
 
 TAG_MAX_LENGTH = 30
@@ -296,8 +309,10 @@ class Album(models.Model):
     """One node of an album tree. A root album sits in a folder; a sub-album has a parent.
 
     `path` is the materialised path of primary keys, root first — "/12/34/56/" for album 56 under 34
-    under 12. Keys rather than names, so renaming never touches it, and albums are never moved, so it
-    is written once and never again. It is what makes the two questions the album page asks cheap:
+    under 12. Keys rather than names, so renaming never touches it, and an album only ever moves when
+    the album above it is merged into another (photo_album.merge), which rewrites the moved
+    subtree's paths and depths in one UPDATE; `save` refuses any other move. It is what makes the two questions
+    the album page asks cheap:
     "everything in this subtree" is one indexed prefix scan (`path LIKE '/12/34/%'`), and "the
     ancestors of this album" is just the path read back. The names along the way — the breadcrumb,
     the folder names inside a downloaded ZIP — are always looked up fresh, never stored.
@@ -306,7 +321,9 @@ class Album(models.Model):
     folder it belongs to.
     """
 
-    folder = models.CharField(max_length=10, verbose_name="Mappe", validators=[validate_folder])
+    folder = models.CharField(
+        max_length=FOLDER_MAX_LENGTH, verbose_name="Mappe", validators=[validate_folder]
+    )
     name = models.CharField(max_length=140, verbose_name="Albumnavn", validators=[validate_album_name])
     parent = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.PROTECT, related_name="children", editable=False
@@ -359,6 +376,7 @@ class Album(models.Model):
         update_fields: Iterable[str] | None = None,
     ) -> None:
         self.name = normalize_name(self.name)
+        self.folder = normalize_name(self.folder)
         creating = self._state.adding
         if (
             not creating
@@ -418,6 +436,7 @@ class Album(models.Model):
     def clean(self) -> None:
         super().clean()
         self.name = normalize_name(self.name)
+        self.folder = normalize_name(self.folder)
 
     def _remember_stored_values(self, fields: Iterable[str] | None = None) -> None:
         """Note what is stored, to tell a move or a folder change from a plain save.
@@ -578,6 +597,23 @@ class Album(models.Model):
         )
         return (now or timezone.now()) < deadline
 
+    # --- Merging --------------------------------------------------------------------------------
+
+    def active_merge(self) -> "AlbumMerge | None":
+        """The merge under way of this album or of one above it (photo_album.merge), if any.
+
+        Cached like the lock state: the album page and its upload check both ask.
+        """
+        if "merge" not in self._lock_cache:
+            lineage = [*self.ancestor_ids, self.pk]
+            self._lock_cache["merge"] = (
+                AlbumMerge.objects.filter(state__in=AlbumMerge.ACTIVE_STATES)
+                .filter(Q(target_id__in=lineage) | Q(source_id__in=lineage))
+                .select_related("target")
+                .first()
+            )
+        return self._lock_cache["merge"]
+
 
 class Media(models.Model):
     album = models.ForeignKey(Album, on_delete=models.CASCADE, related_name="media")
@@ -612,6 +648,9 @@ class Media(models.Model):
         upload_to=album_sidecar_path, storage=get_photo_album_storage, max_length=500, blank=True
     )
     content_type = models.CharField(max_length=100, blank=True)
+    # A camera RAW file (CR2, NEF, ARW, DNG, …; uploads.RAW_EXTENSIONS): its viewer and grid copies
+    # are decoded by LibRaw, and its original is the sensor's data rather than a picture to look at.
+    is_raw = models.BooleanField(default=False)
     derivative_state = models.CharField(
         max_length=10, choices=DerivativeState.choices, default=DerivativeState.READY
     )
@@ -744,6 +783,24 @@ class Media(models.Model):
         return self.derivative_state == DerivativeState.READY and bool(self.thumbnail)
 
 
+def locked_album_ids(albums: list[Album], now: datetime | None = None) -> set[int]:
+    """Which of `albums` are locked, by their own lock or one above them: `Album.is_locked` for many
+    at once, in one query. `albums` must hold every one's ancestors too — whole trees, a folder."""
+    by_id = {album.pk: album for album in albums}
+    activity: dict[int, datetime] = {}
+    newest = (
+        Media.objects.filter(album_id__in=by_id, status=MediaStatus.APPROVED, deleted_at__isnull=True)
+        .values_list("album_id")
+        .annotate(newest=Max("added_at"))
+    )
+    for album_id, added_at in newest:
+        for pk in [*by_id[album_id].ancestor_ids, album_id]:  # it is activity in each subtree above
+            if pk in by_id and (pk not in activity or added_at > activity[pk]):
+                activity[pk] = added_at
+    own = {album.pk for album in albums if album._own_lock(activity.get(album.pk), now) is not None}
+    return {album.pk for album in albums if own & {*album.ancestor_ids, album.pk}}
+
+
 class DownloadVariant(models.TextChoices):
     ORIGINAL = "original", "Originaler"
     HIGH_DEFINITION = "hd", "Komprimeret (HD)"
@@ -802,7 +859,7 @@ class AlbumImport(models.Model):
     requested_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="album_imports"
     )
-    folder = models.CharField(max_length=10)
+    folder = models.CharField(max_length=FOLDER_MAX_LENGTH)
     archive_name = models.CharField(max_length=255)
     # 500, like Media's files: the key is "photo-album-imports/<uuid>/<the ZIP's name>". At Django's
     # default of 100, "Generalforsamlingen oktober 2006-Therese.zip" (44 characters) made it 101, and
@@ -838,6 +895,46 @@ class AlbumImport(models.Model):
 
     class Meta:
         ordering = ["-created_at", "-pk"]
+
+
+class AlbumMerge(models.Model):
+    """An administrator's merge of `source` into `target`, done by a background worker
+    (photo_album.merge). On success `source` is gone, so where it was is kept here for the notice."""
+
+    target = models.ForeignKey(Album, on_delete=models.CASCADE, related_name="merges")
+    source = models.ForeignKey(
+        Album, null=True, blank=True, on_delete=models.SET_NULL, related_name="merged_into"
+    )
+    # Its names from the folder down ("Sommerfest › Lørdag"): an album may share its name with the
+    # one it is merged into, its own parent above all, and five levels of names are long.
+    source_path = models.CharField(max_length=800)
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="album_merges"
+    )
+    task_id = models.CharField(max_length=36, blank=True)
+    state = models.CharField(max_length=10, choices=AlbumMergeState.choices, default=AlbumMergeState.QUEUED)
+    # What it did (merge.MergeResult): {"moved", "duplicates", "sidecars_kept", "albums_merged",
+    # "albums_moved"}.
+    result = models.JSONField(default=dict, blank=True)
+    error = models.CharField(max_length=255, blank=True)
+    # How far the worker has got ({"step", "done", "total"}) and when it last moved on — what
+    # `fail_stalled_*` tells a slow job from a dead one by. See JOB_STALLED_AFTER.
+    progress = models.JSONField(default=dict, blank=True)
+    progressed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    # When its administrator closed the notice of how it went, which otherwise stays on the kept
+    # album's page for views.MERGE_NOTICE_SHOWN_FOR.
+    notice_closed_at = models.DateTimeField(null=True, blank=True)
+
+    ACTIVE_STATES = (AlbumMergeState.QUEUED, AlbumMergeState.BUILDING)
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
+
+    @property
+    def is_active(self) -> bool:
+        return self.state in self.ACTIVE_STATES
 
 
 class MediaView(models.Model):

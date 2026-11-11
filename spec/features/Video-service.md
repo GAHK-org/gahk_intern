@@ -20,12 +20,13 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 - Top 10 ranks videos by unique viewers over the last 7 days.
 - A card shows the thumbnail, title, series and episode, year and length, and a red bar for how far
   the reader has watched.
-- A video's page has its banner, date, length, quality, views and unique viewers, description,
-  credits (each linking to that person's cast page), tags, the series' episodes by season, `Mere som
-  denne` (videos sharing tags or cast) and `Hent`: HD, Full HD (when there is one) or the original,
-  each with its size.
+- A video's page has its banner, release date (as much of it as is known: `12. marts 2015`, `marts
+  2015` or `2015`), length, quality, views and unique viewers, description, credits (each linking to
+  that person's cast page), tags, the series' episodes by season, `Mere som denne` (videos sharing
+  tags or cast) and `Hent`: HD, Full HD (when there is one) or the original, each with its size.
 - Series pages list the published episodes by season and episode. The timeline lists every video by
-  its date, grouped by year and month, with a jump to each year.
+  its release date (else its upload), grouped by year and month, with a jump to each year; a video
+  known only by its year comes after that year's months, under `Uden måned`.
 - Search matches titles, descriptions, tags, credited names and roles, and series, every word
   somewhere; results update as you type. Tag pages and cast pages (one per resident, one per
   external name) list their videos.
@@ -50,8 +51,13 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   least 5 seconds) a video counts as watched and starts from the beginning next time.
 - A view counts after 5 seconds of actual playback, or half of a very short video. Views by the same
   resident within 10 minutes count once.
-- The uploader and administrators see statistics on the video's page: views, unique viewers, views
-  in the last 7 days and views per day for the last 30 days.
+- Every time the player opens a published video is a viewing, a view or not. Opening it again within
+  10 minutes of leaving it short of the end goes on with the same viewing. The player reports how
+  much of the film actually played (skipping adds nothing) and whether it reached the end.
+- The uploader and administrators see statistics on the video's page: how often it was opened in the
+  player, views, how many views reached the end, the average time a view played (and its share of
+  the film), unique viewers, views in the last 7 days and views per day for the last 30 days. Playing
+  time is known only for views since the player began reporting it; shares are of those views.
 - Autoplay: when a video ends, an end card shows what is next and starts it by itself after 8
   seconds (`Afspil nu` starts it at once, `Annuller` or Escape stays). In a series that is the next
   episode, and `Næste afsnit` also appears in the last 20 seconds. After a film, or the last
@@ -68,23 +74,34 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 
 - Any resident with access may upload: MP4, MOV, M4V, WebM, AVI, MKV, 3GP, MTS, MPEG, WMV or OGV, up
   to 5 GB. The file goes straight from the browser to object storage, with a progress bar.
-- Nobody can start an upload while one of theirs is still being processed. The upload page first
-  lists the uploader's recent videos — unpublished ones (processing, failed or waiting to be
-  finished) and those uploaded in the last week, each with its state — so one already uploaded is
-  not uploaded again.
+- One video at a time: nobody can start an upload while one of theirs is still being processed. The
+  uploader says so, the header's `Upload` becomes `⏳ Behandles` (or `⏳ I kø`) with why, and several
+  files dropped at once are refused rather than the first taken. The upload page first lists the
+  uploader's recent videos — unpublished ones (processing, failed or waiting to be finished) and
+  those uploaded in the last week, each with its state — so one already uploaded is not uploaded
+  again.
+- While an upload waits for the encodes before it, its edit page says it is in the queue and how many
+  go first, and the lists say `I kø`, rather than showing 0 %. It starts by itself.
 - The same file cannot be uploaded twice, by anyone. Before anything is sent, a fingerprint of the
   file is compared with every video's; once it has arrived, its full checksum is, binned videos
   included. A duplicate is refused, naming the video it duplicates.
 - An upload is a draft until it is published. While it is processed, the uploader can fill in the
-  title, description, date, series, season and episode, credits (residents, or people from outside
-  by name, each with an optional role) and tags (the photo album's tag rules).
-- The date is read from the video's own metadata, else the file's last-modified time. It can be set
-  by hand, and then stays as set.
+  title, description, release date, series, season and episode, credits (residents, or people from
+  outside by name, each with an optional role) and tags (the photo album's tag rules).
+- The release date (`Udgivelsesdato`) is known to the day, the month or only the year: only the year
+  is needed. It is guessed when the file is processed: a whole date written in the file's name or in
+  its date tags first; else the camera's clock, unless a year (or month) written there disagrees;
+  else that year or month; else the file's last-modified time. The edit page says where the guess
+  came from. Set by hand, it stays as set through a new version of the file; cleared, a new version
+  guesses it again.
 - The thumbnail and the banner are picked from 10 random frames spread over the video, with black and
-  flat frames redrawn; `Vis 10 nye billeder` draws another ten. Or the uploader picks the moment
-  themselves in a player, a second or a frame at a time, and it is cut from the best rendition.
-  Either may also be a picture of the uploader's own. The edit page shows what is chosen now apart
-  from the options, under a ruler.
+  flat frames redrawn; `Vis 10 nye billeder` draws another ten, which replace the ones shown without
+  the page reloading. Or the uploader picks the moment themselves in a player, a second or a frame at
+  a time, and it is cut from the best rendition. Either may also be a picture of the uploader's own.
+  The edit page shows what is chosen now apart from the options, under a ruler.
+- What is typed on the edit page and not yet saved outlives whatever reloads the page — picking a
+  picture, a new version, the processing finishing — with a note that it is not saved; `Fortryd det`
+  drops it. `Udgiv videoen` saves what is typed before it publishes.
 - Thumbnails and banners are 16:9. A picture close to that shape (from 4:3 to cinema widescreen) is
   cropped to it; any other — a phone held upright, a square, a panorama — is shown whole on a
   blurred, darkened copy of itself, so nothing important is cut off. A draft can only be published with a title, a finished file,
@@ -102,7 +119,8 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 ## Series
 
 - Any resident may create a series and put their own videos in it. Titles are unique, ignoring case,
-  and so is an episode number within a series' season.
+  and so is an episode number within a series' season. `Opret en ny serie` on the edit page creates
+  one in a dialog and picks it for the video, to be saved with the rest.
 - Season and episode take digits only. Each has a dropdown of what the series already has — its
   seasons with their number of episodes, the chosen season's episodes with their titles — and offers
   the free numbers: the next one, and any gap. Taken numbers are shown but cannot be picked; an
@@ -124,6 +142,17 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   so where the new version is uploaded, with its deadline. Once the 7 days are over, it says why
   there is no new version.
 
+## History
+
+- Every video has a `Historik`, for its uploader and the administrators: who did what and when —
+  uploads and new versions, processing finished (with the date it guessed) or failed, every change
+  to the details and the pictures with before and after, publishing, binning and restoring. An
+  approved proposal is the proposer's change, marked as approved. A video uploaded before there was
+  a history has only what happened since.
+- Every thumbnail and banner a video has had is kept as long as the video is. The edit page offers
+  the latest earlier ones to bring back, and the history all of them; after 30 days that is a
+  proposal, like any change.
+
 ## Deleting and the bin
 
 - A draft is deleted outright, by its uploader or an administrator.
@@ -135,8 +164,8 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   open proposals about it.
 - Administrators see the bin and can restore from it. A binned video is deleted with all its files 30
   days after it was binned.
-- A stored file no video, frame or open proposal refers to — an upload abandoned before it was saved,
-  or what a crashed encode left — is deleted once it is two days old. If that would be more than half
+- A stored file no video, frame, open proposal or history refers to — an upload abandoned before it
+  was saved, or what a crashed encode left — is deleted once it is two days old. If that would be more than half
   of everything stored, nothing is deleted and the error is logged: the database does not match the
   storage.
 
@@ -159,3 +188,10 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   Celery sends again after its worker died says so instead of passing as done.
 - Subtitles are kept as files of their own rather than inside the MP4s: WebVTT is what a browser's
   player reads, and inside an MP4 only Safari shows them.
+- A date somebody wrote beats the camera's clock in the guess: an exported or re-encoded film carries
+  the day it was exported, while `Revy 2009.mp4` says what it is. A camera's file counter
+  (`IMG_1999`) is not taken for a year.
+- Unsaved details are kept in the browser tab rather than saved as they are typed: after 30 days a
+  saved change is a proposal to approve, which must stay something done on purpose.
+- Bringing a picture back stores a copy of it: a proposal that is turned down deletes its pictures,
+  and must not take the history's with it.

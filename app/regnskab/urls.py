@@ -8,8 +8,8 @@ urlpatterns = [
     path("", views.overview, name="overview"),
     path(
         "<int:pk>/economic-nummer",
-        views.set_economic_account_number,
-        name="set_economic_account_number",
+        views.edit_economic_account_number,
+        name="edit_economic_account_number",
     ),
     path(
         "alumneregninger/forhaandsvisning",

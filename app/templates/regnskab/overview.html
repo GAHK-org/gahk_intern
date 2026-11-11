@@ -55,7 +55,36 @@
       regning, også hvis der ikke er nye posteringer i netop denne periode. Selve afsendelsen sker
       først efter du har set forhåndsvisningen.
     </p>
-    <form method="get" action="{% url 'regnskab:preview_alumneregninger' %}" class="flex flex-wrap items-end gap-2">
+    {% if missing_account_numbers %}
+      <div class="mb-4">
+        <p class="text-sm text-red-600 font-semibold mb-2">
+          Mangler e-conomic kontonr. ({{ missing_account_numbers|length }}) — de får ingen alumneregning
+          for {{ period_label }}, før de har et.
+        </p>
+        <div class="overflow-x-auto">
+          <table cellpadding="6" class="text-sm" style="width:100%; border-collapse:collapse">
+            <thead><tr style="text-align:left; border-bottom:1px solid #e6e8ec; white-space:nowrap">
+              <th>Navn</th><th>E-conomic kontonr.</th>
+            </tr></thead>
+            <tbody>
+              {% for resident in missing_account_numbers %}
+                <tr style="border-bottom:1px solid #f0f1f4">
+                  <td>{{ resident.full_name }}<br><span class="muted text-xs">{{ resident.email }}</span></td>
+                  {% include "regnskab/_economic_account_cell.html" %}
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
+    {% comment %}
+      Building the preview fetches every alumne's entries from e-conomic before the page answers, which
+      takes minutes, so the button says it is working rather than looking like nothing happened.
+    {% endcomment %}
+    <div x-data="{ busy: false }" @pageshow.window="busy = false">
+    <form method="get" action="{% url 'regnskab:preview_alumneregninger' %}" class="flex flex-wrap items-end gap-2"
+          @submit="busy = true">
       <div>
         <label for="fra" class="font-semibold block text-sm">Fra</label>
         <input type="date" id="fra" name="fra" value="{{ alumneregning_from }}" required>
@@ -64,8 +93,16 @@
         <label for="til" class="font-semibold block text-sm">Til</label>
         <input type="date" id="til" name="til" value="{{ alumneregning_to }}" required>
       </div>
-      <button type="submit" class="btn">Lav Alumneregninger</button>
+      <button type="submit" class="btn" :disabled="busy" :aria-busy="busy">
+        <span class="spinner" x-show="busy" x-cloak></span>
+        <span x-text="busy ? 'Laver alumneregninger…' : 'Lav Alumneregninger'">Lav Alumneregninger</span>
+      </button>
     </form>
+    <p class="muted text-sm mt-2" x-show="busy" x-cloak role="status">
+      Henter posteringer fra e-conomic og laver en kontoudskrift til hver alumne. Det kan tage et par
+      minutter — luk ikke siden.
+    </p>
+    </div>
     <p class="text-sm mt-2">
       <a href="{% url 'regnskab:alumneregning_settings' %}">Rediger besked og følgebrev →</a>
     </p>
