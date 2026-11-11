@@ -10,6 +10,7 @@
 // through the same core.markdown call the reader's page uses and cannot disagree with it. A
 // client-side Markdown renderer would be a second implementation with a second sanitiser allowlist.
 
+import { csrfToken } from "./htmx-csrf";
 import { downscaleImage } from "./imageupload";
 
 const root = document.getElementById("js-md-editor");
@@ -137,14 +138,6 @@ function init(form: HTMLElement): void {
       say("Upload mislykkedes. Prøv igen.");
     }
   });
-}
-
-/** Duplicated from htmx-csrf.ts, which reads the token for htmx requests rather than fetch ones.
- * Two callers, four lines; sharing it would mean a module whose only job is one cookie lookup. */
-function csrfToken(): string {
-  const cookie = document.cookie.split("; ").find((c) => c.startsWith("csrftoken="));
-  if (cookie) return decodeURIComponent(cookie.slice("csrftoken=".length));
-  return document.querySelector<HTMLInputElement>('input[name="csrfmiddlewaretoken"]')?.value ?? "";
 }
 
 if (root) init(root);

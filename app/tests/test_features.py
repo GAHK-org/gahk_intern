@@ -19,15 +19,19 @@ from config import settings as config_settings
 from residents.models import Resident, Role, active_period
 
 
-@pytest.mark.parametrize(("debug", "domain"), [("0", ".gahk.dk"), ("1", None)])
-def test_session_cookie_domain_supports_site_hosts(
-    monkeypatch: pytest.MonkeyPatch, debug: str, domain: str | None
-) -> None:
+@pytest.mark.parametrize("debug", ["0", "1"])
+def test_session_cookie_stays_on_the_intranet_host(monkeypatch: pytest.MonkeyPatch, debug: str) -> None:
+    """Host-only (no Domain attribute) in every environment: the session used to be shared as
+    ".gahk.dk", which would now hand it to the public site's webhost. Renamed as well, so a leftover
+    ".gahk.dk" `sessionid`/`csrftoken` can never be mistaken for the current one."""
     monkeypatch.setenv("DJANGO_DEBUG", debug)
     monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
     configured = run_path(config_settings.__file__)
 
-    assert configured["SESSION_COOKIE_DOMAIN"] == domain
+    assert configured["SESSION_COOKIE_DOMAIN"] is None
+    assert configured.get("CSRF_COOKIE_DOMAIN") is None
+    assert configured["SESSION_COOKIE_NAME"] == "intern_sessionid"
+    assert configured["CSRF_COOKIE_NAME"] == "intern_csrftoken"
 
 
 def test_production_defaults_name_both_hosts(monkeypatch: pytest.MonkeyPatch) -> None:

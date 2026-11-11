@@ -1,6 +1,7 @@
 """Middleware of the core app."""
 
 from collections.abc import Callable
+from http.cookies import Morsel
 
 from django.conf import settings
 from django.core.exceptions import DisallowedHost, PermissionDenied
@@ -95,3 +96,50 @@ class KitchenAccountGate:
             if not kitchen_may_open(path):
                 raise PermissionDenied
         return self.get_response(request)
+
+
+# The cookie names and domain this site used while it lived at gahk.dk/intern/ (see
+# settings.SESSION_COOKIE_NAME). A browser that logged in back then still holds a ".gahk.dk"
+# `sessionid`, sends it to intern.gahk.dk AND to the public site's webhost, and keeps it for up to two
+# weeks. Nothing reads it any more; ExpireLegacyCookies makes the browser drop it.
+LEGACY_COOKIE_NAMES = ("sessionid", "csrftoken")
+LEGACY_COOKIE_DOMAIN = ".gahk.dk"
+_EXPIRED = "Thu, 01 Jan 1970 00:00:00 GMT"
+
+
+def _expired_morsel(name: str, domain: str | None, secure: bool) -> Morsel[str]:
+    morsel: Morsel[str] = Morsel()
+    morsel.set(name, "", '""')
+    morsel["expires"] = _EXPIRED
+    morsel["max-age"] = 0
+    morsel["path"] = "/"
+    morsel["samesite"] = "Lax"
+    if domain:
+        morsel["domain"] = domain
+    if secure:
+        morsel["secure"] = True
+    return morsel
+
+
+class ExpireLegacyCookies:
+    """Delete the pre-move `sessionid`/`csrftoken` whenever a request still carries one.
+
+    The browser alone knows which variant it holds — the ".gahk.dk" domain cookie of production, or a
+    host-only one (development, or a stray) — and a deletion only matches the variant with the same
+    Domain, so both are expired. Two Set-Cookie headers for one name do not fit HttpResponse.cookies,
+    a SimpleCookie keyed by name, so each Morsel goes in under its own dict key; the handlers write
+    every Morsel's own output, whose name is the real one.
+    """
+
+    def __init__(self, get_response: Callable[[HttpRequest], HttpResponseBase]) -> None:
+        self.get_response = get_response
+
+    def __call__(self, request: HttpRequest) -> HttpResponseBase:
+        response = self.get_response(request)
+        current = {settings.SESSION_COOKIE_NAME, settings.CSRF_COOKIE_NAME}
+        for name in LEGACY_COOKIE_NAMES:
+            if name in request.COOKIES and name not in current:
+                for domain in (LEGACY_COOKIE_DOMAIN, None):
+                    key = f"{name} (legacy {domain or 'host-only'})"
+                    response.cookies[key] = _expired_morsel(name, domain, request.is_secure())
+        return response

@@ -26,8 +26,15 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 # "https://intern.gahk.dk". Set in the environment for prod.
 CSRF_TRUSTED_ORIGINS = [o for o in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",") if o]
 SESSION_COOKIE_SECURE = not DEBUG
-SESSION_COOKIE_DOMAIN = ".gahk.dk" if not DEBUG else None
 CSRF_COOKIE_SECURE = not DEBUG
+# Host-only cookies (no Domain attribute): the intranet's session must reach intern.gahk.dk and
+# nothing else. It used to be ".gahk.dk", shared with the public site — which now runs on separate,
+# less trusted webhosting that must never see an intranet session. New names as well, because a
+# browser keeps the old ".gahk.dk" `sessionid` until it expires and would otherwise send two cookies
+# of the same name to intern.gahk.dk; core.middleware.ExpireLegacyCookies deletes the old pair.
+SESSION_COOKIE_DOMAIN = None
+SESSION_COOKIE_NAME = "intern_sessionid"
+CSRF_COOKIE_NAME = "intern_csrftoken"
 
 # Absolute base of THIS site, for links that leave the request: mail sent off the request thread
 # (residents.tasks, core.admin_summary), push payloads opened by a service worker, calendar exports.
@@ -68,6 +75,10 @@ MIDDLEWARE = [
     "core.health.HealthCheckMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
+    # Deletes the pre-intern.gahk.dk ".gahk.dk" session/CSRF cookies (see SESSION_COOKIE_NAME). This
+    # high up so every response carries the deletion — a redirect, a 403 — but after WhiteNoise, so
+    # static files never carry a Set-Cookie.
+    "core.middleware.ExpireLegacyCookies",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
