@@ -16,6 +16,7 @@ const lookupUrl = document.body.dataset.mentionLookup;
 let field: Field | null = null;
 let start = 0; // index of the "@" being completed
 let options: Option[] = [];
+let query = ""; // what `options` answers, for the empty state
 let active = 0;
 let timer = 0;
 let request = 0;
@@ -33,6 +34,7 @@ function isField(target: EventTarget | null): target is Field {
 
 function close(): void {
   options = [];
+  query = "";
   list.hidden = true;
   list.replaceChildren();
   field?.removeAttribute("aria-activedescendant");
@@ -64,13 +66,27 @@ function render(): void {
     });
     list.append(item);
   });
-  if (!field || !options.length) {
+  if (!field) {
     list.hidden = true;
     return;
   }
+  if (!options.length) {
+    // Said rather than vanishing: an empty list looked like the picker had broken, and since more
+    // letters only narrow the search it never came back.
+    if (!query) {
+      list.hidden = true;
+      return;
+    }
+    const empty = document.createElement("li");
+    empty.className = "mention-empty";
+    empty.setAttribute("aria-disabled", "true");
+    empty.textContent = `Ingen beboere eller embedsgrupper matcher "${query}"`;
+    list.append(empty);
+  }
   list.hidden = false;
   place();
-  field?.setAttribute("aria-activedescendant", `mention-option-${active}`);
+  if (options.length) field?.setAttribute("aria-activedescendant", `mention-option-${active}`);
+  else field?.removeAttribute("aria-activedescendant");
 }
 
 const GAP = 4; // between the caret line and the list
@@ -114,26 +130,9 @@ function caretRect(target: Field): { left: number; top: number; bottom: number }
 /** The part of the viewport the reader can actually see — smaller than the window while a phone's
  * keyboard is up. */
 function visibleArea(): { left: number; top: number; right: number; bottom: number } {
-  const layout = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
   const vv = window.visualViewport;
-  if (!vv) return layout;
-  // Clamped to the layout viewport: iOS standalone can report offsets that run past it.
-  return {
-    left: Math.max(vv.offsetLeft, layout.left),
-    top: Math.max(vv.offsetTop, layout.top),
-    right: Math.min(vv.offsetLeft + vv.width, layout.right),
-    bottom: Math.min(vv.offsetTop + vv.height, layout.bottom),
-  };
-}
-
-/** Keeps the highlighted option in view by scrolling the list alone. scrollIntoView would also pan
- * the viewport on iOS, which moved Den Hurtige's locked shell and closed the picker. */
-function revealActive(): void {
-  const item = list.querySelector<HTMLElement>('[aria-selected="true"]');
-  if (!item) return;
-  if (item.offsetTop < list.scrollTop) list.scrollTop = item.offsetTop;
-  else if (item.offsetTop + item.offsetHeight > list.scrollTop + list.clientHeight)
-    list.scrollTop = item.offsetTop + item.offsetHeight - list.clientHeight;
+  if (!vv) return { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+  return { left: vv.offsetLeft, top: vv.offsetTop, right: vv.offsetLeft + vv.width, bottom: vv.offsetTop + vv.height };
 }
 
 /** Under the caret's line if it fits, else above it (Den Hurtige's composer sits at the very
@@ -142,9 +141,7 @@ function place(): void {
   if (!field || list.hidden) return;
   const area = visibleArea();
   const box = field.getBoundingClientRect();
-  // Tested against the layout viewport, the space getBoundingClientRect measures in: iOS's visual
-  // viewport offsets disagree with it while the keyboard is up, which closed the picker at once.
-  if (box.bottom < 0 || box.top > window.innerHeight) {
+  if (box.bottom < area.top || box.top > area.bottom) {
     close(); // the field itself scrolled away
     return;
   }
@@ -168,12 +165,12 @@ function place(): void {
     list.style.maxHeight = `${above}px`;
     list.style.top = `${lineTop - GAP - Math.min(wanted, above)}px`;
   }
-  revealActive();
+  list.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
 }
 
-async function search(target: Field, query: string): Promise<void> {
+async function search(target: Field, q: string): Promise<void> {
   const mine = ++request;
-  const response = await fetch(`${lookupUrl}?q=${encodeURIComponent(query)}`, {
+  const response = await fetch(`${lookupUrl}?q=${encodeURIComponent(q)}`, {
     headers: { Accept: "application/json" },
   });
   if (!response.ok || mine !== request || field !== target) return;
@@ -182,6 +179,7 @@ async function search(target: Field, query: string): Promise<void> {
     ...data.residents.map((r) => ({ ref: String(r.id), name: r.name, avatar: r.avatar, detail: "" })),
     ...data.groups.map((g) => ({ ref: `g${g.id}`, name: g.name, avatar: "", detail: `Embedsgruppe · ${g.members}` })),
   ];
+  query = q;
   active = 0;
   render();
 }
@@ -219,6 +217,7 @@ document.addEventListener(
   "keydown",
   (event) => {
     if (!field || event.target !== field || list.hidden) return;
+    if (!options.length && event.key !== "Escape") return; // only the empty-state row is showing
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       active = (active + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
       render();

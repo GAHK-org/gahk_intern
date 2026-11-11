@@ -2578,4 +2578,5 @@
   .mention-picker li[aria-selected="true"], .mention-picker li:hover { background:var(--green-050); }
   .mention-picker img { width:22px; height:22px; border-radius:50%; object-fit:cover; }
   .mention-picker small { margin-left:auto; color:var(--faint); font-size:12px; }
+  .mention-picker li.mention-empty { cursor:default; color:var(--muted); background:none; }
 }
