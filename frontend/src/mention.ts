@@ -114,9 +114,26 @@ function caretRect(target: Field): { left: number; top: number; bottom: number }
 /** The part of the viewport the reader can actually see — smaller than the window while a phone's
  * keyboard is up. */
 function visibleArea(): { left: number; top: number; right: number; bottom: number } {
+  const layout = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
   const vv = window.visualViewport;
-  if (!vv) return { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
-  return { left: vv.offsetLeft, top: vv.offsetTop, right: vv.offsetLeft + vv.width, bottom: vv.offsetTop + vv.height };
+  if (!vv) return layout;
+  // Clamped to the layout viewport: iOS standalone can report offsets that run past it.
+  return {
+    left: Math.max(vv.offsetLeft, layout.left),
+    top: Math.max(vv.offsetTop, layout.top),
+    right: Math.min(vv.offsetLeft + vv.width, layout.right),
+    bottom: Math.min(vv.offsetTop + vv.height, layout.bottom),
+  };
+}
+
+/** Keeps the highlighted option in view by scrolling the list alone. scrollIntoView would also pan
+ * the viewport on iOS, which moved Den Hurtige's locked shell and closed the picker. */
+function revealActive(): void {
+  const item = list.querySelector<HTMLElement>('[aria-selected="true"]');
+  if (!item) return;
+  if (item.offsetTop < list.scrollTop) list.scrollTop = item.offsetTop;
+  else if (item.offsetTop + item.offsetHeight > list.scrollTop + list.clientHeight)
+    list.scrollTop = item.offsetTop + item.offsetHeight - list.clientHeight;
 }
 
 /** Under the caret's line if it fits, else above it (Den Hurtige's composer sits at the very
@@ -125,7 +142,9 @@ function place(): void {
   if (!field || list.hidden) return;
   const area = visibleArea();
   const box = field.getBoundingClientRect();
-  if (box.bottom < area.top || box.top > area.bottom) {
+  // Tested against the layout viewport, the space getBoundingClientRect measures in: iOS's visual
+  // viewport offsets disagree with it while the keyboard is up, which closed the picker at once.
+  if (box.bottom < 0 || box.top > window.innerHeight) {
     close(); // the field itself scrolled away
     return;
   }
@@ -149,7 +168,7 @@ function place(): void {
     list.style.maxHeight = `${above}px`;
     list.style.top = `${lineTop - GAP - Math.min(wanted, above)}px`;
   }
-  list.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+  revealActive();
 }
 
 async function search(target: Field, query: string): Promise<void> {
