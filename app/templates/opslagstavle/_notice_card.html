@@ -68,7 +68,7 @@
             predating the field), rather than rendered as a blank pill.
           {% endcomment %}
           <span class="notice-nameline">
-            <a class="notice-name author-link" href="{% url 'resident_profile' notice.author_id %}">{{ notice.author.full_name }}</a>
+            <a class="notice-name author-link" data-highlight-in href="{% url 'resident_profile' notice.author_id %}">{{ notice.author.full_name }}</a>
             {% if notice.author_embedsgruppe %}
               <span class="chip chip-embedsgruppe">{{ notice.author_embedsgruppe }}</span>
             {% endif %}
@@ -160,7 +160,7 @@
     {% endif %}
   </div>
 
-  <div class="board-body prose-gahk">
+  <div class="board-body prose-gahk" data-highlight-in>
     {% comment %}
       Truncated AFTER rendering, not before: truncatewords_html closes any tag it cuts through, while
       truncating the Markdown source would slice a construct in half and render as noise.
@@ -193,6 +193,11 @@
       {% endwith %}
     {% endif %}
   </div>
+
+  {% if notice.match_snippet and not full %}
+    {# Where a search matched, when that is past the excerpt above (opslagstavle/search.py). #}
+    <p class="notice-match" data-highlight-in>{{ notice.match_snippet }}</p>
+  {% endif %}
 
   {% if notice.thumbnail and not full %}
     {% comment %}

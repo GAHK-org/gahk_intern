@@ -31,7 +31,7 @@ from core.reactions import CREATED, apply_toggle, reaction_rows
 from core.uploads import attached_image, validate_image_upload
 from residents.permissions import current_resident, is_kitchen
 
-from . import live, services
+from . import live, search, services
 from .access import (
     access_required,
     can_delete,
@@ -116,14 +116,23 @@ def board(request: HttpRequest) -> HttpResponse:
     if selected not in Category.values:
         selected = ""  # an unknown category shows everything rather than 404ing
 
+    query = (request.GET.get("q") or "").strip()[:200]
+    periods = search.period_choices(_visible(request))
+    period = request.GET.get("periode") or ""
+    if period not in dict(periods):
+        period = ""
+
     qs = _list_queryset(request)
     if selected:
         qs = qs.filter(category=selected)
+    qs = search.in_period(search.search(qs, query), period)
 
     pinned = list(qs.pinned()[:MAX_PINNED])
     page = Paginator(qs.unpinned(), PAGE_SIZE).get_page(request.GET.get("page"))
 
+    marks = search.highlight_terms(query)
     _decorate([*pinned, *page.object_list], request)
+    search.attach_snippets([*pinned, *page.object_list], marks)
     return render(
         request,
         "opslagstavle/board.html",
@@ -132,6 +141,13 @@ def board(request: HttpRequest) -> HttpResponse:
             "page_obj": page,
             "categories": Category.choices,
             "selected_category": selected,
+            "query": query,
+            "highlight": marks,
+            "periods": periods,
+            "selected_period": period,
+            # Live updates cannot tell whether a new post matches a search, so the banner stays off.
+            "filtered": bool(query or period),
+            "result_count": page.paginator.count + len(pinned),
             "can_moderate": can_moderate(request),
             "events_allowed": events_allowed(request),
             "quick_emoji": EMOJI_SHORTLIST,
@@ -221,6 +237,8 @@ def live_cards(request: HttpRequest) -> HttpResponse:
         return HttpResponse(status=204)
     ids = [int(raw) for raw in request.GET.getlist("id") if raw.isdigit()][:MAX_LIVE_CARDS]
     notices = _decorate(list(_list_queryset(request).filter(pk__in=ids)), request)
+    # A searched board re-fetches its cards with the search, so a live card keeps its snippet.
+    search.attach_snippets(notices, search.highlight_terms((request.GET.get("q") or "").strip()[:200]))
     since = request.GET.get("siden", "")
     new_since: list[int] | None = None
     if since.isdigit():
