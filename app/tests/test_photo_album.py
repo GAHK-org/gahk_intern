@@ -418,23 +418,53 @@ def test_system_import_with_an_album_name_takes_the_paths_as_relative_to_that_al
 
 @pytest.mark.django_db
 @override_settings(PHOTO_ALBUM_IMPORT_TOKEN="migration-token")
-def test_system_import_refuses_to_add_to_a_locked_album() -> None:
-    """The import never lifts a lock; Fotogruppen unlocks the album on purpose first."""
+def test_system_import_adds_to_a_locked_album_the_import_script_made() -> None:
+    """The rest of an album too big for one archive, a file fixed since, a file new in Dropbox: the
+    script adds them to the album it imported and locked itself, which stays locked."""
     _system_import(("Fest/first.jpg", jpeg_bytes()), ("Fest/Lørdag/second.jpg", jpeg_bytes()))
+    assert Album.objects.get(name="Fest").is_locked()
+
+    album_import, status = _system_import(
+        ("new.jpg", jpeg_bytes()),
+        ("Lørdag/late.jpg", jpeg_bytes()),
+        ("Søndag/later.jpg", jpeg_bytes()),
+        name="Fest - del 2.zip",
+        album="Fest",
+    )
+
+    assert album_import.state == AlbumImportState.READY
+    assert (status["merged"], status["locked"]) == (True, True)
+    assert _tree() == [("Fest", None), ("Lørdag", "Fest"), ("Søndag", "Fest")]
+    assert Media.objects.count() == 5
+    assert Album.objects.get(name="Fest").is_locked()
+
+
+@pytest.mark.django_db
+@override_settings(PHOTO_ALBUM_IMPORT_TOKEN="migration-token")
+def test_system_import_refuses_to_add_to_a_locked_album_someone_else_made(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """The import never lifts anyone else's lock; Fotogruppen unlocks the album on purpose first."""
+    resident = make_resident()
+    fest = Album.objects.create(folder="2026", name="Fest")
+    upload_media(album=fest, uploaded_file=image_upload("first.jpg"), resident=resident, approved=True)
+    fest.manually_locked_at = timezone.now()
+    fest.save(update_fields=["manually_locked_at"])
+
     album_import, _ = _system_import(("Fest/new.jpg", jpeg_bytes()))
 
     assert album_import.state == AlbumImportState.FAILED
     assert album_import.errors == ['Albummet "Fest" er låst. Lås det op, før der tilføjes flere filer.']
 
-    # A locked sub-album refuses what would land in it, not the rest of the album.
+    # A locked sub-album someone made refuses what would land in it, not the rest of the album.
     _unlock("Fest")
-    Album.objects.filter(name="Lørdag").update(manually_locked_at=timezone.now())
+    Album.objects.create(folder="2026", name="Lørdag", parent=fest, manually_locked_at=timezone.now())
     refused, _ = _system_import(("Fest/new.jpg", jpeg_bytes()), ("Fest/Lørdag/late.jpg", jpeg_bytes()))
     accepted, _ = _system_import(("Fest/new.jpg", jpeg_bytes()), ("Fest/Søndag/late.jpg", jpeg_bytes()))
 
     assert refused.errors == ['Albummet "Lørdag" er låst. Lås det op, før der tilføjes flere filer.']
     assert accepted.state == AlbumImportState.READY
-    assert Media.objects.count() == 4
+    assert Media.objects.count() == 3
 
 
 @pytest.mark.django_db

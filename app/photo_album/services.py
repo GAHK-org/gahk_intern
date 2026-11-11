@@ -208,6 +208,7 @@ def store_upload(
     sha256: str | None = None,
     stored: tuple[str, UUID] | None = None,
     sidecar: bytes = b"",
+    locked_ok: bool = False,
 ) -> UploadOutcome:
     """Store an original and queue its derivatives after the database transaction commits.
 
@@ -218,8 +219,11 @@ def store_upload(
 
     With `stored`, (key, uuid), the original is already at that key, sent straight to the bucket
     (photo_album.direct_upload): `uploaded_file` is a local copy to read, and is not stored again.
+
+    `locked_ok` is for an import, whose plan has already refused every locked album it may not add
+    to (_plan_import): the import script's own albums are added to locked.
     """
-    if album.is_locked():
+    if album.is_locked() and not locked_ok:
         raise ValueError("Albummet er låst.")
     filename = normalize_name(Path(uploaded_file.name or "upload").name)
     sha256 = sha256 or file_sha256(uploaded_file)
@@ -596,6 +600,7 @@ def _plan_import(
     merge: bool = False,
     root_name: str = "",
     limit_video_size: bool = True,
+    resident: Resident | None = None,
     progress: Progress = no_progress,
 ) -> _ImportPlan:
     """Pass one: read, check and extract everything, collecting EVERY reason to refuse the import."""
@@ -734,11 +739,15 @@ def _plan_import(
     if plan.existing_root is not None:
         # A locked album takes nothing new, and the import does not lift the lock for it: someone
         # unlocks it on purpose first. Checked where each file would land, so a locked sub-album the
-        # archive does not touch is no reason to refuse it.
+        # archive does not touch is no reason to refuse it. The import script may add to an album
+        # one of its own imports made or added to, which it locked itself (as it may rename one):
+        # the rest of a big album it sends in parts, files fixed since, and files new in Dropbox.
         locked: dict[int, Album] = {}
         for folders in {item.folders for item in plan.files}:
             locking = _existing_album(plan.existing_root, folders).locking_album()
-            if locking is not None:
+            if locking is not None and not (
+                resident is not None and imported_by_import_script(locking, resident)
+            ):
                 locked[locking.pk] = locking
         plan.errors.extend(
             f'Albummet "{album.name}" er låst. Lås det op, før der tilføjes flere filer.'
@@ -771,7 +780,9 @@ def import_zip_album(
     is added to it, its folders to the sub-albums of the same names (created where missing). Only
     new files are stored — one with the same name AND the same bytes already in that album is left
     out; one that merely shares a name is a different photo and is kept beside it. A locked album
-    is still refused. The Dropbox import uses it to send what an earlier attempt left out.
+    is still refused, unless the import script imported it itself (imported_by_import_script). The
+    Dropbox import uses it to send what an earlier attempt left out, the parts of an album too big
+    for one archive, and files new in Dropbox.
 
     With `root_name`, that is the root album's name and the archive's paths are relative to it: the
     import does not descend through single folders. A retry of a few files from one sub-album would
@@ -798,6 +809,7 @@ def import_zip_album(
                     merge=merge,
                     root_name=root_name,
                     limit_video_size=not is_import_script(resident),
+                    resident=resident,
                     progress=progress,
                 )
         except zipfile.BadZipFile as exc:
@@ -870,6 +882,7 @@ def _store_import(
                         file_time_source=item.modified_from,
                         sha256=item.sha256,
                         sidecar=item.sidecar,
+                        locked_ok=True,  # _plan_import refused the locked albums it may not add to
                     )
                 if outcome.duplicate is not None:
                     plan.skipped.append(f"{item.member}: findes allerede i albummet (ignoreret)")
