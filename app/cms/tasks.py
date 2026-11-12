@@ -260,10 +260,10 @@ def sync_gahk_web() -> dict[str, Any]:
         legacy = import_pending_legacy_images()
         report["legacy_images"] = legacy.summary()
         if legacy.error:
-            errors.append(_short(f"Gamle billeder: {legacy.error}"))
+            errors.append(_short(f"Legacy images: {legacy.error}"))
     except Exception as exc:
         logger.exception("Syncing with gahk.dk: importing the old site's images failed")
-        errors.append(_short(f"Gamle billeder: {exc}"))
+        errors.append(_short(f"Legacy images: {exc}"))
 
     try:
         status = client.status()

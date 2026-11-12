@@ -449,7 +449,7 @@ def test_a_broken_legacy_import_still_lets_the_sync_publish_and_pull(
 
     report = tasks.sync_gahk_web()
 
-    assert report["errors"] == ["Gamle billeder: bucket says no"]
+    assert report["errors"] == ["Legacy images: bucket says no"]
     assert gahk_web.published and gahk_web.acks[0]["applications"] == [item["id"]]
 
 
@@ -766,6 +766,6 @@ def test_a_legacy_import_stopped_by_an_error_shows_it_in_the_sync_status(
 
     report = tasks.sync_gahk_web()
 
-    assert report["errors"] == ["Gamle billeder: upload/a.jpg: OSError: S3 is down"]
+    assert report["errors"] == ["Legacy images: upload/a.jpg: OSError: S3 is down"]
     assert gahk_web.published
     assert "S3 is down" in GahkWebSync.load().last_error
