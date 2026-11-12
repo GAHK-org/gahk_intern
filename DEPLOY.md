@@ -11,7 +11,8 @@ stays a separate **PHP + MariaDB** app on the same box. No SPA/API — one monol
 root, query string kept). The public site **gahk.dk** is a separate app, `gahk_web`, on Hetzner
 Webhosting — its own runbook is gahk_web's `DEPLOY.md`. This app still holds the website's content
 and pushes it there; gahk.dk forwards its old intranet paths (`/intern/…`, `/admin/…`, `/media/…`,
-`/wiki/…`, …) to intern.gahk.dk. Cutover order: §7.
+`/wiki/…`, …) to intern.gahk.dk with a 308, path and query kept, `/intern/` prefix included (so
+`gahk.dk/intern/x` → `intern.gahk.dk/intern/x` → `intern.gahk.dk/x`). Cutover order: §7.
 
 ## 1. Local
 Prereqs: [`uv`](https://docs.astral.sh/uv/) (Python deps) + [`go-task`](https://taskfile.dev) + Node + Docker.
@@ -811,6 +812,12 @@ moves, and this version must follow right behind it:
 1. A **day ahead**, lower the TTL of the gahk.dk A record (e.g. 300 s). Create `intern.gahk.dk`
    pointing at the Coolify VM; add the domain to this app in Coolify (and the wiki's route, §6) so
    Let's Encrypt issues its certificate. Add `https://intern.gahk.dk` to the bucket's CORS rule (§4c).
+   **The old version must answer on `intern.gahk.dk` before the DNS switch:** from step 3 until step 4
+   it receives every link gahk.dk forwards (`https://intern.gahk.dk/intern/…`, which it serves at
+   that path). So, on the version running now, add `intern.gahk.dk` to `DJANGO_ALLOWED_HOSTS` and
+   `https://intern.gahk.dk` to `CSRF_TRUSTED_ORIGINS` (keeping the gahk.dk entries), keep
+   `intern.gahk.dk` as a Coolify domain beside gahk.dk, and redeploy it. Check that
+   `https://intern.gahk.dk/intern/` shows the old login page and that logging in there works.
 2. **gahk_web installed by hand** (gahk_web's `DEPLOY.md` §8): a signed `POST /api/update` straight
    to the webhost's address, then `/api/health` there. It has no content yet, so its pages answer
    the 503 page *"Siden opdateres"*. Nothing can publish to it from here before step 4: the running
@@ -822,10 +829,13 @@ moves, and this version must follow right behind it:
    `CSRF_TRUSTED_ORIGINS`, `SITE_URL`, `PUBLIC_SITE_URL`) and `GAHK_WEB_URL` / `GAHK_WEB_KEY`
    (§4f). Within about 2 minutes `sync_gahk_web` sees that gahk.dk has no content and publishes
    everything; over the next few runs it moves the old site's images into the library and publishes
-   again with the pictures in place (§4f, "Legacy images"). Between 3 and 4, links forwarded from
-   gahk.dk land on the old version, which still expects `/intern/`.
+   again with the pictures in place (§4f, "Legacy images"). gahk.dk forwards `/intern/<rest>` to
+   `https://intern.gahk.dk/intern/<rest>`, keeping the prefix, so the same link works with both
+   versions: between 3 and 4 the old version serves it at its old path (step 1), and from step 4
+   this version answers it with a 308 to `/<rest>` (query and method kept).
 5. Verify: gahk.dk shows its pages and pictures, the Hjemmeside overview shows an OK publication,
-   `https://gahk.dk/intern/` → 308 to `https://intern.gahk.dk/`, a `https://gahk.dk/kalender/<token>.ics`
+   `https://gahk.dk/intern/` → 308 to `https://intern.gahk.dk/intern/` → 308 to `https://intern.gahk.dk/`
+   (`curl -sI` each hop), a `https://gahk.dk/kalender/<token>.ics`
    feed still answers, `https://intern.gahk.dk/health` is 200 (move the uptime monitor there, §4e),
    one upload to Arkiv works (CORS).
 6. **Rollback** = repoint gahk.dk back to the VM and redeploy the previous image with the old env.
@@ -868,10 +878,13 @@ host-only and renamed, and the old `.gahk.dk` one is deleted on the first reques
       delete `phpinfo.php`, pull & archive access logs).
 - [ ] MediaWiki migrated + upgraded to 1.43, reachable behind the proxy.
 - [ ] Staging smoke-tested; behavioural diff vs the live PHP site on key pages.
-- [ ] `intern.gahk.dk` live in Coolify, bucket CORS updated; gahk_web installed by hand and its
+- [ ] `intern.gahk.dk` live in Coolify, bucket CORS updated, and the **old** version answering on it
+      (`DJANGO_ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, Coolify domain; §7 step 1:
+      `https://intern.gahk.dk/intern/` shows its login); gahk_web installed by hand and its
       `/api/health` checked; then gahk.dk repointed and this version deployed with `GAHK_WEB_KEY`
-      set (§7 steps 2-4) → verify, including that the Hjemmeside overview shows no old images
-      waiting or failed (§4f) → keep MX on one.com.
+      set (§7 steps 2-4) → verify, including `https://gahk.dk/intern/` → `https://intern.gahk.dk/intern/`
+      → `https://intern.gahk.dk/` and that the Hjemmeside overview shows no old images waiting or
+      failed (§4f) → keep MX on one.com.
 - [ ] Uptime monitor on `https://intern.gahk.dk/health`; till, kitchen and Dropbox-script URLs updated.
 
 ## 9. Notes
