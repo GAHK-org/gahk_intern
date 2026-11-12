@@ -756,7 +756,8 @@ overview shows how many old images are still waiting and lists the ones that cou
 A file that GitHub does not have, or that is not a usable image, is logged once, recorded
 (LegacyImageFailure) and not asked for again; its references stay as they are (gahk.dk shows a broken
 picture or a plain green band there). Replace it in the editor, or retry by hand. A network problem
-records nothing: the next run tries again. The manual fallback runs the whole import at once and
+records nothing: the next run tries again. So does a storage or database error (S3 down), which also
+shows as the sync's `last_error`; what the run imported before it is still pointed at. The manual fallback runs the whole import at once and
 also retries the recorded failures:
 ```
 docker exec <web> python manage.py import_legacy_images              # from the pinned GitHub commit

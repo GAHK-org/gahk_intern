@@ -236,7 +236,10 @@ def sync_gahk_web() -> dict[str, Any]:
     # time (cms.legacy_images), so the outbox below never waits long; a failure here (S3 down) is
     # logged and the publish and the pull go ahead.
     try:
-        report["legacy_images"] = import_pending_legacy_images().summary()
+        legacy = import_pending_legacy_images()
+        report["legacy_images"] = legacy.summary()
+        if legacy.error:
+            errors.append(_short(f"Gamle billeder: {legacy.error}"))
     except Exception as exc:
         logger.exception("Syncing with gahk.dk: importing the old site's images failed")
         errors.append(_short(f"Gamle billeder: {exc}"))

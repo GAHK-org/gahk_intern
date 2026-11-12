@@ -144,6 +144,34 @@ def test_every_legacy_form_is_recognised() -> None:
     assert '"http://gahk.dk/public/image/upload/images/a.jpg"' in out  # unknown: untouched
 
 
+def test_css_after_an_unquoted_or_entity_quoted_url_is_not_part_of_the_file_name() -> None:
+    # nh3 writes the quotes of url("…") inside a style attribute as &quot;, and a declaration may
+    # follow the ")" without a space; neither belongs to the file name.
+    text = (
+        '<p style="background:url(/public/image/upload/images/gang.jpg);color:red">'
+        '<p style="background:url(&quot;/public/image/upload/images/Hall(1).png&quot;)">'
+    )
+    assert [legacy_images._name_of(candidates) for candidates in references(text)] == [
+        "upload/images/gang.jpg",
+        "upload/images/Hall(1).png",
+    ]
+    known = {
+        "upload/images/gang.jpg": "/media/cms/gang.jpg",
+        "upload/images/Hall(1).png": "/media/cms/hall.png",
+    }
+    assert rewrite(text, known.get) == (
+        '<p style="background:url(/media/cms/gang.jpg);color:red">'
+        '<p style="background:url(&quot;/media/cms/hall.png&quot;)">'
+    )
+
+
+def test_what_no_file_can_be_called_is_no_reference() -> None:
+    # A NUL (PostgreSQL text cannot hold one) or a path longer than legacy_path takes would break
+    # every run at the database instead of being recorded.
+    assert references('<img src="/public/image/upload/a%00.jpg">') == []
+    assert references(f'<img src="/public/image/upload/{"a" * 260}.jpg">') == []
+
+
 # ------------------------------------------------------------------------------------ import
 @pytest.mark.django_db
 def test_referenced_images_are_downloaded_from_the_pinned_commit_and_the_content_rewritten(
@@ -247,6 +275,7 @@ def test_nothing_referenced_means_no_request_and_no_change(github: FakeGitHub, f
         "unusable": 0,
         "deferred": 0,
         "unavailable": "",
+        "error": "",
         "busy": False,
     }
     assert github.urls == []
@@ -388,6 +417,69 @@ def test_an_edit_saved_during_the_import_is_kept(
     front_page.refresh_from_db()
     gang = CmsImage.objects.get(legacy_path="upload/images/gang.jpg")
     assert front_page.body == f'<p>Ny tekst</p><img src="{gang.url}">'
+
+
+@pytest.mark.django_db
+def test_a_reference_no_file_can_have_does_not_stop_the_import(github: FakeGitHub, front_page: Page) -> None:
+    _refer(front_page, "upload/a%00.jpg", f"upload/{'a' * 260}.jpg", "upload/images/gang.jpg")
+
+    result = import_pending_legacy_images()
+
+    assert result.imported == ["upload/images/gang.jpg"] and github.paths() == ["upload/images/gang.jpg"]
+    assert not LegacyImageFailure.objects.exists()
+    assert legacy_state().waiting == 0
+
+
+@pytest.mark.django_db
+def test_one_file_referenced_in_two_forms_is_imported_once(github: FakeGitHub, front_page: Page) -> None:
+    front_page.body = (
+        '<p style="background:url(/public/image/upload/images/Hall(1).png)">x</p>'
+        '<img src="/public/image/upload/images/Hall(1).png">'
+    )
+    front_page.save()
+
+    result = import_pending_legacy_images()
+
+    assert result.imported == ["upload/images/Hall(1).png"] and github.paths() == [
+        "upload/images/Hall(1).png"
+    ]
+    hall = CmsImage.objects.get(legacy_path="upload/images/Hall(1).png")
+    front_page.refresh_from_db()
+    assert front_page.body == f'<p style="background:url({hall.url})">x</p><img src="{hall.url}">'
+
+
+@pytest.mark.django_db
+def test_an_unexpected_error_still_rewrites_what_was_imported_before_it(
+    github: FakeGitHub, front_page: Page, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cms import services
+
+    _refer(front_page, "upload/images/gang.jpg", "upload/images/Hall(1).png")
+    real_store = services.store_prepared_image
+
+    def storage_breaks_on_the_second(*args: Any, **kwargs: Any) -> CmsImage:  # noqa: ANN401
+        if CmsImage.objects.exists():
+            raise OSError("S3 is down")
+        return real_store(*args, **kwargs)
+
+    monkeypatch.setattr(services, "store_prepared_image", storage_breaks_on_the_second)
+
+    result = import_pending_legacy_images()
+
+    gang = CmsImage.objects.get()
+    front_page.refresh_from_db()
+    assert (
+        f'src="{gang.url}"' in front_page.body
+        and "/public/image/upload/images/Hall(1).png" in front_page.body
+    )
+    assert result.imported == [gang.legacy_path] and result.rewritten == 1
+    assert result.error == "upload/images/Hall(1).png: OSError: S3 is down" and result.deferred == 1
+    assert not LegacyImageFailure.objects.exists()  # tried again next run
+
+    monkeypatch.setattr(services, "store_prepared_image", real_store)
+    assert import_pending_legacy_images().imported == ["upload/images/Hall(1).png"]
+    front_page.refresh_from_db()
+    assert "/public/image/" not in front_page.body
 
 
 @pytest.fixture

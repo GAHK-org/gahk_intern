@@ -55,6 +55,10 @@ class Command(BaseCommand):
         if result.imported or result.rewritten:
             publish_on_commit("save")
             self.stdout.write("Queued a publish to gahk.dk.")
+        if result.error:
+            raise CommandError(
+                f"Stopped with {result.deferred} images left: {result.error}. Run it again later."
+            )
         if result.unavailable:
             raise CommandError(
                 f"Stopped with {result.deferred} images left: {result.unavailable}. Run it again later."

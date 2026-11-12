@@ -93,8 +93,10 @@ IMPORT_LOCK_ID = 0x6761686B6C6567
 
 # A legacy reference, wherever it sits: an attribute, a CSS url(), or the whole of a background
 # field. The look-behind keeps it from matching inside a longer URL (example.com/public/image/…).
-# `rest` stops at what cannot be part of a URL in an attribute; a ")" it swallows from an unquoted
-# CSS url() is given back below when the file name does not end in one.
+# `rest` stops at what cannot be part of a URL in an attribute. In a style attribute it may swallow
+# the end of the CSS: the ")" of an unquoted url() and what follows it without a space
+# ("…/a.jpg);color:red"), or the "&quot;)" of url("…"), which nh3 writes with entities. _options
+# cuts those off again, at a ")" or "&", when the file name does not go on past it.
 LEGACY_REF_RE = re.compile(
     r"(?<![\w./:-])"
     r"(?:https?://(?:www\.)?gahk\.dk)?"
@@ -121,6 +123,10 @@ KIND_OF: dict[type[Model], str] = {
 }
 
 ACCEPTED_TYPES = frozenset(EXTENSION_TYPES.values())
+
+# The longest legacy path that fits CmsImage.legacy_path and LegacyImageFailure.legacy_path. A longer
+# one names no file of the old site, and storing it would fail every run at the database.
+MAX_PATH_LENGTH = 255
 
 
 # ------------------------------------------------------------------------------------- sources
@@ -228,14 +234,20 @@ def _normalize(rest: str) -> str | None:
     parts = [part for part in path.split("/") if part not in ("", ".")]
     if not parts or ".." in parts:
         return None
-    return "/".join(parts)
+    normalized = "/".join(parts)
+    # A control character (PostgreSQL text cannot even hold a NUL) or an overlong path is no file of
+    # the old site; taken as one, it would break every run when it is recorded.
+    if len(normalized) > MAX_PATH_LENGTH or any(ord(char) < 0x20 or ord(char) == 0x7F for char in normalized):
+        return None
+    return normalized
 
 
 def references(text: str) -> list[list[str]]:
     """The legacy references in `text`, each as its candidate paths below static/legacy/image/.
 
-    Usually one candidate. A reference inside an unquoted CSS url(…) has two — with and without the
-    ")" it swallowed — because a file name may end in ")" itself; the file decides which it is.
+    Usually one candidate. A reference inside a CSS url(…) may have more — with and without the end
+    of the CSS it swallowed (see _options) — because a file name may contain ")" itself; the file
+    decides which it is.
     """
     found: list[list[str]] = []
     for match in LEGACY_REF_RE.finditer(text or ""):
@@ -245,14 +257,25 @@ def references(text: str) -> list[list[str]]:
     return found
 
 
-def _candidates(rest: str) -> list[str]:
-    """`rest` itself and, for an unquoted CSS url(), `rest` without the ")" it swallowed."""
+def _options(rest: str) -> list[str]:
+    """`rest` itself, then each shorter piece of it that ends right before a ")" or "&" and still
+    looks like a file name (has an extension): the swallowed end of a CSS url(), cut off. Longest
+    first, because a file name may contain ")" itself ("Hall(1).png")."""
     options = [rest]
-    stripped = rest
-    while stripped.endswith(")"):
-        stripped = stripped[:-1]
-        options.append(stripped)
-    return [path for option in options if (path := _normalize(option))]
+    for cut in range(len(rest) - 1, 0, -1):
+        if rest[cut] in ")&" and PurePosixPath(rest[:cut]).suffix:
+            options.append(rest[:cut])
+    return options
+
+
+def _candidates(rest: str) -> list[str]:
+    """The paths `rest` may name (see _options), normalized; each once."""
+    paths: list[str] = []
+    for option in _options(rest):
+        path = _normalize(option)
+        if path and path not in paths:
+            paths.append(path)
+    return paths
 
 
 def _image_candidates(candidates: list[str]) -> list[str]:
@@ -271,15 +294,12 @@ def rewrite(text: str, url_for: Callable[[str], str | None]) -> str:
 
     def _replace(match: re.Match[str]) -> str:
         rest = match.group("rest")
-        trimmed = rest
-        while True:
-            path = _normalize(trimmed)
+        for option in _options(rest):
+            path = _normalize(option)
             new_url = url_for(path) if path else None
             if new_url:
-                return new_url + rest[len(trimmed) :]
-            if not trimmed.endswith(")"):
-                return match.group(0)
-            trimmed = trimmed[:-1]
+                return new_url + rest[len(option) :]
+        return match.group(0)
 
     return LEGACY_REF_RE.sub(_replace, text or "")
 
@@ -320,6 +340,7 @@ class ConversionResult:
     skipped: list[str] = field(default_factory=list)  # failed in an earlier run, not asked again
     deferred: int = 0  # references left for a later run (budget spent, or source unavailable)
     unavailable: str = ""  # why the source could not be asked, when it could not
+    error: str = ""  # an unexpected failure (S3, the database) that stopped the downloads
     busy: bool = False  # another import was running, so this one did nothing
 
     def summary(self) -> dict[str, Any]:
@@ -330,6 +351,7 @@ class ConversionResult:
             "unusable": len(self.unusable),
             "deferred": self.deferred,
             "unavailable": self.unavailable,
+            "error": self.error,
             "busy": self.busy,
         }
 
@@ -488,19 +510,40 @@ def _convert(
             continue
         todo.append(candidates)
 
+    # Two references may name the same file (an unquoted url() and a plain src): it is asked for once.
+    asked: set[str] = set()
+
+    def settled(candidates: list[str]) -> bool:
+        return any(path in library or path in asked for path in candidates)
+
+    downloads = 0
     for index, candidates in enumerate(todo):
-        if (max_files is not None and index >= max_files) or _out_of_time(deadline):
-            result.deferred = len(todo) - index
+        if settled(candidates):
+            continue
+        if (max_files is not None and downloads >= max_files) or _out_of_time(deadline):
+            result.deferred = sum(1 for left in todo[index:] if not settled(left))
             break
+        downloads += 1
+        asked.update(candidates)
         try:
             image = _import(candidates, source, deadline, result)
         except LegacySourceUnavailable as exc:
             logger.warning("Legacy image import stopped, to go on in a later run: %s", exc)
             result.unavailable = str(exc)[:500]
-            result.deferred = len(todo) - index
-            break
-        if image is not None and image.legacy_path:
-            library[image.legacy_path] = image
+        except Exception as exc:
+            # Storage or the database, not the file: the next run tries it again. What this run did
+            # import is still pointed at below, so a stubborn error never holds that back.
+            logger.exception(
+                "Legacy image import stopped at %s, to go on in a later run", _name_of(candidates)
+            )
+            result.error = f"{_name_of(candidates)}: {exc.__class__.__name__}: {exc}"[:500]
+        else:
+            if image is not None and image.legacy_path:
+                library[image.legacy_path] = image
+            continue
+        asked.difference_update(candidates)
+        result.deferred = sum(1 for left in todo[index:] if not settled(left))
+        break
 
     if not library:
         return result  # nothing to point the content at: no rewrite, no transaction

@@ -647,3 +647,22 @@ def test_the_public_site_is_not_served_here(path: str) -> None:
 def test_begivenheder_is_the_intranet_events_app_and_needs_a_login() -> None:
     response = Client().get("/begivenheder/")
     assert response.status_code == 302 and "login" in response.headers["Location"]
+
+
+@pytest.mark.django_db
+def test_a_legacy_import_stopped_by_an_error_shows_it_in_the_sync_status(
+    gahk_web: FakeGahkWeb, front_page: Page, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cms.legacy_images import ConversionResult
+
+    monkeypatch.setattr(
+        tasks,
+        "import_pending_legacy_images",
+        lambda: ConversionResult(error="upload/a.jpg: OSError: S3 is down"),
+    )
+
+    report = tasks.sync_gahk_web()
+
+    assert report["errors"] == ["Gamle billeder: upload/a.jpg: OSError: S3 is down"]
+    assert gahk_web.published
+    assert "S3 is down" in GahkWebSync.load().last_error
