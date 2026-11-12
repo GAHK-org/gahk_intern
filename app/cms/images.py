@@ -15,7 +15,6 @@ here — core.uploads has already turned it into a JPEG.
 """
 
 import hashlib
-import re
 import unicodedata
 from dataclasses import dataclass
 from io import BytesIO
@@ -128,32 +127,72 @@ def content_type_of(data: bytes) -> str | None:
 
 
 # ------------------------------------------------------------------------- gahk.dk's image URLs
-BILLEDER_NAME_RE = re.compile(r"[^a-z0-9]+")
-DANISH_LETTERS = str.maketrans({"æ": "ae", "Æ": "Ae", "ø": "oe", "Ø": "Oe", "å": "aa", "Å": "Aa"})
-STORED_STEM_RE = re.compile(r"[^A-Za-z0-9_-]+")
+# A name keeps its letters, Danish or not: names are UTF-8 everywhere, and wherever one reaches a URL
+# it is percent-encoded (Storage.url() for /media/…, quote() for a preview's background). Only
+# NFC-normalized first, because a Mac hands over "å" as "a" plus a combining ring (NFD), which would
+# otherwise give two different names, and URLs, for what looks like the same file.
+STORED_STEM_MAX = 100
+BILLEDER_STEM_MAX_BYTES = 120  # gahk.dk's file system allows 255 bytes per name, not characters
+SEPARATORS = "-_."
+
+
+def _is_letter_or_digit(char: str) -> bool:
+    """A Unicode letter or decimal digit: "æ", "é", "ß" and "7" are; "²", "(" and a space are not."""
+    category = unicodedata.category(char)
+    return category[0] == "L" or category == "Nd"
+
+
+def _letters_runs(text: str, keep: str, replacement: str) -> str:
+    """`text` with every run of characters that are neither letters, digits nor in `keep` turned into
+    `replacement`, a run of separators cut down to its first, and none at either end. Combining
+    marks are dropped, as Django's get_valid_filename drops them."""
+    out: list[str] = []
+    for char in text:
+        if unicodedata.category(char)[0] == "M":
+            continue  # a combining mark NFC had no letter for ("İ" lower-cased is "i" + a dot): dropped
+        if not (_is_letter_or_digit(char) or char in keep):
+            char = replacement
+        if char in SEPARATORS and (not out or out[-1] in SEPARATORS):
+            continue  # never two in a row, and never one first
+        out.append(char)
+    return "".join(out).rstrip(SEPARATORS)
+
+
+def _cut_utf8(text: str, max_bytes: int) -> str:
+    return text.encode()[:max_bytes].decode(errors="ignore")
 
 
 def stored_stem(file_name: str) -> str:
-    """An ASCII stem for a library image's storage name ("Tovtrækning 2019" → "Tovtraekning_2019").
+    """The stem of a library image's storage name ("Tovtrækning 2019 (2).jpg" → "Tovtrækning_2019_2").
 
-    Storage names appear in /media/cms/… URLs, which gahk.dk's preview only takes as plain ASCII; an
-    "æ" there (Django keeps Unicode letters in file names) would make the preview fall back.
+    Letters stay as they are (NFC); spaces and everything that is not a letter, a digit, "-", "_" or
+    "." become "_". That is Django's own get_valid_filename, minus the punctuation it would still let
+    through, so a storage name never needs more in a URL than percent-encoding of its letters.
     """
-    stem = PurePath(file_name).stem.translate(DANISH_LETTERS)
-    ascii_stem = unicodedata.normalize("NFKD", stem).encode("ascii", "ignore").decode()
-    return STORED_STEM_RE.sub("_", ascii_stem).strip("_-")[:100] or "billede"
+    stem = unicodedata.normalize("NFC", PurePath(file_name).stem)
+    cleaned = _letters_runs(stem, SEPARATORS, "_")[:STORED_STEM_MAX].rstrip(SEPARATORS)
+    return unicodedata.normalize("NFC", cleaned) or "billede"
 
 
 def billeder_name(file_name: str, content_type: str) -> str:
-    """The file name part of an image's gahk.dk URL: the basename slugified, lower-case, with an
-    extension that matches its content type (gahk.dk checks that it does)."""
+    """The file name part of an image's gahk.dk URL: the basename in lower case, its letters kept
+    (NFC), every other run of characters a "-", with an extension that matches its content type
+    (gahk.dk checks that it does).
+
+    Never starts with "_" or ".": gahk.dk keeps its own WebP variants ("_960w.webp") beside the copy.
+    Only "-" separates words, so an ASCII name is spelled as it always was and its URL is unchanged.
+    """
     path = PurePath(file_name)
-    ascii_stem = unicodedata.normalize("NFKD", path.stem).encode("ascii", "ignore").decode().lower()
-    stem = BILLEDER_NAME_RE.sub("-", ascii_stem).strip("-")[:80].strip("-") or "billede"
+    lowered = unicodedata.normalize("NFC", unicodedata.normalize("NFC", path.stem).lower())
+    # Keep only lower-case or caseless letters: an upper-case letter with no lower-case form is rare,
+    # and gahk.dk takes lower-case names only.
+    words = "".join(c if unicodedata.category(c) not in ("Lu", "Lt") else "-" for c in lowered)
+    stem = _letters_runs(words, "-", "-")
+    stem = unicodedata.normalize("NFC", _cut_utf8(stem, BILLEDER_STEM_MAX_BYTES)).rstrip(SEPARATORS)
     extension = path.suffix.lower()
     if EXTENSION_TYPES.get(extension) != content_type:
         extension = next(ext for ext, kind in EXTENSION_TYPES.items() if kind == content_type)
-    return f"{stem}{extension}"
+    return f"{stem or 'billede'}{extension}"
 
 
 def billeder_url(sha256: str, file_name: str, content_type: str) -> str:

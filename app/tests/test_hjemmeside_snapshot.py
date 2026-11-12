@@ -3,10 +3,13 @@
 import hashlib
 import json
 import re
+import unicodedata
 from io import BytesIO
+from urllib.parse import unquote
 
 import pytest
 from django.core.files.base import ContentFile
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from PIL import Image
 
@@ -21,6 +24,7 @@ from cms.models import (
     PageVersion,
     SiteSettings,
 )
+from cms.services import upload_image
 from cms.snapshot import (
     INTERN_LINK_RE,
     build_snapshot,
@@ -30,7 +34,13 @@ from cms.snapshot import (
     rewrite_intern_links,
 )
 
-BILLEDER_RE = re.compile(r"^/billeder/([0-9a-f]{16})/([a-z0-9]+(?:[-_.][a-z0-9]+)*)$")
+# What gahk.dk takes: lower-case NFC letters and digits, words joined by one "-", "_" or ".".
+BILLEDER_RE = re.compile(r"^/billeder/([0-9a-f]{16})/([^\W_]+(?:[-_.][^\W_]+)*)$")
+
+
+def _gahk_dk_takes(name: str) -> bool:
+    match = BILLEDER_RE.match(f"/billeder/{'0' * 16}/{name}")
+    return bool(match) and name == name.lower() and unicodedata.is_normalized("NFC", name)
 
 
 def _image_bytes(fmt: str = "JPEG", size: tuple[int, int] = (40, 30)) -> bytes:
@@ -241,23 +251,92 @@ def test_a_preview_keeps_library_images_on_intern(front_page: Page) -> None:
 
 
 @pytest.mark.django_db
-def test_a_preview_background_with_a_danish_letter_is_a_plain_ascii_path(front_page: Page) -> None:
-    """gahk.dk takes a preview background only as /media/ plus ASCII; anything else falls back."""
+def test_a_preview_background_with_a_danish_letter_is_percent_encoded(front_page: Page) -> None:
+    """gahk.dk takes a preview background as /media/cms/ plus a percent-encoded path."""
     old = CmsImage(caption="Gammel")
-    old.file.save("Værelse.jpg", ContentFile(_image_bytes()), save=True)  # stored before the fold
-    draft = Page(slug="kladde", header="Kladde", body="", background_image=old.url)
+    old.file.save("Værelse (1).jpg", ContentFile(_image_bytes()), save=True)  # Django's own name
+    new = upload_image(SimpleUploadedFile("Værelse.jpg", _image_bytes(), content_type="image/jpeg"), "", None)
+    for image in (old, new):
+        draft = Page(slug="kladde", header="Kladde", body="", background_image=image.url)
 
-    background = preview_request(draft)["item"]["background"]
+        background = preview_request(draft)["item"]["background"]
 
-    assert background.startswith("/media/cms/") and "V%C3%A6relse" in background
-    assert background.isascii()
+        assert background.startswith("/media/cms/") and "V%C3%A6relse" in background
+        assert re.fullmatch(r"/media/cms(?:/(?:[A-Za-z0-9._~-]|%[0-9A-Fa-f]{2})+)+", background)
+        assert unquote(background) == f"/media/{image.file.name}"
 
 
-def test_library_names_are_stored_in_ascii() -> None:
+@pytest.mark.parametrize(
+    ("file_name", "stem"),
+    [
+        ("Tovtrækning_2019_1.jpg", "Tovtrækning_2019_1"),
+        ("Forårskoncert 2020 (2).JPG", "Forårskoncert_2020_2"),
+        ("Ølkælder-søndag.png", "Ølkælder-søndag"),
+        ("Café.jpg", "Café"),
+        (unicodedata.normalize("NFD", "Værelse på Østergården.jpg"), "Værelse_på_Østergården"),
+        ("Skærmbillede 2026-09-04 kl. 10.11.12.png", "Skærmbillede_2026-09-04_kl.10.11.12"),
+        ("İstanbul.jpg", "İstanbul"),
+        ("…….jpg", "billede"),
+        ("._.jpg", "billede"),
+    ],
+)
+def test_library_names_keep_their_letters(file_name: str, stem: str) -> None:
     from cms.images import stored_stem
 
-    assert stored_stem("Tovtrækning_2019_1.jpg") == "Tovtraekning_2019_1"
-    assert stored_stem("Forårskoncert 2020 (2).JPG") == "Foraarskoncert_2020_2"
-    assert stored_stem("Ølkælder-søndag.png") == "Oelkaelder-soendag"
-    assert stored_stem("Café.jpg") == "Cafe"
-    assert stored_stem("…….jpg") == "billede"
+    assert stored_stem(file_name) == stem
+    assert unicodedata.is_normalized("NFC", stored_stem(file_name))
+
+
+@pytest.mark.parametrize(
+    ("file_name", "content_type", "name"),
+    [
+        ("cms/2026/11/Tovtrækning_2019_1.jpg", "image/jpeg", "tovtrækning-2019-1.jpg"),
+        ("Forårskoncert 2020 (2).JPG", "image/jpeg", "forårskoncert-2020-2.jpg"),
+        ("ØLKÆLDER søndag.jpeg", "image/jpeg", "ølkælder-søndag.jpeg"),
+        (unicodedata.normalize("NFD", "Værelse på Øen.png"), "image/png", "værelse-på-øen.png"),
+        ("Crème brûlée.gif", "image/gif", "crème-brûlée.gif"),
+        ("STRAẞE.jpg", "image/jpeg", "straße.jpg"),
+        ("İstanbul.jpg", "image/jpeg", "istanbul.jpg"),
+        ("Have_Foto_aB3x9Zq.png", "image/png", "have-foto-ab3x9zq.png"),  # ASCII: as it always was
+        ("_960w.webp", "image/webp", "960w.webp"),  # never one of gahk.dk's own variant names
+        (".skjult.jpg", "image/jpeg", "skjult.jpg"),
+        ("…….jpg", "image/jpeg", "billede.jpg"),
+        ("foto.jpg", "image/png", "foto.png"),  # the extension follows the content
+    ],
+)
+def test_billeder_names_keep_their_letters_in_lower_case(
+    file_name: str, content_type: str, name: str
+) -> None:
+    from cms.images import billeder_name
+
+    assert billeder_name(file_name, content_type) == name
+    assert _gahk_dk_takes(name)
+
+
+def test_a_long_billeder_name_is_cut_by_bytes_not_letters() -> None:
+    from cms.images import BILLEDER_STEM_MAX_BYTES, billeder_name
+
+    for letter in ("a", "æ", "あ"):
+        name = billeder_name(letter * 300 + ".jpg", "image/jpeg")
+        stem = name.removesuffix(".jpg")
+        assert len(stem.encode()) <= BILLEDER_STEM_MAX_BYTES and set(stem) == {letter}
+        assert _gahk_dk_takes(name)
+
+
+@pytest.mark.django_db
+def test_an_upload_from_a_mac_keeps_its_letters_in_both_urls(front_page: Page) -> None:
+    """A Mac sends "å" decomposed (NFD); the library stores it composed, and gahk.dk's URL has it."""
+    upload = SimpleUploadedFile(
+        unicodedata.normalize("NFD", "Forår i gården.jpg"), _image_bytes(), "image/jpeg"
+    )
+    image = upload_image(upload, "Forår", None)
+    front_page.body = f'<img src="{image.url}">'
+    front_page.save()
+
+    assert image.file.name.startswith("cms/") and "/Forår_i_gården" in image.file.name
+    assert unicodedata.is_normalized("NFC", image.file.name)
+    assert "/For%C3%A5r_i_g%C3%A5rden" in image.url  # percent-encoded UTF-8, as a URL
+    snapshot = build_snapshot().data
+    [entry] = snapshot["images"]
+    assert entry["url"].endswith("/forår-i-gården.jpg") and _gahk_dk_takes(entry["url"].rsplit("/", 1)[1])
+    assert f'src="{entry["url"]}"' in snapshot["pages"][0]["body"]

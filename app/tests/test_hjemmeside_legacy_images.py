@@ -226,7 +226,8 @@ def test_referenced_images_are_downloaded_from_the_pinned_commit_and_the_content
     with gang.file.open("rb") as handle:
         assert max(Image.open(handle).size) == 2400  # downscaled like an upload
     nytaar = CmsImage.objects.get(legacy_path="upload/images/aaretsgang/nytår 2014-15.jpg")
-    assert nytaar.url.isascii()  # stored under an ASCII name
+    assert "/nytår_2014-15" in nytaar.file.name  # the name keeps its letters
+    assert "/nyt%C3%A5r_2014-15" in nytaar.url  # and is percent-encoded as a URL
     front_page.refresh_from_db()
     assert front_page.background_image == gang.url
     assert f'src="{gang.url}"' in front_page.body and f'src="{nytaar.url}"' in front_page.body

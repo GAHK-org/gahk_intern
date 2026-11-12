@@ -78,8 +78,9 @@ working when intern or the image storage is down; editing needs intern.
 - A picture that cannot be fetched or is not a usable image is reported once and not tried again;
   the overview lists them, and a manual import can try them again. Until a picture has moved, it is
   missing on gahk.dk.
-- Images keep their file name, spelled without Danish letters (Værelse.jpg is stored as
-  Vaerelse.jpg), so every image address is plain ASCII.
+- Images keep their file name, Danish letters included (Værelse på Øen.jpg is stored as
+  Værelse_på_Øen.jpg and shown on gahk.dk as værelse-på-øen.jpg). Images already stored under a
+  name without them keep that name.
 
 ## Publishing
 
@@ -116,6 +117,8 @@ working when intern or the image storage is down; editing needs intern.
   the image library like any other picture, and the repository no longer holds them. The import
   fetches them from the repository's public history (one fixed version), so nobody has to remember
   to supply a copy at the move.
+- **File names stay UTF-8.** Æ, ø and å are kept, not spelled out: a name only has to be
+  normalized (a Mac sends "å" as two characters) and percent-encoded where it is part of an address.
 - **Plain-text headings.** They were shown as HTML without ever being cleaned.
 - **The menu is data.** It was written into the code, so changing it needed a developer.
 - **A visual editor that keeps the old pages intact.** Editors should not need HTML, but the old
