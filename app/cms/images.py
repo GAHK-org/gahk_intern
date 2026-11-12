@@ -133,6 +133,7 @@ def content_type_of(data: bytes) -> str | None:
 # otherwise give two different names, and URLs, for what looks like the same file.
 STORED_STEM_MAX = 100
 BILLEDER_STEM_MAX_BYTES = 120  # gahk.dk's file system allows 255 bytes per name, not characters
+BILLEDER_STEM_MAX_CHARS = 80  # an ASCII name was always cut here; its URL must not change
 SEPARATORS = "-_."
 
 
@@ -180,7 +181,8 @@ def billeder_name(file_name: str, content_type: str) -> str:
     (gahk.dk checks that it does).
 
     Never starts with "_" or ".": gahk.dk keeps its own WebP variants ("_960w.webp") beside the copy.
-    Only "-" separates words, so an ASCII name is spelled as it always was and its URL is unchanged.
+    Only "-" separates words, and the stem is cut at 80 characters as it always was (and at 120 bytes),
+    so an ASCII name is spelled as before and its URL is unchanged.
     """
     path = PurePath(file_name)
     lowered = unicodedata.normalize("NFC", unicodedata.normalize("NFC", path.stem).lower())
@@ -188,7 +190,8 @@ def billeder_name(file_name: str, content_type: str) -> str:
     # and gahk.dk takes lower-case names only.
     words = "".join(c if unicodedata.category(c) not in ("Lu", "Lt") else "-" for c in lowered)
     stem = _letters_runs(words, "-", "-")
-    stem = unicodedata.normalize("NFC", _cut_utf8(stem, BILLEDER_STEM_MAX_BYTES)).rstrip(SEPARATORS)
+    stem = _cut_utf8(stem[:BILLEDER_STEM_MAX_CHARS], BILLEDER_STEM_MAX_BYTES)
+    stem = unicodedata.normalize("NFC", stem).rstrip(SEPARATORS)
     extension = path.suffix.lower()
     if EXTENSION_TYPES.get(extension) != content_type:
         extension = next(ext for ext, kind in EXTENSION_TYPES.items() if kind == content_type)

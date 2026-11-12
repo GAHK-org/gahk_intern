@@ -313,14 +313,24 @@ def test_billeder_names_keep_their_letters_in_lower_case(
     assert _gahk_dk_takes(name)
 
 
-def test_a_long_billeder_name_is_cut_by_bytes_not_letters() -> None:
+def test_a_long_billeder_name_is_cut_by_bytes_as_well_as_letters() -> None:
     from cms.images import BILLEDER_STEM_MAX_BYTES, billeder_name
 
-    for letter in ("a", "æ", "あ"):
+    for letter, length in (("a", 80), ("æ", 60), ("あ", 40)):
         name = billeder_name(letter * 300 + ".jpg", "image/jpeg")
         stem = name.removesuffix(".jpg")
-        assert len(stem.encode()) <= BILLEDER_STEM_MAX_BYTES and set(stem) == {letter}
+        assert len(stem.encode()) <= BILLEDER_STEM_MAX_BYTES and stem == letter * length
         assert _gahk_dk_takes(name)
+
+
+def test_a_long_ascii_billeder_name_is_cut_where_it_always_was() -> None:
+    """Already published URLs must not move: an ASCII stem is still cut at 80 characters."""
+    from cms.images import billeder_name
+
+    stored = "cms/2024/03/" + "Sommerfest_i_gaarden_" * 5 + "aB3x9Zq.jpg"  # a 100-letter stem + suffix
+    name = billeder_name(stored, "image/jpeg")
+
+    assert name == ("sommerfest-i-gaarden-" * 4)[:80].strip("-") + ".jpg"
 
 
 @pytest.mark.django_db
