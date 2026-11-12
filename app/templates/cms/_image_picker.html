@@ -25,7 +25,7 @@
           </label>
         {% endfor %}
       </div>
-      <p class="muted hj-help">Mangler billedet? <a href="{% url 'hjemmeside:image_list' %}" target="_blank" rel="noopener">Læg det i billedbiblioteket</a> og genindlæs siden.</p>
+      <p class="muted hj-help">Mangler billedet? <a href="{% url 'cms:image_list' %}" target="_blank" rel="noopener">Læg det i billedbiblioteket</a> og genindlæs siden.</p>
     </details>
     {{ field.errors }}
   </fieldset>

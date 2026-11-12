@@ -1,13 +1,13 @@
-{% extends "hjemmeside/base.html" %}
-{% block hj_title %}Sider{% endblock %}
-{% block hj_content %}
+{% extends "cms/base.html" %}
+{% block cms_title %}Sider{% endblock %}
+{% block cms_content %}
   <div class="page-head">
     <div>
       <p class="eyebrow">Hjemmeside</p>
       <h1>Sider <span class="muted hj-count">{{ page_count }}</span></h1>
     </div>
     <div class="head-actions">
-      <a class="btn" href="{% url 'hjemmeside:page_create' %}">Ny side</a>
+      <a class="btn" href="{% url 'cms:page_create' %}">Ny side</a>
     </div>
   </div>
 
@@ -18,7 +18,7 @@
         {% for row in section.rows %}
           <li class="hj-row{% if '/' in row.page.slug|default:'' %} hj-row-sub{% endif %}">
             <div class="hj-row-main">
-              <a class="hj-row-title" href="{% url 'hjemmeside:page_edit' row.page.pk %}">{{ row.page.header }}</a>
+              <a class="hj-row-title" href="{% url 'cms:page_edit' row.page.pk %}">{{ row.page.header }}</a>
               <div class="hj-row-meta">
                 {% if row.path is not None %}<span class="hj-path">/{{ row.path }}</span>{% endif %}
                 {% if row.menu_state == "front" %}

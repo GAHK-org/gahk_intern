@@ -62,8 +62,8 @@ View = Callable[..., HttpResponseBase]
 
 # How long the overview waits for a requested publish or code update before it stops asking.
 PENDING_TIMEOUT = datetime.timedelta(minutes=3)
-PUBLISH_PENDING_KEY = "hjemmeside_publish_requested"
-UPDATE_PENDING_KEY = "hjemmeside_update_requested"
+PUBLISH_PENDING_KEY = "cms_publish_requested"
+UPDATE_PENDING_KEY = "cms_update_requested"
 
 # Only CMS editors (the effective roles, so a role preview applies here as everywhere).
 editor_view: Callable[[View], View] = role_required(*CMS_EDITOR_ROLES)
@@ -199,13 +199,13 @@ def overview(request: HttpRequest) -> HttpResponse:
         },
         public_site_url=settings.PUBLIC_SITE_URL,
     )
-    return render(request, "hjemmeside/overview.html", context)
+    return render(request, "cms/overview.html", context)
 
 
 @editor_view
 def status(request: HttpRequest) -> HttpResponse:
     """The overview's status card on its own, which it polls while a publish or update is pending."""
-    return render(request, "hjemmeside/_status.html", _status_context(request))
+    return render(request, "cms/_status.html", _status_context(request))
 
 
 @editor_view
@@ -213,11 +213,11 @@ def status(request: HttpRequest) -> HttpResponse:
 def publish_now(request: HttpRequest) -> HttpResponse:
     if not settings.GAHK_WEB_KEY:
         messages.error(request, "gahk.dk er ikke forbundet, så der kan ikke udgives.")
-        return redirect("hjemmeside:overview")
+        return redirect("cms:overview")
     services.request_publish(current_resident(request))
     request.session[PUBLISH_PENDING_KEY] = timezone.now().isoformat()
     messages.success(request, "gahk.dk udgives igen nu.")
-    return redirect("hjemmeside:overview")
+    return redirect("cms:overview")
 
 
 @editor_view
@@ -228,11 +228,11 @@ def update_now(request: HttpRequest) -> HttpResponse:
     _require_administrator(request)
     if not settings.GAHK_WEB_KEY:
         messages.error(request, "gahk.dk er ikke forbundet, så den kan ikke bedes om at opdatere.")
-        return redirect("hjemmeside:overview")
+        return redirect("cms:overview")
     services.request_gahk_web_update(current_resident(request))
     request.session[UPDATE_PENDING_KEY] = timezone.now().isoformat()
     messages.success(request, "gahk.dk er bedt om at opdatere sin kode. Svaret vises her om lidt.")
-    return redirect("hjemmeside:overview")
+    return redirect("cms:overview")
 
 
 # ---------------------------------------------------------------------------------------- pages
@@ -298,7 +298,7 @@ def page_list(request: HttpRequest) -> HttpResponse:
     pages = Page.objects.select_related("updated_by").order_by("slug", "pk")
     return render(
         request,
-        "hjemmeside/page_list.html",
+        "cms/page_list.html",
         {"sections": page_sections(pages), "page_count": pages.count()},
     )
 
@@ -366,13 +366,13 @@ def page_edit(request: HttpRequest, pk: int | None = None) -> HttpResponse:
                         messages.info(request, "Der var ingen ændringer at gemme.")
                     else:
                         _after_page_save(request, saved, old_slug)
-                    return redirect("hjemmeside:page_edit", saved.pk)
+                    return redirect("cms:page_edit", saved.pk)
     else:
         form = PageForm(initial=_page_initial(page), page=page)
     path = _page_path(page) if page else None
     return render(
         request,
-        "hjemmeside/page_form.html",
+        "cms/page_form.html",
         {
             "form": form,
             "page": page,
@@ -393,7 +393,7 @@ def page_delete(request: HttpRequest, pk: int) -> HttpResponse:
     page = get_object_or_404(Page, pk=pk)
     if page.pk == FRONT_PAGE_ID:
         messages.error(request, "Forsiden kan ikke slettes.")
-        return redirect("hjemmeside:page_edit", page.pk)
+        return redirect("cms:page_edit", page.pk)
     redirects = list(page.redirects.all())
     if request.method == "POST":
         header = page.header
@@ -401,12 +401,12 @@ def page_delete(request: HttpRequest, pk: int) -> HttpResponse:
             services.delete_page(page, current_resident(request))
         except ValidationError as exc:
             messages.error(request, " ".join(exc.messages))
-            return redirect("hjemmeside:page_edit", pk)
+            return redirect("cms:page_edit", pk)
         messages.success(request, f"Siden “{header}” er slettet.")
-        return redirect("hjemmeside:page_list")
+        return redirect("cms:page_list")
     return render(
         request,
-        "hjemmeside/page_delete.html",
+        "cms/page_delete.html",
         {"page": page, "redirects": redirects, "in_menu": page.slug in services.menu_paths()},
     )
 
@@ -442,7 +442,7 @@ def page_history(request: HttpRequest, pk: int) -> HttpResponse:
                     changed.append((label, before or "–", after or "–"))
         body_diff = html_diff(previous.body, version.body) if previous is not None else []
         entries.append(VersionEntry(version, previous, body_diff, changed))
-    return render(request, "hjemmeside/page_history.html", {"page": page, "entries": entries})
+    return render(request, "cms/page_history.html", {"page": page, "entries": entries})
 
 
 @editor_view
@@ -455,7 +455,7 @@ def page_restore(request: HttpRequest, pk: int, version_pk: int) -> HttpResponse
     messages.success(request, f"Versionen fra {stamp} er gendannet.")
     for warning in result.warnings:
         messages.warning(request, warning)
-    return redirect("hjemmeside:page_edit", page.pk)
+    return redirect("cms:page_edit", page.pk)
 
 
 # -------------------------------------------------------------------------------------- preview
@@ -513,7 +513,7 @@ def preview(request: HttpRequest) -> HttpResponse:
         title = data.get("header") or data.get("title") or ""
         body = data.get("body") if kind != "event" else data.get("description")
         html = render_to_string(
-            "hjemmeside/preview_local.html",
+            "cms/preview_local.html",
             {
                 "title": title,
                 "body": clean_html(str(body or "")) or "",
@@ -536,7 +536,7 @@ def preview(request: HttpRequest) -> HttpResponse:
 @editor_view
 def news_list(request: HttpRequest) -> HttpResponse:
     page_obj = Paginator(NewsItem.objects.all(), 30).get_page(request.GET.get("side"))
-    return render(request, "hjemmeside/news_list.html", {"page_obj": page_obj})
+    return render(request, "cms/news_list.html", {"page_obj": page_obj})
 
 
 def _item_edit(
@@ -585,9 +585,9 @@ def news_edit(request: HttpRequest, pk: int | None = None) -> HttpResponse:
         form_class=NewsForm,
         initial=initial,
         save=services.save_news,
-        template="hjemmeside/news_form.html",
+        template="cms/news_form.html",
         kind="news",
-        edit_url="hjemmeside:news_edit",
+        edit_url="cms:news_edit",
         saved_message="Nyheden er gemt.",
     )
 
@@ -598,7 +598,7 @@ def news_delete(request: HttpRequest, pk: int) -> HttpResponse:
     item = get_object_or_404(NewsItem, pk=pk)
     services.delete_news(item, current_resident(request))
     messages.success(request, f"Nyheden “{item.title}” er slettet.")
-    return redirect("hjemmeside:news_list")
+    return redirect("cms:news_list")
 
 
 @editor_view
@@ -608,7 +608,7 @@ def event_list(request: HttpRequest) -> HttpResponse:
     past = Paginator(Event.objects.filter(starts_on__lt=today).order_by("-starts_on"), 30).get_page(
         request.GET.get("side")
     )
-    return render(request, "hjemmeside/event_list.html", {"upcoming": upcoming, "past": past})
+    return render(request, "cms/event_list.html", {"upcoming": upcoming, "past": past})
 
 
 @editor_view
@@ -623,9 +623,9 @@ def event_edit(request: HttpRequest, pk: int | None = None) -> HttpResponse:
         form_class=EventForm,
         initial=initial,
         save=services.save_event,
-        template="hjemmeside/event_form.html",
+        template="cms/event_form.html",
         kind="event",
-        edit_url="hjemmeside:event_edit",
+        edit_url="cms:event_edit",
         saved_message="Begivenheden er gemt.",
     )
 
@@ -636,7 +636,7 @@ def event_delete(request: HttpRequest, pk: int) -> HttpResponse:
     item = get_object_or_404(Event, pk=pk)
     services.delete_event(item, current_resident(request))
     messages.success(request, f"Begivenheden “{item.title}” er slettet.")
-    return redirect("hjemmeside:event_list")
+    return redirect("cms:event_list")
 
 
 # --------------------------------------------------------------------------------------- images
@@ -673,7 +673,7 @@ def image_list(request: HttpRequest) -> HttpResponse:
             messages.success(
                 request, f"{uploaded} billede{'r' if uploaded != 1 else ''} er lagt i biblioteket."
             )
-        return redirect("hjemmeside:image_list")
+        return redirect("cms:image_list")
     query = request.GET.get("q", "").strip()
     images = CmsImage.objects.select_related("uploaded_by")
     if query:
@@ -682,7 +682,7 @@ def image_list(request: HttpRequest) -> HttpResponse:
     usage = services.usage_map(page_obj.object_list)
     return render(
         request,
-        "hjemmeside/image_list.html",
+        "cms/image_list.html",
         {
             "page_obj": page_obj,
             "tiles": [(image, usage[image.pk]) for image in page_obj.object_list],
@@ -705,12 +705,12 @@ def image_detail(request: HttpRequest, pk: int) -> HttpResponse:
                 apply_service_errors(form, exc, {})
             else:
                 messages.success(request, "Beskrivelsen er gemt.")
-                return redirect("hjemmeside:image_detail", image.pk)
+                return redirect("cms:image_detail", image.pk)
     else:
         form = CaptionForm(initial={"caption": image.caption})
     return render(
         request,
-        "hjemmeside/image_detail.html",
+        "cms/image_detail.html",
         {"image": image, "form": form, "usage": services.image_usage(image)},
     )
 
@@ -721,10 +721,10 @@ def image_delete(request: HttpRequest, pk: int) -> HttpResponse:
     image = get_object_or_404(CmsImage, pk=pk)
     if usage := services.image_usage(image):
         messages.error(request, f"Billedet bruges stadig ({', '.join(usage)}), så det kan ikke slettes.")
-        return redirect("hjemmeside:image_detail", image.pk)
+        return redirect("cms:image_detail", image.pk)
     services.delete_image(image, current_resident(request))
     messages.success(request, "Billedet er slettet.")
-    return redirect("hjemmeside:image_list")
+    return redirect("cms:image_list")
 
 
 @editor_view
@@ -799,13 +799,13 @@ def menu_edit(request: HttpRequest) -> HttpResponse:
             )
         else:
             messages.success(request, "Menuen er gemt.")
-            return redirect("hjemmeside:menu")
+            return redirect("cms:menu")
     else:
         rows = [{"label": item.label, "url": item.url} for item in MenuItem.objects.all()]
     site = SiteSettings.load()
     return render(
         request,
-        "hjemmeside/menu.html",
+        "cms/menu.html",
         {
             "rows": rows,
             "new_index": len(rows),
@@ -838,7 +838,7 @@ def site_settings(request: HttpRequest) -> HttpResponse:
             messages.success(request, "Standardbaggrunden er gemt.")
     else:
         messages.error(request, "Vælg et billede fra biblioteket.")
-    return redirect("hjemmeside:menu")
+    return redirect("cms:menu")
 
 
 # ------------------------------------------------------------------------------------ redirects
@@ -856,9 +856,9 @@ def redirect_list(request: HttpRequest) -> HttpResponse:
             apply_service_errors(form, exc, {})
         else:
             messages.success(request, "Omdirigeringen er gemt.")
-            return redirect("hjemmeside:redirect_list")
+            return redirect("cms:redirect_list")
     redirects = PageRedirect.objects.select_related("page", "created_by")
-    return render(request, "hjemmeside/redirect_list.html", {"redirects": redirects, "form": form})
+    return render(request, "cms/redirect_list.html", {"redirects": redirects, "form": form})
 
 
 @editor_view
@@ -867,7 +867,7 @@ def redirect_delete(request: HttpRequest, pk: int) -> HttpResponse:
     item = get_object_or_404(PageRedirect, pk=pk)
     services.delete_redirect(item, current_resident(request))
     messages.success(request, f"/{item.old_path} sender ikke længere videre.")
-    return redirect("hjemmeside:redirect_list")
+    return redirect("cms:redirect_list")
 
 
 # -------------------------------------------------------------------------------------- the log
@@ -922,10 +922,10 @@ def change_fields(change: ContentChange) -> list[ChangeField]:
 
 
 LINKED_KINDS: dict[str, tuple[type[Page | NewsItem | Event | CmsImage], str]] = {
-    ContentChange.Kind.PAGE: (Page, "hjemmeside:page_edit"),
-    ContentChange.Kind.NEWS: (NewsItem, "hjemmeside:news_edit"),
-    ContentChange.Kind.EVENT: (Event, "hjemmeside:event_edit"),
-    ContentChange.Kind.IMAGE: (CmsImage, "hjemmeside:image_detail"),
+    ContentChange.Kind.PAGE: (Page, "cms:page_edit"),
+    ContentChange.Kind.NEWS: (NewsItem, "cms:news_edit"),
+    ContentChange.Kind.EVENT: (Event, "cms:event_edit"),
+    ContentChange.Kind.IMAGE: (CmsImage, "cms:image_detail"),
 }
 
 
@@ -965,7 +965,7 @@ def change_log(request: HttpRequest) -> HttpResponse:
     query.pop("side", None)
     return render(
         request,
-        "hjemmeside/change_log.html",
+        "cms/change_log.html",
         {
             "page_obj": page_obj,
             "rows": rows,

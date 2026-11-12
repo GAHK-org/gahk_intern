@@ -6,6 +6,6 @@
 <input type="hidden" name="preview_id" value="{{ preview_id|default:'' }}">
 <div class="hj-form-actions">
   <button type="submit" class="btn">Gem</button>
-  <button type="submit" class="btn btn-secondary" formaction="{% url 'hjemmeside:preview' %}" formtarget="_blank" formnovalidate data-hj-preview>Forhåndsvis</button>
+  <button type="submit" class="btn btn-secondary" formaction="{% url 'cms:preview' %}" formtarget="_blank" formnovalidate data-hj-preview>Forhåndsvis</button>
   <a class="btn btn-secondary" href="{{ cancel_url }}">Annullér</a>
 </div>

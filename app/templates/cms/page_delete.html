@@ -1,10 +1,10 @@
-{% extends "hjemmeside/base.html" %}
-{% block hj_title %}Slet {{ page.header }}{% endblock %}
+{% extends "cms/base.html" %}
+{% block cms_title %}Slet {{ page.header }}{% endblock %}
 {% block content_width %}max-w-3xl{% endblock %}
-{% block hj_content %}
+{% block cms_content %}
   <div class="page-head">
     <div>
-      <p class="eyebrow"><a href="{% url 'hjemmeside:page_edit' page.pk %}">{{ page.header }}</a></p>
+      <p class="eyebrow"><a href="{% url 'cms:page_edit' page.pk %}">{{ page.header }}</a></p>
       <h1>Slet siden?</h1>
     </div>
   </div>
@@ -15,13 +15,13 @@
         <li>De gamle adresser, der sender hertil, forsvinder også:
           {% for item in redirects %}<span class="hj-path">/{{ item.old_path }}</span>{% if not forloop.last %}, {% endif %}{% endfor %}.</li>
       {% endif %}
-      {% if in_menu %}<li>Siden står i menuen. Fjern den også fra <a href="{% url 'hjemmeside:menu' %}">menuen</a>, ellers peger menupunktet på en side, der ikke findes.</li>{% endif %}
+      {% if in_menu %}<li>Siden står i menuen. Fjern den også fra <a href="{% url 'cms:menu' %}">menuen</a>, ellers peger menupunktet på en side, der ikke findes.</li>{% endif %}
       <li>Sidens tidligere versioner gemmes, så indholdet kan findes frem igen i ændringsloggen.</li>
     </ul>
     <form method="post" class="hj-form-actions">
       {% csrf_token %}
       <button type="submit" class="btn btn-danger">Slet siden</button>
-      <a class="btn btn-secondary" href="{% url 'hjemmeside:page_edit' page.pk %}">Fortryd</a>
+      <a class="btn btn-secondary" href="{% url 'cms:page_edit' page.pk %}">Fortryd</a>
     </form>
   </div>
 {% endblock %}

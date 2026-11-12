@@ -1,6 +1,6 @@
-{% extends "hjemmeside/base.html" %}
-{% block hj_title %}Billeder{% endblock %}
-{% block hj_content %}
+{% extends "cms/base.html" %}
+{% block cms_title %}Billeder{% endblock %}
+{% block cms_content %}
   <div class="page-head">
     <div>
       <p class="eyebrow">Hjemmeside</p>
@@ -29,13 +29,13 @@
     <label for="hj-image-q" class="sr-only">Søg</label>
     <input id="hj-image-q" type="search" name="q" value="{{ query }}" placeholder="Søg i beskrivelse og filnavn">
     <button type="submit" class="btn btn-secondary">Søg</button>
-    {% if query %}<a href="{% url 'hjemmeside:image_list' %}">Vis alle</a>{% endif %}
+    {% if query %}<a href="{% url 'cms:image_list' %}">Vis alle</a>{% endif %}
   </form>
 
   <ul class="hj-image-grid">
     {% for image, usage in tiles %}
       <li>
-        <a href="{% url 'hjemmeside:image_detail' image.pk %}" class="hj-image-tile">
+        <a href="{% url 'cms:image_detail' image.pk %}" class="hj-image-tile">
           <img src="{{ image.url }}" alt="{{ image.caption }}" loading="lazy">
           <span class="hj-image-caption">{{ image.caption|default:"(ingen beskrivelse)" }}</span>
           <span class="hj-image-meta">
@@ -48,5 +48,5 @@
       <li class="card muted">{% if query %}Ingen billeder matcher “{{ query }}”.{% else %}Biblioteket er tomt.{% endif %}</li>
     {% endfor %}
   </ul>
-  {% include "hjemmeside/_pager.html" %}
+  {% include "cms/_pager.html" %}
 {% endblock %}

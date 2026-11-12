@@ -32,7 +32,7 @@
 
 "area:hjemmeside":
   - changed-files:
-      - any-glob-to-any-file: ["app/cms/**", "app/templates/hjemmeside/**"]
+      - any-glob-to-any-file: ["app/cms/**", "app/templates/cms/**"]
 
 "area:stats":
   - changed-files:

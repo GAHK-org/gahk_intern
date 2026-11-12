@@ -7,13 +7,13 @@
   {% if form.non_field_errors %}<div class="card hj-form-errors">{{ form.non_field_errors }}</div>{% endif %}
   <div class="hj-editor-grid">
     <div class="card-flat card-pad hj-editor-main">
-      {% include "hjemmeside/_field.html" with field=title_field %}
-      {% include "hjemmeside/_field.html" with field=body_field %}
+      {% include "cms/_field.html" with field=title_field %}
+      {% include "cms/_field.html" with field=body_field %}
     </div>
     <div class="hj-editor-side">
       <div class="card-flat card-pad">
-        {% include "hjemmeside/_field.html" with field=date_field %}
-        {% include "hjemmeside/_form_actions.html" with preview_id=item.pk cancel_url=list_url %}
+        {% include "cms/_field.html" with field=date_field %}
+        {% include "cms/_form_actions.html" with preview_id=item.pk cancel_url=list_url %}
       </div>
     </div>
   </div>

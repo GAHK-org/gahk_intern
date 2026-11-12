@@ -1,6 +1,6 @@
-{% extends "hjemmeside/base.html" %}
-{% block hj_title %}Menu{% endblock %}
-{% block hj_content %}
+{% extends "cms/base.html" %}
+{% block cms_title %}Menu{% endblock %}
+{% block cms_content %}
   <div class="page-head">
     <div>
       <p class="eyebrow">Hjemmeside</p>
@@ -56,17 +56,17 @@
       <div class="card-pad">
         <p class="muted text-sm">Hverken siden eller dens sektion står i menuen.</p>
         <ul class="hj-plain-list">
-          {% for page in unreachable %}<li><a href="{% url 'hjemmeside:page_edit' page.pk %}">{{ page.header }}</a> <span class="hj-path">/{{ page.slug }}</span></li>{% endfor %}
+          {% for page in unreachable %}<li><a href="{% url 'cms:page_edit' page.pk %}">{{ page.header }}</a> <span class="hj-path">/{{ page.slug }}</span></li>{% endfor %}
         </ul>
       </div>
     </section>
   {% endif %}
 
-  <form method="post" action="{% url 'hjemmeside:site_settings' %}" class="card-flat card-pad hj-section">
+  <form method="post" action="{% url 'cms:site_settings' %}" class="card-flat card-pad hj-section">
     {% csrf_token %}
     <h2>Standardbaggrund</h2>
     <p class="muted text-sm">Billedet øverst på alle sider, der ikke har deres eget baggrundsbillede. Uden et billede får de en grøn bjælke.</p>
-    {% include "hjemmeside/_image_picker.html" with field=settings_form.default_background none_label="Ingen (grøn bjælke)" hide_legend=True %}
+    {% include "cms/_image_picker.html" with field=settings_form.default_background none_label="Ingen (grøn bjælke)" hide_legend=True %}
     <div class="hj-form-actions"><button type="submit" class="btn">Gem standardbaggrund</button></div>
   </form>
 {% endblock %}

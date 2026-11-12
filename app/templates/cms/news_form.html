@@ -1,0 +1,13 @@
+{% extends "cms/base.html" %}
+{% block cms_title %}{% if item %}{{ item.title }}{% else %}Ny nyhed{% endif %}{% endblock %}
+{% block cms_content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow"><a href="{% url 'cms:news_list' %}">Nyheder</a></p>
+      <h1>{% if item %}{{ item.title }}{% else %}Ny nyhed{% endif %}</h1>
+    </div>
+  </div>
+  {% url 'cms:news_list' as list_url %}
+  {% if item %}{% url 'cms:news_delete' item.pk as delete_url %}{% endif %}
+  {% include "cms/_item_form.html" with title_field=form.title date_field=form.published_at body_field=form.body %}
+{% endblock %}

@@ -88,7 +88,7 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     if "indstilling" in roles:
         administration.append((reverse("admissions:list"), "Ansøgninger", "inbox"))
     if not set(roles).isdisjoint(CMS_EDITOR_ROLES):  # administrator/indstilling/inspektion/pr
-        administration.append((reverse("hjemmeside:overview"), "Hjemmeside", "globe"))
+        administration.append((reverse("cms:overview"), "Hjemmeside", "globe"))
     if "administrator" in roles:
         administration.append((reverse("siteadmin:home"), "Site-admin", "gear"))
         administration.append((reverse("siteadmin:roles"), "Roller", "users"))

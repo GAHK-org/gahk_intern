@@ -1,9 +1,9 @@
-{% extends "hjemmeside/base.html" %}
-{% block hj_title %}{{ image }}{% endblock %}
-{% block hj_content %}
+{% extends "cms/base.html" %}
+{% block cms_title %}{{ image }}{% endblock %}
+{% block cms_content %}
   <div class="page-head">
     <div>
-      <p class="eyebrow"><a href="{% url 'hjemmeside:image_list' %}">Billeder</a></p>
+      <p class="eyebrow"><a href="{% url 'cms:image_list' %}">Billeder</a></p>
       <h1>{{ image.caption|default:"Billede" }}</h1>
       <p class="muted text-sm">Lagt op {{ image.uploaded_at|date:"j. b Y" }}{% if image.uploaded_by %} af {{ image.uploaded_by.full_name }}{% elif image.legacy_path %} fra den gamle hjemmeside{% endif %}{% if image.size %} · {{ image.size|filesizeformat }}{% endif %}</p>
     </div>
@@ -15,7 +15,7 @@
       <form method="post" class="card-flat card-pad">
         {% csrf_token %}
         {{ form.non_field_errors }}
-        {% include "hjemmeside/_field.html" with field=form.caption %}
+        {% include "cms/_field.html" with field=form.caption %}
         <div class="hj-form-actions"><button type="submit" class="btn">Gem</button></div>
       </form>
       <div class="card-flat card-pad hj-section">
@@ -25,7 +25,7 @@
           <p class="muted hj-help">Et billede, der bruges, kan ikke slettes. Fjern det først fra stederne ovenfor.</p>
         {% else %}
           <p class="muted">Ingen steder.</p>
-          <form method="post" action="{% url 'hjemmeside:image_delete' image.pk %}"
+          <form method="post" action="{% url 'cms:image_delete' image.pk %}"
                 onsubmit="return confirm('Slet billedet fra biblioteket?')">
             {% csrf_token %}
             <button type="submit" class="btn btn-danger">Slet billedet</button>

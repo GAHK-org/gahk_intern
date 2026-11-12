@@ -2,7 +2,7 @@
   The overview's status card. While a publish or code update this editor asked for is still unanswered,
   it re-fetches itself every few seconds (views.status) and stops once the answer is in.
 {% endcomment %}
-<section id="hj-status" class="card-flat hj-section"{% if polling %} hx-get="{% url 'hjemmeside:status' %}" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}>
+<section id="hj-status" class="card-flat hj-section"{% if polling %} hx-get="{% url 'cms:status' %}" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}>
   <div class="card-head">
     <h2>Forbindelse til gahk.dk</h2>
     {% if not enabled %}
@@ -64,7 +64,7 @@
     {% elif publish_state == "timeout" %}
       <p class="hj-note hj-note-warn" role="status">Intet svar fra udgivelsen endnu. Den kører måske stadig; se igen om lidt.</p>
     {% endif %}
-    <form method="post" action="{% url 'hjemmeside:publish_now' %}" class="hj-actions">
+    <form method="post" action="{% url 'cms:publish_now' %}" class="hj-actions">
       {% csrf_token %}
       <button type="submit" class="btn btn-secondary"{% if not enabled or publish_state == "waiting" %} disabled{% endif %}>Udgiv igen nu</button>
       <span class="muted text-sm">Gemte ændringer udgives automatisk. Brug knappen, hvis gahk.dk ikke viser det nyeste.</span>
@@ -89,7 +89,7 @@
       <p class="hj-note hj-note-warn" role="status">gahk.dk har ikke svaret endnu. Se igen om lidt.</p>
     {% endif %}
     {% if is_admin %}
-      <form method="post" action="{% url 'hjemmeside:update_now' %}" class="hj-actions">
+      <form method="post" action="{% url 'cms:update_now' %}" class="hj-actions">
         {% csrf_token %}
         <button type="submit" class="btn btn-secondary"{% if not enabled or update_state == "waiting" %} disabled{% endif %}>Opdatér gahk.dk nu</button>
         <span class="muted text-sm">gahk.dk henter selv ny kode, når intern beder om det: hvert kvarter, eller nu med knappen.</span>

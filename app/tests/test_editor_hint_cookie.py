@@ -85,7 +85,7 @@ def test_a_resident_without_an_editor_role_does_not(resident: Resident) -> None:
 def test_any_page_sets_it_when_the_browser_lacks_it_and_is_quiet_when_it_has_it(editor: Resident) -> None:
     _assert_set(_hint(_signed_in(editor).get("/")))  # not only Hjemmeside's own screens
 
-    response = _signed_in(editor, hint="1").get(reverse("hjemmeside:overview"))
+    response = _signed_in(editor, hint="1").get(reverse("cms:overview"))
     assert response.status_code == 200 and _hint(response) is None
 
     _assert_set(_hint(_signed_in(editor, hint="0").get("/")))  # no other value counts

@@ -1,6 +1,6 @@
-{% extends "hjemmeside/base.html" %}
-{% block hj_title %}Ændringslog{% endblock %}
-{% block hj_content %}
+{% extends "cms/base.html" %}
+{% block cms_title %}Ændringslog{% endblock %}
+{% block cms_content %}
   <div class="page-head">
     <div>
       <p class="eyebrow">Hjemmeside</p>
@@ -39,7 +39,7 @@
                 <div class="hj-log-field">
                   <p class="hj-label">{{ item.label }}</p>
                   {% if item.diff is not None %}
-                    {% if item.diff %}{% include "hjemmeside/_diff.html" with rows=item.diff %}{% else %}<p class="muted text-sm">Uændret</p>{% endif %}
+                    {% if item.diff %}{% include "cms/_diff.html" with rows=item.diff %}{% else %}<p class="muted text-sm">Uændret</p>{% endif %}
                   {% elif item.menu %}
                     <div class="hj-menu-diff">
                       <div><p class="muted text-sm">Før</p><ol>{% for entry in item.menu.0 %}<li>{{ entry.label }} <span class="hj-path">{{ entry.url }}</span></li>{% empty %}<li class="muted">–</li>{% endfor %}</ol></div>
@@ -60,5 +60,5 @@
       {% endfor %}
     </ul>
   </section>
-  {% include "hjemmeside/_pager.html" %}
+  {% include "cms/_pager.html" %}
 {% endblock %}
