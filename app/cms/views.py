@@ -8,16 +8,15 @@ Who: CMS_EDITOR_ROLES (administrator, indstilling, inspektion, pr) and superuser
 role check as the rest of the intranet (so "vis siden som rolle" applies here too). Deleting a page
 and asking gahk.dk to update its code are for administrators only.
 
-Every response here also sets the non-secret `gahk_redaktoer=1` cookie on the parent domain, so
-gahk.dk can show its "Rediger siden" link to editors. It grants nothing: the link leads here, and
-this checks the role.
+gahk.dk's "Rediger siden" links here (/hjemmeside/sider/<id>/ and /hjemmeside/), shown to browsers
+that carry the `gahk_redaktoer` hint cookie, which cms.middleware keeps for editors. It grants
+nothing: these views check the role.
 """
 
 import datetime
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from functools import wraps
 from typing import Any
 from urllib.parse import urlencode
 
@@ -61,37 +60,13 @@ from .sanitize import clean_html
 
 View = Callable[..., HttpResponseBase]
 
-EDITOR_HINT_COOKIE = "gahk_redaktoer"
-EDITOR_HINT_MAX_AGE = 30 * 24 * 60 * 60
-
 # How long the overview waits for a requested publish or code update before it stops asking.
 PENDING_TIMEOUT = datetime.timedelta(minutes=3)
 PUBLISH_PENDING_KEY = "hjemmeside_publish_requested"
 UPDATE_PENDING_KEY = "hjemmeside_update_requested"
 
-_editor_required = role_required(*CMS_EDITOR_ROLES)
-
-
-def editor_view(view: View) -> View:
-    """Only CMS editors; and every response tells gahk.dk's pages that this browser is an editor's."""
-    gated = _editor_required(view)
-
-    @wraps(view)
-    def wrapped(request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
-        response = gated(request, *args, **kwargs)
-        if request.user.is_authenticated:  # past the role check (it raises or redirects otherwise)
-            response.set_cookie(
-                EDITOR_HINT_COOKIE,
-                "1",
-                max_age=EDITOR_HINT_MAX_AGE,
-                domain=settings.EDITOR_HINT_COOKIE_DOMAIN,
-                secure=not settings.DEBUG,
-                httponly=False,  # gahk.dk's pages are static; their script reads it
-                samesite="Lax",
-            )
-        return response
-
-    return wrapped
+# Only CMS editors (the effective roles, so a role preview applies here as everywhere).
+editor_view: Callable[[View], View] = role_required(*CMS_EDITOR_ROLES)
 
 
 def is_administrator(request: HttpRequest) -> bool:

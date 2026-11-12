@@ -47,8 +47,11 @@ working when intern or the image storage is down; editing needs intern.
 - The menu is edited in place: text and link per entry, move up or down, remove, add.
 - The change log can be filtered by type and person and shows each change's before and after; text
   as a line-by-line difference.
-- Every editor screen tells the browser it belongs to an editor (a harmless cookie on gahk.dk's
-  domain), which is how gahk.dk knows to show "Rediger siden".
+- An editor's browser carries a harmless cookie on gahk.dk's domain, which is how gahk.dk knows to
+  show "Rediger siden" (it opens the page's editor, or the overview). It is given at login, and on
+  any page if it is missing, to whoever really holds an editor role (a role preview does not count),
+  and taken away at logout and as soon as the role is gone. Following the link checks the role
+  again.
 
 ## History and audit
 
@@ -118,5 +121,8 @@ working when intern or the image storage is down; editing needs intern.
 - **A visual editor that keeps the old pages intact.** Editors should not need HTML, but the old
   pages' picture layout must survive being opened and saved, and anything the editor cannot show is
   left as HTML rather than silently dropped.
+- **The editor cookie is a hint, not a permission.** gahk.dk's pages are static and cannot ask intern
+  who is signed in, so they read a cookie; it grants nothing. It changes only when the editor
+  status does, so ordinary pages stay free of cookie headers.
 - **The preview never runs scripts on intern.** It is gahk.dk's HTML shown inside the intranet, so it
   is shown without JavaScript.

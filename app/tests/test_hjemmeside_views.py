@@ -13,6 +13,7 @@ from django.utils import timezone
 from PIL import Image
 
 from cms import services
+from cms.middleware import EDITOR_HINT_COOKIE
 from cms.models import (
     CmsImage,
     ContentChange,
@@ -26,7 +27,7 @@ from cms.models import (
     Publication,
     SiteSettings,
 )
-from cms.views import EDITOR_HINT_COOKIE, with_base
+from cms.views import with_base
 from residents.models import Resident
 
 
@@ -158,28 +159,6 @@ def test_the_pr_group_opens_every_screen(
 ) -> None:
     response = client_for(editor).get(_url(name, args, objects))
     assert response.status_code == 200
-
-
-@pytest.mark.django_db
-def test_every_screen_sets_the_editor_hint_cookie(editor: Resident, settings: Any) -> None:  # noqa: ANN401
-    settings.EDITOR_HINT_COOKIE_DOMAIN = ".gahk.dk"
-    settings.DEBUG = False
-
-    cookie = client_for(editor).get(reverse("hjemmeside:overview")).cookies[EDITOR_HINT_COOKIE]
-
-    assert cookie.value == "1"
-    assert cookie["domain"] == ".gahk.dk"
-    assert cookie["secure"] is True
-    assert cookie["samesite"] == "Lax"
-    assert not cookie["httponly"]
-    assert int(cookie["max-age"]) == 30 * 24 * 60 * 60
-
-
-@pytest.mark.django_db
-def test_the_hint_cookie_is_host_only_by_default_in_development(editor: Resident, settings: Any) -> None:  # noqa: ANN401
-    settings.EDITOR_HINT_COOKIE_DOMAIN = None
-    cookie = client_for(editor).get(reverse("hjemmeside:overview")).cookies[EDITOR_HINT_COOKIE]
-    assert cookie["domain"] == ""
 
 
 @pytest.mark.django_db
