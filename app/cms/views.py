@@ -535,7 +535,7 @@ def preview(request: HttpRequest) -> HttpResponse:
 # ------------------------------------------------------------------------------ news and events
 @editor_view
 def news_list(request: HttpRequest) -> HttpResponse:
-    page_obj = Paginator(NewsItem.objects.all(), 30).get_page(request.GET.get("side"))
+    page_obj = Paginator(NewsItem.objects.all(), 30).get_page(request.GET.get("page"))
     return render(request, "cms/news_list.html", {"page_obj": page_obj})
 
 
@@ -606,7 +606,7 @@ def event_list(request: HttpRequest) -> HttpResponse:
     today = timezone.localdate()
     upcoming = Event.objects.filter(starts_on__gte=today).order_by("starts_on")
     past = Paginator(Event.objects.filter(starts_on__lt=today).order_by("-starts_on"), 30).get_page(
-        request.GET.get("side")
+        request.GET.get("page")
     )
     return render(request, "cms/event_list.html", {"upcoming": upcoming, "past": past})
 
@@ -678,7 +678,7 @@ def image_list(request: HttpRequest) -> HttpResponse:
     images = CmsImage.objects.select_related("uploaded_by")
     if query:
         images = images.filter(Q(caption__icontains=query) | Q(file__icontains=query))
-    page_obj = Paginator(images, 48).get_page(request.GET.get("side"))
+    page_obj = Paginator(images, 48).get_page(request.GET.get("page"))
     usage = services.usage_map(page_obj.object_list)
     return render(
         request,
@@ -943,7 +943,7 @@ def change_log(request: HttpRequest) -> HttpResponse:
         changes = changes.filter(by__isnull=True, by_name__startswith=services.SYSTEM_NAME)
     elif person.isdigit():
         changes = changes.filter(by_id=int(person))
-    page_obj = Paginator(changes, 50).get_page(request.GET.get("side"))
+    page_obj = Paginator(changes, 50).get_page(request.GET.get("page"))
     existing: dict[str, set[int]] = {}
     for kind_value, (model, _url) in LINKED_KINDS.items():
         ids = {c.object_id for c in page_obj.object_list if c.kind == kind_value and c.object_id}
@@ -962,7 +962,7 @@ def change_log(request: HttpRequest) -> HttpResponse:
         .order_by("first_name", "last_name")
     )
     query = request.GET.copy()
-    query.pop("side", None)
+    query.pop("page", None)
     return render(
         request,
         "cms/change_log.html",

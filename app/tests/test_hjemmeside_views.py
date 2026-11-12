@@ -776,6 +776,20 @@ def test_the_change_log_filters_and_diffs_bodies(
 
 
 @pytest.mark.django_db
+def test_the_change_log_pages_with_page_and_keeps_its_filters(editor: Resident) -> None:
+    for number in range(51):
+        services.record_change(action="update", kind="page", label=f"P{number}", by_name=services.SYSTEM_NAME)
+    client = client_for(editor)
+
+    first = client.get(reverse("cms:change_log"), {"person": "system"})
+    second = client.get(reverse("cms:change_log"), {"person": "system", "page": "2"})
+
+    assert 'href="?person=system&amp;page=2"' in first.content.decode()
+    assert second.context["page_obj"].number == 2 and len(second.context["rows"]) == 1
+    assert 'href="?person=system&amp;page=1"' in second.content.decode()
+
+
+@pytest.mark.django_db
 def test_saving_a_page_unchanged_says_so_and_writes_nothing(editor: Resident, front: Page) -> None:
     client_for(editor).post(reverse("cms:page_edit", args=[front.pk]), {"header": "Velkommen!", "body": ""})
     before = ContentChange.objects.count()
