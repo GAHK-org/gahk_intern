@@ -30,7 +30,7 @@ body:
         - "ak"
         - "oelkaelder"
         - "rooms (vaerelsestjek / soegvaerelse)"
-        - "hjemmeside (gahk.dk-indhold)"
+        - "cms (gahk.dk content)"
         - "stats"
         - "auth / login"
         - "infra / deploy"

@@ -30,7 +30,7 @@
   - changed-files:
       - any-glob-to-any-file: ["app/rooms/**", "app/templates/vaerelsestjek/**", "app/templates/soegvaerelse/**"]
 
-"area:hjemmeside":
+"area:cms":
   - changed-files:
       - any-glob-to-any-file: ["app/cms/**", "app/templates/cms/**"]
 

@@ -1,4 +1,4 @@
-# Feature: Hjemmeside — editing gahk.dk from the intranet
+# Feature: CMS — editing gahk.dk from the intranet (Hjemmeside)
 
 All of gahk.dk's content is kept and edited on intern.gahk.dk, under Hjemmeside. gahk.dk itself is
 static pages on separate webhosting, which intern updates whenever something is saved. gahk.dk keeps
@@ -133,3 +133,7 @@ working when intern or the image storage is down; editing needs intern.
   status does, so ordinary pages stay free of cookie headers.
 - **The preview never runs scripts on intern.** It is gahk.dk's HTML shown inside the intranet, so it
   is shown without JavaScript.
+- **Technical names are English; what people read is Danish.** The editor's pages keep Danish
+  addresses like the rest of the intranet (`/hjemmeside/sider/…`), and its labels and messages are
+  Danish. Everything only programs read is English: the code name `cms`, the picker's
+  `images/library.json`, the `gahk_editor` cookie, gahk.dk's `/images/` copies and the outbox's codes.
