@@ -23,7 +23,8 @@ working when intern or the image storage is down; editing needs intern.
   background for pages that have none of their own.
 - **Old addresses:** where an old link should send visitors.
 - Headings and titles are plain text. Page text is HTML; anything that could run a script is
-  removed when it is saved.
+  removed when it is saved, and again whenever it is published. Text stored before the editor
+  existed was cleaned once, recorded as a system change.
 
 ## The editor
 

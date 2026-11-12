@@ -37,6 +37,7 @@ from django.utils import timezone
 from .images import billeder_url, content_type_of, sha256_hex
 from .models import FRONT_PAGE_ID, CmsImage, Event, MenuItem, NewsItem, Page, PageRedirect, SiteSettings
 from .paths import is_reserved, validate_page_path
+from .sanitize import clean_html
 
 logger = logging.getLogger(__name__)
 
@@ -244,7 +245,9 @@ def build_snapshot(published_at: Any = None) -> Snapshot:  # noqa: ANN401 — a 
             legacy_images[f"/static/legacy/image/{image.legacy_path}"] = entry["url"]
 
     def body(text: str) -> str:
-        return rewrite_intern_links(rewrite_media(text, url_by_name.get))
+        # gahk.dk renders bodies as trusted HTML and has no sanitizer of its own, so clean them here
+        # too, not only when they are saved: a row stored some other way must not reach it raw.
+        return rewrite_intern_links(rewrite_media(clean_html(text) or "", url_by_name.get))
 
     def background(value: str) -> str:
         names = media_names(value)
