@@ -47,6 +47,24 @@ def test_an_old_address_lands_on_the_same_page_at_the_root(old: str, new: str) -
     assert response["Location"] == new
 
 
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("/intern/a%3Fb", "/a%3Fb"),
+        ("/intern/a%23b?x=1", "/a%23b?x=1"),
+        ("/intern/a%25b", "/a%25b"),
+        ("/intern/a%20b/", "/a%20b/"),
+        ("/intern/v%C3%A6relse/", "/v%C3%A6relse/"),
+    ],
+)
+def test_an_escaped_character_in_the_old_path_stays_escaped(old: str, new: str) -> None:
+    """The view gets the path decoded: an escaped "?" must not become a query, nor "#" a fragment,
+    nor "%25" a stray "%". gahk.dk forwards such a path escaped as it came."""
+    response = Client().get(old)
+    assert response.status_code == 308
+    assert response["Location"] == new
+
+
 @pytest.mark.parametrize("method", ["post", "put", "patch", "delete"])
 @pytest.mark.parametrize(
     ("old", "new"),

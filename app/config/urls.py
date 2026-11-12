@@ -9,6 +9,7 @@ both old prefixes redirect to the root — see `_legacy_prefix_redirect`. Django
 from django.contrib import admin
 from django.http import HttpRequest, HttpResponsePermanentRedirect
 from django.urls import include, path, re_path
+from django.utils.encoding import escape_uri_path
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import TemplateView
 
@@ -32,7 +33,9 @@ from photo_album.views import serve_media as serve_photo_album_media
 @csrf_exempt
 def _legacy_prefix_redirect(request: HttpRequest, rest: str = "") -> HttpResponsePermanentRedirect:
     # lstrip: "/intern//evil.example" must not become the protocol-relative "//evil.example".
-    target = "/" + rest.lstrip("/\\")
+    # escape_uri_path: `rest` is decoded, so an escaped "?", "#" or "%" in the old path (a%3Fb) must
+    # be escaped again, or it would turn into a query, a fragment or a broken escape at the new one.
+    target = escape_uri_path("/" + rest.lstrip("/\\"))
     query = request.META.get("QUERY_STRING", "")
     response = HttpResponsePermanentRedirect(f"{target}?{query}" if query else target)
     response.status_code = 308
