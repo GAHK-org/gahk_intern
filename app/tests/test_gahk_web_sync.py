@@ -555,6 +555,27 @@ def test_the_update_nudge_stores_what_the_webhost_says(gahk_web: FakeGahkWeb) ->
     assert "ConnectionError" in GahkWebSync.load().update_error
 
 
+@pytest.mark.django_db
+def test_a_failed_update_keeps_the_known_version_and_shows_the_error(
+    gahk_web: FakeGahkWeb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    GahkWebSync.load()
+    GahkWebSync.objects.filter(pk=1).update(update_available_version="def456")
+    failed = {
+        "updated": False,
+        "version": "abc123",
+        "available_version": None,
+        "detail": "failed: no python3",
+    }
+    monkeypatch.setattr(GahkWebClient, "update", lambda self: failed)
+
+    tasks.nudge_gahk_web_update()
+
+    state = GahkWebSync.load()
+    assert state.update_available_version == "def456"
+    assert state.update_error == "failed: no python3"
+
+
 # ------------------------------------------------------------------------- the old public routes
 @pytest.mark.django_db
 @pytest.mark.parametrize(

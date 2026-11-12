@@ -318,10 +318,16 @@ def nudge_gahk_web_update() -> dict[str, Any]:
         summary = detail or "Ingen ny version"
     fields: dict[str, Any] = {
         "update_checked_at": now,
-        "update_available_version": available,
         "update_result": summary[:255],
         "update_error": "",
     }
+    # An updater that could not start or gave no result answers without an available version: keep
+    # the one we know rather than forget that an update is waiting.
+    if available:
+        fields["update_available_version"] = available
+    if not result.get("updated") and detail.startswith("failed"):
+        fields["update_error"] = _short(detail)
+        logger.warning("gahk.dk's self-update failed: %s", detail)
     if version:
         fields["remote_version"] = version
     _note(**fields)
