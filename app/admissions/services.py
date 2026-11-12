@@ -42,8 +42,11 @@ FORMS: dict[str, type[RundvisningForm] | type[FremlejeForm]] = {
     Application.Type.TOUR: RundvisningForm,
     Application.Type.SUBLET: FremlejeForm,
 }
-# No field of a real application comes near this; anything longer is not one.
-MAX_FIELD_LENGTH = 10_000
+# Above anything gahk.dk can accept: its forms read at most 64 KiB of request body (gahk_web's
+# forms.MAX_FORM_BYTES), so no field it validated and queued can be longer, and an over-long field
+# is not from gahk.dk's form. Keep it above that limit: an item dropped here is acknowledged, which
+# deletes gahk.dk's only copy. (The fremleje motivation has no length rule of its own, here or there.)
+MAX_FIELD_LENGTH = 65_536
 # A submission time this far ahead of intern's clock is the webhost's clock being wrong; it is
 # stored as "now" rather than sorting at the top of the list for weeks.
 CLOCK_SKEW = timedelta(hours=1)

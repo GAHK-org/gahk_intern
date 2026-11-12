@@ -462,6 +462,17 @@ def test_a_500_character_motivation_is_accepted(gahk_web: FakeGahkWeb, front_pag
 
 
 @pytest.mark.django_db
+def test_a_long_fremleje_motivation_that_gahk_dk_accepted_is_stored(
+    gahk_web: FakeGahkWeb, front_page: Page
+) -> None:
+    """gahk.dk caps a form post at 64 KiB and the fremleje motivation at nothing else, so intern
+    must take any field up to that size: dropping it would also delete gahk.dk's only copy."""
+    gahk_web.outbox["applications"] = [_application("fremleje", motivation="a" * 60_000)]
+    tasks.sync_gahk_web()
+    assert len(Application.objects.get().motivation) == 60_000
+
+
+@pytest.mark.django_db
 def test_a_submission_time_in_the_future_is_stored_as_now(gahk_web: FakeGahkWeb, front_page: Page) -> None:
     item = _application() | {"submitted_at": (timezone.now() + timedelta(days=30)).isoformat()}
     gahk_web.outbox["applications"] = [item]
