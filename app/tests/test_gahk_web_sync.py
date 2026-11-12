@@ -195,10 +195,13 @@ def test_the_signed_path_has_no_query_string_and_keeps_a_base_path() -> None:
             seen.update(url=url, headers=headers)
             return FakeGahkWeb._response(200, b"{}")
 
-    GahkWebClient("http://127.0.0.1:8810/", "k", Session()).status()  # type: ignore[arg-type]
+    client = GahkWebClient("http://127.0.0.1:8810/prefix/", "k", Session())  # type: ignore[arg-type]
+    client.request("GET", "/api/status?x=1")
     headers = seen["headers"]
-    assert seen["url"] == "http://127.0.0.1:8810/api/status"
-    assert headers["X-Gahk-Signature"] == sign("k", headers["X-Gahk-Timestamp"], "GET", "/api/status", b"")
+    assert seen["url"] == "http://127.0.0.1:8810/prefix/api/status?x=1"
+    assert headers["X-Gahk-Signature"] == sign(
+        "k", headers["X-Gahk-Timestamp"], "GET", "/prefix/api/status", b""
+    )
 
 
 def test_errors_are_typed() -> None:
