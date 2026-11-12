@@ -160,11 +160,10 @@ tasks:
     dir: '{{.APP}}'
     cmds: ['{{.PY}} -m pytest {{.CLI_ARGS}}']
 
-  # `task test` reads app/.env, which is tuned for real dev/ETL and so diverges from CI in two ways
-  # that break the suite when run from the host:
+  # `task test` reads app/.env, which is tuned for real dev/ETL and so diverges from CI in one way
+  # that breaks the suite when run from the host:
   #   - DATABASE_URL points at the *in-Docker* Postgres hostname (only resolvable inside the network)
-  #   - TURNSTILE_SECRET_KEY is set, so the admissions form tests hit real Cloudflare verification
-  # These variants override both so the host run matches CI:
+  # These variants override it so the host run matches CI:
   #   test:pg     -> the compose Postgres via its host port (needs `task db:up`); matches CI exactly.
   #   test:sqlite -> a throwaway local SQLite file; no Docker needed, but misses Postgres-only behaviour.
   #   test:pg:fresh -> test:pg on a newly created test DB. The test DB is otherwise reused between runs
@@ -175,7 +174,6 @@ tasks:
     dir: '{{.APP}}'
     env:
       DATABASE_URL: 'postgres://gahk:gahk@localhost:5432/gahk'
-      TURNSTILE_SECRET_KEY: ''
     cmds: ['{{.PY}} -m pytest {{.CLI_ARGS}}']
 
   test:pg:fresh:
@@ -189,7 +187,6 @@ tasks:
     dir: '{{.APP}}'
     env:
       DATABASE_URL: 'sqlite:///test-db.sqlite3'
-      TURNSTILE_SECRET_KEY: ''
     cmds: ['{{.PY}} -m pytest {{.CLI_ARGS}}']
 
   lint:

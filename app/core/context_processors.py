@@ -13,7 +13,7 @@ from events.access import roles_allowed as events_allowed
 from gahkflix.access import roles_allowed as gahkflix_allowed
 from opslagstavle.access import roles_allowed as opslagstavle_allowed
 from photo_album.access import roles_allowed as photo_album_allowed
-from residents.permissions import CMS_EDITOR_ROLES, KITCHEN, can_preview, effective_roles
+from residents.permissions import KITCHEN, can_preview, effective_roles
 
 # Public site nav, matching the legacy gahk.dk menu (labels + order). Paths on PUBLIC_SITE_URL.
 NAV_LEGACY = [
@@ -112,8 +112,6 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     administration: list[NavItem] = []
     if "indstilling" in roles:
         administration.append((reverse("admissions:list"), "Ansøgninger", "inbox"))
-    if not set(roles).isdisjoint(CMS_EDITOR_ROLES):  # administrator/indstilling/inspektion/pr
-        administration.append(("/django-admin/cms/", "Rediger indhold", "edit"))
     if "administrator" in roles:
         administration.append((reverse("siteadmin:home"), "Site-admin", "gear"))
         administration.append((reverse("siteadmin:roles"), "Roller", "users"))
@@ -181,8 +179,8 @@ def navigation(request: HttpRequest) -> dict[str, object]:
     previewer = can_preview(request.user) if authed else False
     nav_intern = _nav_intern(roles, request.user.pk or 0) if authed else []
     ctx: dict[str, object] = {
-        # The public site's menu, for the few public-looking pages still rendered here (optagelse,
-        # the CSRF failure page). Its pages live on gahk.dk now, so the links go there.
+        # The public site's menu, for the few public-looking pages still rendered here (login, the
+        # CSRF failure page). Its pages live on gahk.dk now, so the links go there.
         "nav_legacy": [(settings.PUBLIC_SITE_URL + url, label) for url, label in NAV_LEGACY],
         "nav_public": [(settings.PUBLIC_SITE_URL + url, label) for url, label in NAV_PUBLIC],
         "public_site_url": settings.PUBLIC_SITE_URL,

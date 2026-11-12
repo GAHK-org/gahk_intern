@@ -1,24 +1,16 @@
-"""Admissions views (F-001).
+"""Admissions review on the intranet (F-001), role `indstilling`.
 
-Public: tour (rundvisning) and sublet (fremleje) forms. Neither notifies the committee anymore — both
-just send the applicant an auto-reply and appear in the list view. (The committee asked us to stop the
-per-request rundvisning mail; F-011.)
-Admin (role `indstilling`): list (searchable + sortable across all applications) / detail /
-mark-received. Mark-received is POST-only (the legacy GET was CSRF-able). All fixes from F-001
+The application forms themselves are on gahk.dk (gahk_web), which keeps submissions in its outbox
+until cms.tasks.sync_gahk_web pulls them in (admissions.services.ingest_outbox_applications). What
+is here: list (searchable + sortable across all applications) / export / detail / mark-received /
+discard. Mark-received is POST-only (the legacy GET was CSRF-able). All fixes from F-001
 (mass-assignment, SQLi, auth, CSRF) are structural here.
 """
 
 import csv
 import io
-import json
-import logging
-import urllib.parse
-import urllib.request
 from datetime import date
 
-from django.conf import settings
-from django.contrib import messages
-from django.core.mail import send_mail
 from django.core.paginator import Paginator
 from django.db.models import Q, QuerySet
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
@@ -28,124 +20,7 @@ from django.views.decorators.http import require_POST
 
 from residents.permissions import current_resident, role_required
 
-from .forms import FremlejeForm, RundvisningForm
 from .models import Application
-
-logger = logging.getLogger(__name__)
-
-# Cloudflare Turnstile server-side verification endpoint (fixed, HTTPS-only).
-TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
-
-
-def index(request: HttpRequest) -> HttpResponse:
-    return render(request, "optagelse/landing.html")
-
-
-def _verify_turnstile(request: HttpRequest) -> bool:
-    """Verify the Cloudflare Turnstile token. Skipped (returns True) when no secret is configured (dev)."""
-    secret = settings.TURNSTILE_SECRET_KEY
-    if not secret:
-        return True
-    token = request.POST.get("cf-turnstile-response", "")
-    if not token:
-        return False
-    data = urllib.parse.urlencode(
-        {
-            "secret": secret,
-            "response": token,
-            "remoteip": request.META.get("REMOTE_ADDR", ""),
-        }
-    ).encode()
-    try:
-        # URL is a fixed HTTPS constant, not user-controlled — safe from B310 scheme abuse.
-        with urllib.request.urlopen(TURNSTILE_VERIFY_URL, data=data, timeout=5) as resp:  # nosec B310
-            return bool(json.loads(resp.read()).get("success"))
-    except Exception:
-        logger.warning("Turnstile verification request failed", exc_info=True)
-        return False
-
-
-def _apply(
-    request: HttpRequest,
-    form_class: type,
-    app_type: str,
-    post_url: str,
-    title: str,
-    show_criteria: bool = False,
-    intro: str = "",
-) -> HttpResponse:
-    form = form_class()
-    if request.method == "POST":
-        form = form_class(request.POST)
-        turnstile_ok = _verify_turnstile(request)
-        if form.is_valid() and turnstile_ok:
-            app = form.save(commit=False)
-            app.type = app_type
-            app.submitted_at = timezone.now()
-            app.save()
-            _send_auto_reply(app)
-            return redirect("admissions:success")
-        if not turnstile_ok:
-            messages.error(request, "Captcha-verifikation fejlede. Prøv igen.")
-    return render(
-        request,
-        "optagelse/apply_form.html",
-        {
-            "form": form,
-            "post_url": post_url,
-            "title": title,
-            "show_criteria": show_criteria,
-            "intro": intro,
-            "turnstile_site_key": settings.TURNSTILE_SITE_KEY,
-        },
-    )
-
-
-def ansoeg(request: HttpRequest) -> HttpResponse:
-    return _apply(
-        request,
-        RundvisningForm,
-        Application.Type.TOUR,
-        "admissions:send_rundvisning",
-        "Anmod om rundvisning",
-        show_criteria=True,
-        intro=(
-            "Udfyld formularen for at anmode om en rundvisning. Indstillingen kontakter dig, "
-            "hvis der er udsigt til ledige værelser, og din profil passer."
-        ),
-    )
-
-
-def fremlej(request: HttpRequest) -> HttpResponse:
-    return _apply(
-        request,
-        FremlejeForm,
-        Application.Type.SUBLET,
-        "admissions:send_fremleje",
-        "Ansøg om fremleje",
-        intro=("Skal du fremleje et værelse midlertidigt? Udfyld formularen, så vender vi tilbage til dig."),
-    )
-
-
-def success(request: HttpRequest) -> HttpResponse:
-    return render(request, "optagelse/success.html")
-
-
-def _send_auto_reply(app: Application) -> None:
-    """Send the applicant a "we got it" auto-reply. Best-effort; a mail failure must not lose the saved
-    application. The committee is no longer emailed per application (F-011) — they review the list view.
-    Not sent with fail_silently: SMTP errors — e.g. one.com refusing a DEFAULT_FROM_EMAIL the SMTP
-    account is not an alias of — must reach the log instead of vanishing."""
-    try:
-        send_mail(
-            "GAHK – vi har modtaget din henvendelse",
-            f"Kære {app.full_name}\n\nTak for din henvendelse. Vi vender tilbage.\n\nMvh. Indstillingen",
-            settings.DEFAULT_FROM_EMAIL,
-            [app.email],
-        )
-    except Exception:
-        logger.exception("Failed sending the auto-reply for application %s", app.pk)
-
 
 # ---- indstilling review ----
 # Free-text fields the list search scans (icontains, OR-combined). Covers both tour and sublet.

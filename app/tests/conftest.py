@@ -58,16 +58,14 @@ def _isolate_from_dotenv(settings: object, tmp_path: Path) -> None:
 
       * S3_BUCKET — several tests upload files and several assert that deleting a row deletes the
         file, so the suite would write to and then delete objects in the PRODUCTION bucket.
-      * TURNSTILE_SECRET_KEY — with a secret set, admissions._verify_turnstile stops short-circuiting
-        and looks for a `cf-turnstile-response` token that no test posts, so every application form
-        is silently rejected. That surfaces as `assert 0 == 1` on an Application count: it reads like
-        a broken view, and three tests failed this way for some time while CI stayed green.
+      * GAHK_WEB_KEY — with a key set, every content write in a test would try to publish to the
+        developer's gahk_web devserver (or gahk.dk itself), and sync tests would talk to it.
       * S3_PUBLIC_ENDPOINT_URL — a developer's `task dev` value (the S3 container's published port) would
         otherwise reach every test that builds its own MediaS3Storage/PhotoAlbumS3Storage with a
         different (fake) endpoint_url, making core.storage.PublicEndpointS3Storage presign against a
         host that has nothing to do with the test's own fixture bucket.
 
-    Autouse and unconditional, because in both cases the symptom points somewhere other than the
+    Autouse and unconditional, because in every case the symptom points somewhere other than the
     cause, and no individual test should have to remember. Anything else added to .env that changes
     behaviour rather than merely configuring an address belongs here too.
     """
@@ -78,7 +76,11 @@ def _isolate_from_dotenv(settings: object, tmp_path: Path) -> None:
     # Files a test saves go to its own directory, never the developer's app/media: that is the dev
     # data, and the Docker dev container leaves root-owned folders in it that tests cannot write to.
     settings.MEDIA_ROOT = tmp_path / "media"  # type: ignore[attr-defined]
-    settings.TURNSTILE_SECRET_KEY = ""  # type: ignore[attr-defined]
+    settings.GAHK_WEB_KEY = ""  # type: ignore[attr-defined]
+    # Every publish imports referenced legacy images into the library (cms.legacy_images), and the
+    # seeded default background references one that is in the repo today. Tests that want the
+    # import give it their own directory.
+    settings.CMS_LEGACY_IMAGE_DIRS = []  # type: ignore[attr-defined]
     settings.S3_PUBLIC_ENDPOINT_URL = ""  # type: ignore[attr-defined]
     # A developer's cache directory would otherwise collect test files and serve them across tests;
     # the cache tests (test_photo_album_cache.py) turn it on with their own tmp_path.

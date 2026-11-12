@@ -3,6 +3,7 @@
 Clean reimplementation of F-001: explicit fields (no mass-assignment), `gender` as male/female/other
 (legacy stored only a `female` bool), a single `submitted_at` instead of day/month/year/timestamp, and a
 real `received_by`/`received_at`. 1-year retention is enforced by a scheduled purge (see management cmd).
+Submitted on gahk.dk and pulled in from its outbox (admissions.services).
 """
 
 from django.db import models
@@ -53,6 +54,9 @@ class Application(models.Model):
         related_name="applications_discarded",
     )
     discarded_at = models.DateTimeField(null=True, blank=True)
+    # The id gahk.dk gave the submission in its outbox (a UUID). Unique, so pulling the same outbox
+    # twice stores an application once. NULL for applications from before gahk.dk had its own forms.
+    external_id = models.UUIDField(unique=True, null=True, blank=True, editable=False)
 
     class Meta:
         indexes = [

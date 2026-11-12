@@ -41,6 +41,11 @@ CSRF_COOKIE_NAME = "intern_csrftoken"
 SITE_URL = os.environ.get("SITE_URL", "http://localhost:8000" if DEBUG else "https://intern.gahk.dk")
 # The public site (gahk_web, separate hosting) — where "Til GAHK-forsiden" goes.
 PUBLIC_SITE_URL = os.environ.get("PUBLIC_SITE_URL", "https://gahk.dk")
+# Where cms.tasks reaches gahk.dk's sync API (/api/*), and the key both ends sign requests with
+# (gahk.dk's config.ini `[sync] key`). Empty key: syncing is off — every gahk.dk task logs and does
+# nothing, and the Hjemmeside editor still saves. In dev the default points at gahk_web's devserver.
+GAHK_WEB_URL = os.environ.get("GAHK_WEB_URL", "http://127.0.0.1:8810" if DEBUG else "https://gahk.dk")
+GAHK_WEB_KEY = os.environ.get("GAHK_WEB_KEY", "")
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -86,8 +91,7 @@ MIDDLEWARE = [
     "core.middleware.KitchenAccountGate",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    # No stats.middleware.FrontPageVisitCounterMiddleware: it counted GET "/" as a public front-page
-    # visit, and "/" is the intranet dashboard now. The public site counts its own visits.
+    # No visit counter: gahk.dk counts its own visits, and cms.tasks.sync_gahk_web pulls the totals.
     # DEBUG only: presigned URLs follow the host the page was opened on, so a phone on the LAN works.
     "core.middleware.PresignForRequestHost",
 ]
@@ -249,6 +253,13 @@ CELERY_TASK_ROUTES = {
     "photo_album.tasks.measure_photo_album_storage": {"queue": "media"},
     "gahkflix.tasks.process_video_file": {"queue": "media"},
     "gahkflix.tasks.redraw_frames": {"queue": "media"},
+    # Explicitly the default queue: small HTTP exchanges with gahk.dk that an editor is waiting on,
+    # which must not sit behind an hour of video encoding on "media". (A publish may read and send
+    # a few images; the first one imports the legacy images once, which is the heaviest it gets.)
+    "cms.tasks.publish_gahk_web": {"queue": "celery"},
+    "cms.tasks.sync_gahk_web": {"queue": "celery"},
+    "cms.tasks.rebuild_gahk_web": {"queue": "celery"},
+    "cms.tasks.nudge_gahk_web_update": {"queue": "celery"},
 }
 
 # A local migration client uses this bearer token to submit album ZIP imports as the non-login
@@ -259,6 +270,24 @@ PHOTO_ALBUM_SYSTEM_IMPORT_EMAIL = os.environ.get("PHOTO_ALBUM_SYSTEM_IMPORT_EMAI
 # (YYYY-MM-DD). Blank means the command's own default, 2026-10-01; a date in the future is refused.
 PHOTO_ALBUM_DELETE_PROTECTED_FROM = os.environ.get("PHOTO_ALBUM_DELETE_PROTECTED_FROM", "")
 CELERY_BEAT_SCHEDULE = {
+    # gahk.dk (cms.tasks): every 2 minutes, compare content revisions (republish on a mismatch) and
+    # pull the optagelse applications and visit counts waiting on the webhost. Often, because an
+    # application waits there until this runs, and the webhost holds no durable copy of it.
+    "sync-gahk-web": {
+        "task": "cms.tasks.sync_gahk_web",
+        "schedule": crontab(minute="*/2"),
+    },
+    # 00:05, just after midnight: gahk.dk re-renders, so "kommende begivenheder" drops yesterday's.
+    "rebuild-gahk-web": {
+        "task": "cms.tasks.rebuild_gahk_web",
+        "schedule": crontab(minute=5, hour=0),
+    },
+    # The webhost's ONLY update trigger: there is no cron job there, by decision. Odd minutes, so it
+    # never coincides with the 2-minute sync above.
+    "nudge-gahk-web-update": {
+        "task": "cms.tasks.nudge_gahk_web_update",
+        "schedule": crontab(minute="1-59/15"),
+    },
     "purge-expired-applications": {
         "task": "admissions.tasks.purge_expired_applications",
         "schedule": crontab(minute=20, hour=3),
@@ -559,13 +588,6 @@ ALUMNEREGNING_SEND_MAIL = os.environ.get("ALUMNEREGNING_SEND_MAIL", "0" if DEBUG
 ALUMNEREGNING_BANK_REG = os.environ.get("ALUMNEREGNING_BANK_REG", "9070")
 ALUMNEREGNING_BANK_ACCOUNT = os.environ.get("ALUMNEREGNING_BANK_ACCOUNT", "1642410853")
 
-# Front-page visit counter: server-side secret for HMAC-hashing visitor IPs (F-002/F-011).
-VISIT_COUNTER_HMAC_KEY = os.environ.get("VISIT_COUNTER_HMAC_KEY", "dev-hmac-key")
-
-# Cloudflare Turnstile on the public application forms (F-001). Unset in dev → the check is skipped.
-TURNSTILE_SITE_KEY = os.environ.get("TURNSTILE_SITE_KEY", "")
-TURNSTILE_SECRET_KEY = os.environ.get("TURNSTILE_SECRET_KEY", "")
-
 # Ølkælder till is an open kiosk on the GAHK LAN (F-003): purchases allowed without per-user login,
 # but only from these source IPs (as seen by the server). In DEBUG the gate is open for testing.
 OELKAELDER_KIOSK_IPS = [ip for ip in os.environ.get("OELKAELDER_KIOSK_IPS", "").split(",") if ip]
@@ -631,8 +653,13 @@ LOGGING = {
     },
 }
 
-# CMS image uploads (editors add pictures from the admin instead of committing them to the repo).
+# Website image uploads (the Hjemmeside image library; cms.services.upload_image). Checked before
+# the image is downscaled to 2400 px, so it caps what an editor may send, not what is stored.
 CMS_IMAGE_MAX_MB = int(os.environ.get("CMS_IMAGE_MAX_MB", "5"))
+# Where cms.legacy_images finds the old site's image files (static/legacy/image/): the collected
+# static files in the Docker image (app/static is emptied there), app/static in dev. TEMPORARY:
+# goes with that module once production has converted them (DEPLOY.md, "gahk.dk (gahk_web)").
+CMS_LEGACY_IMAGE_DIRS = [STATIC_ROOT / "legacy" / "image", BASE_DIR / "static" / "legacy" / "image"]
 
 # Opslagstavlen image uploads (inserted into a post's Markdown from the compose toolbar). Its own
 # setting rather than sharing the CMS one: every feature here caps its own uploads, and an ops

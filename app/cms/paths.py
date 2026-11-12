@@ -1,27 +1,26 @@
-"""What a CMS page's address is allowed to look like — the single definition, shared by the admin
-form, the model field, the redirect table, the system check and the tests.
+"""What a website page's address is allowed to look like — the single definition, shared by the
+model fields, the redirect table, cms.services and the tests. gahk_web checks the same rules on
+every snapshot it receives (its snapshot.py), so the two lists below must stay in step with it.
 
 The rewrite inherited a contradiction that cost a live page: `Page.slug` was a `SlugField`, whose
-validator forbids `/`, while the routing contract *requires* it. `config.urls` matches the whole
-multi-segment path as one lookup key, and `etl_cms` seeds `faciliteter/kokken` and eight siblings
+validator forbids `/`, while the routing contract *requires* it. gahk.dk serves the whole
+multi-segment path as one address, and `etl_cms` seeds `faciliteter/kokken` and eight siblings
 through `update_or_create`, which skips validators. So the database held addresses the edit form
 could never accept back: an editor who changed `faciliteter/kokken` to `faciliteter-kokken` could
-not type the old value again, and the page fell out of its section sidebar (the only thing that
-links a sub-page — see cms.nav) and became unreachable.
+not type the old value again, and the page fell out of its section and became unreachable.
 
-Hence a validator that permits exactly the shape the router resolves, and nothing sloppier:
+Hence a validator that permits exactly the shape gahk.dk serves, and nothing sloppier:
 
   * two levels at most, matching the legacy routes.php map (`faciliteter/kokken`, never `a/b/c`);
   * lowercase ASCII words separated by `-`/`_`, so an address is typable and stable across the
-    /301s F-006 promises — this one rule also rejects uppercase, spaces, `.`, `..` and `køkken`;
+    301s F-006 promises — this one rule also rejects uppercase, spaces, `.`, `..` and `køkken`;
   * no leading/trailing `/` and no `//`, which are the mistakes a hand-typed path actually makes;
-  * a first segment that is not already mounted in the URLconf. A fixed pattern is matched before
-    the catch-all, so a page addressed `intern` would simply never open, with nothing reporting it
-    (cms.checks keeps this list honest as urls.py grows).
+  * not an address gahk.dk uses for something else (RESERVED_FIRST_SEGMENTS, RESERVED_PATHS): a
+    page there would never be shown, and gahk.dk refuses a snapshot that contains one.
 
 Deliberately NOT enforced here: uniqueness (the model's `unique=True` plus a friendlier pre-check in
-PageAdminForm) and non-emptiness — Django skips validators for empty values, and a page with no
-address is legitimate (the `optagelse` bodies, which that app renders itself).
+cms.services) and non-emptiness — Django skips validators for empty values, and a page with no
+address is legitimate (it is simply not published).
 """
 
 import re
@@ -34,26 +33,50 @@ MAX_SEGMENTS = 2
 
 SEGMENT_RE = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$")
 
-# First path segments owned by something other than the CMS catch-all. Matched patterns win over the
-# catch-all, so a page given one of these addresses is unreachable rather than merely shadowed.
-# `cms.checks.check_reserved_top_segments` fails the build if urls.py grows a segment missing here.
-RESERVED_TOP_SEGMENTS = frozenset(
+# First path segments gahk.dk (or its webhost) uses for something else. Most of them cannot pass
+# SEGMENT_RE anyway (`sw.js`), but the list is kept whole so it reads the same as gahk_web's.
+RESERVED_FIRST_SEGMENTS = frozenset(
     {
         "admin",
-        "django-admin",
-        "intern",
-        "nyintern",
-        "optagelse",
+        "api",
         "begivenheder",
+        "billeder",
+        "cgi-bin",
+        "django-admin",
+        "favicon.ico",
+        "health",
+        "intern",
         "kalender",
         "media",
+        "nyintern",
         "photo-album",
+        "robots.txt",
+        "s",
+        "sitemap.xml",
         "static",
         "sw.js",
-        "favicon.ico",
-        "robots.txt",
+        "wiki",
+        "404",
     }
 )
+
+# Whole addresses gahk.dk generates itself (the optagelse forms) or forwards to intern. `optagelse`
+# on its own is an ordinary page.
+RESERVED_PATHS = frozenset(
+    {
+        "optagelse/ansoeg",
+        "optagelse/fremlej",
+        "optagelse/send_rundvisning",
+        "optagelse/send_fremleje",
+        "optagelse/listansoegninger",
+        "optagelse/eksport",
+    }
+)
+
+
+def is_reserved(path: str) -> bool:
+    """Whether gahk.dk uses `path` for something other than a page."""
+    return path.split("/", 1)[0] in RESERVED_FIRST_SEGMENTS or path in RESERVED_PATHS
 
 
 def validate_page_path(value: str) -> None:
@@ -80,10 +103,15 @@ def validate_page_path(value: str) -> None:
             )
 
     # Only the first segment: `faciliteter/media` is a perfectly good address, `media/noget` is not.
-    if segments[0] in RESERVED_TOP_SEGMENTS:
+    if segments[0] in RESERVED_FIRST_SEGMENTS:
         raise ValidationError(
             "“%(segment)s” er reserveret til en anden del af sitet og kan ikke bruges som adresse.",
             params={"segment": segments[0]},
+        )
+    if value in RESERVED_PATHS:
+        raise ValidationError(
+            "/%(path)s bruges af gahk.dk selv og kan ikke bruges som adresse.",
+            params={"path": value},
         )
 
 
@@ -109,8 +137,8 @@ def join_path(parent: str, segment: str) -> str:
 def normalize_segment(value: str) -> str:
     """Coerce typed input toward a legal segment, so an editor is corrected rather than rejected.
 
-    Deliberately forgiving in exactly the ways `page_path.js` previews live (trim, lowercase, spaces
-    to hyphens) and no further: anything still illegal afterwards is a real mistake and must reach
+    Deliberately forgiving in a few predictable ways (trim, lowercase, spaces to hyphens) and no
+    further: anything still illegal afterwards is a real mistake and must reach
     the editor as an error, not be silently rewritten into a different address than they asked for.
     """
     collapsed = re.sub(r"\s+", "-", value.strip().lower())

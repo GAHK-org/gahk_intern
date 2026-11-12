@@ -1,10 +1,13 @@
-"""HTML sanitization for admin-edited CMS content (F-006 hardening).
+"""HTML sanitization for the website's content (F-006 hardening).
 
-The CMS body is rendered with `|safe`, so admin input must be scrubbed of scripts/handlers before it is
-stored. nh3 (ammonia) always strips <script>, event handlers and dangerous URL schemes, and sanitizes
+Bodies are published to gahk.dk as they are stored (gahk.dk has no sanitizer of its own and renders
+them as trusted), so editor input must be scrubbed of scripts/handlers before it is stored. nh3 (ammonia) always strips <script>, event handlers and dangerous URL schemes, and sanitizes
 the CSS inside `style`. The allowlist below is intentionally generous — it keeps the formatting the
 migrated GAHK pages rely on (tables, inline styles, images, links) while removing anything executable.
 """
+
+import html
+import re
 
 import nh3
 
@@ -79,3 +82,15 @@ def clean_html(html: str | None) -> str | None:
         url_schemes={"http", "https", "mailto"},  # relative URLs (/static/…, #…) are allowed too
         link_rel="noopener noreferrer",
     )
+
+
+_TAG_RE = re.compile(r"<[^>]*>")
+
+
+def plain_text_from_html(value: str | None) -> str:
+    """The text a legacy title showed as: tags dropped, entities decoded, whitespace collapsed.
+
+    For the legacy page headers and news titles, which were rendered `|safe`; they are plain text
+    now and escaped wherever they are shown.
+    """
+    return " ".join(html.unescape(_TAG_RE.sub(" ", value or "")).split())

@@ -17,6 +17,7 @@ from django.utils import timezone
 from admissions.models import Application
 from config import settings as config_settings
 from residents.models import Resident, Role, active_period
+from residents.permissions import CMS_EDITOR_ROLES, has_active_role
 
 
 @pytest.mark.parametrize("debug", ["0", "1"])
@@ -119,96 +120,7 @@ def test_monthly_role_is_time_bound(make_resident: Callable) -> None:
 
 
 # ---------------------------------------------------------------- admissions (F-001)
-def _rundvisning_data(motivation: str) -> dict[str, str]:
-    return {
-        "full_name": "Ny",
-        "email": "ny@x.dk",
-        "gender": "male",
-        "age": "22",
-        "study_year": "1",
-        "year_left": "3",
-        "university": "DTU",
-        "field_of_study": "Fysik",
-        "heard_about_us": "plakat",
-        "motivation": motivation,
-    }
-
-
-def test_rundvisning_motivation_renders_500_character_limit() -> None:
-    response = Client().get("/optagelse/ansoeg")
-
-    assert response.status_code == 200
-    assert response.context["form"]["motivation"].field.max_length == 500
-    assert 'maxlength="500"' in str(response.context["form"]["motivation"])
-
-
-@pytest.mark.django_db
-def test_rundvisning_accepts_500_character_motivation() -> None:
-    motivation = ("a " * 249) + "ab"
-    assert len(motivation) == 500
-
-    response = Client().post("/optagelse/send_rundvisning", _rundvisning_data(motivation))
-
-    assert response.status_code == 302
-    assert Application.objects.get().motivation == motivation
-
-
-@pytest.mark.django_db
-def test_rundvisning_rejects_501_character_motivation() -> None:
-    motivation = ("a " * 249) + "abc"
-    assert len(motivation) == 501
-
-    response = Client().post("/optagelse/send_rundvisning", _rundvisning_data(motivation))
-
-    assert response.status_code == 200
-    assert "motivation" in response.context["form"].errors
-    assert not Application.objects.exists()
-
-
-@pytest.mark.django_db
-def test_rundvisning_emails_applicant_only() -> None:
-    """The committee is no longer notified per rundvisning request; only the applicant auto-reply
-    goes out (F-011)."""
-    mail.outbox = []
-    Client().post(
-        "/optagelse/send_rundvisning",
-        {
-            "full_name": "Ny",
-            "email": "ny@x.dk",
-            "gender": "male",
-            "age": "22",
-            "study_year": "1",
-            "year_left": "3",
-            "university": "DTU",
-            "field_of_study": "Fysik",
-            "heard_about_us": "plakat",
-            "motivation": "m",
-        },
-    )
-    assert Application.objects.filter(type="rundvisning").count() == 1
-    assert len(mail.outbox) == 1  # applicant auto-reply only, committee not emailed
-    assert mail.outbox[0].to == ["ny@x.dk"]
-
-
-@pytest.mark.django_db
-def test_fremleje_does_not_email_committee() -> None:
-    mail.outbox = []
-    Client().post(
-        "/optagelse/send_fremleje",
-        {
-            "full_name": "Ny",
-            "email": "ny@x.dk",
-            "gender": "other",
-            "age": "25",
-            "occupation": "Studerende",
-            "heard_about_us": "avis",
-            "motivation": "m",
-        },
-    )
-    assert Application.objects.filter(type="fremleje").count() == 1
-    assert len(mail.outbox) == 1  # applicant auto-reply only (decision 2026-06)
-
-
+# The forms are gahk.dk's; what reaches intern is tested in test_gahk_web_sync.py.
 @pytest.mark.django_db
 def test_mark_received_is_post_only_and_role_gated(make_resident: Callable) -> None:
     app = Application.objects.create(
@@ -483,24 +395,13 @@ def test_application_list_shows_receiver(make_resident: Callable) -> None:
     assert "Afventer" in html  # the un-received one is flagged
 
 
-@pytest.mark.django_db
-def test_cms_admin_is_gated_to_content_editor_roles(make_resident: Callable) -> None:
-    """Frontpage/CMS content is editable by administrator, indstilling, inspektion and pr — the
-    content-editor roles — and by nobody else (other role-holders are is_staff but not editors)."""
-    from cms.models import Page
+def test_django_admin_does_not_edit_website_content() -> None:
+    """Website content is edited only through cms.services (audited, published to gahk.dk); the
+    Django admin must not be a second, unaudited write path."""
+    from django.apps import apps
+    from django.contrib import admin
 
-    Page.objects.create(header="Testside", slug="testside", body="<p>hej</p>")
-
-    for role in (Role.ADMINISTRATOR, Role.INDSTILLING, Role.INSPEKTION, Role.PR):
-        c = Client()
-        c.force_login(make_resident(email=f"{role.value}@gahk.dk", roles=[role]))
-        for model in ("page", "newsitem", "event"):  # all CMS content, not just pages
-            assert c.get(f"/django-admin/cms/{model}/").status_code == 200, f"{role} should edit {model}"
-
-    for role in (Role.AK, Role.OELKAELDER, Role.KOKKENGRUPPE, Role.REGNSKAB):  # staff, but not editors
-        c = Client()
-        c.force_login(make_resident(email=f"{role.value}@gahk.dk", roles=[role]))
-        assert c.get("/django-admin/cms/page/").status_code == 403, f"{role} must not edit CMS"
+    assert not [model for model in apps.get_app_config("cms").get_models() if admin.site.is_registered(model)]
 
 
 @pytest.mark.django_db
@@ -518,32 +419,7 @@ def test_pr_embedsgruppe_grants_cms_access(make_resident: Callable) -> None:
     _sync_month_roles(r.id, pr_group, y, m, is_admin=False)  # what the next-month editor runs
 
     assert r.has_role("pr", (y, m))
-    c = Client()
-    c.force_login(r)
-    assert c.get("/django-admin/cms/page/").status_code == 200
-
-
-@pytest.mark.django_db
-def test_cms_admin_sanitizes_html_on_save(make_resident: Callable) -> None:
-    from cms.models import Page
-
-    page = Page.objects.create(header="S", slug="s", body="")
-    admin = make_resident(email="admin@gahk.dk", roles=[Role.ADMINISTRATOR])
-    c = Client()
-    c.force_login(admin)
-    c.post(
-        f"/django-admin/cms/page/{page.id}/change/",
-        {
-            "slug": "s",
-            "menu_category": "0",
-            "header": "S",
-            "background_image": "",
-            "body": '<p>Hej</p><script>alert(1)</script><a href="javascript:evil()">x</a>',
-        },
-    )
-    page.refresh_from_db()
-    assert "<p>Hej</p>" in page.body  # safe markup kept
-    assert "<script" not in page.body and "javascript:" not in page.body  # stripped
+    assert has_active_role(r, *CMS_EDITOR_ROLES)
 
 
 @pytest.mark.django_db
@@ -734,19 +610,19 @@ def test_body_media_rewrites_relative_and_absolute_legacy_urls() -> None:
 def test_the_dashboard_is_not_counted_as_a_front_page_visit(make_resident: Callable) -> None:
     """The intranet dashboard is at "/" on intern.gahk.dk; the public front page, and its visit count,
     live on gahk.dk now."""
-    from stats.models import DailyVisitCount, VisitTally
+    from stats.models import DailyVisitCount, PageViewDay
 
     c = Client()
     c.force_login(make_resident(email="m@gahk.dk"))
     assert c.get("/").status_code == 200
-    assert not VisitTally.objects.exists() and not DailyVisitCount.objects.exists()
+    assert not PageViewDay.objects.exists() and not DailyVisitCount.objects.exists()
 
 
 @pytest.mark.django_db
 def test_statistik_renders_charts(make_resident: Callable) -> None:
     from datetime import date
 
-    from stats.models import DailyVisitCount
+    from stats.models import DailyVisitCount, PageViewDay
 
     Application.objects.create(
         type=Application.Type.TOUR,
@@ -757,9 +633,15 @@ def test_statistik_renders_charts(make_resident: Callable) -> None:
         heard_about_us="plakat",
     )
     DailyVisitCount.objects.create(date=date.today(), count=5)
+    PageViewDay.objects.create(date=timezone.localdate(), path="faciliteter", views=7, visitors=3)
+    PageViewDay.objects.create(date=timezone.localdate(), path="*", views=9, visitors=5)
     c = Client()
     c.force_login(make_resident(email="m@gahk.dk"))
     h = c.get("/statistik/").content.decode()
+    assert "Besøgende pr. dag (gahk.dk, seneste 30)" in h
+    assert "Mest besøgte sider (30 dage)" in h
+    assert "/faciliteter" in h and "https://gahk.dk/faciliteter" in h
+    assert ">/*<" not in h  # the whole-site row is the chart, not a page
     assert 'id="stats-data"' in h  # chart data embedded via json_script
     for cid in ("chart-applications", "chart-heard", "chart-visits"):
         assert f'id="{cid}"' in h  # the three chart canvases
@@ -1082,23 +964,6 @@ def test_room_clash_warning_is_indstilling_only(make_resident: Callable) -> None
     ind.force_login(make_resident(email="clash-ind@gahk.dk", roles=("indstilling",)))
     html = ind.get("/alumneliste/").content.decode()
     assert "Værelseskonflikt" in html and "098" in html
-
-
-@pytest.mark.django_db
-def test_cms_admin_link_in_sidebar_for_editor_roles(make_resident: Callable) -> None:
-    """The 'Rediger indhold' sidebar link appears for content-editor roles and no one else."""
-    for role in (Role.ADMINISTRATOR, Role.INDSTILLING, Role.INSPEKTION, Role.PR):
-        c = Client()
-        c.force_login(make_resident(email=f"navcms-{role.value}@gahk.dk", roles=[role]))
-        nav = c.get("/").context["nav_intern"]
-        labels = [label for _sec, items in nav for _u, label, _i in items]
-        assert "Rediger indhold" in labels, f"{role} should see the CMS link"
-
-    plain = Client()
-    plain.force_login(make_resident(email="navcms-plain@gahk.dk", roles=[Role.AK]))
-    nav = plain.get("/").context["nav_intern"]
-    labels = [label for _sec, items in nav for _u, label, _i in items]
-    assert "Rediger indhold" not in labels
 
 
 @pytest.mark.django_db
