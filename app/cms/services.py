@@ -467,7 +467,12 @@ def save_news(item: NewsItem | None, data: Mapping[str, Any], by: Resident | Non
     if "body" in data:
         item.body = _html(data["body"])
     if data.get("published_at") not in (None, ""):
-        item.published_at = _aware_datetime(data["published_at"], "published_at")
+        published_at = _aware_datetime(data["published_at"], "published_at")
+        # The editor's field shows minutes only, so an untouched field sends the stored time without
+        # its seconds. That is no change: keep the stored time rather than record and publish one.
+        stored = None if creating else item.published_at
+        if stored is None or published_at != stored.replace(second=0, microsecond=0):
+            item.published_at = published_at
     elif creating:
         item.published_at = timezone.now()
     changes = field_changes(before, {name: getattr(item, name) for name in NEWS_FIELDS})

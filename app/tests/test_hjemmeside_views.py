@@ -493,6 +493,31 @@ def test_news_are_created_edited_and_deleted_through_the_services(editor: Reside
 
 
 @pytest.mark.django_db
+def test_saving_a_news_item_untouched_keeps_its_time_and_writes_nothing(
+    editor: Resident,
+    published: list[dict[str, Any]],
+    django_capture_on_commit_callbacks: Callable[..., Any],
+) -> None:
+    item = services.save_news(None, {"title": "Nyhed", "body": "<p>x</p>"}, editor)  # now, with seconds
+    item.published_at = item.published_at.replace(second=42, microsecond=123)
+    item.save()
+    stored = item.published_at
+    client = client_for(editor)
+    form = client.get(reverse("hjemmeside:news_edit", args=[item.pk])).context["form"]
+    shown = form["published_at"].value().strftime("%Y-%m-%dT%H:%M")  # what the field sends back
+
+    with django_capture_on_commit_callbacks(execute=True):
+        client.post(
+            reverse("hjemmeside:news_edit", args=[item.pk]),
+            {"title": "Nyhed", "published_at": shown, "body": "<p>x</p>"},
+        )
+
+    item.refresh_from_db()
+    assert item.published_at == stored
+    assert ContentChange.objects.filter(kind="news", action="update").count() == 0 and published == []
+
+
+@pytest.mark.django_db
 def test_events_need_a_date_and_are_deleted_through_the_services(editor: Resident) -> None:
     client = client_for(editor)
     response = client.post(reverse("hjemmeside:event_create"), {"title": "Fest", "starts_on": ""})
