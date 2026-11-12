@@ -774,6 +774,18 @@ def test_the_change_log_filters_and_diffs_bodies(
     system = client.get(reverse("hjemmeside:change_log"), {"person": "system"}).context["rows"]
     assert system == []
 
+    # Every automatic change counts as the system's, whichever job made it.
+    services.record_change(action="update", kind="page", label="A", by_name=services.SYSTEM_NAME)
+    services.record_change(
+        action="upload",
+        kind="image",
+        label="B",
+        by_name="System (gamle billeder flyttet til billedbiblioteket)",
+    )
+    services.record_change(action="update", kind="page", label="C", by_name="Slettet Beboer")
+    system = client.get(reverse("hjemmeside:change_log"), {"person": "system"}).context["rows"]
+    assert sorted(change.label for change, _link, _fields in system) == ["A", "B"]
+
 
 @pytest.mark.django_db
 def test_saving_a_page_unchanged_says_so_and_writes_nothing(editor: Resident, front: Page) -> None:

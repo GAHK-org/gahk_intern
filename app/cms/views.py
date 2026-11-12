@@ -981,7 +981,10 @@ def change_log(request: HttpRequest) -> HttpResponse:
         changes = changes.filter(kind=kind)
     person = request.GET.get("person", "")
     if person == "system":
-        changes = changes.filter(by__isnull=True, by_name=services.SYSTEM_NAME)
+        # Every automatic change: "System", and the variants that say which job it was (the
+        # legacy image import's "System (gamle billeder …)"). A resident deleted since keeps their
+        # by_name, so by__isnull alone would count their edits as the system's.
+        changes = changes.filter(by__isnull=True, by_name__startswith=services.SYSTEM_NAME)
     elif person.isdigit():
         changes = changes.filter(by_id=int(person))
     page_obj = Paginator(changes, 50).get_page(request.GET.get("side"))

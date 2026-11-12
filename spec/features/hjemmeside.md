@@ -54,7 +54,9 @@ working when intern or the image storage is down; editing needs intern.
 
 - Every change is recorded: who, when, what, and the values before and after — pages, news,
   events, images, the menu, old addresses and settings alike. Automatic changes are recorded as
-  "System".
+  "System", and the log's System filter shows all of them.
+- Saving a news item without changing it writes nothing, even though its time is edited to the
+  minute.
 - Every saved version of a page is kept and can be restored. A restore is itself a change, so it can
   be undone too. If the old address is taken by another page by then, the content comes back and the
   address does not, and the editor is told so.
