@@ -4,7 +4,7 @@ library (cms.legacy_images)."""
 import hashlib
 import json
 import re
-from io import BytesIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any
 
@@ -206,7 +206,6 @@ def legacy_dir(tmp_path: Path, settings: Any) -> Path:  # noqa: ANN401
     (root / "upload" / "images" / "Forårskoncert.jpg").write_bytes(_image_bytes())
     (root / "elements").mkdir()
     (root / "elements" / "logo.svg").write_text("<svg/>")
-    settings.CMS_LEGACY_IMAGE_DIRS = [tmp_path / "not-collected", root]
     return root
 
 
@@ -268,7 +267,8 @@ def test_legacy_images_are_imported_once_and_the_content_rewritten(
         pk=1, defaults={"default_background": "/public/image/upload/images/gang.jpg"}
     )
 
-    result = convert_legacy_images()
+    # A directory that does not exist is skipped; the next one has the files.
+    result = convert_legacy_images([legacy_dir.parent / "not-collected", legacy_dir])
 
     assert sorted(result.imported) == [
         "upload/images/Forårskoncert.jpg",
@@ -300,7 +300,7 @@ def test_legacy_images_are_imported_once_and_the_content_rewritten(
     assert system.filter(kind="settings").exists() and system.filter(label__contains="sideversioner").exists()
 
     # Idempotent: nothing more to import or rewrite (the missing file is reported again).
-    again = convert_legacy_images()
+    again = convert_legacy_images([legacy_dir])
     assert again.imported == [] and again.rewritten == 0
     assert CmsImage.objects.filter(legacy_path__isnull=False).count() == 3
 
@@ -322,6 +322,56 @@ def test_legacy_images_are_imported_once_and_the_content_rewritten(
 def test_nothing_to_convert_is_a_no_op(legacy_dir: Path, front_page: Page) -> None:
     SiteSettings.objects.update_or_create(pk=1, defaults={"default_background": ""})  # seeded with gang.jpg
 
-    result = convert_legacy_images()
+    result = convert_legacy_images([legacy_dir])
     assert (result.imported, result.rewritten, result.missing) == ([], 0, [])
     assert not ContentChange.objects.exists()
+
+
+@pytest.mark.django_db
+def test_an_edit_saved_during_the_import_is_kept(
+    legacy_dir: Path, front_page: Page, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cms import legacy_images
+
+    front_page.body = '<img src="/public/image/upload/images/gang.jpg">'
+    front_page.save()
+    real_import = legacy_images._import
+
+    def import_while_an_editor_saves(*args: Any, **kwargs: Any) -> CmsImage | None:  # noqa: ANN401
+        # The editor's save lands while the (slow) import runs, after the rows were first read.
+        Page.objects.filter(pk=front_page.pk).update(
+            body='<p>Ny tekst</p><img src="/public/image/upload/images/gang.jpg">'
+        )
+        return real_import(*args, **kwargs)
+
+    monkeypatch.setattr(legacy_images, "_import", import_while_an_editor_saves)
+
+    convert_legacy_images([legacy_dir])
+
+    front_page.refresh_from_db()
+    gang = CmsImage.objects.get(legacy_path="upload/images/gang.jpg")
+    assert front_page.body == f'<p>Ny tekst</p><img src="{gang.url}">'
+
+
+@pytest.mark.django_db
+def test_the_import_command_reads_the_directory_it_is_given(
+    legacy_dir: Path, front_page: Page, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from django.core.management import CommandError, call_command
+
+    from cms.management.commands import import_legacy_images
+
+    queued: list[str] = []
+    monkeypatch.setattr(import_legacy_images, "publish_on_commit", queued.append)
+    front_page.body = '<img src="/public/image/upload/images/gang.jpg"><img src="/public/image/upload/x.jpg">'
+    front_page.save()
+    out = StringIO()
+
+    call_command("import_legacy_images", "--from", str(legacy_dir), stdout=out)
+
+    assert "Imported 1 images; rewrote 2 rows." in out.getvalue()  # the page and the default background
+    assert "Missing: upload/x.jpg" in out.getvalue()
+    assert CmsImage.objects.filter(legacy_path="upload/images/gang.jpg").exists()
+    assert queued == ["save"]
+    with pytest.raises(CommandError):
+        call_command("import_legacy_images", "--from", str(legacy_dir / "nowhere"))

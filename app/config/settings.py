@@ -660,10 +660,6 @@ LOGGING = {
 # Website image uploads (the Hjemmeside image library; cms.services.upload_image). Checked before
 # the image is downscaled to 2400 px, so it caps what an editor may send, not what is stored.
 CMS_IMAGE_MAX_MB = int(os.environ.get("CMS_IMAGE_MAX_MB", "5"))
-# Where cms.legacy_images finds the old site's image files (static/legacy/image/): the collected
-# static files in the Docker image (app/static is emptied there), app/static in dev. TEMPORARY:
-# goes with that module once production has converted them (DEPLOY.md, "gahk.dk (gahk_web)").
-CMS_LEGACY_IMAGE_DIRS = [STATIC_ROOT / "legacy" / "image", BASE_DIR / "static" / "legacy" / "image"]
 
 # Opslagstavlen image uploads (inserted into a post's Markdown from the compose toolbar). Its own
 # setting rather than sharing the CMS one: every feature here caps its own uploads, and an ops

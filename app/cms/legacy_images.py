@@ -1,36 +1,38 @@
 """Moving the old site's images into the image library, once.
 
-The legacy site kept its content images as files (/public/image/…), and this project carried them
-on in git under static/legacy/image/. They are content, not code: they belong in the image library
-(CmsImage, in S3) like every other picture, and gahk.dk gets them from there.
+The legacy site kept its content images as files (/public/image/…), and this project used to carry
+them in git under static/legacy/image/upload/. They are content, not code: they belong in the image
+library (CmsImage, in S3) like every other picture, and gahk.dk gets them from there. The repository
+no longer holds them; the operator supplies a copy of the old files for the one run that imports them.
 
-`convert_legacy_images()` does the move. For every legacy image reference in the stored content —
+`convert_legacy_images(source_dirs)` does the move. For every legacy image reference in the stored
+content —
 
     /public/image/<rest>   public/image/<rest>   http(s)://(www.)gahk.dk/public/image/<rest>
     /static/legacy/image/<rest>   (and the same with http(s)://(www.)gahk.dk in front)
 
 — in Page.body/background_image, NewsItem.body, Event.description, PageVersion.body/
-background_image and SiteSettings.default_background, it imports the file static/legacy/image/<rest>
-into the library once (downscaled like an upload, `legacy_path` = <rest>, uploaded by nobody) and
-rewrites the reference to the library URL. Every rewrite is recorded as a system ContentChange.
+background_image and SiteSettings.default_background, it imports the file <rest> found below one
+of `source_dirs` (each a copy of the old static/legacy/image/ or public/image/ directory) into the
+library once (downscaled like an upload, `legacy_path` = <rest>, uploaded by nobody) and rewrites the
+reference to the library URL. Every rewrite is recorded as a system ContentChange.
 
-It runs at the start of every publish (cms.tasks.publish_gahk_web), so production converts itself
-on its first publish and every later run finds nothing to do. A file that is missing or is not a
-usable image is logged and its references are left as they are.
+It is run by hand, once, with `manage.py import_legacy_images --from <dir>` (DEPLOY.md, "gahk.dk
+(gahk_web)"). It is idempotent, so running it again only reports what is still missing. A file that
+is missing or is not a usable image is logged and its references are left as they are. Until it has
+run, gahk.dk shows such pictures as broken and such backgrounds as a plain band.
 
-TEMPORARY. Once this has run in production, a follow-up removes static/legacy/image/upload/ and this
-module (DEPLOY.md, "gahk.dk (gahk_web)"). static/legacy/image/elements/ and intern/ stay: the
-intranet itself uses them.
+TEMPORARY. Once production has run the import, the command and this module can go; `legacy_path`
+stays, because gahk.dk's redirects for old image links are built from it (legacy_image_map).
 """
 
 import logging
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import unquote
 
-from django.conf import settings
 from django.db import transaction
 from django.db.models import Model, Q
 
@@ -80,11 +82,6 @@ class ConversionResult:
     unusable: list[str] = field(default_factory=list)  # a file, but not an image gahk.dk can show
 
 
-def legacy_image_dirs() -> list[Path]:
-    """Where the legacy files are: collected static files in production, app/static in dev."""
-    return [Path(directory) for directory in settings.CMS_LEGACY_IMAGE_DIRS]
-
-
 def _normalize(rest: str) -> str | None:
     """The file below static/legacy/image/ that `rest` names, or None if it is not a plain path."""
     path = unquote(rest).strip().replace("\\", "/")
@@ -94,8 +91,8 @@ def _normalize(rest: str) -> str | None:
     return "/".join(parts)
 
 
-def _find_file(legacy_path: str) -> Path | None:
-    for directory in legacy_image_dirs():
+def _find_file(legacy_path: str, source_dirs: Sequence[Path]) -> Path | None:
+    for directory in source_dirs:
         candidate = directory / legacy_path
         try:
             if candidate.is_file() and candidate.resolve().is_relative_to(directory.resolve()):
@@ -191,11 +188,13 @@ def _label(row: Model) -> str:
     return str(row)
 
 
-def convert_legacy_images() -> ConversionResult:
-    """Import every referenced legacy image into the library and point the content at it.
+def convert_legacy_images(source_dirs: Sequence[Path]) -> ConversionResult:
+    """Import every referenced legacy image found below `source_dirs` into the library and point
+    the content at it.
 
     Idempotent: a second run finds no references (or only ones whose file is missing).
     """
+    source_dirs = [Path(directory) for directory in source_dirs]
     result = ConversionResult()
     rows = [
         (model, fields, row) for model, fields in TEXT_FIELDS for row in _rows_with_references(model, fields)
@@ -217,7 +216,9 @@ def convert_legacy_images() -> ConversionResult:
         for candidates in wanted:
             if any(path in library for path in candidates):
                 continue
-            found = next(((path, file) for path in candidates if (file := _find_file(path))), None)
+            found = next(
+                ((path, file) for path in candidates if (file := _find_file(path, source_dirs))), None
+            )
             if found is None:
                 if candidates[0] not in result.missing:
                     logger.warning(
@@ -245,7 +246,12 @@ def _rewrite_rows(
     from .services import record_change
 
     versions: list[int] = []
-    for model, fields, row in rows:
+    for model, fields, stale in rows:
+        # The imports above take a while (an S3 upload per file); an editor may have saved this row
+        # meanwhile. Rewrite what is stored now, locked until the commit, never the copy read before.
+        row = model._default_manager.select_for_update().filter(pk=stale.pk).first()
+        if row is None:
+            continue
         changes: dict[str, list[str]] = {}
         for name in fields:
             before = getattr(row, name)

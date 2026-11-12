@@ -1,8 +1,8 @@
 """Keeping gahk.dk in step with intern. Every exchange is started here; gahk.dk never calls intern.
 
   * publish_gahk_web — after every content save (cms.services.publish_on_commit), on "Udgiv nu",
-    and whenever sync finds gahk.dk on another revision: convert legacy images, build the snapshot,
-    upload the images gahk.dk lacks, publish.
+    and whenever sync finds gahk.dk on another revision: build the snapshot, upload the images
+    gahk.dk lacks, publish.
   * sync_gahk_web — every 2 minutes: compare revisions (republish on a mismatch, so a missed or
     failed publish heals itself), then pull the outbox: optagelse applications and visit counts,
     stored here and acknowledged so gahk.dk can delete them.
@@ -28,7 +28,6 @@ from django.utils import timezone
 
 from .gahk_web import GahkWebClient, GahkWebError, GahkWebRejected, MissingImages
 from .images import sha256_hex
-from .legacy_images import convert_legacy_images
 from .models import CmsImage, GahkWebSync, Publication
 from .snapshot import Snapshot, build_snapshot
 
@@ -113,7 +112,6 @@ def publish(
         return None
 
     try:
-        convert_legacy_images()
         snapshot = build_snapshot()
     except Exception as exc:
         # Recorded, so the overview shows a failed publish rather than nothing; raised, so the

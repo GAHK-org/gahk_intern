@@ -739,14 +739,34 @@ A manual publish is never skipped as "already current".
 4. On gahk.dk, `https://gahk.dk/api/health` shows the revision it serves; compare with the newest OK
    Publication.
 
-**Legacy images — first publish, then a follow-up.** The old site's content images still ship in
-this image under `app/static/legacy/image/upload/` for one reason: on its first publish, production
-imports every one that content refers to into the image library (S3) and rewrites the content to
-point at it (`cms/legacy_images.py`; audited as "System" changes; idempotent, a no-op afterwards).
-Check after the first publish that the log names no missing files and that Hjemmeside's library holds
-the imported images. **Then a follow-up PR removes `app/static/legacy/image/upload/` and
-`cms/legacy_images.py`** (and `CMS_LEGACY_IMAGE_DIRS`). `static/legacy/image/elements/` and
-`image/intern/` stay for good: the intranet uses them.
+**Legacy images — a one-off import, at the cutover.** The old site's content images are content,
+not code, so they are not in this repository (they used to be, under
+`app/static/legacy/image/upload/`). They go into the image library (S3) once, with
+`python manage.py import_legacy_images --from <dir>`: every file the stored content refers to is
+imported, and the content is rewritten to point at the library copy (`cms/legacy_images.py`; audited
+as "System" changes; idempotent, so a second run only reports what is still missing). Then it queues
+a publish. Until it has run, gahk.dk shows those pictures as broken and those backgrounds as a plain
+green band. `static/legacy/image/elements/` and `image/intern/` stay in the repository: the intranet
+itself uses them.
+
+1. **Before the deploy** (§7 step 4 replaces the running container), copy the files out of the
+   running production container. The directory must be the one that holds `upload/`:
+   ```
+   docker cp <old-web>:/app/staticfiles/legacy/image ./legacy-image
+   ```
+   If that container is gone, take them from git history (`git archive <a commit before their
+   removal> app/static/legacy/image | tar -x`, the files are under `app/static/legacy/image/`) or
+   from the legacy PHP server's `public/image/`.
+2. **Right after the deploy**, import them into the new container, then delete every copy:
+   ```
+   docker cp ./legacy-image <new-web>:/tmp/legacy-image
+   docker exec <new-web> python manage.py import_legacy_images --from /tmp/legacy-image
+   docker exec <new-web> rm -rf /tmp/legacy-image && rm -rf ./legacy-image
+   ```
+   The output counts the imported images and names every referenced file it did not find. Check that
+   the list is empty or explained, and that Hjemmeside's library holds the imported images. Once that
+   is done in production, a follow-up can remove the command and `cms/legacy_images.py` (keep
+   `CmsImage.legacy_path`: gahk.dk's redirects for old image links are built from it).
 
 **Applications** pulled from the outbox are validated with the old form rules, stored once (by
 gahk.dk's id), answered with the usual auto-reply, and then acknowledged so gahk.dk deletes them. One

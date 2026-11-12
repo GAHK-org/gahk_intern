@@ -77,10 +77,6 @@ def _isolate_from_dotenv(settings: object, tmp_path: Path) -> None:
     # data, and the Docker dev container leaves root-owned folders in it that tests cannot write to.
     settings.MEDIA_ROOT = tmp_path / "media"  # type: ignore[attr-defined]
     settings.GAHK_WEB_KEY = ""  # type: ignore[attr-defined]
-    # Every publish imports referenced legacy images into the library (cms.legacy_images), and the
-    # seeded default background references one that is in the repo today. Tests that want the
-    # import give it their own directory.
-    settings.CMS_LEGACY_IMAGE_DIRS = []  # type: ignore[attr-defined]
     settings.S3_PUBLIC_ENDPOINT_URL = ""  # type: ignore[attr-defined]
     # A developer's cache directory would otherwise collect test files and serve them across tests;
     # the cache tests (test_photo_album_cache.py) turn it on with their own tmp_path.

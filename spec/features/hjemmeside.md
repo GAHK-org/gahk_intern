@@ -66,8 +66,11 @@ working when intern or the image storage is down; editing needs intern.
   2400 px on the long side, turned upright, and stripped of metadata such as the GPS position.
 - gahk.dk gets its own copy of every image it shows. A copy's address never changes, so browsers
   may keep it for a year.
-- The old site's pictures were moved into the library the first time intern published. Their old
-  addresses on gahk.dk send visitors on to the copies.
+- The old site's pictures are moved into the library once, by an import run at the move to the new
+  gahk.dk, from a copy of the old files. Their old addresses on gahk.dk send visitors on to the
+  copies. Until the import has run, those pictures are missing on gahk.dk.
+- Images keep their file name, spelled without Danish letters (Værelse.jpg is stored as
+  Vaerelse.jpg), so every image address is plain ASCII.
 
 ## Publishing
 
@@ -99,7 +102,8 @@ working when intern or the image storage is down; editing needs intern.
 - **The Django admin no longer edits website content.** It would be a second way in that records no
   history and publishes nothing.
 - **The old pictures are content, not code.** They lived in the code repository; now they are in
-  the image library like any other picture, and a later change removes them from the repository.
+  the image library like any other picture, and the repository no longer holds them. The import
+  reads a copy the operator supplies at the move, rather than files shipped with the code.
 - **Plain-text headings.** They were shown as HTML without ever being cleaned.
 - **The menu is data.** It was written into the code, so changing it needed a developer.
 - **A visual editor that keeps the old pages intact.** Editors should not need HTML, but the old
