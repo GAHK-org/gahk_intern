@@ -1,4 +1,4 @@
-"""Data for the Hjemmeside content model.
+"""Data for the website content model.
 
   * Titles become plain text. Page.header, NewsItem.title and the front-page Event.title were
     rendered `|safe` without ever being sanitized; from now on they are escaped everywhere, so any
@@ -98,7 +98,7 @@ def unseed_backgrounds(apps, schema_editor) -> None:  # noqa: ANN001
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("cms", "0005_hjemmeside_content_model"),
+        ("cms", "0005_website_content_model"),
     ]
 
     operations = [

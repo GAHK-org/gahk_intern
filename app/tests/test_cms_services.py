@@ -444,7 +444,7 @@ def _migration(name: str) -> Any:  # noqa: ANN401
 
 @pytest.mark.django_db
 def test_the_menu_is_seeded_from_the_old_hard_coded_one() -> None:
-    migration = _migration("0006_seed_hjemmeside")
+    migration = _migration("0006_seed_website")
     MenuItem.objects.all().delete()
 
     migration.seed_menu(apps, None)
@@ -462,7 +462,7 @@ def test_the_menu_is_seeded_from_the_old_hard_coded_one() -> None:
 
 @pytest.mark.django_db
 def test_the_hero_images_and_titles_become_content() -> None:
-    migration = _migration("0006_seed_hjemmeside")
+    migration = _migration("0006_seed_website")
     SiteSettings.objects.all().delete()
     Page.put_front_page(slug="velkommen", header="Velkommen til <b>GAHK</b> &amp; co")
     NewsItem.objects.create(title="&quot;Fest&quot;", published_at="2026-01-01T00:00:00+01:00")
@@ -479,15 +479,15 @@ def test_the_hero_images_and_titles_become_content() -> None:
 
 @pytest.mark.django_db
 def test_the_admissions_text_becomes_a_page_once() -> None:
-    migration = _migration("0007_optagelse_page")
+    migration = _migration("0007_admissions_page")
     editor = SimpleNamespace(connection=connection)
 
-    migration.create_optagelse_page(apps, editor)
+    migration.create_admissions_page(apps, editor)
     assert not Page.objects.filter(slug="optagelse").exists()  # an empty database gets nothing
 
     Page.put_front_page(slug="velkommen", header="Velkommen")
-    migration.create_optagelse_page(apps, editor)
-    migration.create_optagelse_page(apps, editor)
+    migration.create_admissions_page(apps, editor)
+    migration.create_admissions_page(apps, editor)
 
     page = Page.objects.get(slug="optagelse")
     assert page.header == "Optagelse" and page.pk != 1
@@ -495,5 +495,5 @@ def test_the_admissions_text_becomes_a_page_once() -> None:
     assert "5.616 kr. pr. måned" in page.body and "<blockquote>" in page.body
     assert "{%" not in page.body and "class=" not in page.body
     assert page.versions.count() == 1
-    migration.remove_optagelse_page(apps, editor)
+    migration.remove_admissions_page(apps, editor)
     assert not Page.objects.filter(slug="optagelse").exists()

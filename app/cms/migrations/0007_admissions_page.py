@@ -1,4 +1,4 @@
-"""The optagelse landing text becomes an ordinary page at /optagelse.
+"""The admissions landing text becomes an ordinary page at /optagelse.
 
 It was hard-coded in templates/optagelse/landing.html and _criteria.html, so the rent and the
 criteria could only be changed by a developer. gahk.dk now renders the page like any other, and the
@@ -46,7 +46,7 @@ BODY = """<p>Her er dejligt på G. A. Hagemanns Kollegium, og vi er glade for at
 </ul>"""
 
 
-def create_optagelse_page(apps, schema_editor) -> None:  # noqa: ANN001
+def create_admissions_page(apps, schema_editor) -> None:  # noqa: ANN001
     Page = apps.get_model("cms", "Page")
     PageVersion = apps.get_model("cms", "PageVersion")
     if not Page.objects.exists() or Page.objects.filter(slug="optagelse").exists():
@@ -74,7 +74,7 @@ def create_optagelse_page(apps, schema_editor) -> None:  # noqa: ANN001
     )
 
 
-def remove_optagelse_page(apps, schema_editor) -> None:  # noqa: ANN001
+def remove_admissions_page(apps, schema_editor) -> None:  # noqa: ANN001
     """Only the page this migration made, and only while nobody has edited it."""
     Page = apps.get_model("cms", "Page")
     Page.objects.filter(slug="optagelse", header=HEADER, body=BODY).delete()
@@ -82,9 +82,9 @@ def remove_optagelse_page(apps, schema_editor) -> None:  # noqa: ANN001
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("cms", "0006_seed_hjemmeside"),
+        ("cms", "0006_seed_website"),
     ]
 
     operations = [
-        migrations.RunPython(create_optagelse_page, remove_optagelse_page),
+        migrations.RunPython(create_admissions_page, remove_admissions_page),
     ]

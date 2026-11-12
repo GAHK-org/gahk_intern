@@ -60,7 +60,7 @@ def clean_stored_html(apps, schema_editor) -> None:  # noqa: ANN001
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("cms", "0007_optagelse_page"),
+        ("cms", "0007_admissions_page"),
     ]
 
     operations = [migrations.RunPython(clean_stored_html, migrations.RunPython.noop)]
