@@ -105,7 +105,8 @@ working when intern or the image storage is down; editing needs intern.
 - A publish that fails never stops applications and visit counts from being fetched.
 - It shows the code version gahk.dk runs, the newest one available and how the last update went.
   gahk.dk updates its code only when intern asks it to: every 15 minutes, or at once with
-  "Opdatér gahk.dk nu" (administrators only).
+  "Opdatér gahk.dk nu" (administrators only). An update that takes longer than the request waits
+  goes on by itself on gahk.dk; how it ended, an error included, shows after the next sync.
 
 ## Decisions
 

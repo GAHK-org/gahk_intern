@@ -26,6 +26,7 @@ from typing import Any
 from celery import shared_task
 from django.db import connection
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from .gahk_web import GahkWebClient, GahkWebError, GahkWebRejected, MissingImages
 from .images import sha256_hex
@@ -196,9 +197,29 @@ def _store_status(status: dict[str, Any]) -> None:
         "remote_revision": str(status.get("revision") or "")[:64],
     }
     update = status.get("update")
-    if isinstance(update, dict) and update.get("available_version"):
-        fields["update_available_version"] = str(update["available_version"])[:64]
+    if isinstance(update, dict):
+        if update.get("available_version"):
+            fields["update_available_version"] = str(update["available_version"])[:64]
+        fields.update(_finished_update(update, fields["remote_version"]))
     _note(**fields)
+
+
+def _finished_update(update: dict[str, Any], version: str) -> dict[str, Any]:
+    """How the webhost's last self-update ended, from GET /api/status, when it ended after what the
+    overview shows. An install slower than POST /api/update waits answers "still running" and goes
+    on detached; this is how its outcome (an error above all) reaches the overview."""
+    checked = parse_datetime(str(update.get("checked_at") or ""))
+    result = update.get("last_result")
+    if checked is None or timezone.is_naive(checked) or result not in ("updated", "unchanged", "failed"):
+        return {}
+    known = GahkWebSync.load().update_checked_at
+    if known is not None and checked <= known:
+        return {}
+    if result == "failed":
+        error = _short(f"failed: {update.get('last_error') or 'no reason given'}")
+        return {"update_checked_at": checked, "update_result": error[:255], "update_error": error}
+    summary = f"Opdateret til {version[:12]}" if result == "updated" else "Ingen ny version"
+    return {"update_checked_at": checked, "update_result": summary, "update_error": ""}
 
 
 def pull_outbox(client: GahkWebClient) -> dict[str, int]:

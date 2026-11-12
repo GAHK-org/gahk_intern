@@ -50,6 +50,13 @@ class FakeGahkWeb:
         self.acks: list[dict[str, Any]] = []
         self.forget_after_missing = False  # simulate images vanishing between the two calls
         self.down = False
+        # GET /api/status's "update": how the updater's last run ended (it may end after its nudge).
+        self.update_state: dict[str, Any] = {
+            "checked_at": None,
+            "available_version": "def456",
+            "last_result": None,
+            "last_error": None,
+        }
 
     # requests.Session.request's signature, as GahkWebClient calls it
     def request(
@@ -78,12 +85,7 @@ class FakeGahkWeb:
                     "published_at": None,
                     "rendered_at": None,
                     "outbox": {"applications": 0, "visit_days": 0},
-                    "update": {
-                        "checked_at": None,
-                        "available_version": "def456",
-                        "last_result": None,
-                        "last_error": None,
-                    },
+                    "update": self.update_state,
                 },
             )
         if method == "POST" and path == "/api/images/missing":
@@ -623,6 +625,75 @@ def test_a_failed_update_keeps_the_known_version_and_shows_the_error(
     state = GahkWebSync.load()
     assert state.update_available_version == "def456"
     assert state.update_error == "failed: no python3"
+
+
+STILL_RUNNING = {
+    "updated": False,
+    "version": "abc123",
+    "available_version": "def456",
+    "detail": "the update is still running; GET /api/status shows how it ends",
+}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("last_result", "last_error", "result", "error"),
+    [
+        (
+            "failed",
+            "self-test failed: selftest: app: FAILED",
+            "failed: self-test failed: selftest: app: FAILED",
+            "failed: self-test failed: selftest: app: FAILED",
+        ),
+        ("updated", None, "Opdateret til def456", ""),
+    ],
+)
+def test_an_update_that_outlasts_its_nudge_shows_how_it_ended_after_the_next_sync(
+    gahk_web: FakeGahkWeb,
+    front_page: Page,
+    monkeypatch: pytest.MonkeyPatch,
+    last_result: str,
+    last_error: str | None,
+    result: str,
+    error: str,
+) -> None:
+    """A slow install answers "still running" and finishes detached. Found in the full-system e2e:
+    the overview said "still running" until the next nudge, and never showed a slow install's error."""
+    monkeypatch.setattr(GahkWebClient, "update", lambda self: STILL_RUNNING)
+    tasks.nudge_gahk_web_update()
+    nudged = GahkWebSync.load()
+    assert nudged.update_result.startswith("the update is still running") and nudged.update_error == ""
+
+    finished = nudged.update_checked_at + timedelta(seconds=90)
+    gahk_web.update_state.update(
+        checked_at=finished.isoformat().replace("+00:00", "Z"), last_result=last_result, last_error=last_error
+    )
+    if last_result == "updated":
+        gahk_web.version = "def456"
+    tasks.sync_gahk_web()
+
+    state = GahkWebSync.load()
+    assert (state.update_result, state.update_error) == (result, error)
+    assert state.update_checked_at == finished
+    assert state.remote_version == gahk_web.version
+
+
+@pytest.mark.django_db
+def test_an_older_update_record_on_the_webhost_does_not_replace_the_nudges_answer(
+    gahk_web: FakeGahkWeb, front_page: Page
+) -> None:
+    gahk_web.update_state.update(
+        checked_at=(timezone.now() - timedelta(hours=1)).isoformat(), last_result="failed", last_error="old"
+    )
+    tasks.nudge_gahk_web_update()
+    tasks.sync_gahk_web()
+
+    state = GahkWebSync.load()
+    assert state.update_result.startswith("Opdateret til def456") and state.update_error == ""
+
+    gahk_web.update_state.update(checked_at="not a time", last_result="failed")
+    tasks.sync_gahk_web()
+    assert GahkWebSync.load().update_error == ""
 
 
 # ------------------------------------------------------------------------- the old public routes
