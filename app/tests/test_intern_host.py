@@ -190,6 +190,23 @@ def test_stored_notification_targets_lose_the_intern_prefix(make_resident: Calla
     ]
 
 
+def test_a_session_from_before_the_move_does_not_log_anyone_in(
+    make_resident: Callable[..., Resident],
+) -> None:
+    """Renaming the cookie does not end a session: its key would still work under the new name. The
+    old ".gahk.dk" cookie reaches gahk.dk's webhost, so the deploy ends every session there was."""
+    before_the_move = Client()
+    before_the_move.force_login(make_resident(email="beboer@gahk.dk"))
+    key = before_the_move.cookies[settings.SESSION_COOKIE_NAME].value
+
+    _migration("core", "0017_end_sessions_from_before_intern_host").end_every_session(apps, None)  # type: ignore[attr-defined]
+
+    c = Client()
+    c.cookies[settings.SESSION_COOKIE_NAME] = key
+    response = c.get(reverse("dashboard"))
+    assert response.status_code == 302 and response["Location"].startswith(reverse("login"))
+
+
 def test_the_debt_warnings_name_the_intranet_host() -> None:
     Warning.objects.all().delete()
     warning = Warning.objects.create(
