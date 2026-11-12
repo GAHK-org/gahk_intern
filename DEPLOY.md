@@ -54,7 +54,7 @@ SITE_URL=https://intern.gahk.dk                    # absolute links in mail and 
 PUBLIC_SITE_URL=https://gahk.dk                    # the public site, for "Til GAHK-forsiden" (default)
 GAHK_WEB_URL=https://gahk.dk                       # where the sync API is (default when DJANGO_DEBUG=0)
 GAHK_WEB_KEY=<64 random chars>                     # = [sync] key in gahk.dk's config.ini — see §4f
-# EDITOR_HINT_COOKIE_DOMAIN=.gahk.dk                # default; the "gahk_redaktoer" hint cookie for gahk.dk's "Rediger siden"
+# EDITOR_HINT_COOKIE_DOMAIN=.gahk.dk                # default; the "gahk_editor" hint cookie for gahk.dk's "Rediger siden"
 DATABASE_URL=postgres://gahk:<pw>@postgres:5432/gahk
 SMTP_HOST=send.one.com  SMTP_USER=…  SMTP_PASSWORD=…  SMTP_PORT=587
 EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend

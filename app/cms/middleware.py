@@ -1,6 +1,6 @@
-"""The `gahk_redaktoer` hint cookie: how gahk.dk knows to show its "Rediger siden" link.
+"""The `gahk_editor` hint cookie: how gahk.dk knows to show its "Rediger siden" link.
 
-gahk_web's protocol ("The edit link", docs/protocol.md there) fixes the cookie: `gahk_redaktoer=1`
+gahk_web's protocol ("The edit link", docs/protocol.md there) fixes the cookie: `gahk_editor=1`
 on the parent domain (EDITOR_HINT_COOKIE_DOMAIN, ".gahk.dk" in production), Path=/, Secure,
 SameSite=Lax, and NOT HttpOnly, because gahk.dk's static pages read it from a script. intern sets it
 for a user who is a superuser or holds one of CMS_EDITOR_ROLES as a REAL role (a role preview neither
@@ -21,7 +21,7 @@ from django.http.response import HttpResponseBase
 
 from residents.permissions import CMS_EDITOR_ROLES, real_roles
 
-EDITOR_HINT_COOKIE = "gahk_redaktoer"
+EDITOR_HINT_COOKIE = "gahk_editor"
 
 
 def is_cms_editor(request: HttpRequest) -> bool:
@@ -34,7 +34,7 @@ def _path_prefix(url: str) -> str | None:
 
 
 class EditorHintCookie:
-    """Keep the browser's `gahk_redaktoer` cookie in step with whether its user edits gahk.dk."""
+    """Keep the browser's `gahk_editor` cookie in step with whether its user edits gahk.dk."""
 
     def __init__(self, get_response: Callable[[HttpRequest], HttpResponseBase]) -> None:
         self.get_response = get_response

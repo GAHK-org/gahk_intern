@@ -9,7 +9,7 @@ role check as the rest of the intranet (so "vis siden som rolle" applies here to
 and asking gahk.dk to update its code are for administrators only.
 
 gahk.dk's "Rediger siden" links here (/hjemmeside/sider/<id>/ and /hjemmeside/), shown to browsers
-that carry the `gahk_redaktoer` hint cookie, which cms.middleware keeps for editors. It grants
+that carry the `gahk_editor` hint cookie, which cms.middleware keeps for editors. It grants
 nothing: these views check the role.
 """
 

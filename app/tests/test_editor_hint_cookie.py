@@ -1,4 +1,4 @@
-"""The `gahk_redaktoer` hint cookie (cms.middleware), by gahk_web's protocol ("The edit link"): set for
+"""The `gahk_editor` hint cookie (cms.middleware), by gahk_web's protocol ("The edit link"): set for
 CMS editors at login and whenever it is missing, deleted at logout and once the user stops
 qualifying, untouched otherwise, never on static files or media."""
 
@@ -51,6 +51,7 @@ def _hint(response: HttpResponse) -> Morsel[str] | None:
 
 def _assert_set(morsel: Morsel[str] | None) -> None:
     assert morsel is not None and morsel.value == "1"
+    assert morsel.key == "gahk_editor"  # the name gahk.dk's script reads
     assert morsel["domain"] == ".gahk.dk" and morsel["path"] == "/"
     assert morsel["secure"] is True and morsel["samesite"] == "Lax"
     assert not morsel["httponly"]  # gahk.dk's script reads it

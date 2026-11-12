@@ -50,7 +50,7 @@ PUBLIC_SITE_URL = os.environ.get("PUBLIC_SITE_URL", "https://gahk.dk")
 # nothing, and the Hjemmeside editor still saves. In dev the default points at gahk_web's devserver.
 GAHK_WEB_URL = os.environ.get("GAHK_WEB_URL", "http://127.0.0.1:8810" if DEBUG else "https://gahk.dk")
 GAHK_WEB_KEY = os.environ.get("GAHK_WEB_KEY", "")
-# The non-secret "gahk_redaktoer=1" cookie intern keeps on a CMS editor's browser (cms.middleware), so
+# The non-secret "gahk_editor=1" cookie intern keeps on a CMS editor's browser (cms.middleware), so
 # gahk.dk can show its "Rediger siden" link (it only links here; intern still checks the role).
 # Shared with gahk.dk through the parent domain; host-only in development, where the two run on
 # different ports.
@@ -97,7 +97,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
-    # The "gahk_redaktoer" hint cookie for gahk.dk's "Rediger siden" (EDITOR_HINT_COOKIE_DOMAIN).
+    # The "gahk_editor" hint cookie for gahk.dk's "Rediger siden" (EDITOR_HINT_COOKIE_DOMAIN).
     # Needs the user; set or deleted only when its state changes, never on static files or media.
     "cms.middleware.EditorHintCookie",
     "core.middleware.KitchenAccountGate",
