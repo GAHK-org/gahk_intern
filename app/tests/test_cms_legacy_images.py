@@ -221,24 +221,24 @@ def test_referenced_images_are_downloaded_from_the_pinned_commit_and_the_content
         "upload/images/gang.jpg",
     ]
     assert result.missing == ["upload/images/findes-ikke.jpg"] and result.unusable == ["elements/logo.svg"]
-    gang = CmsImage.objects.get(legacy_path="upload/images/gang.jpg")
-    assert gang.uploaded_by is None and gang.caption == "gang" and gang.sha256
-    with gang.file.open("rb") as handle:
+    hallway = CmsImage.objects.get(legacy_path="upload/images/gang.jpg")
+    assert hallway.uploaded_by is None and hallway.caption == "gang" and hallway.sha256
+    with hallway.file.open("rb") as handle:
         assert max(Image.open(handle).size) == 2400  # downscaled like an upload
-    nytaar = CmsImage.objects.get(legacy_path="upload/images/aaretsgang/nytår 2014-15.jpg")
-    assert "/nytår_2014-15" in nytaar.file.name  # the name keeps its letters
-    assert "/nyt%C3%A5r_2014-15" in nytaar.url  # and is percent-encoded as a URL
+    new_year = CmsImage.objects.get(legacy_path="upload/images/aaretsgang/nytår 2014-15.jpg")
+    assert "/nytår_2014-15" in new_year.file.name  # the name keeps its letters
+    assert "/nyt%C3%A5r_2014-15" in new_year.url  # and is percent-encoded as a URL
     front_page.refresh_from_db()
-    assert front_page.background_image == gang.url
-    assert f'src="{gang.url}"' in front_page.body and f'src="{nytaar.url}"' in front_page.body
+    assert front_page.background_image == hallway.url
+    assert f'src="{hallway.url}"' in front_page.body and f'src="{new_year.url}"' in front_page.body
     assert "url(/media/cms/" in front_page.body and "Hall(1)" not in front_page.body
     assert (
         "findes-ikke.jpg" in front_page.body and "elements/logo.svg" in front_page.body
     )  # left as they were
     for row in (news, event, version):
         row.refresh_from_db()
-    assert gang.url in news.body and gang.url in event.description and gang.url in version.body
-    assert SiteSettings.load().default_background == gang.url
+    assert hallway.url in news.body and hallway.url in event.description and hallway.url in version.body
+    assert SiteSettings.load().default_background == hallway.url
     system = ContentChange.objects.filter(by__isnull=True, by_name__startswith="System")
     assert system.filter(action="upload", kind="image").count() == 3
     assert system.filter(action="update", kind="page", object_id=front_page.pk).exists()
@@ -416,8 +416,8 @@ def test_an_edit_saved_during_the_import_is_kept(
     import_pending_legacy_images()
 
     front_page.refresh_from_db()
-    gang = CmsImage.objects.get(legacy_path="upload/images/gang.jpg")
-    assert front_page.body == f'<p>Ny tekst</p><img src="{gang.url}">'
+    hallway = CmsImage.objects.get(legacy_path="upload/images/gang.jpg")
+    assert front_page.body == f'<p>Ny tekst</p><img src="{hallway.url}">'
 
 
 @pytest.mark.django_db
@@ -467,13 +467,13 @@ def test_an_unexpected_error_still_rewrites_what_was_imported_before_it(
 
     result = import_pending_legacy_images()
 
-    gang = CmsImage.objects.get()
+    hallway = CmsImage.objects.get()
     front_page.refresh_from_db()
     assert (
-        f'src="{gang.url}"' in front_page.body
+        f'src="{hallway.url}"' in front_page.body
         and "/public/image/upload/images/Hall(1).png" in front_page.body
     )
-    assert result.imported == [gang.legacy_path] and result.rewritten == 1
+    assert result.imported == [hallway.legacy_path] and result.rewritten == 1
     assert result.error == "upload/images/Hall(1).png: OSError: S3 is down" and result.deferred == 1
     assert not LegacyImageFailure.objects.exists()  # tried again next run
 

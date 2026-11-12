@@ -478,7 +478,7 @@ def test_the_hero_images_and_titles_become_content() -> None:
 
 
 @pytest.mark.django_db
-def test_the_optagelse_text_becomes_a_page_once() -> None:
+def test_the_admissions_text_becomes_a_page_once() -> None:
     migration = _migration("0007_optagelse_page")
     editor = SimpleNamespace(connection=connection)
 

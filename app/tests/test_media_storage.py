@@ -607,7 +607,7 @@ def test_publishing_the_tills_photos_did_not_publish_vaerelsestjek(media_tmp: Pa
 @pytest.mark.django_db
 def test_website_images_need_a_session(media_tmp: Path, make_resident: object) -> None:
     """gahk.dk serves its own copies (/images/); intern's library is for logged-in editors. (An old
-    link to a picture gahk.dk publishes goes to that copy: tests/test_hjemmeside_old_image_links.py.)"""
+    link to a picture gahk.dk publishes goes to that copy: tests/test_cms_old_image_links.py.)"""
     from django.test import Client
 
     store(media_tmp, "cms/2026/08/logo.jpg")

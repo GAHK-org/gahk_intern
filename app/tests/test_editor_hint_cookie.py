@@ -111,7 +111,7 @@ def test_it_follows_real_roles_not_a_role_preview(make_resident: Callable[..., R
     resident = make_resident(email="beboer@gahk.dk")
     client = _signed_in(resident)
     session = client.session
-    session[PREVIEW_SESSION_KEY] = ["pr"]  # a preview a beboer may not use, and it grants nothing
+    session[PREVIEW_SESSION_KEY] = ["pr"]  # a preview a resident may not use, and it grants nothing
     session.save()
     assert _hint(client.get("/")) is None
 

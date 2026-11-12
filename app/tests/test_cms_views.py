@@ -162,7 +162,7 @@ def test_the_pr_group_opens_every_screen(
 
 
 @pytest.mark.django_db
-def test_the_sidebar_links_editors_to_hjemmeside(editor: Resident, resident: Resident) -> None:
+def test_the_sidebar_links_editors_to_the_cms(editor: Resident, resident: Resident) -> None:
     def nav_urls(who: Resident) -> list[str]:
         nav = client_for(who).get("/").context["nav_intern"]
         return [url for _section, items in nav for url, _label, _icon in items]

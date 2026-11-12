@@ -413,7 +413,7 @@ def test_the_sync_brings_in_legacy_images_and_publishes_them_in_the_same_run(
 ) -> None:
     from cms import legacy_images
 
-    from .test_hjemmeside_legacy_images import FakeGitHub, image_bytes
+    from .test_cms_legacy_images import FakeGitHub, image_bytes
 
     github = FakeGitHub({"upload/images/gang.jpg": image_bytes()})
     monkeypatch.setattr(legacy_images, "http_get", github)
@@ -423,12 +423,12 @@ def test_the_sync_brings_in_legacy_images_and_publishes_them_in_the_same_run(
     report = tasks.sync_gahk_web()
 
     assert report["errors"] == [] and report["legacy_images"]["imported"] == 1
-    gang = CmsImage.objects.get(legacy_path="upload/images/gang.jpg")
+    hallway = CmsImage.objects.get(legacy_path="upload/images/gang.jpg")
     published = gahk_web.published[-1]
     assert published["legacy_images"] == {
         "/static/legacy/image/upload/images/gang.jpg": published["site"]["default_background"]
     }
-    assert gang.sha256 in gahk_web.images
+    assert hallway.sha256 in gahk_web.images
     assert "/public/image/" not in json.dumps(published)
 
     github.urls.clear()
@@ -747,7 +747,7 @@ def test_the_public_site_is_not_served_here(path: str) -> None:
 
 
 @pytest.mark.django_db
-def test_begivenheder_is_the_intranet_events_app_and_needs_a_login() -> None:
+def test_the_events_path_is_the_intranet_events_app_and_needs_a_login() -> None:
     response = Client().get("/begivenheder/")
     assert response.status_code == 302 and "login" in response.headers["Location"]
 
