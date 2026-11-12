@@ -28,7 +28,8 @@ from io import BytesIO
 from django.conf import settings
 from django.core.files.base import ContentFile
 from django.core.management.base import BaseCommand, CommandError
-from django.db import models, transaction
+from django.core.management.color import no_style
+from django.db import connection, models, transaction
 from django.utils import timezone
 
 from admissions.models import Application
@@ -593,6 +594,11 @@ class Command(BaseCommand):
                 "menu_category": 1,
             },
         )
+        # An explicit id does not move the id sequence, so the next page created would be given 1
+        # as well and fail on the primary key.
+        with connection.cursor() as cursor:
+            for statement in connection.ops.sequence_reset_sql(no_style(), [Page]):
+                cursor.execute(statement)
         pages = [
             ("kollegielivet", "Kollegielivet", "<p>Livet på kollegiet.</p>"),
             ("kollegielivet/historie", "Historie", "<p>Kollegiets historie siden 1908.</p>"),
