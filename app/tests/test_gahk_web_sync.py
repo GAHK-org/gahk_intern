@@ -380,6 +380,27 @@ def test_a_revision_mismatch_republishes(gahk_web: FakeGahkWeb, front_page: Page
 
 
 @pytest.mark.django_db
+def test_a_publish_that_breaks_still_lets_the_outbox_be_pulled(
+    gahk_web: FakeGahkWeb, front_page: Page, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gahk_web.revision = "0" * 64  # gahk.dk is on another revision, so sync publishes
+    item = _application()
+    gahk_web.outbox["applications"] = [item]
+
+    def broken_publish(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("bucket says no")
+
+    monkeypatch.setattr(tasks, "publish", broken_publish)
+
+    report = tasks.sync_gahk_web()
+
+    assert report["errors"] == ["bucket says no"]
+    assert str(Application.objects.get().external_id) == item["id"]
+    assert gahk_web.acks[0]["applications"] == [item["id"]]
+    assert "bucket says no" in GahkWebSync.load().last_error
+
+
+@pytest.mark.django_db
 def test_applications_are_stored_once_and_acknowledged(
     gahk_web: FakeGahkWeb, front_page: Page, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:

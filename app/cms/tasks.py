@@ -241,6 +241,11 @@ def sync_gahk_web() -> dict[str, Any]:
                 errors.append(publication.error)
     except GahkWebError as exc:
         errors.append(_short(exc))
+    except Exception as exc:
+        # Never let a publish problem (S3 down, one bad row) keep the applications and visit counts
+        # waiting in gahk.dk's outbox, which is not durable storage. The traceback goes to the log.
+        logger.exception("Syncing with gahk.dk: the revision check or publish failed")
+        errors.append(_short(exc) or exc.__class__.__name__)
 
     try:
         report["outbox"] = pull_outbox(client)
