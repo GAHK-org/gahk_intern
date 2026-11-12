@@ -47,11 +47,37 @@ def test_an_old_address_lands_on_the_same_page_at_the_root(old: str, new: str) -
     assert response["Location"] == new
 
 
-def test_a_post_to_an_old_address_stays_a_post() -> None:
-    """308, not 301: a script or a restored form aimed at the old path must not turn into a GET."""
-    response = Client().post("/intern/fotoalbum/importer-zip/system", {"x": "1"})
+@pytest.mark.parametrize("method", ["post", "put", "patch", "delete"])
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("/intern/fotoalbum/importer-zip/system", "/fotoalbum/importer-zip/system"),
+        ("/intern/den-hurtige/?traad=4", "/den-hurtige/?traad=4"),
+        ("/nyintern/ak/?x=1", "/ak/?x=1"),
+        ("/intern", "/"),
+    ],
+)
+def test_any_method_to_an_old_address_keeps_its_method(method: str, old: str, new: str) -> None:
+    """308, not 301: a script or a restored form aimed at the old path must not turn into a GET.
+
+    With CSRF checks on, as in production: the test client skips them by default, which hid that
+    CsrfViewMiddleware answered every one of these with a 403 before the redirect was reached. gahk.dk
+    sends old links to https://intern.gahk.dk/intern/<rest>, so a form re-sent by the browser
+    arrives here with an Origin of "null" and no way to pass the check.
+    """
+    client = Client(enforce_csrf_checks=True)
+    response = getattr(client, method)(old, {"x": "1"} if method == "post" else "", HTTP_ORIGIN="null")
     assert response.status_code == 308
-    assert response["Location"] == "/fotoalbum/importer-zip/system"
+    assert response["Location"] == new
+
+
+def test_the_landing_view_still_checks_csrf(make_resident: Callable[..., Resident]) -> None:
+    """The exemption is the redirect's alone: the POST it passes on meets the usual check."""
+    client = Client(enforce_csrf_checks=True)
+    client.force_login(make_resident(email="beboer@gahk.dk"))
+    response = client.post("/intern/notifikationer/", follow=True)
+    assert response.redirect_chain == [("/notifikationer/", 308)]
+    assert response.status_code == 403
 
 
 @pytest.mark.parametrize(

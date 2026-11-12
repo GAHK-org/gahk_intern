@@ -9,6 +9,7 @@ both old prefixes redirect to the root — see `_legacy_prefix_redirect`. Django
 from django.contrib import admin
 from django.http import HttpRequest, HttpResponsePermanentRedirect
 from django.urls import include, path, re_path
+from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import TemplateView
 
 from core.media import serve_media
@@ -23,6 +24,12 @@ from photo_album.views import serve_media as serve_photo_album_media
 # string survives (a search, a ?next=), and the status is 308 rather than 301 so a POST stays a POST
 # (a script or a restored form still aimed at the old path). The bare /intern and /nyintern, without
 # a slash, land on the dashboard too.
+#
+# csrf_exempt, or "a POST stays a POST" is false: CsrfViewMiddleware would answer every unsafe method
+# here with a 403 before the redirect is reached (a script carries no token, and a form re-sent by
+# the browser after gahk.dk's cross-origin 308 has an Origin of "null"). Exempting it is safe because
+# it only answers with a redirect and changes nothing; the view the request lands on checks CSRF.
+@csrf_exempt
 def _legacy_prefix_redirect(request: HttpRequest, rest: str = "") -> HttpResponsePermanentRedirect:
     # lstrip: "/intern//evil.example" must not become the protocol-relative "//evil.example".
     target = "/" + rest.lstrip("/\\")
