@@ -522,13 +522,13 @@ def preview(request: HttpRequest) -> HttpResponse:
             },
             request=request,
         )
-        source = "lokal"
+        source = "local"
     else:
         html = with_base(html, settings.GAHK_WEB_URL)
     response = HttpResponse(html)
     response["Content-Security-Policy"] = PREVIEW_CSP
     response["Cache-Control"] = "no-store"
-    response["X-Hjemmeside-Preview"] = source
+    response["X-CMS-Preview"] = source
     return response
 
 

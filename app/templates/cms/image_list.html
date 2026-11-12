@@ -4,41 +4,41 @@
   <div class="page-head">
     <div>
       <p class="eyebrow">Hjemmeside</p>
-      <h1>Billeder <span class="muted hj-count">{{ page_obj.paginator.count }}</span></h1>
+      <h1>Billeder <span class="muted cms-count">{{ page_obj.paginator.count }}</span></h1>
       <p class="muted text-sm">Billedbiblioteket til sider, nyheder, begivenheder og baggrunde.</p>
     </div>
   </div>
 
-  <form method="post" enctype="multipart/form-data" class="card-flat card-pad hj-upload" data-hj-dropzone>
+  <form method="post" enctype="multipart/form-data" class="card-flat card-pad cms-upload" data-cms-dropzone>
     {% csrf_token %}
-    <div class="hj-upload-drop">
-      <label for="hj-upload-file" class="hj-upload-label">Træk billeder hertil, eller <span class="hj-upload-pick">vælg filer</span></label>
-      <input id="hj-upload-file" type="file" name="file" accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif" multiple required>
-      <p class="muted hj-help">JPEG, PNG, GIF eller WebP (iPhone-billeder virker også), højst {{ max_mb }} MB pr. billede. De gøres højst 2400 pixel store, og oplysninger som GPS-position fjernes.</p>
+    <div class="cms-upload-drop">
+      <label for="cms-upload-file" class="cms-upload-label">Træk billeder hertil, eller <span class="cms-upload-pick">vælg filer</span></label>
+      <input id="cms-upload-file" type="file" name="file" accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif" multiple required>
+      <p class="muted cms-help">JPEG, PNG, GIF eller WebP (iPhone-billeder virker også), højst {{ max_mb }} MB pr. billede. De gøres højst 2400 pixel store, og oplysninger som GPS-position fjernes.</p>
     </div>
-    <div class="hj-upload-row">
-      <div class="hj-field">
-        <label for="hj-upload-caption">Beskrivelse (alt-tekst)</label>
-        <input id="hj-upload-caption" type="text" name="caption" maxlength="255" placeholder="Hvad viser billedet?">
+    <div class="cms-upload-row">
+      <div class="cms-field">
+        <label for="cms-upload-caption">Beskrivelse (alt-tekst)</label>
+        <input id="cms-upload-caption" type="text" name="caption" maxlength="255" placeholder="Hvad viser billedet?">
       </div>
       <button type="submit" class="btn">Læg i biblioteket</button>
     </div>
   </form>
 
-  <form method="get" class="hj-search" role="search">
-    <label for="hj-image-q" class="sr-only">Søg</label>
-    <input id="hj-image-q" type="search" name="q" value="{{ query }}" placeholder="Søg i beskrivelse og filnavn">
+  <form method="get" class="cms-search" role="search">
+    <label for="cms-image-q" class="sr-only">Søg</label>
+    <input id="cms-image-q" type="search" name="q" value="{{ query }}" placeholder="Søg i beskrivelse og filnavn">
     <button type="submit" class="btn btn-secondary">Søg</button>
     {% if query %}<a href="{% url 'cms:image_list' %}">Vis alle</a>{% endif %}
   </form>
 
-  <ul class="hj-image-grid">
+  <ul class="cms-image-grid">
     {% for image, usage in tiles %}
       <li>
-        <a href="{% url 'cms:image_detail' image.pk %}" class="hj-image-tile">
+        <a href="{% url 'cms:image_detail' image.pk %}" class="cms-image-tile">
           <img src="{{ image.url }}" alt="{{ image.caption }}" loading="lazy">
-          <span class="hj-image-caption">{{ image.caption|default:"(ingen beskrivelse)" }}</span>
-          <span class="hj-image-meta">
+          <span class="cms-image-caption">{{ image.caption|default:"(ingen beskrivelse)" }}</span>
+          <span class="cms-image-meta">
             {% if usage %}<span class="chip">Bruges {{ usage|length }} sted{{ usage|length|pluralize:"er" }}</span>{% else %}<span class="chip chip-quiet">Ikke i brug</span>{% endif %}
             {% if not image.caption %}<span class="chip chip-brass">Mangler alt-tekst</span>{% endif %}
           </span>

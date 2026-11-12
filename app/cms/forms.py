@@ -17,9 +17,9 @@ from django.core.exceptions import ValidationError
 from .models import FRONT_PAGE_ID, CmsImage, Page
 from .paths import is_reserved, join_path, normalize_segment, split_path, validate_page_path
 
-# The HTML field the body editor (frontend/src/hjemmeside-editor.ts) takes over. Without JavaScript it
+# The HTML field the body editor (frontend/src/cms-editor.ts) takes over. Without JavaScript it
 # stays a plain textarea of HTML, which saves just as well.
-EDITOR_ATTRS = {"rows": 18, "data-hjemmeside-editor": "", "spellcheck": "true"}
+EDITOR_ATTRS = {"rows": 18, "data-cms-editor": "", "spellcheck": "true"}
 
 
 def library_choices(current: str) -> list[tuple[str, str]]:

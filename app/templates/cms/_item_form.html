@@ -2,15 +2,15 @@
   The news and event editor: a title, a date and a body. Takes: form, item, title_field, date_field,
   body_field, list_url, delete_url, preview_kind, heading.
 {% endcomment %}
-<form method="post" class="hj-editor-form" novalidate>
+<form method="post" class="cms-editor-form" novalidate>
   {% csrf_token %}
-  {% if form.non_field_errors %}<div class="card hj-form-errors">{{ form.non_field_errors }}</div>{% endif %}
-  <div class="hj-editor-grid">
-    <div class="card-flat card-pad hj-editor-main">
+  {% if form.non_field_errors %}<div class="card cms-form-errors">{{ form.non_field_errors }}</div>{% endif %}
+  <div class="cms-editor-grid">
+    <div class="card-flat card-pad cms-editor-main">
       {% include "cms/_field.html" with field=title_field %}
       {% include "cms/_field.html" with field=body_field %}
     </div>
-    <div class="hj-editor-side">
+    <div class="cms-editor-side">
       <div class="card-flat card-pad">
         {% include "cms/_field.html" with field=date_field %}
         {% include "cms/_form_actions.html" with preview_id=item.pk cancel_url=list_url %}
@@ -19,7 +19,7 @@
   </div>
 </form>
 {% if item %}
-  <form method="post" action="{{ delete_url }}" class="hj-danger-link"
+  <form method="post" action="{{ delete_url }}" class="cms-danger-link"
         onsubmit="return confirm('Slet «{{ item.title|truncatechars:60|escapejs }}»? Den forsvinder fra gahk.dk.')">
     {% csrf_token %}
     <button type="submit" class="btn-link-danger">Slet …</button>

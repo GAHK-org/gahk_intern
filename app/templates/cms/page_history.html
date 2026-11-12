@@ -10,10 +10,10 @@
   </div>
 
   {% for entry in entries %}
-    <section class="card-flat hj-section hj-version">
+    <section class="card-flat cms-section cms-version">
       <div class="card-head">
         <h2>{{ entry.version.created_at|date:"j. b Y, H:i" }}
-          <span class="muted hj-version-by">{{ entry.version.created_by.full_name|default:"System" }}{% if entry.version.note %} · {{ entry.version.note }}{% endif %}</span>
+          <span class="muted cms-version-by">{{ entry.version.created_by.full_name|default:"System" }}{% if entry.version.note %} · {{ entry.version.note }}{% endif %}</span>
         </h2>
         {% if forloop.first %}
           <span class="chip">Nuværende</span>
@@ -29,7 +29,7 @@
         {% if entry.previous %}
           {% if entry.changed or entry.body_diff %}
             {% for label, before, after in entry.changed %}
-              <p class="hj-change"><b>{{ label }}:</b> <del>{{ before }}</del> → <ins>{{ after }}</ins></p>
+              <p class="cms-change"><b>{{ label }}:</b> <del>{{ before }}</del> → <ins>{{ after }}</ins></p>
             {% endfor %}
             {% if entry.body_diff %}
               <details{% if forloop.first %} open{% endif %}>

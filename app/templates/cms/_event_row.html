@@ -1,7 +1,7 @@
-<li class="hj-row">
-  <div class="hj-row-main">
-    <a class="hj-row-title" href="{% url 'cms:event_edit' item.pk %}">{{ item.title }}</a>
-    <div class="hj-row-meta muted text-sm">{{ item.description|striptags|truncatewords:24 }}</div>
+<li class="cms-row">
+  <div class="cms-row-main">
+    <a class="cms-row-title" href="{% url 'cms:event_edit' item.pk %}">{{ item.title }}</a>
+    <div class="cms-row-meta muted text-sm">{{ item.description|striptags|truncatewords:24 }}</div>
   </div>
-  <div class="hj-row-side"><span class="text-sm">{{ item.starts_on|date:"l j. F Y"|capfirst }}</span></div>
+  <div class="cms-row-side"><span class="text-sm">{{ item.starts_on|date:"l j. F Y"|capfirst }}</span></div>
 </li>

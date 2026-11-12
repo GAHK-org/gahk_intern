@@ -1,5 +1,5 @@
 // The visual body editor for gahk.dk's pages, news and events (Tiptap), loaded only where a
-// `textarea[data-hjemmeside-editor]` is (hjemmeside-loader.ts).
+// `textarea[data-cms-editor]` is (cms-loader.ts).
 //
 // The textarea stays the form field: the editor writes its HTML into it after each change, and the
 // "HTML" button shows it for editing by hand. Without JavaScript it is simply a textarea of HTML. The
@@ -18,7 +18,7 @@ import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
 import StarterKit from "@tiptap/starter-kit";
 
-import type { Placement, PickedImage } from "./hjemmeside";
+import type { Placement, PickedImage } from "./cms";
 
 export interface EditorOptions {
   pickImage: () => Promise<PickedImage | null>;
@@ -155,27 +155,27 @@ interface ToolButton {
 
 export function mountEditor(textarea: HTMLTextAreaElement, options: EditorOptions): void {
   const wrapper = document.createElement("div");
-  wrapper.className = "hj-editor";
+  wrapper.className = "cms-editor";
   const toolbar = document.createElement("div");
-  toolbar.className = "hj-toolbar";
+  toolbar.className = "cms-toolbar";
   toolbar.setAttribute("role", "toolbar");
   toolbar.setAttribute("aria-label", "Formatering");
   const surface = document.createElement("div");
-  surface.className = "hj-editor-surface";
+  surface.className = "cms-editor-surface";
   // Shown under the toolbar while a picture is selected: where it sits, and its alt text.
   const imageBar = document.createElement("div");
-  imageBar.className = "hj-image-bar";
+  imageBar.className = "cms-image-bar";
   imageBar.hidden = true;
   const imageBarLabel = document.createElement("span");
-  imageBarLabel.className = "hj-image-bar-label";
+  imageBarLabel.className = "cms-image-bar-label";
   imageBarLabel.textContent = "Billedet:";
   imageBar.append(imageBarLabel);
   const notice = document.createElement("p");
-  notice.className = "hj-note hj-note-warn";
+  notice.className = "cms-note cms-note-warn";
   notice.hidden = true;
   textarea.before(wrapper);
   wrapper.append(toolbar, imageBar, notice, surface, textarea);
-  textarea.classList.add("hj-source");
+  textarea.classList.add("cms-source");
 
   const label = textarea.id ? document.querySelector(`label[for="${textarea.id}"]`)?.textContent?.trim() : "";
   const lossy = unsupportedContent(textarea.value);
@@ -196,7 +196,7 @@ export function mountEditor(textarea: HTMLTextAreaElement, options: EditorOption
     ],
     editorProps: {
       attributes: {
-        class: "prose-gahk hj-editor-content",
+        class: "prose-gahk cms-editor-content",
         "aria-label": label || "Tekst",
         "aria-multiline": "true",
         role: "textbox",
@@ -213,7 +213,7 @@ export function mountEditor(textarea: HTMLTextAreaElement, options: EditorOption
   let sourceMode = false;
   const sourceButton = document.createElement("button");
   sourceButton.type = "button";
-  sourceButton.className = "hj-tool hj-tool-source";
+  sourceButton.className = "cms-tool cms-tool-source";
   sourceButton.textContent = "HTML";
   sourceButton.title = "Vis og ret teksten som HTML";
 
@@ -221,7 +221,7 @@ export function mountEditor(textarea: HTMLTextAreaElement, options: EditorOption
     sourceMode = on;
     wrapper.classList.toggle("is-source", on);
     sourceButton.setAttribute("aria-pressed", String(on));
-    toolbar.querySelectorAll<HTMLButtonElement>("button:not(.hj-tool-source)").forEach((button) => {
+    toolbar.querySelectorAll<HTMLButtonElement>("button:not(.cms-tool-source)").forEach((button) => {
       button.disabled = on;
     });
     if (on) {
@@ -315,14 +315,14 @@ export function mountEditor(textarea: HTMLTextAreaElement, options: EditorOption
   for (const tool of tools) {
     if (tool === "|") {
       const separator = document.createElement("span");
-      separator.className = "hj-tool-sep";
+      separator.className = "cms-tool-sep";
       separator.setAttribute("aria-hidden", "true");
       toolbar.append(separator);
       continue;
     }
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "hj-tool";
+    button.className = "cms-tool";
     if (tool.icon) {
       button.innerHTML = tool.icon;
     } else {
@@ -349,7 +349,7 @@ export function mountEditor(textarea: HTMLTextAreaElement, options: EditorOption
   updateButtons();
 
   // The preview reads the form; make sure it reads what is on screen.
-  textarea.form?.addEventListener("hj:sync", () => {
+  textarea.form?.addEventListener("cms:sync", () => {
     if (!sourceMode && changed) textarea.value = serialize(editor);
   });
 

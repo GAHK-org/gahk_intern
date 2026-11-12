@@ -1,16 +1,16 @@
-// The Hjemmeside editor's pages (templates/hjemmeside/), loaded by hjemmeside-loader.ts on those
+// The Hjemmeside editor's pages (templates/cms/), loaded by cms-loader.ts on those
 // pages only. Everything here enhances plain forms that work without it:
 //
 //   * "Forhåndsvis" shows the preview in a dialog instead of a new tab;
 //   * the image pickers (radio buttons with thumbnails) keep their summary line in step;
 //   * the image library takes files dropped on its upload form;
-//   * each body textarea becomes the visual editor (hjemmeside-editor.ts, Tiptap), with an image
+//   * each body textarea becomes the visual editor (cms-editor.ts, Tiptap), with an image
 //     picker that lists and uploads to the library.
 //
-// Imports nothing from the main bundle (see hjemmeside-loader.ts).
-import type * as EditorModule from "./hjemmeside-editor";
+// Imports nothing from the main bundle (see cms-loader.ts).
+import type * as EditorModule from "./cms-editor";
 
-export interface HjemmesideDeps {
+export interface CmsDeps {
   csrfToken: () => string;
   loadEditor: () => Promise<typeof EditorModule>;
 }
@@ -30,18 +30,18 @@ export interface PickedImage {
   placement: Placement;
 }
 
-export function start(root: HTMLElement, deps: HjemmesideDeps): void {
-  root.querySelectorAll<HTMLButtonElement>("[data-hj-preview]").forEach((button) => {
+export function start(root: HTMLElement, deps: CmsDeps): void {
+  root.querySelectorAll<HTMLButtonElement>("[data-cms-preview]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.preventDefault();
       void showPreview(button, root.dataset.preview ?? "", deps);
     });
   });
-  root.querySelectorAll<HTMLElement>("[data-hj-image-picker]").forEach(hookImagePicker);
-  root.querySelectorAll<HTMLFormElement>("[data-hj-dropzone]").forEach(hookDropzone);
-  root.querySelectorAll<HTMLElement>("[data-hj-address-preview]").forEach(hookAddressPreview);
+  root.querySelectorAll<HTMLElement>("[data-cms-image-picker]").forEach(hookImagePicker);
+  root.querySelectorAll<HTMLFormElement>("[data-cms-dropzone]").forEach(hookDropzone);
+  root.querySelectorAll<HTMLElement>("[data-cms-address-preview]").forEach(hookAddressPreview);
 
-  const fields = root.querySelectorAll<HTMLTextAreaElement>("textarea[data-hjemmeside-editor]");
+  const fields = root.querySelectorAll<HTMLTextAreaElement>("textarea[data-cms-editor]");
   if (fields.length) {
     const picker = new LibraryPicker(root.dataset.imageLibrary ?? "", root.dataset.imageUpload ?? "", deps);
     void deps.loadEditor().then((editor) => {
@@ -59,9 +59,9 @@ interface Dialog {
 
 function makeDialog(className: string, title: string): Dialog {
   const dialog = document.createElement("dialog");
-  dialog.className = `hj-dialog ${className}`;
+  dialog.className = `cms-dialog ${className}`;
   const head = document.createElement("div");
-  head.className = "hj-dialog-head";
+  head.className = "cms-dialog-head";
   const heading = document.createElement("h2");
   heading.textContent = title;
   const close = document.createElement("button");
@@ -71,7 +71,7 @@ function makeDialog(className: string, title: string): Dialog {
   close.addEventListener("click", () => dialog.close());
   head.append(heading, close);
   const body = document.createElement("div");
-  body.className = "hj-dialog-body";
+  body.className = "cms-dialog-body";
   dialog.append(head, body);
   // A click on the backdrop (the dialog element itself, outside its content) closes it.
   dialog.addEventListener("click", (event) => {
@@ -83,7 +83,7 @@ function makeDialog(className: string, title: string): Dialog {
 
 function statusLine(text: string, warn = false): HTMLElement {
   const p = document.createElement("p");
-  p.className = warn ? "hj-note hj-note-warn" : "hj-note";
+  p.className = warn ? "cms-note cms-note-warn" : "cms-note";
   p.textContent = text;
   return p;
 }
@@ -93,9 +93,9 @@ let previewDialog: Dialog | null = null;
 
 function previewParts(): Dialog {
   if (previewDialog) return previewDialog;
-  const parts = makeDialog("hj-preview-dialog", "Forhåndsvisning");
+  const parts = makeDialog("cms-preview-dialog", "Forhåndsvisning");
   const sizes = document.createElement("div");
-  sizes.className = "hj-preview-sizes";
+  sizes.className = "cms-preview-sizes";
   for (const [label, width] of [
     ["Computer", ""],
     ["Mobil", "390px"],
@@ -115,10 +115,10 @@ function previewParts(): Dialog {
   return parts;
 }
 
-async function showPreview(button: HTMLButtonElement, url: string, deps: HjemmesideDeps): Promise<void> {
+async function showPreview(button: HTMLButtonElement, url: string, deps: CmsDeps): Promise<void> {
   const form = button.form;
   if (!form || !url) return;
-  form.dispatchEvent(new CustomEvent("hj:sync")); // the visual editor writes its HTML to the textarea
+  form.dispatchEvent(new CustomEvent("cms:sync")); // the visual editor writes its HTML to the textarea
   const { dialog, body } = previewParts();
   body.replaceChildren(statusLine("Henter forhåndsvisning …"));
   if (!dialog.open) dialog.showModal();
@@ -136,10 +136,10 @@ async function showPreview(button: HTMLButtonElement, url: string, deps: Hjemmes
     // allow-same-origin so the images a draft uses load from /media/cms/ with the editor's session.
     frame.setAttribute("sandbox", "allow-same-origin allow-popups allow-popups-to-escape-sandbox");
     frame.title = "Forhåndsvisning";
-    frame.className = "hj-preview-frame";
+    frame.className = "cms-preview-frame";
     frame.srcdoc = html;
     const parts: HTMLElement[] = [];
-    if (response.headers.get("X-Hjemmeside-Preview") === "gahk.dk") {
+    if (response.headers.get("X-CMS-Preview") === "gahk.dk") {
       parts.push(statusLine("Sådan ser det ud på gahk.dk. Intet er gemt endnu."));
     }
     parts.push(frame);
@@ -151,19 +151,19 @@ async function showPreview(button: HTMLButtonElement, url: string, deps: Hjemmes
 
 // ------------------------------------------------------------------------- radio image pickers
 function hookImagePicker(picker: HTMLElement): void {
-  const picked = picker.querySelector<HTMLElement>("[data-hj-picked]");
-  const label = picker.querySelector<HTMLElement>("[data-hj-picked-label]");
+  const picked = picker.querySelector<HTMLElement>("[data-cms-picked]");
+  const label = picker.querySelector<HTMLElement>("[data-cms-picked-label]");
   if (!picked || !label) return;
   picker.addEventListener("change", (event) => {
     const input = event.target as HTMLInputElement;
     if (input.type !== "radio") return;
     const option = input.closest("label");
     const image = option?.querySelector("img");
-    const old = picked.querySelector("img, .hj-thumb-none");
+    const old = picked.querySelector("img, .cms-thumb-none");
     const replacement = image ? (image.cloneNode() as HTMLElement) : document.createElement("span");
-    if (!image) replacement.className = "hj-thumb-none";
+    if (!image) replacement.className = "cms-thumb-none";
     old?.replaceWith(replacement);
-    label.textContent = option?.querySelector(".hj-thumb-label")?.textContent ?? "";
+    label.textContent = option?.querySelector(".cms-thumb-label")?.textContent ?? "";
     picker.querySelector("details")?.removeAttribute("open");
   });
 }
@@ -230,7 +230,7 @@ class LibraryPicker {
   constructor(
     private listUrl: string,
     private uploadUrl: string,
-    private deps: HjemmesideDeps,
+    private deps: CmsDeps,
   ) {}
 
   pick(): Promise<PickedImage | null> {
@@ -247,18 +247,18 @@ class LibraryPicker {
   }
 
   private build(): Dialog {
-    const parts = makeDialog("hj-picker-dialog", "Indsæt billede");
+    const parts = makeDialog("cms-picker-dialog", "Indsæt billede");
     this.parts = parts;
     parts.dialog.addEventListener("close", () => this.finish(null));
 
     const tools = document.createElement("div");
-    tools.className = "hj-picker-tools";
+    tools.className = "cms-picker-tools";
     this.search.type = "search";
     this.search.placeholder = "Søg i billederne";
     this.search.setAttribute("aria-label", "Søg i billederne");
     this.search.addEventListener("input", () => this.render());
     const upload = document.createElement("label");
-    upload.className = "btn btn-secondary hj-picker-upload";
+    upload.className = "btn btn-secondary cms-picker-upload";
     upload.textContent = "Læg nyt billede op";
     const file = document.createElement("input");
     file.type = "file";
@@ -273,17 +273,17 @@ class LibraryPicker {
     tools.append(this.search, upload);
 
     this.message.hidden = true;
-    this.grid.className = "hj-picker-grid";
+    this.grid.className = "cms-picker-grid";
 
     const foot = document.createElement("div");
-    foot.className = "hj-picker-foot";
+    foot.className = "cms-picker-foot";
     const altLabel = document.createElement("label");
-    altLabel.className = "hj-picker-alt";
+    altLabel.className = "cms-picker-alt";
     altLabel.textContent = "Alt-tekst: hvad viser billedet?";
     this.alt.type = "text";
     this.alt.maxLength = 255;
     altLabel.append(this.alt);
-    this.placement.className = "hj-placement";
+    this.placement.className = "cms-placement";
     const legend = document.createElement("legend");
     legend.textContent = "Placering";
     this.placement.append(legend);
@@ -295,7 +295,7 @@ class LibraryPicker {
       const option = document.createElement("label");
       const radio = document.createElement("input");
       radio.type = "radio";
-      radio.name = "hj-placement";
+      radio.name = "cms-placement";
       radio.value = value;
       option.append(radio, ` ${text}`);
       this.placement.append(option);
@@ -326,7 +326,7 @@ class LibraryPicker {
 
   private say(text: string, warn = false): void {
     this.message.textContent = text;
-    this.message.className = warn ? "hj-note hj-note-warn" : "hj-note";
+    this.message.className = warn ? "cms-note cms-note-warn" : "cms-note";
     this.message.hidden = !text;
   }
 
@@ -389,7 +389,7 @@ class LibraryPicker {
       ...shown.map((image) => {
         const button = document.createElement("button");
         button.type = "button";
-        button.className = "hj-picker-item";
+        button.className = "cms-picker-item";
         button.dataset.id = String(image.id);
         button.title = image.caption || image.name;
         const img = document.createElement("img");

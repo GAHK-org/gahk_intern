@@ -8,16 +8,16 @@
       <p class="muted text-sm">Gamle adresser, der sender besøgende videre til en side. De oprettes af sig selv, når en side får ny adresse, så gamle links og søgeresultater bliver ved med at virke.</p>
     </div>
   </div>
-  <section class="card-flat hj-section">
+  <section class="card-flat cms-section">
     {% if redirects %}
       <div class="overflow-x-auto">
-        <table class="zebra hj-table">
+        <table class="zebra cms-table">
           <thead><tr><th>Gammel adresse</th><th>Sender videre til</th><th>Oprettet</th><th><span class="sr-only">Handling</span></th></tr></thead>
           <tbody>
             {% for item in redirects %}
               <tr>
-                <td class="hj-path">/{{ item.old_path }}</td>
-                <td><a href="{% url 'cms:page_edit' item.page.pk %}">{{ item.page.header }}</a> <span class="hj-path muted">/{% if item.page.pk != 1 %}{{ item.page.slug|default:"" }}{% endif %}</span></td>
+                <td class="cms-path">/{{ item.old_path }}</td>
+                <td><a href="{% url 'cms:page_edit' item.page.pk %}">{{ item.page.header }}</a> <span class="cms-path muted">/{% if item.page.pk != 1 %}{{ item.page.slug|default:"" }}{% endif %}</span></td>
                 <td class="muted text-sm">{{ item.created_at|date:"j. b Y" }}{% if item.created_by %}, {{ item.created_by.full_name }}{% endif %}</td>
                 <td>
                   <form method="post" action="{% url 'cms:redirect_delete' item.pk %}"
@@ -35,12 +35,12 @@
     {% endif %}
   </section>
 
-  <form method="post" class="card-flat card-pad hj-section hj-redirect-form" novalidate>
+  <form method="post" class="card-flat card-pad cms-section cms-redirect-form" novalidate>
     {% csrf_token %}
     <h2>Ny omdirigering</h2>
     <p class="muted text-sm">Til en gammel adresse, der ikke kom fra en omdøbt side, fx fra en tryksag.</p>
     {{ form.non_field_errors }}
-    <div class="hj-inline-fields">
+    <div class="cms-inline-fields">
       {% include "cms/_field.html" with field=form.old_path %}
       {% include "cms/_field.html" with field=form.page %}
       <button type="submit" class="btn">Opret</button>

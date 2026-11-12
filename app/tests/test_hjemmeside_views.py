@@ -398,7 +398,7 @@ def test_preview_shows_gahk_dk_s_rendering_with_a_base_and_no_scripts(
     )
 
     html = response.content.decode()
-    assert response.status_code == 200 and response["X-Hjemmeside-Preview"] == "gahk.dk"
+    assert response.status_code == 200 and response["X-CMS-Preview"] == "gahk.dk"
     assert '<head><base href="https://gahk.dk/">' in html
     assert "allow-scripts" not in response["Content-Security-Policy"]
     assert response["Content-Security-Policy"].startswith("sandbox")
@@ -428,7 +428,7 @@ def test_preview_falls_back_to_the_text_when_gahk_dk_is_unreachable(
     )
 
     html = response.content.decode()
-    assert response["X-Hjemmeside-Preview"] == "lokal"
+    assert response["X-CMS-Preview"] == "local"
     assert "kunne ikke nås" in html and "<p>Tekst</p>" in html and "<script>alert" not in html
 
 

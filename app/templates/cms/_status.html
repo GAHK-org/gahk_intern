@@ -2,7 +2,7 @@
   The overview's status card. While a publish or code update this editor asked for is still unanswered,
   it re-fetches itself every few seconds (views.status) and stops once the answer is in.
 {% endcomment %}
-<section id="hj-status" class="card-flat hj-section"{% if polling %} hx-get="{% url 'cms:status' %}" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}>
+<section id="cms-status" class="card-flat cms-section"{% if polling %} hx-get="{% url 'cms:status' %}" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}>
   <div class="card-head">
     <h2>Forbindelse til gahk.dk</h2>
     {% if not enabled %}
@@ -17,11 +17,11 @@
   </div>
   <div class="card-pad">
     {% if not enabled %}
-      <p class="hj-note hj-note-warn">intern har ingen nøgle til gahk.dk (GAHK_WEB_KEY), så intet sendes dertil. Du kan stadig rette
+      <p class="cms-note cms-note-warn">intern har ingen nøgle til gahk.dk (GAHK_WEB_KEY), så intet sendes dertil. Du kan stadig rette
         indholdet; det udgives, når forbindelsen er sat op.</p>
     {% endif %}
 
-    <h3 class="hj-subhead">Indhold</h3>
+    <h3 class="cms-subhead">Indhold</h3>
     <div class="kv"><span class="l">Seneste udgivelse</span>
       <span class="r">
         {% if latest %}
@@ -33,7 +33,7 @@
       </span>
     </div>
     {% if latest.status == "failed" and latest.error %}
-      <pre class="hj-error">{{ latest.error }}</pre>
+      <pre class="cms-error">{{ latest.error }}</pre>
     {% endif %}
     {% if last_ok %}
       <div class="kv"><span class="l">Senest udgivet</span>
@@ -54,23 +54,23 @@
         <div class="kv"><span class="l">Afviste ansøgninger</span><span class="r">{{ sync.rejected_applications }} (ugyldige felter, se loggen)</span></div>
       {% endif %}
       {% if sync.last_error %}
-        <p class="hj-note hj-note-warn">Seneste fejl{% if sync.last_error_at %} {{ sync.last_error_at|date:"j. b, H:i" }}{% endif %}:</p>
-        <pre class="hj-error">{{ sync.last_error }}</pre>
+        <p class="cms-note cms-note-warn">Seneste fejl{% if sync.last_error_at %} {{ sync.last_error_at|date:"j. b, H:i" }}{% endif %}:</p>
+        <pre class="cms-error">{{ sync.last_error }}</pre>
       {% endif %}
     {% endif %}
 
     {% if publish_state == "waiting" %}
-      <p class="hj-note" role="status"><span class="spinner"></span> Udgiver …</p>
+      <p class="cms-note" role="status"><span class="spinner"></span> Udgiver …</p>
     {% elif publish_state == "timeout" %}
-      <p class="hj-note hj-note-warn" role="status">Intet svar fra udgivelsen endnu. Den kører måske stadig; se igen om lidt.</p>
+      <p class="cms-note cms-note-warn" role="status">Intet svar fra udgivelsen endnu. Den kører måske stadig; se igen om lidt.</p>
     {% endif %}
-    <form method="post" action="{% url 'cms:publish_now' %}" class="hj-actions">
+    <form method="post" action="{% url 'cms:publish_now' %}" class="cms-actions">
       {% csrf_token %}
       <button type="submit" class="btn btn-secondary"{% if not enabled or publish_state == "waiting" %} disabled{% endif %}>Udgiv igen nu</button>
       <span class="muted text-sm">Gemte ændringer udgives automatisk. Brug knappen, hvis gahk.dk ikke viser det nyeste.</span>
     </form>
 
-    <h3 class="hj-subhead">Kode på gahk.dk</h3>
+    <h3 class="cms-subhead">Kode på gahk.dk</h3>
     <div class="kv"><span class="l">Kører</span>
       <span class="r">{% if sync.remote_version %}<code class="code">{{ sync.remote_version|slice:":12" }}</code>{% else %}<span class="muted">ukendt</span>{% endif %}</span>
     </div>
@@ -81,15 +81,15 @@
       <span class="r">{% if sync.update_checked_at %}{{ sync.update_checked_at|date:"j. b, H:i" }}{% if sync.update_result and not sync.update_error %} · {{ sync.update_result }}{% endif %}{% else %}<span class="muted">aldrig</span>{% endif %}</span>
     </div>
     {% if sync.update_error %}
-      <pre class="hj-error">{{ sync.update_error }}</pre>
+      <pre class="cms-error">{{ sync.update_error }}</pre>
     {% endif %}
     {% if update_state == "waiting" %}
-      <p class="hj-note" role="status"><span class="spinner"></span> Venter på svar fra gahk.dk …</p>
+      <p class="cms-note" role="status"><span class="spinner"></span> Venter på svar fra gahk.dk …</p>
     {% elif update_state == "timeout" %}
-      <p class="hj-note hj-note-warn" role="status">gahk.dk har ikke svaret endnu. Se igen om lidt.</p>
+      <p class="cms-note cms-note-warn" role="status">gahk.dk har ikke svaret endnu. Se igen om lidt.</p>
     {% endif %}
     {% if is_admin %}
-      <form method="post" action="{% url 'cms:update_now' %}" class="hj-actions">
+      <form method="post" action="{% url 'cms:update_now' %}" class="cms-actions">
         {% csrf_token %}
         <button type="submit" class="btn btn-secondary"{% if not enabled or update_state == "waiting" %} disabled{% endif %}>Opdatér gahk.dk nu</button>
         <span class="muted text-sm">gahk.dk henter selv ny kode, når intern beder om det: hvert kvarter, eller nu med knappen.</span>

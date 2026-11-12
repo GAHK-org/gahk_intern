@@ -1,4 +1,4 @@
-// Hjemmeside (the gahk.dk editor, templates/hjemmeside/): its code is fetched only on its own pages,
+// Hjemmeside (the gahk.dk editor, templates/cms/): its code is fetched only on its own pages,
 // and the body editor (Tiptap, the bulk of it) only where there is a body to edit. The rest of the
 // intranet never downloads either.
 //
@@ -9,9 +9,9 @@
 // token, the editor loader) is handed to them.
 import { csrfToken } from "./htmx-csrf";
 
-const root = document.querySelector<HTMLElement>("[data-hjemmeside]");
+const root = document.querySelector<HTMLElement>("[data-cms]");
 if (root) {
-  void import("./hjemmeside").then((hjemmeside) =>
-    hjemmeside.start(root, { csrfToken, loadEditor: () => import("./hjemmeside-editor") }),
+  void import("./cms").then((cms) =>
+    cms.start(root, { csrfToken, loadEditor: () => import("./cms-editor") }),
   );
 }
