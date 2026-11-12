@@ -11,6 +11,10 @@
   (fetching it again changes nothing), and then lets gahk.dk delete it.
 - A submission that breaks the rules is dropped and logged; the overview counts them. One of a kind
   intern does not know yet stays on gahk.dk until an intern that knows it fetches it.
+- gahk.dk hands a submission over with English codes: the kind is `tour` or `sublet`, and "Hvor
+  hørte du om os?" is one of `social_media`, `website`, `residents`, `newspaper`, `recommendation`,
+  `poster` and `self`. intern stores the values it always stored (`rundvisning`, `fremleje`,
+  `sociale medier` and so on), so the list, the export and the statistics are unchanged.
 - The applicant gets the same auto-reply as before, once, when intern stores the application.
 - Indstillingen reviews applications on intern as before: `/optagelse/listansoegninger`, export,
   detail, received and discard. gahk.dk sends those addresses on to intern.
