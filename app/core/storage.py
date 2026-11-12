@@ -6,11 +6,12 @@ That sentence is the entire reason this module exists, so it is worth being prec
 
 A media URL is not only a way to *reach* a file here — in several places it has been written into
 the database as data. `cms.Page.background_image` is a *CharField holding the URL string itself*,
-not a FileField name, and the CMS toolbar writes `<img src="/media/...">` straight into page bodies.
+not a FileField name, and the Hjemmeside editor writes `<img src="/media/...">` straight into page
+bodies.
 Resident-authored Markdown in `opslagstavle.Notice.body` embeds the same way.
 
-Weight those correctly. **The CMS half is live** — it is the public site, populated by the legacy
-ETL, and it breaks the day MEDIA_URL moves. Opslagstavlen is still gated to Inspektionen and
+Weight those correctly. **The CMS half is live** — it is the public site's content, populated by the
+legacy ETL, and cms.snapshot finds its images by that prefix to publish them to gahk.dk. Opslagstavlen is still gated to Inspektionen and
 Netværksgruppen (`opslagstavle/access.py`), so it holds a trial's worth of posts, not an archive;
 its exposure is small *today* and becomes the larger one the moment that gate opens, which is the
 point of writing this down rather than relying on "there is hardly anything in it".
@@ -21,14 +22,15 @@ Four pieces of code treat `settings.MEDIA_URL` as a string prefix of that stored
     start with it, and _SRCLESS_IMG then removes the tag outright;
   * core.markdown.extract_image_names — strips the prefix to recover FileField names for the indexed
     `file__in=` lookup that opslagstavle.images.sync_images claims images with;
-  * cms.admin.CmsImageAdmin.usage — `Page.objects.filter(background_image=obj.url)`, an exact match;
+  * cms.services.image_usage and cms.snapshot — `background_image=image.url`, an exact match, and
+    the /media/cms/ references in bodies that become gahk.dk's /billeder/ copies;
   * rooms.RoomConditionScore.image_urls — concatenates MEDIA_URL onto legacy `;`-separated paths.
 
 So pointing MEDIA_URL at the bucket host — the obvious way to serve media from S3, and what
 django-storages does by default — fails like this, with nothing in any log:
 
-  1. cms.admin's usage column reports "Ingen steder endnu" for images that are live on the front
-     page, so the next editor to tidy up deletes one. A new background saved after the move stores
+  1. The image library reports an image as unused while it is live on the front page, so the next
+     editor to tidy up deletes one, and gahk.dk stops getting it. A new background saved after the move stores
      a presigned URL, which expires within the hour and is then wrong permanently.
   2. Every existing opslag image disappears, because the stored `/media/…` src no longer matches the
      new prefix and the sanitizer strips it.

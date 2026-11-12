@@ -282,7 +282,6 @@ tasks:
       - '{{.PY}} manage.py etl_oelkaelder'
       - '{{.PY}} manage.py etl_stats'
       - '{{.PY}} manage.py reset_sequences'
-      - '{{.PY}} manage.py sync_cms_media'
 
   frontend:install:
     desc: Install frontend dependencies (npm)

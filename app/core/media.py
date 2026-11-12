@@ -73,13 +73,12 @@ REDIRECT_CACHE_CONTROL = f"private, max-age={REDIRECT_MAX_AGE}"
 
 # The upload prefixes a client with no session may read.
 #
-# Derived from the templates rather than assumed, and re-derivable the same way: cms.CmsImage is the
-# toolbar the CMS editors use, and its /media/cms/… URLs go into Page.body, NewsItem.body and
-# Event.description, which cms/home.html, cms/page.html and cms/events_news.html render to anonymous
-# visitors. `body_media` (cms.templatetags.cms_extras) rewrites only the LEGACY /public/… paths to
-# /static/legacy/, so it never redirects these away from /media/.
+# Derived from the clients rather than assumed, and re-derivable the same way. Website images
+# (cms/, the Hjemmeside library) are NOT here: gahk.dk serves its own copies at /billeder/, and the
+# only people who load them from intern are logged-in editors (the library, a draft's preview). They
+# were anonymous while this app rendered the public site itself.
 #
-# THE ØLKÆLDER TILL IS THE SECOND ENTRY, AND IT IS THE CASE THIS LIST GOT WRONG ONCE.
+# THE ØLKÆLDER TILL IS THE ONE ENTRY, AND IT IS THE CASE THIS LIST GOT WRONG ONCE.
 # "Everything else is reached from the intranet only" was the original reasoning, and it is true of the
 # URL and false of the CLIENT: oelkaelder.views.shop is gated on the till's LAN IP and takes no
 # login at all (settings.OELKAELDER_KIOSK_IPS), so the iPad behind the bar is an ANONYMOUS client
@@ -95,8 +94,7 @@ REDIRECT_CACHE_CONTROL = f"private, max-age={REDIRECT_MAX_AGE}"
 #                      paths here, and they land in DIFFERENT subtrees — image/intern/oel/ for the
 #                      ølkælder (public, below) and image/intern/roomimages/ for værelsestjek (NOT).
 #                      That split is why the public entry is the long path and not a bare "public/".
-#                      Legacy CMS images are a different command (sync_cms_media) and land in
-#                      static/legacy/, not here.
+#   cms/               the website's image library — editors only, see above
 #   opslag/            opslagstavlen        quick_posts/, quick_comments/  Den Hurtige
 #                      (opslag/kommentarer/ is a comment's attached photo — same prefix, so it
 #                      inherits the same "not public" answer without a second check)
@@ -106,7 +104,6 @@ REDIRECT_CACHE_CONTROL = f"private, max-age={REDIRECT_MAX_AGE}"
 # without a session — the till is not the only thing that could be one. Adding a prefix wrongly
 # publishes it silently; omitting one wrongly breaks a page loudly, which is the safer way round.
 PUBLIC_PREFIXES = (
-    "cms/",
     # The till, which has no session. Product photos only — see above.
     "oel/",  # Product.image uploads
     "public/image/intern/oel/",  # the same photos, legacy paths relocate_media kept
@@ -171,8 +168,8 @@ def discard_cached_attachment(name: str) -> None:
 def _clean(path: str) -> str | None:
     """The storage name a request is really asking for, or None if it is not asking honestly.
 
-    NORMALISING BEFORE THE PREFIX CHECK IS THE WHOLE POINT. `/media/cms/../profile_pictures/x.jpg`
-    starts with "cms/" and resolves to a profile picture, and it does NOT trip the storage's
+    NORMALISING BEFORE THE PREFIX CHECK IS THE WHOLE POINT. `/media/oel/../profile_pictures/x.jpg`
+    starts with "oel/" and resolves to a profile picture, and it does NOT trip the storage's
     safe_join guard, because collapsing those dots never escapes the media root — it just lands
     somewhere else inside it. Checking the raw path would be an authentication bypass, not a
     cosmetic issue.

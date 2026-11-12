@@ -507,17 +507,17 @@ def test_media_files_are_served_in_prod() -> None:
     from django.conf import settings
     from django.test import override_settings
 
-    # Under the cms/ prefix on purpose. This test is about ROUTING — WhiteNoise serves only static,
-    # and DEBUG-only serving would 404 these in prod — so it uses the one prefix that is still
-    # readable without a session (core.media.PUBLIC_PREFIXES), keeping the anonymous client, which
-    # is the stronger statement about the route. The gate itself is covered in
+    # Under the oel/ prefix on purpose. This test is about ROUTING — WhiteNoise serves only static,
+    # and DEBUG-only serving would 404 these in prod — so it uses a prefix that is still readable
+    # without a session (core.media.PUBLIC_PREFIXES, the ølkælder till), keeping the anonymous
+    # client, which is the stronger statement about the route. The gate itself is covered in
     # tests/test_media_storage.py, including that every other prefix now requires a login.
-    f = Path(settings.MEDIA_ROOT) / "cms" / "__test_serve.txt"
+    f = Path(settings.MEDIA_ROOT) / "oel" / "__test_serve.txt"
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text("hello-media")
     try:
         with override_settings(DEBUG=False):  # prod-like: must still serve /media/
-            r = Client().get("/media/cms/__test_serve.txt")
+            r = Client().get("/media/oel/__test_serve.txt")
         assert r.status_code == 200
         assert b"".join(r.streaming_content) == b"hello-media"
     finally:
@@ -592,19 +592,6 @@ def test_room_condition_image_urls() -> None:
     assert RoomConditionScore(image="").image_urls == []
 
 
-def test_body_media_rewrites_relative_and_absolute_legacy_urls() -> None:
-    from cms.templatetags.cms_extras import body_media
-
-    html = (
-        '<img src="/public/image/a.jpg">'
-        '<img src="http://gahk.dk/public/image/b.jpg">'
-        '<img src="https://www.gahk.dk/public/image/c.jpg">'
-    )
-    out = body_media(html)
-    assert out.count('src="/static/legacy/image/') == 3  # all three rewritten
-    assert "gahk.dk/public" not in out and 'src="/public' not in out  # no http/relative leftovers
-
-
 # ---------------------------------------------------------------- visit counter (F-002/F-011)
 @pytest.mark.django_db
 def test_the_dashboard_is_not_counted_as_a_front_page_visit(make_resident: Callable) -> None:
@@ -654,6 +641,15 @@ def test_the_root_is_the_intranet_and_asks_a_stranger_to_log_in() -> None:
     response = Client().get("/")
     assert response.status_code == 302
     assert response.headers["Location"].startswith(reverse("login"))
+
+
+@pytest.mark.django_db
+def test_the_login_page_has_its_own_small_layout() -> None:
+    """auth_base.html: no public menu (that is gahk.dk's), a way back to gahk.dk, never indexed."""
+    html = Client().get(reverse("login")).content.decode()
+    assert "Log ind" in html and 'name="robots" content="noindex"' in html
+    assert 'href="https://gahk.dk/"' in html and "Til gahk.dk" in html
+    assert "/public/image/" not in html and "Kollegielivet" not in html
 
 
 @pytest.mark.django_db
