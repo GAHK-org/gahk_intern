@@ -18,7 +18,8 @@ const zipImportJob = document.querySelector<HTMLElement>("[data-album-import-job
 document.querySelectorAll<HTMLElement>("[data-album-folder-selector]").forEach((selector) => {
   const choice = selector.querySelector<HTMLSelectElement>("[data-album-folder-choice]")!
   const input = selector.querySelector<HTMLInputElement>("[data-album-folder-input]")!
-  const currentValue = selector.dataset.currentValue ?? "Andet"
+  // The form's folder, or this year's (the server fills it in); one not offered is typed in.
+  const currentValue = selector.dataset.currentValue ?? choice.options[0]?.value ?? ""
   choice.value = Array.from(choice.options).some((option) => option.value === currentValue)
     ? currentValue
     : "__new__"
@@ -919,6 +920,8 @@ interface MediaDetail {
   kind: "image" | "video"
   title: string
   filename: string
+  // A camera RAW file: what "Download original" fetches is the sensor's data, not a picture
+  raw: boolean
   full: string
   album: string
   albumUrl: string
@@ -1159,6 +1162,7 @@ if (gallery && dialog) {
       mobileDate.textContent = detail.capturedAt || detail.approximateDate || detail.uploadedAt
       download.href = detail.downloadUrl
       menuDownload.href = detail.downloadUrl
+      download.textContent = menuDownload.textContent = detail.raw ? "Download original (RAW)" : "Download original"
       deleteForm.hidden = !detail.deleteUrl
       deleteForm.action = detail.deleteUrl
       menuDeleteForm.hidden = !detail.deleteUrl

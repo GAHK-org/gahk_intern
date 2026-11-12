@@ -1,4 +1,5 @@
 {% extends "gahkflix/base.html" %}
+{% load gahkflix %}
 {% block title %}Upload – GAHKFlix{% endblock %}
 {% block content %}
   <div class="flix-page flix-page-narrow">
@@ -11,8 +12,16 @@
     {% endif %}
     {% if pending %}
       <div class="flix-panel">
-        <h2>Du har allerede en video, der behandles</h2>
-        <p><a href="{% url 'gahkflix:edit' pending.video_id %}">{{ pending.video.title }}</a> er {{ pending.progress }} % færdig. Du kan uploade den næste, når den er klar.</p>
+        {% if pending.state == "queued" %}
+          {% with ahead=pending|queue_ahead %}
+            <h2>Din video venter i kø</h2>
+            <p><a href="{% url 'gahkflix:edit' pending.video_id %}">{{ pending.video.title }}</a> venter på at blive behandlet{% if ahead %}: der er {{ ahead }} video{{ ahead|pluralize:"er" }} foran den{% else %} og er den næste{% endif %}.</p>
+          {% endwith %}
+        {% else %}
+          <h2>Du har en video, der behandles</h2>
+          <p><a href="{% url 'gahkflix:edit' pending.video_id %}">{{ pending.video.title }}</a> er {{ pending.progress }} % færdig.</p>
+        {% endif %}
+        <p>Du kan uploade én video ad gangen, så du kan uploade den næste, når den er færdigbehandlet.</p>
       </div>
     {% else %}
       {% include "gahkflix/_uploader.html" %}

@@ -4,6 +4,7 @@ import logging
 import posixpath
 import subprocess  # nosec B404 — only to catch ffmpeg's CalledProcessError
 from collections.abc import Buffer, Callable, Iterator
+from dataclasses import asdict
 from datetime import timedelta
 from functools import partial
 from pathlib import Path
@@ -17,7 +18,7 @@ from django.db.models import Q, QuerySet
 from django.utils import timezone
 from zipstream import ZIP_STORED, ZipStream
 
-from . import direct_upload, notify
+from . import direct_upload, merge, notify
 from .dashboard import measure_storage
 from .models import (
     ALBUM_DOWNLOAD_RETENTION,
@@ -29,6 +30,8 @@ from .models import (
     AlbumDownloadState,
     AlbumImport,
     AlbumImportState,
+    AlbumMerge,
+    AlbumMergeState,
     DerivativeState,
     DownloadVariant,
     Media,
@@ -83,6 +86,7 @@ FAILED_IMPORT_ARCHIVE_KEPT = timedelta(days=1)
 
 DOWNLOAD_INTERRUPTED = "Download blev afbrudt undervejs."
 IMPORT_INTERRUPTED = "Importen blev afbrudt undervejs. Intet er importeret."
+MERGE_INTERRUPTED = "Fletningen blev afbrudt undervejs. Intet er flettet."
 
 
 class Claim(enum.Enum):
@@ -95,12 +99,12 @@ class Claim(enum.Enum):
 
 def _claim_job(
     rows: "QuerySet[Any]",
-    states: type[AlbumDownloadState] | type[AlbumImportState],
+    states: type[AlbumDownloadState] | type[AlbumImportState] | type[AlbumMergeState],
     task_id: str | None,
     *,
     interrupted: str,
 ) -> Claim:
-    """Move a QUEUED download or import to BUILDING for this task.
+    """Move a QUEUED download, import or merge to BUILDING for this task.
 
     A row `fail_stalled_*` failed while this very message was still waiting in the queue is claimed
     too: with one media slot a job can honestly wait longer than JOB_QUEUED_TOO_LONG. It is told
@@ -134,7 +138,8 @@ def _claim_job(
 
 
 def _stalled(
-    rows: "QuerySet[Any]", states: type[AlbumDownloadState] | type[AlbumImportState]
+    rows: "QuerySet[Any]",
+    states: type[AlbumDownloadState] | type[AlbumImportState] | type[AlbumMergeState],
 ) -> "QuerySet[Any]":
     """The jobs no worker is coming back to: no progress for JOB_STALLED_AFTER, or never started."""
     now = timezone.now()
@@ -686,3 +691,50 @@ def purge_expired_downloads() -> int:
         download.delete()
         count += 1
     return count
+
+
+@shared_task(bind=True, time_limit=ZIP_TASK_TIME_LIMIT, soft_time_limit=ZIP_TASK_SOFT_TIME_LIMIT)
+def process_album_merge(self: Task, merge_id: int) -> bool:
+    """Merge one album into another outside the request that asked for it (photo_album.merge).
+
+    As long as an import may take: two albums of a whole year, imported twice, is every original
+    read twice to compare them.
+    """
+    rows = AlbumMerge.objects.filter(pk=merge_id)
+    if _claim_job(rows, AlbumMergeState, self.request.id, interrupted=MERGE_INTERRUPTED) is not Claim.CLAIMED:
+        return False
+    job = rows.select_related("target", "source").get()
+    logger.info("Merging %s into %s for %s.", job.source_path, merge.label(job.target), job.requested_by)
+    try:
+        if job.source is None:
+            raise ValidationError(f"{job.source_path} findes ikke længere.")
+        result = merge.merge_albums(job.target, job.source, progress=JobProgress(rows))
+    except ValidationError as exc:
+        # Refused, not crashed: an album was locked or moved meanwhile, and nothing was merged.
+        logger.warning("Refused: %s", " ".join(exc.messages))
+        rows.update(
+            state=AlbumMergeState.FAILED, error=" ".join(exc.messages)[:255], completed_at=timezone.now()
+        )
+        return False
+    except Exception:
+        rows.update(
+            state=AlbumMergeState.FAILED,
+            error="Fletningen mislykkedes. Intet er flettet.",
+            completed_at=timezone.now(),
+        )
+        raise
+    # By update, not save: the merge deleted the source album, which the row in memory still names.
+    rows.update(state=AlbumMergeState.READY, result=asdict(result), error="", completed_at=timezone.now())
+    logger.info(
+        "Merged %s into %s: %s.", job.source_path, merge.label(job.target), merge.describe(asdict(result))
+    )
+    return True
+
+
+@shared_task
+def fail_stalled_merges() -> int:
+    """Close out album merges no worker is coming back to. A merge changes the albums in one
+    transaction, which died with the worker, so there is nothing of it to undo."""
+    return _stalled(AlbumMerge.objects.all(), AlbumMergeState).update(
+        state=AlbumMergeState.FAILED, error=MERGE_INTERRUPTED, completed_at=timezone.now()
+    )

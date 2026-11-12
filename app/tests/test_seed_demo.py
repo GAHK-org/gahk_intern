@@ -34,6 +34,12 @@ def test_seed_demo_populates_and_is_idempotent() -> None:
     assert "administrator" in real_roles(formand)
     assert formand.check_password("demo1234")
 
+    # Two alumni in the current month lack an e-conomic kontonr., for trying the regnskab page's
+    # "Mangler e-conomic kontonr." list; everyone else has one.
+    missing = Resident.objects.filter(economic_account_number__isnull=True)
+    assert missing.count() == 2
+    assert all(r.residencies.filter(year=year, month=month).exists() for r in missing)
+
     # Derived ølkælder balance is computable (no crash, integer øre).
     shopper = Shopper.objects.first()
     assert isinstance(shopper.balance_ore, int)

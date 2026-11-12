@@ -84,6 +84,9 @@ def _isolate_from_dotenv(settings: object, tmp_path: Path) -> None:
     # the cache tests (test_photo_album_cache.py) turn it on with their own tmp_path.
     settings.PHOTO_ALBUM_CACHE_DIR = ""  # type: ignore[attr-defined]
     settings.MEDIA_CACHE_DIR = ""  # type: ignore[attr-defined]  # likewise; test_attachment_cache.py
+    # Off by default under DEBUG, so a dev .env would decide whether the suite's alumneregninger reach
+    # Django's test outbox; tests always take the real path (the test runner's locmem backend sends nothing).
+    settings.ALUMNEREGNING_SEND_MAIL = True  # type: ignore[attr-defined]
 
 
 @pytest.fixture

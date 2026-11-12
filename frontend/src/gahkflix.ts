@@ -312,12 +312,20 @@ function initUpload(): void {
   drop.addEventListener("drop", (event) => {
     event.preventDefault();
     drop.classList.remove("is-over");
-    const file = event.dataTransfer?.files?.[0];
-    if (file) void upload(file);
+    const files = event.dataTransfer?.files;
+    if (files && files.length > 1) {
+      // Not the first of them quietly: the next can only go once this one is processed anyway.
+      say(`Du kan uploade én video ad gangen. Træk kun én af de ${files.length} filer herind.`, true);
+      return;
+    }
+    if (files?.[0]) void upload(files[0]);
   });
 }
 
-/** The edit page while a file is processed: follow its progress, reload when it is done. */
+type ProcessingStatus = { state: string; progress: number; ahead: number };
+
+/** The edit page while a file is processed: whether it waits its turn or how far it has come,
+ * and a reload when it is done. */
 function initProcessing(): void {
   const panel = document.querySelector<HTMLElement>("[data-flix-processing]");
   if (!panel) return;
@@ -327,13 +335,20 @@ function initProcessing(): void {
     try {
       const response = await fetch(panel.dataset.flixProcessing!, { credentials: "same-origin" });
       if (response.ok) {
-        const data = (await response.json()) as { state: string; progress: number };
+        const data = (await response.json()) as ProcessingStatus;
         if (data.state === "ready" || data.state === "failed" || data.state === "") {
           window.location.reload();
           return;
         }
+        const queued = data.state === "queued";
+        for (const part of panel.querySelectorAll<HTMLElement>("[data-flix-when]")) {
+          part.hidden = part.dataset.flixWhen !== (queued ? "queued" : "processing");
+        }
         if (meter) meter.style.width = `${data.progress}%`;
-        if (text) text.textContent = data.state === "queued" ? "I kø …" : `${data.progress} % færdig`;
+        if (text) {
+          const waiting = data.ahead ? `${data.ahead} ${data.ahead === 1 ? "video" : "videoer"} foran` : "den er den næste";
+          text.textContent = queued ? `I kø · ${waiting}` : `${data.progress} % færdig`;
+        }
       }
     } catch {
       // A missed poll is harmless; the next one catches up.
@@ -630,10 +645,6 @@ function initNumberPickers(): void {
   for (const kind of ["season", "episode"] as const) {
     const input = inputs[kind];
     const list = row.querySelector<HTMLUListElement>(`[data-numbers-for="${kind}"]`)!;
-    input.addEventListener("input", () => {
-      const digits = input.value.replace(/\D+/g, "").slice(0, input.maxLength > 0 ? input.maxLength : 3);
-      if (digits !== input.value) input.value = digits;
-    });
     const show = () => {
       list.replaceChildren();
       const rows = numbers[series?.value ?? ""] ?? [];
@@ -675,6 +686,16 @@ function initNumberPickers(): void {
   }
 }
 
+/** Number fields — season, episode, the release year — take digits only, as they are typed. */
+function initDigitFields(): void {
+  for (const input of document.querySelectorAll<HTMLInputElement>('input[inputmode="numeric"]')) {
+    input.addEventListener("input", () => {
+      const digits = input.value.replace(/\D+/g, "").slice(0, input.maxLength > 0 ? input.maxLength : undefined);
+      if (digits !== input.value) input.value = digits;
+    });
+  }
+}
+
 // --- Picking a frame yourself ---------------------------------------------------------------------
 
 function formatTime(seconds: number): string {
@@ -704,6 +725,187 @@ function initScrubber(): void {
   }
 }
 
+// --- What is typed on the edit page ---------------------------------------------------------------
+//
+// THE DETAILS OUTLIVE THE PAGE. Most of what is done on the edit page reloads it: picking a picture,
+// a new version, the processing finishing. What was typed under "Oplysninger" and not saved is kept
+// in the tab's sessionStorage as the page goes, and put back when it comes again — only the fields
+// that were changed, so a date the worker found meanwhile still shows — with a note that it is not
+// saved yet. Saving the form, or "Fortryd det", lets it go. "Vis 10 nye billeder" and "Opret en ny
+// serie" do not reload the page at all.
+
+type KeptDetails = { at: number; base: Record<string, string>; values: Record<string, string> };
+
+// A page come back to after this is not taken to be the same piece of work.
+const KEEP_DETAILS_MS = 12 * 60 * 60 * 1000;
+
+function detailFields(form: HTMLFormElement): (HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement)[] {
+  return [...form.elements].filter(
+    (element): element is HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement =>
+      (element instanceof HTMLInputElement && element.type !== "file") ||
+      element instanceof HTMLTextAreaElement ||
+      element instanceof HTMLSelectElement,
+  );
+}
+
+function detailValues(form: HTMLFormElement): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const field of detailFields(form)) {
+    if (!field.name || field.name === "csrfmiddlewaretoken") continue;
+    // The cast and the tags are JSON, written by the server one way and by their editors another.
+    let value = field.value;
+    if (field.type === "hidden") {
+      try {
+        value = JSON.stringify(JSON.parse(value || "null"));
+      } catch {
+        // Not JSON: compared as it is.
+      }
+    }
+    values[field.name] = value;
+  }
+  return values;
+}
+
+function initDetailsKeeper(): void {
+  const form = document.querySelector<HTMLFormElement>("form[data-flix-details]");
+  if (!form) return;
+  const key = `gahkflix-details-${form.dataset.flixDetails}`;
+  const notice = form.querySelector<HTMLElement>("[data-flix-unsaved]");
+  const loaded = detailValues(form);
+  // A form sent back with errors shows what was typed, and none of it is saved.
+  const base = form.hasAttribute("data-flix-bound") ? {} : loaded;
+  let letGo = false;
+  const store = (kept: KeptDetails | null) => {
+    try {
+      if (kept) window.sessionStorage.setItem(key, JSON.stringify(kept));
+      else window.sessionStorage.removeItem(key);
+    } catch {
+      // Private mode: nothing is kept.
+    }
+  };
+
+  let kept: KeptDetails | null = null;
+  try {
+    kept = JSON.parse(window.sessionStorage.getItem(key) ?? "null") as KeptDetails | null;
+  } catch {
+    kept = null;
+  }
+  if (kept && Date.now() - kept.at < KEEP_DETAILS_MS) {
+    let restored = false;
+    for (const field of detailFields(form)) {
+      const value = kept.values[field.name];
+      if (value === undefined || value === kept.base[field.name] || value === loaded[field.name]) continue;
+      field.value = value;
+      restored = true;
+    }
+    if (notice) notice.hidden = !restored;
+  }
+  store(null);
+
+  // Saved (Gem, or Udgiv, whose button belongs to this form), or undone: nothing to keep.
+  form.addEventListener("submit", () => (letGo = true));
+  notice?.querySelector("[data-flix-discard]")?.addEventListener("click", () => {
+    letGo = true;
+    window.location.reload();
+  });
+  window.addEventListener("pagehide", () => {
+    const values = detailValues(form);
+    const changed = Object.keys(values).some((name) => values[name] !== base[name]);
+    store(letGo || !changed ? null : { at: Date.now(), base, values });
+  });
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) letGo = false; // back from the browser's cache: the page is as it was left
+  });
+}
+
+/** "Vis 10 nye billeder" without leaving the page: the worker draws them, and the new ones are swapped
+ * in from the edit page once its status says they are there. */
+const NEW_FRAMES_WAIT_MS = 3 * 60 * 1000;
+
+function initNewFrames(): void {
+  const region = document.querySelector<HTMLElement>("[data-flix-frames]");
+  if (!region) return;
+  region.addEventListener("submit", async (event) => {
+    const form = (event.target as HTMLElement).closest<HTMLFormElement>("form[data-flix-new-frames]");
+    if (!form) return;
+    event.preventDefault();
+    const button = form.querySelector<HTMLButtonElement>("button")!;
+    const status = region.querySelector<HTMLElement>("[data-flix-new-frames-status]");
+    const say = (text: string) => {
+      if (status) status.textContent = text;
+    };
+    button.disabled = true;
+    say("Der tages 10 nye billeder fra videoen …");
+    try {
+      const started = await fetch(jsonUrl(form.action), {
+        method: "POST",
+        body: new FormData(form),
+        credentials: "same-origin",
+      });
+      if (!started.ok) throw new Error(await errorOf(started, "Der kunne ikke tages nye billeder."));
+      const { batch } = (await started.json()) as { batch: number };
+      const until = Date.now() + NEW_FRAMES_WAIT_MS;
+      while (Date.now() < until) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        const polled = await fetch(form.dataset.flixNewFrames!, { credentials: "same-origin" }).catch(() => null);
+        if (!polled?.ok || ((await polled.json()) as { batch: number }).batch <= batch) continue;
+        const page = await fetch(window.location.pathname, { credentials: "same-origin" });
+        const fresh = new DOMParser().parseFromString(await page.text(), "text/html").querySelector("[data-flix-frames]");
+        if (!fresh) break;
+        region.replaceChildren(...fresh.childNodes);
+        return;
+      }
+      // The media worker takes one job at a time; it may be busy with somebody's film.
+      say("De nye billeder er ikke klar endnu. Genindlæs siden om lidt for at se dem.");
+    } catch (error) {
+      say(error instanceof Error ? error.message : "Der kunne ikke tages nye billeder.");
+    }
+    button.disabled = false;
+  });
+}
+
+/** "Opret en ny serie" in a dialog: the series is created and picked, and the page stays as it is. */
+function initNewSeries(): void {
+  const link = document.querySelector<HTMLAnchorElement>("a[data-flix-new-series]");
+  const dialog = document.querySelector<HTMLDialogElement>("dialog[data-flix-series-dialog]");
+  const select = document.getElementById(link?.dataset.series ?? "") as HTMLSelectElement | null;
+  if (!link || !dialog || !select || typeof dialog.showModal !== "function") return;
+  const form = dialog.querySelector<HTMLFormElement>("form")!;
+  const error = dialog.querySelector<HTMLElement>("[data-flix-dialog-error]")!;
+  const note = document.querySelector<HTMLElement>("[data-flix-new-series-note]");
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    error.hidden = true;
+    dialog.showModal();
+  });
+  dialog.querySelector("[data-flix-dialog-close]")?.addEventListener("click", () => dialog.close());
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    button.disabled = true;
+    try {
+      const response = await fetch(form.action, { method: "POST", body: new FormData(form), credentials: "same-origin" });
+      if (!response.ok) throw new Error(await errorOf(response, "Serien kunne ikke oprettes."));
+      const series = (await response.json()) as { id: number; title: string };
+      // In its place in the list, which is by title.
+      const before = [...select.options].find(
+        (option) => option.value && option.text.localeCompare(series.title, "da", { sensitivity: "base" }) > 0,
+      );
+      select.add(new Option(series.title, String(series.id)), before ?? null);
+      select.value = String(series.id);
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      form.reset();
+      dialog.close();
+      if (note) note.textContent = `${series.title} er oprettet og valgt. Husk at gemme.`;
+    } catch (failure) {
+      error.textContent = failure instanceof Error ? failure.message : "Serien kunne ikke oprettes.";
+      error.hidden = false;
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
 // --- The player -----------------------------------------------------------------------------------
 //
 // THE INTRO STARTS IN THE CLICK. A browser lets a page play sound only from inside the click (or tap)
@@ -727,6 +929,8 @@ type FilmConfig = {
   playUrl: string;
   backUrl: string;
   next: UpNext | null;
+  // The viewing the statistics keep of this opening of the film; null for a draft.
+  viewing: number | null;
 };
 
 type UpNext = {
@@ -795,7 +999,9 @@ class Player {
   private filmWanted = false;
   private quality = "";
   private filmTime = 0;
+  // Seconds of the film that have actually played, and of those the ones not yet reported.
   private watched = 0;
+  private unreported = 0;
   private lastTime: number | null = null;
   private counted = false;
   private retries = 0;
@@ -849,6 +1055,7 @@ class Player {
     this.film = film;
     this.filmTime = film.startAt || 0;
     this.watched = 0;
+    this.unreported = 0;
     this.lastTime = null;
     this.counted = false;
     this.retries = 0;
@@ -906,10 +1113,22 @@ class Player {
     if (play) this.tryPlay();
   }
 
+  /** Where the film is, and how much of it has played since the last report — put back to go with
+   * the next one if this one does not arrive. */
   private savePosition(keepalive = false): Promise<unknown> {
     if (this.phase !== "film" || !this.film || !this.video.duration) return Promise.resolve();
     this.lastSaved = Date.now();
-    return postJSON(this.film.positionUrl, { position: this.video.currentTime }, keepalive).catch(() => undefined);
+    const film = this.film;
+    const watched = this.unreported;
+    this.unreported = 0;
+    const missed = () => {
+      if (this.film === film) this.unreported += watched;
+    };
+    return postJSON(film.positionUrl, { position: this.video.currentTime, viewing: film.viewing, watched }, keepalive)
+      .then((response) => {
+        if (!response.ok) missed();
+      })
+      .catch(missed);
   }
 
   /** The end card: the next video, counting down to it unless autoplay is off or nobody seems to be there. */
@@ -1080,7 +1299,10 @@ class Player {
       this.filmTime = now;
       if (this.lastTime !== null) {
         const step = now - this.lastTime;
-        if (step > 0 && step < 1.5) this.watched += step;
+        if (step > 0 && step < 1.5) {
+          this.watched += step;
+          this.unreported += step;
+        }
       }
       this.lastTime = now;
       if (
@@ -1088,7 +1310,7 @@ class Player {
         (this.watched >= VIEW_AFTER_SECONDS || (video.duration > 0 && this.watched >= video.duration / 2))
       ) {
         this.counted = true;
-        void postJSON(this.film.viewUrl, {}).catch(() => (this.counted = false));
+        void postJSON(this.film.viewUrl, { viewing: this.film.viewing }).catch(() => (this.counted = false));
       }
       if (Date.now() - this.lastSaved > SAVE_EVERY_MS && !video.paused) this.savePosition();
       if (this.film.next?.kind === "episode" && this.upNext.hidden && video.duration && video.duration - now < 20) {
@@ -1211,9 +1433,13 @@ if (body.classList.contains("flix")) {
   initLiveSearch();
   initUpload();
   initProcessing();
+  initDetailsKeeper(); // before the editors, which read what it puts back
   initCastEditor();
   initTagEditor();
   initNumberPickers();
+  initDigitFields();
+  initNewSeries();
+  initNewFrames();
   initScrubber();
   initPlayPage();
   initPlayLinks();
