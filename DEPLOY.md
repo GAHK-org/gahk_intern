@@ -53,6 +53,7 @@ SITE_URL=https://intern.gahk.dk                    # absolute links in mail and 
 PUBLIC_SITE_URL=https://gahk.dk                    # the public site, for "Til GAHK-forsiden" (default)
 GAHK_WEB_URL=https://gahk.dk                       # where the sync API is (default when DJANGO_DEBUG=0)
 GAHK_WEB_KEY=<64 random chars>                     # = [sync] key in gahk.dk's config.ini — see §4f
+# EDITOR_HINT_COOKIE_DOMAIN=.gahk.dk                # default; the "gahk_redaktoer" hint cookie for gahk.dk's "Rediger siden"
 DATABASE_URL=postgres://gahk:<pw>@postgres:5432/gahk
 SMTP_HOST=send.one.com  SMTP_USER=…  SMTP_PASSWORD=…  SMTP_PORT=587
 EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
@@ -724,7 +725,7 @@ revision, pages written, images uploaded, error) and the GahkWebSync row (last s
 gahk.dk's code version and revision, last outbox pull, rejected applications, last error, last
 update result) — the Hjemmeside overview shows both, and so does `/admin/worker-jobs`.
 
-**Force a republish:** "Udgiv nu" in the Hjemmeside overview, or
+**Force a republish:** "Udgiv igen nu" in the Hjemmeside overview (/hjemmeside/), or
 `docker exec <worker> python manage.py shell -c "from cms.tasks import publish_gahk_web; print(publish_gahk_web(reason='manual'))"`.
 A manual publish is never skipped as "already current".
 

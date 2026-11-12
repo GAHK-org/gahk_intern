@@ -25,6 +25,30 @@ working when intern or the image storage is down; editing needs intern.
 - Headings and titles are plain text. Page text is HTML; anything that could run a script is
   removed when it is saved.
 
+## The editor
+
+- Hjemmeside is in the intranet's menu under Administration, at `/hjemmeside/`, with tabs for the
+  overview, pages, news, front-page events, images, the menu, old addresses and the change log.
+  gahk.dk's "Rediger siden" opens a page's editor directly.
+- Pages are listed by section, each with its address, who changed it last, a link to it on gahk.dk,
+  and whether the menu leads to it.
+- A page's address is picked as a section plus a last part, so it cannot be typed into a third level
+  or onto an address gahk.dk uses itself, and taken addresses are refused.
+- Text is edited visually: headings, bold, italic, lists, quotes, links, pictures from the library
+  (or uploaded on the spot) placed in the text, left or right, with an alt text, undo and redo.
+  An "HTML" button shows the text as HTML. Pasted text keeps its structure but not its fonts and
+  colours. Pictures on the old pages keep their size and placement.
+- Text the visual editor cannot show (a table, for example) opens as HTML with a note, so nothing is
+  lost by opening it. Saving a page untouched changes nothing.
+- If someone else saved the page after it was opened, saving stops once and says so; saving again
+  overwrites.
+- An image can only be deleted when nothing uses it; the library shows where each one is used.
+- The menu is edited in place: text and link per entry, move up or down, remove, add.
+- The change log can be filtered by type and person and shows each change's before and after; text
+  as a line-by-line difference.
+- Every editor screen tells the browser it belongs to an editor (a harmless cookie on gahk.dk's
+  domain), which is how gahk.dk knows to show "Rediger siden".
+
 ## History and audit
 
 - Every change is recorded: who, when, what, and the values before and after — pages, news,
@@ -47,7 +71,7 @@ working when intern or the image storage is down; editing needs intern.
 
 ## Publishing
 
-- Saving publishes automatically, a moment after the save. There is also "Udgiv nu".
+- Saving publishes automatically, a moment after the save. There is also "Udgiv igen nu".
 - Every two minutes intern checks that gahk.dk shows the current content and publishes again if
   not, so a publish that failed while gahk.dk was down catches up by itself.
 - Every night after midnight gahk.dk renders its pages again, so passed events drop off.
@@ -57,6 +81,8 @@ working when intern or the image storage is down; editing needs intern.
 
 - A page, news item or event can be previewed as gahk.dk would show it, with the current menu,
   before it is saved. Nothing is published by a preview.
+- When gahk.dk cannot be reached (or intern is not connected to it), the preview shows the text alone
+  in the intranet's styling and says why.
 
 ## Status of gahk.dk
 
@@ -76,3 +102,8 @@ working when intern or the image storage is down; editing needs intern.
   the image library like any other picture, and a later change removes them from the repository.
 - **Plain-text headings.** They were shown as HTML without ever being cleaned.
 - **The menu is data.** It was written into the code, so changing it needed a developer.
+- **A visual editor that keeps the old pages intact.** Editors should not need HTML, but the old
+  pages' picture layout must survive being opened and saved, and anything the editor cannot show is
+  left as HTML rather than silently dropped.
+- **The preview never runs scripts on intern.** It is gahk.dk's HTML shown inside the intranet, so it
+  is shown without JavaScript.

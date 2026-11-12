@@ -38,6 +38,10 @@ sendes der intet, og alt andet virker som normalt. Vil du se ændringerne lokalt
 udviklingsserver (`task dev` dér) og sæt `GAHK_WEB_URL` og `GAHK_WEB_KEY` til de værdier, den skriver
 ud. Se `DEPLOY.md` §4f.
 
+Editoren ligger på `/hjemmeside/` (rollerne administrator, indstilling, inspektion og pr). Den visuelle
+teksteditor (Tiptap) hentes kun på redigeringssiderne; byg frontenden (`npm run build` i `frontend/`),
+før du prøver den.
+
 ## Test
 
 ```sh
