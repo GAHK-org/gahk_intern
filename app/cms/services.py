@@ -22,7 +22,7 @@ deleting a page); these functions trust `by`.
 import datetime
 import logging
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -51,6 +51,7 @@ from .models import (
 )
 from .paths import validate_page_path
 from .sanitize import clean_html
+from .snapshot import media_names
 
 logger = logging.getLogger(__name__)
 
@@ -617,19 +618,43 @@ def update_image(image: CmsImage, caption: str, by: Resident | None) -> CmsImage
     return image
 
 
-def image_usage(image: CmsImage) -> list[str]:
-    """Where the image is used, as Danish labels — so deleting it does not silently break a page."""
-    if not image.file:
-        return []
-    url = image.url
+def usage_map(images: Iterable[CmsImage]) -> dict[int, list[str]]:
+    """Where each image is used, as Danish labels — so deleting one does not silently break a page.
+
+    Five queries for any number of images. A body uses an image when it holds its URL as
+    Storage.url() writes it, or when the snapshot would publish it (cms.snapshot.media_names): a name
+    may also be written with its letters as they are ("Værelse", typed in the HTML view) or with
+    other percent-encoding, and gahk.dk gets the picture all the same. A background is chosen from
+    the library, so it is always the URL exactly.
+    """
     site = SiteSettings.load()
-    return [
-        *(f"Side: {p.header}" for p in Page.objects.filter(body__contains=url)),
-        *(f"Baggrund: {p.header}" for p in Page.objects.filter(background_image=url)),
-        *(f"Nyhed: {n.title}" for n in NewsItem.objects.filter(body__contains=url)),
-        *(f"Begivenhed: {e.title}" for e in Event.objects.filter(description__contains=url)),
-        *(["Standardbaggrund"] if site.default_background == url else []),
+    bodies: list[tuple[str, str, set[str]]] = []
+    backgrounds: list[tuple[str, str]] = []
+    for page in Page.objects.only("header", "body", "background_image"):
+        bodies.append((f"Side: {page.header}", page.body, media_names(page.body)))
+        backgrounds.append((f"Baggrund: {page.header}", page.background_image))
+    bodies += [
+        (f"Nyhed: {n.title}", n.body, media_names(n.body)) for n in NewsItem.objects.only("title", "body")
     ]
+    bodies += [
+        (f"Begivenhed: {e.title}", e.description, media_names(e.description))
+        for e in Event.objects.only("title", "description")
+    ]
+    backgrounds.append(("Standardbaggrund", site.default_background))
+    usage: dict[int, list[str]] = {}
+    for image in images:
+        if not image.file:
+            usage[image.pk] = []
+            continue
+        url, name = image.url, image.file.name
+        usage[image.pk] = [label for label, text, names in bodies if url in text or name in names]
+        usage[image.pk] += [label for label, background in backgrounds if background == url]
+    return usage
+
+
+def image_usage(image: CmsImage) -> list[str]:
+    """Where the image is used, as Danish labels (see usage_map)."""
+    return usage_map([image])[image.pk]
 
 
 def delete_image(image: CmsImage, by: Resident | None) -> None:

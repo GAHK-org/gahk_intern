@@ -644,27 +644,6 @@ def _library() -> list[CmsImage]:
     return [image for image in CmsImage.objects.all() if image.file]
 
 
-def usage_map(images: Iterable[CmsImage]) -> dict[int, list[str]]:
-    """services.image_usage for many images with five queries instead of five per image."""
-    site = SiteSettings.load()
-    texts: list[tuple[str, str]] = []
-    for page in Page.objects.only("header", "body", "background_image"):
-        texts.append((f"Side: {page.header}", page.body))
-        texts.append((f"Baggrund: {page.header}", f"\0{page.background_image}\0"))
-    texts += [(f"Nyhed: {n.title}", n.body) for n in NewsItem.objects.only("title", "body")]
-    texts += [(f"Begivenhed: {e.title}", e.description) for e in Event.objects.only("title", "description")]
-    texts.append(("Standardbaggrund", f"\0{site.default_background}\0"))
-    usage: dict[int, list[str]] = {}
-    for image in images:
-        url = image.url
-        usage[image.pk] = [
-            label
-            for label, text in texts
-            if url and ((f"\0{url}\0" == text) if text.startswith("\0") else (url in text))
-        ]
-    return usage
-
-
 def image_json(image: CmsImage) -> dict[str, Any]:
     return {"id": image.pk, "url": image.url, "caption": image.caption, "name": str(image)}
 
@@ -700,7 +679,7 @@ def image_list(request: HttpRequest) -> HttpResponse:
     if query:
         images = images.filter(Q(caption__icontains=query) | Q(file__icontains=query))
     page_obj = Paginator(images, 48).get_page(request.GET.get("side"))
-    usage = usage_map(page_obj.object_list)
+    usage = services.usage_map(page_obj.object_list)
     return render(
         request,
         "hjemmeside/image_list.html",

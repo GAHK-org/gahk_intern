@@ -297,6 +297,29 @@ def test_image_usage_and_delete(editor: Resident) -> None:
     ]
 
 
+@pytest.mark.django_db
+def test_an_image_is_in_use_however_its_letters_are_spelled_in_the_html(editor: Resident) -> None:
+    """A body may name the image with its letters as they are (typed in the HTML view) or with other
+    percent-encoding than Storage.url() writes; gahk.dk gets the picture either way, so it is in use."""
+    from cms.snapshot import build_snapshot
+
+    image = services.upload_image(
+        SimpleUploadedFile("Værelse.png", _png(5, 5), content_type="image/png"), "V", editor
+    )
+    name = image.file.name
+    assert "%C3%A6" in image.url
+    Page.objects.create(slug="raa", header="Rå", body=f'<img src="/media/{name}">')
+    Page.objects.create(
+        slug="smaa", header="Små", body=f'<img src="{image.url.replace("%C3%A6", "%c3%a6")}">'
+    )
+    Page.objects.create(slug="anden", header="Anden", body='<img src="/media/cms/andet.png">')
+
+    snapshot = build_snapshot().data
+    [entry] = snapshot["images"]
+    assert sum(entry["url"] in page["body"] for page in snapshot["pages"]) == 2  # both published
+    assert sorted(services.image_usage(image)) == ["Side: Rå", "Side: Små"]
+
+
 # ------------------------------------------------------------------------------------------ menu
 @pytest.mark.django_db
 def test_the_menu_is_replaced_as_a_whole_and_audited(editor: Resident) -> None:
