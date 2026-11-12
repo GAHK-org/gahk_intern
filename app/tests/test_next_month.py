@@ -579,3 +579,100 @@ def test_the_create_form_offers_a_fylgje_picker(make_resident: Callable) -> None
 
     assert 'name="sponsor"' in html
     assert "Gammel Beboer" in html
+
+
+@pytest.mark.django_db
+def test_add_new_replaces_a_resident_in_a_full_sized_group(
+    make_resident: Callable, groups: dict[str, Room | Workgroup | Cleaning]
+) -> None:
+    """Swapping one resident for a newcomer used to deadlock: removing failed the exact group size,
+    adding failed on the taken room. "Erstatter" does both at once and inherits the blank fields."""
+    c, _ind, target = _setup(make_resident, groups)
+    ny, nm = next_period(active_period())
+    c.post(URL, {"action": "copy"})  # target -> r2, Festgruppen
+    Workgroup.objects.filter(id=groups["plain"].id).update(size=1)
+    Residency.objects.filter(resident=target, year=ny, month=nm).update(cleaning=groups["clean"])
+
+    c.post(
+        URL,
+        {
+            "action": "add_new",
+            "first_name": "Nina",
+            "last_name": "Ny",
+            "email": "nina@gahk.dk",
+            "replaces": target.id,
+        },
+    )
+    nina = Residency.objects.get(resident__email="nina@gahk.dk", year=ny, month=nm)
+    assert (nina.room_id, nina.workgroup_id, nina.cleaning_id) == (
+        groups["r2"].id,
+        groups["plain"].id,
+        groups["clean"].id,
+    )
+    assert not Residency.objects.filter(resident=target, year=ny, month=nm).exists()
+    # the list still satisfies the size rule, so a plain save goes through afterwards
+    form = {"action": "save"}
+    for res in Residency.objects.filter(year=ny, month=nm):
+        form |= {f"room_{res.resident_id}": res.room_id, f"workgroup_{res.resident_id}": res.workgroup_id}
+        form[f"cleaning_{res.resident_id}"] = res.cleaning_id or ""
+    resp = c.post(URL, form, follow=True)
+    assert "Ændringer gemt." in [str(m) for m in resp.context["messages"]]
+
+
+@pytest.mark.django_db
+def test_add_existing_replaces_and_drops_the_replaced_roles(
+    make_resident: Callable, groups: dict[str, Room | Workgroup | Cleaning]
+) -> None:
+    c, _ind, target = _setup(make_resident, groups)
+    ny, nm = next_period(active_period())
+    c.post(URL, {"action": "copy"})
+    Residency.objects.filter(resident=target, year=ny, month=nm).update(workgroup=groups["ak"])
+    RoleAssignment.objects.create(resident=target, role=Role.AK, year=ny, month=nm)
+    newcomer = make_resident(email="new@gahk.dk")
+
+    c.post(
+        URL,
+        {"action": "add_existing", "resident": newcomer.id, "replaces": target.id, "room": groups["r3"].id},
+    )
+    res = Residency.objects.get(resident=newcomer, year=ny, month=nm)
+    assert (res.room_id, res.workgroup_id) == (groups["r3"].id, groups["ak"].id)  # room chosen, wg inherited
+    assert RoleAssignment.objects.filter(resident=newcomer, role=Role.AK, year=ny, month=nm).exists()
+    assert not Residency.objects.filter(resident=target, year=ny, month=nm).exists()
+    assert not RoleAssignment.objects.filter(resident=target, year=ny, month=nm).exists()
+
+
+@pytest.mark.django_db
+def test_replacing_still_rejects_someone_elses_room(
+    make_resident: Callable, groups: dict[str, Room | Workgroup | Cleaning]
+) -> None:
+    c, _ind, target = _setup(make_resident, groups)
+    ny, nm = next_period(active_period())
+    c.post(URL, {"action": "copy"})  # ind -> r1, target -> r2
+
+    resp = c.post(
+        URL,
+        {
+            "action": "add_new",
+            "first_name": "Nina",
+            "last_name": "Ny",
+            "email": "nina@gahk.dk",
+            "replaces": target.id,
+            "room": groups["r1"].id,
+        },
+    )
+    assert not Resident.objects.filter(email="nina@gahk.dk").exists()
+    assert Residency.objects.filter(resident=target, year=ny, month=nm).exists()  # nothing removed
+    assert resp.context["new_draft"]["replaces"] == target.id
+
+
+@pytest.mark.django_db
+def test_cannot_replace_yourself_in_the_current_month(
+    make_resident: Callable, groups: dict[str, Room | Workgroup | Cleaning]
+) -> None:
+    c, ind, _target = _setup(make_resident, groups)
+    cy, cm = active_period()
+    newcomer = make_resident(email="new@gahk.dk")
+
+    c.post(URL, {"action": "add_existing", "period": "current", "resident": newcomer.id, "replaces": ind.id})
+    assert Residency.objects.filter(resident=ind, year=cy, month=cm).exists()
+    assert not Residency.objects.filter(resident=newcomer, year=cy, month=cm).exists()
