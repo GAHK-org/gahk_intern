@@ -148,7 +148,7 @@ class CmsImage(models.Model):
     """An image in the website's library, for use in page/news/event HTML and as a background.
 
     ALL of gahk.dk's content images live here (in S3), including the ones the old site kept in
-    static/legacy/ (imported once by cms.legacy_images, which sets `legacy_path`). gahk.dk gets a
+    static/legacy/ (imported by cms.legacy_images, which sets `legacy_path`). gahk.dk gets a
     copy of each image it needs at a content-hashed URL, /billeder/<sha256[:16]>/<name>, which is
     why `sha256` is kept: it names the copy and lets publishing skip the ones gahk.dk already has.
 
@@ -182,8 +182,8 @@ class CmsImage(models.Model):
     content_type = models.CharField(max_length=30, blank=True)
     size = models.PositiveIntegerField(null=True, blank=True)
     # Where the old site served this image from, below static/legacy/image/ (e.g.
-    # "upload/images/gang.jpg"). Set only by the one-time legacy import; unique so an image is never
-    # imported twice, and kept so gahk.dk can send old image links to the new copy.
+    # "upload/images/gang.jpg"). Set only by the legacy import; unique so an image is never imported
+    # twice, and kept so gahk.dk can send old image links to the new copy.
     legacy_path = models.CharField(max_length=255, unique=True, null=True, blank=True, editable=False)
 
     class Meta:
@@ -206,6 +206,34 @@ def _delete_cms_image_file(sender: type[CmsImage], instance: CmsImage, **kwargs:
     """Drop the file from storage with the row — Django has not done this since 1.3, and an orphaned
     upload is invisible: nothing lists it and nothing ever cleans it up. See core.files."""
     delete_attached_files(instance)
+
+
+class LegacyImageFailure(models.Model):
+    """An old-site image the automatic import (cms.legacy_images) could not bring into the library.
+
+    Recorded so the 2-minute sync does not ask for it again forever; a manual
+    `manage.py import_legacy_images` tries every recorded one again and drops the row once it works.
+    The Hjemmeside overview lists them: the content still points at the old address, which gahk.dk
+    cannot show.
+    """
+
+    class Reason(models.TextChoices):
+        MISSING = "missing", "Findes ikke"
+        UNUSABLE = "unusable", "Kan ikke bruges"
+
+    # Below the old static/legacy/image/, like CmsImage.legacy_path.
+    legacy_path = models.CharField(max_length=255, unique=True)
+    reason = models.CharField(max_length=10, choices=Reason.choices)
+    detail = models.CharField(max_length=255, blank=True)
+    failed_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["legacy_path"]
+        verbose_name = "Gammelt billede, der ikke kunne flyttes"
+        verbose_name_plural = "Gamle billeder, der ikke kunne flyttes"
+
+    def __str__(self) -> str:
+        return f"{self.legacy_path}: {self.get_reason_display()}"
 
 
 class PageRedirect(models.Model):

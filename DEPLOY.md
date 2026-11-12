@@ -739,34 +739,33 @@ A manual publish is never skipped as "already current".
 4. On gahk.dk, `https://gahk.dk/api/health` shows the revision it serves; compare with the newest OK
    Publication.
 
-**Legacy images — a one-off import, at the cutover.** The old site's content images are content,
-not code, so they are not in this repository (they used to be, under
-`app/static/legacy/image/upload/`). They go into the image library (S3) once, with
-`python manage.py import_legacy_images --from <dir>`: every file the stored content refers to is
-imported, and the content is rewritten to point at the library copy (`cms/legacy_images.py`; audited
-as "System" changes; idempotent, so a second run only reports what is still missing). Then it queues
-a publish. Until it has run, gahk.dk shows those pictures as broken and those backgrounds as a plain
-green band. `static/legacy/image/elements/` and `image/intern/` stay in the repository: the intranet
-itself uses them.
+**Legacy images — imported by themselves after the deploy.** The old site's content images are
+content, not code, so they are not in this repository any more (they were, under
+`app/static/legacy/image/upload/`, up to commit `3fc1817` on main). `sync_gahk_web` moves them into
+the image library (S3) on its own (`cms/legacy_images.py`): before it builds the snapshot, it looks
+for content that still refers to an old image (`/public/image/…`, `/static/legacy/image/…`), and
+for each such file downloads it from that pinned commit on GitHub
+(`raw.githubusercontent.com/GAHK-org/gahk_intern/3fc1817…/app/static/legacy/image/…`), checks it like
+an upload, stores it in the library and rewrites the content to point at it. At most 20 files or 60
+seconds per run, so the old files (77 at most) take a few runs, well under ten minutes; each run
+publishes what it rewrote. Nothing to do after the deploy: it runs with the sync, so it needs
+`GAHK_WEB_KEY` set and outbound HTTPS from the worker to raw.githubusercontent.com. To watch it: the
+change log's **System** filter shows each imported image and each rewritten page, and the Hjemmeside
+overview shows how many old images are still waiting and lists the ones that could not be moved.
 
-1. **Before the deploy** (§7 step 4 replaces the running container), copy the files out of the
-   running production container. The directory must be the one that holds `upload/`:
-   ```
-   docker cp <old-web>:/app/staticfiles/legacy/image ./legacy-image
-   ```
-   If that container is gone, take them from git history (`git archive <a commit before their
-   removal> app/static/legacy/image | tar -x`, the files are under `app/static/legacy/image/`) or
-   from the legacy PHP server's `public/image/`.
-2. **Right after the deploy**, import them into the new container, then delete every copy:
-   ```
-   docker cp ./legacy-image <new-web>:/tmp/legacy-image
-   docker exec <new-web> python manage.py import_legacy_images --from /tmp/legacy-image
-   docker exec <new-web> rm -rf /tmp/legacy-image && rm -rf ./legacy-image
-   ```
-   The output counts the imported images and names every referenced file it did not find. Check that
-   the list is empty or explained, and that Hjemmeside's library holds the imported images. Once that
-   is done in production, a follow-up can remove the command and `cms/legacy_images.py` (keep
-   `CmsImage.legacy_path`: gahk.dk's redirects for old image links are built from it).
+A file that GitHub does not have, or that is not a usable image, is logged once, recorded
+(LegacyImageFailure) and not asked for again; its references stay as they are (gahk.dk shows a broken
+picture or a plain green band there). Replace it in the editor, or retry by hand. A network problem
+records nothing: the next run tries again. The manual fallback runs the whole import at once and
+also retries the recorded failures:
+```
+docker exec <web> python manage.py import_legacy_images              # from the pinned GitHub commit
+docker exec <web> python manage.py import_legacy_images --from DIR   # from a local copy of the old image dir
+```
+`static/legacy/image/elements/` and `image/intern/` stay in the repository: the intranet itself uses
+them. Once the overview shows no old images left in production, a follow-up can remove the import
+(`cms/legacy_images.py`, the command, LegacyImageFailure); keep `CmsImage.legacy_path`: gahk.dk's
+redirects for old image links are built from it.
 
 **Applications** pulled from the outbox are validated with the old form rules, stored once (by
 gahk.dk's id), answered with the usual auto-reply, and then acknowledged so gahk.dk deletes them. One
@@ -813,16 +812,15 @@ moves, and this version must follow right behind it:
    to the webhost's address, then `/api/health` there. It has no content yet, so its pages answer
    the 503 page *"Siden opdateres"*. Nothing can publish to it from here before step 4: the running
    version has no publishing at all, and this version cannot go out early, because its migrations
-   reshape `cms` while the old version still serves gahk.dk from the same database. Also copy the
-   legacy images out of the running container now (§4f, step 1).
+   reshape `cms` while the old version still serves gahk.dk from the same database.
 3. **DNS switch:** repoint gahk.dk (+ www) to Hetzner Webhosting. As resolvers pick it up, visitors
    see *"Siden opdateres"* until step 4 has published — keep the gap short.
 4. **Deploy this version** straight after, with the env of §2 (`DJANGO_ALLOWED_HOSTS`,
    `CSRF_TRUSTED_ORIGINS`, `SITE_URL`, `PUBLIC_SITE_URL`) and `GAHK_WEB_URL` / `GAHK_WEB_KEY`
    (§4f). Within about 2 minutes `sync_gahk_web` sees that gahk.dk has no content and publishes
-   everything. Then run the one-off legacy image import (§4f, step 2), which publishes again with
-   the pictures in place. Between 3 and 4, links forwarded from gahk.dk land on the old version,
-   which still expects `/intern/`.
+   everything; over the next few runs it moves the old site's images into the library and publishes
+   again with the pictures in place (§4f, "Legacy images"). Between 3 and 4, links forwarded from
+   gahk.dk land on the old version, which still expects `/intern/`.
 5. Verify: gahk.dk shows its pages and pictures, the Hjemmeside overview shows an OK publication,
    `https://gahk.dk/intern/` → 308 to `https://intern.gahk.dk/`, a `https://gahk.dk/kalender/<token>.ics`
    feed still answers, `https://intern.gahk.dk/health` is 200 (move the uptime monitor there, §4e),
@@ -868,9 +866,9 @@ host-only and renamed, and the old `.gahk.dk` one is deleted on the first reques
 - [ ] MediaWiki migrated + upgraded to 1.43, reachable behind the proxy.
 - [ ] Staging smoke-tested; behavioural diff vs the live PHP site on key pages.
 - [ ] `intern.gahk.dk` live in Coolify, bucket CORS updated; gahk_web installed by hand and its
-      `/api/health` checked; legacy images copied out of the old container (§4f); then gahk.dk
-      repointed, this version deployed with `GAHK_WEB_KEY` set, and the legacy image import run
-      (§7 steps 2-4) → verify → keep MX on one.com.
+      `/api/health` checked; then gahk.dk repointed and this version deployed with `GAHK_WEB_KEY`
+      set (§7 steps 2-4) → verify, including that the Hjemmeside overview shows no old images
+      waiting or failed (§4f) → keep MX on one.com.
 - [ ] Uptime monitor on `https://intern.gahk.dk/health`; till, kitchen and Dropbox-script URLs updated.
 
 ## 9. Notes

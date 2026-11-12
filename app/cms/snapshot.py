@@ -9,9 +9,9 @@ What is sent, and how it differs from what is stored:
     /billeder/<sha256[:16]>/<slugified basename>, which gahk.dk serves without asking intern (or S3)
     anything. A background that is not a library image is sent as "" (gahk.dk refuses any other).
   * Links into the intranet (/intern/…, http(s)://(www.)gahk.dk/intern/…) point at intern.gahk.dk.
-  * Legacy /public/image/… references are converted in the database, once, by the
-    import_legacy_images command (cms.legacy_images); `legacy_images` maps their old URLs to the
-    copies. One not converted yet is sent as it is (gahk.dk answers it with a 404).
+  * Legacy /public/image/… references are converted in the database, once, by the sync before it
+    builds a snapshot (cms.legacy_images); `legacy_images` maps their old URLs to the copies. One
+    not converted yet is sent as it is (gahk.dk answers it with a 404).
 
 `revision` is the sha256 of the canonical JSON of everything except `revision` and `published_at`,
 so it changes exactly when what gahk.dk would show changes. cms.tasks compares it with the revision

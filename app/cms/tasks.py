@@ -3,9 +3,10 @@
   * publish_gahk_web — after every content save (cms.services.publish_on_commit), on "Udgiv nu",
     and whenever sync finds gahk.dk on another revision: build the snapshot, upload the images
     gahk.dk lacks, publish.
-  * sync_gahk_web — every 2 minutes: compare revisions (republish on a mismatch, so a missed or
-    failed publish heals itself), then pull the outbox: optagelse applications and visit counts,
-    stored here and acknowledged so gahk.dk can delete them.
+  * sync_gahk_web — every 2 minutes: import the old site's images the content still points at
+    (cms.legacy_images; bounded, usually nothing to do), compare revisions (republish on a mismatch,
+    so a missed or failed publish heals itself), then pull the outbox: optagelse applications and
+    visit counts, stored here and acknowledged so gahk.dk can delete them.
   * rebuild_gahk_web — 00:05: gahk.dk re-renders from the snapshot it has, so "upcoming events"
     drop yesterday's.
   * nudge_gahk_web_update — every 15 minutes (and the overview's "Opdatér gahk.dk nu"): the webhost
@@ -28,6 +29,7 @@ from django.utils import timezone
 
 from .gahk_web import GahkWebClient, GahkWebError, GahkWebRejected, MissingImages
 from .images import sha256_hex
+from .legacy_images import import_pending_legacy_images
 from .models import CmsImage, GahkWebSync, Publication
 from .snapshot import Snapshot, build_snapshot
 
@@ -221,13 +223,23 @@ def pull_outbox(client: GahkWebClient) -> dict[str, int]:
 
 @shared_task
 def sync_gahk_web() -> dict[str, Any]:
-    """Every 2 minutes: republish if gahk.dk is on another revision, then pull its outbox."""
+    """Every 2 minutes: bring in legacy images the content still points at, republish if gahk.dk is
+    on another revision, then pull its outbox."""
     client = GahkWebClient()
     if not client.enabled:
         logger.info("GAHK_WEB_KEY is not set; not syncing with gahk.dk")
         return {"enabled": False}
     errors: list[str] = []
     report: dict[str, Any] = {"enabled": True}
+
+    # Before the snapshot, so its rewrites are published in this same run. Bounded in files and
+    # time (cms.legacy_images), so the outbox below never waits long; a failure here (S3 down) is
+    # logged and the publish and the pull go ahead.
+    try:
+        report["legacy_images"] = import_pending_legacy_images().summary()
+    except Exception as exc:
+        logger.exception("Syncing with gahk.dk: importing the old site's images failed")
+        errors.append(_short(f"Gamle billeder: {exc}"))
 
     try:
         status = client.status()

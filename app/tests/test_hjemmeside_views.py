@@ -18,6 +18,7 @@ from cms.models import (
     ContentChange,
     Event,
     GahkWebSync,
+    LegacyImageFailure,
     MenuItem,
     NewsItem,
     Page,
@@ -725,6 +726,22 @@ def test_the_overview_shows_a_failed_publication(editor: Resident, settings: Any
     Publication.objects.create(reason="save", status="failed", error="gahk.dk answered 400: bad snapshot")
     html = client_for(editor).get(reverse("hjemmeside:overview")).content.decode()
     assert "Fejl" in html and "bad snapshot" in html
+
+
+@pytest.mark.django_db
+def test_the_overview_shows_the_old_images_still_to_move_and_those_that_failed(editor: Resident) -> None:
+    # The seeded default background points at the old gang.jpg: waiting for the next sync.
+    html = client_for(editor).get(reverse("hjemmeside:overview")).content.decode()
+    assert "Billeder fra den gamle hjemmeside" in html and "1 billede flyttes" in html
+
+    LegacyImageFailure.objects.create(legacy_path="upload/images/gang.jpg", reason="missing")
+    html = client_for(editor).get(reverse("hjemmeside:overview")).content.decode()
+    assert "flyttes ind" not in html
+    assert "<code>upload/images/gang.jpg</code>" in html and "findes ikke" in html
+
+    SiteSettings.objects.filter(pk=1).update(default_background="")
+    html = client_for(editor).get(reverse("hjemmeside:overview")).content.decode()
+    assert "Billeder fra den gamle hjemmeside" not in html  # nothing refers to it any more
 
 
 @pytest.mark.django_db

@@ -62,6 +62,25 @@
           </div>
         </section>
       {% endif %}
+
+      {% if legacy.waiting or legacy.failures %}
+        <section class="card-flat hj-section{% if legacy.failures %} hj-warn{% endif %}">
+          <div class="card-head"><h2>Billeder fra den gamle hjemmeside</h2></div>
+          <div class="card-pad">
+            {% if legacy.waiting %}
+              <p class="muted text-sm">{{ legacy.waiting }} billede{{ legacy.waiting|pluralize:"r" }} flyttes ind i billedbiblioteket af sig selv inden for de næste minutter. Ændringerne står i loggen under System.</p>
+            {% endif %}
+            {% if legacy.failures %}
+              <p class="muted text-sm">Disse kunne ikke flyttes, så gahk.dk viser dem ikke. Erstat dem med et billede fra biblioteket der, hvor de bruges.</p>
+              <ul class="hj-plain-list">
+                {% for failure in legacy.failures %}
+                  <li><code>{{ failure.legacy_path }}</code> <span class="muted">{{ failure.get_reason_display|lower }}</span></li>
+                {% endfor %}
+              </ul>
+            {% endif %}
+          </div>
+        </section>
+      {% endif %}
     </aside>
   </div>
 {% endblock %}

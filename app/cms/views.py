@@ -42,6 +42,7 @@ from . import services
 from .diff import DiffRow, html_diff
 from .forms import CaptionForm, EventForm, NewsForm, PageForm, RedirectForm, SiteSettingsForm
 from .gahk_web import GahkWebDisabled, GahkWebError
+from .legacy_images import legacy_state
 from .models import (
     FRONT_PAGE_ID,
     CmsImage,
@@ -214,6 +215,7 @@ def overview(request: HttpRequest) -> HttpResponse:
     context.update(
         changes=ContentChange.objects.all()[:10],
         unreachable=services.unreachable_pages(),
+        legacy=legacy_state(),
         counts={
             "pages": Page.objects.count(),
             "news": NewsItem.objects.count(),

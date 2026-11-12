@@ -69,9 +69,12 @@ working when intern or the image storage is down; editing needs intern.
   2400 px on the long side, turned upright, and stripped of metadata such as the GPS position.
 - gahk.dk gets its own copy of every image it shows. A copy's address never changes, so browsers
   may keep it for a year.
-- The old site's pictures are moved into the library once, by an import run at the move to the new
-  gahk.dk, from a copy of the old files. Their old addresses on gahk.dk send visitors on to the
-  copies. Until the import has run, those pictures are missing on gahk.dk.
+- The old site's pictures move into the library by themselves: the sync every two minutes fetches
+  the ones the content still uses (a batch at a time) and points the content at the library copies,
+  recorded as "System". Their old addresses on gahk.dk send visitors on to the copies.
+- A picture that cannot be fetched or is not a usable image is reported once and not tried again;
+  the overview lists them, and a manual import can try them again. Until a picture has moved, it is
+  missing on gahk.dk.
 - Images keep their file name, spelled without Danish letters (Værelse.jpg is stored as
   Vaerelse.jpg), so every image address is plain ASCII.
 
@@ -108,7 +111,8 @@ working when intern or the image storage is down; editing needs intern.
   history and publishes nothing.
 - **The old pictures are content, not code.** They lived in the code repository; now they are in
   the image library like any other picture, and the repository no longer holds them. The import
-  reads a copy the operator supplies at the move, rather than files shipped with the code.
+  fetches them from the repository's public history (one fixed version), so nobody has to remember
+  to supply a copy at the move.
 - **Plain-text headings.** They were shown as HTML without ever being cleaned.
 - **The menu is data.** It was written into the code, so changing it needed a developer.
 - **A visual editor that keeps the old pages intact.** Editors should not need HTML, but the old

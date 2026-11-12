@@ -199,6 +199,14 @@ erDiagram
         string legacy_path
     }
 
+    cms_LegacyImageFailure {
+        int id PK
+        string legacy_path
+        string reason
+        string detail
+        datetime failed_at
+    }
+
     cms_PageRedirect {
         int id PK
         string old_path
@@ -1264,6 +1272,14 @@ erDiagram
         string content_type
         int size
         string legacy_path
+    }
+
+    cms_LegacyImageFailure {
+        int id PK
+        string legacy_path
+        string reason
+        string detail
+        datetime failed_at
     }
 
     cms_PageRedirect {

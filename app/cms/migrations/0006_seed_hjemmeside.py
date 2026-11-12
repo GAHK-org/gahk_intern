@@ -9,8 +9,8 @@
     MenuItem rows with the same labels, links and order.
   * The two hero images that were hard-coded in templates become content: SiteSettings'
     default background (every page without its own) and the front page's own background. They still
-    point at the legacy files here; the import_legacy_images command moves them into the image
-    library at the cutover.
+    point at the legacy files here; cms.legacy_images moves them into the image library after the
+    deploy.
 
 Every step leaves data alone that somebody has already set, so it is safe on any database.
 """

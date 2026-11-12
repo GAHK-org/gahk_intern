@@ -3,7 +3,7 @@
 Pages get a `slug` seeded from the legacy routes.php named-route map (public URLs preserved for 301s).
 News/pylon dates rebuilt from their day/month/year (+ epoch). Titles are imported as plain text and
 bodies through cms.sanitize, the same as the Hjemmeside editor saves them. Legacy /public/image/
-references stay as they are; the import_legacy_images command moves them into the image library.
+references stay as they are; the sync moves them into the image library (cms.legacy_images).
 """
 
 import datetime

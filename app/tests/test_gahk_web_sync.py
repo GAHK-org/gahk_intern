@@ -404,6 +404,52 @@ def test_a_publish_that_breaks_still_lets_the_outbox_be_pulled(
 
 
 @pytest.mark.django_db
+def test_the_sync_brings_in_legacy_images_and_publishes_them_in_the_same_run(
+    gahk_web: FakeGahkWeb, front_page: Page, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cms import legacy_images
+
+    from .test_hjemmeside_legacy_images import FakeGitHub, image_bytes
+
+    github = FakeGitHub({"upload/images/gang.jpg": image_bytes()})
+    monkeypatch.setattr(legacy_images, "http_get", github)
+    front_page.body = '<img src="/public/image/upload/images/gang.jpg">'
+    front_page.save()  # and the seeded default background points at gang.jpg too
+
+    report = tasks.sync_gahk_web()
+
+    assert report["errors"] == [] and report["legacy_images"]["imported"] == 1
+    gang = CmsImage.objects.get(legacy_path="upload/images/gang.jpg")
+    published = gahk_web.published[-1]
+    assert published["legacy_images"] == {
+        "/static/legacy/image/upload/images/gang.jpg": published["site"]["default_background"]
+    }
+    assert gang.sha256 in gahk_web.images
+    assert "/public/image/" not in json.dumps(published)
+
+    github.urls.clear()
+    report = tasks.sync_gahk_web()
+    assert github.urls == [] and report["legacy_images"]["imported"] == 0
+
+
+@pytest.mark.django_db
+def test_a_broken_legacy_import_still_lets_the_sync_publish_and_pull(
+    gahk_web: FakeGahkWeb, front_page: Page, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken_import() -> None:
+        raise RuntimeError("bucket says no")
+
+    monkeypatch.setattr(tasks, "import_pending_legacy_images", broken_import)
+    item = _application()
+    gahk_web.outbox["applications"] = [item]
+
+    report = tasks.sync_gahk_web()
+
+    assert report["errors"] == ["Gamle billeder: bucket says no"]
+    assert gahk_web.published and gahk_web.acks[0]["applications"] == [item["id"]]
+
+
+@pytest.mark.django_db
 def test_applications_are_stored_once_and_acknowledged(
     gahk_web: FakeGahkWeb, front_page: Page, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
