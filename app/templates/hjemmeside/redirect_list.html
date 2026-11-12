@@ -1,0 +1,49 @@
+{% extends "hjemmeside/base.html" %}
+{% block hj_title %}Omdirigeringer{% endblock %}
+{% block hj_content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Hjemmeside</p>
+      <h1>Omdirigeringer</h1>
+      <p class="muted text-sm">Gamle adresser, der sender besøgende videre til en side. De oprettes af sig selv, når en side får ny adresse, så gamle links og søgeresultater bliver ved med at virke.</p>
+    </div>
+  </div>
+  <section class="card-flat hj-section">
+    {% if redirects %}
+      <div class="overflow-x-auto">
+        <table class="zebra hj-table">
+          <thead><tr><th>Gammel adresse</th><th>Sender videre til</th><th>Oprettet</th><th><span class="sr-only">Handling</span></th></tr></thead>
+          <tbody>
+            {% for item in redirects %}
+              <tr>
+                <td class="hj-path">/{{ item.old_path }}</td>
+                <td><a href="{% url 'hjemmeside:page_edit' item.page.pk %}">{{ item.page.header }}</a> <span class="hj-path muted">/{% if item.page.pk != 1 %}{{ item.page.slug|default:"" }}{% endif %}</span></td>
+                <td class="muted text-sm">{{ item.created_at|date:"j. b Y" }}{% if item.created_by %}, {{ item.created_by.full_name }}{% endif %}</td>
+                <td>
+                  <form method="post" action="{% url 'hjemmeside:redirect_delete' item.pk %}"
+                        onsubmit="return confirm('Skal /{{ item.old_path|escapejs }} holde op med at sende videre? Links dertil giver så “siden findes ikke”.')">
+                    {% csrf_token %}<button type="submit" class="btn-link-danger">Slet</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="card-pad muted">Ingen omdirigeringer.</p>
+    {% endif %}
+  </section>
+
+  <form method="post" class="card-flat card-pad hj-section hj-redirect-form" novalidate>
+    {% csrf_token %}
+    <h2>Ny omdirigering</h2>
+    <p class="muted text-sm">Til en gammel adresse, der ikke kom fra en omdøbt side, fx fra en tryksag.</p>
+    {{ form.non_field_errors }}
+    <div class="hj-inline-fields">
+      {% include "hjemmeside/_field.html" with field=form.old_path %}
+      {% include "hjemmeside/_field.html" with field=form.page %}
+      <button type="submit" class="btn">Opret</button>
+    </div>
+  </form>
+{% endblock %}

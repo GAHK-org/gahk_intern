@@ -1,0 +1,67 @@
+{% extends "hjemmeside/base.html" %}
+{% block hj_title %}Oversigt{% endblock %}
+{% block hj_content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Hjemmeside</p>
+      <h1>gahk.dk</h1>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-secondary" href="{{ public_site_url }}/" target="_blank" rel="noopener">Se gahk.dk</a>
+      <a class="btn" href="{% url 'hjemmeside:page_create' %}">Ny side</a>
+    </div>
+  </div>
+
+  <div class="grid2 hj-overview">
+    <div>
+      {% include "hjemmeside/_status.html" %}
+
+      <section class="card-flat hj-section">
+        <div class="card-head">
+          <h2>Seneste ændringer</h2>
+          <a href="{% url 'hjemmeside:change_log' %}">Hele loggen</a>
+        </div>
+        {% if changes %}
+          <ul class="hj-changes">
+            {% for change in changes %}
+              <li>
+                <span class="hj-when" title="{{ change.at|date:'j. b Y, H:i' }}">{{ change.at|date:"j. b, H:i" }}</span>
+                <span><b>{{ change.by_name|default:"System" }}</b> {{ change.get_action_display|lower }} {{ change.get_kind_display|lower }}{% if change.label %} <q>{{ change.label }}</q>{% endif %}</span>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="card-pad muted">Ingen ændringer endnu.</p>
+        {% endif %}
+      </section>
+    </div>
+
+    <aside>
+      <section class="card-flat hj-section">
+        <div class="card-head"><h2>Rediger</h2></div>
+        <div class="card-pad quick">
+          <a href="{% url 'hjemmeside:page_list' %}"><svg aria-hidden="true"><use href="#i-file"></use></svg>Sider <span class="muted hj-count">{{ counts.pages }}</span></a>
+          <a href="{% url 'hjemmeside:news_list' %}"><svg aria-hidden="true"><use href="#i-board"></use></svg>Nyheder <span class="muted hj-count">{{ counts.news }}</span></a>
+          <a href="{% url 'hjemmeside:event_list' %}"><svg aria-hidden="true"><use href="#i-calendar"></use></svg>Forsidebegivenheder <span class="muted hj-count">{{ counts.events }} kommende</span></a>
+          <a href="{% url 'hjemmeside:image_list' %}"><svg aria-hidden="true"><use href="#i-photo"></use></svg>Billeder <span class="muted hj-count">{{ counts.images }}</span></a>
+          <a href="{% url 'hjemmeside:menu' %}"><svg aria-hidden="true"><use href="#i-list"></use></svg>Menu og standardbaggrund</a>
+          <a href="{% url 'hjemmeside:redirect_list' %}"><svg aria-hidden="true"><use href="#i-chevron-right"></use></svg>Omdirigeringer</a>
+        </div>
+      </section>
+
+      {% if unreachable %}
+        <section class="card-flat hj-section hj-warn">
+          <div class="card-head"><h2>Kan ikke findes fra menuen</h2></div>
+          <div class="card-pad">
+            <p class="muted text-sm">Hverken siden eller dens sektion står i menuen, så besøgende finder den kun via et link.</p>
+            <ul class="hj-plain-list">
+              {% for page in unreachable %}
+                <li><a href="{% url 'hjemmeside:page_edit' page.pk %}">{{ page.header }}</a> <span class="muted">/{{ page.slug }}</span></li>
+              {% endfor %}
+            </ul>
+          </div>
+        </section>
+      {% endif %}
+    </aside>
+  </div>
+{% endblock %}

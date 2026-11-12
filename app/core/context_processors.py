@@ -13,7 +13,7 @@ from events.access import roles_allowed as events_allowed
 from gahkflix.access import roles_allowed as gahkflix_allowed
 from opslagstavle.access import roles_allowed as opslagstavle_allowed
 from photo_album.access import roles_allowed as photo_album_allowed
-from residents.permissions import KITCHEN, can_preview, effective_roles
+from residents.permissions import CMS_EDITOR_ROLES, KITCHEN, can_preview, effective_roles
 
 NavItem = tuple[str, str, str]  # (url, label, icon-key from the base.html sprite)
 NavSection = tuple[str, list[NavItem]]
@@ -87,6 +87,8 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
     administration: list[NavItem] = []
     if "indstilling" in roles:
         administration.append((reverse("admissions:list"), "Ansøgninger", "inbox"))
+    if not set(roles).isdisjoint(CMS_EDITOR_ROLES):  # administrator/indstilling/inspektion/pr
+        administration.append((reverse("hjemmeside:overview"), "Hjemmeside", "globe"))
     if "administrator" in roles:
         administration.append((reverse("siteadmin:home"), "Site-admin", "gear"))
         administration.append((reverse("siteadmin:roles"), "Roller", "users"))

@@ -38,6 +38,8 @@ urlpatterns = [
     re_path(r"^(?:ny)?intern$", _legacy_prefix_redirect),
     path("optagelse/", include("admissions.urls")),
     path("admin/", include("residents.urls_admin")),  # site-admin tools (roles, worker jobs, …)
+    # The editor for gahk.dk's content (cms). gahk.dk's "Rediger siden" links to hjemmeside/sider/<id>/.
+    path("hjemmeside/", include("cms.urls")),
     # The subscribable calendar feed carries no auth decorator — the token in the path is the
     # credential (see events.views.calendar_feed). gahk.dk passes its old /kalender/ URLs through
     # to this one, so feeds handed out before the move keep refreshing.

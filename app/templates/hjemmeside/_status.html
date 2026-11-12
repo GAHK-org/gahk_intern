@@ -1,0 +1,101 @@
+{% comment %}
+  The overview's status card. While a publish or code update this editor asked for is still unanswered,
+  it re-fetches itself every few seconds (views.status) and stops once the answer is in.
+{% endcomment %}
+<section id="hj-status" class="card-flat hj-section"{% if polling %} hx-get="{% url 'hjemmeside:status' %}" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}>
+  <div class="card-head">
+    <h2>Forbindelse til gahk.dk</h2>
+    {% if not enabled %}
+      <span class="chip chip-neg">Ikke forbundet</span>
+    {% elif latest.status == "failed" or sync.last_error %}
+      <span class="chip chip-brass">Problem</span>
+    {% elif in_sync %}
+      <span class="chip">Opdateret</span>
+    {% else %}
+      <span class="chip chip-brass">Venter</span>
+    {% endif %}
+  </div>
+  <div class="card-pad">
+    {% if not enabled %}
+      <p class="hj-note hj-note-warn">intern har ingen nøgle til gahk.dk (GAHK_WEB_KEY), så intet sendes dertil. Du kan stadig rette
+        indholdet; det udgives, når forbindelsen er sat op.</p>
+    {% endif %}
+
+    <h3 class="hj-subhead">Indhold</h3>
+    <div class="kv"><span class="l">Seneste udgivelse</span>
+      <span class="r">
+        {% if latest %}
+          {% if latest.status == "ok" %}<span class="chip">OK</span>{% elif latest.status == "failed" %}<span class="chip chip-neg">Fejl</span>{% elif latest.status == "running" %}<span class="chip chip-brass">I gang</span>{% else %}<span class="chip chip-quiet">{{ latest.get_status_display }}</span>{% endif %}
+          {{ latest.started_at|date:"j. b, H:i" }} · {{ latest.get_reason_display|lower }}{% if latest.triggered_by %} af {{ latest.triggered_by.full_name }}{% endif %}
+        {% else %}
+          <span class="muted">Ingen endnu</span>
+        {% endif %}
+      </span>
+    </div>
+    {% if latest.status == "failed" and latest.error %}
+      <pre class="hj-error">{{ latest.error }}</pre>
+    {% endif %}
+    {% if last_ok %}
+      <div class="kv"><span class="l">Senest udgivet</span>
+        <span class="r">{{ last_ok.finished_at|default:last_ok.started_at|date:"j. b, H:i" }} · version <code class="code">{{ last_ok.revision|slice:":8" }}</code>{% if last_ok.pages_written is not None %} · {{ last_ok.pages_written }} sider{% endif %}</span>
+      </div>
+    {% endif %}
+    {% if enabled %}
+      <div class="kv"><span class="l">gahk.dk viser</span>
+        <span class="r">{% if in_sync %}det nyeste indhold{% elif sync.remote_revision %}version <code class="code">{{ sync.remote_revision|slice:":8" }}</code> – en ældre udgave{% else %}<span class="muted">ukendt</span>{% endif %}</span>
+      </div>
+      <div class="kv"><span class="l">Seneste kontakt</span>
+        <span class="r">{% if sync.status_checked_at %}{{ sync.status_checked_at|date:"j. b, H:i" }}{% else %}<span class="muted">aldrig</span>{% endif %}</span>
+      </div>
+      <div class="kv"><span class="l">Ansøgninger og besøgstal hentet</span>
+        <span class="r">{% if sync.outbox_pulled_at %}{{ sync.outbox_pulled_at|date:"j. b, H:i" }}{% else %}<span class="muted">aldrig</span>{% endif %}</span>
+      </div>
+      {% if sync.rejected_applications %}
+        <div class="kv"><span class="l">Afviste ansøgninger</span><span class="r">{{ sync.rejected_applications }} (ugyldige felter, se loggen)</span></div>
+      {% endif %}
+      {% if sync.last_error %}
+        <p class="hj-note hj-note-warn">Seneste fejl{% if sync.last_error_at %} {{ sync.last_error_at|date:"j. b, H:i" }}{% endif %}:</p>
+        <pre class="hj-error">{{ sync.last_error }}</pre>
+      {% endif %}
+    {% endif %}
+
+    {% if publish_state == "waiting" %}
+      <p class="hj-note" role="status"><span class="spinner"></span> Udgiver …</p>
+    {% elif publish_state == "timeout" %}
+      <p class="hj-note hj-note-warn" role="status">Intet svar fra udgivelsen endnu. Den kører måske stadig; se igen om lidt.</p>
+    {% endif %}
+    <form method="post" action="{% url 'hjemmeside:publish_now' %}" class="hj-actions">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-secondary"{% if not enabled or publish_state == "waiting" %} disabled{% endif %}>Udgiv igen nu</button>
+      <span class="muted text-sm">Gemte ændringer udgives automatisk. Brug knappen, hvis gahk.dk ikke viser det nyeste.</span>
+    </form>
+
+    <h3 class="hj-subhead">Kode på gahk.dk</h3>
+    <div class="kv"><span class="l">Kører</span>
+      <span class="r">{% if sync.remote_version %}<code class="code">{{ sync.remote_version|slice:":12" }}</code>{% else %}<span class="muted">ukendt</span>{% endif %}</span>
+    </div>
+    <div class="kv"><span class="l">Nyeste version</span>
+      <span class="r">{% if sync.update_available_version %}<code class="code">{{ sync.update_available_version|slice:":12" }}</code>{% if update_waiting %} <span class="chip chip-brass">Ikke installeret endnu</span>{% endif %}{% else %}<span class="muted">ukendt</span>{% endif %}</span>
+    </div>
+    <div class="kv"><span class="l">Seneste opdateringstjek</span>
+      <span class="r">{% if sync.update_checked_at %}{{ sync.update_checked_at|date:"j. b, H:i" }}{% if sync.update_result and not sync.update_error %} · {{ sync.update_result }}{% endif %}{% else %}<span class="muted">aldrig</span>{% endif %}</span>
+    </div>
+    {% if sync.update_error %}
+      <pre class="hj-error">{{ sync.update_error }}</pre>
+    {% endif %}
+    {% if update_state == "waiting" %}
+      <p class="hj-note" role="status"><span class="spinner"></span> Venter på svar fra gahk.dk …</p>
+    {% elif update_state == "timeout" %}
+      <p class="hj-note hj-note-warn" role="status">gahk.dk har ikke svaret endnu. Se igen om lidt.</p>
+    {% endif %}
+    {% if is_admin %}
+      <form method="post" action="{% url 'hjemmeside:update_now' %}" class="hj-actions">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-secondary"{% if not enabled or update_state == "waiting" %} disabled{% endif %}>Opdatér gahk.dk nu</button>
+        <span class="muted text-sm">gahk.dk henter selv ny kode, når intern beder om det: hvert kvarter, eller nu med knappen.</span>
+      </form>
+    {% else %}
+      <p class="muted text-sm">gahk.dk bliver bedt om at hente ny kode hvert kvarter. Kun administratorer kan bede om det med det samme.</p>
+    {% endif %}
+  </div>
+</section>

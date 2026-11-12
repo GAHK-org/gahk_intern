@@ -1,0 +1,31 @@
+{% extends "hjemmeside/base.html" %}
+{% block hj_title %}Forsidebegivenheder{% endblock %}
+{% block hj_content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Hjemmeside</p>
+      <h1>Forsidebegivenheder</h1>
+      <p class="muted text-sm">Begivenhederne på gahk.dk's forside og under Begivenheder. De forsvinder af sig selv, når dagen er gået. Beboernes egne begivenheder i intranettet er noget andet.</p>
+    </div>
+    <div class="head-actions"><a class="btn" href="{% url 'hjemmeside:event_create' %}">Ny begivenhed</a></div>
+  </div>
+  <section class="card-flat hj-section">
+    <div class="card-head"><h2>Kommende</h2></div>
+    <ul class="hj-rows">
+      {% for item in upcoming %}
+        {% include "hjemmeside/_event_row.html" %}
+      {% empty %}
+        <li class="card-pad muted">Ingen kommende begivenheder.</li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% if past.object_list %}
+    <section class="card-flat hj-section">
+      <div class="card-head"><h2>Overståede</h2><span class="muted text-sm">vises ikke længere på gahk.dk</span></div>
+      <ul class="hj-rows">
+        {% for item in past %}{% include "hjemmeside/_event_row.html" %}{% endfor %}
+      </ul>
+    </section>
+    {% include "hjemmeside/_pager.html" with page_obj=past %}
+  {% endif %}
+{% endblock %}

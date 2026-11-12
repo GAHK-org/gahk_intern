@@ -46,6 +46,10 @@ PUBLIC_SITE_URL = os.environ.get("PUBLIC_SITE_URL", "https://gahk.dk")
 # nothing, and the Hjemmeside editor still saves. In dev the default points at gahk_web's devserver.
 GAHK_WEB_URL = os.environ.get("GAHK_WEB_URL", "http://127.0.0.1:8810" if DEBUG else "https://gahk.dk")
 GAHK_WEB_KEY = os.environ.get("GAHK_WEB_KEY", "")
+# The non-secret "gahk_redaktoer=1" cookie every Hjemmeside response sets, so gahk.dk can show its
+# "Rediger siden" link to editors (it only links here; intern still checks the role). Shared with
+# gahk.dk through the parent domain; host-only in development, where the two run on different ports.
+EDITOR_HINT_COOKIE_DOMAIN = os.environ.get("EDITOR_HINT_COOKIE_DOMAIN", "" if DEBUG else ".gahk.dk") or None
 
 INSTALLED_APPS = [
     "django.contrib.admin",

@@ -1,0 +1,69 @@
+{% extends "hjemmeside/base.html" %}
+{% block hj_title %}{% if page %}{{ page.header }}{% else %}Ny side{% endif %}{% endblock %}
+{% block hj_content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow"><a href="{% url 'hjemmeside:page_list' %}">Sider</a></p>
+      <h1>{% if page %}{{ page.header }}{% else %}Ny side{% endif %}</h1>
+      {% if page %}
+        <p class="muted text-sm">Sidst rettet {{ page.updated_at|date:"j. b Y, H:i" }}{% if page.updated_by %} af {{ page.updated_by.full_name }}{% endif %}</p>
+      {% endif %}
+    </div>
+    {% if page %}
+      <div class="head-actions">
+        {% if live_url %}<a class="btn btn-secondary" href="{{ live_url }}" target="_blank" rel="noopener">Se på gahk.dk ↗</a>{% endif %}
+        <a class="btn btn-secondary" href="{% url 'hjemmeside:page_history' page.pk %}">Historik</a>
+      </div>
+    {% endif %}
+  </div>
+
+  <form method="post" class="hj-editor-form" novalidate>
+    {% csrf_token %}
+    <input type="hidden" name="loaded_at" value="{{ loaded_at }}">
+    {% if form.non_field_errors %}<div class="card hj-form-errors">{{ form.non_field_errors }}</div>{% endif %}
+    <div class="hj-editor-grid">
+      <div class="card-flat card-pad hj-editor-main">
+        {% include "hjemmeside/_field.html" with field=form.header %}
+        {% include "hjemmeside/_field.html" with field=form.body %}
+      </div>
+      <div class="hj-editor-side">
+        <div class="card-flat card-pad">
+          {% if form.path_segment %}
+            <fieldset class="hj-field hj-address">
+              <legend>Adresse på gahk.dk</legend>
+              <label for="{{ form.path_parent.id_for_label }}" class="hj-sublabel">{{ form.path_parent.label }}</label>
+              {{ form.path_parent }}
+              <label for="{{ form.path_segment.id_for_label }}" class="hj-sublabel">Sidste del</label>
+              {{ form.path_segment }}
+              <p class="hj-address-preview" data-hj-address-preview>{% if page.slug %}gahk.dk/<b>{{ page.slug }}</b>{% elif page %}<span class="muted">Ingen adresse</span>{% endif %}</p>
+              <p class="muted hj-help">{{ form.path_segment.help_text }}</p>
+              {{ form.path_parent.errors }}{{ form.path_segment.errors }}
+            </fieldset>
+          {% else %}
+            <div class="hj-field">
+              <p class="hj-label">Adresse på gahk.dk</p>
+              <p><span class="hj-path">/</span> <span class="muted text-sm">Forsiden har altid adressen gahk.dk/.</span></p>
+            </div>
+          {% endif %}
+          {% include "hjemmeside/_field.html" with field=form.description %}
+          {% include "hjemmeside/_image_picker.html" with field=form.background_image none_label="Ingen (standardbaggrunden)" %}
+          {% url 'hjemmeside:page_list' as cancel_url %}
+          {% include "hjemmeside/_form_actions.html" with preview_id=page.pk %}
+        </div>
+
+        {% if redirects %}
+          <div class="card-flat card-pad hj-section">
+            <p class="hj-label">Gamle adresser, der sender hertil</p>
+            <ul class="hj-plain-list">
+              {% for item in redirects %}<li class="hj-path">/{{ item.old_path }}</li>{% endfor %}
+            </ul>
+          </div>
+        {% endif %}
+
+        {% if can_delete %}
+          <p class="hj-danger-link"><a class="btn-link-danger" href="{% url 'hjemmeside:page_delete' page.pk %}">Slet siden …</a></p>
+        {% endif %}
+      </div>
+    </div>
+  </form>
+{% endblock %}

@@ -1,0 +1,37 @@
+{% extends "hjemmeside/base.html" %}
+{% block hj_title %}{{ image }}{% endblock %}
+{% block hj_content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow"><a href="{% url 'hjemmeside:image_list' %}">Billeder</a></p>
+      <h1>{{ image.caption|default:"Billede" }}</h1>
+      <p class="muted text-sm">Lagt op {{ image.uploaded_at|date:"j. b Y" }}{% if image.uploaded_by %} af {{ image.uploaded_by.full_name }}{% elif image.legacy_path %} fra den gamle hjemmeside{% endif %}{% if image.size %} · {{ image.size|filesizeformat }}{% endif %}</p>
+    </div>
+    <div class="head-actions"><a class="btn btn-secondary" href="{{ image.url }}" target="_blank" rel="noopener">Åbn i fuld størrelse</a></div>
+  </div>
+  <div class="hj-editor-grid">
+    <div class="card-flat hj-image-large"><img src="{{ image.url }}" alt="{{ image.caption }}"></div>
+    <div class="hj-editor-side">
+      <form method="post" class="card-flat card-pad">
+        {% csrf_token %}
+        {{ form.non_field_errors }}
+        {% include "hjemmeside/_field.html" with field=form.caption %}
+        <div class="hj-form-actions"><button type="submit" class="btn">Gem</button></div>
+      </form>
+      <div class="card-flat card-pad hj-section">
+        <p class="hj-label">Bruges</p>
+        {% if usage %}
+          <ul class="hj-plain-list">{% for place in usage %}<li>{{ place }}</li>{% endfor %}</ul>
+          <p class="muted hj-help">Et billede, der bruges, kan ikke slettes. Fjern det først fra stederne ovenfor.</p>
+        {% else %}
+          <p class="muted">Ingen steder.</p>
+          <form method="post" action="{% url 'hjemmeside:image_delete' image.pk %}"
+                onsubmit="return confirm('Slet billedet fra biblioteket?')">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-danger">Slet billedet</button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+{% endblock %}

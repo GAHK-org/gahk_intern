@@ -1,0 +1,48 @@
+{% extends "hjemmeside/base.html" %}
+{% block hj_title %}Sider{% endblock %}
+{% block hj_content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Hjemmeside</p>
+      <h1>Sider <span class="muted hj-count">{{ page_count }}</span></h1>
+    </div>
+    <div class="head-actions">
+      <a class="btn" href="{% url 'hjemmeside:page_create' %}">Ny side</a>
+    </div>
+  </div>
+
+  {% for section in sections %}
+    <section class="card-flat hj-section">
+      <div class="card-head"><h2>{{ section.title }}</h2></div>
+      <ul class="hj-rows">
+        {% for row in section.rows %}
+          <li class="hj-row{% if '/' in row.page.slug|default:'' %} hj-row-sub{% endif %}">
+            <div class="hj-row-main">
+              <a class="hj-row-title" href="{% url 'hjemmeside:page_edit' row.page.pk %}">{{ row.page.header }}</a>
+              <div class="hj-row-meta">
+                {% if row.path is not None %}<span class="hj-path">/{{ row.path }}</span>{% endif %}
+                {% if row.menu_state == "front" %}
+                  <span class="chip">Forside</span>
+                {% elif row.menu_state == "menu" %}
+                  <span class="chip">I menuen</span>
+                {% elif row.menu_state == "section" %}
+                  <span class="chip chip-quiet" title="Sektionen står i menuen, og siden vises i dens undermenu">I menuen via /{{ row.section }}</span>
+                {% elif row.menu_state == "none" %}
+                  <span class="chip chip-brass" title="Hverken siden eller dens sektion står i menuen">Ikke i menuen</span>
+                {% else %}
+                  <span class="chip chip-neg">Ingen adresse</span>
+                {% endif %}
+              </div>
+            </div>
+            <div class="hj-row-side">
+              <span class="muted text-sm">{% if row.page.updated_by %}{{ row.page.updated_by.full_name }}, {% endif %}{{ row.page.updated_at|date:"j. b Y" }}</span>
+              {% if row.live_url %}<a class="text-sm" href="{{ row.live_url }}" target="_blank" rel="noopener">Se på gahk.dk ↗</a>{% endif %}
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% empty %}
+    <p class="card muted">Der er ingen sider endnu.</p>
+  {% endfor %}
+{% endblock %}

@@ -1,0 +1,32 @@
+{% comment %}
+  A library image as radio buttons with thumbnails (a page's background, the default background). Plain
+  HTML, so it works without JavaScript; hjemmeside.ts only keeps the summary line in step.
+  Takes: field (a bound ChoiceField of image URLs, "" = none), none_label, and hide_legend when a
+  heading already names it. A stored value from outside the library (an old /public/image/… path
+  not converted yet) gets the empty tile, not a broken image.
+{% endcomment %}
+{% with current=field.value|default:"" %}
+  <fieldset class="hj-field hj-image-picker" data-hj-image-picker>
+    <legend{% if hide_legend %} class="sr-only"{% endif %}>{{ field.label }}</legend>
+    <details{% if field.errors %} open{% endif %}>
+      <summary>
+        <span class="hj-picked" data-hj-picked>
+          {% if current|slice:":7" == "/media/" %}<img src="{{ current }}" alt="" loading="lazy">{% else %}<span class="hj-thumb-none" aria-hidden="true"></span>{% endif %}
+          <span data-hj-picked-label>{% if current %}{% for value, label in field.field.choices %}{% if value == current %}{{ label }}{% endif %}{% endfor %}{% else %}{{ none_label }}{% endif %}</span>
+        </span>
+        <span class="btn btn-secondary hj-pick-button">Vælg billede</span>
+      </summary>
+      <div class="hj-thumbs">
+        {% for value, label in field.field.choices %}
+          <label class="hj-thumb">
+            <input type="radio" name="{{ field.html_name }}" value="{{ value }}"{% if value == current %} checked{% endif %}>
+            {% if value|slice:":7" == "/media/" %}<img src="{{ value }}" alt="" loading="lazy">{% else %}<span class="hj-thumb-none"></span>{% endif %}
+            <span class="hj-thumb-label">{% if value %}{{ label }}{% else %}{{ none_label }}{% endif %}</span>
+          </label>
+        {% endfor %}
+      </div>
+      <p class="muted hj-help">Mangler billedet? <a href="{% url 'hjemmeside:image_list' %}" target="_blank" rel="noopener">Læg det i billedbiblioteket</a> og genindlæs siden.</p>
+    </details>
+    {{ field.errors }}
+  </fieldset>
+{% endwith %}
