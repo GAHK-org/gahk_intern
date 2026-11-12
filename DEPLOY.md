@@ -809,21 +809,31 @@ moves, and this version must follow right behind it:
 1. A **day ahead**, lower the TTL of the gahk.dk A record (e.g. 300 s). Create `intern.gahk.dk`
    pointing at the Coolify VM; add the domain to this app in Coolify (and the wiki's route, §6) so
    Let's Encrypt issues its certificate. Add `https://intern.gahk.dk` to the bucket's CORS rule (§4c).
-2. **gahk_web live first:** installed on the webhost, published to from here, and checked through
-   the webhost's own address.
-3. **DNS switch:** repoint gahk.dk (+ www) to Hetzner Webhosting.
+2. **gahk_web installed by hand** (gahk_web's `DEPLOY.md` §8): a signed `POST /api/update` straight
+   to the webhost's address, then `/api/health` there. It has no content yet, so its pages answer
+   the 503 page *"Siden opdateres"*. Nothing can publish to it from here before step 4: the running
+   version has no publishing at all, and this version cannot go out early, because its migrations
+   reshape `cms` while the old version still serves gahk.dk from the same database. Also copy the
+   legacy images out of the running container now (§4f, step 1).
+3. **DNS switch:** repoint gahk.dk (+ www) to Hetzner Webhosting. As resolvers pick it up, visitors
+   see *"Siden opdateres"* until step 4 has published — keep the gap short.
 4. **Deploy this version** straight after, with the env of §2 (`DJANGO_ALLOWED_HOSTS`,
-   `CSRF_TRUSTED_ORIGINS`, `SITE_URL`, `PUBLIC_SITE_URL`). Between 3 and 4, links forwarded from
-   gahk.dk land on the old version, which still expects `/intern/` — keep the gap short.
-5. Verify: `https://gahk.dk/intern/` → 308 to `https://intern.gahk.dk/`, a `https://gahk.dk/kalender/<token>.ics`
+   `CSRF_TRUSTED_ORIGINS`, `SITE_URL`, `PUBLIC_SITE_URL`) and `GAHK_WEB_URL` / `GAHK_WEB_KEY`
+   (§4f). Within about 2 minutes `sync_gahk_web` sees that gahk.dk has no content and publishes
+   everything. Then run the one-off legacy image import (§4f, step 2), which publishes again with
+   the pictures in place. Between 3 and 4, links forwarded from gahk.dk land on the old version,
+   which still expects `/intern/`.
+5. Verify: gahk.dk shows its pages and pictures, the Hjemmeside overview shows an OK publication,
+   `https://gahk.dk/intern/` → 308 to `https://intern.gahk.dk/`, a `https://gahk.dk/kalender/<token>.ics`
    feed still answers, `https://intern.gahk.dk/health` is 200 (move the uptime monitor there, §4e),
    one upload to Arkiv works (CORS).
 6. **Rollback** = repoint gahk.dk back to the VM and redeploy the previous image with the old env.
    Registrar transfer is optional/separate (MitID + auth code). Confirm **who the registrant of
    record is** early — often the slowest item.
 
-Everyone is logged out once (the session cookie is host-only and renamed; the old `.gahk.dk` one is
-deleted on the first request). Afterwards, tell residents and update by hand:
+Everyone is logged out once: the deploy's migrations end every existing session (an old `.gahk.dk`
+session cookie also reaches the webhost, so its key must stop working), the session cookie is
+host-only and renamed, and the old `.gahk.dk` one is deleted on the first request. Afterwards, tell residents and update by hand:
 - Push and the iPhone home-screen app must be re-enabled on intern.gahk.dk (§2, Web Push).
 - The ølkælder till's bookmark (`https://intern.gahk.dk/oelkaelder/…`) and the kitchen account's
   (`https://intern.gahk.dk/den-hurtige/koekken/`). The redirect covers them, but a redirect is one
@@ -857,9 +867,10 @@ deleted on the first request). Afterwards, tell residents and update by hand:
       delete `phpinfo.php`, pull & archive access logs).
 - [ ] MediaWiki migrated + upgraded to 1.43, reachable behind the proxy.
 - [ ] Staging smoke-tested; behavioural diff vs the live PHP site on key pages.
-- [ ] `intern.gahk.dk` live in Coolify, env set (`GAHK_WEB_KEY` too), bucket CORS updated; gahk_web
-      live and published to from here (§4f: first publish converted the legacy images); then gahk.dk
-      repointed (§7) → verify → keep MX on one.com.
+- [ ] `intern.gahk.dk` live in Coolify, bucket CORS updated; gahk_web installed by hand and its
+      `/api/health` checked; legacy images copied out of the old container (§4f); then gahk.dk
+      repointed, this version deployed with `GAHK_WEB_KEY` set, and the legacy image import run
+      (§7 steps 2-4) → verify → keep MX on one.com.
 - [ ] Uptime monitor on `https://intern.gahk.dk/health`; till, kitchen and Dropbox-script URLs updated.
 
 ## 9. Notes
