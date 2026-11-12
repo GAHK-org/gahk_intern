@@ -111,6 +111,11 @@ def ensure_image_metadata(image: CmsImage) -> bool:
         CmsImage.objects.filter(pk=image.pk).update(
             sha256=image.sha256, content_type=image.content_type, size=image.size
         )
+    return _shippable(image)
+
+
+def _shippable(image: CmsImage) -> bool:
+    """Whether gahk.dk takes `image`, going by the metadata it already has."""
     return bool(image.content_type) and 0 < (image.size or 0) <= MAX_IMAGE_BYTES
 
 
@@ -212,20 +217,30 @@ def _menu() -> list[dict[str, str]]:
     return menu
 
 
+def _published_pages() -> list[tuple[Page, str]]:
+    return [(page, path) for page in Page.objects.order_by("pk") if (path := _page_path(page)) is not None]
+
+
+def _referenced_names(
+    site: SiteSettings, pages: list[tuple[Page, str]], news: list[NewsItem], events: list[Event]
+) -> set[str]:
+    """The library images (storage names) that published content refers to."""
+    texts = [site.default_background]
+    texts += [text for page, _path in pages for text in (page.body, page.background_image)]
+    texts += [item.body for item in news] + [item.description for item in events]
+    return set().union(*(media_names(text) for text in texts))
+
+
 # ---------------------------------------------------------------------------------------- build
 def build_snapshot(published_at: Any = None) -> Snapshot:  # noqa: ANN401 — a datetime
     """The snapshot of what is in the database now. Reads image files only for rows missing their
     sha256 (once per image, ever); otherwise database-only, so it is cheap enough to build every
     couple of minutes just to compare revisions."""
     site = SiteSettings.load()
-    pages = [(page, path) for page in Page.objects.order_by("pk") if (path := _page_path(page)) is not None]
+    pages = _published_pages()
     news = list(NewsItem.objects.order_by("-published_at", "-pk"))
     events = list(Event.objects.order_by("starts_on", "pk"))
-
-    texts = [site.default_background]
-    texts += [text for page, _path in pages for text in (page.body, page.background_image)]
-    texts += [item.body for item in news] + [item.description for item in events]
-    referenced = set().union(*(media_names(text) for text in texts))
+    referenced = _referenced_names(site, pages, news, events)
 
     images: dict[str, CmsImage] = {}
     url_by_name: dict[str, str] = {}
@@ -290,6 +305,29 @@ def build_snapshot(published_at: Any = None) -> Snapshot:  # noqa: ANN401 — a 
 
 def current_revision() -> str:
     return build_snapshot().revision
+
+
+def published_image_url(name: str) -> str | None:
+    """gahk.dk's address (absolute, percent-encoded) of the library image stored as `name`, when a
+    snapshot of what is in the database now sends it there; None otherwise.
+
+    core.media asks this for an anonymous /media/cms/<name> request (cms.apps), so an old link to a
+    picture on the public site keeps working. It applies build_snapshot's test without building one:
+    the row and its metadata first (one query, and usually the answer), then a legacy import or a
+    reference from published content. It reads no file: an image whose sha256 is still blank has
+    never been in a snapshot.
+    """
+    image = CmsImage.objects.filter(file=name).order_by("pk").first()
+    if image is None or not image.sha256 or not _shippable(image):
+        return None
+    if not image.legacy_path:
+        site = SiteSettings.load()
+        news = list(NewsItem.objects.all())
+        events = list(Event.objects.all())
+        if name not in _referenced_names(site, _published_pages(), news, events):
+            return None
+    path = billeder_url(image.sha256, name, image.content_type)
+    return f"{settings.PUBLIC_SITE_URL.rstrip('/')}{quote(path, safe='/')}"
 
 
 # -------------------------------------------------------------------------------------- preview

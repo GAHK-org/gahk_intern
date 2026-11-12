@@ -72,6 +72,9 @@ working when intern or the image storage is down; editing needs intern.
   2400 px on the long side, turned upright, and stripped of metadata such as the GPS position.
 - gahk.dk gets its own copy of every image it shows. A copy's address never changes, so browsers
   may keep it for a year.
+- The library itself needs a login. An old link to a library picture (`/media/cms/…`, public while
+  intern rendered gahk.dk) still works for a picture gahk.dk shows: a visitor who is not logged in
+  is sent on to gahk.dk's copy. Any other library file asks for a login.
 - The old site's pictures move into the library by themselves: the sync every two minutes fetches
   the ones the content still uses (a batch at a time) and points the content at the library copies,
   recorded as "System". Their old addresses on gahk.dk send visitors on to the copies.

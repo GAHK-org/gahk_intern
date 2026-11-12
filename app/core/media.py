@@ -27,6 +27,11 @@ feed and a fresh opslag are read by most of the house within hours, and each of 
 archived: an old file is read rarely enough that a copy on this disk would only take room from the
 live ones. Profile thumbnails are registered the same way, all of them: every avatar on a page was
 a redirect of its own. See register_cacheable.
+
+AND ONE IN FRONT OF THE LOGIN, for a public copy somewhere else. A website image (cms/) was
+anonymous at /media/cms/<name> for as long as this app rendered gahk.dk, so such links may live on
+outside it; gahk.dk forwards /media/ here. An anonymous request for one that gahk.dk publishes goes
+301 to gahk.dk's own copy instead of to the login page. See register_public_copy.
 """
 
 import mimetypes
@@ -44,6 +49,7 @@ from django.http import (
     HttpRequest,
     HttpResponse,
     HttpResponseNotModified,
+    HttpResponsePermanentRedirect,
     HttpResponseRedirect,
 )
 from django.http.response import HttpResponseBase
@@ -76,7 +82,8 @@ REDIRECT_CACHE_CONTROL = f"private, max-age={REDIRECT_MAX_AGE}"
 # Derived from the clients rather than assumed, and re-derivable the same way. Website images
 # (cms/, the Hjemmeside library) are NOT here: gahk.dk serves its own copies at /billeder/, and the
 # only people who load them from intern are logged-in editors (the library, a draft's preview). They
-# were anonymous while this app rendered the public site itself.
+# were anonymous while this app rendered the public site itself; an old link to one that gahk.dk
+# still publishes goes 301 to that copy (register_public_copy, cms.apps).
 #
 # THE ØLKÆLDER TILL IS THE ONE ENTRY, AND IT IS THE CASE THIS LIST GOT WRONG ONCE.
 # "Everything else is reached from the intranet only" was the original reasoning, and it is true of the
@@ -94,7 +101,8 @@ REDIRECT_CACHE_CONTROL = f"private, max-age={REDIRECT_MAX_AGE}"
 #                      paths here, and they land in DIFFERENT subtrees — image/intern/oel/ for the
 #                      ølkælder (public, below) and image/intern/roomimages/ for værelsestjek (NOT).
 #                      That split is why the public entry is the long path and not a bare "public/".
-#   cms/               the website's image library — editors only, see above
+#   cms/               the website's image library — editors only, see above (an anonymous request
+#                      for an image gahk.dk publishes goes to gahk.dk's copy: register_public_copy)
 #   opslag/            opslagstavlen        quick_posts/, quick_comments/  Den Hurtige
 #                      (opslag/kommentarer/ is a comment's attached photo — same prefix, so it
 #                      inherits the same "not public" answer without a second check)
@@ -137,6 +145,32 @@ def register_cacheable(prefix: str, is_live: Callable[[str], bool]) -> None:
     """
     _cacheable.append((prefix, is_live))
     _cacheable.sort(key=lambda entry: len(entry[0]), reverse=True)
+
+
+# --- public copies elsewhere, for anonymous requests --------------------------------------------
+
+# How long a browser may keep the redirect to a public copy. Short, and `private` with Vary: Cookie
+# like the presigned redirect: the copy goes away when the image is no longer published, and a
+# logged-in resident gets this file from here.
+PUBLIC_COPY_CACHE_CONTROL = f"private, max-age={REDIRECT_MAX_AGE}"
+
+_public_copies: list[tuple[str, Callable[[str], str | None]]] = []
+
+
+def register_public_copy(prefix: str, locate: Callable[[str], str | None]) -> None:
+    """Send an anonymous request for a file under `prefix` to `locate(name)`, when it names one.
+
+    `locate` gets the storage name and answers the absolute URL of a public copy of that file, or
+    None, which keeps the login redirect. It is asked only for anonymous requests outside
+    PUBLIC_PREFIXES. Called from the owning app's AppConfig.ready(), like register_cacheable.
+    """
+    _public_copies.append((prefix, locate))
+    _public_copies.sort(key=lambda entry: len(entry[0]), reverse=True)
+
+
+def _public_copy(name: str) -> str | None:
+    locate = next((rule for prefix, rule in _public_copies if name.startswith(prefix)), None)
+    return locate(name) if locate is not None else None
 
 
 def _attachment_directory() -> Path | None:
@@ -195,6 +229,12 @@ def serve_media(request: HttpRequest, path: str) -> HttpResponseBase:
         raise Http404("not a media path")
 
     if not name.startswith(PUBLIC_PREFIXES) and not request.user.is_authenticated:
+        public = _public_copy(name)
+        if public is not None:
+            moved = HttpResponsePermanentRedirect(public)
+            moved.headers["Cache-Control"] = PUBLIC_COPY_CACHE_CONTROL
+            moved.headers["Vary"] = "Cookie"
+            return moved
         # redirect_to_login rather than 404: these URLs are opened directly often enough (a resident
         # following a link to a picture in an opslag on a machine where the session expired) that
         # landing on the login page and coming back is the useful answer. It carries no
