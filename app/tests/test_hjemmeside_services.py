@@ -61,7 +61,7 @@ def test_ordinary_addresses_are_accepted(path: str) -> None:
     "path",
     [
         "api",
-        "billeder/x",
+        "images/x",
         "begivenheder",
         "s",
         "wiki",

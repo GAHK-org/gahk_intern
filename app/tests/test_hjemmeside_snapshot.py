@@ -35,11 +35,11 @@ from cms.snapshot import (
 )
 
 # What gahk.dk takes: lower-case NFC letters and digits, words joined by one "-", "_" or ".".
-BILLEDER_RE = re.compile(r"^/billeder/([0-9a-f]{16})/([^\W_]+(?:[-_.][^\W_]+)*)$")
+IMAGE_URL_RE = re.compile(r"^/images/([0-9a-f]{16})/([^\W_]+(?:[-_.][^\W_]+)*)$")
 
 
 def _gahk_dk_takes(name: str) -> bool:
-    match = BILLEDER_RE.match(f"/billeder/{'0' * 16}/{name}")
+    match = IMAGE_URL_RE.match(f"/images/{'0' * 16}/{name}")
     return bool(match) and name == name.lower() and unicodedata.is_normalized("NFC", name)
 
 
@@ -170,7 +170,7 @@ def test_the_revision_is_stable_and_follows_the_content(front_page: Page) -> Non
 
 
 @pytest.mark.django_db
-def test_library_images_become_content_hashed_billeder_urls(front_page: Page) -> None:
+def test_library_images_become_content_hashed_public_image_urls(front_page: Page) -> None:
     image = _library_image()
     unused = _library_image("ubrugt.jpg")
     front_page.body = f'<p><img src="{image.url}" alt="x"> og <img src="https://gahk.dk{image.url}"></p>'
@@ -183,7 +183,7 @@ def test_library_images_become_content_hashed_billeder_urls(front_page: Page) ->
     with image.file.open("rb") as handle:
         assert image.sha256 == hashlib.sha256(handle.read()).hexdigest()  # filled in and saved
     [entry] = snapshot.data["images"]
-    match = BILLEDER_RE.match(entry["url"])
+    match = IMAGE_URL_RE.match(entry["url"])
     assert match and match.group(1) == image.sha256[:16] and match.group(2).startswith("have-foto")
     assert entry["url"].endswith(".jpg") and entry["content_type"] == "image/jpeg"
     assert entry["size"] == image.size and entry["sha256"] == image.sha256
@@ -304,31 +304,31 @@ def test_library_names_keep_their_letters(file_name: str, stem: str) -> None:
         ("foto.jpg", "image/png", "foto.png"),  # the extension follows the content
     ],
 )
-def test_billeder_names_keep_their_letters_in_lower_case(
+def test_public_image_names_keep_their_letters_in_lower_case(
     file_name: str, content_type: str, name: str
 ) -> None:
-    from cms.images import billeder_name
+    from cms.images import public_image_name
 
-    assert billeder_name(file_name, content_type) == name
+    assert public_image_name(file_name, content_type) == name
     assert _gahk_dk_takes(name)
 
 
-def test_a_long_billeder_name_is_cut_by_bytes_as_well_as_letters() -> None:
-    from cms.images import BILLEDER_STEM_MAX_BYTES, billeder_name
+def test_a_long_public_image_name_is_cut_by_bytes_as_well_as_letters() -> None:
+    from cms.images import PUBLIC_IMAGE_STEM_MAX_BYTES, public_image_name
 
     for letter, length in (("a", 80), ("æ", 60), ("あ", 40)):
-        name = billeder_name(letter * 300 + ".jpg", "image/jpeg")
+        name = public_image_name(letter * 300 + ".jpg", "image/jpeg")
         stem = name.removesuffix(".jpg")
-        assert len(stem.encode()) <= BILLEDER_STEM_MAX_BYTES and stem == letter * length
+        assert len(stem.encode()) <= PUBLIC_IMAGE_STEM_MAX_BYTES and stem == letter * length
         assert _gahk_dk_takes(name)
 
 
-def test_a_long_ascii_billeder_name_is_cut_where_it_always_was() -> None:
+def test_a_long_ascii_public_image_name_is_cut_where_it_always_was() -> None:
     """Already published URLs must not move: an ASCII stem is still cut at 80 characters."""
-    from cms.images import billeder_name
+    from cms.images import public_image_name
 
     stored = "cms/2024/03/" + "Sommerfest_i_gaarden_" * 5 + "aB3x9Zq.jpg"  # a 100-letter stem + suffix
-    name = billeder_name(stored, "image/jpeg")
+    name = public_image_name(stored, "image/jpeg")
 
     assert name == ("sommerfest-i-gaarden-" * 4)[:80].strip("-") + ".jpg"
 

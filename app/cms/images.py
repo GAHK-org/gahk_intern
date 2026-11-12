@@ -132,8 +132,8 @@ def content_type_of(data: bytes) -> str | None:
 # NFC-normalized first, because a Mac hands over "å" as "a" plus a combining ring (NFD), which would
 # otherwise give two different names, and URLs, for what looks like the same file.
 STORED_STEM_MAX = 100
-BILLEDER_STEM_MAX_BYTES = 120  # gahk.dk's file system allows 255 bytes per name, not characters
-BILLEDER_STEM_MAX_CHARS = 80  # an ASCII name was always cut here; its URL must not change
+PUBLIC_IMAGE_STEM_MAX_BYTES = 120  # gahk.dk's file system allows 255 bytes per name, not characters
+PUBLIC_IMAGE_STEM_MAX_CHARS = 80  # an ASCII name was always cut here; its URL must not change
 SEPARATORS = "-_."
 
 
@@ -175,7 +175,7 @@ def stored_stem(file_name: str) -> str:
     return unicodedata.normalize("NFC", cleaned) or "billede"
 
 
-def billeder_name(file_name: str, content_type: str) -> str:
+def public_image_name(file_name: str, content_type: str) -> str:
     """The file name part of an image's gahk.dk URL: the basename in lower case, its letters kept
     (NFC), every other run of characters a "-", with an extension that matches its content type
     (gahk.dk checks that it does).
@@ -190,7 +190,7 @@ def billeder_name(file_name: str, content_type: str) -> str:
     # and gahk.dk takes lower-case names only.
     words = "".join(c if unicodedata.category(c) not in ("Lu", "Lt") else "-" for c in lowered)
     stem = _letters_runs(words, "-", "-")
-    stem = _cut_utf8(stem[:BILLEDER_STEM_MAX_CHARS], BILLEDER_STEM_MAX_BYTES)
+    stem = _cut_utf8(stem[:PUBLIC_IMAGE_STEM_MAX_CHARS], PUBLIC_IMAGE_STEM_MAX_BYTES)
     stem = unicodedata.normalize("NFC", stem).rstrip(SEPARATORS)
     extension = path.suffix.lower()
     if EXTENSION_TYPES.get(extension) != content_type:
@@ -198,6 +198,6 @@ def billeder_name(file_name: str, content_type: str) -> str:
     return f"{stem or 'billede'}{extension}"
 
 
-def billeder_url(sha256: str, file_name: str, content_type: str) -> str:
-    """/billeder/<sha256[:16]>/<name>: where gahk.dk serves its copy. Content-hashed, so immutable."""
-    return f"/billeder/{sha256[:16]}/{billeder_name(file_name, content_type)}"
+def public_image_url(sha256: str, file_name: str, content_type: str) -> str:
+    """/images/<sha256[:16]>/<name>: where gahk.dk serves its copy. Content-hashed, so immutable."""
+    return f"/images/{sha256[:16]}/{public_image_name(file_name, content_type)}"

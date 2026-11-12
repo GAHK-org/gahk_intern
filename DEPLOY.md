@@ -561,10 +561,10 @@ resident's photograph. Now only `core.media.PUBLIC_PREFIXES` — the ølkælder 
 (`oel/`, `public/image/intern/oel/`), which the till shows without a session — is anonymous.
 
 The website's images (`cms/`, the Hjemmeside library) used to be anonymous too, while this app
-rendered gahk.dk. They are not any more: gahk.dk serves its own copies at `/billeder/` (§4f), and only
+rendered gahk.dk. They are not any more: gahk.dk serves its own copies at `/images/` (§4f), and only
 logged-in editors load them from here. An old `/media/cms/<name>` link (gahk.dk forwards `/media/`
 here) still works for a picture gahk.dk publishes: an anonymous request goes 301 to
-`https://gahk.dk/billeder/<sha16>/<name>`; any other `cms/` file needs a login. Every other prefix was
+`https://gahk.dk/images/<sha16>/<name>`; any other `cms/` file needs a login. Every other prefix was
 checked individually and is reachable only from the intranet.
 
 **If an image on the till ever goes missing, this list is the first thing to check.** The gate is a

@@ -23,7 +23,7 @@ Four pieces of code treat `settings.MEDIA_URL` as a string prefix of that stored
   * core.markdown.extract_image_names — strips the prefix to recover FileField names for the indexed
     `file__in=` lookup that opslagstavle.images.sync_images claims images with;
   * cms.services.image_usage and cms.snapshot — `background_image=image.url`, an exact match, and
-    the /media/cms/ references in bodies that become gahk.dk's /billeder/ copies;
+    the /media/cms/ references in bodies that become gahk.dk's /images/ copies;
   * rooms.RoomConditionScore.image_urls — concatenates MEDIA_URL onto legacy `;`-separated paths.
 
 So pointing MEDIA_URL at the bucket host — the obvious way to serve media from S3, and what

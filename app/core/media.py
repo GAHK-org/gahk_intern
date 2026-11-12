@@ -80,7 +80,7 @@ REDIRECT_CACHE_CONTROL = f"private, max-age={REDIRECT_MAX_AGE}"
 # The upload prefixes a client with no session may read.
 #
 # Derived from the clients rather than assumed, and re-derivable the same way. Website images
-# (cms/, the Hjemmeside library) are NOT here: gahk.dk serves its own copies at /billeder/, and the
+# (cms/, the Hjemmeside library) are NOT here: gahk.dk serves its own copies at /images/, and the
 # only people who load them from intern are logged-in editors (the library, a draft's preview). They
 # were anonymous while this app rendered the public site itself; an old link to one that gahk.dk
 # still publishes goes 301 to that copy (register_public_copy, cms.apps).

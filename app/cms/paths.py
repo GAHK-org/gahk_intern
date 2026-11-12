@@ -40,12 +40,12 @@ RESERVED_FIRST_SEGMENTS = frozenset(
         "admin",
         "api",
         "begivenheder",
-        "billeder",
         "cgi-bin",
         "django-admin",
         "favicon.ico",
         "health",
         "healthz",  # the old app's liveness check, which gahk.dk forwards to intern like /health
+        "images",
         "intern",
         "kalender",
         "media",

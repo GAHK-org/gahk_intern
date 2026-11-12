@@ -2,7 +2,7 @@
 
 The library was anonymous at /media/cms/ while this app rendered gahk.dk, and gahk.dk now forwards
 /media/ to intern. An anonymous request for a picture gahk.dk publishes goes 301 to gahk.dk's own
-copy (/billeder/<sha16>/<name>); every other cms/ file still needs a login, and a logged-in resident
+copy (/images/<sha16>/<name>); every other cms/ file still needs a login, and a logged-in resident
 gets the file from here as before.
 """
 
@@ -60,7 +60,7 @@ def test_an_old_link_to_a_published_picture_goes_to_gahk_dk(settings: object) ->
 
     assert response.status_code == 301
     assert response["Location"] == f"https://gahk.dk{url}"
-    assert url.startswith(f"/billeder/{image.sha256[:16]}/")
+    assert url.startswith(f"/images/{image.sha256[:16]}/")
     # Short and per-browser: the copy goes away once the picture is no longer published.
     assert response["Cache-Control"] == "private, max-age=900"
     assert response["Vary"] == "Cookie"

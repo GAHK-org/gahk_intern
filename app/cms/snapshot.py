@@ -6,7 +6,7 @@ What is sent, and how it differs from what is stored:
   * Pages with an address, plus the front page (id 1), which is always at path "" — its own slug
     becomes a redirect to "/". Paths have no leading or trailing slash.
   * Images are content-addressed copies: /media/cms/<name> in bodies and backgrounds becomes
-    /billeder/<sha256[:16]>/<slugified basename>, which gahk.dk serves without asking intern (or S3)
+    /images/<sha256[:16]>/<slugified basename>, which gahk.dk serves without asking intern (or S3)
     anything. A background that is not a library image is sent as "" (gahk.dk refuses any other).
   * Links into the intranet (/intern/…, http(s)://(www.)gahk.dk/intern/…) point at intern.gahk.dk.
   * Legacy /public/image/… references are converted in the database, once, by the sync before it
@@ -34,7 +34,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 
-from .images import billeder_url, content_type_of, sha256_hex
+from .images import content_type_of, public_image_url, sha256_hex
 from .models import FRONT_PAGE_ID, CmsImage, Event, MenuItem, NewsItem, Page, PageRedirect, SiteSettings
 from .paths import is_reserved, validate_page_path
 from .sanitize import clean_html
@@ -124,7 +124,7 @@ def image_entry(image: CmsImage) -> dict[str, Any] | None:
     if not ensure_image_metadata(image):
         return None
     return {
-        "url": billeder_url(image.sha256, image.file.name or "", image.content_type),
+        "url": public_image_url(image.sha256, image.file.name or "", image.content_type),
         "sha256": image.sha256,
         "content_type": image.content_type,
         "size": image.size,
@@ -326,7 +326,7 @@ def published_image_url(name: str) -> str | None:
         events = list(Event.objects.all())
         if name not in _referenced_names(site, _published_pages(), news, events):
             return None
-    path = billeder_url(image.sha256, name, image.content_type)
+    path = public_image_url(image.sha256, name, image.content_type)
     return f"{settings.PUBLIC_SITE_URL.rstrip('/')}{quote(path, safe='/')}"
 
 

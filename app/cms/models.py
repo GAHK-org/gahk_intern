@@ -166,7 +166,7 @@ class CmsImage(models.Model):
 
     ALL of gahk.dk's content images live here (in S3), including the ones the old site kept in
     static/legacy/ (imported by cms.legacy_images, which sets `legacy_path`). gahk.dk gets a
-    copy of each image it needs at a content-hashed URL, /billeder/<sha256[:16]>/<name>, which is
+    copy of each image it needs at a content-hashed URL, /images/<sha256[:16]>/<name>, which is
     why `sha256` is kept: it names the copy and lets publishing skip the ones gahk.dk already has.
 
     Uploads are downscaled and stripped of metadata before they are stored (cms.images), so the
