@@ -1,5 +1,22 @@
 # Feature: Optagelse — admission/tour & sublet applications (public forms + indstilling review)
 
+## Today (since the split of gahk.dk and intern.gahk.dk)
+
+- The landing text is an ordinary page at gahk.dk/optagelse, edited under Hjemmeside on intern.
+- The two forms, `/optagelse/ansoeg` (rundvisning) and `/optagelse/fremlej` (fremleje), are served
+  by gahk.dk, which also handles spam (honeypot, Turnstile). The old POST addresses
+  `/optagelse/send_rundvisning` and `/optagelse/send_fremleje` keep working there.
+- gahk.dk keeps a submission only until intern fetches it, at most a couple of minutes later.
+  intern checks every submission against the same field rules the forms had, stores it once
+  (fetching it again changes nothing), and then lets gahk.dk delete it.
+- A submission that breaks the rules is dropped and logged; the overview counts them. One of a kind
+  intern does not know yet stays on gahk.dk until an intern that knows it fetches it.
+- The applicant gets the same auto-reply as before, once, when intern stores the application.
+- Indstillingen reviews applications on intern as before: `/optagelse/listansoegninger`, export,
+  detail, received and discard. gahk.dk sends those addresses on to intern.
+
+Everything below is the analysis of the legacy PHP site, kept for reference.
+
 - **Feature ID:** F-001
 - **Source file(s):** `application/controllers/optagelse.php`, `application/models/ansoegninger_model.php`,
   views `application/views/optagelse/{overview,rundvisning_box,fremlej_box,list_ansoegninger_box,show_ansoegninger_box}.php`

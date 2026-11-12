@@ -30,9 +30,9 @@
   - changed-files:
       - any-glob-to-any-file: ["app/rooms/**", "app/templates/vaerelsestjek/**", "app/templates/soegvaerelse/**"]
 
-"area:cms":
+"area:hjemmeside":
   - changed-files:
-      - any-glob-to-any-file: ["app/cms/**", "app/templates/cms/**"]
+      - any-glob-to-any-file: ["app/cms/**", "app/templates/hjemmeside/**"]
 
 "area:stats":
   - changed-files:

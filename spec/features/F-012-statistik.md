@@ -1,5 +1,18 @@
 # Feature: Statistik — internal statistics/charts dashboard + JSON data feeders
 
+## Today
+
+- `/statistik/` on intern, for every logged-in resident: applications by type, "hvor hørte du om
+  os?" and tours by university for this year.
+- **Besøgende pr. dag (gahk.dk, seneste 30):** unique visitors to gahk.dk per day. gahk.dk counts
+  them itself without storing IP addresses; intern fetches the day totals every couple of minutes.
+  Today's figure grows during the day. The history before the split counted the front page only.
+- **Mest besøgte sider (30 dage):** gahk.dk's pages by views over the last 30 days, with their
+  visitors (each day's unique visitors, added up).
+- Nothing here counts visits to intern itself.
+
+Everything below is the analysis of the legacy PHP site, kept for reference.
+
 - **Feature ID:** F-012
 - **Source file(s):** `application/controllers/intern/statistik.php`,
   `application/models/ansoegninger_model.php` (stats query methods),
