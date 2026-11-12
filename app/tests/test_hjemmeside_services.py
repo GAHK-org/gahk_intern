@@ -59,7 +59,19 @@ def test_ordinary_addresses_are_accepted(path: str) -> None:
 
 @pytest.mark.parametrize(
     "path",
-    ["api", "billeder/x", "begivenheder", "s", "wiki", "404", "optagelse/ansoeg", "optagelse/fremlej"],
+    [
+        "api",
+        "billeder/x",
+        "begivenheder",
+        "s",
+        "wiki",
+        "404",
+        "optagelse/ansoeg",
+        "optagelse/fremlej",
+        "health",
+        "healthz",
+        "healthz/x",
+    ],
 )
 def test_addresses_gahk_dk_uses_itself_are_refused(path: str) -> None:
     with pytest.raises(ValidationError):
