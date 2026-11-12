@@ -702,6 +702,33 @@ def test_the_overview_shows_a_failed_publication(editor: Resident, settings: Any
     assert "Fejl" in html and "bad snapshot" in html
 
 
+@pytest.mark.django_db
+def test_the_overview_is_up_to_date_only_until_the_next_save(
+    editor: Resident,
+    front: Page,
+    settings: Any,  # noqa: ANN401
+    published: list[dict[str, Any]],
+) -> None:
+    settings.GAHK_WEB_KEY = "k"
+    revision = "a" * 64
+    Publication.objects.create(reason="save", status="ok", revision=revision)
+    GahkWebSync.load()
+    GahkWebSync.objects.filter(pk=1).update(remote_revision=revision)
+    client = client_for(editor)
+    assert client.get(reverse("hjemmeside:status")).context["in_sync"] is True
+
+    services.upload_image(_png(), "Ny", editor)  # unused in any page: gahk.dk shows the same
+    assert client.get(reverse("hjemmeside:status")).context["in_sync"] is True
+
+    services.save_page(front, {"body": "<p>Ny tekst</p>"}, editor)  # its publish has not run yet
+    status = client.get(reverse("hjemmeside:status"))
+    assert status.context["in_sync"] is False and "det nyeste indhold" not in status.content.decode()
+
+    # The publish ran and found nothing new to send (skipped): up to date again.
+    Publication.objects.create(reason="save", status="skipped", revision=revision)
+    assert client.get(reverse("hjemmeside:status")).context["in_sync"] is True
+
+
 # ----------------------------------------------------------------------------------- change log
 @pytest.mark.django_db
 def test_the_change_log_filters_and_diffs_bodies(

@@ -142,6 +142,36 @@ def _pending(request: HttpRequest, key: str, done: Callable[[datetime.datetime],
     return "waiting"
 
 
+# The kinds of change that alter what gahk.dk shows (an image only does so through a page using it).
+PUBLISHED_KINDS = (
+    ContentChange.Kind.PAGE,
+    ContentChange.Kind.NEWS,
+    ContentChange.Kind.EVENT,
+    ContentChange.Kind.MENU,
+    ContentChange.Kind.REDIRECT,
+    ContentChange.Kind.SETTINGS,
+)
+
+
+def _in_sync(sync: GahkWebSync) -> bool:
+    """gahk.dk shows the newest content: it reports the revision of the last settled publish (sent,
+    or skipped as already there), and no content change has been saved since that publish began.
+
+    The second half catches a save whose publish is still queued, failed to queue, or waits for a
+    stopped worker. A query rather than build_snapshot(), because the status card polls every 3 s.
+    """
+    settled = Publication.objects.filter(
+        status__in=(Publication.Status.OK, Publication.Status.SKIPPED)
+    ).first()
+    if settled is None or not sync.remote_revision or sync.remote_revision != settled.revision:
+        return False
+    return not (
+        ContentChange.objects.filter(at__gt=settled.started_at, kind__in=PUBLISHED_KINDS)
+        .exclude(action=ContentChange.Action.PUBLISH)
+        .exists()
+    )
+
+
 def _status_context(request: HttpRequest) -> dict[str, Any]:
     sync = GahkWebSync.load()
     publications = list(Publication.objects.select_related("triggered_by")[:5])
@@ -166,7 +196,7 @@ def _status_context(request: HttpRequest) -> dict[str, Any]:
         "latest": publications[0] if publications else None,
         "publications": publications,
         "last_ok": last_ok,
-        "in_sync": bool(last_ok and sync.remote_revision and sync.remote_revision == last_ok.revision),
+        "in_sync": _in_sync(sync),
         "update_waiting": sync.update_available_version
         and sync.remote_version
         and sync.update_available_version != sync.remote_version,

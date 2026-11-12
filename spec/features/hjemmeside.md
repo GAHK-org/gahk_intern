@@ -90,8 +90,10 @@ working when intern or the image storage is down; editing needs intern.
 
 ## Status of gahk.dk
 
-- The overview shows whether gahk.dk is reachable, whether it shows the current content, when
-  applications and visit counts were last fetched, and the last error.
+- The overview shows whether gahk.dk is reachable, whether it shows the current content (not while a
+  saved change is still waiting to be published), when applications and visit counts were last
+  fetched, and the last error.
+- A publish that fails never stops applications and visit counts from being fetched.
 - It shows the code version gahk.dk runs, the newest one available and how the last update went.
   gahk.dk updates its code only when intern asks it to: every 15 minutes, or at once with
   "Opdatér gahk.dk nu" (administrators only).
