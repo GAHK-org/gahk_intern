@@ -28,7 +28,7 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -311,7 +311,8 @@ def preview_request(item: Page | NewsItem | Event) -> dict[str, Any]:
         except ValidationError:
             path = ""
         names = media_names(item.background_image)
-        background = f"/media/{names.pop()}" if len(names) == 1 else ""
+        # Percent-encoded, as a URL path: a stored name may hold a letter like "æ".
+        background = f"/media/{quote(names.pop(), safe='/')}" if len(names) == 1 else ""
         page = page_item(item, path, rewrite_intern_links(item.body), background)
         return {"kind": "page", "item": {**page, "id": item_id}, "media_base": media_base}
     if isinstance(item, NewsItem):

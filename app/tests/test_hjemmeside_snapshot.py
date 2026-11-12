@@ -244,9 +244,33 @@ def test_a_preview_keeps_library_images_on_intern(front_page: Page) -> None:
     assert preview_request(NewsItem(title="", body="<p>x</p>"))["item"]["title"] == "Nyhed"
 
 
+@pytest.mark.django_db
+def test_a_preview_background_with_a_danish_letter_is_a_plain_ascii_path(front_page: Page) -> None:
+    """gahk.dk takes a preview background only as /media/ plus ASCII; anything else falls back."""
+    old = CmsImage(caption="Gammel")
+    old.file.save("Værelse.jpg", ContentFile(_image_bytes()), save=True)  # stored before the fold
+    draft = Page(slug="kladde", header="Kladde", body="", background_image=old.url)
+
+    background = preview_request(draft)["item"]["background"]
+
+    assert background.startswith("/media/cms/") and "V%C3%A6relse" in background
+    assert background.isascii()
+
+
+def test_library_names_are_stored_in_ascii() -> None:
+    from cms.images import stored_stem
+
+    assert stored_stem("Tovtrækning_2019_1.jpg") == "Tovtraekning_2019_1"
+    assert stored_stem("Forårskoncert 2020 (2).JPG") == "Foraarskoncert_2020_2"
+    assert stored_stem("Ølkælder-søndag.png") == "Oelkaelder-soendag"
+    assert stored_stem("Café.jpg") == "Cafe"
+    assert stored_stem("…….jpg") == "billede"
+
+
 # --------------------------------------------------------------------------------- legacy images
 @pytest.fixture
-def legacy_dir(tmp_path: Path, settings: Any) -> Path:  # noqa: ANN401
+def legacy_dir(tmp_path: Path) -> Path:
+    """A copy of the old site's static/legacy/image/, as the operator supplies it (not in git)."""
     root = tmp_path / "legacy-image"
     (root / "upload" / "images").mkdir(parents=True)
     (root / "upload" / "images" / "gang.jpg").write_bytes(_image_bytes(size=(3000, 1000)))

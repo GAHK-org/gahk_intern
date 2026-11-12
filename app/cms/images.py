@@ -129,6 +129,19 @@ def content_type_of(data: bytes) -> str | None:
 
 # ------------------------------------------------------------------------- gahk.dk's image URLs
 BILLEDER_NAME_RE = re.compile(r"[^a-z0-9]+")
+DANISH_LETTERS = str.maketrans({"æ": "ae", "Æ": "Ae", "ø": "oe", "Ø": "Oe", "å": "aa", "Å": "Aa"})
+STORED_STEM_RE = re.compile(r"[^A-Za-z0-9_-]+")
+
+
+def stored_stem(file_name: str) -> str:
+    """An ASCII stem for a library image's storage name ("Tovtrækning 2019" → "Tovtraekning_2019").
+
+    Storage names appear in /media/cms/… URLs, which gahk.dk's preview only takes as plain ASCII; an
+    "æ" there (Django keeps Unicode letters in file names) would make the preview fall back.
+    """
+    stem = PurePath(file_name).stem.translate(DANISH_LETTERS)
+    ascii_stem = unicodedata.normalize("NFKD", stem).encode("ascii", "ignore").decode()
+    return STORED_STEM_RE.sub("_", ascii_stem).strip("_-")[:100] or "billede"
 
 
 def billeder_name(file_name: str, content_type: str) -> str:

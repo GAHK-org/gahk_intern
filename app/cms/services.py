@@ -24,7 +24,6 @@ import logging
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import PurePath
 from typing import Any
 
 from django.conf import settings
@@ -37,7 +36,7 @@ from django.utils.dateparse import parse_date, parse_datetime
 from core.uploads import validate_image_upload
 from residents.models import Resident
 
-from .images import ImageRejected, PreparedImage, prepare_image
+from .images import ImageRejected, PreparedImage, prepare_image, stored_stem
 from .models import (
     FRONT_PAGE_ID,
     CmsImage,
@@ -553,7 +552,7 @@ def store_prepared_image(
     legacy_path: str | None = None,
 ) -> CmsImage:
     """Save already-prepared bytes as a library image (no audit; the callers record their own)."""
-    stem = PurePath(name).stem or "billede"
+    stem = stored_stem(name)
     image = CmsImage(
         caption=plain_text(caption)[:255],
         uploaded_by=by,
