@@ -186,5 +186,5 @@ def test_in_development_it_is_host_only_and_not_secure(editor: Resident, setting
 def test_the_edit_links_gahk_dk_uses_exist(editor: Resident, path: str) -> None:
     from cms.models import Page
 
-    Page.objects.update_or_create(pk=1, defaults={"slug": "velkommen", "header": "Velkommen"})
+    Page.put_front_page(slug="velkommen", header="Velkommen")
     assert _signed_in(editor).get(path).status_code == 200

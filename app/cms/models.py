@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from django.conf import settings
-from django.db import models
+from django.core.management.color import no_style
+from django.db import connections, models, router
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
 from django.utils import timezone
@@ -93,6 +94,22 @@ class Page(models.Model):  # gahk_page
         "" (not None) because templates concatenate it and admin reads it via view_on_site.
         """
         return f"{settings.PUBLIC_SITE_URL.rstrip('/')}/{self.slug}" if self.slug else ""
+
+    @classmethod
+    def put_front_page(cls, **fields: Any) -> "Page":  # noqa: ANN401
+        """Create or update the front page, at its pinned id FRONT_PAGE_ID, with `fields`.
+
+        THE way to make the front page outside the legacy ETL. An insert with an explicit id does not
+        move PostgreSQL's id sequence, so on a database where no page was ever created the next
+        ordinary Page.objects.create() is handed id 1 again and fails on the primary key. The
+        sequence is moved past the highest id here, in the same breath.
+        """
+        page, _created = cls.objects.update_or_create(pk=FRONT_PAGE_ID, defaults=fields)
+        connection = connections[router.db_for_write(cls)]
+        with connection.cursor() as cursor:
+            for statement in connection.ops.sequence_reset_sql(no_style(), [cls]):
+                cursor.execute(statement)
+        return page
 
 
 class NewsItem(models.Model):  # gahk_news; shown on gahk.dk's front page and /begivenheder/

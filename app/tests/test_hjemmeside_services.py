@@ -197,7 +197,7 @@ def test_restore_sanitizes_again(editor: Resident) -> None:
 
 @pytest.mark.django_db
 def test_deleting_a_page_keeps_its_history_and_the_front_page_cannot_go(editor: Resident) -> None:
-    front = Page.objects.create(pk=1, slug="velkommen", header="Velkommen")
+    front = Page.put_front_page(slug="velkommen", header="Velkommen")
     page = services.save_page(None, {"header": "Væk", "slug": "vaek", "body": "<p>tekst</p>"}, editor)
 
     services.delete_page(page, editor)
@@ -338,7 +338,7 @@ def test_bad_menu_entries_are_reported_by_position(editor: Resident) -> None:
 def test_reachability_follows_the_menu() -> None:
     MenuItem.objects.all().delete()
     MenuItem.objects.create(label="Faciliteter", url="/faciliteter", order=0)
-    front = Page.objects.create(pk=1, slug="velkommen", header="Velkommen")
+    front = Page.put_front_page(slug="velkommen", header="Velkommen")
     sub = Page.objects.create(slug="faciliteter/kokken", header="Køkken")
     orphan = Page.objects.create(slug="glemt", header="Glemt")
     Page.objects.create(slug=None, header="Uden adresse")
@@ -429,7 +429,7 @@ def test_the_menu_is_seeded_from_the_old_hard_coded_one() -> None:
 def test_the_hero_images_and_titles_become_content() -> None:
     migration = _migration("0006_seed_hjemmeside")
     SiteSettings.objects.all().delete()
-    Page.objects.create(pk=1, slug="velkommen", header="Velkommen til <b>GAHK</b> &amp; co")
+    Page.put_front_page(slug="velkommen", header="Velkommen til <b>GAHK</b> &amp; co")
     NewsItem.objects.create(title="&quot;Fest&quot;", published_at="2026-01-01T00:00:00+01:00")
 
     migration.seed_backgrounds(apps, None)
@@ -450,7 +450,7 @@ def test_the_optagelse_text_becomes_a_page_once() -> None:
     migration.create_optagelse_page(apps, editor)
     assert not Page.objects.filter(slug="optagelse").exists()  # an empty database gets nothing
 
-    Page.objects.create(pk=1, slug="velkommen", header="Velkommen")
+    Page.put_front_page(slug="velkommen", header="Velkommen")
     migration.create_optagelse_page(apps, editor)
     migration.create_optagelse_page(apps, editor)
 

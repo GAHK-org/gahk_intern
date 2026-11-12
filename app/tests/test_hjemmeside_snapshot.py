@@ -47,7 +47,7 @@ def _library_image(name: str = "Have Foto.jpg") -> CmsImage:
 
 @pytest.fixture
 def front_page() -> Page:
-    return Page.objects.create(pk=1, slug="velkommen", header="Velkommen", body="<p>Forside</p>")
+    return Page.put_front_page(slug="velkommen", header="Velkommen", body="<p>Forside</p>")
 
 
 # -------------------------------------------------------------------------------------- snapshot

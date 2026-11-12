@@ -159,7 +159,7 @@ def gahk_web(settings: Any, monkeypatch: pytest.MonkeyPatch) -> FakeGahkWeb:  # 
 
 @pytest.fixture
 def front_page() -> Page:
-    return Page.objects.create(pk=1, slug="velkommen", header="Velkommen", body="<p>Forside</p>")
+    return Page.put_front_page(slug="velkommen", header="Velkommen", body="<p>Forside</p>")
 
 
 def _library_image() -> CmsImage:

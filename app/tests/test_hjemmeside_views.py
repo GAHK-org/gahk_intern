@@ -65,7 +65,7 @@ def published(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
 
 @pytest.fixture
 def front(db: None) -> Page:
-    return Page.objects.create(pk=1, slug="velkommen", header="Velkommen", body="<p>Hej</p>")
+    return Page.put_front_page(slug="velkommen", header="Velkommen", body="<p>Hej</p>")
 
 
 def _png(name: str = "billede.png") -> SimpleUploadedFile:

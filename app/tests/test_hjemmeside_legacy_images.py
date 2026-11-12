@@ -105,7 +105,7 @@ def github(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
 @pytest.fixture
 def front_page() -> Page:
     SiteSettings.objects.update_or_create(pk=1, defaults={"default_background": ""})  # seeded with gang.jpg
-    return Page.objects.create(pk=1, slug="velkommen", header="Velkommen", body="<p>Forside</p>")
+    return Page.put_front_page(slug="velkommen", header="Velkommen", body="<p>Forside</p>")
 
 
 def _refer(page: Page, *paths: str) -> None:
