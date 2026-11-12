@@ -1,6 +1,6 @@
 """Applications from gahk.dk's outbox, and the applicant's auto-reply.
 
-gahk.dk's optagelse forms store a submission in the webhost's own database (its outbox) until
+gahk.dk's admission forms store a submission in the webhost's own database (its outbox) until
 cms.tasks.sync_gahk_web pulls it here. That data is UNTRUSTED input — the webhost is less trusted
 than intern, and its database is reachable over the network — so every item is checked as if it
 had been posted to intern: its shape here, its fields with the same forms the old intern views used
@@ -42,10 +42,25 @@ FORMS: dict[str, type[RundvisningForm] | type[FremlejeForm]] = {
     Application.Type.TOUR: RundvisningForm,
     Application.Type.SUBLET: FremlejeForm,
 }
+# The outbox speaks English codes (gahk_web's docs/protocol.md); intern stores the values its forms
+# and the old site always used. A kind not listed here is one intern does not know yet.
+KINDS: dict[str, str] = {"tour": Application.Type.TOUR, "sublet": Application.Type.SUBLET}
+# heard_about_us, wire code -> stored value: one entry for every choice in forms.HEARD_CHOICES (a test
+# holds it to that). Any other
+# code is not from gahk.dk's form and fails the field rules like any other wrong choice.
+HEARD_ABOUT_US: dict[str, str] = {
+    "social_media": "sociale medier",
+    "website": "hjemmeside",
+    "residents": "beboere",
+    "newspaper": "avis",
+    "recommendation": "anbefaling",
+    "poster": "plakat",
+    "self": "selv",
+}
 # Above anything gahk.dk can accept: its forms read at most 64 KiB of request body (gahk_web's
 # forms.MAX_FORM_BYTES), so no field it validated and queued can be longer, and an over-long field
 # is not from gahk.dk's form. Keep it above that limit: an item dropped here is acknowledged, which
-# deletes gahk.dk's only copy. (The fremleje motivation has no length rule of its own, here or there.)
+# deletes gahk.dk's only copy. (The sublet motivation has no length rule of its own, here or there.)
 MAX_FIELD_LENGTH = 65_536
 # A submission time this far ahead of intern's clock is the webhost's clock being wrong; it is
 # stored as "now" rather than sorting at the top of the list for weeks.
@@ -105,15 +120,17 @@ def _form_data(form_class: type[RundvisningForm] | type[FremlejeForm], fields: o
         if len(value) > MAX_FIELD_LENGTH:
             raise _Drop(f"{name} is too long")
         data[name] = value
+    data["heard_about_us"] = HEARD_ABOUT_US.get(data["heard_about_us"], "")
     return data
 
 
 def _ingest_one(item: dict[str, Any], external_id: str) -> Application | None:
     """Store one outbox item; None when it was stored before. Raises _Drop / _Keep."""
     kind = item.get("kind")
-    form_class = FORMS.get(kind) if isinstance(kind, str) else None
-    if form_class is None:
+    stored_type = KINDS.get(kind) if isinstance(kind, str) else None
+    if stored_type is None:
         raise _Keep(f"unknown kind {kind!r}")
+    form_class = FORMS[stored_type]
     submitted_at = _submitted_at(item.get("submitted_at"))
     form = form_class(data=_form_data(form_class, item.get("fields")))
     if not form.is_valid():
@@ -121,7 +138,7 @@ def _ingest_one(item: dict[str, Any], external_id: str) -> Application | None:
     if Application.objects.filter(external_id=external_id).exists():
         return None
     application = form.save(commit=False)
-    application.type = kind
+    application.type = stored_type
     application.submitted_at = submitted_at
     application.external_id = uuid.UUID(external_id)
     try:

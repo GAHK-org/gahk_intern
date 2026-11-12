@@ -19,7 +19,9 @@ from django.test import Client
 from django.utils import timezone
 from PIL import Image
 
+from admissions.forms import HEARD_CHOICES
 from admissions.models import Application
+from admissions.services import HEARD_ABOUT_US
 from cms import tasks
 from cms.gahk_web import (
     GahkWebClient,
@@ -346,16 +348,16 @@ def test_a_content_save_publishes_after_the_commit(
 
 
 # ------------------------------------------------------------------------------------------ sync
-def _application(kind: str = "rundvisning", **fields: Any) -> dict[str, Any]:  # noqa: ANN401
+def _application(kind: str = "tour", **fields: Any) -> dict[str, Any]:  # noqa: ANN401
     base = {
         "full_name": "Ada Lovelace",
         "email": "ada@example.com",
         "gender": "female",
         "age": "21",
-        "heard_about_us": "plakat",
+        "heard_about_us": "poster",
         "motivation": "Jeg vil gerne bo her.",
     }
-    if kind == "rundvisning":
+    if kind == "tour":
         base |= {"study_year": "2", "year_left": "3", "university": "DTU", "field_of_study": "Fysik"}
     else:
         base |= {"occupation": "Studerende"}
@@ -455,7 +457,7 @@ def test_a_broken_legacy_import_still_lets_the_sync_publish_and_pull(
 def test_applications_are_stored_once_and_acknowledged(
     gahk_web: FakeGahkWeb, front_page: Page, django_capture_on_commit_callbacks: Callable[..., Any]
 ) -> None:
-    tour, sublet = _application(), _application("fremleje", motivation="x" * 2000)
+    tour, sublet = _application(), _application("sublet", motivation="x" * 2000)
     gahk_web.outbox["applications"] = [tour, sublet]
     mail.outbox = []
 
@@ -467,6 +469,8 @@ def test_applications_are_stored_once_and_acknowledged(
     assert Application.objects.count() == 2
     stored = Application.objects.get(external_id=tour["id"])
     assert (stored.type, stored.full_name, stored.university) == ("rundvisning", "Ada Lovelace", "DTU")
+    assert stored.heard_about_us == "plakat"  # stored as intern's forms always stored it
+    assert Application.objects.get(external_id=sublet["id"]).type == "fremleje"
     assert stored.submitted_at.isoformat() == "2026-11-10T08:30:00+00:00"
     assert [ack["applications"] for ack in gahk_web.acks] == [[tour["id"], sublet["id"]]] * 2
     assert len(mail.outbox) == 2  # one auto-reply per applicant, not per pull
@@ -477,13 +481,13 @@ def test_applications_are_stored_once_and_acknowledged(
 def test_malformed_applications_are_dropped_or_kept_as_the_contract_says(
     gahk_web: FakeGahkWeb, front_page: Page
 ) -> None:
-    too_long = _application(motivation="a" * 501)  # rundvisning caps motivation at 500
+    too_long = _application(motivation="a" * 501)  # a tour caps motivation at 500
     bad_email = _application(email="ikke en adresse")
     bad_choice = _application(heard_about_us="<script>")
     not_text = _application(full_name=["Ada"])
-    no_fields = {"id": str(uuid.uuid4()), "kind": "fremleje", "submitted_at": "2026-11-10T09:30:00+01:00"}
+    no_fields = {"id": str(uuid.uuid4()), "kind": "sublet", "submitted_at": "2026-11-10T09:30:00+01:00"}
     naive_time = _application() | {"submitted_at": "2026-11-10 09:30"}
-    future_kind = _application() | {"kind": "venteliste"}
+    future_kind = _application() | {"kind": "waiting_list"}
     no_id = _application() | {"id": "42"}
     gahk_web.outbox["applications"] = [
         too_long,
@@ -505,6 +509,34 @@ def test_malformed_applications_are_dropped_or_kept_as_the_contract_says(
     assert GahkWebSync.load().rejected_applications == len(dropped)
 
 
+def test_every_heard_about_us_choice_has_one_wire_code() -> None:
+    assert set(HEARD_ABOUT_US.values()) == {value for value, _ in HEARD_CHOICES if value}
+    assert len(set(HEARD_ABOUT_US.values())) == len(HEARD_ABOUT_US)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(("code", "stored"), sorted(HEARD_ABOUT_US.items()))
+def test_each_heard_about_us_code_is_stored_as_intern_s_value(
+    gahk_web: FakeGahkWeb, front_page: Page, code: str, stored: str
+) -> None:
+    gahk_web.outbox["applications"] = [_application("sublet", heard_about_us=code)]
+    tasks.sync_gahk_web()
+    assert Application.objects.get().heard_about_us == stored
+
+
+@pytest.mark.django_db
+def test_the_stored_danish_values_are_not_wire_values(gahk_web: FakeGahkWeb, front_page: Page) -> None:
+    """The outbox speaks the English codes only: a stored value on the wire is not from gahk.dk."""
+    danish_choice = _application(heard_about_us="plakat")
+    danish_kind = _application() | {"kind": "rundvisning"}
+    gahk_web.outbox["applications"] = [danish_choice, danish_kind]
+
+    tasks.sync_gahk_web()
+
+    assert not Application.objects.exists()
+    assert gahk_web.acks[0]["applications"] == [danish_choice["id"]]  # dropped; the unknown kind waits
+
+
 @pytest.mark.django_db
 def test_a_500_character_motivation_is_accepted(gahk_web: FakeGahkWeb, front_page: Page) -> None:
     gahk_web.outbox["applications"] = [_application(motivation=("a " * 249) + "ab")]
@@ -513,12 +545,12 @@ def test_a_500_character_motivation_is_accepted(gahk_web: FakeGahkWeb, front_pag
 
 
 @pytest.mark.django_db
-def test_a_long_fremleje_motivation_that_gahk_dk_accepted_is_stored(
+def test_a_long_sublet_motivation_that_gahk_dk_accepted_is_stored(
     gahk_web: FakeGahkWeb, front_page: Page
 ) -> None:
-    """gahk.dk caps a form post at 64 KiB and the fremleje motivation at nothing else, so intern
+    """gahk.dk caps a form post at 64 KiB and the sublet motivation at nothing else, so intern
     must take any field up to that size: dropping it would also delete gahk.dk's only copy."""
-    gahk_web.outbox["applications"] = [_application("fremleje", motivation="a" * 60_000)]
+    gahk_web.outbox["applications"] = [_application("sublet", motivation="a" * 60_000)]
     tasks.sync_gahk_web()
     assert len(Application.objects.get().motivation) == 60_000
 
