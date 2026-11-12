@@ -91,9 +91,10 @@ def test_logging_in_sets_the_renamed_host_only_cookies(make_resident: Callable[.
     response = c.post(reverse("login"), {"username": "beboer@gahk.dk", "password": "hemmelig"})
 
     assert response.status_code == 302
-    session = response.cookies["intern_sessionid"]
+    session = response.cookies[settings.SESSION_COOKIE_NAME]
     assert session.value and not session["domain"]
-    assert "intern_csrftoken" in c.cookies and not c.cookies["intern_csrftoken"]["domain"]
+    csrf = settings.CSRF_COOKIE_NAME
+    assert csrf in c.cookies and not c.cookies[csrf]["domain"]
     assert "sessionid" not in response.cookies and "csrftoken" not in response.cookies
 
 
@@ -140,7 +141,7 @@ def test_an_old_session_cookie_does_not_log_anyone_in(make_resident: Callable[..
     reads it, so it is the login page, not the dashboard — and the cookie is deleted."""
     logged_in = Client()
     logged_in.force_login(make_resident(email="beboer@gahk.dk"))
-    key = logged_in.cookies["intern_sessionid"].value
+    key = logged_in.cookies[settings.SESSION_COOKIE_NAME].value
 
     c = Client()
     c.cookies["sessionid"] = key
@@ -153,8 +154,12 @@ def test_the_frontend_reads_the_renamed_csrf_cookie() -> None:
     """fetch() and htmx send the token from the cookie (frontend/src/htmx-csrf.ts). Reading the old
     name would pick up nothing — or a stale ".gahk.dk" token — and every POST would fail CSRF."""
     source = (Path(settings.BASE_DIR).parent / "frontend" / "src" / "htmx-csrf.ts").read_text()
-    match = re.search(r'const CSRF_COOKIE = "([^"]+)"', source)
-    assert match and match.group(1) == settings.CSRF_COOKIE_NAME
+    match = re.search(r"const CSRF_COOKIES = \[([^\]]+)\]", source)
+    assert match
+    names = re.findall(r'"([^"]+)"', match.group(1))
+    # Production's name first: the __Host- one cannot be planted from gahk.dk, the bare one can.
+    assert names == ["__Host-intern_csrftoken", "intern_csrftoken"]
+    assert settings.CSRF_COOKIE_NAME in names
 
 
 # --- stored data ---------------------------------------------------------------------------------

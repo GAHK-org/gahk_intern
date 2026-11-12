@@ -32,9 +32,13 @@ CSRF_COOKIE_SECURE = not DEBUG
 # less trusted webhosting that must never see an intranet session. New names as well, because a
 # browser keeps the old ".gahk.dk" `sessionid` until it expires and would otherwise send two cookies
 # of the same name to intern.gahk.dk; core.middleware.ExpireLegacyCookies deletes the old pair.
+# In production the names carry the __Host- prefix: the browser then accepts them only host-only,
+# Secure and on Path=/, so a compromised gahk.dk cannot plant a ".gahk.dk" cookie of the same name
+# that intern would read (it is same-site). Development serves plain http, where a __Host- cookie
+# (which must be Secure) would be refused, so it keeps the bare names.
 SESSION_COOKIE_DOMAIN = None
-SESSION_COOKIE_NAME = "intern_sessionid"
-CSRF_COOKIE_NAME = "intern_csrftoken"
+SESSION_COOKIE_NAME = "intern_sessionid" if DEBUG else "__Host-intern_sessionid"
+CSRF_COOKIE_NAME = "intern_csrftoken" if DEBUG else "__Host-intern_csrftoken"
 
 # Absolute base of THIS site, for links that leave the request: mail sent off the request thread
 # (residents.tasks, core.admin_summary), push payloads opened by a service worker, calendar exports.

@@ -31,8 +31,11 @@ def test_session_cookie_stays_on_the_intranet_host(monkeypatch: pytest.MonkeyPat
 
     assert configured["SESSION_COOKIE_DOMAIN"] is None
     assert configured.get("CSRF_COOKIE_DOMAIN") is None
-    assert configured["SESSION_COOKIE_NAME"] == "intern_sessionid"
-    assert configured["CSRF_COOKIE_NAME"] == "intern_csrftoken"
+    # __Host- (host-only, Secure, Path=/ enforced by the browser) wherever cookies are Secure.
+    prefix = "" if debug == "1" else "__Host-"
+    assert configured["SESSION_COOKIE_NAME"] == f"{prefix}intern_sessionid"
+    assert configured["CSRF_COOKIE_NAME"] == f"{prefix}intern_csrftoken"
+    assert configured["SESSION_COOKIE_SECURE"] == configured["CSRF_COOKIE_SECURE"] == (debug == "0")
 
 
 def test_production_defaults_name_both_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
