@@ -46,8 +46,8 @@ FORMS: dict[str, type[RundvisningForm] | type[FremlejeForm]] = {
 # and the old site always used. A kind not listed here is one intern does not know yet.
 KINDS: dict[str, str] = {"tour": Application.Type.TOUR, "sublet": Application.Type.SUBLET}
 # heard_about_us, wire code -> stored value: one entry for every choice in forms.HEARD_CHOICES (a test
-# holds it to that). Any other
-# code is not from gahk.dk's form and fails the field rules like any other wrong choice.
+# holds it to that). Any other code is not from gahk.dk's form and fails the field rules like any
+# other wrong choice.
 HEARD_ABOUT_US: dict[str, str] = {
     "social_media": "sociale medier",
     "website": "hjemmeside",
