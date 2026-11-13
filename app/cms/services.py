@@ -586,7 +586,7 @@ def upload_image(upload: Any, caption: str, by: Resident | None) -> CmsImage:  #
     except ImageRejected as exc:
         raise ValidationError({"file": str(exc)}) from exc
     with transaction.atomic():
-        image = store_prepared_image(prepared, getattr(upload, "name", "") or "billede", caption, by)
+        image = store_prepared_image(prepared, getattr(upload, "name", "") or "image", caption, by)
         record_change(
             action=Action.UPLOAD,
             kind=Kind.IMAGE,

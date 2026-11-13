@@ -172,7 +172,7 @@ def stored_stem(file_name: str) -> str:
     """
     stem = unicodedata.normalize("NFC", PurePath(file_name).stem)
     cleaned = _letters_runs(stem, SEPARATORS, "_")[:STORED_STEM_MAX].rstrip(SEPARATORS)
-    return unicodedata.normalize("NFC", cleaned) or "billede"
+    return unicodedata.normalize("NFC", cleaned) or "image"
 
 
 def public_image_name(file_name: str, content_type: str) -> str:
@@ -195,7 +195,7 @@ def public_image_name(file_name: str, content_type: str) -> str:
     extension = path.suffix.lower()
     if EXTENSION_TYPES.get(extension) != content_type:
         extension = next(ext for ext, kind in EXTENSION_TYPES.items() if kind == content_type)
-    return f"{stem or 'billede'}{extension}"
+    return f"{stem or 'image'}{extension}"
 
 
 def public_image_url(sha256: str, file_name: str, content_type: str) -> str:

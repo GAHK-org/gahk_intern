@@ -276,8 +276,8 @@ def test_a_preview_background_with_a_danish_letter_is_percent_encoded(front_page
         (unicodedata.normalize("NFD", "Værelse på Østergården.jpg"), "Værelse_på_Østergården"),
         ("Skærmbillede 2026-09-04 kl. 10.11.12.png", "Skærmbillede_2026-09-04_kl.10.11.12"),
         ("İstanbul.jpg", "İstanbul"),
-        ("…….jpg", "billede"),
-        ("._.jpg", "billede"),
+        ("…….jpg", "image"),
+        ("._.jpg", "image"),
     ],
 )
 def test_library_names_keep_their_letters(file_name: str, stem: str) -> None:
@@ -300,7 +300,7 @@ def test_library_names_keep_their_letters(file_name: str, stem: str) -> None:
         ("Have_Foto_aB3x9Zq.png", "image/png", "have-foto-ab3x9zq.png"),  # ASCII: as it always was
         ("_960w.webp", "image/webp", "960w.webp"),  # never one of gahk.dk's own variant names
         (".skjult.jpg", "image/jpeg", "skjult.jpg"),
-        ("…….jpg", "image/jpeg", "billede.jpg"),
+        ("…….jpg", "image/jpeg", "image.jpg"),
         ("foto.jpg", "image/png", "foto.png"),  # the extension follows the content
     ],
 )
