@@ -156,7 +156,7 @@ def _build() -> tuple[Category, ...]:
             CHAT_LIKES,
             "Reaktioner på dine beskeder",
             "chat",
-            "Når nogen reagerer på din besked.",
+            "Når nogen reagerer på din besked eller dit svar.",
             importance=Importance.LAV,
         ),
         Category(POSTS_NEW, "Nye opslag", "posts", "Når nogen slår op på tavlen."),

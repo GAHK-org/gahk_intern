@@ -8,7 +8,7 @@ from django.core.files.base import ContentFile
 
 from residents.models import Resident
 
-from .models import DEFAULT_CHANNEL_SLUG, QuickComment, QuickPost, QuickReaction
+from .models import DEFAULT_CHANNEL_SLUG, QuickComment, QuickCommentReaction, QuickPost, QuickReaction
 
 POSTS = [
     # channel, message age, expiry relative to now, replies, post image, reply image, reactions
@@ -231,6 +231,12 @@ def seed(residents: list[Resident], now: datetime, rng: random.Random) -> int:
             QuickComment.objects.filter(pk=comment.pk).update(
                 created_at=created_at + timedelta(minutes=reply_index + 1)
             )
+            # Every other reply gets a reaction from the person who asked, so the thread panel shows
+            # reactions on replies without a hand-made fixture.
+            if reply_index % 2 == 0 and comment.author_id != post.author_id:
+                QuickCommentReaction.objects.create(
+                    comment=comment, author=post.author, emoji=rng.choice(EMOJI)
+                )
         for resident in rng.sample(residents, k=min(reaction_count, len(residents))):
             QuickReaction.objects.create(post=post, author=resident, emoji=rng.choice(EMOJI))
         made += 1

@@ -14,16 +14,17 @@
   Callers set:
     post     the QuickPost, carrying .reaction_rows (see views.posts_for / views.thread) and, from
              the same function, .grouped / .group_end — where this message sits in a run by one
-             sender. Neither is a field on the model.
+             sender. On the feed and in the archive it also carries .reply_preview, the newest
+             replies drawn under it (views.LATEST_REPLIES). None of these is a field on the model.
     bare     truthy for the message a thread hangs off: skips grouping (a parent is never a
-             continuation of anything), the delete button, the swipe gestures and the "N svar"
-             link — you are already in the thread, and deleting from here would orphan the panel
-             you are standing in.
+             continuation of anything), the delete button, the swipe gestures, the "Svar" action
+             and the reply preview — you are already in the thread, and deleting from here would
+             orphan the panel you are standing in.
     archived truthy in the archive and in the thread panel of an archived message. Removes every
              control that would WRITE: the delete form and the swipe gestures that fire it, and it
              turns the reaction row read-only (see _reactions.html). It also drops the countdown,
-             which has nothing left to count. The "N svar" link stays — reading a thread is not a
-             write, and the panel it opens refuses one.
+             which has nothing left to count, and the "Svar" action. The reply preview stays —
+             reading a thread is not a write, and the panel it opens refuses one.
 
              A FLAG FROM THE CALLER, NOT `post.is_archived`. The two agree today and the property
              exists — but reading it here would make every message on the LIVE feed ask the clock
@@ -34,7 +35,7 @@
 
   A DELETED message (`post.is_deleted`) renders a tombstone: the bubble keeps the name, the time and
   its place in the run, and holds "Besked slettet" where the message was — no image, no countdown,
-  no reaction row, no delete form. The "N svar" link survives where there are replies, for the same
+  no reaction row, no delete form. The reply preview survives where there are replies, for the same
   reason the archive keeps it.
 
   Read off the post rather than passed in like `archived`, and deliberately the opposite call:
@@ -69,14 +70,24 @@
       which matters for the shape of the swipe transform (see .msg in styles.css).
 {% endcomment %}
 {% comment %}
-  data-msg-swipe marks this as a swipe target for frontend/src/feed.ts: right opens the thread,
-  left (own messages) submits the delete form. An attribute rather than a class because the class
-  list is already doing layout work, and because `bare` must not carry it — the thread parent sits
-  inside the panel a swipe would open, so swiping it right would re-open the thread being read.
+  data-msg-swipe marks this as a swipe target for frontend/src/feed.ts: right answers the message
+  from the feed's composer (or, on a tombstone, opens the thread it left behind), left (own
+  messages) submits the delete form. An attribute rather than a class because the class list is
+  already doing layout work, and because `bare` must not carry it — the thread parent sits inside
+  the panel, where a right swipe means "back to the feed".
+
+  data-reply-* is what the composer needs to answer this message without the thread being open:
+  where to post, and who and what to name in the bar above the text box ("Svar til …"). Rendered
+  only where a reply would be accepted, so their presence IS the rule — the archive and a tombstone
+  carry none, and feed.ts has nothing to second-guess.
 {% endcomment %}
 <article class="msg{% if post.grouped and not bare %} msg-grouped{% endif %}{% if post.group_end or bare %} msg-tail{% endif %}{% if post.author_id == user.id %} msg-own{% endif %}{% if bare %} msg-parent{% endif %}{% if archived %} msg-archived{% endif %}{% if post.is_deleted %} msg-tombstone{% endif %}"
          id="{% if bare %}thread-parent-{{ post.pk }}{% else %}msg-{{ post.pk }}{% endif %}"
-         {% if not bare and not archived %}data-msg-swipe{% endif %}>
+         {% if not bare and not archived %}data-msg-swipe{% endif %}
+         {% if not bare and not archived and not post.is_deleted %}data-reply-url="{% url 'den_hurtige:create_comment' post.pk %}"
+         data-thread-url="{% url 'den_hurtige:thread' post.pk %}"
+         data-reply-name="{{ post.author.full_name }}"
+         data-reply-text="{{ post.content|plain|truncatechars:140 }}"{% endif %}>
   {% comment %}
     No swipe target and no hints in the archive: both gestures fire a control that is not rendered
     there (the thread link, the delete form), so arming them would be a drag that reveals an icon
@@ -101,9 +112,14 @@
     {% endcomment %}
     {% comment %}
       On a tombstone each hint is tied to its control, for the reason the archive gives above: a
-      revealed icon that does nothing reads as a broken gesture.
+      revealed icon that does nothing reads as a broken gesture. There is nothing to answer, so the
+      right swipe opens the thread the message left behind — and only when it left one.
     {% endcomment %}
-    {% if not post.is_deleted or post.reply_count %}
+    {% if not post.is_deleted %}
+      <span class="msg-hint msg-hint-reply" aria-hidden="true">
+        <svg class="ni"><use href="#i-reply"></use></svg>
+      </span>
+    {% elif post.reply_count %}
       <span class="msg-hint msg-hint-thread" aria-hidden="true">
         <svg class="ni"><use href="#i-chat"></use></svg>
       </span>
@@ -140,13 +156,7 @@
     <div class="msg-avatar" aria-hidden="true">
       {% if bare or post.group_end %}
         {# tabindex -1: the name below is the keyboard-reachable link to the same profile. #}
-        <a class="author-link" href="{% url 'resident_profile' post.author_id %}" tabindex="-1">
-        {% if post.author.profile_picture %}
-          <img src="{{ post.author.avatar_url }}" alt="" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:50%;display:block">
-        {% else %}
-          {{ post.author.first_name|slice:":1" }}{{ post.author.last_name|slice:":1" }}
-        {% endif %}
-        </a>
+        <a class="author-link" href="{% url 'resident_profile' post.author_id %}" tabindex="-1">{% include "den_hurtige/_avatar.html" with person=post.author %}</a>
       {% endif %}
     </div>
 
@@ -226,14 +236,9 @@
   </div>
 
   {% comment %}
-    Reactions, the reply link and the message's own clock share one row. All of them are always
-    rendered — the picker and a "Svar" link exist even with nothing on the message — so as separate
-    stacked rows they cost about 54px of every message before a word of content.
-
-    The time and expiry moved here from the old header line. They stay on EVERY message rather than
-    only on the run's last one: a run can span five minutes, and in a feed where messages delete
-    themselves the per-message countdown is most of the point of the page. Here it is free — the
-    row exists anyway — where above the text it was a line of its own.
+    Reactions and the "Svar" action share one row, under the bubble. Both are always rendered on a
+    live message — the picker and "Svar" exist even with nothing on it — so as separate stacked rows
+    they would cost about 54px of every message before a word of content.
   {% endcomment %}
   <div class="msg-actions">
     {% comment %}
@@ -241,65 +246,56 @@
       would render an empty row and a "+" that toggle_reaction refuses.
     {% endcomment %}
     {% if not post.is_deleted %}
-      {% include "den_hurtige/_reactions.html" with reactions=post.reaction_rows %}
+      {% include "den_hurtige/_reactions.html" with item=post reactions=post.reaction_rows %}
     {% endif %}
 
     {% comment %}
-      RENDERED IN THE ARCHIVE TOO. A thread was briefly inlined there behind a <details> instead,
-      on the argument that an archive whose answers are elsewhere is a record of half a
-      conversation. That was solving the wrong half: the answers are not elsewhere, they are in the
-      same panel they have always been in, and a reader who knows how to open a thread in the live
-      feed should not have to learn a second control to open the same thread one screen higher.
+      ANSWER WITHOUT LEAVING THE FEED. With JavaScript this turns the composer at the bottom of the
+      page into a reply to this message ("Svar til …", see frontend/src/feed.ts): the text goes into
+      the thread, the thread stays shut, and the answer appears in the preview below a moment later.
+      Opening the thread is the preview's job, not this one's.
 
-      The panel renders an archived thread read-only — no reply form, no reaction controls, and no
-      5s poll, since nothing about it can change (views._render_thread, _thread.html).
+      An <a href> to the standalone thread page all the same, so that without JavaScript it still
+      leads somewhere you can answer — that page has the reply form.
+
+      Not rendered where a reply would be refused — the archive, a tombstone — and not on the thread
+      parent, whose panel has its own reply box. "Svar på beskeden" is its accessible name.
     {% endcomment %}
-    {% comment %}
-      IN THE ARCHIVE THE LINK APPEARS ONLY WHEN THERE ARE REPLIES. Empty, this element is an
-      affordance and nothing else -- it reads "Svar", and its whole job is to tell you that you may
-      answer. In the archive you may not, so on a message nobody ever replied to it offered a
-      control that does not exist and named an action that is refused. With replies it is doing its
-      OTHER job, which survives archiving intact: it is the only evidence on the feed that a
-      conversation happened at all, and opening it is a read.
-    {% endcomment %}
-    {% comment %}
-      A tombstone follows the archive's rule, one clause on: with replies this link is the only way
-      to them, empty it offers an answer to a message that no longer exists.
-    {% endcomment %}
-    {% if not bare and post.reply_count or not bare and not archived and not post.is_deleted %}
-      {% comment %}
-        An <a href>, not a button: it is a real URL (den_hurtige:thread), so it works with no JS at
-        all — the browser navigates to the standalone thread page — and htmx upgrades it into the
-        side panel when JS is there. That is what keeps the no-JS path the old <details> had.
-
-        hx-target is #js-thread, which lives OUTSIDE #js-feed on purpose. See feed.html.
-
-        The swipe-right gesture fires THIS element's click rather than issuing a request of its
-        own, so the panel, the history entry and the back-gesture handling are all reached by one
-        path. See the swipe block in frontend/src/feed.ts.
-
-        ONE ELEMENT, TWO JOBS, AND THEY ARE NOT EQUALLY IMPORTANT. Empty it is a bare affordance --
-        "you may reply to this" -- and with replies it is the only evidence on the feed that a
-        conversation exists at all. Those two used to render identically: same size, same green,
-        same weight, the text "Svar" or "3 svar" and nothing else, sitting in a row beside the
-        reaction pills. A thread was invisible unless you read the row.
-
-        `.has-replies` is what splits them (styles.css draws the pill), and it was already on the
-        element -- it existed only to keep this link visible on mid-run messages, where the rest of
-        the action row collapses. Styling it costs NO extra height, which is the whole reason the
-        signal goes here rather than into a Slack-style reply bar of its own: the row is rendered
-        on every message already.
-
-        The icon leads and the count follows, contiguously -- `{{ post.reply_count }} svar` must
-        stay one unbroken string, because that is what the feed tests look for.
-      {% endcomment %}
-      <a class="msg-replies{% if post.reply_count %} has-replies{% endif %}" href="{% url 'den_hurtige:thread' post.pk %}"
-         hx-get="{% url 'den_hurtige:thread' post.pk %}"
-         hx-target="#js-thread" hx-swap="innerHTML"
-         aria-label="{% if post.reply_count %}Åbn tråd med {{ post.reply_count }} svar{% else %}Svar på beskeden{% endif %}">
-        {% if post.reply_count %}<svg class="ni" aria-hidden="true"><use href="#i-chat"></use></svg>{{ post.reply_count }} svar{% else %}Svar{% endif %}
-      </a>
+    {% if not bare and not archived and not post.is_deleted %}
+      <a class="msg-reply" href="{% url 'den_hurtige:thread' post.pk %}" data-reply
+         aria-label="Svar på beskeden"><svg class="ni" aria-hidden="true"><use href="#i-reply"></use></svg>Svar</a>
     {% endif %}
-
   </div>
+
+  {% comment %}
+    THE THREAD, PREVIEWED: the newest replies as small bubbles under the message they answer, so
+    the conversation is readable from the feed and the panel is for when you want all of it.
+    views.LATEST_REPLIES fetches them, at most REPLY_PREVIEW per message in one query for the whole
+    feed; `reply_count` is the full count, so the head says how much more there is.
+
+    ONE LINK, the whole block. It opens the thread panel (hx-get into #js-thread, OUTSIDE #js-feed
+    on purpose — see feed.html) and, without JavaScript, the standalone thread page. Because it is a
+    link, nothing inside it may be one: the reply text goes through |plain rather than |links (a link
+    inside a link is invalid HTML), and the names are not links to profiles here.
+
+    Rendered in the archive and on a tombstone too: reading a thread is not a write, and with the
+    message gone this is the only way to the replies it left behind.
+
+    `{{ post.reply_count }} svar` stays one unbroken string — it is what the feed tests look for.
+  {% endcomment %}
+  {% if not bare and post.reply_count %}
+    {% url 'den_hurtige:thread' post.pk as thread_url %}
+    <a class="thread-preview" href="{{ thread_url }}" hx-get="{{ thread_url }}" hx-target="#js-thread" hx-swap="innerHTML">
+      <span class="thread-preview-head"><svg class="ni" aria-hidden="true"><use href="#i-chat"></use></svg>{{ post.reply_count }} svar{% if post.reply_count > post.reply_preview|length %}<span class="thread-preview-all">· Se alle</span>{% endif %}</span>
+      {% for reply in post.reply_preview %}
+        <span class="preview-reply{% if reply.author_id == user.id %} is-own{% endif %}">
+          <span class="preview-avatar" aria-hidden="true">{% include "den_hurtige/_avatar.html" with person=reply.author %}</span>
+          <span class="preview-bubble">
+            <span class="preview-name">{{ reply.author.full_name }}</span>
+            <span class="preview-text">{% if reply.image %}📷 {% endif %}{{ reply.content|plain|default:"Billede" }}</span>
+          </span>
+        </span>
+      {% endfor %}
+    </a>
+  {% endif %}
 </article>

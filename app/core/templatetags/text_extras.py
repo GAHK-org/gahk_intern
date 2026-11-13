@@ -9,7 +9,8 @@ core.markdown, which finds and shortens its links with the same rules. See core.
 from django import template
 from django.utils.safestring import SafeString
 
-from core.links import linkify
+from core.links import linkify, shorten_urls
+from core.mentions import to_plain
 
 register = template.Library()
 
@@ -29,6 +30,19 @@ def links_filter(value: str | None) -> SafeString:
     passing its search-engine standing to whatever anybody pasted.
     """
     return linkify(value)
+
+
+@register.filter
+def plain(value: str | None) -> str:
+    """`value` as words only: @mention tokens shown as `@Name`, and URLs as the short text a link to
+    them shows — but nothing made into a link.
+
+    For text that is QUOTED rather than shown — the reply previews under a message on Den Hurtige's
+    feed, and the message a reply is being written to. The previews sit inside the link that opens
+    the thread, and a link inside a link is invalid HTML that the browser untangles by splitting the
+    outer one, so `|links` cannot be used there. Returns a plain str, so the template escapes it.
+    """
+    return shorten_urls(to_plain(value))
 
 
 @register.filter

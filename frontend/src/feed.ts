@@ -65,13 +65,29 @@ function toBottom(el: HTMLElement): void {
   el.scrollTop = el.scrollHeight;
 }
 
+// Whether the element is rendered at all. The feed is display:none while a thread fills a phone's
+// screen, and a box that is not rendered reports 0 for every measurement.
+function isShown(el: Element): boolean {
+  return el.getClientRects().length > 0;
+}
+
 // Attributes the CLIENT owns, which the server never sends and morphing would therefore strip:
 //   open            a picker or reader panel the reader opened; losing it closes it under their thumb
 //   data-live-busy  live-region.ts's hold. The server renders the channel menu held (it starts
 //                   closed); a refresh of the OPEN menu would otherwise put the hold back on it and
 //                   freeze it, and a refresh mid-drag would take the kanban's off.
 //   data-live-on    live.ts's "this element's topic was joined", which the polls filter on
-const CLIENT_OWNED_ATTRS = new Set(["open", "data-live-busy", "data-live-on"]);
+//   data-replying   the message the composer is answering ("replying from the feed" below)
+//   data-actions-open  a mid-run message whose controls a tap on its bubble brought back
+//   data-flash      the moment's highlight on a message the reader has just come back to
+const CLIENT_OWNED_ATTRS = new Set([
+  "open",
+  "data-live-busy",
+  "data-live-on",
+  "data-replying",
+  "data-actions-open",
+  "data-flash",
+]);
 
 // NOT idiomorph's ignoreActiveValue, which this used to set. That option leaves the focused
 // element's CHILDREN alone, not just its value — right for a <textarea>, whose children ARE its
@@ -117,7 +133,10 @@ if (feed && scroller) {
   document.body.addEventListener("htmx:beforeSwap", (event: Event) => {
     const detail = (event as CustomEvent<BeforeSwapDetail>).detail;
     if (detail?.target?.id !== LIVE_ID) return; // a reaction swap, an archive chunk, or elsewhere
-    wasAtBottom = atBottom(scroller);
+    // Not while the feed is hidden behind a full-screen thread (a phone): a box that is not
+    // rendered measures 0 everywhere, which reads as "at the bottom", and the position the reader
+    // left is the thread panel's to give back when it closes (see clearThread).
+    wasAtBottom = isShown(scroller) && atBottom(scroller);
   });
 
   document.body.addEventListener("htmx:afterSwap", (event: Event) => {
@@ -346,14 +365,21 @@ document.addEventListener("keydown", (event) => {
     last.querySelector<HTMLElement>(":scope > summary")?.focus();
     return;
   }
+  // Then a reply being written from the feed, which is the nearer thing to back out of.
+  if (replying()) {
+    cancelReply();
+    return;
+  }
   closeThread();
 });
 
 // ---- thread panel -----------------------------------------------------------------------------
-// The panel itself is server-rendered and htmx-driven: the "N svar" anchor in _message.html does
-// hx-get into #js-thread, and the fragment that lands there brings its own poll. What is left for
-// this file is the four things htmx has no opinion about: closing it, focus, Escape, and making the
-// system back gesture close it instead of leaving the app.
+// The panel itself is server-rendered and htmx-driven: the reply preview under a message
+// (_message.html) does hx-get into #js-thread, and the fragment that lands there brings its own
+// poll. What is left for this file is what htmx has no opinion about: closing it, focus, Escape,
+// making the system back gesture close it instead of leaving the app — and keeping the reader's
+// place on both sides of the switch, which is most of what makes going into a thread and back out
+// feel like one conversation rather than two pages.
 
 const threadHost = document.getElementById(THREAD_ID);
 
@@ -361,19 +387,53 @@ const threadHost = document.getElementById(THREAD_ID);
 // close time: that message may have expired out of the feed while the thread was open.
 let threadOpener: HTMLElement | null = null;
 
+// Where the feed was when a thread was opened over it. On a phone the feed is display:none for as
+// long as the thread fills the screen, and what a hidden scroller remembers is up to the browser —
+// Chrome keeps the position, nothing promises Safari does, and the feed's own refreshes meanwhile
+// measure a hidden box as "at the bottom". So it is written down here and given back on close:
+// the reader returns to the message they left from, or to the bottom if that is where they were.
+let feedPlace: { top: number; atBottom: boolean } | null = null;
+
 function threadPanel(): HTMLElement | null {
   return threadHost?.querySelector(".thread-panel") ?? null;
 }
 
+function threadBody(): HTMLElement | null {
+  return threadPanel()?.querySelector<HTMLElement>(".thread-body") ?? null;
+}
+
+// A moment's highlight on a message (.msg[data-flash] in styles.css): the one the reader has just
+// come back to from its thread, or just answered from the feed, so the eye lands on it.
+function flashMessage(pk: string): void {
+  const msg = document.getElementById(`msg-${pk}`);
+  if (!msg) return;
+  msg.removeAttribute("data-flash");
+  void msg.offsetWidth; // restart the animation if it is still running from a moment ago
+  msg.setAttribute("data-flash", "");
+  window.setTimeout(() => msg.removeAttribute("data-flash"), 1500);
+}
+
 function clearThread(): void {
+  const pk = threadPanel()?.dataset.threadPk;
+  // Measured while the panel is still there: whether it was covering the feed decides whether the
+  // feed has a place to be given back. Beside a docked desktop panel it never moved.
+  const covered = feed !== null && !isShown(feed);
   if (threadHost) threadHost.innerHTML = "";
   dropThreadParam(); // so a reload does not re-open a thread the reader closed
+  if (covered && feed && feedPlace) {
+    // Reading scrollTop's target forces the layout that shows the feed again, so this lands.
+    if (feedPlace.atBottom) toBottom(feed);
+    else feed.scrollTop = feedPlace.top;
+  }
+  feedPlace = null;
+  if (pk) flashMessage(pk);
   const opener = threadOpener;
   threadOpener = null;
   // Back to the link that opened it, if it is still on screen; otherwise the feed, so focus never
-  // ends up on <body> with nothing to arrow away from.
-  if (opener?.isConnected) opener.focus();
-  else feed?.focus();
+  // ends up on <body> with nothing to arrow away from. preventScroll, because the position was
+  // just put back and focusing must not move it again.
+  if (opener?.isConnected && isShown(opener)) opener.focus({ preventScroll: true });
+  else feed?.focus({ preventScroll: true });
 }
 
 // Whether THIS document pushed a history entry when the thread was opened. False when the page was
@@ -410,9 +470,18 @@ document.addEventListener("click", (event) => {
     closeThread();
   } else {
     // Remember the opener BEFORE htmx swaps, while the click target still exists.
-    const opener = target.closest<HTMLElement>(".msg-replies");
+    const opener = target.closest<HTMLElement>(".thread-preview");
     if (opener) threadOpener = opener;
   }
+});
+
+// Write down the feed's place as a thread is about to land — while the feed is still on screen. A
+// thread opened from inside another one, on a phone, finds the feed already hidden and keeps the
+// place the first one wrote.
+document.body.addEventListener("htmx:beforeSwap", (event: Event) => {
+  const target = (event as CustomEvent<BeforeSwapDetail>).detail?.target;
+  if (target?.id !== THREAD_ID || !feed || !isShown(feed)) return;
+  feedPlace = { top: feed.scrollTop, atBottom: atBottom(feed) };
 });
 
 document.body.addEventListener("htmx:afterSwap", (event: Event) => {
@@ -422,8 +491,26 @@ document.body.addEventListener("htmx:afterSwap", (event: Event) => {
   if (!panel) return;
 
   // Focus the PANEL, not the reply field. On a phone this is a full-screen view, and focusing the
-  // input pops the keyboard over the replies the reader just came to read.
+  // input pops the keyboard over the replies the reader just came to read. The exception is a
+  // reply already being written, carried in from the feed's composer: then the field is where the
+  // reader was, and deliverDraft puts them back in it.
   panel.focus();
+  // WHERE IT OPENS depends on why. Tapped open from the feed, the reader has just seen the newest
+  // replies in the preview and asked for the rest: the top, with the message they answer, reading
+  // down. Arrived at from a notification (no opener — the ?traad= deep link) the news is the newest
+  // reply, and with a draft carried in from the composer the reader is writing: the bottom, beside
+  // the reply box. On a desktop most threads fit the panel and it makes no difference.
+  const body = threadBody();
+  if (body) {
+    const atNewest = !threadOpener || carried !== null;
+    if (atNewest) toBottom(body);
+    else body.scrollTop = 0;
+    // Set from the decision, not measured: the photos in a thread have no height until they have
+    // loaded (nothing stores their size), so a thread opened at its top can measure as "at the
+    // bottom" for a moment — and the first photo to load would then drag it down to the end.
+    threadStuck = atNewest;
+  }
+  deliverDraft(panel);
 
   // One history entry per thread, so Android's back gesture closes the panel rather than leaving
   // the installed PWA (the manifest is display:standalone, so there is no browser back button and
@@ -432,7 +519,7 @@ document.body.addEventListener("htmx:afterSwap", (event: Event) => {
   // Hand-rolled rather than hx-push-url: htmx would also snapshot this page into localStorage for
   // its history cache and, on back, restore a DOM that has been polling for minutes. Turning that
   // off needs hx-history="false" on <body>, which makes every back press a full navigation.
-  // DO NOT add hx-push-url to the "N svar" link.
+  // DO NOT add hx-push-url to the reply preview's link.
   const pk = panel.getAttribute("data-thread-pk");
   if (!pk || history.state?.denHurtigeThread === pk) return;
 
@@ -455,6 +542,51 @@ window.addEventListener("popstate", (event) => {
     pushedThreadEntry = false;
     clearThread();
   }
+});
+
+// ---- the thread follows its newest reply ------------------------------------------------------
+// Like the feed (see the top of this file): while the reader is at the bottom of the thread, what
+// arrives there — a reply from the live refresh, their own reply landing in the list, a photo
+// decoding late — keeps the bottom in view. Scrolled up to re-read, nothing moves under them.
+//
+// `threadStuck` is that one fact, kept current by the reader's own scrolling. The scroll and load
+// listeners sit on #js-thread in the capture phase, because neither event bubbles and the panel
+// inside is replaced every time a different thread is opened.
+let threadStuck = true;
+
+threadHost?.addEventListener(
+  "scroll",
+  (event) => {
+    const body = threadBody();
+    if (body && event.target === body) threadStuck = atBottom(body);
+  },
+  { capture: true, passive: true },
+);
+
+threadHost?.addEventListener(
+  "load",
+  (event) => {
+    const body = threadBody();
+    if (body && threadStuck && event.target instanceof HTMLImageElement) toBottom(body);
+  },
+  true,
+);
+
+document.body.addEventListener("htmx:afterSwap", (event: Event) => {
+  const target = (event as CustomEvent<{ target?: HTMLElement }>).detail?.target;
+  const body = threadBody();
+  // Swaps INSIDE the panel only: its own refresh, and the reply list after a reply. A reaction row
+  // swaps outerHTML, so its target has left the document by now and is not counted.
+  if (!target || !body || target.id === THREAD_ID || !threadHost?.contains(target)) return;
+  // Your own reply always comes into view; anything else only if the reader was following.
+  if (threadStuck || target.id.startsWith("js-replies-")) toBottom(body);
+});
+
+// The keyboard coming up shrinks the panel from below (interactive-widget=resizes-content, see
+// feed.html), which would push the newest replies out of sight under the reply box.
+window.addEventListener("resize", () => {
+  const body = threadBody();
+  if (body && threadStuck) toBottom(body);
 });
 
 // ---- live signals -----------------------------------------------------------------------------
@@ -732,14 +864,20 @@ if (document.body.classList.contains("chat-page")) {
 // ---- swipe gestures (touch only) --------------------------------------------------------------
 // Three gestures, all of them shortcuts to controls that already exist rather than new powers:
 //
-//   message, swipe right      -> open its thread (clicks the "N svar" link)
+//   message, swipe right      -> answer it from the composer ("Svar", startReply) — or, on a
+//                                tombstone, open the thread it left behind (its reply preview)
 //   own message, swipe left   -> delete it (submits the .msg-del form, confirm() and all)
 //   thread panel, swipe right -> back to the feed (the ← button's closeThread)
 //
-// Firing the existing control rather than issuing a request is the whole trick. The thread gesture
-// goes through the anchor, so the htmx swap, the pushed history entry and the Android back handling
-// are reached by exactly one path and cannot drift from the tap; the delete gesture goes through
-// the form, so the confirm() still stands between a stray drag and a permanently deleted message.
+// Firing the existing control rather than issuing a request is the whole trick. The reply gesture
+// is exactly the "Svar" tap; the thread gesture goes through the preview's anchor, so the htmx
+// swap, the pushed history entry and the Android back handling are reached by exactly one path and
+// cannot drift from the tap; the delete gesture goes through the form, so the confirm() still
+// stands between a stray drag and a permanently deleted message.
+//
+// SWIPE RIGHT USED TO OPEN THE THREAD, and answering is what it does in every chat app residents
+// already use — the Messenger group this replaced included. Opening a thread is a tap on its
+// preview now, which shows what is in there before you go.
 //
 // TOUCH ONLY, deliberately. A mouse drag across a message is how you select its text, and a
 // trackpad's horizontal scroll would be indistinguishable from a swipe. Desktop keeps the buttons.
@@ -756,9 +894,8 @@ if (document.body.classList.contains("chat-page")) {
 // vertical axis to the browser (so the feed still scrolls with its native momentum) and hands us
 // the horizontal one. A flick that the browser claims as a scroll arrives here as pointercancel.
 const SWIPE_SLOP = 12; // px of HORIZONTAL travel before the axis can be called
-// px of travel PAST the axis call that commits the gesture. Two of them, because the two gestures
-// are not equally reversible: opening a thread is a view change the back arrow undoes, deleting is
-// permanent. The destructive one is the longer haul; the one people reach for twenty times an
+// px of travel PAST the axis call that commits the gesture. Two of them, because the gestures are
+// not equally reversible: starting a reply is undone by its ×, deleting is permanent. The destructive one is the longer haul; the one people reach for twenty times an
 // evening is the shorter.
 const SWIPE_TRIGGER = 48;
 const SWIPE_TRIGGER_DELETE = 62;
@@ -782,7 +919,7 @@ const SWIPE_HINT_FROM = 28;
 // second. But losing the tie no longer ENDS the gesture -- see the axis block in pointermove.
 const SWIPE_X_BIAS = 1.3;
 
-type SwipeAction = "thread" | "delete" | "close";
+type SwipeAction = "reply" | "thread" | "delete" | "close";
 
 interface Drag {
   pointerId: number;
@@ -814,7 +951,12 @@ function overlayOpen(): boolean {
 
 function actionFor(el: HTMLElement, dx: number): SwipeAction | null {
   if (el.classList.contains("thread-panel")) return dx > 0 ? "close" : null;
-  if (dx > 0) return el.querySelector(".msg-replies") ? "thread" : null;
+  // Right answers wherever a reply would be accepted — the server's answer, carried by data-reply-*
+  // (see _message.html) — and otherwise opens whatever thread there is to read.
+  if (dx > 0) {
+    if (el.dataset.replyUrl && canReplyFromFeed()) return "reply";
+    return el.querySelector(".thread-preview") ? "thread" : null;
+  }
   // Left is delete, and only where the delete control exists — which is the server's answer to
   // "may this resident delete this message", not one this file should try to reproduce.
   return el.querySelector(".msg-del") ? "delete" : null;
@@ -829,9 +971,9 @@ function triggerFor(action: SwipeAction): number {
 }
 
 // Distance OR speed, never both at once. Past the trigger it is committed however slowly the thumb
-// got there; short of it, a flick still counts -- a thread opened by mistake costs one tap on the
-// back arrow, and a delete still has to get past its confirm(), so neither is a decision this is
-// forbidden to make quickly.
+// got there; short of it, a flick still counts -- a reply started by mistake costs one tap on its ×,
+// and a delete still has to get past its confirm(), so neither is a decision this is forbidden to
+// make quickly.
 function shouldCommit(active: Drag, now: number): boolean {
   if (!active.action) return false;
   if (active.armed) return true;
@@ -839,9 +981,16 @@ function shouldCommit(active: Drag, now: number): boolean {
   return active.along >= SWIPE_FLICK_MIN && active.speed * dirOf(active.action) >= SWIPE_FLICK_SPEED;
 }
 
+const HINTS: Record<SwipeAction, string | null> = {
+  reply: ".msg-hint-reply",
+  thread: ".msg-hint-thread",
+  delete: ".msg-hint-del",
+  close: null,
+};
+
 function hintFor(el: HTMLElement, action: SwipeAction): HTMLElement | null {
-  const cls = action === "thread" ? ".msg-hint-thread" : ".msg-hint-del";
-  return action === "close" ? null : el.querySelector<HTMLElement>(cls);
+  const cls = HINTS[action];
+  return cls ? el.querySelector<HTMLElement>(cls) : null;
 }
 
 function clearHints(el: HTMLElement): void {
@@ -871,19 +1020,22 @@ function settle(el: HTMLElement, cls: string): void {
 function fireSwipe(el: HTMLElement, action: SwipeAction): void {
   if (action === "close") {
     closeThread();
+  } else if (action === "reply") {
+    startReply(el);
   } else if (action === "thread") {
     // Clicking the anchor rather than calling htmx directly: the click handler above records it as
     // threadOpener on the way past, which is what focus returns to when the thread is closed.
-    el.querySelector<HTMLElement>(".msg-replies")?.click();
+    el.querySelector<HTMLElement>(".thread-preview")?.click();
   } else {
     el.querySelector<HTMLFormElement>(".msg-del")?.requestSubmit();
   }
 }
 
 // A gesture ends in a compatibility click on whatever the finger left the screen over, and inside
-// a bubble that can be the photo -- so a swipe-to-open-thread would open the thread AND the picture
-// full size. Swallowed for one click, and only the BROWSER's: fireSwipe dispatches its own on the
-// "N svar" anchor, and a synthetic click is not trusted, so the gesture's own effect goes through.
+// a bubble that can be the photo -- so a swipe to answer would start the reply AND open the picture
+// full size (and a click on the bubble itself would toggle its controls). Swallowed for one click,
+// and only the BROWSER's: fireSwipe dispatches its own on the reply preview's anchor, and a
+// synthetic click is not trusted, so the gesture's own effect goes through.
 let swallowIn: HTMLElement | null = null;
 let swallowUntil = 0;
 
@@ -1153,7 +1305,9 @@ if (composer instanceof HTMLFormElement) {
     };
 
     composer.addEventListener("submit", (event: SubmitEvent) => {
-      if (confirmed) return;
+      // A reply is sent by the "replying from the feed" block below, and asks nothing: it lives
+      // exactly as long as the message it answers.
+      if (confirmed || replying()) return;
       // Native validation has already passed by the time `submit` fires, so an empty message never
       // reaches the sheet — the browser has asked for the text first, which is the right order.
       event.preventDefault();
@@ -1196,10 +1350,287 @@ if (composer instanceof HTMLFormElement) {
     fileInput.addEventListener("change", () => {
       const name = fileInput.files?.[0]?.name;
       fileNote.textContent = name ? `📎 ${name}` : "";
+      fileNote.classList.remove("is-warning");
       fileNote.hidden = !name;
     });
   }
 }
+
+// ---- replying from the feed -------------------------------------------------------------------
+// "Svar" on a message — or a right swipe — turns the composer into an answer to it, and the thread
+// stays shut: a bar above the text box names who and what is being answered (#js-composer-reply in
+// feed.html), the text goes to that message's reply endpoint instead of becoming a post, and the
+// answer turns up in the message's reply preview a moment later, by the same refresh that brings
+// everybody else's. The whole thread is one tap away on the bar ("Åbn tråden"), and whatever has
+// been typed goes along into the thread's own reply box.
+//
+// THE COMPOSER STAYS ONE FORM. Replying is a state of it, not a second form: one text box at the
+// bottom of the screen is where the thumb and the keyboard already are, the paperclip, a pasted
+// screenshot and the downscale (imageupload.ts, which runs first and re-submits) all work
+// unchanged, and a draft survives the switch — start typing, decide it is an answer, tap "Svar",
+// carry on. What changes is where `submit` goes: to fetch() and the reply endpoint rather than the
+// native post, and past the duration sheet, which a reply has nothing to ask.
+//
+// Sent with HX-Target: js-composer, which is how views._comment_response knows to answer with a
+// status and the messages as JSON rather than the thread panel's reply list: 201 stored (empty the
+// box), 422 refused (say why, keep the text). Anything else — a lost session answering with the
+// login page, a server error, no network — keeps the text too.
+const replyComposer = composer instanceof HTMLFormElement ? composer : null;
+const replyBar = document.getElementById("js-composer-reply");
+const replyText = replyComposer?.querySelector("textarea") ?? null;
+const replyFile = replyComposer?.querySelector<HTMLInputElement>('input[type="file"]') ?? null;
+const replyNotify = replyBar?.querySelector<HTMLInputElement>('input[name="notify"]') ?? null;
+const replyError = replyBar?.querySelector<HTMLElement>("[data-reply-error]") ?? null;
+const composerNote = document.getElementById("js-composer-file");
+const POST_PLACEHOLDER = replyText?.placeholder ?? "";
+const REPLY_PLACEHOLDER = "Skriv dit svar…";
+const REPLY_FAILED = "Svaret blev ikke sendt. Prøv igen.";
+
+interface ReplyTarget {
+  pk: string;
+  url: string;
+  threadUrl: string;
+}
+
+interface Note {
+  level: string;
+  text: string;
+}
+
+let replyTarget: ReplyTarget | null = null;
+
+// A draft on its way from the composer into the thread's own reply box ("Åbn tråden"), held until
+// that thread's panel has landed (deliverDraft, from the panel's afterSwap above).
+let carried: { pk: string; text: string; files: FileList | null; notify: boolean } | null = null;
+
+function canReplyFromFeed(): boolean {
+  return replyComposer !== null && replyBar !== null;
+}
+
+function replying(): boolean {
+  return replyTarget !== null;
+}
+
+// Scroll the feed just enough to show `el` — by hand rather than scrollIntoView, which would also
+// scroll the locked document and shift the whole shell (see .chat-page in styles.css).
+function keepInFeedView(el: HTMLElement): void {
+  if (!feed || !isShown(feed)) return;
+  const box = feed.getBoundingClientRect();
+  const r = el.getBoundingClientRect();
+  if (r.bottom > box.bottom) feed.scrollTop += r.bottom - box.bottom + 8;
+  else if (r.top < box.top) feed.scrollTop -= box.top - r.top + 8;
+}
+
+function showReplyNote(notes: Note[]): void {
+  if (!replyError) return;
+  replyError.hidden = !notes.length;
+  replyError.textContent = notes.map((n) => n.text).join(" ");
+  replyError.classList.toggle("is-warning", notes.length > 0 && notes.every((n) => n.level === "warning"));
+}
+
+function startReply(msg: HTMLElement): void {
+  const { replyUrl: url, threadUrl } = msg.dataset;
+  if (!replyComposer || !replyBar || !replyText || !url || !threadUrl) return;
+  for (const other of document.querySelectorAll(".msg[data-replying]")) other.removeAttribute("data-replying");
+  msg.setAttribute("data-replying", "");
+  replyTarget = { pk: msg.id.replace(/^msg-/, ""), url, threadUrl };
+  const name = replyBar.querySelector('[data-reply-slot="name"]');
+  if (name) name.textContent = msg.dataset.replyName ?? "";
+  const quote = replyBar.querySelector('[data-reply-slot="text"]');
+  if (quote) quote.textContent = msg.dataset.replyText ?? "";
+  showReplyNote([]);
+  if (replyNotify) {
+    replyNotify.disabled = false;
+    replyNotify.checked = false;
+  }
+  replyBar.hidden = false;
+  replyComposer.classList.add("is-replying");
+  replyText.placeholder = REPLY_PLACEHOLDER;
+  // A reply may be a photo on its own, which only the server can weigh against the text.
+  replyText.required = false;
+  replyText.focus({ preventScroll: true });
+  // The bar takes height from the feed, and on a phone the keyboard takes more: keep the message
+  // being answered in sight once each has settled.
+  keepInFeedView(msg);
+  window.setTimeout(() => keepInFeedView(msg), 350);
+}
+
+function cancelReply(): void {
+  replyTarget = null;
+  for (const msg of document.querySelectorAll(".msg[data-replying]")) msg.removeAttribute("data-replying");
+  if (replyBar) replyBar.hidden = true;
+  replyComposer?.classList.remove("is-replying");
+  if (replyNotify) {
+    replyNotify.checked = false;
+    replyNotify.disabled = true; // so a post never carries it
+  }
+  showReplyNote([]);
+  if (replyText) {
+    replyText.placeholder = POST_PLACEHOLDER;
+    replyText.required = true;
+  }
+}
+
+function clearComposer(): void {
+  if (replyText) {
+    replyText.value = "";
+    replyText.dispatchEvent(new Event("input", { bubbles: true })); // the composer shrinks back
+  }
+  if (replyFile?.value) {
+    replyFile.value = "";
+    replyFile.dispatchEvent(new Event("change", { bubbles: true })); // and its 📎 note goes
+  }
+}
+
+async function readNotes(response: Response): Promise<Note[]> {
+  if (!response.headers.get("Content-Type")?.includes("application/json")) return [];
+  try {
+    const body = (await response.json()) as { messages?: Note[] };
+    return Array.isArray(body.messages) ? body.messages : [];
+  } catch {
+    return [];
+  }
+}
+
+async function sendReply(): Promise<void> {
+  const target = replyTarget;
+  if (!replyComposer || !target) return;
+  const send = replyComposer.querySelector<HTMLButtonElement>(".composer-send");
+  if (send?.disabled) return; // already on its way: a double tap must not answer twice
+  if (send) send.disabled = true;
+  showReplyNote([]);
+  const sent = replyText?.value ?? "";
+  try {
+    const response = await fetch(target.url, {
+      method: "POST",
+      body: new FormData(replyComposer),
+      headers: { "HX-Request": "true", "HX-Target": "js-composer" },
+      credentials: "same-origin",
+    });
+    const notes = await readNotes(response);
+    if (response.status !== 201) {
+      showReplyNote(notes.length ? notes : [{ level: "error", text: REPLY_FAILED }]);
+      return;
+    }
+    // Only what was sent, and only the reply that was sent: the box stays as it is if the reader
+    // has started on something else while this was on its way.
+    if (replyText?.value === sent) clearComposer();
+    if (replyTarget === target) cancelReply();
+    // The preview catches up now rather than on the live signal's round trip, and the message the
+    // answer went to is picked out, which is the confirmation that it went.
+    const live = document.getElementById(LIVE_ID);
+    if (live) htmx.trigger(live, "gahk-live");
+    flashMessage(target.pk);
+    // Stored with a warning (the text was kept, the photo was not): said under the box.
+    if (notes.length && composerNote) {
+      composerNote.textContent = notes.map((n) => n.text).join(" ");
+      composerNote.classList.add("is-warning");
+      composerNote.hidden = false;
+    }
+  } catch {
+    showReplyNote([{ level: "error", text: REPLY_FAILED }]);
+  } finally {
+    if (send) send.disabled = false;
+  }
+}
+
+function copyFiles(files: FileList | null): FileList | null {
+  if (!files?.length) return null;
+  const copy = new DataTransfer();
+  for (const file of Array.from(files)) copy.items.add(file);
+  return copy.files;
+}
+
+// "Åbn tråden": go into the whole conversation, taking the draft along. The composer keeps it until
+// the thread's box has actually taken it (deliverDraft), so a thread that fails to load loses
+// nothing.
+function openReplyThread(): void {
+  const target = replyTarget;
+  if (!target) return;
+  carried = {
+    pk: target.pk,
+    text: replyText?.value ?? "",
+    files: copyFiles(replyFile?.files ?? null),
+    notify: replyNotify?.checked ?? false,
+  };
+  // Focus comes back to the message's "Svar" when the thread is closed, and its presence is also
+  // what makes the panel push a history entry for the back gesture (see the afterSwap above).
+  threadOpener = document.getElementById(`msg-${target.pk}`)?.querySelector<HTMLElement>(".msg-reply") ?? null;
+  cancelReply();
+  void htmx.ajax("get", target.threadUrl, { target: `#${THREAD_ID}`, swap: "innerHTML" });
+}
+
+function deliverDraft(panel: HTMLElement): void {
+  const draft = carried;
+  carried = null;
+  if (!draft || panel.dataset.threadPk !== draft.pk) return;
+  const form = panel.querySelector<HTMLFormElement>(".reply-form");
+  const input = form?.querySelector<HTMLInputElement>('input[name="content"]');
+  // No reply box: the thread was archived or deleted meanwhile. The draft stays in the composer.
+  if (!form || !input) return;
+  input.value = draft.text;
+  const file = form.querySelector<HTMLInputElement>('input[type="file"]');
+  if (file && draft.files) {
+    file.files = draft.files;
+    file.dispatchEvent(new Event("change", { bubbles: true })); // its thumbnail note
+  }
+  const notify = form.querySelector<HTMLInputElement>('input[name="notify"]');
+  if (notify) notify.checked = draft.notify;
+  clearComposer();
+  if (draft.text || draft.files) input.focus();
+}
+
+replyComposer?.addEventListener("submit", (event: SubmitEvent) => {
+  if (!replyTarget) return;
+  event.preventDefault();
+  void sendReply();
+});
+
+// Typing again retires a warning left under the box by the last reply.
+replyText?.addEventListener("input", () => {
+  if (composerNote?.classList.contains("is-warning")) {
+    composerNote.classList.remove("is-warning");
+    composerNote.hidden = !replyFile?.files?.length;
+    if (composerNote.hidden) composerNote.textContent = "";
+  }
+});
+
+document.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  const trigger = target.closest("[data-reply]");
+  if (trigger) {
+    const msg = trigger.closest<HTMLElement>(".msg[data-reply-url]");
+    // No composer on this page: the link goes to the standalone thread page, which has a form.
+    if (!msg || !canReplyFromFeed()) return;
+    event.preventDefault();
+    startReply(msg);
+  } else if (target.closest("[data-reply-cancel]")) {
+    cancelReply();
+  } else if (target.closest("[data-reply-open]")) {
+    openReplyThread();
+  }
+});
+
+// ---- a tap on a bubble brings back its controls -----------------------------------------------
+// The message in the middle of a run shows only its reactions; the picker and "Svar" live on the
+// run's last message (see the MID-RUN block in styles.css). Tapping the bubble shows them for that
+// message — data-actions-open, which the morph leaves alone — and tapping anywhere else puts them
+// away again. The same goes for a reply in the middle of a run in a thread.
+//
+// Never on a tap that lands on something with a job of its own (a link, the photo, a name), and
+// never when the tap was the end of selecting text.
+document.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  const onBubble = target.closest(".msg-bubble") !== null && !target.closest("a, button, summary, input, label");
+  const msg = onBubble ? target.closest<HTMLElement>(".msg") : null;
+  for (const open of document.querySelectorAll<HTMLElement>(".msg[data-actions-open]")) {
+    if (open !== msg && !open.contains(target)) open.removeAttribute("data-actions-open");
+  }
+  if (!msg || msg.classList.contains("msg-tail") || window.getSelection()?.toString()) return;
+  msg.toggleAttribute("data-actions-open");
+});
 
 // ---- attachment notes -------------------------------------------------------------------------
 // What is on screen after you pick a photo, for every form in the project that takes one behind a

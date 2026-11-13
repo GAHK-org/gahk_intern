@@ -12,7 +12,8 @@ Three kinds of notification, each its own category on the settings page:
     posts in.
   * **A reply to your message** (`chat.replies`), grouped per message: "Anders og Bente svarede".
     A reply is addressed to you, not to the room, so a muted room does not silence it.
-  * **A reaction to your message** (`chat.likes`), grouped the same way.
+  * **A reaction to your message** (`chat.likes`), grouped the same way — and a reaction to one of
+    your replies is the same category, grouped per reply: "Bente reagerede på dit svar".
 
 Every chat notification expires with the message it is about: a push for a message that has already
 vanished from the feed is a tap into nothing.
@@ -135,6 +136,27 @@ def notify_reaction(post: "QuickPost", reactor: "Resident", emoji: str) -> None:
         actor=reactor,
         verb="reagerede på din besked",
         body=f"{emoji} {push.preview(to_plain(post.content))}".strip(),
+        url=_thread_url(post),
+        expires_at=post.expires_at,
+    )
+
+
+def notify_reply_reaction(reply: "QuickComment", reactor: "Resident", emoji: str) -> None:
+    """Somebody reacted to `reply`: notify_reaction, one level down.
+
+    It tells the REPLY's author, who is the one it is about, and not the message's — they did not
+    write it. Grouped per reply rather than per thread, so "3 personer reagerede på dit svar" names
+    one thing you said; the link opens the thread it is in. Expires with the message, like every
+    chat notification: the reply has no lifetime of its own."""
+    post = reply.post
+    body = push.preview(to_plain(reply.content)) or "📷 Billede"
+    services.notify_grouped(
+        reply.author_id,
+        category=categories.CHAT_LIKES,
+        group_key=f"chat.likes.svar:{reply.pk}",
+        actor=reactor,
+        verb="reagerede på dit svar",
+        body=f"{emoji} {body}",
         url=_thread_url(post),
         expires_at=post.expires_at,
     )

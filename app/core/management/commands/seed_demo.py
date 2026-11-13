@@ -43,7 +43,7 @@ from cms.models import Event as CmsEvent
 from cms.models import NewsItem, Page, PylonEvent
 from core.models import Cleaning, Room, Workgroup
 from den_hurtige.demo import seed as seed_den_hurtige
-from den_hurtige.models import QuickComment, QuickPost, QuickReaction
+from den_hurtige.models import QuickComment, QuickCommentReaction, QuickPost, QuickReaction
 from events.demo import seed as seed_events
 from events.models import CalendarFeedToken, Event, EventInvite, Rsvp
 from gahkflix.demo import seed as seed_gahkflix
@@ -153,6 +153,7 @@ WIPE_ORDER: list[type[models.Model]] = [
     DailyVisitCount,
     VisitTally,
     QuickReaction,
+    QuickCommentReaction,
     QuickComment,
     QuickPost,
     Media,

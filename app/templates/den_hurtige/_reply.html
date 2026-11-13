@@ -1,0 +1,55 @@
+{% load text_extras %}
+{% comment %}
+  ONE reply in a thread, drawn as the same chat bubble a message is on the feed — the .msg classes
+  and every rule styles.css hangs off them: the avatar at the end of a run and the name at its
+  start, your own replies on the right in green, the photo inside the bubble and a reaction row
+  underneath. Replies used to be a flat list of name, time and text with a rule down the side,
+  which read as comments under a post rather than as the conversation they are.
+
+  NOT _message.html with a flag. A reply has no countdown, no delete, no swipe and no thread of its
+  own, and a message carries a branch for each of those; a second flag through that partial would
+  have touched every one of them to switch them off again. What the two share is the drawing,
+  and that is shared — in styles.css and in _avatar.html and _reactions.html.
+
+  `reply` carries .reaction_rows, .grouped and .group_end (views._thread_replies, which runs the
+  replies through the same mark_runs as the feed). `post` is the message it answers. `read_only`
+  is set by the view for an archived or deleted thread: the reaction row is drawn inert, as the
+  message's own row is, and `archived` alone cools the bubble the way the archive does.
+
+  The clock is shown once per run, above its first reply, and only as a time unless the reply was
+  written on another day than the message. The thread is one conversation, mostly within the hour;
+  the message above it carries the full date.
+{% endcomment %}
+<article class="msg thread-reply{% if reply.grouped %} msg-grouped{% endif %}{% if reply.group_end %} msg-tail{% endif %}{% if reply.author_id == user.id %} msg-own{% endif %}{% if archived %} msg-archived{% endif %}"
+         id="svar-{{ reply.pk }}">
+  {% if not reply.grouped %}
+    <div class="msg-clock">
+      <span class="msg-meta msg-time">{% if reply.created_at|date:"Ymd" == post.created_at|date:"Ymd" %}{{ reply.created_at|date:"H:i" }}{% else %}{{ reply.created_at|date:"j. M, H:i" }}{% endif %}</span>
+    </div>
+  {% endif %}
+  <div class="msg-line">
+    <div class="msg-avatar" aria-hidden="true">
+      {% if reply.group_end %}<a class="author-link" href="{% url 'resident_profile' reply.author_id %}" tabindex="-1">{% include "den_hurtige/_avatar.html" with person=reply.author %}</a>{% endif %}
+    </div>
+    <div class="msg-bubble">
+      {% if not reply.grouped %}<span class="msg-name"><a class="author-link" href="{% url 'resident_profile' reply.author_id %}">{{ reply.author.full_name }}</a></span>{% endif %}
+      {% comment %}
+        Guarded because a reply may be a photo with no caption: an empty line box would still take
+        its line-height, a blank line between the name and the picture.
+      {% endcomment %}
+      {% if reply.content %}
+        <div class="msg-line-text"><span class="msg-text">{{ reply.content|links }}</span></div>
+      {% endif %}
+      {% if reply.image %}
+        {# data-viewer: a bare <img> is what a long press can save. See _message.html. #}
+        <a href="{{ reply.image.url }}" target="_blank" rel="noopener" class="msg-image"
+           data-viewer data-name="{{ reply.image.name|basename }}">
+          <img src="{{ reply.image.url }}" alt="" loading="lazy">
+        </a>
+      {% endif %}
+    </div>
+  </div>
+  <div class="msg-actions">
+    {% include "den_hurtige/_reactions.html" with item=reply reactions=reply.reaction_rows archived=read_only %}
+  </div>
+</article>

@@ -29,7 +29,7 @@ from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.core.files.uploadedfile import UploadedFile
 from django.db.models import Count, Prefetch, QuerySet
-from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect
+from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.http.response import HttpResponseBase
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -52,6 +52,7 @@ from .models import (
     DURATION_CHOICES,
     QUICK_EMOJI,
     QuickComment,
+    QuickCommentReaction,
     QuickPost,
     QuickReaction,
 )
@@ -73,6 +74,26 @@ GROUPING_WINDOW = timedelta(minutes=5)
 # what test_the_feed_costs_no_extra_query_per_reaction forbids. Joining keeps it at one query
 # whether there are reactions or none. The author is needed because the reader panel names people.
 REACTIONS = Prefetch("reactions", queryset=QuickReaction.objects.select_related("author"))
+# The same, for the replies in a thread. Their own table (models.QuickCommentReaction), same join.
+REPLY_REACTIONS = Prefetch("reactions", queryset=QuickCommentReaction.objects.select_related("author"))
+
+# How many replies a message shows under itself on the feed: the newest ones, read oldest first,
+# with a "Se alle N svar" above them when there are more. Two is what fits under a bubble on a phone
+# without the preview outgrowing the message it hangs off; the thread panel has the rest.
+REPLY_PREVIEW = 2
+
+# THE PREVIEW IS ONE QUERY FOR THE WHOLE FEED, and bounded. A sliced Prefetch is a window function
+# (ROW_NUMBER per message), so the poll fetches at most REPLY_PREVIEW replies per message in a
+# single query however many messages and replies there are. The feed stopped prefetching
+# `comments__author` once because that loaded EVERY reply of every message every few seconds to
+# print a count; this loads two, and only because two are now drawn.
+#
+# Newest first, because that is what the slice has to keep; _with_reply_previews turns it round.
+LATEST_REPLIES = Prefetch(
+    "comments",
+    queryset=QuickComment.objects.select_related("author").order_by("-created_at", "-pk")[:REPLY_PREVIEW],
+    to_attr="latest_replies",
+)
 
 
 def _active_posts(channel: Channel) -> QuerySet[QuickPost]:
@@ -89,7 +110,7 @@ def _active_posts(channel: Channel) -> QuerySet[QuickPost]:
         QuickPost.objects.filter(channel=channel.slug)
         .active()
         .select_related("author")
-        .prefetch_related(REACTIONS)
+        .prefetch_related(REACTIONS, LATEST_REPLIES)
         .annotate(reply_count=Count("comments"))
         # Chat order: oldest first, newest at the bottom by the composer. QuickPost.Meta.ordering
         # stays newest-first for the admin and everything else that lists posts as records.
@@ -97,17 +118,27 @@ def _active_posts(channel: Channel) -> QuerySet[QuickPost]:
     )
 
 
-def reactions_for(post: QuickPost, user_id: int) -> list[dict[str, object]]:
-    """[{emoji, count, mine}] for one message, most-used first.
+def _with_reply_previews[P: QuickPost](posts: list[P]) -> list[P]:
+    """Attach `reply_preview`: the replies LATEST_REPLIES fetched, turned round into reading order.
+
+    For a list fetched with LATEST_REPLIES only (the feed and the archive chunks)."""
+    for post in posts:
+        post.reply_preview = post.latest_replies[::-1]  # type: ignore[attr-defined]
+    return posts
+
+
+def reactions_for(post: QuickPost | QuickComment, user_id: int) -> list[dict[str, object]]:
+    """[{emoji, count, mine}] for one message or reply, most-used first.
 
     A thin adapter over core.reactions.reaction_rows, which holds the counting and ordering shared
     with opslagstavlen. Kept as a named function here because the feed and the toggle both call it
-    with a post, and because tests import it from this module.
+    with a post, and because tests import it from this module. Replies have a `reactions` relation
+    of the same shape (models.QuickCommentReaction), so it serves them unchanged.
     """
     return reaction_rows(post.reactions.all(), user_id)
 
 
-def mark_runs(posts: list[QuickPost], user_id: int) -> list[QuickPost]:
+def mark_runs[T: (QuickPost, QuickComment)](posts: list[T], user_id: int) -> list[T]:
     """Attach `reaction_rows`, `grouped` and `group_end` to a list of messages IN READING ORDER.
 
     Attached here rather than resolved in the template because a Django template cannot call a
@@ -120,15 +151,22 @@ def mark_runs(posts: list[QuickPost], user_id: int) -> list[QuickPost]:
     every run backwards. It is called once per DAY rather than once per chunk, because a date
     heading interrupts a run visually and a burst straddling midnight must not be drawn as one
     group with the heading wedged into the middle of it.
+
+    The replies in a thread go through here too (`_thread_replies`), which is what makes them the
+    same bubbles: a reply has an author, a time and reactions, and that is all a run is made of.
     """
-    previous: QuickPost | None = None
+    previous: T | None = None
     for post in posts:
         post.reaction_rows = reactions_for(post, user_id)  # type: ignore[attr-defined]
-        # Same author, close in time → render as a continuation (no repeated name).
+        # Same author, close in time → render as a continuation (no repeated name). A message with
+        # replies ends its run whatever comes next: its reply preview is drawn under it, between it
+        # and the next bubble, so the two cannot be joined into one shape. (A reply has no
+        # `reply_count`; nothing hangs under a reply.)
         post.grouped = bool(  # type: ignore[attr-defined]
             previous
             and previous.author_id == post.author_id
             and post.created_at - previous.created_at < GROUPING_WINDOW
+            and not getattr(previous, "reply_count", 0)
         )
         # `grouped` alone cannot draw a bubble. It says "something of mine is above me", which is
         # enough to decide the NAME and the top corners, and nothing else: the avatar sits at the
@@ -173,7 +211,7 @@ def posts_for(request: HttpRequest, channel: Channel) -> list["DayGroup"]:
     message from yesterday is indistinguishable from one an hour old. The archive already read this
     way; the live feed holds up to two days of messages and did not.
     """
-    return group_by_day(list(_active_posts(channel)), current_resident(request).pk)
+    return group_by_day(_with_reply_previews(list(_active_posts(channel))), current_resident(request).pk)
 
 
 def _channel_or_404(request: HttpRequest, slug: str | None) -> Channel:
@@ -441,12 +479,12 @@ def _archive_chunk(
     forever: that one does split and gets its heading twice, which is the better of the two failures
     and rare enough to be worth the asymmetry.
 
-    Replies are COUNTED, not fetched — the same bargain the live feed struck. A chunk briefly
-    prefetched `comments__author` so it could render every thread inline; the threads went back to
-    the side panel (see _message.html), so all a chunk needs is the number on the "N svar" link, and
-    the panel fetches the conversation itself when somebody actually opens one. On a channel with a
-    long history that is the difference between one query per chunk and one per chunk plus every
-    reply anybody ever wrote in it.
+    Replies are COUNTED, and only the newest REPLY_PREVIEW of each are fetched — the same bargain
+    the live feed struck, so an archived message draws the same preview a live one does. A chunk
+    briefly prefetched `comments__author` so it could render every thread inline; the threads went
+    back to the side panel (see _message.html), and the panel fetches the whole conversation itself
+    when somebody actually opens one. LATEST_REPLIES is one bounded query per chunk, where every
+    reply anybody ever wrote in a long-lived channel was not.
     """
     rows = QuickPost.objects.filter(channel=channel.slug).archived()
     if before is not None:
@@ -454,10 +492,11 @@ def _archive_chunk(
     # One more than a chunk, purely to answer "is there an older chunk?" without a second COUNT.
     page = list(
         rows.select_related("author")
-        .prefetch_related(REACTIONS)
+        .prefetch_related(REACTIONS, LATEST_REPLIES)
         .annotate(reply_count=Count("comments"))
         .order_by("-created_at", "-pk")[: ARCHIVE_PAGE + 1]
     )
+    _with_reply_previews(page)
     more = len(page) > ARCHIVE_PAGE
     page = page[:ARCHIVE_PAGE]
     if more:
@@ -540,7 +579,7 @@ def thread(request: HttpRequest, pk: int) -> HttpResponseBase:
         session to the login page, htmx follows the redirect, and the login form lands inside the
         panel. A 204 makes htmx do nothing, and hands an unauthorised caller no data either way.
       * anything else goes through @access_required like every other page, so a plain resident gets
-        the 403 the rollout gate promises. That is the no-JS path behind the "N svar" anchor's
+        the 403 the rollout gate promises. That is the no-JS path behind the reply preview's
         href, and what a reply push notification deep-links to.
     """
     if request.headers.get("HX-Request"):
@@ -575,15 +614,11 @@ def _render_thread(request: HttpRequest, pk: int, *, fragment: bool) -> HttpResp
     about it can change — no reply can arrive, no reaction can move — so a timer on it is a request
     every five seconds for a byte-identical answer, forever, on a page somebody has left open.
 
-    Replies are prefetched HERE rather than in _active_posts: one post's worth instead of every
-    post's, on a request that only happens when somebody opens a thread.
+    The replies are fetched HERE rather than in _active_posts — all of them, with their reactions,
+    for one message, on a request that only happens when somebody opens a thread. The feed carries
+    only the newest REPLY_PREVIEW of each (LATEST_REPLIES).
     """
-    post = (
-        QuickPost.objects.filter(pk=pk)
-        .select_related("author")
-        .prefetch_related("comments__author", REACTIONS)
-        .first()
-    )
+    post = QuickPost.objects.filter(pk=pk).select_related("author").prefetch_related(REACTIONS).first()
     if post is not None:
         channel = channels.lookup(post.channel)
         # Same answer as "gone" for a channel this resident may not read: never confirm that a
@@ -596,9 +631,11 @@ def _render_thread(request: HttpRequest, pk: int, *, fragment: bool) -> HttpResp
             return render(request, "den_hurtige/_thread.html", {"post": None})
         raise Http404("Ingen besked med det id.")
 
-    post.reaction_rows = reactions_for(post, current_resident(request).pk)  # type: ignore[attr-defined]
+    user_id = current_resident(request).pk
+    post.reaction_rows = reactions_for(post, user_id)  # type: ignore[attr-defined]
     context = {
         "post": post,
+        "replies": _thread_replies(post, user_id),
         "channel": channels.lookup(post.channel),
         "max_content_chars": MAX_CONTENT_CHARS,
         "quick_emoji": QUICK_EMOJI,
@@ -606,9 +643,22 @@ def _render_thread(request: HttpRequest, pk: int, *, fragment: bool) -> HttpResp
         "archived": post.is_archived,
         # Separate from `archived` because the panel names which state it is; both can be true.
         "deleted": post.is_deleted,
+        # Either one shuts the thread: no reply box, and every reaction row drawn inert.
+        "read_only": post.is_archived or post.is_deleted,
     }
     template = "den_hurtige/_thread.html" if fragment else "den_hurtige/thread.html"
     return render(request, template, context)
+
+
+def _thread_replies(post: QuickPost, user_id: int) -> list[QuickComment]:
+    """Every reply to `post`, oldest first, marked into runs and carrying its reaction row.
+
+    Two queries whatever the size of the thread: the replies with their authors, and their reactions
+    with theirs (REPLY_REACTIONS). Shared by the panel, the standalone page and the reply list a
+    posted reply answers with, so the three cannot draw a reply differently.
+    """
+    replies = post.comments.select_related("author").prefetch_related(REPLY_REACTIONS)
+    return mark_runs(list(replies), user_id)
 
 
 def _validated_image(request: HttpRequest) -> UploadedFile | None:
@@ -703,8 +753,23 @@ def create_post(request: HttpRequest) -> HttpResponseRedirect:
     return redirect(channel.url)
 
 
-def _comment_response(request: HttpRequest, post: QuickPost, back: str) -> HttpResponse:
-    """What a reply POST answers with: the reply LIST for htmx, a redirect otherwise.
+# The feed's own composer, which can post a reply without the thread being open (frontend/src/
+# feed.ts, "replying from the feed"). It says so the way htmx names a target, in HX-Target.
+COMPOSER_ID = "js-composer"
+
+
+def _comment_response(
+    request: HttpRequest, post: QuickPost, back: str, *, created: bool = False
+) -> HttpResponse:
+    """What a reply POST answers with. Three askers, three answers:
+
+      * THE FEED'S COMPOSER (HX-Target: js-composer) gets the messages as JSON, and a status that
+        says whether the reply was stored: 201 or 422. It is not looking at the thread, so there is
+        no list to swap in — the reply turns up in the message's preview on the feed, by the live
+        signal like anybody else's — but it must know whether to clear the box, and it must be able
+        to show why not. A warning can come with a 201: the text was kept and the photo was not.
+      * htmx (the thread panel) gets the reply LIST.
+      * anything else is redirected.
 
     The list, not the whole panel. The reply form carries data-morph-skip so the panel's own 5s
     poll cannot wipe half-typed text (see frontend/src/feed.ts) -- and a response that replaced the
@@ -717,13 +782,23 @@ def _comment_response(request: HttpRequest, post: QuickPost, back: str) -> HttpR
     `back` (the channel URL) is still the fallback for a post that vanished under us.
 
     Messages are rendered inside the fragment, so "Skriv en kommentar" and a rejected image warning
-    land in the panel instead of being stranded in the session until the next full page load.
+    land in the panel instead of being stranded in the session until the next full page load. The
+    JSON answer consumes them the same way, by iterating them.
     """
+    if request.headers.get("HX-Target") == COMPOSER_ID:
+        notes = [{"level": note.level_tag, "text": str(note)} for note in messages.get_messages(request)]
+        return JsonResponse({"messages": notes}, status=201 if created else 422)
     if request.headers.get("HX-Request"):
         return render(
             request,
             "den_hurtige/_replies.html",
-            {"post": post, "max_content_chars": MAX_CONTENT_CHARS},
+            {
+                "post": post,
+                "replies": _thread_replies(post, current_resident(request).pk),
+                "quick_emoji": QUICK_EMOJI,
+                "archived": post.is_archived,
+                "read_only": post.is_archived or post.is_deleted,
+            },
         )
     if post.pk is None:  # pragma: no cover - defensive; a deleted post has no thread to return to
         return redirect(back)
@@ -779,7 +854,7 @@ def create_comment(request: HttpRequest, pk: int) -> HttpResponse:
     )
     services.notify_new_comment(comment)
     live.message_changed(post.channel, post.pk)
-    return _comment_response(request, post, back)
+    return _comment_response(request, post, back, created=True)
 
 
 @require_POST
@@ -818,10 +893,39 @@ def toggle_reaction(request: HttpRequest, pk: int) -> HttpResponse:
     return _reaction_row(request, post, resident.pk)
 
 
+@require_POST
+@access_required
+def toggle_reply_reaction(request: HttpRequest, pk: int) -> HttpResponse:
+    """toggle_reaction for a REPLY: the same one emoji per person, on models.QuickCommentReaction.
+
+    The reply is resolved through its MESSAGE (_post_or_404), so every rule is the message's: a
+    reply in a channel this resident may not read is a 404, and a reply in an archived or deleted
+    thread re-renders its row read-only and writes nothing — the panel drew it read-only already,
+    so getting here means the page went stale under a thumb, exactly as in toggle_reaction.
+
+    A new reaction tells the REPLY's author, not the message's (services.notify_reply_reaction).
+    The live signal names the message, as every signal does (den_hurtige.live): the thread panel
+    keyed by it refreshes, and so does the feed, though nothing it draws has changed.
+    """
+    reply = get_object_or_404(QuickComment, pk=pk)
+    post = _post_or_404(request, reply.post_id, archived_ok=True)
+    reply.post = post  # already resolved; spares notify_reply_reaction a query for it
+    resident = current_resident(request)
+    if post.is_deleted or post.is_archived:
+        return _reaction_row(request, reply, resident.pk, archived=True)
+    form = ReactionForm(request.POST)
+    if form.is_valid():
+        emoji = form.cleaned_data["emoji"]
+        if apply_toggle(QuickCommentReaction.objects, author=resident, emoji=emoji, comment=reply) == CREATED:
+            services.notify_reply_reaction(reply, resident, emoji)
+        live.message_changed(post.channel, post.pk)
+    return _reaction_row(request, reply, resident.pk)
+
+
 def _reaction_row(
-    request: HttpRequest, post: QuickPost, user_id: int, *, archived: bool = False
+    request: HttpRequest, item: QuickPost | QuickComment, user_id: int, *, archived: bool = False
 ) -> HttpResponse:
-    """Just one message's reaction row, re-read from the database.
+    """Just one message's (or reply's) reaction row, re-read from the database.
 
     NOT prefetched, and NOT reactions_for(): a prefetch is evaluated when the item is fetched, which
     in toggle_reaction is *before* apply_toggle writes. Reading .reactions.all() would then hit a
@@ -832,8 +936,8 @@ def _reaction_row(
         request,
         "den_hurtige/_reactions.html",
         {
-            "post": post,
-            "reactions": reaction_rows(post.reactions.select_related("author"), user_id),
+            "item": item,
+            "reactions": reaction_rows(item.reactions.select_related("author"), user_id),
             "quick_emoji": QUICK_EMOJI,
             "archived": archived,
         },
