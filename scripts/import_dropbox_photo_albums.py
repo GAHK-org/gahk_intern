@@ -105,11 +105,12 @@ sent twice. A server that stops answering is tried again every 30 seconds, 5 tim
 times, 2 to 16 seconds apart; then the run stops, as every album after it would fail too. A run an
 error stops like that — or a crash — is started again from the top 15 minutes later
 (--restart-after; 0 to exit instead), and again after every such stop, until it gets through or
-Ctrl-C stops it. Not after a mistake in the command or its settings, which it says and exits, nor
-after --stop-on-error or Dropbox refusing its token (an access token expired). Albums that failed
-are skipped on later runs until you fix them in Dropbox and pass --retry-failed. Everything printed
-is also appended to <work-dir>/import.log, and every failure — with all its reasons — to
-<work-dir>/failures.log.
+Ctrl-C stops it. Not after a mistake in the command or its settings, which it says and exits — a
+server refusing the import token or missing an endpoint counts as one until it has answered
+properly, and after that as being redeployed — nor after --stop-on-error or Dropbox refusing its
+token (an access token expired). Albums that failed are skipped on later runs until you fix them in
+Dropbox and pass --retry-failed. Everything printed is also appended to <work-dir>/import.log, and
+every failure — with all its reasons — to <work-dir>/failures.log.
 """
 
 import argparse
@@ -664,6 +665,21 @@ GATEWAY_ERRORS = {502, 503, 504}
 
 
 class Server:
+    # Whether the server has answered a request properly since the script started, restarts included.
+    answered = False
+
+    @classmethod
+    def refused(cls, message: str) -> Fatal:
+        """The stop for an import token refused or an endpoint missing. Before the server has
+        answered properly, a mistake in the command or its settings: the run ends. After, most likely
+        the server being redeployed or set up again — a proxy answers 404 for an app it has no
+        container for — so the run stops, to be started again."""
+        if cls.answered:
+            return Fatal(
+                f"{message} It answered before, so it may be being redeployed."
+            )
+        return FinalStop(message)
+
     def __init__(self, endpoint: str, token: str) -> None:
         self.endpoint = endpoint.rstrip("/")
         if not self.endpoint.endswith("/system"):
@@ -699,11 +715,13 @@ class Server:
                 problem = f"no answer ({exc.__class__.__name__})"
             else:
                 if response.status_code in (401, 403):
-                    raise FinalStop(
+                    raise self.refused(
                         f"The server refused the import token ({response.status_code}) while trying to {what}. "
                         "Check PHOTO_ALBUM_IMPORT_TOKEN against the server's setting."
                     )
                 if not _transient(response):
+                    if response.ok:
+                        Server.answered = True
                     return response
                 problem = f"HTTP {response.status_code}"
                 if response.status_code not in GATEWAY_ERRORS:
@@ -738,7 +756,7 @@ class Server:
             timeout=60,
         )
         if response.status_code == 404:
-            raise FinalStop(
+            raise self.refused(
                 f"{self.endpoint}/albummer does not exist. Is PHOTO_ALBUM_IMPORT_URL right, and is the server "
                 "running a version with sub-albums?"
             )
@@ -893,7 +911,7 @@ class Server:
             timeout=60,
         )
         if response.status_code == 404 and "errors" not in response.text:
-            raise FinalStop(
+            raise self.refused(
                 f"{self.endpoint}/omdoeb does not exist. Is the server running a version that renames albums?"
             )
         if response.status_code != 200:
@@ -913,7 +931,7 @@ class Server:
             timeout=(30, 300),
         )
         if response.status_code == 404:
-            raise FinalStop(
+            raise self.refused(
                 f"{self.endpoint}/datoer does not exist. Is the server running a version that reads sidecars?"
             )
         if response.status_code == 400:
