@@ -119,6 +119,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 import time
 import traceback
 import unicodedata
@@ -996,13 +997,22 @@ def dropbox_client() -> dropbox.Dropbox:
         out.warn(f"Dropbox no longer takes the sign-in saved in {token_file}.")
     refresh_token = sign_in_to_dropbox(app_key, app_secret)
     token_file.parent.mkdir(parents=True, exist_ok=True)
-    partial = token_file.with_suffix(".partial")
-    partial.touch(mode=0o600)
-    partial.write_text(
-        json.dumps({"appKey": app_key, "refreshToken": refresh_token}),
-        encoding="utf-8",
-    )
-    partial.replace(token_file)
+    partial: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=token_file.parent,
+            prefix=f".{token_file.name}.",
+            suffix=".partial",
+            delete=False,
+        ) as temporary:
+            partial = Path(temporary.name)
+            json.dump({"appKey": app_key, "refreshToken": refresh_token}, temporary)
+        partial.replace(token_file)
+    finally:
+        if partial is not None:
+            partial.unlink(missing_ok=True)
     out.ok(f"Signed in to Dropbox; the sign-in is saved in {token_file}.")
     return signed_in_client(app_key, app_secret, refresh_token) or die(
         "Dropbox refused the token it has just given."
@@ -1050,9 +1060,30 @@ def sign_in_to_dropbox(app_key: str, app_secret: str) -> str:
         try:
             return flow.finish(code).refresh_token
         except requests.HTTPError as exc:
+            response = exc.response
+            if response is not None and (
+                response.status_code == 429 or response.status_code >= 500
+            ):
+                raise Fatal(
+                    f"Could not reach Dropbox to sign in (HTTP {response.status_code})."
+                ) from exc
+            try:
+                body = response.json() if response is not None else None
+            except ValueError:
+                body = None
+            error = body.get("error") if isinstance(body, dict) else None
+            if error != "invalid_grant":
+                status = response.status_code if response is not None else "unknown"
+                raise FinalStop(
+                    f"Could not sign in to Dropbox (HTTP {status})."
+                ) from exc
             out.warn(
-                f"Dropbox did not take that code ({exc.response.text[:200]}); try again."
+                f"Dropbox did not take that code ({response.text[:200]}); try again."
             )
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            raise Fatal(
+                f"Could not reach Dropbox to sign in ({exc.__class__.__name__})."
+            ) from exc
     die("Not signed in to Dropbox.")
 
 
@@ -1076,6 +1107,11 @@ def with_dropbox_retries[T](what: str, call: Callable[[], T]) -> T:
         except (
             BadInputError
         ) as exc:  # a request Dropbox will never take: no use asking again
+            if "invalid_grant" in str(exc.message):
+                raise FinalStop(
+                    f"Dropbox refused the refresh token while trying to {what}."
+                    " Sign in to Dropbox again."
+                ) from exc
             raise AlbumFailed(f"Dropbox could not {what}: {exc.message}") from exc
         except RateLimitError as exc:
             wait = exc.backoff or 2**attempt
