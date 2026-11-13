@@ -159,7 +159,7 @@ the next page load as before. A shared layer is also what would make those live.
 Traefik proxies the WebSocket upgrade with no configuration; a proxy that refused it would leave
 Den Hurtige on its old 5-second poll and every other page as it was before.
 
-### 4a. Deploys: CI builds the image, the server pulls it
+### 4a. Deploys: CI builds the image, then asks Coolify to deploy it
 
 Coolify does not build anything. The flow is:
 
@@ -167,10 +167,11 @@ Coolify does not build anything. The flow is:
    `ghcr.io/gahk-org/gahk_intern:sha-<commit>`; once lint, typecheck, migrations, test and build have
    passed, `publish` points **`:main`** at it — a retag, so production runs the tested bytes.
    `security` does not gate it: a fresh advisory should not freeze deploys, least of all the fix.
-2. On the server, `gahk-autodeploy.timer` runs `deploy/autodeploy/gahk-autodeploy.sh` every three
-   minutes. It pulls `:main`; when the image differs from the last one it deployed, it calls the
-   **local** Coolify API to redeploy the app, and Coolify's `docker compose up` recreates `web`,
-   `worker`, `worker-media` and `beat` on the new image (the migration gate in `docker-compose.prod.yml` still applies).
+2. `publish` then calls Coolify's deploy webhook. Coolify checks out that commit of `main` for
+   `docker-compose.prod.yml`, and its `docker compose up` recreates `web`, `worker`, `worker-media`
+   and `beat` on the new image (the migration gate in `docker-compose.prod.yml` still applies). So
+   compose-file changes and the image they go with always deploy together. When two merges race,
+   only the run for `main`'s tip moves `:main` and deploys.
 3. Coolify pulls the image before it stops the running containers, so a redeploy from Coolify by
    hand also runs the newest published image, and an unreachable GHCR fails the deploy with the old
    version still up. That takes **Coolify 4.3.19 or later**: earlier versions stop first and then
@@ -179,42 +180,30 @@ Coolify does not build anything. The flow is:
    that fails to start (a broken migration, a crash on boot) still takes the site down: Coolify has
    no rolling updates for Docker Compose apps.
 
-**Why pull, not a webhook from CI:** a webhook means a Coolify token in GitHub's secrets, i.e. a
-credential for the server held by GitHub. This way GitHub holds nothing for the server; the Coolify
-token never leaves it, and the only thing the server trusts GitHub for is the image.
-
-**The cost:** up to ~3 minutes between a green `main` and the deploy starting.
+**GitHub holds a Coolify token** for this, as a repository secret. It has only the **deploy**
+permission, so the most it can do is redeploy what `main` already says, and pull requests from
+forks never see it.
 
 #### Setting it up **[you]**
 
-1. **GHCR access.** After the first `publish`, the package appears under the org's Packages. Either
-   make it public (Package settings → Change visibility; the repo is public already), or keep it
-   private and, on the server as root, `docker login ghcr.io` with a classic token holding only
-   `read:packages`.
-2. **Coolify**, 4.3.19 or later (step 3 above). In the app's settings, turn **Auto Deploy off** — a push to `main` would otherwise
-   deploy straight away, before CI has published the image. Enable the API (Settings → Advanced) and
-   create a token with only the **deploy** permission. Note the app's UUID (last segment of its URL).
-3. **The timer**, on the server as root:
-   ```sh
-   install -m 755 deploy/autodeploy/gahk-autodeploy.sh /usr/local/bin/gahk-autodeploy
-   install -m 644 deploy/autodeploy/gahk-autodeploy.{service,timer} /etc/systemd/system/
-   install -m 600 deploy/autodeploy/gahk-autodeploy.env.example /etc/gahk-autodeploy.env
-   $EDITOR /etc/gahk-autodeploy.env          # COOLIFY_TOKEN, COOLIFY_APP_UUID
-   systemctl daemon-reload && systemctl enable --now gahk-autodeploy.timer
-   ```
-   The first run deploys once (it has no record of a previous image). Watch it with
-   `journalctl -u gahk-autodeploy -f`; `systemctl list-timers gahk-autodeploy` shows the next run.
-   The timer runs the installed copy, so re-run the first `install` line whenever the script
-   changes.
+1. **GHCR access.** The package is public (Package settings → Change visibility; the repo is public
+   already), so the server pulls without logging in.
+2. **Coolify**, 4.3.19 or later (step 3 above).
+   - In the app's settings, turn **Auto Deploy off**: a push to `main` would otherwise deploy
+     straight away, with the image from before CI has published the new one.
+   - Settings → Advanced: enable **API Access**. Keys & Tokens → API tokens: create a token with
+     only the **deploy** permission.
+   - Copy the app's **Deploy Webhook** URL from its Webhooks tab.
+3. **GitHub**, repo Settings → Secrets and variables → Actions: add `COOLIFY_TOKEN` (the token) and
+   `COOLIFY_WEBHOOK` (the URL). Without them the `publish` job fails at its deploy step, so a
+   missing deploy shows up as a red run.
 
 **Rolling back:** set `IMAGE_TAG=sha-<good commit>` in the app's Coolify environment and redeploy.
-While it is set, new `:main` images still trigger deploys, but they redeploy the pinned one; remove
+While it is set, merges to `main` still trigger deploys, but they redeploy the pinned one; remove
 the variable (and redeploy) once a fix is on `main`. Reverting on `main` also works, it just waits
 for CI.
 
-**A deploy that fails is not retried** by the timer — it records the image once Coolify has accepted
-the request, so a broken migration is not re-run every three minutes. Fix forward, or redeploy from
-Coolify by hand.
+**A deploy that fails is not retried.** Fix forward, or redeploy from Coolify by hand.
 
 ### 4b. Scheduled tasks (Celery Beat → worker)
 
