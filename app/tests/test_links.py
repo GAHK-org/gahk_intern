@@ -269,15 +269,15 @@ def test_a_pasted_link_is_clickable_and_short_on_every_surface(
     )
     EventComment.objects.create(event=event, author=author, body=f"Er det {_url('begivenhed-svar')}?")
 
-    feed = "/intern/den-hurtige/"
+    feed = "/den-hurtige/"
     surfaces = [
         ("Den Hurtige: en besked", feed, _url("besked")),
         ("Den Hurtige: et trådsvar", f"{feed}{post.pk}/traad", _url("svar")),
         ("Den Hurtige: beskeden over tråden", f"{feed}{post.pk}/traad", _url("besked")),
-        ("opslagstavlen: selve opslaget", f"/intern/opslagstavle/{notice.pk}", _url("opslag")),
-        ("opslagstavlen: en kommentar", f"/intern/opslagstavle/{notice.pk}", _url("opslag-svar")),
-        ("begivenheder: beskrivelsen", f"/intern/begivenheder/{event.pk}", _url("begivenhed")),
-        ("begivenheder: en kommentar", f"/intern/begivenheder/{event.pk}", _url("begivenhed-svar")),
+        ("opslagstavlen: selve opslaget", f"/opslagstavle/{notice.pk}", _url("opslag")),
+        ("opslagstavlen: en kommentar", f"/opslagstavle/{notice.pk}", _url("opslag-svar")),
+        ("begivenheder: beskrivelsen", f"/begivenheder/{event.pk}", _url("begivenhed")),
+        ("begivenheder: en kommentar", f"/begivenheder/{event.pk}", _url("begivenhed-svar")),
     ]
 
     bodies = {url: client.get(url).content.decode() for _, url, _ in surfaces}

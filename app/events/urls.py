@@ -1,10 +1,10 @@
 """Danish, mostly slash-less paths, matching opslagstavle/urls.py and den_hurtige/urls.py.
 
-Mounted at /intern/begivenheder/ from residents/urls.py — which has no `app_name`, so its names are
+Mounted at /begivenheder/ from residents/urls.py — which has no `app_name`, so its names are
 global while these are namespaced. Always `{% url 'events:detail' event.pk %}`.
 
-Note the ROOT /begivenheder/ (no /intern/) is the public CMS page and has nothing to do with this;
-see the models docstring on the three-way name collision.
+Note gahk.dk/begivenheder/ (the public site, gahk_web) is a different page that has nothing to do
+with this; see the models docstring on the three-way name collision.
 """
 
 from django.urls import path

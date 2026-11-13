@@ -21,6 +21,7 @@ was on Reppergruppen last year and rotated off should not keep getting paged.
 from typing import TYPE_CHECKING
 
 from django.db.models import Q, QuerySet
+from django.urls import reverse
 
 from core.mentions import notify_mentions
 from notifications import categories, services
@@ -29,11 +30,9 @@ from residents.models import Resident, Role, RoleAssignment, active_period
 if TYPE_CHECKING:
     from .models import RepairComment, RepairTask
 
-BOARD_URL = "/intern/reparationer/"
-
 
 def task_url(task: "RepairTask") -> str:
-    return f"{BOARD_URL}{task.pk}"
+    return reverse("reparationer:detail", args=[task.pk])
 
 
 def _residents_with_role(role: str) -> QuerySet[Resident]:

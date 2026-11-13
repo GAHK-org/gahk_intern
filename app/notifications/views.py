@@ -13,6 +13,7 @@ from django.contrib.auth.decorators import login_required
 from django.db import transaction
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from core import push
@@ -32,7 +33,7 @@ VIEWS = (("kronologisk", "Kronologisk"), ("kategori", "Efter kategori"))
 def _safe(url: str) -> str:
     """Redirect target for a stored row. Rows are written by our own code with site-relative paths;
     this refuses anything else anyway, so a bad row can never become an open redirect."""
-    return url if services.is_site_path(url) else "/intern/notifikationer/"
+    return url if services.is_site_path(url) else reverse("notifications:index")
 
 
 @login_required

@@ -18,13 +18,13 @@
 <body class="min-h-screen flex flex-col bg-gray-50 text-gray-900">
   <header class="bg-emerald-800 text-white shadow">
     <div class="max-w-5xl mx-auto w-full px-4 h-20 flex items-center gap-3">
-      <a href="/" class="flex items-center gap-3 no-underline">
+      <a href="{{ public_site_url }}/" class="flex items-center gap-3 no-underline">
         <img src="{% static 'legacy/image/elements/lamassu.svg' %}" alt="" width="64" height="64"
              class="h-14 w-14 sm:h-16 sm:w-16 object-contain shrink-0">
         <span class="font-display text-lg sm:text-xl text-white">G. A. Hagemanns Kollegium</span>
       </a>
       <span class="flex-1"></span>
-      <a href="/intern/" class="text-xs uppercase tracking-wide text-white/70 hover:text-white no-underline whitespace-nowrap">Intern&nbsp;›</a>
+      <a href="{% url 'dashboard' %}" class="text-xs uppercase tracking-wide text-white/70 hover:text-white no-underline whitespace-nowrap">Intern&nbsp;›</a>
     </div>
     <nav class="bg-emerald-900/40">
       <ul class="max-w-5xl mx-auto w-full px-4 py-2 flex flex-wrap gap-x-5 gap-y-1 uppercase text-sm">

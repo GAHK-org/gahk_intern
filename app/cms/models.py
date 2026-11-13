@@ -21,7 +21,6 @@ from django.conf import settings
 from django.db import models
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
-from django.urls import reverse
 
 from core.files import delete_attached_files
 
@@ -66,12 +65,12 @@ class Page(models.Model):  # gahk_page
         return self.slug or self.header
 
     def get_absolute_url(self) -> str:
-        """The page's public URL, or "" when it has no address.
+        """The page's public URL on gahk.dk (settings.PUBLIC_SITE_URL), or "" when it has no address.
 
-        Reversed against the catch-all rather than f-stringed so the routing contract keeps one
-        owner; "" (not None) because templates concatenate it and admin reads it via view_on_site.
+        Absolute, because the public site is served by gahk_web on other hosting, not by this app.
+        "" (not None) because templates concatenate it and admin reads it via view_on_site.
         """
-        return reverse("page", kwargs={"url_path": self.slug}) if self.slug else ""
+        return f"{settings.PUBLIC_SITE_URL.rstrip('/')}/{self.slug}" if self.slug else ""
 
 
 class NewsItem(models.Model):  # gahk_news — archive-only (live site shows the Facebook feed, F-007)

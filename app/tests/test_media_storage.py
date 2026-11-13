@@ -520,7 +520,7 @@ GATED = [
     "public/image/intern/roomimages/112/skab/image.jpg",
 ]
 
-# What the till asks for, with no session, on every load of /intern/oelkaelder/.
+# What the till asks for, with no session, on every load of /oelkaelder/.
 TILL = [
     "oel/tuborg.png",
     "public/image/intern/oel/billedemangler.jpg",
@@ -656,8 +656,9 @@ def test_a_backslash_path_is_refused(media_tmp: Path) -> None:
 
 def settings_login_url() -> str:
     from django.conf import settings
+    from django.shortcuts import resolve_url
 
-    return settings.LOGIN_URL
+    return resolve_url(settings.LOGIN_URL)
 
 
 # --- conditional GET (the dev-server regression) ----------------------------------------------------

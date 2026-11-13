@@ -41,10 +41,12 @@ class Channel:
     def url(self) -> str:
         """This channel's canonical URL.
 
-        The default channel answers on the bare /intern/den-hurtige/ rather than on its own slug,
-        because static/manifest.json uses that path as the PWA's `id`. A manifest id that changes
-        makes every phone treat the next deploy as a *different* installed app, so the bare URL has
-        to keep rendering a real feed forever. (/generelt/ also resolves; this is the one to link.)
+        The default channel answers on the bare /den-hurtige/ rather than on its own slug, because
+        static/manifest.json uses that path as the PWA's `id`. A manifest id that changes makes every
+        phone treat the next deploy as a *different* installed app, so the bare URL has to keep
+        rendering a real feed forever. (/generelt/ also resolves; this is the one to link.) The id
+        did change once, from /intern/den-hurtige/, with the move to intern.gahk.dk — but the origin
+        changed with it, and a new origin is a new app whatever the id says.
         """
         if self.slug == DEFAULT.slug:
             return reverse("den_hurtige:feed")
@@ -96,18 +98,18 @@ CHANNELS: tuple[Channel, ...] = (
 # mismatch would file every legacy row into a channel no tab links to.
 #
 # Its slug stays the neutral "generelt" even though it is named "Den Hurtige": the canonical URL for
-# the default channel is the bare /intern/den-hurtige/, so a matching slug would only ever surface
-# as the alias /intern/den-hurtige/den-hurtige/. Slug and name are free to differ; only the slug
+# the default channel is the bare /den-hurtige/, so a matching slug would only ever surface as the
+# alias /den-hurtige/den-hurtige/. Slug and name are free to differ; only the slug
 # is stored on posts.
 DEFAULT = CHANNELS[0]
 
-# The kitchen staff's channel. Its slug is the kitchen pseudo-role's, which core.middleware's
-# KITCHEN_HOME also spells out.
+# The kitchen staff's channel. Its slug is the kitchen pseudo-role's; core.middleware.kitchen_home
+# sends the kitchen account here.
 KITCHEN_CHANNEL = KITCHEN
 
 BY_SLUG: dict[str, Channel] = {c.slug: c for c in CHANNELS}
 
-# URL segments under /intern/den-hurtige/ that are views, not channels. `<slug:channel>/` is
+# URL segments under /den-hurtige/ that are views, not channels. `<slug:channel>/` is
 # matched last, so these already win — but a channel named after one would be unreachable with no
 # error anywhere, so checks.py rejects the collision instead (E008). "abonner" and "lyd" are no
 # longer routes (push and per-room muting moved to the notifications app) but stay reserved: an

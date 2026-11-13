@@ -37,7 +37,7 @@ from residents.models import Residency, Resident, Role, RoleAssignment, active_p
 
 pytestmark = pytest.mark.django_db
 
-TARGET = "/intern/opslagstavle/"
+TARGET = "/opslagstavle/"
 
 Recorded = list[tuple[list[int], dict, int]]
 
@@ -143,8 +143,8 @@ def test_notify_writes_a_row_per_resident_and_pushes_once(
     assert ids == sorted([a.pk, b.pk])
     assert payload["head"] == "Nyt opslag"
     assert payload["body"] == "Kaffe i stuen"
-    assert payload["url"] == TARGET
-    assert payload["open"] == f"/intern/notifikationer/aabn/{rows[0].batch}/"
+    assert payload["url"] == push.absolute(TARGET)
+    assert payload["open"] == push.absolute(f"/notifikationer/aabn/{rows[0].batch}/")
     assert payload["tag"] == ""
     assert payload["vibrate"] is True
     assert payload["importance"] == int(Importance.NORMAL)
@@ -342,7 +342,7 @@ def test_a_room_category_makes_rows_only_for_device_owners_with_push_on(
         category=categories.chat_room_key("tv-rezz"),
         title="Anders",
         body="Fodbold?",
-        url="/intern/den-hurtige/tv-rezz/",
+        url="/den-hurtige/tv-rezz/",
     )
 
     assert reached == 1
@@ -505,7 +505,7 @@ def test_grouping_rewrites_one_row(pushes: Recorded, make_resident: Callable[...
             group_key="chat.likes:7",
             actor=actor,
             verb="reagerede på din besked",
-            url="/intern/den-hurtige/?traad=7",
+            url="/den-hurtige/?traad=7",
         )
 
     first = like(anders)
@@ -530,7 +530,7 @@ def test_grouping_rewrites_one_row(pushes: Recorded, make_resident: Callable[...
     # Every push carries the group key as its tag, so the device replaces the banner too.
     assert [p["tag"] for _i, p, _t in pushes] == ["chat.likes:7"] * 3
     assert [p["head"] for _i, p, _t in pushes][-1] == "3 personer reagerede på din besked"
-    assert pushes[-1][1]["open"] == f"/intern/notifikationer/aabn/{row.batch}/"
+    assert pushes[-1][1]["open"] == push.absolute(f"/notifikationer/aabn/{row.batch}/")
 
 
 def test_the_same_actor_again_moves_to_the_front_without_counting_twice(
@@ -664,7 +664,7 @@ def test_the_pages_require_login(client: Client) -> None:
     for name in ("index", "dropdown", "preferences"):
         response = client.get(reverse(f"notifications:{name}"))
         assert response.status_code == 302, name
-        assert "/intern/admin/login" in response["Location"]
+        assert "/admin/login" in response["Location"]
 
 
 def test_index_lists_own_active_rows_most_important_first_then_newest(
@@ -762,13 +762,13 @@ def test_open_marks_seen_and_redirects_to_the_target(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
     a = make_resident(email="a@gahk.dk")
-    row = make_notification(a, url="/intern/begivenheder/3/")
+    row = make_notification(a, url="/begivenheder/3/")
     client.force_login(a)
 
     response = client.get(reverse("notifications:open", args=[row.pk]))
 
     assert response.status_code == 302
-    assert response["Location"] == "/intern/begivenheder/3/"
+    assert response["Location"] == "/begivenheder/3/"
     row.refresh_from_db()
     assert row.seen_at is not None
 
@@ -794,7 +794,7 @@ def test_open_never_becomes_an_open_redirect(
 
     response = client.get(reverse("notifications:open", args=[row.pk]))
 
-    assert response["Location"] == "/intern/notifikationer/"
+    assert response["Location"] == "/notifikationer/"
 
 
 def test_open_batch_marks_the_tapping_residents_own_row(
@@ -802,14 +802,14 @@ def test_open_batch_marks_the_tapping_residents_own_row(
 ) -> None:
     """The push payload is shared by the whole fan-out; tapping it marks only YOUR row seen."""
     a, b = two
-    services.notify([a.pk, b.pk], category=categories.POSTS_NEW, title="t", url="/intern/opslagstavle/9/")
+    services.notify([a.pk, b.pk], category=categories.POSTS_NEW, title="t", url="/opslagstavle/9/")
     open_url = pushes[0][1]["open"]
     client.force_login(a)
 
     response = client.get(open_url)
 
     assert response.status_code == 302
-    assert response["Location"] == "/intern/opslagstavle/9/"
+    assert response["Location"] == "/opslagstavle/9/"
     assert Notification.objects.get(recipient=a).seen_at is not None
     assert Notification.objects.get(recipient=b).seen_at is None
 
@@ -819,14 +819,12 @@ def test_open_batch_also_marks_a_push_only_row(
 ) -> None:
     """A room message has no in-app row to click — the push is the only way it is ever seen."""
     a, _b = two
-    services.notify(
-        [a.pk], category=categories.chat_room_key("generelt"), title="t", url="/intern/den-hurtige/"
-    )
+    services.notify([a.pk], category=categories.chat_room_key("generelt"), title="t", url="/den-hurtige/")
     client.force_login(a)
 
     response = client.get(pushes[0][1]["open"])
 
-    assert response["Location"] == "/intern/den-hurtige/"
+    assert response["Location"] == "/den-hurtige/"
     assert Notification.objects.get().seen_at is not None
 
 
@@ -940,7 +938,7 @@ def test_gahkflix_own_affairs_always_show_in_app_but_push_is_optional(
 
     # Even a saved "off in the app" from before does not hide it in the app.
     NotificationPreference.objects.filter(pk=pref.pk).update(in_app=False)
-    notify([resident.pk], category=categories.GAHKFLIX_UPLOADS, title="Din video er klar", url="/intern/")
+    notify([resident.pk], category=categories.GAHKFLIX_UPLOADS, title="Din video er klar", url="/")
     row = Notification.objects.get(recipient=resident)
     assert row.in_app and not row.pushed
 
@@ -1149,7 +1147,7 @@ def test_broadcast_reaches_everyone(
             "importance": str(int(Importance.KRITISK)),
             "title": "Vandet lukkes kl. 10",
             "body": "I hele huset.",
-            "url": "/intern/",
+            "url": "/",
         },
     )
 
@@ -1350,7 +1348,7 @@ def test_notifications_live_in_the_topbar_not_the_sidebar(make_resident: Callabl
     c = Client()
     c.force_login(make_resident(email="menu@gahk.dk"))
 
-    response = c.get("/intern/")
+    response = c.get("/")
     labels = [label for _section, items in response.context["nav_intern"] for _url, label, _icon in items]
     body = response.content.decode()
 
@@ -1358,7 +1356,7 @@ def test_notifications_live_in_the_topbar_not_the_sidebar(make_resident: Callabl
     assert 'class="notif-bell"' in body
     menu = body[body.index('id="user-menu-panel"') :]
     assert reverse("notifications:preferences") in menu
-    assert 'action="/intern/admin/logout"' in menu
+    assert 'action="/admin/logout"' in menu
     assert "<noscript>" in body  # logging out never depends on the menu's JS
 
 

@@ -91,19 +91,19 @@
   <div class="app">
     <div class="brandcell">
       <img class="logo" src="{% static 'legacy/image/elements/logo.png' %}" alt="" width="34" height="34">
-      <a class="wordmark" href="/intern/"><b>GAHK</b><span>Intern</span></a>
+      <a class="wordmark" href="{% url 'dashboard' %}"><b>GAHK</b><span>Intern</span></a>
     </div>
 
     <header class="topbar">
       <button class="hamburger" @click="sidebar = !sidebar" aria-label="Menu">☰</button>
       {% if "koekken" not in effective_roles %}{# searches the alumneliste, which the kitchen account cannot open #}
-        <form class="topsearch" method="get" action="/intern/alumneliste/" role="search">
+        <form class="topsearch" method="get" action="{% url 'directory' %}" role="search">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
           <input type="search" name="q" placeholder="Søg beboer, studie, e-mail…" aria-label="Søg beboer">
         </form>
       {% endif %}
       <div class="topright">
-        <a href="/" class="btn-top" title="Til GAHK-forsiden">
+        <a href="{{ public_site_url }}/" class="btn-top" title="Til GAHK-forsiden">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
           <span class="hidden sm:inline">Forsiden</span>
         </a>
@@ -130,20 +130,20 @@
                 <a role="menuitem" href="{% url 'resident_profile' user.pk %}">Min profil</a>
               {% endif %}
               <a role="menuitem" href="{% url 'notifications:preferences' %}">Notifikationsindstillinger</a>
-              <a role="menuitem" href="/intern/admin/password-change">Skift kodeord</a>
-              <form method="post" action="/intern/admin/logout">
+              <a role="menuitem" href="{% url 'password_change' %}">Skift kodeord</a>
+              <form method="post" action="{% url 'logout' %}">
                 {% csrf_token %}<button type="submit" role="menuitem">Log ud</button>
               </form>
             </div>
           </div>
           {# Without JS the menu cannot open, and logging out must never depend on it. #}
           <noscript>
-            <form method="post" action="/intern/admin/logout" class="inline">
+            <form method="post" action="{% url 'logout' %}" class="inline">
               {% csrf_token %}<button type="submit" class="btn-top">Log ud</button>
             </form>
           </noscript>
         {% else %}
-          <a href="/intern/admin/login" class="btn-top">Log ind</a>
+          <a href="{% url 'login' %}" class="btn-top">Log ind</a>
         {% endif %}
       </div>
     </header>
@@ -175,7 +175,7 @@
       </div>
     </main>
   </div>
-  {# The one service worker for the whole intern PWA; root path so its scope covers /intern/. #}
+  {# The one service worker for the whole intern PWA; root path so its scope covers the whole site. #}
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', function () {

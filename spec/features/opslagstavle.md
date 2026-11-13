@@ -12,7 +12,7 @@ for "here is what we decided not to do".
 
 The kollegium used a Facebook group for information relevant to the dorm: important events, the
 results of værelsesrunden, birthdays, practical notices. This replaces it: Markdown posts with
-images, comments and reactions, at `/intern/opslagstavle/`, open to every resident.
+images, comments and reactions, at `/opslagstavle/`, open to every resident.
 
 **What it is not:** Den Hurtige. That feature is a chat whose messages are hard-deleted after 30
 minutes to 24 hours, and whose model docstring promises exactly that ("deliberately ephemeral… a
@@ -42,7 +42,7 @@ disputes Inspektionen exists to settle.
 
 ## Routes
 
-`/intern/opslagstavle/` (board), `<pk>` (permalink), `opret`, `<pk>/rediger`, `<pk>/slet`,
+`/opslagstavle/` (board), `<pk>` (permalink), `opret`, `<pk>/rediger`, `<pk>/slet`,
 `<pk>/fastgoer`, `<pk>/kommentar`, `kommentar/<pk>/slet`, `<pk>/reaktion`, `forhaandsvisning`,
 `billede`, `abonner`. Namespaced `opslagstavle:`.
 

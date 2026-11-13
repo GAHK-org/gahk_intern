@@ -44,8 +44,8 @@ class BroadcastForm(forms.Form):
     url = forms.CharField(
         label="Link",
         max_length=500,
-        initial="/intern/",
-        help_text="En side på intern, fx /intern/opslagstavle/.",
+        initial="/",
+        help_text="En side på intern, fx /opslagstavle/.",
     )
 
     def clean_url(self) -> str:

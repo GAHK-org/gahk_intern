@@ -23,15 +23,24 @@ ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").sp
 # without this, every form POST (login included) fails CSRF in prod.
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 # Full https origins that may POST (scheme required, comma-separated), e.g.
-# "https://gahk.dk,https://www.gahk.dk". Set in the environment for prod.
+# "https://intern.gahk.dk". Set in the environment for prod.
 CSRF_TRUSTED_ORIGINS = [o for o in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",") if o]
 SESSION_COOKIE_SECURE = not DEBUG
-SESSION_COOKIE_DOMAIN = ".gahk.dk" if not DEBUG else None
 CSRF_COOKIE_SECURE = not DEBUG
+# Host-only cookies (no Domain attribute): the intranet's session must reach intern.gahk.dk and
+# nothing else. It used to be ".gahk.dk", shared with the public site — which now runs on separate,
+# less trusted webhosting that must never see an intranet session. New names as well, because a
+# browser keeps the old ".gahk.dk" `sessionid` until it expires and would otherwise send two cookies
+# of the same name to intern.gahk.dk; core.middleware.ExpireLegacyCookies deletes the old pair.
+SESSION_COOKIE_DOMAIN = None
+SESSION_COOKIE_NAME = "intern_sessionid"
+CSRF_COOKIE_NAME = "intern_csrftoken"
 
-# Absolute base for links in mail sent off the request thread, where there is no request to
-# call build_absolute_uri on (residents.tasks).
-SITE_URL = os.environ.get("SITE_URL", "http://localhost:8000" if DEBUG else "https://gahk.dk")
+# Absolute base of THIS site, for links that leave the request: mail sent off the request thread
+# (residents.tasks, core.admin_summary), push payloads opened by a service worker, calendar exports.
+SITE_URL = os.environ.get("SITE_URL", "http://localhost:8000" if DEBUG else "https://intern.gahk.dk")
+# The public site (gahk_web, separate hosting) — where "Til GAHK-forsiden" goes.
+PUBLIC_SITE_URL = os.environ.get("PUBLIC_SITE_URL", "https://gahk.dk")
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -66,6 +75,10 @@ MIDDLEWARE = [
     "core.health.HealthCheckMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
+    # Deletes the pre-intern.gahk.dk ".gahk.dk" session/CSRF cookies (see SESSION_COOKIE_NAME). This
+    # high up so every response carries the deletion — a redirect, a 403 — but after WhiteNoise, so
+    # static files never carry a Set-Cookie.
+    "core.middleware.ExpireLegacyCookies",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -73,7 +86,8 @@ MIDDLEWARE = [
     "core.middleware.KitchenAccountGate",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "stats.middleware.FrontPageVisitCounterMiddleware",
+    # No stats.middleware.FrontPageVisitCounterMiddleware: it counted GET "/" as a public front-page
+    # visit, and "/" is the intranet dashboard now. The public site counts its own visits.
     # DEBUG only: presigned URLs follow the host the page was opened on, so a phone on the LAN works.
     "core.middleware.PresignForRequestHost",
 ]
@@ -505,11 +519,11 @@ MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 # Secrets (WiFi/calendar/SMTP) come from the environment (.env / vault), never source. (F-013)
-LOGIN_URL = "/intern/admin/login"
+LOGIN_URL = "login"
 # A stale form (often a PWA's restored login page) explained instead of a bare 403 (residents.auth).
 CSRF_FAILURE_VIEW = "residents.auth.csrf_failure"
-LOGIN_REDIRECT_URL = "/intern/"
-LOGOUT_REDIRECT_URL = "/intern/admin/login"
+LOGIN_REDIRECT_URL = "dashboard"
+LOGOUT_REDIRECT_URL = "login"
 
 # Email — defaults to the console backend in dev (prints instead of sending). SMTP from env in prod.
 EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
