@@ -698,7 +698,7 @@ class Server:
                 problem = f"no answer ({exc.__class__.__name__})"
             else:
                 if response.status_code in (401, 403):
-                    raise Fatal(
+                    raise FinalStop(
                         f"The server refused the import token ({response.status_code}) while trying to {what}. "
                         "Check PHOTO_ALBUM_IMPORT_TOKEN against the server's setting."
                     )
@@ -737,7 +737,7 @@ class Server:
             timeout=60,
         )
         if response.status_code == 404:
-            raise Fatal(
+            raise FinalStop(
                 f"{self.endpoint}/albummer does not exist. Is PHOTO_ALBUM_IMPORT_URL right, and is the server "
                 "running a version with sub-albums?"
             )
@@ -892,7 +892,7 @@ class Server:
             timeout=60,
         )
         if response.status_code == 404 and "errors" not in response.text:
-            raise Fatal(
+            raise FinalStop(
                 f"{self.endpoint}/omdoeb does not exist. Is the server running a version that renames albums?"
             )
         if response.status_code != 200:
@@ -912,7 +912,7 @@ class Server:
             timeout=(30, 300),
         )
         if response.status_code == 404:
-            raise Fatal(
+            raise FinalStop(
                 f"{self.endpoint}/datoer does not exist. Is the server running a version that reads sidecars?"
             )
         if response.status_code == 400:
@@ -3134,7 +3134,7 @@ def year_folders(
     try:
         entries = list(list_folder(client, root))
     except AlbumFailed as exc:
-        raise Fatal(f"{exc.summary} Is --dropbox-root right?") from exc
+        raise FinalStop(f"{exc.summary} Is --dropbox-root right?") from exc
     found = sorted(
         entry.name
         for entry in entries
@@ -3149,7 +3149,7 @@ def year_folders(
     if selected:
         wanted = {same_path(name) for name in selected}
         if missing := wanted - {same_path(name) for name in found}:
-            raise Fatal(f"Not found in {root}: {', '.join(sorted(missing))}")
+            raise FinalStop(f"Not found in {root}: {', '.join(sorted(missing))}")
         found = [name for name in found if same_path(name) in wanted]
     return found, outside
 
