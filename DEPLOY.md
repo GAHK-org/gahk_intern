@@ -737,9 +737,11 @@ albums in real use are never at risk. Run it with `docker exec -it` — it needs
   external link that opens in a new tab, outside the installed GAHK Intern app's scope.
 - Login is standalone (GahkAuthLogin reads the residents table directly); its cookies are host-only
   on wiki.gahk.dk and `Secure`, so neither gahk.dk nor intern.gahk.dk ever sees them.
-- The wiki image of this version only works at wiki.gahk.dk (`$wgScriptPath` is now `""`): deploy it
-  together with the domain switch (§7), not before. Until then gahk.dk/wiki keeps working on the old
-  image and route.
+- The wiki image of this version only works at wiki.gahk.dk (`$wgScriptPath` is now `""`), so it
+  runs as a **second Coolify app** on that domain, set up before the switch (§7 step 1) with the same
+  MariaDB and environment as today's wiki. Today's app keeps serving gahk.dk/wiki until the DNS
+  switch; both use the same database, so an edit on either shows on both. Stop the old app after the
+  switch.
 
 ## 7. DNS and the switch to intern.gahk.dk and wiki.gahk.dk (.dk via Punktum dk) **[you]**
 Records: **`intern.gahk.dk` and `wiki.gahk.dk` A → the Coolify VM** (no AAAA: gahk.dk has never had
@@ -750,7 +752,8 @@ Order — gahk.dk must already serve the public site and forward the old intrane
 moves, and this version must follow right behind it:
 1. A **day ahead**, lower the TTL of the gahk.dk A record (e.g. 300 s). Create `intern.gahk.dk`
    and `wiki.gahk.dk` pointing at the Coolify VM; add the domain to this app in Coolify so Let's
-   Encrypt issues its certificate (the wiki's domain comes with its new image, step 4). Add
+   Encrypt issues its certificate. Deploy the new wiki as its own app on `https://wiki.gahk.dk`
+   (§6) and check it: certificate, login, a few pages, links staying on wiki.gahk.dk. Add
    `https://intern.gahk.dk` to the bucket's CORS rule (§4c).
 2. **gahk_web live first:** installed on the webhost, published to from here, and checked through
    the webhost's own address.
@@ -758,22 +761,23 @@ moves, and this version must follow right behind it:
 4. **Deploy this version** straight after, with the env of §2 (`DJANGO_ALLOWED_HOSTS`,
    `CSRF_TRUSTED_ORIGINS`, `SITE_URL`, `PUBLIC_SITE_URL`). Between 3 and 4, links forwarded from
    gahk.dk land on the old version, which still expects `/intern/` — keep the gap short.
-   In the same go, **switch the wiki** (§6): its new image, the domain `https://wiki.gahk.dk`, the
-   old gahk.dk/wiki route and its `stripprefix` removed, `MW_SERVER=https://wiki.gahk.dk`. Between
-   3 and this, gahk.dk/wiki/… already redirects to wiki.gahk.dk, which does not answer yet.
-5. Verify: `https://gahk.dk/intern/` → 308 to `https://intern.gahk.dk/`, a `https://gahk.dk/kalender/<token>.ics`
+   In the same go, **stop the old wiki app** and its gahk.dk/wiki route: from step 3 gahk.dk
+   redirects `/wiki/…` to wiki.gahk.dk, which has been answering since step 1.
+5. Verify: `https://gahk.dk/intern/` in a browser lands on `https://intern.gahk.dk/` (gahk.dk serves
+   a page that forwards it, or shows the old installed app how to reinstall; other methods get a 308), a `https://gahk.dk/kalender/<token>.ics`
    feed still answers, `https://intern.gahk.dk/health` is 200 (move the uptime monitor there, §4e),
    one upload to Arkiv works (CORS). `https://gahk.dk/wiki/` → `https://wiki.gahk.dk/`, and a wiki
    login lands on the page it came from.
-6. **Rollback** = repoint gahk.dk back to the VM and redeploy the previous images (this app's and
-   the wiki's) with the old env and the wiki's old gahk.dk/wiki route.
+6. **Rollback** = repoint gahk.dk back to the VM, redeploy this app's previous image with the old
+   env, and start the old wiki app again (its gahk.dk/wiki route); the new wiki app can stay.
    Registrar transfer is optional/separate (MitID + auth code). Confirm **who the registrant of
    record is** early — often the slowest item.
 
 Everyone is logged out once (the session cookie is host-only and renamed; the old `.gahk.dk` one is
 deleted on the first request), and out of the wiki once (its old gahk.dk cookies are made
 worthless by `$wgAuthenticationTokenVersion`). Afterwards, tell residents and update by hand:
-- Push and the iPhone home-screen app must be re-enabled on intern.gahk.dk (§2, Web Push).
+- Push and the home-screen app must be set up again on intern.gahk.dk (§2, Web Push). The old app
+  shows how, and `https://intern.gahk.dk/install` has the steps; phones also get a banner.
 - The ølkælder till's bookmark (`https://intern.gahk.dk/oelkaelder/…`) and the kitchen account's
   (`https://intern.gahk.dk/den-hurtige/koekken/`). The redirect covers them, but a redirect is one
   more thing that can break.
