@@ -747,3 +747,24 @@ GAHKFLIX_MAX_UPLOAD_GB = float(os.environ.get("GAHKFLIX_MAX_UPLOAD_GB", "5"))
 GAHKFLIX_PICTURE_MAX_MB = int(os.environ.get("GAHKFLIX_PICTURE_MAX_MB", "15"))
 # Local copies of its thumbnails, banners and frames, in MEDIA_CACHE_DIR/gahkflix/ (gahkflix/cache.py).
 GAHKFLIX_CACHE_MB = int(os.environ.get("GAHKFLIX_CACHE_MB", "1024"))
+
+# --- Transition (TEMPORARY: reverted in phase 3 with the rest of transition/; DEPLOY.md, "Transition") ---
+# Hosts that get the old public site (transition.urls_public) while this app still answers gahk.dk,
+# e.g. "gahk.dk,www.gahk.dk". Empty: none, and intern.gahk.dk is all there is. They must be in
+# DJANGO_ALLOWED_HOSTS too.
+TRANSITION_PUBLIC_HOSTS = [
+    host.strip().lower() for host in os.environ.get("TRANSITION_PUBLIC_HOSTS", "").split(",") if host.strip()
+]
+# Cloudflare Turnstile on the old site's admission forms, as the old code had it. Unset: not checked.
+TURNSTILE_SITE_KEY = os.environ.get("TURNSTILE_SITE_KEY", "")
+TURNSTILE_SECRET_KEY = os.environ.get("TURNSTILE_SECRET_KEY", "")
+INSTALLED_APPS += ["transition"]
+# First of all, ahead of core.health: the public hosts' URLconf, and their /health redirect.
+MIDDLEWARE.insert(0, "transition.middleware.PublicSiteHost")
+# Right after SessionMiddleware: an old ".gahk.dk" session carried over, every saved session marked.
+MIDDLEWARE.insert(
+    MIDDLEWARE.index("django.contrib.sessions.middleware.SessionMiddleware") + 1,
+    "transition.middleware.CarryOverLegacySession",
+)
+# The public hosts' CSRF failure page; residents.auth.csrf_failure for intern.gahk.dk.
+CSRF_FAILURE_VIEW = "transition.views.csrf_failure"

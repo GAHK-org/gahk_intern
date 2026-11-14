@@ -180,20 +180,6 @@ def test_a_request_without_the_old_cookies_deletes_nothing() -> None:
     assert not _deletions(response, "sessionid") and not _deletions(response, "csrftoken")
 
 
-def test_an_old_session_cookie_does_not_log_anyone_in(make_resident: Callable[..., Resident]) -> None:
-    """The old cookie's value is a real session key on this database. Under the new name nothing
-    reads it, so it is the login page, not the dashboard — and the cookie is deleted."""
-    logged_in = Client()
-    logged_in.force_login(make_resident(email="beboer@gahk.dk"))
-    key = logged_in.cookies[settings.SESSION_COOKIE_NAME].value
-
-    c = Client()
-    c.cookies["sessionid"] = key
-    response = c.get(reverse("dashboard"))
-    assert response.status_code == 302 and response["Location"].startswith(reverse("login"))
-    assert set(_deletions(response, "sessionid")) == {".gahk.dk", ""}
-
-
 def test_the_frontend_reads_the_renamed_csrf_cookie() -> None:
     """fetch() and htmx send the token from the cookie (frontend/src/htmx-csrf.ts). Reading the old
     name would pick up nothing — or a stale ".gahk.dk" token — and every POST would fail CSRF."""
