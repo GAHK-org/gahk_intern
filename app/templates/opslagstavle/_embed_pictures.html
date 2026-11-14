@@ -1,0 +1,19 @@
+{% comment %}
+  "Vælg billeder" for an album's widget (views.embed_album_pictures, into form.html's dialog): those
+  picked, in their order, above every picture the mosaic may show. Picking one adds it to the end,
+  picking it again takes it out; "Gem" writes them into the embed (`album:12/88,91,95`), and none
+  writes the plain embed back, which shows the newest (opslagstavle.ts).
+{% endcomment %}
+<div class="board-pictures-picked" data-pictures-picked data-max="{{ mosaic }}">
+  <div class="board-pictures-picked-head">
+    <strong>Valgt <span data-pictures-count>{{ picked|length }}</span> af {{ mosaic }}</strong>
+    <button type="button" class="board-pictures-clear" data-pictures-clear{% if not picked %} hidden{% endif %}>Ryd</button>
+  </div>
+  <p class="board-pictures-auto" data-pictures-auto{% if picked %} hidden{% endif %}>Ingen valgt: albummet viser sine nyeste billeder, de første herunder.</p>
+  <p class="board-pictures-hint" data-pictures-hint{% if not picked %} hidden{% endif %}>Det første bliver det store. På en telefon vises de tre første.</p>
+  <div class="board-pictures-strip" data-pictures-strip>{% for picture in picked %}<button type="button" class="board-picture" data-picture-picked="{{ picture.pk }}" aria-label="Fjern {{ picture.name }} fra de valgte"><img src="{{ picture.url }}" alt="" decoding="async"></button>{% endfor %}</div>
+</div>
+<p class="board-pictures-album">{{ album.name }}</p>
+<div class="board-pictures-grid">
+  {% include "opslagstavle/_embed_pictures_page.html" %}
+</div>

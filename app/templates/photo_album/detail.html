@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load board_extras %}
 {% block title %}{{ album.name }} | Fotoalbum{% endblock %}
 {% block content %}
 <section class="album-detail" data-album-page>
@@ -9,6 +10,7 @@
 		</div>
 		<div class="album-actions">
 			{% if has_subtree_media %}<details class="album-menu"><summary class="btn-link">Download</summary><form class="album-menu-panel" method="post" action="{% url 'photo_album:download_album' album.pk %}">{% csrf_token %}<p>Hele albummet som ZIP:</p>{% if children %}<fieldset class="album-menu-choice"><legend class="sr-only">Underalbummer</legend><label><input type="radio" name="sub_albums" value="1" checked> Med underalbummer</label><label><input type="radio" name="sub_albums" value="0"> Kun dette album</label></fieldset>{% endif %}{% for value, label in variants %}<button class="btn-link" type="submit" name="variant" value="{{ value }}">{{ label }}</button>{% endfor %}</form></details>{% endif %}
+			{% board_share_url album as share_url %}{% if share_url %}<a class="btn-link" href="{{ share_url }}">Del på opslagstavlen</a>{% endif %}
 			{% if can_create_sub_album %}<details class="album-menu"><summary class="btn-link">Nyt underalbum</summary><form class="album-menu-panel album-create-sub" method="post" action="{% url 'photo_album:create_sub_album' album.pk %}">{% csrf_token %}<label for="sub-album-name">Navn på underalbummet</label><input id="sub-album-name" type="text" name="name" maxlength="140" required><button class="btn" type="submit">Opret</button></form></details>{% endif %}
 			{% if page.items %}<button class="btn-link" type="button" data-album-select-toggle>Vælg</button>{% endif %}
 			{% if can_view_bin %}<a class="btn-link" href="{% url 'photo_album:album_bin' album.pk %}">Papirkurv</a>{% endif %}
