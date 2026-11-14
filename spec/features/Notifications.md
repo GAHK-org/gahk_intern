@@ -165,8 +165,8 @@ A notification is marked seen when it is clicked — in the app or as a push.
 - A push's links (target, open-link, icon) are absolute, on the intranet's own host
   (intern.gahk.dk). A service worker resolves a relative link against its own origin, and workers
   installed while the intranet lived at gahk.dk/intern/ still hold subscriptions.
-- Rows stored before that move point at `/intern/…`; a migration dropped the prefix, and the old
-  prefix still redirects to the same page.
+- Rows stored before that move pointed at `/intern/…`; a migration dropped the prefix, which
+  intern.gahk.dk does not serve (an `/intern/…` path there is a 404).
 - "Markér alle som set" on the page marks everything seen.
 - Redirect targets must be paths on this site (`services.is_site_path`, Django's
   `url_has_allowed_host_and_scheme`), so a stored or broadcast link can never become an open

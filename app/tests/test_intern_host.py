@@ -1,8 +1,9 @@
 """The intranet at the root of intern.gahk.dk, where it lived at gahk.dk/intern/ before.
 
-What has to keep working across the move: old /intern/ and /nyintern/ addresses (stored notification
-targets, Markdown links, bookmarks forwarded by gahk.dk), the session (host-only now, under new
-cookie names, with the old ".gahk.dk" pair deleted), and stored data that spelled the old address.
+What has to keep working across the move: the session (host-only now, under new cookie names, with
+the old ".gahk.dk" pair deleted), and stored data that spelled the old address. The old /intern/ and
+/nyintern/ prefixes mean nothing here: gahk.dk forwards its own old /intern/<rest> links straight to
+/<rest> on this host, so a prefixed path is a 404 like any unknown one.
 """
 
 import importlib
@@ -28,46 +29,28 @@ pytestmark = pytest.mark.django_db
 
 
 @pytest.mark.parametrize(
-    ("old", "new"),
+    "old",
     [
-        ("/intern/", "/"),
-        ("/intern/den-hurtige/?traad=4", "/den-hurtige/?traad=4"),
-        ("/intern/alumneliste/?q=Hansen&side=2", "/alumneliste/?q=Hansen&side=2"),
-        ("/intern/notifikationer/aabn/abc/", "/notifikationer/aabn/abc/"),
-        ("/nyintern/ak/", "/ak/"),
-        ("/nyintern/stamtree/?x=1", "/stamtree/?x=1"),
-        ("/intern", "/"),
-        ("/nyintern", "/"),
-        ("/intern?next=/ak/", "/?next=/ak/"),
+        "/intern/",
+        "/intern/den-hurtige/?traad=4",
+        "/intern/alumneliste/",
+        "/nyintern/ak/",
+        "/intern",
+        "/nyintern",
+        "/intern?next=/ak/",
     ],
 )
-def test_an_old_address_lands_on_the_same_page_at_the_root(old: str, new: str) -> None:
-    response = Client().get(old)
-    assert response.status_code == 308
-    assert response["Location"] == new
+def test_an_old_prefix_is_not_found(old: str) -> None:
+    assert Client().get(old).status_code == 404
 
 
-def test_a_post_to_an_old_address_stays_a_post() -> None:
-    """308, not 301: a script or a restored form aimed at the old path must not turn into a GET."""
-    response = Client().post("/intern/fotoalbum/importer-zip/system", {"x": "1"})
-    assert response.status_code == 308
-    assert response["Location"] == "/fotoalbum/importer-zip/system"
-
-
-@pytest.mark.parametrize(
-    "old", ["/intern//evil.example/x", "/intern/\\evil.example", "/nyintern///evil.example"]
-)
-def test_an_old_address_cannot_become_an_open_redirect(old: str) -> None:
-    location = Client().get(old)["Location"]
-    assert location.startswith("/") and not location.startswith(("//", "/\\"))
-
-
-def test_the_redirect_is_followed_to_the_real_page(make_resident: Callable[..., Resident]) -> None:
+def test_an_old_prefix_is_not_found_for_a_resident_or_a_post(
+    make_resident: Callable[..., Resident],
+) -> None:
     c = Client()
     c.force_login(make_resident(email="beboer@gahk.dk"))
-    response = c.get("/intern/alumneliste/", follow=True)
-    assert response.status_code == 200
-    assert response.redirect_chain == [(reverse("directory"), 308)]
+    assert c.get("/intern/alumneliste/").status_code == 404
+    assert Client().post("/intern/fotoalbum/importer-zip/system", {"x": "1"}).status_code == 404
 
 
 def test_the_front_page_button_leaves_for_the_public_site(
@@ -122,11 +105,12 @@ def test_the_old_cookies_are_deleted_from_both_domains() -> None:
 
 
 def test_a_redirect_deletes_the_old_cookies_too() -> None:
-    """The first request after the move is often gahk.dk's forwarded /intern/… link."""
+    """The first request after the move is often gahk.dk's forwarded link, which lands on a page that
+    asks for a login first."""
     c = Client()
     c.cookies["sessionid"] = "from-gahk.dk"
-    response = c.get("/intern/den-hurtige/")
-    assert response.status_code == 308
+    response = c.get("/den-hurtige/")
+    assert response.status_code == 302
     assert set(_deletions(response, "sessionid")) == {".gahk.dk", ""}
 
 

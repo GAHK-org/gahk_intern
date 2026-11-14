@@ -7,11 +7,11 @@ stays a separate **PHP + MariaDB** app on the same box. No SPA/API — one monol
 > Items marked **[you]** need your accounts/credentials (GitHub, Hetzner, Punktum dk) — I can't do them from here.
 
 **Three hosts.** This app is the intranet at the **root of `intern.gahk.dk`** (it used to be
-`gahk.dk/intern/`; `/intern/…` and `/nyintern/…` still answer here with a 308 to the same page at the
-root, query string kept). The public site **gahk.dk** is a separate app, `gahk_web`, on Hetzner
+`gahk.dk/intern/`; here `/intern/…` and `/nyintern/…` are 404s like any unknown path). The public site **gahk.dk** is a separate app, `gahk_web`, on Hetzner
 Webhosting — its own runbook is gahk_web's `DEPLOY.md`. This app still holds the website's content
-and pushes it there; gahk.dk forwards its old intranet paths (`/intern/…`, `/admin/…`, `/media/…`,
-…) to intern.gahk.dk. MediaWiki has its own host, **wiki.gahk.dk** (§6), and gahk.dk forwards
+and pushes it there; gahk.dk forwards its old intranet paths to intern.gahk.dk: `gahk.dk/intern/x`
+goes straight to `intern.gahk.dk/x` (prefix dropped), and `/admin/…`, `/media/…`, … keep their path.
+MediaWiki has its own host, **wiki.gahk.dk** (§6), and gahk.dk forwards
 `/wiki/…` there. Cutover order: §7.
 
 ## 1. Local
@@ -779,10 +779,10 @@ worthless by `$wgAuthenticationTokenVersion`). Afterwards, tell residents and up
 - Push and the home-screen app must be set up again on intern.gahk.dk (§2, Web Push). The old app
   shows how, and `https://intern.gahk.dk/install` has the steps; phones also get a banner.
 - The ølkælder till's bookmark (`https://intern.gahk.dk/oelkaelder/…`) and the kitchen account's
-  (`https://intern.gahk.dk/den-hurtige/koekken/`). The redirect covers them, but a redirect is one
-  more thing that can break.
+  (`https://intern.gahk.dk/den-hurtige/koekken/`). gahk.dk's redirect covers them, but a redirect
+  is one more thing that can break.
 - The Dropbox import script's `PHOTO_ALBUM_IMPORT_URL` → `https://intern.gahk.dk/fotoalbum/importer-zip/system`.
-  A 308 keeps its POST working, but update it anyway.
+  gahk.dk's 308 keeps its POST working, but update it anyway.
 
 ## 8. Cutover checklist
 - [ ] Fresh GitHub repo, CI green, Dependabot on.

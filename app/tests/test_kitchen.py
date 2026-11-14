@@ -82,11 +82,14 @@ def test_what_its_pages_need_is_not_gated(kitchen: Resident, path: str) -> None:
     assert _client(kitchen).get(path).status_code != 403
 
 
-def test_the_old_prefix_redirects_and_the_gate_looks_again(kitchen: Resident) -> None:
-    c = _client(kitchen)
-    response = c.get("/intern/alumneliste/?q=x")
-    assert response.status_code == 308 and response["Location"] == "/alumneliste/?q=x"
-    assert c.get(response["Location"]).status_code == 403
+@pytest.mark.parametrize("path", ["/intern/den-hurtige/koekken/", "/nyintern/", "/intern", "/nyintern"])
+def test_the_old_prefixes_are_gated_like_any_other_path(kitchen: Resident, path: str) -> None:
+    """No special case for the old prefixes: they are not on the allowlist, so the kitchen account
+    gets the gate's 403 there, as on any other path outside it."""
+    from core.middleware import kitchen_may_open
+
+    assert not kitchen_may_open(path)
+    assert _client(kitchen).get(path).status_code == 403
 
 
 def test_a_prefix_that_merely_starts_like_an_allowed_path_is_gated() -> None:
