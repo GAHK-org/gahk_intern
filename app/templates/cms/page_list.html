@@ -1,0 +1,48 @@
+{% extends "cms/base.html" %}
+{% block cms_title %}Sider{% endblock %}
+{% block cms_content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Hjemmeside</p>
+      <h1>Sider <span class="muted cms-count">{{ page_count }}</span></h1>
+    </div>
+    <div class="head-actions">
+      <a class="btn" href="{% url 'cms:page_create' %}">Ny side</a>
+    </div>
+  </div>
+
+  {% for section in sections %}
+    <section class="card-flat cms-section">
+      <div class="card-head"><h2>{{ section.title }}</h2></div>
+      <ul class="cms-rows">
+        {% for row in section.rows %}
+          <li class="cms-row{% if '/' in row.page.slug|default:'' %} cms-row-sub{% endif %}">
+            <div class="cms-row-main">
+              <a class="cms-row-title" href="{% url 'cms:page_edit' row.page.pk %}">{{ row.page.header }}</a>
+              <div class="cms-row-meta">
+                {% if row.path is not None %}<span class="cms-path">/{{ row.path }}</span>{% endif %}
+                {% if row.menu_state == "front" %}
+                  <span class="chip">Forside</span>
+                {% elif row.menu_state == "menu" %}
+                  <span class="chip">I menuen</span>
+                {% elif row.menu_state == "section" %}
+                  <span class="chip chip-quiet" title="Sektionen står i menuen, og siden vises i dens undermenu">I menuen via /{{ row.section }}</span>
+                {% elif row.menu_state == "none" %}
+                  <span class="chip chip-brass" title="Hverken siden eller dens sektion står i menuen">Ikke i menuen</span>
+                {% else %}
+                  <span class="chip chip-neg">Ingen adresse</span>
+                {% endif %}
+              </div>
+            </div>
+            <div class="cms-row-side">
+              <span class="muted text-sm">{% if row.page.updated_by %}{{ row.page.updated_by.full_name }}, {% endif %}{{ row.page.updated_at|date:"j. b Y" }}</span>
+              {% if row.live_url %}<a class="text-sm" href="{{ row.live_url }}" target="_blank" rel="noopener">Se på gahk.dk ↗</a>{% endif %}
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% empty %}
+    <p class="card muted">Der er ingen sider endnu.</p>
+  {% endfor %}
+{% endblock %}

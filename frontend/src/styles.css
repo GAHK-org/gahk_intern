@@ -39,7 +39,6 @@
   .muted { color:var(--muted); }
   .errorlist { color:var(--neg); }
   .amount-pos { color:var(--pos); } .amount-neg { color:var(--neg); }
-  .font-display { font-family: "Julius Sans One", sans-serif; }
   .num { font-variant-numeric: tabular-nums; }
 
   .btn { display:inline-flex; align-items:center; gap:7px; font:inherit; font-size:14px; font-weight:600; line-height:1.1;

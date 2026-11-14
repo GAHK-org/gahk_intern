@@ -45,7 +45,6 @@ jobs:
       - run: uv run python manage.py makemigrations --check --dry-run
         env:
           DJANGO_SECRET_KEY: ci-secret
-          VISIT_COUNTER_HMAC_KEY: ci
 
   test:
     runs-on: ubuntu-latest
@@ -62,7 +61,6 @@ jobs:
       DATABASE_URL: postgres://gahk:gahk@localhost:5432/gahk
       DJANGO_DEBUG: "1"          # plain static storage → no manifest needed for tests
       DJANGO_SECRET_KEY: ci-secret
-      VISIT_COUNTER_HMAC_KEY: ci
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7

@@ -1,0 +1,64 @@
+{% extends "cms/base.html" %}
+{% block cms_title %}Ændringslog{% endblock %}
+{% block cms_content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Hjemmeside</p>
+      <h1>Ændringslog</h1>
+      <p class="muted text-sm">Hver ændring af gahk.dk's indhold: hvem, hvornår, og hvad der stod før og efter.</p>
+    </div>
+  </div>
+
+  <form method="get" class="cms-filters">
+    <label for="log-type">Type</label>
+    <select id="log-type" name="type">
+      <option value="">Alle</option>
+      {% for value, label in kinds %}<option value="{{ value }}"{% if value == kind %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+    <label for="log-person">Person</label>
+    <select id="log-person" name="person">
+      <option value="">Alle</option>
+      <option value="system"{% if person == "system" %} selected{% endif %}>System</option>
+      {% for resident in people %}<option value="{{ resident.pk }}"{% if person == resident.pk|stringformat:"d" %} selected{% endif %}>{{ resident.full_name }}</option>{% endfor %}
+    </select>
+    <button type="submit" class="btn btn-secondary">Vis</button>
+  </form>
+
+  <section class="card-flat cms-section">
+    <ul class="cms-log">
+      {% for change, link, fields in rows %}
+        <li>
+          <details>
+            <summary>
+              <span class="cms-when">{{ change.at|date:"j. b Y, H:i" }}</span>
+              <span class="cms-log-what"><b>{{ change.by_name|default:"System" }}</b> · {{ change.get_action_display }} · {{ change.get_kind_display }}{% if change.label %}: {{ change.label }}{% endif %}</span>
+            </summary>
+            <div class="cms-log-body">
+              {% if link %}<p><a href="{% url link change.object_id %}">Åbn {{ change.get_kind_display|lower }}</a></p>{% endif %}
+              {% for item in fields %}
+                <div class="cms-log-field">
+                  <p class="cms-label">{{ item.label }}</p>
+                  {% if item.diff is not None %}
+                    {% if item.diff %}{% include "cms/_diff.html" with rows=item.diff %}{% else %}<p class="muted text-sm">Uændret</p>{% endif %}
+                  {% elif item.menu %}
+                    <div class="cms-menu-diff">
+                      <div><p class="muted text-sm">Før</p><ol>{% for entry in item.menu.0 %}<li>{{ entry.label }} <span class="cms-path">{{ entry.url }}</span></li>{% empty %}<li class="muted">–</li>{% endfor %}</ol></div>
+                      <div><p class="muted text-sm">Efter</p><ol>{% for entry in item.menu.1 %}<li>{{ entry.label }} <span class="cms-path">{{ entry.url }}</span></li>{% empty %}<li class="muted">–</li>{% endfor %}</ol></div>
+                    </div>
+                  {% else %}
+                    <p class="cms-change"><del>{{ item.before }}</del> → <ins>{{ item.after }}</ins></p>
+                  {% endif %}
+                </div>
+              {% empty %}
+                <p class="muted text-sm">Ingen felter ændret.</p>
+              {% endfor %}
+            </div>
+          </details>
+        </li>
+      {% empty %}
+        <li class="card-pad muted">Ingen ændringer{% if kind or person %} med de valgte filtre{% endif %}.</li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% include "cms/_pager.html" %}
+{% endblock %}

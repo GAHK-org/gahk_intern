@@ -36,11 +36,11 @@ from ak.models import AkEntry, AkMonthlyCharge
 from ak.services import apply_monthly_charge
 from arkiv.demo import seed as seed_arkiv
 from arkiv.models import ArchiveFile, ArchiveFolder
+from cms.models import ContentChange, NewsItem, Page, PageVersion, PylonEvent
 
 # CmsEvent, never Event: the internal events app has one of the same name, and both are seeded
 # here. See events.models on the three-way collision.
 from cms.models import Event as CmsEvent
-from cms.models import NewsItem, Page, PylonEvent
 from core.models import Cleaning, Room, Workgroup
 from den_hurtige.demo import seed as seed_den_hurtige
 from den_hurtige.models import QuickComment, QuickPost, QuickReaction
@@ -81,7 +81,7 @@ from rooms.models import (
     RoomCriterion,
     RoomOffer,
 )
-from stats.models import DailyVisitCount, VisitTally
+from stats.models import DailyVisitCount, PageViewDay
 
 from .seed_rooms import build_rooms
 
@@ -146,12 +146,14 @@ WIPE_ORDER: list[type[models.Model]] = [
     Application,
     RoleAssignment,
     Residency,
+    ContentChange,
+    PageVersion,
     Page,
     NewsItem,
     CmsEvent,
     PylonEvent,
     DailyVisitCount,
-    VisitTally,
+    PageViewDay,
     QuickReaction,
     QuickComment,
     QuickPost,
@@ -579,33 +581,37 @@ class Command(BaseCommand):
 
     # ------------------------------------------------------------------ cms
     def _seed_cms(self) -> None:
-        Page.objects.create(
-            slug="om-kollegiet",
-            header="Om Kollegiet",
+        # The front page is id 1 (cms.models.FRONT_PAGE_ID), the rest follow the seeded menu
+        # (cms migration 0006), including sub-pages, so gahk.dk's section lists and the editor's
+        # "not in the menu" warning both have something to show in dev.
+        Page.put_front_page(
+            slug="velkommen",
+            header="Velkommen",
             body="<p>G. A. Hagemanns Kollegium blev grundlagt i 1908.</p>",
             menu_category=1,
         )
-        Page.objects.create(
-            slug="ansoegning",
-            header="Ansøgning",
-            body="<p>Sådan søger du en plads på kollegiet.</p>",
-            menu_category=2,
-        )
-        # A sub-page, so the section sidebar (cms.views._section_nav) and the CMS overview's
-        # reachability badge are both exercised in dev — with only top-level slugs, neither ever
-        # renders, and the bug that made a renamed page vanish was invisible locally.
-        Page.objects.create(
-            slug="faciliteter",
-            header="Faciliteter",
-            body="<p>Kollegiets faciliteter.</p>",
-            menu_category=1,
-        )
-        Page.objects.create(
-            slug="faciliteter/kokken",
-            header="Køkkenet",
-            body="<p>Fælleskøkkenet på hver gang.</p>",
-            menu_category=1,
-        )
+        pages = [
+            ("kollegielivet", "Kollegielivet", "<p>Livet på kollegiet.</p>"),
+            ("kollegielivet/historie", "Historie", "<p>Kollegiets historie siden 1908.</p>"),
+            ("vision", "Vision", "<p>Kollegiets vision.</p>"),
+            ("faciliteter", "Faciliteter", "<p>Kollegiets faciliteter.</p>"),
+            ("faciliteter/kokken", "Køkkenet", "<p>Fælleskøkkenet på hver gang.</p>"),
+            ("legater", "Legater", "<p>Legater til alumner.</p>"),
+            ("kontakt", "Kontakt", "<p>Skriv til os.</p>"),
+            (
+                "optagelse",
+                "Optagelse",
+                (
+                    '<p>Sådan søger du ind.</p><ul><li><a href="/optagelse/ansoeg">Anmod om rundvisning</a></li>'
+                    '<li><a href="/optagelse/fremlej">Ansøg om fremleje</a></li></ul>'
+                ),
+            ),
+            ("arkiv/gammel-side", "En side uden for menuen", "<p>Kun med et direkte link.</p>"),
+        ]
+        for slug, header, body in pages:
+            Page.objects.update_or_create(
+                slug=slug, defaults={"header": header, "body": body, "menu_category": 1}
+            )
         for _ in range(6):
             NewsItem.objects.create(
                 title=self.fake.sentence(nb_words=6),
@@ -680,13 +686,15 @@ class Command(BaseCommand):
             DailyVisitCount.objects.update_or_create(
                 date=today - timedelta(days=i), defaults={"count": self.rng.randint(5, 120)}
             )
+        # gahk.dk's per-page totals for the last month, so "Mest besøgte sider" has rows.
         for i in range(30):
-            VisitTally.objects.create(
-                ip_hash=f"{i:064x}",
-                count=self.rng.randint(1, 50),
-                first_seen=self.now - timedelta(days=self.rng.randint(30, 120)),
-                last_seen=self.now,
-            )
+            for path in ("", "optagelse", "faciliteter", "kollegielivet", "begivenheder"):
+                views = self.rng.randint(1, 80)
+                PageViewDay.objects.update_or_create(
+                    date=today - timedelta(days=i),
+                    path=path,
+                    defaults={"views": views, "visitors": self.rng.randint(1, views)},
+                )
 
     # ---------------------------------------------------------------- report
     def _report(self, residents: list[Resident]) -> None:

@@ -274,13 +274,15 @@ def test_s3_files_opened_for_reading_spill_to_disk() -> None:
 
 def test_heavy_jobs_are_routed_to_the_media_queue() -> None:
     """A route naming a task that does not exist routes nothing, silently — and the job then runs
-    on the default queue beside the quick ones."""
+    on the default queue beside the quick ones. The only routes to the default queue are the gahk.dk
+    sync tasks, listed so they can never end up behind a video encode."""
     from config.celery import app
 
     app.loader.import_default_modules()
     for name, route in settings.CELERY_TASK_ROUTES.items():
         assert name in app.tasks, name
-        assert route == {"queue": "media"}
+        expected = {"queue": "celery"} if name.startswith("cms.tasks.") else {"queue": "media"}
+        assert route == expected, name
     assert "photo_album.tasks.build_media_derivatives" in settings.CELERY_TASK_ROUTES
     assert "photo_album.tasks.process_album_import" in settings.CELERY_TASK_ROUTES
 

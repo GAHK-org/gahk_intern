@@ -44,9 +44,9 @@ KITCHEN = "koekken"
 # Attribute the resolved role set is memoised under, on the request's user instance.
 _REAL_ROLES_MEMO = "_gahk_real_roles"
 
-# Roles allowed to edit CMS / frontpage content (Django admin cms.* models, and the sidebar link to
-# it). Single source of truth, shared by cms.admin and the navigation. administrator has full access;
-# indstilling, inspektion and pr (the PR group) maintain the frontpage.
+# Roles allowed to edit the website gahk.dk (the Hjemmeside editor, cms.services). Single source of
+# truth for its views and the navigation. administrator has full access (and alone may delete a
+# page); indstilling, inspektion and pr (the PR group) maintain the content.
 CMS_EDITOR_ROLES = (Role.ADMINISTRATOR, Role.INDSTILLING, Role.INSPEKTION, Role.PR)
 
 # Roles that may remove other residents' content and pin it (Den Hurtige messages, opslagstavlen

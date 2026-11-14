@@ -1,0 +1,52 @@
+{% extends "cms/base.html" %}
+{% block cms_title %}Billeder{% endblock %}
+{% block cms_content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Hjemmeside</p>
+      <h1>Billeder <span class="muted cms-count">{{ page_obj.paginator.count }}</span></h1>
+      <p class="muted text-sm">Billedbiblioteket til sider, nyheder, begivenheder og baggrunde.</p>
+    </div>
+  </div>
+
+  <form method="post" enctype="multipart/form-data" class="card-flat card-pad cms-upload" data-cms-dropzone>
+    {% csrf_token %}
+    <div class="cms-upload-drop">
+      <label for="cms-upload-file" class="cms-upload-label">Træk billeder hertil, eller <span class="cms-upload-pick">vælg filer</span></label>
+      <input id="cms-upload-file" type="file" name="file" accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif" multiple required>
+      <p class="muted cms-help">JPEG, PNG, GIF eller WebP (iPhone-billeder virker også), højst {{ max_mb }} MB pr. billede. De gøres højst 2400 pixel store, og oplysninger som GPS-position fjernes.</p>
+    </div>
+    <div class="cms-upload-row">
+      <div class="cms-field">
+        <label for="cms-upload-caption">Beskrivelse (alt-tekst)</label>
+        <input id="cms-upload-caption" type="text" name="caption" maxlength="255" placeholder="Hvad viser billedet?">
+      </div>
+      <button type="submit" class="btn">Læg i biblioteket</button>
+    </div>
+  </form>
+
+  <form method="get" class="cms-search" role="search">
+    <label for="cms-image-q" class="sr-only">Søg</label>
+    <input id="cms-image-q" type="search" name="q" value="{{ query }}" placeholder="Søg i beskrivelse og filnavn">
+    <button type="submit" class="btn btn-secondary">Søg</button>
+    {% if query %}<a href="{% url 'cms:image_list' %}">Vis alle</a>{% endif %}
+  </form>
+
+  <ul class="cms-image-grid">
+    {% for image, usage in tiles %}
+      <li>
+        <a href="{% url 'cms:image_detail' image.pk %}" class="cms-image-tile">
+          <img src="{{ image.url }}" alt="{{ image.caption }}" loading="lazy">
+          <span class="cms-image-caption">{{ image.caption|default:"(ingen beskrivelse)" }}</span>
+          <span class="cms-image-meta">
+            {% if usage %}<span class="chip">Bruges {{ usage|length }} sted{{ usage|length|pluralize:"er" }}</span>{% else %}<span class="chip chip-quiet">Ikke i brug</span>{% endif %}
+            {% if not image.caption %}<span class="chip chip-brass">Mangler alt-tekst</span>{% endif %}
+          </span>
+        </a>
+      </li>
+    {% empty %}
+      <li class="card muted">{% if query %}Ingen billeder matcher “{{ query }}”.{% else %}Biblioteket er tomt.{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% include "cms/_pager.html" %}
+{% endblock %}

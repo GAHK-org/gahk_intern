@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% comment %}
+  The Hjemmeside editor's frame: the intranet shell plus a row of tabs for its screens. `data-cms`
+  is what makes the main bundle load the editor's own code (frontend/src/cms.ts); the URLs on it
+  are the image picker's JSON endpoints.
+{% endcomment %}
+{% block title %}{% block cms_title %}{% endblock %} - Hjemmeside - GAHK Intern{% endblock %}
+{% block content_width %}max-w-6xl{% endblock %}
+{% block content %}
+  <div class="cms" data-cms
+       data-image-library="{% url 'cms:image_library_json' %}"
+       data-image-upload="{% url 'cms:image_upload_json' %}"
+       data-preview="{% url 'cms:preview' %}">
+    {% with name=request.resolver_match.url_name %}
+      <nav class="cms-tabs" aria-label="Hjemmeside">
+        <a href="{% url 'cms:overview' %}"{% if name == "overview" %} aria-current="page"{% endif %}>Oversigt</a>
+        <a href="{% url 'cms:page_list' %}"{% if "page" in name %} aria-current="page"{% endif %}>Sider</a>
+        <a href="{% url 'cms:news_list' %}"{% if "news" in name %} aria-current="page"{% endif %}>Nyheder</a>
+        <a href="{% url 'cms:event_list' %}"{% if "event" in name %} aria-current="page"{% endif %}>Forsidebegivenheder</a>
+        <a href="{% url 'cms:image_list' %}"{% if "image" in name %} aria-current="page"{% endif %}>Billeder</a>
+        <a href="{% url 'cms:menu' %}"{% if name == "menu" or name == "site_settings" %} aria-current="page"{% endif %}>Menu</a>
+        <a href="{% url 'cms:redirect_list' %}"{% if "redirect" in name %} aria-current="page"{% endif %}>Omdirigeringer</a>
+        <a href="{% url 'cms:change_log' %}"{% if name == "change_log" %} aria-current="page"{% endif %}>Ændringslog</a>
+      </nav>
+    {% endwith %}
+    {% block cms_content %}{% endblock %}
+  </div>
+{% endblock %}

@@ -34,9 +34,32 @@
   </div>
 
   <div class="card">
-    <h2>Besøg pr. dag (seneste 30)</h2>
+    <h2>Besøgende pr. dag (gahk.dk, seneste 30)</h2>
     {% if charts.visits.data %}
       <div style="position:relative; height:300px"><canvas id="chart-visits"></canvas></div>
+    {% else %}
+      <p class="muted">Ingen besøgsdata endnu.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Mest besøgte sider (30 dage)</h2>
+    {% if top_pages %}
+      <table cellpadding="4" style="width:100%">
+        <thead>
+          <tr><th style="text-align:left">Side</th><th style="text-align:right">Visninger</th><th style="text-align:right">Besøgende</th></tr>
+        </thead>
+        <tbody>
+          {% for p in top_pages %}
+            <tr>
+              <td><a href="{{ p.url }}" target="_blank" rel="noopener">/{{ p.path }}</a></td>
+              <td style="text-align:right">{{ p.total_views }}</td>
+              <td style="text-align:right">{{ p.total_visitors }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="muted text-sm">Besøgende tælles pr. dag og lægges sammen over perioden.</p>
     {% else %}
       <p class="muted">Ingen besøgsdata endnu.</p>
     {% endif %}

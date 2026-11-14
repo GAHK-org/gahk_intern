@@ -504,9 +504,9 @@ def test_a_storage_failure_is_logged_and_does_not_break_the_delete(
 #
 # /media/ used to be public by URL, deliberately, as the legacy /public/ images were. It is not any
 # more: most prefixes need a session. The exceptions are in PUBLIC_PREFIXES, which records how each
-# one was derived — cms/ because the CMS toolbar's uploads are embedded in Page/NewsItem/Event
-# bodies that the logged-out front page renders, and the two ølkælder product-photo prefixes because
-# the till renders them with no session at all.
+# one was derived — the two ølkælder product-photo prefixes, because the till renders them with no
+# session at all. The website's images (cms/) were public while this app rendered gahk.dk; gahk.dk
+# serves its own copies now, so they are gated like the rest.
 
 GATED = [
     "profile_pictures/IMG_1234.jpg",
@@ -605,34 +605,34 @@ def test_publishing_the_tills_photos_did_not_publish_vaerelsestjek(media_tmp: Pa
 
 
 @pytest.mark.django_db
-def test_cms_images_stay_readable_without_a_session(media_tmp: Path) -> None:
-    """The public site embeds these in Page/NewsItem/Event bodies. Gating them blanks the front
-    page, which is why PUBLIC_PREFIXES exists at all."""
+def test_website_images_need_a_session(media_tmp: Path, make_resident: object) -> None:
+    """gahk.dk serves its own copies (/images/); intern's library is for logged-in editors. (An old
+    link to a picture gahk.dk publishes goes to that copy: tests/test_cms_old_image_links.py.)"""
     from django.test import Client
 
     store(media_tmp, "cms/2026/08/logo.jpg")
 
-    response = Client().get("/media/cms/2026/08/logo.jpg")
-
-    assert response.status_code == 200
+    assert Client().get("/media/cms/2026/08/logo.jpg").status_code == 302
+    editor = Client()
+    editor.force_login(make_resident(email="editor@gahk.dk"))  # type: ignore[operator]
+    assert editor.get("/media/cms/2026/08/logo.jpg").status_code == 200
 
 
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     "attempt",
     [
-        "/media/cms/../profile_pictures/IMG_1234.jpg",
-        "/media/cms/./../profile_pictures/IMG_1234.jpg",
-        "/media/cms/../../media/profile_pictures/IMG_1234.jpg",
-        # Every public prefix is a fresh doorway, so the till's two are parametrised alongside cms/
-        # rather than trusted to inherit its normalisation.
         "/media/oel/../profile_pictures/IMG_1234.jpg",
+        "/media/oel/./../profile_pictures/IMG_1234.jpg",
+        "/media/oel/../../media/profile_pictures/IMG_1234.jpg",
+        # Every public prefix is a fresh doorway, so both of the till's are parametrised rather than
+        # one trusted to inherit the other's normalisation.
         "/media/public/image/intern/oel/../../../../profile_pictures/IMG_1234.jpg",
     ],
 )
 def test_the_public_prefix_cannot_be_used_to_reach_a_gated_one(media_tmp: Path, attempt: str) -> None:
     """THE BYPASS. A prefix check on the raw path would pass every one of these: the string starts
-    with "cms/", and collapsing the dots lands back INSIDE the media root, so the storage's own
+    with "oel/", and collapsing the dots lands back INSIDE the media root, so the storage's own
     safe_join guard never fires either. Normalising first is what makes the check mean anything."""
     from django.test import Client
 
@@ -651,7 +651,7 @@ def test_a_backslash_path_is_refused(media_tmp: Path) -> None:
     is a second spelling of the same trick."""
     from django.test import Client
 
-    assert Client().get(r"/media/cms\..\profile_pictures/x.jpg").status_code == 404
+    assert Client().get(r"/media/oel\..\profile_pictures/x.jpg").status_code == 404
 
 
 def settings_login_url() -> str:
@@ -674,9 +674,9 @@ def settings_login_url() -> str:
 def test_a_served_file_carries_last_modified(media_tmp: Path) -> None:
     from django.test import Client
 
-    store(media_tmp, "cms/logo.jpg")
+    store(media_tmp, "oel/logo.jpg")
 
-    response = Client().get("/media/cms/logo.jpg")
+    response = Client().get("/media/oel/logo.jpg")
 
     assert response.status_code == 200
     assert response.headers.get("Last-Modified"), "without this the browser cannot revalidate"
@@ -688,10 +688,10 @@ def test_an_unchanged_file_revalidates_to_304(media_tmp: Path) -> None:
     from django.test import Client
     from django.utils.http import http_date
 
-    store(media_tmp, "cms/logo.jpg")
-    mtime = (media_tmp / "cms" / "logo.jpg").stat().st_mtime
+    store(media_tmp, "oel/logo.jpg")
+    mtime = (media_tmp / "oel" / "logo.jpg").stat().st_mtime
 
-    response = Client().get("/media/cms/logo.jpg", HTTP_IF_MODIFIED_SINCE=http_date(mtime))
+    response = Client().get("/media/oel/logo.jpg", HTTP_IF_MODIFIED_SINCE=http_date(mtime))
 
     assert response.status_code == 304
 
@@ -702,10 +702,10 @@ def test_a_modified_file_is_sent_again(media_tmp: Path) -> None:
     from django.test import Client
     from django.utils.http import http_date
 
-    store(media_tmp, "cms/logo.jpg")
+    store(media_tmp, "oel/logo.jpg")
     long_ago = http_date(0)
 
-    response = Client().get("/media/cms/logo.jpg", HTTP_IF_MODIFIED_SINCE=long_ago)
+    response = Client().get("/media/oel/logo.jpg", HTTP_IF_MODIFIED_SINCE=long_ago)
 
     assert response.status_code == 200
     assert b"".join(response.streaming_content) == b"pngbytes"

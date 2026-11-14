@@ -1,0 +1,69 @@
+{% extends "cms/base.html" %}
+{% block cms_title %}{% if page %}{{ page.header }}{% else %}Ny side{% endif %}{% endblock %}
+{% block cms_content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow"><a href="{% url 'cms:page_list' %}">Sider</a></p>
+      <h1>{% if page %}{{ page.header }}{% else %}Ny side{% endif %}</h1>
+      {% if page %}
+        <p class="muted text-sm">Sidst rettet {{ page.updated_at|date:"j. b Y, H:i" }}{% if page.updated_by %} af {{ page.updated_by.full_name }}{% endif %}</p>
+      {% endif %}
+    </div>
+    {% if page %}
+      <div class="head-actions">
+        {% if live_url %}<a class="btn btn-secondary" href="{{ live_url }}" target="_blank" rel="noopener">Se på gahk.dk ↗</a>{% endif %}
+        <a class="btn btn-secondary" href="{% url 'cms:page_history' page.pk %}">Historik</a>
+      </div>
+    {% endif %}
+  </div>
+
+  <form method="post" class="cms-editor-form" novalidate>
+    {% csrf_token %}
+    <input type="hidden" name="loaded_at" value="{{ loaded_at }}">
+    {% if form.non_field_errors %}<div class="card cms-form-errors">{{ form.non_field_errors }}</div>{% endif %}
+    <div class="cms-editor-grid">
+      <div class="card-flat card-pad cms-editor-main">
+        {% include "cms/_field.html" with field=form.header %}
+        {% include "cms/_field.html" with field=form.body %}
+      </div>
+      <div class="cms-editor-side">
+        <div class="card-flat card-pad">
+          {% if form.path_segment %}
+            <fieldset class="cms-field cms-address">
+              <legend>Adresse på gahk.dk</legend>
+              <label for="{{ form.path_parent.id_for_label }}" class="cms-sublabel">{{ form.path_parent.label }}</label>
+              {{ form.path_parent }}
+              <label for="{{ form.path_segment.id_for_label }}" class="cms-sublabel">Sidste del</label>
+              {{ form.path_segment }}
+              <p class="cms-address-preview" data-cms-address-preview>{% if page.slug %}gahk.dk/<b>{{ page.slug }}</b>{% elif page %}<span class="muted">Ingen adresse</span>{% endif %}</p>
+              <p class="muted cms-help">{{ form.path_segment.help_text }}</p>
+              {{ form.path_parent.errors }}{{ form.path_segment.errors }}
+            </fieldset>
+          {% else %}
+            <div class="cms-field">
+              <p class="cms-label">Adresse på gahk.dk</p>
+              <p><span class="cms-path">/</span> <span class="muted text-sm">Forsiden har altid adressen gahk.dk/.</span></p>
+            </div>
+          {% endif %}
+          {% include "cms/_field.html" with field=form.description %}
+          {% include "cms/_image_picker.html" with field=form.background_image none_label="Ingen (standardbaggrunden)" %}
+          {% url 'cms:page_list' as cancel_url %}
+          {% include "cms/_form_actions.html" with preview_id=page.pk %}
+        </div>
+
+        {% if redirects %}
+          <div class="card-flat card-pad cms-section">
+            <p class="cms-label">Gamle adresser, der sender hertil</p>
+            <ul class="cms-plain-list">
+              {% for item in redirects %}<li class="cms-path">/{{ item.old_path }}</li>{% endfor %}
+            </ul>
+          </div>
+        {% endif %}
+
+        {% if can_delete %}
+          <p class="cms-danger-link"><a class="btn-link-danger" href="{% url 'cms:page_delete' page.pk %}">Slet siden …</a></p>
+        {% endif %}
+      </div>
+    </div>
+  </form>
+{% endblock %}

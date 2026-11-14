@@ -185,7 +185,7 @@ accessors stop being greppable — plus a coupling that puts Den Hurtige's schem
 release cadence. The models genuinely diverge: `expires_at`/`minutes_left` against
 `title`/`category`/`pinned_at`/`pinned_by`/`edited_at` and a reverse-FK image relation.
 
-**A nightly sweep that scans post bodies for each image's URL** (the `CmsImageAdmin.usage` pattern).
+**A nightly sweep that scans post bodies for each image's URL** (the `cms.services.image_usage` pattern).
 Rejected. It is O(images × posts) with a `LIKE '%…%'` no index can serve, and it can never be exact —
 a URL inside a fenced code block looks like a reference — which leaves a choice between leaking files
 forever and occasionally deleting a live image. Instead the reference is turned back into a real FK
