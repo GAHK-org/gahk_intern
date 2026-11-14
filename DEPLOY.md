@@ -7,14 +7,13 @@ stays a separate **PHP + MariaDB** app on the same box. No SPA/API — one monol
 > Items marked **[you]** need your accounts/credentials (GitHub, Hetzner, Punktum dk) — I can't do them from here.
 
 **Three hosts.** This app is the intranet at the **root of `intern.gahk.dk`** (it used to be
-`gahk.dk/intern/`; `/intern/…` and `/nyintern/…` still answer here with a 308 to the same page at the
-root, query string kept). The public site **gahk.dk** is a separate app, `gahk_web`, on Hetzner
-Webhosting — its own runbook is gahk_web's `DEPLOY.md`. This app still holds the website's content
-and pushes it there; gahk.dk forwards its old intranet paths (`/intern/…`, `/admin/…`, `/media/…`,
-…) to intern.gahk.dk with a 308, path and query kept, `/intern/` prefix included (so
-`gahk.dk/intern/x` → `intern.gahk.dk/intern/x` → `intern.gahk.dk/x`; a GET there gets a page that
-forwards browsers the same way and shows the old installed app how to reinstall). MediaWiki has its
-own host, **wiki.gahk.dk** (§6), and gahk.dk forwards `/wiki/…` there. Cutover order: §7.
+`gahk.dk/intern/`; here `/intern/…` and `/nyintern/…` are 404s like any unknown path). The public
+site **gahk.dk** is a separate app, `gahk_web`, on Hetzner Webhosting — its own runbook is
+gahk_web's `DEPLOY.md`. This app still holds the website's content and pushes it there; gahk.dk forwards its old intranet paths to intern.gahk.dk with a 308, query
+kept: `gahk.dk/intern/x` goes straight to `intern.gahk.dk/x` (prefix dropped; a GET there gets a page
+that forwards browsers the same way and shows the old installed app how to reinstall), and
+`/admin/…`, `/media/…`, … keep their path. MediaWiki has its own host, **wiki.gahk.dk** (§6), and
+gahk.dk forwards `/wiki/…` there. Cutover order: §7.
 
 ## 1. Local
 Prereqs: [`uv`](https://docs.astral.sh/uv/) (Python deps) + [`go-task`](https://taskfile.dev) + Node + Docker.
@@ -832,12 +831,9 @@ moves, and this version must follow right behind it:
    Encrypt issues its certificate. Deploy the new wiki as its own app on `https://wiki.gahk.dk`
    (§6) and check it: certificate, login, a few pages, links staying on wiki.gahk.dk. Add
    `https://intern.gahk.dk` to the bucket's CORS rule (§4c).
-   **The old version must answer on `intern.gahk.dk` before the DNS switch:** from step 3 until step 4
-   it receives every link gahk.dk forwards (`https://intern.gahk.dk/intern/…`, which it serves at
-   that path). So, on the version running now, add `intern.gahk.dk` to `DJANGO_ALLOWED_HOSTS` and
-   `https://intern.gahk.dk` to `CSRF_TRUSTED_ORIGINS` (keeping the gahk.dk entries), keep
-   `intern.gahk.dk` as a Coolify domain beside gahk.dk, and redeploy it. Check that
-   `https://intern.gahk.dk/intern/` shows the old login page and that logging in there works.
+   From step 3 gahk.dk forwards `/intern/<rest>` to `https://intern.gahk.dk/<rest>`, without the
+   prefix, and only this version serves the intranet there: the old one keeps it under `/intern/`,
+   so until step 4 a forwarded link misses its page.
 2. **gahk_web installed by hand** (gahk_web's `DEPLOY.md` §8): a signed `POST /api/update` straight
    to the webhost's address, then `/api/health` there. It has no content yet, so its pages answer
    the 503 page *"Siden opdateres"*. Nothing can publish to it from here before step 4: the running
@@ -849,15 +845,13 @@ moves, and this version must follow right behind it:
    `CSRF_TRUSTED_ORIGINS`, `SITE_URL`, `PUBLIC_SITE_URL`) and `GAHK_WEB_URL` / `GAHK_WEB_KEY`
    (§4f). Within about 2 minutes `sync_gahk_web` sees that gahk.dk has no content and publishes
    everything; over the next few runs it moves the old site's images into the library and publishes
-   again with the pictures in place (§4f, "Legacy images"). gahk.dk forwards `/intern/<rest>` to
-   `https://intern.gahk.dk/intern/<rest>`, keeping the prefix, so the same link works with both
-   versions: between 3 and 4 the old version serves it at its old path (step 1), and from step 4
-   this version answers it with a 308 to `/<rest>` (query and method kept). In the same go, **stop
+   again with the pictures in place (§4f, "Legacy images"). From here the links gahk.dk forwards
+   (`/intern/<rest>` → `https://intern.gahk.dk/<rest>`) reach their pages. In the same go, **stop
    the old wiki app** and its gahk.dk/wiki route: from step 3 gahk.dk redirects `/wiki/…` to
    wiki.gahk.dk, which has been answering since step 1.
 5. Verify: gahk.dk shows its pages and pictures, the Hjemmeside overview shows an OK publication,
    `https://gahk.dk/intern/` in a browser lands on `https://intern.gahk.dk/` (gahk.dk's page forwards
-   to `https://intern.gahk.dk/intern/`, which 308s to `/`; `curl -sI -X POST` shows gahk.dk's 308),
+   it; `curl -sI -X POST` shows gahk.dk's 308 there), `https://intern.gahk.dk/intern/` is a 404,
    a `https://gahk.dk/kalender/<token>.ics`
    feed still answers, `https://intern.gahk.dk/health` is 200 (move the uptime monitor there, §4e),
    one upload to Arkiv works (CORS). `https://gahk.dk/wiki/` → `https://wiki.gahk.dk/`, and a wiki
@@ -875,10 +869,10 @@ logged out of the wiki once (its old gahk.dk cookies are made worthless by
 - Push and the home-screen app must be set up again on intern.gahk.dk (§2, Web Push). The old app
   shows how, and `https://intern.gahk.dk/install` has the steps; phones also get a banner.
 - The ølkælder till's bookmark (`https://intern.gahk.dk/oelkaelder/…`) and the kitchen account's
-  (`https://intern.gahk.dk/den-hurtige/koekken/`). The redirect covers them, but a redirect is one
-  more thing that can break.
+  (`https://intern.gahk.dk/den-hurtige/koekken/`). gahk.dk's redirect covers them, but a redirect
+  is one more thing that can break.
 - The Dropbox import script's `PHOTO_ALBUM_IMPORT_URL` → `https://intern.gahk.dk/fotoalbum/importer-zip/system`.
-  A 308 keeps its POST working, but update it anyway.
+  gahk.dk's 308 keeps its POST working, but update it anyway.
 
 ## 8. Cutover checklist
 - [ ] Fresh GitHub repo, CI green, Dependabot on.
@@ -906,12 +900,10 @@ logged out of the wiki once (its old gahk.dk cookies are made worthless by
       delete `phpinfo.php`, pull & archive access logs).
 - [ ] MediaWiki migrated + upgraded to 1.43; switched to `https://wiki.gahk.dk` with this version (§6, §7).
 - [ ] Staging smoke-tested; behavioural diff vs the live PHP site on key pages.
-- [ ] `intern.gahk.dk` live in Coolify, bucket CORS updated, and the **old** version answering on it
-      (`DJANGO_ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, Coolify domain; §7 step 1:
-      `https://intern.gahk.dk/intern/` shows its login); gahk_web installed by hand and its
+- [ ] `intern.gahk.dk` live in Coolify and bucket CORS updated; gahk_web installed by hand and its
       `/api/health` checked; then gahk.dk repointed and this version deployed with `GAHK_WEB_KEY`
-      set (§7 steps 2-4) → verify, including `https://gahk.dk/intern/` → `https://intern.gahk.dk/intern/`
-      → `https://intern.gahk.dk/` and that the Hjemmeside overview shows no old images waiting or
+      set (§7 steps 2-4) → verify, including `https://gahk.dk/intern/` → `https://intern.gahk.dk/`
+      and that the Hjemmeside overview shows no old images waiting or
       failed (§4f) → keep MX on one.com.
 - [ ] Uptime monitor on `https://intern.gahk.dk/health`; till, kitchen and Dropbox-script URLs updated.
 

@@ -35,13 +35,10 @@ KITCHEN_ALLOWED_PREFIXES = (
     "/media/",
     "/ws/",
     "/kalender/",
-    # The old prefixes only redirect to the root, where the gate looks again.
-    "/intern/",
-    "/nyintern/",
 )
 # /install is public anyway (how to install the app), and the kitchen tablet may itself carry the old
 # app from gahk.dk, whose notice links there: a 403 only for the kitchen account would make no sense.
-KITCHEN_ALLOWED_PATHS = ("/sw.js", "/healthz", "/health", "/intern", "/nyintern", "/install")
+KITCHEN_ALLOWED_PATHS = ("/sw.js", "/healthz", "/health", "/install")
 
 
 def kitchen_home() -> str:

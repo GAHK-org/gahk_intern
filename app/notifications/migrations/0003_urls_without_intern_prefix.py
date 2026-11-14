@@ -1,8 +1,8 @@
 """Drop the /intern prefix from stored notification targets.
 
 The intranet moved from gahk.dk/intern/ to the root of intern.gahk.dk, so a row written before the
-move points at /intern/<rest>. config.urls redirects those anyway, but the open views redirect to
-the stored url, and one hop less is one redirect fewer on every tap.
+move points at /intern/<rest>, which this host does not serve: the open views redirect to the
+stored url, so without this a tap on an old notification would land on a 404.
 
 Reversible: backwards puts the prefix back on every site path (the rows written since the move
 included), which is what the old URLconf needs.
