@@ -84,8 +84,11 @@ home screen before notifications are available at all.
 Push is bound to the **origin**. Subscriptions made while the intranet lived at gahk.dk/intern/ keep
 receiving (payload links are absolute, on `SITE_URL`, so a tap opens intern.gahk.dk), until gahk.dk's
 self-unregistering `/sw.js` removes the old worker. Residents then re-enable push on
-intern.gahk.dk, and iPhone users add the home-screen app again from intern.gahk.dk — an app
-installed from gahk.dk is a different app (its manifest id changed with the origin).
+intern.gahk.dk, and install the home-screen app again from intern.gahk.dk — an app installed from
+gahk.dk is a different app (its manifest id changed with the origin). The new one is called "GAHK
+Intern". `/install` (public) has the steps per platform, the old app on gahk.dk shows a notice
+linking there, and logged-in residents on a phone get a banner pointing to it until they install or
+close it (spec/features/gahk-intern-app.md).
 
 **Email — verify the senders, don't assume.** one.com authenticates as `SMTP_USER` and rejects any
 From address that account is not itself or an alias of:
