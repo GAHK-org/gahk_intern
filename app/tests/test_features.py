@@ -10,7 +10,7 @@ from runpy import run_path
 import pytest
 from django.contrib.auth.hashers import identify_hasher
 from django.core import mail
-from django.test import Client
+from django.test import Client, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -34,15 +34,16 @@ def test_session_cookie_stays_on_the_intranet_host(monkeypatch: pytest.MonkeyPat
     assert configured["CSRF_COOKIE_NAME"] == "intern_csrftoken"
 
 
-def test_production_defaults_name_both_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_production_defaults_name_each_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DJANGO_DEBUG", "0")
     monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
-    monkeypatch.delenv("SITE_URL", raising=False)
-    monkeypatch.delenv("PUBLIC_SITE_URL", raising=False)
+    for name in ("SITE_URL", "PUBLIC_SITE_URL", "WIKI_URL"):
+        monkeypatch.delenv(name, raising=False)
     configured = run_path(config_settings.__file__)
 
     assert configured["SITE_URL"] == "https://intern.gahk.dk"
     assert configured["PUBLIC_SITE_URL"] == "https://gahk.dk"
+    assert configured["WIKI_URL"] == "https://wiki.gahk.dk/"
 
 
 # ---------------------------------------------------------------- auth (F-014)
@@ -1099,6 +1100,24 @@ def test_cms_admin_link_in_sidebar_for_editor_roles(make_resident: Callable) -> 
     nav = plain.get("/").context["nav_intern"]
     labels = [label for _sec, items in nav for _u, label, _i in items]
     assert "Rediger indhold" not in labels
+
+
+@pytest.mark.django_db
+@override_settings(WIKI_URL="https://wiki.gahk.dk/")
+def test_sidebar_wiki_link_leaves_the_app(make_resident: Callable) -> None:
+    """The wiki has its own host: the sidebar opens it in a new tab, and it is never the active item."""
+    c = Client()
+    c.force_login(make_resident(email="navwiki@gahk.dk"))
+    r = c.get("/")
+
+    assert ("https://wiki.gahk.dk/", "Wiki", "book") in [
+        item for _sec, items in r.context["nav_intern"] for item in items
+    ]
+    assert r.context["active_nav_url"] == "/"
+    assert (
+        '<a class="nav-item" href="https://wiki.gahk.dk/" target="_blank" rel="noopener">'
+        in r.content.decode()
+    )
 
 
 @pytest.mark.django_db
