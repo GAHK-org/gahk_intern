@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Callable
 from datetime import timedelta
 from io import BytesIO
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -409,14 +410,16 @@ def test_a_publish_that_breaks_still_lets_the_outbox_be_pulled(
 
 @pytest.mark.django_db
 def test_the_sync_brings_in_legacy_images_and_publishes_them_in_the_same_run(
-    gahk_web: FakeGahkWeb, front_page: Page, monkeypatch: pytest.MonkeyPatch
+    gahk_web: FakeGahkWeb, front_page: Page, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from cms import legacy_images
 
-    from .test_cms_legacy_images import FakeGitHub, image_bytes
+    from .test_cms_legacy_images import image_bytes
 
-    github = FakeGitHub({"upload/images/gang.jpg": image_bytes()})
-    monkeypatch.setattr(legacy_images, "http_get", github)
+    old = tmp_path / "old-images" / "upload" / "images"
+    old.mkdir(parents=True)
+    (old / "gang.jpg").write_bytes(image_bytes())
+    monkeypatch.setattr(legacy_images, "LEGACY_DIRECTORY", tmp_path / "old-images")
     front_page.body = '<img src="/public/image/upload/images/gang.jpg">'
     front_page.save()  # and the seeded default background points at gang.jpg too
 
@@ -431,9 +434,8 @@ def test_the_sync_brings_in_legacy_images_and_publishes_them_in_the_same_run(
     assert hallway.sha256 in gahk_web.images
     assert "/public/image/" not in json.dumps(published)
 
-    github.urls.clear()
     report = tasks.sync_gahk_web()
-    assert github.urls == [] and report["legacy_images"]["imported"] == 0
+    assert report["legacy_images"]["imported"] == 0
 
 
 @pytest.mark.django_db
@@ -442,18 +444,19 @@ def test_every_old_image_goes_to_gahk_dk_used_or_not_until_it_is_deleted(
     front_page: Page,
     monkeypatch: pytest.MonkeyPatch,
     django_capture_on_commit_callbacks: Callable[..., Any],
+    tmp_path: Path,
 ) -> None:
     """gahk.dk redirects every old picture address, so it gets every old picture, not only the ones
     a page shows. Deleting one from the library takes it, and its redirect, off at the next publish."""
     from cms import legacy_images, services
 
-    from .test_cms_legacy_images import FakeGitHub, _list, image_bytes
+    from .test_cms_legacy_images import image_bytes
 
-    github = FakeGitHub(
-        {"upload/images/gang.jpg": image_bytes(), "upload/images/klatring.jpg": image_bytes("PNG")}
-    )
-    monkeypatch.setattr(legacy_images, "http_get", github)
-    _list(monkeypatch, github, "upload/images/gang.jpg", "upload/images/klatring.jpg")
+    old = tmp_path / "old-images" / "upload" / "images"
+    old.mkdir(parents=True)
+    (old / "gang.jpg").write_bytes(image_bytes())
+    (old / "klatring.jpg").write_bytes(image_bytes("PNG"))
+    monkeypatch.setattr(legacy_images, "LEGACY_DIRECTORY", tmp_path / "old-images")
 
     report = tasks.sync_gahk_web()
 
@@ -472,8 +475,7 @@ def test_every_old_image_goes_to_gahk_dk_used_or_not_until_it_is_deleted(
     published = gahk_web.published[-1]
     assert old_address not in published["legacy_images"]
     assert climbing.sha256 not in {image["sha256"] for image in published["images"]}
-    github.urls.clear()
-    assert tasks.sync_gahk_web()["legacy_images"]["imported"] == 0 and github.urls == []
+    assert tasks.sync_gahk_web()["legacy_images"]["imported"] == 0
 
 
 @pytest.mark.django_db

@@ -5,54 +5,35 @@ same import at once, without that budget, and also tries the files an earlier ru
 missing or unusable. Run it right after the deploy, so no old picture address on gahk.dk goes
 without its copy for the minutes the sync would take:
 
-    python manage.py import_legacy_images                 # from GitHub, the pinned commit
-    python manage.py import_legacy_images --from DIR      # from a local copy of the old image dir
+    python manage.py import_legacy_images
 
-Every file of cms/legacy_images.json, and every other file the content refers to, is imported once
-(each listed one checked against its SHA-256), with a line per file; the content is pointed at the
-library copies, and then gahk.dk is published. Safe to run again, or after an interruption: what is
-in the library already is skipped, and so is what an editor deleted from it.
+Every file below static/legacy/image/upload/, and every other file the content refers to, is
+imported once, with a line per file; the content is pointed at the library copies, and then gahk.dk
+is published. Safe to run again, or after an interruption: what is in the library already is
+skipped, and so is what an editor deleted from it.
 """
 
-from argparse import ArgumentParser
-from pathlib import Path
 from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError
 
-from cms.legacy_images import DirectorySource, GitHubSource, LegacySource, convert_legacy_images, legacy_state
+from cms import legacy_images
+from cms.legacy_images import convert_legacy_images, legacy_state
 from cms.services import publish_on_commit
 
 
 class Command(BaseCommand):
-    help = "Import every old-site image into the Hjemmeside image library (from GitHub, or a directory)."
-
-    def add_arguments(self, parser: ArgumentParser) -> None:
-        parser.add_argument(
-            "--from",
-            dest="source_dirs",
-            action="append",
-            type=Path,
-            metavar="DIR",
-            help="Read the files from a copy of the old static/legacy/image/ (or public/image/) "
-            "directory, the one that holds upload/, instead of GitHub. May be given more than once; "
-            "the first directory that has a file wins.",
-        )
+    help = "Import every old-site image (static/legacy/image/upload/) into the Hjemmeside image library."
 
     def handle(self, *args: Any, **options: Any) -> None:  # noqa: ANN401
-        source_dirs: list[Path] = options["source_dirs"] or []
-        for directory in source_dirs:
-            if not directory.is_dir():
-                raise CommandError(f"{directory} is not a directory")
-        source: LegacySource = DirectorySource(source_dirs) if source_dirs else GitHubSource()
-        self.stdout.write(f"Reading from {source.description}")
+        self.stdout.write(f"Reading from {legacy_images.LEGACY_DIRECTORY}")
 
         def progress(number: int, total: int, path: str, outcome: str) -> None:
             line = f"[{number}/{total}] {path}: {outcome}"
             self.stdout.write(line if outcome == "imported" else self.style.WARNING(line))
             self.stdout.flush()
 
-        result = convert_legacy_images(source, retry_failed=True, progress=progress)
+        result = convert_legacy_images(retry_failed=True, progress=progress)
         if result.busy:
             raise CommandError("Another legacy image import is running; try again in a minute.")
 
@@ -66,10 +47,6 @@ class Command(BaseCommand):
         if result.error:
             raise CommandError(
                 f"Stopped with {result.deferred} images left: {result.error}. Run it again later."
-            )
-        if result.unavailable:
-            raise CommandError(
-                f"Stopped with {result.deferred} images left: {result.unavailable}. Run it again later."
             )
         state = legacy_state()
         deleted = f" ({state.deleted} deleted from it)" if state.deleted else ""
