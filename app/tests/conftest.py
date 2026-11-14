@@ -87,24 +87,6 @@ def _isolate_from_dotenv(settings: object, tmp_path: Path) -> None:
     settings.ALUMNEREGNING_SEND_MAIL = True  # type: ignore[attr-defined]
 
 
-@pytest.fixture(autouse=True)
-def _no_legacy_image_downloads(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The test database's seeded default background still points at an old-site image, so every
-    sync would download it from GitHub (cms.legacy_images). Tests never touch the network: a
-    download fails as "unreachable", which the import records nowhere. Nor does every sync try the
-    whole list of old files (cms/legacy_images.json): it is empty here. The legacy image tests put
-    their own fakes in place of both."""
-    import requests
-
-    from cms import legacy_images
-
-    def offline(url: str, **kwargs: object) -> requests.Response:
-        raise requests.ConnectionError(f"tests do not download ({url})")
-
-    monkeypatch.setattr(legacy_images, "http_get", offline)
-    monkeypatch.setattr(legacy_images, "manifest", tuple)
-
-
 @pytest.fixture
 def make_resident(db: None) -> Callable[[str, str, bool, tuple], Resident]:
     def _make(

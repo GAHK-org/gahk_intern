@@ -75,20 +75,12 @@ working when intern or the image storage is down; editing needs intern.
 - The library itself needs a login. An old link to a library picture (`/media/cms/…`, public while
   intern rendered gahk.dk) still works for a picture gahk.dk shows: a visitor who is not logged in
   is sent on to gahk.dk's copy. Any other library file asks for a login.
-- All of the old site's pictures (77) move into the library, also the ones no page uses any more:
-  their old addresses on gahk.dk (`/static/legacy/image/…`, `/public/image/…`) send visitors on to
-  the copies, so links from other websites and old mails keep working. The sync every two minutes
-  fetches them by itself, a batch at a time, the ones the content uses first, and points the content
-  at the library copies, recorded as "System". Right after the deploy the operator runs the manual
-  import, which fetches all of them at once.
-- Each picture is checked against a list of the old files with their checksums; one that differs
-  is not stored.
-- The overview says how many of the old pictures are in the library ("x af y gamle billeder").
-- An old picture nothing uses shows as "Ikke i brug" and may be deleted. A deleted one is not fetched
-  again (unless content uses it again), and gahk.dk drops it and its old address at the next publish.
-- A picture that cannot be fetched or is not a usable image is reported once and not tried again;
-  the overview lists them, and a manual import can try them again. Until a picture has moved, it is
-  missing on gahk.dk.
+- All of the old site's pictures (77) were moved into the library once, at the move to
+  intern.gahk.dk, also the ones no page used any more, and the content was pointed at the copies.
+  Their old addresses on gahk.dk (`/static/legacy/image/…`, `/public/image/…`) send visitors on to
+  the copies, so links from other websites and old mails keep working.
+- An old picture nothing uses shows as "Ikke i brug" and may be deleted; gahk.dk then drops it and
+  its old address at the next publish.
 - Images keep their file name, Danish letters included (Værelse på Øen.jpg is stored as
   Værelse_på_Øen.jpg and shown on gahk.dk as værelse-på-øen.jpg). Images already stored under a
   name without them keep that name.
