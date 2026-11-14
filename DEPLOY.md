@@ -735,9 +735,9 @@ A manual publish is never skipped as "already current".
 4. On gahk.dk, `https://gahk.dk/api/health` shows the revision it serves; compare with the newest OK
    Publication.
 
-**Legacy images.** The old site's content images (77 files, under `app/static/legacy/image/upload/`
-in git up to commit `3fc1817` on main) were moved into the image library (S3) once, at the move to
-intern.gahk.dk, with their old path in `CmsImage.legacy_path`, and the content was pointed at the
+**Legacy images.** The old site's content images (77 files, in git under
+`app/static/legacy/image/upload/` until the cutover's cleanup) were moved into the image library (S3)
+once, at the move to intern.gahk.dk, with their old path in `CmsImage.legacy_path`, and the content was pointed at the
 copies. Every snapshot sends gahk.dk the map from each old address (`/static/legacy/image/…`;
 gahk.dk also answers `/public/image/…`) to the library copy, so links from other websites and old
 mails keep working. An old image nothing uses shows as "Ikke i brug" in the library and may be
