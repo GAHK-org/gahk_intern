@@ -6,6 +6,8 @@
   {% include "_csp_upgrade.html" %}
   {% block viewport %}<meta name="viewport" content="width=device-width, initial-scale=1">{% endblock %}
   <meta name="theme-color" content="#1F5A3A">
+  {# The home-screen name on iOS, which reads this rather than the manifest's short_name. #}
+  <meta name="apple-mobile-web-app-title" content="GAHK Intern">
   <title>{% block title %}G. A. Hagemanns Kollegium{% endblock %}</title>
   <link rel="icon" href="{% static 'legacy/image/elements/lamassu.svg' %}" type="image/svg+xml">
   <link rel="stylesheet" href="{% static 'dist/app.css' %}">

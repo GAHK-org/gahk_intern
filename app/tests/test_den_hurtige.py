@@ -1122,7 +1122,7 @@ def test_a_message_notification_is_titled_with_the_sender(
     client: Client, make_resident: Callable[..., Resident], pushes: list
 ) -> None:
     """Every platform already labels a notification with the app it came from — iOS renders
-    "from Den Hurtige" under the title, taken from the manifest name. Repeating it in the title
+    "from GAHK Intern" under the title, taken from the manifest name. Repeating it in the title
     spent the most valuable line on the lock screen saying nothing, and pushed who-said-what into
     the body. Sender in the title, message in the body, as in any chat app."""
     author = make_resident(email="a@gahk.dk", first_name="Magnus", last_name="Pedersen")
