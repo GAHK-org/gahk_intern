@@ -29,7 +29,8 @@ opens on Den Hurtige. Push notifications on a phone (iPhone in particular) need 
 - "Installér GAHK Intern som app på din telefon — Sådan gør du" at the top of the intranet's pages,
   linking to /install.
 - Only for a logged-in resident on a phone or tablet, in the browser rather than the installed app.
-  Never on a computer, on /install itself, on the kiosk pages or for the kitchen account.
+  Never on a computer, on /install itself, in GAHKFlix, on the ølkælder till or for the kitchen
+  account.
 - Closing it hides it on that browser for 30 days.
 
 ## Decisions

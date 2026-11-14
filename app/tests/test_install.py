@@ -13,8 +13,9 @@ import pytest
 from django.conf import settings
 from django.test import Client
 from django.test.utils import override_settings
+from django.urls import reverse
 
-from residents.models import Resident
+from residents.models import Resident, Role
 
 pytestmark = pytest.mark.django_db
 
@@ -122,9 +123,26 @@ def test_the_banner_is_not_for_the_kitchen_account(make_resident: Callable[..., 
     assert BANNER not in client.get("/reparationer/").content.decode()
 
 
+@pytest.mark.parametrize("page", ["home", "series_list", "timeline", "play"])
+def test_the_banner_is_not_on_gahkflix(
+    page: str, settings: object, tmp_path: Path, make_resident: Callable[..., Resident]
+) -> None:
+    """GAHKFlix draws its own page (gahkflix/base.html), without the intranet's chrome or the banner."""
+    from tests.test_gahkflix import make_video
+
+    settings.MEDIA_ROOT = tmp_path / "media"  # type: ignore[attr-defined]
+    admin = make_resident(email="admin@gahk.dk", roles=(Role.ADMINISTRATOR,))
+    args = [make_video(admin).pk] if page == "play" else []
+    client = Client()
+    client.force_login(admin)
+    response = client.get(reverse(f"gahkflix:{page}", args=args))
+    assert response.status_code == 200
+    assert BANNER not in response.content.decode()
+
+
 @override_settings(OELKAELDER_KIOSK_IPS=["127.0.0.1"])
 def test_the_banner_is_not_on_kiosk_pages(client: Client, make_resident: Callable[..., Resident]) -> None:
-    """The ølkælder till runs its own page (kiosk_base.html) without the frontend bundle."""
+    """The ølkælder till (the shop, on kiosk_base.html) runs its own page without the frontend bundle."""
     client.force_login(make_resident())
     response = client.get("/oelkaelder/")
     assert response.status_code == 200
