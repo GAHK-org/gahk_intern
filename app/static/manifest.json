@@ -1,8 +1,8 @@
 {
-  "id": "/den-hurtige/",
-  "name": "Den Hurtige - G.A. Hagemanns Kollegium",
-  "short_name": "Den Hurtige",
-  "description": "Hurtige beskeder for alumnerne på G.A. Hagemanns Kollegium",
+  "id": "/",
+  "name": "GAHK Intern",
+  "short_name": "GAHK Intern",
+  "description": "Intranettet for alumnerne på G.A. Hagemanns Kollegium",
   "lang": "da",
   "dir": "ltr",
   "start_url": "/den-hurtige/",

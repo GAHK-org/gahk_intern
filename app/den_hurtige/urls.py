@@ -2,12 +2,10 @@
 
 Two rules govern the shape here:
 
-  * The bare path must stay a real page. static/manifest.json uses /den-hurtige/ as the PWA's `id`
-    as well as its start_url, and a changed id makes every phone that already installed the app
-    treat the next deploy as a *different* app. So it renders the default channel — not a redirect
-    and not an index of channels. (The id was /intern/den-hurtige/ until the intranet moved to the
-    root of intern.gahk.dk; that move changed the origin too, which alone makes it a new app, so
-    the id changed with it rather than keeping a path that no longer exists.)
+  * The bare path must stay a real page: static/manifest.json opens the installed app there (its
+    start_url). So it renders the default channel — not a redirect and not an index of channels.
+    The app's identity is the manifest's own `id` ("/", the whole site), not this path, so the start
+    page may move; the id may not.
   * `<slug:channel>/` is matched LAST, so the fixed segments below keep resolving. A channel slug
     equal to one of them would be shadowed with no error anywhere, so checks.E008 rejects that
     outright rather than leaving it to be discovered.

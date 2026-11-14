@@ -22,6 +22,7 @@ import "./gahkflix"; // GAHKFlix: rows, uploader, editors and player (no-op outs
 import "./topbar"; // hide the sticky top bar on scroll-down (phones only)
 import "./cms-loader"; // Hjemmeside, the gahk.dk editor: fetches its own code on its pages only
 import "./cms.css"; // its styles (small; in app.css so the lazy chunks carry no CSS)
+import "./install"; // the phone install banner, and /install's steps and install prompt
 
 // Alpine for small client-only interactions; HTMX (imported above) auto-wires hx-* attributes.
 // NB: the ølkælder till (kiosk) is deliberately NOT an Alpine island — it runs on an iOS 10.3 iPad

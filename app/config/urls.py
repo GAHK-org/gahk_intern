@@ -93,6 +93,9 @@ urlpatterns = [
         TemplateView.as_view(template_name="sw.js", content_type="application/javascript"),
         name="pwa_service_worker",
     ),
+    # How to install the intranet as the home-screen app GAHK Intern. Public, with no login: the old
+    # app on gahk.dk sends people here, and its session stayed behind on that origin.
+    path("install", TemplateView.as_view(template_name="install.html"), name="install"),
     # The intranet itself, at the root. Last, so the fixed prefixes above keep resolving first.
     path("", include("residents.urls")),
 ]
