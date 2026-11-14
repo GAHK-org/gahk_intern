@@ -1,5 +1,5 @@
 {% extends "gahkflix/base.html" %}
-{% load gahkflix %}
+{% load gahkflix board_extras %}
 {% block title %}{{ video.title }} – GAHKFlix{% endblock %}
 {% block body_class %}flix-detail{% endblock %}
 {% block content %}
@@ -44,6 +44,9 @@
         {% if can_view_history %}
           <a class="flix-icon-btn" href="{% url 'gahkflix:history' video.pk %}" title="Historik" aria-label="Historik"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg></a>
         {% endif %}
+        {% if video.is_published and not video.is_binned %}{% board_share_url video as share_url %}{% if share_url %}
+          <a class="flix-icon-btn" href="{{ share_url }}" title="Del på opslagstavlen" aria-label="Del på opslagstavlen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg></a>
+        {% endif %}{% endif %}
       </div>
     </div>
   </section>
