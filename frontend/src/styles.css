@@ -109,6 +109,10 @@
   .side-foot { margin-top:auto; padding:10px 6px 4px; }
   .side-foot .clock { display:flex; align-items:center; gap:7px; background:var(--warn-bg); color:var(--brass-ink); border:1px solid #e7d8b0; border-radius:8px; padding:7px 9px; font-weight:600; font-size:12px; }
   .backdrop { display:none; }
+  /* Nobody logged in (/install): no menu, so main also takes the sidebar's column. Before the
+     phone media query below, whose single-column .app wins over this. */
+  .app-no-nav { grid-template-areas:"brand top" "main main"; }
+  .app-no-nav .sidebar, .app-no-nav .hamburger { display:none; }
 
   .main { grid-area:main; overflow:auto; }
   .content { padding:26px 30px 48px; }
@@ -2579,4 +2583,21 @@
   .mention-picker img { width:22px; height:22px; border-radius:50%; object-fit:cover; }
   .mention-picker small { margin-left:auto; color:var(--faint); font-size:12px; }
   .mention-picker li.mention-empty { cursor:default; color:var(--muted); background:none; }
+
+  /* --- /install (install.html, install.ts): one collapsible .card per platform --- */
+  .install-page ol { list-style:decimal; padding-left:22px; margin:10px 0; display:grid; gap:8px; }
+  .install-page .card h2 { margin-top:0; }
+  .install-platform { padding:0; }
+  .install-platform > summary { display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:16px 20px; font-size:16px; font-weight:700; cursor:pointer; list-style:none; }
+  .install-platform > summary::-webkit-details-marker { display:none; }
+  .install-platform > summary::after { content:"▾"; color:var(--muted); transition:rotate .15s ease; }
+  .install-platform[open] > summary::after { rotate:180deg; }
+  .install-platform > :not(summary) { margin-left:20px; margin-right:20px; }
+  .install-platform > :last-child { margin-bottom:18px; }
+  .install-offer p { margin:10px 0 0; }
+  .install-icon { display:inline-block; width:18px; height:18px; vertical-align:-3px; color:var(--green-700);
+    fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  .install-done { margin:16px 0; padding:10px 14px; border:1px solid var(--green-100); border-radius:10px;
+    background:var(--green-050); color:var(--green-700); font-weight:600; }
 }

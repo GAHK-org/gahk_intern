@@ -39,3 +39,50 @@ def test_ios_gets_the_name_from_the_page(client: Client, make_resident: Callable
     client.force_login(make_resident())
     html = client.get(FEED_URL).content.decode()
     assert '<meta name="apple-mobile-web-app-title" content="GAHK Intern">' in html
+
+
+# --- /install ------------------------------------------------------------------------------------
+
+INSTALL_URL = "/install"
+STEPS = ("Føj til hjemmeskærm", "Installér app", "Når appen er installeret", "Fjern app")
+
+
+def test_the_install_page_needs_no_login() -> None:
+    """The old app on gahk.dk links here, and its session stayed behind on that origin."""
+    response = Client().get(INSTALL_URL)
+    assert response.status_code == 200
+    html = response.content.decode()
+    for step in STEPS:
+        assert step in html
+    # No menu and no resident search without a login.
+    assert "app-no-nav" in html
+    assert "Søg beboer" not in html
+
+
+def test_the_install_page_links_the_manifest() -> None:
+    """Browsers install the app described by the manifest of the page you are on."""
+    html = Client().get(INSTALL_URL).content.decode()
+    assert '<link rel="manifest" href="/static/manifest.json">' in html
+    assert '<meta name="apple-mobile-web-app-title" content="GAHK Intern">' in html
+
+
+def test_the_install_page_for_a_resident(client: Client, make_resident: Callable[..., Resident]) -> None:
+    client.force_login(make_resident())
+    response = client.get(INSTALL_URL)
+    assert response.status_code == 200
+    html = response.content.decode()
+    for step in STEPS:
+        assert step in html
+    assert "app-no-nav" not in html
+    assert "/notifikationer/indstillinger" in html
+
+
+def test_the_kitchen_account_may_read_the_install_page(make_resident: Callable[..., Resident]) -> None:
+    """The page is public; the kitchen gate guards residents' data, and the kitchen tablet may carry the
+    old app itself."""
+    from core.middleware import kitchen_may_open
+
+    client = Client()
+    client.force_login(make_resident(email="koekken@gahk.dk", is_kitchen=True))
+    assert client.get(INSTALL_URL).status_code == 200
+    assert not kitchen_may_open(INSTALL_URL + "x")
