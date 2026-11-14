@@ -1520,9 +1520,44 @@
      does NOT reuse the .chat, .msg and .composer families: those encode a one-viewport-tall chat
      shell with its own internal scroller, and a paginated document list wants the normal page
      scroll. */
+  /* One row: the field takes the slack, the period sits beside it. 16px text so iOS does not zoom
+     into the field on focus. */
+  .board-search { display:flex; gap:8px; margin-bottom:12px; }
+  .board-search-field { position:relative; flex:1; min-width:0; }
+  .board-search-field input[type="search"] { height:42px; padding:0 38px 0 40px; font-size:16px;
+    border-radius:999px; }
+  .board-search-field input[type="search"]::-webkit-search-cancel-button { display:none; }
+  .board-search-go, .board-search-clear { position:absolute; top:50%; transform:translateY(-50%);
+    display:grid; place-items:center; width:32px; height:32px; border:0; border-radius:50%;
+    background:none; color:var(--faint); cursor:pointer; text-decoration:none; }
+  .board-search-go { left:5px; }
+  .board-search-go svg { width:18px; height:18px; }
+  .board-search-clear { right:5px; font-size:14px; }
+  .board-search-go:hover, .board-search-clear:hover { color:var(--ink); background:var(--surface-2); }
+  .board-period { width:auto; flex:none; height:42px; padding:0 12px; font-size:15px; border-radius:999px;
+    max-width:44%; }
+  .board-period.is-active { background:var(--green-050); border-color:var(--green); color:var(--green-700);
+    font-weight:600; }
+  /* A search's matches, in the card text and the author's name. */
+  mark.search-hit { background:#f6e3a1; color:inherit; border-radius:3px; padding:0 1px; }
+  .notice-match { margin:6px 0 0; padding:6px 10px; border-left:3px solid var(--brass); background:var(--surface-2);
+    color:var(--muted); font-size:14px; border-radius:0 6px 6px 0; }
+  .board-result { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between;
+    gap:4px 12px; margin:0 0 12px; font-size:14px; color:var(--muted); }
+  .board-result strong { color:var(--ink); }
+  .board-result q { color:var(--ink); font-weight:600; }
+  .board-result a, .board-empty a { color:var(--green-700); font-weight:600; text-decoration:underline;
+    text-underline-offset:2px; }
   .board-filters { @apply flex flex-wrap gap-2 mb-4; }
   .board-filters .chip { @apply no-underline; }
   .board-filters .chip.is-active { background: var(--green); color: #fff; border-color: var(--green); }
+  /* Phones: the chips scroll sideways in one row instead of wrapping into three. */
+  @media (max-width: 720px) {
+    .board-filters { flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; margin-inline:-18px;
+      padding-inline:18px; }
+    .board-period { max-width:none; padding:0 6px 0 12px; font-size:16px; }
+    .board-filters::-webkit-scrollbar { display:none; }
+  }
   /* Vertical rhythm: the feed is scanned, so the gap only has to say "separate card" -- the card
      border does most of the separating work -- but 8px was under the point where it said it, and
      cards ran together into one column of text. 12px reads as separate posts.

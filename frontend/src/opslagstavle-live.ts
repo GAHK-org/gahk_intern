@@ -21,6 +21,7 @@
 // the board needs its own handling, because one request answers for many cards here.
 
 import { LIVE_EVENT, concerns, topicsOf, type LiveSignal } from "./live";
+import { highlight } from "./highlight";
 import { fetchFragment, morphInto, serialised } from "./live-region";
 
 const CARD_PREFIX = "opslag-";
@@ -32,6 +33,7 @@ const board = document.querySelector<HTMLElement>("[data-live-board]");
 if (board) {
   const liveUrl = board.dataset.liveUrl ?? "";
   const category = board.dataset.category ?? "";
+  const filtered = "filtered" in board.dataset;
   // The newest post that existed when the page was drawn; a resync asks what came after it.
   const newest = board.dataset.newest ?? "0";
   const topics = topicsOf(board);
@@ -70,6 +72,7 @@ if (board) {
   const refresh = serialised<number | "since">(async (items) => {
     const query = new URLSearchParams();
     for (const item of items) if (item !== "since") query.append("id", String(item));
+    if (board.dataset.query) query.set("q", board.dataset.query);
     if (items.has("since")) {
       query.set("siden", newest);
       if (category) query.set("kategori", category);
@@ -84,11 +87,14 @@ if (board) {
       if (!old) continue;
       const fresh = answer.content.getElementById(`${CARD_PREFIX}${item}`);
       if (!fresh) old.remove();
-      else if (belongs(old, fresh)) morphInto(old, fresh);
+      else if (belongs(old, fresh)) {
+        morphInto(old, fresh);
+        highlight(cardFor(item) ?? undefined);
+      }
       else moved = true;
     }
     const since = answer.content.getElementById("js-board-new-since");
-    if (since) unseen = new Set((since.dataset.pks ?? "").split(",").filter(Boolean).map(Number));
+    if (since && !filtered) unseen = new Set((since.dataset.pks ?? "").split(",").filter(Boolean).map(Number));
     showBanner();
   });
 
@@ -103,6 +109,8 @@ if (board) {
     }
     if (signal.pk === null) return;
     if (signal.kind === "created") {
+      // A search or period filter: whether the new post matches is unknown here.
+      if (filtered) return;
       if (category && signal.category !== category) return;
       unseen.add(signal.pk);
       showBanner();

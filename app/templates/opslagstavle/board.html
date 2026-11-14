@@ -26,6 +26,31 @@
     resultatet af værelsesrunden"), back/forward works, and it composes with the pager for free via
     {% querystring %}. An htmx swap would buy nothing on a 15-item list and cost all of that.
   {% endcomment %}
+  {% comment %}
+    A plain GET form for the same reasons as the chips below: a search is a link you can share, and
+    the chips and the pager keep `q` and `periode` through {% querystring %}. See opslagstavle/search.py.
+  {% endcomment %}
+  <form class="board-search" method="get" role="search">
+    {% if selected_category %}<input type="hidden" name="kategori" value="{{ selected_category }}">{% endif %}
+    <div class="board-search-field">
+      <button type="submit" class="board-search-go" aria-label="Søg">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      </button>
+      <input type="search" name="q" value="{{ query }}" placeholder="Søg i opslag" maxlength="200"
+             aria-label="Søg i opslag" enterkeyhint="search">
+      {% if query %}
+        <a class="board-search-clear" href="{% querystring q=None page=None %}" aria-label="Ryd søgning">✕</a>
+      {% endif %}
+    </div>
+    <select name="periode" class="board-period{% if selected_period %} is-active{% endif %}" aria-label="Periode"
+            onchange="this.form.requestSubmit()">
+      <option value="">Hele tiden</option>
+      {% for value, label in periods %}
+        <option value="{{ value }}"{% if selected_period == value %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </form>
+
   <nav class="board-filters" aria-label="Filtrér efter kategori">
     <a class="chip{% if not selected_category %} is-active{% endif %}"
        href="{% querystring kategori=None page=None %}">Alle</a>
@@ -42,7 +67,15 @@
     card down under somebody reading, and on page 2 it would not even belong here. The banner links
     to page 1 of the same filter; `data-category` lets it ignore posts this filter would not show.
   {% endcomment %}
-  <div data-live="opslagstavle" data-live-board data-category="{{ selected_category }}" data-newest="{{ newest_pk }}"
+  {{ highlight|json_script:"board-highlight" }}
+  {% if filtered %}
+    <p class="board-result" aria-live="polite">
+      <span><strong>{{ result_count }}</strong> opslag{% if query %} matcher <q>{{ query }}</q>{% endif %}{% if selected_period %} · {% for value, label in periods %}{% if value == selected_period %}{{ label|lower }}{% endif %}{% endfor %}{% endif %}</span>
+      <a href="{% querystring q=None periode=None page=None %}">Ryd filtre</a>
+    </p>
+  {% endif %}
+
+  <div data-live="opslagstavle" data-live-board data-category="{{ selected_category }}" data-newest="{{ newest_pk }}"{% if filtered %} data-filtered data-query="{{ query }}"{% endif %}
        data-live-url="{% url 'opslagstavle:live_cards' %}">
     <a class="board-new" id="js-board-new" href="{% querystring page=None %}" aria-live="polite" hidden><span></span></a>
 
@@ -63,7 +96,13 @@
       {% for notice in page_obj %}
         {% include "opslagstavle/_notice_card.html" %}
       {% empty %}
-        {% if not pinned %}
+        {% if filtered and not pinned %}
+          <div class="card-flat card-pad board-empty">
+            <p><strong>Ingen opslag matcher.</strong></p>
+            <p class="muted">Prøv færre eller kortere ord, en anden periode, eller
+              <a href="{% querystring q=None periode=None page=None %}">ryd søgningen</a>.</p>
+          </div>
+        {% elif not pinned %}
           <div class="card-flat card-pad">
             <p><strong>Der er ingen opslag her endnu.</strong></p>
             <p class="muted">

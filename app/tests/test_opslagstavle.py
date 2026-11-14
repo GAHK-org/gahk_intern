@@ -10,6 +10,7 @@ lockdown, a purge on page load. Those look like omissions and are decisions; wit
 """
 
 import json
+import os
 from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
@@ -2188,3 +2189,133 @@ def test_the_authors_name_links_to_their_profile(client: Client, beboer: Residen
     body = client.get(BOARD).content.decode()
 
     assert f'href="{reverse("resident_profile", args=[other.pk])}">{other.full_name}</a>' in body
+
+
+# --- search and period ----------------------------------------------------------------------------
+
+
+def board_ids(client: Client, **params: str) -> list[int]:
+    response = client.get(BOARD, params)
+    assert response.status_code == 200
+    return [n.pk for n in [*response.context["pinned"], *response.context["page_obj"]]]
+
+
+def test_search_matches_stems_prefixes_and_the_middle_of_compounds(client: Client, beboer: Resident) -> None:
+    client.force_login(beboer)
+    birthday = make_notice(beboer, body="Tillykke med fødselsdagen!")
+    rooms = make_notice(beboer, body="Resultatet af værelsesrunden er klar.")
+    party = make_notice(beboer, body="Kom til julefest på lørdag.")
+
+    assert board_ids(client, q="fødselsdag") == [birthday.pk]
+    assert board_ids(client, q="Værelses") == [rooms.pk]
+    assert board_ids(client, q="fest") == [party.pk]
+
+
+def test_every_word_must_match(client: Client, beboer: Resident) -> None:
+    client.force_login(beboer)
+    both = make_notice(beboer, body="Fællesspisning i køkkenet")
+    make_notice(beboer, body="Fællesspisning i haven")
+
+    assert board_ids(client, q="fællesspisning køkken") == [both.pk]
+
+
+def test_search_finds_posts_by_the_authors_name(client: Client, beboer: Resident, other: Resident) -> None:
+    client.force_login(beboer)
+    hers = make_notice(other, body="Noget helt andet")
+    make_notice(beboer, body="Mit opslag")
+
+    assert board_ids(client, q="anden") == [hers.pk]
+
+
+def test_tsquery_syntax_in_a_search_is_harmless(client: Client, beboer: Resident) -> None:
+    client.force_login(beboer)
+    make_notice(beboer, body="Hej")
+
+    assert board_ids(client, q="a:* & !( ' \\ |") == []
+
+
+def test_period_filters_by_rolling_window_and_by_year(client: Client, beboer: Resident) -> None:
+    client.force_login(beboer)
+    now = timezone.now()
+    recent = make_notice(beboer, body="ny")
+    old = make_notice(beboer, body="gammel")
+    Notice.objects.filter(pk=old.pk).update(created_at=now.replace(year=now.year - 1))
+
+    assert board_ids(client, periode="uge") == [recent.pk]
+    assert board_ids(client, periode=str(now.year - 1)) == [old.pk]
+    # An unknown period is ignored rather than emptying the board.
+    assert sorted(board_ids(client, periode="1999")) == sorted([recent.pk, old.pk])
+
+
+def test_a_search_keeps_working_with_the_category_chips_and_turns_off_the_new_posts_banner(
+    client: Client, beboer: Resident
+) -> None:
+    client.force_login(beboer)
+    make_notice(beboer, body="fest", category="begivenhed")
+
+    html = client.get(BOARD, {"q": "fest"}).content.decode()
+
+    assert "kategori=begivenhed" in html and "q=fest" in html
+    assert "data-filtered" in html
+    assert "opslag matcher" in html and "Ryd filtre" in html
+    assert "data-filtered" not in client.get(BOARD).content.decode()
+
+
+@pytest.mark.skipif(
+    not os.environ.get("DATABASE_URL", "postgres").startswith("postgres"), reason="Postgres indexes"
+)
+def test_search_uses_the_indexes(client: Client, beboer: Resident) -> None:
+    from django.db import connection
+
+    from opslagstavle import search
+
+    make_notice(beboer, body="Hej")
+    qs = search.search(Notice.objects.all(), "værelses")
+    sql, params = qs.query.sql_with_params()
+    with connection.cursor() as cursor:
+        cursor.execute("SET LOCAL enable_seqscan = off")
+        cursor.execute(f"EXPLAIN {sql}", params)
+        plan = "\n".join(row[0] for row in cursor.fetchall())
+
+    assert "notice_body_fts_idx" in plan
+    assert "notice_body_trgm_idx" in plan
+
+
+def test_highlight_terms_include_the_danish_stem() -> None:
+    from opslagstavle import search
+
+    marks = search.highlight_terms("Fødselsdage a")
+
+    assert marks[0] == "fødselsdage"  # longest first, so the full word is marked before its stem
+    assert "fødselsdag" in marks
+    assert "a" not in marks  # too short to be a search word
+
+
+def test_a_match_past_the_excerpt_gets_a_snippet(client: Client, beboer: Resident) -> None:
+    client.force_login(beboer)
+    filler = " ".join(f"ord{i}" for i in range(60))
+    deep = make_notice(beboer, body=f"{filler} husk julefesten på lørdag {filler}")
+    shallow = make_notice(beboer, body="julefest i aften")
+
+    response = client.get(BOARD, {"q": "julefest"})
+    cards = {n.pk: n for n in response.context["page_obj"]}
+    html = response.content.decode()
+
+    assert cards[deep.pk].match_snippet.startswith("… ")
+    assert "husk julefesten på lørdag" in cards[deep.pk].match_snippet
+    assert cards[deep.pk].match_snippet.endswith(" …")
+    assert cards[shallow.pk].match_snippet == ""
+    assert 'class="notice-match"' in html
+    assert 'id="board-highlight"' in html and "julefest" in html
+
+
+def test_a_live_card_on_a_searched_board_keeps_its_snippet(client: Client, beboer: Resident) -> None:
+    client.force_login(beboer)
+    filler = " ".join(f"ord{i}" for i in range(60))
+    notice = make_notice(beboer, body=f"{filler} julefest {filler}")
+
+    with_query = client.get("/intern/opslagstavle/kort", {"id": notice.pk, "q": "julefest"}).content.decode()
+    without = client.get("/intern/opslagstavle/kort", {"id": notice.pk}).content.decode()
+
+    assert 'class="notice-match"' in with_query
+    assert 'class="notice-match"' not in without
