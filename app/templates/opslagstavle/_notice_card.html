@@ -181,14 +181,19 @@
       second link to the same place is worse for a screen reader than one — the same call the gallery
       count below makes.
     {% endcomment %}
+    {% comment %}
+      `notice.embeds` are the widgets for the albums and films the body embeds (opslagstavle.embeds).
+      On the post's own page each is drawn where it stands; the excerpt leaves them out, and the feed
+      shows the first under it, below. An embed this reader gets no widget for shows its name.
+    {% endcomment %}
     {% if full %}
-      {{ notice.body|markdown }}
+      {{ notice.body|markdown:notice.embeds }}
     {% elif notice.thumbnail %}
-      {% with excerpt=notice.body|markdown_text_only|truncatewords_html:40 %}
+      {% with excerpt=notice.body|markdown_text_only:notice.embeds|truncatewords_html:40 %}
         {{ excerpt }}{% if "…" in excerpt %}<span class="see-more">Se mere …</span>{% endif %}
       {% endwith %}
     {% else %}
-      {% with excerpt=notice.body|markdown|truncatewords_html:40 %}
+      {% with excerpt=notice.body|markdown_excerpt:notice.embeds|truncatewords_html:40 %}
         {{ excerpt }}{% if "…" in excerpt %}<span class="see-more">Se mere …</span>{% endif %}
       {% endwith %}
     {% endif %}
@@ -209,6 +214,13 @@
       <span class="notice-gallery-count muted">{{ notice.image_count }} billeder</span>
     </div>
   {% endif %}
+
+  {% comment %}
+    The feed's one widget: the first album or film the post embeds, under the excerpt, for the reason
+    a gallery collapses to one picture. Positioned, and after the stretched permalink, so its own
+    links stay clickable.
+  {% endcomment %}
+  {% if notice.first_embed and not full %}{{ notice.first_embed }}{% endif %}
 
   <div class="notice-foot">
     {% include "opslagstavle/_reactions.html" with reactions=notice.reaction_rows %}

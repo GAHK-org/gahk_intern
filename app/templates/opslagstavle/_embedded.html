@@ -1,0 +1,17 @@
+{% comment %}
+  The widgets the composer's body embeds (views.embedded), drawn as the post will draw them, under
+  the textarea. Re-drawn as the body is typed; "Fjern" takes the embed out of the text again
+  (opslagstavle.ts), which re-draws this. "Vælg billeder" on an album opens the picker of the pictures
+  its mosaic shows (form.html, views.embed_album_pictures), which writes them into the embed.
+{% endcomment %}
+{% for item in embedded %}
+  <div class="board-embed">
+    {{ item.html }}
+    <span class="board-embed-actions">
+      {% if item.featuring_url %}
+        <button type="button" class="board-embed-action" data-embed-feature="{{ item.reference }}" data-url="{{ item.featuring_url }}">Vælg billeder</button>
+      {% endif %}
+      <button type="button" class="board-embed-action" data-embed-remove="{{ item.reference }}">Fjern</button>
+    </span>
+  </div>
+{% endfor %}

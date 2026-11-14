@@ -10,6 +10,8 @@
 // through the same core.markdown call the reader's page uses and cannot disagree with it. A
 // client-side Markdown renderer would be a second implementation with a second sanitiser allowlist.
 
+import htmx from "htmx.org";
+
 import { downscaleImage } from "./imageupload";
 
 const root = document.getElementById("js-md-editor");
@@ -147,4 +149,172 @@ function csrfToken(): string {
   return document.querySelector<HTMLInputElement>('input[name="csrfmiddlewaretoken"]')?.value ?? "";
 }
 
-if (root) init(root);
+/** Put an embed (`![Julefrokost 2026](album:12)`) in the body at the cursor, on a paragraph of its
+ * own: an embed is drawn as a widget after the paragraph it is in, so one alone is drawn exactly
+ * where it was put. */
+function insertEmbed(area: HTMLTextAreaElement, markdown: string): void {
+  const before = area.value.slice(0, area.selectionStart);
+  const after = area.value.slice(area.selectionEnd);
+  const lead = before === "" || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
+  const trail = after.startsWith("\n\n") ? "" : after.startsWith("\n") ? "\n" : "\n\n";
+  insert(area, `${lead}${markdown}${trail}`, lead.length + markdown.length);
+}
+
+/** Take every embed of `reference` (`album:12`) out of the body, with the blank line it leaves. */
+function removeEmbed(area: HTMLTextAreaElement, reference: string): void {
+  const escaped = reference.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const embed = new RegExp(`!\\[(?:\\\\.|[^\\]\\\\])*\\]\\(${escaped}\\)`, "g");
+  area.value = area.value.replace(embed, "").replace(/\n{3,}/g, "\n\n").trim();
+  area.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+/** Point every embed of `reference` at `replacement` instead (`album:12` → `album:12/88,91`). */
+function replaceEmbed(area: HTMLTextAreaElement, reference: string, replacement: string): void {
+  area.value = area.value.split(`](${reference})`).join(`](${replacement})`);
+  area.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+/** "Vælg billeder" on an album's widget (form.html's #js-embed-pictures, filled by
+ * _embed_pictures.html): which pictures its mosaic shows.
+ *
+ * The picks are the strip's pictures, in order, and nothing else holds them: picking one in the grid
+ * adds it to the end, picking it again (there or in the strip) takes it out, and the grid marks each
+ * picked one with its place. "Gem" writes them into the embed, `album:12/88,91,95`, or none back to
+ * `album:12`, which shows the newest; the widgets re-draw on the `input` that fires.
+ */
+function initPictures(area: HTMLTextAreaElement): void {
+  const dialog = document.getElementById("js-embed-pictures");
+  const body = document.getElementById("js-embed-pictures-body");
+  if (!(dialog instanceof HTMLDialogElement) || !body) return;
+  let reference = "";
+
+  const strip = (): HTMLElement | null => body.querySelector<HTMLElement>("[data-pictures-strip]");
+  const picked = (): string[] =>
+    Array.from(strip()?.querySelectorAll<HTMLElement>("[data-picture-picked]") ?? [], (b) => b.dataset.picturePicked ?? "");
+  const max = (): number => Number(body.querySelector<HTMLElement>("[data-pictures-picked]")?.dataset.max ?? 7);
+
+  const refresh = (): void => {
+    const order = picked();
+    for (const button of Array.from(body.querySelectorAll<HTMLElement>("[data-picture-pick]"))) {
+      const place = order.indexOf(button.dataset.picturePick ?? "");
+      button.setAttribute("aria-pressed", String(place >= 0));
+      if (place >= 0) button.dataset.place = String(place + 1);
+      else delete button.dataset.place;
+    }
+    body.querySelector(".board-pictures-grid")?.classList.toggle("is-full", order.length >= max());
+    const count = body.querySelector("[data-pictures-count]");
+    if (count) count.textContent = String(order.length);
+    body.querySelector<HTMLElement>("[data-pictures-auto]")?.toggleAttribute("hidden", order.length > 0);
+    body.querySelector<HTMLElement>("[data-pictures-hint]")?.toggleAttribute("hidden", order.length === 0);
+    body.querySelector<HTMLElement>("[data-pictures-clear]")?.toggleAttribute("hidden", order.length === 0);
+  };
+
+  const toggle = (button: HTMLElement): void => {
+    const pk = button.dataset.picturePick ?? "";
+    const there = strip()?.querySelector(`[data-picture-picked="${CSS.escape(pk)}"]`);
+    if (there) there.remove();
+    else if (picked().length < max()) {
+      const chosen = document.createElement("button");
+      chosen.type = "button";
+      chosen.className = "board-picture";
+      chosen.dataset.picturePicked = pk;
+      chosen.setAttribute("aria-label", `Fjern ${button.getAttribute("aria-label") ?? ""} fra de valgte`);
+      const img = document.createElement("img");
+      img.src = button.querySelector("img")?.src ?? "";
+      img.alt = "";
+      chosen.append(img);
+      strip()?.append(chosen);
+    }
+    refresh();
+  };
+
+  // The first page as it opens, and every "Vis flere" after it.
+  dialog.addEventListener("htmx:afterSettle", refresh);
+
+  dialog.addEventListener("click", (event) => {
+    const target = event.target as Element;
+    const pick = target.closest<HTMLElement>("[data-picture-pick]");
+    if (pick) return toggle(pick);
+    const chosen = target.closest<HTMLElement>("[data-picture-picked]");
+    if (chosen) {
+      chosen.remove();
+      return refresh();
+    }
+    if (target.closest("[data-pictures-clear]")) {
+      strip()?.replaceChildren();
+      return refresh();
+    }
+    if (target.closest("[data-pictures-save]") && reference) {
+      const order = picked();
+      const album = reference.split("/")[0];
+      replaceEmbed(area, reference, order.length ? `${album}/${order.join(",")}` : album);
+      dialog.close();
+    }
+  });
+
+  document.addEventListener("click", (event) => {
+    const opener = (event.target as Element).closest<HTMLElement>("[data-embed-feature]");
+    if (!opener) return;
+    reference = opener.dataset.embedFeature ?? "";
+    body.innerHTML = '<p class="board-choice-none">Henter billeder …</p>';
+    dialog.showModal();
+    void htmx.ajax("get", opener.dataset.url ?? "", { target: body, swap: "innerHTML" });
+  });
+}
+
+/** The composer's pickers for an album and a film (form.html's <dialog>s), and "Fjern" on the
+ * widgets under the textarea (_embedded.html).
+ *
+ * Opening a picker empties its search and fires `embed-open`, which its hx-trigger answers with the
+ * newest albums or films. Picking one embeds it in the body, where the cursor was, and the widgets
+ * under the textarea re-draw on the `input` that fires. Clicking the backdrop closes a picker, as
+ * Escape does by itself.
+ */
+function initEmbeds(area: HTMLTextAreaElement): void {
+  document.addEventListener("click", (event) => {
+    const target = event.target as Element;
+    const opener = target.closest<HTMLElement>("[data-embed-open]");
+    if (opener) {
+      const dialog = document.getElementById(`js-embed-${opener.dataset.embedOpen}`);
+      if (!(dialog instanceof HTMLDialogElement)) return;
+      const search = dialog.querySelector<HTMLInputElement>("input[type='search']");
+      dialog.showModal();
+      if (search) {
+        search.value = "";
+        search.focus();
+        search.dispatchEvent(new Event("embed-open"));
+      }
+      return;
+    }
+    const pick = target.closest<HTMLElement>("[data-embed-pick]");
+    if (pick) {
+      pick.closest("dialog")?.close();
+      insertEmbed(area, pick.dataset.embed ?? "");
+      return;
+    }
+    const remove = target.closest<HTMLElement>("[data-embed-remove]");
+    if (remove) {
+      removeEmbed(area, remove.dataset.embedRemove ?? "");
+      return;
+    }
+    if (target.closest("[data-embed-close]")) {
+      target.closest("dialog")?.close();
+      return;
+    }
+    // A click on the backdrop lands on the dialog itself, outside its box.
+    if (target instanceof HTMLDialogElement && target.matches(".board-picker")) {
+      const box = target.getBoundingClientRect();
+      const { clientX: x, clientY: y } = event as MouseEvent;
+      if (x < box.left || x > box.right || y < box.top || y > box.bottom) target.close();
+    }
+  });
+}
+
+if (root) {
+  init(root);
+  const area = root.querySelector<HTMLTextAreaElement>("textarea[name='body']");
+  if (area) {
+    initEmbeds(area);
+    initPictures(area);
+  }
+}

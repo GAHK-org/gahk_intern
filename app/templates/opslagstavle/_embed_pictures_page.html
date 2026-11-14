@@ -1,0 +1,17 @@
+{% comment %}
+  A page of an album's pictures in "Vælg billeder" (_embed_pictures.html); "Vis flere" puts the next
+  page in its own place.
+{% endcomment %}
+{% for picture in pictures %}
+  <button type="button" class="board-picture" data-picture-pick="{{ picture.pk }}" aria-pressed="false" aria-label="{{ picture.name }}">
+    <img src="{{ picture.url }}" alt="" loading="lazy" decoding="async">
+    {% if picture.video %}<span class="board-picture-video" aria-hidden="true">▶</span>{% endif %}
+  </button>
+{% empty %}
+  {% if not next_page %}<p class="board-choice-none">Der er ingen billeder i albummet endnu.</p>{% endif %}
+{% endfor %}
+{% if next_page %}
+  <button type="button" class="board-pictures-more"
+          hx-get="{% url 'opslagstavle:embed_album_pictures' album.pk %}?side={{ next_page }}"
+          hx-swap="outerHTML">Vis flere</button>
+{% endif %}
