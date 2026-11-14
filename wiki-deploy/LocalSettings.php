@@ -7,7 +7,7 @@
 #     password that App A, App B and MediaWiki all used.
 #   * $wgDBTableOptions switched MyISAM -> InnoDB: the database was converted before the Aug 4 dump,
 #     so the imported tables are InnoDB and update.php must not create new ones as MyISAM.
-#   * $wgServer moved to the canonical host.
+#   * $wgServer moved to the wiki's own host, wiki.gahk.dk, served from its root.
 #   * $wgScriptExtension dropped — removed from MediaWiki in 1.26, ignored since.
 # Everything else is unchanged from the legacy configuration.
 
@@ -43,33 +43,27 @@ function gahkEnv($name, $default = null)
 $wgSitename = "Gahk Wiki";
 $wgMetaNamespace = "Gahk_Wiki";
 
-$wgScriptPath = "/wiki";
+## The wiki has its own host, wiki.gahk.dk (it used to be gahk.dk/wiki behind a Traefik
+## `stripprefix`), and is served from its root with no proxy rewriting: the scripts at /index.php,
+## /load.php, /api.php, uploads at /images/…, and pages at /wiki/<title> (MediaWiki's standard short
+## URLs; the rewrite is in apache-wiki.conf). gahk.dk forwards its old /wiki/… addresses here.
+$wgScriptPath = "";
+$wgArticlePath = "/wiki/$1";
 
-# Coolify/Traefik routes intern.gahk.dk/wiki here with a `stripprefix` middleware (gahk.dk/wiki until the
-# intranet moved to intern.gahk.dk; gahk.dk now redirects /wiki there), so Apache receives
-# "/index.php/Forside" while $wgScript is still "/wiki/index.php". MediaWiki extracts the page title
-# by matching REQUEST_URI against the pattern "$wgScript/$1" (WebRequest::getPathInfo, via
-# PathRouter). After the strip that match fails, so *every* path-style URL resolves to no title at
-# all and renders the main page — which on a private wiki is "Log på nødvendigt" for every link,
-# including the login link. The symptom is a login button that appears to do nothing: it navigates
-# to a page identical to the one you left.
-#
-# Do NOT try to fix this with $wgUsePathInfo = true. It was tried and does nothing: getPathInfo()
-# parses REQUEST_URI, not $_SERVER['PATH_INFO'], so the correctly-populated PATH_INFO ("/Forside")
-# is never consulted. $wgUsePathInfo only controls *whether* the REQUEST_URI parse is attempted.
-#
-# Query-style URLs carry the title in the query string, which the prefix strip leaves untouched.
-# Literal "/wiki/index.php" rather than "$wgScript" — $wgScript is not populated until Setup.php
-# runs, i.e. after this file is parsed, so interpolating it here yields an empty string.
-#
-# The alternative is removing Coolify's stripprefix middleware so $wgScriptPath matches natively;
-# that means overriding Coolify's generated Traefik labels, which is more fragile than accepting
-# query-style URLs. Moving the wiki to wiki.gahk.dk would remove the problem entirely.
-$wgArticlePath = "/wiki/index.php?title=$1";
+## The protocol and server name to use in fully-qualified URLs.
+$wgServer = gahkEnv('MW_SERVER', 'https://wiki.gahk.dk');
 
-## The protocol and server name to use in fully-qualified URLs. The wiki lives beside the intranet,
-## on its host; gahk.dk is the public site on other hosting.
-$wgServer = gahkEnv('MW_SERVER', 'https://intern.gahk.dk');
+## Cookies stay on this host: no Domain attribute, so the browser never sends them to gahk.dk (other,
+## shared hosting) or intern.gahk.dk. Login is the wiki's own (GahkAuthLogin); nothing is shared with
+## the intranet. Secure whenever the wiki is served over https, which production always is. Set
+## explicitly rather than left to 'detect', since behind the proxy Apache itself only sees http.
+$wgCookieDomain = "";
+$wgCookieSecure = str_starts_with($wgServer, 'https://');
+## Logs everyone out once, at the move: the wiki's old cookies were host-only on gahk.dk, so browsers
+## keep sending them to the public site's shared hosting until they expire (a "remember me" token
+## lasts 180 days). A new token version makes every one of them worthless. Changing it again logs
+## everyone out again.
+$wgAuthenticationTokenVersion = "wiki.gahk.dk";
 
 ## The relative URL path to the skins directory
 $wgStylePath = "$wgScriptPath/skins";

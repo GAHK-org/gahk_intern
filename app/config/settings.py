@@ -604,9 +604,10 @@ ALUMNEREGNING_BANK_ACCOUNT = os.environ.get("ALUMNEREGNING_BANK_ACCOUNT", "16424
 # but only from these source IPs (as seen by the server). In DEBUG the gate is open for testing.
 OELKAELDER_KIOSK_IPS = [ip for ip in os.environ.get("OELKAELDER_KIOSK_IPS", "").split(",") if ip]
 
-# GAHK Wiki — standalone MediaWiki, served at /wiki/ in prod (legacy path). Point WIKI_URL at the
-# preview container (e.g. http://localhost:8899) during local development.
-WIKI_URL = os.environ.get("WIKI_URL", "/wiki/")
+# GAHK Wiki — standalone MediaWiki on its own host (wiki-deploy/), with its own login. An absolute
+# URL, so the sidebar treats it as an external link: a new tab, and outside the installed app's scope.
+# Point WIKI_URL at a local wiki container (e.g. http://localhost:8899/) to try one.
+WIKI_URL = os.environ.get("WIKI_URL", "https://wiki.gahk.dk/")
 
 # Where residents report bugs / request features. Defaults to the project's GitHub issue chooser;
 # override FEEDBACK_URL if the repo moves or a different tracker is used.
