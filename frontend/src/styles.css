@@ -1154,6 +1154,11 @@
   .banner a, .banner button { color:inherit; text-decoration:underline; background:none; border:0; font:inherit; font-weight:600; cursor:pointer; }
   .banner-preview { background:var(--warn-bg); color:var(--brass-ink); border-bottom:1px solid #e7d8b0; }
   .banner-dev { background:#3730a3; color:#fff; }
+  /* "Installér GAHK Intern som app" on phones (base.html, install.ts). */
+  .banner-install { background:var(--green-050); color:var(--green-700); border-bottom:1px solid var(--green-100); }
+  .banner-install .banner-close { flex:none; display:grid; place-items:center; width:36px; height:36px; margin:-6px -10px -6px 0;
+    border-radius:50%; font-size:22px; font-weight:400; line-height:1; text-decoration:none; }
+  .banner-install .banner-close:hover { background:var(--green-100); }
 
   @media (max-width:960px) {
     /* The rows have to be redeclared with the areas: the desktop grid is two rows (auto 1fr) and

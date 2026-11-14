@@ -92,6 +92,21 @@
     </div>
   {% endif %}
 
+  {% block install_banner %}
+    {% if user.is_authenticated and "koekken" not in effective_roles %}
+      {% comment %}
+        Points phones and tablets at /install (the app has to be installed again from intern.gahk.dk).
+        Hidden here and shown by frontend/src/install.ts only on a phone or tablet that is not already
+        running the installed app, and not within 30 days of closing it, so nothing flashes on a
+        computer. Not for the kitchen account; /install leaves the block empty.
+      {% endcomment %}
+      <div class="banner banner-install" role="region" aria-label="Installér appen" data-install-banner hidden>
+        <span>Installér GAHK Intern som app på din telefon. <a href="{% url 'install' %}">Sådan gør du</a></span>
+        <button type="button" class="banner-close" aria-label="Luk" data-install-banner-close>×</button>
+      </div>
+    {% endif %}
+  {% endblock %}
+
   {# Not logged in (/install, the one page here that is public), there is no menu to show. #}
   <div class="app{% if not user.is_authenticated %} app-no-nav{% endif %}">
     <div class="brandcell">

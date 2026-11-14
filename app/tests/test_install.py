@@ -5,12 +5,14 @@ site to another origin, so everyone installs it again from intern.gahk.dk.
 """
 
 import json
+import re
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 from django.conf import settings
 from django.test import Client
+from django.test.utils import override_settings
 
 from residents.models import Resident
 
@@ -86,3 +88,44 @@ def test_the_kitchen_account_may_read_the_install_page(make_resident: Callable[.
     client.force_login(make_resident(email="koekken@gahk.dk", is_kitchen=True))
     assert client.get(INSTALL_URL).status_code == 200
     assert not kitchen_may_open(INSTALL_URL + "x")
+
+
+# --- the banner ----------------------------------------------------------------------------------
+
+BANNER = "data-install-banner"
+
+
+def test_the_banner_is_on_a_residents_pages_hidden_until_the_script_shows_it(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    """Hidden in the markup, so nothing flashes on a computer: install.ts shows it on a phone."""
+    client.force_login(make_resident())
+    html = client.get("/").content.decode()
+    match = re.search(r"<div[^>]*data-install-banner[^>]*>(.*?)</div>", html, re.DOTALL)
+    assert match, "no banner"
+    assert " hidden>" in match.group(0)
+    banner = match.group(1)
+    assert 'href="/install"' in banner and "Sådan gør du" in banner
+    assert 'aria-label="Luk"' in banner
+
+
+def test_the_banner_is_not_on_the_install_page(
+    client: Client, make_resident: Callable[..., Resident]
+) -> None:
+    client.force_login(make_resident())
+    assert BANNER not in client.get(INSTALL_URL).content.decode()
+
+
+def test_the_banner_is_not_for_the_kitchen_account(make_resident: Callable[..., Resident]) -> None:
+    client = Client()
+    client.force_login(make_resident(email="koekken@gahk.dk", is_kitchen=True))
+    assert BANNER not in client.get("/reparationer/").content.decode()
+
+
+@override_settings(OELKAELDER_KIOSK_IPS=["127.0.0.1"])
+def test_the_banner_is_not_on_kiosk_pages(client: Client, make_resident: Callable[..., Resident]) -> None:
+    """The ølkælder till runs its own page (kiosk_base.html) without the frontend bundle."""
+    client.force_login(make_resident())
+    response = client.get("/oelkaelder/")
+    assert response.status_code == 200
+    assert BANNER not in response.content.decode()

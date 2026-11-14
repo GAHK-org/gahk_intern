@@ -1,5 +1,6 @@
-// Installing the intranet as the home-screen app GAHK Intern: the /install page (install.html).
-// No-op on every page without [data-install-page].
+// Installing the intranet as the home-screen app GAHK Intern: the banner that points phones at
+// /install (base.html, [data-install-banner]) and the /install page itself (install.html,
+// [data-install-page]). No-op on a page with neither.
 
 type Platform = "ios" | "android" | "desktop";
 
@@ -72,6 +73,45 @@ function initPage(page: HTMLElement): void {
     }),
   );
 }
+
+// Closing the banner keeps it away this long, on this browser.
+const BANNER_DISMISSED_KEY = "installBannerDismissedUntil";
+const BANNER_DISMISS_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** A phone or a tablet: the UA says so and there is a touch screen. Not a laptop with one. */
+function isPhoneOrTablet(): boolean {
+  return (IOS || ANDROID) && window.matchMedia("(any-pointer: coarse)").matches;
+}
+
+// Storage can be missing or throw (private mode, blocked site data); the banner then simply comes
+// back on the next page.
+function bannerDismissed(): boolean {
+  try {
+    return Date.now() < Number(localStorage.getItem(BANNER_DISMISSED_KEY) || 0);
+  } catch {
+    return false;
+  }
+}
+
+function dismissBanner(): void {
+  try {
+    localStorage.setItem(BANNER_DISMISSED_KEY, String(Date.now() + BANNER_DISMISS_MS));
+  } catch {
+    // shown again on the next page, then
+  }
+}
+
+function initBanner(banner: HTMLElement): void {
+  if (!isPhoneOrTablet() || isInstalledApp() || bannerDismissed()) return;
+  banner.hidden = false;
+  banner.querySelector("[data-install-banner-close]")?.addEventListener("click", () => {
+    banner.hidden = true;
+    dismissBanner();
+  });
+}
+
+const banner = document.querySelector<HTMLElement>("[data-install-banner]");
+if (banner) initBanner(banner);
 
 const page = document.querySelector<HTMLElement>("[data-install-page]");
 if (page) initPage(page);
