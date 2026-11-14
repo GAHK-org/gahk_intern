@@ -77,9 +77,16 @@ locked albums, and is safe to run again.
 Setup:
     export PHOTO_ALBUM_IMPORT_URL=https://<host>/intern/fotoalbum/importer-zip/system
     export PHOTO_ALBUM_IMPORT_TOKEN=<the server's PHOTO_ALBUM_IMPORT_TOKEN>
-    export DROPBOX_ACCESS_TOKEN=<token>
-    # ...or, for a run longer than a short-lived access token lasts:
-    export DROPBOX_REFRESH_TOKEN=<token> DROPBOX_APP_KEY=<key> DROPBOX_APP_SECRET=<secret>
+    export DROPBOX_APP_KEY=<key> DROPBOX_APP_SECRET=<secret>   # the Dropbox app's Settings tab
+    # ...or, for a run shorter than about four hours:
+    export DROPBOX_ACCESS_TOKEN=<token>   # its "Generate access token"
+
+With the app's key and secret, the first run in a terminal has you sign in to Dropbox with the app,
+once: open the link it prints, allow the app, paste the code. It saves the refresh token it gets in
+~/.config/gahk/dropbox-refresh-token.json, from which every run gets a new access token whenever the
+last one expires, so a run of any length keeps going. Set DROPBOX_REFRESH_TOKEN to use a refresh token
+of your own instead. DROPBOX_ACCESS_TOKEN, if set, is used rather than the saved sign-in: the run
+stops when it expires.
 
 Usage:
     uv run scripts/import_dropbox_photo_albums.py --dry-run          # what would happen
@@ -93,11 +100,17 @@ Usage:
 
 Resuming: progress is saved in <work-dir>/state.json after every step, so stopping (Ctrl-C, a lost
 connection, a reboot) is safe — run the same command again and it continues where it stopped. An
-album already on the server is skipped; one the server was still importing is waited for rather
-than sent twice. A server that stops answering is tried again every 30 seconds, 5 times; then the
-run stops, as every album after it would fail too. Albums that failed are skipped on later runs until you fix them in Dropbox and pass
---retry-failed. Everything printed is also appended to <work-dir>/import.log, and every failure —
-with all its reasons — to <work-dir>/failures.log.
+album already on the server is skipped; one the server was still importing is waited for rather than
+sent twice. A server that stops answering is tried again every 30 seconds, 5 times, and Dropbox 4
+times, 2 to 16 seconds apart; then the run stops, as every album after it would fail too. A run an
+error stops like that — or a crash — is started again from the top 15 minutes later
+(--restart-after; 0 to exit instead), and again after every such stop, until it gets through or
+Ctrl-C stops it. Not after a mistake in the command or its settings, which it says and exits — a
+server refusing the import token or missing an endpoint counts as one until it has answered
+properly, and after that as being redeployed — nor after --stop-on-error or Dropbox refusing its
+token (an access token expired). Albums that failed are skipped on later runs until you fix them in
+Dropbox and pass --retry-failed. Everything printed is also appended to <work-dir>/import.log, and
+every failure — with all its reasons — to <work-dir>/failures.log.
 """
 
 import argparse
@@ -107,22 +120,26 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 import time
+import traceback
 import unicodedata
 import zipfile
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Iterator
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn, TextIO, TypeVar
 from urllib.parse import quote, urljoin
 
 import dropbox
 import requests
+from dropbox import DropboxOAuth2FlowNoRedirect
 from dropbox.exceptions import (
     ApiError,
     AuthError,
+    BadInputError,
     HttpError,
     InternalServerError,
     RateLimitError,
@@ -138,6 +155,10 @@ RETRIES = 5
 # again this often before the run gives up: every album after it would fail the same way.
 UNREACHABLE_RETRIES = 5
 UNREACHABLE_WAIT = 30  # seconds
+# A run stopped by an error (the server still not answering after those tries, a crash) starts again
+# from the top after this long (--restart-after), until it gets through or is stopped with Ctrl-C.
+RESTART_AFTER = 15  # minutes
+RUN_STOPPED = 75  # run()'s exit code for such a stop (EX_TEMPFAIL); the process exits 2 if not restarting
 QUEUED_TOO_LONG = 5 * 60  # seconds before a job that never starts gets a hint
 # What the server ignores in an archive (photo_album.services); everything else must be media.
 MACOS_METADATA_FOLDERS = {"__MACOSX", ".AppleDouble"}
@@ -151,6 +172,16 @@ T = TypeVar("T")
 
 class Fatal(Exception):
     """Stops the whole run: nothing after it could succeed either (a rejected token, a full disk)."""
+
+
+class FinalStop(Fatal):
+    """Stops the run for good, as starting it again would meet the same: --stop-on-error at a failed
+    album, a Dropbox token Dropbox refuses (an access token expired, a sign-in withdrawn)."""
+
+
+def stop_code(exc: Exception) -> int:
+    """What run() returns for an error that stopped it: to be started again, or not."""
+    return 2 if isinstance(exc, FinalStop) else RUN_STOPPED
 
 
 class AlbumFailed(Exception):
@@ -182,6 +213,8 @@ class Console:
         self.colour = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
 
     def open_log(self, path: Path, failure_log: Path) -> None:
+        if self.log_file:  # a restarted run opens it again
+            self.log_file.close()
         self.log_file = path.open("a", encoding="utf-8")
         self.log_file.write(
             f"\n===== {datetime.now(UTC).isoformat(timespec='seconds')} {' '.join(sys.argv)}\n"
@@ -632,6 +665,21 @@ GATEWAY_ERRORS = {502, 503, 504}
 
 
 class Server:
+    # Whether the server has answered a request properly since the script started, restarts included.
+    answered = False
+
+    @classmethod
+    def refused(cls, message: str) -> Fatal:
+        """The stop for an import token refused or an endpoint missing. Before the server has
+        answered properly, a mistake in the command or its settings: the run ends. After, most likely
+        the server being redeployed or set up again — a proxy answers 404 for an app it has no
+        container for — so the run stops, to be started again."""
+        if cls.answered:
+            return Fatal(
+                f"{message} It answered before, so it may be being redeployed."
+            )
+        return FinalStop(message)
+
     def __init__(self, endpoint: str, token: str) -> None:
         self.endpoint = endpoint.rstrip("/")
         if not self.endpoint.endswith("/system"):
@@ -667,11 +715,13 @@ class Server:
                 problem = f"no answer ({exc.__class__.__name__})"
             else:
                 if response.status_code in (401, 403):
-                    raise Fatal(
+                    raise self.refused(
                         f"The server refused the import token ({response.status_code}) while trying to {what}. "
                         "Check PHOTO_ALBUM_IMPORT_TOKEN against the server's setting."
                     )
                 if not _transient(response):
+                    if response.ok:
+                        Server.answered = True
                     return response
                 problem = f"HTTP {response.status_code}"
                 if response.status_code not in GATEWAY_ERRORS:
@@ -706,7 +756,7 @@ class Server:
             timeout=60,
         )
         if response.status_code == 404:
-            raise Fatal(
+            raise self.refused(
                 f"{self.endpoint}/albummer does not exist. Is PHOTO_ALBUM_IMPORT_URL right, and is the server "
                 "running a version with sub-albums?"
             )
@@ -861,7 +911,7 @@ class Server:
             timeout=60,
         )
         if response.status_code == 404 and "errors" not in response.text:
-            raise Fatal(
+            raise self.refused(
                 f"{self.endpoint}/omdoeb does not exist. Is the server running a version that renames albums?"
             )
         if response.status_code != 200:
@@ -881,7 +931,7 @@ class Server:
             timeout=(30, 300),
         )
         if response.status_code == 404:
-            raise Fatal(
+            raise self.refused(
                 f"{self.endpoint}/datoer does not exist. Is the server running a version that reads sidecars?"
             )
         if response.status_code == 400:
@@ -916,31 +966,171 @@ def form_errors(response: requests.Response) -> list[str]:
 # --- Dropbox ------------------------------------------------------------------------------------
 
 
+def dropbox_token_file() -> Path:
+    """Where the refresh token got by signing in is kept, outside any work directory: the scripts
+    beside this one use it too, from wherever they run."""
+    config = os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config"
+    return Path(config) / "gahk" / "dropbox-refresh-token.json"
+
+
 def dropbox_client() -> dropbox.Dropbox:
-    refresh_token = os.environ.get("DROPBOX_REFRESH_TOKEN")
-    if refresh_token:
-        app_key = os.environ.get("DROPBOX_APP_KEY") or die(
-            "DROPBOX_REFRESH_TOKEN needs DROPBOX_APP_KEY as well."
+    """A Dropbox client, from the first of:
+
+    - DROPBOX_REFRESH_TOKEN, with DROPBOX_APP_KEY (and DROPBOX_APP_SECRET, unless the token was got
+      with PKCE);
+    - DROPBOX_ACCESS_TOKEN, used as it is: one from the app's "Generate access token" lasts about
+      four hours, and the run stops when it expires;
+    - DROPBOX_APP_KEY and DROPBOX_APP_SECRET: the refresh token saved by signing in to Dropbox once
+      with the app, which the first run in a terminal asks for (and again if Dropbox no longer takes
+      the saved one).
+
+    On a refresh token, the client gets a new access token whenever the last one expires, so a run
+    of any length keeps going."""
+    app_key = os.environ.get("DROPBOX_APP_KEY")
+    app_secret = os.environ.get("DROPBOX_APP_SECRET")
+    if refresh_token := os.environ.get("DROPBOX_REFRESH_TOKEN"):
+        if not app_key:
+            die("DROPBOX_REFRESH_TOKEN needs DROPBOX_APP_KEY as well.")
+        return signed_in_client(app_key, app_secret, refresh_token) or die(
+            "Dropbox refused DROPBOX_REFRESH_TOKEN."
         )
-        return dropbox.Dropbox(
-            oauth2_refresh_token=refresh_token,
-            app_key=app_key,
-            app_secret=os.environ.get("DROPBOX_APP_SECRET"),
+    if access_token := os.environ.get("DROPBOX_ACCESS_TOKEN"):
+        return dropbox.Dropbox(access_token)
+    if not (app_key and app_secret):
+        die(
+            "Set DROPBOX_APP_KEY and DROPBOX_APP_SECRET, the key and secret of the Dropbox app"
+            " (dropbox.com/developers/apps, its Settings tab) — or DROPBOX_ACCESS_TOKEN, a token"
+            ' from its "Generate access token", which lasts about four hours.'
         )
-    access_token = os.environ.get("DROPBOX_ACCESS_TOKEN") or die(
-        "Set DROPBOX_ACCESS_TOKEN (or DROPBOX_REFRESH_TOKEN with DROPBOX_APP_KEY)."
+    token_file = dropbox_token_file()
+    try:
+        saved = json.loads(token_file.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError):
+        saved = {}
+    if saved.get("appKey") == app_key and (
+        client := signed_in_client(app_key, app_secret, saved.get("refreshToken", ""))
+    ):
+        return client
+    if saved:
+        out.warn(f"Dropbox no longer takes the sign-in saved in {token_file}.")
+    refresh_token = sign_in_to_dropbox(app_key, app_secret)
+    token_file.parent.mkdir(parents=True, exist_ok=True)
+    partial: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=token_file.parent,
+            prefix=f".{token_file.name}.",
+            suffix=".partial",
+            delete=False,
+        ) as temporary:
+            partial = Path(temporary.name)
+            json.dump({"appKey": app_key, "refreshToken": refresh_token}, temporary)
+        partial.replace(token_file)
+    finally:
+        if partial is not None:
+            partial.unlink(missing_ok=True)
+    out.ok(f"Signed in to Dropbox; the sign-in is saved in {token_file}.")
+    return signed_in_client(app_key, app_secret, refresh_token) or die(
+        "Dropbox refused the token it has just given."
     )
-    return dropbox.Dropbox(access_token)
+
+
+def signed_in_client(
+    app_key: str, app_secret: str | None, refresh_token: str
+) -> dropbox.Dropbox | None:
+    """A client on this refresh token, or None if Dropbox does not take it."""
+    if not refresh_token:
+        return None
+    client = dropbox.Dropbox(
+        oauth2_refresh_token=refresh_token, app_key=app_key, app_secret=app_secret
+    )
+    try:
+        client.check_and_refresh_access_token()
+    except (AuthError, BadInputError):
+        return None
+    except (HttpError, requests.ConnectionError, requests.Timeout) as exc:
+        raise Fatal(
+            f"Could not reach Dropbox to sign in ({exc.__class__.__name__})."
+        ) from exc
+    return client
+
+
+def sign_in_to_dropbox(app_key: str, app_secret: str) -> str:
+    """Has the user sign in to Dropbox with the app in a browser; returns the refresh token."""
+    if not sys.stdin.isatty():
+        die(
+            "Not signed in to Dropbox: run this once in a terminal, which asks you to sign in,"
+            " or set DROPBOX_REFRESH_TOKEN."
+        )
+    flow = DropboxOAuth2FlowNoRedirect(app_key, app_secret, token_access_type="offline")
+    out.heading("Sign in to Dropbox, once")
+    out.info(f"1. Open {flow.start()}")
+    out.info(
+        "2. Sign in with the account that has the photo archive, and allow the app."
+    )
+    out.info("3. Paste the code it shows here.")
+    for _ in range(3):
+        code = input("Code: ").strip()
+        if not code:
+            continue
+        try:
+            return flow.finish(code).refresh_token
+        except requests.HTTPError as exc:
+            response = exc.response
+            if response is not None and (
+                response.status_code == 429 or response.status_code >= 500
+            ):
+                raise Fatal(
+                    f"Could not reach Dropbox to sign in (HTTP {response.status_code})."
+                ) from exc
+            try:
+                body = response.json() if response is not None else None
+            except ValueError:
+                body = None
+            error = body.get("error") if isinstance(body, dict) else None
+            if error != "invalid_grant":
+                status = response.status_code if response is not None else "unknown"
+                raise FinalStop(
+                    f"Could not sign in to Dropbox (HTTP {status})."
+                ) from exc
+            out.warn(
+                f"Dropbox did not take that code ({response.text[:200]}); try again."
+            )
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            raise Fatal(
+                f"Could not reach Dropbox to sign in ({exc.__class__.__name__})."
+            ) from exc
+    die("Not signed in to Dropbox.")
 
 
 def with_dropbox_retries[T](what: str, call: Callable[[], T]) -> T:
+    """`call`, tried again while Dropbox does not answer, is busy or rate limits; then the run stops,
+    as every album after it would fail too, to be started again (--restart-after)."""
     for attempt in range(1, RETRIES + 1):
         try:
             return call()
         except AuthError as exc:
-            raise Fatal(
-                f"Dropbox refused the token while trying to {what}: {exc.error}"
+            expired = (
+                ' A token from the app\'s "Generate access token" lasts about four hours: set'
+                " DROPBOX_APP_KEY and DROPBOX_APP_SECRET instead, for a run of any length."
+                if os.environ.get("DROPBOX_ACCESS_TOKEN")
+                and not os.environ.get("DROPBOX_REFRESH_TOKEN")
+                else ""
+            )
+            raise FinalStop(
+                f"Dropbox refused the token while trying to {what}: {exc.error}.{expired}"
             ) from exc
+        except (
+            BadInputError
+        ) as exc:  # a request Dropbox will never take: no use asking again
+            if "invalid_grant" in str(exc.message):
+                raise FinalStop(
+                    f"Dropbox refused the refresh token while trying to {what}."
+                    " Sign in to Dropbox again."
+                ) from exc
+            raise AlbumFailed(f"Dropbox could not {what}: {exc.message}") from exc
         except RateLimitError as exc:
             wait = exc.backoff or 2**attempt
             problem = "rate limited"
@@ -953,7 +1143,10 @@ def with_dropbox_retries[T](what: str, call: Callable[[], T]) -> T:
             wait = 2**attempt
             problem = exc.__class__.__name__
         if attempt == RETRIES:
-            raise AlbumFailed(f"Dropbox: could not {what} ({problem}).")
+            raise Fatal(
+                f"Dropbox did not answer {RETRIES} times in a row while trying to {what} ({problem})."
+                " Giving up."
+            )
         out.warn(
             f"    … Dropbox: {what}: {problem}; retrying in {wait}s ({attempt}/{RETRIES - 1})"
         )
@@ -1018,8 +1211,9 @@ def download_zip(
         ) as exc:
             partial.unlink(missing_ok=True)
             if attempt == RETRIES:
-                raise AlbumFailed(
-                    f"The download of {source} kept breaking off ({exc.__class__.__name__})."
+                raise Fatal(
+                    f"The download of {source} from Dropbox kept breaking off"
+                    f" ({exc.__class__.__name__}). Giving up."
                 ) from exc
             out.warn(
                 f"    … download broke off; starting it again ({attempt}/{RETRIES - 1})"
@@ -1078,8 +1272,9 @@ def download_file(
         ) as exc:
             partial.unlink(missing_ok=True)
             if attempt == RETRIES:
-                raise AlbumFailed(
-                    f"The download of {source} kept breaking off ({exc.__class__.__name__})."
+                raise Fatal(
+                    f"The download of {source} from Dropbox kept breaking off"
+                    f" ({exc.__class__.__name__}). Giving up."
                 ) from exc
             time.sleep(2**attempt)
         except OSError as exc:
@@ -2993,7 +3188,7 @@ def year_folders(
     try:
         entries = list(list_folder(client, root))
     except AlbumFailed as exc:
-        raise Fatal(f"{exc.summary} Is --dropbox-root right?") from exc
+        raise FinalStop(f"{exc.summary} Is --dropbox-root right?") from exc
     found = sorted(
         entry.name
         for entry in entries
@@ -3008,7 +3203,7 @@ def year_folders(
     if selected:
         wanted = {same_path(name) for name in selected}
         if missing := wanted - {same_path(name) for name in found}:
-            raise Fatal(f"Not found in {root}: {', '.join(sorted(missing))}")
+            raise FinalStop(f"Not found in {root}: {', '.join(sorted(missing))}")
         found = [name for name in found if same_path(name) in wanted]
     return found, outside
 
@@ -3312,7 +3507,7 @@ def open_ledger(server: Server, state: State, options: Options) -> Ledger:
 # --- Main ---------------------------------------------------------------------------------------
 
 
-def main() -> int:
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -3390,8 +3585,56 @@ def main() -> int:
         help=f"write {OVERVIEW} again from what is known, after you have dealt with some files;"
         " needs no server or Dropbox",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--restart-after",
+        type=float,
+        default=RESTART_AFTER,
+        metavar="MINUTES",
+        help="when an error stops the run, start it again after this long, until it gets through"
+        " (0: exit instead)",
+    )
+    return parser.parse_args()
 
+
+def main() -> int:
+    """run(), started again --restart-after minutes after each run an error stops."""
+    args = parse_args()
+    while True:
+        try:
+            code = run(args)
+        except KeyboardInterrupt:
+            out.error("\n✗ Stopped.")
+            return 130
+        except Exception as exc:  # noqa: BLE001 — a crash, also started again
+            out.failure(
+                "the run crashed",
+                f"{exc.__class__.__name__}: {exc}",
+                traceback.format_exc().splitlines(),
+            )
+            code = RUN_STOPPED
+        if code != RUN_STOPPED:
+            return code
+        if args.restart_after <= 0:
+            out.error(
+                "  Progress is saved; run the same command again once this is fixed."
+            )
+            return 2
+        again = datetime.now().astimezone() + timedelta(minutes=args.restart_after)
+        out.warn(
+            f"\n  Starting again at {again:%H:%M} ({args.restart_after:g} min); Ctrl-C to stop."
+        )
+        try:
+            time.sleep(args.restart_after * 60)
+        except KeyboardInterrupt:
+            out.error(
+                "\n✗ Stopped. Progress is saved; run the same command again to continue."
+            )
+            return 130
+        out.heading(f"Starting again: {' '.join(sys.argv)}")
+
+
+def run(args: argparse.Namespace) -> int:
+    """One run. RUN_STOPPED if an error stopped it, to be started again."""
     if args.overview:
         if not (args.work_dir / LEDGER).exists():
             die(
@@ -3446,7 +3689,7 @@ def main() -> int:
     except (Fatal, AlbumFailed, requests.RequestException) as exc:
         out.failure("the run stopped", str(exc), [], echo=False)
         out.error(f"\n✗ {exc}")
-        return 2
+        return stop_code(exc)
     if args.retry_invalid:
         try:
             return retry_invalid(server, ledger, options, album_dir)
@@ -3463,7 +3706,7 @@ def main() -> int:
             return 1
         except Fatal as exc:
             out.failure(f"{album_dir} (retry)", str(exc), [])
-            return 2
+            return stop_code(exc)
         finally:
             report_not_on_server(ledger)
     if args.rename_albums:
@@ -3476,7 +3719,7 @@ def main() -> int:
             return 130
         except Fatal as exc:
             out.failure("renaming albums", str(exc), [])
-            return 2
+            return stop_code(exc)
     if args.send_dates:
         try:
             return send_dates(server, ledger, options, state, selected)
@@ -3487,15 +3730,15 @@ def main() -> int:
             return 130
         except Fatal as exc:
             out.failure("sending dates", str(exc), [])
-            return 2
+            return stop_code(exc)
         finally:
             ledger.save()
             report_not_on_server(ledger)
-    client = dropbox_client()
     results: dict[str, list[str]] = {}
     kept_out: list[tuple[Path, int]] = []
 
     try:
+        client = dropbox_client()
         out.info(f"Checking {server.endpoint} …")
         # A wrong URL or token stops the run here, not after the Dropbox listing.
         _, rules = server.albums(OTHER_FOLDER)
@@ -3599,7 +3842,7 @@ def main() -> int:
                         ledger.save()
                     result = "failed"
                     if args.stop_on_error:
-                        raise Fatal(
+                        raise FinalStop(
                             "Stopped at the first failure (--stop-on-error)."
                         ) from failure
                 if result == "exists" and not options.dry_run:
@@ -3626,9 +3869,13 @@ def main() -> int:
     except (Fatal, AlbumFailed, requests.RequestException) as exc:
         out.failure("the run stopped", str(exc), [], echo=False)
         out.error(f"\n✗ {exc}")
-        out.error("  Progress is saved; run the same command again once this is fixed.")
         report_not_on_server(ledger)
-        return 2
+        if isinstance(exc, FinalStop):
+            out.error(
+                "  Progress is saved; run the same command again once this is fixed."
+            )
+            return 2
+        return RUN_STOPPED
     finally:
         ledger.save()
         for leftover in [
