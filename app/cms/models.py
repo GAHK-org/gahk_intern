@@ -226,17 +226,19 @@ def _delete_cms_image_file(sender: type[CmsImage], instance: CmsImage, **kwargs:
 
 
 class LegacyImageFailure(models.Model):
-    """An old-site image the automatic import (cms.legacy_images) could not bring into the library.
+    """An old-site image the import (cms.legacy_images) does not bring into the library: it could
+    not (missing, unusable), or an editor deleted its library copy (deleted).
 
     Recorded so the 2-minute sync does not ask for it again forever; a manual
-    `manage.py import_legacy_images` tries every recorded one again and drops the row once it works.
-    The Hjemmeside overview lists them: the content still points at the old address, which gahk.dk
-    cannot show.
+    `manage.py import_legacy_images` tries every missing or unusable one again and drops the row once
+    it works. The Hjemmeside overview lists those: content may still point at the old address, which
+    gahk.dk cannot show. A deleted one is never asked for again, unless content refers to it again.
     """
 
     class Reason(models.TextChoices):
         MISSING = "missing", "Findes ikke"
         UNUSABLE = "unusable", "Kan ikke bruges"
+        DELETED = "deleted", "Slettet fra billedbiblioteket"
 
     # Below the old static/legacy/image/, like CmsImage.legacy_path.
     legacy_path = models.CharField(max_length=255, unique=True)

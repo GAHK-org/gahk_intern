@@ -75,9 +75,17 @@ working when intern or the image storage is down; editing needs intern.
 - The library itself needs a login. An old link to a library picture (`/media/cms/…`, public while
   intern rendered gahk.dk) still works for a picture gahk.dk shows: a visitor who is not logged in
   is sent on to gahk.dk's copy. Any other library file asks for a login.
-- The old site's pictures move into the library by themselves: the sync every two minutes fetches
-  the ones the content still uses (a batch at a time) and points the content at the library copies,
-  recorded as "System". Their old addresses on gahk.dk send visitors on to the copies.
+- All of the old site's pictures (77) move into the library, also the ones no page uses any more:
+  their old addresses on gahk.dk (`/static/legacy/image/…`, `/public/image/…`) send visitors on to
+  the copies, so links from other websites and old mails keep working. The sync every two minutes
+  fetches them by itself, a batch at a time, the ones the content uses first, and points the content
+  at the library copies, recorded as "System". Right after the deploy the operator runs the manual
+  import, which fetches all of them at once.
+- Each picture is checked against a list of the old files with their checksums; one that differs
+  is not stored.
+- The overview says how many of the old pictures are in the library ("x af y gamle billeder").
+- An old picture nothing uses shows as "Ikke i brug" and may be deleted. A deleted one is not fetched
+  again (unless content uses it again), and gahk.dk drops it and its old address at the next publish.
 - A picture that cannot be fetched or is not a usable image is reported once and not tried again;
   the overview lists them, and a manual import can try them again. Until a picture has moved, it is
   missing on gahk.dk.
@@ -120,7 +128,10 @@ working when intern or the image storage is down; editing needs intern.
 - **The old pictures are content, not code.** They lived in the code repository; now they are in
   the image library like any other picture, and the repository no longer holds them. The import
   fetches them from the repository's public history (one fixed version), so nobody has to remember
-  to supply a copy at the move.
+  to supply a copy at the move. The list of files and their checksums is committed, made from that
+  history.
+- **Every old picture, not only the used ones.** Old picture addresses are linked from outside the
+  site, where nobody can update them; 34 MB is a small price for none of them breaking.
 - **File names stay UTF-8.** Æ, ø and å are kept, not spelled out: a name only has to be
   normalized (a Mac sends "å" as two characters) and percent-encoded where it is part of an address.
 - **Plain-text headings.** They were shown as HTML without ever being cleaned.

@@ -6,7 +6,16 @@ library (CmsImage, in S3) like every other picture, and gahk.dk gets them from t
 no longer holds them, but its public history does, at LEGACY_SOURCE_COMMIT, and GitHub serves any
 file of any commit: that is where the import downloads them from.
 
-For every legacy image reference in the stored content —
+ALL of them are imported, not only the ones the content still uses: other websites, old mails and
+search engines link old picture addresses, and gahk.dk redirects each one to its library copy
+(legacy_image_map). The list of files is legacy_images.json next to this module (made from git by
+`manage.py legacy_images_manifest`): each file's path, size and SHA-256 at the pinned commit. Every
+download is checked against it; a file that differs is recorded as unusable, never stored. An image
+an editor deletes from the library is recorded as deleted (LegacyImageFailure, cms.services.
+delete_image) and not imported again, unless content refers to it again.
+
+The content's references are imported first, then the rest of the list. For every legacy image
+reference in the stored content —
 
     /public/image/<rest>   public/image/<rest>   http(s)://(www.)gahk.dk/public/image/<rest>
     /static/legacy/image/<rest>   (and the same with http(s)://(www.)gahk.dk in front)
@@ -17,29 +26,38 @@ static/legacy/image/) is imported into the library once (checked and downscaled 
 `legacy_path` = <rest>, uploaded by nobody), and the reference is rewritten to the library URL. Every
 import and every rewrite is recorded as a system ContentChange.
 
+A reference to a file that is not on the list (elements/…, a file that never existed) is asked for
+all the same, without the check.
+
 It runs by itself: cms.tasks.sync_gahk_web calls `import_pending_legacy_images` every 2 minutes,
-before it builds the snapshot. A run that finds no reference does nothing (a few queries, no HTTP).
-Otherwise it downloads at most AUTO_MAX_FILES files in at most AUTO_SECONDS and leaves the rest to
+before it builds the snapshot. A run that finds nothing left to import does nothing (a few queries,
+no HTTP). Otherwise it downloads at most AUTO_MAX_FILES files in at most AUTO_SECONDS and leaves the rest to
 the next run, so the outbox pull behind it is never held up for long. A file that does not exist or
 is not a usable image is logged, recorded as a LegacyImageFailure and not asked for again; its
 references stay as they are (gahk.dk shows such a picture as broken, such a background as a plain
 band). A network problem is recorded nowhere: the next run simply tries again.
 
-`manage.py import_legacy_images` runs the same import by hand, without the budget and retrying the
-recorded failures; `--from DIR` reads a local copy instead of GitHub.
+`manage.py import_legacy_images` runs the same import by hand, all of it at once, without the budget
+and retrying the recorded failures (not the deleted ones); `--from DIR` reads a local copy instead of
+GitHub.
 
 Idempotent, and one run at a time (a PostgreSQL advisory lock): a second run finds the images in
 the library and the content already rewritten.
 
-TEMPORARY. Once production has no legacy reference left (the Hjemmeside overview shows none), this
-module, the command and LegacyImageFailure can go; `legacy_path` stays, because gahk.dk's redirects
-for old image links are built from it (legacy_image_map).
+TEMPORARY. Once production has every listed file in the library (or deleted) and no legacy reference
+left (the Hjemmeside overview says so), this module, the list, both commands and LegacyImageFailure
+can go; `legacy_path` stays, because gahk.dk's redirects for old image links are built from it
+(legacy_image_map).
 """
 
+import functools
+import hashlib
+import json
 import logging
 import re
 import time
-from collections.abc import Callable, Iterable, Iterator, Sequence
+import unicodedata
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from io import BytesIO
@@ -48,6 +66,7 @@ from typing import Any, Protocol
 from urllib.parse import quote, unquote
 
 import requests
+from django.core.exceptions import ImproperlyConfigured
 from django.db import connection, transaction
 from django.db.models import Model, Q
 from PIL import Image
@@ -76,9 +95,14 @@ OLD_URL_PREFIX = "/static/legacy/image/"
 # public, and raw.githubusercontent.com serves any file of any commit. Pinned by the full sha,
 # because a sha always names the same files, where a branch moves on and no longer has them.
 LEGACY_SOURCE_COMMIT = "3fc1817b0d5ef07a2b636b4a01c892ba3fe3a8ba"
+LEGACY_SOURCE_DIRECTORY = "app/static/legacy/image/"  # in the repository; legacy paths are below it
 LEGACY_SOURCE_URL = (
-    f"https://raw.githubusercontent.com/GAHK-org/gahk_intern/{LEGACY_SOURCE_COMMIT}/app/static/legacy/image/"
+    f"https://raw.githubusercontent.com/GAHK-org/gahk_intern/{LEGACY_SOURCE_COMMIT}/{LEGACY_SOURCE_DIRECTORY}"
 )
+# The list of every file to import: all of upload/ (the content images; elements/ and intern/ are the
+# intranet's own and stay in the repository).
+MANIFEST_PATH = Path(__file__).with_name("legacy_images.json")
+MANIFEST_DIRECTORY = "upload/"
 DOWNLOAD_TIMEOUT = (5, 20)  # seconds: to connect, and between two reads
 MAX_FILE_BYTES = 25 * 1024 * 1024  # the largest old image is 13 MB
 USER_AGENT = "intern.gahk.dk legacy image import"
@@ -122,11 +146,36 @@ KIND_OF: dict[type[Model], str] = {
     SiteSettings: ContentChange.Kind.SETTINGS,
 }
 
-ACCEPTED_TYPES = frozenset(EXTENSION_TYPES.values())
+# What GitHub may call a file the library takes. It serves a large file (the 13 MB PNG) as
+# application/octet-stream whatever its name; the bytes are checked as an image afterwards anyway.
+ACCEPTED_TYPES = frozenset(EXTENSION_TYPES.values()) | {"application/octet-stream"}
 
 # The longest legacy path that fits CmsImage.legacy_path and LegacyImageFailure.legacy_path. A longer
 # one names no file of the old site, and storing it would fail every run at the database.
 MAX_PATH_LENGTH = 255
+
+
+# ------------------------------------------------------------------------------------ manifest
+@dataclass(frozen=True)
+class ManifestEntry:
+    path: str  # below static/legacy/image/, like CmsImage.legacy_path ("upload/images/gang.jpg")
+    size: int
+    sha256: str
+
+
+@functools.cache
+def _read_manifest(path: Path) -> tuple[ManifestEntry, ...]:
+    data = json.loads(path.read_text("utf-8"))
+    if data.get("commit") != LEGACY_SOURCE_COMMIT:
+        raise ImproperlyConfigured(
+            f"{path.name} lists commit {data.get('commit')}, not {LEGACY_SOURCE_COMMIT}"
+        )
+    return tuple(ManifestEntry(entry["path"], entry["size"], entry["sha256"]) for entry in data["files"])
+
+
+def manifest() -> tuple[ManifestEntry, ...]:
+    """Every old-site image file to import, from legacy_images.json (read once per process)."""
+    return _read_manifest(MANIFEST_PATH)
 
 
 # ------------------------------------------------------------------------------------- sources
@@ -230,7 +279,8 @@ class DirectorySource:
 # ---------------------------------------------------------------------------------- references
 def _normalize(rest: str) -> str | None:
     """The file below static/legacy/image/ that `rest` names, or None if it is not a plain path."""
-    path = unquote(rest).strip().replace("\\", "/")
+    # NFC, as the list (and git) spell the names: "å" typed as "a" + a combining ring is the same file.
+    path = unicodedata.normalize("NFC", unquote(rest)).strip().replace("\\", "/")
     parts = [part for part in path.split("/") if part not in ("", ".")]
     if not parts or ".." in parts:
         return None
@@ -331,14 +381,19 @@ def _wanted(rows: Iterable[Row]) -> list[list[str]]:
 
 
 # -------------------------------------------------------------------------------------- import
+# Called after each file a run asks for: (how many so far, of how many, its legacy path, the outcome).
+Progress = Callable[[int, int, str, str], None]
+
+
 @dataclass
 class ConversionResult:
     imported: list[str] = field(default_factory=list)  # legacy paths imported this run
     rewritten: int = 0  # rows whose references were rewritten
-    missing: list[str] = field(default_factory=list)  # referenced, but no such file (recorded)
+    missing: list[str] = field(default_factory=list)  # referenced or listed, but no such file (recorded)
     unusable: list[str] = field(default_factory=list)  # a file, but not an image gahk.dk can show
+    details: dict[str, str] = field(default_factory=dict)  # why, for each missing or unusable one
     skipped: list[str] = field(default_factory=list)  # failed in an earlier run, not asked again
-    deferred: int = 0  # references left for a later run (budget spent, or source unavailable)
+    deferred: int = 0  # files left for a later run (budget spent, or source unavailable)
     unavailable: str = ""  # why the source could not be asked, when it could not
     error: str = ""  # an unexpected failure (S3, the database) that stopped the downloads
     busy: bool = False  # another import was running, so this one did nothing
@@ -401,30 +456,46 @@ def _record_failure(
         legacy_path=legacy_path, defaults={"reason": reason, "detail": detail[:255]}
     )
     (result.missing if reason == LegacyImageFailure.Reason.MISSING else result.unusable).append(legacy_path)
+    result.details[legacy_path] = detail
 
 
-def _fetch(candidates: list[str], source: LegacySource, deadline: float | None) -> tuple[str, bytes]:
-    """The first candidate the source has, with its bytes. Raises like LegacySource.read."""
+def _fetch(
+    candidates: list[str], source: LegacySource, deadline: float | None, listed: Mapping[str, ManifestEntry]
+) -> tuple[str, bytes]:
+    """The first candidate the source has, with its bytes. Raises like LegacySource.read, and
+    LegacyFileUnusable for a listed file whose bytes are not the ones the list names."""
     images = _image_candidates(candidates)
     if not images:
         raise LegacyFileUnusable("not a JPEG, PNG, GIF or WebP file name")
     for path in images:
         try:
-            return path, source.read(path, deadline)
+            data = source.read(path, deadline)
         except LegacyFileMissing:
             continue
+        entry = listed.get(path)
+        if entry is not None:
+            digest = hashlib.sha256(data).hexdigest()
+            if (len(data), digest) != (entry.size, entry.sha256):
+                raise LegacyFileUnusable(
+                    f"not the file {MANIFEST_PATH.name} lists: {len(data)} bytes, SHA-256 {digest}"
+                )
+        return path, data
     raise LegacyFileMissing(f"not in {source.description}")
 
 
 def _import(
-    candidates: list[str], source: LegacySource, deadline: float | None, result: ConversionResult
+    candidates: list[str],
+    source: LegacySource,
+    deadline: float | None,
+    listed: Mapping[str, ManifestEntry],
+    result: ConversionResult,
 ) -> CmsImage | None:
-    """Bring one referenced file into the library; None when it is missing or unusable (recorded).
+    """Bring one file into the library; None when it is missing or unusable (recorded).
     LegacySourceUnavailable passes through: nothing is recorded, and the caller stops the run."""
     from .services import record_change, store_prepared_image
 
     try:
-        path, data = _fetch(candidates, source, deadline)
+        path, data = _fetch(candidates, source, deadline, listed)
     except LegacyFileMissing as exc:
         _record_failure(_name_of(candidates), LegacyImageFailure.Reason.MISSING, str(exc), candidates, result)
         return None
@@ -452,9 +523,59 @@ def _import(
             changes={"file": [f"{OLD_URL_PREFIX}{path}", image.file.name]},
             by_name=SYSTEM_NAME,
         )
+        # Also a "deleted" record: content refers to the file again, so it is back in the library.
         LegacyImageFailure.objects.filter(legacy_path__in=candidates).delete()
     result.imported.append(path)
     return image
+
+
+@dataclass
+class _Plan:
+    """What an import run has to do, and what the overview reports."""
+
+    rows: list[Row]  # the rows that may hold a legacy reference
+    referenced: set[str]  # every candidate path of their references
+    listed: dict[str, ManifestEntry]  # the list, by legacy path
+    library: dict[str, CmsImage]  # legacy path -> library image, for every path in question
+    recorded: dict[str, str]  # legacy path -> LegacyImageFailure.reason, for every path in question
+    todo: list[list[str]]  # what to import, each as its candidate paths: the references first
+    skipped: list[str]  # failed in an earlier run, left out this time
+
+
+def _plan(retry_failed: bool) -> _Plan:
+    rows = _rows_with_references()
+    wanted = _wanted(rows)
+    listed = {entry.path: entry for entry in manifest()}
+    referenced = {path for candidates in wanted for path in candidates}
+    in_question = sorted(referenced | set(listed))
+    library = {
+        image.legacy_path: image
+        for image in CmsImage.objects.filter(legacy_path__in=in_question)
+        if image.legacy_path
+    }
+    recorded = dict(
+        LegacyImageFailure.objects.filter(legacy_path__in=in_question).values_list("legacy_path", "reason")
+    )
+    deleted = LegacyImageFailure.Reason.DELETED
+
+    def failed(path: str) -> bool:
+        return not retry_failed and path in recorded and recorded[path] != deleted
+
+    todo: list[list[str]] = []
+    skipped: list[str] = []
+    # What the content refers to, even a file an editor deleted from the library before: it is in
+    # use again. Then the rest of the list, without the deleted ones.
+    queue = wanted + [[path] for path in listed if path not in referenced]
+    for candidates in queue:
+        if any(path in library for path in candidates):
+            continue
+        if any(failed(path) for path in candidates):
+            skipped.append(_name_of(candidates))
+            continue
+        if candidates[0] not in referenced and recorded.get(candidates[0]) == deleted:
+            continue
+        todo.append(candidates)
+    return _Plan(rows, referenced, listed, library, recorded, todo, skipped)
 
 
 def convert_legacy_images(
@@ -463,18 +584,20 @@ def convert_legacy_images(
     retry_failed: bool = True,
     max_files: int | None = None,
     seconds: float | None = None,
+    progress: Progress | None = None,
 ) -> ConversionResult:
-    """Import the referenced legacy images from `source` (GitHub by default) into the library and
-    point the content at them.
+    """Import the listed and the referenced legacy images from `source` (GitHub by default) into the
+    library and point the content at them.
 
-    `retry_failed=False` leaves out the files an earlier run recorded as missing or unusable.
-    `max_files` and `seconds` bound the downloads; what is left is counted in `deferred`. Does
-    nothing (`busy`) while another import runs.
+    `retry_failed=False` leaves out the files an earlier run recorded as missing or unusable (never
+    asked again: the deleted ones). `max_files` and `seconds` bound the downloads; what is left is
+    counted in `deferred`. `progress` hears of each file asked for. Does nothing (`busy`) while
+    another import runs.
     """
     with _import_lock() as taken:
         if not taken:
             return ConversionResult(busy=True)
-        return _convert(source or GitHubSource(), retry_failed, max_files, seconds)
+        return _convert(source or GitHubSource(), retry_failed, max_files, seconds, progress)
 
 
 def import_pending_legacy_images() -> ConversionResult:
@@ -482,33 +605,29 @@ def import_pending_legacy_images() -> ConversionResult:
     return convert_legacy_images(retry_failed=False, max_files=AUTO_MAX_FILES, seconds=AUTO_SECONDS)
 
 
+def _outcome(result: ConversionResult, path: str) -> str:
+    if result.imported and result.imported[-1] == path:
+        return "imported"
+    if path in result.details:
+        kind = "missing" if path in result.missing else "not a usable image"
+        return f"{kind} ({result.details[path]})"
+    return "done"
+
+
 def _convert(
-    source: LegacySource, retry_failed: bool, max_files: int | None, seconds: float | None
+    source: LegacySource,
+    retry_failed: bool,
+    max_files: int | None,
+    seconds: float | None,
+    progress: Progress | None,
 ) -> ConversionResult:
     deadline = time.monotonic() + seconds if seconds is not None else None
     result = ConversionResult()
-    rows = _rows_with_references()
-    wanted = _wanted(rows)
-    if not wanted:
+    plan = _plan(retry_failed)
+    result.skipped = plan.skipped
+    library, todo = plan.library, plan.todo
+    if not todo and not plan.rows:
         return result
-
-    every_candidate = [path for candidates in wanted for path in candidates]
-    library = {image.legacy_path: image for image in CmsImage.objects.filter(legacy_path__in=every_candidate)}
-    failed: set[str] = set()
-    if not retry_failed:
-        failed = set(
-            LegacyImageFailure.objects.filter(legacy_path__in=every_candidate).values_list(
-                "legacy_path", flat=True
-            )
-        )
-    todo: list[list[str]] = []
-    for candidates in wanted:
-        if any(path in library for path in candidates):
-            continue
-        if any(path in failed for path in candidates):
-            result.skipped.append(_name_of(candidates))
-            continue
-        todo.append(candidates)
 
     # Two references may name the same file (an unquoted url() and a plain src): it is asked for once.
     asked: set[str] = set()
@@ -526,7 +645,7 @@ def _convert(
         downloads += 1
         asked.update(candidates)
         try:
-            image = _import(candidates, source, deadline, result)
+            image = _import(candidates, source, deadline, plan.listed, result)
         except LegacySourceUnavailable as exc:
             logger.warning("Legacy image import stopped, to go on in a later run: %s", exc)
             result.unavailable = str(exc)[:500]
@@ -538,14 +657,17 @@ def _convert(
             )
             result.error = f"{_name_of(candidates)}: {exc.__class__.__name__}: {exc}"[:500]
         else:
+            name = image.legacy_path if image is not None and image.legacy_path else _name_of(candidates)
             if image is not None and image.legacy_path:
                 library[image.legacy_path] = image
+            if progress is not None:
+                progress(index + 1, len(todo), name, _outcome(result, name))
             continue
         asked.difference_update(candidates)
         result.deferred = sum(1 for left in todo[index:] if not settled(left))
         break
 
-    if not library:
+    if not any(path in library for path in plan.referenced):
         return result  # nothing to point the content at: no rewrite, no transaction
 
     def url_for(path: str) -> str | None:
@@ -553,7 +675,7 @@ def _convert(
         return image.url if image is not None and image.file else None
 
     with transaction.atomic():
-        _rewrite_rows(rows, url_for, result)
+        _rewrite_rows(plan.rows, url_for, result)
     return result
 
 
@@ -612,21 +734,27 @@ def _rewrite_rows(rows: list[Row], url_for: Callable[[str], str | None], result:
 # ------------------------------------------------------------------------------------ overview
 @dataclass
 class LegacyState:
-    waiting: int  # references not in the library and not failed: the next runs import them
-    failures: list[LegacyImageFailure]
+    total: int  # files on the list (all of the old upload/)
+    in_library: int  # of those, in the library now
+    deleted: int  # of those, deleted from the library by an editor: not imported again
+    waiting: int  # files and references not in the library and not failed: the next runs import them
+    failures: list[LegacyImageFailure]  # what could not be imported (not the deleted ones)
 
 
 def legacy_state() -> LegacyState:
-    """For the Hjemmeside overview: what the import still has to do, and what it could not do."""
-    wanted = _wanted(_rows_with_references())
-    every_candidate = [path for candidates in wanted for path in candidates]
-    done = set(CmsImage.objects.filter(legacy_path__in=every_candidate).values_list("legacy_path", flat=True))
-    failures = list(LegacyImageFailure.objects.filter(legacy_path__in=every_candidate))
-    failed = {failure.legacy_path for failure in failures}
-    waiting = sum(
-        1 for candidates in wanted if not any(path in done or path in failed for path in candidates)
+    """For the Hjemmeside overview: how far the import is, and what it could not do."""
+    plan = _plan(retry_failed=False)
+    deleted = LegacyImageFailure.Reason.DELETED
+    failed = [path for path, reason in plan.recorded.items() if reason != deleted]
+    return LegacyState(
+        total=len(plan.listed),
+        in_library=sum(1 for path in plan.listed if path in plan.library),
+        deleted=sum(
+            1 for path in plan.listed if path not in plan.library and plan.recorded.get(path) == deleted
+        ),
+        waiting=len(plan.todo),
+        failures=list(LegacyImageFailure.objects.filter(legacy_path__in=failed)),
     )
-    return LegacyState(waiting=waiting, failures=failures)
 
 
 def legacy_image_map() -> dict[str, str]:

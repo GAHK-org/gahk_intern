@@ -1,8 +1,9 @@
 """The intranet at the root of intern.gahk.dk, where it lived at gahk.dk/intern/ before.
 
-What has to keep working across the move: old /intern/ and /nyintern/ addresses (stored notification
-targets, Markdown links, bookmarks forwarded by gahk.dk), the session (host-only now, under new
-cookie names, with the old ".gahk.dk" pair deleted), and stored data that spelled the old address.
+What has to keep working across the move: the session (host-only now, under new cookie names, with
+the old ".gahk.dk" pair deleted), and stored data that spelled the old address. The old /intern/ and
+/nyintern/ prefixes mean nothing here: gahk.dk forwards its own old /intern/<rest> links straight to
+/<rest> on this host, so a prefixed path is a 404 like any unknown one.
 """
 
 import importlib
@@ -28,90 +29,28 @@ pytestmark = pytest.mark.django_db
 
 
 @pytest.mark.parametrize(
-    ("old", "new"),
+    "old",
     [
-        ("/intern/", "/"),
-        ("/intern/den-hurtige/?traad=4", "/den-hurtige/?traad=4"),
-        ("/intern/alumneliste/?q=Hansen&side=2", "/alumneliste/?q=Hansen&side=2"),
-        ("/intern/notifikationer/aabn/abc/", "/notifikationer/aabn/abc/"),
-        ("/nyintern/ak/", "/ak/"),
-        ("/nyintern/stamtree/?x=1", "/stamtree/?x=1"),
-        ("/intern", "/"),
-        ("/nyintern", "/"),
-        ("/intern?next=/ak/", "/?next=/ak/"),
+        "/intern/",
+        "/intern/den-hurtige/?traad=4",
+        "/intern/alumneliste/",
+        "/nyintern/ak/",
+        "/intern",
+        "/nyintern",
+        "/intern?next=/ak/",
     ],
 )
-def test_an_old_address_lands_on_the_same_page_at_the_root(old: str, new: str) -> None:
-    response = Client().get(old)
-    assert response.status_code == 308
-    assert response["Location"] == new
+def test_an_old_prefix_is_not_found(old: str) -> None:
+    assert Client().get(old).status_code == 404
 
 
-@pytest.mark.parametrize(
-    ("old", "new"),
-    [
-        ("/intern/a%3Fb", "/a%3Fb"),
-        ("/intern/a%23b?x=1", "/a%23b?x=1"),
-        ("/intern/a%25b", "/a%25b"),
-        ("/intern/a%20b/", "/a%20b/"),
-        ("/intern/v%C3%A6relse/", "/v%C3%A6relse/"),
-    ],
-)
-def test_an_escaped_character_in_the_old_path_stays_escaped(old: str, new: str) -> None:
-    """The view gets the path decoded: an escaped "?" must not become a query, nor "#" a fragment,
-    nor "%25" a stray "%". gahk.dk forwards such a path escaped as it came."""
-    response = Client().get(old)
-    assert response.status_code == 308
-    assert response["Location"] == new
-
-
-@pytest.mark.parametrize("method", ["post", "put", "patch", "delete"])
-@pytest.mark.parametrize(
-    ("old", "new"),
-    [
-        ("/intern/fotoalbum/importer-zip/system", "/fotoalbum/importer-zip/system"),
-        ("/intern/den-hurtige/?traad=4", "/den-hurtige/?traad=4"),
-        ("/nyintern/ak/?x=1", "/ak/?x=1"),
-        ("/intern", "/"),
-    ],
-)
-def test_any_method_to_an_old_address_keeps_its_method(method: str, old: str, new: str) -> None:
-    """308, not 301: a script or a restored form aimed at the old path must not turn into a GET.
-
-    With CSRF checks on, as in production: the test client skips them by default, which hid that
-    CsrfViewMiddleware answered every one of these with a 403 before the redirect was reached. gahk.dk
-    sends old links to https://intern.gahk.dk/intern/<rest>, so a form re-sent by the browser
-    arrives here with an Origin of "null" and no way to pass the check.
-    """
-    client = Client(enforce_csrf_checks=True)
-    response = getattr(client, method)(old, {"x": "1"} if method == "post" else "", HTTP_ORIGIN="null")
-    assert response.status_code == 308
-    assert response["Location"] == new
-
-
-def test_the_landing_view_still_checks_csrf(make_resident: Callable[..., Resident]) -> None:
-    """The exemption is the redirect's alone: the POST it passes on meets the usual check."""
-    client = Client(enforce_csrf_checks=True)
-    client.force_login(make_resident(email="beboer@gahk.dk"))
-    response = client.post("/intern/notifikationer/", follow=True)
-    assert response.redirect_chain == [("/notifikationer/", 308)]
-    assert response.status_code == 403
-
-
-@pytest.mark.parametrize(
-    "old", ["/intern//evil.example/x", "/intern/\\evil.example", "/nyintern///evil.example"]
-)
-def test_an_old_address_cannot_become_an_open_redirect(old: str) -> None:
-    location = Client().get(old)["Location"]
-    assert location.startswith("/") and not location.startswith(("//", "/\\"))
-
-
-def test_the_redirect_is_followed_to_the_real_page(make_resident: Callable[..., Resident]) -> None:
+def test_an_old_prefix_is_not_found_for_a_resident_or_a_post(
+    make_resident: Callable[..., Resident],
+) -> None:
     c = Client()
     c.force_login(make_resident(email="beboer@gahk.dk"))
-    response = c.get("/intern/alumneliste/", follow=True)
-    assert response.status_code == 200
-    assert response.redirect_chain == [(reverse("directory"), 308)]
+    assert c.get("/intern/alumneliste/").status_code == 404
+    assert Client().post("/intern/fotoalbum/importer-zip/system", {"x": "1"}).status_code == 404
 
 
 def test_the_front_page_button_leaves_for_the_public_site(
@@ -167,11 +106,12 @@ def test_the_old_cookies_are_deleted_from_both_domains() -> None:
 
 
 def test_a_redirect_deletes_the_old_cookies_too() -> None:
-    """The first request after the move is often gahk.dk's forwarded /intern/… link."""
+    """The first request after the move is often gahk.dk's forwarded link, which lands on a page that
+    asks for a login first."""
     c = Client()
     c.cookies["sessionid"] = "from-gahk.dk"
-    response = c.get("/intern/den-hurtige/")
-    assert response.status_code == 308
+    response = c.get("/den-hurtige/")
+    assert response.status_code == 302
     assert set(_deletions(response, "sessionid")) == {".gahk.dk", ""}
 
 
@@ -223,23 +163,6 @@ def test_stored_notification_targets_lose_the_intern_prefix(make_resident: Calla
         "/intern/notifikationer/",
         "https://example.org/intern/x",
     ]
-
-
-def test_a_session_from_before_the_move_does_not_log_anyone_in(
-    make_resident: Callable[..., Resident],
-) -> None:
-    """Renaming the cookie does not end a session: its key would still work under the new name. The
-    old ".gahk.dk" cookie reaches gahk.dk's webhost, so the deploy ends every session there was."""
-    before_the_move = Client()
-    before_the_move.force_login(make_resident(email="beboer@gahk.dk"))
-    key = before_the_move.cookies[settings.SESSION_COOKIE_NAME].value
-
-    _migration("core", "0017_end_sessions_from_before_intern_host").end_every_session(apps, None)  # type: ignore[attr-defined]
-
-    c = Client()
-    c.cookies[settings.SESSION_COOKIE_NAME] = key
-    response = c.get(reverse("dashboard"))
-    assert response.status_code == 302 and response["Location"].startswith(reverse("login"))
 
 
 def test_the_debt_warnings_name_the_intranet_host() -> None:

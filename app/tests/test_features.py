@@ -659,7 +659,7 @@ def test_the_login_page_has_its_own_small_layout() -> None:
 @pytest.mark.django_db
 def test_slashless_urls_redirect_instead_of_404() -> None:
     """With no CMS catch-all in front of them, Django's APPEND_SLASH handles slashless app URLs
-    again, query string included. The old /intern and /nyintern prefixes go to the root."""
+    again, query string included. The old /intern and /nyintern prefixes are not found."""
     c = Client()
     for path in ("/optagelse", "/begivenheder"):
         r = c.get(path)
@@ -671,7 +671,7 @@ def test_slashless_urls_redirect_instead_of_404() -> None:
 
     for path in ("/intern", "/nyintern"):
         r = c.get(path)
-        assert r.status_code == 308 and r.headers["Location"] == "/"
+        assert r.status_code == 404, f"{path} should be a 404, got {r.status_code}"
 
     # The public site's pages are not served here any more.
     assert c.get("/faciliteter").status_code == 404
