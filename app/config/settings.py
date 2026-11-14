@@ -31,7 +31,7 @@ CSRF_COOKIE_SECURE = not DEBUG
 # nothing else. It used to be ".gahk.dk", shared with the public site — which now runs on separate,
 # less trusted webhosting that must never see an intranet session. New names as well, because a
 # browser keeps the old ".gahk.dk" `sessionid` until it expires and would otherwise send two cookies
-# of the same name to intern.gahk.dk; core.middleware.ExpireLegacyCookies deletes the old pair.
+# of the same name to intern.gahk.dk.
 # In production the names carry the __Host- prefix: the browser then accepts them only host-only,
 # Secure and on Path=/, so a compromised gahk.dk cannot plant a ".gahk.dk" cookie of the same name
 # that intern would read (it is same-site). Development serves plain http, where a __Host- cookie
@@ -89,10 +89,6 @@ MIDDLEWARE = [
     "core.health.HealthCheckMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
-    # Deletes the pre-intern.gahk.dk ".gahk.dk" session/CSRF cookies (see SESSION_COOKIE_NAME). This
-    # high up so every response carries the deletion — a redirect, a 403 — but after WhiteNoise, so
-    # static files never carry a Set-Cookie.
-    "core.middleware.ExpireLegacyCookies",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
