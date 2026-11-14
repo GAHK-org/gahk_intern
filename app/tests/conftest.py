@@ -88,21 +88,15 @@ def _isolate_from_dotenv(settings: object, tmp_path: Path) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _no_legacy_image_downloads(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The test database's seeded default background still points at an old-site image, so every
-    sync would download it from GitHub (cms.legacy_images). Tests never touch the network: a
-    download fails as "unreachable", which the import records nowhere. Nor does every sync try the
-    whole list of old files (cms/legacy_images.json): it is empty here. The legacy image tests put
-    their own fakes in place of both."""
-    import requests
-
+def _no_old_site_images(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The old site's images (static/legacy/image/upload/, cms.legacy_images) are not imported by
+    every sync of every test: here the import reads an empty directory. The legacy image tests fill
+    one of their own."""
     from cms import legacy_images
 
-    def offline(url: str, **kwargs: object) -> requests.Response:
-        raise requests.ConnectionError(f"tests do not download ({url})")
-
-    monkeypatch.setattr(legacy_images, "http_get", offline)
-    monkeypatch.setattr(legacy_images, "manifest", tuple)
+    empty = tmp_path / "legacy-image"
+    empty.mkdir()
+    monkeypatch.setattr(legacy_images, "LEGACY_DIRECTORY", empty)
 
 
 @pytest.fixture

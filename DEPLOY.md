@@ -738,23 +738,18 @@ A manual publish is never skipped as "already current".
    Publication.
 
 **Legacy images — run the import right after the deploy.** The old site's content images are
-content, not code, so they are not in this repository any more (they were, under
-`app/static/legacy/image/upload/`, up to commit `3fc1817` on main). ALL of them (77 files, 34 MB)
-move into the image library (S3), the ones no page uses too: gahk.dk redirects every old picture
-address (`/static/legacy/image/…`, `/public/image/…`) to its library copy, and other websites link
-them. `app/cms/legacy_images.json` lists every file with its size and SHA-256, made from git history
-(`manage.py legacy_images_manifest`; `--check` compares). The import (`cms/legacy_images.py`)
-downloads each listed file not yet in the library from that pinned commit on GitHub
-(`raw.githubusercontent.com/GAHK-org/gahk_intern/3fc1817…/app/static/legacy/image/…`), checks its
-SHA-256 against the list, checks it like an upload, stores it with its old path, and rewrites content
-that still refers to it (`/public/image/…`, `/static/legacy/image/…`). It needs outbound HTTPS from
-the worker (and from `docker exec`) to raw.githubusercontent.com.
+content, not code: they belong in the image library (S3) like every other picture. ALL of them (77
+files, 34 MB, under `app/static/legacy/image/upload/`) move there, the ones no page uses too: gahk.dk
+redirects every old picture address (`/static/legacy/image/…`, `/public/image/…`) to its library
+copy, and other websites link them. The import (`cms/legacy_images.py`) reads each file not yet in
+the library from that directory, which is in the image like any static file, checks it like an
+upload, stores it with its old path, and rewrites content that still refers to it
+(`/public/image/…`, `/static/legacy/image/…`). It needs nothing from outside the container.
 
 Right after the deploy, run it by hand, so no old picture address goes without its copy for the
 minutes the sync would take:
 ```
-docker exec <web> python manage.py import_legacy_images              # all of them, one line per file
-docker exec <web> python manage.py import_legacy_images --from DIR   # from a local copy of the old image dir
+docker exec <web> python manage.py import_legacy_images     # all of them, one line per file
 ```
 It ends with "The library has 77 of the 77 old images" and queues a publish. Safe to run again: what
 is in the library is skipped. `sync_gahk_web` (with `GAHK_WEB_KEY` set) runs the same import by
@@ -764,21 +759,20 @@ brought in. To watch it: the change log's **System** filter shows each imported 
 rewritten page, and the Hjemmeside overview shows "x af 77 gamle billeder", how many are still
 waiting and the ones that could not be moved.
 
-A file that GitHub does not have, whose SHA-256 differs from the list, or that is not a usable image
-is logged once, recorded (LegacyImageFailure) and not asked for again by the sync; references to it
-stay as they are (gahk.dk shows a broken picture or a plain green band there). Replace it in the
-editor, or retry with the command, which retries every recorded failure. A network problem records
-nothing: the next run tries again. So does a storage or database error (S3 down), which also shows
-as the sync's `last_error`; what the run imported before it is still pointed at. An old image nothing
-uses shows as "Ikke i brug" in the library and may be deleted: it is recorded as deleted and not
-imported again (unless content refers to it again), and gahk.dk drops it, and the redirect from its
-old address, at the next publish.
+A file content refers to that is not there, or that is not a usable image, is logged once, recorded
+(LegacyImageFailure) and not asked for again by the sync; references to it stay as they are (gahk.dk
+shows a broken picture or a plain green band there). Replace it in the editor, or retry with the
+command, which retries every recorded failure. A storage or database error (S3 down) records
+nothing: the next run tries again, and it shows as the sync's `last_error`; what the run imported
+before it is still pointed at. An old image nothing uses shows as "Ikke i brug" in the library and
+may be deleted: it is recorded as deleted and not imported again (unless content refers to it
+again), and gahk.dk drops it, and the redirect from its old address, at the next publish.
 
 `static/legacy/image/elements/` and `image/intern/` stay in the repository: the intranet itself uses
 them. Once the overview shows all old images in the library (or deleted) and none waiting in
-production, a follow-up can remove the import (`cms/legacy_images.py`, `legacy_images.json`, both
-commands, LegacyImageFailure); keep `CmsImage.legacy_path`: gahk.dk's redirects for old image links
-are built from it.
+production, the cutover's cleanup removes the import (`cms/legacy_images.py`, the command,
+LegacyImageFailure) and `upload/` with it; `CmsImage.legacy_path` stays: gahk.dk's redirects for old
+image links are built from it.
 
 **Applications** pulled from the outbox are validated with the old form rules, stored once (by
 gahk.dk's id), answered with the usual auto-reply, and then acknowledged so gahk.dk deletes them. One

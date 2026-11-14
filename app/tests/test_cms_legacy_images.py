@@ -1,20 +1,14 @@
-"""The old site's images moving into the library by themselves (cms.legacy_images), downloaded from
-the pinned commit on GitHub — here from a fake GitHub, because tests never use the network."""
+"""The old site's images moving into the library by themselves (cms.legacy_images), read from
+static/legacy/image/ — here from a temporary directory of the test's own."""
 
-import hashlib
 import json
-import re
-import subprocess
-import threading
 from collections.abc import Callable, Iterator
 from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote
 
 import psycopg
 import pytest
-import requests
 from django.conf import settings
 from django.core.management import CommandError, call_command
 from django.db import connection
@@ -22,15 +16,12 @@ from django.urls import reverse
 from PIL import Image
 
 from cms import legacy_images
+from cms.images import EXTENSION_TYPES
 from cms.legacy_images import (
     IMPORT_LOCK_ID,
-    LEGACY_SOURCE_COMMIT,
-    LEGACY_SOURCE_URL,
-    MANIFEST_PATH,
-    DirectorySource,
-    ManifestEntry,
     convert_legacy_images,
     import_pending_legacy_images,
+    legacy_files,
     legacy_image_map,
     legacy_state,
     references,
@@ -57,59 +48,43 @@ def image_bytes(fmt: str = "JPEG", size: tuple[int, int] = (40, 30)) -> bytes:
     return buffer.getvalue()
 
 
-def fake_response(status: int, body: bytes, content_type: str, length: bool = True) -> requests.Response:
-    response = requests.Response()
-    response.status_code = status
-    response.headers["Content-Type"] = content_type
-    if length:
-        response.headers["Content-Length"] = str(len(body))
-    response.raw = BytesIO(body)
-    return response
+class OldFiles:
+    """static/legacy/image/ for one test: a temporary directory, and every legacy path the import
+    reads from it, in order."""
 
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.reads: list[str] = []
 
-TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif"}
-
-
-class FakeGitHub:
-    """raw.githubusercontent.com for the pinned commit: `files` maps a legacy path to its bytes
-    (served with the content type of its extension) or to a ready response."""
-
-    def __init__(self, files: dict[str, bytes | requests.Response] | None = None) -> None:
-        self.files = files or {}
-        self.urls: list[str] = []
-        self.down = False
-        self.lock = threading.Lock()
-
-    def __call__(self, url: str, **kwargs: Any) -> requests.Response:  # noqa: ANN401
-        assert kwargs["stream"] is True and kwargs["timeout"]
-        with self.lock:
-            self.urls.append(url)
-        if self.down:
-            raise requests.ConnectionError("network unreachable")
-        assert url.startswith(LEGACY_SOURCE_URL), url
-        path = unquote(url.removeprefix(LEGACY_SOURCE_URL))
-        entry = self.files.get(path)
-        if entry is None:
-            return fake_response(404, b"404: Not Found", "text/plain; charset=utf-8")
-        if isinstance(entry, requests.Response):
-            return entry
-        return fake_response(200, entry, TYPES.get(Path(path).suffix.lower(), "application/octet-stream"))
-
-    def paths(self) -> list[str]:
-        return [unquote(url.removeprefix(LEGACY_SOURCE_URL)) for url in self.urls]
+    def put(self, legacy_path: str, data: bytes) -> None:
+        path = self.root / legacy_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
 
 
 @pytest.fixture
-def github(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
-    fake = FakeGitHub(
-        {
-            "upload/images/gang.jpg": image_bytes(size=(3000, 1000)),
-            "upload/images/Hall(1).png": image_bytes("PNG"),
-            "upload/images/aaretsgang/nytår 2014-15.jpg": image_bytes(),
-        }
-    )
-    monkeypatch.setattr(legacy_images, "http_get", fake)
-    return fake
+def old_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> OldFiles:
+    """Three old images. Nothing is listed (see _list_all): most tests look at what the content
+    refers to alone."""
+    files = OldFiles(tmp_path / "old-images")
+    files.put("upload/images/gang.jpg", image_bytes(size=(3000, 1000)))
+    files.put("upload/images/Hall(1).png", image_bytes("PNG"))
+    files.put("upload/images/aaretsgang/nytår 2014-15.jpg", image_bytes())
+    monkeypatch.setattr(legacy_images, "LEGACY_DIRECTORY", files.root)
+    monkeypatch.setattr(legacy_images, "LISTED_DIRECTORY", "(nothing)/")
+    real_read = legacy_images.read_legacy_file
+
+    def recording_read(legacy_path: str, found: Any) -> bytes:  # noqa: ANN401
+        files.reads.append(legacy_path)
+        return real_read(legacy_path, found)
+
+    monkeypatch.setattr(legacy_images, "read_legacy_file", recording_read)
+    return files
+
+
+def _list_all(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every file below upload/ is to be imported, as in production."""
+    monkeypatch.setattr(legacy_images, "LISTED_DIRECTORY", "upload/")
 
 
 @pytest.fixture
@@ -183,9 +158,10 @@ def test_what_no_file_can_be_called_is_no_reference() -> None:
 
 
 # ------------------------------------------------------------------------------------ import
+# ------------------------------------------------------------------------------------ import
 @pytest.mark.django_db
-def test_referenced_images_are_downloaded_from_the_pinned_commit_and_the_content_rewritten(
-    github: FakeGitHub, front_page: Page
+def test_referenced_images_are_imported_and_the_content_rewritten(
+    old_files: OldFiles, front_page: Page
 ) -> None:
     front_page.body = (
         '<img src="/public/image/upload/images/gang.jpg">'
@@ -211,20 +187,14 @@ def test_referenced_images_are_downloaded_from_the_pinned_commit_and_the_content
 
     result = import_pending_legacy_images()
 
-    # Each file once, quoted, from the pinned commit; the svg is never asked for (not an image name),
-    # nor "Hall(1).png)" with the ")" of the unquoted url().
-    assert sorted(github.urls) == sorted(
-        LEGACY_SOURCE_URL + path
-        for path in (
-            "upload/images/gang.jpg",
-            "upload/images/aaretsgang/nyt%C3%A5r%202014-15.jpg",
-            "upload/images/Hall%281%29.png",
-            "upload/images/findes-ikke.jpg",
-        )
-    )
-    assert LEGACY_SOURCE_URL.startswith(
-        "https://raw.githubusercontent.com/GAHK-org/gahk_intern/3fc1817b0d5ef07a2b636b4a01c892ba3fe3a8ba/"
-    )
+    # Each file once; the svg is never asked for (not an image name), nor "Hall(1).png)" with the ")"
+    # of the unquoted url().
+    assert sorted(old_files.reads) == [
+        "upload/images/Hall(1).png",
+        "upload/images/aaretsgang/nytår 2014-15.jpg",
+        "upload/images/findes-ikke.jpg",
+        "upload/images/gang.jpg",
+    ]
     assert sorted(result.imported) == [
         "upload/images/Hall(1).png",
         "upload/images/aaretsgang/nytår 2014-15.jpg",
@@ -266,17 +236,17 @@ def test_referenced_images_are_downloaded_from_the_pinned_commit_and_the_content
     assert snapshot["site"]["default_background"] == mapping["/static/legacy/image/upload/images/gang.jpg"]
     assert "/public/image/upload/images/gang.jpg" not in json.dumps(snapshot)
 
-    # The next run: everything is in the library or recorded, so it asks GitHub nothing.
-    github.urls.clear()
+    # The next run: everything is in the library or recorded, so it reads nothing.
+    old_files.reads.clear()
     again = import_pending_legacy_images()
-    assert github.urls == []
+    assert old_files.reads == []
     assert again.imported == [] and again.rewritten == 0
     assert sorted(again.skipped) == ["elements/logo.svg", "upload/images/findes-ikke.jpg"]
     assert CmsImage.objects.filter(legacy_path__isnull=False).count() == 3
 
 
 @pytest.mark.django_db
-def test_nothing_referenced_means_no_request_and_no_change(github: FakeGitHub, front_page: Page) -> None:
+def test_nothing_referenced_means_nothing_read_and_no_change(old_files: OldFiles, front_page: Page) -> None:
     result = import_pending_legacy_images()
 
     assert result.summary() == {
@@ -285,29 +255,29 @@ def test_nothing_referenced_means_no_request_and_no_change(github: FakeGitHub, f
         "missing": 0,
         "unusable": 0,
         "deferred": 0,
-        "unavailable": "",
         "error": "",
         "busy": False,
     }
-    assert github.urls == []
+    assert old_files.reads == []
     assert not ContentChange.objects.exists()
 
 
 @pytest.mark.django_db
 @pytest.mark.parametrize(
-    ("response", "reason"),
+    ("data", "reason"),
     [
-        (fake_response(404, b"404: Not Found", "text/plain"), "missing"),
-        (fake_response(200, b"<html>login</html>", "text/html; charset=utf-8"), "unusable"),
-        (fake_response(200, b"not an image at all", "image/jpeg"), "unusable"),
-        (fake_response(200, image_bytes("BMP"), "image/jpeg"), "unusable"),  # decodes, but not a web format
-        (fake_response(200, image_bytes()[:200], "image/jpeg"), "unusable"),  # cut off
+        (None, "missing"),
+        (b"<html>login</html>", "unusable"),
+        (b"not an image at all", "unusable"),
+        (image_bytes("BMP"), "unusable"),  # decodes, but not a web format
+        (image_bytes()[:200], "unusable"),  # cut off
     ],
 )
 def test_a_file_that_cannot_be_used_is_recorded_and_not_asked_for_again(
-    github: FakeGitHub, front_page: Page, response: requests.Response, reason: str
+    old_files: OldFiles, front_page: Page, data: bytes | None, reason: str
 ) -> None:
-    github.files["upload/images/bad.jpg"] = response
+    if data is not None:
+        old_files.put("upload/images/bad.jpg", data)
     _refer(front_page, "upload/images/bad.jpg")
 
     first = import_pending_legacy_images()
@@ -319,70 +289,40 @@ def test_a_file_that_cannot_be_used_is_recorded_and_not_asked_for_again(
     front_page.refresh_from_db()
     assert "/public/image/upload/images/bad.jpg" in front_page.body
 
-    github.urls.clear()
+    old_files.reads.clear()
     for _run in range(3):
         assert import_pending_legacy_images().skipped == ["upload/images/bad.jpg"]
-    assert github.urls == []
+    assert old_files.reads == []
 
 
 @pytest.mark.django_db
-def test_a_file_over_the_size_cap_is_refused_without_reading_it_all(
-    github: FakeGitHub, front_page: Page, monkeypatch: pytest.MonkeyPatch
+def test_a_file_over_the_size_cap_is_refused_without_reading_it(
+    old_files: OldFiles, front_page: Page, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(legacy_images, "MAX_FILE_BYTES", 1000)
     big = image_bytes(size=(400, 400))
     assert len(big) > 1000
-    github.files["upload/images/stor.jpg"] = fake_response(200, big, "image/jpeg")
-    github.files["upload/images/stor-uden-laengde.jpg"] = fake_response(200, big, "image/jpeg", length=False)
-    _refer(front_page, "upload/images/stor.jpg", "upload/images/stor-uden-laengde.jpg")
+    old_files.put("upload/images/stor.jpg", big)
+    _refer(front_page, "upload/images/stor.jpg")
 
     result = import_pending_legacy_images()
 
-    assert sorted(result.unusable) == ["upload/images/stor-uden-laengde.jpg", "upload/images/stor.jpg"]
-    assert set(LegacyImageFailure.objects.values_list("detail", flat=True)) == {
-        f"{len(big)} bytes, more than 1000",
-        "more than 1000 bytes",
-    }
-
-
-@pytest.mark.django_db
-@pytest.mark.parametrize("trouble", ["down", "503", "429"])
-def test_an_unreachable_github_is_recorded_nowhere_and_tried_again_next_run(
-    github: FakeGitHub, front_page: Page, trouble: str
-) -> None:
-    _refer(front_page, "upload/images/gang.jpg", "upload/images/Hall(1).png")
-    if trouble == "down":
-        github.down = True
-    else:
-        for path in ("upload/images/gang.jpg", "upload/images/Hall(1).png"):
-            github.files[path] = fake_response(int(trouble), b"busy", "text/plain")
-
-    result = import_pending_legacy_images()
-
-    assert len(github.urls) == 1  # stops at the first: the rest would fail the same way
-    assert result.unavailable and result.deferred == 2 and result.imported == []
-    assert not LegacyImageFailure.objects.exists()
-
-    github.down = False
-    github.files["upload/images/gang.jpg"] = image_bytes()
-    github.files["upload/images/Hall(1).png"] = image_bytes("PNG")
-    assert sorted(import_pending_legacy_images().imported) == [
-        "upload/images/Hall(1).png",
-        "upload/images/gang.jpg",
-    ]
+    assert result.unusable == ["upload/images/stor.jpg"]
+    assert LegacyImageFailure.objects.get().detail == "more than 1000 bytes"
 
 
 @pytest.mark.django_db
 def test_a_run_stops_at_its_budget_and_the_next_one_goes_on(
-    github: FakeGitHub, front_page: Page, monkeypatch: pytest.MonkeyPatch
+    old_files: OldFiles, front_page: Page, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     paths = [f"upload/images/billede{number}.jpg" for number in range(5)]
-    github.files.update({path: image_bytes() for path in paths})
+    for path in paths:
+        old_files.put(path, image_bytes())
     _refer(front_page, *paths)
     monkeypatch.setattr(legacy_images, "AUTO_MAX_FILES", 2)
 
     first = import_pending_legacy_images()
-    assert (len(first.imported), first.deferred, len(github.urls)) == (2, 3, 2)
+    assert (len(first.imported), first.deferred, len(old_files.reads)) == (2, 3, 2)
     front_page.refresh_from_db()
     assert front_page.body.count("/public/image/") == 3  # what was imported is already rewritten
 
@@ -391,37 +331,37 @@ def test_a_run_stops_at_its_budget_and_the_next_one_goes_on(
     assert (len(second.imported), len(third.imported), third.deferred) == (2, 1, 0)
     front_page.refresh_from_db()
     assert "/public/image/" not in front_page.body
-    assert sorted(github.paths()) == sorted(paths)  # each file asked for once
+    assert sorted(old_files.reads) == sorted(paths)  # each file read once
 
 
 @pytest.mark.django_db
-def test_a_run_out_of_time_downloads_nothing_more(
-    github: FakeGitHub, front_page: Page, monkeypatch: pytest.MonkeyPatch
+def test_a_run_out_of_time_imports_nothing_more(
+    old_files: OldFiles, front_page: Page, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _refer(front_page, "upload/images/gang.jpg")
     monkeypatch.setattr(legacy_images, "AUTO_SECONDS", 0)
 
     result = import_pending_legacy_images()
 
-    assert (result.deferred, github.urls) == (1, [])
+    assert (result.deferred, old_files.reads) == (1, [])
     assert not LegacyImageFailure.objects.exists()
 
 
 @pytest.mark.django_db
 def test_an_edit_saved_during_the_import_is_kept(
-    github: FakeGitHub, front_page: Page, monkeypatch: pytest.MonkeyPatch
+    old_files: OldFiles, front_page: Page, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _refer(front_page, "upload/images/gang.jpg")
-    real_get = legacy_images.http_get
+    real_read = legacy_images.read_legacy_file
 
-    def download_while_an_editor_saves(url: str, **kwargs: Any) -> requests.Response:  # noqa: ANN401
-        # The editor's save lands while the (slow) download runs, after the rows were first read.
+    def read_while_an_editor_saves(legacy_path: str, found: Any) -> bytes:  # noqa: ANN401
+        # The editor's save lands while the (slow) import runs, after the rows were first read.
         Page.objects.filter(pk=front_page.pk).update(
             body='<p>Ny tekst</p><img src="/public/image/upload/images/gang.jpg">'
         )
-        return real_get(url, **kwargs)
+        return real_read(legacy_path, found)
 
-    monkeypatch.setattr(legacy_images, "http_get", download_while_an_editor_saves)
+    monkeypatch.setattr(legacy_images, "read_legacy_file", read_while_an_editor_saves)
 
     import_pending_legacy_images()
 
@@ -431,18 +371,18 @@ def test_an_edit_saved_during_the_import_is_kept(
 
 
 @pytest.mark.django_db
-def test_a_reference_no_file_can_have_does_not_stop_the_import(github: FakeGitHub, front_page: Page) -> None:
+def test_a_reference_no_file_can_have_does_not_stop_the_import(old_files: OldFiles, front_page: Page) -> None:
     _refer(front_page, "upload/a%00.jpg", f"upload/{'a' * 260}.jpg", "upload/images/gang.jpg")
 
     result = import_pending_legacy_images()
 
-    assert result.imported == ["upload/images/gang.jpg"] and github.paths() == ["upload/images/gang.jpg"]
+    assert result.imported == ["upload/images/gang.jpg"] and old_files.reads == ["upload/images/gang.jpg"]
     assert not LegacyImageFailure.objects.exists()
     assert legacy_state().waiting == 0
 
 
 @pytest.mark.django_db
-def test_one_file_referenced_in_two_forms_is_imported_once(github: FakeGitHub, front_page: Page) -> None:
+def test_one_file_referenced_in_two_forms_is_imported_once(old_files: OldFiles, front_page: Page) -> None:
     front_page.body = (
         '<p style="background:url(/public/image/upload/images/Hall(1).png)">x</p>'
         '<img src="/public/image/upload/images/Hall(1).png">'
@@ -451,7 +391,7 @@ def test_one_file_referenced_in_two_forms_is_imported_once(github: FakeGitHub, f
 
     result = import_pending_legacy_images()
 
-    assert result.imported == ["upload/images/Hall(1).png"] and github.paths() == [
+    assert result.imported == ["upload/images/Hall(1).png"] and old_files.reads == [
         "upload/images/Hall(1).png"
     ]
     hall = CmsImage.objects.get(legacy_path="upload/images/Hall(1).png")
@@ -461,7 +401,7 @@ def test_one_file_referenced_in_two_forms_is_imported_once(github: FakeGitHub, f
 
 @pytest.mark.django_db
 def test_an_unexpected_error_still_rewrites_what_was_imported_before_it(
-    github: FakeGitHub, front_page: Page, monkeypatch: pytest.MonkeyPatch
+    old_files: OldFiles, front_page: Page, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from cms import services
 
@@ -493,6 +433,18 @@ def test_an_unexpected_error_still_rewrites_what_was_imported_before_it(
     assert "/public/image/" not in front_page.body
 
 
+@pytest.mark.django_db
+def test_nothing_outside_the_directory_is_read(old_files: OldFiles, front_page: Page) -> None:
+    (old_files.root.parent / "secret.jpg").write_bytes(image_bytes())
+    (old_files.root / "upload" / "link.jpg").symlink_to(old_files.root.parent / "secret.jpg")
+    _refer(front_page, "upload/../../secret.jpg", "upload/link.jpg")
+
+    result = convert_legacy_images()
+
+    assert result.imported == [] and result.missing == ["upload/link.jpg"]
+    assert not CmsImage.objects.exists()
+
+
 @pytest.fixture
 def lock_held_elsewhere(db: None) -> Iterator[None]:
     """The import lock, held by another database session (a second worker's run)."""
@@ -513,13 +465,13 @@ def lock_held_elsewhere(db: None) -> Iterator[None]:
 
 @pytest.mark.django_db
 def test_a_run_while_another_import_runs_does_nothing(
-    github: FakeGitHub, front_page: Page, lock_held_elsewhere: None
+    old_files: OldFiles, front_page: Page, lock_held_elsewhere: None
 ) -> None:
     _refer(front_page, "upload/images/gang.jpg")
 
     result = import_pending_legacy_images()
 
-    assert result.busy and github.urls == []
+    assert result.busy and old_files.reads == []
     assert not CmsImage.objects.exists()
     with pytest.raises(CommandError, match="Another legacy image import is running"):
         call_command("import_legacy_images", stdout=StringIO())
@@ -527,8 +479,8 @@ def test_a_run_while_another_import_runs_does_nothing(
 
 # --------------------------------------------------------------------------------- the command
 @pytest.mark.django_db
-def test_the_command_downloads_from_the_pinned_commit_and_retries_recorded_failures(
-    github: FakeGitHub, front_page: Page, monkeypatch: pytest.MonkeyPatch
+def test_the_command_imports_and_retries_recorded_failures(
+    old_files: OldFiles, front_page: Page, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from cms.management.commands import import_legacy_images
 
@@ -540,68 +492,17 @@ def test_the_command_downloads_from_the_pinned_commit_and_retries_recorded_failu
 
     call_command("import_legacy_images", stdout=out)
 
-    assert f"Reading from {LEGACY_SOURCE_URL}" in out.getvalue()
+    assert f"Reading from {old_files.root}" in out.getvalue()
     assert "Imported 1 images; rewrote 1 rows." in out.getvalue()
     assert "Missing: upload/x.jpg" in out.getvalue()
-    assert sorted(github.paths()) == ["upload/images/gang.jpg", "upload/x.jpg"]  # the recorded one too
+    assert sorted(old_files.reads) == ["upload/images/gang.jpg", "upload/x.jpg"]  # the recorded one too
     assert list(LegacyImageFailure.objects.values_list("legacy_path", flat=True)) == ["upload/x.jpg"]
     assert queued == ["save"]
 
 
-@pytest.mark.django_db
-def test_the_command_says_when_github_cannot_be_reached(github: FakeGitHub, front_page: Page) -> None:
-    _refer(front_page, "upload/images/gang.jpg")
-    github.down = True
-    with pytest.raises(CommandError, match="Stopped with 1 images left"):
-        call_command("import_legacy_images", stdout=StringIO())
-
-
-@pytest.fixture
-def legacy_dir(tmp_path: Path) -> Path:
-    """A local copy of the old site's static/legacy/image/."""
-    root = tmp_path / "legacy-image"
-    (root / "upload" / "images").mkdir(parents=True)
-    (root / "upload" / "images" / "gang.jpg").write_bytes(image_bytes())
-    (root / "elements").mkdir()
-    (root / "elements" / "logo.svg").write_text("<svg/>")
-    return root
-
-
-@pytest.mark.django_db
-def test_the_command_can_read_a_local_copy_instead(
-    github: FakeGitHub, front_page: Page, legacy_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from cms.management.commands import import_legacy_images
-
-    monkeypatch.setattr(import_legacy_images, "publish_on_commit", lambda reason: None)
-    _refer(front_page, "upload/images/gang.jpg", "elements/logo.svg")
-    out = StringIO()
-
-    # A directory without the file is passed over; the next one has it.
-    call_command(
-        "import_legacy_images", "--from", str(legacy_dir.parent), "--from", str(legacy_dir), stdout=out
-    )
-
-    assert "Imported 1 images; rewrote 1 rows." in out.getvalue()
-    assert "Not a usable image: elements/logo.svg" in out.getvalue()
-    assert github.urls == []
-    with pytest.raises(CommandError):
-        call_command("import_legacy_images", "--from", str(legacy_dir / "nowhere"))
-
-
-@pytest.mark.django_db
-def test_a_directory_source_never_reads_outside_its_directory(legacy_dir: Path, front_page: Page) -> None:
-    (legacy_dir.parent / "secret.jpg").write_bytes(image_bytes())
-    _refer(front_page, "upload/../../secret.jpg")
-
-    result = convert_legacy_images(DirectorySource([legacy_dir]))
-
-    assert result.imported == [] and not CmsImage.objects.exists()
-
-
 # ---------------------------------------------------------------------------------- overview
 @pytest.mark.django_db
-def test_the_overview_shows_what_is_waiting_and_what_failed(github: FakeGitHub, front_page: Page) -> None:
+def test_the_overview_shows_what_is_waiting_and_what_failed(old_files: OldFiles, front_page: Page) -> None:
     _refer(front_page, "upload/images/gang.jpg", "upload/images/findes-ikke.jpg")
     assert legacy_state().waiting == 2
 
@@ -613,62 +514,34 @@ def test_the_overview_shows_what_is_waiting_and_what_failed(github: FakeGitHub, 
 
 
 # ------------------------------------------------------------------------- the whole old upload/
-def _list(monkeypatch: pytest.MonkeyPatch, github: FakeGitHub, *paths: str) -> list[ManifestEntry]:
-    """Make legacy_images.json list `paths`, with the sizes and hashes of the fake GitHub's files."""
-    entries = []
-    for path in sorted(paths):
-        data = github.files[path]
-        assert isinstance(data, bytes)
-        entries.append(ManifestEntry(path, len(data), hashlib.sha256(data).hexdigest()))
-    monkeypatch.setattr(legacy_images, "manifest", lambda: tuple(entries))
-    return entries
-
-
 ALL = ("upload/images/gang.jpg", "upload/images/Hall(1).png", "upload/images/aaretsgang/nytår 2014-15.jpg")
 
 
-def test_the_list_names_every_old_file_at_the_pinned_commit() -> None:
-    data = json.loads(MANIFEST_PATH.read_text("utf-8"))
-    assert data["commit"] == LEGACY_SOURCE_COMMIT and data["directory"] == "app/static/legacy/image/"
-    paths = [entry["path"] for entry in data["files"]]
-    assert paths == sorted(set(paths)) and len(paths) == 77
-    for entry in data["files"]:
-        assert set(entry) == {"path", "size", "sha256"}
-        assert (
-            entry["path"].startswith("upload/") and legacy_images._normalize(entry["path"]) == entry["path"]
-        )
-        assert isinstance(entry["size"], int) and 0 < entry["size"] <= legacy_images.MAX_FILE_BYTES
-        assert re.fullmatch(r"[0-9a-f]{64}", entry["sha256"])
-    # What the import reads is what the file says.
-    assert [entry.path for entry in legacy_images._read_manifest(MANIFEST_PATH)] == paths
+def test_the_repository_holds_all_77_old_images(monkeypatch: pytest.MonkeyPatch) -> None:
+    """What production imports: the files below static/legacy/image/upload/, as git has them."""
+    monkeypatch.setattr(legacy_images, "LEGACY_DIRECTORY", Path(settings.BASE_DIR) / "static/legacy/image")
+    files = legacy_files()
+    listed = sorted(path for path in files if path.startswith("upload/"))
 
-
-def test_the_list_is_what_git_has_at_the_pinned_commit() -> None:
-    """Regenerated from git history (`manage.py legacy_images_manifest`), byte for byte. Needs a
-    clone that has the commit; a shallow one skips."""
-    from cms.management.commands.legacy_images_manifest import build_manifest, manifest_text
-
-    repo = Path(settings.BASE_DIR).parent
-    has_commit = subprocess.run(
-        ["git", "-C", str(repo), "cat-file", "-e", f"{LEGACY_SOURCE_COMMIT}^{{commit}}"],
-        capture_output=True,
-        check=False,
-    )
-    if has_commit.returncode != 0:
-        pytest.skip("this clone does not have the pinned commit")
-    assert manifest_text(build_manifest(repo)) == MANIFEST_PATH.read_text("utf-8")
+    assert len(listed) == 77
+    assert sum(files[path].stat().st_size for path in listed) == 34_165_111
+    for path in listed:
+        assert legacy_images._normalize(path) == path
+        assert Path(path).suffix.lower() in EXTENSION_TYPES
+        assert 0 < files[path].stat().st_size <= legacy_images.MAX_FILE_BYTES
+    assert "elements/logo.svg" in files or any(path.startswith("elements/") for path in files)
 
 
 @pytest.mark.django_db
-def test_every_listed_file_is_imported_even_when_no_content_uses_it(
-    github: FakeGitHub, front_page: Page, monkeypatch: pytest.MonkeyPatch
+def test_every_file_is_imported_even_when_no_content_uses_it(
+    old_files: OldFiles, front_page: Page, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _list(monkeypatch, github, *ALL)
+    _list_all(monkeypatch)
 
     result = convert_legacy_images()
 
     assert sorted(result.imported) == sorted(ALL) and result.rewritten == 0
-    assert sorted(github.paths()) == sorted(ALL)
+    assert sorted(old_files.reads) == sorted(ALL)
     mapping = legacy_image_map()
     assert set(mapping) == {f"/static/legacy/image/{path}" for path in ALL}
     # None of them is used, and every one is sent to gahk.dk, with the redirect from its old address.
@@ -680,15 +553,15 @@ def test_every_listed_file_is_imported_even_when_no_content_uses_it(
     state = legacy_state()
     assert (state.total, state.in_library, state.deleted, state.waiting) == (3, 3, 0, 0)
 
-    github.urls.clear()
-    assert convert_legacy_images().imported == [] and github.urls == []
+    old_files.reads.clear()
+    assert convert_legacy_images().imported == [] and old_files.reads == []
 
 
 @pytest.mark.django_db
 def test_the_content_s_files_come_first_and_the_automatic_runs_keep_their_budget(
-    github: FakeGitHub, front_page: Page, monkeypatch: pytest.MonkeyPatch
+    old_files: OldFiles, front_page: Page, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _list(monkeypatch, github, *ALL)
+    _list_all(monkeypatch)
     _refer(front_page, "upload/images/aaretsgang/nyt%C3%A5r%202014-15.jpg")
     monkeypatch.setattr(legacy_images, "AUTO_MAX_FILES", 2)
     assert legacy_state().waiting == 3
@@ -705,36 +578,15 @@ def test_the_content_s_files_come_first_and_the_automatic_runs_keep_their_budget
 
 
 @pytest.mark.django_db
-def test_a_listed_file_with_other_bytes_is_recorded_and_never_stored(
-    github: FakeGitHub, front_page: Page, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _list(monkeypatch, github, *ALL)
-    github.files["upload/images/gang.jpg"] = image_bytes(size=(41, 30))  # not the file git had
-
-    result = convert_legacy_images(retry_failed=False)
-
-    assert sorted(result.imported) == sorted(set(ALL) - {"upload/images/gang.jpg"})
-    assert result.unusable == ["upload/images/gang.jpg"]
-    failure = LegacyImageFailure.objects.get()
-    assert (failure.legacy_path, failure.reason) == ("upload/images/gang.jpg", "unusable")
-    assert failure.detail.startswith("not the file legacy_images.json lists")
-    assert not CmsImage.objects.filter(legacy_path="upload/images/gang.jpg").exists()
-    assert [f.legacy_path for f in legacy_state().failures] == ["upload/images/gang.jpg"]
-
-    github.urls.clear()
-    assert import_pending_legacy_images().skipped == ["upload/images/gang.jpg"] and github.urls == []
-
-
-@pytest.mark.django_db
 def test_an_unused_old_image_can_be_deleted_and_is_not_imported_again(
-    github: FakeGitHub,
+    old_files: OldFiles,
     front_page: Page,
     monkeypatch: pytest.MonkeyPatch,
     make_resident: Callable[..., Resident],
 ) -> None:
     from cms import services
 
-    _list(monkeypatch, github, *ALL)
+    _list_all(monkeypatch)
     convert_legacy_images()
     hallway = CmsImage.objects.get(legacy_path="upload/images/gang.jpg")
     old_address = "/static/legacy/image/upload/images/gang.jpg"
@@ -749,9 +601,9 @@ def test_an_unused_old_image_can_be_deleted_and_is_not_imported_again(
     assert (marker.legacy_path, marker.reason) == ("upload/images/gang.jpg", "deleted")
     snapshot = build_snapshot()
     assert old_address not in snapshot.data["legacy_images"] and hallway.sha256 not in snapshot.images
-    github.urls.clear()
+    old_files.reads.clear()
     for run in (import_pending_legacy_images, convert_legacy_images):  # nor by the command's retry
-        assert run().imported == [] and github.urls == []
+        assert run().imported == [] and old_files.reads == []
     state = legacy_state()
     assert (state.total, state.in_library, state.deleted, state.waiting, state.failures) == (3, 2, 1, 0, [])
 
@@ -762,47 +614,45 @@ def test_an_unused_old_image_can_be_deleted_and_is_not_imported_again(
 
 
 @pytest.mark.django_db
-def test_the_command_imports_every_listed_file_in_one_go(
-    github: FakeGitHub, front_page: Page, monkeypatch: pytest.MonkeyPatch
+def test_the_command_imports_every_file_in_one_go(
+    old_files: OldFiles, front_page: Page, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from cms.management.commands import import_legacy_images
 
     queued: list[str] = []
     monkeypatch.setattr(import_legacy_images, "publish_on_commit", queued.append)
     monkeypatch.setattr(legacy_images, "AUTO_MAX_FILES", 1)  # the automatic runs' budget is not its
-    _list(monkeypatch, github, *ALL)
-    github.files["upload/images/findes-ikke.jpg"] = image_bytes()
-    _list(monkeypatch, github, *ALL, "upload/images/findes-ikke.jpg")
-    del github.files["upload/images/findes-ikke.jpg"]
+    _list_all(monkeypatch)
+    old_files.put("upload/images/ødelagt.jpg", b"not an image at all")
     out = StringIO()
 
     call_command("import_legacy_images", stdout=out)
 
     text = out.getvalue()
     assert "[1/4] upload/images/Hall(1).png: imported" in text
-    assert "[4/4] upload/images/gang.jpg: imported" in text
-    assert "upload/images/findes-ikke.jpg: missing (not in https://raw.githubusercontent.com/" in text
+    assert "[3/4] upload/images/gang.jpg: imported" in text
+    assert "upload/images/ødelagt.jpg: not a usable image" in text
     assert "Imported 3 images; rewrote 0 rows." in text
     assert "The library has 3 of the 4 old images." in text
     assert "Every old image is in the library." not in text
     assert queued == ["save"]
 
-    # Again: nothing to download but the missing one, which the command retries.
-    github.urls.clear()
+    # Again: nothing to read but the unusable one, which the command retries.
+    old_files.reads.clear()
     out = StringIO()
     call_command("import_legacy_images", stdout=out)
-    assert github.paths() == ["upload/images/findes-ikke.jpg"]
+    assert old_files.reads == ["upload/images/ødelagt.jpg"]
     assert "Imported 0 images" in out.getvalue() and queued == ["save"]
 
 
 @pytest.mark.django_db
 def test_the_command_says_when_everything_is_in(
-    github: FakeGitHub, front_page: Page, monkeypatch: pytest.MonkeyPatch
+    old_files: OldFiles, front_page: Page, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from cms.management.commands import import_legacy_images
 
     monkeypatch.setattr(import_legacy_images, "publish_on_commit", lambda reason: None)
-    _list(monkeypatch, github, *ALL)
+    _list_all(monkeypatch)
     out = StringIO()
 
     call_command("import_legacy_images", stdout=out)
@@ -813,14 +663,14 @@ def test_the_command_says_when_everything_is_in(
 
 @pytest.mark.django_db
 def test_the_overview_counts_against_every_old_file(
-    github: FakeGitHub,
+    old_files: OldFiles,
     front_page: Page,
     monkeypatch: pytest.MonkeyPatch,
     make_resident: Callable[..., Resident],
 ) -> None:
     from django.test import Client
 
-    _list(monkeypatch, github, *ALL)
+    _list_all(monkeypatch)
     monkeypatch.setattr(legacy_images, "AUTO_MAX_FILES", 1)
     import_pending_legacy_images()
     editor = make_resident(email="redaktoer@gahk.dk", roles=("pr",))
