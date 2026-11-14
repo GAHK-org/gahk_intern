@@ -768,12 +768,12 @@ docker exec <web> python manage.py import_legacy_images              # all of th
 docker exec <web> python manage.py import_legacy_images --from DIR   # from a local copy of the old image dir
 ```
 It ends with "The library has 77 of the 77 old images" and queues a publish. Safe to run again: what
-is in the library is skipped. `sync_gahk_web` runs the same import by itself every 2 minutes, at most
-20 files or 60 seconds per run (content's references first), so an interrupted or skipped manual run
-is finished within ten minutes anyway; each run publishes what it brought in. To watch it: the change
-log's **System** filter shows each imported image and each rewritten page, and the Hjemmeside
-overview shows "x af 77 gamle billeder", how many are still waiting and the ones that could not be
-moved.
+is in the library is skipped. `sync_gahk_web` (with `GAHK_WEB_KEY` set) runs the same import by
+itself every 2 minutes, at most 20 files or 60 seconds per run (content's references first), so an
+interrupted or skipped manual run is finished within ten minutes anyway; each run publishes what it
+brought in. To watch it: the change log's **System** filter shows each imported image and each
+rewritten page, and the Hjemmeside overview shows "x af 77 gamle billeder", how many are still
+waiting and the ones that could not be moved.
 
 A file that GitHub does not have, whose SHA-256 differs from the list, or that is not a usable image
 is logged once, recorded (LegacyImageFailure) and not asked for again by the sync; references to it
@@ -784,6 +784,7 @@ as the sync's `last_error`; what the run imported before it is still pointed at.
 uses shows as "Ikke i brug" in the library and may be deleted: it is recorded as deleted and not
 imported again (unless content refers to it again), and gahk.dk drops it, and the redirect from its
 old address, at the next publish.
+
 `static/legacy/image/elements/` and `image/intern/` stay in the repository: the intranet itself uses
 them. Once the overview shows all old images in the library (or deleted) and none waiting in
 production, a follow-up can remove the import (`cms/legacy_images.py`, `legacy_images.json`, both
