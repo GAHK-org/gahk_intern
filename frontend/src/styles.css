@@ -2585,6 +2585,9 @@
   .mention-picker li.mention-empty { cursor:default; color:var(--muted); background:none; }
 
   /* --- /install (install.html, install.ts): one collapsible .card per platform --- */
+  .install-page > p { margin:0 0 10px; }
+  .install-page a:not(.btn) { color:var(--green-700); font-weight:600; text-decoration:underline; }
+  .install-installed p + p { margin-top:12px; }
   .install-page ol { list-style:decimal; padding-left:22px; margin:10px 0; display:grid; gap:8px; }
   .install-page .card h2 { margin-top:0; }
   .install-platform { padding:0; }
