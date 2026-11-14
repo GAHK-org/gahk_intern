@@ -861,10 +861,8 @@ moves, and this version must follow right behind it:
    Registrar transfer is optional/separate (MitID + auth code). Confirm **who the registrant of
    record is** early — often the slowest item.
 
-Everyone is logged out once: the deploy's migrations end every existing session (an old `.gahk.dk`
-session cookie also reaches the webhost, so its key must stop working), the session cookie is
-host-only and renamed, and the old `.gahk.dk` one is deleted on the first request. Everyone is also
-logged out of the wiki once (its old gahk.dk cookies are made worthless by
+The session cookie is host-only and renamed, and the old `.gahk.dk` one is deleted on the first
+request. Everyone is logged out of the wiki once (its old gahk.dk cookies are made worthless by
 `$wgAuthenticationTokenVersion`). Afterwards, tell residents and update by hand:
 - Push and the home-screen app must be set up again on intern.gahk.dk (§2, Web Push). The old app
   shows how, and `https://intern.gahk.dk/install` has the steps; phones also get a banner.
