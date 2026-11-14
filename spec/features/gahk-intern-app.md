@@ -41,8 +41,11 @@ opens on Den Hurtige. Push notifications on a phone (iPhone in particular) need 
 
 - **The name is GAHK Intern, not Den Hurtige.** The app is the whole intranet; it only opens on Den
   Hurtige. Everyone reinstalls anyway, so this was the moment to rename it.
-- **The app's identity (its start page, /den-hurtige/) is unchanged.** Changing it would make
-  every installed copy a different app once more.
+- **The app's identity is the whole site (id "/", i.e. https://intern.gahk.dk/), not its start
+  page.** It used to be the start page, /den-hurtige/. Nobody had installed it from intern.gahk.dk
+  yet, so this was the moment to separate them. The id must never change once the app has been
+  installed from intern.gahk.dk: a new id splits every installed copy into a different app. The
+  start page (/den-hurtige/) may change freely.
 - **The page is public.** It holds no residents' data, and asking for a login first would stop the
   people it is for.
 - **The kitchen account may read it but gets no banner.** A public page should not answer 403 to one

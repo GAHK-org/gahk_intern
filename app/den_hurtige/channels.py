@@ -42,11 +42,10 @@ class Channel:
         """This channel's canonical URL.
 
         The default channel answers on the bare /den-hurtige/ rather than on its own slug, because
-        static/manifest.json uses that path as the PWA's `id`. A manifest id that changes makes every
-        phone treat the next deploy as a *different* installed app, so the bare URL has to keep
-        rendering a real feed forever. (/generelt/ also resolves; this is the one to link.) The id
-        did change once, from /intern/den-hurtige/, with the move to intern.gahk.dk — but the origin
-        changed with it, and a new origin is a new app whatever the id says.
+        static/manifest.json opens the installed app there (its start_url), so the bare URL has to
+        render a real feed. (/generelt/ also resolves; this is the one to link.) The app's identity
+        is the manifest's separate `id`, "/" (the whole site), so the start page can move without
+        making installed copies a different app.
         """
         if self.slug == DEFAULT.slug:
             return reverse("den_hurtige:feed")

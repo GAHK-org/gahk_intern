@@ -32,9 +32,13 @@ def test_the_app_is_called_gahk_intern() -> None:
     assert manifest["name"] == manifest["short_name"] == "GAHK Intern"
 
 
-def test_the_app_keeps_its_id() -> None:
-    """A changed id makes every installed copy a different app, so renaming it leaves the id alone."""
-    assert _manifest()["id"] == FEED_URL
+def test_the_app_id_is_not_its_start_page() -> None:
+    """The id is the app's identity: once anyone has installed it from intern.gahk.dk, a changed id
+    makes every installed copy a different app. Kept apart from start_url so the start page can move.
+    """
+    manifest = _manifest()
+    assert manifest["id"] == "/"  # https://intern.gahk.dk/: one app for the whole site
+    assert manifest["start_url"] == FEED_URL
 
 
 def test_ios_gets_the_name_from_the_page(client: Client, make_resident: Callable[..., Resident]) -> None:

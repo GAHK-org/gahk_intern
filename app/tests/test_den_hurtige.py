@@ -1508,9 +1508,8 @@ OTHER = "tv-rezz"
 def test_the_bare_url_renders_the_default_channel(
     client: Client, make_resident: Callable[..., Resident]
 ) -> None:
-    """static/manifest.json uses /den-hurtige/ as the PWA's `id`, so it must keep answering
-    with a real page forever: a changed id makes every phone treat the next deploy as a *different*
-    installed app. Not a redirect, not an index of channels — the default feed itself."""
+    """static/manifest.json opens the installed app on /den-hurtige/ (its start_url), so it must
+    answer with a real page. Not a redirect, not an index of channels — the default feed itself."""
     client.force_login(make_resident(email="a@gahk.dk"))
 
     response = client.get(FEED_URL)
