@@ -31,7 +31,11 @@ opens on Den Hurtige. Push notifications on a phone (iPhone in particular) need 
 - Only for a logged-in resident on a phone or tablet, in the browser rather than the installed app.
   Never on a computer, on /install itself, in GAHKFlix, on the ølkælder till or for the kitchen
   account.
-- Closing it hides it on that browser for 30 days.
+- Closing it hides it on that browser for longer each time: 1 day, then 3 days, then 30 days.
+- A close within 7 days after a 30-day hide ended hides it for another 30 days; a later close starts
+  over at 1 day (then 3, then 30).
+- Where the browser keeps no site data, it shows on every page, and closing it hides it on that page
+  only.
 
 ## Decisions
 
@@ -46,3 +50,6 @@ opens on Den Hurtige. Push notifications on a phone (iPhone in particular) need 
   not nagged to install anything.
 - **The banner appears only after the page has checked the device**, so a computer never sees it
   flash.
+- **Escalating hides rather than one long one.** A first close is often "not now"; a resident who
+  keeps closing it is asked less and less, and one who closes it promptly after every 30 days has
+  clearly decided, so stays at 30.

@@ -97,8 +97,8 @@
       {% comment %}
         Points phones and tablets at /install (the app has to be installed again from intern.gahk.dk).
         Hidden here and shown by frontend/src/install.ts only on a phone or tablet that is not already
-        running the installed app, and not within 30 days of closing it, so nothing flashes on a
-        computer. Not for the kitchen account; /install leaves the block empty. GAHKFlix
+        running the installed app, and not while a close still hides it (1, 3, then 30 days; see
+        install.ts), so nothing flashes on a computer. Not for the kitchen account; /install leaves the block empty. GAHKFlix
         (gahkflix/base.html) and the ølkælder till (kiosk_base.html) draw their own pages from
         their own base templates, so they never carry it; tests/test_install.py holds them to that.
       {% endcomment %}

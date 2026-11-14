@@ -74,39 +74,66 @@ function initPage(page: HTMLElement): void {
   );
 }
 
-// Closing the banner keeps it away this long, on this browser.
-const BANNER_DISMISSED_KEY = "installBannerDismissedUntil";
-const BANNER_DISMISS_MS = 30 * 24 * 60 * 60 * 1000;
+// Closing the banner hides it for longer each time, on this browser: 1 day, then 3, then 30. A close
+// within a week after a 30-day hide ended hides it for another 30 days; a later one starts over at
+// 1 day (then 3, then 30).
+const DAY_MS = 24 * 60 * 60 * 1000;
+const HIDE_DAYS = [1, 3, 30] as const;
+const KEEP_LONG_HIDE_MS = 7 * DAY_MS;
+const BANNER_KEY = "installBanner";
+
+/** What the browser remembers: which hide in HIDE_DAYS the last close started, and until when. */
+export interface BannerDismissal {
+  step: number;
+  hiddenUntil: number;
+}
+
+/** The hide that a close at `now` starts, after the one in `previous` (null: never closed). */
+export function nextDismissal(previous: BannerDismissal | null, now: number): BannerDismissal {
+  const last = HIDE_DAYS.length - 1;
+  let step = 0;
+  if (previous) {
+    if (previous.step < last) step = previous.step + 1;
+    else step = now <= previous.hiddenUntil + KEEP_LONG_HIDE_MS ? last : 0;
+  }
+  return { step, hiddenUntil: now + HIDE_DAYS[step] * DAY_MS };
+}
 
 /** A phone or a tablet: the UA says so and there is a touch screen. Not a laptop with one. */
 function isPhoneOrTablet(): boolean {
   return (IOS || ANDROID) && window.matchMedia("(any-pointer: coarse)").matches;
 }
 
-// Storage can be missing or throw (private mode, blocked site data); the banner then simply comes
-// back on the next page.
-function bannerDismissed(): boolean {
+// Storage can be missing or throw (private mode, blocked site data), or hold something unreadable:
+// the banner then simply shows, and closing it hides it for this page view only.
+function storedDismissal(): BannerDismissal | null {
   try {
-    return Date.now() < Number(localStorage.getItem(BANNER_DISMISSED_KEY) || 0);
+    const value: unknown = JSON.parse(localStorage.getItem(BANNER_KEY) || "null");
+    const { step, hiddenUntil } = (value ?? {}) as Partial<BannerDismissal>;
+    if (Number.isInteger(step) && step! >= 0 && step! < HIDE_DAYS.length && typeof hiddenUntil === "number") {
+      return { step: step!, hiddenUntil };
+    }
   } catch {
-    return false;
+    // treated as never closed
   }
+  return null;
 }
 
-function dismissBanner(): void {
+function storeDismissal(dismissal: BannerDismissal): void {
   try {
-    localStorage.setItem(BANNER_DISMISSED_KEY, String(Date.now() + BANNER_DISMISS_MS));
+    localStorage.setItem(BANNER_KEY, JSON.stringify(dismissal));
   } catch {
-    // shown again on the next page, then
+    // hidden for this page view only, then
   }
 }
 
 function initBanner(banner: HTMLElement): void {
-  if (!isPhoneOrTablet() || isInstalledApp() || bannerDismissed()) return;
+  if (!isPhoneOrTablet() || isInstalledApp()) return;
+  if (Date.now() < (storedDismissal()?.hiddenUntil ?? 0)) return;
   banner.hidden = false;
   banner.querySelector("[data-install-banner-close]")?.addEventListener("click", () => {
     banner.hidden = true;
-    dismissBanner();
+    storeDismissal(nextDismissal(storedDismissal(), Date.now()));
   });
 }
 
