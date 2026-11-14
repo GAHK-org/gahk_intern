@@ -6,12 +6,13 @@ stays a separate **PHP + MariaDB** app on the same box. No SPA/API — one monol
 
 > Items marked **[you]** need your accounts/credentials (GitHub, Hetzner, Punktum dk) — I can't do them from here.
 
-**Two hosts.** This app is the intranet at the **root of `intern.gahk.dk`** (it used to be
+**Three hosts.** This app is the intranet at the **root of `intern.gahk.dk`** (it used to be
 `gahk.dk/intern/`; `/intern/…` and `/nyintern/…` still answer here with a 308 to the same page at the
 root, query string kept). The public site **gahk.dk** is a separate app, `gahk_web`, on Hetzner
 Webhosting — its own runbook is gahk_web's `DEPLOY.md`. This app still holds the website's content
 and pushes it there; gahk.dk forwards its old intranet paths (`/intern/…`, `/admin/…`, `/media/…`,
-`/wiki/…`, …) to intern.gahk.dk. Cutover order: §7.
+…) to intern.gahk.dk. MediaWiki has its own host, **wiki.gahk.dk** (§6), and gahk.dk forwards
+`/wiki/…` there. Cutover order: §7.
 
 ## 1. Local
 Prereqs: [`uv`](https://docs.astral.sh/uv/) (Python deps) + [`go-task`](https://taskfile.dev) + Node + Docker.
@@ -726,36 +727,52 @@ albums in real use are never at risk. Run it with `docker exec -it` — it needs
   Split the `wiki*` tables into their **own MariaDB database** on the new box.
 - **Upgrade to the current LTS (1.43, supported to Dec 2027)**. MediaWiki upgrades span at most two LTS
   releases at a time, so if the current install is old this is **multi-step**; then stay on the LTS track.
-- Served at **`intern.gahk.dk/wiki`**: the same Coolify/Traefik route with the `stripprefix`
-  middleware as before, on the new host (`Host(`intern.gahk.dk`) && PathPrefix(`/wiki`)`), and
-  `MW_SERVER=https://intern.gahk.dk` in the wiki's environment (`wiki-deploy/LocalSettings.php`).
-  gahk.dk/wiki/… redirects there (gahk_web). The intranet's sidebar links to the relative `/wiki/`, so
-  it follows by itself. Wiki login is standalone (GahkAuthLogin reads the residents table directly).
+- Served at the **root of `wiki.gahk.dk`** (`wiki-deploy/`): pages at `/wiki/<title>`, the scripts
+  at `/index.php`, `/load.php`, uploads at `/images/…`. The image's Apache does the short-URL rewrite
+  (`wiki-deploy/apache-wiki.conf`), so in Coolify the wiki app gets the domain `https://wiki.gahk.dk`
+  and nothing else: **no `stripprefix` middleware, no path route**. Set `MW_SERVER=https://wiki.gahk.dk`
+  in its environment.
+- gahk.dk/wiki/… redirects there (gahk_web: `/wiki/index.php?title=X` → `/index.php?title=X`, `/wiki/X`
+  → `/wiki/X`). The intranet's sidebar links to `WIKI_URL` (default `https://wiki.gahk.dk/`), an
+  external link that opens in a new tab, outside the installed GAHK Intern app's scope.
+- Login is standalone (GahkAuthLogin reads the residents table directly); its cookies are host-only
+  on wiki.gahk.dk and `Secure`, so neither gahk.dk nor intern.gahk.dk ever sees them.
+- The wiki image of this version only works at wiki.gahk.dk (`$wgScriptPath` is now `""`): deploy it
+  together with the domain switch (§7), not before. Until then gahk.dk/wiki keeps working on the old
+  image and route.
 
-## 7. DNS and the switch to intern.gahk.dk (.dk via Punktum dk) **[you]**
-Records: **`intern.gahk.dk` A/AAAA → the Coolify VM**; **`gahk.dk` and `www.gahk.dk` → Hetzner
-Webhosting** (gahk_web, see its `DEPLOY.md`). **Leave MX on one.com** (email untouched).
+## 7. DNS and the switch to intern.gahk.dk and wiki.gahk.dk (.dk via Punktum dk) **[you]**
+Records: **`intern.gahk.dk` and `wiki.gahk.dk` A → the Coolify VM** (no AAAA: gahk.dk has never had
+one); **`gahk.dk` and `www.gahk.dk` → Hetzner Webhosting** (gahk_web, see its `DEPLOY.md`). **Leave
+MX on one.com** (email untouched).
 
 Order — gahk.dk must already serve the public site and forward the old intranet paths when it
 moves, and this version must follow right behind it:
 1. A **day ahead**, lower the TTL of the gahk.dk A record (e.g. 300 s). Create `intern.gahk.dk`
-   pointing at the Coolify VM; add the domain to this app in Coolify (and the wiki's route, §6) so
-   Let's Encrypt issues its certificate. Add `https://intern.gahk.dk` to the bucket's CORS rule (§4c).
+   and `wiki.gahk.dk` pointing at the Coolify VM; add the domain to this app in Coolify so Let's
+   Encrypt issues its certificate (the wiki's domain comes with its new image, step 4). Add
+   `https://intern.gahk.dk` to the bucket's CORS rule (§4c).
 2. **gahk_web live first:** installed on the webhost, published to from here, and checked through
    the webhost's own address.
 3. **DNS switch:** repoint gahk.dk (+ www) to Hetzner Webhosting.
 4. **Deploy this version** straight after, with the env of §2 (`DJANGO_ALLOWED_HOSTS`,
    `CSRF_TRUSTED_ORIGINS`, `SITE_URL`, `PUBLIC_SITE_URL`). Between 3 and 4, links forwarded from
    gahk.dk land on the old version, which still expects `/intern/` — keep the gap short.
+   In the same go, **switch the wiki** (§6): its new image, the domain `https://wiki.gahk.dk`, the
+   old gahk.dk/wiki route and its `stripprefix` removed, `MW_SERVER=https://wiki.gahk.dk`. Between
+   3 and this, gahk.dk/wiki/… already redirects to wiki.gahk.dk, which does not answer yet.
 5. Verify: `https://gahk.dk/intern/` → 308 to `https://intern.gahk.dk/`, a `https://gahk.dk/kalender/<token>.ics`
    feed still answers, `https://intern.gahk.dk/health` is 200 (move the uptime monitor there, §4e),
-   one upload to Arkiv works (CORS).
-6. **Rollback** = repoint gahk.dk back to the VM and redeploy the previous image with the old env.
+   one upload to Arkiv works (CORS). `https://gahk.dk/wiki/` → `https://wiki.gahk.dk/`, and a wiki
+   login lands on the page it came from.
+6. **Rollback** = repoint gahk.dk back to the VM and redeploy the previous images (this app's and
+   the wiki's) with the old env and the wiki's old gahk.dk/wiki route.
    Registrar transfer is optional/separate (MitID + auth code). Confirm **who the registrant of
    record is** early — often the slowest item.
 
 Everyone is logged out once (the session cookie is host-only and renamed; the old `.gahk.dk` one is
-deleted on the first request). Afterwards, tell residents and update by hand:
+deleted on the first request), and out of the wiki once (its old gahk.dk cookies are made
+worthless by `$wgAuthenticationTokenVersion`). Afterwards, tell residents and update by hand:
 - Push and the iPhone home-screen app must be re-enabled on intern.gahk.dk (§2, Web Push).
 - The ølkælder till's bookmark (`https://intern.gahk.dk/oelkaelder/…`) and the kitchen account's
   (`https://intern.gahk.dk/den-hurtige/koekken/`). The redirect covers them, but a redirect is one
@@ -789,7 +806,7 @@ deleted on the first request). Afterwards, tell residents and update by hand:
       the bucket, and one restore rehearsed end-to-end with row counts checked.
 - [ ] Interim hardening done on the *old* box until DNS flips (scope §8: lock KCFinder, gate mass-mailers,
       delete `phpinfo.php`, pull & archive access logs).
-- [ ] MediaWiki migrated + upgraded to 1.43, reachable behind the proxy.
+- [ ] MediaWiki migrated + upgraded to 1.43; switched to `https://wiki.gahk.dk` with this version (§6, §7).
 - [ ] Staging smoke-tested; behavioural diff vs the live PHP site on key pages.
 - [ ] `intern.gahk.dk` live in Coolify, env set, bucket CORS updated; gahk_web live; then gahk.dk
       repointed (§7) → verify → keep MX on one.com.
