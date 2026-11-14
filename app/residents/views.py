@@ -404,6 +404,7 @@ def _add_form_draft(request: HttpRequest, action: str) -> dict[str, object]:
     return {
         "action": action,
         "resident": _int(request.POST.get("resident")),
+        "replaces": _int(request.POST.get("replaces")),
         "room": _int(request.POST.get("room")),
         "workgroup": _int(request.POST.get("workgroup")),
         "cleaning": _int(request.POST.get("cleaning")),
@@ -446,12 +447,41 @@ def _send_welcome_email(request: HttpRequest, resident: Resident) -> bool:
     return True
 
 
-def _room_taken(room: Room, year: int, month: int, exclude_resident_id: int | None = None) -> bool:
-    """True if `room` already has an occupant that month (optionally ignoring one resident)."""
+def _room_taken(room: Room, year: int, month: int, exclude: tuple[int | None, ...] = ()) -> bool:
+    """True if `room` already has an occupant that month (ignoring the residents in `exclude`)."""
     qs = Residency.objects.filter(year=year, month=month, room=room)
-    if exclude_resident_id is not None:
-        qs = qs.exclude(resident_id=exclude_resident_id)
-    return qs.exists()
+    return qs.exclude(resident_id__in=[rid for rid in exclude if rid is not None]).exists()
+
+
+def _replaced_residency(request: HttpRequest, year: int, month: int) -> Residency | None:
+    """The residency an add-form's "Erstatter" field names, if any, for the month being edited."""
+    raw = request.POST.get("replaces", "")
+    if not raw.isdigit():
+        return None
+    return (
+        Residency.objects.filter(year=year, month=month, resident_id=int(raw))
+        .select_related("resident", "room", "workgroup", "cleaning")
+        .first()
+    )
+
+
+def _place[T](mapping: dict[int, T], raw: str | None, inherited: T | None) -> T | None:
+    """An add-form choice; left blank while replacing someone, the replaced resident's value."""
+    return _pick(mapping, raw) if raw else inherited
+
+
+def _drop_from_month(residency: Residency) -> None:
+    """Take a resident off a month's list, with the roles that month gave them."""
+    RoleAssignment.objects.filter(
+        resident_id=residency.resident_id, year=residency.year, month=residency.month
+    ).delete()
+    residency.delete()
+
+
+def _added_message(name: str, replaced: Residency | None, year: int, month: int) -> str:
+    if replaced:
+        return f"{name} erstatter {replaced.resident.full_name} i {year}-{month:02d}."
+    return f"{name} tilføjet til {year}-{month:02d}."
 
 
 def _target_period(request: HttpRequest, current: tuple[int, int]) -> tuple[int, int]:
@@ -495,6 +525,17 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                 "resident_id", flat=True
             )
         )
+        me = current_resident(request).pk
+
+        def _replace_error(replaced: Residency | None, newcomer_id: int | None) -> str | None:
+            if request.POST.get("replaces") and replaced is None:
+                return f"Den, der skal erstattes, står ikke på listen for {ny}-{nm:02d}."
+            if replaced and replaced.resident_id == newcomer_id:
+                return "En beboer kan ikke erstatte sig selv."
+            if replaced and editing_current and replaced.resident_id == me:
+                return "Du kan ikke fjerne dig selv fra den nuværende måned."  # same lock-out as save
+            return None
+
         room_by_id = {r.id: r for r in rooms}
         wg_by_id = {w.id: w for w in workgroups}
         cl_by_id = {c.id: c for c in cleanings}
@@ -519,7 +560,6 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
         if action == "save":  # edit room/workgroup/cleaning + remove people
             removed: set[int] = set()
             intended: dict[int, tuple[Room, Workgroup | None, Cleaning | None]] = {}
-            me = current_resident(request).pk
             for res in Residency.objects.filter(year=ny, month=nm):
                 rid = res.resident_id
                 if request.POST.get(f"remove_{rid}"):
@@ -607,28 +647,42 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                 )
 
         elif action == "add_existing":  # add a resident already in the system
-            room = _pick(room_by_id, request.POST.get("room", ""))
+            # "Erstatter": the newcomer takes a listed resident's place in one step. Removing first is
+            # blocked by the exact group sizes, adding first by the room being taken (see save).
+            replaced = _replaced_residency(request, ny, nm)
+            room = _place(room_by_id, request.POST.get("room"), replaced.room if replaced else None)
             resident = _pick({r.id: r for r in Resident.objects.all()}, request.POST.get("resident", ""))
+            replace_error = _replace_error(replaced, resident.id if resident else None)
             if not (resident and room):
                 messages.error(request, "Vælg både en beboer og et værelse.")
                 existing_draft = _add_form_draft(request, "add_existing")
-            elif _room_taken(room, ny, nm, exclude_resident_id=resident.id):
+            elif replace_error:
+                messages.error(request, replace_error)
+                existing_draft = _add_form_draft(request, "add_existing")
+            elif _room_taken(room, ny, nm, exclude=(resident.id, replaced.resident_id if replaced else None)):
                 messages.error(request, f"Værelse {room.number:03d} er allerede optaget i {ny}-{nm:02d}.")
                 existing_draft = _add_form_draft(request, "add_existing")
             else:
-                wg = _pick(wg_by_id, request.POST.get("workgroup", ""))
-                Residency.objects.update_or_create(
-                    resident_id=resident.id,
-                    year=ny,
-                    month=nm,
-                    defaults={
-                        "room": room,
-                        "workgroup": wg,
-                        "cleaning": _pick(cl_by_id, request.POST.get("cleaning", "")),
-                    },
-                )
-                _sync_month_roles(resident.id, wg, ny, nm, resident.id in admins)
-                messages.success(request, f"{resident.full_name} tilføjet til {ny}-{nm:02d}.")
+                wg = _place(wg_by_id, request.POST.get("workgroup"), replaced.workgroup if replaced else None)
+                with transaction.atomic():
+                    if replaced:
+                        _drop_from_month(replaced)
+                    Residency.objects.update_or_create(
+                        resident_id=resident.id,
+                        year=ny,
+                        month=nm,
+                        defaults={
+                            "room": room,
+                            "workgroup": wg,
+                            "cleaning": _place(
+                                cl_by_id,
+                                request.POST.get("cleaning"),
+                                replaced.cleaning if replaced else None,
+                            ),
+                        },
+                    )
+                    _sync_month_roles(resident.id, wg, ny, nm, resident.id in admins)
+                messages.success(request, _added_message(resident.full_name, replaced, ny, nm))
                 return redirect(
                     f"{reverse('next_month_list')}?period={'current' if editing_current else 'next'}"
                 )
@@ -637,7 +691,9 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
             email = (request.POST.get("email") or "").strip().lower()
             first = (request.POST.get("first_name") or "").strip()
             last = (request.POST.get("last_name") or "").strip()
-            room = _pick(room_by_id, request.POST.get("room", ""))
+            replaced = _replaced_residency(request, ny, nm)
+            replace_error = _replace_error(replaced, None)
+            room = _place(room_by_id, request.POST.get("room"), replaced.room if replaced else None)
             phone = (request.POST.get("phone") or "").strip()[:40]
             raw_birthday = (request.POST.get("birthday") or "").strip()
             try:
@@ -653,16 +709,21 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
             elif Resident.objects.filter(email=email).exists():
                 messages.error(request, "Der findes allerede en beboer med den e-mail.")
                 new_draft = _add_form_draft(request, "add_new")
-            elif _room_taken(room, ny, nm):
+            elif replace_error:
+                messages.error(request, replace_error)
+                new_draft = _add_form_draft(request, "add_new")
+            elif _room_taken(room, ny, nm, exclude=(replaced.resident_id if replaced else None,)):
                 messages.error(request, f"Værelse {room.number:03d} er allerede optaget i {ny}-{nm:02d}.")
                 new_draft = _add_form_draft(request, "add_new")
             else:
-                wg = _pick(wg_by_id, request.POST.get("workgroup", ""))
+                wg = _place(wg_by_id, request.POST.get("workgroup"), replaced.workgroup if replaced else None)
                 # Fylgje is set here rather than left for a follow-up edit: whoever adds a newcomer
                 # knows who introduced them right then, and a separate trip through the edit form is
                 # exactly the step that gets skipped, leaving holes in the stamtræ (F-011).
                 sponsor = _pick({r.id: r for r in Resident.objects.all()}, request.POST.get("sponsor", ""))
                 with transaction.atomic():
+                    if replaced:
+                        _drop_from_month(replaced)
                     r = Resident(
                         email=email,
                         first_name=first,
@@ -677,13 +738,15 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                         resident=r,
                         room=room,
                         workgroup=wg,
-                        cleaning=_pick(cl_by_id, request.POST.get("cleaning", "")),
+                        cleaning=_place(
+                            cl_by_id, request.POST.get("cleaning"), replaced.cleaning if replaced else None
+                        ),
                         year=ny,
                         month=nm,
                     )
                     _sync_month_roles(r.id, wg, ny, nm, False)
                 sent = _send_welcome_email(request, r)
-                base = f"{first} {last} oprettet og tilføjet til {ny}-{nm:02d}."
+                base = f"{first} {last} oprettet. " + _added_message(f"{first} {last}", replaced, ny, nm)
                 messages.success(request, f"{base} Velkomstmail sendt." if sent else base)
                 if not sent:
                     messages.warning(
