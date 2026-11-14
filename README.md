@@ -84,3 +84,7 @@ release. Det samme gælder, når Dependabot har merget en sikkerhedsopdatering i
 - `in-sync`: *"main has changes dev lacks"* – merge sync-PR'en ind i `dev` først.
 - `in-sync`: *"main has moved on"* – klik "Update branch" (på Dependabots PR'er: kommentér
   `@dependabot rebase`).
+
+## Licens
+
+Koden er udgivet under GNU Affero General Public License v3.0 eller senere (AGPL-3.0-or-later) – se [LICENSE](LICENSE).

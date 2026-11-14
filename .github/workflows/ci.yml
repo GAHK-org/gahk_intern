@@ -110,8 +110,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # Moves :main to this commit's image once the checks have passed — the server picks it up from
-  # there (DEPLOY.md §4a). A retag, not a rebuild, so production runs the bytes `build` produced.
+  # Moves :main to this commit's image once the checks have passed, then has Coolify deploy it
+  # (DEPLOY.md §4a). A retag, not a rebuild, so production runs the bytes `build` produced.
   # `security` is left out on purpose: a new advisory against a dependency should not freeze
   # deploys, least of all the one that bumps it.
   publish:
@@ -151,3 +151,18 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - if: steps.tip.outputs.result == 'true'
         run: docker buildx imagetools create -t "${IMAGE}:main" "${IMAGE}:sha-${GITHUB_SHA}"
+      # Asks Coolify to redeploy the app: the deploy pulls the :main just set and takes
+      # docker-compose.prod.yml from this same commit. The token can only trigger deploys.
+      - name: Deploy through Coolify
+        if: steps.tip.outputs.result == 'true'
+        env:
+          COOLIFY_WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: |
+          if [ -z "$COOLIFY_WEBHOOK" ] || [ -z "$COOLIFY_TOKEN" ]; then
+            echo "::error::Set the COOLIFY_WEBHOOK and COOLIFY_TOKEN repository secrets (DEPLOY.md §4a)."
+            exit 1
+          fi
+          # POST: since Coolify 4.2 a GET on /deploy only answers 405.
+          curl --fail-with-body --silent --show-error --max-time 30 --request POST \
+            --header "Authorization: Bearer ${COOLIFY_TOKEN}" "$COOLIFY_WEBHOOK"

@@ -1,6 +1,7 @@
 {
   "name": "gahk-frontend",
   "private": true,
+  "license": "AGPL-3.0-or-later",
   "type": "module",
   "scripts": {
     "build": "vite build",
@@ -18,6 +19,6 @@
     "@tailwindcss/vite": "^4.1.0",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.7.0",
-    "vite": "^6.0.0"
+    "vite": "^6.4.5"
   }
 }

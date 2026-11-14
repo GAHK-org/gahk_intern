@@ -20,18 +20,18 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Max, Prefetch
-from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
+from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from core.emoji import EMOJI_SHORTLIST
-from core.markdown import image_sources, render_markdown
+from core.markdown import embed_references, image_sources, render_markdown
 from core.reactions import CREATED, apply_toggle, reaction_rows
 from core.uploads import attached_image, validate_image_upload
 from residents.permissions import current_resident, is_kitchen
 
-from . import live, search, services
+from . import embeds, live, search services
 from .access import (
     access_required,
     can_delete,
@@ -44,6 +44,7 @@ from .access import (
 from .forms import NoticeCommentForm, NoticeForm, ReactionForm
 from .images import sync_images
 from .models import (
+    MAX_BODY_CHARS,
     MAX_PINNED,
     Category,
     Notice,
@@ -78,6 +79,9 @@ def _decorate(notices: list[Notice], request: HttpRequest) -> list[Notice]:
         images = image_sources(notice.body)
         notice.image_count = len(images)  # type: ignore[attr-defined]
         notice.thumbnail = images[0] if len(images) > 1 else ""  # type: ignore[attr-defined]
+    # The widgets for the albums and films the posts embed, as this reader may see them: for the
+    # whole page at once, so they cost the same few queries however many posts embed something.
+    embeds.attach(request, notices)
     return notices
 
 
@@ -271,8 +275,19 @@ def live_detail(request: HttpRequest, pk: int) -> HttpResponse:
 @access_required
 def create(request: HttpRequest) -> HttpResponse:
     """Compose on its own page, not inline: title + category + Markdown + toolbar + preview is a
-    form, and an inline composer on a paginated list would lose a long draft on any navigation."""
-    form = NoticeForm(request.POST or None, events_allowed=events_allowed(request))
+    form, and an inline composer on a paginated list would lose a long draft on any navigation.
+
+    `?album=` or `?gahkflix=` is "Del på opslagstavlen" on that album's or film's page: the body starts
+    with it embedded, below an empty line, and the cursor sits in that line for the text.
+    """
+    shared = embeds.shared_body(request) if request.method == "GET" else ""
+    form = NoticeForm(
+        request.POST or None,
+        initial={"body": shared} if shared else None,
+        events_allowed=events_allowed(request),
+    )
+    if shared:
+        form.fields["body"].widget.attrs["autofocus"] = True
     if request.method == "POST" and form.is_valid():
         with transaction.atomic():
             notice = form.save(commit=False)
@@ -284,7 +299,7 @@ def create(request: HttpRequest) -> HttpResponse:
         live.notice_created(notice)
         messages.success(request, "Opslaget er slået op.")
         return redirect("opslagstavle:detail", pk=notice.pk)
-    return render(request, "opslagstavle/form.html", {"form": form, "notice": None})
+    return _form_page(request, form, None)
 
 
 @access_required
@@ -307,7 +322,22 @@ def edit(request: HttpRequest, pk: int) -> HttpResponse:
         live.notice_changed(notice.pk)
         messages.success(request, "Opslaget er opdateret.")
         return redirect("opslagstavle:detail", pk=notice.pk)
-    return render(request, "opslagstavle/form.html", {"form": form, "notice": notice})
+    return _form_page(request, form, notice)
+
+
+def _form_page(request: HttpRequest, form: NoticeForm, notice: Notice | None) -> HttpResponse:
+    return render(
+        request,
+        "opslagstavle/form.html",
+        {
+            "form": form,
+            "notice": notice,
+            # Under the textarea, re-drawn as it is typed (views.embedded).
+            "embedded": embeds.for_body(request, form["body"].value() or "", compose=True),
+            "albums_allowed": embeds.albums_allowed(request),
+            "videos_allowed": embeds.videos_allowed(request),
+        },
+    )
 
 
 @require_POST
@@ -454,10 +484,49 @@ def preview(request: HttpRequest) -> HttpResponse:
     a second allowlist, and the first time they disagreed the author would see one thing and the
     board would show another — the classic "the preview kept my HTML, the saved post stripped it"
     bug. Going through core.markdown makes the preview byte-identical to the save by construction,
-    and there is a test asserting exactly that.
+    and there is a test asserting exactly that. The albums and films it embeds are drawn where they
+    stand, as on the post's own page.
     """
+    body = request.POST.get("body", "")[:MAX_BODY_CHARS]
+    widgets = embeds.rendered(request, embed_references(body), compose=True)
+    return render(request, "opslagstavle/_preview.html", {"html": render_markdown(body, embeds=widgets)})
+
+
+@require_POST
+@access_required
+def embedded(request: HttpRequest) -> HttpResponse:
+    """The widgets the compose form's body embeds, re-drawn under the textarea as it is typed, each
+    with a "Fjern" that takes its embed out of the text again (opslagstavle.ts)."""
+    body = request.POST.get("body", "")[:MAX_BODY_CHARS]
     return render(
-        request, "opslagstavle/_preview.html", {"html": render_markdown(request.POST.get("body", ""))}
+        request, "opslagstavle/_embedded.html", {"embedded": embeds.for_body(request, body, compose=True)}
+    )
+
+
+@access_required
+def embed_album_pictures(request: HttpRequest, pk: int) -> HttpResponse:
+    """`Vælg billeder` on an album's widget in the composer (form.html): the pictures its mosaic may
+    show, `?side=` a page at a time, and on the first page those picked now (`?valgt=88,91`)."""
+    page = request.GET.get("side", "1")
+    context = (
+        embeds.album_featuring(pk, int(page), request.GET.get("valgt", ""))
+        if embeds.albums_allowed(request) and page.isdecimal() and 0 < int(page) < 10_000
+        else None
+    )
+    if context is None:
+        raise Http404
+    template = "_embed_pictures.html" if "picked" in context else "_embed_pictures_page.html"
+    return render(request, f"opslagstavle/{template}", context)
+
+
+@access_required
+def embed_choices(request: HttpRequest, kind: str) -> HttpResponse:
+    """The picker's list (form.html): the newest albums or films, or those matching `?q=`."""
+    query = request.GET.get("q", "").strip()[:100]
+    found = embeds.KINDS[kind]
+    choices = found.choices(request, query) if found.allowed(request) else []
+    return render(
+        request, "opslagstavle/_embed_choices.html", {"kind": kind, "query": query, "choices": choices}
     )
 
 

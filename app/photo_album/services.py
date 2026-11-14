@@ -208,6 +208,7 @@ def store_upload(
     sha256: str | None = None,
     stored: tuple[str, UUID] | None = None,
     sidecar: bytes = b"",
+    locked_ok: bool = False,
 ) -> UploadOutcome:
     """Store an original and queue its derivatives after the database transaction commits.
 
@@ -218,8 +219,11 @@ def store_upload(
 
     With `stored`, (key, uuid), the original is already at that key, sent straight to the bucket
     (photo_album.direct_upload): `uploaded_file` is a local copy to read, and is not stored again.
+
+    `locked_ok` is for an import adding to an album locked by one of the import script's own albums,
+    which its plan found it may add to (_plan_import).
     """
-    if album.is_locked():
+    if album.is_locked() and not locked_ok:
         raise ValueError("Albummet er låst.")
     filename = normalize_name(Path(uploaded_file.name or "upload").name)
     sha256 = sha256 or file_sha256(uploaded_file)
@@ -337,11 +341,18 @@ def is_import_script(resident: Resident) -> bool:
 
 
 def imported_by_import_script(album: Album, resident: Resident) -> bool:
-    """Whether `resident` is the import script and one of its imports made `album`, or added to it."""
+    """Whether `resident` is the import script and one of its imports made `album`: created it while
+    it ran. An album made on the site stays the site's, even once the script has added to it, or an
+    album merge (merge.py) has put it in an import's `album_ids` in place of the one merged in."""
     if not is_import_script(resident):
         return False
-    imports = AlbumImport.objects.filter(requested_by=resident, state=AlbumImportState.READY)
-    return any(album.pk in album_ids for album_ids in imports.values_list("album_ids", flat=True))
+    return AlbumImport.objects.filter(
+        requested_by=resident,
+        state=AlbumImportState.READY,
+        album_ids__contains=[album.pk],
+        created_at__lte=album.created_at,
+        completed_at__gte=album.created_at,
+    ).exists()
 
 
 # --- Tags ---------------------------------------------------------------------------------------
@@ -533,6 +544,8 @@ class _ImportPlan:
     skipped: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     existing_root: Album | None = None  # the album a merging import adds to
+    # The locked albums it may add to all the same: the import script's own (imported_by_import_script).
+    exempt: set[int] = field(default_factory=set)
 
 
 @dataclass
@@ -596,6 +609,7 @@ def _plan_import(
     merge: bool = False,
     root_name: str = "",
     limit_video_size: bool = True,
+    resident: Resident | None = None,
     progress: Progress = no_progress,
 ) -> _ImportPlan:
     """Pass one: read, check and extract everything, collecting EVERY reason to refuse the import."""
@@ -734,11 +748,17 @@ def _plan_import(
     if plan.existing_root is not None:
         # A locked album takes nothing new, and the import does not lift the lock for it: someone
         # unlocks it on purpose first. Checked where each file would land, so a locked sub-album the
-        # archive does not touch is no reason to refuse it.
+        # archive does not touch is no reason to refuse it. The import script may add to an album
+        # one of its own imports made, which it locked itself (as it may rename one):
+        # the rest of a big album it sends in parts, files fixed since, and files new in Dropbox.
         locked: dict[int, Album] = {}
         for folders in {item.folders for item in plan.files}:
             locking = _existing_album(plan.existing_root, folders).locking_album()
-            if locking is not None:
+            if locking is None or locking.pk in plan.exempt:
+                continue
+            if resident is not None and imported_by_import_script(locking, resident):
+                plan.exempt.add(locking.pk)
+            else:
                 locked[locking.pk] = locking
         plan.errors.extend(
             f'Albummet "{album.name}" er låst. Lås det op, før der tilføjes flere filer.'
@@ -765,13 +785,17 @@ def import_zip_album(
     so a refused import leaves nothing behind. Archive paths are never extracted as paths.
 
     With `lock`, the new album is locked in the same transaction, once its last file is stored —
-    so it is never visible unlocked. The Dropbox import uses it for albums that are history.
+    so it is never visible unlocked. The Dropbox import uses it for albums that are history. An
+    album locked already keeps the time of its lock, so adding to it does not move the six months
+    Fotogruppen has to lift it.
 
     With `merge`, a root album of the same name in the folder is not a reason to refuse: the archive
     is added to it, its folders to the sub-albums of the same names (created where missing). Only
     new files are stored — one with the same name AND the same bytes already in that album is left
     out; one that merely shares a name is a different photo and is kept beside it. A locked album
-    is still refused. The Dropbox import uses it to send what an earlier attempt left out.
+    is still refused, unless one of the import script's imports made it (imported_by_import_script). The
+    Dropbox import uses it to send what an earlier attempt left out, the parts of an album too big
+    for one archive, and files new in Dropbox.
 
     With `root_name`, that is the root album's name and the archive's paths are relative to it: the
     import does not descend through single folders. A retry of a few files from one sub-album would
@@ -798,6 +822,7 @@ def import_zip_album(
                     merge=merge,
                     root_name=root_name,
                     limit_video_size=not is_import_script(resident),
+                    resident=resident,
                     progress=progress,
                 )
         except zipfile.BadZipFile as exc:
@@ -835,6 +860,16 @@ def _store_import(
         nonlocal committed
         committed = True
 
+    # Album pk -> whether it is locked by an album the import may add to all the same (plan.exempt).
+    # Any other lock still stops the import, set after its plan was made too.
+    exempt: dict[int, bool] = {}
+
+    def locked_ok(album: Album) -> bool:
+        if album.pk not in exempt:
+            locking = album.locking_album()
+            exempt[album.pk] = locking is not None and locking.pk in plan.exempt
+        return exempt[album.pk]
+
     try:
         with transaction.atomic():
             # First of this transaction's callbacks, so it has run before any other can raise.
@@ -843,6 +878,8 @@ def _store_import(
             if root is None:
                 root = Album(folder=folder, name=plan.root_name)
                 root.save()
+            else:  # read minutes ago, before pass one: a lock since then still stops the import
+                root.refresh_from_db()
             albums[()] = root
             files = sorted(plan.files, key=lambda item: (len(item.folders), item.folders, item.member))
             for index, item in enumerate(files):
@@ -870,6 +907,7 @@ def _store_import(
                         file_time_source=item.modified_from,
                         sha256=item.sha256,
                         sidecar=item.sidecar,
+                        locked_ok=locked_ok(album),
                     )
                 if outcome.duplicate is not None:
                     plan.skipped.append(f"{item.member}: findes allerede i albummet (ignoreret)")
@@ -885,7 +923,9 @@ def _store_import(
                         name for name in (outcome.media.original.name, outcome.media.sidecar.name) if name
                     )
             settle_dates(root)
-            if lock:
+            # Locked as it is done, unless it is locked already: a later import keeps the time of
+            # its lock, from which Fotogruppen has six months to lift it.
+            if lock and root.manually_locked_at is None:
                 root.manually_locked_at = timezone.now()
                 root.save(update_fields=["manually_locked_at"])
     except Exception:
