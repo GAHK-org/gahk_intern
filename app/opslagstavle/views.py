@@ -31,7 +31,7 @@ from core.reactions import CREATED, apply_toggle, reaction_rows
 from core.uploads import attached_image, validate_image_upload
 from residents.permissions import current_resident, is_kitchen
 
-from . import embeds, live, search services
+from . import embeds, live, search, services
 from .access import (
     access_required,
     can_delete,
