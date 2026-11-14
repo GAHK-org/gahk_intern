@@ -63,10 +63,13 @@
         </section>
       {% endif %}
 
-      {% if legacy.waiting or legacy.failures %}
+      {% if legacy.total or legacy.waiting or legacy.failures %}
         <section class="card-flat cms-section{% if legacy.failures %} cms-warn{% endif %}">
           <div class="card-head"><h2>Billeder fra den gamle hjemmeside</h2></div>
           <div class="card-pad">
+            {% if legacy.total %}
+              <p class="text-sm">{{ legacy.in_library }} af {{ legacy.total }} gamle billeder er i billedbiblioteket{% if legacy.deleted %}, {{ legacy.deleted }} er slettet derfra{% endif %}.</p>
+            {% endif %}
             {% if legacy.waiting %}
               <p class="muted text-sm">{{ legacy.waiting }} billede{{ legacy.waiting|pluralize:"r" }} flyttes ind i billedbiblioteket af sig selv inden for de næste minutter. Ændringerne står i loggen under System.</p>
             {% endif %}

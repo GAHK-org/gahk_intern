@@ -1,14 +1,17 @@
-"""Fallback: move the old site's content images into the Hjemmeside image library (S3) now.
+"""Move ALL of the old site's images into the Hjemmeside image library (S3) now, in one go.
 
 The 2-minute sync does this by itself (cms.legacy_images), a few files per run. This command runs the
 same import at once, without that budget, and also tries the files an earlier run recorded as
-missing or unusable:
+missing or unusable. Run it right after the deploy, so no old picture address on gahk.dk goes
+without its copy for the minutes the sync would take:
 
     python manage.py import_legacy_images                 # from GitHub, the pinned commit
     python manage.py import_legacy_images --from DIR      # from a local copy of the old image dir
 
-Every referenced file is imported once and the content is pointed at the library copy; then gahk.dk
-is published. Safe to run again: a second run imports nothing and reports only what is still missing.
+Every file of cms/legacy_images.json, and every other file the content refers to, is imported once
+(each listed one checked against its SHA-256), with a line per file; the content is pointed at the
+library copies, and then gahk.dk is published. Safe to run again, or after an interruption: what is
+in the library already is skipped, and so is what an editor deleted from it.
 """
 
 from argparse import ArgumentParser
@@ -17,12 +20,12 @@ from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError
 
-from cms.legacy_images import DirectorySource, GitHubSource, LegacySource, convert_legacy_images
+from cms.legacy_images import DirectorySource, GitHubSource, LegacySource, convert_legacy_images, legacy_state
 from cms.services import publish_on_commit
 
 
 class Command(BaseCommand):
-    help = "Import the old site's images into the Hjemmeside image library (from GitHub, or a directory)."
+    help = "Import every old-site image into the Hjemmeside image library (from GitHub, or a directory)."
 
     def add_arguments(self, parser: ArgumentParser) -> None:
         parser.add_argument(
@@ -44,7 +47,12 @@ class Command(BaseCommand):
         source: LegacySource = DirectorySource(source_dirs) if source_dirs else GitHubSource()
         self.stdout.write(f"Reading from {source.description}")
 
-        result = convert_legacy_images(source, retry_failed=True)
+        def progress(number: int, total: int, path: str, outcome: str) -> None:
+            line = f"[{number}/{total}] {path}: {outcome}"
+            self.stdout.write(line if outcome == "imported" else self.style.WARNING(line))
+            self.stdout.flush()
+
+        result = convert_legacy_images(source, retry_failed=True, progress=progress)
         if result.busy:
             raise CommandError("Another legacy image import is running; try again in a minute.")
 
@@ -63,5 +71,8 @@ class Command(BaseCommand):
             raise CommandError(
                 f"Stopped with {result.deferred} images left: {result.unavailable}. Run it again later."
             )
-        if not result.missing and not result.unusable:
-            self.stdout.write(self.style.SUCCESS("Every referenced legacy image is in the library."))
+        state = legacy_state()
+        deleted = f" ({state.deleted} deleted from it)" if state.deleted else ""
+        self.stdout.write(f"The library has {state.in_library} of the {state.total} old images{deleted}.")
+        if not result.missing and not result.unusable and not state.waiting:
+            self.stdout.write(self.style.SUCCESS("Every old image is in the library."))

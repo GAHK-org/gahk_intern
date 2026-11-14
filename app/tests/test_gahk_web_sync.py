@@ -437,6 +437,46 @@ def test_the_sync_brings_in_legacy_images_and_publishes_them_in_the_same_run(
 
 
 @pytest.mark.django_db
+def test_every_old_image_goes_to_gahk_dk_used_or_not_until_it_is_deleted(
+    gahk_web: FakeGahkWeb,
+    front_page: Page,
+    monkeypatch: pytest.MonkeyPatch,
+    django_capture_on_commit_callbacks: Callable[..., Any],
+) -> None:
+    """gahk.dk redirects every old picture address, so it gets every old picture, not only the ones
+    a page shows. Deleting one from the library takes it, and its redirect, off at the next publish."""
+    from cms import legacy_images, services
+
+    from .test_cms_legacy_images import FakeGitHub, _list, image_bytes
+
+    github = FakeGitHub(
+        {"upload/images/gang.jpg": image_bytes(), "upload/images/klatring.jpg": image_bytes("PNG")}
+    )
+    monkeypatch.setattr(legacy_images, "http_get", github)
+    _list(monkeypatch, github, "upload/images/gang.jpg", "upload/images/klatring.jpg")
+
+    report = tasks.sync_gahk_web()
+
+    assert report["errors"] == [] and report["legacy_images"]["imported"] == 2
+    climbing = CmsImage.objects.get(legacy_path="upload/images/klatring.jpg")
+    assert not services.image_usage(climbing)
+    old_address = "/static/legacy/image/upload/images/klatring.jpg"
+    published = gahk_web.published[-1]
+    assert old_address in published["legacy_images"]
+    assert published["legacy_images"][old_address] in {image["url"] for image in published["images"]}
+    assert climbing.sha256 in gahk_web.images
+
+    with django_capture_on_commit_callbacks(execute=True):
+        services.delete_image(climbing, None)
+
+    published = gahk_web.published[-1]
+    assert old_address not in published["legacy_images"]
+    assert climbing.sha256 not in {image["sha256"] for image in published["images"]}
+    github.urls.clear()
+    assert tasks.sync_gahk_web()["legacy_images"]["imported"] == 0 and github.urls == []
+
+
+@pytest.mark.django_db
 def test_a_broken_legacy_import_still_lets_the_sync_publish_and_pull(
     gahk_web: FakeGahkWeb, front_page: Page, monkeypatch: pytest.MonkeyPatch
 ) -> None:
