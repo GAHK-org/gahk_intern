@@ -464,14 +464,14 @@ MEDIA_LISTS = {
         MediaList(
             "venter-versioner",
             "Venter på HD-version og miniature",
-            "Videoer konverteres i baggrunden, én ad gangen; et billede tager et øjeblik.",
+            "Videoer konverteres i baggrunden, én ad gangen; et billede tager et øjeblik. Et forsøg, der"
+            " fejlede, prøves igen i nat, eller nu med Prøv igen nu.",
             lambda: live_media().filter(derivative_state=DerivativeState.PENDING).order_by("added_at", "pk"),
         ),
         MediaList(
             "fejlede-versioner",
             "Kunne ikke få HD-version og miniature",
-            "Konverteringen er opgivet efter tre forsøg; jobbet viser hvorfor. manage.py"
-            " retry_failed_photo_album_media giver dem tre nye.",
+            "Konverteringen er opgivet efter tre forsøg; jobbet viser hvorfor. Prøv igen nu giver dem tre nye.",
             lambda: live_media().filter(derivative_state=DerivativeState.FAILED).order_by("-added_at", "pk"),
             alert=True,
         ),
