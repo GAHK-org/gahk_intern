@@ -13,7 +13,7 @@ The kollegium plans parties, fællesspisninger and excursions in a **Facebook gr
 people up on **a paper sheet in the kitchen** — opslagstavlen's own demo fixture still reads
 *"Tilmelding på sedlen i køkkenet"*. This replaces both: an event has a time, a place, a
 description, an optional picture, and a guest list that people answer **ja** or **nej** to. At
-`/intern/begivenheder/`.
+`/begivenheder/` on intern.gahk.dk.
 
 **Three things are called "begivenhed" in this codebase, and the collision is deliberate rather
 than accidental.** They divide like this, and each model's docstring says so:
@@ -83,7 +83,7 @@ production.
 
 ## Routes
 
-Mounted at `/intern/begivenheder/`, namespaced `events:`. Fixed segments come **before** `<int:pk>`
+Mounted at `/begivenheder/`, namespaced `events:`. Fixed segments come **before** `<int:pk>`
 so they are never read as an id.
 
 ```
@@ -101,15 +101,17 @@ so they are never read as an id.
 "<int:pk>/ics"           event_ics      GET       single-event download
 ```
 
-One route lives **outside** `/intern/`, in `config/urls.py`:
+One route lives **outside** the intranet's URLconf, in `config/urls.py`:
 
 ```
 "/kalender/<token>.ics"  events_feed    GET       NO auth decorator
 ```
 
-Mounted at the site root on purpose. If `/intern/` is ever gated at the proxy, or someone adds
-Django's `LoginRequiredMiddleware`, a feed under it dies **silently** — and silence is the entire
-failure mode of a calendar subscription. The token is the credential; see below.
+Mounted on its own, ahead of the intranet, on purpose. If the intranet is ever gated at the proxy,
+or someone adds Django's `LoginRequiredMiddleware`, a feed inside it dies **silently** — and silence
+is the entire failure mode of a calendar subscription. The token is the credential; see below.
+Feed URLs handed out before the move say `gahk.dk/kalender/…`; gahk.dk passes those through to
+intern.gahk.dk, so they keep refreshing.
 
 ## Data model
 
@@ -371,8 +373,10 @@ What the format decisions are, and why:
   function of the data — which is what lets the feed answer 304 to a conditional GET instead of
   resending to a client polling hourly, and makes "did editing the description change the bytes?" a
   question a test can ask.
-- **`URL:` points at `gahk.dk`, hard-coded**, for the same reason as the UID: the link lands in
-  somebody's calendar and must still work from a phone that has never heard of `localhost:8000`.
+- **`URL:` is `SITE_URL` + the event's path** (`https://intern.gahk.dk/begivenheder/<pk>`), never
+  the request's host: the link lands in somebody's calendar and must still work from a phone that
+  has never heard of `localhost:8000`. Unlike the UID it follows the site: it pointed at
+  gahk.dk/intern/ until the intranet moved to intern.gahk.dk, while the UID kept `@gahk.dk`.
 - **`DESCRIPTION` carries `plain_text`, never the Markdown source or HTML.** A calendar has no more
   use for `**bold**` than a lock screen does, and `X-ALT-DESC` is Outlook-only.
 
@@ -401,7 +405,7 @@ phones polling hourly would otherwise turn a read endpoint into a write storm.
 | Moderators cannot see private events | "Inspektionen sees everything". It falsifies the one promise a private event makes. The admin is the escape hatch. |
 | Subqueries in `visible_to` | `Q(invites__resident=r)` joins. An event you are both co-organiser of and invited to comes back twice — a duplicate card, and two VEVENTs sharing one UID, which some clients resolve by dropping both. `.distinct()` patches it and silently stops being enough the moment anyone adds an `annotate(Count(...))`. |
 | Hand-rolled iCalendar | A library. CI runs `pip-audit` over a frozen lockfile; `core/push.py` made the same call for the same reason. |
-| Feed at the site root | Under `/intern/`. A proxy gate or `LoginRequiredMiddleware` would kill every subscription **silently**. |
+| Feed outside the intranet's URLconf | Inside it. A proxy gate or `LoginRequiredMiddleware` would kill every subscription **silently**. |
 | `core.rollout` extracted | A third copy of the gate. `opslagstavle/access.py` said verbatim that a third feature wanting it is the point to extract it. This was the third. |
 
 ## Open questions, flagged not answered

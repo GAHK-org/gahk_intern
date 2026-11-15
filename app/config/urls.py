@@ -1,30 +1,32 @@
-"""Root URLconf. Preserves the legacy public URLs (`/`, Danish slugs incl. multi-segment ones like
-`faciliteter/vaerelse`) for SEO. Django's own admin is moved to /django-admin/ so the legacy public-site
-admin can keep /admin later (F-002)."""
+"""Root URLconf of intern.gahk.dk: the intranet lives at the ROOT of its own host.
+
+The public site (gahk.dk) is served by gahk_web, a separate app on separate hosting; nothing here
+renders it any more. The intranet used to sit under gahk.dk/intern/, and before that /nyintern/; here
+neither prefix means anything and both answer 404 like any unknown path (gahk.dk forwards its own old
+/intern/<rest> links to intern.gahk.dk/<rest>). Django's own admin is at /django-admin/ so /admin/
+can hold the site-admin tools.
+"""
 
 from django.contrib import admin
 from django.urls import include, path, re_path
-from django.views.generic import RedirectView, TemplateView
+from django.views.generic import TemplateView
 
-from cms import views as cms_views
 from core.media import serve_media
 from events import views as events_views
 from photo_album.views import serve_media as serve_photo_album_media
 
 urlpatterns = [
     path("django-admin/", admin.site.urls),
-    path("intern/", include("residents.urls")),
-    re_path(r"^nyintern/(?P<rest>.*)$", RedirectView.as_view(url="/intern/%(rest)s", permanent=True)),
     path("optagelse/", include("admissions.urls")),
-    path("admin/", include("residents.urls_admin")),  # legacy public-site admin (F-002)
-    path("", cms_views.home, name="home"),
-    path("begivenheder/", cms_views.events_news, name="events_news"),
-    # The subscribable calendar feed, mounted at the ROOT rather than under /intern/ and carrying no
-    # auth decorator — the token in the path is the credential (see events.views.calendar_feed).
+    path("admin/", include("residents.urls_admin")),  # site-admin tools (roles, worker jobs, …)
+    # The subscribable calendar feed carries no auth decorator — the token in the path is the
+    # credential (see events.views.calendar_feed). gahk.dk passes its old /kalender/ URLs through
+    # to this one, so feeds handed out before the move keep refreshing.
     #
-    # Root-mounted on purpose: if /intern/ is ever gated at the proxy, or somebody adds Django's
-    # LoginRequiredMiddleware, a feed underneath it dies SILENTLY. Calendar clients do not report a
-    # failed refresh; they just stop updating, which is the worst failure this feature can have.
+    # Mounted before the intranet on purpose: if somebody adds Django's LoginRequiredMiddleware or a
+    # gate in front of the intranet, a feed underneath it dies SILENTLY. Calendar clients do not
+    # report a failed refresh; they just stop updating, which is the worst failure this feature can
+    # have.
     path("kalender/<str:token>.ics", events_views.calendar_feed, name="events_feed"),
     # User-uploaded media. Routed through Django in EVERY environment, and the URL space is fixed
     # forever: MEDIA_URL is a prefix of content stored in the database (opslag Markdown bodies,
@@ -37,9 +39,9 @@ urlpatterns = [
     # DEBUG-only serving would 404 these in prod, so this route is unconditional.
     #
     # It is also where uploads are gated. /media/ used to be public by URL, as the legacy /public/
-    # images were; now only core.media.PUBLIC_PREFIXES ("cms/", the images the logged-out front page
-    # embeds) is anonymous and everything else needs a session. Note ølkælder is NOT public-site
-    # content despite the name — it lives under /intern/oelkaelder/.
+    # images were; now only core.media.PUBLIC_PREFIXES ("cms/", the images the public site's pages
+    # embed) is anonymous and everything else needs a session. Note ølkælder is NOT public-site
+    # content despite the name — it lives under /oelkaelder/.
     re_path(r"^media/(?P<path>.*)$", serve_media, name="media"),
     # photo_album's own media route (photo_album.storage.PhotoAlbumS3Storage.url() points here) —
     # a presigned bucket URL is a bearer token good for an hour with no further check, and
@@ -53,13 +55,16 @@ urlpatterns = [
     # segment and every lookup by key would miss.
     re_path(r"^(?P<path>photo-album/.*)$", serve_photo_album_media, name="photo_album_media"),
     # PWA service worker for Den Hurtige. Must be served from the ROOT path: a service worker's
-    # default scope is its own directory, so only a root-scoped worker covers /intern/. Served via
+    # default scope is its own directory, so only a root-scoped worker covers the whole site. Served via
     # TemplateView because static/ would put it under /static/ and cap its scope there.
     path(
         "sw.js",
         TemplateView.as_view(template_name="sw.js", content_type="application/javascript"),
         name="pwa_service_worker",
     ),
-    # catch-all CMS page lookup by (possibly multi-segment) slug — must stay last
-    re_path(r"^(?P<url_path>[\w/-]+?)/?$", cms_views.page, name="page"),
+    # How to install the intranet as the home-screen app GAHK Intern. Public, with no login: the old
+    # app on gahk.dk sends people here, and its session stayed behind on that origin.
+    path("install", TemplateView.as_view(template_name="install.html"), name="install"),
+    # The intranet itself, at the root. Last, so the fixed prefixes above keep resolving first.
+    path("", include("residents.urls")),
 ]
