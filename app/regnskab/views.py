@@ -25,7 +25,7 @@ from residents.views import DA_MONTHS, _parse_period, _period_options
 
 from . import alumneregning, economic, tasks
 from .forms import AlumneregningSettingsForm, EconomicAccountNumberForm
-from .models import AlumneregningSend, AlumneregningSettings
+from .models import AlumneregningBatch, AlumneregningSend, AlumneregningSettings
 
 
 class Row(NamedTuple):
@@ -245,7 +245,7 @@ def send_alumneregninger_view(request: HttpRequest) -> HttpResponse:
     date_from, date_to = period
     _warn_missing_account_numbers(request, date_from, date_to)
 
-    tasks.send_alumneregninger_task.delay(date_from.isoformat(), date_to.isoformat())
+    tasks.queue_alumneregninger(date_from, date_to)
     messages.success(
         request,
         f"Alumneregninger for {date_from.isoformat()} til {date_to.isoformat()} er sat i kø og sendes i "
@@ -273,12 +273,21 @@ def alumneregninger_status_view(request: HttpRequest) -> HttpResponse:
     billable = list(alumneregning.residents_billable_for(date_from, date_to))
     sends = {s.resident_id: s for s in AlumneregningSend.objects.filter(date_from=date_from, date_to=date_to)}
     rows = [(resident, sends.get(resident.pk)) for resident in billable]
-    done = sum(1 for _resident, send in rows if send is not None)
+    done = sum(1 for _resident, send in rows if send is not None and send.outcome != "sending")
+    batch = AlumneregningBatch.objects.filter(date_from=date_from, date_to=date_to).first()
 
     return render(
         request,
         "regnskab/alumneregninger_status.html",
-        {"rows": rows, "date_from": date_from, "date_to": date_to, "done": done, "total": len(rows)},
+        {
+            "rows": rows,
+            "date_from": date_from,
+            "date_to": date_to,
+            "done": done,
+            "total": len(rows),
+            "running": batch is not None and batch.resume_at is not None,
+            "batch": batch,
+        },
     )
 
 

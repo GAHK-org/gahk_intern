@@ -93,7 +93,13 @@ class AlumneregningSend(models.Model):
     resident = models.ForeignKey(Resident, on_delete=models.PROTECT, related_name="alumneregning_sends")
     date_from = models.DateField()
     date_to = models.DateField()
-    outcome = models.CharField(max_length=10, choices=[("sent", "Sendt"), ("failed", "Fejlede")])
+    # "sending" is written before the mail goes out, and is this send's claim on the alumne: a second
+    # run of the same period (the button pressed while a retry is pending) skips them rather than
+    # mailing them too. One left behind by a run that died mid-mail stays, since nobody knows whether
+    # that mail went out.
+    outcome = models.CharField(
+        max_length=10, choices=[("sending", "Sendes"), ("sent", "Sendt"), ("failed", "Fejlede")]
+    )
     # TextField, not CharField: this can hold a raw e-conomic error body (see
     # regnskab.economic._error_for_status), whose length is outside our control.
     detail = models.TextField(blank=True)
@@ -111,3 +117,26 @@ class AlumneregningSend(models.Model):
         return (
             f"{self.resident.full_name} — {self.date_from} til {self.date_to} ({self.get_outcome_display()})"
         )
+
+
+class AlumneregningBatch(models.Model):
+    """A send of one period's alumneregninger that is still to finish. Kept in the database rather than
+    as a delayed Celery retry, which the worker holds in memory and a deploy loses: regnskab.tasks.
+    resume_alumneregninger runs it again once resume_at has passed — after the mail server's throttle,
+    or when a run was lost — and gives up after MAX_ATTEMPTS, failing whoever is still waiting."""
+
+    date_from = models.DateField()
+    date_to = models.DateField()
+    resume_at = models.DateTimeField(null=True, blank=True)  # None: finished (or given up)
+    throttled = models.BooleanField(default=False)  # waiting out the mail server, not a running send
+    attempts = models.PositiveIntegerField(default=0)  # runs started by resume_alumneregninger
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["date_from", "date_to"], name="uniq_alumneregning_batch_per_period"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.date_from} til {self.date_to}"

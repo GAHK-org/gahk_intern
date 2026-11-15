@@ -292,6 +292,12 @@ CELERY_BEAT_SCHEDULE = {
     # Every quarter of an hour, matching JOB_STALLED_AFTER: what it clears is a download the
     # resident is still watching a spinner for, so the gap between "the worker died" and "the page
     # says so" is the thing being minimised. Off the hour, like everything else here.
+    # Every minute: an alumneregning send waiting out the mail server's throttle goes on as soon as
+    # its wait is over (regnskab.tasks.resume_alumneregninger). Nothing due is one indexed query.
+    "resume-alumneregninger": {
+        "task": "regnskab.tasks.resume_alumneregninger",
+        "schedule": crontab(),
+    },
     "fail-stalled-photo-album-downloads": {
         "task": "photo_album.tasks.fail_stalled_downloads",
         "schedule": crontab(minute="5-59/15"),

@@ -462,3 +462,35 @@ def test_alumneregninger_go_ahead_with_a_warning_when_someone_lacks_a_kontonr(
         html = c.get(response.url).content.decode()
 
     assert "1 i perioden har intet e-conomic kontonr. og får ingen alumneregning: nonumber" in html
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("resume_at", "throttled", "expected"),
+    [
+        ("later", True, "Mailserveren tager ikke imod flere lige nu"),
+        ("later", False, "Sendes i baggrunden"),
+        (None, False, "Afsendelsen er stoppet"),
+    ],
+)
+def test_the_status_page_says_whether_the_rest_are_still_coming(
+    make_resident: Callable, resume_at: str | None, throttled: bool, expected: str
+) -> None:
+    from datetime import date, timedelta
+
+    from regnskab.models import AlumneregningBatch
+
+    _alumne_in_august("waiting@gahk.dk", 1101, 1)
+    AlumneregningBatch.objects.create(
+        date_from=date(2026, 8, 1),
+        date_to=date(2026, 8, 31),
+        resume_at=timezone.now() + timedelta(minutes=6) if resume_at else None,
+        throttled=throttled,
+    )
+    acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
+    c = Client()
+    c.force_login(acc)
+
+    html = c.get(reverse("regnskab:alumneregninger_status"), {"fra": "2026-08-01", "til": "2026-08-31"})
+
+    assert expected in html.content.decode()

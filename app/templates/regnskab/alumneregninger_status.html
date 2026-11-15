@@ -4,7 +4,16 @@
   <h1>Alumneregninger</h1>
   <p class="muted text-sm mb-3">Periode: {{ date_from }} – {{ date_to }}</p>
   <p class="muted text-sm mb-3">
-    Sendes i baggrunden — {{ done }} af {{ total }} behandlet. Genindlæs siden for at se status opdateret.
+    {% if running and batch.throttled %}
+      {{ done }} af {{ total }} behandlet. Mailserveren tager ikke imod flere lige nu — resten sendes
+      automatisk fra kl. {{ batch.resume_at|time:"H:i" }}. Genindlæs siden for at se status opdateret.
+    {% elif running %}
+      Sendes i baggrunden — {{ done }} af {{ total }} behandlet. Genindlæs siden for at se status opdateret.
+    {% elif done < total %}
+      {{ done }} af {{ total }} behandlet. Afsendelsen er stoppet — send perioden igen (Lav Alumneregninger, Bekræft og send) for at sende til resten; de allerede sendte springes over.
+    {% else %}
+      Alle {{ total }} er behandlet.
+    {% endif %}
   </p>
 
   <div class="overflow-x-auto mb-8">
@@ -19,6 +28,8 @@
             <td>{{ resident.email }}</td>
             <td class="whitespace-nowrap {% if send.outcome == 'failed' %}text-red-600 font-semibold{% endif %}">
               {% if not send %}Venter…
+              {% elif send.outcome == 'sending' and running %}Sendes…
+              {% elif send.outcome == 'sending' %}Ukendt — afbrudt under afsendelse, tjek om mailen kom frem
               {% elif send.outcome == 'sent' %}Sendt
               {% else %}Fejlede{% endif %}
             </td>
