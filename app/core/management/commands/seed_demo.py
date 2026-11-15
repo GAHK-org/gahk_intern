@@ -22,7 +22,8 @@ Deterministic logins (all password `demo1234`):
 import argparse
 import random
 import unicodedata
-from datetime import timedelta
+from collections import Counter
+from datetime import date, timedelta
 from io import BytesIO
 
 from django.conf import settings
@@ -219,7 +220,9 @@ class Command(BaseCommand):
             rooms = self._seed_rooms()
             workgroups, cleanings = self._seed_lookups(opts["residents"])
             residents = self._seed_residents(opts["residents"])
-            self._seed_residencies(residents, rooms, workgroups, cleanings)
+            # Returns the list plus the newcomer who took over the leaver's room, so the new resident
+            # takes part in the seeding below like everyone else (roles, AK, ølkælder, posts, ...).
+            residents = self._seed_residencies(residents, rooms, workgroups, cleanings)
             self._seed_roles(residents)
             self._seed_profile_pictures(residents)
             self._seed_ak(residents)
@@ -310,8 +313,8 @@ class Command(BaseCommand):
             residents.append(self._make_resident(email, first, last))
 
         # An e-conomic kontonr. for every alumne, numbered from 4201 like GAHK's real alumne accounts,
-        # except two in the current month (residents[-1] has none, see _seed_residencies), so the
-        # regnskab page's "Mangler e-conomic kontonr." list has someone on it to try setting one for.
+        # except two of them, so the regnskab page's "Mangler e-conomic kontonr." list has someone on
+        # it to try setting one for.
         without_number = residents[-3:-1] if len(residents) > len(fixtures) + 2 else []
         for i, r in enumerate(residents):
             r.economic_account_number = None if r in without_number else 4201 + i
@@ -368,7 +371,8 @@ class Command(BaseCommand):
         rooms: list[Room],
         workgroups: list[Workgroup],
         cleanings: list[Cleaning],
-    ) -> None:
+    ) -> list[Resident]:
+        """Fill the three recent months, leaving one leaver plus the newcomer who replaces them."""
         fixed_groups = {
             "ak@gahk.dk": "AK-gruppen",
             "oel@gahk.dk": "Ølkælderen",
@@ -412,9 +416,70 @@ class Command(BaseCommand):
                     },
                 )
 
-        # Sletter den sidst tilføjede beboer i nuværende måned, så næste måned præcis mangler 1 fordeling
         if residents:
-            Residency.objects.filter(resident=residents[-1], year=self.year, month=self.month).delete()
+            leaver = residents[-1]
+            Residency.objects.filter(resident=leaver, year=self.year, month=self.month).delete()
+            leaver.move_out_date = date(self.year, self.month, 1)  # moved out on the 1st of this month
+            leaver.save(update_fields=["move_out_date"])
+            self._seed_successor(residents, rooms, workgroups, cleanings, len(residents))
+        return residents
+
+    def _seed_successor(
+        self,
+        residents: list[Resident],
+        rooms: list[Room],
+        workgroups: list[Workgroup],
+        cleanings: list[Cleaning],
+        account_number: int,
+    ) -> Resident:
+        """Add a new resident this month and put them in the free room and the short embedsgruppe.
+
+        The leaver's old room is not reused: every month gets its own random room assignment, so the
+        room the leaver had last month is usually someone else's now. What has to hold is the month
+        being seeded — one resident per room, and every fixed-size embedsgruppe exactly full — which is
+        what the indstilling "Erstatter" flow does when a resident leaves and another arrives.
+        """
+        taken_emails = set(Resident.objects.values_list("email", flat=True))
+        first, last = self.fake.first_name(), self.fake.last_name()
+        base = f"{_ascii_slug(first)}.{_ascii_slug(last)}"
+        email = f"{base}@gahk.dk"
+        n = 1
+        while email in taken_emails:  # same suffixing rule as _seed_residents
+            n += 1
+            email = f"{base}{n}@gahk.dk"
+
+        newcomer = Resident(
+            email=email,
+            first_name=first,
+            last_name=last,
+            phone=self.fake.phone_number(),
+            birthday=self.fake.date_between(start_date="-30y", end_date="-19y"),
+            move_in_date=date(self.year, self.month, 1),  # arrived the day the leaver left
+            study=self.rng.choice([r.study for r in residents if r.study] or [""]),
+            economic_account_number=4201 + account_number,
+        )
+        newcomer.set_password(DEMO_PASSWORD)
+        newcomer.save()
+
+        this_month = Residency.objects.filter(year=self.year, month=self.month)
+        occupied = set(this_month.values_list("room_id", flat=True))
+        free_rooms = [r for r in rooms if r.id not in occupied]
+        if not free_rooms:  # every room already taken, so there is nowhere to put anyone
+            return newcomer
+        counts = Counter(this_month.values_list("workgroup_id", flat=True))
+        short = [w for w in workgroups if w.size > 0 and counts.get(w.id, 0) < w.size]
+        workgroup = self.rng.choice(short) if short else self.rng.choice(workgroups)
+        Residency.objects.update_or_create(
+            resident=newcomer,
+            year=self.year,
+            month=self.month,
+            defaults={
+                "room": self.rng.choice(free_rooms),
+                "workgroup": workgroup,
+                "cleaning": self.rng.choice(cleanings),
+            },
+        )
+        return newcomer
 
     # --------------------------------------------------------------- roles
     def _seed_roles(self, residents: list[Resident]) -> None:

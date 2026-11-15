@@ -14,8 +14,11 @@ from residents.permissions import real_roles
 def test_seed_demo_populates_and_is_idempotent() -> None:
     # --force because Django's test runner forces DEBUG=False, which the safety guard blocks.
     call_command("seed_demo", "--fresh", "--force", "--residents", "12", verbosity=0)
+    # 12 seeded residents, one of whom then moves out and is replaced by a newly created one, so the
+    # current month stays full (see _seed_residencies). That keeps a leaver for the regnskab page
+    # without leaving the alumneliste a person short.
     first_count = Resident.objects.count()
-    assert first_count == 12
+    assert first_count == 13
 
     # Re-running with --fresh must not duplicate or raise (idempotent).
     # --force because Django's test runner forces DEBUG=False, which the safety guard blocks.
@@ -43,6 +46,27 @@ def test_seed_demo_populates_and_is_idempotent() -> None:
     # Derived ølkælder balance is computable (no crash, integer øre).
     shopper = Shopper.objects.first()
     assert isinstance(shopper.balance_ore, int)
+
+    # The leaver/replacement pair: exactly one resident moved out this month and exactly one new
+    # one arrived, so the regnskab page has a fraflytter while the alumneliste stays full.
+    from datetime import date
+
+    from residents.models import Residency
+
+    leavers = [r for r in Resident.objects.all() if r.move_out_date is not None]
+    assert len(leavers) == 1
+    leaver = leavers[0]
+    assert not leaver.residencies.filter(year=year, month=month).exists(), "a leaver is off this month"
+    assert leaver.residencies.exists(), "a leaver was on earlier months, so there is history to settle"
+
+    this_month = Residency.objects.filter(year=year, month=month)
+    # Everyone except the one leaver is on this month's list: a full alumneliste, not one short.
+    assert this_month.count() == Resident.objects.count() - 1
+    assert not this_month.filter(resident=leaver).exists()
+    room_ids = list(this_month.values_list("room_id", flat=True))
+    assert len(room_ids) == len(set(room_ids)), "one resident per room this month"
+    newcomer = Resident.objects.get(move_in_date=date(year, month, 1))
+    assert this_month.filter(resident=newcomer).exists()
 
     from arkiv.models import ArchiveFile, ArchiveFolder
 
