@@ -225,6 +225,8 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 HEALTH_PROCESSES = [p for p in os.environ.get("HEALTH_PROCESSES", "default,media,beat").split(",") if p]
 
 CELERY_TASK_ROUTES = {
+    # To the worker whose /tmp holds the job directories it clears (core.job_directories).
+    "core.tasks.remove_abandoned_job_directories": {"queue": "media"},
     "photo_album.tasks.build_media_derivatives": {"queue": "media"},
     "photo_album.tasks.build_album_download": {"queue": "media"},
     "photo_album.tasks.process_album_import": {"queue": "media"},
@@ -336,6 +338,12 @@ CELERY_BEAT_SCHEDULE = {
     "close-lost-worker-jobs": {
         "task": "core.tasks.close_lost_jobs",
         "schedule": crontab(minute=35),
+    },
+    # Hourly: the backstop for the sweep each new worker process does as it starts. On "media" it
+    # waits behind a running encode, which is fine: that encode's own directory is the one in use.
+    "remove-abandoned-job-directories": {
+        "task": "core.tasks.remove_abandoned_job_directories",
+        "schedule": crontab(minute=25),
     },
     "purge-worker-job-results": {
         "task": "core.tasks.purge_worker_job_results",
