@@ -16,8 +16,10 @@ is killed, the job fails with what it was doing. So a stuck job gives up its slo
 instead of at its hard time limit, which can then be generous (twelve hours) for the honest ones.
 A job that reports no progress is not watched; its hard time limit stays its only limit.
 
-Measured against the progress an hour earlier, from the job's start (at 0). A job that has only
-just begun reporting is therefore held to the same pace from its start, never given a fresh hour.
+Measured against the progress an hour earlier, from the job's FIRST REPORT, not its start: what
+comes before it is not held against the job. An import downloads its ZIP from the bucket before it
+can report anything, and that download is its business, not a stall. Once watched, always watched.
+A job stuck before its first report has only its hard time limit, like one that never reports.
 """
 
 import logging
@@ -52,14 +54,12 @@ class LiveJob:
     thread_ident: int = field(default_factory=threading.get_ident)
     fraction: float | None = None
     step: str = ""
-    # (monotonic time, fraction) as the monitor saw it, from (start, 0) on, back to WINDOW ago.
+    # (monotonic time, fraction) as the monitor saw it, from its first report on, back to WINDOW ago.
     samples: deque[tuple[float, float]] = field(default_factory=deque)
+    watched_from: float | None = None  # when the monitor first saw progress
     written: tuple[float | None, str, int] = (None, "", 0)  # fraction, step, lines at the last write
     written_at: float = 0.0
     stopped: str = ""  # why the watchdog stopped it, once it has
-
-    def __post_init__(self) -> None:
-        self.samples.append((self.started, 0.0))
 
 
 _jobs: dict[str, LiveJob] = {}
@@ -166,6 +166,8 @@ def tick(now: float) -> None:
 
 
 def _sample(job: LiveJob, now: float) -> None:
+    if job.watched_from is None:
+        job.watched_from = now
     job.samples.append((now, job.fraction or 0.0))
     # Keep one sample at or before the window's start: the one the gain is measured from.
     while len(job.samples) > 1 and job.samples[1][0] <= now - WINDOW:
@@ -174,7 +176,7 @@ def _sample(job: LiveJob, now: float) -> None:
 
 def stalled(job: LiveJob, now: float) -> str:
     """Why the job counts as stalled now, or "" if it does not."""
-    if job.fraction is None or now - job.started < WINDOW:
+    if job.fraction is None or job.watched_from is None or now - job.watched_from < WINDOW:
         return ""
     since, then = job.samples[0]
     needed = min(MIN_GAIN, 1.0 - then)

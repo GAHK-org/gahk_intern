@@ -106,6 +106,13 @@ def test_a_job_is_not_judged_in_its_first_hour(running: LiveJob) -> None:
     assert stalled(running, now) == ""
 
 
+def test_a_job_is_judged_from_its_first_report_not_its_start(running: LiveJob) -> None:
+    """An import downloads its ZIP before it reports anything; that hour is not held against it."""
+    _at(running, 59, 0.0)
+    assert stalled(running, _at(running, 61, 0.05)) == ""
+    assert "0% to 5% in the last 60 minutes" in stalled(running, _at(running, 119, 0.05))
+
+
 def test_a_job_that_gains_less_than_a_tenth_in_an_hour_is_stalled(running: LiveJob) -> None:
     for minutes, fraction in ((0, 0.0), (30, 0.20), (61, 0.20), (90, 0.25), (121, 0.29)):
         now = _at(running, minutes, fraction)

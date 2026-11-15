@@ -813,7 +813,10 @@ def import_zip_album(
     Returns the albums (root first), the log of files deliberately left out and how many were
     stored. Raises ValidationError carrying every error when the import is refused.
     """
-    archive.seek(0)  # an S3 file is downloaded here, which reports no progress of its own
+    # An S3 file is downloaded here, which reports no progress of its own: the watchdog
+    # (core.job_progress) starts watching at the report below, so the download's time is not held
+    # against the import.
+    archive.seek(0)
     progress("reading", 0, 0)
     with job_directory("photo-album-import") as directory:
         try:

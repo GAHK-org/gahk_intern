@@ -52,9 +52,13 @@ ran and how it went, and what is scheduled next. Under Administration → Worker
 ## Stuck jobs
 
 - A job that reports its progress must get at least 10 percentage points further every hour, or
-  finish within the hour when less than that is left. One that does not is stopped, as at its time
-  limit, with the progress it made in the last hour in its log; a video's conversion counts it as a
-  failed try. Its page says so while it runs.
+  finish within the hour when less than that is left, counted from its first report (an import's
+  download of its ZIP comes before that and is not held against it). One that does not is stopped,
+  as at its time limit, with the progress it made in the last hour in its log; a video's conversion
+  counts it as a failed try. Its page says so while it runs.
+- A job at 100 % that has not finished is left to its time limit: what it does after its last
+  report (an import's commit, a merge's moves) is not measured, and stopping it there would throw
+  away the whole job.
 - So such jobs may run for up to twelve hours: a video conversion, an album ZIP (imported, built
   for download) or merge, and a GAHKFlix film. Jobs that report no progress keep their own limits.
 
