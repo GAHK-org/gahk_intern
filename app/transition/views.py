@@ -89,7 +89,7 @@ TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverif
 
 def body_html(html: str) -> SafeString:
     """A stored body (sanitized on save) for the page, with old picture addresses made absolute."""
-    return mark_safe(_LEGACY_REF_RE.sub(LEGACY_IMAGE_URL, html or ""))  # noqa: S308 — sanitized on save
+    return mark_safe(_LEGACY_REF_RE.sub(LEGACY_IMAGE_URL, html or ""))  # noqa: S308  # nosec — sanitized on save
 
 
 def _legacy_image_url(legacy_path: str) -> str:
