@@ -1,15 +1,15 @@
 import logging
 from datetime import date
 
-from celery import shared_task
+from celery import Task, shared_task
 
 from . import alumneregning, economic
 
 logger = logging.getLogger(__name__)
 
 
-@shared_task
-def send_alumneregninger_task(date_from_iso: str, date_to_iso: str) -> None:
+@shared_task(bind=True, max_retries=30)
+def send_alumneregninger_task(self: Task, date_from_iso: str, date_to_iso: str) -> None:
     """Runs the actual send in the background — a page load blocking for the duration of hundreds of
     e-conomic calls and SMTP sends, inside a single HTTP request, does not survive a proxy/browser
     timeout partway through. regnskab.views.send_alumneregninger_view queues this instead of calling
@@ -22,5 +22,8 @@ def send_alumneregninger_task(date_from_iso: str, date_to_iso: str) -> None:
     an unhandled Celery task failure, noisier than the log line already written."""
     try:
         alumneregning.send_alumneregninger(date.fromisoformat(date_from_iso), date.fromisoformat(date_to_iso))
+    except alumneregning.MailThrottled as exc:
+        # one.com counts the last 5 minutes. The rerun skips everyone already sent.
+        raise self.retry(exc=exc, countdown=6 * 60) from exc
     except economic.EconomicAuthError:
         logger.error("alumneregning task: aborted — see the error logged by send_alumneregninger above")

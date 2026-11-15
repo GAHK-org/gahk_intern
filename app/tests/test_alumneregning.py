@@ -582,3 +582,103 @@ def test_render_preview_pdf_none_without_account_number(make_resident: Callable)
     resident = make_resident(email="alumne@gahk.dk")
 
     assert alumneregning.render_preview_pdf(resident, *AUGUST) is None
+
+
+@pytest.mark.django_db
+def test_mail_server_throttling_leaves_the_rest_waiting_for_the_retry(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    """one.com refuses everything for 5 minutes after ~25 mails ("451 4.7.1 [R2] Too many mails")."""
+    import smtplib
+
+    from django.core.mail import EmailMessage
+
+    for i, name in enumerate(["Anna", "Bo"], start=1):
+        _give_residency(
+            make_resident(email=f"{name.lower()}@gahk.dk", economic_account_number=i, first_name=name),
+            2026,
+            8,
+            room_index=i,
+        )
+    monkeypatch.setattr(economic, "get_account", lambda n: _account(0.0))
+    _mock_entries(monkeypatch)
+    real_send = EmailMessage.send
+
+    def throttled_after_anna(self: EmailMessage, *args: object, **kwargs: object) -> int:
+        if self.to != ["anna@gahk.dk"]:
+            raise smtplib.SMTPRecipientsRefused({self.to[0]: (451, b"4.7.1 [R2] Too many mails")})
+        return real_send(self, *args, **kwargs)
+
+    monkeypatch.setattr(EmailMessage, "send", throttled_after_anna)
+    with pytest.raises(alumneregning.MailThrottled):
+        alumneregning.send_alumneregninger(*AUGUST)
+    assert [s.resident.email for s in AlumneregningSend.objects.all()] == ["anna@gahk.dk"]  # Bo: no row
+
+    monkeypatch.setattr(EmailMessage, "send", real_send)
+    [result] = alumneregning.send_alumneregninger(*AUGUST)  # the retry: only Bo
+    assert result.resident.email == "bo@gahk.dk"
+    assert len(mail.outbox) == 2
+
+
+def test_the_task_retries_when_the_mail_server_throttles(monkeypatch: pytest.MonkeyPatch) -> None:
+    from regnskab import tasks
+
+    def throttled(*args: object) -> None:
+        raise alumneregning.MailThrottled("451")
+
+    monkeypatch.setattr(alumneregning, "send_alumneregninger", throttled)
+    retried: list[object] = []
+    monkeypatch.setattr(
+        tasks.send_alumneregninger_task,
+        "retry",
+        lambda **kw: retried.append(kw["countdown"]) or RuntimeError(),
+    )
+
+    with pytest.raises(RuntimeError):
+        tasks.send_alumneregninger_task("2026-08-01", "2026-08-31")
+    assert retried == [6 * 60]
+
+
+def test_the_statement_renders_characters_outside_latin_1() -> None:
+    from decimal import Decimal
+
+    from regnskab import statement_pdf
+
+    entry = economic.LedgerEntry(**{**_entry(1, "2026-08-01", 10.0).__dict__, "text": "Husleje aug – sep €"})
+    pdf = statement_pdf.render(
+        Resident(first_name="Łukasz", last_name="Kæmpe"), 4201, [entry], Decimal(10), *AUGUST
+    )
+
+    text = PdfReader(io.BytesIO(pdf)).pages[0].extract_text()
+    assert "?ukasz Kæmpe" in text
+    assert "Husleje aug ? sep ?" in text
+
+
+@pytest.mark.django_db
+def test_an_unexpected_error_for_one_alumne_does_not_stop_the_send(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    from regnskab import statement_pdf
+
+    for i, name in enumerate(["Broken", "Ok"], start=1):
+        _give_residency(
+            make_resident(email=f"{name.lower()}@gahk.dk", economic_account_number=i, first_name=name),
+            2026,
+            8,
+            room_index=i,
+        )
+    monkeypatch.setattr(economic, "get_account", lambda n: _account(0.0))
+    _mock_entries(monkeypatch)
+    real_render = statement_pdf.render
+
+    def render(resident: Resident, *args: object) -> bytes:
+        if resident.first_name == "Broken":
+            raise RuntimeError("unforeseen")
+        return real_render(resident, *args)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(statement_pdf, "render", render)
+
+    results = {r.resident.first_name: r for r in alumneregning.send_alumneregninger(*AUGUST)}
+
+    assert results["Broken"].outcome == "failed"
+    assert results["Ok"].outcome == "sent"
