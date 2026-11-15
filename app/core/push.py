@@ -71,6 +71,18 @@ def preview(text: str) -> str:
     return text[: BODY_PREVIEW_CHARS - 1].rstrip() + "…"
 
 
+def absolute(url: str) -> str:
+    """`url` on SITE_URL when it is a path on this site; anything else unchanged.
+
+    A push is opened by a service worker, which resolves a relative URL against ITS OWN origin.
+    Workers registered while the intranet lived at gahk.dk/intern/ still hold push subscriptions,
+    and gahk.dk is now the public site on other hosting — so every link in a payload names the host.
+    """
+    if url.startswith("/") and not url.startswith("//"):
+        return settings.SITE_URL.rstrip("/") + url
+    return url
+
+
 def _payload(
     head: str,
     body: str,
@@ -96,13 +108,15 @@ def _payload(
     it ("Anders og Bente reagerede" instead of two separate banners). Empty = stands alone.
 
     `vibrate` is the resident's setting already resolved for this push (notifications.services).
+
+    Every URL goes out absolute (see `absolute`).
     """
     return {
         "head": head,
         "body": body,
-        "icon": static("icons/icon-192x192.png"),
-        "url": url,
-        "open": open_url,
+        "icon": absolute(static("icons/icon-192x192.png")),
+        "url": absolute(url),
+        "open": absolute(open_url) if open_url else open_url,
         "tag": tag,
         "vibrate": vibrate,
         "importance": importance,

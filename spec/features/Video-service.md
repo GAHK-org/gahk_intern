@@ -1,7 +1,7 @@
 # Feature: GAHKFlix (video service)
 
 GAHKFlix is the kollegium's own streaming service for films residents have made — revyer, sketches,
-fester. It is a dark, full-page area in the style of Netflix at `/intern/gahkflix/`, without the
+fester. It is a dark, full-page area in the style of Netflix at `/gahkflix/`, without the
 intern site's sidebar and top bar; its own header links back to the intern site.
 
 ## Access

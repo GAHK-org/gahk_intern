@@ -1,6 +1,6 @@
 // Service worker for the intern PWA: every push notification on the site lands here.
 //
-// Served from the ROOT path (/sw.js, see config/urls.py) so its scope covers /intern/. It lives
+// Served from the ROOT path (/sw.js, see config/urls.py) so its scope covers the whole site. It lives
 // under templates/ because a TemplateView renders it, but the contents are deliberately plain
 // JavaScript with no Django tags at all: editors lint this file as JS, and any tag syntax here —
 // even inside a comment — is parsed by the template engine and can 500 the response.
@@ -15,7 +15,7 @@
 // Bump when editing this file. A service worker is cached aggressively and updates silently, so
 // without a version marker there is no way to tell which copy is actually running — and debugging
 // "no notification arrives" against a stale worker wastes a lot of time.
-var SW_VERSION = 5;
+var SW_VERSION = 6;
 
 // Take over immediately instead of waiting for every tab to close — otherwise a fixed push handler
 // only reaches users after they close all intern tabs.
@@ -35,8 +35,11 @@ self.addEventListener('fetch', function (event) {});
 // Incoming push from core/push.py (built by notifications/services.py). Payload keys:
 //   head, body, icon  what the notification says.
 //   url               where the notification points (the post, the event, the feed).
-//   open              where a TAP goes: /intern/notifikationer/aabn/<batch>/, which marks the
-//                     resident's in-app row seen and then redirects to `url`. Falls back to `url`.
+//   open              where a TAP goes: /notifikationer/aabn/<batch>/, which marks the resident's
+//                     in-app row seen and then redirects to `url`. Falls back to `url`.
+//                     Both are absolute (https://intern.gahk.dk/...) since the move from
+//                     gahk.dk/intern/, so a worker still installed on the old origin opens them
+//                     on the right host.
 //   tag               set for grouped notifications ("A og B reagerede"): the new one replaces the
 //                     previous one for the same thing instead of stacking. Ungrouped ones have no
 //                     tag, so a second post never silently overwrites the first.
@@ -64,7 +67,7 @@ self.addEventListener('push', function (event) {
     badge: '/static/icons/badge-72x72.png', // monochrome, for the Android status bar
     silent: !vibrate,
     requireInteraction: data.importance === 4,
-    data: { url: data.open || data.url || '/intern/notifikationer/' },
+    data: { url: data.open || data.url || '/notifikationer/' },
   };
   if (vibrate) {
     options.vibrate = data.importance >= 3 ? [200, 100, 200, 100, 200] : [200, 100, 200];
@@ -89,16 +92,17 @@ self.addEventListener('push', function (event) {
   );
 });
 
-// Focus an intern tab that is already open before opening a new one — tapping three notifications
-// should not leave three copies of the feed behind.
+// Focus a tab of the site that is already open before opening a new one — tapping three
+// notifications should not leave three copies of the feed behind. matchAll only returns this
+// origin's windows, and the whole origin is the intranet, so any of them will do.
 self.addEventListener('notificationclick', function (event) {
   event.notification.close();
-  var target = (event.notification.data && event.notification.data.url) || '/intern/notifikationer/';
+  var target = (event.notification.data && event.notification.data.url) || '/notifikationer/';
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (windows) {
       for (var i = 0; i < windows.length; i++) {
-        if (new URL(windows[i].url).pathname.indexOf('/intern/') === 0 && 'focus' in windows[i]) {
+        if (new URL(windows[i].url).origin === self.location.origin && 'focus' in windows[i]) {
           return windows[i].navigate ? windows[i].navigate(target).then(function (c) { return c.focus(); })
                                      : windows[i].focus();
         }

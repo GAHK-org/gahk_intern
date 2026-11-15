@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% comment %}
+  How to install the intranet as the home-screen app GAHK Intern. Public: the old app "Den Hurtige",
+  installed from gahk.dk, links here, and the people using it are not logged in on this origin yet.
+
+  frontend/src/install.ts (found by data-install-page) opens the section for this device and puts it
+  first, offers the browser's own install prompt where there is one, and swaps the steps for "Du
+  bruger allerede appen" inside the installed app. Without JavaScript all three sections are there,
+  closed, and the steps still read right.
+{% endcomment %}
+{% block title %}Installér appen - GAHK Intern{% endblock %}
+{% block install_banner %}{% endblock %}
+{% block content_width %}max-w-2xl{% endblock %}
+{% block content %}
+  <div class="install-page" data-install-page>
+    <div class="page-head">
+      <div>
+        <div class="eyebrow">App</div>
+        <h1>Installér GAHK Intern</h1>
+      </div>
+    </div>
+
+    <p>GAHK Intern er intranettet som app på din telefon, med Den Hurtige, opslagstavlen og notifikationer.</p>
+    <p class="muted">Intranettet er flyttet fra gahk.dk til intern.gahk.dk, og en installeret app kan ikke flytte med.
+      Har du den gamle app Den Hurtige, skal du derfor installere appen igen herfra.</p>
+
+    <div class="card install-installed" data-install-installed hidden>
+      <p><strong>Du bruger allerede appen.</strong></p>
+      <p><a class="btn" href="{% url 'dashboard' %}">Gå til forsiden</a></p>
+    </div>
+
+    <div class="install-platforms" data-install-steps>
+      <details class="card install-platform" data-install-platform="ios">
+        <summary>iPhone og iPad</summary>
+        <ol>
+          <li>Åbn <strong>intern.gahk.dk</strong> i Safari. Kom du hertil fra den gamle app, så tryk først på kompasset for at åbne siden i Safari.</li>
+          <li>Tryk på <strong>Del</strong> <svg class="install-icon" aria-hidden="true"><use href="#i-share"></use></svg>.
+            Kan du ikke se den, så tryk først på <strong>•••</strong>.</li>
+          <li>Rul ned, og tryk på <strong>Føj til hjemmeskærm</strong>.</li>
+          <li>Tryk på <strong>Tilføj</strong>.</li>
+        </ol>
+        <p class="muted">I Chrome og Edge på iPhone virker det på samme måde, via Del.</p>
+      </details>
+
+      <details class="card install-platform" data-install-platform="android">
+        <summary>Android</summary>
+        <div class="install-offer" data-install-offer hidden>
+          <button type="button" class="btn" data-install-button>Installér appen</button>
+          <p class="muted">Eller gør det via menuen:</p>
+        </div>
+        <ol>
+          <li>Åbn <strong>intern.gahk.dk</strong> i Chrome.</li>
+          <li>Tryk på menuen <strong>⋮</strong> øverst til højre.</li>
+          <li>Tryk på <strong>Installér app</strong> eller <strong>Føj til startskærm</strong>.</li>
+          <li>Tryk på <strong>Installér</strong>.</li>
+        </ol>
+      </details>
+
+      <details class="card install-platform" data-install-platform="desktop">
+        <summary>Computer</summary>
+        <div class="install-offer" data-install-offer hidden>
+          <button type="button" class="btn" data-install-button>Installér appen</button>
+        </div>
+        <p>I Chrome og Edge: klik på installér-ikonet yderst til højre i adresselinjen, og vælg <strong>Installér</strong>.
+          I Safari på Mac: <strong>Arkiv › Føj til Dock</strong>.</p>
+      </details>
+    </div>
+
+    <p class="install-done" data-install-done hidden role="status">Appen er installeret. Du finder den på din hjemmeskærm.</p>
+
+    <div class="card">
+      <h2>Når appen er installeret</h2>
+      <ol>
+        <li>Åbn <strong>GAHK Intern</strong> fra hjemmeskærmen, og log ind.</li>
+        <li>Slå notifikationer til igen: tryk på <strong>Slå notifikationer til</strong> i
+          <a href="{% url 'den_hurtige:feed' %}">Den Hurtige</a> eller under
+          <a href="{% url 'notifications:preferences' %}">Notifikationsindstillinger</a>.</li>
+        <li>Slet den gamle app <strong>Den Hurtige</strong>, hvis du har den: hold fingeren på ikonet, og vælg
+          <strong>Fjern app</strong> (iPhone) eller <strong>Afinstaller</strong> (Android).</li>
+      </ol>
+    </div>
+  </div>
+{% endblock %}

@@ -30,7 +30,7 @@ from notifications.models import Notification
 from reparationer.models import ARCHIVE_AFTER_DAYS, RepairComment, RepairTask
 from residents.models import WORKGROUP_ROLE, Resident, Role, RoleAssignment, active_period
 
-BOARD = "/intern/reparationer/"
+BOARD = "/reparationer/"
 pytestmark = pytest.mark.django_db
 
 

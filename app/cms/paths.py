@@ -50,6 +50,7 @@ RESERVED_TOP_SEGMENTS = frozenset(
         "photo-album",
         "static",
         "sw.js",
+        "install",
         "favicon.ico",
         "robots.txt",
     }

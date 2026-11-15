@@ -137,7 +137,7 @@ def test_an_address_cannot_shadow_a_real_app_url(editor_client: Client) -> None:
         page.refresh_from_db()
         assert page.slug == "vision"
 
-    assert Client().get("/intern/").status_code in {200, 302}, "the real app must still answer"
+    assert Client().get("/").status_code in {200, 302}, "the real app must still answer"
 
 
 def test_an_address_already_in_use_is_refused_by_name(editor_client: Client) -> None:
@@ -167,6 +167,11 @@ def test_pages_without_an_address_do_not_collide(editor_client: Client) -> None:
 
 
 # ------------------------------------------------------------------ redirects
+# The public site (gahk.dk) serves these redirects now; here the editor records them.
+
+
+def _redirects() -> dict[str, int]:
+    return dict(PageRedirect.objects.values_list("old_path", "page_id"))
 
 
 def test_renaming_a_page_keeps_the_old_address_alive(editor_client: Client) -> None:
@@ -176,21 +181,9 @@ def test_renaming_a_page_keeps_the_old_address_alive(editor_client: Client) -> N
 
     assert _post_page(editor_client, page, path_segment="koekken").status_code == 302
 
-    public = Client()
-    moved = public.get("/faciliteter/kokken")
-    assert moved.status_code == 301
-    assert moved.headers["Location"] == "/faciliteter/koekken"
-    assert public.get("/faciliteter/koekken").status_code == 200
-
-
-def test_a_redirect_keeps_the_query_string(editor_client: Client) -> None:
-    _faciliteter()
-    page = Page.objects.create(header="Køkkenet", slug="faciliteter/kokken", body="")
-
-    _post_page(editor_client, page, path_segment="koekken")
-
-    response = Client().get("/faciliteter/kokken?fra=nyhedsbrev")
-    assert response.headers["Location"] == "/faciliteter/koekken?fra=nyhedsbrev"
+    page.refresh_from_db()
+    assert page.slug == "faciliteter/koekken"
+    assert _redirects() == {"faciliteter/kokken": page.pk}
 
 
 def test_renaming_twice_redirects_in_one_hop(editor_client: Client) -> None:
@@ -201,11 +194,7 @@ def test_renaming_twice_redirects_in_one_hop(editor_client: Client) -> None:
     page.refresh_from_db()
     _post_page(editor_client, page, path_segment="side-c")
 
-    public = Client()
-    for old in ("/side-a", "/side-b"):
-        response = public.get(old)
-        assert response.status_code == 301
-        assert response.headers["Location"] == "/side-c", f"{old} should reach the page directly"
+    assert _redirects() == {"side-a": page.pk, "side-b": page.pk}
 
 
 def test_renaming_back_leaves_no_self_redirect(editor_client: Client) -> None:
@@ -216,39 +205,7 @@ def test_renaming_back_leaves_no_self_redirect(editor_client: Client) -> None:
     page.refresh_from_db()
     _post_page(editor_client, page, path_segment="side-a")
 
-    public = Client()
-    assert public.get("/side-a").status_code == 200
-    assert public.get("/side-b").status_code == 301
-
-
-def test_a_live_page_wins_over_an_old_redirect(editor_client: Client) -> None:
-    """A new page may reclaim an abandoned address; real content always beats a redirect."""
-    page = Page.objects.create(header="Gammel", slug="side-a", body="<p>gammel</p>")
-    _post_page(editor_client, page, path_segment="side-b")
-    assert PageRedirect.objects.filter(old_path="side-a").exists()
-
-    Page.objects.create(header="Ny", slug="side-a", body="<p>ny</p>")
-
-    response = Client().get("/side-a")
-    assert response.status_code == 200
-    assert "ny" in response.content.decode()
-
-
-def test_redirects_cannot_swallow_a_slashless_app_url(editor_client: Client) -> None:
-    """Guards the lookup order in cms.views.page.
-
-    The redirect lookup sits above the APPEND_SLASH restoration, and must never intercept a path
-    owned by a real app. It cannot: PageRedirect.old_path is validated by cms.paths, whose reserved
-    list rejects exactly these names — and cms.checks fails the build if urls.py grows another.
-    """
-    page = Page.objects.create(header="Side", slug="side-a", body="")
-    _post_page(editor_client, page, path_segment="side-b")  # a PageRedirect row now exists
-
-    public = Client()
-    for path in ("/optagelse", "/nyintern", "/begivenheder"):
-        response = public.get(path)
-        assert response.status_code == 301, f"{path} should still redirect, got {response.status_code}"
-        assert response.headers["Location"] == f"{path}/"
+    assert _redirects() == {"side-b": page.pk}
 
 
 # ------------------------------------------------------------------ version history
@@ -427,12 +384,12 @@ def test_a_page_without_an_address_is_not_reported_as_broken() -> None:
     assert is_reachable(Page.objects.create(header="Optagelse-tekst", slug=None, body=""))
 
 
-def test_get_absolute_url_matches_the_catch_all_route() -> None:
+def test_get_absolute_url_is_the_page_on_the_public_site(settings: object) -> None:
+    settings.PUBLIC_SITE_URL = "https://gahk.dk"  # type: ignore[attr-defined]
     _faciliteter()
     page = Page.objects.create(header="Køkkenet", slug="faciliteter/kokken", body="<p>Hej</p>")
 
-    assert page.get_absolute_url() == "/faciliteter/kokken"
-    assert Client().get(page.get_absolute_url()).status_code == 200
+    assert page.get_absolute_url() == "https://gahk.dk/faciliteter/kokken"
     assert Page.objects.create(header="Uden", slug=None, body="").get_absolute_url() == ""
 
 
@@ -470,13 +427,14 @@ def test_the_overview_flags_the_page_in_no_menu(editor_client: Client) -> None:
     assert "Ikke i nogen menu" in row.split("</tr>")[0]
 
 
-def test_the_overview_links_to_the_live_page(editor_client: Client) -> None:
+def test_the_overview_links_to_the_live_page(editor_client: Client, settings: object) -> None:
+    settings.PUBLIC_SITE_URL = "https://gahk.dk"  # type: ignore[attr-defined]
     _faciliteter()
     Page.objects.create(header="Køkkenet", slug="faciliteter/kokken", body="")
 
     html = editor_client.get("/django-admin/cms/page/").content.decode()
 
-    assert 'href="/faciliteter/kokken"' in html
+    assert 'href="https://gahk.dk/faciliteter/kokken"' in html
 
 
 def test_the_overview_costs_the_same_whatever_the_page_count(
