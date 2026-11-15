@@ -649,3 +649,96 @@ def test_an_unexpected_error_for_one_alumne_does_not_break_the_preview(
 
     assert rows["Broken"].status == "failed"
     assert rows["Ok"].status == "ready"
+
+
+@pytest.mark.django_db
+def test_mail_server_throttling_stops_the_batch_and_leaves_the_rest_waiting(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    """one.com refuses everything for 5 minutes after ~25 mails ("451 4.7.1 [R2] Too many mails"):
+    the rest must wait for the next run, not all be marked failed."""
+    for i, name in enumerate(["Anna", "Bo", "Carl"], start=1):
+        _give_residency(
+            make_resident(email=f"{name.lower()}@gahk.dk", economic_account_number=i, first_name=name),
+            2026,
+            8,
+            room_index=i,
+        )
+    monkeypatch.setattr(economic, "get_account", lambda n: _account(0.0))
+    _mock_entries(monkeypatch)
+
+    import smtplib
+
+    from django.core.mail import EmailMessage
+
+    real_send = EmailMessage.send
+
+    def throttled_from_bo(self: EmailMessage, *args: object, **kwargs: object) -> int:
+        if self.to != ["anna@gahk.dk"]:
+            raise smtplib.SMTPRecipientsRefused(
+                {self.to[0]: (451, b"4.7.1 [R2] Too many mails received from x within the last 5 minutes")}
+            )
+        return real_send(self, *args, **kwargs)
+
+    monkeypatch.setattr(EmailMessage, "send", throttled_from_bo)
+
+    with pytest.raises(alumneregning.MailThrottled):
+        alumneregning.send_alumneregninger(*AUGUST)
+
+    assert len(mail.outbox) == 1
+    rows = {s.resident.email: s.outcome for s in AlumneregningSend.objects.all()}
+    assert rows == {"anna@gahk.dk": "sent"}  # Bo and Carl have no row: still waiting, not failed
+
+    monkeypatch.setattr(EmailMessage, "send", real_send)  # the throttle window has passed
+    results = alumneregning.send_alumneregninger(*AUGUST)
+
+    assert sorted(r.resident.email for r in results) == ["bo@gahk.dk", "carl@gahk.dk"]  # Anna not again
+    assert len(mail.outbox) == 3
+
+
+@pytest.mark.django_db
+def test_a_permanent_smtp_refusal_still_just_fails_that_alumne(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    resident = make_resident(email="bad@gahk.dk", economic_account_number=1101)
+    _give_residency(resident, 2026, 8, room_index=1)
+    monkeypatch.setattr(economic, "get_account", lambda n: _account(0.0))
+    _mock_entries(monkeypatch)
+
+    import smtplib
+
+    from django.core.mail import EmailMessage
+
+    def refused(self: EmailMessage, *args: object, **kwargs: object) -> int:
+        raise smtplib.SMTPRecipientsRefused({"bad@gahk.dk": (550, b"5.1.1 no such user")})
+
+    monkeypatch.setattr(EmailMessage, "send", refused)
+
+    [result] = alumneregning.send_alumneregninger(*AUGUST)
+
+    assert result.outcome == "failed"
+    assert "no such user" in result.detail
+
+
+def test_the_task_retries_after_the_throttle_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    from regnskab import tasks
+
+    def throttled(*args: object) -> None:
+        raise alumneregning.MailThrottled("451 too many mails")
+
+    monkeypatch.setattr(alumneregning, "send_alumneregninger", throttled)
+    retries: list[int] = []
+
+    class Retry(Exception):
+        pass
+
+    def retry(**kwargs: object) -> Exception:
+        retries.append(kwargs["countdown"])  # type: ignore[arg-type]
+        return Retry()
+
+    monkeypatch.setattr(tasks.send_alumneregninger_task, "retry", retry)
+
+    with pytest.raises(Retry):
+        tasks.send_alumneregninger_task("2026-08-01", "2026-08-31")
+
+    assert retries == [tasks.THROTTLE_RETRY_SECONDS]
