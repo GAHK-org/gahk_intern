@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import smtplib
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -27,6 +28,19 @@ PreviewStatus = Literal["ready", "failed"]
 class AccountNameMismatch(Exception):
     """The e-conomic account is named for someone other than the resident it is set on — most likely a
     mistyped kontonr., which would otherwise mail one alumne another's balance under their own name."""
+
+
+class MailThrottled(Exception):
+    """The SMTP server refused a mail for now (a 4xx reply), as one.com does after ~25 mails within 5
+    minutes ("451 4.7.1 [R2] Too many mails received from …"). Every mail after it would be refused
+    too, so the batch stops and tasks.send_alumneregninger_task tries the rest again later."""
+
+
+def _is_throttled(exc: Exception) -> bool:
+    """A temporary (4xx) refusal — try again later — as opposed to a bad address or a broken setup."""
+    if isinstance(exc, smtplib.SMTPRecipientsRefused):
+        return bool(exc.recipients) and all(400 <= code < 500 for code, _msg in exc.recipients.values())
+    return isinstance(exc, smtplib.SMTPResponseException) and 400 <= exc.smtp_code < 500
 
 
 @dataclass(frozen=True)
@@ -170,6 +184,8 @@ def _send_one(
     try:
         email.send()
     except Exception as exc:  # SMTP errors, a bad address, etc. must not abort the batch
+        if _is_throttled(exc):
+            raise MailThrottled(str(exc)) from exc
         logger.warning("alumneregning: failed to mail resident %s: %s", resident.pk, exc)
         return AlumneregningResult(resident, "failed", f"Kunne ikke sende mail: {exc}")
     detail = (
@@ -185,7 +201,9 @@ def _send_one(
 def send_alumneregninger(date_from: date, date_to: date) -> list[AlumneregningResult]:
     """Email every billable resident their statement, skipping anyone already billed for this exact
     period (AlumneregningSend) — so a retried/duplicate send (the task re-running, the button pressed
-    twice) never bills someone twice. Best-effort: one failing doesn't stop the rest."""
+    twice) never bills someone twice. Best-effort: one failing doesn't stop the rest. Raises MailThrottled
+    once the mail server starts refusing for now: the alumne it happened to is left without a row (still
+    waiting, not failed), and so is everyone after them, for the next run to pick up."""
     mail_settings = AlumneregningSettings.get_solo()
     already_sent = set(
         AlumneregningSend.objects.filter(date_from=date_from, date_to=date_to, outcome="sent").values_list(
@@ -203,6 +221,9 @@ def send_alumneregninger(date_from: date, date_to: date) -> list[AlumneregningRe
         except economic.EconomicAuthError as exc:
             logger.error("alumneregning: e-conomic access invalid/revoked: %s", exc)
             raise  # affects every remaining alumne equally — stop the batch, don't repeat the error
+        except MailThrottled as exc:
+            logger.warning("alumneregning: mail server throttling, %d sent so far: %s", len(results), exc)
+            raise
         except AccountNameMismatch as exc:
             logger.warning("alumneregning: account name mismatch for resident %s: %s", resident.pk, exc)
             result = AlumneregningResult(resident, "failed", str(exc))
