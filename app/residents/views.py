@@ -685,7 +685,9 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                     _sync_month_roles(r.id, wg, ny, nm, False)
                 sent = _send_welcome_email(request, r)
                 base = f"{first} {last} oprettet og tilføjet til {ny}-{nm:02d}."
-                messages.success(request, f"{base} Velkomstmailen er sat i kø og sendes om lidt." if sent else base)
+                messages.success(
+                    request, f"{base} Velkomstmailen er sat i kø og sendes om lidt." if sent else base
+                )
                 if not sent:
                     messages.warning(
                         request,
