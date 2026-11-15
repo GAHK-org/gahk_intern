@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import unicodedata
 from datetime import date
 from decimal import Decimal
 
@@ -14,6 +15,52 @@ from pypdf import PdfReader, PdfWriter
 from residents.models import Resident
 
 from . import economic
+
+# Typographic characters e-conomic texts and names may contain, as the closest latin-1 equivalents.
+_LATIN1_REPLACEMENTS = str.maketrans(
+    {
+        "–": "-",
+        "—": "-",
+        "‘": "'",
+        "’": "'",
+        "‚": ",",
+        "“": '"',
+        "”": '"',
+        "„": '"',
+        "…": "...",
+        "€": "EUR",
+        # Letters with no Unicode decomposition, so the NFKD fallback below can't find their base letter.
+        "Ł": "L",
+        "ł": "l",
+        "Đ": "D",
+        "đ": "d",
+        "Œ": "OE",
+        "œ": "oe",
+        "ı": "i",
+    }
+)
+
+
+def _latin1(text: str) -> str:
+    """The text with every character fpdf's built-in fonts can't draw (they are latin-1 only) swapped
+    for its nearest match — "Ł" becomes "L", an en dash "-" — or "?" when there is none."""
+    text = text.translate(_LATIN1_REPLACEMENTS)
+    if all(ord(c) < 256 for c in text):
+        return text
+    return "".join(
+        c
+        if ord(c) < 256
+        else (unicodedata.normalize("NFKD", c).encode("latin-1", "ignore").decode("latin-1") or "?")
+        for c in text
+    )
+
+
+class _StatementPDF(FPDF):
+    """Never fails on a character outside latin-1: one en dash in one posting text otherwise raised
+    FPDFUnicodeEncodingException and stopped the statement, and with it the whole batch."""
+
+    def normalize_text(self, text: str) -> str:
+        return super().normalize_text(_latin1(text))
 
 
 def _kr(amount: Decimal) -> str:
@@ -40,7 +87,7 @@ def render(
     date_to: date,
 ) -> bytes:
     """The period's postings (if any) with a running subtotal, plus the account's current balance."""
-    pdf = FPDF()
+    pdf = _StatementPDF()
     pdf.add_page()
 
     pdf.set_font("helvetica", "B", 16)

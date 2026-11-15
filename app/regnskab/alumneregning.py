@@ -217,6 +217,9 @@ def send_alumneregninger(date_from: date, date_to: date) -> list[AlumneregningRe
                 f"Kontonr. {account_number} findes ikke i e-conomic." if exc.status_code == 404 else str(exc)
             )
             result = AlumneregningResult(resident, "failed", detail)
+        except Exception as exc:  # anything unforeseen for one alumne must not strand everyone after them
+            logger.exception("alumneregning: unexpected error for resident %s", resident.pk)
+            result = AlumneregningResult(resident, "failed", f"Uventet fejl: {exc}")
         AlumneregningSend.objects.update_or_create(
             resident=resident,
             date_from=date_from,
@@ -249,6 +252,10 @@ def preview_alumneregninger(date_from: date, date_to: date) -> list[PreviewRow]:
             continue
         except economic.EconomicApiError as exc:
             rows.append(PreviewRow(resident, "failed", str(exc)))
+            continue
+        except Exception as exc:  # as in send_alumneregninger: one alumne must not break the whole preview
+            logger.exception("alumneregning preview: unexpected error for resident %s", resident.pk)
+            rows.append(PreviewRow(resident, "failed", f"Uventet fejl: {exc}"))
             continue
 
         detail = (

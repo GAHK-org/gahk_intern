@@ -582,3 +582,70 @@ def test_render_preview_pdf_none_without_account_number(make_resident: Callable)
     resident = make_resident(email="alumne@gahk.dk")
 
     assert alumneregning.render_preview_pdf(resident, *AUGUST) is None
+
+
+def test_the_statement_renders_characters_outside_latin_1() -> None:
+    """fpdf's built-in fonts are latin-1 only: one en dash in one e-conomic posting text used to raise
+    and stop the statement, and with it the whole batch."""
+    from decimal import Decimal
+
+    from regnskab import statement_pdf
+
+    resident = Resident(first_name="Łukasz", last_name="Wiśniewski", email="l@gahk.dk")
+    entry = _entry(1, "2026-08-01", 10.0)
+    entry = economic.LedgerEntry(**{**entry.__dict__, "text": "Husleje aug – sep “Kælder” € 🎉"})
+
+    pdf = statement_pdf.render(resident, 4201, [entry], Decimal(10), *AUGUST)
+
+    text = PdfReader(io.BytesIO(pdf)).pages[0].extract_text()
+    assert "Lukasz Wisniewski" in text
+    assert 'Husleje aug - sep "Kælder" EUR ?' in text
+
+
+def _two_alumni_one_broken(monkeypatch: pytest.MonkeyPatch, make_resident: Callable) -> None:
+    """Broken's statement fails with an error nobody planned for; OK's renders as usual."""
+    for i, name in enumerate(["Broken", "Ok"], start=1):
+        _give_residency(
+            make_resident(email=f"{name.lower()}@gahk.dk", economic_account_number=i, first_name=name),
+            2026,
+            8,
+            room_index=i,
+        )
+    monkeypatch.setattr(economic, "get_account", lambda n: _account(0.0))
+    _mock_entries(monkeypatch)
+    from regnskab import statement_pdf
+
+    real_render = statement_pdf.render
+
+    def render(resident: Resident, *args: object) -> bytes:
+        if resident.first_name == "Broken":
+            raise RuntimeError("something nobody planned for")
+        return real_render(resident, *args)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(statement_pdf, "render", render)
+
+
+@pytest.mark.django_db
+def test_an_unexpected_error_for_one_alumne_does_not_stop_the_send(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    _two_alumni_one_broken(monkeypatch, make_resident)
+
+    results = {r.resident.first_name: r for r in alumneregning.send_alumneregninger(*AUGUST)}
+
+    assert results["Broken"].outcome == "failed"
+    assert "Uventet fejl: something nobody planned for" in results["Broken"].detail
+    assert results["Ok"].outcome == "sent"
+    assert len(mail.outbox) == 1
+
+
+@pytest.mark.django_db
+def test_an_unexpected_error_for_one_alumne_does_not_break_the_preview(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    _two_alumni_one_broken(monkeypatch, make_resident)
+
+    rows = {r.resident.first_name: r for r in alumneregning.preview_alumneregninger(*AUGUST)}
+
+    assert rows["Broken"].status == "failed"
+    assert rows["Ok"].status == "ready"
