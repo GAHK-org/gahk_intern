@@ -11,12 +11,15 @@ from pathlib import Path
 from typing import Any
 
 from celery import Task, shared_task
+from celery.exceptions import SoftTimeLimitExceeded
 from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile, File
 from django.core.management import call_command
 from django.db.models import Q, QuerySet
 from django.utils import timezone
 from zipstream import ZIP_STORED, ZipStream
+
+from core.job_progress import stopped_reason
 
 from . import direct_upload, merge, notify
 from .dashboard import measure_storage
@@ -69,16 +72,24 @@ logger = logging.getLogger(__name__)
 # records FAILED with a message, rather than vanishing. The hard limit is only the backstop for a
 # task wedged somewhere uninterruptible, five minutes later.
 #
-# Four hours: a long video on this box's few cores honestly takes more than the hour this used to
-# be. It holds the one media slot for as long as it runs, so ZIP jobs queue behind it meanwhile.
-# DERIVATIVE_CLAIM_TTL must stay equal to it.
+# Twelve hours for a video's conversion: a 5 GB video on this box's few cores can honestly take
+# more than four. What stops a stuck one sooner is the watchdog (core.job_progress): the encode
+# reports how far it has got, and one that gains less than a tenth of the way in an hour is stopped
+# as if by the soft limit. It holds the one media slot for as long as it runs, so ZIP jobs queue
+# behind it meanwhile. DERIVATIVE_CLAIM_TTL must stay equal to it.
+ENCODE_TASK_TIME_LIMIT = 12 * 60 * 60
+ENCODE_TASK_SOFT_TIME_LIMIT = ENCODE_TASK_TIME_LIMIT - 300
+
+# The media queue's other jobs (hashes, dates, the storage measurement), which report no progress
+# and so have no watchdog: their limit stays the four hours that is plenty for each.
 MEDIA_TASK_TIME_LIMIT = 4 * 60 * 60
 MEDIA_TASK_SOFT_TIME_LIMIT = MEDIA_TASK_TIME_LIMIT - 300
 
-# Album ZIPs, both ways, may take as long: one Dropbox album can be a whole year. What
-# tells a slow one from a dead one is its progress (JOB_STALLED_AFTER), not its age, so the limit
-# here is only the ceiling for a job that keeps reporting yet never finishes.
-ZIP_TASK_TIME_LIMIT = 4 * 60 * 60
+# Album ZIPs, both ways, may take as long: one Dropbox album can be a whole year. What tells a slow
+# one from a dead one is its progress — JOB_STALLED_AFTER for a worker gone, the watchdog for one
+# that works but gets nowhere — not its age, so the limit here is only the ceiling for a job that
+# keeps making progress yet never finishes.
+ZIP_TASK_TIME_LIMIT = 12 * 60 * 60
 ZIP_TASK_SOFT_TIME_LIMIT = ZIP_TASK_TIME_LIMIT - 300
 
 # How long a failed import's ZIP is kept. Not deleted when the sweep fails the job: that is a guess
@@ -165,7 +176,7 @@ class DerivativesNotBuilt(Exception):
     """A media item's derivatives could not be built. Raised so the job shows as failed, with why."""
 
 
-@shared_task(bind=True, time_limit=MEDIA_TASK_TIME_LIMIT, soft_time_limit=MEDIA_TASK_SOFT_TIME_LIMIT)
+@shared_task(bind=True, time_limit=ENCODE_TASK_TIME_LIMIT, soft_time_limit=ENCODE_TASK_SOFT_TIME_LIMIT)
 def build_media_derivatives(self: Task, media_id: int) -> bool:
     """Build derivatives for one committed upload, if it still needs them and nobody else has it.
 
@@ -204,6 +215,16 @@ def build_media_derivatives(self: Task, media_id: int) -> bool:
     logger.info("Converting %s, in %s.", media.display_name_and_size, media.album)
     try:
         built = build_derivatives(media)
+    except SoftTimeLimitExceeded as exc:
+        # Stopped by the watchdog (no progress) or the soft time limit; ffmpeg is gone with it. The
+        # attempt counts, and the row is released for the nightly pass rather than after the TTL.
+        Media.objects.filter(pk=media_id, derivative_task_id=task_id).update(derivative_started_at=None)
+        media.refresh_from_db(fields=["derivative_attempts"])
+        why = stopped_reason() or "Stopped at its time limit."
+        raise DerivativesNotBuilt(
+            f"{media.display_name_and_size} was not converted: {why} Attempt {media.derivative_attempts} of "
+            f"{MAX_DERIVATIVE_ATTEMPTS}; tried again by the nightly process_pending_media."
+        ) from exc
     except NotEnoughDiskSpace as exc:
         # Released, so the next pass can take it at once rather than after DERIVATIVE_CLAIM_TTL.
         # Raised, so the jobs page shows why it is still waiting.
@@ -223,7 +244,7 @@ def build_media_derivatives(self: Task, media_id: int) -> bool:
     )
 
 
-@shared_task(time_limit=MEDIA_TASK_TIME_LIMIT, soft_time_limit=MEDIA_TASK_SOFT_TIME_LIMIT)
+@shared_task(time_limit=ENCODE_TASK_TIME_LIMIT, soft_time_limit=ENCODE_TASK_SOFT_TIME_LIMIT)
 def reencode_enlarged_video(media_id: int) -> str:
     """Re-encode one video's viewer copy at the video's own size, if an earlier conversion enlarged
     it to 1600 px. Queued by `manage.py reencode_enlarged_photo_album_videos`."""
@@ -507,7 +528,7 @@ def build_album_download(self: Task, download_id: int) -> bool:
             storage.save(key, ContentFile(b"".join(archive)))
     except Exception as exc:
         download.state = AlbumDownloadState.FAILED
-        download.error = str(exc)[:255]
+        download.error = _failure(exc)
         download.completed_at = timezone.now()
         download.save(update_fields=["state", "error", "completed_at"])
         raise
@@ -546,6 +567,13 @@ def _discard_archives(imports: "QuerySet[AlbumImport]") -> None:
     for album_import in imports.exclude(archive=""):
         album_import.archive.delete(save=False)
         album_import.save(update_fields=["archive"])
+
+
+def _failure(exc: Exception) -> str:
+    """A ZIP job's error, as its row shows it. A stopped job's exception says nothing of its own."""
+    if isinstance(exc, SoftTimeLimitExceeded):
+        return "Stoppet, fordi jobbet ikke kom videre." if stopped_reason() else "Stoppet ved tidsgrænsen."
+    return str(exc)[:255]
 
 
 def _tell_import_failed(album_import: AlbumImport, reason: str) -> None:
@@ -679,7 +707,7 @@ def process_album_import(self: Task, import_id: int) -> bool:
         return False
     except Exception as exc:
         album_import.state = AlbumImportState.FAILED
-        album_import.error = str(exc)[:255]
+        album_import.error = _failure(exc)
         album_import.completed_at = timezone.now()
         album_import.save(update_fields=["state", "error", "completed_at"])
         _tell_import_failed(album_import, notify.CRASHED)
