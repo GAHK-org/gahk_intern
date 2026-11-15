@@ -525,6 +525,9 @@ EMAIL_BACKEND = "core.mail.OutboxBackend"
 MAIL_DELIVERY_BACKEND = os.environ.get("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
 # one.com refuses the account after ~25 mails in 5 minutes; this leaves room below it.
 MAIL_RATE_LIMIT = int(os.environ.get("MAIL_RATE_LIMIT", "20"))
+# What bulk mail (core.mail.bulk: alumneregninger, ølkælder overviews) may use of that, so the rest is
+# always free for a password reset or a welcome mail — which go out first anyway.
+MAIL_BULK_LIMIT = int(os.environ.get("MAIL_BULK_LIMIT", "10"))
 MAIL_RATE_WINDOW = timedelta(minutes=5)
 EMAIL_HOST = os.environ.get("SMTP_HOST", "")
 EMAIL_HOST_USER = os.environ.get("SMTP_USER", "")

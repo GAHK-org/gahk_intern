@@ -14,6 +14,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import F, Q, QuerySet
 from django.utils import timezone
 
+from core import mail as outbox
 from core.models import OutgoingMail
 from residents.models import Residency, Resident
 
@@ -223,7 +224,8 @@ def _bill(prepared: PreparedStatement, date_from: date, date_to: date) -> Alumne
         if not _record(resident, date_from, date_to, "sent", detail):
             return None
         try:
-            email.send()  # through core.mail's outbox: stored here, sent after commit
+            with outbox.bulk():
+                email.send()  # through core.mail's outbox: stored here, sent after commit
         except Exception as exc:  # only a backend that sends there and then (dev's console) gets here
             raise _NotMailed(str(exc)) from exc  # rolls the "sent" row back with it
         mail = getattr(email, "outgoing_mail", None)

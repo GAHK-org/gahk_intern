@@ -23,6 +23,7 @@ class Migration(migrations.Migration):
                 ("subject", models.TextField()),
                 ("recipients", models.TextField()),
                 ("payload", models.JSONField(blank=True, default=dict)),
+                ("bulk", models.BooleanField(default=False)),
                 (
                     "status",
                     models.CharField(

@@ -226,6 +226,9 @@ class OutgoingMail(models.Model):
     # The message itself (core.mail.serialize). Emptied once delivered: it can hold a password-reset
     # link, or a statement PDF of several MB.
     payload = models.JSONField(default=dict, blank=True)
+    bulk = models.BooleanField(
+        default=False
+    )  # queued inside core.mail.bulk(): sent last, within MAIL_BULK_LIMIT
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.QUEUED)
     attempts = models.PositiveSmallIntegerField(default=0)
     next_attempt_at = models.DateTimeField(default=timezone.now)

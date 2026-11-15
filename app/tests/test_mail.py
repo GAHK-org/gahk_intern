@@ -26,6 +26,7 @@ def _outbox() -> Iterator[None]:
         EMAIL_BACKEND="core.mail.OutboxBackend",
         MAIL_DELIVERY_BACKEND="django.core.mail.backends.locmem.EmailBackend",
         MAIL_RATE_LIMIT=3,
+        MAIL_BULK_LIMIT=2,
     ):
         cache.delete(tasks._RESUME_SCHEDULED)
         yield
@@ -102,6 +103,34 @@ def test_no_more_than_the_rate_limit_go_out_in_a_window() -> None:
 
     OutgoingMail.objects.update(last_attempt_at=timezone.now() - timedelta(minutes=6))  # the window passes
     assert outbox.deliver().sent == 2
+
+
+@pytest.mark.django_db
+def test_other_mail_goes_out_before_bulk_queued_earlier() -> None:
+    with outbox.bulk():
+        send_mail("Alumneregning", "Tekst", "regnskab@gahk.dk", ["alumne@gahk.dk"])
+    send_mail("Nulstil kodeord", "Tekst", "autosvar@gahk.dk", ["beboer@gahk.dk"])
+    settings_limit_one = override_settings(MAIL_RATE_LIMIT=1)
+
+    with settings_limit_one:
+        outbox.deliver()
+
+    assert [m.subject for m in mail.outbox] == ["Nulstil kodeord"]
+
+
+@pytest.mark.django_db
+def test_bulk_mail_leaves_room_in_the_window_for_everything_else() -> None:
+    """A password reset during a monthly send goes out at once, not after the bulk mail."""
+    with outbox.bulk():
+        _queue(3)
+
+    assert outbox.deliver().sent == 2  # MAIL_BULK_LIMIT, of a MAIL_RATE_LIMIT of 3
+    send_mail("Nulstil kodeord", "Tekst", "autosvar@gahk.dk", ["beboer@gahk.dk"])
+    result = outbox.deliver()
+
+    assert result.sent == 1
+    assert mail.outbox[-1].subject == "Nulstil kodeord"
+    assert OutgoingMail.objects.filter(bulk=True, status=Status.QUEUED).count() == 1
 
 
 @pytest.mark.django_db

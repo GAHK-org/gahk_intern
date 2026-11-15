@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import contextvars
 import logging
 import smtplib
 from collections.abc import Iterator, Sequence
@@ -109,6 +110,21 @@ def deserialize(payload: dict[str, Any]) -> EmailMultiAlternatives:
     return message
 
 
+_bulk = contextvars.ContextVar("core.mail.bulk", default=False)
+
+
+@contextlib.contextmanager
+def bulk() -> Iterator[None]:
+    """Mail queued inside this is bulk — the same mail to many, like a month's alumneregninger. It
+    goes out after any other due mail, and only within MAIL_BULK_LIMIT of the window, so a password
+    reset never waits behind a monthly send."""
+    token = _bulk.set(True)
+    try:
+        yield
+    finally:
+        _bulk.reset(token)
+
+
 def queue(message: EmailMessage) -> OutgoingMail:
     """Store the message for delivery, and set it as message.outgoing_mail — how a caller that
     tracks delivery (regnskab.alumneregning) finds its row. Delivery is queued once the caller's
@@ -117,6 +133,7 @@ def queue(message: EmailMessage) -> OutgoingMail:
         subject=message.subject[:998],
         recipients=", ".join(message.recipients()),
         payload=serialize(message),
+        bulk=_bulk.get(),
     )
     message.outgoing_mail = mail  # type: ignore[attr-defined]
     transaction.on_commit(_start_delivery)
@@ -177,15 +194,22 @@ def classify(exc: Exception) -> Verdict:
     return "failed"
 
 
-def quota_wait(now: datetime) -> timedelta | None:
+def quota_wait(now: datetime, *, bulk: bool = False) -> timedelta | None:
     """None if a mail may go out now; otherwise how long until the window has room for a full batch
-    again — waiting for one slot at a time would run the job once per mail."""
+    again — waiting for one slot at a time would run the job once per mail. A bulk mail must also
+    fit within MAIL_BULK_LIMIT, which keeps the rest of the window free for everything else."""
     attempted = OutgoingMail.objects.filter(last_attempt_at__gt=now - settings.MAIL_RATE_WINDOW)
-    if attempted.count() < settings.MAIL_RATE_LIMIT:
-        return None
-    newest: datetime = attempted.order_by("-last_attempt_at").values_list("last_attempt_at", flat=True)[0]  # type: ignore[assignment]
-    wait: timedelta = newest + settings.MAIL_RATE_WINDOW - now
-    return wait
+    limits = [(attempted, settings.MAIL_RATE_LIMIT)]
+    if bulk:
+        limits.append((attempted.filter(bulk=True), settings.MAIL_BULK_LIMIT))
+    waits = []
+    for counted, limit in limits:
+        if counted.count() >= limit:
+            newest: datetime = counted.order_by("-last_attempt_at").values_list("last_attempt_at", flat=True)[
+                0
+            ]  # type: ignore[assignment]
+            waits.append(newest + settings.MAIL_RATE_WINDOW - now)
+    return max(waits, default=None)
 
 
 @contextlib.contextmanager
@@ -237,12 +261,12 @@ def deliver() -> Delivery:
             now = timezone.now()
             mail = (
                 OutgoingMail.objects.filter(status=Status.QUEUED, next_attempt_at__lte=now)
-                .order_by("next_attempt_at", "pk")
+                .order_by("bulk", "next_attempt_at", "pk")  # everything else before bulk
                 .first()
             )
             if mail is None:
                 break
-            result.resume_in = quota_wait(now)
+            result.resume_in = quota_wait(now, bulk=mail.bulk)
             if result.resume_in is not None:
                 break
             mail.status, mail.attempts, mail.last_attempt_at = Status.SENDING, mail.attempts + 1, now

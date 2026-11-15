@@ -46,6 +46,7 @@ VISIT_COUNTER_HMAC_KEY=<random>
 SMTP_HOST=send.one.com  SMTP_USER=…  SMTP_PASSWORD=…  SMTP_PORT=587
 EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend   # what core.mail's queue delivers through — see below
 MAIL_RATE_LIMIT=20                                # optional: mails per 5 minutes; one.com blocks at ~25
+MAIL_BULK_LIMIT=10                                # optional: of those, what bulk (alumneregninger, ølkælder) may use
 DEFAULT_FROM_EMAIL=autosvar@gahk.dk               # ⚠ must be an alias of SMTP_USER — see below
 OELKAELDER_FROM_EMAIL=bierkeller@gahk.dk          # ⚠ second sender, same requirement
 TURNSTILE_SITE_KEY=…  TURNSTILE_SECRET_KEY=…      # Cloudflare Turnstile [you]
