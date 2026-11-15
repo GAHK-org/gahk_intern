@@ -7,6 +7,7 @@ from typing import Any
 
 from celery import shared_task
 from django.conf import settings
+from django.core.cache import cache
 from django.core.mail import send_mail
 from django.db import connection
 from django.db.models import F, Subquery, Window
@@ -17,6 +18,7 @@ from config.celery import app as celery_app
 from residents.admin_access import approvers
 
 from . import admin_summary
+from . import mail as outbox
 
 # How long a delivered broker message is kept before being swept.
 #
@@ -77,6 +79,35 @@ def task_time_limit(task_name: str) -> datetime.timedelta:
     global one."""
     task = _task_registry().get(task_name)
     return datetime.timedelta(seconds=getattr(task, "time_limit", None) or settings.CELERY_TASK_TIME_LIMIT)
+
+
+class MailNotDelivered(Exception):
+    """Raised by deliver_mail so a run that failed a mail, or found the server down, shows as failed."""
+
+
+# Set while a deliver_mail is scheduled to pick up where the rate limit stopped one, so the many runs
+# a batch of mails queues don't each schedule another.
+_RESUME_SCHEDULED = "core.tasks.deliver_mail.resume_scheduled"
+
+
+@shared_task
+def deliver_mail() -> int:
+    """Send the queued mail that is due (core.mail.deliver), and schedule the next run when the rate
+    limit or a wait stops it short. Queued by each mail as it is stored, and every 5 minutes by Beat
+    in case one of those was lost. Returns how many went out."""
+    result = outbox.deliver()
+    if result.resume_in is not None and result.resume_in > datetime.timedelta(0):
+        seconds = result.resume_in.total_seconds()
+        if cache.add(_RESUME_SCHEDULED, True, timeout=int(seconds) + 1):
+            deliver_mail.apply_async(countdown=seconds)
+    if result.failed or result.server_error:
+        failed = ", ".join(f"{m.recipients} ({m.error})" for m in result.failed)
+        raise MailNotDelivered(
+            f"{result.sent} sendt. "
+            + (f"{len(result.failed)} fejlede: {failed}. " if result.failed else "")
+            + (f"Mailserveren svarer ikke: {result.server_error}" if result.server_error else "")
+        )
+    return result.sent
 
 
 @shared_task

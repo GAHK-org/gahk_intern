@@ -44,7 +44,8 @@ DJANGO_ALLOWED_HOSTS=www.gahk.dk,gahk.dk
 DATABASE_URL=postgres://gahk:<pw>@postgres:5432/gahk
 VISIT_COUNTER_HMAC_KEY=<random>
 SMTP_HOST=send.one.com  SMTP_USER=…  SMTP_PASSWORD=…  SMTP_PORT=587
-EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend   # what core.mail's queue delivers through — see below
+MAIL_RATE_LIMIT=20                                # optional: mails per 5 minutes; one.com blocks at ~25
 DEFAULT_FROM_EMAIL=autosvar@gahk.dk               # ⚠ must be an alias of SMTP_USER — see below
 OELKAELDER_FROM_EMAIL=bierkeller@gahk.dk          # ⚠ second sender, same requirement
 TURNSTILE_SITE_KEY=…  TURNSTILE_SECRET_KEY=…      # Cloudflare Turnstile [you]
@@ -81,11 +82,13 @@ the app relays through their smarthost, so existing SPF/DKIM for gahk.dk covers 
 ```
 python manage.py sendtestemail you@example.com                       # exercises DEFAULT_FROM_EMAIL
 DEFAULT_FROM_EMAIL=$OELKAELDER_FROM_EMAIL python manage.py sendtestemail you@example.com
+python manage.py shell -c "from core.tasks import deliver_mail; deliver_mail()"
 ```
-Exit 0 = delivered. A failure here is otherwise near-invisible in the UI: the mails are best-effort
-so the app keeps working, and only the server log records the rejection. The one exception is
-password reset — Django's built-in view does not suppress errors, so a bad `DEFAULT_FROM_EMAIL`
-turns "glemt kodeord" into a 500 for the resident.
+`sendtestemail` only queues the mail: every mail goes through `core.mail`'s queue, which the worker
+sends within `MAIL_RATE_LIMIT` per 5 minutes. The last line sends the queue there and then, and
+raises `MailNotDelivered` naming any mail the server refused, so no traceback = delivered. In
+running use, a refused mail fails the `core.tasks.deliver_mail` job on the worker-jobs page and is
+listed under "Outgoing mails" in Django admin, where it can be sent again once the cause is fixed.
 
 ## 3. CI (GitHub Actions — `.github/workflows/ci.yml`) **[you: create the repo]**
 Fresh repo (do **not** import the legacy history — it contains plaintext secrets, scope §5). Jobs:

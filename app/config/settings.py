@@ -4,6 +4,7 @@ Schema/decisions: see ../02-schema-etl.md. Target DB is PostgreSQL (via DATABASE
 """
 
 import os
+from datetime import timedelta
 from pathlib import Path
 
 import dj_database_url
@@ -292,11 +293,11 @@ CELERY_BEAT_SCHEDULE = {
     # Every quarter of an hour, matching JOB_STALLED_AFTER: what it clears is a download the
     # resident is still watching a spinner for, so the gap between "the worker died" and "the page
     # says so" is the thing being minimised. Off the hour, like everything else here.
-    # Every minute: an alumneregning send waiting out the mail server's throttle goes on as soon as
-    # its wait is over (regnskab.tasks.resume_alumneregninger). Nothing due is one indexed query.
-    "resume-alumneregninger": {
-        "task": "regnskab.tasks.resume_alumneregninger",
-        "schedule": crontab(),
+    # Each mail queues its own delivery, and a run the rate limit stops schedules the next; this
+    # only sends what is left if one of those messages was lost (core.mail).
+    "deliver-mail": {
+        "task": "core.tasks.deliver_mail",
+        "schedule": crontab(minute="*/5"),
     },
     "fail-stalled-photo-album-downloads": {
         "task": "photo_album.tasks.fail_stalled_downloads",
@@ -518,7 +519,13 @@ LOGIN_REDIRECT_URL = "/intern/"
 LOGOUT_REDIRECT_URL = "/intern/admin/login"
 
 # Email — defaults to the console backend in dev (prints instead of sending). SMTP from env in prod.
-EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
+# Every mail is stored first and sent by a job within the rate limit below (core.mail, #397);
+# MAIL_DELIVERY_BACKEND is what that job sends through, and what the env's EMAIL_BACKEND sets.
+EMAIL_BACKEND = "core.mail.OutboxBackend"
+MAIL_DELIVERY_BACKEND = os.environ.get("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
+# one.com refuses the account after ~25 mails in 5 minutes; this leaves room below it.
+MAIL_RATE_LIMIT = int(os.environ.get("MAIL_RATE_LIMIT", "20"))
+MAIL_RATE_WINDOW = timedelta(minutes=5)
 EMAIL_HOST = os.environ.get("SMTP_HOST", "")
 EMAIL_HOST_USER = os.environ.get("SMTP_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("SMTP_PASSWORD", "")

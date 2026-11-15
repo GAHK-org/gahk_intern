@@ -188,7 +188,7 @@ def test_send_alumneregninger_queues_the_task_and_the_status_page_shows_the_resu
 def test_send_alumneregninger_auth_error_does_not_crash_the_request(
     monkeypatch: pytest.MonkeyPatch, make_resident: Callable
 ) -> None:
-    """An invalid/revoked e-conomic connection is handled inside the task (tasks.py), not the view —
+    """An invalid/revoked e-conomic connection fails the task (tasks.py), not the view —
     there is no HTTP response left for a background job to show an error on. The POST itself always
     just queues and redirects; the status page simply shows nobody processed yet."""
     alumne = make_resident(email="alumne@gahk.dk", economic_account_number=1101)
@@ -204,6 +204,12 @@ def test_send_alumneregninger_auth_error_does_not_crash_the_request(
         raise economic.EconomicAuthError("token revoked")
 
     monkeypatch.setattr(economic, "get_account", get_account)
+    # The job does fail (#397) — but on the worker, not in the request, as with a real broker.
+    monkeypatch.setattr(
+        tasks.send_alumneregninger_task,
+        "delay",
+        lambda *args: tasks.send_alumneregninger_task.apply(args=args, throw=False),
+    )
     c = Client()
     c.force_login(acc)
 
@@ -465,32 +471,30 @@ def test_alumneregninger_go_ahead_with_a_warning_when_someone_lacks_a_kontonr(
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize(
-    ("resume_at", "throttled", "expected"),
-    [
-        ("later", True, "Mailserveren tager ikke imod flere lige nu"),
-        ("later", False, "Sendes i baggrunden"),
-        (None, False, "Afsendelsen er stoppet"),
-    ],
-)
-def test_the_status_page_says_whether_the_rest_are_still_coming(
-    make_resident: Callable, resume_at: str | None, throttled: bool, expected: str
-) -> None:
-    from datetime import date, timedelta
+def test_the_status_page_follows_each_mail_through_the_queue(make_resident: Callable) -> None:
+    from datetime import date
 
-    from regnskab.models import AlumneregningBatch
+    from core.models import OutgoingMail
+    from regnskab.models import AlumneregningSend
 
-    _alumne_in_august("waiting@gahk.dk", 1101, 1)
-    AlumneregningBatch.objects.create(
-        date_from=date(2026, 8, 1),
-        date_to=date(2026, 8, 31),
-        resume_at=timezone.now() + timedelta(minutes=6) if resume_at else None,
-        throttled=throttled,
-    )
+    period = {"date_from": date(2026, 8, 1), "date_to": date(2026, 8, 31)}
+    for i, (status, error) in enumerate(
+        [(OutgoingMail.Status.QUEUED, ""), (OutgoingMail.Status.FAILED, "550 no such user")], start=1
+    ):
+        alumne = _alumne_in_august(f"alumne{i}@gahk.dk", 1100 + i, i)
+        mail = OutgoingMail.objects.create(
+            subject="Alumneregning", recipients=alumne.email, status=status, error=error
+        )
+        AlumneregningSend.objects.create(
+            resident=alumne, outcome="sent", detail="saldo 0,00 kr.", mail=mail, **period
+        )
     acc = make_resident(email="acc@gahk.dk", roles=("regnskab",))
     c = Client()
     c.force_login(acc)
 
     html = c.get(reverse("regnskab:alumneregninger_status"), {"fra": "2026-08-01", "til": "2026-08-31"})
 
-    assert expected in html.content.decode()
+    text = html.content.decode()
+    assert "1 mail venter på at blive sendt" in text
+    assert "I mailkøen" in text
+    assert "Mailen kunne ikke sendes: 550 no such user" in text

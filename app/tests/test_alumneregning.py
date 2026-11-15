@@ -9,6 +9,7 @@ from datetime import date
 import pytest
 from django.core import mail
 from django.core.files.base import ContentFile
+from django.test import override_settings
 from fpdf import FPDF
 from pypdf import PdfReader
 
@@ -584,42 +585,6 @@ def test_render_preview_pdf_none_without_account_number(make_resident: Callable)
     assert alumneregning.render_preview_pdf(resident, *AUGUST) is None
 
 
-@pytest.mark.django_db
-def test_mail_server_throttling_leaves_the_rest_waiting_for_the_retry(
-    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
-) -> None:
-    """one.com refuses everything for 5 minutes after ~25 mails ("451 4.7.1 [R2] Too many mails")."""
-    import smtplib
-
-    from django.core.mail import EmailMessage
-
-    for i, name in enumerate(["Anna", "Bo"], start=1):
-        _give_residency(
-            make_resident(email=f"{name.lower()}@gahk.dk", economic_account_number=i, first_name=name),
-            2026,
-            8,
-            room_index=i,
-        )
-    monkeypatch.setattr(economic, "get_account", lambda n: _account(0.0))
-    _mock_entries(monkeypatch)
-    real_send = EmailMessage.send
-
-    def throttled_after_anna(self: EmailMessage, *args: object, **kwargs: object) -> int:
-        if self.to != ["anna@gahk.dk"]:
-            raise smtplib.SMTPRecipientsRefused({self.to[0]: (451, b"4.7.1 [R2] Too many mails")})
-        return real_send(self, *args, **kwargs)
-
-    monkeypatch.setattr(EmailMessage, "send", throttled_after_anna)
-    with pytest.raises(alumneregning.MailThrottled):
-        alumneregning.send_alumneregninger(*AUGUST)
-    assert [s.resident.email for s in AlumneregningSend.objects.all()] == ["anna@gahk.dk"]  # Bo: no row
-
-    monkeypatch.setattr(EmailMessage, "send", real_send)
-    [result] = alumneregning.send_alumneregninger(*AUGUST)  # the retry: only Bo
-    assert result.resident.email == "bo@gahk.dk"
-    assert len(mail.outbox) == 2
-
-
 def _two_alumner(monkeypatch: pytest.MonkeyPatch, make_resident: Callable) -> None:
     for i, name in enumerate(["Anna", "Bo"], start=1):
         _give_residency(
@@ -630,147 +595,6 @@ def _two_alumner(monkeypatch: pytest.MonkeyPatch, make_resident: Callable) -> No
         )
     monkeypatch.setattr(economic, "get_account", lambda n: _account(0.0))
     _mock_entries(monkeypatch)
-
-
-@pytest.mark.django_db
-def test_a_full_mailbox_fails_just_that_alumne(
-    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
-) -> None:
-    """452 is about the one recipient: taking it for a throttle stopped every run at the same alumne."""
-    import smtplib
-
-    from django.core.mail import EmailMessage
-
-    _two_alumner(monkeypatch, make_resident)
-    real_send = EmailMessage.send
-
-    def anna_mailbox_full(self: EmailMessage, *args: object, **kwargs: object) -> int:
-        if self.to == ["anna@gahk.dk"]:
-            raise smtplib.SMTPRecipientsRefused({self.to[0]: (452, b"4.2.2 Mailbox full")})
-        return real_send(self, *args, **kwargs)
-
-    monkeypatch.setattr(EmailMessage, "send", anna_mailbox_full)
-
-    results = {r.resident.first_name: r.outcome for r in alumneregning.send_alumneregninger(*AUGUST)}
-
-    assert results == {"Anna": "failed", "Bo": "sent"}
-
-
-@pytest.mark.django_db
-def test_an_alumne_another_run_is_mailing_is_skipped(
-    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
-) -> None:
-    """The button pressed while a throttled send waits: the two runs must not both mail anyone."""
-    _two_alumner(monkeypatch, make_resident)
-    anna = Resident.objects.get(first_name="Anna")
-    AlumneregningSend.objects.create(resident=anna, date_from=AUGUST[0], date_to=AUGUST[1], outcome="sending")
-
-    [result] = alumneregning.send_alumneregninger(*AUGUST)
-
-    assert result.resident.first_name == "Bo"
-    assert [m.to for m in mail.outbox] == [["bo@gahk.dk"]]
-
-
-@pytest.mark.django_db
-def test_a_throttled_alumne_who_had_failed_before_is_left_failed_not_sending(
-    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
-) -> None:
-    import smtplib
-
-    from django.core.mail import EmailMessage
-
-    _two_alumner(monkeypatch, make_resident)
-    anna = Resident.objects.get(first_name="Anna")
-    AlumneregningSend.objects.create(
-        resident=anna, date_from=AUGUST[0], date_to=AUGUST[1], outcome="failed", detail="earlier"
-    )
-
-    def throttled(self: EmailMessage, *args: object, **kwargs: object) -> int:
-        raise smtplib.SMTPRecipientsRefused({self.to[0]: (421, b"4.7.0 Try again later")})
-
-    monkeypatch.setattr(EmailMessage, "send", throttled)
-    with pytest.raises(alumneregning.MailThrottled):
-        alumneregning.send_alumneregninger(*AUGUST)
-
-    assert [(s.resident.first_name, s.outcome, s.detail) for s in AlumneregningSend.objects.all()] == [
-        ("Anna", "failed", "earlier")
-    ]
-
-
-@pytest.mark.django_db
-def test_a_throttled_send_is_resumed_from_the_database_after_the_wait(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Not a Celery retry held in the worker's memory, which a deploy during the wait would lose."""
-    from datetime import timedelta
-
-    from django.utils import timezone
-
-    from regnskab import tasks
-    from regnskab.models import AlumneregningBatch
-
-    def throttled(*args: object) -> None:
-        raise alumneregning.MailThrottled("451")
-
-    monkeypatch.setattr(alumneregning, "send_alumneregninger", throttled)
-    tasks.queue_alumneregninger(*AUGUST)  # eager in tests: runs the task now
-
-    batch = AlumneregningBatch.objects.get()
-    assert batch.throttled
-    assert batch.resume_at is not None
-    assert timedelta(minutes=5) < batch.resume_at - timezone.now() <= tasks.THROTTLE_WAIT
-
-    queued: list[tuple[str, str]] = []
-    monkeypatch.setattr(tasks.send_alumneregninger_task, "delay", lambda *a: queued.append(a))
-    tasks.resume_alumneregninger()
-    assert queued == []  # the wait is not over
-
-    AlumneregningBatch.objects.update(resume_at=timezone.now())
-    tasks.resume_alumneregninger()
-    assert queued == [("2026-08-01", "2026-08-31")]
-    batch.refresh_from_db()
-    assert batch.attempts == 1
-    assert batch.resume_at is not None and batch.resume_at > timezone.now()  # a lost run comes round again
-
-
-@pytest.mark.django_db
-def test_a_finished_send_is_not_resumed(monkeypatch: pytest.MonkeyPatch, make_resident: Callable) -> None:
-    from regnskab import tasks
-    from regnskab.models import AlumneregningBatch
-
-    _two_alumner(monkeypatch, make_resident)
-    tasks.queue_alumneregninger(*AUGUST)
-
-    assert AlumneregningBatch.objects.get().resume_at is None
-    assert len(mail.outbox) == 2
-
-
-@pytest.mark.django_db
-def test_after_the_last_attempt_whoever_is_still_waiting_is_marked_failed(
-    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
-) -> None:
-    from django.utils import timezone
-
-    from regnskab import tasks
-    from regnskab.models import AlumneregningBatch
-
-    _two_alumner(monkeypatch, make_resident)
-    anna = Resident.objects.get(first_name="Anna")
-    AlumneregningSend.objects.create(resident=anna, date_from=AUGUST[0], date_to=AUGUST[1], outcome="sent")
-    AlumneregningBatch.objects.create(
-        date_from=AUGUST[0],
-        date_to=AUGUST[1],
-        resume_at=timezone.now(),
-        throttled=True,
-        attempts=tasks.MAX_ATTEMPTS,
-    )
-    monkeypatch.setattr(tasks.send_alumneregninger_task, "delay", lambda *a: pytest.fail("ran again"))
-
-    tasks.resume_alumneregninger()
-
-    outcomes = {s.resident.first_name: (s.outcome, s.detail) for s in AlumneregningSend.objects.all()}
-    assert outcomes == {"Anna": ("sent", ""), "Bo": ("failed", tasks.GAVE_UP_DETAIL)}
-    assert AlumneregningBatch.objects.get().resume_at is None
 
 
 def test_the_statement_renders_characters_outside_latin_1() -> None:
@@ -816,3 +640,96 @@ def test_an_unexpected_error_for_one_alumne_does_not_stop_the_send(
 
     assert results["Broken"].outcome == "failed"
     assert results["Ok"].outcome == "sent"
+
+
+@pytest.mark.django_db
+@override_settings(EMAIL_BACKEND="core.mail.OutboxBackend")
+def test_each_statement_is_queued_with_its_row_and_billed_once(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    """Through the outbox (core.mail): the row and the mail are written together, so a second run —
+    the button pressed while the mails are still queued — finds everyone billed and queues nothing."""
+    from core.models import OutgoingMail
+
+    _two_alumner(monkeypatch, make_resident)
+
+    alumneregning.send_alumneregninger(*AUGUST)
+    again = alumneregning.send_alumneregninger(*AUGUST)
+
+    assert again == []
+    assert OutgoingMail.objects.count() == 2
+    assert mail.outbox == []  # not sent by the run: deliver_mail does that
+    sends = AlumneregningSend.objects.select_related("mail")
+    assert {(s.resident.email, s.mail.recipients) for s in sends} == {  # type: ignore[union-attr]
+        ("anna@gahk.dk", "anna@gahk.dk"),
+        ("bo@gahk.dk", "bo@gahk.dk"),
+    }
+    [attachment] = OutgoingMail.objects.get(recipients="bo@gahk.dk").payload["attachments"]
+    assert attachment["mimetype"] == "application/pdf"
+
+
+@pytest.mark.django_db
+@override_settings(EMAIL_BACKEND="core.mail.OutboxBackend")
+def test_an_alumne_whose_mail_failed_is_billed_again_by_the_next_run(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    from core.models import OutgoingMail
+
+    _two_alumner(monkeypatch, make_resident)
+    alumneregning.send_alumneregninger(*AUGUST)
+    OutgoingMail.objects.filter(recipients="anna@gahk.dk").update(status=OutgoingMail.Status.FAILED)
+
+    [result] = alumneregning.send_alumneregninger(*AUGUST)
+
+    assert result.resident.email == "anna@gahk.dk"
+    anna = AlumneregningSend.objects.get(resident__email="anna@gahk.dk")
+    assert anna.mail is not None and anna.mail.status == OutgoingMail.Status.QUEUED
+
+
+@pytest.mark.django_db
+def test_the_job_fails_when_someone_could_not_be_billed(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    """#397: it used to finish as done with failures only in the log."""
+    from regnskab import tasks
+
+    _two_alumner(monkeypatch, make_resident)
+    monkeypatch.setattr(
+        alumneregning, "account_name_matches", lambda resident, name: resident.first_name != "Anna"
+    )
+
+    with pytest.raises(tasks.AlumneregningerFailed, match="1 af 2"):
+        tasks.send_alumneregninger_task("2026-08-01", "2026-08-31")
+    assert len(mail.outbox) == 1  # Bo was still billed
+
+
+@pytest.mark.django_db
+def test_the_job_tries_again_after_economics_rate_limit(
+    monkeypatch: pytest.MonkeyPatch, make_resident: Callable
+) -> None:
+    from regnskab import tasks
+
+    _two_alumner(monkeypatch, make_resident)
+    calls: list[int] = []
+
+    def get_account(number: int) -> economic.EconomicAccount:
+        calls.append(number)
+        if len(calls) == 1:
+            raise economic.EconomicRateLimitError("429")
+        return _account(0.0)
+
+    monkeypatch.setattr(economic, "get_account", get_account)
+    retried: list[int] = []
+    monkeypatch.setattr(
+        tasks.send_alumneregninger_task,
+        "retry",
+        lambda **kw: retried.append(kw["countdown"]) or RuntimeError(),
+    )
+
+    with pytest.raises(RuntimeError):
+        tasks.send_alumneregninger_task("2026-08-01", "2026-08-31")
+    assert retried == [tasks.ECONOMIC_RETRY_COUNTDOWN]
+
+    assert tasks.send_alumneregninger_task("2026-08-01", "2026-08-31") == 1  # the retry: only the one left
+    assert {s.outcome for s in AlumneregningSend.objects.all()} == {"sent"}
+    assert len(mail.outbox) == 2

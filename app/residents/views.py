@@ -420,7 +420,8 @@ def _send_welcome_email(request: HttpRequest, resident: Resident) -> bool:
     """Welcome a newly created resident with a link to set their password (F-014). Best-effort — a
     mail failure must not undo the creation — but it is logged and reported, never swallowed: the
     caller reports delivery to the user, and a wrong DEFAULT_FROM_EMAIL (one.com refuses senders the
-    SMTP account is not an alias of) must not look like success. Returns whether the mail went out."""
+    SMTP account is not an alias of) must not look like success. Returns whether the mail was queued:
+    core.mail sends it, and a refusal then shows on the worker-jobs page and in Django admin's mail queue."""
     uid = urlsafe_base64_encode(force_bytes(resident.pk))
     token = default_token_generator.make_token(resident)
     set_link = request.build_absolute_uri(
@@ -684,7 +685,7 @@ def next_month_list(request: HttpRequest) -> HttpResponse | HttpResponseRedirect
                     _sync_month_roles(r.id, wg, ny, nm, False)
                 sent = _send_welcome_email(request, r)
                 base = f"{first} {last} oprettet og tilføjet til {ny}-{nm:02d}."
-                messages.success(request, f"{base} Velkomstmail sendt." if sent else base)
+                messages.success(request, f"{base} Velkomstmailen er sat i kø og sendes om lidt." if sent else base)
                 if not sent:
                     messages.warning(
                         request,

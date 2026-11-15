@@ -19,13 +19,14 @@ from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 
 from ak.models import AkEntry
+from core.models import OutgoingMail
 from residents.models import Residency, Resident, prev_period
 from residents.permissions import role_required
 from residents.views import DA_MONTHS, _parse_period, _period_options
 
 from . import alumneregning, economic, tasks
 from .forms import AlumneregningSettingsForm, EconomicAccountNumberForm
-from .models import AlumneregningBatch, AlumneregningSend, AlumneregningSettings
+from .models import AlumneregningSend, AlumneregningSettings
 
 
 class Row(NamedTuple):
@@ -245,7 +246,7 @@ def send_alumneregninger_view(request: HttpRequest) -> HttpResponse:
     date_from, date_to = period
     _warn_missing_account_numbers(request, date_from, date_to)
 
-    tasks.queue_alumneregninger(date_from, date_to)
+    tasks.send_alumneregninger_task.delay(date_from.isoformat(), date_to.isoformat())
     messages.success(
         request,
         f"Alumneregninger for {date_from.isoformat()} til {date_to.isoformat()} er sat i kø og sendes i "
@@ -271,10 +272,19 @@ def alumneregninger_status_view(request: HttpRequest) -> HttpResponse:
     date_from, date_to = period
 
     billable = list(alumneregning.residents_billable_for(date_from, date_to))
-    sends = {s.resident_id: s for s in AlumneregningSend.objects.filter(date_from=date_from, date_to=date_to)}
+    sends = {
+        s.resident_id: s
+        for s in AlumneregningSend.objects.filter(date_from=date_from, date_to=date_to).select_related("mail")
+    }
     rows = [(resident, sends.get(resident.pk)) for resident in billable]
-    done = sum(1 for _resident, send in rows if send is not None and send.outcome != "sending")
-    batch = AlumneregningBatch.objects.filter(date_from=date_from, date_to=date_to).first()
+    done = sum(1 for _resident, send in rows if send is not None)
+    queued = sum(
+        1
+        for _resident, send in rows
+        if send is not None
+        and send.mail is not None
+        and send.mail.status in (OutgoingMail.Status.QUEUED, OutgoingMail.Status.SENDING)
+    )
 
     return render(
         request,
@@ -285,8 +295,17 @@ def alumneregninger_status_view(request: HttpRequest) -> HttpResponse:
             "date_to": date_to,
             "done": done,
             "total": len(rows),
-            "running": batch is not None and batch.resume_at is not None,
-            "batch": batch,
+            "queued": queued,
+            "failed": sum(
+                1
+                for _resident, send in rows
+                if send is not None
+                and (
+                    send.outcome == "failed"
+                    or (send.mail is not None and send.mail.status == OutgoingMail.Status.FAILED)
+                )
+            ),
+            "rate_limit": settings.MAIL_RATE_LIMIT,
         },
     )
 

@@ -6,6 +6,7 @@ Workgroup/Cleaning come from `intern_alumne_workgroup` / `intern_alumne_cleaning
 
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 
 class Room(models.Model):
@@ -205,3 +206,39 @@ class ServiceHeartbeat(models.Model):
 
     def __str__(self) -> str:
         return f"{self.name} {self.beat_at:%Y-%m-%d %H:%M:%S}"
+
+
+class OutgoingMail(models.Model):
+    """One mail the app sends, kept until it is delivered (#397). EMAIL_BACKEND is core.mail.
+    OutboxBackend, so every send_mail lands here — in the same transaction as whatever caused it —
+    and core.tasks.deliver_mail hands it to the real backend (MAIL_DELIVERY_BACKEND) within
+    MAIL_RATE_LIMIT per MAIL_RATE_WINDOW, retrying until it goes through or is refused outright."""
+
+    class Status(models.TextChoices):
+        QUEUED = "queued", "I kø"
+        SENDING = "sending", "Sendes"
+        SENT = "sent", "Sendt"
+        FAILED = "failed", "Fejlede"
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    subject = models.TextField()
+    recipients = models.TextField()  # comma-separated, for the admin and the log
+    # The message itself (core.mail.serialize). Emptied once delivered: it can hold a password-reset
+    # link, or a statement PDF of several MB.
+    payload = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.QUEUED)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(default=timezone.now)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)  # what the rate limit counts
+    sent_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["status", "next_attempt_at"], name="outgoingmail_due"),
+            models.Index(fields=["last_attempt_at"], name="outgoingmail_attempted"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.subject} → {self.recipients} ({self.get_status_display()})"

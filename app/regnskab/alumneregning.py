@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import re
-import smtplib
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -12,9 +11,10 @@ from typing import Literal
 from django.conf import settings
 from django.core.mail import EmailMessage, get_connection
 from django.db import IntegrityError, transaction
-from django.db.models import F, QuerySet
+from django.db.models import F, Q, QuerySet
 from django.utils import timezone
 
+from core.models import OutgoingMail
 from residents.models import Residency, Resident
 
 from . import economic, ledger, statement_pdf
@@ -32,27 +32,12 @@ class AccountNameMismatch(Exception):
     mistyped kontonr., which would otherwise mail one alumne another's balance under their own name."""
 
 
-class MailThrottled(Exception):
-    """The mail server refuses everyone for now, as one.com does after ~25 mails in 5 minutes."""
-
-
-# 421: the server is closing the connection. 451: one.com's "4.7.1 [R2] Too many mails" (and greylisting,
-# which a later run gets past too). Any other 4xx — 450 mailbox busy, 452 mailbox full — is about the one
-# recipient, and fails just them: treating it as a throttle would stop every run at the same alumne.
-THROTTLE_CODES = frozenset({421, 451})
-
-
-def _is_throttled(exc: Exception) -> bool:
-    if isinstance(exc, smtplib.SMTPRecipientsRefused):
-        return bool(exc.recipients) and all(code in THROTTLE_CODES for code, _msg in exc.recipients.values())
-    return isinstance(exc, smtplib.SMTPResponseException) and exc.smtp_code in THROTTLE_CODES
-
-
 @dataclass(frozen=True)
 class AlumneregningResult:
     resident: Resident
     outcome: Outcome
     detail: str = ""
+    retryable: bool = False  # a failure that may pass if tried again shortly (e-conomic's rate limit)
 
 
 @dataclass(frozen=True)
@@ -167,32 +152,21 @@ def _prepare_one(
     return PreparedStatement(resident, account_number, entries, balance, pdf, body)
 
 
-def _send_one(
-    resident: Resident,
-    account_number: int,
-    date_from: date,
-    date_to: date,
-    mail_settings: AlumneregningSettings,
-) -> AlumneregningResult:
-    prepared = _prepare_one(resident, account_number, date_from, date_to, mail_settings, persist=True)
-
+def _email(prepared: PreparedStatement, date_from: date) -> EmailMessage:
     email = EmailMessage(
         subject="Alumneregning",
         body=prepared.body,
         from_email=f"Regnskabsgruppen <{settings.ALUMNEREGNING_FROM_EMAIL}>",
-        to=[resident.email],
+        to=[prepared.resident.email],
         connection=None
         if settings.ALUMNEREGNING_SEND_MAIL
         else get_connection("django.core.mail.backends.console.EmailBackend"),
     )
     email.attach(f"alumneregning-{date_from.isoformat()}.pdf", prepared.pdf, "application/pdf")
-    try:
-        email.send()
-    except Exception as exc:  # SMTP errors, a bad address, etc. must not abort the batch
-        if _is_throttled(exc):
-            raise MailThrottled(str(exc)) from exc
-        logger.warning("alumneregning: failed to mail resident %s: %s", resident.pk, exc)
-        return AlumneregningResult(resident, "failed", f"Kunne ikke sende mail: {exc}")
+    return email
+
+
+def _sent_detail(prepared: PreparedStatement) -> str:
     detail = (
         f"{len(prepared.entries)} posteringer, saldo {_kr(prepared.balance)} kr."
         if prepared.entries
@@ -200,91 +174,113 @@ def _send_one(
     )
     if not settings.ALUMNEREGNING_SEND_MAIL:
         detail += " Ikke mailet (test, ALUMNEREGNING_SEND_MAIL er slået fra): kun skrevet i loggen."
-    return AlumneregningResult(resident, "sent", detail)
+    return detail
 
 
-def _claim(resident: Resident, date_from: date, date_to: date) -> bool | None:
-    """Mark the alumne "sending" for this period, unless another run has them or they are already sent.
-    None: not ours. Otherwise whether the row is new — what _release needs to put it back. Both ways
-    are a single statement that only one of two concurrent runs can win."""
-    period = {"resident": resident, "date_from": date_from, "date_to": date_to}
-    if AlumneregningSend.objects.filter(**period, outcome="failed").update(outcome="sending"):
-        return False
+def _billed(date_from: date, date_to: date) -> QuerySet[AlumneregningSend]:
+    """Sends of the period that count as done: made and mailed, or with their mail still on its way.
+    A failure — of the statement or, in the end, of its mail — is tried again by the next run."""
+    return AlumneregningSend.objects.filter(date_from=date_from, date_to=date_to, outcome="sent").exclude(
+        mail__status=OutgoingMail.Status.FAILED
+    )
+
+
+def _retryable(resident: Resident, date_from: date, date_to: date) -> QuerySet[AlumneregningSend]:
+    return AlumneregningSend.objects.filter(resident=resident, date_from=date_from, date_to=date_to).filter(
+        Q(outcome="failed") | Q(mail__status=OutgoingMail.Status.FAILED)
+    )
+
+
+def _record(resident: Resident, date_from: date, date_to: date, outcome: Outcome, detail: str) -> bool:
+    """Write the alumne's outcome for the period, unless another run has billed them meanwhile.
+    Either way it is one statement only one of two concurrent runs can win: the update of a retryable
+    row, or the insert the unique constraint guards. Returns whether this run's outcome was written."""
+    if _retryable(resident, date_from, date_to).update(
+        outcome=outcome, detail=detail, mail=None, sent_at=timezone.now()
+    ):
+        return True
     try:
         with transaction.atomic():
-            AlumneregningSend.objects.create(**period, outcome="sending")
-    except IntegrityError:  # a row already there is "sent" or "sending"
-        return None
+            AlumneregningSend.objects.create(
+                resident=resident, date_from=date_from, date_to=date_to, outcome=outcome, detail=detail
+            )
+    except IntegrityError:  # billed by another run
+        return False
     return True
 
 
-def _release(resident: Resident, date_from: date, date_to: date, *, created: bool) -> None:
-    """Undo _claim for an alumne this run is leaving to a later one."""
-    rows = AlumneregningSend.objects.filter(resident=resident, date_from=date_from, date_to=date_to)
-    if created:
-        rows.delete()
-    else:
-        rows.update(outcome="failed")  # detail was left as the earlier failure's
+class _NotMailed(Exception):
+    pass
+
+
+def _bill(prepared: PreparedStatement, date_from: date, date_to: date) -> AlumneregningResult | None:
+    """Record the alumne as billed and queue their mail, in one transaction: a mail is only queued
+    with its row, and a row only written with its mail. None if another run billed them first."""
+    resident = prepared.resident
+    detail = _sent_detail(prepared)
+    email = _email(prepared, date_from)
+    with transaction.atomic():
+        if not _record(resident, date_from, date_to, "sent", detail):
+            return None
+        try:
+            email.send()  # through core.mail's outbox: stored here, sent after commit
+        except Exception as exc:  # only a backend that sends there and then (dev's console) gets here
+            raise _NotMailed(str(exc)) from exc  # rolls the "sent" row back with it
+        mail = getattr(email, "outgoing_mail", None)
+        if mail is not None:
+            AlumneregningSend.objects.filter(resident=resident, date_from=date_from, date_to=date_to).update(
+                mail=mail
+            )
+    return AlumneregningResult(resident, "sent", detail)
 
 
 def send_alumneregninger(date_from: date, date_to: date) -> list[AlumneregningResult]:
-    """Email every billable resident their statement, skipping anyone already billed for this exact
-    period, or being billed by another run of it (_claim) — so a retried/duplicate send (the task
-    re-running, the button pressed while a retry is pending) never bills someone twice. Best-effort:
-    one failing doesn't stop the rest. Stops with MailThrottled, leaving the rest waiting rather than
-    failed, for regnskab.tasks to run again."""
+    """Make every billable resident's statement and queue it to them, skipping anyone already billed
+    for this exact period — so a retried/duplicate send (the task re-running, the button pressed
+    twice) never bills someone twice. Best-effort: one failing doesn't stop the rest. The mails go out
+    from core.mail's outbox within the mail server's rate limit; the status page follows them there."""
     mail_settings = AlumneregningSettings.get_solo()
     results: list[AlumneregningResult] = []
     for resident in residents_billable_for(date_from, date_to):
-        created = _claim(resident, date_from, date_to)
-        if created is None:
+        if _billed(date_from, date_to).filter(resident=resident).exists():
             continue
         account_number = resident.economic_account_number
         assert account_number is not None  # noqa: S101  # nosec B101 — residents_billable_for filters on it
+        failure: AlumneregningResult | None = None
         try:
-            result = _send_one(resident, account_number, date_from, date_to, mail_settings)
+            prepared = _prepare_one(resident, account_number, date_from, date_to, mail_settings, persist=True)
+            result = _bill(prepared, date_from, date_to)
         except economic.EconomicAuthError as exc:
             logger.error("alumneregning: e-conomic access invalid/revoked: %s", exc)
-            _release(resident, date_from, date_to, created=created)
             raise  # affects every remaining alumne equally — stop the batch, don't repeat the error
-        except MailThrottled:
-            _release(resident, date_from, date_to, created=created)
-            raise  # before the catch-all below: the rest wait for the retry rather than fail
+        except _NotMailed as exc:
+            logger.warning("alumneregning: failed to mail resident %s: %s", resident.pk, exc)
+            failure = AlumneregningResult(resident, "failed", f"Kunne ikke sende mail: {exc}")
         except AccountNameMismatch as exc:
             logger.warning("alumneregning: account name mismatch for resident %s: %s", resident.pk, exc)
-            result = AlumneregningResult(resident, "failed", str(exc))
+            failure = AlumneregningResult(resident, "failed", str(exc))
         except economic.EconomicRateLimitError as exc:
             logger.warning("alumneregning: e-conomic rate limit for resident %s: %s", resident.pk, exc)
-            result = AlumneregningResult(
-                resident, "failed", "E-conomic rate-limit ramt — prøv at sende igen om lidt."
+            failure = AlumneregningResult(
+                resident, "failed", "E-conomic rate-limit ramt — prøves igen automatisk.", retryable=True
             )
         except economic.EconomicApiError as exc:
             logger.warning("alumneregning failed for resident %s: %s", resident.pk, exc)
             detail = (
                 f"Kontonr. {account_number} findes ikke i e-conomic." if exc.status_code == 404 else str(exc)
             )
-            result = AlumneregningResult(resident, "failed", detail)
+            failure = AlumneregningResult(
+                resident, "failed", detail, retryable=exc.status_code is None or exc.status_code >= 500
+            )
         except Exception as exc:  # anything unforeseen for one alumne must not strand everyone after them
             logger.exception("alumneregning: unexpected error for resident %s", resident.pk)
-            result = AlumneregningResult(resident, "failed", f"Uventet fejl: {exc}")
-        AlumneregningSend.objects.filter(resident=resident, date_from=date_from, date_to=date_to).update(
-            outcome=result.outcome, detail=result.detail, sent_at=timezone.now()
-        )
-        results.append(result)
+            failure = AlumneregningResult(resident, "failed", f"Uventet fejl: {exc}")
+        if failure is not None:
+            if _record(resident, date_from, date_to, "failed", failure.detail):
+                results.append(failure)
+        elif result is not None:
+            results.append(result)
     return results
-
-
-def fail_the_rest(date_from: date, date_to: date, detail: str) -> int:
-    """Give up on everyone billable for the period who has no outcome yet: they are marked failed, so
-    the status page stops saying they will be sent. Returns how many."""
-    handled = AlumneregningSend.objects.filter(date_from=date_from, date_to=date_to).values("resident_id")
-    waiting = residents_billable_for(date_from, date_to).exclude(pk__in=handled)
-    rows = [
-        AlumneregningSend(resident=r, date_from=date_from, date_to=date_to, outcome="failed", detail=detail)
-        for r in waiting
-    ]
-    AlumneregningSend.objects.bulk_create(rows, ignore_conflicts=True)
-    return len(rows)
 
 
 def preview_alumneregninger(date_from: date, date_to: date) -> list[PreviewRow]:
