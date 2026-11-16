@@ -56,7 +56,8 @@ Dropbox stays listed, as its copy may be the last. What is kept:
   until it is imported.
 
 Once the kept-out files are fixed, --retry-invalid sends them — and only them, with their sidecars —
-to their album. The server adds them to it rather than refusing an album that already exists,
+to their album: of one album folder, or without one, of every album with files waiting in invalid/
+(narrowed by --year/--year-range). The server adds them to it rather than refusing an album that already exists,
 storing only files it does not have (the same name with other content is a different photo and is
 kept). An album the script imported takes them locked; one made on the site has to be unlocked
 there first. What the server took is deleted; what is still invalid stays.
@@ -94,6 +95,7 @@ Usage:
     uv run scripts/import_dropbox_photo_albums.py --year 2019 --confirm
     uv run scripts/import_dropbox_photo_albums.py --retry-failed --year 2019  # send failed albums again
     uv run scripts/import_dropbox_photo_albums.py --retry-invalid .dropbox-photo-album-import/2019/Sommerfest
+    uv run scripts/import_dropbox_photo_albums.py --retry-invalid --year 2026   # every album of 2026
     uv run scripts/import_dropbox_photo_albums.py --send-dates --year-range 2001-2006
     uv run scripts/import_dropbox_photo_albums.py --rename-albums --year 2014   # --dry-run lists them
     uv run scripts/import_dropbox_photo_albums.py --overview   # NOT-ON-SERVER.md again, after a clean-up
@@ -114,6 +116,7 @@ every failure — with all its reasons — to <work-dir>/failures.log.
 """
 
 import argparse
+import difflib
 import io
 import json
 import os
@@ -158,6 +161,8 @@ UNREACHABLE_WAIT = 30  # seconds
 # A run stopped by an error (the server still not answering after those tries, a crash) starts again
 # from the top after this long (--restart-after), until it gets through or is stopped with Ctrl-C.
 RESTART_AFTER = 15  # minutes
+# --retry-invalid without a folder: every album with files waiting.
+ALL_ALBUMS = Path("<every album>")
 RUN_STOPPED = 75  # run()'s exit code for such a stop (EX_TEMPFAIL); the process exits 2 if not restarting
 QUEUED_TOO_LONG = 5 * 60  # seconds before a job that never starts gets a hint
 # What the server ignores in an archive (photo_album.services); everything else must be media.
@@ -2680,6 +2685,36 @@ def partly_sent(
 # --- Retrying the kept-out files of one album -----------------------------------------------------
 
 
+def album_folder(given: Path, work_dir: Path) -> Path:
+    """The album folder --retry-invalid was given, checked before anything is written: a mistake
+    in the command, said and exited on rather than run again later. Its invalid/ folder will do."""
+    album_dir = given.parent if given.name == "invalid" else given
+    if (album_dir / "album.json").is_file():
+        return album_dir
+    known = {
+        str(path.parent): path.parent
+        for root in {work_dir, album_dir.parent, album_dir.parent.parent}
+        for path in root.glob("*/*/album.json")
+    }
+    close = difflib.get_close_matches(str(album_dir), list(known), n=1, cutoff=0.6)
+    hint = f" Did you mean {close[0]}?" if close else ""
+    die(
+        f"{album_dir} is not an album folder this script wrote: it has no album.json. Album folders"
+        f" are <work-dir>/<year>/<album folder>.{hint}"
+    )
+
+
+def albums_waiting(work_dir: Path, selected: set[str]) -> list[Path]:
+    """Every album folder with files waiting in its invalid/ folder, in --year/--year-range if given."""
+    years = {same_path(year) for year in selected}
+    return [
+        manifest.parent
+        for manifest in sorted(work_dir.glob("*/*/album.json"))
+        if (not years or same_path(manifest.parent.parent.name) in years)
+        and waiting(manifest.parent)
+    ]
+
+
 def retry_invalid(
     server: Server, ledger: Ledger, options: Options, album_dir: Path
 ) -> int:
@@ -2698,7 +2733,8 @@ def retry_invalid(
             manifest["dropboxPath"],
         )
     except (OSError, ValueError, KeyError) as exc:
-        raise Fatal(
+        # This album's problem, not the run's: never a reason to stop and start again.
+        raise AlbumFailed(
             f"{album_dir} is not an album folder this script wrote (no readable album.json: {exc})."
         ) from exc
     folder = Folder(ledger, dropbox_path, album_dir)
@@ -3564,8 +3600,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--retry-invalid",
         type=Path,
+        nargs="?",
+        const=ALL_ALBUMS,
         metavar="ALBUM_DIR",
-        help="send the fixed files in <work-dir>/<year>/<album>/invalid to their album, and nothing else",
+        help="send the fixed files in <work-dir>/<year>/<album>/invalid to their album, and nothing"
+        " else; without ALBUM_DIR, those of every album (or of --year/--year-range)",
     )
     parser.add_argument(
         "--send-dates",
@@ -3660,10 +3699,14 @@ def run(args: argparse.Namespace) -> int:
         die(
             "--send-dates, --retry-invalid and --rename-albums are different runs; pass one of them."
         )
-    if args.retry_invalid:
-        album_dir = args.retry_invalid
-        if album_dir.name == "invalid":
-            album_dir = album_dir.parent
+    album_dir: Path | None = None
+    if args.retry_invalid and args.retry_invalid != ALL_ALBUMS:
+        if selected:
+            die(
+                "--retry-invalid takes an album folder or --year/--year-range, not both: without"
+                " the folder it goes through every album of those years."
+            )
+        album_dir = album_folder(args.retry_invalid, args.work_dir)
         args.work_dir = album_dir.parent.parent  # its logs are that work directory's
     args.work_dir.mkdir(parents=True, exist_ok=True)
     out.open_log(args.work_dir / "import.log", args.work_dir / "failures.log")
@@ -3691,24 +3734,44 @@ def run(args: argparse.Namespace) -> int:
         out.error(f"\n✗ {exc}")
         return stop_code(exc)
     if args.retry_invalid:
+        album_dirs = (
+            [album_dir] if album_dir else albums_waiting(options.work_dir, selected)
+        )
+        if album_dir is None:
+            out.info(
+                f"{len(album_dirs)} album(s) with files waiting in invalid/"
+                + (f" in {', '.join(sorted(selected))}" if selected else "")
+                + "."
+            )
+        failed = still_waiting = 0
         try:
-            return retry_invalid(server, ledger, options, album_dir)
+            for each in album_dirs:
+                try:
+                    if retry_invalid(server, ledger, options, each):
+                        still_waiting += 1
+                except (AlbumFailed, requests.RequestException, ValueError) as error:
+                    failure = (
+                        error
+                        if isinstance(error, AlbumFailed)
+                        else AlbumFailed(f"Unexpected answer: {error}")
+                    )
+                    out.failure(f"{each} (retry)", failure.summary, failure.details)
+                    failed += 1
         except KeyboardInterrupt:
             out.error("\n✗ Stopped. Run the same command again to send them.")
             return 130
-        except (AlbumFailed, requests.RequestException, ValueError) as error:
-            failure = (
-                error
-                if isinstance(error, AlbumFailed)
-                else AlbumFailed(f"Unexpected answer: {error}")
-            )
-            out.failure(f"{album_dir} (retry)", failure.summary, failure.details)
-            return 1
         except Fatal as exc:
-            out.failure(f"{album_dir} (retry)", str(exc), [])
+            out.failure("--retry-invalid", str(exc), [])
             return stop_code(exc)
         finally:
             report_not_on_server(ledger)
+        if album_dir is None and album_dirs:
+            out.heading("Summary")
+            out.info(
+                f"  {len(album_dirs) - failed - still_waiting} album(s) sent,"
+                f" {still_waiting} with nothing the server would accept yet, {failed} failed"
+            )
+        return 1 if failed or (album_dir and still_waiting) else 0
     if args.rename_albums:
         try:
             return rename_albums(server, state, options, selected)
