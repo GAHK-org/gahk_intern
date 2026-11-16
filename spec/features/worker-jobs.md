@@ -43,6 +43,9 @@ ran and how it went, and what is scheduled next. Under Administration → Worker
 - Sent, started and finished on one line, with the wait and the run time between them; a running
   job's share of its time limit.
 - Queue, worker, retries, arguments, parent and root job (linked), ETA, expiry, origin.
+- Its peak memory: the worker's own, and that of the largest program it ran (ffmpeg), with the
+  program's name. Measured as it runs, so a job killed for running out of memory shows what it had
+  reached. Only measured on the server; "–" where it was not.
 - Its sub-jobs: how many in each status, then the first 200 — those still queued included.
 - Its result, its traceback, and what it logged. While it runs, the page refreshes itself every 10
   seconds (while the tab is in view), showing its progress and what it has logged so far, at most

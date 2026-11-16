@@ -29,7 +29,7 @@ from typing import Any
 from celery.signals import before_task_publish, task_postrun, task_prerun
 from django.utils import timezone
 
-from . import job_progress
+from . import job_memory, job_progress
 
 # Enough for an import's list of left-out files; a task that logs more than this keeps its first
 # lines and a count of the rest, rather than growing one row without bound.
@@ -162,6 +162,7 @@ def _start(task_id: str | None = None, task: Any = None, **_: Any) -> None:  # n
     except Exception:
         logging.getLogger(__name__).warning("Could not record the start of task %s", task_id, exc_info=True)
         earlier = []
+    job_memory.reset()  # this job's peak, not the process's biggest job's
     job_progress.start(
         job_progress.LiveJob(task_id, capture.started_at, capture.lines, earlier),
         monitor=not getattr(request, "is_eager", False),
@@ -175,6 +176,8 @@ def _finish(task_id: str | None = None, task: Any = None, state: str | None = No
     live = job_progress.finish(task_id) if task_id else None
     if task_id is None or capture is None:
         return
+    if live is not None:  # the last reading of its own peak; its programs have ended
+        live.note_memory(job_memory.own_peak(), None)
     from .models import WorkerJobLog
 
     try:
@@ -192,6 +195,9 @@ def _finish(task_id: str | None = None, task: Any = None, state: str | None = No
         log.finished_at = timezone.now()
         if live is not None and live.fraction is not None:
             log.progress, log.progress_step, log.progressed_at = live.fraction, live.step, log.finished_at
+        if live is not None:
+            for name, value in job_progress.memory_fields(live).items():
+                setattr(log, name, value)
         log.save()
     except Exception:
         logging.getLogger(__name__).warning("Could not store the log of task %s", task_id, exc_info=True)
