@@ -1,0 +1,13 @@
+# MediaWiki's MariaDB. It is a Coolify-managed resource, so Coolify keeps its configuration, not
+# this repository: paste this file into the resource's custom MariaDB configuration and restart it
+# (DEPLOY.md §4f). Keep the two the same.
+[mysqld]
+# The cache of table and index pages. The default is 128M; the wiki has little traffic, and its
+# hot pages fit in less.
+innodb_buffer_pool_size = 64M
+# Aria is only used for MariaDB's internal temporary tables, and MyISAM not at all (the wiki's
+# tables are InnoDB): the default 128M for each is cache that has nothing to hold.
+aria_pagecache_buffer_size = 16M
+key_buffer_size = 8M
+# Already MariaDB's default; written down so that it stays off.
+performance_schema = OFF

@@ -9,15 +9,33 @@
 # Coolify pulls it before it stops the running containers (4.3.19 and later), so a redeploy by hand
 # gets the current `:main` too, and an unreachable registry fails the deploy with the old one still up.
 # IMAGE_TAG is for rolling back: set it to `sha-<commit>` in Coolify and redeploy; unset to follow main.
+#
+# MEMORY (DEPLOY.md §4f). The box has 4 GB, shared with Coolify, Postgres and MediaWiki. Each service
+# has a limit, so a job that runs away is killed inside its own container instead of the kernel
+# picking a victim on the whole box — which on 2026-11-15 sent Postgres into recovery and took the
+# site down. memswap_limit equal to mem_limit keeps the containers out of the swap, which is there
+# for everything else. The workers are also the kernel's first choice should the box still run
+# short (oom_score_adj), and their Celery child is replaced after a job that left it over
+# --max-memory-per-child (in KiB): Python keeps the peak of its biggest job otherwise.
+# MALLOC_ARENA_MAX=2 stops glibc from keeping a memory arena per thread, which inflates the threaded
+# processes (uvicorn's request threads, boto3's upload threads) without being used.
+#
+# `exec` makes the server itself the container's main process, so a stop reaches it as SIGTERM and
+# it shuts down cleanly. Behind a bare `sh -c`, sh got the SIGTERM, ignored it, and Docker killed
+# everything 10 seconds later: every stop or reboot ended in exit 137.
 services:
   web:
     image: ghcr.io/gahk-org/gahk_intern:${IMAGE_TAG:-main}
     restart: unless-stopped
     command: >-
       sh -c "python manage.py migrate --noinput &&
-             uvicorn config.asgi:application --host 0.0.0.0 --port 8000 --lifespan off --timeout-keep-alive 120"
+             exec uvicorn config.asgi:application --host 0.0.0.0 --port 8000 --lifespan off --timeout-keep-alive 120"
+    # One process (DEPLOY.md §4) using about 300 MB.
+    mem_limit: 768m
+    memswap_limit: 768m
     environment:
       PHOTO_ALBUM_CACHE_DIR: /app/cache
+      MALLOC_ARENA_MAX: "2"
     volumes:
       - media:/app/media       # uploaded files (room-inspection photos, relocated legacy images)
       # Local copies of photo-album thumbnails/HD images (photo_album.cache, ~5 GB at most). Only
@@ -59,7 +77,13 @@ services:
     command: >-
       sh -c "python core/heartbeat_check.py --reset default;
              until python manage.py migrate --check; do echo 'waiting for migrations'; sleep 3; done;
-             celery -A config worker -Q celery,thumbnails -n default@%h --loglevel=INFO --concurrency=1"
+             exec celery -A config worker -Q celery,thumbnails -n default@%h --loglevel=INFO --concurrency=1 --max-memory-per-child=300000"
+    # Two processes of about 150 MB each, and Pillow decoding photos for thumbnails.
+    mem_limit: 768m
+    memswap_limit: 768m
+    oom_score_adj: 500
+    environment:
+      MALLOC_ARENA_MAX: "2"
     # Without a healthcheck, Coolify counts a running container as "unknown", and one unknown
     # container shows the whole app as "Running (unknown)". core/heartbeat_check.py fails when
     # /health would call the process down, on the file core/heartbeat.py touches with every
@@ -82,7 +106,22 @@ services:
     command: >-
       sh -c "python core/heartbeat_check.py --reset media;
              until python manage.py migrate --check; do echo 'waiting for migrations'; sleep 3; done;
-             celery -A config worker -Q media -n media@%h --loglevel=INFO --concurrency=1"
+             exec celery -A config worker -Q media -n media@%h --loglevel=INFO --concurrency=1 --max-memory-per-child=400000"
+    # The limit is the two Celery processes plus ffmpeg, which runs inside this container and so
+    # counts towards it. An encode killed here is retried, and the item ends FAILED after its
+    # attempts, while the rest of the box keeps running.
+    mem_limit: 1536m
+    memswap_limit: 1536m
+    oom_score_adj: 500
+    # An encode takes both vCPUs for hours. cpus keeps half of one free for the site whatever
+    # happens; cpu_shares, well under the default of 1024, gives this container a low CPU weight, so
+    # the rest of the box goes first when it wants the CPU while the encode still has all of it at
+    # night. `nice` would not do this: it ranks processes inside one container, not containers
+    # against each other.
+    cpus: 1.5
+    cpu_shares: 256
+    environment:
+      MALLOC_ARENA_MAX: "2"
     # As worker's. The heartbeat keeps beating through a 15-minute encode, so a long job is no failure.
     healthcheck:
       <<: *heartbeat-healthcheck
@@ -96,7 +135,12 @@ services:
     command: >-
       sh -c "python core/heartbeat_check.py --reset beat;
              until python manage.py migrate --check; do echo 'waiting for migrations'; sleep 3; done;
-             celery -A config beat --loglevel=INFO"
+             exec celery -A config beat --loglevel=INFO"
+    # One process of about 150 MB; it only sends messages.
+    mem_limit: 256m
+    memswap_limit: 256m
+    environment:
+      MALLOC_ARENA_MAX: "2"
     # As worker's.
     healthcheck:
       <<: *heartbeat-healthcheck
