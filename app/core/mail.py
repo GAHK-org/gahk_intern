@@ -7,8 +7,8 @@ else was sent meanwhile — a password reset, a welcome mail — was lost with t
 
 So EMAIL_BACKEND is OutboxBackend, which only stores each message as an OutgoingMail, in the caller's
 transaction, and queues core.tasks.deliver_mail once that commits. deliver() sends what is due, in
-order, through MAIL_DELIVERY_BACKEND (the real one), never more than MAIL_RATE_LIMIT within
-MAIL_RATE_WINDOW. A throttle or a server that is down stops it with the mail still queued; a refusal
+order, through MAIL_DELIVERY_BACKEND (the real one). Bulk mail goes out last, and only while fewer
+than MAIL_RATE_LIMIT mails went out within MAIL_RATE_WINDOW; other mail goes out at once. A throttle or a server that is down stops it with the mail still queued; a refusal
 that may pass later is retried with a growing wait; a refusal outright fails the mail, and the job
 with it, so it shows on the worker-jobs page instead of only in the log.
 """
@@ -116,8 +116,8 @@ _bulk = contextvars.ContextVar("core.mail.bulk", default=False)
 @contextlib.contextmanager
 def bulk() -> Iterator[None]:
     """Mail queued inside this is bulk — the same mail to many, like a month's alumneregninger. It
-    goes out after any other due mail, and only within MAIL_BULK_LIMIT of the window, so a password
-    reset never waits behind a monthly send."""
+    goes out after any other due mail, and only within MAIL_RATE_LIMIT, so a password reset never
+    waits behind a monthly send."""
     token = _bulk.set(True)
     try:
         yield
@@ -196,20 +196,16 @@ def classify(exc: Exception) -> Verdict:
 
 def quota_wait(now: datetime, *, bulk: bool = False) -> timedelta | None:
     """None if a mail may go out now; otherwise how long until the window has room for a full batch
-    again — waiting for one slot at a time would run the job once per mail. A bulk mail must also
-    fit within MAIL_BULK_LIMIT, which keeps the rest of the window free for everything else."""
+    again — waiting for one slot at a time would run the job once per mail. Only bulk mail is held:
+    it goes out while fewer than MAIL_RATE_LIMIT mails of any kind went out within the window, and
+    everything else goes out at once, whatever the count — a password reset never waits for a slot."""
+    if not bulk:
+        return None
     attempted = OutgoingMail.objects.filter(last_attempt_at__gt=now - settings.MAIL_RATE_WINDOW)
-    limits = [(attempted, settings.MAIL_RATE_LIMIT)]
-    if bulk:
-        limits.append((attempted.filter(bulk=True), settings.MAIL_BULK_LIMIT))
-    waits = []
-    for counted, limit in limits:
-        if counted.count() >= limit:
-            newest: datetime = counted.order_by("-last_attempt_at").values_list("last_attempt_at", flat=True)[
-                0
-            ]  # type: ignore[assignment]
-            waits.append(newest + settings.MAIL_RATE_WINDOW - now)
-    return max(waits, default=None)
+    if attempted.count() < settings.MAIL_RATE_LIMIT:
+        return None
+    newest: datetime = attempted.order_by("-last_attempt_at").values_list("last_attempt_at", flat=True)[0]  # type: ignore[assignment]
+    return newest + settings.MAIL_RATE_WINDOW - now
 
 
 @contextlib.contextmanager

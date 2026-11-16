@@ -228,7 +228,7 @@ class OutgoingMail(models.Model):
     payload = models.JSONField(default=dict, blank=True)
     bulk = models.BooleanField(
         default=False
-    )  # queued inside core.mail.bulk(): sent last, within MAIL_BULK_LIMIT
+    )  # queued inside core.mail.bulk(): sent last, within MAIL_RATE_LIMIT
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.QUEUED)
     attempts = models.PositiveSmallIntegerField(default=0)
     next_attempt_at = models.DateTimeField(default=timezone.now)

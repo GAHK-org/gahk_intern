@@ -26,7 +26,6 @@ def _outbox() -> Iterator[None]:
         EMAIL_BACKEND="core.mail.OutboxBackend",
         MAIL_DELIVERY_BACKEND="django.core.mail.backends.locmem.EmailBackend",
         MAIL_RATE_LIMIT=3,
-        MAIL_BULK_LIMIT=2,
     ):
         cache.delete(tasks._RESUME_SCHEDULED)
         yield
@@ -92,8 +91,9 @@ def test_the_mail_is_delivered_as_it_was_written() -> None:
 
 
 @pytest.mark.django_db
-def test_no_more_than_the_rate_limit_go_out_in_a_window() -> None:
-    _queue(5)
+def test_no_more_bulk_mail_than_the_rate_limit_goes_out_in_a_window() -> None:
+    with outbox.bulk():
+        _queue(5)
 
     result = outbox.deliver()
 
@@ -106,30 +106,39 @@ def test_no_more_than_the_rate_limit_go_out_in_a_window() -> None:
 
 
 @pytest.mark.django_db
+def test_other_mail_is_never_held_by_the_rate_limit() -> None:
+    _queue(5)
+
+    result = outbox.deliver()
+
+    assert result.sent == 5
+    assert result.resume_in is None
+
+
+@pytest.mark.django_db
 def test_other_mail_goes_out_before_bulk_queued_earlier() -> None:
     with outbox.bulk():
         send_mail("Alumneregning", "Tekst", "regnskab@gahk.dk", ["alumne@gahk.dk"])
     send_mail("Nulstil kodeord", "Tekst", "autosvar@gahk.dk", ["beboer@gahk.dk"])
-    settings_limit_one = override_settings(MAIL_RATE_LIMIT=1)
 
-    with settings_limit_one:
-        outbox.deliver()
+    outbox.deliver()
 
-    assert [m.subject for m in mail.outbox] == ["Nulstil kodeord"]
+    assert [m.subject for m in mail.outbox] == ["Nulstil kodeord", "Alumneregning"]
 
 
 @pytest.mark.django_db
-def test_bulk_mail_leaves_room_in_the_window_for_everything_else() -> None:
-    """A password reset during a monthly send goes out at once, not after the bulk mail."""
+def test_a_password_reset_during_a_monthly_send_goes_out_at_once() -> None:
+    """And counts against the bulk mail's room, so together they stay below one.com's limit."""
     with outbox.bulk():
-        _queue(3)
+        _queue(4)
 
-    assert outbox.deliver().sent == 2  # MAIL_BULK_LIMIT, of a MAIL_RATE_LIMIT of 3
+    assert outbox.deliver().sent == 3  # MAIL_RATE_LIMIT
     send_mail("Nulstil kodeord", "Tekst", "autosvar@gahk.dk", ["beboer@gahk.dk"])
     result = outbox.deliver()
 
     assert result.sent == 1
     assert mail.outbox[-1].subject == "Nulstil kodeord"
+    assert result.resume_in is not None
     assert OutgoingMail.objects.filter(bulk=True, status=Status.QUEUED).count() == 1
 
 

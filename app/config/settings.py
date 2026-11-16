@@ -533,15 +533,14 @@ LOGIN_REDIRECT_URL = "dashboard"
 LOGOUT_REDIRECT_URL = "login"
 
 # Email — defaults to the console backend in dev (prints instead of sending). SMTP from env in prod.
-# Every mail is stored first and sent by a job within the rate limit below (core.mail, #397);
+# Every mail is stored first and sent by a job (core.mail, #397);
 # MAIL_DELIVERY_BACKEND is what that job sends through, and what the env's EMAIL_BACKEND sets.
 EMAIL_BACKEND = "core.mail.OutboxBackend"
 MAIL_DELIVERY_BACKEND = os.environ.get("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
-# one.com refuses the account after ~25 mails in 5 minutes; this leaves room below it.
-MAIL_RATE_LIMIT = int(os.environ.get("MAIL_RATE_LIMIT", "20"))
-# What bulk mail (core.mail.bulk: alumneregninger, ølkælder overviews) may use of that, so the rest is
-# always free for a password reset or a welcome mail — which go out first anyway.
-MAIL_BULK_LIMIT = int(os.environ.get("MAIL_BULK_LIMIT", "10"))
+# one.com refuses the account after ~25 mails in 5 minutes. Only bulk mail (core.mail.bulk:
+# alumneregninger, ølkælder overviews) is held to this, counting every mail sent in the window; a
+# password reset or a welcome mail goes out at once, in the room this leaves below one.com's limit.
+MAIL_RATE_LIMIT = int(os.environ.get("MAIL_RATE_LIMIT", "10"))
 MAIL_RATE_WINDOW = timedelta(minutes=5)
 EMAIL_HOST = os.environ.get("SMTP_HOST", "")
 EMAIL_HOST_USER = os.environ.get("SMTP_USER", "")

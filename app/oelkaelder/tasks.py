@@ -77,7 +77,7 @@ def send_monthly_statements() -> int:
                 f"Saldo ved månedens udgang: {_kr(_balance_at(shopper, upper))} kr",
             ]
         )
-        with outbox.bulk():  # one to every shopper: after any other mail, within MAIL_BULK_LIMIT
+        with outbox.bulk():  # one to every shopper: after any other mail, within MAIL_RATE_LIMIT
             sent += send_mail(
                 f"Ølkælderoversigt for {_month_name(start)}",
                 body,
