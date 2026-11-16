@@ -645,6 +645,9 @@ NOTICE_IMAGE_MAX_MB = int(os.environ.get("NOTICE_IMAGE_MAX_MB", "5"))
 # post to another.
 EVENT_IMAGE_MAX_MB = int(os.environ.get("EVENT_IMAGE_MAX_MB", "5"))
 
+# Photos on a Reparationer ticket or note. Its own setting for the same reason as the ones above.
+REPAIR_IMAGE_MAX_MB = int(os.environ.get("REPAIR_IMAGE_MAX_MB", "5"))
+
 # The ceiling for an ANIMATED image, which cuts across the per-feature caps above rather than
 # joining them, because what it answers is a question about the FORMAT.
 #

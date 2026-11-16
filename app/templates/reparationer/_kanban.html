@@ -23,17 +23,32 @@
       </div>
       <div class="kanban-col-body" data-drop>
         {% for task in tasks %}
+          {% comment %}
+            data-age colours the card by how long it has sat in this column (models.RepairTask.
+            column_age): yellow then red the longer it sits, green once Færdig. A move resets it;
+            reparationer.ts sets the new column's colour the moment a drop is accepted rather than
+            waiting for the live refresh.
+          {% endcomment %}
+          {% with age=task.column_age %}
           <div class="kanban-card" id="kanban-task-{{ task.pk }}" data-task-id="{{ task.pk }}"
-               data-move-url="{% url 'reparationer:set_status' task.pk %}">
+               data-move-url="{% url 'reparationer:set_status' task.pk %}"
+               {% if age %}data-age="{{ age }}"{% endif %}>
             <h3><a href="{% url 'reparationer:detail' task.pk %}">{{ task.title }}</a></h3>
             {% if task.location %}<p class="muted">{{ task.location }}</p>{% endif %}
             {% if task.description %}<p>{{ task.description|links|linebreaksbr }}</p>{% endif %}
             <p class="chip chip-quiet">Ansvarlig: {{ task.get_responsible_display }}</p>
+            {% if age and age != "done" %}
+              <p class="kanban-age" data-age-label>
+                {% with days=task.days_in_column %}{{ days }} dag{{ days|pluralize:"e" }} i {{ label|lower }}{% endwith %}
+              </p>
+            {% endif %}
             <p class="muted">
               Meldt af {{ task.reported_by.first_name }} · {{ task.created_at|date:"j. M" }}
               {% if task.comment_count %}· <a href="{% url 'reparationer:detail' task.pk %}">{{ task.comment_count }} note{{ task.comment_count|pluralize:"r" }}</a>{% endif %}
+              {% if task.image_count %}· <span title="{{ task.image_count }} billede{{ task.image_count|pluralize:"r" }}">📷 {{ task.image_count }}</span>{% endif %}
             </p>
           </div>
+          {% endwith %}
         {% endfor %}
         {% comment %}
           Always rendered, hidden while the column has cards: a drag can empty a column without a
