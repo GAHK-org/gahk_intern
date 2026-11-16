@@ -681,3 +681,24 @@ def test_jobs_whose_worker_died_under_them_are_closed_as_failed() -> None:
     assert _status("ancient")[1] is not None
     assert _status("slow")[0] == "STARTED"
     assert _status("done")[0] == "SUCCESS"
+
+
+@pytest.mark.usefixtures("celery_tables")
+def test_a_redelivered_job_still_running_is_not_closed_as_lost() -> None:
+    """GOPR6565.MP4: the first run's worker died, the message came back under the same id, and
+    the record still said "started 8½ hours ago" — so close_lost_jobs closed the running encode."""
+    from celery.app.task import Context
+
+    from core import worker_logs
+    from core.tasks import close_lost_jobs
+
+    first_start = timezone.now() - timedelta(hours=8, minutes=30)
+    _record("encode", first_start, state="FAILURE", finished_at=first_start + timedelta(hours=4))
+    _started_row("encode", DERIVATIVES)  # Celery's row for the second run
+    task = type("FakeTask", (), {"name": DERIVATIVES, "request": Context()})()
+
+    worker_logs._start(task_id="encode", task=task)
+    worker_logs._current.set(None)
+
+    assert close_lost_jobs.run() == 0
+    assert _status("encode")[0] == "STARTED"

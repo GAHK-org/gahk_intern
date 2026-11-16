@@ -354,3 +354,30 @@ def test_the_temporary_admin_test_email_is_removed_from_the_stored_schedule() ->
 
     assert list(PeriodicTask.objects.values_list("name", flat=True)) == ["other"]
     assert "send-admin-dummy-notification" not in settings.CELERY_BEAT_SCHEDULE
+
+
+@pytest.mark.django_db
+def test_a_job_started_again_under_its_id_is_timed_from_this_start() -> None:
+    """A retry, or a message redelivered after its worker died, runs under the same task id. The
+    record kept the first run's start and end, so a running job looked hours old — and finished."""
+    task = type("FakeTask", (), {"name": "photo_album.tasks.build_media_derivatives"})()
+    task.request = Context(argsrepr="(42,)")
+    first_start = timezone.now() - timedelta(hours=8)
+    WorkerJobLog.objects.create(
+        task_id="encode",
+        task_name=task.name,
+        state="FAILURE",
+        started_at=first_start,
+        finished_at=first_start + timedelta(hours=4),
+        lines=[{"message": "Converting GOPR6565.MP4 (3,7 GB)"}],
+    )
+
+    before = timezone.now()
+    worker_logs._start(task_id="encode", task=task)
+    worker_logs._current.set(None)  # as _finish would; the job is still running here
+
+    record = WorkerJobLog.objects.get(task_id="encode")
+    assert record.state == "STARTED"
+    assert record.started_at >= before
+    assert record.finished_at is None
+    assert record.lines == [{"message": "Converting GOPR6565.MP4 (3,7 GB)"}]  # why it ran again
