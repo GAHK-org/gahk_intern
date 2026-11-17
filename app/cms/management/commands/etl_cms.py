@@ -1,8 +1,9 @@
 """ETL: legacy gahk_page / gahk_news / gahk_pylon_calendar -> cms models (F-006/07/08).
 
 Pages get a `slug` seeded from the legacy routes.php named-route map (public URLs preserved for 301s).
-News/pylon dates rebuilt from their day/month/year (+ epoch). Content is imported as-is — it is GAHK's
-own copy and there is no runtime editing (F-006), so it stays code/fixture-managed afterwards.
+News/pylon dates rebuilt from their day/month/year (+ epoch). Titles are imported as plain text and
+bodies through cms.sanitize, the same as the Hjemmeside editor saves them. Legacy /public/image/
+references stay as they are; the sync moves them into the image library (cms.legacy_images).
 """
 
 import datetime
@@ -12,6 +13,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from cms.models import NewsItem, Page, PylonEvent
+from cms.sanitize import clean_html, plain_text_from_html
 from core.etl import epoch_to_dt, fetch_all
 
 # legacy routes.php: page id -> public slug (kept verbatim for SEO)
@@ -54,8 +56,9 @@ class Command(BaseCommand):
                 defaults={
                     "menu_category": p["menuCat"] or 0,
                     "slug": SLUG_BY_PAGE_ID.get(p["id"]),  # None when unmapped (NULL allows many)
-                    "header": (p["header"] or "").strip(),
-                    "body": p["text"] or "",
+                    # Plain text and sanitized HTML, as everything the editor saves is.
+                    "header": plain_text_from_html(p["header"])[:255],
+                    "body": clean_html(p["text"]) or "",
                     "background_image": (p["bgpic"] or "").strip(),
                 },
             )
@@ -75,8 +78,8 @@ class Command(BaseCommand):
             NewsItem.objects.update_or_create(
                 id=n["id"],
                 defaults={
-                    "title": (n["title"] or "").strip(),
-                    "body": n["text"] or "",
+                    "title": plain_text_from_html(n["title"])[:255],
+                    "body": clean_html(n["text"]) or "",
                     "published_at": published,
                 },
             )

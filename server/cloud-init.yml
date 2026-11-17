@@ -1,6 +1,6 @@
 #cloud-config
 # For a NEW Coolify server: paste this into "Cloud config" when creating it in Hetzner's console.
-# On first boot it applies server/setup.sh (swap, earlyoom; DEPLOY.md §4f) from main, then installs
+# On first boot it applies server/setup.sh (swap, earlyoom; DEPLOY.md §4g) from main, then installs
 # Coolify with its own installer. What is left is Coolify's own setup in its web interface and the
 # resources it runs (DEPLOY.md §4). The running server does not need this: run setup.sh there.
 runcmd:

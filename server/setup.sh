@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The Coolify server's own settings, which no container can make: swap, the kernel's use of it, and
-# earlyoom. DEPLOY.md §4f says why. Safe to run again: each step checks what is already in place.
+# earlyoom. DEPLOY.md §4g says why. Safe to run again: each step checks what is already in place.
 #
 # On the running server, from a checkout:   ssh root@<server> 'bash -s' < server/setup.sh
 # On a new server: server/cloud-init.yml runs it on first boot.

@@ -10,7 +10,7 @@
 # gets the current `:main` too, and an unreachable registry fails the deploy with the old one still up.
 # IMAGE_TAG is for rolling back: set it to `sha-<commit>` in Coolify and redeploy; unset to follow main.
 #
-# MEMORY (DEPLOY.md §4f). The box has 4 GB, shared with Coolify, Postgres and MediaWiki. Each service
+# MEMORY (DEPLOY.md §4g). The box has 4 GB, shared with Coolify, Postgres and MediaWiki. Each service
 # has a limit, so a job that runs away is killed inside its own container instead of the kernel
 # picking a victim on the whole box — which on 2026-11-15 sent Postgres into recovery and took the
 # site down. memswap_limit equal to mem_limit keeps the containers out of the swap, which is there

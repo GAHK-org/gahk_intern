@@ -1,6 +1,6 @@
 # MediaWiki's MariaDB. It is a Coolify-managed resource, so Coolify keeps its configuration, not
 # this repository: paste this file into the resource's custom MariaDB configuration and restart it
-# (DEPLOY.md §4f). Keep the two the same.
+# (DEPLOY.md §4g). Keep the two the same.
 [mysqld]
 # The cache of table and index pages. The default is 128M; the wiki has little traffic, and its
 # hot pages fit in less.
