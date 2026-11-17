@@ -19,6 +19,8 @@ urlpatterns = [
     path("django-admin/", admin.site.urls),
     path("optagelse/", include("admissions.urls")),
     path("admin/", include("residents.urls_admin")),  # site-admin tools (roles, worker jobs, …)
+    # The editor for gahk.dk's content (cms). gahk.dk's "Rediger siden" links to hjemmeside/sider/<id>/.
+    path("hjemmeside/", include("cms.urls")),
     # The subscribable calendar feed carries no auth decorator — the token in the path is the
     # credential (see events.views.calendar_feed). gahk.dk passes its old /kalender/ URLs through
     # to this one, so feeds handed out before the move keep refreshing.
@@ -39,9 +41,9 @@ urlpatterns = [
     # DEBUG-only serving would 404 these in prod, so this route is unconditional.
     #
     # It is also where uploads are gated. /media/ used to be public by URL, as the legacy /public/
-    # images were; now only core.media.PUBLIC_PREFIXES ("cms/", the images the public site's pages
-    # embed) is anonymous and everything else needs a session. Note ølkælder is NOT public-site
-    # content despite the name — it lives under /oelkaelder/.
+    # images were; now only core.media.PUBLIC_PREFIXES (the ølkælder till's product photos) is
+    # anonymous and everything else needs a session — the website's images included, since gahk.dk
+    # serves its own copies of them.
     re_path(r"^media/(?P<path>.*)$", serve_media, name="media"),
     # photo_album's own media route (photo_album.storage.PhotoAlbumS3Storage.url() points here) —
     # a presigned bucket URL is a bearer token good for an hour with no further check, and
