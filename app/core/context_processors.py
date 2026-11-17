@@ -13,6 +13,7 @@ from events.access import roles_allowed as events_allowed
 from gahkflix.access import roles_allowed as gahkflix_allowed
 from opslagstavle.access import roles_allowed as opslagstavle_allowed
 from photo_album.access import roles_allowed as photo_album_allowed
+from postkasser.access import has_any as has_any_mailbox
 from residents.permissions import CMS_EDITOR_ROLES, KITCHEN, can_preview, effective_roles
 
 # Public site nav, matching the legacy gahk.dk menu (labels + order). Paths on PUBLIC_SITE_URL.
@@ -44,10 +45,11 @@ NavItem = tuple[str, str, str]  # (url, label, icon-key from the base.html sprit
 NavSection = tuple[str, list[NavItem]]
 
 
-def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
+def _nav_intern(roles: Collection[str], user_pk: int, *, has_mailbox: bool = False) -> list[NavSection]:
     """Internal menu grouped into sidebar sections, built from the *effective* role set: base items for
     every resident plus each embedsgruppe's admin tools. Each item is (url, label, icon); empty sections
-    are dropped. Honors the preview override (roles come from effective_roles)."""
+    are dropped. Honors the preview override (roles come from effective_roles). `has_mailbox` is
+    computed by the caller, which has the request: the menu only needs the answer."""
     if KITCHEN in roles:  # the kitchen account sees only what core.middleware.KitchenAccountGate lets through
         return [
             (
@@ -104,6 +106,10 @@ def _nav_intern(roles: Collection[str], user_pk: int) -> list[NavSection]:
         grupper.append((reverse("oelkaelder:admin"), "Ølkælder-admin", "beer"))
     if "regnskab" in roles:
         grupper.append((reverse("regnskab:overview"), "Regnskab", "receipt"))
+    # Only for someone who can open at least one group mailbox (by embedsgruppe this month or by role),
+    # so nobody is offered a page that would be empty — see postkasser.access.has_any.
+    if has_mailbox:
+        grupper.append((reverse("postkasser:index"), "Postkasser", "inbox"))
     # Open to every resident, same as Opslagstavlen: reporting a repair needs no role. Reppergruppen
     # manages the board once inside — see reparationer.views.MANAGE_ROLES.
     vaerktoejer: list[NavItem] = [
@@ -179,7 +185,9 @@ def navigation(request: HttpRequest) -> dict[str, object]:
     authed = request.user.is_authenticated
     roles = effective_roles(request) if authed else set()
     previewer = can_preview(request.user) if authed else False
-    nav_intern = _nav_intern(roles, request.user.pk or 0) if authed else []
+    # The kitchen account never sees group mailboxes (and its menu is built without them), so skip the query.
+    mailbox = authed and KITCHEN not in roles and has_any_mailbox(request)
+    nav_intern = _nav_intern(roles, request.user.pk or 0, has_mailbox=mailbox) if authed else []
     ctx: dict[str, object] = {
         # The public site's menu, for the few public-looking pages still rendered here (optagelse,
         # the CSRF failure page). Its pages live on gahk.dk now, so the links go there.

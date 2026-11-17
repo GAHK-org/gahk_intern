@@ -87,6 +87,7 @@ GROUPS: tuple[tuple[str, str], ...] = (
     ("posts", "Opslagstavlen"),
     ("events", "Begivenheder"),
     ("repairs", "Reparationer"),
+    ("mail", "Postkasser"),
     ("gahkflix", "GAHKFlix"),
     ("mentions", "Nævnt"),
     ("system", "System"),
@@ -101,6 +102,7 @@ GROUP_ICONS: dict[str, str] = {
     "posts": "board",
     "events": "calendar",
     "repairs": "wrench",
+    "mail": "inbox",
     "gahkflix": "film",
     "mentions": "users",
 }
@@ -119,6 +121,9 @@ EVENTS_CHANGES = "events.changes"
 EVENTS_PERSONAL = "events.personal"
 EVENTS_COMMENTS = "events.comments"
 REPAIRS = "repairs"
+MAIL_NEW_SAG = "mail.new_sag"
+MAIL_ASSIGNED_REPLY = "mail.assigned_reply"
+MAIL_ASSIGNED = "mail.assigned"
 GAHKFLIX_NEW = "gahkflix.new"
 GAHKFLIX_CAST = "gahkflix.cast"
 GAHKFLIX_UPLOADS = "gahkflix.uploads"
@@ -190,6 +195,22 @@ def _build() -> tuple[Category, ...]:
             "Når nogen kommenterer en begivenhed, du er vært for.",
         ),
         Category(REPAIRS, "Reparationer", "repairs", "Nye og overdragede reparationer for din gruppe."),
+        Category(
+            MAIL_NEW_SAG,
+            "Nye sager i gruppens postkasse",
+            "mail",
+            "Når der kommer en ny sag i en postkasse, din gruppe har adgang til.",
+            importance=Importance.LAV,
+        ),
+        Category(
+            MAIL_ASSIGNED_REPLY,
+            "Nyt svar på dine sager",
+            "mail",
+            "Når der kommer en ny mail på en sag, du er ansvarlig for.",
+        ),
+        Category(
+            MAIL_ASSIGNED, "Sager du får ansvaret for", "mail", "Når en anden gør dig ansvarlig for en sag."
+        ),
         Category(GAHKFLIX_NEW, "Nye videoer", "gahkflix", "Når en ny video udgives på GAHKFlix."),
         Category(GAHKFLIX_CAST, "Når du medvirker", "gahkflix", "Når du bliver krediteret i en video."),
         Category(

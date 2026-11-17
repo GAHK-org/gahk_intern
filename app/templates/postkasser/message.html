@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}{{ msg }} - {{ mailbox.name }}{% endblock %}
+{% block content_width %}max-w-4xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Grupper & konti · Postkasser · {{ mailbox.name }}</p>
+      <h1>{{ rendered.subject|default:"(intet emne)" }}</h1>
+    </div>
+    <div class="head-actions">
+      <a class="btn" href="{% url 'postkasser:reply' mailbox.slug msg.pk %}">Svar</a>
+      <a class="btn btn-secondary" href="{% url 'postkasser:reply' mailbox.slug msg.pk %}?alle=1">Svar alle</a>
+      <form method="post" action="{% url 'postkasser:message_unread' mailbox.slug msg.pk %}" class="inline">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-secondary">Markér som ulæst</button>
+      </form>
+      {% if msg.thread_id %}<a class="btn btn-secondary" href="{% url 'postkasser:thread' mailbox.slug msg.thread_id %}">‹ Til sagen</a>{% endif %}
+      <a class="btn btn-secondary" href="{% url 'postkasser:board' mailbox.slug %}">‹ Til tavlen</a>
+    </div>
+  </div>
+
+  <div class="card-flat card-pad mb-4">
+    <p><strong>Fra:</strong> {{ rendered.from_header }}</p>
+    <p><strong>Til:</strong> {{ rendered.to }}</p>
+    {% if rendered.cc %}<p><strong>Cc:</strong> {{ rendered.cc }}</p>{% endif %}
+    <p><strong>Dato:</strong> {{ msg.date|date:"j. M Y H:i" }}</p>
+    <p><strong>Mappe:</strong> {{ msg.folder.display_name }}</p>
+  </div>
+
+  {% if move_targets %}
+    <form method="post" action="{% url 'postkasser:move_message' mailbox.slug msg.pk %}" class="board-search mb-4"
+          onsubmit="var o = this.mappe.selectedOptions[0]; return !o || !o.dataset.confirm || confirm(o.dataset.confirm);">
+      {% csrf_token %}
+      <label for="mappe" class="text-sm">Flyt til mappe</label>
+      <select name="mappe" id="mappe">
+        {% for folder in move_targets %}
+          <option value="{{ folder.pk }}"{% if folder.removes %} data-confirm="Mailen lægges i mappen «{{ folder.move_label }}» i one.com. Sagen fjernes fra boardet, hvis det var dens sidste mail."{% endif %}>{{ folder.indent }}{{ folder.move_label }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn btn-secondary">Flyt</button>
+    </form>
+  {% endif %}
+
+  {% if history %}
+    <ul class="muted text-sm mb-4">
+      {% for event in history %}
+        <li>{{ event.get_action_display }} af {{ event.resident.full_name|default:"en slettet bruger" }} · {{ event.created_at|date:"j. M H:i" }}</li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  {% if rendered.has_remote_images and not show_images %}
+    <p class="muted text-sm mb-2">
+      Billeder fra internettet er skjult, så afsenderen ikke kan se at mailen er åbnet.
+      <a href="?billeder=1">Vis billeder</a>
+    </p>
+  {% endif %}
+
+  {% comment %}
+    `frame` is HTML written by a stranger. It goes into an attribute, where autoescape is what keeps
+    it inert: NEVER add |safe here. The sandbox has no allow-scripts and no allow-same-origin.
+  {% endcomment %}
+  <iframe sandbox="allow-popups allow-popups-to-escape-sandbox" srcdoc="{{ frame }}"
+          title="Mailens indhold" class="card-flat"
+          style="width:100%;min-height:60vh;border:1px solid #ddd;background:#fff"></iframe>
+
+  {% if rendered.attachments %}
+    <h2 class="mt-4">Vedhæftninger</h2>
+    <ul>
+      {% for att in rendered.attachments %}
+        <li><a href="{% url 'postkasser:attachment' mailbox.slug msg.pk att.index %}">{{ att.filename }}</a> <span class="muted text-sm">({{ att.size|filesizeformat }})</span></li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+{% endblock %}
