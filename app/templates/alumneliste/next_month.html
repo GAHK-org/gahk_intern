@@ -98,6 +98,12 @@
             <option value="">— vælg —</option>
             {% for a in available %}<option value="{{ a.id }}" {% if existing_draft.resident == a.id %}selected{% endif %}>{{ a.full_name }} ({{ a.email }})</option>{% endfor %}
           </select>
+          <label>Erstatter <span class="muted">(valgfri)</span></label>
+          <select name="replaces">
+            <option value="">— ingen —</option>
+            {% for r in next_rows %}<option value="{{ r.resident_id }}" {% if existing_draft.replaces == r.resident_id %}selected{% endif %}>{{ r.resident.full_name }} ({{ r.room.number|stringformat:"03d" }})</option>{% endfor %}
+          </select>
+          <p class="muted">Fjerner beboeren fra listen. Værelse, embedsgruppe og rengøring, du ikke vælger, overtages fra vedkommende.</p>
           <label>Værelse</label>
           <select name="room"><option value="">— vælg —</option>{% for room in rooms %}<option value="{{ room.id }}" {% if existing_draft.room == room.id %}selected{% endif %}>{{ room.number|stringformat:"03d" }}</option>{% endfor %}</select>
           <label>Embedsgruppe</label>
@@ -118,6 +124,12 @@
           <label>E-mail</label><input type="email" name="email" value="{{ new_draft.email|default:"" }}">
           <label>Telefon <span class="muted">(valgfri)</span></label><input type="tel" name="phone" maxlength="40" value="{{ new_draft.phone|default:"" }}">
           <label>Fødselsdag <span class="muted">(valgfri)</span></label><input type="date" name="birthday" value="{{ new_draft.birthday|default:"" }}">
+          <label>Erstatter <span class="muted">(valgfri)</span></label>
+          <select name="replaces">
+            <option value="">— ingen —</option>
+            {% for r in next_rows %}<option value="{{ r.resident_id }}" {% if new_draft.replaces == r.resident_id %}selected{% endif %}>{{ r.resident.full_name }} ({{ r.room.number|stringformat:"03d" }})</option>{% endfor %}
+          </select>
+          <p class="muted">Fjerner beboeren fra listen. Værelse, embedsgruppe og rengøring, du ikke vælger, overtages fra vedkommende.</p>
           <label>Værelse</label>
           <select name="room"><option value="">— vælg —</option>{% for room in rooms %}<option value="{{ room.id }}" {% if new_draft.room == room.id %}selected{% endif %}>{{ room.number|stringformat:"03d" }}</option>{% endfor %}</select>
           <label>Embedsgruppe</label>
