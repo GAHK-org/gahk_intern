@@ -907,3 +907,69 @@ request. Everyone is logged out of the wiki once (its old gahk.dk cookies are ma
 - Python: **dev is 3.14, prod image pins 3.13** (Django 5.2's supported range; psycopg wheels).
 - Static: WhiteNoise `CompressedManifestStaticFilesStorage` in prod (hashed/cached); `collectstatic` runs at image build.
 - The `gahk_dk` DB account is shared by App A, App B, and MediaWiki — rotating its password touches all three.
+
+## Transition (temporary — removed in phase 3)
+While gahk.dk's DNS still points at the Coolify server, this version also answers **gahk.dk** — with
+the old public site — and carries logins over from the old code instead of logging everyone out. All
+of it is `app/transition/` (+ `app/templates/transition/`, `app/tests/test_transition.py`, the
+"Transition" block at the end of `config/settings.py` and this section), and none of it outlives the
+switch: phase 3 reverts it. **Until then this replaces §7's steps 3-4 and its "everyone is logged out
+once".**
+
+**Phase 0 (done):** intern.gahk.dk and wiki.gahk.dk point at the Coolify server; the old code answers
+on `https://intern.gahk.dk/intern/`.
+
+**Phase 1 — deploy this version** to the Coolify app that still has the domains `gahk.dk`,
+`www.gahk.dk` and `intern.gahk.dk`; at the same time the wiki app moves to `https://wiki.gahk.dk`
+(root layout) and loses its gahk.dk/wiki route, so gahk.dk/wiki/… reaches this app. Environment, on
+top of §2:
+```
+TRANSITION_PUBLIC_HOSTS=gahk.dk,www.gahk.dk           # these hosts get the old public site
+DJANGO_ALLOWED_HOSTS=intern.gahk.dk,gahk.dk,www.gahk.dk
+CSRF_TRUSTED_ORIGINS=https://intern.gahk.dk,https://gahk.dk,https://www.gahk.dk
+GAHK_WEB_URL=https://hetznerdemo.gahk.dk              # the new site, published to while DNS waits
+GAHK_WEB_KEY=…                                        # §4f
+# TURNSTILE_SITE_KEY / TURNSTILE_SECRET_KEY            # the old forms' captcha, if the old deploy had it
+```
+What gahk.dk then answers (`transition/urls_public.py`):
+- `/`, page addresses (former addresses 301 to the page), `/begivenheder/`: the old site with the old
+  menu, built from today's content; its pictures are library images, anonymous at `/media/cms/…` on
+  this host only. Old picture addresses `/static/legacy/image/…` and `/public/image/…` 302 to the
+  library copy (`CmsImage.legacy_path`; 404 when not imported). No visit counter.
+- `/optagelse/`, `ansoeg`, `fremlej` (and their old POST targets): the old forms; an application goes
+  straight into intern's database, with the usual auto-reply.
+- GET/HEAD `/intern`, `/intern/…`, `/nyintern…`: gahk_web's "Den Hurtige er flyttet" page (a browser
+  goes on to `https://intern.gahk.dk/<path without the prefix>`; the old installed app shows how to
+  reinstall). Other methods: 308 there.
+- 308 to intern.gahk.dk, same path and query: `/admin…`, `/django-admin…`, `/photo-album/…`, other
+  `/media/…`, `/health`, `/healthz`, `/optagelse/listansoegninger|eksport|showAnsoegning/…|setasreceived/…|kasser/…`.
+- 308 to wiki.gahk.dk with gahk_web's mapping: `/wiki` → `/`; `/wiki/index.php`, `load.php`,
+  `images/`, … → the same at the root; any other `/wiki/<title>` → `/wiki/<title>`.
+- Served as before: `/kalender/<token>.ics`, `/sw.js` (the old installed app keeps its pushes until
+  the switch), `/static/…`. `robots.txt` and `favicon.ico` are 404, as on the old site.
+
+The old ".gahk.dk" session cookie is left alone on gahk.dk. On intern.gahk.dk a request with it and
+without our own cookie has its session moved to a new key under `__Host-intern_sessionid` (the old row
+deleted, the old cookie expired), so a logged-in user stays logged in. Every session this version
+saves is marked; an old key is accepted once, and a marked session never under the old name.
+
+Check: `https://gahk.dk/` shows the old front page with pictures; a page, `/begivenheder/`, a test
+application under `/optagelse/ansoeg` (then delete it in the list); `https://gahk.dk/intern/` in a
+browser lands on `https://intern.gahk.dk/` still logged in; `curl -sI -X POST https://gahk.dk/intern/x`
+is a 308; `https://gahk.dk/wiki/` → `https://wiki.gahk.dk/`.
+
+**Phase 2 — the switch.** Right before repointing gahk.dk (+ www) to Hetzner Webhosting (gahk_web's
+`DEPLOY.md`), end every session the old code saved — from then on its ".gahk.dk" cookie reaches the
+webhost:
+```
+python manage.py end_legacy_sessions --dry-run   # "would end N old session(s) and keep M"
+python manage.py end_legacy_sessions             # idempotent; run it again right after the switch
+```
+Then switch DNS, and remove `gahk.dk`/`www.gahk.dk` from the Coolify domains once it has moved
+(their certificates could not renew). The old installed app then gets gahk_web's own copy of the
+"flyttet" page and its self-removing service worker.
+
+**Phase 3 — remove the transition:** `git revert` this PR's commits (no migrations, no models, no
+`SESSION_ENGINE` change, so nothing in the database needs undoing; the mark left in session data is
+ignored), and set `GAHK_WEB_URL=https://gahk.dk`, drop `TRANSITION_PUBLIC_HOSTS` and `TURNSTILE_*`,
+and take gahk.dk/www out of `DJANGO_ALLOWED_HOSTS` and `CSRF_TRUSTED_ORIGINS`.
