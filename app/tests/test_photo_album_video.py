@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from io import StringIO
+from pathlib import Path
 
 import pytest
 from django.core.files.base import ContentFile
@@ -54,6 +55,33 @@ def test_a_large_video_is_scaled_down_to_the_viewer_size(make_resident: Callable
     assert build_derivatives(media)
 
     assert stored_video_dimensions(media.high_definition) == (1600, 900)
+
+
+@pytest.mark.django_db
+def test_the_viewer_copy_is_stored_from_disk_not_read_into_memory(
+    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On 2026-11-15 a 4 GB film encoded for three hours, and then its MP4 was read into memory
+    whole to be stored: the worker died at 1.4 GB, and took the server's memory with it."""
+    from photo_album import services
+
+    media = _video(make_resident, "film.mp4", sized_mp4_bytes(320, 240))
+    stored: list[Path] = []
+    store = services._store_variants
+
+    def store_and_look(media: Media, variants: services.Variants) -> None:
+        # A file still open in the encode's directory, not bytes in memory.
+        path = Path(variants.high_definition.file.name)
+        assert path.is_file()
+        stored.append(path)
+        store(media, variants)
+
+    monkeypatch.setattr(services, "_store_variants", store_and_look)
+
+    assert build_derivatives(media)
+
+    assert stored_video_dimensions(media.high_definition) == (320, 240)
+    assert not stored[0].exists()  # the directory went once the copy was stored
 
 
 @pytest.mark.django_db
