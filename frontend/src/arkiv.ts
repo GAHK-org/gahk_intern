@@ -1,3 +1,4 @@
+import { csrfToken as csrf } from './htmx-csrf'
 import { previewImage, thumbnailImage } from './imageupload'
 
 /**
@@ -26,11 +27,6 @@ async function hashFile(file: File): Promise<string> {
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('')
-}
-
-function csrf(): string {
-  const m = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]*)/)
-  return m ? decodeURIComponent(m[1]) : ''
 }
 
 async function postJSON(url: string, body: unknown): Promise<Response> {

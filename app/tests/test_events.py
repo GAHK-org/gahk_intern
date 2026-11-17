@@ -44,7 +44,7 @@ from notifications import categories
 from notifications.models import Notification
 from residents.models import Resident, Role
 
-EVENTS = "/intern/begivenheder/"
+EVENTS = "/begivenheder/"
 
 
 def settings_media_root() -> object:
@@ -866,9 +866,9 @@ def test_the_notification_links_to_the_event_not_the_list(
 
     event = Event.objects.get()
     assert Notification.objects.get().url == f"{EVENTS}{event.pk}"
-    assert pushes[0][1]["url"] == f"{EVENTS}{event.pk}"
+    assert pushes[0][1]["url"] == push.absolute(f"{EVENTS}{event.pk}")
     # A tap goes through the open link, which marks the row seen and then redirects to `url`.
-    assert str(pushes[0][1]["open"]).startswith("/intern/notifikationer/aabn/")
+    assert str(pushes[0][1]["open"]).startswith(push.absolute("/notifikationer/aabn/"))
 
 
 def test_a_resident_without_a_phone_still_hears_about_a_new_event(
@@ -2183,6 +2183,20 @@ def test_the_uid_is_stable_and_identical_in_download_and_feed(beboer: Resident) 
     assert uid in in_feed
 
 
+def test_the_url_follows_the_intranet_host_but_the_uid_keeps_gahk_dk(
+    beboer: Resident, settings: object
+) -> None:
+    """The intranet moved from gahk.dk/intern/ to intern.gahk.dk. The URL is where the event opens,
+    so it moves with it; the UID is what every subscribed calendar keys on, so it must not."""
+    settings.SITE_URL = "https://intern.gahk.dk"  # type: ignore[attr-defined]
+    event = make_event(beboer)
+    unfolded = icalendar_mod.one_event(event).replace("\r\n ", "")
+
+    assert f"URL:https://intern.gahk.dk/begivenheder/{event.pk}\r\n" in unfolded
+    assert f"UID:begivenhed-{event.pk}@gahk.dk\r\n" in unfolded
+    assert "/intern/" not in unfolded
+
+
 def test_editing_the_time_increments_sequence_in_the_file(beboer: Resident) -> None:
     event = make_event(beboer)
     assert "SEQUENCE:0" in icalendar_mod.one_event(event)
@@ -2634,7 +2648,7 @@ def test_the_event_page_lists_the_posts_about_it(client: Client, beboer: Residen
 
     assert "Omtalt på opslagstavlen" in body
     assert len(response.context["notices"]) == 1
-    assert f"/intern/opslagstavle/{response.context['notices'][0].pk}" in body
+    assert f"/opslagstavle/{response.context['notices'][0].pk}" in body
     # The excerpt, not just the byline: on an event with two or three posts about it, what the post
     # says is the only thing that lets a reader pick. And rendered, so no `**` reaches the page.
     assert "Vi spiser sammen." in body

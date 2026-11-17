@@ -1,4 +1,4 @@
-"""Arkiv URLs, mounted under /intern/arkiv/ by residents.urls."""
+"""Arkiv URLs, mounted under /arkiv/ by residents.urls."""
 
 from django.urls import path
 

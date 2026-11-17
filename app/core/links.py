@@ -39,8 +39,9 @@ from .mentions import MENTION_RE, is_group, profile_url
 MAX_LINK_TEXT = 42
 
 # The scanner. `mailto:` addresses are wanted (someone pastes a mail address and it should be
-# clickable), and the default fuzzy matching is what catches a bare `gahk.dk/intern` written without
-# a scheme — which is how people actually type an internal link to each other.
+# clickable), and the default fuzzy matching is what catches a bare `intern.gahk.dk` (or the old
+# `gahk.dk/intern`) written without a scheme — which is how people actually type an internal link to
+# each other.
 _LINKIFY = LinkifyIt()
 
 _SCHEME = re.compile(r"^[a-z][a-z0-9+.\-]*://", re.IGNORECASE)

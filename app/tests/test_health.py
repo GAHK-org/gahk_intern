@@ -23,7 +23,7 @@ PROCESSES = ["default", "media", "beat"]
 def _processes(settings: object) -> None:
     settings.HEALTH_PROCESSES = PROCESSES
     # A host production would never list: the probe must get through ALLOWED_HOSTS regardless.
-    settings.ALLOWED_HOSTS = ["gahk.dk"]
+    settings.ALLOWED_HOSTS = ["intern.gahk.dk"]
 
 
 @pytest.fixture

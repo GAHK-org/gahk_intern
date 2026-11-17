@@ -41,19 +41,11 @@ COPY skins/      /var/www/html/skins/
 
 COPY LocalSettings.php /var/www/html/LocalSettings.php
 
-# $wgScriptPath is "/wiki" (the legacy URL, preserved per DEPLOY.md §7.3) but the image serves
-# MediaWiki from the document root. Whether the reverse proxy strips the /wiki prefix decides which
-# of /index.php or /wiki/index.php actually reaches Apache — so serve both. With this alias the
-# container is correct either way, instead of depending on a proxy behaviour we would otherwise have
-# to discover by trial and error in production.
-RUN printf '%s\n' \
-      'Alias /wiki /var/www/html' \
-      '<Directory /var/www/html>' \
-      '    Require all granted' \
-      '    AllowOverride All' \
-      '</Directory>' \
-      > /etc/apache2/conf-available/gahk-wiki-alias.conf \
-    && a2enconf gahk-wiki-alias \
+# Pages at /wiki/<title> and the main page at /, from the root of wiki.gahk.dk: apache-wiki.conf.
+# It replaces the base image's catch-all short-url.conf, so the two never both apply.
+COPY apache-wiki.conf /etc/apache2/conf-available/gahk-wiki.conf
+RUN a2disconf short-url \
+    && a2enconf gahk-wiki \
     && a2enmod rewrite
 
 # session.upload_progress is disabled as defence in depth against CVE-2026-109619 (it is PHP's own
