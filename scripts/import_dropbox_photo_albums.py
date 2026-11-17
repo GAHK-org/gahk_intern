@@ -52,7 +52,8 @@ What is kept:
   is a file the server refuses on reading it, after which the rest is sent again.
 - Metadata (.DS_Store, AppleDouble sidecars, Thumbs.db, …) is sent with the album. The server keeps
   each photo's sidecar with it; a copy of the rest — what it reports skipping — is saved in
-  <work-dir>/<year>/<album>/metadata/. A duplicate it skips needs no copy: the album has the file.
+  <work-dir>/<year>/<album>/metadata/. A file it skips as one its album has already (the same name
+  and bytes) is on the server, and not listed.
 - Files beside the album folders in a year folder, and beside the year folders in the Dropbox root,
   are saved in <work-dir>/<year>/_not-in-an-album/ and <work-dir>/_not-in-a-year-folder/.
 - Of an album that fails, what is not in its invalid/ stays in <work-dir>/<year>/<album>/failed.zip
@@ -366,7 +367,6 @@ FILE_KINDS = {
     "refused": "Refused by the server when it read them",
     "outside": "Outside the album folders",
     "metadata": "Metadata the server did not keep",
-    "duplicate": "Duplicates the server skipped: the album has the same file",
 }
 ALBUM_KINDS = {
     "failed": "Album folders that failed",
@@ -381,8 +381,8 @@ def same_path(path: str) -> str:
 
 class Ledger:
     """Every file in Dropbox that is not on the server, keyed by its Dropbox path: why, and where its
-    copy is in the work directory — none for a duplicate, whose content the album has. Also every
-    album folder that did not get onto the server.
+    copy is in the work directory. Also every album folder that did not get onto the server. A file
+    the server skips as one the album of its path has already is on the server, so not on it.
 
     Written out as NOT-ON-SERVER.md after every run, for a person to go through. A copy deleted
     there is one dealt with: it is listed apart, and not fetched again. A file the server takes
@@ -401,6 +401,13 @@ class Ledger:
             try:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
                 self.files, self.albums = data["files"], data["albums"]
+                # Lists written before held the duplicates the server skipped, as "duplicate": those
+                # files are on the server, in the album of their path.
+                self.files = {
+                    path: entry
+                    for path, entry in self.files.items()
+                    if entry["kind"] != "duplicate"
+                }
             except (ValueError, KeyError) as exc:
                 die(
                     f"{self.path} is not a list this script wrote ({exc}). Move it away to start it over."
@@ -1503,7 +1510,6 @@ class Outgoing:
     album: str  # the album it is sent to by name, or "" for the server to name it as it descends
     # Name in the ZIP -> path below the Dropbox folder.
     members: dict[str, tuple[str, ...]]
-    sizes: dict[tuple[str, ...], int] = field(default_factory=dict)  # by that path
 
 
 @dataclass
@@ -1634,7 +1640,7 @@ def without(
         partial.unlink(missing_ok=True)
         raise Fatal(f"Cannot write {partial}: {exc}") from exc
     partial.replace(outgoing.path)
-    return Outgoing(outgoing.path, plan.name, members, outgoing.sizes)
+    return Outgoing(outgoing.path, plan.name, members)
 
 
 def by_member(
@@ -2018,9 +2024,9 @@ def keep_what_the_server_left(
     save: Callable[[dict[str, str]], None] | None = None,
     strike: bool = True,
 ) -> set[str]:
-    """After an import: keep a copy of the metadata the server skipped, and list the duplicates it
-    skipped; strike what it stored off the list, deleting any copy of it. Returns the members on
-    the server — stored, or skipped as the same file as one it has.
+    """After an import: keep a copy of the metadata the server skipped; strike what it stored, or
+    skipped as the same file as one the album has, off the list, deleting any copy of it. Returns
+    the members on the server — stored, or skipped as the same file as one it has.
 
     `save` keeps those copies (from the ZIP sent, unless given); `strike` False leaves the list
     as it is for what was stored, when it is not known exactly what was sent.
@@ -2030,23 +2036,13 @@ def keep_what_the_server_left(
     on_server: set[str] = set()
     for name, path in sent.members.items():
         why = skipped.get(name)
-        duplicate = DUPLICATE.fullmatch(why) if why else None
         if why is None:
             if strike:
                 folder.ledger.on_server(folder.dropbox(path))
             on_server.add(name)
-        elif why == ALREADY_THERE or duplicate:
+        elif why == ALREADY_THERE or DUPLICATE.fullmatch(why):
+            # In the album of its path already, or the same file as another sent with it there.
             folder.ledger.on_server(folder.dropbox(path))
-            earlier = sent.members.get(duplicate["earlier"]) if duplicate else None
-            folder.ledger.file(
-                folder.dropbox(path),
-                "duplicate",
-                f"the same file as {shown(earlier)}, which the server stored"
-                if earlier
-                else "the album on the server had the same file already",
-                copy=None,
-                size=sent.sizes.get(path, 0),
-            )
             on_server.add(name)
         else:
             metadata[name] = metadata_why(why, path, folder)
@@ -2080,7 +2076,6 @@ def fetch_what_the_server_left(
         path = PurePosixPath(same_path(entry.path_display[cut:])).parts
         name = shown(below(path, prefix)) if by_name else f"{folder_name}/{shown(path)}"
         sent.members.setdefault(name, path)
-        sent.sizes[path] = entry.size
         found[path] = entry
 
     def save(whys: dict[str, str]) -> None:
@@ -2812,7 +2807,6 @@ def retry_invalid(
                 ):
                     shutil.copyfileobj(data, copy, CHUNK_SIZE)
                 outgoing.members[name] = path
-                outgoing.sizes[path] = source.stat().st_size
         partial.replace(archive)
     except OSError as exc:
         partial.unlink(missing_ok=True)
@@ -3498,8 +3492,8 @@ def strike_gone_albums(
 
 def moved_where(client: dropbox.Dropbox, ledger: Ledger, path: str) -> str | None:
     """Where in Dropbox the listed file once at `path` is now: a file of the same name elsewhere,
-    with the same content — Dropbox's hash of the copy kept here — or, where none is kept (a
-    duplicate, one dealt with), the same size. Dropbox's search goes by name, so a file renamed
+    with the same content — Dropbox's hash of the copy kept here — or, where none is kept (one
+    dealt with), the same size. Dropbox's search goes by name, so a file renamed
     as well is not found, and one moved a moment ago may not be yet."""
     entry = ledger.get(path)
     if entry is None:
