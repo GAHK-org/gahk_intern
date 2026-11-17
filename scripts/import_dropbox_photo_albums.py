@@ -1510,6 +1510,7 @@ class Outgoing:
     album: str  # the album it is sent to by name, or "" for the server to name it as it descends
     # Name in the ZIP -> path below the Dropbox folder.
     members: dict[str, tuple[str, ...]]
+    sizes: dict[tuple[str, ...], int] = field(default_factory=dict)  # by that path
 
 
 @dataclass
@@ -1640,7 +1641,7 @@ def without(
         partial.unlink(missing_ok=True)
         raise Fatal(f"Cannot write {partial}: {exc}") from exc
     partial.replace(outgoing.path)
-    return Outgoing(outgoing.path, plan.name, members)
+    return Outgoing(outgoing.path, plan.name, members, outgoing.sizes)
 
 
 def by_member(
@@ -2076,6 +2077,7 @@ def fetch_what_the_server_left(
         path = PurePosixPath(same_path(entry.path_display[cut:])).parts
         name = shown(below(path, prefix)) if by_name else f"{folder_name}/{shown(path)}"
         sent.members.setdefault(name, path)
+        sent.sizes[path] = entry.size
         found[path] = entry
 
     def save(whys: dict[str, str]) -> None:
@@ -2807,6 +2809,7 @@ def retry_invalid(
                 ):
                     shutil.copyfileobj(data, copy, CHUNK_SIZE)
                 outgoing.members[name] = path
+                outgoing.sizes[path] = source.stat().st_size
         partial.replace(archive)
     except OSError as exc:
         partial.unlink(missing_ok=True)
