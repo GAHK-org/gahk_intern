@@ -35,7 +35,7 @@ from opslagstavle.models import (
 )
 from residents.models import Residency, Resident, Role, active_period
 
-BOARD = "/intern/opslagstavle/"
+BOARD = "/opslagstavle/"
 pytestmark = pytest.mark.django_db
 
 
@@ -133,7 +133,7 @@ def test_the_board_requires_login(client: Client) -> None:
     response = client.get(BOARD)
 
     assert response.status_code == 302
-    assert "/intern/admin/login" in response["Location"]
+    assert "/admin/login" in response["Location"]
 
 
 def test_every_resident_can_read_and_post(client: Client, beboer: Resident) -> None:
@@ -162,7 +162,7 @@ def test_a_resident_who_cannot_open_den_hurtige_can_still_use_the_board(
     monkeypatch.setattr(den_hurtige_access, "ACCESS_ROLES", (Role.ADMINISTRATOR, Role.INSPEKTION))
     client.force_login(beboer)
 
-    assert client.get("/intern/den-hurtige/").status_code == 403
+    assert client.get("/den-hurtige/").status_code == 403
     assert client.get(BOARD).status_code == 200
 
 
@@ -173,7 +173,7 @@ def test_the_sidebar_advertises_the_board_and_the_page_opens_for_the_same_user(
     two halves cannot drift apart."""
     client.force_login(beboer)
 
-    assert BOARD in client.get("/intern/").content.decode()
+    assert BOARD in client.get("/").content.decode()
     assert client.get(BOARD).status_code == 200
 
 
@@ -1379,7 +1379,7 @@ def test_the_notification_links_to_the_post_not_the_board(
     client.post(BOARD + "opret", {"category": Category.NYT, "body": "x"})
 
     notice = Notice.objects.get()
-    assert pushes[0][1]["url"] == f"{BOARD}{notice.pk}"
+    assert pushes[0][1]["url"] == push.absolute(f"{BOARD}{notice.pk}")
     assert Notification.objects.get().url == f"{BOARD}{notice.pk}"
 
 
@@ -1918,10 +1918,10 @@ def test_the_sidebar_only_advertises_the_board_to_those_who_can_open_it(
 ) -> None:
     """A visible link that answers 403 is worse than no link."""
     client.force_login(beboer)
-    assert BOARD not in client.get("/intern/").content.decode()
+    assert BOARD not in client.get("/").content.decode()
 
     client.force_login(inspektion)
-    assert BOARD in client.get("/intern/").content.decode()
+    assert BOARD in client.get("/").content.decode()
 
 
 def test_clearing_access_roles_opens_it_to_every_resident(
@@ -1935,7 +1935,7 @@ def test_clearing_access_roles_opens_it_to_every_resident(
     monkeypatch.setattr(access, "ACCESS_ROLES", None)  # the one documented edit
 
     assert client.get(BOARD).status_code == 200
-    assert BOARD in client.get("/intern/").content.decode()  # and the sidebar follows
+    assert BOARD in client.get("/").content.decode()  # and the sidebar follows
 
 
 def test_preview_as_a_plain_resident_is_locked_out(
@@ -2059,7 +2059,7 @@ def test_the_card_links_to_the_event(client: Client, beboer: Resident, events_op
     body = client.get(BOARD).content.decode()
 
     assert "Fællesspisning i gården" in body
-    assert f"/intern/begivenheder/{event.pk}" in body
+    assert f"/begivenheder/{event.pk}" in body
 
 
 def test_a_private_event_cannot_be_linked(client: Client, beboer: Resident, events_open: None) -> None:
@@ -2150,7 +2150,7 @@ def test_no_event_chip_while_begivenheder_is_behind_its_own_gate(
     body = client.get(BOARD).content.decode()
 
     assert "Fællesspisning i gården" not in body
-    assert f"/intern/begivenheder/{event.pk}" not in body
+    assert f"/begivenheder/{event.pk}" not in body
 
 
 def test_the_event_field_is_absent_while_begivenheder_is_gated(

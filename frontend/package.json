@@ -8,6 +8,11 @@
     "watch": "vite build --watch"
   },
   "dependencies": {
+    "@tiptap/core": "3.32.0",
+    "@tiptap/extension-image": "3.32.0",
+    "@tiptap/extension-link": "3.32.0",
+    "@tiptap/pm": "3.32.0",
+    "@tiptap/starter-kit": "3.32.0",
     "@uppy/aws-s3": "6.2.2",
     "@uppy/core": "6.2.0",
     "alpinejs": "^3.14.8",

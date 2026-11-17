@@ -1,0 +1,45 @@
+{% load static %}
+<!doctype html>
+<html lang="da">
+<head>
+  <meta charset="utf-8">
+  {% include "_csp_upgrade.html" %}
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}GAHK Intern{% endblock %}</title>
+  <link rel="icon" href="{% static 'legacy/image/elements/lamassu.svg' %}" type="image/svg+xml">
+  <meta name="robots" content="noindex">
+  <link rel="stylesheet" href="{% static 'dist/app.css' %}">
+  <script src="{% static 'dist/app.js' %}" defer></script>
+</head>
+{% comment %}
+  The intranet's pages for a visitor who is not logged in: login, password reset and the CSRF
+  failure page. Standalone on purpose — base.html is the logged-in shell (sidebar, menu, push),
+  and the public website is gahk.dk's, rendered by gahk_web.
+{% endcomment %}
+<body class="min-h-screen flex flex-col bg-gray-50 text-gray-900">
+  <header class="bg-emerald-800 text-white shadow">
+    <div class="max-w-5xl mx-auto w-full px-4 h-20 flex items-center gap-3">
+      <a href="{% url 'dashboard' %}" class="flex items-center gap-3 no-underline">
+        <img src="{% static 'legacy/image/elements/lamassu.svg' %}" alt="" width="64" height="64"
+             class="h-14 w-14 sm:h-16 sm:w-16 object-contain shrink-0">
+        <span class="text-lg sm:text-xl font-semibold tracking-wide text-white">GAHK Intern</span>
+      </a>
+      <span class="flex-1"></span>
+      <a href="{{ public_site_url }}/" class="text-xs uppercase tracking-wide text-white/70 hover:text-white no-underline whitespace-nowrap">Til gahk.dk&nbsp;›</a>
+    </div>
+  </header>
+
+  <main class="flex-1 w-full max-w-3xl mx-auto px-6 py-8">
+    {% if messages %}
+      {% for m in messages %}
+        <div class="mb-4 rounded p-3 border {% if m.tags == 'error' %}bg-red-50 text-red-700 border-red-200{% else %}bg-emerald-50 text-emerald-800 border-emerald-200{% endif %}">{{ m }}</div>
+      {% endfor %}
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="bg-gray-100 text-gray-500 text-xs text-center py-5">
+    G. A. Hagemanns Kollegium · Kristianiagade 10 · 2100 København Ø
+  </footer>
+</body>
+</html>

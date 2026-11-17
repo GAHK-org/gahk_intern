@@ -1,10 +1,11 @@
-"""Public application forms (F-001).
+"""The field rules for an application (F-001): what a tour (rundvisning) or sublet (fremleje)
+request must contain to be stored.
 
-Explicit fields (kills the legacy mass-assignment), server-side validation, a honeypot for spam.
-(reCAPTCHA/Turnstile to be wired with keys — see TODO in views.) gender is male/female/other.
+The forms people fill in are on gahk.dk (gahk_web), which keeps the same fields and choices. Its
+submissions reach intern as untrusted data in the outbox, and admissions.services validates every
+one with these forms before anything is stored — exactly as if it had been posted here. Spam
+protection (honeypot, Turnstile) is gahk.dk's job now. gender is male/female/other.
 """
-
-from typing import Literal
 
 from django import forms
 
@@ -23,15 +24,8 @@ HEARD_CHOICES = [
 
 
 class _BaseApplicationForm(forms.ModelForm):
-    # honeypot — real users leave this empty; bots fill it
-    website = forms.CharField(required=False, widget=forms.HiddenInput)
     heard_about_us = forms.ChoiceField(choices=HEARD_CHOICES, required=True, label="Hvor hørte du om os?")
     gender = forms.ChoiceField(choices=Application.Gender.choices, required=True, label="Køn")
-
-    def clean_website(self) -> Literal[""]:
-        if self.cleaned_data.get("website"):
-            raise forms.ValidationError("Spam detected.")
-        return ""
 
 
 class RundvisningForm(_BaseApplicationForm):
