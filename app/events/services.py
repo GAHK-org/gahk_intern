@@ -31,6 +31,7 @@ from dataclasses import dataclass
 
 from django.db import transaction
 from django.db.models import QuerySet
+from django.urls import reverse
 
 from core import push
 from core.clock import current_datetime
@@ -263,7 +264,7 @@ def _audience(event: Event) -> QuerySet[Resident]:
 
 def _url(event: Event) -> str:
     """The permalink. A notification lands on the thing it is about, never on a list."""
-    return f"/intern/begivenheder/{event.pk}"
+    return reverse("events:detail", args=[event.pk])
 
 
 def _when(event: Event) -> str:

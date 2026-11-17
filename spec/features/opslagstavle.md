@@ -12,7 +12,7 @@ for "here is what we decided not to do".
 
 The kollegium used a Facebook group for information relevant to the dorm: important events, the
 results of værelsesrunden, birthdays, practical notices. This replaces it: Markdown posts with
-images, comments and reactions, at `/intern/opslagstavle/`, open to every resident.
+images, comments and reactions, at `/opslagstavle/`, open to every resident.
 
 **What it is not:** Den Hurtige. That feature is a chat whose messages are hard-deleted after 30
 minutes to 24 hours, and whose model docstring promises exactly that ("deliberately ephemeral… a
@@ -42,7 +42,7 @@ disputes Inspektionen exists to settle.
 
 ## Routes
 
-`/intern/opslagstavle/` (board), `<pk>` (permalink), `opret`, `<pk>/rediger`, `<pk>/slet`,
+`/opslagstavle/` (board), `<pk>` (permalink), `opret`, `<pk>/rediger`, `<pk>/slet`,
 `<pk>/fastgoer`, `<pk>/kommentar`, `kommentar/<pk>/slet`, `<pk>/reaktion`, `forhaandsvisning`,
 `billede`, `abonner`, `indlejret`, `indlejr/album`, `indlejr/album/<pk>/billeder`, `indlejr/gahkflix`. `opret?album=<pk>` and
 `opret?gahkflix=<pk>` open the composer with that album or film embedded. Namespaced `opslagstavle:`.
@@ -221,7 +221,7 @@ accessors stop being greppable — plus a coupling that puts Den Hurtige's schem
 release cadence. The models genuinely diverge: `expires_at`/`minutes_left` against
 `title`/`category`/`pinned_at`/`pinned_by`/`edited_at` and a reverse-FK image relation.
 
-**A nightly sweep that scans post bodies for each image's URL** (the `CmsImageAdmin.usage` pattern).
+**A nightly sweep that scans post bodies for each image's URL** (the `cms.services.image_usage` pattern).
 Rejected. It is O(images × posts) with a `LIKE '%…%'` no index can serve, and it can never be exact —
 a URL inside a fenced code block looks like a reference — which leaves a choice between leaking files
 forever and occasionally deleting a live image. Instead the reference is turned back into a real FK

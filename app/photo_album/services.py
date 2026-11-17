@@ -4,8 +4,10 @@ import filecmp
 import hashlib
 import logging
 import re
+import shutil
 import struct
 import subprocess  # nosec B404
+import tempfile
 import zipfile
 from collections import defaultdict
 from collections.abc import Callable
@@ -14,7 +16,6 @@ from datetime import UTC, datetime, timedelta
 from functools import partial
 from io import BytesIO
 from pathlib import Path, PurePosixPath
-from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -30,6 +31,7 @@ from django.template.defaultfilters import filesizeformat
 from django.utils import timezone
 from PIL import ExifTags, Image, ImageFile, ImageOps, ImageSequence, IptcImagePlugin
 
+from core.job_directories import job_directory
 from residents.models import Resident
 
 from . import file_metadata, raw
@@ -811,7 +813,7 @@ def import_zip_album(
     """
     archive.seek(0)  # an S3 file is downloaded here, which reports no progress of its own
     progress("reading", 0, 0)
-    with TemporaryDirectory(prefix="photo-album-import-") as directory:
+    with job_directory("photo-album-import") as directory:
         try:
             with zipfile.ZipFile(archive) as zip_archive:
                 plan = _plan_import(
@@ -969,6 +971,39 @@ def is_video_media(media: Media) -> bool:
     return is_video(media) or is_video(media.original)
 
 
+# What a video encode needs free on the disk under /tmp, beyond three times the original: the original
+# downloaded from the bucket (opening it spills it to a temp file, PhotoAlbumS3Storage), its copy in
+# the job's directory, and the viewer copy, at most the original's size but for a rare overshoot the
+# reserve absorbs. The reserve is otherwise for everything else on the server's one disk, the databases included: a job that
+# fills the disk takes them down with it.
+ENCODE_DISK_RESERVE = 2 * 1024**3
+ENCODE_DISK_FACTOR = 3
+
+
+class NotEnoughDiskSpace(Exception):
+    """A video was not encoded because the disk has too little room for it. Nothing was counted."""
+
+
+def check_encode_disk_space(media: Media) -> None:
+    """Raise NotEnoughDiskSpace when encoding this video now could fill the disk.
+
+    An original of unknown size is let through: the encode itself then decides, as before.
+    """
+    size = media.size
+    if size is None:
+        try:
+            size = media.original.size
+        except Exception:  # the build reports a missing original better than this can
+            return
+    needed = ENCODE_DISK_FACTOR * size + ENCODE_DISK_RESERVE
+    free = shutil.disk_usage(tempfile.gettempdir()).free
+    if free < needed:
+        raise NotEnoughDiskSpace(
+            f"{media.display_name_and_size} needs {filesizeformat(needed)} free to be encoded; "
+            f"there is {filesizeformat(free)}."
+        )
+
+
 def build_derivatives(media: Media) -> bool:
     """Build stored image or video derivatives. Returns whether they are now available.
 
@@ -983,6 +1018,9 @@ def build_derivatives(media: Media) -> bool:
     The attempt is counted BEFORE the work, not after: a worker killed mid-encode (out of memory,
     the hard time limit) saves nothing afterwards, and a video that kills its worker every time
     used to stay "Mediet behandles" forever instead of ending FAILED after MAX_DERIVATIVE_ATTEMPTS.
+
+    A video the disk has no room for raises NotEnoughDiskSpace before that, and is left PENDING with
+    no attempt counted: a full disk says nothing about the file, and it should not use up the tries.
     """
     filename = media.display_name or "upload"
     if media.derivative_attempts >= MAX_DERIVATIVE_ATTEMPTS:
@@ -995,9 +1033,11 @@ def build_derivatives(media: Media) -> bool:
             media.derivative_attempts,
         )
         return False
+    video = is_video_media(media)
+    if video:
+        check_encode_disk_space(media)
     media.derivative_attempts += 1
     media.save(update_fields=["derivative_attempts"])
-    video = is_video_media(media)
     with media.original.open("rb") as original:
         source = File(original, name=filename)
         variants = video_variants(source, filename) if video else image_variants(source, filename)
@@ -1158,7 +1198,7 @@ def _animated_gif_variant(
 def video_variants(uploaded_file: File, filename: str) -> Variants | None:
     """Transcode a video to a viewer-sized MP4 and extract a grid-sized JPEG frame."""
     try:
-        with TemporaryDirectory(prefix="photo-album-") as directory:
+        with job_directory("photo-album-video") as directory:
             source = _copy_to_disk(uploaded_file, Path(directory), filename)
             return _encode_video(_ffmpeg(), source, Path(directory), filename)
     except ImportError:
@@ -1381,14 +1421,15 @@ def shrink_enlarged_video(media: Media) -> str:
     Returns what it did, for the job log. The item is left exactly as it was — still READY, its old
     copy still served — unless the new copy is made: when the copy turns out not to be enlarged,
     when the original is not smaller than HIGH_DEFINITION_SIZE, and when ffmpeg fails (raises
-    CalledProcessError).
+    CalledProcessError) or the disk has no room for the encode (raises NotEnoughDiskSpace).
     """
     name = media.display_name
     copy = stored_video_dimensions(media.high_definition)
     if copy is not None and max(copy) < HIGH_DEFINITION_SIZE:
         return f"{name}: its copy is {copy[0]}x{copy[1]}, not enlarged; left as it is."
+    check_encode_disk_space(media)
     ffmpeg = _ffmpeg()
-    with media.original.open("rb") as original, TemporaryDirectory(prefix="photo-album-") as directory:
+    with media.original.open("rb") as original, job_directory("photo-album-video") as directory:
         source = _copy_to_disk(File(original, name=name), Path(directory), name)
         dimensions = probe_video(ffmpeg, str(source)).dimensions
         if dimensions is None:

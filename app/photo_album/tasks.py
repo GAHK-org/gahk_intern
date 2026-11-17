@@ -39,6 +39,7 @@ from .models import (
 from .progress import JobProgress
 from .services import (
     MAX_DERIVATIVE_ATTEMPTS,
+    NotEnoughDiskSpace,
     Progress,
     backfill_hashes,
     backfill_sizes,
@@ -204,7 +205,16 @@ def build_media_derivatives(self: Task, media_id: int) -> bool:
     except Media.DoesNotExist:
         return False
     logger.info("Converting %s, in %s.", media.display_name_and_size, media.album)
-    if build_derivatives(media):
+    try:
+        built = build_derivatives(media)
+    except NotEnoughDiskSpace as exc:
+        # Released, so the next pass can take it at once rather than after DERIVATIVE_CLAIM_TTL.
+        # Raised, so the jobs page shows why it is still waiting.
+        Media.objects.filter(pk=media_id, derivative_task_id=task_id).update(derivative_started_at=None)
+        raise DerivativesNotBuilt(
+            f"{exc} Not counted as an attempt; tried again by the nightly process_pending_media."
+        ) from exc
+    if built:
         return True
     if media.derivative_state == DerivativeState.FAILED:
         raise DerivativesNotBuilt(
@@ -231,6 +241,8 @@ def reencode_enlarged_video(media_id: int) -> str:
         raise DerivativesNotBuilt(
             f"{media.display_name_and_size} could not be re-encoded ({ffmpeg_failure(exc)}); its old copy is kept."
         ) from exc
+    except NotEnoughDiskSpace as exc:
+        raise DerivativesNotBuilt(f"{exc} Its old copy is kept; queue it again when there is room.") from exc
     logger.info("%s", outcome)
     return outcome
 

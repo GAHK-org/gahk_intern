@@ -71,10 +71,7 @@ def test_tokens_parse_into_residents_and_groups() -> None:
 
 def test_plain_text_renders_mentions_escaped() -> None:
     html = linkify("@[<script>x</script>](4) og @[Grp](g7) https://dr.dk")
-    assert (
-        '<a data-mention="resident" href="/intern/beboer/4/profil">@&lt;script&gt;x&lt;/script&gt;</a>'
-        in html
-    )
+    assert '<a data-mention="resident" href="/beboer/4/profil">@&lt;script&gt;x&lt;/script&gt;</a>' in html
     assert '<span data-mention="group">@Grp</span>' in html
     assert ">dr.dk</a>" in html
     assert "<script>" not in html
@@ -82,7 +79,7 @@ def test_plain_text_renders_mentions_escaped() -> None:
 
 def test_markdown_renders_mentions_and_keeps_other_classes_out() -> None:
     html = render_markdown("**Hej** @[Anders](4) og @[Grp](g7)")
-    assert 'href="/intern/beboer/4/profil" data-mention="resident"' in html
+    assert 'href="/beboer/4/profil" data-mention="resident"' in html
     assert '<span data-mention="group">@Grp</span>' in html
     assert plain_text("Hej @[Anders](4)") == "Hej @Anders"
     # The author cannot smuggle a marker or a span of their own through.
@@ -103,10 +100,10 @@ def test_lookup_offers_current_residents_and_groups_only(
     empty = Workgroup.objects.create(name="Tomgruppen")  # nobody in it this month
 
     client.force_login(anders)
-    data = client.get("/intern/beboere/naevn", {"q": "and"}).json()
+    data = client.get("/beboere/naevn", {"q": "and"}).json()
     assert [r["id"] for r in data["residents"]] == [anders.pk]
 
-    data = client.get("/intern/beboere/naevn", {"q": "gruppen"}).json()
+    data = client.get("/beboere/naevn", {"q": "gruppen"}).json()
     assert data["groups"] == [{"id": group.pk, "name": "Testgruppen", "members": 1}]
     assert empty.pk not in [g["id"] for g in data["groups"]]
 
@@ -122,7 +119,7 @@ def test_a_comment_mention_notifies_the_named_resident_once(
 
     client.force_login(commenter)
     client.post(
-        f"/intern/opslagstavle/{notice.pk}/kommentar", {"body": f"Spørg {token(named)} og {token(commenter)}"}
+        f"/opslagstavle/{notice.pk}/kommentar", {"body": f"Spørg {token(named)} og {token(commenter)}"}
     )
 
     assert told() == [named.pk]  # never the commenter themself
@@ -138,7 +135,7 @@ def test_a_mentioned_post_author_gets_the_mention_instead_of_the_reply(
     notice = Notice.objects.create(author=author, body="Stige?")
 
     client.force_login(commenter)
-    client.post(f"/intern/opslagstavle/{notice.pk}/kommentar", {"body": f"{token(author)} ja"})
+    client.post(f"/opslagstavle/{notice.pk}/kommentar", {"body": f"{token(author)} ja"})
 
     assert list(Notification.objects.values_list("category", flat=True)) == [categories.MENTIONS]
 
@@ -149,12 +146,12 @@ def test_editing_a_notice_only_notifies_newly_mentioned(
     author, first, second = (live_here(f"{n}@gahk.dk") for n in "abc")
 
     client.force_login(author)
-    client.post("/intern/opslagstavle/opret", {"category": Category.NYT, "body": f"Hej {token(first)}"})
+    client.post("/opslagstavle/opret", {"category": Category.NYT, "body": f"Hej {token(first)}"})
     assert told() == [first.pk]
 
     notice = Notice.objects.get()
     client.post(
-        f"/intern/opslagstavle/{notice.pk}/rediger",
+        f"/opslagstavle/{notice.pk}/rediger",
         {"category": Category.NYT, "body": f"Hej {token(first)} og {token(second)}"},
     )
     assert told() == sorted([first.pk, second.pk])
@@ -171,7 +168,7 @@ def test_a_group_mention_reaches_the_group_this_month(
 
     client.force_login(author)
     body = f"@[Testgruppen](g{group.pk}) og {token(direct)}: møde i aften"
-    client.post("/intern/opslagstavle/opret", {"category": Category.NYT, "body": body})
+    client.post("/opslagstavle/opret", {"category": Category.NYT, "body": body})
 
     assert told() == sorted([member.pk, direct.pk])  # not the author, not the outsider
     assert outsider.pk not in told()
@@ -189,7 +186,7 @@ def test_a_former_resident_is_not_notified(
     former = make_resident(email="former@gahk.dk")
 
     client.force_login(author)
-    client.post("/intern/opslagstavle/opret", {"category": Category.NYT, "body": f"Hej {token(former)}"})
+    client.post("/opslagstavle/opret", {"category": Category.NYT, "body": f"Hej {token(former)}"})
     assert told() == []
 
 
@@ -211,7 +208,7 @@ def test_den_hurtige_mention_replaces_the_room_notification(
     monkeypatch.setattr(services, "notify", recording_notify)
     client.force_login(author)
     client.post(
-        "/intern/den-hurtige/opret",
+        "/den-hurtige/opret",
         {"content": f"{token(named)} kommer du?", "duration": min(VALID_DURATIONS)},
     )
 
@@ -226,9 +223,7 @@ def test_den_hurtige_reply_mention(client: Client, live_here: Callable[..., Resi
     post = QuickPost.objects.create(author=author, content="Boremaskine?")
 
     client.force_login(replier)
-    client.post(
-        f"/intern/den-hurtige/{post.pk}/kommentar", {"content": f"{token(named)} har en", "notify": "op"}
-    )
+    client.post(f"/den-hurtige/{post.pk}/kommentar", {"content": f"{token(named)} har en", "notify": "op"})
     assert told() == [named.pk]
 
 
@@ -236,13 +231,11 @@ def test_reparationer_mentions_in_task_and_note(client: Client, live_here: Calla
     reporter, named, noted = (live_here(f"{n}@gahk.dk") for n in "abc")
 
     client.force_login(reporter)
-    client.post(
-        "/intern/reparationer/opret", {"title": "Utæt vandhane", "description": f"Spørg {token(named)}"}
-    )
+    client.post("/reparationer/opret", {"title": "Utæt vandhane", "description": f"Spørg {token(named)}"})
     assert told() == [named.pk]
 
     task = RepairTask.objects.get()
-    client.post(f"/intern/reparationer/{task.pk}/kommentar", {"body": f"{token(noted)} kig lige"})
+    client.post(f"/reparationer/{task.pk}/kommentar", {"body": f"{token(noted)} kig lige"})
     assert told() == sorted([named.pk, noted.pk])
 
 
@@ -259,7 +252,7 @@ def test_a_private_event_only_notifies_mentioned_invitees_and_hosts(
     EventInvite.objects.create(event=event, resident=guest, invited_by=host)
 
     client.force_login(guest)
-    client.post(f"/intern/begivenheder/{event.pk}/kommentar", {"body": f"{token(host)} {token(outsider)}"})
+    client.post(f"/begivenheder/{event.pk}/kommentar", {"body": f"{token(host)} {token(outsider)}"})
 
     assert told() == [host.pk]  # the outsider cannot see the event
     # The host was mentioned, so they get that rather than a second "kommenterede".
@@ -272,7 +265,7 @@ def test_a_mention_in_a_new_notice_replaces_the_new_post_notification(
     author, named, other = (live_here(f"{n}@gahk.dk") for n in "abc")
 
     client.force_login(author)
-    client.post("/intern/opslagstavle/opret", {"category": Category.NYT, "body": f"Hej {token(named)}"})
+    client.post("/opslagstavle/opret", {"category": Category.NYT, "body": f"Hej {token(named)}"})
 
     rows = set(Notification.objects.values_list("recipient_id", "category"))
     assert rows == {(named.pk, categories.MENTIONS), (other.pk, categories.POSTS_NEW)}
@@ -286,7 +279,7 @@ def test_an_event_description_mention_notifies_on_create_and_on_edit(
     data = {"title": "Filmaften", "location": "TV-stuen", "starts_at": when, "visibility": Visibility.AABENT}
 
     client.force_login(host)
-    client.post("/intern/begivenheder/opret", {**data, "description": f"Med {token(first)}"})
+    client.post("/begivenheder/opret", {**data, "description": f"Med {token(first)}"})
 
     rows = set(Notification.objects.values_list("recipient_id", "category"))
     assert (first.pk, categories.MENTIONS) in rows
@@ -297,7 +290,7 @@ def test_an_event_description_mention_notifies_on_create_and_on_edit(
 
     event = Event.objects.get()
     client.post(
-        f"/intern/begivenheder/{event.pk}/rediger",
+        f"/begivenheder/{event.pk}/rediger",
         {**data, "description": f"Med {token(first)} og {token(second)}"},
     )
     assert told() == sorted([first.pk, second.pk])
@@ -312,7 +305,7 @@ def test_a_private_event_description_only_notifies_invitees(
 
     client.force_login(host)
     client.post(
-        "/intern/begivenheder/opret",
+        "/begivenheder/opret",
         {
             "title": "Middag",
             "starts_at": when,
@@ -342,8 +335,6 @@ def test_a_group_mention_skips_last_months_members(
     Residency.objects.create(resident=moved, room=room, year=last_year, month=last_month, workgroup=group)
 
     client.force_login(author)
-    client.post(
-        "/intern/opslagstavle/opret", {"category": Category.NYT, "body": f"@[Testgruppen](g{group.pk})"}
-    )
+    client.post("/opslagstavle/opret", {"category": Category.NYT, "body": f"@[Testgruppen](g{group.pk})"})
 
     assert told() == [member.pk]

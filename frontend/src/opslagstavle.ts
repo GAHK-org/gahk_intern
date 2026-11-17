@@ -12,6 +12,7 @@
 
 import htmx from "htmx.org";
 
+import { csrfToken } from "./htmx-csrf";
 import { downscaleImage } from "./imageupload";
 
 const root = document.getElementById("js-md-editor");
@@ -139,14 +140,6 @@ function init(form: HTMLElement): void {
       say("Upload mislykkedes. Prøv igen.");
     }
   });
-}
-
-/** Duplicated from htmx-csrf.ts, which reads the token for htmx requests rather than fetch ones.
- * Two callers, four lines; sharing it would mean a module whose only job is one cookie lookup. */
-function csrfToken(): string {
-  const cookie = document.cookie.split("; ").find((c) => c.startsWith("csrftoken="));
-  if (cookie) return decodeURIComponent(cookie.slice("csrftoken=".length));
-  return document.querySelector<HTMLInputElement>('input[name="csrfmiddlewaretoken"]')?.value ?? "";
 }
 
 /** Put an embed (`![Julefrokost 2026](album:12)`) in the body at the cursor, on a paragraph of its
