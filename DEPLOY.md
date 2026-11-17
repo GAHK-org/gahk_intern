@@ -779,6 +779,46 @@ gahk.dk's id), answered with the usual auto-reply, and then acknowledged so gahk
 that fails the rules is dropped with a log line and counted on GahkWebSync. Spam protection
 (Turnstile, honeypot) is gahk.dk's; its keys live in its config.ini.
 
+### 4g. Memory
+
+The box has 4 GB and 2 vCPUs, and at rest about 3 GB of that is in use: Coolify ~0.6 GB, the two
+databases ~0.4 GB, `web` ~0.3 GB, the workers ~0.3–0.5 GB each. On 2026-11-15 a worker went past
+that, there was no swap and no limit, and the kernel's out-of-memory handling stalled the whole
+box: Postgres went into recovery, the site returned 500s, and only a reboot brought it back.
+
+Three layers keep a runaway job from taking anything else down with it:
+
+1. **Limits on the app's containers** (`docker-compose.prod.yml`, applied by every deploy).
+   `mem_limit` per service, so a job that runs away is killed inside its own container. Swap is
+   off for them (`memswap_limit`). The workers go first if the box still runs short
+   (`oom_score_adj`), and their Celery child is replaced once a job has left it large
+   (`--max-memory-per-child`). `worker-media` also has `cpus: 1.5` and a low `cpu_shares`, so an
+   encode never has the whole CPU while the site wants some.
+2. **The server's own settings**, from `server/setup.sh`: 2 GB of swap for everything that is not
+   limited, `vm.swappiness = 10`, and earlyoom, which stops a worker or ffmpeg before the box
+   stalls and never a database, the proxy or Docker. Run it once on a server, and again after
+   changing it: `ssh root@<server> 'bash -s' < server/setup.sh`. Safe to repeat. A new server
+   gets it from `server/cloud-init.yml`, pasted into Hetzner's "Cloud config" when creating it.
+3. **MariaDB** (MediaWiki), which is a Coolify-managed resource, so its configuration lives in
+   Coolify: paste `server/mariadb.cnf` into the resource's custom MariaDB configuration and
+   restart it. Keep the two the same.
+
+**After a deploy that changes the limits**, check that Coolify passed them on (the values are in
+bytes; 0 means no limit):
+
+```
+docker inspect $(docker ps -q --filter name=worker-media-) \
+  --format '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.NanoCpus}} {{.HostConfig.CpuShares}} {{.HostConfig.OomScoreAdj}}'
+```
+
+**When a job is killed at its limit**, `docker inspect` shows `OOMKilled` only if the container's
+main process died. Usually it is ffmpeg or the Celery child, and the container lives on; the job
+log names the job, and `journalctl -k | grep -i oom` the process and its memory.
+
+**More services need more memory.** Roundcube and a Dovecot proxy fit as things are. OnlyOffice's
+Document Server needs about 2 GB on its own and does not: move to an 8 GB server first, with
+Hetzner's "CPU and RAM only" rescale, which keeps the disk so it can be scaled back.
+
 ## 5. Data migration to prod
 ```
 mysqldump the live gahk_dk  →  load into the MariaDB staging container
