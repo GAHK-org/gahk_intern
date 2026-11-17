@@ -106,8 +106,8 @@ Usage:
 
 Resuming: progress is saved in <work-dir>/state.json after every step, so stopping (Ctrl-C, a lost
 connection, a reboot) is safe — run the same command again and it continues where it stopped. An
-album already on the server is skipped; one the server was still importing is waited for rather than
-sent twice. A server that stops answering is tried again every 30 seconds, 5 times, and Dropbox 4
+album imported already is not sent again; one the server was still importing is waited for rather
+than sent twice. A server that stops answering is tried again every 30 seconds, 5 times, and Dropbox 4
 times, 2 to 16 seconds apart; then the run stops, as every album after it would fail too. A run an
 error stops like that — or a crash — is started again from the top 15 minutes later
 (--restart-after; 0 to exit instead), and again after every such stop, until it gets through or
@@ -370,6 +370,7 @@ FILE_KINDS = {
 }
 ALBUM_KINDS = {
     "failed": "Album folders that failed",
+    # Earlier runs did not send these; a run going through their year now adds them to that album.
     "exists": "Album folders not sent: an album of that name was on the server already",
 }
 
@@ -1767,8 +1768,14 @@ def import_album(
             plan.problems,
         )
     if same_name(plan.name) in existing:
-        out.ok(f'  ✓ Already on the server as "{year}/{plan.name}" — skipped.')
-        return "exists"
+        # On the server, but not as an import this script knows of: a run stopped before the server
+        # answered, or another import made it. The server merges into it, skipping each file that
+        # album has with the same name and bytes, and refuses a locked one the script's imports did
+        # not make.
+        out.info(
+            f'  An album "{year}/{plan.name}" is on the server already: sending to it, for the'
+            " server to add what it does not have"
+        )
 
     if plan.name != folder_name:
         out.info(f'  As album "{plan.name}"')
@@ -4051,13 +4058,6 @@ def run(args: argparse.Namespace) -> int:
                         raise FinalStop(
                             "Stopped at the first failure (--stop-on-error)."
                         ) from failure
-                if result == "exists" and not options.dry_run:
-                    ledger.album(
-                        album_path,
-                        "exists",
-                        "an album of that name is on the server already, so the folder was not"
-                        " sent; its files were not compared with the album's",
-                    )
                 if result in {"imported", "updated", "partial"}:
                     existing.add(
                         same_name(state.get(album_path).get("album") or entry.name)
@@ -4100,7 +4100,6 @@ def run(args: argparse.Namespace) -> int:
         "partial": "partly sent; the rest goes on the next run",
         "gone": "imported earlier, but no album of its name on the server now: new files not sent",
         "done": "imported on an earlier run, nothing new",
-        "exists": "already on the server",
         "declined": "skipped by you",
         "failed": "FAILED",
     }
