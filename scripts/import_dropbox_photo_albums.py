@@ -53,7 +53,8 @@ What is kept:
 - Metadata (.DS_Store, AppleDouble sidecars, Thumbs.db, …) is sent with the album. The server keeps
   each photo's sidecar with it; a copy of the rest — what it reports skipping — is saved in
   <work-dir>/<year>/<album>/metadata/. A file it skips as one its album has already (the same name
-  and bytes) is on the server, and not listed.
+  and bytes) is on the server, and not listed; one it skips as the same file as another sent with
+  it, which it stores, is listed as a duplicate.
 - Files beside the album folders in a year folder, and beside the year folders in the Dropbox root,
   are saved in <work-dir>/<year>/_not-in-an-album/ and <work-dir>/_not-in-a-year-folder/.
 - Of an album that fails, what is not in its invalid/ stays in <work-dir>/<year>/<album>/failed.zip
@@ -367,6 +368,7 @@ FILE_KINDS = {
     "refused": "Refused by the server when it read them",
     "outside": "Outside the album folders",
     "metadata": "Metadata the server did not keep",
+    "duplicate": "Duplicates the server skipped",
 }
 ALBUM_KINDS = {
     "failed": "Album folders that failed",
@@ -382,8 +384,9 @@ def same_path(path: str) -> str:
 
 class Ledger:
     """Every file in Dropbox that is not on the server, keyed by its Dropbox path: why, and where its
-    copy is in the work directory. Also every album folder that did not get onto the server. A file
-    the server skips as one the album of its path has already is on the server, so not on it.
+    copy is in the work directory (none for a duplicate). Also every album folder that did not get
+    onto the server. A file the server skips as one the album of its path has already is on the
+    server, so not on it; one it skips as the same file as another sent with it is.
 
     Written out as NOT-ON-SERVER.md after every run, for a person to go through. A copy deleted
     there is one dealt with: it is listed apart, and not fetched again. A file the server takes
@@ -402,13 +405,6 @@ class Ledger:
             try:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
                 self.files, self.albums = data["files"], data["albums"]
-                # Lists written before held the duplicates the server skipped, as "duplicate": those
-                # files are on the server, in the album of their path.
-                self.files = {
-                    path: entry
-                    for path, entry in self.files.items()
-                    if entry["kind"] != "duplicate"
-                }
             except (ValueError, KeyError) as exc:
                 die(
                     f"{self.path} is not a list this script wrote ({exc}). Move it away to start it over."
@@ -1992,6 +1988,9 @@ def send(
 
 # How the server reports a file it skipped as one it has (photo_album.services).
 ALREADY_THERE = "findes allerede i albummet (ignoreret)"
+# Why lists written before held a file the server skipped as ALREADY_THERE. Such a file is sent to its
+# album again by the next run of it, for the server to confirm it is there (or store it).
+TO_CONFIRM = "the album on the server had the same file already"
 DUPLICATE = re.compile(r"dublet af (?P<earlier>.+) \(ignoreret\)")
 
 
@@ -2032,9 +2031,10 @@ def keep_what_the_server_left(
     save: Callable[[dict[str, str]], None] | None = None,
     strike: bool = True,
 ) -> set[str]:
-    """After an import: keep a copy of the metadata the server skipped; strike what it stored, or
-    skipped as the same file as one the album has, off the list, deleting any copy of it. Returns
-    the members on the server — stored, or skipped as the same file as one it has.
+    """After an import: keep a copy of the metadata the server skipped, and list the files it
+    skipped as the same file as another sent with them; strike what it stored, or skipped as one
+    the album has already, off the list, deleting any copy of it. Returns the members on the server
+    — stored, or skipped as the same file as one it has.
 
     `save` keeps those copies (from the ZIP sent, unless given); `strike` False leaves the list
     as it is for what was stored, when it is not known exactly what was sent.
@@ -2048,9 +2048,22 @@ def keep_what_the_server_left(
             if strike:
                 folder.ledger.on_server(folder.dropbox(path))
             on_server.add(name)
-        elif why == ALREADY_THERE or DUPLICATE.fullmatch(why):
-            # In the album of its path already, or the same file as another sent with it there.
+        elif why == ALREADY_THERE:
+            # In the album of its path already: same name, same bytes.
             folder.ledger.on_server(folder.dropbox(path))
+            on_server.add(name)
+        elif duplicate := DUPLICATE.fullmatch(why):
+            # Not stored itself: the server stored the same file sent with it instead.
+            folder.ledger.on_server(folder.dropbox(path))
+            earlier = sent.members.get(duplicate["earlier"])
+            folder.ledger.file(
+                folder.dropbox(path),
+                "duplicate",
+                f"the same file as {shown(earlier) if earlier else duplicate['earlier']},"
+                " which the server stored",
+                copy=None,
+                size=sent.sizes.get(path, 0),
+            )
             on_server.add(name)
         else:
             metadata[name] = metadata_why(why, path, folder)
@@ -2610,7 +2623,25 @@ def sync_album(
             for path, entry in listing.items()
             if synced.get(shown(path)) != content_hash(entry)
         }
-    send = to_send(new, listing, rules)
+    confirm = {
+        path: entry
+        for path, entry in listing.items()
+        if path not in new
+        and (listed := ledger.get(folder.dropbox(path))) is not None
+        and listed["kind"] == "duplicate"
+        and listed["why"] == TO_CONFIRM
+    }
+    for path, entry in confirm.items():
+        # Its size as Dropbox has it, for the list should the server not confirm it.
+        ledger.file(
+            folder.dropbox(path), "duplicate", TO_CONFIRM, copy=None, size=entry.size
+        )
+    if confirm:
+        out.info(
+            f"  {len(confirm)} file(s) listed as skipped by the server, as already in the album:"
+            " sent again, for the server to confirm it has them"
+        )
+    send = to_send({**new, **confirm}, listing, rules)
     plan = plan_files(
         folder_name,
         [(path, entry.size) for path, entry in send.items()],
