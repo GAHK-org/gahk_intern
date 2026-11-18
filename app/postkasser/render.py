@@ -127,7 +127,8 @@ class RenderedMessage:
 
 def parse(raw: bytes) -> EmailMessage:
     msg = email.message_from_bytes(raw, policy=email.policy.default)
-    assert isinstance(msg, EmailMessage)  # policy.default always builds EmailMessage  # noqa: S101
+    if not isinstance(msg, EmailMessage):  # policy.default always builds one; this narrows the type
+        raise TypeError(f"expected EmailMessage, got {type(msg).__name__}")
     return msg
 
 
