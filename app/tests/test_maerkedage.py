@@ -13,7 +13,7 @@ from events import maerkedage
 from events.models import Event, Visibility
 from residents.models import Resident
 
-EVENTS = "/intern/begivenheder/"
+EVENTS = "/begivenheder/"
 
 
 @pytest.fixture
@@ -63,7 +63,7 @@ def test_the_dashboard_shows_the_kollegium_calendar_not_google(
     )
     client.force_login(beboer)
 
-    body = client.get("/intern/").content.decode()
+    body = client.get("/").content.decode()
 
     assert "calendar.google.com" not in body
     assert "Fællesspisning" in body

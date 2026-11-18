@@ -1,0 +1,72 @@
+{% extends "cms/base.html" %}
+{% block cms_title %}Menu{% endblock %}
+{% block cms_content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Hjemmeside</p>
+      <h1>Menu</h1>
+      <p class="muted text-sm">Menuen øverst på gahk.dk, i denne rækkefølge. Et link er en side på gahk.dk (fx <span class="cms-path">/vision</span>) eller en hel adresse (https://…). Hver knap gemmer menuen med det samme.</p>
+    </div>
+  </div>
+
+  <form method="post" class="card-flat cms-section cms-menu">
+    {% csrf_token %}
+    <input type="hidden" name="rows" value="{{ row_count }}">
+    {# The default button for Enter in a field: the first submit button in the form, and the rows' own start with a disabled ↑. #}
+    <button type="submit" name="action" value="save" class="sr-only" tabindex="-1" aria-hidden="true">Gem menuen</button>
+    {% if errors %}<ul class="errorlist card-pad">{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul>{% endif %}
+    <ol class="cms-menu-list">
+      {% for row in rows %}
+        <li class="cms-menu-row">
+          <span class="cms-menu-number" aria-hidden="true">{{ forloop.counter }}</span>
+          <div class="cms-menu-fields">
+            <label for="menu-label-{{ forloop.counter0 }}" class="sr-only">Tekst, punkt {{ forloop.counter }}</label>
+            <input id="menu-label-{{ forloop.counter0 }}" type="text" name="label_{{ forloop.counter0 }}" value="{{ row.label }}" maxlength="60" placeholder="Tekst">
+            <label for="menu-url-{{ forloop.counter0 }}" class="sr-only">Link, punkt {{ forloop.counter }}</label>
+            <input id="menu-url-{{ forloop.counter0 }}" type="text" name="url_{{ forloop.counter0 }}" value="{{ row.url }}" list="cms-menu-targets" placeholder="/side eller https://…" autocapitalize="off" spellcheck="false">
+          </div>
+          <div class="cms-menu-buttons">
+            <button type="submit" class="btn btn-secondary" name="action" value="up-{{ forloop.counter0 }}" title="Flyt op" aria-label="Flyt {{ row.label }} op"{% if forloop.first %} disabled{% endif %}>↑</button>
+            <button type="submit" class="btn btn-secondary" name="action" value="down-{{ forloop.counter0 }}" title="Flyt ned" aria-label="Flyt {{ row.label }} ned"{% if forloop.last %} disabled{% endif %}>↓</button>
+            <button type="submit" class="btn btn-danger" name="action" value="remove-{{ forloop.counter0 }}" title="Fjern" aria-label="Fjern {{ row.label }}"
+                    onclick="return confirm('Fjern «{{ row.label|escapejs }}» fra menuen?')">Fjern</button>
+          </div>
+        </li>
+      {% endfor %}
+      <li class="cms-menu-row cms-menu-new">
+        <span class="cms-menu-number" aria-hidden="true">+</span>
+        <div class="cms-menu-fields">
+          <label for="menu-label-new" class="sr-only">Tekst til nyt punkt</label>
+          <input id="menu-label-new" type="text" name="label_{{ new_index }}" maxlength="60" placeholder="Nyt punkt: tekst">
+          <label for="menu-url-new" class="sr-only">Link til nyt punkt</label>
+          <input id="menu-url-new" type="text" name="url_{{ new_index }}" list="cms-menu-targets" placeholder="/side eller https://…" autocapitalize="off" spellcheck="false">
+        </div>
+        <div class="cms-menu-buttons">
+          <button type="submit" class="btn btn-secondary" name="action" value="save">Tilføj</button>
+        </div>
+      </li>
+    </ol>
+    <datalist id="cms-menu-targets">{% for target in targets %}<option value="{{ target }}">{% endfor %}</datalist>
+    <div class="card-pad cms-form-actions"><button type="submit" class="btn" name="action" value="save">Gem menuen</button></div>
+  </form>
+
+  {% if unreachable %}
+    <section class="card-flat cms-section cms-warn">
+      <div class="card-head"><h2>Sider, menuen ikke fører til</h2></div>
+      <div class="card-pad">
+        <p class="muted text-sm">Hverken siden eller dens sektion står i menuen.</p>
+        <ul class="cms-plain-list">
+          {% for page in unreachable %}<li><a href="{% url 'cms:page_edit' page.pk %}">{{ page.header }}</a> <span class="cms-path">/{{ page.slug }}</span></li>{% endfor %}
+        </ul>
+      </div>
+    </section>
+  {% endif %}
+
+  <form method="post" action="{% url 'cms:site_settings' %}" class="card-flat card-pad cms-section">
+    {% csrf_token %}
+    <h2>Standardbaggrund</h2>
+    <p class="muted text-sm">Billedet øverst på alle sider, der ikke har deres eget baggrundsbillede. Uden et billede får de en grøn bjælke.</p>
+    {% include "cms/_image_picker.html" with field=settings_form.default_background none_label="Ingen (grøn bjælke)" hide_legend=True %}
+    <div class="cms-form-actions"><button type="submit" class="btn">Gem standardbaggrund</button></div>
+  </form>
+{% endblock %}

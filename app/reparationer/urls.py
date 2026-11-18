@@ -1,4 +1,4 @@
-"""Mounted at /intern/reparationer/ from residents/urls.py — global names, not namespaced there,
+"""Mounted at /reparationer/ from residents/urls.py — global names, not namespaced there,
 but this module has its own `app_name` so callers always use `{% url 'reparationer:board' %}`."""
 
 from django.urls import path

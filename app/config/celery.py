@@ -28,3 +28,16 @@ def _own_broker_connections(**_: Any) -> None:  # noqa: ANN401
         return
     for engine, _session in list(Channel._engines.values()):
         engine.dispose(close=False)
+
+
+@worker_process_init.connect
+def _remove_abandoned_job_directories(**_: Any) -> None:  # noqa: ANN401
+    """Clear what a killed job left in /tmp, the moment its replacement starts.
+
+    A new pool process is how a lost one is replaced — after the OOM killer or the hard time limit —
+    and how a restarted container begins, which are exactly when a job was killed holding a
+    directory. The hourly `remove_abandoned_job_directories` task catches the rest.
+    """
+    from core.job_directories import remove_abandoned_job_directories
+
+    remove_abandoned_job_directories()

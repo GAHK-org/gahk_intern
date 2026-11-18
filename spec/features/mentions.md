@@ -15,7 +15,7 @@ without the token is plain text.
 
 Opslagstavlen (posts and comments), Den Hurtige (messages and replies), Reparationer (description and
 notes) and Begivenheder (description and comments). Fields opt in with the `data-mentionable` attribute; the picker is
-`frontend/src/mention.ts`, fed by `residents:mention_lookup` (`/intern/beboere/naevn`).
+`frontend/src/mention.ts`, fed by `residents:mention_lookup` (`/beboere/naevn`).
 
 ## Rendering
 
