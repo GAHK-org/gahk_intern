@@ -9,6 +9,10 @@
 #     so the imported tables are InnoDB and update.php must not create new ones as MyISAM.
 #   * $wgServer moved to the wiki's own host, wiki.gahk.dk, served from its root.
 #   * $wgScriptExtension dropped — removed from MediaWiki in 1.26, ignored since.
+#
+# 2026-11-18 — accounts follow the intranet: one per resident, named after their e-mail, signed out
+# when the intranet no longer lets them in; Netværksgruppen are administrators (GahkAuthLogin).
+#
 # Everything else is unchanged from the legacy configuration.
 
 # Protect against web entry
@@ -135,6 +139,9 @@ $wgGroupPermissions['*']['edit'] = false;
 # Add more configuration options below.
 
 $wgGroupPermissions['*']['createaccount'] = false;
+# E-mail and real name come from the intranet at every login (GahkAccountSync); an edit here would
+# only be overwritten, and until then would sign the resident out on every page (GahkSession).
+$wgGroupPermissions['*']['editmyprivateinfo'] = false;
 $wgGroupPermissions['*']['autocreateaccount'] = true;
 $wgGroupPermissions['sysop']['createaccount'] = true;
 
@@ -180,7 +187,8 @@ $wgAuthManagerAutoConfig = [
     ],
     'primaryauth'   => [
         // Comment this entry out and reload to fall back to local MediaWiki passwords — the
-        // break-glass path when Postgres is unreachable. See CUTOVER.md Phase 5A.
+        // break-glass path when Postgres is unreachable. See CUTOVER.md Phase 5A. The per-request
+        // resident check and the Netværksgruppen admin rights (GahkSession) switch off with it.
         'gahk' => [
             'class'    => Gahk\GahkAuthLogin::class,
             // Required since 1.43: the parent provider's constructor takes the DB connection provider.
@@ -202,11 +210,16 @@ $wgAuthManagerAutoConfig = [
             'services' => ['DBLoadBalancerFactory'],
             'sort'     => 200,
         ],
-        \Gahk\GahkAuthChangeName::class                                        => [
-            'class' => \Gahk\GahkAuthChangeName::class,
+        // Ties the account to its resident and copies their e-mail and real name onto it.
+        \Gahk\GahkAccountSync::class                                           => [
+            'class' => \Gahk\GahkAccountSync::class,
             'sort'  => 0,
         ],
     ],
 ];
 
 $wgShowExceptionDetails = false;
+
+# GahkAuthLogin's warnings (resident database unreachable, a rename that failed) go to the container
+# log, next to Apache's.
+$wgDebugLogGroups['GahkAuthLogin'] = 'php://stderr';

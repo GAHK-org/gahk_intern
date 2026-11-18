@@ -850,6 +850,13 @@ albums in real use are never at risk. Run it with `docker exec -it` — it needs
   external link that opens in a new tab, outside the installed GAHK Intern app's scope.
 - Login is standalone (GahkAuthLogin reads the residents table directly); its cookies are host-only
   on wiki.gahk.dk and `Secure`, so neither gahk.dk nor intern.gahk.dk ever sees them.
+- Accounts, sessions and admin rights follow the intranet (`spec/features/wiki.md`): GahkAuthLogin
+  checks the resident at every login and at most every five minutes after (cached in APCu), through the column grants of migration
+  `residents/0013_wiki_ro_grants` (applied when the intranet deploys, if a role named `wiki_ro`
+  exists; for a role with another name, run its GRANTs by hand). **Deploy the intranet first.** A
+  wiki without the grants keeps working as before: logins pass, nobody is signed out, nobody gets
+  admin rights. The first deploy signs everyone out of the wiki once; their next login links their
+  account. No `update.php` is needed.
 - The wiki image of this version only works at wiki.gahk.dk (`$wgScriptPath` is now `""`), so it
   runs as a **second Coolify app** on that domain, set up before the switch (§7 step 1) with the same
   MariaDB and environment as today's wiki. Today's app keeps serving gahk.dk/wiki until the DNS

@@ -1,0 +1,8 @@
+{
+	"@metadata": {
+		"authors": []
+	},
+	"gahkauthlogin-not-allowed": "This account has no access to the wiki.",
+	"gahkauthlogin-account-error": "Your wiki account could not be set up. Contact Netværksgruppen.",
+	"gahkauthlogin-unavailable": "The wiki cannot check logins right now. Try again shortly."
+}
