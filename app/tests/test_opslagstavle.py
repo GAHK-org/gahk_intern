@@ -2314,8 +2314,8 @@ def test_a_live_card_on_a_searched_board_keeps_its_snippet(client: Client, beboe
     filler = " ".join(f"ord{i}" for i in range(60))
     notice = make_notice(beboer, body=f"{filler} julefest {filler}")
 
-    with_query = client.get("/intern/opslagstavle/kort", {"id": notice.pk, "q": "julefest"}).content.decode()
-    without = client.get("/intern/opslagstavle/kort", {"id": notice.pk}).content.decode()
+    with_query = client.get("/opslagstavle/kort", {"id": notice.pk, "q": "julefest"}).content.decode()
+    without = client.get("/opslagstavle/kort", {"id": notice.pk}).content.decode()
 
     assert 'class="notice-match"' in with_query
     assert 'class="notice-match"' not in without
