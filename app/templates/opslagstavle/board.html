@@ -44,7 +44,7 @@
     </div>
     <select name="periode" class="board-period{% if selected_period %} is-active{% endif %}" aria-label="Periode"
             onchange="this.form.requestSubmit()">
-      <option value="">Hele tiden</option>
+      <option value="">Altid</option>
       {% for value, label in periods %}
         <option value="{{ value }}"{% if selected_period == value %} selected{% endif %}>{{ label }}</option>
       {% endfor %}
