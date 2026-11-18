@@ -1,7 +1,7 @@
-"""Internal members area + auth, under /intern/. F-013/F-014."""
+"""The intranet + auth, at the root of intern.gahk.dk (config.urls). F-013/F-014."""
 
 from django.contrib.auth import views as auth_views
-from django.urls import include, path
+from django.urls import include, path, reverse_lazy
 
 from . import views
 from .forms import EmailAuthenticationForm, ResidentPasswordResetForm
@@ -44,7 +44,7 @@ urlpatterns = [
         "admin/password-change",
         auth_views.PasswordChangeView.as_view(
             template_name="registration/password_change.html",
-            success_url="/intern/admin/password-change/done",
+            success_url=reverse_lazy("password_change_done"),
         ),
         name="password_change",
     ),
@@ -63,7 +63,7 @@ urlpatterns = [
             template_name="registration/password_reset_form.html",
             email_template_name="registration/password_reset_email.html",
             subject_template_name="registration/password_reset_subject.txt",
-            success_url="/intern/admin/password-reset/done",
+            success_url=reverse_lazy("password_reset_done"),
         ),
         name="password_reset",
     ),
@@ -75,7 +75,8 @@ urlpatterns = [
     path(
         "admin/reset/<uidb64>/<token>/",
         auth_views.PasswordResetConfirmView.as_view(
-            template_name="registration/password_reset_confirm.html", success_url="/intern/admin/reset/done"
+            template_name="registration/password_reset_confirm.html",
+            success_url=reverse_lazy("password_reset_complete"),
         ),
         name="password_reset_confirm",
     ),

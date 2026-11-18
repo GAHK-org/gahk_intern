@@ -25,6 +25,13 @@ class Command(BaseCommand):
     help = "Compare legacy MariaDB counts to the migrated Postgres counts."
 
     def handle(self, *args: object, **opts: object) -> None:
+        try:
+            # Pages made here since (the /optagelse page from cms migration 0007, anything an editor
+            # created) are not legacy rows: only the ids the ETL kept are compared.
+            last_legacy_page = _legacy("SELECT COALESCE(MAX(id), 0) n FROM gahk_page")
+        except Exception as e:  # MariaDB not up
+            self.stderr.write(f"legacy DB unavailable ({e}); run `task db:up`.")
+            return
         checks = [
             (
                 "residents",
@@ -44,7 +51,12 @@ class Command(BaseCommand):
                 Application.objects.count(),
                 "equal",
             ),
-            ("pages", "SELECT COUNT(*) n FROM gahk_page", Page.objects.count(), "equal"),
+            (
+                "pages",
+                "SELECT COUNT(*) n FROM gahk_page",
+                Page.objects.filter(pk__lte=last_legacy_page).count(),
+                "equal",
+            ),
             ("news", "SELECT COUNT(*) n FROM gahk_news", NewsItem.objects.count(), "equal"),
             (
                 "pylon events",

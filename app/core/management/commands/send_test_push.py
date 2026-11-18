@@ -19,6 +19,7 @@ on screen instead of in a swallowed log line.
 import json
 
 from django.core.management.base import BaseCommand, CommandError, CommandParser
+from django.urls import reverse
 from pywebpush import WebPushException
 
 from core import push
@@ -51,14 +52,14 @@ class Command(BaseCommand):
         self.stdout.write(f"{resident.full_name}: {len(subscriptions)} device(s) — {total} in total.")
         if not subscriptions:
             raise CommandError(
-                "This resident has no subscribed devices. Open /intern/notifikationer/indstillinger "
+                "This resident has no subscribed devices. Open /notifikationer/indstillinger "
                 "as them and press 'Slå notifikationer til' first."
             )
 
         # Deep-links somewhere real: this is a delivery test, and a notification that opens nothing
         # when tapped only half-tests it.
         payload = push._payload(
-            "Test fra GAHK", "Hvis du kan se denne, virker push.", "/intern/notifikationer/"
+            "Test fra GAHK", "Hvis du kan se denne, virker push.", reverse("notifications:index")
         )
         body = json.dumps(payload)
 

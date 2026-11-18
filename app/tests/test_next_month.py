@@ -17,7 +17,7 @@ from django.test import Client
 from core.models import Cleaning, Room, Workgroup
 from residents.models import Residency, Resident, Role, RoleAssignment, active_period, next_period
 
-URL = "/intern/alumneliste/naeste-maaned"
+URL = "/alumneliste/naeste-maaned"
 
 
 @pytest.fixture
@@ -341,11 +341,11 @@ def test_directory_history_shows_selected_month(
     Residency.objects.create(resident=past, room=groups["r2"], year=py, month=pm)
 
     c = _login(viewer)
-    now = c.get("/intern/alumneliste/").content.decode()
+    now = c.get("/alumneliste/").content.decode()
     assert "Current Person" in now and "Past Person" not in now
     assert f"{py}-{pm}" in now  # the picker offers the past month
 
-    hist = c.get(f"/intern/alumneliste/?period={py}-{pm}").content.decode()
+    hist = c.get(f"/alumneliste/?period={py}-{pm}").content.decode()
     assert "Past Person" in hist and "Current Person" not in hist
 
 
@@ -365,7 +365,7 @@ def test_alumneliste_shows_fylgje_and_cleaning(
         year=cy,
         month=cm,
     )
-    h = _login(viewer).get("/intern/alumneliste/").content.decode()
+    h = _login(viewer).get("/alumneliste/").content.decode()
     assert "Fylgje" in h and "Rengøring" in h  # column headers
     assert "Fødselsdag" in h and "Indflyttet" in h  # new columns
     assert "Elder Sponsor" in h  # resolved fylgje
@@ -394,7 +394,7 @@ def test_alumneliste_export_csv_and_xlsx(
     )
     c = _login(viewer)
 
-    csv_resp = c.get(f"/intern/alumneliste/eksport?format=csv&period={cy}-{cm}")
+    csv_resp = c.get(f"/alumneliste/eksport?format=csv&period={cy}-{cm}")
     assert csv_resp.status_code == 200
     assert "text/csv" in csv_resp["Content-Type"]
     assert ".csv" in csv_resp["Content-Disposition"]
@@ -405,7 +405,7 @@ def test_alumneliste_export_csv_and_xlsx(
     )
     assert "Eks Port" in body and "Fysik" in body and "1999-03-04" in body and "2020-08-01" in body
 
-    xlsx_resp = c.get(f"/intern/alumneliste/eksport?format=xlsx&period={cy}-{cm}")
+    xlsx_resp = c.get(f"/alumneliste/eksport?format=xlsx&period={cy}-{cm}")
     assert xlsx_resp.status_code == 200
     assert "spreadsheetml" in xlsx_resp["Content-Type"]
     assert ".xlsx" in xlsx_resp["Content-Disposition"]
@@ -425,7 +425,7 @@ def test_stamtree_shows_lineage(
     make_resident(
         email="c@gahk.dk", first_name="Young", last_name="Leaf", sponsor=elder, move_in_date=date(2021, 8, 1)
     )
-    h = _login(viewer).get("/intern/stamtree/").content.decode()
+    h = _login(viewer).get("/stamtree/").content.decode()
     assert "Hagemanns Ånd" in h
     assert "Elder Root" in h and "Young Leaf" in h
     # the child appears nested under its sponsor (sponsor's name comes first in the document)
@@ -579,3 +579,100 @@ def test_the_create_form_offers_a_fylgje_picker(make_resident: Callable) -> None
 
     assert 'name="sponsor"' in html
     assert "Gammel Beboer" in html
+
+
+@pytest.mark.django_db
+def test_add_new_replaces_a_resident_in_a_full_sized_group(
+    make_resident: Callable, groups: dict[str, Room | Workgroup | Cleaning]
+) -> None:
+    """Swapping one resident for a newcomer used to deadlock: removing failed the exact group size,
+    adding failed on the taken room. "Erstatter" does both at once and inherits the blank fields."""
+    c, _ind, target = _setup(make_resident, groups)
+    ny, nm = next_period(active_period())
+    c.post(URL, {"action": "copy"})  # target -> r2, Festgruppen
+    Workgroup.objects.filter(id=groups["plain"].id).update(size=1)
+    Residency.objects.filter(resident=target, year=ny, month=nm).update(cleaning=groups["clean"])
+
+    c.post(
+        URL,
+        {
+            "action": "add_new",
+            "first_name": "Nina",
+            "last_name": "Ny",
+            "email": "nina@gahk.dk",
+            "replaces": target.id,
+        },
+    )
+    nina = Residency.objects.get(resident__email="nina@gahk.dk", year=ny, month=nm)
+    assert (nina.room_id, nina.workgroup_id, nina.cleaning_id) == (
+        groups["r2"].id,
+        groups["plain"].id,
+        groups["clean"].id,
+    )
+    assert not Residency.objects.filter(resident=target, year=ny, month=nm).exists()
+    # the list still satisfies the size rule, so a plain save goes through afterwards
+    form = {"action": "save"}
+    for res in Residency.objects.filter(year=ny, month=nm):
+        form |= {f"room_{res.resident_id}": res.room_id, f"workgroup_{res.resident_id}": res.workgroup_id}
+        form[f"cleaning_{res.resident_id}"] = res.cleaning_id or ""
+    resp = c.post(URL, form, follow=True)
+    assert "Ændringer gemt." in [str(m) for m in resp.context["messages"]]
+
+
+@pytest.mark.django_db
+def test_add_existing_replaces_and_drops_the_replaced_roles(
+    make_resident: Callable, groups: dict[str, Room | Workgroup | Cleaning]
+) -> None:
+    c, _ind, target = _setup(make_resident, groups)
+    ny, nm = next_period(active_period())
+    c.post(URL, {"action": "copy"})
+    Residency.objects.filter(resident=target, year=ny, month=nm).update(workgroup=groups["ak"])
+    RoleAssignment.objects.create(resident=target, role=Role.AK, year=ny, month=nm)
+    newcomer = make_resident(email="new@gahk.dk")
+
+    c.post(
+        URL,
+        {"action": "add_existing", "resident": newcomer.id, "replaces": target.id, "room": groups["r3"].id},
+    )
+    res = Residency.objects.get(resident=newcomer, year=ny, month=nm)
+    assert (res.room_id, res.workgroup_id) == (groups["r3"].id, groups["ak"].id)  # room chosen, wg inherited
+    assert RoleAssignment.objects.filter(resident=newcomer, role=Role.AK, year=ny, month=nm).exists()
+    assert not Residency.objects.filter(resident=target, year=ny, month=nm).exists()
+    assert not RoleAssignment.objects.filter(resident=target, year=ny, month=nm).exists()
+
+
+@pytest.mark.django_db
+def test_replacing_still_rejects_someone_elses_room(
+    make_resident: Callable, groups: dict[str, Room | Workgroup | Cleaning]
+) -> None:
+    c, _ind, target = _setup(make_resident, groups)
+    ny, nm = next_period(active_period())
+    c.post(URL, {"action": "copy"})  # ind -> r1, target -> r2
+
+    resp = c.post(
+        URL,
+        {
+            "action": "add_new",
+            "first_name": "Nina",
+            "last_name": "Ny",
+            "email": "nina@gahk.dk",
+            "replaces": target.id,
+            "room": groups["r1"].id,
+        },
+    )
+    assert not Resident.objects.filter(email="nina@gahk.dk").exists()
+    assert Residency.objects.filter(resident=target, year=ny, month=nm).exists()  # nothing removed
+    assert resp.context["new_draft"]["replaces"] == target.id
+
+
+@pytest.mark.django_db
+def test_cannot_replace_yourself_in_the_current_month(
+    make_resident: Callable, groups: dict[str, Room | Workgroup | Cleaning]
+) -> None:
+    c, ind, _target = _setup(make_resident, groups)
+    cy, cm = active_period()
+    newcomer = make_resident(email="new@gahk.dk")
+
+    c.post(URL, {"action": "add_existing", "period": "current", "resident": newcomer.id, "replaces": ind.id})
+    assert Residency.objects.filter(resident=ind, year=cy, month=cm).exists()
+    assert not Residency.objects.filter(resident=newcomer, year=cy, month=cm).exists()
