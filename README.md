@@ -30,6 +30,18 @@ kan køres igen når som helst (`--fresh` rydder først). Logins (kodeord `demo1
 | `oel@gahk.dk` | Ølkælder-rolle |
 | `beboer@gahk.dk` | almindelig beboer (kan bruge opslagstavlen, men ikke Den Hurtige endnu) |
 
+### Hjemmesiden gahk.dk
+
+Den offentlige hjemmeside er et separat projekt, [gahk_web](https://github.com/GAHK-org/gahk_web), men
+alt dens indhold redigeres her under *Hjemmeside* og sendes derover. Uden `GAHK_WEB_KEY` i `app/.env`
+sendes der intet, og alt andet virker som normalt. Vil du se ændringerne lokalt, så start gahk_webs
+udviklingsserver (`task dev` dér) og sæt `GAHK_WEB_URL` og `GAHK_WEB_KEY` til de værdier, den skriver
+ud. Se `DEPLOY.md` §4f.
+
+Editoren ligger på `/hjemmeside/` (rollerne administrator, indstilling, inspektion og pr). Den visuelle
+teksteditor (Tiptap) hentes kun på redigeringssiderne; byg frontenden (`npm run build` i `frontend/`),
+før du prøver den.
+
 ## Test
 
 ```sh

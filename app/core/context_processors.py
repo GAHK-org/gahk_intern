@@ -16,31 +16,6 @@ from photo_album.access import roles_allowed as photo_album_allowed
 from postkasser.access import has_any as has_any_mailbox
 from residents.permissions import CMS_EDITOR_ROLES, KITCHEN, can_preview, effective_roles
 
-# Public site nav, matching the legacy gahk.dk menu (labels + order). Paths on PUBLIC_SITE_URL.
-NAV_LEGACY = [
-    ("/", "Hjem"),
-    ("/kollegielivet/historie", "Historie"),
-    ("/vision", "Vision"),
-    ("/kollegielivet", "Kollegielivet"),
-    ("/faciliteter", "Faciliteter"),
-    ("/begivenheder/", "Begivenheder"),
-    ("/optagelse/", "Optagelse"),
-    ("/legater", "Legater"),
-    ("/kontakt", "Kontakt"),
-]
-
-NAV_PUBLIC = [
-    ("/", "Forside"),
-    ("/faciliteter", "Faciliteter"),
-    ("/kollegielivet", "Kollegielivet"),
-    ("/vision", "Vision"),
-    ("/legater", "Legater"),
-    ("/begivenheder/", "Begivenheder"),
-    ("/kontakt", "Kontakt"),
-    ("/optagelse/", "Optagelse"),
-]
-
-
 NavItem = tuple[str, str, str]  # (url, label, icon-key from the base.html sprite)
 NavSection = tuple[str, list[NavItem]]
 
@@ -119,7 +94,7 @@ def _nav_intern(roles: Collection[str], user_pk: int, *, has_mailbox: bool = Fal
     if "indstilling" in roles:
         administration.append((reverse("admissions:list"), "Ansøgninger", "inbox"))
     if not set(roles).isdisjoint(CMS_EDITOR_ROLES):  # administrator/indstilling/inspektion/pr
-        administration.append(("/django-admin/cms/", "Rediger indhold", "edit"))
+        administration.append((reverse("cms:overview"), "Hjemmeside", "globe"))
     if "administrator" in roles:
         administration.append((reverse("siteadmin:home"), "Site-admin", "gear"))
         administration.append((reverse("siteadmin:roles"), "Roller", "users"))
@@ -189,10 +164,6 @@ def navigation(request: HttpRequest) -> dict[str, object]:
     mailbox = authed and KITCHEN not in roles and has_any_mailbox(request)
     nav_intern = _nav_intern(roles, request.user.pk or 0, has_mailbox=mailbox) if authed else []
     ctx: dict[str, object] = {
-        # The public site's menu, for the few public-looking pages still rendered here (optagelse,
-        # the CSRF failure page). Its pages live on gahk.dk now, so the links go there.
-        "nav_legacy": [(settings.PUBLIC_SITE_URL + url, label) for url, label in NAV_LEGACY],
-        "nav_public": [(settings.PUBLIC_SITE_URL + url, label) for url, label in NAV_PUBLIC],
         "public_site_url": settings.PUBLIC_SITE_URL,
         "nav_intern": nav_intern,
         "active_nav_url": _active_nav_url(nav_intern, request.path),
