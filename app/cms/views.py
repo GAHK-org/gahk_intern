@@ -55,6 +55,7 @@ from .models import (
     Publication,
     SiteSettings,
 )
+from .page_types import PAGE_TYPES, FieldKind, field_label, html_fields, page_type_of
 from .paths import split_path
 from .sanitize import clean_html
 
@@ -307,7 +308,7 @@ def _page_initial(page: Page | None) -> dict[str, Any]:
     if page is None:
         return {}
     parent, segment = split_path(page.slug)
-    return {
+    initial = {
         "header": page.header,
         "path_parent": parent,
         "path_segment": segment,
@@ -315,6 +316,11 @@ def _page_initial(page: Page | None) -> dict[str, Any]:
         "background_image": page.background_image,
         "body": page.body,
     }
+    if page_type := page_type_of(page):
+        stored = page.fields if isinstance(page.fields, dict) else {}
+        for spec in page_type.fields:
+            initial[PageForm.text_field_name(spec.name)] = stored.get(spec.name, "")
+    return initial
 
 
 def _stamp(moment: datetime.datetime | None) -> str:
@@ -360,7 +366,7 @@ def page_edit(request: HttpRequest, pk: int | None = None) -> HttpResponse:
                 try:
                     saved = services.save_page(page, form.service_data(), current_resident(request))
                 except ValidationError as exc:
-                    apply_service_errors(form, exc, PageForm.SERVICE_FIELDS)
+                    apply_service_errors(form, exc, form.service_fields)
                 else:
                     if page is not None and saved.updated_at == page.updated_at:
                         messages.info(request, "Der var ingen ændringer at gemme.")
@@ -381,7 +387,11 @@ def page_edit(request: HttpRequest, pk: int | None = None) -> HttpResponse:
             "live_url": public_url(path) if path is not None else "",
             "redirects": list(page.redirects.all()) if page else [],
             "is_admin": is_administrator(request),
-            "can_delete": page is not None and page.pk != FRONT_PAGE_ID and is_administrator(request),
+            "can_delete": page is not None
+            and page.pk != FRONT_PAGE_ID
+            and page_type_of(page) is None
+            and is_administrator(request),
+            "page_type": page_type_of(page) if page else None,
             "preview_kind": "page",
         },
     )
@@ -417,6 +427,8 @@ class VersionEntry:
     previous: Any
     body_diff: list[DiffRow]
     changed: list[tuple[str, str, str]]  # (label, before, after) for the short fields
+    # A typed page's HTML texts that changed: (label, diff).
+    field_diffs: list[tuple[str, list[DiffRow]]] = field(default_factory=list)
 
 
 VERSION_FIELDS = (
@@ -430,6 +442,7 @@ VERSION_FIELDS = (
 @editor_view
 def page_history(request: HttpRequest, pk: int) -> HttpResponse:
     page = get_object_or_404(Page, pk=pk)
+    page_type = page_type_of(page)
     versions = list(page.versions.select_related("created_by"))
     entries = []
     for index, version in enumerate(versions):
@@ -441,7 +454,21 @@ def page_history(request: HttpRequest, pk: int) -> HttpResponse:
                 if before != after:
                     changed.append((label, before or "–", after or "–"))
         body_diff = html_diff(previous.body, version.body) if previous is not None else []
-        entries.append(VersionEntry(version, previous, body_diff, changed))
+        field_diffs = []
+        if previous is not None and page_type is not None:
+            before_fields, after_fields = previous.fields or {}, version.fields or {}
+            for spec in page_type.fields:
+                before, after = (
+                    str(before_fields.get(spec.name) or ""),
+                    str(after_fields.get(spec.name) or ""),
+                )
+                if before == after:
+                    continue
+                if spec.kind is FieldKind.HTML:
+                    field_diffs.append((spec.label, html_diff(before, after)))
+                else:
+                    changed.append((spec.label, before or "–", after or "–"))
+        entries.append(VersionEntry(version, previous, body_diff, changed, field_diffs))
     return render(request, "cms/page_history.html", {"page": page, "entries": entries})
 
 
@@ -512,6 +539,10 @@ def preview(request: HttpRequest) -> HttpResponse:
     except GahkWebError as exc:
         title = data.get("header") or data.get("title") or ""
         body = data.get("body") if kind != "event" else data.get("description")
+        if kind == "page" and isinstance(instance, Page) and page_type_of(instance) is not None:
+            # A typed page's look is gahk.dk's alone: here, its HTML texts one after another.
+            draft = Page(page_type=instance.page_type, fields=data.get("fields") or {})
+            body = "\n".join(html_fields(draft))
         html = render_to_string(
             "cms/preview_local.html",
             {
@@ -912,13 +943,25 @@ def change_fields(change: ContentChange) -> list[ChangeField]:
     for name, pair in (change.changes or {}).items():
         before, after = ([*pair, None, None])[:2] if isinstance(pair, list) else (None, pair)
         label = FIELD_LABELS.get(name, name)
+        if name.startswith("fields."):  # a typed page's text (cms.services.audit_state)
+            label = field_label(name.removeprefix("fields."))
         if name == "menu":
             fields.append(ChangeField(label, menu=(before or [], after or [])))
-        elif name in DIFF_FIELDS and (before or after):
+        elif (name in DIFF_FIELDS or _is_html_text(name)) and (before or after):
             fields.append(ChangeField(label, diff=html_diff(str(before or ""), str(after or ""))))
         else:
             fields.append(ChangeField(label, _text(before), _text(after)))
     return fields
+
+
+def _is_html_text(name: str) -> bool:
+    """Whether a change log field is a typed page's HTML text (`fields.criteria`)."""
+    if not name.startswith("fields."):
+        return False
+    text = name.removeprefix("fields.")
+    return any(
+        (spec := page_type.field(text)) and spec.kind is FieldKind.HTML for page_type in PAGE_TYPES.values()
+    )
 
 
 LINKED_KINDS: dict[str, tuple[type[Page | NewsItem | Event | CmsImage], str]] = {

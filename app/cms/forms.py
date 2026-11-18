@@ -15,6 +15,7 @@ from django import forms
 from django.core.exceptions import ValidationError
 
 from .models import FRONT_PAGE_ID, CmsImage, Page
+from .page_types import FieldKind, PageType, page_type_of
 from .paths import is_reserved, join_path, normalize_segment, split_path, validate_page_path
 
 # The HTML field the body editor (frontend/src/cms-editor.ts) takes over. Without JavaScript it
@@ -61,26 +62,64 @@ class PageForm(forms.Form):
     # caught instead of silently undoing it (PageEditView).
     loaded_at = forms.CharField(required=False, widget=forms.HiddenInput)
 
-    # Where cms.services' ValidationError keys land on this form.
+    # Where cms.services' ValidationError keys land on this form (a typed page adds its texts').
     SERVICE_FIELDS = {"slug": "path_segment"}
 
     def __init__(self, *args: Any, page: Page | None = None, **kwargs: Any) -> None:  # noqa: ANN401
         super().__init__(*args, **kwargs)
         self.page = page
+        self.page_type: PageType | None = page_type_of(page) if page is not None else None
+        self.service_fields = dict(self.SERVICE_FIELDS)
         current_parent, _segment = split_path(page.slug if page else None)
         cast(forms.ChoiceField, self.fields["path_parent"]).choices = self._parent_choices(current_parent)
         cast(forms.ChoiceField, self.fields["background_image"]).choices = library_choices(
             page.background_image if page else ""
         )
-        if self.is_front_page:
-            # gahk.dk shows the front page at "/" whatever its address says; offering to change it
-            # would only invite a meaningless edit.
+        if self.has_fixed_address:
+            # gahk.dk shows the front page at "/" whatever its address says, and a typed page where
+            # its layout expects it; offering to change either would only invite a meaningless edit.
             del self.fields["path_parent"]
             del self.fields["path_segment"]
+        if self.page_type is not None:
+            # A typed page has its texts (cms.page_types) instead of the one body, after the title.
+            del self.fields["body"]
+            for spec in self.page_type.fields:
+                name = self.text_field_name(spec.name)
+                if spec.kind is FieldKind.HTML:
+                    widget: forms.Widget = forms.Textarea(attrs={**EDITOR_ATTRS, "rows": 10})
+                    self.fields[name] = forms.CharField(
+                        label=spec.label, help_text=spec.help_text, required=False, widget=widget
+                    )
+                else:
+                    widget = forms.Textarea(attrs={"rows": 3}) if spec.max_length > 255 else forms.TextInput()
+                    self.fields[name] = forms.CharField(
+                        label=spec.label,
+                        help_text=spec.help_text,
+                        required=False,
+                        max_length=spec.max_length,
+                        widget=widget,
+                    )
+                self.service_fields[f"fields.{spec.name}"] = name
+
+    @staticmethod
+    def text_field_name(name: str) -> str:
+        """The form field of a typed page's text `name` (kept apart from the page's own fields)."""
+        return f"text_{name}"
+
+    @property
+    def text_fields(self) -> list[forms.BoundField]:
+        """A typed page's texts, in the page type's order ([] for an ordinary page)."""
+        if self.page_type is None:
+            return []
+        return [self[self.text_field_name(spec.name)] for spec in self.page_type.fields]
 
     @property
     def is_front_page(self) -> bool:
         return self.page is not None and self.page.pk == FRONT_PAGE_ID
+
+    @property
+    def has_fixed_address(self) -> bool:
+        return self.is_front_page or self.page_type is not None
 
     def _parent_choices(self, current_parent: str) -> list[tuple[str, str]]:
         """Top-level pages, offered as sections. Never the page itself, which would nest it in itself."""
@@ -101,7 +140,7 @@ class PageForm(forms.Form):
     def clean(self) -> dict[str, Any]:
         super().clean()
         cleaned = self.cleaned_data
-        if self.is_front_page:
+        if self.has_fixed_address:
             return cleaned
         parent = (cleaned.get("path_parent") or "").strip()
         segment = normalize_segment(cleaned.get("path_segment") or "")
@@ -135,10 +174,16 @@ class PageForm(forms.Form):
     def service_data(self) -> dict[str, Any]:
         """What cms.services.save_page takes."""
         data = {
-            name: self.cleaned_data.get(name, "")
-            for name in ("header", "body", "background_image", "description")
+            name: self.cleaned_data.get(name, "") for name in ("header", "background_image", "description")
         }
-        if not self.is_front_page:
+        if self.page_type is None:
+            data["body"] = self.cleaned_data.get("body", "")
+        else:
+            data["fields"] = {
+                spec.name: self.cleaned_data.get(self.text_field_name(spec.name), "")
+                for spec in self.page_type.fields
+            }
+        if not self.has_fixed_address:
             data["slug"] = self.cleaned_data.get("slug")
         return data
 
@@ -146,7 +191,7 @@ class PageForm(forms.Form):
         """The unsaved form as cms.services.render_preview takes it, valid or not."""
         raw = self.data
         slug = ""
-        if not self.is_front_page:
+        if not self.has_fixed_address:
             parent = str(raw.get("path_parent") or "").strip()
             segment = normalize_segment(str(raw.get("path_segment") or ""))
             slug = join_path(parent, segment)
@@ -158,6 +203,10 @@ class PageForm(forms.Form):
             "body": raw.get("body", ""),
             "background_image": raw.get("background_image", ""),
             "description": raw.get("description", ""),
+            "fields": {
+                spec.name: raw.get(self.text_field_name(spec.name), "")
+                for spec in (self.page_type.fields if self.page_type else ())
+            },
         }
 
 

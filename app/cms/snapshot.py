@@ -9,6 +9,8 @@ What is sent, and how it differs from what is stored:
     /images/<sha256[:16]>/<slugified basename>, which gahk.dk serves without asking intern (or S3)
     anything. A background that is not a library image is sent as "" (gahk.dk refuses any other).
   * Links into the intranet (/intern/…, http(s)://(www.)gahk.dk/intern/…) point at intern.gahk.dk.
+  * A page of a page type (cms.page_types) also has `page_type` and `fields`, its texts: the HTML
+    ones treated as bodies are, the plain ones as one line. An ordinary page has neither key.
   * Legacy /public/image/… references are converted in the database, once, by the sync before it
     builds a snapshot (cms.legacy_images); `legacy_images` maps their old URLs to the copies. One
     not converted yet is sent as it is (gahk.dk answers it with a 404).
@@ -36,6 +38,7 @@ from django.utils import timezone
 
 from .images import content_type_of, public_image_url, sha256_hex
 from .models import FRONT_PAGE_ID, CmsImage, Event, MenuItem, NewsItem, Page, PageRedirect, SiteSettings
+from .page_types import FieldKind, html_fields, page_type_of
 from .paths import is_reserved, validate_page_path
 from .sanitize import clean_html
 
@@ -171,8 +174,11 @@ def _page_path(page: Page) -> str | None:
     return page.slug
 
 
-def page_item(page: Page, path: str, body: str, background: str) -> dict[str, Any]:
-    return {
+def page_item(
+    page: Page, path: str, body: str, background: str, html: Callable[[str], str]
+) -> dict[str, Any]:
+    """The snapshot's page. `html` prepares an HTML text (a typed page's HTML fields) as `body` was."""
+    item = {
         "id": page.pk,
         "path": path,
         "title": _plain(page.header) or "Side",
@@ -181,6 +187,16 @@ def page_item(page: Page, path: str, body: str, background: str) -> dict[str, An
         "description": _plain(page.description)[:MAX_DESCRIPTION],
         "updated_at": _iso(page.updated_at or timezone.now()),
     }
+    if page_type := page_type_of(page):
+        stored = page.fields if isinstance(page.fields, dict) else {}
+        item["page_type"] = page_type.name
+        item["fields"] = {
+            field.name: html(str(stored.get(field.name) or ""))
+            if field.kind is FieldKind.HTML
+            else _plain(stored.get(field.name))
+            for field in page_type.fields
+        }
+    return item
 
 
 def news_item(item: NewsItem, body: str) -> dict[str, Any]:
@@ -226,7 +242,9 @@ def _referenced_names(
 ) -> set[str]:
     """The library images (storage names) that published content refers to."""
     texts = [site.default_background]
-    texts += [text for page, _path in pages for text in (page.body, page.background_image)]
+    texts += [
+        text for page, _path in pages for text in (page.body, page.background_image, *html_fields(page))
+    ]
     texts += [item.body for item in news] + [item.description for item in events]
     return set().union(*(media_names(text) for text in texts))
 
@@ -291,7 +309,8 @@ def build_snapshot(published_at: Any = None) -> Snapshot:  # noqa: ANN401 — a 
         "site": {"front_page_id": FRONT_PAGE_ID, "default_background": background(site.default_background)},
         "legacy_images": legacy_images,
         "pages": [
-            page_item(page, path, body(page.body), background(page.background_image)) for page, path in pages
+            page_item(page, path, body(page.body), background(page.background_image), body)
+            for page, path in pages
         ],
         "news": [news_item(item, body(item.body)) for item in news if _plain(item.title)],
         "events": [event_item(item, body(item.description)) for item in events if _plain(item.title)],
@@ -351,7 +370,7 @@ def preview_request(item: Page | NewsItem | Event) -> dict[str, Any]:
         names = media_names(item.background_image)
         # Percent-encoded, as a URL path: a stored name may hold a letter like "æ".
         background = f"/media/{quote(names.pop(), safe='/')}" if len(names) == 1 else ""
-        page = page_item(item, path, rewrite_intern_links(item.body), background)
+        page = page_item(item, path, rewrite_intern_links(item.body), background, rewrite_intern_links)
         return {"kind": "page", "item": {**page, "id": item_id}, "media_base": media_base}
     if isinstance(item, NewsItem):
         news = {

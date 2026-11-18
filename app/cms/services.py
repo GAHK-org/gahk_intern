@@ -50,6 +50,7 @@ from .models import (
     PageVersion,
     SiteSettings,
 )
+from .page_types import FieldKind, html_fields, page_type_of
 from .paths import validate_page_path
 from .sanitize import clean_html
 from .snapshot import media_names
@@ -208,11 +209,40 @@ def _image_url(value: object, field_name: str, current: str) -> str:
 
 
 # ---------------------------------------------------------------------------------------- pages
-PAGE_FIELDS = ("slug", "header", "body", "background_image", "description")
+# `fields`: a typed page's texts (cms.page_types), {} on an ordinary page.
+PAGE_FIELDS = ("slug", "header", "body", "background_image", "description", "fields")
 
 
 def page_state(page: Page) -> dict[str, Any]:
     return {name: getattr(page, name) for name in PAGE_FIELDS}
+
+
+def audit_state(state: Mapping[str, Any]) -> dict[str, Any]:
+    """A page_state for the change log: each of a typed page's texts as a field of its own
+    (`fields.criteria`), so the log shows what changed in which text."""
+    flat = {name: value for name, value in state.items() if name != "fields"}
+    for name, text in (state.get("fields") or {}).items():
+        flat[f"fields.{name}"] = text
+    return flat
+
+
+def clean_page_fields(page: Page, value: object, *, keep_missing: bool = True) -> dict[str, str]:
+    """A typed page's texts from `value` ({name: text}): HTML sanitized like a body, plain text as
+    one line. Names the page type does not have are dropped; a missing one keeps its stored text
+    (keep_missing) or is empty. Raises ValidationError keyed `fields.<name>`."""
+    page_type = page_type_of(page)
+    if page_type is None:
+        raise ValidationError({"fields": "Siden har ingen faste felter."})
+    given = value if isinstance(value, Mapping) else {}
+    stored = page.fields if keep_missing and isinstance(page.fields, dict) else {}
+    cleaned: dict[str, str] = {}
+    for spec in page_type.fields:
+        text = given[spec.name] if spec.name in given else stored.get(spec.name, "")
+        if spec.kind is FieldKind.HTML:
+            cleaned[spec.name] = _html(text)
+        else:
+            cleaned[spec.name] = _optional_text(text, f"fields.{spec.name}", spec.max_length)
+    return cleaned
 
 
 def _clean_slug(page: Page, value: object) -> str | None:
@@ -234,6 +264,8 @@ def clean_page_data(page: Page, data: Mapping[str, Any]) -> dict[str, Any]:
     cleaned: dict[str, Any] = {}
     if "slug" in data:
         cleaned["slug"] = _clean_slug(page, data["slug"])
+        if page_type_of(page) is not None and cleaned["slug"] != page.slug:
+            raise ValidationError({"slug": "Siden har en fast adresse."})
     if "header" in data or page.pk is None:
         cleaned["header"] = _required_text(data.get("header"), "header", 255, "en overskrift")
     if "body" in data:
@@ -244,6 +276,8 @@ def clean_page_data(page: Page, data: Mapping[str, Any]) -> dict[str, Any]:
         )
     if "description" in data:
         cleaned["description"] = _optional_text(data["description"], "description", 300)
+    if "fields" in data:
+        cleaned["fields"] = clean_page_fields(page, data["fields"])
     return cleaned
 
 
@@ -260,6 +294,7 @@ def snapshot_page(page: Page, author: Resident | None, note: str = "") -> PageVe
         body=page.body,
         background_image=page.background_image,
         description=page.description,
+        fields=page.fields,
         created_by=author,
         note=note[:120],
     )
@@ -334,7 +369,7 @@ def save_page(page: Page | None, data: Mapping[str, Any], by: Resident | None) -
             kind=Kind.PAGE,
             object_id=page.pk,
             label=page.header,
-            changes=field_changes(before, page_state(page)),
+            changes=field_changes(audit_state(before), audit_state(page_state(page))),
             by=by,
         )
         publish_on_commit("save", by)
@@ -345,6 +380,8 @@ def delete_page(page: Page, by: Resident | None) -> None:
     """Delete a page. Its versions stay (PageVersion.page is SET_NULL), so it can be recreated."""
     if page.pk == FRONT_PAGE_ID:
         raise ValidationError("Forsiden kan ikke slettes.")
+    if page_type_of(page) is not None:
+        raise ValidationError("Siden kan ikke slettes: den har en fast plads og et fast udseende på gahk.dk.")
     with transaction.atomic():
         snapshot_page(page, by, note="Før sletning")
         record_change(
@@ -352,7 +389,7 @@ def delete_page(page: Page, by: Resident | None) -> None:
             kind=Kind.PAGE,
             object_id=page.pk,
             label=page.header,
-            changes=field_changes(page_state(page), {}),
+            changes=field_changes(audit_state(page_state(page)), {}),
             by=by,
         )
         page.delete()
@@ -375,6 +412,11 @@ def _restorable_slug(page: Page, version: PageVersion, warnings: list[str]) -> s
     """
     wanted = version.slug or None
     if not wanted or wanted == page.slug:
+        return None
+    if page_type_of(page) is not None:
+        warnings.append(
+            f"Siden har en fast adresse, så den beholder /{page.slug} i stedet for /{wanted}. Indholdet er gendannet."
+        )
         return None
     try:
         validate_page_path(wanted)
@@ -412,6 +454,15 @@ def restore_version(page: Page, version: PageVersion, by: Resident | None) -> Re
         page.body = _html(version.body)
         page.background_image = version.background_image
         page.description = plain_text(version.description)[:300]
+        if page_type_of(page) is not None:
+            if version.fields:
+                # Cut to fit, not refused: history may hold a text from before a limit was set.
+                page.fields = _fitted_fields(page, version.fields)
+            else:
+                warnings.append(
+                    "Den udgave er fra før siden fik faste felter, så felterne er ikke ændret. "
+                    "Kopiér teksten fra historikken ind i felterne, hvis du vil bruge den."
+                )
         if restored_slug := _restorable_slug(page, version, warnings):
             page.slug = restored_slug
         page.updated_at = timezone.now()
@@ -427,11 +478,28 @@ def restore_version(page: Page, version: PageVersion, by: Resident | None) -> Re
             kind=Kind.PAGE,
             object_id=page.pk,
             label=page.header,
-            changes={**field_changes(before, page_state(page)), "version": [None, version.pk]},
+            changes={
+                **field_changes(audit_state(before), audit_state(page_state(page))),
+                "version": [None, version.pk],
+            },
             by=by,
         )
         publish_on_commit("save", by)
     return RestoreResult(page=page, warnings=warnings)
+
+
+def _fitted_fields(page: Page, stored: object) -> dict[str, str]:
+    """Texts for a typed page from a version or a draft: cleaned again, plain ones cut to fit."""
+    page_type = page_type_of(page)
+    given = stored if isinstance(stored, Mapping) else {}
+    restored: dict[str, str] = {}
+    for spec in page_type.fields if page_type else ():
+        text = str(given.get(spec.name) or "")
+        if spec.kind is FieldKind.HTML:
+            restored[spec.name] = _html(text)
+        else:
+            restored[spec.name] = plain_text(text)[: spec.max_length]
+    return restored
 
 
 # ------------------------------------------------------------------------------ news and events
@@ -631,8 +699,9 @@ def usage_map(images: Iterable[CmsImage]) -> dict[int, list[str]]:
     site = SiteSettings.load()
     bodies: list[tuple[str, str, set[str]]] = []
     backgrounds: list[tuple[str, str]] = []
-    for page in Page.objects.only("header", "body", "background_image"):
-        bodies.append((f"Side: {page.header}", page.body, media_names(page.body)))
+    for page in Page.objects.only("header", "body", "background_image", "page_type", "fields"):
+        text = "\n".join([page.body, *html_fields(page)])
+        bodies.append((f"Side: {page.header}", text, media_names(text)))
         backgrounds.append((f"Baggrund: {page.header}", page.background_image))
     bodies += [
         (f"Nyhed: {n.title}", n.body, media_names(n.body)) for n in NewsItem.objects.only("title", "body")
@@ -868,6 +937,9 @@ def render_preview(
             description=plain_text(data.get("description"))[:300],
             updated_at=timezone.now(),
         )
+        if isinstance(instance, Page) and page_type_of(instance) is not None:
+            item.page_type = instance.page_type
+            item.fields = _fitted_fields(item, data.get("fields"))  # cleaned, cut to fit: a draft
     elif kind == "news":
         try:
             published_at = _aware_datetime(data.get("published_at"), "published_at")

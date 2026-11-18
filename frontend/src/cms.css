@@ -78,7 +78,7 @@
 .cms-form-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; }
 .cms-form-errors { border-color: #e7c7c3; color: var(--neg); }
 .cms-form-errors .errorlist { margin: 0; padding-left: 18px; }
-.cms-editor-main textarea { font-family: ui-monospace, Menlo, monospace; font-size: 13px; line-height: 1.5; min-height: 22rem; }
+.cms-editor-main textarea[data-cms-editor] { font-family: ui-monospace, Menlo, monospace; font-size: 13px; line-height: 1.5; min-height: 22rem; }
 .cms-inline-fields { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 14px; }
 .cms-inline-fields .cms-field { flex: 1 1 220px; }
 .cms-inline-fields > .btn { margin-top: 27px; }

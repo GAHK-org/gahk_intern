@@ -666,20 +666,32 @@ class Command(BaseCommand):
             ("faciliteter/kokken", "Køkkenet", "<p>Fælleskøkkenet på hver gang.</p>"),
             ("legater", "Legater", "<p>Legater til alumner.</p>"),
             ("kontakt", "Kontakt", "<p>Skriv til os.</p>"),
-            (
-                "optagelse",
-                "Optagelse",
-                (
-                    '<p>Sådan søger du ind.</p><ul><li><a href="/optagelse/ansoeg">Anmod om rundvisning</a></li>'
-                    '<li><a href="/optagelse/fremlej">Ansøg om fremleje</a></li></ul>'
-                ),
-            ),
             ("arkiv/gammel-side", "En side uden for menuen", "<p>Kun med et direkte link.</p>"),
         ]
         for slug, header, body in pages:
             Page.objects.update_or_create(
                 slug=slug, defaults={"header": header, "body": body, "menu_category": 1}
             )
+        # The admissions page is a typed page (cms.page_types): its texts are fields, not a body.
+        Page.objects.update_or_create(
+            slug="optagelse",
+            defaults={
+                "header": "Optagelse",
+                "body": "",
+                "menu_category": 1,
+                "page_type": "admissions",
+                "fields": {
+                    "intro": "<p>Vil du bo her, skal du først på en <strong>rundvisning</strong>.</p>",
+                    "criteria": (
+                        "<h2>Kriterier for at søge ind</h2><p>Studerende fra 3. semester.</p>"
+                        "<h2>Husleje</h2><p>Pt. <strong>5.616 kr. pr. måned</strong> med fuld madordning.</p>"
+                        "<h2>Sprog</h2><p>Dansktalende.</p><p><em>We prefer Danish-speaking applicants.</em></p>"
+                    ),
+                    "quote": "«Valget skal træffes under hensyn til vidnesbyrd, flid, begavelse og trang.»",
+                    "quote_by": "Gustav Adolph Hagemann",
+                },
+            },
+        )
         for _ in range(6):
             NewsItem.objects.create(
                 title=self.fake.sentence(nb_words=6),
