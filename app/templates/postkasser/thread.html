@@ -93,6 +93,37 @@
     </form>
   {% endif %}
 
+  {% comment %}
+    Kladder on this sag: everyone who can open the mailbox sees that one exists and may read it (so two
+    people do not answer at once); only its author continues or deletes it. The text is autoescaped.
+  {% endcomment %}
+  {% if drafts %}
+    <h2>Kladder</h2>
+    <div class="board-list mb-4">
+      {% for draft in drafts %}
+        <div class="card-flat card-pad">
+          <div class="flex gap-2 justify-between items-center">
+            <span>Kladde af {{ draft.author.full_name }} · gemt {{ draft.updated_at|date:"j. M H:i" }}</span>
+            {% if draft.mine %}
+              <span class="flex gap-2">
+                <a class="btn btn-secondary" href="{{ draft.continue_url }}">Fortsæt</a>
+                <form method="post" action="{% url 'postkasser:delete_draft' mailbox.slug draft.pk %}" class="inline">
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn-secondary">Slet</button>
+                </form>
+              </span>
+            {% endif %}
+          </div>
+          <details class="mt-2">
+            <summary class="text-sm">Læs kladden</summary>
+            {% if draft.to %}<p class="muted text-sm">Til: {{ draft.to }}</p>{% endif %}
+            <div>{{ draft.body|linebreaksbr }}</div>
+          </details>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
   {% if history %}
     <ul class="muted text-sm mb-4">
       {% for event in history %}

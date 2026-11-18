@@ -40,6 +40,7 @@ from postkasser.models import (
     BoardColumn,
     ColumnRole,
     Mailbox,
+    MailDraft,
     MailEvent,
     MailFolder,
     MailMessage,
@@ -3974,7 +3975,9 @@ def test_the_board_query_count_does_not_grow_with_cards_or_tags(
         make_thread(mailbox, f"Sag {i}").tags.set(palette[:1])
     few = count()
     for i in range(3, 30):
-        make_thread(mailbox, f"Sag {i}").tags.set(palette)
+        sag = make_thread(mailbox, f"Sag {i}")
+        sag.tags.set(palette)
+        MailDraft.objects.create(mailbox=mailbox, author=ak_member, thread=sag)  # the draft chip is no N+1
     assert count() == few
 
 
@@ -6133,3 +6136,724 @@ def test_a_stored_sent_folder_that_cannot_take_sent_mail_is_labelled_and_replace
     )
     Mailbox.objects.filter(pk=mailbox.pk).update(sent_folder="Sent")
     assert not services.sent_folder_is_stale(Mailbox.objects.get(pk=mailbox.pk))
+
+
+# --- drafts (kladder) ----------------------------------------------------------------------------------------
+
+
+def autosave(client: Client, data: dict[str, str], slug: str = "ak") -> "HttpResponse":  # noqa: F821
+    """What postkasser-draft.ts sends: a POST that asks for JSON."""
+    return client.post(reverse("postkasser:save_draft", args=[slug]), data, HTTP_ACCEPT="application/json")
+
+
+def colleague(make_resident: MakeResident) -> tuple[Resident, Client]:
+    """Another member of the same mailbox, with a client of their own."""
+    other = make_resident("kollega@intern.dk", roles=(Role.AK,))
+    Resident.objects.filter(pk=other.pk).update(first_name="Kollega")
+    other.refresh_from_db()
+    other_client = Client()
+    other_client.force_login(other)
+    return other, other_client
+
+
+def test_autosave_creates_then_updates_the_same_draft(client: Client, ak_member: Resident) -> None:
+    mailbox = make_mailbox(roles=["ak"])
+    first = autosave(client, {"to": "a@example.com", "subject": "Nyt", "body": "Hej"})
+    data = first.json()
+    assert first.status_code == 200 and data["ok"] and re.fullmatch(r"\d\d:\d\d", data["saved_at"])
+    second = autosave(
+        client, {"draft": str(data["draft"]), "to": "a@example.com", "subject": "Nyt", "body": "Hej igen"}
+    )
+    assert second.json()["draft"] == data["draft"]
+    draft = MailDraft.objects.get()
+    assert (draft.mailbox, draft.author, draft.body, draft.thread) == (mailbox, ak_member, "Hej igen", None)
+
+
+def test_autosave_without_a_pk_finds_the_authors_draft_on_the_sag(
+    client: Client, ak_member: Resident, server: FakeServer
+) -> None:
+    mailbox = make_mailbox(roles=["ak"])
+    (message,) = synced(server, mailbox, raw_mail("Spørgsmål"))
+    sag = message.thread
+    assert sag is not None
+    one = autosave(client, {"reply_to": str(message.pk), "body": "Første"}).json()["draft"]
+    two = autosave(client, {"reply_to": str(message.pk), "body": "Anden"}).json()["draft"]  # a second tab
+    three = autosave(client, {"thread": str(sag.pk), "body": "Tredje"}).json()["draft"]
+    assert one == two == three
+    draft = MailDraft.objects.get()
+    assert (draft.thread, draft.reply_to, draft.body) == (sag, message, "Tredje")
+
+
+def test_one_author_may_have_many_new_mail_drafts_but_one_per_sag(
+    ak_member: Resident, server: FakeServer
+) -> None:
+    mailbox = make_mailbox(roles=["ak"])
+    MailDraft.objects.create(mailbox=mailbox, author=ak_member)
+    MailDraft.objects.create(mailbox=mailbox, author=ak_member)
+    sag = make_thread(mailbox)
+    MailDraft.objects.create(mailbox=mailbox, author=ak_member, thread=sag)
+    with pytest.raises(IntegrityError), transaction.atomic():
+        MailDraft.objects.create(mailbox=mailbox, author=ak_member, thread=sag)
+    assert MailDraft.objects.count() == 3
+
+
+def test_the_plain_button_saves_and_goes_back_to_the_form(client: Client, ak_member: Resident) -> None:
+    make_mailbox(roles=["ak"])
+    response = client.post(
+        reverse("postkasser:save_draft", args=["ak"]), {"to": "a@example.com", "subject": "S", "body": "B"}
+    )
+    draft = MailDraft.objects.get()
+    assert response.status_code == 302
+    assert response["Location"] == reverse("postkasser:compose", args=["ak"]) + f"?kladde={draft.pk}"
+    page = client.get(response["Location"], follow=True).content.decode()
+    assert "Kladden er gemt." in page and 'value="a@example.com"' in page
+
+
+def test_the_plain_button_on_a_reply_goes_back_to_the_reply_page(
+    client: Client, ak_member: Resident, server: FakeServer
+) -> None:
+    mailbox = make_mailbox(roles=["ak"])
+    (message,) = synced(server, mailbox, raw_mail("Spørgsmål"))
+    response = client.post(
+        reverse("postkasser:save_draft", args=["ak"]), {"reply_to": str(message.pk), "alle": "1", "body": "B"}
+    )
+    draft = MailDraft.objects.get()
+    assert draft.reply_all
+    assert response["Location"] == reverse("postkasser:reply", args=["ak", message.pk]) + "?alle=1"
+
+
+def test_a_half_typed_address_saves(client: Client, ak_member: Resident) -> None:
+    make_mailbox(roles=["ak"])
+    assert autosave(client, {"to": "mette@exa", "cc": "a@, ", "subject": "", "body": ""}).json()["ok"]
+    draft = MailDraft.objects.get()
+    assert (draft.to, draft.cc) == ("mette@exa", "a@, ")
+
+
+def test_a_draft_over_the_limits_is_refused_not_truncated_and_never_a_500(
+    client: Client, ak_member: Resident
+) -> None:
+    make_mailbox(roles=["ak"])
+    too_long = {"body": "x" * 100_001}
+    response = autosave(client, too_long)
+    assert (
+        response.status_code == 400 and not response.json()["ok"] and "for lang" in response.json()["error"]
+    )
+    assert autosave(client, {"subject": "s" * 999}).status_code == 400
+    assert autosave(client, {"to": "a" * 10_001}).status_code == 400
+    assert not MailDraft.objects.exists()
+    exact = autosave(client, {"subject": "s" * 998, "body": "x" * 100_000})
+    assert exact.json()["ok"] and len(MailDraft.objects.get().body) == 100_000
+    # The plain button shows the form again WITH the text and the reason, instead of losing it.
+    page = client.post(
+        reverse("postkasser:save_draft", args=["ak"]), {"to": "a@example.com", "body": "y" * 100_001}
+    )
+    assert page.status_code == 400 and "teksten er for lang" in page.content.decode()
+    assert 'value="a@example.com"' in page.content.decode()
+
+
+def test_garbage_input_to_the_save_is_not_a_500(client: Client, ak_member: Resident) -> None:
+    make_mailbox(roles=["ak"])
+    for bad in (
+        {"draft": "abc"},
+        {"draft": "99999999999999999999999"},
+        {"thread": "x"},
+        {"reply_to": "²"},
+        {"draft": "0"},
+    ):
+        assert autosave(client, {**bad, "body": "x"}).status_code == 404, bad
+    # A timestamp that is well-formed but impossible is ignored, not a 500.
+    for started in ("2026-02-30T10:00:00", "2026-02-10T10:00:00+99:00", "nonsense", "2026-02-10T10:00:00"):
+        assert autosave(client, {"body": "x", "draft_started": started}).status_code == 200, started
+    MailDraft.objects.all().delete()
+    saved = autosave(client, {"body": "a\x00b", "subject": "\x00", "to": "\n"})
+    assert saved.status_code == 200 and MailDraft.objects.get().body == "ab"
+
+
+def test_a_foreign_draft_thread_or_mail_is_a_404(
+    client: Client, ak_member: Resident, make_resident: MakeResident
+) -> None:
+    make_mailbox(roles=["ak"])
+    secret = make_mailbox("fest", name="Festgruppen", roles=["ak"])
+    other, _other_client = colleague(make_resident)
+    theirs = MailDraft.objects.create(mailbox=secret, author=other, body="hemmeligt")
+    here = MailDraft.objects.create(mailbox=Mailbox.objects.get(slug="ak"), author=other, body="deres")
+    foreign_thread = make_thread(secret)
+    foreign_mail = foreign_thread.messages.get()
+    assert (
+        autosave(client, {"draft": str(theirs.pk), "body": "x"}).status_code == 404
+    )  # another author, other box
+    assert (
+        autosave(client, {"draft": str(here.pk), "body": "x"}).status_code == 404
+    )  # another author, same box
+    assert autosave(client, {"thread": str(foreign_thread.pk), "body": "x"}).status_code == 404
+    assert autosave(client, {"reply_to": str(foreign_mail.pk), "body": "x"}).status_code == 404
+    assert (
+        autosave(client, {"body": "x"}, slug="fest").status_code == 200
+    )  # but their own, in a box they can open
+    assert MailDraft.objects.get(pk=here.pk).body == "deres"
+
+
+def test_wrong_slug_is_404_and_the_endpoints_are_post_only(client: Client, ak_member: Resident) -> None:
+    make_mailbox(roles=["ak"])
+    draft = MailDraft.objects.create(mailbox=Mailbox.objects.get(), author=ak_member)
+    assert autosave(client, {"body": "x"}, slug="findes-ikke").status_code == 404
+    assert client.post(reverse("postkasser:delete_draft", args=["findes-ikke", draft.pk])).status_code == 404
+    assert client.get(reverse("postkasser:save_draft", args=["ak"])).status_code == 405
+    assert client.get(reverse("postkasser:delete_draft", args=["ak", draft.pk])).status_code == 405
+    assert MailDraft.objects.filter(pk=draft.pk).exists()
+
+
+def test_the_group_reads_a_draft_on_the_sag_but_only_the_author_changes_it(
+    client: Client, ak_member: Resident, make_resident: MakeResident, server: FakeServer
+) -> None:
+    mailbox = make_mailbox(roles=["ak"])
+    (message,) = synced(server, mailbox, raw_mail("Spørgsmål"))
+    sag = message.thread
+    assert sag is not None
+    draft = MailDraft.objects.create(
+        mailbox=mailbox,
+        author=ak_member,
+        thread=sag,
+        reply_to=message,
+        body="<script>alert(1)</script>\nlinje 2",
+    )
+    other, other_client = colleague(make_resident)
+    url = reverse("postkasser:thread", args=["ak", sag.pk])
+    seen = other_client.get(url).content.decode()
+    assert f"Kladde af {ak_member.full_name}" in seen and "Læs kladden" in seen
+    assert "<script>alert(1)</script>" not in seen and "&lt;script&gt;alert(1)" in seen and "linje 2" in seen
+    assert "Fortsæt" not in seen and reverse("postkasser:delete_draft", args=["ak", draft.pk]) not in seen
+    mine = client.get(url).content.decode()
+    assert "Fortsæt" in mine and reverse("postkasser:delete_draft", args=["ak", draft.pk]) in mine
+    # The colleague can neither overwrite it nor delete it.
+    assert autosave(other_client, {"draft": str(draft.pk), "body": "min"}).status_code == 404
+    assert other_client.post(reverse("postkasser:delete_draft", args=["ak", draft.pk])).status_code == 404
+    # ... and their own autosave on the same sag is a SECOND draft, not an edit of the first.
+    autosave(other_client, {"reply_to": str(message.pk), "body": "min egen"})
+    assert MailDraft.objects.count() == 2 and MailDraft.objects.get(pk=draft.pk).author == ak_member
+    # The author deletes theirs, and lands back on the sag.
+    response = client.post(reverse("postkasser:delete_draft", args=["ak", draft.pk]))
+    assert response["Location"] == url and MailDraft.objects.get().author == other
+
+
+def test_compose_resumes_a_draft_and_sending_deletes_it(
+    client: Client, ak_member: Resident, server: FakeServer
+) -> None:
+    mailbox = make_mailbox(roles=["ak"])
+    draft = MailDraft.objects.create(
+        mailbox=mailbox, author=ak_member, to="a@example.com", subject="Emne", body="Halvt"
+    )
+    url = reverse("postkasser:compose", args=["ak"])
+    page = client.get(url, {"kladde": str(draft.pk)}).content.decode()
+    assert 'value="a@example.com"' in page and 'value="Emne"' in page and "Halvt" in page
+    assert f'name="draft" value="{draft.pk}"' in page
+    assert "Venlig hilsen" not in page  # the saved text replaces the fresh greeting
+    # Somebody else's pk, or a stale one, is just a fresh form.
+    assert "Halvt" not in client.get(url, {"kladde": "999999"}).content.decode()
+    response = client.post(
+        url, {"draft": str(draft.pk), "to": "a@example.com", "subject": "Emne", "body": "Færdigt"}
+    )
+    assert response.status_code == 302 and len(mail.outbox) == 1
+    assert not MailDraft.objects.exists()
+
+
+def test_a_failed_send_keeps_the_draft(
+    client: Client, ak_member: Resident, server: FakeServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mailbox = make_mailbox(roles=["ak"])
+    draft = MailDraft.objects.create(
+        mailbox=mailbox, author=ak_member, to="a@example.com", subject="E", body="B"
+    )
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(services.EmailMessage, "send", boom)
+    response = client.post(
+        reverse("postkasser:compose", args=["ak"]),
+        {"draft": str(draft.pk), "to": "a@example.com", "subject": "E", "body": "B"},
+    )
+    assert response.status_code == 200 and "Mailen blev ikke sendt" in response.content.decode()
+    assert f'name="draft" value="{draft.pk}"' in response.content.decode()
+    assert MailDraft.objects.filter(pk=draft.pk).exists()
+    # An invalid address keeps it too: drafts are validated only on send.
+    client.post(
+        reverse("postkasser:compose", args=["ak"]),
+        {"draft": str(draft.pk), "to": "halv@", "subject": "E", "body": "B"},
+    )
+    assert MailDraft.objects.filter(pk=draft.pk).exists()
+
+
+def test_a_reply_resumes_the_draft_start_over_deletes_it_and_sending_deletes_it(
+    client: Client, ak_member: Resident, server: FakeServer
+) -> None:
+    mailbox = make_mailbox(roles=["ak"])
+    (message,) = synced(server, mailbox, raw_mail("Spørgsmål"))
+    url = reverse("postkasser:reply", args=["ak", message.pk])
+    fresh = client.get(url).content.decode()
+    assert "Du fortsætter din kladde" not in fresh and "&gt; Hvornår åbner kælderen?" in fresh
+    draft = MailDraft.objects.create(
+        mailbox=mailbox, author=ak_member, thread=message.thread, reply_to=message,
+        to="mette@example.com", subject="Re: Spørgsmål", body="Mit halve svar",
+    )  # fmt: skip
+    page = client.get(url).content.decode()
+    assert "Mit halve svar" in page and "&gt; Hvornår" not in page
+    assert "Du fortsætter din kladde fra" in page and "Start forfra" in page
+    assert f'name="draft" value="{draft.pk}"' in page and f'name="reply_to" value="{message.pk}"' in page
+    # Start forfra: the draft goes, the reply page is fresh again.
+    response = client.post(reverse("postkasser:delete_draft", args=["ak", draft.pk]), {"next": "svar"})
+    assert response["Location"] == url and not MailDraft.objects.exists()
+    assert "&gt; Hvornår åbner kælderen?" in client.get(url).content.decode()
+    # Sending deletes the draft: both the one the form names and the one on the sag.
+    MailDraft.objects.create(
+        mailbox=mailbox, author=ak_member, thread=message.thread, reply_to=message, body="x"
+    )
+    sent = client.post(url, {"to": "mette@example.com", "subject": "Re: Spørgsmål", "body": "Svar"})
+    assert sent.status_code == 302 and len(mail.outbox) == 1 and not MailDraft.objects.exists()
+
+
+def test_a_reply_draft_survives_a_failed_send_and_another_authors_draft_is_untouched(
+    client: Client, ak_member: Resident, make_resident: MakeResident, server: FakeServer
+) -> None:
+    mailbox = make_mailbox(roles=["ak"])
+    (message,) = synced(server, mailbox, raw_mail("Spørgsmål"))
+    other, _ = colleague(make_resident)
+    theirs = MailDraft.objects.create(mailbox=mailbox, author=other, thread=message.thread, body="deres")
+    mine = MailDraft.objects.create(
+        mailbox=mailbox, author=ak_member, reply_to=message, thread=message.thread, body="min"
+    )
+    server.error = imap.MailboxError("nede")  # the reply page needs one.com to quote the mail
+    url = reverse("postkasser:reply", args=["ak", message.pk])
+    assert client.get(url).status_code == 302
+    server.error = None
+    client.post(url, {"to": "mette@example.com", "subject": "Re: S", "body": "Svar"})
+    assert list(MailDraft.objects.all()) == [theirs] and mine.pk != theirs.pk
+    assert "deres" not in client.get(url).content.decode()  # and never prefilled from somebody else's
+
+
+def test_the_board_shows_a_draft_chip_without_more_queries(
+    client: Client, ak_member: Resident, make_resident: MakeResident
+) -> None:
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    mailbox = make_mailbox(roles=["ak"])
+    other, _ = colleague(make_resident)
+    url = reverse("postkasser:board", args=["ak"])
+
+    def count() -> int:
+        with CaptureQueriesContext(connection) as queries:
+            assert client.get(url).status_code == 200
+        return len(queries)
+
+    first = make_thread(mailbox, "Uden kladde")
+    second = make_thread(mailbox, "Med kladde")
+    assert "Kladde</span>" not in board(client) and "Mine kladder" not in board(client)
+    MailDraft.objects.create(mailbox=mailbox, author=ak_member, thread=second)
+    few = count()
+    page = board(client)
+    assert page.count("✎ Kladde") == 1 and f"Kladde af {ak_member.full_name}" in page
+    assert "Mine kladder (1)" in page
+    for i in range(25):
+        sag = make_thread(mailbox, f"Sag {i}")
+        MailDraft.objects.create(mailbox=mailbox, author=ak_member if i % 2 else other, thread=sag)
+    MailDraft.objects.create(mailbox=mailbox, author=other, thread=second)
+    assert count() == few
+    page = board(client)
+    assert page.count("✎ Kladde") == 26  # one chip per sag with a draft, however many drafts it has
+    assert f"Kladde af {ak_member.full_name}, {other.full_name}" in page or (
+        f"Kladde af {other.full_name}, {ak_member.full_name}" in page
+    )
+    assert first.pk  # the sag without a draft is on the board too, without a chip
+
+
+def test_mine_kladder_lists_only_my_drafts_in_this_mailbox(
+    client: Client, ak_member: Resident, make_resident: MakeResident, server: FakeServer
+) -> None:
+    mailbox = make_mailbox(roles=["ak"])
+    other_box = make_mailbox("fest", name="Festgruppen", roles=["ak"])
+    (message,) = synced(server, mailbox, raw_mail("Spørgsmål"))
+    other, _ = colleague(make_resident)
+    new = MailDraft.objects.create(
+        mailbox=mailbox, author=ak_member, subject="Ny til Per", to="per@example.com"
+    )
+    answer = MailDraft.objects.create(
+        mailbox=mailbox,
+        author=ak_member,
+        thread=message.thread,
+        reply_to=message,
+        subject="Re: Spørgsmål",
+        reply_all=True,
+    )
+    MailDraft.objects.create(mailbox=mailbox, author=other, subject="Kollegaens")
+    MailDraft.objects.create(mailbox=other_box, author=ak_member, subject="Anden postkasse")
+    response = client.get(reverse("postkasser:drafts", args=["ak"]))
+    page = response.content.decode()
+    assert [d.pk for d in response.context["drafts"]] == [answer.pk, new.pk]  # newest first
+    assert "Ny til Per" in page and "Re: Spørgsmål" in page
+    assert "Kollegaens" not in page and "Anden postkasse" not in page
+    assert reverse("postkasser:compose", args=["ak"]) + f"?kladde={new.pk}" in page
+    assert reverse("postkasser:reply", args=["ak", message.pk]) + "?alle=1" in page
+    deleted = client.post(reverse("postkasser:delete_draft", args=["ak", new.pk]), {"next": "kladder"})
+    assert deleted["Location"] == reverse("postkasser:drafts", args=["ak"])
+    assert client.get(reverse("postkasser:drafts", args=["nej"])).status_code == 404
+
+
+def test_the_purge_removes_drafts_untouched_for_30_days(
+    ak_member: Resident, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from django.core.management import call_command
+
+    from postkasser import tasks
+
+    mailbox = make_mailbox(roles=["ak"])
+    old, edge, fresh = (MailDraft.objects.create(mailbox=mailbox, author=ak_member, subject=s) for s in "abc")
+    now = timezone.now()
+    MailDraft.objects.filter(pk=old.pk).update(updated_at=now - timedelta(days=30, minutes=1))
+    MailDraft.objects.filter(pk=edge.pk).update(updated_at=now - timedelta(days=29, hours=23))
+    call_command("purge_mail_drafts", "--dry-run")
+    assert "Ville slette 1 kladde(r)." in capsys.readouterr().out and MailDraft.objects.count() == 3
+    call_command("purge_mail_drafts")
+    assert "Slettede 1 kladde(r)." in capsys.readouterr().out
+    assert set(MailDraft.objects.values_list("pk", flat=True)) == {edge.pk, fresh.pk}
+    MailDraft.objects.filter(pk=edge.pk).update(updated_at=now - timedelta(days=31))
+    tasks.purge_drafts()
+    assert list(MailDraft.objects.values_list("pk", flat=True)) == [fresh.pk]
+
+
+def test_the_purge_job_is_scheduled_daily_at_a_minute_nobody_else_uses(settings: LazySettings) -> None:
+    from celery.schedules import crontab
+
+    entry = settings.CELERY_BEAT_SCHEDULE["purge-mail-drafts"]
+    assert entry["task"] == "postkasser.tasks.purge_drafts"
+    assert entry["schedule"] == crontab(minute=45, hour=3)
+    others = [e["schedule"] for k, e in settings.CELERY_BEAT_SCHEDULE.items() if k != "purge-mail-drafts"]
+    assert crontab(minute=45, hour=3) not in others
+
+
+def test_the_draft_script_is_in_the_bundle_and_the_form_is_wired_for_it(
+    client: Client, ak_member: Resident
+) -> None:
+    from pathlib import Path
+
+    make_mailbox(roles=["ak"])
+    page = client.get(reverse("postkasser:compose", args=["ak"])).content.decode()
+    assert (
+        "data-draft-form" in page
+        and f'data-draft-url="{reverse("postkasser:save_draft", args=["ak"])}"' in page
+    )
+    assert "data-draft-status" in page and "Gem kladde" in page
+    main = (Path(__file__).resolve().parents[2] / "frontend/src/main.ts").read_text()
+    assert 'import "./postkasser-draft"' in main
+
+
+def test_the_over_limit_rerender_sends_to_the_right_place(
+    client: Client, ak_member: Resident, server: FakeServer
+) -> None:
+    mailbox = make_mailbox(roles=["ak"])
+    (message,) = synced(server, mailbox, raw_mail("Spørgsmål"))
+    save = reverse("postkasser:save_draft", args=["ak"])
+    new = client.post(save, {"to": "a@example.com", "body": "y" * 100_001}).content.decode()
+    assert f'action="{reverse("postkasser:compose", args=["ak"])}"' in new
+    reply = client.post(save, {"reply_to": str(message.pk), "alle": "1", "body": "y" * 100_001})
+    assert f'action="{reverse("postkasser:reply", args=["ak", message.pk])}?alle=1"' in reply.content.decode()
+    assert 'name="draft_started"' in reply.content.decode()
+    # The re-rendered form really sends: no draft was made, and the mail goes out.
+    sent = client.post(
+        reverse("postkasser:compose", args=["ak"]), {"to": "a@example.com", "subject": "S", "body": "ok"}
+    )
+    assert sent.status_code == 302 and len(mail.outbox) == 1
+
+
+def test_a_late_autosave_cannot_bring_back_a_sent_draft(
+    client: Client, ak_member: Resident, server: FakeServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from postkasser import views
+
+    mailbox = make_mailbox(roles=["ak"])
+    (message,) = synced(server, mailbox, raw_mail("Spørgsmål"))
+    started = timezone.now().isoformat()
+    # An update of a draft Send has deleted: 404, nothing inserted (here deleted between lookup and write).
+    draft = MailDraft.objects.create(
+        mailbox=mailbox, author=ak_member, thread=message.thread, reply_to=message
+    )
+    real = views._draft_problem
+
+    def delete_then_check(fields: dict[str, str]) -> str:
+        MailDraft.objects.all().delete()  # Send won the race, after the view had found the draft
+        return real(fields)
+
+    monkeypatch.setattr(views, "_draft_problem", delete_then_check)
+    gone = autosave(client, {"draft": str(draft.pk), "body": "sent text"})
+    monkeypatch.setattr(views, "_draft_problem", real)
+    assert gone.status_code == 404 and not gone.json()["ok"] and not MailDraft.objects.exists()
+    # ... and with the pk already gone at lookup time.
+    assert autosave(client, {"draft": str(draft.pk), "body": "x"}).status_code == 404
+    assert not MailDraft.objects.exists()
+    # Creating one on a sag the author has answered since the page was opened is refused.
+    client.post(
+        reverse("postkasser:reply", args=["ak", message.pk]),
+        {"to": "mette@example.com", "subject": "Re: Spørgsmål", "body": "Svar"},
+    )
+    late = autosave(client, {"reply_to": str(message.pk), "body": "sent text", "draft_started": started})
+    assert late.status_code == 409 and not late.json()["ok"] and not MailDraft.objects.exists()
+    plain = client.post(
+        reverse("postkasser:save_draft", args=["ak"]), {"reply_to": str(message.pk), "draft_started": started}
+    )
+    assert plain.status_code == 409 and not MailDraft.objects.exists()
+    assert "allerede sendt" in plain.content.decode() and "action=" in plain.content.decode()
+    # A page opened after the answer may start a new draft.
+    fresh = autosave(
+        client, {"reply_to": str(message.pk), "body": "ny", "draft_started": timezone.now().isoformat()}
+    )
+    assert fresh.json()["ok"] and MailDraft.objects.count() == 1
+
+
+def test_a_draft_saved_before_the_mail_had_a_sag_is_found_and_joins_the_sag(
+    client: Client, ak_member: Resident, server: FakeServer
+) -> None:
+    mailbox = make_mailbox(roles=["ak"])
+    (message,) = synced(server, mailbox, raw_mail("Spørgsmål"))
+    draft = MailDraft.objects.create(
+        mailbox=mailbox, author=ak_member, thread=None, reply_to=message, subject="Re: S", body="Halvt"
+    )
+    page = client.get(reverse("postkasser:reply", args=["ak", message.pk])).content.decode()
+    assert "Halvt" in page and "Du fortsætter din kladde" in page
+    draft.refresh_from_db()
+    assert draft.thread == message.thread
+    # Saving by sag finds it too instead of making a second one (a still-threadless one first).
+    MailDraft.objects.filter(pk=draft.pk).update(thread=None)
+    again = autosave(client, {"reply_to": str(message.pk), "body": "Mere"}).json()["draft"]
+    draft.refresh_from_db()
+    assert again == draft.pk and draft.thread == message.thread and MailDraft.objects.count() == 1
+    # "Mine kladder" calls it a reply and links to the reply page.
+    MailDraft.objects.filter(pk=draft.pk).update(thread=None)
+    listing = client.get(reverse("postkasser:drafts", args=["ak"])).content.decode()
+    assert "Svar" in listing and reverse("postkasser:reply", args=["ak", message.pk]) in listing
+
+
+def test_a_lost_create_race_never_500s(
+    client: Client, ak_member: Resident, server: FakeServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mailbox = make_mailbox(roles=["ak"])
+    (message,) = synced(server, mailbox, raw_mail("Spørgsmål"))
+
+    def lost(*_args: object, **_kwargs: object) -> None:
+        raise IntegrityError("duplicate")
+
+    monkeypatch.setattr(MailDraft.objects, "create", lost)
+    # The other save is not there to find (deleted meanwhile): a 404, not a 500.
+    assert autosave(client, {"reply_to": str(message.pk), "body": "x"}).status_code == 404
+
+
+def test_the_draft_script_does_not_retry_in_a_loop_and_guards_keepalive() -> None:
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[2] / "frontend/src/postkasser-draft.ts").read_text()
+    assert "typedDuringFlight" in source and "schedule(0)" not in source and "AbortController" in source
+    assert "KEEPALIVE_MAX_BYTES" in source and "er du logget ud" in source
+
+
+def test_a_late_autosave_cannot_bring_back_a_sent_new_mail_draft(
+    client: Client, ak_member: Resident, server: FakeServer
+) -> None:
+    make_mailbox(roles=["ak"])
+    started = timezone.now().isoformat()
+    sent = client.post(
+        reverse("postkasser:compose", args=["ak"]), {"to": "a@example.com", "subject": "Nyt", "body": "Hej"}
+    )
+    assert sent.status_code == 302 and not MailDraft.objects.exists()
+    # The first autosave (no pk yet) arrives after Send: refused, nothing inserted.
+    late = autosave(client, {"to": "a@example.com", "body": "Hej", "draft_started": started})
+    assert late.status_code == 409 and not late.json()["ok"] and not MailDraft.objects.exists()
+    plain = client.post(
+        reverse("postkasser:save_draft", args=["ak"]), {"body": "Hej", "draft_started": started}
+    )
+    assert plain.status_code == 409 and not MailDraft.objects.exists()
+    assert "allerede sendt" in plain.content.decode() and "action=" in plain.content.decode()
+    # A page opened after the send starts a new draft as usual.
+    fresh = autosave(client, {"body": "Ny", "draft_started": timezone.now().isoformat()})
+    assert fresh.json()["ok"] and MailDraft.objects.count() == 1
+
+
+def test_the_plain_button_keeps_the_text_when_the_draft_is_gone_or_sent(
+    client: Client, ak_member: Resident, server: FakeServer
+) -> None:
+    make_mailbox(roles=["ak"])
+    started = timezone.now().isoformat()
+    client.post(
+        reverse("postkasser:compose", args=["ak"]), {"to": "a@example.com", "subject": "Nyt", "body": "Hej"}
+    )
+    page = client.post(
+        reverse("postkasser:save_draft", args=["ak"]),
+        {"to": "halv@", "subject": "Mit emne", "body": "Min tekst", "draft_started": started},
+    )
+    html = page.content.decode()
+    assert page.status_code == 409 and "Min tekst" in html and "Mit emne" in html and "halv@" in html
+    assert 'name="draft" value=""' in html
+
+
+def test_the_drafts_are_deleted_only_after_the_send_is_logged(
+    client: Client, ak_member: Resident, server: FakeServer
+) -> None:
+    from django.db.models.signals import pre_delete
+
+    mailbox = make_mailbox(roles=["ak"])
+    (message,) = synced(server, mailbox, raw_mail("Spørgsmål"))
+    (lone,) = (server.put(2, raw_mail("Fra webmail", sender="ak@gahk.dk"), folder="Sent"),)
+    services.sync(mailbox)
+    sentless = mailbox.messages.get(thread=None)
+    seen: list[bool] = []
+
+    def check(sender: object, instance: MailDraft, **_kw: object) -> None:
+        # What save_draft goes by to refuse a late autosave: the event must already be there.
+        seen.append(
+            MailEvent.objects.filter(
+                resident=ak_member, action__in=[MailEvent.Action.REPLY, MailEvent.Action.SEND]
+            ).exists()
+        )
+
+    pre_delete.connect(check, sender=MailDraft)
+    try:
+        d1 = MailDraft.objects.create(
+            mailbox=mailbox, author=ak_member, thread=message.thread, reply_to=message
+        )
+        client.post(
+            reverse("postkasser:reply", args=["ak", message.pk]),
+            {"draft": str(d1.pk), "to": "m@example.com", "subject": "Re: S", "body": "x"},
+        )
+        MailDraft.objects.create(mailbox=mailbox, author=ak_member, thread=None, reply_to=sentless)
+        client.post(
+            reverse("postkasser:reply", args=["ak", sentless.pk]),
+            {"to": "m@example.com", "subject": "Re: W", "body": "x"},
+        )
+        d3 = MailDraft.objects.create(mailbox=mailbox, author=ak_member)
+        client.post(
+            reverse("postkasser:compose", args=["ak"]),
+            {"draft": str(d3.pk), "to": "a@example.com", "subject": "N", "body": "x"},
+        )
+    finally:
+        pre_delete.disconnect(check, sender=MailDraft)
+    assert lone is None and seen == [True, True, True] and not MailDraft.objects.exists()
+
+
+def test_a_late_autosave_after_a_reply_to_a_mail_without_a_sag_is_refused(
+    client: Client, ak_member: Resident, server: FakeServer
+) -> None:
+    mailbox = make_mailbox(roles=["ak"])
+    server.put(1, raw_mail("Fra webmail", sender="ak@gahk.dk"), folder="Sent")
+    services.sync(mailbox)
+    message = mailbox.messages.get()
+    assert message.thread is None
+    started = timezone.now().isoformat()
+    client.post(
+        reverse("postkasser:reply", args=["ak", message.pk]),
+        {"to": "m@example.com", "subject": "Re: W", "body": "x"},
+    )
+    late = autosave(client, {"reply_to": str(message.pk), "body": "x", "draft_started": started})
+    assert late.status_code == 409 and not MailDraft.objects.exists()
+
+
+def test_resuming_a_sagless_draft_survives_losing_the_race_to_a_sag_draft(
+    client: Client, ak_member: Resident, server: FakeServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from django.db.models import QuerySet
+
+    mailbox = make_mailbox(roles=["ak"])
+    (message,) = synced(server, mailbox, raw_mail("Spørgsmål"))
+    MailDraft.objects.create(
+        mailbox=mailbox, author=ak_member, thread=None, reply_to=message, body="uden sag"
+    )
+    real = QuerySet.update
+
+    def racing(self: QuerySet, **kwargs: object) -> int:
+        if "thread_id" in kwargs and kwargs["thread_id"] == message.thread_id:
+            # Another request's draft on the sag, committed first: the unique constraint refuses this one.
+            # (It is not created here: a test's single transaction would roll it back with the refusal.)
+            raise IntegrityError("duplicate key")
+        return real(self, **kwargs)
+
+    monkeypatch.setattr(QuerySet, "update", racing)
+    page = client.get(reverse("postkasser:reply", args=["ak", message.pk]))
+    assert page.status_code == 200  # not a 500
+    assert MailDraft.objects.get().thread is None
+
+
+def test_the_way_back_from_compose_is_the_sag_for_a_reply_and_the_board_for_a_new_mail(
+    client: Client, ak_member: Resident, server: FakeServer
+) -> None:
+    mailbox = make_mailbox(roles=["ak"])
+    (message,) = synced(server, mailbox, raw_mail("Spørgsmål"))
+    assert message.thread is not None
+    reply = client.get(reverse("postkasser:reply", args=["ak", message.pk])).content.decode()
+    back = reverse("postkasser:thread", args=["ak", message.thread.pk])
+    assert f'href="{back}" class="btn btn-secondary" data-draft-back>‹ Tilbage til sagen' in reply
+    assert f'href="{reverse("postkasser:message", args=["ak", message.pk])}"' not in reply
+    assert "Afbryd" not in reply
+    new = client.get(reverse("postkasser:compose", args=["ak"])).content.decode()
+    board_url = reverse("postkasser:board", args=["ak"])
+    assert f'href="{board_url}" class="btn btn-secondary" data-draft-back>‹ Til tavlen' in new
+    assert "Afbryd" not in new
+    # A reply to a mail with no sag has nowhere to go back to but the board.
+    server.put(2, raw_mail("Fra webmail", sender="ak@gahk.dk"), folder="Sent")
+    services.sync(mailbox)
+    sagless = mailbox.messages.get(thread=None)
+    page = client.get(reverse("postkasser:reply", args=["ak", sagless.pk])).content.decode()
+    assert "‹ Til tavlen" in page and "Tilbage til sagen" not in page
+
+
+def test_a_reply_that_cannot_fetch_the_mail_goes_back_to_the_sag(
+    client: Client, ak_member: Resident, server: FakeServer
+) -> None:
+    mailbox = make_mailbox(roles=["ak"])
+    (message,) = synced(server, mailbox, raw_mail("Spørgsmål"))
+    server.error = imap.MailboxError("nede")
+    response = client.get(reverse("postkasser:reply", args=["ak", message.pk]))
+    assert response["Location"] == reverse("postkasser:thread", args=["ak", message.thread_id])
+
+
+def test_the_single_mail_page_is_a_sub_view_of_the_sag(
+    client: Client, ak_member: Resident, server: FakeServer
+) -> None:
+    mailbox = make_mailbox(roles=["ak"])
+    (message,) = synced(server, mailbox, raw_mail("Spørgsmål"))
+    sag = message.thread
+    assert sag is not None
+    tag = make_tag(mailbox, "Faktura")
+    sag.tags.add(tag)
+    MailThread.objects.filter(pk=sag.pk).update(assignee=ak_member)
+    page = client.get(reverse("postkasser:message", args=["ak", message.pk])).content.decode()
+    sag_url = reverse("postkasser:thread", args=["ak", sag.pk])
+    assert f'Sag: <a href="{sag_url}">Spørgsmål</a>' in page  # the breadcrumb
+    assert page.index("‹ Til sagen") < page.index("Svar</a>") < page.index("‹ Til tavlen")  # primary first
+    assert 'class="btn" href="' + sag_url in page
+    assert "Ret på sagen" in page and "Faktura" in page and f"Ansvarlig: {ak_member.full_name}" in page
+    assert "page-head-wrap" in page
+
+
+def test_the_single_mail_page_falls_back_for_the_date(
+    client: Client, ak_member: Resident, server: FakeServer
+) -> None:
+    mailbox = make_mailbox(roles=["ak"])
+    # EmailMessage itself blanks a Date it cannot parse, so the header is written into the bytes by hand.
+    garbled = re.sub(rb"Date:[^\n]*\n", b"Date: some time yesterday\n", raw_mail("Skæv dato"))
+    undated = EmailMessage()
+    undated["From"], undated["To"], undated["Subject"] = "mette@example.com", "ak@gahk.dk", "Uden dato"
+    undated["Message-ID"] = "<undated@example.com>"
+    undated.set_content("x")
+    first, second = synced(server, mailbox, garbled, undated.as_bytes())
+    assert first.date is None and second.date is None
+    page = client.get(reverse("postkasser:message", args=["ak", first.pk])).content.decode()
+    assert "<strong>Dato:</strong> some time yesterday" in page  # the header as written
+    assert (
+        "<strong>Dato:</strong>"
+        not in client.get(reverse("postkasser:message", args=["ak", second.pk])).content.decode()
+    )
+    dated = raw_mail("Normal")
+    server.put(3, dated)
+    services.sync(mailbox)
+    third = mailbox.messages.get(uid=3)
+    assert (
+        "<strong>Dato:</strong> "
+        in client.get(reverse("postkasser:message", args=["ak", third.pk])).content.decode()
+    )

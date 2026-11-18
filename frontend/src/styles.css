@@ -120,6 +120,10 @@
   .eyebrow { font-size:11px; font-weight:700; letter-spacing:.15em; text-transform:uppercase; color:var(--brass); }
   .page-head h1 { font-size:26px; font-weight:750; margin:4px 0 0; }
   .head-actions { display:flex; gap:10px; flex-wrap:wrap; }
+  /* A header with many buttons (postkasser's single-mail page): the title keeps a sensible width and the
+     buttons wrap as a group beneath it, instead of the last one being left alone under the title. */
+  .page-head-wrap { flex-wrap:wrap; }
+  .page-head-wrap > :first-child { flex:1 1 22rem; min-width:0; }
 
   /* --- dashboard pieces --- */
   .glance { display:flex; flex-wrap:wrap; align-items:center; gap:10px 26px; padding:15px 20px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow-sm); margin-bottom:22px; }
@@ -1186,6 +1190,8 @@
     .content { padding:20px 18px 40px; }
     .grid2 { grid-template-columns:1fr; }
     .page-head { flex-direction:column; align-items:flex-start; }
+    /* In a column the 22rem basis would become a HEIGHT and open a gap under the title. */
+    .page-head-wrap > :first-child { flex:0 0 auto; }
   }
   @media (prefers-reduced-motion:reduce) { * { transition:none !important; } }
 

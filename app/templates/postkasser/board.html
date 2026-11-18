@@ -15,6 +15,7 @@
         {% csrf_token %}
         <button type="submit" class="btn btn-secondary">Hent ny post</button>
       </form>
+      {% if draft_count %}<a class="btn btn-secondary" href="{% url 'postkasser:drafts' mailbox.slug %}">Mine kladder ({{ draft_count }})</a>{% endif %}
       <a class="btn btn-secondary" href="{% url 'postkasser:archive' mailbox.slug %}{% if query or tag_filter %}?{% if tag_filter %}tag={{ tag_filter }}{% endif %}{% if query and tag_filter %}&amp;{% endif %}{% if query %}q={{ query|urlencode }}{% endif %}{% endif %}">Arkiv</a>
       <a class="btn btn-secondary" href="{% url 'postkasser:columns' mailbox.slug %}">Kolonner</a>
       <a class="btn btn-secondary" href="{% url 'postkasser:tags' mailbox.slug %}">Tags</a>
@@ -96,6 +97,7 @@
               </p>
               <p>
                 {% if card.unread_count %}<span class="chip">Ulæst</span>{% endif %}
+                {% if card.draft_authors %}<span class="chip chip-quiet" title="Kladde af {{ card.draft_authors|join:', ' }}">✎ Kladde</span>{% endif %}
                 {% if card.assignee %}<span class="chip chip-quiet">{{ card.assignee.full_name }}</span>{% endif %}
                 {% for name in card.folder_chips %}<span class="chip chip-quiet">{{ name }}</span>{% endfor %}
                 {% for tag in card.tags.all %}{% include "postkasser/_tag.html" %}{% endfor %}

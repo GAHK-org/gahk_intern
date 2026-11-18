@@ -11,8 +11,31 @@
     </div>
   </div>
 
-  <form method="post" class="card-flat card-pad">
+  {% if resumed %}
+    {% comment %}Outside the form below: a form cannot hold another form.{% endcomment %}
+    <div class="card-flat card-pad mb-3 flex gap-2 items-center">
+      <span>Du fortsætter din kladde fra {{ resumed.updated_at|date:"j. M H:i" }}.</span>
+      <form method="post" action="{% url 'postkasser:delete_draft' mailbox.slug resumed.pk %}" class="inline">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="svar">
+        <button type="submit" class="btn btn-secondary">Start forfra</button>
+      </form>
+    </div>
+  {% endif %}
+
+  {% comment %}
+    Kladder live in the intranet only. The form sends to this page; "Gem kladde" posts the same fields to
+    the save view (formaction), so it works without JavaScript, and postkasser-draft.ts autosaves to the
+    same URL while typing: it fills in the hidden `draft` with the pk it gets back, so the next save
+    updates the same draft.
+  {% endcomment %}
+  {% comment %}An explicit action: the page can also be a re-render served from the save URL, where a form without one would post "Send" to the draft saver.{% endcomment %}
+  <form method="post" action="{% if reply_to %}{% url 'postkasser:reply' mailbox.slug reply_to.pk %}{% if reply_all %}?alle=1{% endif %}{% else %}{% url 'postkasser:compose' mailbox.slug %}{% endif %}" class="card-flat card-pad" data-draft-form data-draft-url="{% url 'postkasser:save_draft' mailbox.slug %}">
     {% csrf_token %}
+    <input type="hidden" name="draft" value="{{ draft.pk|default_if_none:'' }}">
+    {% comment %}When this draft session began: the save view refuses to CREATE a draft on a sag the author has answered since (a late autosave after Send).{% endcomment %}
+    <input type="hidden" name="draft_started" value="{{ draft_started }}">
+    {% if reply_to %}<input type="hidden" name="reply_to" value="{{ reply_to.pk }}">{% endif %}
     {% if reply_all %}<input type="hidden" name="alle" value="1">{% endif %}
     {% if form.non_field_errors %}
       <div class="errorlist">{{ form.non_field_errors }}</div>
@@ -27,11 +50,17 @@
     {% endfor %}
     <div class="flex gap-2">
       <button type="submit" class="btn">Send</button>
-      {% if reply_to %}
-        <a href="{% url 'postkasser:message' mailbox.slug reply_to.pk %}" class="btn btn-secondary">Afbryd</a>
+      <button type="submit" class="btn btn-secondary" formaction="{% url 'postkasser:save_draft' mailbox.slug %}" formnovalidate>Gem kladde</button>
+      {% comment %}
+        No "Afbryd": the draft is saved as you type, so this is just the way back — to the SAG for a reply
+        (never the single mail), to the board for a new mail. postkasser-draft.ts saves a last time first.
+      {% endcomment %}
+      {% if reply_to.thread_id %}
+        <a href="{% url 'postkasser:thread' mailbox.slug reply_to.thread_id %}" class="btn btn-secondary" data-draft-back>‹ Tilbage til sagen</a>
       {% else %}
-        <a href="{% url 'postkasser:board' mailbox.slug %}" class="btn btn-secondary">Afbryd</a>
+        <a href="{% url 'postkasser:board' mailbox.slug %}" class="btn btn-secondary" data-draft-back>‹ Til tavlen</a>
       {% endif %}
     </div>
+    <p class="muted text-sm mt-2" data-draft-status role="status" aria-live="polite"></p>
   </form>
 {% endblock %}

@@ -416,6 +416,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "postkasser.tasks.apply_time_rules",
         "schedule": crontab(minute=17),
     },
+    # Kladder (half-written mails, kept in the intranet only) untouched for 30 days. 03:45 is free: the
+    # other 03:xx jobs sit at :05/:20/:30/:40/:50, and the 15-minute jobs never land on :45.
+    "purge-mail-drafts": {
+        "task": "postkasser.tasks.purge_drafts",
+        "schedule": crontab(minute=45, hour=3),
+    },
 }
 
 STATIC_URL = "static/"

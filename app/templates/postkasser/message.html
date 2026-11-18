@@ -3,28 +3,43 @@
 {% block content_width %}max-w-4xl{% endblock %}
 
 {% block content %}
-  <div class="page-head">
+  <div class="page-head page-head-wrap">
     <div>
-      <p class="eyebrow">Grupper & konti · Postkasser · {{ mailbox.name }}</p>
+      <p class="eyebrow">
+        Postkasser · <a href="{% url 'postkasser:board' mailbox.slug %}">{{ mailbox.name }}</a>
+        {% if sag %}· Sag: <a href="{% url 'postkasser:thread' mailbox.slug sag.pk %}">{{ sag.subject|default:"(intet emne)" }}</a>{% endif %}
+      </p>
       <h1>{{ rendered.subject|default:"(intet emne)" }}</h1>
     </div>
     <div class="head-actions">
-      <a class="btn" href="{% url 'postkasser:reply' mailbox.slug msg.pk %}">Svar</a>
+      {% if sag %}<a class="btn" href="{% url 'postkasser:thread' mailbox.slug sag.pk %}">‹ Til sagen</a>{% endif %}
+      <a class="btn btn-secondary" href="{% url 'postkasser:reply' mailbox.slug msg.pk %}">Svar</a>
       <a class="btn btn-secondary" href="{% url 'postkasser:reply' mailbox.slug msg.pk %}?alle=1">Svar alle</a>
       <form method="post" action="{% url 'postkasser:message_unread' mailbox.slug msg.pk %}" class="inline">
         {% csrf_token %}
         <button type="submit" class="btn btn-secondary">Markér som ulæst</button>
       </form>
-      {% if msg.thread_id %}<a class="btn btn-secondary" href="{% url 'postkasser:thread' mailbox.slug msg.thread_id %}">‹ Til sagen</a>{% endif %}
       <a class="btn btn-secondary" href="{% url 'postkasser:board' mailbox.slug %}">‹ Til tavlen</a>
     </div>
   </div>
+
+  {% if sag %}
+    {% comment %}Read-only: the sag's status lives on the sag page, which this links to.{% endcomment %}
+    <p class="mb-3">
+      <span class="chip chip-quiet">{{ sag.column.name }}</span>
+      <span class="chip chip-quiet">Ansvarlig: {{ sag.assignee.full_name|default:"ingen" }}</span>
+      {% for tag in sag.tags.all %}{% include "postkasser/_tag.html" %}{% endfor %}
+      <a class="text-sm" href="{% url 'postkasser:thread' mailbox.slug sag.pk %}">Ret på sagen</a>
+    </p>
+  {% endif %}
 
   <div class="card-flat card-pad mb-4">
     <p><strong>Fra:</strong> {{ rendered.from_header }}</p>
     <p><strong>Til:</strong> {{ rendered.to }}</p>
     {% if rendered.cc %}<p><strong>Cc:</strong> {{ rendered.cc }}</p>{% endif %}
-    <p><strong>Dato:</strong> {{ msg.date|date:"j. M Y H:i" }}</p>
+    {% comment %}The cached date, else the Date header as written (one that would not parse); no row if neither.{% endcomment %}
+    {% if msg.date %}<p><strong>Dato:</strong> {{ msg.date|date:"j. M Y H:i" }}</p>
+    {% elif rendered.date %}<p><strong>Dato:</strong> {{ rendered.date }}</p>{% endif %}
     <p><strong>Mappe:</strong> {{ msg.folder.display_name }}</p>
   </div>
 

@@ -12,3 +12,9 @@ def sync_mailboxes() -> None:
 def apply_time_rules() -> None:
     """Move the sager that have gone quiet, by each mailbox's time rules (beat: hourly)."""
     call_command("apply_mail_time_rules")
+
+
+@shared_task
+def purge_drafts() -> None:
+    """Delete the kladder nobody has touched for 30 days (beat: daily)."""
+    call_command("purge_mail_drafts")

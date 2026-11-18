@@ -21,10 +21,14 @@ one.com has no API, so the only way in is the mailbox's own IMAP/SMTP login. Tha
   * `BoardColumn` is a column of a mailbox's board. Every group names and orders its own, so nothing
     in the code ever looks at a NAME: automation goes by `role` (see BoardColumn).
   * `MailTag` is a category a group sticks on sager, per mailbox, intranet-only.
+  * `MailDraft` is a half-written mail (kladde), kept in THIS database only: nothing goes to one.com's
+    Kladder folder, and nothing is sent until "Send". The group can see that a draft exists on a sag (and
+    read it), so two people do not answer at once; only its author can change, send or delete it.
   * `MailEvent` is a small log — who read, answered, moved or handed over what — because several
     people share one inbox and "has anyone answered this?" is the question a shared inbox has to answer.
 """
 
+from datetime import timedelta
 from typing import Any
 
 from django.core.validators import MaxValueValidator, MinValueValidator
@@ -405,6 +409,63 @@ class MailTimeRule(models.Model):
 
     def __str__(self) -> str:
         return self.name
+
+
+# A draft nobody has touched for this long is purged by the daily job (postkasser.tasks.purge_drafts).
+DRAFT_TTL = timedelta(days=30)
+# Server-side limits on a draft. Over them the save is REFUSED with a message, never truncated: cutting
+# somebody's text off silently is worse than saying no.
+DRAFT_MAX_BODY = 100_000
+DRAFT_MAX_SUBJECT = 998
+DRAFT_MAX_ADDRESSES = 10_000  # `to` / `cc`, raw text
+
+
+class MailDraft(models.Model):
+    """A mail somebody has started but not sent. Stored here and nowhere else (see the module docstring).
+
+    Every field is the RAW text of the compose form: addresses are NOT validated when saving, because a
+    half-typed address must save too — they are checked only on send (forms.ComposeForm).
+
+    `thread` is None for a new mail and the sag for a reply; at most one draft per author and sag (the
+    constraint below), so an autosave that does not yet know its draft's pk finds the same row again.
+    A new mail has no sag, so one author may have any number of those.
+
+    Visibility: anyone who can open the mailbox sees that a draft exists on a sag and can read it; only the
+    author can edit, continue, send or delete it. If the author later loses access to the mailbox, the
+    draft stays visible on the sag to the others (so they know half an answer exists) until the purge
+    removes it; nobody else can delete it."""
+
+    mailbox = models.ForeignKey(Mailbox, on_delete=models.CASCADE, related_name="drafts")
+    author = models.ForeignKey(Resident, on_delete=models.CASCADE, related_name="+")
+    thread = models.ForeignKey(
+        MailThread, null=True, blank=True, on_delete=models.CASCADE, related_name="drafts"
+    )
+    # The mail being answered. SET_NULL: the cached header may go; the draft (and its sag) stays.
+    reply_to = models.ForeignKey(
+        MailMessage, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    reply_all = models.BooleanField(default=False)
+    to = models.TextField(blank=True)
+    cc = models.TextField(blank=True)
+    subject = models.CharField(max_length=DRAFT_MAX_SUBJECT, blank=True)
+    body = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at", "-pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["author", "thread"],
+                condition=models.Q(thread__isnull=False),
+                name="postkasser_one_draft_per_author_thread",
+            )
+        ]
+        verbose_name = "kladde"
+        verbose_name_plural = "kladder"
+
+    def __str__(self) -> str:
+        return self.subject or "(intet emne)"
 
 
 def shown(prefix: str = "") -> models.Q:

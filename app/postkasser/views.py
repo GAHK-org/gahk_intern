@@ -8,7 +8,7 @@ becomes a message on the page, not a 500 (imap.MailboxError).
 """
 
 from collections.abc import Iterable
-from datetime import timedelta
+from datetime import datetime, timedelta
 from smtplib import SMTPException
 from typing import Any
 
@@ -16,13 +16,15 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.mail import BadHeaderError
 from django.core.paginator import Paginator
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Count, F, OuterRef, Q, QuerySet, Subquery
 from django.db.models.functions import Coalesce
-from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
-from django.utils.http import content_disposition_header
+from django.utils.dateparse import parse_datetime
+from django.utils.http import content_disposition_header, urlencode
 from django.views.decorators.http import require_POST
 
 from residents.models import Resident
@@ -32,9 +34,13 @@ from . import access, columns, imap, rules, services, tags
 from . import render as mailrender
 from .forms import ComposeForm, RuleForm, TimeRuleForm
 from .models import (
+    DRAFT_MAX_ADDRESSES,
+    DRAFT_MAX_BODY,
+    DRAFT_MAX_SUBJECT,
     BoardColumn,
     ColumnRole,
     Mailbox,
+    MailDraft,
     MailEvent,
     MailFolder,
     MailMessage,
@@ -148,9 +154,16 @@ def _cards(threads: "QuerySet[MailThread]") -> list[MailThread]:
     )
     for thread_id, name in rows:
         chips.setdefault(thread_id, []).append(name)
+    # Who has a kladde on each sag: one more query for the whole page, not one per card.
+    writers: dict[int, set[str]] = {}
+    for thread_id, first, last in MailDraft.objects.filter(thread__in=[c.pk for c in cards]).values_list(
+        "thread_id", "author__first_name", "author__last_name"
+    ):
+        writers.setdefault(thread_id, set()).add(f"{first} {last}".strip())
     for card in cards:
         card.latest_sender = card.latest_name or card.latest_address
         card.folder_chips = sorted(chips.get(card.pk, []))
+        card.draft_authors = sorted(writers.get(card.pk, []))
     return cards
 
 
@@ -198,6 +211,7 @@ def board(request: HttpRequest, slug: str) -> HttpResponse:
             "tag_filter": tag_filter,
             "filtered": bool(query or folder_filter or owner or tag_filter),
             "unread_count": mailbox.messages.filter(seen=False).count(),
+            "draft_count": MailDraft.objects.filter(mailbox=mailbox, author=resident).count(),
             "mailboxes": access.visible_mailboxes(request).order_by("name"),
         },
     )
@@ -290,10 +304,16 @@ def thread(request: HttpRequest, slug: str, pk: int) -> HttpResponse:
                 subject=newest.subject,
             )
     incoming = [m for m in mails if _is_incoming(mailbox, m)]
+    resident = current_resident(request)
+    drafts: list[Any] = list(sag.drafts.select_related("author"))
+    for draft in drafts:
+        draft.mine = draft.author_id == resident.pk
+        draft.continue_url = _continue_url(mailbox, draft, fallback=incoming[-1] if incoming else None)
     return render(
         request,
         "postkasser/thread.html",
         {
+            "drafts": drafts,
             "mailbox": mailbox,
             "sag": sag,
             "mails": mails,
@@ -449,6 +469,7 @@ def message(request: HttpRequest, slug: str, pk: int) -> HttpResponse:
         {
             "mailbox": mailbox,
             "msg": msg,
+            "sag": _get_thread(mailbox, msg.thread_id) if msg.thread_id else None,
             "rendered": rendered,
             "frame": frame,
             "show_images": show_images,
@@ -612,36 +633,113 @@ def _send(
     return sent
 
 
+# --- kladder (drafts) ---------------------------------------------------------------------------------
+# Kept in the intranet only (models.MailDraft). The compose/reply form posts to the send view as ever; a
+# draft is saved by a separate POST (the "Gem kladde" button, or the autosave in postkasser-draft.ts).
+
+
+def _own_draft(mailbox: Mailbox, resident: Resident, raw_pk: str | None) -> MailDraft | None:
+    """The requester's own draft in THIS mailbox, or None — for a pk from a query string or a hidden
+    field, where somebody else's (or a stale) pk just means "no draft" and never reveals anything."""
+    pk = _int(raw_pk)
+    if pk is None:
+        return None
+    return MailDraft.objects.filter(pk=pk, mailbox=mailbox, author=resident).first()
+
+
+def _reply_drafts(mailbox: Mailbox, resident: Resident, msg: MailMessage) -> "QuerySet[MailDraft]":
+    """The requester's draft for answering `msg`: the one on its sag, or the one that names the mail itself
+    — saved while the mail had no sag yet, and still the right one once it has one. Built before sending,
+    since a reply can give the mail a sag."""
+    own = MailDraft.objects.filter(mailbox=mailbox, author=resident)
+    if msg.thread_id is not None:
+        return own.filter(Q(thread_id=msg.thread_id) | Q(thread=None, reply_to=msg))
+    return own.filter(thread=None, reply_to=msg)
+
+
+def _continue_url(mailbox: Mailbox, draft: MailDraft, *, fallback: MailMessage | None = None) -> str:
+    """Where a draft is continued: the reply page of the mail it answers (`fallback`, or the sag page,
+    when that header is gone), or the compose page for a new mail."""
+    slug = mailbox.slug
+    reply_pk = draft.reply_to_id or (fallback.pk if fallback is not None else None)
+    if reply_pk is not None:
+        return reverse("postkasser:reply", args=[slug, reply_pk]) + ("?alle=1" if draft.reply_all else "")
+    if draft.thread_id is not None:
+        return reverse("postkasser:thread", args=[slug, draft.thread_id])
+    return reverse("postkasser:compose", args=[slug]) + "?" + urlencode({"kladde": draft.pk})
+
+
+def _draft_initial(draft: MailDraft) -> dict[str, str]:
+    return {"to": draft.to, "cc": draft.cc, "subject": draft.subject, "body": draft.body}
+
+
 @login_required
 def compose(request: HttpRequest, slug: str) -> HttpResponse:
     mailbox = access.get_mailbox(request, slug)
-    form = ComposeForm(
-        request.POST or None,
-        initial={"body": services.initial_body(mailbox, current_resident(request))},
-    )
+    resident = current_resident(request)
+    # A draft is resumed through `?kladde=<pk>` (its own, a new mail); while sending, the hidden `draft`
+    # field says which one this form came from, so it is deleted once the mail is out.
+    draft = _own_draft(mailbox, resident, request.POST.get("draft") or request.GET.get("kladde"))
+    if draft is not None and draft.thread_id is not None:
+        draft = None  # a reply's draft is resumed through its reply page
+    initial = _draft_initial(draft) if draft else {"body": services.initial_body(mailbox, resident)}
+    form = ComposeForm(request.POST or None, initial=initial)
     if request.method == "POST" and form.is_valid():
         data = form.cleaned_data
         outgoing = services.Outgoing(to=data["to"], cc=data["cc"], subject=data["subject"], body=data["body"])
         if sent := _send(request, mailbox, form, outgoing):
-            sag = services.start_thread(mailbox, current_resident(request), data["subject"], sent.message_id)
+            sag = services.start_thread(mailbox, resident, data["subject"], sent.message_id)
+            # Sending deletes the draft (a failed send never gets here) — AFTER the SEND event is logged,
+            # which is what save_draft looks for to refuse a late autosave that would bring it back.
+            if draft is not None:
+                draft.delete()
             if sent.filed:  # the sag exists now, so the sent copy can join it right away
                 services.sync_sent_folder(mailbox)
             messages.success(request, "Mailen er sendt.")
             return redirect("postkasser:thread", slug=slug, pk=sag.pk)
-    return render(request, "postkasser/compose.html", {"mailbox": mailbox, "form": form, "reply_to": None})
+    return render(
+        request,
+        "postkasser/compose.html",
+        {
+            "mailbox": mailbox,
+            "form": form,
+            "reply_to": None,
+            "draft": draft,
+            "draft_started": timezone.now().isoformat(),
+        },
+    )
 
 
 @login_required
 def reply(request: HttpRequest, slug: str, pk: int) -> HttpResponse:
     mailbox = access.get_mailbox(request, slug)
+    resident = current_resident(request)
     msg = _get_message(mailbox, pk)
     try:
         rendered = mailrender.render(services.fetch_raw(mailbox, msg))
     except imap.MailboxError as exc:
         messages.error(request, f"Kunne ikke hente mailen: {exc}")
+        # Back to the sag the reply was started from (the single mail needs one.com too, and would fail).
+        if msg.thread_id:
+            return redirect("postkasser:thread", slug=slug, pk=msg.thread_id)
         return redirect("postkasser:message", slug=slug, pk=pk)
 
+    drafts = _reply_drafts(mailbox, resident, msg)
+    # The draft on the sag wins over one saved before the mail had a sag.
+    draft = drafts.filter(thread_id=msg.thread_id).first() if msg.thread_id else None
+    draft = draft or drafts.first()
+    if draft is not None and draft.thread_id is None and msg.thread_id is not None:
+        # Saved before the mail had a sag: it joins the sag now (nobody has a draft there, or the draft on
+        # the sag would have won above).
+        try:
+            with transaction.atomic():
+                MailDraft.objects.filter(pk=draft.pk).update(thread_id=msg.thread_id)
+            draft.thread_id = msg.thread_id
+        except IntegrityError:  # a draft on the sag appeared meanwhile: just resume that one
+            draft = drafts.filter(thread_id=msg.thread_id).first()
     reply_all = request.GET.get("alle") == "1" or request.POST.get("alle") == "1"
+    if draft is not None and request.method != "POST":
+        reply_all = reply_all or draft.reply_all
     to_addresses = _unique(
         addr for _n, addr in mailrender.getaddresses([rendered.reply_to or rendered.from_header])
     )
@@ -654,15 +752,14 @@ def reply(request: HttpRequest, slug: str, pk: int) -> HttpResponse:
             if a.lower() not in taken
         ]
     quoted = services.quote(rendered.text, msg.sender, rendered.date)
-    form = ComposeForm(
-        request.POST or None,
-        initial={
-            "to": ", ".join(to_addresses),
-            "cc": ", ".join(cc_addresses),
-            "subject": services.reply_subject(rendered.subject),
-            "body": services.initial_body(mailbox, current_resident(request), quoted),
-        },
-    )
+    # Resuming a draft replaces the fresh quote and greeting with what was written.
+    initial = _draft_initial(draft) if draft is not None else {
+        "to": ", ".join(to_addresses),
+        "cc": ", ".join(cc_addresses),
+        "subject": services.reply_subject(rendered.subject),
+        "body": services.initial_body(mailbox, resident, quoted),
+    }  # fmt: skip
+    form = ComposeForm(request.POST or None, initial=initial)
     if request.method == "POST" and form.is_valid():
         data = form.cleaned_data
         outgoing = services.Outgoing(
@@ -680,9 +777,13 @@ def reply(request: HttpRequest, slug: str, pk: int) -> HttpResponse:
                 messages.warning(
                     request, f"Svaret er sendt, men mailen blev ikke markeret som besvaret: {exc}"
                 )
-            sag = services.record_reply(
-                mailbox, msg, current_resident(request), data["subject"], sent.message_id
-            )
+            sag = services.record_reply(mailbox, msg, resident, data["subject"], sent.message_id)
+            # Sending deletes the draft (a failed send never gets here): the one on this sag, and the
+            # one the form says it came from, which may be a different row. Only AFTER the REPLY event is
+            # logged, which is what save_draft looks for to refuse a late autosave that would bring it back.
+            drafts.delete()
+            if posted := _own_draft(mailbox, resident, request.POST.get("draft")):
+                posted.delete()
             if sent.filed:
                 services.sync_sent_folder(mailbox)
             messages.success(request, "Svaret er sendt.")
@@ -690,8 +791,224 @@ def reply(request: HttpRequest, slug: str, pk: int) -> HttpResponse:
     return render(
         request,
         "postkasser/compose.html",
-        {"mailbox": mailbox, "form": form, "reply_to": msg, "reply_all": reply_all},
+        {
+            "mailbox": mailbox,
+            "form": form,
+            "reply_to": msg,
+            "reply_all": reply_all,
+            "draft": draft,
+            "draft_started": timezone.now().isoformat(),
+            # The "you are continuing" notice is for the page that opens, not for a failed send.
+            "resumed": draft if request.method != "POST" else None,
+        },
     )
+
+
+def _draft_problem(fields: dict[str, str]) -> str:
+    """Why a draft cannot be saved, in Danish, or "". Over the limit is refused, never truncated."""
+    if len(fields["body"]) > DRAFT_MAX_BODY:
+        return f"Kladden blev ikke gemt: teksten er for lang (højst {DRAFT_MAX_BODY:,} tegn).".replace(
+            ",", "."
+        )
+    if len(fields["subject"]) > DRAFT_MAX_SUBJECT:
+        return f"Kladden blev ikke gemt: emnet er for langt (højst {DRAFT_MAX_SUBJECT} tegn)."
+    if len(fields["to"]) > DRAFT_MAX_ADDRESSES or len(fields["cc"]) > DRAFT_MAX_ADDRESSES:
+        return "Kladden blev ikke gemt: modtagerlisten er for lang."
+    return ""
+
+
+def _linked(model: type[MailThread] | type[MailMessage], mailbox: Mailbox, raw: str) -> int | None:
+    """The pk of the row `raw` names if it is in this mailbox; blank is None, anything else a 404."""
+    if not raw:
+        return None
+    row = model.objects.filter(pk=_int(raw) or 0, mailbox=mailbox).first()
+    if row is None:
+        raise Http404
+    return row.pk
+
+
+@login_required
+@require_POST
+def save_draft(request: HttpRequest, slug: str) -> HttpResponse:
+    """Create or update the requester's kladde. Answers JSON for the autosave script (it asks for
+    `Accept: application/json`) and a redirect back to the page otherwise, for the plain "Gem kladde"
+    button. The text is stored as typed: addresses are NOT validated here, since half an address must
+    save; they are checked when the mail is sent."""
+    mailbox = access.get_mailbox(request, slug)
+    resident = current_resident(request)
+    post = request.POST
+    wants_json = (
+        "application/json" in request.headers.get("accept", "")
+        or request.headers.get("x-requested-with") == "XMLHttpRequest"
+    )
+    # NUL cannot be stored in PostgreSQL text: a pasted one would be a 500, so it is dropped.
+    fields = {name: post.get(name, "").replace("\x00", "") for name in ("to", "cc", "subject", "body")}
+
+    # Every id is looked up THROUGH the mailbox (and, for the draft, the author): somebody else's draft,
+    # or another group's sag or mail, is a 404 like anywhere else in this app.
+    draft: MailDraft | None = None
+    if post.get("draft"):
+        draft = MailDraft.objects.filter(
+            pk=_int(post["draft"]) or 0, mailbox=mailbox, author=resident
+        ).first()
+        if draft is None:
+            raise Http404
+    thread_id = _linked(MailThread, mailbox, post.get("thread", ""))
+    reply_to_id = _linked(MailMessage, mailbox, post.get("reply_to", ""))
+    if reply_to_id is not None:  # a reply belongs to the sag of the mail it answers (None: no sag yet)
+        thread_id = MailMessage.objects.values_list("thread_id", flat=True).get(pk=reply_to_id)
+    reply_all = post.get("alle") == "1"
+
+    started = _parse_started(post.get("draft_started", ""))
+
+    def refuse(error: str, status: int, keep: MailDraft | None = None) -> HttpResponse:
+        if wants_json:
+            return JsonResponse({"ok": False, "error": error}, status=status)
+        # Back to the form WITH the text, which a redirect would lose. `keep` is the draft the form goes
+        # on naming; a draft that is gone or was sent is not named again.
+        messages.error(request, error)
+        reply_to = _get_message(mailbox, reply_to_id) if reply_to_id else None
+        return render(
+            request,
+            "postkasser/compose.html",
+            {
+                "mailbox": mailbox,
+                "form": ComposeForm(initial=fields),
+                "reply_to": reply_to,
+                "reply_all": reply_all,
+                "draft": keep,
+                "draft_started": post.get("draft_started", ""),
+            },
+            status=status,
+        )
+
+    if error := _draft_problem(fields):
+        return refuse(error, 400, draft)
+
+    if draft is None:
+        # No pk yet (the first autosave, or a second tab): the author's draft on this sag is THE draft —
+        # or one that named the mail before it had a sag.
+        if thread_id is not None:
+            draft = MailDraft.objects.filter(mailbox=mailbox, author=resident, thread_id=thread_id).first()
+            if draft is None and reply_to_id is not None:
+                draft = MailDraft.objects.filter(
+                    mailbox=mailbox, author=resident, thread=None, reply_to_id=reply_to_id
+                ).first()
+        elif reply_to_id is not None:
+            draft = MailDraft.objects.filter(
+                mailbox=mailbox, author=resident, thread=None, reply_to_id=reply_to_id
+            ).first()
+    saved = timezone.now()
+    if draft is None:
+        # A late autosave must not bring back a draft that Send has just deleted. The page says when its
+        # draft session began; an answer from this author on the sag since then means the draft was sent.
+        if started is not None:
+            answered = MailEvent.objects.filter(
+                mailbox=mailbox,
+                resident=resident,
+                action__in=[MailEvent.Action.REPLY, MailEvent.Action.SEND],
+                created_at__gt=started,
+            )
+            if thread_id is not None:
+                answered = answered.filter(thread_id=thread_id)
+            elif reply_to_id is not None:
+                answered = answered.filter(message_id=reply_to_id)  # a mail with no sag yet: its REPLY event
+            else:
+                # A NEW mail has no sag to match on, so any mail this author sent from the mailbox since
+                # the page opened counts (at worst a second tab's unrelated send refuses one autosave).
+                answered = answered.filter(action=MailEvent.Action.SEND)
+            if answered.exists():
+                return refuse("Mailen er allerede sendt, så kladden blev ikke gemt.", 409)
+        try:
+            with transaction.atomic():
+                draft = MailDraft.objects.create(
+                    mailbox=mailbox,
+                    author=resident,
+                    thread_id=thread_id,
+                    reply_to_id=reply_to_id,
+                    reply_all=reply_all,
+                    **fields,
+                )
+            return _saved(request, mailbox, draft, draft.updated_at, wants_json)
+        except IntegrityError:  # two autosaves raced for the same sag; the other one won
+            if thread_id is None:
+                raise
+            draft = MailDraft.objects.filter(mailbox=mailbox, author=resident, thread_id=thread_id).first()
+            if draft is None:
+                raise Http404 from None
+    # An UPDATE, never save(): a save() of a row that Send deleted meanwhile would INSERT it again.
+    # Two tabs on one draft are last-write-wins; that is accepted.
+    values: dict[str, Any] = {**fields, "reply_all": reply_all, "updated_at": saved}
+    if reply_to_id is not None and draft.thread_id in (None, thread_id):
+        values |= {"reply_to_id": reply_to_id, "thread_id": thread_id}  # a draft saved before the sag existed
+    try:
+        with transaction.atomic():
+            rows = MailDraft.objects.filter(pk=draft.pk, mailbox=mailbox, author=resident).update(**values)
+    except IntegrityError:  # it would join a sag where the author has another draft already
+        return refuse("Du har allerede en kladde på sagen.", 409)
+    if rows == 0:
+        return refuse("Kladden findes ikke længere (den er sendt eller slettet).", 404)
+    return _saved(request, mailbox, draft, saved, wants_json)
+
+
+def _parse_started(raw: str) -> datetime | None:
+    """The page's `draft_started`, or None for anything that is not a timestamp — also one that is
+    well-formed but impossible (February 30th, an offset of +99:00), which parse_datetime raises on."""
+    try:
+        started = parse_datetime(raw)
+    except ValueError:
+        return None
+    if started is not None and timezone.is_naive(started):
+        started = timezone.make_aware(started)
+    return started
+
+
+def _saved(
+    request: HttpRequest,
+    mailbox: Mailbox,
+    draft: MailDraft,
+    saved_at: datetime,
+    wants_json: bool,
+) -> HttpResponse:
+    if wants_json:
+        return JsonResponse(
+            {"ok": True, "draft": draft.pk, "saved_at": timezone.localtime(saved_at).strftime("%H:%M")}
+        )
+    messages.success(request, "Kladden er gemt.")
+    # The reply page, or the compose page, which names the draft itself (`?kladde=`; a reply finds it by sag).
+    return redirect(_continue_url(mailbox, draft))
+
+
+@login_required
+@require_POST
+def delete_draft(request: HttpRequest, slug: str, pk: int) -> HttpResponse:
+    """Delete the requester's own draft. Somebody else's is a 404: only the author may delete it, even if
+    the author has since lost access to the mailbox (the purge removes it in the end)."""
+    mailbox = access.get_mailbox(request, slug)
+    draft = get_object_or_404(MailDraft, pk=pk, mailbox=mailbox, author=current_resident(request))
+    reply_url = _continue_url(mailbox, draft)
+    thread_id = draft.thread_id
+    draft.delete()
+    messages.success(request, "Kladden er slettet.")
+    # `next` picks one of a few known places; it is never a URL taken from the request.
+    where = request.POST.get("next")
+    if where == "kladder":
+        return redirect("postkasser:drafts", slug=slug)
+    if where == "svar":  # "Start forfra": the reply page again, now with a fresh quote and greeting
+        return redirect(reply_url)
+    if where == "board" or thread_id is None:
+        return redirect("postkasser:board", slug=slug)
+    return redirect("postkasser:thread", slug=slug, pk=thread_id)
+
+
+@login_required
+def drafts(request: HttpRequest, slug: str) -> HttpResponse:
+    """ "Mine kladder": the requester's own drafts in this mailbox, new mails and replies, newest first."""
+    mailbox = access.get_mailbox(request, slug)
+    mine: list[Any] = list(MailDraft.objects.filter(mailbox=mailbox, author=current_resident(request)))
+    for draft in mine:
+        draft.continue_url = _continue_url(mailbox, draft)
+    return render(request, "postkasser/drafts.html", {"mailbox": mailbox, "drafts": mine})
 
 
 @login_required
