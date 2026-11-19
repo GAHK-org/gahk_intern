@@ -72,7 +72,7 @@ næste release, og `main` er det, der kører i produktion.
 | `feature/…`, `fix/…` (og Copilots `copilot/…`) | `dev` | `dev` | **Squash and merge** |
 | `dev` (release) | – | `main` | **Create a merge commit** |
 | `hotfix/…` | `main` | `main` | **Squash and merge** |
-| `automation/sync-main-…` (laves automatisk) | – | `dev` | **Create a merge commit** – aldrig squash |
+| `automation/sync-main-…` (branch og PR laves automatisk) | – | `dev` | **Create a merge commit** – aldrig squash |
 | Dependabot | – | `dev`; sikkerhedsopdateringer: `main` | **Squash and merge** (patch-opdateringer merges automatisk) |
 
 **Release:** Åbn en PR fra `dev` til `main`, og merge med "Create a merge commit". Squash eller rebase
@@ -83,8 +83,10 @@ konflikter igen.
 
 1. Lav branchen fra `main`, ikke `dev`: `git fetch && git switch -c hotfix/kort-navn origin/main`.
 2. Åbn en PR ind i `main`, og squash-merge den.
-3. Workflowet *Sync main to dev* laver en branch med `main` merget ind i `dev`. Åbn PR'en via linket i
-   kørslens opsummering (Actions-fanen), og merge med "Create a merge commit".
+3. Workflowet *Sync main to dev* merger `main` ind i `dev` på en branch og åbner selv PR'en ind i
+   `dev` (som github-actions) og beder den, der mergede hotfixen, om review. På PR'en: klik "Approve
+   workflows to run", så CI kører, godkend den, og merge med "Create a merge commit". Botten har
+   åbnet PR'en, så du må godt godkende den selv.
 
 Indtil sync-PR'en er merget, er PR'er ind i `dev` blokeret – så rettelsen ikke går tabt i næste
 release. Det samme gælder, når Dependabot har merget en sikkerhedsopdatering ind i `main`.

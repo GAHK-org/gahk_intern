@@ -199,14 +199,6 @@ erDiagram
         string legacy_path
     }
 
-    cms_LegacyImageFailure {
-        int id PK
-        string legacy_path
-        string reason
-        string detail
-        datetime failed_at
-    }
-
     cms_PageRedirect {
         int id PK
         string old_path
@@ -596,6 +588,7 @@ erDiagram
         int reported_by_id FK
         datetime created_at
         datetime updated_at
+        datetime status_changed_at
         datetime archived_at
     }
 
@@ -605,6 +598,14 @@ erDiagram
         int author_id FK
         text body
         datetime created_at
+    }
+
+    reparationer_RepairImage {
+        int id PK
+        int task_id FK
+        int comment_id FK
+        string file
+        datetime uploaded_at
     }
 
     photo_album_Tag {
@@ -1026,6 +1027,8 @@ erDiagram
     reparationer_RepairTask }o--|| residents_Resident : "reported_by"
     reparationer_RepairComment }o--|| reparationer_RepairTask : "task"
     reparationer_RepairComment }o--|| residents_Resident : "author"
+    reparationer_RepairImage }o--|| reparationer_RepairTask : "task"
+    reparationer_RepairImage }o--|o reparationer_RepairComment : "comment"
     photo_album_Album }o--|o photo_album_Album : "parent"
     photo_album_Album }o--o{ photo_album_Tag : "tags"
     photo_album_Media }o--|| photo_album_Album : "album"
@@ -1192,14 +1195,6 @@ erDiagram
         string content_type
         int size
         string legacy_path
-    }
-
-    cms_LegacyImageFailure {
-        int id PK
-        string legacy_path
-        string reason
-        string detail
-        datetime failed_at
     }
 
     cms_PageRedirect {
@@ -2082,6 +2077,7 @@ erDiagram
         int reported_by_id FK
         datetime created_at
         datetime updated_at
+        datetime status_changed_at
         datetime archived_at
     }
 
@@ -2093,11 +2089,21 @@ erDiagram
         datetime created_at
     }
 
+    reparationer_RepairImage {
+        int id PK
+        int task_id FK
+        int comment_id FK
+        string file
+        datetime uploaded_at
+    }
+
     residents_Resident { }
 
     reparationer_RepairTask }o--|| residents_Resident : "reported_by"
     reparationer_RepairComment }o--|| reparationer_RepairTask : "task"
     reparationer_RepairComment }o--|| residents_Resident : "author"
+    reparationer_RepairImage }o--|| reparationer_RepairTask : "task"
+    reparationer_RepairImage }o--|o reparationer_RepairComment : "comment"
 ```
 
 ## residents

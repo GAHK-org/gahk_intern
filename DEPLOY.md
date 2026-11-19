@@ -13,7 +13,7 @@ gahk_web's `DEPLOY.md`. This app still holds the website's content and pushes it
 kept: `gahk.dk/intern/x` goes straight to `intern.gahk.dk/x` (prefix dropped; a GET there gets a page
 that forwards browsers the same way and shows the old installed app how to reinstall), and
 `/admin/…`, `/media/…`, … keep their path. MediaWiki has its own host, **wiki.gahk.dk** (§6), and
-gahk.dk forwards `/wiki/…` there. Cutover order: §7.
+gahk.dk forwards `/wiki/…` there. DNS: §7.
 
 ## 1. Local
 Prereqs: [`uv`](https://docs.astral.sh/uv/) (Python deps) + [`go-task`](https://taskfile.dev) + Node + Docker.
@@ -441,7 +441,7 @@ docker exec <web> python manage.py shell -c "
 from django.core.files.storage import storages
 s = storages['default']; c = s.connection.meta.client
 c.put_bucket_cors(Bucket=s.bucket_name, CORSConfiguration={'CORSRules': [
-  {'AllowedOrigins': ['https://intern.gahk.dk', 'https://gahk.dk', 'https://www.gahk.dk'],
+  {'AllowedOrigins': ['https://intern.gahk.dk'],
    'AllowedMethods': ['POST', 'PUT', 'DELETE'],
    'AllowedHeaders': ['*'],
    'ExposeHeaders': ['ETag'],
@@ -454,9 +454,7 @@ print(c.get_bucket_cors(Bucket=s.bucket_name)['CORSRules'])"
 (`@uppy/aws-s3`) starts and completes itself; `PUT` for their parts; `DELETE` to abort one that
 failed or was cancelled. The server signs each of those requests for the one key it chose
 (`photo_album/direct_upload.py`). `ETag` must be exposed: Uppy reads each part's ETag to complete
-the upload. Only those origins. **Add `https://intern.gahk.dk` before the switch to intern.gahk.dk
-(§7)** — uploads from the new host fail until it is there; drop the two gahk.dk origins once the
-switch is done, since gahk.dk no longer runs this app. **Reading needs no
+the upload. Only that origin: gahk.dk does not run this app. **Reading needs no
 CORS** — a download is a top-level navigation to a redirect, not a `fetch`. Widening
 `AllowedMethods` to `GET` or `AllowedOrigins` to `*` would let any page on the internet script
 requests against the bucket with a stolen presigned URL; there is no reason to.
@@ -701,42 +699,15 @@ A manual publish is never skipped as "already current".
 4. On gahk.dk, `https://gahk.dk/api/health` shows the revision it serves; compare with the newest OK
    Publication.
 
-**Legacy images — run the import right after the deploy.** The old site's content images are
-content, not code: they belong in the image library (S3) like every other picture. ALL of them (77
-files, 34 MB, under `app/static/legacy/image/upload/`) move there, the ones no page uses too: gahk.dk
-redirects every old picture address (`/static/legacy/image/…`, `/public/image/…`) to its library
-copy, and other websites link them. The import (`cms/legacy_images.py`) reads each file not yet in
-the library from that directory, which is in the image like any static file, checks it like an
-upload, stores it with its old path, and rewrites content that still refers to it
-(`/public/image/…`, `/static/legacy/image/…`). It needs nothing from outside the container.
-
-Right after the deploy, run it by hand, so no old picture address goes without its copy for the
-minutes the sync would take:
-```
-docker exec <web> python manage.py import_legacy_images     # all of them, one line per file
-```
-It ends with "The library has 77 of the 77 old images" and queues a publish. Safe to run again: what
-is in the library is skipped. `sync_gahk_web` (with `GAHK_WEB_KEY` set) runs the same import by
-itself every 2 minutes, at most 20 files or 60 seconds per run (content's references first), so an
-interrupted or skipped manual run is finished within ten minutes anyway; each run publishes what it
-brought in. To watch it: the change log's **System** filter shows each imported image and each
-rewritten page, and the Hjemmeside overview shows "x af 77 gamle billeder", how many are still
-waiting and the ones that could not be moved.
-
-A file content refers to that is not there, or that is not a usable image, is logged once, recorded
-(LegacyImageFailure) and not asked for again by the sync; references to it stay as they are (gahk.dk
-shows a broken picture or a plain green band there). Replace it in the editor, or retry with the
-command, which retries every recorded failure. A storage or database error (S3 down) records
-nothing: the next run tries again, and it shows as the sync's `last_error`; what the run imported
-before it is still pointed at. An old image nothing uses shows as "Ikke i brug" in the library and
-may be deleted: it is recorded as deleted and not imported again (unless content refers to it
-again), and gahk.dk drops it, and the redirect from its old address, at the next publish.
-
+**Legacy images.** The old site's content images (77 files, in git under
+`app/static/legacy/image/upload/` until the cutover's cleanup) were moved into the image library (S3)
+once, at the move to intern.gahk.dk, with their old path in `CmsImage.legacy_path`, and the content was pointed at the
+copies. Every snapshot sends gahk.dk the map from each old address (`/static/legacy/image/…`;
+gahk.dk also answers `/public/image/…`) to the library copy, so links from other websites and old
+mails keep working. An old image nothing uses shows as "Ikke i brug" in the library and may be
+deleted; gahk.dk then drops it, and the redirect from its old address, at the next publish.
 `static/legacy/image/elements/` and `image/intern/` stay in the repository: the intranet itself uses
-them. Once the overview shows all old images in the library (or deleted) and none waiting in
-production, the cutover's cleanup removes the import (`cms/legacy_images.py`, the command,
-LegacyImageFailure) and `upload/` with it; `CmsImage.legacy_path` stays: gahk.dk's redirects for old
-image links are built from it.
+them.
 
 **Applications** pulled from the outbox are validated with the old form rules, stored once (by
 gahk.dk's id), answered with the usual auto-reply, and then acknowledged so gahk.dk deletes them. One
@@ -814,65 +785,19 @@ albums in real use are never at risk. Run it with `docker exec -it` — it needs
   external link that opens in a new tab, outside the installed GAHK Intern app's scope.
 - Login is standalone (GahkAuthLogin reads the residents table directly); its cookies are host-only
   on wiki.gahk.dk and `Secure`, so neither gahk.dk nor intern.gahk.dk ever sees them.
-- The wiki image of this version only works at wiki.gahk.dk (`$wgScriptPath` is now `""`), so it
-  runs as a **second Coolify app** on that domain, set up before the switch (§7 step 1) with the same
-  MariaDB and environment as today's wiki. Today's app keeps serving gahk.dk/wiki until the DNS
-  switch; both use the same database, so an edit on either shows on both. Stop the old app after the
-  switch.
+- The wiki image only works at wiki.gahk.dk (`$wgScriptPath` is `""`).
 
-## 7. DNS and the switch to intern.gahk.dk and wiki.gahk.dk (.dk via Punktum dk) **[you]**
+## 7. DNS (.dk via Punktum dk) **[you]**
 Records: **`intern.gahk.dk` and `wiki.gahk.dk` A → the Coolify VM** (no AAAA: gahk.dk has never had
 one); **`gahk.dk` and `www.gahk.dk` → Hetzner Webhosting** (gahk_web, see its `DEPLOY.md`). **Leave
-MX on one.com** (email untouched).
+MX on one.com** (email untouched). In Coolify this app has only the domain `https://intern.gahk.dk`,
+and the wiki app only `https://wiki.gahk.dk`.
 
-Order — gahk.dk must already serve the public site and forward the old intranet paths when it
-moves, and this version must follow right behind it:
-1. A **day ahead**, lower the TTL of the gahk.dk A record (e.g. 300 s). Create `intern.gahk.dk`
-   and `wiki.gahk.dk` pointing at the Coolify VM; add the domain to this app in Coolify so Let's
-   Encrypt issues its certificate. Deploy the new wiki as its own app on `https://wiki.gahk.dk`
-   (§6) and check it: certificate, login, a few pages, links staying on wiki.gahk.dk. Add
-   `https://intern.gahk.dk` to the bucket's CORS rule (§4c).
-   From step 3 gahk.dk forwards `/intern/<rest>` to `https://intern.gahk.dk/<rest>`, without the
-   prefix, and only this version serves the intranet there: the old one keeps it under `/intern/`,
-   so until step 4 a forwarded link misses its page.
-2. **gahk_web installed by hand** (gahk_web's `DEPLOY.md` §8): a signed `POST /api/update` straight
-   to the webhost's address, then `/api/health` there. It has no content yet, so its pages answer
-   the 503 page *"Siden opdateres"*. Nothing can publish to it from here before step 4: the running
-   version has no publishing at all, and this version cannot go out early, because its migrations
-   reshape `cms` while the old version still serves gahk.dk from the same database.
-3. **DNS switch:** repoint gahk.dk (+ www) to Hetzner Webhosting. As resolvers pick it up, visitors
-   see *"Siden opdateres"* until step 4 has published — keep the gap short.
-4. **Deploy this version** straight after, with the env of §2 (`DJANGO_ALLOWED_HOSTS`,
-   `CSRF_TRUSTED_ORIGINS`, `SITE_URL`, `PUBLIC_SITE_URL`) and `GAHK_WEB_URL` / `GAHK_WEB_KEY`
-   (§4f). Within about 2 minutes `sync_gahk_web` sees that gahk.dk has no content and publishes
-   everything. Run `manage.py import_legacy_images` at once: it moves all of the old site's images
-   into the library and publishes again with the pictures in place (§4f, "Legacy images"; the sync
-   would do it by itself over the next few runs). From here the links gahk.dk forwards
-   (`/intern/<rest>` → `https://intern.gahk.dk/<rest>`) reach their pages. In the same go, **stop
-   the old wiki app** and its gahk.dk/wiki route: from step 3 gahk.dk redirects `/wiki/…` to
-   wiki.gahk.dk, which has been answering since step 1.
-5. Verify: gahk.dk shows its pages and pictures, the Hjemmeside overview shows an OK publication,
-   `https://gahk.dk/intern/` in a browser lands on `https://intern.gahk.dk/` (gahk.dk's page forwards
-   it; `curl -sI -X POST` shows gahk.dk's 308 there), `https://intern.gahk.dk/intern/` is a 404,
-   a `https://gahk.dk/kalender/<token>.ics`
-   feed still answers, `https://intern.gahk.dk/health` is 200 (move the uptime monitor there, §4e),
-   one direct upload to the bucket works (CORS: a photo album file of 8 MB or more). `https://gahk.dk/wiki/` → `https://wiki.gahk.dk/`, and a wiki
-   login lands on the page it came from.
-6. **Rollback** = repoint gahk.dk back to the VM, redeploy this app's previous image with the old
-   env, and start the old wiki app again (its gahk.dk/wiki route); the new wiki app can stay.
-   Registrar transfer is optional/separate (MitID + auth code). Confirm **who the registrant of
-   record is** early — often the slowest item.
-
-The session cookie is host-only and renamed, and the old `.gahk.dk` one is deleted on the first
-request. Everyone is logged out of the wiki once (its old gahk.dk cookies are made worthless by
-`$wgAuthenticationTokenVersion`). Afterwards, tell residents and update by hand:
-- Push and the home-screen app must be set up again on intern.gahk.dk (§2, Web Push). The old app
-  shows how, and `https://intern.gahk.dk/install` has the steps; phones also get a banner.
-- The ølkælder till's bookmark (`https://intern.gahk.dk/oelkaelder/…`) and the kitchen account's
-  (`https://intern.gahk.dk/den-hurtige/koekken/`). gahk.dk's redirect covers them, but a redirect
-  is one more thing that can break.
-- The Dropbox import script's `PHOTO_ALBUM_IMPORT_URL` → `https://intern.gahk.dk/fotoalbum/importer-zip/system`.
-  gahk.dk's 308 keeps its POST working, but update it anyway.
+The intranet moved here from gahk.dk/intern/ in November 2026. gahk.dk forwards the old addresses
+(`/intern/<rest>` → `https://intern.gahk.dk/<rest>`, `/wiki/…` → wiki.gahk.dk); here `/intern/…` is a
+404. The session cookie is host-only and renamed (`__Host-intern_sessionid`), so an old `.gahk.dk`
+`sessionid` is never read. Home-screen apps and push had to be set up again on intern.gahk.dk: the
+old app shows how, `https://intern.gahk.dk/install` has the steps, and phones get a banner.
 
 ## 8. Cutover checklist
 - [ ] Fresh GitHub repo, CI green, Dependabot on.
@@ -898,80 +823,12 @@ request. Everyone is logged out of the wiki once (its old gahk.dk cookies are ma
       delete `phpinfo.php`, pull & archive access logs).
 - [ ] MediaWiki migrated + upgraded to 1.43; switched to `https://wiki.gahk.dk` with this version (§6, §7).
 - [ ] Staging smoke-tested; behavioural diff vs the live PHP site on key pages.
-- [ ] `intern.gahk.dk` live in Coolify and bucket CORS updated; gahk_web installed by hand and its
-      `/api/health` checked; then gahk.dk repointed and this version deployed with `GAHK_WEB_KEY`
-      set (§7 steps 2-4) → `import_legacy_images` run (§4f) → verify, including
-      `https://gahk.dk/intern/` → `https://intern.gahk.dk/` and that the Hjemmeside overview shows
-      "77 af 77 gamle billeder" with none waiting or failed (§4f) → keep MX on one.com.
+- [ ] `intern.gahk.dk` live in Coolify and bucket CORS updated; gahk.dk on Hetzner Webhosting with
+      `GAHK_WEB_KEY` set here (§4f, §7); `https://gahk.dk/intern/` → `https://intern.gahk.dk/`;
+      MX kept on one.com.
 - [ ] Uptime monitor on `https://intern.gahk.dk/health`; till, kitchen and Dropbox-script URLs updated.
 
 ## 9. Notes
 - Python: **dev is 3.14, prod image pins 3.13** (Django 5.2's supported range; psycopg wheels).
 - Static: WhiteNoise `CompressedManifestStaticFilesStorage` in prod (hashed/cached); `collectstatic` runs at image build.
 - The `gahk_dk` DB account is shared by App A, App B, and MediaWiki — rotating its password touches all three.
-
-## Transition (temporary — removed in phase 3)
-While gahk.dk's DNS still points at the Coolify server, this version also answers **gahk.dk** — with
-the old public site — and carries logins over from the old code instead of logging everyone out. All
-of it is `app/transition/` (+ `app/templates/transition/`, `app/tests/test_transition.py`, the
-"Transition" block at the end of `config/settings.py` and this section), and none of it outlives the
-switch: phase 3 reverts it. **Until then this replaces §7's steps 3-4 and its "everyone is logged out
-once".**
-
-**Phase 0 (done):** intern.gahk.dk and wiki.gahk.dk point at the Coolify server; the old code answers
-on `https://intern.gahk.dk/intern/`.
-
-**Phase 1 — deploy this version** to the Coolify app that still has the domains `gahk.dk`,
-`www.gahk.dk` and `intern.gahk.dk`; at the same time the wiki app moves to `https://wiki.gahk.dk`
-(root layout) and loses its gahk.dk/wiki route, so gahk.dk/wiki/… reaches this app. Environment, on
-top of §2:
-```
-TRANSITION_PUBLIC_HOSTS=gahk.dk,www.gahk.dk           # these hosts get the old public site
-DJANGO_ALLOWED_HOSTS=intern.gahk.dk,gahk.dk,www.gahk.dk
-CSRF_TRUSTED_ORIGINS=https://intern.gahk.dk,https://gahk.dk,https://www.gahk.dk
-GAHK_WEB_URL=https://hetznerdemo.gahk.dk              # the new site, published to while DNS waits
-GAHK_WEB_KEY=…                                        # §4f
-# TURNSTILE_SITE_KEY / TURNSTILE_SECRET_KEY            # the old forms' captcha, if the old deploy had it
-```
-What gahk.dk then answers (`transition/urls_public.py`):
-- `/`, page addresses (former addresses 301 to the page), `/begivenheder/`: the old site with the old
-  menu, built from today's content; its pictures are library images, anonymous at `/media/cms/…` on
-  this host only. Old picture addresses `/static/legacy/image/…` and `/public/image/…` 302 to the
-  library copy (`CmsImage.legacy_path`; 404 when not imported). No visit counter.
-- `/optagelse/`, `ansoeg`, `fremlej` (and their old POST targets): the old forms; an application goes
-  straight into intern's database, with the usual auto-reply.
-- GET/HEAD `/intern`, `/intern/…`, `/nyintern…`: gahk_web's "Den Hurtige er flyttet" page (a browser
-  goes on to `https://intern.gahk.dk/<path without the prefix>`; the old installed app shows how to
-  reinstall). Other methods: 308 there.
-- 308 to intern.gahk.dk, same path and query: `/admin…`, `/django-admin…`, `/photo-album/…`, other
-  `/media/…`, `/health`, `/healthz`, `/optagelse/listansoegninger|eksport|showAnsoegning/…|setasreceived/…|kasser/…`.
-- 308 to wiki.gahk.dk with gahk_web's mapping: `/wiki` → `/`; `/wiki/index.php`, `load.php`,
-  `images/`, … → the same at the root; any other `/wiki/<title>` → `/wiki/<title>`.
-- Served as before: `/kalender/<token>.ics`, `/sw.js` (the old installed app keeps its pushes until
-  the switch), `/static/…`. `robots.txt` and `favicon.ico` are 404, as on the old site.
-
-The old ".gahk.dk" session cookie is left alone on gahk.dk. On intern.gahk.dk a request with it and
-without our own cookie has its session moved to a new key under `__Host-intern_sessionid` (the old row
-deleted, the old cookie expired), so a logged-in user stays logged in. Every session this version
-saves is marked; an old key is accepted once, and a marked session never under the old name.
-
-Check: `https://gahk.dk/` shows the old front page with pictures; a page, `/begivenheder/`, a test
-application under `/optagelse/ansoeg` (then delete it in the list); `https://gahk.dk/intern/` in a
-browser lands on `https://intern.gahk.dk/` still logged in; `curl -sI -X POST https://gahk.dk/intern/x`
-is a 308; `https://gahk.dk/wiki/` → `https://wiki.gahk.dk/`.
-
-**Phase 2 — the switch.** Right before repointing gahk.dk (+ www) to Hetzner Webhosting (gahk_web's
-`DEPLOY.md`), end every session the old code saved — from then on its ".gahk.dk" cookie reaches the
-webhost:
-```
-python manage.py end_legacy_sessions --dry-run   # "would end N old session(s) and keep M"
-python manage.py end_legacy_sessions             # idempotent; run it again right after the switch
-```
-Then switch DNS, and remove `gahk.dk`/`www.gahk.dk` from the Coolify domains once it has moved
-(their certificates could not renew). The old installed app then gets gahk_web's own copy of the
-"flyttet" page and its self-removing service worker.
-
-**Phase 3 — remove the transition:** `git revert` this PR's commits (no migrations, no models, no
-`SESSION_ENGINE` change, so nothing in the database needs undoing; the mark left in session data is
-ignored), and set `GAHK_WEB_URL=https://gahk.dk`, drop `TRANSITION_PUBLIC_HOSTS` and `TURNSTILE_*`,
-and take gahk.dk/www out of `DJANGO_ALLOWED_HOSTS` and `CSRF_TRUSTED_ORIGINS`.

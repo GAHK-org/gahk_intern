@@ -1,0 +1,14 @@
+{% comment %}
+  A ticket's or a note's photos. Each is a link to the full picture around a capped thumbnail —
+  data-viewer opens it in the site's image viewer, as on Opslagstavlen and Den Hurtige.
+{% endcomment %}
+{% load text_extras %}
+{% if images %}
+  <div class="repair-photos">
+    {% for image in images %}
+      <a href="{{ image.file.url }}" target="_blank" rel="noopener" data-viewer data-name="{{ image.file.name|basename }}">
+        <img src="{{ image.file.url }}" alt="Billede {{ forloop.counter }}" loading="lazy">
+      </a>
+    {% endfor %}
+  </div>
+{% endif %}
