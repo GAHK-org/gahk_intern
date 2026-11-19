@@ -1596,8 +1596,7 @@ def _run_ffmpeg_with_progress(
             stderr=errors,
         )
         try:
-            assert process.stdout is not None  # noqa: S101 — for the type checker: PIPE was asked for
-            for raw in process.stdout:
+            for raw in process.stdout or ():  # never None: PIPE was asked for
                 key, _, value = raw.decode("utf-8", errors="replace").strip().partition("=")
                 if key == "out_time_us" and duration and value.isdigit():  # "N/A" before the first frame
                     on_progress(int(value) / 1_000_000 / duration)
