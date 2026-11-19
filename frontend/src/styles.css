@@ -98,6 +98,15 @@
   .btn-top svg { width:16px; height:16px; }
 
   .sidebar { grid-area:side; background:var(--surface); border-right:1px solid var(--border); padding:14px 12px; display:flex; flex-direction:column; gap:3px; overflow:auto; }
+  /* The window scrolls, not .main, so a grid cell as tall as the page took the menu with it: at the
+     bottom of a long page (the photo timeline) it was thousands of pixels up. It sticks under the
+     60px top bar instead, one screen tall, and scrolls on its own when the menu is longer than that.
+     Desktop only: phones have the drawer (the max-width:960px block), and Den Hurtige's page never
+     scrolls, so its menu keeps filling the column it is given. */
+  @media (min-width:961px) {
+    .sidebar { position:sticky; top:60px; height:calc(100dvh - 60px); }
+    .chat-page .sidebar { position:static; height:auto; }
+  }
   .nav-label { font-size:10.5px; font-weight:700; letter-spacing:.13em; text-transform:uppercase; color:var(--faint); padding:14px 12px 6px; }
   .nav-item { display:flex; align-items:center; gap:11px; padding:9px 12px; border-radius:9px; color:#33413a; font-weight:500; font-size:14px; line-height:1.1; text-decoration:none; position:relative; }
   .nav-item .ni { width:18px; height:18px; color:var(--faint); flex:none; stroke:currentColor; fill:none; }
