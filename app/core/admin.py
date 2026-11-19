@@ -1,7 +1,6 @@
 from django.contrib import admin
 from django.db.models import QuerySet
 from django.http import HttpRequest
-from django.utils import timezone
 
 from .models import Cleaning, OutgoingMail, PushDeliveryDay, PushSubscription, Room, Workgroup
 
@@ -62,8 +61,8 @@ class OutgoingMailAdmin(admin.ModelAdmin):
     """The mail queue (core.mail): what is waiting, what went out, and why a mail failed. Read-only —
     a failed mail is sent again with the action, once whatever refused it is fixed."""
 
-    list_display = ("created_at", "subject", "recipients", "status", "attempts", "sent_at", "error")
-    list_filter = ("status",)
+    list_display = ("created_at", "kind", "subject", "recipients", "status", "attempts", "sent_at", "error")
+    list_filter = ("status", "kind")
     search_fields = ("subject", "recipients")
     readonly_fields = [f.name for f in OutgoingMail._meta.fields if f.name != "payload"]
     exclude = ("payload",)
@@ -74,13 +73,9 @@ class OutgoingMailAdmin(admin.ModelAdmin):
 
     @admin.action(description="Send valgte fejlede mails igen")
     def send_again(self, request: HttpRequest, queryset: QuerySet[OutgoingMail]) -> None:
-        from .mail import _start_delivery
+        from . import mail
 
-        # A failed mail still has its payload; one that was sent has not, and is not sent twice.
-        count = (
-            queryset.filter(status=OutgoingMail.Status.FAILED)
-            .exclude(payload={})
-            .update(status=OutgoingMail.Status.QUEUED, attempts=0, next_attempt_at=timezone.now(), error="")
-        )
-        _start_delivery()
+        # Only a failed or cut-off mail that still has its content and lifetime (core.mail.can_send_again):
+        # a sent one is not sent twice, and an alumneregning replaced by a rerun has lost its content.
+        count = mail.send_again(list(queryset))
         self.message_user(request, f"{count} mail(s) sat i kø igen.")

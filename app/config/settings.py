@@ -343,15 +343,16 @@ CELERY_BEAT_SCHEDULE = {
         "task": "ak.tasks.apply_monthly_assessment",
         "schedule": crontab(minute=10, hour=4, day_of_month=1),
     },
-    # Every quarter of an hour, matching JOB_STALLED_AFTER: what it clears is a download the
-    # resident is still watching a spinner for, so the gap between "the worker died" and "the page
-    # says so" is the thing being minimised. Off the hour, like everything else here.
     # Each mail queues its own delivery, and a run the rate limit stops schedules the next; this
-    # only sends what is left if one of those messages was lost (core.mail).
+    # only sends what is left if one of those messages was lost (core.mail), and gives up on mail
+    # whose lifetime has run out.
     "deliver-mail": {
         "task": "core.tasks.deliver_mail",
         "schedule": crontab(minute="*/5"),
     },
+    # Every quarter of an hour, matching JOB_STALLED_AFTER: what it clears is a download the
+    # resident is still watching a spinner for, so the gap between "the worker died" and "the page
+    # says so" is the thing being minimised. Off the hour, like everything else here.
     "fail-stalled-photo-album-downloads": {
         "task": "photo_album.tasks.fail_stalled_downloads",
         "schedule": crontab(minute="5-59/15"),
@@ -413,6 +414,10 @@ CELERY_BEAT_SCHEDULE = {
     "purge-delivered-broker-messages": {
         "task": "core.tasks.purge_delivered_broker_messages",
         "schedule": crontab(minute=50, hour=4),
+    },
+    "purge-outgoing-mail": {
+        "task": "core.tasks.purge_outgoing_mail",
+        "schedule": crontab(minute=55, hour=4),
     },
     "process-photo-album-media": {
         "task": "photo_album.tasks.process_pending_media",
@@ -577,16 +582,22 @@ CSRF_FAILURE_VIEW = "residents.auth.csrf_failure"
 LOGIN_REDIRECT_URL = "dashboard"
 LOGOUT_REDIRECT_URL = "login"
 
-# Email — defaults to the console backend in dev (prints instead of sending). SMTP from env in prod.
-# Every mail is stored first and sent by a job (core.mail, #397);
-# MAIL_DELIVERY_BACKEND is what that job sends through, and what the env's EMAIL_BACKEND sets.
+# Email (core.mail, #397). Two backends, and the names are on purpose:
+#   * the SETTING EMAIL_BACKEND is the outbox, always: every send_mail, ours or a third-party app's, is
+#     stored as an OutgoingMail and sent from there. core.checks warns if anything replaces it.
+#   * the ENV VAR EMAIL_BACKEND keeps meaning what it says to whoever sets it — where mail actually
+#     goes — and becomes MAIL_DELIVERY_BACKEND, what the outbox sends through. Unset (dev), that is
+#     the console backend, which prints each mail in the log of the process that sends it.
 EMAIL_BACKEND = "core.mail.OutboxBackend"
 MAIL_DELIVERY_BACKEND = os.environ.get("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
-# one.com refuses the account after ~25 mails in 5 minutes. Only bulk mail (core.mail.bulk:
+# one.com refuses the account after ~25 mails in 5 minutes. Only bulk mail (core.mail.Kind.BULK:
 # alumneregninger, ølkælder overviews) is held to this, counting every mail sent in the window; a
 # password reset or a welcome mail goes out at once, in the room this leaves below one.com's limit.
 MAIL_RATE_LIMIT = int(os.environ.get("MAIL_RATE_LIMIT", "10"))
 MAIL_RATE_WINDOW = timedelta(minutes=5)
+# Seconds before a send gives up on a mail server that does not answer. Django's default is to wait
+# for ever, and a hung send holds the outbox's lock: every mail would wait for the job's time limit.
+EMAIL_TIMEOUT = 30
 EMAIL_HOST = os.environ.get("SMTP_HOST", "")
 EMAIL_HOST_USER = os.environ.get("SMTP_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("SMTP_PASSWORD", "")

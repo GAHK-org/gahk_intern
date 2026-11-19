@@ -12,8 +12,8 @@ ECONOMIC_RETRY_COUNTDOWN = 2 * 60
 
 
 class AlumneregningerFailed(Exception):
-    """Raised at the end of a send in which someone could not be billed, so the job shows as failed
-    on the worker-jobs page rather than done (#397). Who and why is on the status page."""
+    """Raised at the end of a send in which someone's statement could not be made, so the job shows as
+    failed on the worker-jobs page rather than done (#397). Who and why is on the status page."""
 
 
 @shared_task(bind=True, max_retries=3)
@@ -26,9 +26,9 @@ def send_alumneregninger_task(self: Task, date_from_iso: str, date_to_iso: str) 
 
     It makes the statements and queues their mails; core.mail delivers them, within the mail server's
     rate limit, and retries each until it goes through. The job itself is tried again when e-conomic's
-    rate limit failed someone (the rerun skips whoever is billed), and fails if anyone is left failed
-    — as it does on EconomicAuthError, already logged by send_alumneregninger. Returns how many it
-    billed."""
+    rate limit failed someone (the rerun skips whoever was sent theirs), and fails if anyone is left
+    failed — as it does on EconomicAuthError, already logged by send_alumneregninger. Returns how many
+    statements it made."""
     date_from, date_to = date.fromisoformat(date_from_iso), date.fromisoformat(date_to_iso)
     results = alumneregning.send_alumneregninger(date_from, date_to)
     failed = [r for r in results if r.outcome == "failed"]

@@ -209,30 +209,38 @@ class ServiceHeartbeat(models.Model):
 
 
 class OutgoingMail(models.Model):
-    """One mail the app sends, kept until it is delivered (#397). EMAIL_BACKEND is core.mail.
-    OutboxBackend, so every send_mail lands here — in the same transaction as whatever caused it —
-    and core.tasks.deliver_mail hands it to the real backend (MAIL_DELIVERY_BACKEND) within
-    MAIL_RATE_LIMIT per MAIL_RATE_WINDOW, retrying until it goes through or is refused outright."""
+    """One mail the app sends, kept until it is delivered or given up on (#397). EMAIL_BACKEND is
+    core.mail.OutboxBackend, so every send_mail lands here — in the same transaction as whatever caused
+    it — and core.mail.deliver hands it to the real backend (MAIL_DELIVERY_BACKEND) by the rules of its
+    kind (core.mail.KINDS), retrying until it goes through, is refused outright or expires."""
+
+    class Kind(models.TextChoices):
+        # Someone is waiting for it (a password reset, a welcome mail): sent at once, first.
+        INTERACTIVE = "interactive", "Haster"
+        NORMAL = "normal", "Almindelig"
+        # The same mail to many (alumneregninger, ølkælder overviews): last, within MAIL_RATE_LIMIT.
+        BULK = "bulk", "Masseudsendelse"
 
     class Status(models.TextChoices):
         QUEUED = "queued", "I kø"
         SENDING = "sending", "Sendes"
         SENT = "sent", "Sendt"
         FAILED = "failed", "Fejlede"
+        EXPIRED = "expired", "Udløbet"  # not sent within its kind's lifetime: given up on
+        UNKNOWN = "unknown", "Ukendt"  # cut off while being sent: it may or may not have arrived
 
     created_at = models.DateTimeField(auto_now_add=True)
     subject = models.TextField()
     recipients = models.TextField()  # comma-separated, for the admin and the log
-    # The message itself (core.mail.serialize). Emptied once delivered: it can hold a password-reset
-    # link, or a statement PDF of several MB.
+    # The message itself (core.mail.serialize). Emptied once delivered or expired, and a failed one's
+    # when its lifetime ends: it can hold a password-reset link, or a statement PDF of several MB.
     payload = models.JSONField(default=dict, blank=True)
-    bulk = models.BooleanField(
-        default=False
-    )  # queued inside core.mail.bulk(): sent last, within MAIL_RATE_LIMIT
+    kind = models.CharField(max_length=12, choices=Kind.choices, default=Kind.NORMAL)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.QUEUED)
     attempts = models.PositiveSmallIntegerField(default=0)
     next_attempt_at = models.DateTimeField(default=timezone.now)
     last_attempt_at = models.DateTimeField(null=True, blank=True)  # what the rate limit counts
+    expires_at = models.DateTimeField()  # not sent by then, it is given up on (EXPIRED)
     sent_at = models.DateTimeField(null=True, blank=True)
     error = models.TextField(blank=True)
 

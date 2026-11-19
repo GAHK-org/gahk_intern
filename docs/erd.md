@@ -77,6 +77,22 @@ erDiagram
         datetime beat_at
     }
 
+    core_OutgoingMail {
+        int id PK
+        datetime created_at
+        text subject
+        text recipients
+        json payload
+        string kind
+        string status
+        int attempts
+        datetime next_attempt_at
+        datetime last_attempt_at
+        datetime expires_at
+        datetime sent_at
+        text error
+    }
+
     residents_Resident {
         int id PK
         string password
@@ -588,6 +604,7 @@ erDiagram
         int reported_by_id FK
         datetime created_at
         datetime updated_at
+        datetime status_changed_at
         datetime archived_at
     }
 
@@ -597,6 +614,14 @@ erDiagram
         int author_id FK
         text body
         datetime created_at
+    }
+
+    reparationer_RepairImage {
+        int id PK
+        int task_id FK
+        int comment_id FK
+        string file
+        datetime uploaded_at
     }
 
     arkiv_ArchiveFolder {
@@ -977,6 +1002,7 @@ erDiagram
         string outcome
         text detail
         datetime sent_at
+        int mail_id FK
     }
 
     core_PushSubscription }o--|| residents_Resident : "user"
@@ -1046,6 +1072,8 @@ erDiagram
     reparationer_RepairTask }o--|| residents_Resident : "reported_by"
     reparationer_RepairComment }o--|| reparationer_RepairTask : "task"
     reparationer_RepairComment }o--|| residents_Resident : "author"
+    reparationer_RepairImage }o--|| reparationer_RepairTask : "task"
+    reparationer_RepairImage }o--|o reparationer_RepairComment : "comment"
     arkiv_ArchiveFolder }o--|o arkiv_ArchiveFolder : "parent"
     arkiv_ArchiveFolder }o--|o core_Workgroup : "workgroup"
     arkiv_ArchiveFolder }o--|o core_Workgroup : "effective_workgroup"
@@ -1100,6 +1128,7 @@ erDiagram
     gahkflix_VideoEvent }o--|o gahkflix_ChangeRequest : "request"
     regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
+    regnskab_AlumneregningSend }o--|o core_OutgoingMail : "mail"
 ```
 
 ## admissions
@@ -1423,6 +1452,22 @@ erDiagram
         string name
         string hostname
         datetime beat_at
+    }
+
+    core_OutgoingMail {
+        int id PK
+        datetime created_at
+        text subject
+        text recipients
+        json payload
+        string kind
+        string status
+        int attempts
+        datetime next_attempt_at
+        datetime last_attempt_at
+        datetime expires_at
+        datetime sent_at
+        text error
     }
 
     residents_Resident { }
@@ -2124,12 +2169,16 @@ erDiagram
         string outcome
         text detail
         datetime sent_at
+        int mail_id FK
     }
+
+    core_OutgoingMail { }
 
     residents_Resident { }
 
     regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
+    regnskab_AlumneregningSend }o--|o core_OutgoingMail : "mail"
 ```
 
 ## reparationer
@@ -2146,6 +2195,7 @@ erDiagram
         int reported_by_id FK
         datetime created_at
         datetime updated_at
+        datetime status_changed_at
         datetime archived_at
     }
 
@@ -2157,11 +2207,21 @@ erDiagram
         datetime created_at
     }
 
+    reparationer_RepairImage {
+        int id PK
+        int task_id FK
+        int comment_id FK
+        string file
+        datetime uploaded_at
+    }
+
     residents_Resident { }
 
     reparationer_RepairTask }o--|| residents_Resident : "reported_by"
     reparationer_RepairComment }o--|| reparationer_RepairTask : "task"
     reparationer_RepairComment }o--|| residents_Resident : "author"
+    reparationer_RepairImage }o--|| reparationer_RepairTask : "task"
+    reparationer_RepairImage }o--|o reparationer_RepairComment : "comment"
 ```
 
 ## residents

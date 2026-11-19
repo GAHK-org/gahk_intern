@@ -22,7 +22,7 @@ from core.danish import MONTHS
 from core.mentions import mentionable
 from core.models import Cleaning, Room, Workgroup
 
-from .forms import ProfileEditForm, ResidentEditForm
+from .forms import ProfileEditForm, ResidentEditForm, password_link_mail
 from .models import (
     WORKGROUP_ROLE,
     WORKGROUP_ROLE_VALUES,
@@ -422,7 +422,7 @@ def _send_welcome_email(request: HttpRequest, resident: Resident) -> bool:
     mail failure must not undo the creation — but it is logged and reported, never swallowed: the
     caller reports delivery to the user, and a wrong DEFAULT_FROM_EMAIL (one.com refuses senders the
     SMTP account is not an alias of) must not look like success. Returns whether the mail was queued:
-    core.mail sends it, and a refusal then shows on the worker-jobs page and in Django admin's mail queue."""
+    core.mail sends it at once (password_link_mail), and a refusal then shows on the worker-jobs page."""
     uid = urlsafe_base64_encode(force_bytes(resident.pk))
     token = default_token_generator.make_token(resident)
     set_link = request.build_absolute_uri(
@@ -430,18 +430,19 @@ def _send_welcome_email(request: HttpRequest, resident: Resident) -> bool:
     )
     reset_link = request.build_absolute_uri(reverse("password_reset"))
     try:
-        send_mail(
-            "Velkommen til GAHK Intern",
-            (
-                f"Kære {resident.first_name}\n\n"
-                f"Du er blevet oprettet på GAHKs interne netværk med e-mailen {resident.email}.\n\n"
-                f"Sæt dit kodeord her:\n{set_link}\n\n"
-                f"Hvis linket er udløbet, kan du anmode om et nyt på:\n{reset_link}\n\n"
-                f"Mvh. Indstillingen"
-            ),
-            settings.DEFAULT_FROM_EMAIL,
-            [resident.email],
-        )
+        with password_link_mail():
+            send_mail(
+                "Velkommen til GAHK Intern",
+                (
+                    f"Kære {resident.first_name}\n\n"
+                    f"Du er blevet oprettet på GAHKs interne netværk med e-mailen {resident.email}.\n\n"
+                    f"Sæt dit kodeord her:\n{set_link}\n\n"
+                    f"Hvis linket er udløbet, kan du anmode om et nyt på:\n{reset_link}\n\n"
+                    f"Mvh. Indstillingen"
+                ),
+                settings.DEFAULT_FROM_EMAIL,
+                [resident.email],
+            )
     except Exception:
         logger.exception("Failed sending welcome email to resident %s", resident.pk)
         return False
