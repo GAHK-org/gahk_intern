@@ -36,7 +36,7 @@ def _item_folder(file: File | None, folder: Folder | None) -> Folder:
         if file.deleted_at is not None:
             raise ValidationError("Filen er i papirkurven.")
         return file.folder
-    assert folder is not None  # noqa: S101 - one of the two is given
+    assert folder is not None  # noqa: S101  # nosec B101 - one of the two is given
     if folder.kind != Folder.Kind.FOLDER or folder.deleted_at is not None:
         raise ValidationError("Kun filer og egne mapper kan deles.")
     return folder
