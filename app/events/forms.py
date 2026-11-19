@@ -16,7 +16,7 @@ from django import forms
 from django.conf import settings
 
 from core.clock import current_datetime
-from core.date_and_time import DateAndTimeField
+from core.date_and_time import DateAndTimeField, DateAndTimeInput
 from core.uploads import validate_image_upload
 from residents.models import Residency, Resident, active_period
 
@@ -108,10 +108,11 @@ class EventForm(forms.ModelForm):
     # picker. Declared rather than left to the model's DateTimeField, so their labels and help text
     # are given here — a declared field ignores Meta.labels and Meta.help_texts.
     starts_at = DateAndTimeField(label="Starter")
-    ends_at = DateAndTimeField(label="Slutter", required=False)
+    ends_at = DateAndTimeField(label="Slutter", required=False, widget=DateAndTimeInput(after="starts_at"))
     rsvp_deadline_at = DateAndTimeField(
         label="Svarfrist",
         required=False,
+        widget=DateAndTimeInput(before="starts_at"),
         # It says what the empty value MEANS, because "ingen frist" would otherwise read as "svar
         # hvornår du vil" and the rule is the opposite. See services.answers_locked.
         help_text=(

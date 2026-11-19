@@ -9,6 +9,7 @@ from django import forms
 from django.utils import timezone
 
 from core.date_and_time import DateAndTimeField, parse_clock
+from events.forms import EventForm
 
 
 @pytest.mark.parametrize(
@@ -112,3 +113,20 @@ def test_no_native_time_picker_anywhere_in_the_app() -> None:
     ]
 
     assert offenders == []
+
+
+def test_a_required_pair_marks_both_boxes_required_and_an_optional_one_neither() -> None:
+    form = _Form()
+
+    assert str(form["when"]).count(" required") == 2
+    assert " required" not in str(form["maybe"])
+
+
+@pytest.mark.django_db
+def test_the_event_form_ties_the_end_and_the_svarfrist_to_the_start() -> None:
+    """frontend/src/date-and-time.ts reads these: the end follows the start, the svarfrist precedes it."""
+    form = EventForm()
+
+    assert 'data-date-and-time="starts_at"' in str(form["starts_at"])
+    assert 'data-after="starts_at"' in str(form["ends_at"])
+    assert 'data-before="starts_at"' in str(form["rsvp_deadline_at"])

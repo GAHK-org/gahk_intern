@@ -70,16 +70,28 @@ class ClockInput(forms.TimeInput):
 
 
 class DateAndTimeInput(forms.MultiWidget):
+    """`after` / `before` name another date-and-time field of the same form that this one must come
+    after (an end) or before (a deadline). frontend/src/date-and-time.ts uses it to fill in and move
+    the end with the start, and to keep each calendar to the days allowed; the form still checks."""
+
     template_name = "core/date_and_time_input.html"
 
-    def __init__(self, attrs: dict[str, Any] | None = None) -> None:
+    def __init__(self, attrs: dict[str, Any] | None = None, *, after: str = "", before: str = "") -> None:
         widgets: dict[str, forms.Widget | type[forms.Widget]] = {
-            # The native picker is kept for the date: it shows no clock, and it must be given exactly
-            # YYYY-MM-DD or it comes up blank (and an edit would then wipe the date on save).
+            # A date input still, which frontend/src/date-picker.ts turns into its Danish calendar. It
+            # must be given exactly YYYY-MM-DD or it comes up blank (and an edit would then wipe the
+            # date on save).
             "date": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
             "time": ClockInput(),
         }
+        self.after = after
+        self.before = before
         super().__init__(widgets, attrs)
+
+    def get_context(self, name: str, value: object, attrs: dict[str, Any] | None) -> dict[str, Any]:
+        context = super().get_context(name, value, attrs)
+        context["widget"].update(after=self.after, before=self.before)
+        return context
 
     def decompress(self, value: datetime.datetime | None) -> list[object]:
         if not value:
@@ -105,16 +117,23 @@ class DateAndTimeField(forms.MultiValueField):
 
     def __init__(self, **kwargs: Any) -> None:  # noqa: ANN401 - Django's field kwargs
         messages = {**self.default_error_messages, **kwargs.get("error_messages", {})}
+        # A required field's halves are required too, which is what puts `required` on both boxes
+        # (and leaves "Ryd" out of its calendar). Their "incomplete" message is Django's word for
+        # "this half is empty"; an optional field's half-filled pair is caught in compress().
+        required = kwargs.get("required", True)
         fields = (
             forms.DateField(
                 input_formats=["%Y-%m-%d"],
-                required=False,
-                error_messages={"invalid": messages["invalid_date"]},
+                required=required,
+                error_messages={"invalid": messages["invalid_date"], "incomplete": messages["missing_date"]},
             ),
-            ClockField(required=False, error_messages={"invalid": messages["invalid_time"]}),
+            ClockField(
+                required=required,
+                error_messages={"invalid": messages["invalid_time"], "incomplete": messages["missing_time"]},
+            ),
         )
-        # require_all_fields=False so a half-filled pair reaches compress(), which says which half
-        # is missing, instead of Django's generic "Indtast en fuldstændig værdi".
+        # require_all_fields=False so a half-filled pair says which half is missing, instead of
+        # Django's generic "Indtast en fuldstændig værdi".
         super().__init__(fields, require_all_fields=False, **kwargs)
 
     def compress(self, data_list: list[object]) -> datetime.datetime | None:
