@@ -2692,7 +2692,7 @@
   .audit-op-involved { background:var(--surface-2); color:var(--muted); border-color:var(--border); }
   .audit-changes { margin-top:6px; border-collapse:collapse; font-size:13px; }
   .audit-changes th, .audit-changes td { padding:4px 12px 4px 0; text-align:left; vertical-align:top; overflow-wrap:break-word; }
-  .audit-changes td { min-width:11ch; }
+  .audit-changes td { min-width:11ch; white-space:pre-line; }
   .audit-changes thead th { font-size:11px; font-weight:650; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); }
   .audit-changes tbody th { font-weight:600; white-space:nowrap; }
   .audit-before { color:var(--muted); text-decoration:line-through; text-decoration-color:var(--border-strong); }

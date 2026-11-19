@@ -264,18 +264,6 @@ erDiagram
         string default_background
     }
 
-    cms_ContentChange {
-        int id PK
-        datetime at
-        int by_id FK
-        string by_name
-        string action
-        string kind
-        string object_id
-        string label
-        json changes
-    }
-
     cms_Publication {
         int id PK
         datetime started_at
@@ -1041,7 +1029,6 @@ erDiagram
     cms_PageRedirect }o--|o residents_Resident : "created_by"
     cms_PageVersion }o--|o cms_Page : "page"
     cms_PageVersion }o--|o residents_Resident : "created_by"
-    cms_ContentChange }o--|o residents_Resident : "by"
     cms_Publication }o--|o residents_Resident : "triggered_by"
     ak_AkEntry }o--|| residents_Resident : "resident"
     ak_AkEntry }o--|o residents_Resident : "created_by"
@@ -1388,18 +1375,6 @@ erDiagram
         string default_background
     }
 
-    cms_ContentChange {
-        int id PK
-        datetime at
-        int by_id FK
-        string by_name
-        string action
-        string kind
-        string object_id
-        string label
-        json changes
-    }
-
     cms_Publication {
         int id PK
         datetime started_at
@@ -1436,7 +1411,6 @@ erDiagram
     cms_PageRedirect }o--|o residents_Resident : "created_by"
     cms_PageVersion }o--|o cms_Page : "page"
     cms_PageVersion }o--|o residents_Resident : "created_by"
-    cms_ContentChange }o--|o residents_Resident : "by"
     cms_Publication }o--|o residents_Resident : "triggered_by"
 ```
 

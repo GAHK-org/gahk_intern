@@ -38,11 +38,11 @@ from ak.services import apply_monthly_charge
 from arkiv.demo import seed as seed_arkiv
 from arkiv.models import ArchiveFile, ArchiveFolder
 from audit import trail
-from cms.models import ContentChange, NewsItem, Page, PageVersion, PylonEvent
 
 # CmsEvent, never Event: the internal events app has one of the same name, and both are seeded
 # here. See events.models on the three-way collision.
 from cms.models import Event as CmsEvent
+from cms.models import NewsItem, Page, PageVersion, PylonEvent
 from core.models import Cleaning, Room, Workgroup
 from den_hurtige.demo import seed as seed_den_hurtige
 from den_hurtige.models import QuickComment, QuickPost, QuickReaction
@@ -149,7 +149,6 @@ WIPE_ORDER: list[type[models.Model]] = [
     Application,
     RoleAssignment,
     Residency,
-    ContentChange,
     PageVersion,
     Page,
     NewsItem,

@@ -87,6 +87,7 @@ _registry: dict[type[models.Model], Registration] = {}
 _by_kind: dict[str, Registration] = {}
 _exempt: dict[type[models.Model], str] = {}
 _actions: dict[str, str] = {}
+_kind_labels: dict[str, str] = {}
 
 
 def register(
@@ -132,6 +133,11 @@ def actions(labels: dict[str, str]) -> None:
     _actions.update(labels)
 
 
+def kind_labels(labels: dict[str, str]) -> None:
+    """Name kinds that are no single model, recorded with Event.change_kind ("cms.menu": "Menu")."""
+    _kind_labels.update(labels)
+
+
 def registration(model: type[models.Model]) -> Registration | None:
     return _registry.get(model)
 
@@ -158,7 +164,7 @@ def action_label(action: str) -> str:
 
 def kind_label(kind: str) -> str:
     reg = _by_kind.get(kind)
-    return reg.label if reg else kind
+    return reg.label if reg else _kind_labels.get(kind, kind)
 
 
 def known_actions() -> dict[str, str]:
@@ -297,6 +303,22 @@ class Event:
         redacted = field_name in reg.redact
         _merge_change(entity, field_name, _Change(_json(before), _json(after), redacted))
 
+    def change_kind(
+        self,
+        kind: str,
+        entity_id: int | None,
+        name: str,
+        field_name: str,
+        before: Any,  # noqa: ANN401
+        after: Any,  # noqa: ANN401
+    ) -> None:
+        """Record a change of something that is no single row: the whole menu, a list of settings."""
+        key = (kind, entity_id if entity_id is not None else name)
+        entity = self._entities.get(key)
+        if entity is None:
+            entity = self._entities[key] = _Entity(kind, entity_id, name[:255], "updated", "")
+        _merge_change(entity, field_name, _Change(_json(before), _json(after), redacted=False))
+
     def cancel(self) -> None:
         """Write nothing for this block (it turned out not to change anything)."""
         self.cancelled = True
@@ -383,7 +405,9 @@ def event(
     saved as it was)."""
     ctx = _context.get()
     recorded = Event(action, _request_actor(ctx) if actor is _UNSET else actor, dict(details or {}))
-    if subject is not None and subject.pk is not None:
+    # A subject made inside the block has no id yet: it is named when the block ends.
+    unsaved_subject = subject is not None and subject.pk is None
+    if subject is not None and not unsaved_subject:
         recorded.involve(subject, "subject")
     for obj, role in involve:
         recorded.involve(obj, role)
@@ -393,8 +417,8 @@ def event(
             yield recorded
         finally:
             _open.reset(token)
-        if subject is not None and subject.pk is not None:
-            recorded.involve(subject, "subject")  # a subject created inside the block has its id now
+        if unsaved_subject and subject is not None and subject.pk is not None:
+            recorded.involve(subject, "subject")
         if not recorded.cancelled and not (only_if_changed and not recorded.has_changes):
             recorded._write(ctx)
 
