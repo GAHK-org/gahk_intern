@@ -46,7 +46,7 @@ def test_every_kept_prefix_has_a_rule() -> None:
     """Prefix matching is literal: `photo-album/` does not cover `photo-album-zips/`, so each prefix
     with a lifetime of its own needs a rule that names it exactly."""
     prefixes = {r["Filter"].get("Prefix") for r in RULES}
-    for needed in ("photo-album-zips/", "media/", "data/"):
+    for needed in ("photo-album-zips/", "drive/", "media/", "data/"):
         assert needed in prefixes, f"no rule covers {needed}"
 
 

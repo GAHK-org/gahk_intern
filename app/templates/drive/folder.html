@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}{% if folder %}{{ folder.name }} - {% endif %}Drive - GAHK Intern{% endblock %}
+{% block content_width %}max-w-5xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Ressourcer</p>
+      <h1>{% if folder %}{{ folder.name }}{% else %}Drive{% endif %} {% if limited_rollout %}<span class="chip chip-brass">Under test</span>{% endif %}</h1>
+    </div>
+  </div>
+
+  {% if folder %}
+    <nav class="drive-crumbs mb-4" aria-label="Sti">
+      <a href="{% url 'drive:home' %}">Drive</a>
+      {% for crumb in ancestors %}
+        <span aria-hidden="true">/</span>
+        <a href="{% url 'drive:folder' crumb.pk %}">{{ crumb.name }}</a>
+      {% endfor %}
+      <span aria-hidden="true">/</span>
+      <span aria-current="page">{{ folder.name }}</span>
+    </nav>
+  {% endif %}
+
+  {% if can_write or can_create_folder %}
+    <div class="drive-actions mb-4">
+      {% if can_write %}
+        {% comment %}
+          The bytes go straight to the bucket, not through Django (drive/services.py,
+          frontend/src/drive.ts). Without JavaScript there is no upload.
+        {% endcomment %}
+        <div class="drive-upload" data-drive-upload>
+          {{ upload_config|json_script:"drive-upload-config" }}
+          <label class="btn btn-secondary">
+            Læg filer op
+            <input type="file" multiple hidden data-drive-files>
+          </label>
+          <span class="muted" data-upload-status aria-live="polite"></span>
+          <dialog class="drive-dialog" data-drive-conflict aria-labelledby="drive-conflict-text">
+            <form method="dialog">
+              <p id="drive-conflict-text" data-conflict-text></p>
+              <div class="drive-dialog-buttons">
+                <button class="btn btn-primary" value="replace">Erstat (ny version)</button>
+                <button class="btn btn-secondary" value="keep_both">Behold begge</button>
+                <button class="btn-link" value="skip">Spring over</button>
+              </div>
+            </form>
+          </dialog>
+        </div>
+      {% endif %}
+      {% if can_create_folder %}
+        <form method="post" action="{% url 'drive:create_folder' folder.pk %}" class="drive-newfolder">
+          {% csrf_token %}
+          <label class="sr-only" for="drive-new-folder">Navn på ny mappe</label>
+          <input id="drive-new-folder" type="text" name="name" maxlength="200" placeholder="Navn på ny mappe…" required>
+          <button type="submit" class="btn btn-secondary">Opret mappe</button>
+        </form>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  {% if not rows and not files %}
+    <p class="muted">{% if folder %}Mappen er tom.{% else %}Der er ingen mapper, du har adgang til.{% endif %}</p>
+  {% endif %}
+
+  {% if rows %}
+    <ul class="drive-list mb-4">
+      {% for row in rows %}
+        <li{% if row.is_current %} class="drive-current"{% endif %}>
+          {% if row.can_open %}
+            <a href="{% url 'drive:folder' row.folder.pk %}">
+              <svg class="ni" aria-hidden="true"><use href="#i-folder"></use></svg>
+              <span class="drive-name">{{ row.folder.name }}</span>
+            </a>
+          {% else %}
+            {% comment %}
+              Admins and Inspektionen on a group's current or next period: that it exists, how much
+              is in it, and nothing else.
+            {% endcomment %}
+            <span class="drive-static" title="Du kan se, at mappen findes, men ikke åbne den">
+              <svg class="ni" aria-hidden="true"><use href="#i-lock"></use></svg>
+              <span class="drive-name">{{ row.folder.name }}</span>
+            </span>
+          {% endif %}
+          {% if row.is_current %}<span class="chip">Nu</span>{% endif %}
+          {% if row.count is not None %}
+            <span class="muted drive-meta">{{ row.count }} fil{{ row.count|pluralize:"er" }} · {{ row.size|filesizeformat }}</span>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  {% if files %}
+    <ul class="drive-list">
+      {% for file in files %}
+        <li>
+          {% comment %}
+            Through the download view, never a presigned URL in the page: that URL would work for
+            whoever has it, after the reader has left the group too.
+          {% endcomment %}
+          <a href="{% url 'drive:download' file.pk %}">
+            <svg class="ni" aria-hidden="true"><use href="#i-file"></use></svg>
+            <span class="drive-name">{{ file.name }}</span>
+          </a>
+          <span class="muted drive-meta">
+            {{ file.size|filesizeformat }} · {{ file.changed_at|date:"j. M Y" }}{% if file.changed_by %} · {{ file.changed_by.full_name }}{% endif %}
+          </span>
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+{% endblock %}
