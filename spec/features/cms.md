@@ -41,8 +41,12 @@ working when intern or the image storage is down; editing needs intern.
   colours. Pictures on the old pages keep their size and placement.
 - Text the visual editor cannot show (a table, for example) opens as HTML with a note, so nothing is
   lost by opening it. Saving a page untouched changes nothing.
-- If someone else saved the page after it was opened, saving stops once and says so; saving again
-  overwrites.
+- If someone else saved a page, news item, event or the menu after it was opened, saving stops
+  once and says who and when; saving again overwrites. Saving what is already there is no conflict.
+- An editor shows who else has the same page, news item, event or the menu open right now, and says
+  at once when one of them saves it, with a link to the change. Somebody whose browser has been
+  quiet for two minutes (a closed laptop) no longer counts. It is a warning only: nobody is locked
+  out.
 - An image can only be deleted when nothing uses it; the library shows where each one is used.
 - The menu is edited in place: text and link per entry, move up or down, remove, add.
 - The change log can be filtered by type and person and shows each change's before and after; text
@@ -134,6 +138,10 @@ working when intern or the image storage is down; editing needs intern.
 - **The editor cookie is a hint, not a permission.** gahk.dk's pages are static and cannot ask intern
   who is signed in, so they read a cookie; it grants nothing. It changes only when the editor
   status does, so ordinary pages stay free of cookie headers.
+- **Warn, don't lock.** A lock left behind by a closed tab or a sleeping phone would keep everyone
+  out. The save check is what protects the work; the warning lets two editors agree before they
+  collide. Editing together live was not worth building for a site a handful of people edit a few
+  times a month.
 - **The preview never runs scripts on intern.** It is gahk.dk's HTML shown inside the intranet, so it
   is shown without JavaScript.
 - **Technical names are English; what people read is Danish.** The editor's pages keep Danish

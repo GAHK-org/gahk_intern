@@ -244,6 +244,14 @@ erDiagram
         json changes
     }
 
+    cms_OpenEditor {
+        int id PK
+        string target
+        int resident_id FK
+        datetime opened_at
+        datetime seen_at
+    }
+
     cms_Publication {
         int id PK
         datetime started_at
@@ -588,6 +596,7 @@ erDiagram
         int reported_by_id FK
         datetime created_at
         datetime updated_at
+        datetime status_changed_at
         datetime archived_at
     }
 
@@ -597,6 +606,14 @@ erDiagram
         int author_id FK
         text body
         datetime created_at
+    }
+
+    reparationer_RepairImage {
+        int id PK
+        int task_id FK
+        int comment_id FK
+        string file
+        datetime uploaded_at
     }
 
     arkiv_ArchiveFolder {
@@ -998,6 +1015,7 @@ erDiagram
     cms_PageVersion }o--|o cms_Page : "page"
     cms_PageVersion }o--|o residents_Resident : "created_by"
     cms_ContentChange }o--|o residents_Resident : "by"
+    cms_OpenEditor }o--|| residents_Resident : "resident"
     cms_Publication }o--|o residents_Resident : "triggered_by"
     ak_AkEntry }o--|| residents_Resident : "resident"
     ak_AkEntry }o--|o residents_Resident : "created_by"
@@ -1046,6 +1064,8 @@ erDiagram
     reparationer_RepairTask }o--|| residents_Resident : "reported_by"
     reparationer_RepairComment }o--|| reparationer_RepairTask : "task"
     reparationer_RepairComment }o--|| residents_Resident : "author"
+    reparationer_RepairImage }o--|| reparationer_RepairTask : "task"
+    reparationer_RepairImage }o--|o reparationer_RepairComment : "comment"
     arkiv_ArchiveFolder }o--|o arkiv_ArchiveFolder : "parent"
     arkiv_ArchiveFolder }o--|o core_Workgroup : "workgroup"
     arkiv_ArchiveFolder }o--|o core_Workgroup : "effective_workgroup"
@@ -1311,6 +1331,14 @@ erDiagram
         json changes
     }
 
+    cms_OpenEditor {
+        int id PK
+        string target
+        int resident_id FK
+        datetime opened_at
+        datetime seen_at
+    }
+
     cms_Publication {
         int id PK
         datetime started_at
@@ -1348,6 +1376,7 @@ erDiagram
     cms_PageVersion }o--|o cms_Page : "page"
     cms_PageVersion }o--|o residents_Resident : "created_by"
     cms_ContentChange }o--|o residents_Resident : "by"
+    cms_OpenEditor }o--|| residents_Resident : "resident"
     cms_Publication }o--|o residents_Resident : "triggered_by"
 ```
 
@@ -2146,6 +2175,7 @@ erDiagram
         int reported_by_id FK
         datetime created_at
         datetime updated_at
+        datetime status_changed_at
         datetime archived_at
     }
 
@@ -2157,11 +2187,21 @@ erDiagram
         datetime created_at
     }
 
+    reparationer_RepairImage {
+        int id PK
+        int task_id FK
+        int comment_id FK
+        string file
+        datetime uploaded_at
+    }
+
     residents_Resident { }
 
     reparationer_RepairTask }o--|| residents_Resident : "reported_by"
     reparationer_RepairComment }o--|| reparationer_RepairTask : "task"
     reparationer_RepairComment }o--|| residents_Resident : "author"
+    reparationer_RepairImage }o--|| reparationer_RepairTask : "task"
+    reparationer_RepairImage }o--|o reparationer_RepairComment : "comment"
 ```
 
 ## residents

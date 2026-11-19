@@ -398,6 +398,31 @@ class ContentChange(models.Model):
         )
 
 
+class OpenEditor(models.Model):
+    """Somebody has an editor open: which page, news item, event or the menu, since when, and when
+    their browser last said it still had it (cms.presence).
+
+    Only a warning to the others — it locks nothing, and saving over somebody's newer save is stopped
+    by cms.services whether or not anyone was seen here. One row per person and thing: two tabs of
+    the same editor are one person, who needs no warning about themselves.
+    """
+
+    target = models.CharField(max_length=40)  # "page-41", "news-3", "event-7" or "menu"
+    resident = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="cms_open_editors"
+    )
+    opened_at = models.DateTimeField(default=timezone.now)
+    seen_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["target", "resident"], name="cms_open_editor_once")]
+        verbose_name = "Åben editor"
+        verbose_name_plural = "Åbne editorer"
+
+    def __str__(self) -> str:
+        return f"{self.target}: {self.resident}"
+
+
 class Publication(models.Model):
     """One attempt to publish the content to gahk.dk (cms.tasks.publish_gahk_web)."""
 

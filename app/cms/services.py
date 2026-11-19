@@ -20,6 +20,8 @@ deleting a page); these functions trust `by`.
 """
 
 import datetime
+import hashlib
+import json
 import logging
 import re
 from collections.abc import Iterable, Mapping, Sequence
@@ -36,6 +38,7 @@ from django.utils.dateparse import parse_date, parse_datetime
 from core.uploads import validate_image_upload
 from residents.models import Resident
 
+from . import live as live_signals
 from .images import ImageRejected, PreparedImage, prepare_image, stored_stem
 from .models import (
     FRONT_PAGE_ID,
@@ -206,12 +209,57 @@ def _image_url(value: object, field_name: str, current: str) -> str:
     return url
 
 
+# ------------------------------------------------------------------------------- edit conflicts
+def edit_version(state: object) -> str:
+    """A fingerprint of what an editor was shown. The form carries it back, and if what is stored no
+    longer has the same fingerprint, somebody else saved in between and saving would overwrite it.
+
+    A fingerprint of the content rather than a time stamp: news, events and the menu keep no time
+    stamp, and content saved back to what it was is no conflict.
+    """
+    data = json.dumps(_jsonable(state), sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(data.encode()).hexdigest()[:16]
+
+
+class EditConflict(Exception):
+    """Somebody saved after the editor was opened, so nothing was saved.
+
+    `version` is what is stored now: the form takes it, so saving once more overwrites knowingly.
+    `change` is the last recorded change to the thing (who and when), None if there is none.
+    """
+
+    def __init__(self, version: str, change: ContentChange | None) -> None:
+        super().__init__("Saved by somebody else since the editor was opened")
+        self.version = version
+        self.change = change
+
+
+def last_change(kind: str, object_id: int | None) -> ContentChange | None:
+    return ContentChange.objects.filter(kind=kind, object_id=object_id).first()
+
+
+def _check_opened(opened: str | None, state: object, kind: str, object_id: int | None) -> None:
+    """Raise EditConflict unless `opened` (None: not checked) is the fingerprint of `state`.
+
+    Called under the row's lock, so two saves of the same version cannot both get through.
+    """
+    if opened is None:
+        return
+    current = edit_version(state)
+    if opened != current:
+        raise EditConflict(current, last_change(kind, object_id))
+
+
 # ---------------------------------------------------------------------------------------- pages
 PAGE_FIELDS = ("slug", "header", "body", "background_image", "description")
 
 
 def page_state(page: Page) -> dict[str, Any]:
     return {name: getattr(page, name) for name in PAGE_FIELDS}
+
+
+def page_version(page: Page) -> str:
+    return edit_version(page_state(page))
 
 
 def _clean_slug(page: Page, value: object) -> str | None:
@@ -293,12 +341,15 @@ def record_slug_change(page: Page, old_slug: str | None, author: Resident | None
     PageRedirect.objects.update_or_create(old_path=old_slug, defaults={"page": page, "created_by": author})
 
 
-def save_page(page: Page | None, data: Mapping[str, Any], by: Resident | None) -> Page:
+def save_page(
+    page: Page | None, data: Mapping[str, Any], by: Resident | None, *, opened: str | None = None
+) -> Page:
     """Create (`page` None) or update a page from `data` (any of PAGE_FIELDS; absent ones are kept).
 
     Raises ValidationError keyed by field. Renaming a page leaves a redirect from the old address.
     Saving without a change writes nothing. Returns the saved page — when updating, a fresh instance
-    read under a row lock, not the object passed in.
+    read under a row lock, not the object passed in. `opened` is the page_version the editor was
+    opened with: EditConflict if the page has been saved since (and this save would change it).
     """
     with transaction.atomic():
         creating = page is None or page.pk is None
@@ -311,6 +362,7 @@ def save_page(page: Page | None, data: Mapping[str, Any], by: Resident | None) -
         if previous is not None:
             if {**before, **cleaned} == before:
                 return previous
+            _check_opened(opened, before, Kind.PAGE, previous.pk)
             # First edit of a page that predates version history: capture what it said beforehand,
             # or that one save would be unrecoverable.
             if not previous.versions.exists():
@@ -337,6 +389,7 @@ def save_page(page: Page | None, data: Mapping[str, Any], by: Resident | None) -
             by=by,
         )
         publish_on_commit("save", by)
+        live_signals.changed(live_signals.target(Kind.PAGE, page.pk), page.pk)
     return page
 
 
@@ -354,6 +407,7 @@ def delete_page(page: Page, by: Resident | None) -> None:
             changes=field_changes(page_state(page), {}),
             by=by,
         )
+        live_signals.deleted(live_signals.target(Kind.PAGE, page.pk), page.pk)
         page.delete()
         publish_on_commit("save", by)
 
@@ -430,6 +484,7 @@ def restore_version(page: Page, version: PageVersion, by: Resident | None) -> Re
             by=by,
         )
         publish_on_commit("save", by)
+        live_signals.changed(live_signals.target(Kind.PAGE, page.pk), page.pk)
     return RestoreResult(page=page, warnings=warnings)
 
 
@@ -458,28 +513,48 @@ NEWS_FIELDS = ("title", "body", "published_at")
 EVENT_FIELDS = ("title", "description", "starts_on")
 
 
-def save_news(item: NewsItem | None, data: Mapping[str, Any], by: Resident | None) -> NewsItem:
-    """Create or update a news item. `published_at` defaults to now for a new one."""
+def news_state(item: NewsItem) -> dict[str, Any]:
+    return {name: getattr(item, name) for name in NEWS_FIELDS}
+
+
+def news_version(item: NewsItem) -> str:
+    return edit_version(news_state(item))
+
+
+def save_news(
+    item: NewsItem | None, data: Mapping[str, Any], by: Resident | None, *, opened: str | None = None
+) -> NewsItem:
+    """Create or update a news item. `published_at` defaults to now for a new one.
+
+    Returns the saved item — when updating, a fresh instance read under a row lock. `opened` is the
+    news_version the editor was opened with: EditConflict if it has been saved since.
+    """
     creating = item is None or item.pk is None
-    item = item if item is not None else NewsItem()
-    before = {} if creating else {name: getattr(item, name) for name in NEWS_FIELDS}
-    if "title" in data or creating:
-        item.title = _required_text(data.get("title"), "title", 255, "en titel")
-    if "body" in data:
-        item.body = _html(data["body"])
-    if data.get("published_at") not in (None, ""):
-        published_at = _aware_datetime(data["published_at"], "published_at")
-        # The editor's field shows minutes only, so an untouched field sends the stored time without
-        # its seconds. That is no change: keep the stored time rather than record and publish one.
-        stored = None if creating else item.published_at
-        if stored is None or published_at != stored.replace(second=0, microsecond=0):
-            item.published_at = published_at
-    elif creating:
-        item.published_at = timezone.now()
-    changes = field_changes(before, {name: getattr(item, name) for name in NEWS_FIELDS})
-    if not creating and not changes:
-        return item
     with transaction.atomic():
+        if item is None:
+            item = NewsItem()
+        elif not creating:
+            item = NewsItem.objects.select_for_update().get(pk=item.pk)
+        before = {} if creating else news_state(item)
+        if "title" in data or creating:
+            item.title = _required_text(data.get("title"), "title", 255, "en titel")
+        if "body" in data:
+            item.body = _html(data["body"])
+        if data.get("published_at") not in (None, ""):
+            published_at = _aware_datetime(data["published_at"], "published_at")
+            # The editor's field shows minutes only, so an untouched field sends the stored time
+            # without its seconds. That is no change: keep the stored time rather than record and
+            # publish one.
+            stored = None if creating else item.published_at
+            if stored is None or published_at != stored.replace(second=0, microsecond=0):
+                item.published_at = published_at
+        elif creating:
+            item.published_at = timezone.now()
+        changes = field_changes(before, news_state(item))
+        if not creating and not changes:
+            return item
+        if not creating:
+            _check_opened(opened, before, Kind.NEWS, item.pk)
         item.save()
         record_change(
             action=Action.CREATE if creating else Action.UPDATE,
@@ -490,6 +565,7 @@ def save_news(item: NewsItem | None, data: Mapping[str, Any], by: Resident | Non
             by=by,
         )
         publish_on_commit("save", by)
+        live_signals.changed(live_signals.target(Kind.NEWS, item.pk), item.pk)
     return item
 
 
@@ -500,28 +576,48 @@ def delete_news(item: NewsItem, by: Resident | None) -> None:
             kind=Kind.NEWS,
             object_id=item.pk,
             label=item.title,
-            changes=field_changes({name: getattr(item, name) for name in NEWS_FIELDS}, {}),
+            changes=field_changes(news_state(item), {}),
             by=by,
         )
+        live_signals.deleted(live_signals.target(Kind.NEWS, item.pk), item.pk)
         item.delete()
         publish_on_commit("save", by)
 
 
-def save_event(item: Event | None, data: Mapping[str, Any], by: Resident | None) -> Event:
-    """Create or update a "Forsidebegivenhed" (the public event list, not the residents' events)."""
+def event_state(item: Event) -> dict[str, Any]:
+    return {name: getattr(item, name) for name in EVENT_FIELDS}
+
+
+def event_version(item: Event) -> str:
+    return edit_version(event_state(item))
+
+
+def save_event(
+    item: Event | None, data: Mapping[str, Any], by: Resident | None, *, opened: str | None = None
+) -> Event:
+    """Create or update a "Forsidebegivenhed" (the public event list, not the residents' events).
+
+    Returns the saved event — when updating, a fresh instance read under a row lock. `opened` is the
+    event_version the editor was opened with: EditConflict if it has been saved since.
+    """
     creating = item is None or item.pk is None
-    item = item if item is not None else Event()
-    before = {} if creating else {name: getattr(item, name) for name in EVENT_FIELDS}
-    if "title" in data or creating:
-        item.title = _required_text(data.get("title"), "title", 255, "en titel")
-    if "description" in data:
-        item.description = _html(data["description"])
-    if "starts_on" in data or creating:
-        item.starts_on = _date(data.get("starts_on"), "starts_on")
-    changes = field_changes(before, {name: getattr(item, name) for name in EVENT_FIELDS})
-    if not creating and not changes:
-        return item
     with transaction.atomic():
+        if item is None:
+            item = Event()
+        elif not creating:
+            item = Event.objects.select_for_update().get(pk=item.pk)
+        before = {} if creating else event_state(item)
+        if "title" in data or creating:
+            item.title = _required_text(data.get("title"), "title", 255, "en titel")
+        if "description" in data:
+            item.description = _html(data["description"])
+        if "starts_on" in data or creating:
+            item.starts_on = _date(data.get("starts_on"), "starts_on")
+        changes = field_changes(before, event_state(item))
+        if not creating and not changes:
+            return item
+        if not creating:
+            _check_opened(opened, before, Kind.EVENT, item.pk)
         item.save()
         record_change(
             action=Action.CREATE if creating else Action.UPDATE,
@@ -532,6 +628,7 @@ def save_event(item: Event | None, data: Mapping[str, Any], by: Resident | None)
             by=by,
         )
         publish_on_commit("save", by)
+        live_signals.changed(live_signals.target(Kind.EVENT, item.pk), item.pk)
     return item
 
 
@@ -542,9 +639,10 @@ def delete_event(item: Event, by: Resident | None) -> None:
             kind=Kind.EVENT,
             object_id=item.pk,
             label=item.title,
-            changes=field_changes({name: getattr(item, name) for name in EVENT_FIELDS}, {}),
+            changes=field_changes(event_state(item), {}),
             by=by,
         )
+        live_signals.deleted(live_signals.target(Kind.EVENT, item.pk), item.pk)
         item.delete()
         publish_on_commit("save", by)
 
@@ -694,11 +792,18 @@ def menu_state() -> list[dict[str, str]]:
     return [{"label": item.label, "url": item.url} for item in MenuItem.objects.all()]
 
 
-def save_menu(items: Sequence[Mapping[str, Any]], by: Resident | None) -> list[MenuItem]:
+def menu_version() -> str:
+    return edit_version(menu_state())
+
+
+def save_menu(
+    items: Sequence[Mapping[str, Any]], by: Resident | None, *, opened: str | None = None
+) -> list[MenuItem]:
     """Replace the whole menu with `items` ({"label", "url"}), in that order.
 
     One call covers adding, renaming, reordering and removing entries. Raises
-    ValidationError({"items": [...]}) naming each bad entry by its position.
+    ValidationError({"items": [...]}) naming each bad entry by its position. `opened` is the
+    menu_version the editor was opened with: EditConflict if the menu has been saved since.
     """
     if len(items) > MAX_MENU_ITEMS:
         raise ValidationError({"items": f"Menuen kan højst have {MAX_MENU_ITEMS} punkter."})
@@ -721,9 +826,13 @@ def save_menu(items: Sequence[Mapping[str, Any]], by: Resident | None) -> list[M
         raise ValidationError({"items": errors})
 
     with transaction.atomic():
+        # The menu has no row of its own to lock, so two saves queue up on the settings singleton.
+        SiteSettings.load()
+        SiteSettings.objects.select_for_update().get(pk=1)
         before = menu_state()
         if before == cleaned:
             return list(MenuItem.objects.all())
+        _check_opened(opened, before, Kind.MENU, None)
         MenuItem.objects.all().delete()
         MenuItem.objects.bulk_create(
             [MenuItem(label=e["label"], url=e["url"], order=index * 10) for index, e in enumerate(cleaned)]
@@ -732,6 +841,7 @@ def save_menu(items: Sequence[Mapping[str, Any]], by: Resident | None) -> list[M
             action=Action.MENU, kind=Kind.MENU, label="Menu", changes={"menu": [before, cleaned]}, by=by
         )
         publish_on_commit("save", by)
+        live_signals.changed(live_signals.target(Kind.MENU), None)
     return list(MenuItem.objects.all())
 
 

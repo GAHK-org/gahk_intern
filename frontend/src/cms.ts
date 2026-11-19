@@ -5,7 +5,9 @@
 //   * the image pickers (radio buttons with thumbnails) keep their summary line in step;
 //   * the image library takes files dropped on its upload form;
 //   * each body textarea becomes the visual editor (cms-editor.ts, Tiptap), with an image
-//     picker that lists and uploads to the library.
+//     picker that lists and uploads to the library;
+//   * an open editor tells the server it is still open, so the others can be told
+//     (templates/cms/_editing.html).
 //
 // Imports nothing from the main bundle (see cms-loader.ts).
 import type * as EditorModule from "./cms-editor";
@@ -40,6 +42,7 @@ export function start(root: HTMLElement, deps: CmsDeps): void {
   root.querySelectorAll<HTMLElement>("[data-cms-image-picker]").forEach(hookImagePicker);
   root.querySelectorAll<HTMLFormElement>("[data-cms-dropzone]").forEach(hookDropzone);
   root.querySelectorAll<HTMLElement>("[data-cms-address-preview]").forEach(hookAddressPreview);
+  root.querySelectorAll<HTMLElement>("[data-cms-heartbeat]").forEach((box) => keepPresent(box, deps));
 
   const fields = root.querySelectorAll<HTMLTextAreaElement>("textarea[data-cms-editor]");
   if (fields.length) {
@@ -189,6 +192,53 @@ function hookAddressPreview(preview: HTMLElement): void {
   parent.addEventListener("change", update);
   segment.addEventListener("input", update);
   update();
+}
+
+// ---------------------------------------------------------------------- others in the same editor
+const HEARTBEAT_MS = 30_000; // the server counts an editor as gone after two minutes without one
+// live-region.ts's REFRESH_EVENT, spelled out: this chunk imports nothing from the main bundle.
+const LIVE_REFRESH = "gahk:live-refresh";
+
+/** Report that this editor is open, every half minute while it is, and that it closed when it does.
+ * The box about the others is a live region; after each report it is asked to read itself again,
+ * which is how somebody whose laptop closed without a goodbye drops out of it. */
+function keepPresent(box: HTMLElement, deps: CmsDeps): void {
+  const url = box.dataset.cmsHeartbeat ?? "";
+  const id = box.id;
+  if (!url || !id) return;
+  let saving = false;
+  const form = (leave: boolean): FormData => {
+    const body = new FormData();
+    body.append("csrfmiddlewaretoken", deps.csrfToken());
+    if (leave) body.append("leave", "1");
+    return body;
+  };
+  const report = async (): Promise<void> => {
+    try {
+      const response = await fetch(url, { method: "POST", body: form(false), credentials: "same-origin" });
+      if (!response.ok) return;
+    } catch {
+      return;
+    }
+    document.getElementById(id)?.dispatchEvent(new CustomEvent(LIVE_REFRESH, { bubbles: true }));
+  };
+  window.setInterval(() => void report(), HEARTBEAT_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") void report();
+  });
+  // Saving leaves the page only to come straight back to it. No goodbye then, or the others would
+  // see this editor leave and arrive again within a second.
+  document.addEventListener("submit", (event) => {
+    if (!event.defaultPrevented) saving = true;
+  });
+  window.addEventListener("pagehide", () => {
+    if (!saving) navigator.sendBeacon(url, form(true));
+  });
+  window.addEventListener("pageshow", (event) => {
+    if (!event.persisted) return;
+    saving = false; // back from the back/forward cache: open again
+    void report();
+  });
 }
 
 // ------------------------------------------------------------------------------ dropped uploads

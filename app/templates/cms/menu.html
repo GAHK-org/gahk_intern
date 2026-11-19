@@ -9,8 +9,11 @@
     </div>
   </div>
 
+  {% if editing %}{% include "cms/_editing.html" %}{% endif %}
+
   <form method="post" class="card-flat cms-section cms-menu">
     {% csrf_token %}
+    <input type="hidden" name="opened_version" value="{{ opened_version }}">
     <input type="hidden" name="rows" value="{{ row_count }}">
     {# The default button for Enter in a field: the first submit button in the form, and the rows' own start with a disabled ↑. #}
     <button type="submit" name="action" value="save" class="sr-only" tabindex="-1" aria-hidden="true">Gem menuen</button>
