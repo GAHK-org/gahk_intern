@@ -1933,6 +1933,16 @@
      than the card snapping back a moment later with an explanation. */
   .kanban-col.is-drop-refused { border-color: var(--neg); background: var(--neg-bg); }
   .kanban-note { font-size: 13px; }
+  /* Column age (models.RepairTask.column_age): a left edge and a tint, so the colour reads at a glance
+     across a full board without drowning the card's own text. */
+  .kanban-card[data-age="stale"] { border-color: #e7d8b0; border-left: 4px solid var(--warn); background: var(--warn-bg); }
+  .kanban-card[data-age="overdue"] { border-color: #e7c7c3; border-left: 4px solid var(--neg); background: var(--neg-bg); }
+  .kanban-card[data-age="done"] { border-color: #bfd8c8; border-left: 4px solid var(--pos); background: #E6F2EA; }
+  .kanban-age { font-size: 12px !important; font-weight: 600; }
+  .kanban-card[data-age="stale"] .kanban-age { color: var(--brass-ink); }
+  .kanban-card[data-age="overdue"] .kanban-age { color: var(--neg); }
+  .repair-photos { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+  .repair-photos img { width: 120px; height: 120px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); display: block; }
 
   /* --- Arkiv -------------------------------------------------------------------------------
      A file browser is a list, not a grid: names are the thing being scanned, they are long and of
