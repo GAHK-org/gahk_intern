@@ -469,8 +469,14 @@ def test_up_to_ten_drafts_even_while_one_is_processing(
     refused = upload(client, other_clip())
     assert refused.status_code == 409
     assert f"allerede {MAX_DRAFTS} videoer, der ikke er udgivet" in refused.json()["error"]
+    # Made a draft again, a published video may take them past the limit; they still cannot upload.
+    out = make_video(admin, title="Lige udgivet")
+    services.unpublish(out, admin)
+    assert services.draft_count(admin) == MAX_DRAFTS + 1
+    assert "Du har 11 videoer, der ikke er udgivet" in client.get(reverse("gahkflix:upload")).content.decode()
+    assert "allerede 11 videoer" in upload(client, other_clip()).json()["error"]
     full = client.get(reverse("gahkflix:upload")).content.decode()
-    assert f"Du har {MAX_DRAFTS} videoer, der ikke er udgivet" in full and "data-flix-upload" not in full
+    assert "data-flix-upload" not in full
     # Upload stays in the header; the upload page says why it is full.
     assert "+ Upload" in client.get(reverse("gahkflix:home")).content.decode()
     # A new version is no new draft, but waits for the version before it.
@@ -1228,6 +1234,41 @@ def test_a_premiere_is_announced_when_it_comes(
     assert not notified(admin, categories.GAHKFLIX_NEW)
     assert video.events.filter(kind=VideoEvent.Kind.PREMIERED).count() == 1
     assert client_for(admin2).get(reverse("gahkflix:detail", args=[video.pk])).status_code == 200
+
+
+@pytest.fixture
+def lined_up(monkeypatch: pytest.MonkeyPatch) -> list[datetime]:
+    """The minutes announcements were lined up for, instead of running them (eager in the tests)."""
+    minutes: list[datetime] = []
+    monkeypatch.setattr(
+        tasks.announce_released, "apply_async", lambda **options: minutes.append(options["eta"])
+    )
+    return minutes
+
+
+def test_a_premiere_is_announced_on_its_minute_without_a_job_every_minute(
+    admin: Resident, lined_up: list[datetime], django_capture_on_commit_callbacks: Callable[..., Any]
+) -> None:
+    client = client_for(admin)
+    later = make_video(admin, title="Om et døgn", published=False)
+    publish_now(client, later, django_capture_on_commit_callbacks, premiere_at=evening(1))
+    assert lined_up == []  # far off: no job waits days on the broker for it
+    soon = make_video(admin, title="Om lidt", published=False)
+    moment = (timezone.now() + timedelta(minutes=12)).replace(second=0, microsecond=0)
+    publish_now(client, soon, django_capture_on_commit_callbacks, premiere_at=moment)
+    assert lined_up == [moment]  # published at short notice: lined up at once
+
+    # The quarter-hourly sweep lines up what comes within 20 minutes, and nothing further off.
+    lined_up.clear()
+    with django_capture_on_commit_callbacks(execute=True):
+        assert services.announce_premieres() == (0, 1)
+    assert lined_up == [moment]
+    # And announces what came out unannounced, a lost job's premiere among them.
+    with django_capture_on_commit_callbacks(execute=True):
+        assert tasks.announce_premieres() == "0 announced, 1 lined up"
+    Video.objects.filter(pk=soon.pk).update(premiere_at=timezone.now() - timedelta(minutes=1))
+    with django_capture_on_commit_callbacks(execute=True):
+        assert tasks.announce_premieres() == "1 announced, 0 lined up"
 
 
 def test_a_premiere_taken_away_is_announced_by_the_next_round(

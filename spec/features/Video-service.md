@@ -149,7 +149,8 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   upcoming premiere may be made a draft again at any time.
 - Either way, the notifications that it was out, and to its cast, are taken back (a push already shown
   cannot be), and it is announced again when it comes out. Views counted meanwhile stay.
-- A draft again counts its 90 days, and its reminders, from then rather than from the upload.
+- A draft again counts its 90 days, and its reminders, from then rather than from the upload. It may
+  take its uploader past 10 drafts; they then cannot upload until they are below it again.
 
 ## Series
 
@@ -230,8 +231,11 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   (`IMG_1999`) is not taken for a year.
 - A premiere's thumbnail is blurred on the server: blurred in the browser, the sharp picture would be
   sent along. Its address names the blur, so a browser never keeps the blurred one past the premiere.
-- Premieres are announced by a job every minute, as a premiere is set to the minute; the page itself
-  opens at the minute by the clock.
+- A premiere's page opens at its minute by the clock, and its announcement is a job lined up for that
+  minute — but only once it is within 20 minutes: published at shorter notice it is lined up at once,
+  otherwise by a sweep every quarter hour, which also announces anything that came out unannounced.
+  Not a job every minute (1440 a day on the worker-jobs page), and not one waiting days for its
+  minute, which the database broker can lose to a worker restart or its nightly sweep.
 - Unsaved details are kept in the browser tab rather than saved as they are typed: after 30 days a
   saved change is a proposal to approve, which must stay something done on purpose.
 - Bringing a picture back stores a copy of it: a proposal that is turned down deletes its pictures,

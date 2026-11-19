@@ -171,10 +171,15 @@ def search_tags(query: str, limit: int = 20) -> list[str]:
 # --- Uploading ----------------------------------------------------------------------------------
 
 
+def draft_count(resident: Resident) -> int:
+    return Video.objects.drafts().filter(uploaded_by=resident).count()
+
+
 def drafts_left(resident: Resident) -> int:
     """How many more videos they may upload: a resident has at most MAX_DRAFTS unpublished drafts,
-    those still being processed included."""
-    return max(0, MAX_DRAFTS - Video.objects.drafts().filter(uploaded_by=resident).count())
+    those still being processed included. Making a video a draft again may take them past it; it
+    only stops new uploads."""
+    return max(0, MAX_DRAFTS - draft_count(resident))
 
 
 def is_processing(video: Video) -> bool:
@@ -208,9 +213,9 @@ def fingerprint_duplicate(fingerprint: str, size: int) -> Video | None:
 
 
 def _upload_refusal(resident: Resident, fingerprint: str, size: int, video: Video | None) -> str | None:
-    if video is None and not drafts_left(resident):
+    if video is None and (count := draft_count(resident)) >= MAX_DRAFTS:
         return (
-            f"Du har allerede {MAX_DRAFTS} videoer, der ikke er udgivet. "
+            f"Du har allerede {count} videoer, der ikke er udgivet (højst {MAX_DRAFTS}). "
             "Udgiv eller slet en af dem, før du uploader flere."
         )
     if video is not None and is_processing(video):
@@ -880,6 +885,7 @@ def apply_changes(
             video.announced_at = None
             fields.append("announced_at")
             transaction.on_commit(lambda: notify.withdraw_announcement(video))
+        _line_up(video)
     if "series" in changes:
         series = Series.objects.filter(pk=changes["series"]).first() if changes["series"] else None
         if changes["series"] and series is None:
@@ -982,6 +988,8 @@ def publish(video: Video, resident: Resident) -> None:
     record_event(video, VideoEvent.Kind.PUBLISHED, resident)
     if video.is_released:
         _announce(video)
+    else:
+        _line_up(video)
 
 
 def _announce(video: Video) -> None:
@@ -1013,9 +1021,42 @@ def unpublish(video: Video, resident: Resident) -> None:
     transaction.on_commit(lambda: notify.withdraw_announcement(video))
 
 
+# How far ahead a premiere's announcement is lined up on the minute (_line_up). More than the
+# quarter hour between two announce_premieres, so a sweep running a little late misses none.
+PREMIERE_LOOKAHEAD = timedelta(minutes=20)
+
+
+def _line_up(video: Video, now: datetime | None = None) -> bool:
+    """An upcoming premiere within PREMIERE_LOOKAHEAD gets a job at its minute that announces it.
+
+    Only that close: a job waiting days for its minute would sit taken but unacknowledged on the
+    broker, where a worker restart can lose it and the nightly sweep of delivered messages deletes
+    it. Further ahead, announce_premieres lines it up when its time comes near. A job that finds the
+    premiere moved, or already announced, does nothing (announce_released)."""
+    moment = now or _now()
+    premiere = video.premiere_at
+    if not video.is_upcoming or premiere is None or premiere - moment > PREMIERE_LOOKAHEAD:
+        return False
+    from .tasks import announce_released as job
+
+    transaction.on_commit(lambda: job.apply_async(eta=premiere))
+    return True
+
+
+def announce_premieres(now: datetime | None = None) -> tuple[int, int]:
+    """Every quarter hour: announce what has come out unannounced (a job lost, a premiere moved
+    earlier or taken away), and line up the premieres of the next PREMIERE_LOOKAHEAD to be announced
+    on their minute. Returns (announced, lined up)."""
+    moment = now or _now()
+    announced = announce_released(moment)
+    soon = Video.objects.upcoming(moment).filter(premiere_at__lte=moment + PREMIERE_LOOKAHEAD)
+    return announced, sum(_line_up(video, moment) for video in soon)
+
+
 def announce_released(now: datetime | None = None) -> int:
-    """Every minute: announce the published videos that have come out since — premieres whose minute
-    has come, and any whose premiere was moved earlier or taken away. Returns how many."""
+    """Announce the published videos that have come out unannounced — premieres whose minute has
+    come, and any whose premiere was moved earlier or taken away. Returns how many. Run at a
+    premiere's minute (_line_up), and by the quarter-hourly announce_premieres."""
     now = now or _now()
     count = 0
     for pk in Video.objects.released(now).filter(announced_at__isnull=True).values_list("pk", flat=True):

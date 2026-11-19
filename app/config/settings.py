@@ -368,11 +368,13 @@ CELERY_BEAT_SCHEDULE = {
         "task": "gahkflix.tasks.recover_stalled",
         "schedule": crontab(minute="13-59/15"),
     },
-    # Every minute, as a premiere is set to the minute: tell everybody about each GAHKFlix premiere
-    # that has come out (gahkflix.services.announce_released). A query on a small table, mostly empty.
+    # Lines up each GAHKFlix premiere of the next 20 minutes to be announced on its minute, and
+    # announces any that came out unannounced (gahkflix.services.announce_premieres). Not every
+    # minute: that is 1440 jobs a day on the worker-jobs page for a handful of premieres a year.
+    # Free quarter-hour minutes, off the */15 sweeps above and the 2-minute gahk.dk sync.
     "gahkflix-announce-premieres": {
-        "task": "gahkflix.tasks.announce_released",
-        "schedule": crontab(),
+        "task": "gahkflix.tasks.announce_premieres",
+        "schedule": crontab(minute="3-59/15"),
     },
     # GAHKFlix's bin and expired requests after 30 days, unpublished drafts after 90, and stored files
     # nothing refers to (gahkflix.services.sweep_orphans).

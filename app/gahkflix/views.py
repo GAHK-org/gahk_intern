@@ -703,6 +703,7 @@ def upload(request: HttpRequest) -> HttpResponse:
         {
             "max_gb": max_upload_bytes() / 1024**3,
             "drafts_left": drafts_left,
+            "draft_count": services.draft_count(resident),
             "max_drafts": MAX_DRAFTS,
             "upload_config": _upload_config(drafts_left=drafts_left),
             "recent": recent,

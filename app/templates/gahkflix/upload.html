@@ -11,7 +11,7 @@
     </section>
     {% if not drafts_left %}
       <div class="flix-panel">
-        <h2>Du har {{ max_drafts }} videoer, der ikke er udgivet</h2>
+        <h2>Du har {{ draft_count }} videoer, der ikke er udgivet</h2>
         <p>Du kan højst have {{ max_drafts }} kladder ad gangen, også dem, der stadig behandles. Udgiv eller slet en af dem under <a href="{% url 'gahkflix:mine' %}">Mine videoer</a>, før du uploader flere.</p>
       </div>
     {% else %}
