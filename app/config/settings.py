@@ -31,7 +31,7 @@ CSRF_COOKIE_SECURE = not DEBUG
 # nothing else. It used to be ".gahk.dk", shared with the public site — which now runs on separate,
 # less trusted webhosting that must never see an intranet session. New names as well, because a
 # browser keeps the old ".gahk.dk" `sessionid` until it expires and would otherwise send two cookies
-# of the same name to intern.gahk.dk; core.middleware.ExpireLegacyCookies deletes the old pair.
+# of the same name to intern.gahk.dk.
 # In production the names carry the __Host- prefix: the browser then accepts them only host-only,
 # Secure and on Path=/, so a compromised gahk.dk cannot plant a ".gahk.dk" cookie of the same name
 # that intern would read (it is same-site). Development serves plain http, where a __Host- cookie
@@ -89,10 +89,6 @@ MIDDLEWARE = [
     "core.health.HealthCheckMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
-    # Deletes the pre-intern.gahk.dk ".gahk.dk" session/CSRF cookies (see SESSION_COOKIE_NAME). This
-    # high up so every response carries the deletion — a redirect, a 403 — but after WhiteNoise, so
-    # static files never carry a Set-Cookie.
-    "core.middleware.ExpireLegacyCookies",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -758,24 +754,3 @@ GAHKFLIX_MAX_UPLOAD_GB = float(os.environ.get("GAHKFLIX_MAX_UPLOAD_GB", "5"))
 GAHKFLIX_PICTURE_MAX_MB = int(os.environ.get("GAHKFLIX_PICTURE_MAX_MB", "15"))
 # Local copies of its thumbnails, banners and frames, in MEDIA_CACHE_DIR/gahkflix/ (gahkflix/cache.py).
 GAHKFLIX_CACHE_MB = int(os.environ.get("GAHKFLIX_CACHE_MB", "1024"))
-
-# --- Transition (TEMPORARY: reverted in phase 3 with the rest of transition/; DEPLOY.md, "Transition") ---
-# Hosts that get the old public site (transition.urls_public) while this app still answers gahk.dk,
-# e.g. "gahk.dk,www.gahk.dk". Empty: none, and intern.gahk.dk is all there is. They must be in
-# DJANGO_ALLOWED_HOSTS too.
-TRANSITION_PUBLIC_HOSTS = [
-    host.strip().lower() for host in os.environ.get("TRANSITION_PUBLIC_HOSTS", "").split(",") if host.strip()
-]
-# Cloudflare Turnstile on the old site's admission forms, as the old code had it. Unset: not checked.
-TURNSTILE_SITE_KEY = os.environ.get("TURNSTILE_SITE_KEY", "")
-TURNSTILE_SECRET_KEY = os.environ.get("TURNSTILE_SECRET_KEY", "")
-INSTALLED_APPS += ["transition"]
-# First of all, ahead of core.health: the public hosts' URLconf, and their /health redirect.
-MIDDLEWARE.insert(0, "transition.middleware.PublicSiteHost")
-# Right after SessionMiddleware: an old ".gahk.dk" session carried over, every saved session marked.
-MIDDLEWARE.insert(
-    MIDDLEWARE.index("django.contrib.sessions.middleware.SessionMiddleware") + 1,
-    "transition.middleware.CarryOverLegacySession",
-)
-# The public hosts' CSRF failure page; residents.auth.csrf_failure for intern.gahk.dk.
-CSRF_FAILURE_VIEW = "transition.views.csrf_failure"

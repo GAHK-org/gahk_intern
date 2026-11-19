@@ -87,22 +87,6 @@ def _isolate_from_dotenv(settings: object, tmp_path: Path) -> None:
     settings.ALUMNEREGNING_SEND_MAIL = True  # type: ignore[attr-defined]
 
 
-@pytest.fixture(scope="session")
-def _empty_legacy_directory(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    # Not in a test's own tmp_path: some tests check that nothing was written there.
-    return tmp_path_factory.mktemp("legacy-image")
-
-
-@pytest.fixture(autouse=True)
-def _no_old_site_images(monkeypatch: pytest.MonkeyPatch, _empty_legacy_directory: Path) -> None:
-    """The old site's images (static/legacy/image/upload/, cms.legacy_images) are not imported by
-    every sync of every test: here the import reads an empty directory. The legacy image tests fill
-    one of their own."""
-    from cms import legacy_images
-
-    monkeypatch.setattr(legacy_images, "LEGACY_DIRECTORY", _empty_legacy_directory)
-
-
 @pytest.fixture
 def make_resident(db: None) -> Callable[[str, str, bool, tuple], Resident]:
     def _make(

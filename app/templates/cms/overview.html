@@ -62,28 +62,6 @@
           </div>
         </section>
       {% endif %}
-
-      {% if legacy.total or legacy.waiting or legacy.failures %}
-        <section class="card-flat cms-section{% if legacy.failures %} cms-warn{% endif %}">
-          <div class="card-head"><h2>Billeder fra den gamle hjemmeside</h2></div>
-          <div class="card-pad">
-            {% if legacy.total %}
-              <p class="text-sm">{{ legacy.in_library }} af {{ legacy.total }} gamle billeder er i billedbiblioteket{% if legacy.deleted %}, {{ legacy.deleted }} er slettet derfra{% endif %}.</p>
-            {% endif %}
-            {% if legacy.waiting %}
-              <p class="muted text-sm">{{ legacy.waiting }} billede{{ legacy.waiting|pluralize:"r" }} flyttes ind i billedbiblioteket af sig selv inden for de næste minutter. Ændringerne står i loggen under System.</p>
-            {% endif %}
-            {% if legacy.failures %}
-              <p class="muted text-sm">Disse kunne ikke flyttes, så gahk.dk viser dem ikke. Erstat dem med et billede fra biblioteket der, hvor de bruges.</p>
-              <ul class="cms-plain-list">
-                {% for failure in legacy.failures %}
-                  <li><code>{{ failure.legacy_path }}</code> <span class="muted">{{ failure.get_reason_display|lower }}</span></li>
-                {% endfor %}
-              </ul>
-            {% endif %}
-          </div>
-        </section>
-      {% endif %}
     </aside>
   </div>
 {% endblock %}
