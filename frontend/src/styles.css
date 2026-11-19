@@ -3,6 +3,20 @@
 /* Scan the Django templates for class names (path is relative to THIS css file: frontend/src/). */
 @source "../../app/templates";
 
+/* The tokens below as Tailwind colours, so a template writes text-neg or border-line instead of reaching for
+   Tailwind's own palette (red-600, gray-200, emerald-700), which is a different green and cool greys
+   beside these warm ones. inline: the utilities read the variable itself. */
+@theme inline {
+  --color-ink: var(--ink); --color-muted: var(--muted); --color-faint: var(--faint);
+  --color-paper: var(--paper); --color-surface: var(--surface); --color-surface-2: var(--surface-2); --color-sunken: var(--sunken);
+  --color-line: var(--border); --color-line-strong: var(--border-strong);
+  --color-gahk-green: var(--green); --color-gahk-green-700: var(--green-700);
+  --color-gahk-green-050: var(--green-050); --color-gahk-green-100: var(--green-100);
+  --color-brass: var(--brass); --color-brass-ink: var(--brass-ink);
+  --color-pos: var(--pos); --color-neg: var(--neg); --color-neg-bg: var(--neg-bg); --color-neg-line: var(--neg-line);
+  --color-warn-bg: var(--warn-bg); --color-warn-line: var(--warn-line);
+}
+
 /* ---- Refined GAHK Green: design tokens (heritage green, warm neutrals, restrained brass) ---- */
 :root {
   --paper:#F6F5F1; --surface:#FFFFFF; --surface-2:#FBFAF7; --sunken:#F1EFE8;
@@ -17,20 +31,6 @@
   --radius:12px; --radius-sm:9px;
   --shadow:0 1px 2px rgba(24,40,30,.05), 0 8px 24px -12px rgba(24,40,30,.14);
   --shadow-sm:0 1px 2px rgba(24,40,30,.06);
-}
-
-/* The tokens as Tailwind colours, so a template writes text-neg or border-line instead of reaching for
-   Tailwind's own palette (red-600, gray-200, emerald-700), which is a different green and cool greys
-   beside these warm ones. inline: the utilities read the variable itself. */
-@theme inline {
-  --color-ink: var(--ink); --color-muted: var(--muted); --color-faint: var(--faint);
-  --color-paper: var(--paper); --color-surface: var(--surface); --color-surface-2: var(--surface-2); --color-sunken: var(--sunken);
-  --color-line: var(--border); --color-line-strong: var(--border-strong);
-  --color-gahk-green: var(--green); --color-gahk-green-700: var(--green-700);
-  --color-gahk-green-050: var(--green-050); --color-gahk-green-100: var(--green-100);
-  --color-brass: var(--brass); --color-brass-ink: var(--brass-ink);
-  --color-pos: var(--pos); --color-neg: var(--neg); --color-neg-bg: var(--neg-bg); --color-neg-line: var(--neg-line);
-  --color-warn-bg: var(--warn-bg); --color-warn-line: var(--warn-line);
 }
 
 /* Element defaults so existing templates (bare <button>/<input>/<table>) look right without rewrites. */
