@@ -27,9 +27,11 @@ from django.utils.formats import date_format
 from gahkflix import access, dating, encoding, services, tasks
 from gahkflix.dating import DatePrecision, DateSource, PartialDate
 from gahkflix.models import (
+    MAX_DRAFTS,
     CastMember,
     ChangeRequest,
     FileState,
+    PremiereBlur,
     Series,
     Video,
     VideoEvent,
@@ -189,16 +191,28 @@ def notified(resident: Resident, category: str) -> list[Notification]:
 
 def details(video: Video, **changes: Any) -> dict[str, str]:  # noqa: ANN401
     """The edit form's POST for `video`, with `changes` on top (released_on as "2015-03-12",
-    "2015-03" or "2015")."""
+    "2015-03" or "2015"; premiere_at as a datetime, or its ISO form)."""
     current = services.snapshot(video)
     current.update(changes)
+    premiere = current["premiere_at"]
+    if isinstance(premiere, str):
+        premiere = dating.parse_premiere(premiere)
     year, month, day = [*(current["released_on"] or "").split("-"), "", "", ""][:3]
+    if premiere is not None:
+        local = timezone.localtime(premiere)
+        year, month, day = str(local.year), str(local.month), str(local.day)
     return {
         "title": current["title"],
         "description": current["description"],
         "released_year": year,
         "released_month": month.lstrip("0"),
         "released_day": day.lstrip("0"),
+        **(
+            {"premiere": "on", "premiere_time": timezone.localtime(premiere).strftime("%H:%M")}
+            if premiere
+            else {}
+        ),
+        "premiere_blur": current["premiere_blur"],
         "series": str(current["series"] or ""),
         "season": str(current["season"] or ""),
         "episode": str(current["episode"] or ""),
@@ -433,17 +447,35 @@ def test_season_and_episode_titles_of_drafts_you_cannot_see(
     assert response.status_code == 200 and not Video.objects.get(pk=own.pk).series
 
 
-def test_one_upload_at_a_time(admin: Resident) -> None:
-    upload_page = client_for(admin).get(reverse("gahkflix:upload")).content.decode()
-    assert "Én video ad gangen" in upload_page
-    video = make_video(admin, published=False)
-    VideoFile.objects.filter(video=video).update(state=FileState.PROCESSING)
-    response = upload(client_for(admin), other_clip())
-    assert response.status_code == 409
-    assert "behandles" in response.json()["error"]
-    # Where Upload would be, the header says why it is not.
-    page = client_for(admin).get(reverse("gahkflix:home")).content.decode()
-    assert "⏳ Behandles" in page and "Du kan uploade én video ad gangen" in page
+def test_up_to_ten_drafts_even_while_one_is_processing(
+    admin: Resident, admin2: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+) -> None:
+    processing = make_video(admin, title="Behandles stadig", published=False)
+    VideoFile.objects.filter(video=processing).update(state=FileState.PROCESSING)
+    for number in range(MAX_DRAFTS - 2):
+        make_video(admin, title=f"Kladde {number}", published=False)
+    make_video(admin, title="Udgivet")  # a published one is no draft
+    make_video(admin2, title="En andens kladde", published=False)  # nor is anybody else's
+    client = client_for(admin)
+    upload_page = client.get(reverse("gahkflix:upload")).content.decode()
+    assert "plads til 1 mere" in upload_page
+    assert (
+        json.loads(re.search(r'id="flix-upload-config"[^>]*>(.*?)</script>', upload_page)[1])["maxFiles"] == 1
+    )
+    with django_capture_on_commit_callbacks(execute=True):
+        assert upload(client, mp4_bytes()).status_code == 201  # the tenth, beside one processing
+
+    refused = upload(client, other_clip())
+    assert refused.status_code == 409
+    assert f"allerede {MAX_DRAFTS} videoer, der ikke er udgivet" in refused.json()["error"]
+    full = client.get(reverse("gahkflix:upload")).content.decode()
+    assert f"Du har {MAX_DRAFTS} videoer, der ikke er udgivet" in full and "data-flix-upload" not in full
+    # Upload stays in the header; the upload page says why it is full.
+    assert "+ Upload" in client.get(reverse("gahkflix:home")).content.decode()
+    # A new version is no new draft, but waits for the version before it.
+    revision = upload(client, other_clip(), video=processing)
+    assert revision.status_code == 409 and "behandles allerede" in revision.json()["error"]
+    assert "Kladder" in client.get(reverse("gahkflix:mine")).content.decode()
 
 
 def test_an_upload_waiting_its_turn_says_so(admin: Resident, admin2: Resident) -> None:
@@ -459,9 +491,7 @@ def test_an_upload_waiting_its_turn_says_so(admin: Resident, admin2: Resident) -
     edit = client.get(reverse("gahkflix:edit", args=[waiting.pk])).content.decode()
     assert "Videoen venter i kø" in edit and "I kø · 1 video foran" in edit
     upload_page = client.get(reverse("gahkflix:upload")).content.decode()
-    assert "Din video venter i kø" in upload_page and "1 video foran den" in upload_page
     assert "I kø · 1 foran" in upload_page and "0 %" not in upload_page
-    assert "⏳ I kø" in upload_page
 
     VideoFile.objects.filter(video=encoding_now).update(state=FileState.READY)
     assert client.get(status).json()["ahead"] == 0
@@ -967,6 +997,254 @@ def test_no_guess_without_anything_to_go_by() -> None:
     assert dating.guess(name="film.mp4", recorded_at=None, tags={"date": "0000"}, modified_at=None) is None
     assert PartialDate.parse("2015-02-30") is None and PartialDate.parse("15") is None
     assert PartialDate.parse("2015-03") == PartialDate(date(2015, 3, 1), DatePrecision.MONTH)
+
+
+# --- Premieres ---------------------------------------------------------------------------------
+
+
+def evening(days: int) -> datetime:
+    """20:00 local time, `days` from today."""
+    return (timezone.localtime() + timedelta(days=days)).replace(hour=20, minute=0, second=0, microsecond=0)
+
+
+def stripes() -> bytes:
+    """A sharp picture: black and white squares at random, which a blur turns grey (not regular
+    bars, which a box-approximated blur can let through)."""
+    import random
+    from io import BytesIO
+
+    from PIL import Image
+
+    rng = random.Random(7)
+    blocks = [[rng.choice((0, 255)) for _x in range(80)] for _y in range(45)]
+    image = Image.new("L", (640, 360))
+    image.putdata([blocks[y // 8][x // 8] for y in range(360) for x in range(640)])
+    output = BytesIO()
+    image.save(output, format="JPEG")
+    return output.getvalue()
+
+
+def contrast(data: bytes) -> float:
+    from io import BytesIO
+
+    from PIL import Image, ImageStat
+
+    with Image.open(BytesIO(data)) as image:
+        return float(ImageStat.Stat(image.convert("L")).stddev[0])
+
+
+def content_of(response: Any) -> bytes:  # noqa: ANN401
+    return b"".join(response.streaming_content) if response.streaming else response.content
+
+
+def test_a_future_release_date_needs_a_premiere_with_a_time(admin: Resident) -> None:
+    from gahkflix.forms import VideoDetailsForm
+
+    video = make_video(admin, published=False)
+    tomorrow = timezone.localdate() + timedelta(days=1)
+    form = VideoDetailsForm(details(video, released_on=tomorrow.isoformat()), video=video)
+    assert not form.is_valid() and "Sæt flueben ved Premiere" in " ".join(form.errors["released_year"])
+    # Ticked: the whole date and a time, no more than a year ahead.
+    no_time = VideoDetailsForm({**details(video, premiere_at=evening(1)), "premiere_time": ""}, video=video)
+    assert not no_time.is_valid() and "klokkeslættet" in " ".join(no_time.errors["premiere_time"])
+    no_day = VideoDetailsForm({**details(video, premiere_at=evening(1)), "released_day": ""}, video=video)
+    assert not no_day.is_valid() and "dag, måned og år" in " ".join(no_day.errors["premiere"])
+    too_far = VideoDetailsForm(details(video, premiere_at=evening(400)), video=video)
+    assert not too_far.is_valid() and "et år" in " ".join(too_far.errors["premiere"])
+
+    client = client_for(admin)
+    edit = reverse("gahkflix:edit", args=[video.pk])
+    saved = client.post(edit, details(video, premiere_at=evening(3), premiere_blur=PremiereBlur.MEDIUM))
+    assert saved.status_code == 302
+    video.refresh_from_db()
+    assert video.premiere_at == evening(3) and video.premiere_blur == PremiereBlur.MEDIUM
+    assert video.release == PartialDate(evening(3).date(), DatePrecision.DAY)
+    assert video.release_source == DateSource.MANUAL
+    page = client.get(edit)
+    form = page.context["form"]
+    assert form["premiere"].value() is True and form["premiere_time"].value() == time(20, 0)
+    assert "data-flix-premiere-preview" in page.content.decode()
+    [event] = video.events.filter(kind=VideoEvent.Kind.EDITED)
+    assert set(event.changes) >= {"premiere_at", "premiere_blur", "released_on"}
+    history = client.get(reverse("gahkflix:history", args=[video.pk])).content.decode()
+    assert video.premiere_label in history and "Middel sløret" in history
+
+
+def test_a_premiere_already_past_is_released_at_once(
+    admin: Resident, admin2: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+) -> None:
+    video = make_video(admin, title="Revyen", published=False)
+    with django_capture_on_commit_callbacks(execute=True):
+        client_for(admin).post(
+            reverse("gahkflix:publish", args=[video.pk]), details(video, premiere_at=evening(-2))
+        )
+    video.refresh_from_db()
+    assert video.is_released and video.announced_at is not None
+    [announced] = notified(admin2, categories.GAHKFLIX_NEW)
+    assert announced.title == "Premiere på GAHKFlix: Revyen"
+    # Past its premiere, its page shows the day, not the time.
+    page = client_for(admin2).get(reverse("gahkflix:detail", args=[video.pk])).content.decode()
+    assert date_format(evening(-2), "j. F Y") in page and "kl. 20.00" not in page
+
+
+def test_an_upcoming_premiere_is_listed_but_not_opened(
+    open_gate: None,
+    admin: Resident,
+    admin2: Resident,
+    plain: Resident,
+    django_capture_on_commit_callbacks: Callable[..., Any],
+) -> None:
+    series = Series.objects.create(title="Gangen", created_by=admin)
+    video = make_video(
+        admin,
+        title="Julerevyen",
+        description="Hemmelig handling",
+        published=False,
+        series=series,
+        season=1,
+        episode=2,
+    )
+    services.apply_changes(
+        video, {"tags": ["revy"], "cast": [{"resident": plain.pk, "name": "", "role": "Nisse"}]}, admin
+    )
+    client = client_for(admin)
+    with django_capture_on_commit_callbacks(execute=True):
+        published = client.post(
+            reverse("gahkflix:publish", args=[video.pk]),
+            details(video, premiere_at=evening(2), premiere_blur=PremiereBlur.HEAVY),
+        )
+    assert published.status_code == 302
+    video.refresh_from_db()
+    assert video.is_upcoming and video.announced_at is None
+    # Nobody is told yet: not about the film, not about being in it.
+    assert not notified(admin2, categories.GAHKFLIX_NEW) and not notified(plain, categories.GAHKFLIX_CAST)
+    label = video.premiere_label
+    assert label.endswith("kl. 20.00")
+
+    reader = client_for(plain)
+    detail = reverse("gahkflix:detail", args=[video.pk])
+    home = reader.get(reverse("gahkflix:home")).content.decode()
+    assert "Kommer snart" in home and "Julerevyen" in home and label in home and "Gangen" in home
+    assert f'href="{detail}"' not in home and "Hemmelig handling" not in home
+    for url in (
+        detail,
+        reverse("gahkflix:play", args=[video.pk]),
+        reverse("gahkflix:stream", args=[video.pk, "hd"]),
+        reverse("gahkflix:download", args=[video.pk, "original"]),
+        reverse("gahkflix:picture", args=[video.pk, "banner"]),
+    ):
+        assert reader.get(url).status_code == 404, url
+    series_page = reader.get(reverse("gahkflix:series", args=[series.pk])).content.decode()
+    assert "Julerevyen" in series_page and label in series_page and f'href="{detail}"' not in series_page
+    assert "Afspil første afsnit" not in series_page
+    assert label in reader.get(reverse("gahkflix:timeline")).content.decode()
+    # What is not out yet is not found either: its description, tags and cast.
+    assert not reader.get(reverse("gahkflix:search"), {"q": "Hemmelig"}).context["videos"]
+    assert not reader.get(reverse("gahkflix:tag", args=["revy"])).context["videos"]
+    assert not services.credits_of(plain)
+    # Its uploader and the administrators may open it.
+    own = client.get(detail).content.decode()
+    assert f"Premiere {label}" in own and "Indtil da kan kun du og administratorerne" in own
+    assert client_for(admin2).get(detail).status_code == 200
+    assert "Kommende premierer" in client.get(reverse("gahkflix:mine")).content.decode()
+
+
+def test_an_upcoming_premiere_shows_its_thumbnail_blurred(
+    open_gate: None, admin: Resident, plain: Resident
+) -> None:
+    from gahkflix.templatetags.gahkflix import picture_url
+
+    video = make_video(admin, premiere_at=evening(2), premiere_blur=PremiereBlur.HEAVY)
+    video.thumbnail.save("stripes.jpg", ContentFile(stripes()))
+    sharp = contrast(stripes())
+    url = picture_url(video)
+    assert url.endswith("&premiere=heavy")
+    reader = client_for(plain)
+    shown = reader.get(url)
+    assert shown.status_code == 200 and shown["Cache-Control"] == "private, max-age=604800"
+    assert contrast(shown.content) < sharp / 4
+    # The plain address, or another blur, gets the same, and is not kept past the premiere.
+    for other in (url.split("&")[0], url.replace("heavy", "none")):
+        response = reader.get(other)
+        assert contrast(content_of(response)) < sharp / 4 and response["Cache-Control"] == "no-store"
+    # The uploader sees the picture itself, and any blur to compare.
+    uploader = client_for(admin)
+    assert contrast(content_of(uploader.get(url.split("&")[0]))) > sharp * 0.8
+    light = contrast(content_of(uploader.get(url.replace("heavy", "light"))))
+    assert contrast(shown.content) < light < sharp
+    assert picture_url(video, as_premiere=False) == url.split("&")[0]
+    # Once it is out, the thumbnail is itself again, at an address of its own.
+    Video.objects.filter(pk=video.pk).update(premiere_at=timezone.now() - timedelta(minutes=1))
+    video.refresh_from_db()
+    assert picture_url(video) == url.split("&")[0]
+    assert contrast(content_of(reader.get(picture_url(video)))) > sharp * 0.8
+
+
+def test_a_premiere_is_announced_when_it_comes(
+    admin: Resident,
+    admin2: Resident,
+    member: Resident,
+    django_capture_on_commit_callbacks: Callable[..., Any],
+) -> None:
+    video = make_video(admin, title="Julerevyen", published=False)
+    services.apply_changes(video, {"cast": [{"resident": member.pk, "name": "", "role": ""}]}, admin)
+    with django_capture_on_commit_callbacks(execute=True):
+        client_for(admin).post(
+            reverse("gahkflix:publish", args=[video.pk]), details(video, premiere_at=evening(1))
+        )
+        assert tasks.announce_released() == 0
+    assert not notified(admin2, categories.GAHKFLIX_NEW)
+
+    Video.objects.filter(pk=video.pk).update(premiere_at=timezone.now() - timedelta(seconds=30))
+    with django_capture_on_commit_callbacks(execute=True):
+        assert tasks.announce_released() == 1
+        assert tasks.announce_released() == 0  # once
+    [announced] = notified(admin2, categories.GAHKFLIX_NEW)
+    assert announced.title == "Premiere på GAHKFlix: Julerevyen"
+    assert notified(member, categories.GAHKFLIX_CAST)
+    assert not notified(admin, categories.GAHKFLIX_NEW)
+    assert video.events.filter(kind=VideoEvent.Kind.PREMIERED).count() == 1
+    assert client_for(admin2).get(reverse("gahkflix:detail", args=[video.pk])).status_code == 200
+
+
+def test_a_premiere_taken_away_is_announced_by_the_next_round(
+    admin: Resident, admin2: Resident, django_capture_on_commit_callbacks: Callable[..., Any]
+) -> None:
+    video = make_video(admin, title="Revyen", published=False)
+    client = client_for(admin)
+    client.post(reverse("gahkflix:publish", args=[video.pk]), details(video, premiere_at=evening(5)))
+    video.refresh_from_db()
+    today = timezone.localdate().isoformat()
+    assert (
+        client.post(
+            reverse("gahkflix:edit", args=[video.pk]), details(video, premiere_at=None, released_on=today)
+        ).status_code
+        == 302
+    )
+    video.refresh_from_db()
+    assert video.premiere_at is None and video.is_released
+    with django_capture_on_commit_callbacks(execute=True):
+        assert services.announce_released() == 1
+    [announced] = notified(admin2, categories.GAHKFLIX_NEW)
+    assert announced.title == "Ny på GAHKFlix: Revyen"
+    assert not video.events.filter(kind=VideoEvent.Kind.PREMIERED).exists()
+
+
+def test_a_video_already_out_cannot_premiere_later(admin: Resident) -> None:
+    video = make_video(admin)
+    response = client_for(admin).post(
+        reverse("gahkflix:edit", args=[video.pk]), details(video, premiere_at=evening(2))
+    )
+    assert response.status_code == 200 and "allerede ude" in response.content.decode()
+    video.refresh_from_db()
+    assert video.premiere_at is None
+
+
+def test_the_blur_levels() -> None:
+    sharp = stripes()
+    assert encoding.premiere_jpeg(sharp, PremiereBlur.NONE) == sharp
+    levels = [contrast(encoding.premiere_jpeg(sharp, level)) for level in ("light", "medium", "heavy")]
+    assert contrast(sharp) > levels[0] > levels[1] > levels[2]
 
 
 # --- History ------------------------------------------------------------------------------------

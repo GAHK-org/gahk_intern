@@ -16,13 +16,18 @@ def _version(key: str) -> str:
 
 
 @register.simple_tag
-def picture_url(video: Video | None, kind: str = "thumbnail") -> str:
+def picture_url(video: Video | None, kind: str = "thumbnail", *, as_premiere: bool = True) -> str:
+    """An upcoming premiere's thumbnail is the blurred one, as everybody sees it (views.picture),
+    unless `as_premiere` is False: the edit page shows its uploader the picture itself."""
     if video is None:
         return ""
     field = getattr(video, kind, None)
     if not field:
         return ""
-    return f"{reverse('gahkflix:picture', args=[video.pk, kind])}?v={_version(key_of(field))}"
+    url = f"{reverse('gahkflix:picture', args=[video.pk, kind])}?v={_version(key_of(field))}"
+    if as_premiere and kind == "thumbnail" and video.is_upcoming:
+        url += f"&premiere={video.premiere_blur}"
+    return url
 
 
 @register.simple_tag

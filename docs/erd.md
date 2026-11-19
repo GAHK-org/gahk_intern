@@ -829,6 +829,9 @@ erDiagram
         date released_on
         string release_precision
         string release_source
+        datetime premiere_at
+        string premiere_blur
+        datetime announced_at
         int series_id FK
         int season
         int episode
@@ -1589,6 +1592,9 @@ erDiagram
         date released_on
         string release_precision
         string release_source
+        datetime premiere_at
+        string premiere_blur
+        datetime announced_at
         int series_id FK
         int season
         int episode

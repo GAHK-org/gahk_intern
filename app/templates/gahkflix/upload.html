@@ -10,18 +10,10 @@
         {% include "gahkflix/_recent_list.html" %}
       </section>
     {% endif %}
-    {% if pending %}
+    {% if not drafts_left %}
       <div class="flix-panel">
-        {% if pending.state == "queued" %}
-          {% with ahead=pending|queue_ahead %}
-            <h2>Din video venter i kø</h2>
-            <p><a href="{% url 'gahkflix:edit' pending.video_id %}">{{ pending.video.title }}</a> venter på at blive behandlet{% if ahead %}: der er {{ ahead }} video{{ ahead|pluralize:"er" }} foran den{% else %} og er den næste{% endif %}.</p>
-          {% endwith %}
-        {% else %}
-          <h2>Du har en video, der behandles</h2>
-          <p><a href="{% url 'gahkflix:edit' pending.video_id %}">{{ pending.video.title }}</a> er {{ pending.progress }} % færdig.</p>
-        {% endif %}
-        <p>Du kan uploade én video ad gangen, så du kan uploade den næste, når den er færdigbehandlet.</p>
+        <h2>Du har {{ max_drafts }} videoer, der ikke er udgivet</h2>
+        <p>Du kan højst have {{ max_drafts }} kladder ad gangen, også dem, der stadig behandles. Udgiv eller slet en af dem under <a href="{% url 'gahkflix:mine' %}">Mine videoer</a>, før du uploader flere.</p>
       </div>
     {% else %}
       {% include "gahkflix/_uploader.html" %}
@@ -31,9 +23,9 @@
           <li>Videoen sendes direkte til lageret. Lad siden være åben, til den er sendt.</li>
           <li>Mens den behandles (HD og Full HD), kan du skrive titel, beskrivelse, medvirkende og tags.</li>
           <li>Vælg miniature og banner blandt 10 billeder fra videoen. Begge kan også være dit eget billede.</li>
-          <li>Udgiv den. Indtil da er den en kladde, som kun du og administratorerne kan se.</li>
+          <li>Udgiv den. Indtil da er den en kladde, som kun du og administratorerne kan se. Skal den have premiere på et bestemt tidspunkt, så sæt flueben ved Premiere under udgivelsesdatoen.</li>
         </ol>
-        <p style="margin-top:12px">Den samme video kan ikke uploades to gange, og du kan kun have én video under behandling ad gangen.</p>
+        <p style="margin-top:12px">Den samme video kan ikke uploades to gange. Du kan uploade flere videoer på én gang og have op til {{ max_drafts }} kladder ad gangen; du har plads til {{ drafts_left }} mere.</p>
       </div>
     {% endif %}
   </div>

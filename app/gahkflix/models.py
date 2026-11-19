@@ -2,7 +2,12 @@
 
 A video is a DRAFT until its uploader publishes it, which needs a finished encode, a thumbnail and a
 banner. A draft is the uploader's own business: only they and the administrators see it, and the
-time-limited rules below do not apply to it. Once published:
+time-limited rules below do not apply to it. A resident has at most MAX_DRAFTS of them at a time.
+
+A published video may be a PREMIERE (Video.premiere_at): until that moment it is UPCOMING, listed with
+its title, its series and season, the moment and its thumbnail (blurred as the uploader chose), but its
+page and files are still only its uploader's and the administrators'. Everybody is told when it comes
+out: at publishing, or at its premiere (Video.announced_at). Once published:
 
   * for 7 days after the upload, the uploader (or an administrator) may bin it or upload a new
     version of the file; after that only an administrator may ASK to bin it, and two other
@@ -35,7 +40,7 @@ from django.utils.formats import date_format
 
 from photo_album.models import TAG_MAX_LENGTH, validate_tag_name
 
-from .dating import DatePrecision, DateSource, PartialDate
+from .dating import DatePrecision, DateSource, PartialDate, premiere_label
 from .storage import get_video_storage
 
 # The windows in the spec, all counted from the upload (Video.created_at).
@@ -50,6 +55,10 @@ REQUEST_TTL = timedelta(days=30)
 DRAFT_TTL_DAYS = 90
 # Drafts older than this are in the weekly reminders; nobody is nagged about one they just uploaded.
 DRAFT_REMINDER_AFTER = timedelta(days=7)
+# How many unpublished drafts one resident may have at a time; uploads still being processed count.
+MAX_DRAFTS = 10
+# How far ahead a premiere may be set: a typo should not hide a film for decades.
+PREMIERE_MAX_AHEAD = timedelta(days=366)
 # Approvals needed, from administrators other than the one who asked.
 DELETE_APPROVALS = 2
 EDIT_APPROVALS = 1
@@ -183,10 +192,29 @@ class Series(models.Model):
         return self.created_at + EDIT_WINDOW
 
 
+class PremiereBlur(models.TextChoices):
+    """How blurred an upcoming premiere's thumbnail is shown (encoding.premiere_jpeg)."""
+
+    NONE = "none", "Ikke sløret"
+    LIGHT = "light", "Lidt sløret"
+    MEDIUM = "medium", "Middel sløret"
+    HEAVY = "heavy", "Meget sløret"
+
+
 class VideoQuerySet(models.QuerySet["Video"]):
     def published(self) -> "VideoQuerySet":
-        """What every resident with access sees: published and not in the bin."""
+        """Published and not in the bin: out, or an upcoming premiere."""
         return self.filter(published_at__isnull=False, deleted_at__isnull=True)
+
+    def released(self, now: datetime | None = None) -> "VideoQuerySet":
+        """What every resident with access may open: published, and past its premiere if it has one."""
+        return self.published().filter(
+            Q(premiere_at__isnull=True) | Q(premiere_at__lte=now or timezone.now())
+        )
+
+    def upcoming(self, now: datetime | None = None) -> "VideoQuerySet":
+        """Published premieres still to come."""
+        return self.published().filter(premiere_at__gt=now or timezone.now())
 
     def drafts(self) -> "VideoQuerySet":
         return self.filter(published_at__isnull=True, deleted_at__isnull=True)
@@ -213,6 +241,17 @@ class Video(models.Model):
     )
     # Where it came from; "" when there is none.
     release_source = models.CharField(max_length=8, choices=DateSource.choices, blank=True)
+    # A premiere: the minute it comes out, which may be in the future. Its day is `released_on`.
+    premiere_at = models.DateTimeField(null=True, blank=True, verbose_name="Premiere")
+    # How its thumbnail is shown until then.
+    premiere_blur = models.CharField(
+        max_length=6,
+        choices=PremiereBlur.choices,
+        default=PremiereBlur.NONE,
+        verbose_name="Miniature før premieren",
+    )
+    # When everybody was told it is out: when it was published, or at its premiere (services.announce).
+    announced_at = models.DateTimeField(null=True, blank=True)
     series = models.ForeignKey(
         Series, null=True, blank=True, on_delete=models.PROTECT, related_name="videos", verbose_name="Serie"
     )
@@ -265,6 +304,25 @@ class Video(models.Model):
     @property
     def is_binned(self) -> bool:
         return self.deleted_at is not None
+
+    @property
+    def is_upcoming(self) -> bool:
+        """Published, but its premiere is still to come."""
+        return self.is_published and self.premiere_to_come
+
+    @property
+    def premiere_to_come(self) -> bool:
+        """It has a premiere, and it is still ahead — published yet or not."""
+        return self.premiere_at is not None and self.premiere_at > timezone.now()
+
+    @property
+    def is_released(self) -> bool:
+        return self.is_published and not self.is_upcoming
+
+    @property
+    def premiere_label(self) -> str:
+        """ "24. december 2026 kl. 20.00"."""
+        return premiere_label(self.premiere_at)
 
     @property
     def revision_window_ends(self) -> datetime:
@@ -617,6 +675,7 @@ class VideoEvent(models.Model):
         FAILED = "failed", "Kunne ikke behandles"
         EDITED = "edited", "Ændret"
         PUBLISHED = "published", "Udgivet"
+        PREMIERED = "premiered", "Havde premiere"
         BINNED = "binned", "Lagt i papirkurven"
         RESTORED = "restored", "Hentet tilbage fra papirkurven"
 

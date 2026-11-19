@@ -142,6 +142,12 @@ def housekeeping() -> str:
 
 
 @shared_task
+def announce_released() -> int:
+    """Every minute: tell everybody about the premieres whose minute has come."""
+    return services.announce_released()
+
+
+@shared_task
 def weekly_draft_reminders() -> int:
     """Mondays: remind uploaders of their unpublished drafts, and give the administrators an overview."""
     return services.send_weekly_draft_reminders()

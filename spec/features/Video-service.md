@@ -15,8 +15,9 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 ## Browsing
 
 - The home page leads with a banner for one of the most watched (else newest) videos, a different one
-  each day, then rows: `Fortsæt med at se`, `Top 10 på GAHKFlix lige nu`, `Nyeste`, one row for each
-  of the most used tags (up to four, each with at least two videos) and `Serier`.
+  each day, then rows: `Fortsæt med at se`, `Kommer snart` (upcoming premieres, soonest first), `Top
+  10 på GAHKFlix lige nu`, `Nyeste` (by when each came out: its premiere, else its publishing), one row
+  for each of the most used tags (up to four, each with at least two videos) and `Serier`.
 - Top 10 ranks videos by unique viewers over the last 7 days.
 - A card shows the thumbnail, title, series and episode, year and length, and a red bar for how far
   the reader has watched.
@@ -76,12 +77,14 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 
 - Any resident with access may upload: MP4, MOV, M4V, WebM, AVI, MKV, 3GP, MTS, MPEG, WMV or OGV, up
   to 5 GB. The file goes straight from the browser to object storage, with a progress bar.
-- One video at a time: nobody can start an upload while one of theirs is still being processed. The
-  uploader says so, the header's `Upload` becomes `⏳ Behandles` (or `⏳ I kø`) with why, and several
-  files dropped at once are refused rather than the first taken. The upload page first lists the
-  uploader's recent videos — unpublished ones (processing, failed or waiting to be finished) and
-  those uploaded in the last week, each with its state — so one already uploaded is not uploaded
-  again.
+- A resident may have up to 10 unpublished drafts, those still being processed included, and may
+  upload while earlier uploads wait or are processed. Several files can be picked or dropped at once;
+  they are sent one after another, each with its own progress and a link to its edit page. More files
+  than there is room for are refused rather than the first few taken; with 10 drafts the upload page
+  says to publish or delete one first. A new version waits until the version before it is processed.
+  The upload page first lists the uploader's recent videos — unpublished ones (processing, failed or
+  waiting to be finished) and those uploaded in the last week, each with its state — so one already
+  uploaded is not uploaded again.
 - While an upload waits for the encodes before it, its edit page says it is in the queue and how many
   go first, and the lists say `I kø`, rather than showing 0 %. It starts by itself.
 - The same file cannot be uploaded twice, by anyone. Before anything is sent, a fingerprint of the
@@ -91,7 +94,7 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   title, description, release date, series, season and episode, credits (residents, or people from
   outside by name, each with an optional role) and tags (the photo album's tag rules).
 - The release date (`Udgivelsesdato`) is known to the day, the month or only the year: only the year
-  is needed. It is guessed when the file is processed: a whole date written in the file's name or in
+  is needed. It cannot lie in the future, unless the video is a premiere (below). It is guessed when the file is processed: a whole date written in the file's name or in
   its date tags first; else the camera's clock, unless a year (or month) written there disagrees;
   else that year or month; else the file's last-modified time. The edit page says where the guess
   came from. Set by hand, it stays as set through a new version of the file; cleared, a new version
@@ -108,7 +111,8 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   cropped to it; any other — a phone held upright, a square, a panorama — is shown whole on a
   blurred, darkened copy of itself, so nothing important is cut off. A draft can only be published with a title, a finished file,
   a thumbnail and a banner.
-- Publishing notifies everyone with access and the credited residents. The uploader is notified
+- Publishing notifies everyone with access and the credited residents (an upcoming premiere: at its
+  premiere instead). The uploader is notified
   when processing has finished or failed. Only the notifications about new videos and about being
   credited can be turned off; those about one's own uploads and requests, approvals and drafts always
   appear in the app, and only their push can be switched off.
@@ -117,6 +121,24 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 - Every Monday, each uploader is reminded of their drafts more than a week old, and the administrators
   get an overview of all of them. The day before a draft is deleted, its uploader and the
   administrators are warned. Administrators see every draft under `Kladder`.
+
+## Premieres
+
+- Beside `Udgivelsesdato` is a `Premiere` box. Ticked, the release is a whole moment — day, month,
+  year and a time to the minute, all required — and may lie up to a year ahead. Only a premiere has a
+  time. A video already out cannot be given a premiere in the future.
+- A premiere chooses how its thumbnail is shown until then: `Ikke sløret`, `Lidt sløret`, `Middel
+  sløret` or `Meget sløret`. The edit page previews it.
+- Published before its premiere, a video is upcoming: it is listed in `Kommer snart`, its series and
+  the timeline as a card that cannot be opened, showing only its title, series, season and episode,
+  the exact premiere (`24. december 2026 kl. 20.00`) and its thumbnail as chosen. Its page, player,
+  files and banner stay closed to everybody but its uploader and the administrators, and it is not
+  found by search, tags, cast pages, `Mere som denne`, Top 10 or autoplay.
+- At its premiere it opens to everybody, and everybody with access and its credited residents are
+  notified, as at publishing (`Premiere på GAHKFlix: …`); the history notes it. A premiere already
+  past when the video is published is out at once. Once out, its page shows the date only, not the
+  time.
+- The time windows (editing, new versions, binning) still run from the upload.
 
 ## Series
 
@@ -127,7 +149,8 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   seasons with their number of episodes, the chosen season's episodes with their titles — and offers
   the free numbers: the next one, and any gap. Taken numbers are shown but cannot be picked; an
   earlier free number can, even when later ones exist.
-- A series' pictures are those of its first episode.
+- A series' pictures are those of its first episode out; with only upcoming premieres, the first one's
+  thumbnail as it is shown before its premiere, and no banner.
 - Its creator and administrators may edit it, under the same 30-day rule as videos. It can only be
   deleted when it holds no videos at all, drafts and binned ones included.
 
@@ -193,6 +216,10 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 - A date somebody wrote beats the camera's clock in the guess: an exported or re-encoded film carries
   the day it was exported, while `Revy 2009.mp4` says what it is. A camera's file counter
   (`IMG_1999`) is not taken for a year.
+- A premiere's thumbnail is blurred on the server: blurred in the browser, the sharp picture would be
+  sent along. Its address names the blur, so a browser never keeps the blurred one past the premiere.
+- Premieres are announced by a job every minute, as a premiere is set to the minute; the page itself
+  opens at the minute by the clock.
 - Unsaved details are kept in the browser tab rather than saved as they are typed: after 30 days a
   saved change is a proposal to approve, which must stay something done on purpose.
 - Bringing a picture back stores a copy of it: a proposal that is turned down deletes its pictures,

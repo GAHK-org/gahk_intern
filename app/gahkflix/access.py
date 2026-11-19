@@ -93,11 +93,19 @@ def _owns_or_administers(request: HttpRequest, video: Video) -> bool:
 
 
 def can_see(request: HttpRequest, video: Video) -> bool:
+    """The video's page and files. An upcoming premiere is listed for everybody, but until it comes
+    out only its uploader and the administrators may open it (see can_see_premiere)."""
     if video.is_binned:
         return is_administrator(request)
-    if video.is_draft:
+    if video.is_draft or video.is_upcoming:
         return _owns_or_administers(request, video)
     return True
+
+
+def can_see_premiere(video: Video) -> bool:
+    """Whether its premiere card is shown to everybody: the title, series, moment and thumbnail
+    (blurred as chosen) of an upcoming premiere."""
+    return video.is_upcoming and not video.is_binned
 
 
 def can_edit(request: HttpRequest, video: Video) -> bool:

@@ -101,6 +101,33 @@ def label(value: str | None) -> str:
     return parsed.label() if parsed else ""
 
 
+# --- Premieres ----------------------------------------------------------------------------------
+#
+# A premiere is a whole moment, to the minute (Video.premiere_at). As a value — the edit form, a
+# proposal, the history — it is ISO 8601 in local time with its offset: "2026-12-24T20:00+01:00".
+
+
+def premiere_value(moment: datetime | None) -> str | None:
+    return timezone.localtime(moment).isoformat(timespec="minutes") if moment else None
+
+
+def parse_premiere(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        moment = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return moment if timezone.is_aware(moment) else timezone.make_aware(moment)
+
+
+def premiere_label(moment: datetime | None) -> str:
+    """ "24. december 2026 kl. 20.00"."""
+    if moment is None:
+        return ""
+    return date_format(timezone.localtime(moment), "j. F Y \\k\\l. H.i")
+
+
 def _plausible(year: int, month: int | None = None, day: int | None = None) -> PartialDate | None:
     if not FIRST_YEAR <= year <= timezone.localdate().year:
         return None

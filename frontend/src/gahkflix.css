@@ -204,6 +204,12 @@ a.flix-chip:hover { border-color: #fff; }
 .flix-state.is-draft { background: #4a3a00; color: #f5c518; }
 .flix-state.is-failed { background: #4a0f12; color: #ff8a8f; }
 .flix-state.is-binned { background: #3a3a3a; color: #bbb; }
+.flix-state.is-premiere { background: #10304a; color: #9fd0ff; }
+/* An upcoming premiere: listed, not opened. */
+.flix-card.is-upcoming, .flix-episode.is-upcoming { cursor: default; }
+.flix-card-badge.is-premiere { background: #fff; color: #141414; }
+.flix-card-premiere { display: block; margin-top: 3px; font-size: 12px; font-weight: 700; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flix-episode.is-upcoming:hover { background: none; }
 .flix-banner-note { margin: 0 var(--flix-gutter) 16px; padding: 12px 16px; border-radius: 4px; background: #2b2410; border: 1px solid #5b4a10; color: #f1dc8f; font-size: 14px; }
 
 .flix-episodes { padding: 8px var(--flix-gutter) 0; max-width: 1100px; }
@@ -305,7 +311,7 @@ body.flix-play, body.flix-player-open { overflow: hidden; background: #000; }
 .flix-panel > p { color: var(--flix-muted); font-size: 14px; margin: 4px 0 12px; }
 .flix-form label { display: block; margin: 14px 0 6px; font-size: 14px; font-weight: 700; color: #ddd; }
 .flix-form .helptext, .flix-help { display: block; margin-top: 4px; font-size: 13px; color: var(--flix-faint); font-weight: 400; }
-.flix input[type=text], .flix input.flix-field, .flix input[type=number], .flix input[type=date], .flix input[type=file], .flix textarea, .flix select {
+.flix input[type=text], .flix input.flix-field, .flix input[type=number], .flix input[type=date], .flix input[type=time], .flix input[type=file], .flix textarea, .flix select {
   width: 100%; box-sizing: border-box; border: 1px solid #4d4d4d; border-radius: 4px; padding: 10px 12px; background: #333; color: #fff; font: inherit; font-size: 15px;
 }
 .flix input[type=file] { padding: 8px; }
@@ -316,6 +322,19 @@ body.flix-play, body.flix-player-open { overflow: hidden; background: #000; }
 .flix-date { min-width: 0; margin: 0; padding: 0; border: 0; }
 .flix-date legend { margin: 14px 0 6px; padding: 0; font-size: 14px; font-weight: 700; color: #ddd; }
 .flix-date-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr) minmax(0, 1.2fr); gap: 8px; max-width: 440px; }
+/* A premiere: the box beside the legend, and a time after the year. */
+.flix-date legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; }
+.flix-form .flix-check { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-weight: 600; cursor: pointer; }
+.flix-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--flix-red); }
+.flix-date-fields:has(> .flix-date-time:not([hidden])) { grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr) minmax(0, 1.2fr) minmax(0, 1.3fr); max-width: 580px; }
+.flix-premiere-blur { display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: 14px; align-items: end; max-width: 440px; }
+.flix-premiere-blur[hidden] { display: none; }
+.flix-premiere-blur .flix-card-img { max-width: 240px; }
+@media (max-width: 480px) {
+  .flix-date-fields:has(> .flix-date-time:not([hidden])) { grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr) minmax(0, 1.2fr); }
+  .flix-date-time { grid-column: 1 / -1; }
+  .flix-premiere-blur { grid-template-columns: 1fr; }
+}
 /* What was typed and put back after the page reloaded, not saved yet. */
 .flix-unsaved { margin: 10px 0 4px; padding: 10px 12px; border-radius: 4px; background: #2b2410; border: 1px solid #5b4a10; color: #f1dc8f; font-size: 14px; }
 .flix-unsaved[hidden] { display: none; }
@@ -336,6 +355,10 @@ body.flix-play, body.flix-player-open { overflow: hidden; background: #000; }
 .flix-dropzone strong { font-size: 18px; }
 .flix-upload-status { margin-top: 14px; font-size: 14px; color: #ddd; }
 .flix-upload-status.is-error { color: #ff8a8f; }
+.flix-upload-queue { display: grid; gap: 14px; margin: 0; padding: 0; list-style: none; }
+.flix-upload-queue[hidden] { display: none; }
+.flix-upload-item p { margin: 0 0 8px; overflow-wrap: anywhere; }
+.flix-upload-item .flix-upload-status { margin: 8px 0 0; }
 
 .flix-frames { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(220px, 42vw), 1fr)); }
 .flix-frame { position: relative; border-radius: 6px; overflow: hidden; background: #000; border: 2px solid transparent; }
