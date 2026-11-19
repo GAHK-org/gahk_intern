@@ -2691,7 +2691,9 @@
     background:var(--sunken); font-size:10.5px; color:var(--muted); text-align:center; line-height:1.2; }
   .pad-name { display:flex; align-items:center; flex-wrap:wrap; gap:4px 8px; font-size:14px; overflow-wrap:anywhere; }
   .pad-why { margin-top:2px; font-size:13px; }
-  .pad-actions { align-self:center; }
+  .pad-actions { align-self:center; display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end; }
+  .pad-retry { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; justify-content:space-between; }
+  .pad-retry p { margin:0; }
   .pad-details { grid-column:2 / -1; font-size:13px; }
   .pad-details summary { cursor:pointer; color:var(--muted); }
   .pad-details .jobs-facts { padding:10px 0 4px; }
