@@ -154,6 +154,8 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 - Every thumbnail and banner a video has had is kept as long as the video is. The edit page offers
   the latest earlier ones to bring back, and the history all of them; after 30 days that is a
   proposal, like any change.
+- Everything also goes into intern's audit trail (audit-trail.md): series, proposals and votes as
+  well, and a video deleted for good keeps its lines there. The video's own history goes with it.
 
 ## Deleting and the bin
 

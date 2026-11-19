@@ -27,7 +27,6 @@ PENDING_APPS = {
     "core",
     "den_hurtige",
     "events",
-    "gahkflix",
     "notifications",
     "oelkaelder",
     "opslagstavle",
