@@ -7,6 +7,11 @@
   first, offers the browser's own install prompt where there is one, and swaps the steps for "Du
   bruger allerede appen" inside the installed app. Without JavaScript all three sections are there,
   closed, and the steps still read right.
+
+  The old app's button opens this page as /install?from=old-app, and inside the old app the page
+  looks just as it does in an installed GAHK Intern (no API tells which app it runs in). With that
+  parameter, install.ts takes an installed app to be the old one: it shows "Du er stadig i den gamle
+  app" with the way out to the browser, above the steps.
 {% endcomment %}
 {% block title %}Installér appen - GAHK Intern{% endblock %}
 {% block install_banner %}{% endblock %}
@@ -27,6 +32,21 @@
     <div class="card install-installed" data-install-installed hidden>
       <p><strong>Du bruger allerede appen.</strong></p>
       <p><a class="btn" href="{% url 'dashboard' %}">Gå til forsiden</a></p>
+    </div>
+
+    {# x-safari-https:// opens Safari from an app (iOS 17 and later); install.ts sets this origin. #}
+    <div class="card install-installed" data-install-old-app hidden>
+      <p><strong>Du er stadig i den gamle app.</strong> Herfra kan GAHK Intern ikke installeres.
+        Åbn siden i din browser, og følg vejledningen der.</p>
+      <div data-install-old-app-platform="ios">
+        <p><a class="btn" href="x-safari-https://intern.gahk.dk/install" data-install-open-safari>Åbn i Safari</a></p>
+        <p class="muted">Sker der ikke noget, så tryk på kompasset nederst, eller åbn Safari selv, og skriv
+          <strong>intern.gahk.dk/install</strong>.</p>
+      </div>
+      <div data-install-old-app-platform="android">
+        <p>Tryk på menuen <strong>⋮</strong> øverst til højre, og vælg <strong>Åbn i Chrome</strong>.
+          Eller åbn Chrome selv, og skriv <strong>intern.gahk.dk/install</strong>.</p>
+      </div>
     </div>
 
     <div class="install-platforms" data-install-steps>
