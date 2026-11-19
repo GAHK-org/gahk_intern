@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from core.read_only_admin import ReadOnlyAdmin
+from core.admin import ReadOnlyAdmin
 
 from .models import Application
 

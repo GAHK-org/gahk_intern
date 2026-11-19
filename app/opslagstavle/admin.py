@@ -3,7 +3,7 @@ moderate, on the board itself."""
 
 from django.contrib import admin
 
-from core.read_only_admin import ReadOnlyAdmin, ReadOnlyTabularInline
+from core.admin import ReadOnlyAdmin, ReadOnlyTabularInline
 
 from .models import Notice, NoticeComment, NoticeImage, NoticeReaction
 

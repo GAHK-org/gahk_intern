@@ -5,7 +5,7 @@ something GAHKFlix offers (the same as the photo album's)."""
 
 from django.contrib import admin
 
-from core.read_only_admin import ReadOnlyAdmin, ReadOnlyTabularInline
+from core.admin import ReadOnlyAdmin, ReadOnlyTabularInline
 
 from .models import CastMember, ChangeRequest, ChangeVote, Series, Tag, Video, VideoEvent, VideoFile
 

@@ -11,7 +11,16 @@ INSTALLED_APPS, so theirs are registered by the time this runs):
   thing worth doing without a deploy, and Beat leaves that column alone.
 - Groups are not used: Django-admin rights come from the `administrator` role (Resident.has_perm).
   A group made here would be a second way to hand them out.
+
+It also holds the rule every admin here follows — look, don't touch. Every feature has its own
+screens, and those are where its rows are written, with the checks, history, notifications and file
+clean-up that go with them; a row edited in the Django admin is a row the feature never saw change.
+`ReadOnlyAdmin` turns off adding, changing and deleting, for superusers too. An admin opens a narrow
+door with `deletable` (content nobody else may remove) or `editable_fields` (fields with no other
+place to be edited), and says why.
 """
+
+from collections.abc import Sequence
 
 from django.contrib import admin
 from django.contrib.auth.models import Group
@@ -26,7 +35,55 @@ from django_celery_beat.models import (
 )
 
 from .models import Cleaning, PushDeliveryDay, PushSubscription, Room, Workgroup
-from .read_only_admin import ReadOnlyAdmin
+
+
+class ReadOnlyAdmin(admin.ModelAdmin):
+    deletable = False
+    editable_fields: tuple[str, ...] = ()
+
+    def has_add_permission(self, request: HttpRequest) -> bool:
+        return False
+
+    def has_change_permission(self, request: HttpRequest, obj: Model | None = None) -> bool:
+        return bool(self.editable_fields) and super().has_change_permission(request, obj)
+
+    def has_delete_permission(self, request: HttpRequest, obj: Model | None = None) -> bool:
+        return self.deletable and super().has_delete_permission(request, obj)
+
+    def get_readonly_fields(self, request: HttpRequest, obj: Model | None = None) -> list[str]:
+        """Everything on the model except `editable_fields` (and what `exclude` hides)."""
+        hidden = {*self.editable_fields, *(self.exclude or ())}
+        return _all_fields(self.model, hidden, super().get_readonly_fields(request, obj))
+
+
+def _all_fields(model: type[Model], hidden: set[str], declared: Sequence[str]) -> list[str]:
+    opts = model._meta
+    fields = [
+        f.name for f in [*opts.fields, *opts.many_to_many] if not f.auto_created and f.name not in hidden
+    ]
+    return [*dict.fromkeys([*fields, *declared])]
+
+
+class ReadOnlyTabularInline(admin.TabularInline):
+    """The rows under a parent, to read. Removing one is a job for the feature (or the row's own admin)."""
+
+    extra = 0
+    can_delete = False
+
+    def has_add_permission(self, request: HttpRequest, obj: Model | None = None) -> bool:
+        return False
+
+    def has_change_permission(self, request: HttpRequest, obj: Model | None = None) -> bool:
+        return False
+
+    def has_delete_permission(self, request: HttpRequest, obj: Model | None = None) -> bool:
+        return False
+
+    def get_readonly_fields(self, request: HttpRequest, obj: Model | None = None) -> list[str]:
+        # All of them, not just the shown ones: a non-editable field in `fields` must be read-only
+        # or the formset cannot be built.
+        return _all_fields(self.model, set(self.exclude or ()), super().get_readonly_fields(request, obj))
+
 
 for _model in (Group, PeriodicTask, ClockedSchedule, CrontabSchedule, IntervalSchedule, SolarSchedule):
     if admin.site.is_registered(_model):
