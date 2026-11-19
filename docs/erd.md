@@ -151,6 +151,7 @@ erDiagram
         datetime received_at
         int discarded_by_id FK
         datetime discarded_at
+        string external_id
     }
 
     cms_Page {
@@ -160,6 +161,9 @@ erDiagram
         string header
         text body
         string background_image
+        string description
+        datetime updated_at
+        int updated_by_id FK
     }
 
     cms_NewsItem {
@@ -189,6 +193,18 @@ erDiagram
         string caption
         datetime uploaded_at
         int uploaded_by_id FK
+        string sha256
+        string content_type
+        int size
+        string legacy_path
+    }
+
+    cms_LegacyImageFailure {
+        int id PK
+        string legacy_path
+        string reason
+        string detail
+        datetime failed_at
     }
 
     cms_PageRedirect {
@@ -206,9 +222,62 @@ erDiagram
         string header
         text body
         string background_image
+        string description
         datetime created_at
         int created_by_id FK
         string note
+    }
+
+    cms_MenuItem {
+        int id PK
+        string label
+        string url
+        int order
+    }
+
+    cms_SiteSettings {
+        int id PK
+        string default_background
+    }
+
+    cms_ContentChange {
+        int id PK
+        datetime at
+        int by_id FK
+        string by_name
+        string action
+        string kind
+        string object_id
+        string label
+        json changes
+    }
+
+    cms_Publication {
+        int id PK
+        datetime started_at
+        datetime finished_at
+        string revision
+        string reason
+        int triggered_by_id FK
+        string status
+        text error
+        int pages_written
+        int images_uploaded
+    }
+
+    cms_GahkWebSync {
+        int id PK
+        datetime status_checked_at
+        string remote_version
+        string remote_revision
+        datetime outbox_pulled_at
+        int rejected_applications
+        text last_error
+        datetime last_error_at
+        datetime update_checked_at
+        string update_available_version
+        string update_result
+        text update_error
     }
 
     ak_AkEntry {
@@ -385,12 +454,12 @@ erDiagram
         int count
     }
 
-    stats_VisitTally {
+    stats_PageViewDay {
         int id PK
-        string ip_hash
-        int count
-        datetime first_seen
-        datetime last_seen
+        date date
+        string path
+        int views
+        int visitors
     }
 
     den_hurtige_QuickPost {
@@ -930,11 +999,14 @@ erDiagram
     residents_AdminAccessGrant }o--|o residents_Resident : "decided_by"
     admissions_Application }o--|o residents_Resident : "received_by"
     admissions_Application }o--|o residents_Resident : "discarded_by"
+    cms_Page }o--|o residents_Resident : "updated_by"
     cms_CmsImage }o--|o residents_Resident : "uploaded_by"
     cms_PageRedirect }o--|| cms_Page : "page"
     cms_PageRedirect }o--|o residents_Resident : "created_by"
     cms_PageVersion }o--|o cms_Page : "page"
     cms_PageVersion }o--|o residents_Resident : "created_by"
+    cms_ContentChange }o--|o residents_Resident : "by"
+    cms_Publication }o--|o residents_Resident : "triggered_by"
     ak_AkEntry }o--|| residents_Resident : "resident"
     ak_AkEntry }o--|o residents_Resident : "created_by"
     ak_AkMonthlyCharge }o--|o residents_Resident : "updated_by"
@@ -1061,6 +1133,7 @@ erDiagram
         datetime received_at
         int discarded_by_id FK
         datetime discarded_at
+        string external_id
     }
 
     residents_Resident { }
@@ -1163,6 +1236,9 @@ erDiagram
         string header
         text body
         string background_image
+        string description
+        datetime updated_at
+        int updated_by_id FK
     }
 
     cms_NewsItem {
@@ -1192,6 +1268,18 @@ erDiagram
         string caption
         datetime uploaded_at
         int uploaded_by_id FK
+        string sha256
+        string content_type
+        int size
+        string legacy_path
+    }
+
+    cms_LegacyImageFailure {
+        int id PK
+        string legacy_path
+        string reason
+        string detail
+        datetime failed_at
     }
 
     cms_PageRedirect {
@@ -1209,18 +1297,74 @@ erDiagram
         string header
         text body
         string background_image
+        string description
         datetime created_at
         int created_by_id FK
         string note
     }
 
+    cms_MenuItem {
+        int id PK
+        string label
+        string url
+        int order
+    }
+
+    cms_SiteSettings {
+        int id PK
+        string default_background
+    }
+
+    cms_ContentChange {
+        int id PK
+        datetime at
+        int by_id FK
+        string by_name
+        string action
+        string kind
+        string object_id
+        string label
+        json changes
+    }
+
+    cms_Publication {
+        int id PK
+        datetime started_at
+        datetime finished_at
+        string revision
+        string reason
+        int triggered_by_id FK
+        string status
+        text error
+        int pages_written
+        int images_uploaded
+    }
+
+    cms_GahkWebSync {
+        int id PK
+        datetime status_checked_at
+        string remote_version
+        string remote_revision
+        datetime outbox_pulled_at
+        int rejected_applications
+        text last_error
+        datetime last_error_at
+        datetime update_checked_at
+        string update_available_version
+        string update_result
+        text update_error
+    }
+
     residents_Resident { }
 
+    cms_Page }o--|o residents_Resident : "updated_by"
     cms_CmsImage }o--|o residents_Resident : "uploaded_by"
     cms_PageRedirect }o--|| cms_Page : "page"
     cms_PageRedirect }o--|o residents_Resident : "created_by"
     cms_PageVersion }o--|o cms_Page : "page"
     cms_PageVersion }o--|o residents_Resident : "created_by"
+    cms_ContentChange }o--|o residents_Resident : "by"
+    cms_Publication }o--|o residents_Resident : "triggered_by"
 ```
 
 ## core
@@ -2201,11 +2345,11 @@ erDiagram
         int count
     }
 
-    stats_VisitTally {
+    stats_PageViewDay {
         int id PK
-        string ip_hash
-        int count
-        datetime first_seen
-        datetime last_seen
+        date date
+        string path
+        int views
+        int visitors
     }
 ```

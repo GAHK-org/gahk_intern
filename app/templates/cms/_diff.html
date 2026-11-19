@@ -1,0 +1,6 @@
+{% comment %}A line diff (cms.diff) as escaped text rows. Takes: rows.{% endcomment %}
+<div class="cms-diff" role="table" aria-label="Forskelle">
+  {% for kind, text in rows %}
+    <div class="cms-diff-{{ kind }}" role="row"><span class="sr-only">{% if kind == "add" %}Tilføjet: {% elif kind == "del" %}Fjernet: {% endif %}</span>{{ text }}</div>
+  {% endfor %}
+</div>

@@ -20,7 +20,7 @@ than accidental.** They divide like this, and each model's docstring says so:
 
 | | What it is |
 | --- | --- |
-| `cms.Event` (public `/begivenheder/`) | Marketing copy on the public site. A `DateField`, no time, no attendance, developer-edited. Import it as `CmsEvent` anywhere both appear. |
+| `cms.Event` (gahk.dk's `/begivenheder/`) | Marketing copy on the public site. A `DateField`, no time, no attendance, edited under Hjemmeside. Import it as `CmsEvent` anywhere both appear. |
 | `opslagstavle.Category.BEGIVENHED` | An announcement *about* an event, with comments and reactions. |
 | `events.Event` (this) | The thing with a time and a guest list. |
 

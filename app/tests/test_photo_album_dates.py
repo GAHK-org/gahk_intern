@@ -3,6 +3,7 @@
 import struct
 import zipfile
 from collections.abc import Callable
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from io import BytesIO, StringIO
 from typing import Any
@@ -440,8 +441,10 @@ def test_a_videos_date_from_its_transcode_settles_its_album(
     monkeypatch.setattr(
         services,
         "video_variants",
-        lambda *_: Variants(
-            ContentFile(b"v", name="MVI_1.mp4"), ContentFile(jpeg_bytes(), name="MVI_1.jpg"), recorded
+        lambda *_: nullcontext(
+            Variants(
+                ContentFile(b"v", name="MVI_1.mp4"), ContentFile(jpeg_bytes(), name="MVI_1.jpg"), recorded
+            )
         ),
     )
 
