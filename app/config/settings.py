@@ -452,6 +452,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "drive.tasks.ensure_structure",
         "schedule": crontab(minute=20, hour=0),
     },
+    # Drive (drive.operations.empty_bin): what has been in the bin for 30 days goes for good, with
+    # the bytes no version points at any more.
+    "drive-empty-bin": {
+        "task": "drive.tasks.empty_bin",
+        "schedule": crontab(minute=40, hour=3),
+    },
 }
 
 STATIC_URL = "static/"

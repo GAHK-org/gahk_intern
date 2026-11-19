@@ -1,4 +1,5 @@
-"""Drive's pages: the top level, a folder, uploading and downloading.
+"""Drive's pages: the top level, a folder, a file, uploading and downloading. Renaming, moving,
+copying, deleting, the bin and old versions are in views_items.py.
 
 A folder a resident may not see is a 404, not a 403: a group's folders are not something a
 non-member should be able to confirm the existence of by guessing ids. A folder they may see but
@@ -19,9 +20,9 @@ from photo_album import direct_upload
 from photo_album.forms import DirectUploadSignForm
 from residents.permissions import current_resident
 
-from . import access, services
+from . import access, operations, services
 from .access import Level, Viewer
-from .models import File, Folder
+from .models import File, FileVersion, Folder
 from .periods import period_containing
 from .structure import ensure_structure_today
 
@@ -33,7 +34,7 @@ def _render(request: HttpRequest, template: str, context: dict[str, Any]) -> Htt
 
 
 def _folder(request: HttpRequest, pk: int, *, at_least: Level = Level.READ) -> tuple[Folder, Viewer, Level]:
-    folder = get_object_or_404(Folder, pk=pk)
+    folder = get_object_or_404(Folder, pk=pk, deleted_at__isnull=True)
     viewer = Viewer.for_request(request)
     level = viewer.level(folder)
     if level == Level.NONE:
@@ -74,7 +75,7 @@ def _rows(viewer: Viewer, folders: list[Folder]) -> list[dict[str, Any]]:
 
 def _sorted_children(folder: Folder | None) -> list[Folder]:
     """Timeless first, then periods and years newest first, then residents' folders by name."""
-    children = list(Folder.objects.filter(parent=folder).select_related("workgroup"))
+    children = list(Folder.objects.filter(parent=folder, deleted_at__isnull=True).select_related("workgroup"))
     dated = sorted((f for f in children if f.period_start), key=lambda f: f.period_start, reverse=True)  # type: ignore[arg-type, return-value]
     timeless = [f for f in children if f.kind == Folder.Kind.TIMELESS]
     rest = sorted(
@@ -96,24 +97,73 @@ def home(request: HttpRequest) -> HttpResponse:
 def folder(request: HttpRequest, pk: int) -> HttpResponse:
     ensure_structure_today()
     current, viewer, level = _folder(request, pk)
-    files = list(current.files.select_related("changed_by").order_by("name_key"))
+    files = list(
+        current.files.filter(deleted_at__isnull=True).select_related("changed_by").order_by("name_key")
+    )
+    rows = _rows(viewer, _sorted_children(current))
+    can_change_files = viewer.can_change_file_in(current)
     return _render(
         request,
         "drive/folder.html",
         {
             "folder": current,
             "ancestors": current.ancestors(),
-            "rows": _rows(viewer, _sorted_children(current)),
+            "rows": rows,
             "files": files,
             "can_write": level >= Level.WRITE and viewer.can_upload_to(current),
             "can_create_folder": viewer.can_create_in(current),
-            "upload_config": {
-                "beginUrl": reverse("drive:upload_begin", args=[current.pk]),
-                "signUrl": reverse("drive:upload_sign"),
-                "commitUrl": reverse("drive:upload_commit"),
-                "directUrl": reverse("drive:upload_direct", args=[current.pk]),
-                "maxBytes": services.max_upload_bytes(),
+            "can_change_folder": viewer.can_change_folder(current),
+            # Ticking is for moving, copying and deleting: residents' own folders and the files.
+            "can_select": bool(files) or any(row["can_open"] and not row["folder"].is_system for row in rows),
+            "can_change_files": can_change_files,
+            "in_bin": operations.bin_count(viewer, current),
+            "upload_config": _upload_config(current),
+            "selection_config": {
+                "moveUrl": reverse("drive:move", args=[current.pk]),
+                "deleteUrl": reverse("drive:delete", args=[current.pk]),
             },
+        },
+    )
+
+
+def _upload_config(target: Folder, *, version_of: str = "") -> dict[str, object]:
+    return {
+        "beginUrl": reverse("drive:upload_begin", args=[target.pk]),
+        "signUrl": reverse("drive:upload_sign"),
+        "commitUrl": reverse("drive:upload_commit"),
+        "directUrl": reverse("drive:upload_direct", args=[target.pk]),
+        "maxBytes": services.max_upload_bytes(),
+        # "Upload ny version" on a file's page: whatever file is picked becomes its next version.
+        "versionOf": version_of,
+    }
+
+
+def live_file(request: HttpRequest, pk: int, *, at_least: Level = Level.READ) -> tuple[File, Viewer]:
+    """A file outside the bin, in a folder the resident may open."""
+    file = get_object_or_404(File.objects.select_related("folder"), pk=pk, deleted_at__isnull=True)
+    _, viewer, _ = _folder(request, file.folder_id, at_least=at_least)
+    return file, viewer
+
+
+@access.access_required
+def file_page(request: HttpRequest, pk: int) -> HttpResponse:
+    """A file's versions, its history, and what can be done with it."""
+    file, viewer = live_file(request, pk)
+    versions = list(file.versions.select_related("created_by").order_by("-number"))
+    can_change = viewer.can_change_file_in(file.folder)
+    return _render(
+        request,
+        "drive/file.html",
+        {
+            "file": file,
+            "folder": file.folder,
+            "ancestors": [*file.folder.ancestors(), file.folder],
+            "versions": versions,
+            "latest": versions[0],
+            "events": file.events.select_related("actor")[:200],
+            "can_change": can_change,
+            "upload_config": _upload_config(file.folder, version_of=file.name) if can_change else None,
+            "move_query": f"file={file.pk}",
         },
     )
 
@@ -152,9 +202,18 @@ def upload_begin(request: HttpRequest, pk: int) -> JsonResponse:
     on_conflict = request.POST.get("on_conflict", "")
     size = _size(request)
     try:
-        name = services.check_upload(viewer, target, request.POST.get("name", ""), size, on_conflict)
+        name = services.check_upload(
+            viewer,
+            target,
+            request.POST.get("name", ""),
+            size,
+            on_conflict,
+            ignore_stale=bool(request.POST.get("ignore_stale")),
+        )
     except services.NameTaken as exc:
         return _error(" ".join(exc.messages), 409, conflict=True)
+    except services.Stale as exc:
+        return _error(" ".join(exc.messages), 409, stale=True)
     except ValidationError as exc:
         return _error(" ".join(exc.messages))
     upload = direct_upload.ticket(
@@ -236,9 +295,18 @@ def upload_direct(request: HttpRequest, pk: int) -> JsonResponse:
         return _error("Der kom ingen fil med.")
     on_conflict = request.POST.get("on_conflict", "")
     try:
-        name = services.check_upload(viewer, target, upload.name or "", upload.size or 0, on_conflict)
+        name = services.check_upload(
+            viewer,
+            target,
+            request.POST.get("name") or upload.name or "",
+            upload.size or 0,
+            on_conflict,
+            ignore_stale=bool(request.POST.get("ignore_stale")),
+        )
     except services.NameTaken as exc:
         return _error(" ".join(exc.messages), 409, conflict=True)
+    except services.Stale as exc:
+        return _error(" ".join(exc.messages), 409, stale=True)
     except ValidationError as exc:
         return _error(" ".join(exc.messages))
     key = services.new_key()
@@ -257,13 +325,17 @@ def upload_direct(request: HttpRequest, pk: int) -> JsonResponse:
 
 
 @access.access_required
-def download(request: HttpRequest, pk: int) -> HttpResponseBase:
-    """The latest version, under its name. Access is checked on every request, and the bucket URL it
-    redirects to lives for minutes: a link that keeps working after somebody leaves the group would
-    be a key to the group's folder."""
-    file = get_object_or_404(File.objects.select_related("folder"), pk=pk)
-    _folder(request, file.folder_id)
-    version = file.latest_version()
+def download(request: HttpRequest, pk: int, number: int | None = None) -> HttpResponseBase:
+    """The latest version, or an old one, under the file's name. Access is checked on every request,
+    and the bucket URL it redirects to lives for minutes: a link that keeps working after somebody
+    leaves the group would be a key to the group's folder."""
+    file, viewer = live_file(request, pk)
+    version = file.latest_version() if number is None else get_object_or_404(file.versions, number=number)
+    services.remember_download(file, viewer.resident_id, version.number)
+    return serve(version, file.name)
+
+
+def serve(version: FileVersion, name: str) -> HttpResponseBase:
     store = services.storage()
     signed_url = getattr(store, "signed_url", None)
     if signed_url is not None:
@@ -271,9 +343,9 @@ def download(request: HttpRequest, pk: int) -> HttpResponseBase:
             signed_url(
                 version.key,
                 expire=5 * 60,
-                parameters={"ResponseContentDisposition": content_disposition(file.name)},
+                parameters={"ResponseContentDisposition": content_disposition(name)},
             )
         )
     response = FileResponse(store.open(version.key, "rb"), content_type=version.content_type or None)
-    response["Content-Disposition"] = content_disposition(file.name)
+    response["Content-Disposition"] = content_disposition(name)
     return response

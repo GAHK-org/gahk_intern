@@ -98,8 +98,9 @@ Drive
 - Anyone who can write in a folder can rename, move or delete what is in it.
 - Moving needs write access in both places and an unlocked item. A move to another space first shows how access changes. Shares follow the item; they end if it leaves the group's space, and the confirmation says so.
 - Copying needs read access to the source and write access to the destination. A copy is a new file with the copier as creator and no history.
+- When a name is taken at the destination, a move is refused and a copy is numbered (`Budget (2).xlsx`).
 - A folder can be deleted only when it holds no files or subfolders. Files in the bin do not count; restoring one brings its folder back.
-- Deleted files go to their space's bin for 30 days, then are removed with all their versions. Anyone who can write in a folder sees its binned files and can restore them.
+- Deleted files go to their space's bin for 30 days, then are removed with all their versions. Anyone who can write in a folder sees its binned files and can restore them. A restored file whose name has been taken meanwhile is numbered.
 - A file's creator (who uploaded the first version) is notified when someone else deletes it (with a link to restore it), renames it or moves it. One notification per action, not per file, and only while the creator can still see the folder.
 - Several files or a whole folder download as one zip of at most 5 GB. Subfolders the reader cannot see are left out without a trace.
 - A folder shows how many files its whole subtree holds, counting what the reader can see.

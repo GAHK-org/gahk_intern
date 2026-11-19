@@ -2017,6 +2017,34 @@
   .drive-newfolder { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0; flex:1 1 360px; }
   /* width:auto, because inputs are 100% wide site-wide, which would push the button below. */
   .drive-newfolder input[type=text] { width:auto; flex:1 1 200px; max-width:320px; margin:0; }
+  /* A folder's or file's own links: history, bin, rename, delete. */
+  .drive-links { display:flex; align-items:center; gap:8px 18px; flex-wrap:wrap; font-size:13px; }
+  .drive-links > a { color:var(--brass); }
+  .drive-links form { margin:0; }
+  .drive-links .btn-link, .drive-links .btn-link-danger { font-size:13px; }
+  .drive-inline summary { cursor:pointer; color:var(--brass); }
+  .drive-inline[open] { flex:1 1 100%; }
+  .drive-inline[open] summary { margin-bottom:8px; }
+  /* A fixed column, so ticked and unticked rows line up, also beside a system folder with no box. */
+  .drive-tick { flex:none; width:16px; height:16px; margin:0; }
+  .drive-selection { display:flex; align-items:center; gap:10px 14px; flex-wrap:wrap; padding:10px 14px;
+    border:1px solid var(--border); border-radius:10px; background:var(--green-050); }
+  .drive-selection[hidden] { display:none; }
+  .drive-selection [data-selection-count] { font-weight:600; margin-right:auto; }
+  .drive-list li > a.drive-download { flex:0 0 auto; font-size:13px; color:var(--brass); }
+  .drive-list li form { margin:0; }
+  .drive-title { overflow-wrap:anywhere; }
+  .drive-h2 { font-size:16px; font-weight:600; margin:0 0 10px; }
+  .drive-version { display:flex; align-items:center; gap:4px 10px; flex-wrap:wrap; flex:1 1 auto; min-width:0; }
+  .drive-version .muted { font-size:12px; overflow-wrap:anywhere; }
+  .drive-history { list-style:none; margin:0; padding:0; display:grid; gap:8px; font-size:14px; }
+  .drive-history li { display:flex; flex-wrap:wrap; gap:2px 12px; overflow-wrap:anywhere; }
+  .drive-history .muted { font-size:12px; }
+  .drive-move-target { display:flex; align-items:center; gap:10px 16px; flex-wrap:wrap; }
+  .drive-note { flex:1 1 100%; padding:12px 14px; border:1px solid var(--border); border-radius:10px;
+    background:var(--surface); font-size:14px; }
+  .drive-note p { margin:0 0 4px; }
+  .drive-note p:last-child { margin:0; }
   @media (max-width: 560px) {
     /* The metadata goes first: on a phone the name is the point. */
     .drive-meta { display:none; }

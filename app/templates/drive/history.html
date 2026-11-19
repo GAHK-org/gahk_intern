@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Historik - {{ folder.name }} - Drive - GAHK Intern{% endblock %}
+{% block content_width %}max-w-5xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Drive</p>
+      <h1>Historik</h1>
+    </div>
+  </div>
+  {% include "drive/_crumbs.html" with ancestors=ancestors current="" %}
+  {% include "drive/_events.html" %}
+{% endblock %}

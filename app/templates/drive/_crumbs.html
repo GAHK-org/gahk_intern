@@ -1,0 +1,12 @@
+{% comment %} The path to a folder or file: Drive / … / current. {% endcomment %}
+<nav class="drive-crumbs mb-4" aria-label="Sti">
+  <a href="{% url 'drive:home' %}">Drive</a>
+  {% for crumb in ancestors %}
+    <span aria-hidden="true">/</span>
+    <a href="{% url 'drive:folder' crumb.pk %}">{{ crumb.name }}</a>
+  {% endfor %}
+  {% if current %}
+    <span aria-hidden="true">/</span>
+    <span aria-current="page">{{ current }}</span>
+  {% endif %}
+</nav>
