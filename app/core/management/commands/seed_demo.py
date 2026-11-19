@@ -37,6 +37,7 @@ from ak.models import AkEntry, AkMonthlyCharge
 from ak.services import apply_monthly_charge
 from arkiv.demo import seed as seed_arkiv
 from arkiv.models import ArchiveFile, ArchiveFolder
+from audit import trail
 from cms.models import ContentChange, NewsItem, Page, PageVersion, PylonEvent
 
 # CmsEvent, never Event: the internal events app has one of the same name, and both are seeded
@@ -200,6 +201,11 @@ class Command(BaseCommand):
         parser.add_argument("--fresh", action="store_true", help="Delete existing demo data first.")
         parser.add_argument("--residents", type=int, default=61, help="How many residents to create.")
         parser.add_argument("--force", action="store_true", help="Allow running when DEBUG is off.")
+
+    def execute(self, *args: object, **options: object) -> str | None:
+        # Loading old data (or demo data) is nobody's action: not one audit event per row.
+        with trail.unaudited():
+            return super().execute(*args, **options)
 
     def handle(self, *args, **opts) -> None:  # noqa: ANN002, ANN003
         if not settings.DEBUG and not opts["force"]:

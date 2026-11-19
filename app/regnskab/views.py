@@ -19,6 +19,7 @@ from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 
 from ak.models import AkEntry
+from audit import trail
 from residents.models import Residency, Resident, prev_period
 from residents.permissions import role_required
 from residents.views import DA_MONTHS, _parse_period, _period_options
@@ -122,7 +123,12 @@ def edit_economic_account_number(request: HttpRequest, pk: int) -> HttpResponse:
                 ):
                     lookup_error = alumneregning.mismatch_message(resident, number, account_name)
             if not lookup_error:
-                form.save()
+                with trail.event(
+                    "regnskab.account_number.updated",
+                    subject=resident,
+                    details={"account_name": account_name},
+                ):
+                    form.save()
                 messages.success(request, f"E-conomic kontonr. for {resident.full_name} er gemt.")
                 return redirect(nxt or "regnskab:overview")
     else:
