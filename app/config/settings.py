@@ -463,6 +463,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "drive.tasks.auto_lock",
         "schedule": crontab(minute=50, hour=3),
     },
+    # Drive (drive.shared.run_expiry): Delte mapper are deleted or archived the day after they
+    # expire, and their moderators warned 14 days before. In the morning, so the warning is read.
+    "drive-shared-expiry": {
+        "task": "drive.tasks.shared_expiry",
+        "schedule": crontab(minute=15, hour=7),
+    },
 }
 
 STATIC_URL = "static/"

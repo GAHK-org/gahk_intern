@@ -1,6 +1,6 @@
 from celery import shared_task
 
-from . import locks, operations
+from . import locks, operations, shared
 from .structure import ensure_structure
 
 
@@ -20,3 +20,9 @@ def empty_bin_task() -> None:
 def auto_lock_task() -> None:
     """Daily: lock files and folders that have had nothing new for a year."""
     locks.auto_lock()
+
+
+@shared_task(name="drive.tasks.shared_expiry")
+def shared_expiry_task() -> None:
+    """Daily: warn the moderators of Delte mapper about to expire, and delete or archive expired ones."""
+    shared.run_expiry()

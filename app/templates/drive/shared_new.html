@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Opret delt mappe - Drive - GAHK Intern{% endblock %}
+{% block content_width %}max-w-3xl{% endblock %}
+
+{% block content %}
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Drive</p>
+      <h1>Opret delt mappe</h1>
+    </div>
+  </div>
+  <p class="muted mb-4">
+    Kun medlemmerne kan se mappen og dens navn. Du bliver moderator; dem, du inviterer, kan lægge filer op og redigere.
+    Admins og Inspektionen ser kun mappens nummer, antal medlemmer, filer og størrelse.
+  </p>
+
+  <form method="post" class="drive-form">
+    {% csrf_token %}
+    <label>Navn <input type="text" name="name" maxlength="200" value="{{ name }}" required></label>
+
+    <fieldset>
+      <legend>Udløb</legend>
+      <label>Udløber <input type="date" name="expires_on" value="{{ expires_on }}" max="{{ latest }}" required></label>
+      <label class="drive-choice"><input type="radio" name="on_expiry" value="archive"{% if on_expiry == "archive" %} checked{% endif %}> Arkiveres: flyttes til Delte mapper/år og kan læses af alle beboere</label>
+      <label class="drive-choice"><input type="radio" name="on_expiry" value="delete"{% if on_expiry == "delete" %} checked{% endif %}> Slettes for altid, uden papirkurv</label>
+      <p class="muted">Højst to år frem. Datoen kan flyttes senere, og arkivering kan laves om til sletning, men ikke omvendt.</p>
+    </fieldset>
+
+    <fieldset data-drive-pick>
+      <legend>Medlemmer (mindst {{ min_others }} ud over dig)</legend>
+      <input type="search" placeholder="Find beboer…" data-drive-pick-filter aria-label="Find beboer">
+      <ul class="drive-pick">
+        {% for resident in residents %}
+          <li data-drive-pick-name="{{ resident.full_name|lower }}">
+            <label class="drive-choice"><input type="checkbox" name="members" value="{{ resident.pk }}"{% if resident.pk in chosen %} checked{% endif %}> {{ resident.full_name }}</label>
+          </li>
+        {% endfor %}
+      </ul>
+    </fieldset>
+
+    <div class="drive-dialog-buttons">
+      <button type="submit" class="btn btn-primary">Opret</button>
+      <a class="btn-link" href="{% url 'drive:home' %}">Annuller</a>
+    </div>
+  </form>
+{% endblock %}

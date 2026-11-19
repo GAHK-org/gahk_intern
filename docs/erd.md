@@ -941,6 +941,7 @@ erDiagram
         string space
         int workgroup_id FK
         date period_start
+        int shared_id FK
         string path
         int created_by_id FK
         datetime created_at
@@ -998,6 +999,7 @@ erDiagram
         string space
         int workgroup_id FK
         date period_start
+        int shared_id FK
     }
 
     drive_ApprovalRequest {
@@ -1006,6 +1008,7 @@ erDiagram
         string state
         int file_id FK
         int folder_id FK
+        int shared_id FK
         int version_number
         string name
         string where
@@ -1016,6 +1019,24 @@ erDiagram
         int decided_by_id FK
         datetime decided_at
         text decision_reason
+    }
+
+    drive_SharedFolder {
+        int id PK
+        date expires_on
+        string on_expiry
+        int created_by_id FK
+        datetime created_at
+        date warned_for
+        datetime archived_at
+    }
+
+    drive_SharedMember {
+        int id PK
+        int shared_id FK
+        int resident_id FK
+        string role
+        datetime added_at
     }
 
     regnskab_EconomicLedgerEntry {
@@ -1166,6 +1187,7 @@ erDiagram
     drive_Folder }o--|o residents_Resident : "locked_by"
     drive_Folder }o--|o drive_Folder : "parent"
     drive_Folder }o--|o core_Workgroup : "workgroup"
+    drive_Folder }o--|o drive_SharedFolder : "shared"
     drive_Folder }o--|o residents_Resident : "created_by"
     drive_Folder }o--|o residents_Resident : "deleted_by"
     drive_File }o--|o residents_Resident : "locked_by"
@@ -1181,10 +1203,15 @@ erDiagram
     drive_Event }o--|o drive_File : "file"
     drive_Event }o--|o drive_Folder : "folder"
     drive_Event }o--|o core_Workgroup : "workgroup"
+    drive_Event }o--|o drive_SharedFolder : "shared"
     drive_ApprovalRequest }o--|o drive_File : "file"
     drive_ApprovalRequest }o--|o drive_Folder : "folder"
+    drive_ApprovalRequest }o--|o drive_SharedFolder : "shared"
     drive_ApprovalRequest }o--|o residents_Resident : "requested_by"
     drive_ApprovalRequest }o--|o residents_Resident : "decided_by"
+    drive_SharedFolder }o--|o residents_Resident : "created_by"
+    drive_SharedMember }o--|| drive_SharedFolder : "shared"
+    drive_SharedMember }o--|| residents_Resident : "resident"
     regnskab_EconomicLedgerEntry }o--|| residents_Resident : "resident"
     regnskab_AlumneregningSend }o--|| residents_Resident : "resident"
 ```
@@ -1530,6 +1557,7 @@ erDiagram
         string space
         int workgroup_id FK
         date period_start
+        int shared_id FK
         string path
         int created_by_id FK
         datetime created_at
@@ -1587,6 +1615,7 @@ erDiagram
         string space
         int workgroup_id FK
         date period_start
+        int shared_id FK
     }
 
     drive_ApprovalRequest {
@@ -1595,6 +1624,7 @@ erDiagram
         string state
         int file_id FK
         int folder_id FK
+        int shared_id FK
         int version_number
         string name
         string where
@@ -1607,6 +1637,24 @@ erDiagram
         text decision_reason
     }
 
+    drive_SharedFolder {
+        int id PK
+        date expires_on
+        string on_expiry
+        int created_by_id FK
+        datetime created_at
+        date warned_for
+        datetime archived_at
+    }
+
+    drive_SharedMember {
+        int id PK
+        int shared_id FK
+        int resident_id FK
+        string role
+        datetime added_at
+    }
+
     core_Workgroup { }
 
     residents_Resident { }
@@ -1614,6 +1662,7 @@ erDiagram
     drive_Folder }o--|o residents_Resident : "locked_by"
     drive_Folder }o--|o drive_Folder : "parent"
     drive_Folder }o--|o core_Workgroup : "workgroup"
+    drive_Folder }o--|o drive_SharedFolder : "shared"
     drive_Folder }o--|o residents_Resident : "created_by"
     drive_Folder }o--|o residents_Resident : "deleted_by"
     drive_File }o--|o residents_Resident : "locked_by"
@@ -1629,10 +1678,15 @@ erDiagram
     drive_Event }o--|o drive_File : "file"
     drive_Event }o--|o drive_Folder : "folder"
     drive_Event }o--|o core_Workgroup : "workgroup"
+    drive_Event }o--|o drive_SharedFolder : "shared"
     drive_ApprovalRequest }o--|o drive_File : "file"
     drive_ApprovalRequest }o--|o drive_Folder : "folder"
+    drive_ApprovalRequest }o--|o drive_SharedFolder : "shared"
     drive_ApprovalRequest }o--|o residents_Resident : "requested_by"
     drive_ApprovalRequest }o--|o residents_Resident : "decided_by"
+    drive_SharedFolder }o--|o residents_Resident : "created_by"
+    drive_SharedMember }o--|| drive_SharedFolder : "shared"
+    drive_SharedMember }o--|| residents_Resident : "resident"
 ```
 
 ## events

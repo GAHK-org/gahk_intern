@@ -30,7 +30,7 @@ from residents.models import Resident
 
 from . import history, services
 from .access import Level, Viewer
-from .models import BIN_DAYS, ApprovalRequest, Event, File, FileVersion, Folder, Space, name_key
+from .models import BIN_DAYS, ApprovalRequest, Event, File, FileVersion, Folder, SharedFolder, Space, name_key
 from .periods import Period
 
 
@@ -141,6 +141,10 @@ def access_note(folder: Folder) -> str:
     """Who can see what is in `folder`, in a sentence, for confirming a move."""
     if folder.space == Space.COMMON:
         return "Alle beboere kan se det."
+    if folder.space == Space.SHARED:
+        if folder.shared and folder.shared.archived_at:
+            return "Alle beboere kan se det."
+        return "Kun den delte mappes medlemmer kan se det."
     group = folder.workgroup.name if folder.workgroup else "gruppen"
     if folder.period_start is None:
         return f"{group}s nuværende medlemmer kan se det, og det kan admins og Inspektionen også."
@@ -150,10 +154,11 @@ def access_note(folder: Folder) -> str:
 
 def changes_access(selection: Selection, destination: Folder) -> bool:
     source = selection.source
-    return (source.space, source.workgroup_id, source.period_start) != (
+    return (source.space, source.workgroup_id, source.period_start, source.shared_id) != (
         destination.space,
         destination.workgroup_id,
         destination.period_start,
+        destination.shared_id,
     )
 
 
@@ -199,8 +204,10 @@ def move(viewer: Viewer, selection: Selection, destination: Folder, actor: Resid
             space=destination.space,
             workgroup=destination.workgroup,
             period_start=destination.period_start,
+            shared=destination.shared_id,
         )
         folder.parent = destination
+        folder.shared_id = destination.shared_id
         folder.space, folder.workgroup, folder.period_start = (
             destination.space,
             destination.workgroup,
@@ -254,6 +261,7 @@ def _copy_folder(folder: Folder, destination: Folder, actor: Resident, now: date
         space=destination.space,
         workgroup=destination.workgroup,
         period_start=destination.period_start,
+        shared_id=destination.shared_id,
         created_by=actor,
     )
     copy.save()
@@ -410,6 +418,8 @@ def empty_bin(now: datetime | None = None) -> tuple[int, int]:
             if not folder.children.exists() and not folder.files.exists():
                 folder.delete()
                 folders += 1
+        # A Delt mappe whose last folder is gone, with its members.
+        SharedFolder.objects.filter(folders__isnull=True).delete()
     return files, folders
 
 

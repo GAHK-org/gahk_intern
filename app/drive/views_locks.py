@@ -9,14 +9,10 @@ from django.views.decorators.http import require_POST
 
 from residents.permissions import current_resident
 
-from . import access, locks
+from . import access, history, locks
 from .access import Level, Viewer
 from .models import ApprovalRequest, Event, File, Folder
 from .views import _folder, _render, live_file
-
-# How many history lines an activity page reads, and shows of what the reader may see.
-ACTIVITY_SCAN = 3000
-ACTIVITY_SHOWN = 300
 
 
 def _fail(request: HttpRequest, exc: ValidationError) -> None:
@@ -104,9 +100,10 @@ def purge_request(request: HttpRequest, pk: int) -> HttpResponse:
     return redirect("drive:file", file.pk)
 
 
-def _overseer(request: HttpRequest) -> Viewer:
+def _decider(request: HttpRequest) -> Viewer:
+    """Admins, Inspektionen and the moderators of a Delt mappe."""
     viewer = Viewer.for_request(request)
-    if not viewer.oversees:
+    if not (viewer.oversees or any(viewer.moderates(pk) for pk in viewer.shared_roles)):
         raise PermissionDenied
     return viewer
 
@@ -115,8 +112,7 @@ def _overseer(request: HttpRequest) -> Viewer:
 def requests_page(request: HttpRequest) -> HttpResponse:
     """Admins' and Inspektionen's: what waits for a decision, and what was decided. Names and paths
     only - nothing here opens a file."""
-    _overseer(request)
-    rows = ApprovalRequest.objects.select_related("requested_by", "decided_by")
+    rows = locks.decides(_decider(request)).select_related("requested_by", "decided_by")
     return _render(
         request,
         "drive/requests.html",
@@ -131,7 +127,7 @@ def requests_page(request: HttpRequest) -> HttpResponse:
 @access.access_required
 @require_POST
 def decide(request: HttpRequest, pk: int) -> HttpResponse:
-    viewer = _overseer(request)
+    viewer = _decider(request)
     item = get_object_or_404(ApprovalRequest, pk=pk)
     approve = request.POST.get("decision") == "approve"
     try:
@@ -154,21 +150,13 @@ def activity(request: HttpRequest, pk: int) -> HttpResponse:
     """A space's history: Fælles, or one group's folders across all periods. A line shows only to
     those who could read the item where it was."""
     space, viewer, _ = _folder(request, pk)
-    if space.kind not in (Folder.Kind.COMMON_ROOT, Folder.Kind.GROUP):
+    if space.kind not in (Folder.Kind.COMMON_ROOT, Folder.Kind.GROUP, Folder.Kind.SHARED):
         raise Http404("not a space")
-    lines = Event.objects.filter(space=space.space, workgroup=space.workgroup).select_related("actor")
-    shown = []
-    for event in lines[:ACTIVITY_SCAN]:
-        where = Folder(
-            kind=Folder.Kind.FOLDER,
-            space=event.space,
-            workgroup_id=event.workgroup_id,
-            period_start=event.period_start,
-        )
-        if viewer.level(where) >= Level.READ:
-            shown.append(event)
-            if len(shown) == ACTIVITY_SHOWN:
-                break
+    if space.kind == Folder.Kind.SHARED:
+        lines = Event.objects.filter(shared=space.shared_id)
+    else:
+        lines = Event.objects.filter(space=space.space, workgroup=space.workgroup, shared=None)
+    shown = history.visible(viewer, lines.select_related("actor"))
     return _render(
         request,
         "drive/history.html",
