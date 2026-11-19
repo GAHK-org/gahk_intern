@@ -9,7 +9,6 @@ import uuid
 from collections.abc import Callable
 from datetime import timedelta
 from io import BytesIO
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -409,64 +408,26 @@ def test_a_publish_that_breaks_still_lets_the_outbox_be_pulled(
 
 
 @pytest.mark.django_db
-def test_the_sync_brings_in_legacy_images_and_publishes_them_in_the_same_run(
-    gahk_web: FakeGahkWeb, front_page: Page, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    from cms import legacy_images
-
-    from .test_cms_legacy_images import image_bytes
-
-    old = tmp_path / "old-images" / "upload" / "images"
-    old.mkdir(parents=True)
-    (old / "gang.jpg").write_bytes(image_bytes())
-    monkeypatch.setattr(legacy_images, "LEGACY_DIRECTORY", tmp_path / "old-images")
-    front_page.body = '<img src="/public/image/upload/images/gang.jpg">'
-    front_page.save()  # and the seeded default background points at gang.jpg too
-
-    report = tasks.sync_gahk_web()
-
-    assert report["errors"] == [] and report["legacy_images"]["imported"] == 1
-    hallway = CmsImage.objects.get(legacy_path="upload/images/gang.jpg")
-    published = gahk_web.published[-1]
-    assert published["legacy_images"] == {
-        "/static/legacy/image/upload/images/gang.jpg": published["site"]["default_background"]
-    }
-    assert hallway.sha256 in gahk_web.images
-    assert "/public/image/" not in json.dumps(published)
-
-    report = tasks.sync_gahk_web()
-    assert report["legacy_images"]["imported"] == 0
-
-
-@pytest.mark.django_db
 def test_every_old_image_goes_to_gahk_dk_used_or_not_until_it_is_deleted(
     gahk_web: FakeGahkWeb,
     front_page: Page,
-    monkeypatch: pytest.MonkeyPatch,
     django_capture_on_commit_callbacks: Callable[..., Any],
-    tmp_path: Path,
 ) -> None:
     """gahk.dk redirects every old picture address, so it gets every old picture, not only the ones
     a page shows. Deleting one from the library takes it, and its redirect, off at the next publish."""
-    from cms import legacy_images, services
+    from cms import services
 
-    from .test_cms_legacy_images import image_bytes
-
-    old = tmp_path / "old-images" / "upload" / "images"
-    old.mkdir(parents=True)
-    (old / "gang.jpg").write_bytes(image_bytes())
-    (old / "klatring.jpg").write_bytes(image_bytes("PNG"))
-    monkeypatch.setattr(legacy_images, "LEGACY_DIRECTORY", tmp_path / "old-images")
-
-    report = tasks.sync_gahk_web()
-
-    assert report["errors"] == [] and report["legacy_images"]["imported"] == 2
-    climbing = CmsImage.objects.get(legacy_path="upload/images/klatring.jpg")
+    climbing = _library_image()
+    CmsImage.objects.filter(pk=climbing.pk).update(legacy_path="upload/images/klatring.jpg")
+    climbing.refresh_from_db()
     assert not services.image_usage(climbing)
+
+    tasks.publish_gahk_web("test")
+
     old_address = "/static/legacy/image/upload/images/klatring.jpg"
     published = gahk_web.published[-1]
-    assert old_address in published["legacy_images"]
     assert published["legacy_images"][old_address] in {image["url"] for image in published["images"]}
+    climbing.refresh_from_db()
     assert climbing.sha256 in gahk_web.images
 
     with django_capture_on_commit_callbacks(execute=True):
@@ -475,24 +436,6 @@ def test_every_old_image_goes_to_gahk_dk_used_or_not_until_it_is_deleted(
     published = gahk_web.published[-1]
     assert old_address not in published["legacy_images"]
     assert climbing.sha256 not in {image["sha256"] for image in published["images"]}
-    assert tasks.sync_gahk_web()["legacy_images"]["imported"] == 0
-
-
-@pytest.mark.django_db
-def test_a_broken_legacy_import_still_lets_the_sync_publish_and_pull(
-    gahk_web: FakeGahkWeb, front_page: Page, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def broken_import() -> None:
-        raise RuntimeError("bucket says no")
-
-    monkeypatch.setattr(tasks, "import_pending_legacy_images", broken_import)
-    item = _application()
-    gahk_web.outbox["applications"] = [item]
-
-    report = tasks.sync_gahk_web()
-
-    assert report["errors"] == ["Legacy images: bucket says no"]
-    assert gahk_web.published and gahk_web.acks[0]["applications"] == [item["id"]]
 
 
 @pytest.mark.django_db
@@ -792,22 +735,3 @@ def test_the_public_site_is_not_served_here(path: str) -> None:
 def test_the_events_path_is_the_intranet_events_app_and_needs_a_login() -> None:
     response = Client().get("/begivenheder/")
     assert response.status_code == 302 and "login" in response.headers["Location"]
-
-
-@pytest.mark.django_db
-def test_a_legacy_import_stopped_by_an_error_shows_it_in_the_sync_status(
-    gahk_web: FakeGahkWeb, front_page: Page, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from cms.legacy_images import ConversionResult
-
-    monkeypatch.setattr(
-        tasks,
-        "import_pending_legacy_images",
-        lambda: ConversionResult(error="upload/a.jpg: OSError: S3 is down"),
-    )
-
-    report = tasks.sync_gahk_web()
-
-    assert report["errors"] == ["Legacy images: upload/a.jpg: OSError: S3 is down"]
-    assert gahk_web.published
-    assert "S3 is down" in GahkWebSync.load().last_error

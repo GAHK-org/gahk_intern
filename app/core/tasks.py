@@ -111,6 +111,17 @@ def deliver_mail() -> int:
 
 
 @shared_task
+def remove_abandoned_job_directories() -> str:
+    """Hourly, on the "media" queue, whose worker runs the jobs that use them: delete the job
+    directories in /tmp that a killed job left (core.job_directories). Mostly a backstop: a new
+    worker process does the same as it starts, which is when a killed job's replacement begins."""
+    from .job_directories import remove_abandoned_job_directories as remove
+
+    removed = remove()
+    return f"Removed {removed.directories} abandoned job directories ({removed.bytes:,} bytes)."
+
+
+@shared_task
 def send_admin_monthly_summary() -> int:
     """Mail everyone with Django-admin access the summary of the month that just ended
     (core.admin_summary). Returns how many mails were sent: one, or none without recipients."""

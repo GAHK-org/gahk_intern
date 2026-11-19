@@ -32,7 +32,7 @@ CSRF_COOKIE_SECURE = not DEBUG
 # nothing else. It used to be ".gahk.dk", shared with the public site — which now runs on separate,
 # less trusted webhosting that must never see an intranet session. New names as well, because a
 # browser keeps the old ".gahk.dk" `sessionid` until it expires and would otherwise send two cookies
-# of the same name to intern.gahk.dk; core.middleware.ExpireLegacyCookies deletes the old pair.
+# of the same name to intern.gahk.dk.
 # In production the names carry the __Host- prefix: the browser then accepts them only host-only,
 # Secure and on Path=/, so a compromised gahk.dk cannot plant a ".gahk.dk" cookie of the same name
 # that intern would read (it is same-site). Development serves plain http, where a __Host- cookie
@@ -90,10 +90,6 @@ MIDDLEWARE = [
     "core.health.HealthCheckMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
-    # Deletes the pre-intern.gahk.dk ".gahk.dk" session/CSRF cookies (see SESSION_COOKIE_NAME). This
-    # high up so every response carries the deletion — a redirect, a 403 — but after WhiteNoise, so
-    # static files never carry a Set-Cookie.
-    "core.middleware.ExpireLegacyCookies",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -256,6 +252,8 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 HEALTH_PROCESSES = [p for p in os.environ.get("HEALTH_PROCESSES", "default,media,beat").split(",") if p]
 
 CELERY_TASK_ROUTES = {
+    # To the worker whose /tmp holds the job directories it clears (core.job_directories).
+    "core.tasks.remove_abandoned_job_directories": {"queue": "media"},
     "photo_album.tasks.build_media_derivatives": {"queue": "media"},
     "photo_album.tasks.build_album_download": {"queue": "media"},
     "photo_album.tasks.process_album_import": {"queue": "media"},
@@ -398,6 +396,12 @@ CELERY_BEAT_SCHEDULE = {
     "close-lost-worker-jobs": {
         "task": "core.tasks.close_lost_jobs",
         "schedule": crontab(minute=35),
+    },
+    # Hourly: the backstop for the sweep each new worker process does as it starts. On "media" it
+    # waits behind a running encode, which is fine: that encode's own directory is the one in use.
+    "remove-abandoned-job-directories": {
+        "task": "core.tasks.remove_abandoned_job_directories",
+        "schedule": crontab(minute=25),
     },
     "purge-worker-job-results": {
         "task": "core.tasks.purge_worker_job_results",
@@ -694,6 +698,9 @@ NOTICE_IMAGE_MAX_MB = int(os.environ.get("NOTICE_IMAGE_MAX_MB", "5"))
 # feature caps its own uploads, so an ops change for one cannot silently change what residents may
 # post to another.
 EVENT_IMAGE_MAX_MB = int(os.environ.get("EVENT_IMAGE_MAX_MB", "5"))
+
+# Photos on a Reparationer ticket or note. Its own setting for the same reason as the ones above.
+REPAIR_IMAGE_MAX_MB = int(os.environ.get("REPAIR_IMAGE_MAX_MB", "5"))
 
 # The ceiling for an ANIMATED image, which cuts across the per-feature caps above rather than
 # joining them, because what it answers is a question about the FORMAT.

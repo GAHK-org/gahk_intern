@@ -412,6 +412,66 @@ def test_a_redelivered_conversion_whose_first_run_died_fails_and_releases_the_ro
     assert other.derivative_started_at == claimed_at
 
 
+def _free_disk(monkeypatch: pytest.MonkeyPatch, free: int) -> None:
+    import shutil
+
+    from photo_album import services
+
+    monkeypatch.setattr(
+        services.shutil, "disk_usage", lambda _: shutil._ntuple_diskusage(free * 2, free, free)
+    )
+
+
+@pytest.mark.django_db
+def test_a_video_the_disk_has_no_room_for_waits_without_using_an_attempt(
+    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In November 2026 encodes ran the disk full, crashed, and were counted towards giving up:
+    nothing wrong with the files, and three nights of it would have marked them FAILED."""
+    from photo_album import services
+
+    media = _broken_video(make_resident, size=1024**3)
+    _free_disk(monkeypatch, services.ENCODE_DISK_RESERVE + 3 * 1024**3 - 1)
+    monkeypatch.setattr(services, "video_variants", lambda *_: pytest.fail("encoded anyway"))
+
+    with pytest.raises(DerivativesNotBuilt, match=r"clip\.mpg .*needs 5[.,]0\xa0GB free.*Not counted"):
+        build_media_derivatives.apply(args=(media.pk,), task_id="first")
+
+    media.refresh_from_db()
+    assert media.derivative_state == DerivativeState.PENDING
+    assert media.derivative_attempts == 0
+    assert media.derivative_started_at is None  # released for the next pass at once
+
+
+@pytest.mark.django_db
+def test_a_video_with_room_enough_is_encoded(
+    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from photo_album import services
+
+    media = _broken_video(make_resident, size=1024**3)
+    _free_disk(monkeypatch, services.ENCODE_DISK_RESERVE + 3 * 1024**3)
+
+    with pytest.raises(DerivativesNotBuilt, match="attempt 1 of 3"):  # tried, and the file is broken
+        build_media_derivatives.apply(args=(media.pk,), task_id="first")
+
+
+@pytest.mark.django_db
+def test_a_photo_is_built_however_full_the_disk(
+    make_resident: Callable[..., Resident], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A photo is decoded in memory; the check is for encodes alone."""
+    from photo_album.models import Album
+    from photo_album.services import build_derivatives, upload_media
+
+    album = Album.objects.create(folder="2004", name="Fest")
+    photo = SimpleUploadedFile("photo.jpg", jpeg_bytes(), content_type="image/jpeg")
+    media = upload_media(album=album, uploaded_file=photo, resident=make_resident())
+    _free_disk(monkeypatch, 0)
+
+    assert build_derivatives(media) is True
+
+
 def test_a_failed_ffmpeg_says_why() -> None:
     from photo_album.services import ffmpeg_failure
 
