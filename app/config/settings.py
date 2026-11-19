@@ -82,6 +82,7 @@ INSTALLED_APPS = [
     "gahkflix",
     "drive",
     "regnskab",
+    "workgroups",
 ]
 
 MIDDLEWARE = [
