@@ -140,7 +140,9 @@ intern site's sidebar and top bar; its own header links back to the intern site.
   time.
 - Every day at 10.20, an uploader with drafts whose premiere is still ahead is warned they are not
   published (urgent within the last day): unpublished, there is no premiere.
-- The time windows (editing, new versions, binning) still run from the upload.
+- Until its premiere, a video is open as a draft is: edited freely, given a new version or binned by
+  its uploader. Afterwards the time windows (7 days for new versions and binning, 30 for free edits)
+  run from the premiere, or from the upload when the premiere was before it.
 
 ## Taking a video back
 
@@ -213,7 +215,9 @@ intern site's sidebar and top bar; its own header links back to the intern site.
 - Uploads bypass the app server: a multi-gigabyte film over dorm wifi cannot hold a web worker.
 - Two MP4 renditions and a quality switch rather than adaptive streaming: no extra player to ship,
   and nothing to break on a phone.
-- The time windows run from the upload, but a draft is its uploader's own until published. Its
+- The time windows run from the upload, but a draft is its uploader's own until published. A premiere
+  after the upload counts as the upload: the windows guard what people have seen, and nobody sees a
+  premiere before its minute (it could be made a draft and changed anyway). Its
   deletion is counted in calendar days, so it has one date that every reminder can name.
 - Reminders go out in the morning, not with the nightly sweeps: they are read by people.
 - The player opens over the page rather than as a page of its own because a browser only lets a page

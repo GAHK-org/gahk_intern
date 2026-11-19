@@ -75,7 +75,7 @@
 
     {% if needs_approval %}
       <p class="flix-banner-note" style="margin:0 0 18px">
-        Videoen blev uploadet for mere end 30 dage siden. Ændringer – også af billederne – sendes til godkendelse hos en anden administrator.
+        {% if video.windows_from_premiere %}Videoen havde premiere for mere end 30 dage siden.{% else %}Videoen blev uploadet for mere end 30 dage siden.{% endif %} Ændringer – også af billederne – sendes til godkendelse hos en anden administrator.
         {% if open_edit %}<a href="{% url 'gahkflix:request' open_edit.pk %}">Se det ventende forslag</a>.{% endif %}
       </p>
     {% elif video.is_published %}
@@ -273,7 +273,7 @@
         {% elif video.is_published and not processing %}
           <section id="ny-version" class="flix-panel">
             <h2>Ny version af filen</h2>
-            <p>Videofilen kan kun skiftes de første 7 dage efter upload, og de er gået ({{ video.revision_window_ends|date:"j. F Y" }}).</p>
+            <p>Videofilen kan kun skiftes de første 7 dage efter {% if video.windows_from_premiere %}premieren{% else %}upload{% endif %}, og de er gået ({{ video.revision_window_ends|date:"j. F Y" }}).</p>
           </section>
         {% endif %}
 
@@ -292,10 +292,10 @@
           {% elif open_delete %}
             <p>Der er en anmodning om at slette videoen. <a href="{% url 'gahkflix:request' open_delete.pk %}">Se anmodningen</a>.</p>
           {% elif can_request_deletion %}
-            <p>Videoen er over 7 dage gammel. Den kan kun slettes, hvis to andre administratorer godkender det.</p>
+            <p>{% if video.windows_from_premiere %}Premieren var for over 7 dage siden.{% else %}Videoen er over 7 dage gammel.{% endif %} Den kan kun slettes, hvis to andre administratorer godkender det.</p>
             <a class="flix-btn flix-btn-small flix-btn-quiet" href="{% url 'gahkflix:request_deletion' video.pk %}">Anmod om sletning</a>
           {% else %}
-            <p>Videoen er over 7 dage gammel og kan kun slettes af administratorerne. Skriv til dem, hvis den skal fjernes.</p>
+            <p>{% if video.windows_from_premiere %}Premieren var for over 7 dage siden, så videoen kan{% else %}Videoen er over 7 dage gammel og kan{% endif %} kun slettes af administratorerne. Skriv til dem, hvis den skal fjernes.</p>
           {% endif %}
         </section>
       </div>

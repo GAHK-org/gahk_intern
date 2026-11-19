@@ -15,6 +15,9 @@ out: at publishing, or at its premiere (Video.announced_at). Once published:
   * for 30 days after the upload, the uploader and the administrators edit its details directly;
     after that a change is a proposal one other administrator must accept (ChangeRequest.Kind.EDIT).
 
+A premiere after the upload counts as the upload here: until its minute it is open as a draft is, and
+the windows run from it (Video.window_start).
+
 "Administrators" here, as everywhere in GAHKFlix, means the administrator role and Fotogruppen
 (gahkflix.access.is_administrator).
 
@@ -43,7 +46,8 @@ from photo_album.models import TAG_MAX_LENGTH, validate_tag_name
 from .dating import DatePrecision, DateSource, PartialDate, premiere_label
 from .storage import get_video_storage
 
-# The windows in the spec, all counted from the upload (Video.created_at).
+# The windows in the spec, all counted from the upload (Video.created_at) — or from a premiere after
+# it, which nobody has seen before (Video.window_start).
 REVISION_WINDOW = timedelta(days=7)
 DIRECT_DELETE_WINDOW = timedelta(days=7)
 EDIT_WINDOW = timedelta(days=30)
@@ -233,7 +237,8 @@ class Video(models.Model):
     uploaded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="gahkflix_uploads"
     )
-    # The upload. Every time window in the policy (module docstring) runs from here.
+    # The upload. Every time window in the policy (module docstring) runs from here, or from a later
+    # premiere (window_start).
     created_at = models.DateTimeField(auto_now_add=True)
     published_at = models.DateTimeField(null=True, blank=True)
     # The film's own date, as much of it as is known: a day, a month or a year (dating.py), stored
@@ -351,16 +356,28 @@ class Video(models.Model):
         return premiere_label(self.premiere_at)
 
     @property
+    def window_start(self) -> datetime:
+        """Where the time windows run from: the upload, or a premiere after it. Nobody sees a premiere
+        before its minute, so until then it is open as a draft is, and its windows run from then."""
+        if self.premiere_at is not None and self.premiere_at > self.created_at:
+            return self.premiere_at
+        return self.created_at
+
+    @property
+    def windows_from_premiere(self) -> bool:
+        return self.window_start != self.created_at
+
+    @property
     def revision_window_ends(self) -> datetime:
-        return self.created_at + REVISION_WINDOW
+        return self.window_start + REVISION_WINDOW
 
     @property
     def direct_delete_window_ends(self) -> datetime:
-        return self.created_at + DIRECT_DELETE_WINDOW
+        return self.window_start + DIRECT_DELETE_WINDOW
 
     @property
     def edit_window_ends(self) -> datetime:
-        return self.created_at + EDIT_WINDOW
+        return self.window_start + EDIT_WINDOW
 
     @property
     def purge_at(self) -> datetime | None:

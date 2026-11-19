@@ -1409,6 +1409,57 @@ def test_uploaders_are_warned_daily_about_unpublished_premieres(
     assert one.expires_at <= timezone.now() + timedelta(days=1)
 
 
+def test_a_premiere_is_open_as_a_draft_until_it_comes_and_its_windows_run_from_it(admin: Resident) -> None:
+    """Uploaded 40 days ago for a premiere still to come: nobody has seen it, so a new version, binning
+    and free edits are open; once it is out, the 7 and 30 days run from the premiere."""
+    video = make_video(admin, days_old=40, premiere_at=evening(5))
+    client = client_for(admin)
+
+    def can_send_a_new_version() -> bool:
+        begin = client.post(
+            reverse("gahkflix:upload_begin"),
+            {
+                "name": "ny.mp4",
+                "size": 10,
+                "type": "video/mp4",
+                "fingerprint": secrets.token_hex(32),
+                "video": video.pk,
+            },
+            content_type="application/json",
+        )
+        return begin.status_code == 200
+
+    assert video.is_upcoming and video.windows_from_premiere
+    assert not access.edit_needs_approval(video) and can_send_a_new_version()
+    assert "Ny version af filen" in client.get(reverse("gahkflix:edit", args=[video.pk])).content.decode()
+
+    Video.objects.filter(pk=video.pk).update(premiere_at=timezone.now() - timedelta(days=8))
+    video.refresh_from_db()
+    assert not access.edit_needs_approval(video)  # 8 days after the premiere: still within 30
+    assert not can_send_a_new_version()
+    edit = client.get(reverse("gahkflix:edit", args=[video.pk])).content.decode()
+    assert "de første 7 dage efter premieren" in edit and "Premieren var for over 7 dage siden" in edit
+
+    Video.objects.filter(pk=video.pk).update(premiere_at=timezone.now() - timedelta(days=31))
+    video.refresh_from_db()
+    assert access.edit_needs_approval(video)
+    assert (
+        "Videoen havde premiere for mere end 30 dage siden"
+        in client.get(reverse("gahkflix:edit", args=[video.pk])).content.decode()
+    )
+
+    # A premiere before the upload (an old film's) changes nothing: the windows run from the upload.
+    old = make_video(admin, days_old=40, premiere_at=timezone.now() - timedelta(days=4000))
+    assert not old.windows_from_premiere and access.edit_needs_approval(old)
+
+
+def test_an_upcoming_premiere_may_be_binned_directly(admin: Resident) -> None:
+    video = make_video(admin, days_old=40, premiere_at=evening(5))
+    client_for(admin).post(reverse("gahkflix:delete", args=[video.pk]))
+    video.refresh_from_db()
+    assert video.is_binned
+
+
 def test_the_blur_levels() -> None:
     sharp = stripes()
     assert encoding.premiere_jpeg(sharp, PremiereBlur.NONE) == sharp
