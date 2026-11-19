@@ -34,6 +34,23 @@
       }
       if (installed) {
         document.documentElement.className = ios ? "installed ios" : "installed other";
+        // On an iPhone the button tries Safari itself: x-safari-https:// opens it from an app (iOS 17
+        // and later), and /install there is out of the old app. Where nothing happens (an older iOS),
+        // the page is still in view after a moment, and the button's own link opens /install here,
+        // which tells how to get to Safari. A hidden page means Safari opened: no fallback then.
+        if (ios) {
+          document.addEventListener("DOMContentLoaded", function () {
+            var button = document.getElementById("install-link");
+            button.addEventListener("click", function (event) {
+              event.preventDefault();
+              var fallback = setTimeout(function () { location.href = button.href; }, 1500);
+              document.addEventListener("visibilitychange", function () {
+                if (document.hidden) clearTimeout(fallback);
+              });
+              location.href = "x-safari-" + button.href.split("?")[0];
+            });
+          });
+        }
         return;
       }
       document.documentElement.className = "browser";
@@ -137,7 +154,8 @@
 
       <p>Notifikationer skal slås til igen i den nye app.</p>
 
-      <a class="btn" href="{{ intern_origin }}/install">Åbn intern.gahk.dk/install</a>
+      {# from=old-app: /install would otherwise take the old app for GAHK Intern, already installed. #}
+      <a class="btn" id="install-link" href="{{ intern_origin }}/install?from=old-app">Åbn intern.gahk.dk/install</a>
       <p class="muted ios-only">Mangler <strong>Føj til hjemmeskærm</strong>, når du åbner knappen, så åbn Safari selv, og skriv adressen.</p>
     </main>
   </div>
