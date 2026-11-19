@@ -75,19 +75,12 @@ working when intern or the image storage is down; editing needs intern.
 - The library itself needs a login. An old link to a library picture (`/media/cms/…`, public while
   intern rendered gahk.dk) still works for a picture gahk.dk shows: a visitor who is not logged in
   is sent on to gahk.dk's copy. Any other library file asks for a login.
-- All of the old site's pictures (77) move into the library, also the ones no page uses any more:
-  their old addresses on gahk.dk (`/static/legacy/image/…`, `/public/image/…`) send visitors on to
-  the copies, so links from other websites and old mails keep working. The files travel with the
-  code (`static/legacy/image/upload/`) until the move is done. The sync every two minutes imports
-  them by itself, a batch at a time, the ones the content uses first, and points the content at the
-  library copies, recorded as "System". Right after the deploy the operator runs the manual import,
-  which takes all of them at once.
-- The overview says how many of the old pictures are in the library ("x af y gamle billeder").
-- An old picture nothing uses shows as "Ikke i brug" and may be deleted. A deleted one is not imported
-  again (unless content uses it again), and gahk.dk drops it and its old address at the next publish.
-- A picture that is not there or is not a usable image is reported once and not tried again;
-  the overview lists them, and a manual import can try them again. Until a picture has moved, it is
-  missing on gahk.dk.
+- All of the old site's pictures (77) were moved into the library once, at the move to
+  intern.gahk.dk, also the ones no page used any more, and the content was pointed at the copies.
+  Their old addresses on gahk.dk (`/static/legacy/image/…`, `/public/image/…`) send visitors on to
+  the copies, so links from other websites and old mails keep working.
+- An old picture nothing uses shows as "Ikke i brug" and may be deleted; gahk.dk then drops it and
+  its old address at the next publish.
 - Images keep their file name, Danish letters included (Værelse på Øen.jpg is stored as
   Værelse_på_Øen.jpg and shown on gahk.dk as værelse-på-øen.jpg). Images already stored under a
   name without them keep that name.
@@ -124,10 +117,11 @@ working when intern or the image storage is down; editing needs intern.
   image storage; intern sends it signed snapshots. Losing the webhost loses no content.
 - **The Django admin no longer edits website content.** It would be a second way in that records no
   history and publishes nothing.
-- **The old pictures are content, not code.** They lived in the code repository; they move into
-  the image library like any other picture. Until the move is done they stay in the repository and
-  the import reads them from the running code, so it needs no copy, no network and no list of its
-  own: every file below `upload/` is one. The files and the import leave together afterwards.
+- **The old pictures are content, not code.** They lived in the code repository; now they are in
+  the image library like any other picture, and the repository no longer holds them. The import
+  fetches them from the repository's public history (one fixed version), so nobody has to remember
+  to supply a copy at the move. The list of files and their checksums is committed, made from that
+  history.
 - **Every old picture, not only the used ones.** Old picture addresses are linked from outside the
   site, where nobody can update them; 34 MB is a small price for none of them breaking.
 - **File names stay UTF-8.** Æ, ø and å are kept, not spelled out: a name only has to be

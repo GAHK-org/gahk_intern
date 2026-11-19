@@ -7,11 +7,20 @@ on:
 # The workflow only updates the integration branch. A conflict makes the merge fail visibly instead
 # of overwriting dev; resolve it in a normal pull request.
 #
-# It prepares the merge but does NOT open the pull request: the organisation forbids Actions from
-# creating or approving one (409 "The organization does not allow GitHub Actions to create or
-# approve pull requests"), and the repo-level toggle cannot override that. Automating it would mean
-# a PAT or App token, which is a long-lived credential for a link somebody clicks a few times a
-# year. So the job prints the compare link instead, and `pull-requests: write` is gone with it.
+# It pushes the merge as a branch and opens the pull request into dev itself, as github-actions[bot].
+# That needs the organisation's "Allow GitHub Actions to create and approve pull requests". It also
+# makes the bot the author, so the person who merged into main can approve it; a pull request they
+# opened themselves would need somebody else.
+#
+# GitHub starts no workflow runs for a pull request that GITHUB_TOKEN opened, with one exception:
+# the `pull_request` runs (CI) are created waiting for "Approve workflows to run" in the merge box.
+# branch-policy.yml runs on `pull_request_target`, which the exception does not name, so this job
+# dispatches it once the pull request exists (workflow_dispatch always starts a run); the required
+# branch-flow and in-sync statuses would otherwise never appear. Dispatching rather than running the
+# script here keeps the run in branch-policy's queue, so it cannot post a verdict older than one
+# another run has already posted. A human still approves and merges: a bypass for GitHub
+# Actions on dev would let any branch's own workflow push to dev. Their merge is an ordinary push,
+# so branch-policy re-judges the other pull requests into dev as usual.
 #
 # It also stops when the merge carries nothing. Every dev -> main pull request leaves main holding a
 # merge commit dev lacks, so main always reads as "unmerged" even though the files are identical —
@@ -20,6 +29,8 @@ on:
 # next time there is.
 permissions:
   contents: write
+  pull-requests: write
+  actions: write  # dispatch branch-policy.yml
 
 concurrency:
   group: sync-main-to-dev
@@ -28,6 +39,8 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -60,17 +73,52 @@ jobs:
           git push origin "HEAD:refs/heads/${branch}"
           echo "name=${branch}" >> "$GITHUB_OUTPUT"
 
-      - name: Link the pull request to open
+      - name: Open the pull request
+        id: pr
         if: steps.carries.outputs.result == 'true'
         env:
           BRANCH: ${{ steps.branch.outputs.name }}
+          MESSAGE: ${{ github.event.head_commit.message }}
         run: |
-          url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/dev...${BRANCH}?expand=1"
-          {
-            echo "### Sync main into dev"
-            echo
-            echo "Branch \`${BRANCH}\` holds the merge of \`main\` into \`dev\`."
-            echo "Actions may not open the pull request here, so open it by hand:"
-            echo
-            echo "[Open the pull request](${url})"
-          } >> "$GITHUB_STEP_SUMMARY"
+          subject=${MESSAGE%%$'\n'*}
+          short=${GITHUB_SHA::8}
+          body=$(cat <<EOF
+          Merges \`main\` into \`dev\`, so \`dev\` gets ${short} ("${subject}") and anything else that reached \`main\` without passing through \`dev\`.
+
+          1. Click **Approve workflows to run** in the merge box, so CI runs.
+          2. Approve the pull request.
+          3. Merge with **Create a merge commit** – never squash.
+
+          Until this is merged, \`in-sync\` blocks every other pull request into \`dev\`.
+
+          Opened by [Sync main to dev](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}).
+          EOF
+          )
+          url=$(gh pr create --base dev --head "$BRANCH" --title "Sync main into dev (${short})" --body "$body")
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+          echo "### Sync main into dev" >> "$GITHUB_STEP_SUMMARY"
+          echo "Opened ${url}" >> "$GITHUB_STEP_SUMMARY"
+          # Ask whoever merged into main to review. A bot, or anything else GitHub refuses, must not
+          # fail the sync: the pull request exists either way.
+          gh api --silent "repos/${GITHUB_REPOSITORY}/pulls/${url##*/}/requested_reviewers" \
+            -f "reviewers[]=${GITHUB_ACTOR}" ||
+            echo "::warning::Could not request a review from ${GITHUB_ACTOR}"
+
+      # The new pull request has everything the older ones have, so close them rather than leave
+      # two sync pull requests waiting for review.
+      - name: Close superseded sync pull requests
+        if: steps.carries.outputs.result == 'true'
+        env:
+          BRANCH: ${{ steps.branch.outputs.name }}
+          URL: ${{ steps.pr.outputs.url }}
+        run: |
+          gh pr list --base dev --state open --limit 200 --json number,headRefName \
+            --jq ".[] | select(.headRefName | startswith(\"automation/sync-main-\")) | select(.headRefName != \"${BRANCH}\") | .number" |
+            while read -r number; do
+              gh pr close "$number" --delete-branch --comment "Superseded by ${URL}."
+            done
+
+      # See the comment at the top: nothing else posts branch-flow and in-sync on this pull request.
+      - name: Judge the pull request
+        if: steps.carries.outputs.result == 'true'
+        run: gh workflow run branch-policy.yml --ref main
