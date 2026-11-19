@@ -147,20 +147,20 @@ Drive
 | Video and audio (mp4, webm, mov, mp3, m4a) | the browser's player, no conversion |
 | Text (txt, csv, json, log …) | the first 1 MB; csv as a table |
 | Markdown | rendered |
-| Office (docx, xlsx, pptx, odt, ods, odp) | OnlyOffice, view mode |
+| Office (docx, xlsx, pptx, odt, ods, odp) | the online editor (Euro-Office), view mode |
 
 - Images get thumbnails; other files get an icon for their type.
 - An image is shown as a copy of at most 1600 px, made in the background with its thumbnail, so a HEIC is seen in every browser. Images over 50 MB are only downloaded. Next and previous follow the folder's images by name, also with the arrow keys and a swipe, and are not offered to someone the file alone is shared with.
 - A file's type is read from its name, never from what the uploader's browser said. Text is read as UTF-8, or as Windows' Western encoding for what a Danish Excel saves; a CSV shows its first 2,000 rows; markdown is rendered without any HTML of its own.
-- Until OnlyOffice is switched on, office files are downloaded. It is built switched off, to run on the same server once that is upgraded.
+- Until live editing is switched on, office files are downloaded. It is built switched off, to run on the same server once that is upgraded.
 - Everyone who opens the same version edits it together. The edited document becomes a new version when the last of them closes it. If the file was locked or binned while it was open, the work is saved as a new file beside it rather than lost.
 - `Nyt dokument`, `Nyt regneark` and `Ny præsentation` make a blank file, numbered if the name is taken, and open it.
-- On a phone, documents open to be read: OnlyOffice's free edition edits only on a computer, and the page says so.
-- docx, xlsx and pptx can be edited live together in OnlyOffice, showing who else is in the document. Any folder you can write to has `Nyt dokument`, `Nyt regneark` and `Ny præsentation`.
-- Where you cannot write, or the file is locked, OnlyOffice opens in view mode.
-- Older formats (doc, xls, ppt, odt …) open for viewing. `Rediger` makes a docx, xlsx or pptx copy next to the original.
-- OnlyOffice is switched on and off by a server setting. When off, or not responding, office files download, the new-document buttons are hidden, and nothing opens for live editing; everything else works.
-- The OnlyOffice server never receives a resident's login. It only reaches the documents Drive opens in it.
+- On a phone, a resident who may edit gets the computer layout of the editor, and the page says it suits small changes best; one who only reads gets the phone layout. The free editions' phone layout only reads.
+- docx, xlsx and pptx can be edited live together in the browser, showing who else is in the document. Any folder you can write to has `Nyt dokument`, `Nyt regneark` and `Ny præsentation`.
+- Where you cannot write, or the file is locked, the editor opens in view mode.
+- Older formats (doc, xls, ppt, odt …) open for viewing. `Rediger en kopi` makes a docx, xlsx or pptx copy next to the original.
+- Live editing is switched on and off by a server setting. When off, or not responding, office files download, the new-document buttons are hidden, and nothing opens for live editing; everything else works.
+- The editing server never receives a resident's login. It only reaches the documents Drive opens in it.
 
 ## Search and the list
 
@@ -178,4 +178,5 @@ Drive
 - **Purging needs a second person**, so one member cannot quietly rewrite a group's history; binning the file hides it meanwhile.
 - **Unlocking never widens access, and a folder unlock leaves its files locked**: adding one document to an old folder should not reopen everything in it.
 - **Anyone who can write can delete**, rather than only the creator: the bin, the creator's notification and the history protect against mistakes, and a creator-only rule leaves files nobody can tidy once the creator leaves.
+- **Euro-Office for live editing**, the European fork of OnlyOffice, rather than OnlyOffice or Collabora Online. It is free, works fully in Danish, and speaks OnlyOffice's API, so OnlyOffice can replace it unchanged. Neither it nor OnlyOffice edits in its free phone layout; Collabora does, but would need a separate integration and renders on the server, which makes typing less immediate.
 - **No quotas and no full-text search**: admins see every space's size, and indexing file contents costs the server capacity that is short.

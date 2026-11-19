@@ -304,7 +304,7 @@ function waitAndReload(limit: number): void {
   window.setTimeout(() => location.reload(), 3000)
 }
 
-/** The OnlyOffice editor page: load the Document Server's script and open the document in it. A
+/** The live editing page: load the Document Server's script and open the document in it. A
  * server that does not answer leaves a message instead of a blank page. */
 function initOffice(): void {
   const host = document.querySelector<HTMLElement>("[data-drive-office]")
@@ -314,7 +314,7 @@ function initOffice(): void {
     host.replaceChildren()
     const note = document.createElement("p")
     note.className = "drive-note"
-    note.textContent = "OnlyOffice svarer ikke lige nu. Hent filen i stedet, eller prøv igen senere."
+    note.textContent = "Editoren svarer ikke lige nu. Hent filen i stedet, eller prøv igen senere."
     host.append(note)
   }
   const script = document.createElement("script")

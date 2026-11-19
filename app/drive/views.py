@@ -359,7 +359,7 @@ def _preview_context(viewer: Viewer, file: File, latest: FileVersion) -> dict[st
 
 
 def _office_context(viewer: Viewer, file: File) -> dict[str, bool] | None:
-    """What OnlyOffice offers for the file, when it is on and opens the file at all."""
+    """What live editing offers for the file, when it is on and opens the file at all."""
     if office.document_type(file.name) is None or not office.enabled():
         return None
     return {

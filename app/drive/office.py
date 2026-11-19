@@ -1,4 +1,6 @@
-"""Live editing in OnlyOffice Document Server (spec/features/Drive.md, Preview and live editing).
+"""Live editing in a Document Server that speaks OnlyOffice's API (spec/features/Drive.md, Preview
+and live editing): Euro-Office, the OnlyOffice fork, which is what DEPLOY.md §4h runs. OnlyOffice's
+own Document Server works the same way; the settings are named after the API, ONLYOFFICE_*.
 
 SWITCHED OFF while ONLYOFFICE_URL is empty, and whenever the Document Server does not answer its
 health check: office files are then downloaded, and nothing offers to open them. Everything else in
@@ -110,7 +112,7 @@ def _healthcheck() -> bool:
         with urllib.request.urlopen(f"{settings.ONLYOFFICE_INTERNAL_URL}/healthcheck", timeout=3) as response:  # noqa: S310  # nosec B310 - our own setting
             return response.read().strip() == b"true"
     except (OSError, ValueError):
-        logger.warning("drive: OnlyOffice does not answer its health check", exc_info=True)
+        logger.warning("drive: the Document Server does not answer its health check", exc_info=True)
         return False
 
 
@@ -119,7 +121,7 @@ def _extension(name: str) -> str:
 
 
 def document_type(name: str) -> str | None:
-    """`word`, `cell` or `slide` for what OnlyOffice opens, else None."""
+    """`word`, `cell` or `slide` for what the Document Server opens, else None."""
     extension = _extension(name)
     return EDITABLE.get(extension) or VIEW_ONLY.get(extension)
 
@@ -213,7 +215,8 @@ def editor_config(
 ) -> dict[str, Any]:
     kind = document_type(file.name)
     config: dict[str, Any] = {
-        # A phone gets OnlyOffice's own mobile editor; the desktop one does not fit.
+        # The phone editor, for reading on a phone. It only reads in the free editions (Euro-Office and
+        # OnlyOffice alike), so a phone that edits gets the computer layout: cramped, but it edits.
         "type": "mobile" if phone else "desktop",
         "width": "100%",
         "height": "100%",
@@ -247,7 +250,9 @@ def callback(file_id: int, data: dict[str, Any]) -> bool:
     file = File.objects.filter(pk=file_id).first()
     key = str(data.get("key", ""))
     if file is None or not key.startswith(f"drive-{file_id}-"):
-        logger.warning("drive: OnlyOffice called back about %s for file %s, which is not it", key, file_id)
+        logger.warning(
+            "drive: the Document Server called back about %s for file %s, which is not it", key, file_id
+        )
         return False
     status = int(data.get("status", 0))
     if status == 1:  # somebody joined or left: being edited
@@ -258,9 +263,9 @@ def callback(file_id: int, data: dict[str, Any]) -> bool:
         if status == 2:
             File.objects.filter(pk=file.pk, editing_key=key).update(editing_key="", editing_at=None)
         return saved
-    if status in (3, 4, 7):  # closed with nothing to save, or OnlyOffice could not save
+    if status in (3, 4, 7):  # closed with nothing to save, or it could not save
         if status != 4:
-            logger.error("drive: OnlyOffice could not save %s (status %s)", key, status)
+            logger.error("drive: the Document Server could not save %s (status %s)", key, status)
         File.objects.filter(pk=file.pk, editing_key=key).update(editing_key="", editing_at=None)
     return True
 
@@ -320,7 +325,7 @@ def _editor_ids(data: dict[str, Any]) -> list[int]:
 def _save(file: File, data: dict[str, Any]) -> bool:
     url = _from_document_server(str(data.get("url", "")))
     if url is None:
-        logger.error("drive: OnlyOffice named %r to save %s from; refused", data.get("url"), file.pk)
+        logger.error("drive: the Document Server named %r to save %s from; refused", data.get("url"), file.pk)
         return False
     ids = _editor_ids(data)
     by_id = Resident.objects.in_bulk(ids)
@@ -328,7 +333,7 @@ def _save(file: File, data: dict[str, Any]) -> bool:
     try:
         key, size = _download(url)
     except (OSError, ValidationError):
-        logger.exception("drive: could not fetch the edited %s from OnlyOffice", file.pk)
+        logger.exception("drive: could not fetch the edited %s from the Document Server", file.pk)
         return False
     content_type = CONTENT_TYPES.get(_extension(file.name), file.content_type)
     with transaction.atomic():
@@ -422,16 +427,14 @@ def convert(viewer: Viewer, file: File, resident: Resident) -> File:
         with urllib.request.urlopen(request, timeout=120) as response:  # noqa: S310  # nosec B310 - our own setting
             answer = json.load(response)
         if answer.get("error") or not answer.get("endConvert"):
-            raise ValidationError(f"OnlyOffice error {answer.get('error')}")
+            raise ValidationError(f"Document Server error {answer.get('error')}")
         url = _from_document_server(str(answer.get("fileUrl", "")))
         if url is None:
-            raise ValidationError("OnlyOffice named a file elsewhere")
+            raise ValidationError("the Document Server named a file elsewhere")
         key, size = _download(url)
     except (OSError, ValueError, ValidationError) as exc:
-        logger.exception("drive: OnlyOffice could not convert %s", file.pk)
-        raise ValidationError(
-            "OnlyOffice kunne ikke lave en kopi, der kan redigeres. Prøv igen senere."
-        ) from exc
+        logger.exception("drive: the Document Server could not convert %s", file.pk)
+        raise ValidationError("Der kunne ikke laves en kopi, der kan redigeres. Prøv igen senere.") from exc
     return services.add_upload(
         viewer,
         file.folder,

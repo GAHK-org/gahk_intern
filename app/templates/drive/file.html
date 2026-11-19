@@ -30,12 +30,12 @@
     </div>
   {% endif %}
 
-  {% if office.in_use %}<p class="drive-note mb-4">Filen er åben i OnlyOffice lige nu. Ændringerne bliver en ny version, når den sidste lukker den.</p>{% endif %}
+  {% if office.in_use %}<p class="drive-note mb-4">Filen bliver redigeret lige nu. Ændringerne bliver en ny version, når den sidste lukker den.</p>{% endif %}
   {% include "drive/_preview.html" %}
 
   <div class="drive-actions mb-4">
     {% if office %}
-      <a class="btn btn-primary" href="{% url 'drive:office' file.pk %}">{% if office.edit %}Rediger i OnlyOffice{% else %}Åbn i OnlyOffice{% endif %}</a>
+      <a class="btn btn-primary" href="{% url 'drive:office' file.pk %}">{% if office.edit %}Rediger{% else %}Åbn{% endif %}</a>
       {% if office.convert %}
         <form method="post" action="{% url 'drive:office_convert' file.pk %}" class="drive-inline-form">
           {% csrf_token %}

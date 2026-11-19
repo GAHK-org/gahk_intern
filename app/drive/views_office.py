@@ -1,4 +1,4 @@
-"""OnlyOffice: the editor page, a new document, an editable copy of an older format - and the two
+"""Live editing: the editor page, a new document, an editable copy of an older format - and the two
 addresses the Document Server itself calls, which have no login: fetching a document by a signed
 link, and posting back the result (drive/office.py)."""
 
@@ -27,23 +27,23 @@ def _on() -> None:
 
 @access.access_required
 def editor(request: HttpRequest, pk: int) -> HttpResponse:
-    """The file in OnlyOffice: to edit for whoever could upload a new version of it (an edit share
+    """The file in the editor: to edit for whoever could upload a new version of it (an edit share
     is enough), otherwise - and for the older formats, and a locked file - to view."""
     _on()
     file, viewer = live_file(request, pk)
     if office.document_type(file.name) is None:
         raise Http404("not an office file")
-    # OnlyOffice's free edition edits only on a computer: its phone editor opens documents to read.
     phone = "Mobi" in request.headers.get("User-Agent", "")
-    can_edit = office.editable(file.name) and viewer.can_version(file)
-    edit = can_edit and not phone
+    edit = office.editable(file.name) and viewer.can_version(file)
     config = office.editor_config(
         file,
         file.latest_version(),
         current_resident(request),
         edit=edit,
         back_url=request.build_absolute_uri(reverse("drive:file", args=[file.pk])),
-        phone=phone,
+        # The phone editor only reads in the free editions (office.editor_config): a phone that may
+        # edit gets the computer layout instead.
+        phone=phone and not edit,
     )
     return _render(
         request,
@@ -54,7 +54,7 @@ def editor(request: HttpRequest, pk: int) -> HttpResponse:
             "config": config,
             "api_url": f"{settings.ONLYOFFICE_URL}/web-apps/apps/api/documents/api.js",
             "edit": edit,
-            "edit_elsewhere": can_edit and phone,
+            "edit_on_phone": edit and phone,
         },
     )
 

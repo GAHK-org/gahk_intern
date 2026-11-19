@@ -20,7 +20,7 @@ urlpatterns = [
     path("file/<int:pk>/office", views_office.editor, name="office"),
     path("file/<int:pk>/office/copy", views_office.convert, name="office_convert"),
     path("folder/<int:pk>/new-document", views_office.new_document, name="office_new"),
-    # Called by the OnlyOffice Document Server, not by a browser: no login, a signed token instead.
+    # Called by the Document Server, not by a browser: no login, a signed token instead.
     path("office/fetch/<str:token>", views_office.fetch, name="office_fetch"),
     path("office/callback/<str:token>", views_office.callback, name="office_callback"),
     path("folder/<int:pk>/zip", views_search.request_zip, name="request_zip"),

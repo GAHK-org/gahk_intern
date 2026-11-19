@@ -32,7 +32,7 @@ BIN_DAYS = 30
 LOCK_AFTER_DAYS = 365
 # The longest an unlock lasts.
 MAX_UNLOCK_DAYS = 30
-# OnlyOffice reports each join and leave; a file it said nothing about for this long is not taken to
+# The Document Server reports each join and leave; a file it said nothing about for this long is not taken to
 # be open for editing any more.
 LIVE_EDIT_STALE = timedelta(hours=6)
 # A Delt mappe: the fewest members it may have, how long it lasts unless set otherwise, how far ahead
@@ -230,8 +230,8 @@ class File(Lockable):
     deleted_by = models.ForeignKey(
         "residents.Resident", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
-    # Open for live editing in OnlyOffice (drive/office.py): the editing session's document key, and
-    # when OnlyOffice last said somebody was in it. An upload cannot replace it meanwhile.
+    # Open for live editing (drive/office.py): the editing session's document key, and
+    # when the Document Server last said somebody was in it. An upload cannot replace it meanwhile.
     editing_key = models.CharField(max_length=128, blank=True)
     editing_at = models.DateTimeField(null=True, blank=True)
 
@@ -253,7 +253,7 @@ class File(Lockable):
         super().save(*args, **kwargs)  # type: ignore[arg-type]
 
     def in_live_edit(self, now: datetime | None = None) -> bool:
-        """Open for live editing, by OnlyOffice's last word on it (drive/office.py). A session it never
+        """Open for live editing, by the Document Server's last word on it (drive/office.py). A session it never
         reported the end of stops counting after LIVE_EDIT_STALE."""
         if not self.editing_key or self.editing_at is None:
             return False

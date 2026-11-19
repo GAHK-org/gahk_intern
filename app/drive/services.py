@@ -122,9 +122,7 @@ def check_upload(
     if on_conflict == REPLACE and existing.lock_active():
         raise ValidationError(f"„{name}“ er låst og kan ikke erstattes. Vælg at beholde begge.")
     if on_conflict == REPLACE and existing.in_live_edit():
-        raise ValidationError(
-            f"„{name}“ redigeres lige nu i OnlyOffice og kan ikke erstattes. Vælg at beholde begge."
-        )
+        raise ValidationError(f"„{name}“ redigeres lige nu og kan ikke erstattes. Vælg at beholde begge.")
     if on_conflict == REPLACE and not ignore_stale:
         check_stale(existing, viewer.resident_id)
     return name
@@ -263,7 +261,7 @@ def check_version(viewer: Viewer, file: File, size: int, *, ignore_stale: bool =
     if file.deleted_at is not None or not viewer.can_version(file):
         raise PermissionDenied
     if file.in_live_edit():
-        raise ValidationError(f"„{file.name}“ redigeres lige nu i OnlyOffice og kan ikke erstattes.")
+        raise ValidationError(f"„{file.name}“ redigeres lige nu og kan ikke erstattes.")
     if size <= 0:
         raise ValidationError("Filen er tom.")
     if size > max_upload_bytes():

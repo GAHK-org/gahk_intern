@@ -1,4 +1,4 @@
-"""Drive: live editing in OnlyOffice - off unless configured and answering, the signed editor
+"""Drive: live editing in the Document Server (Euro-Office) - off unless configured and answering, the signed editor
 configuration, the Document Server's own fetches and callbacks, new documents and editable copies.
 The Document Server is played by a fake `urlopen`."""
 
@@ -128,7 +128,10 @@ def test_off_by_default_office_files_are_downloaded(people: dict[str, Resident],
     member = _client(people["member"])
     winter = _period_folder(group, WINTER)
     file = _docx(member, winter)
-    assert "OnlyOffice" not in member.get(reverse("drive:file", args=[file.pk])).content.decode()
+    assert (
+        reverse("drive:office", args=[file.pk])
+        not in member.get(reverse("drive:file", args=[file.pk])).content.decode()
+    )
     assert "Nyt dokument" not in member.get(reverse("drive:folder", args=[winter.pk])).content.decode()
     assert member.get(reverse("drive:office", args=[file.pk])).status_code == 404
 
@@ -139,7 +142,10 @@ def test_a_server_that_does_not_answer_switches_it_off(
     server.healthy = False
     member = _client(people["member"])
     file = _docx(member, _period_folder(group, WINTER))
-    assert "OnlyOffice" not in member.get(reverse("drive:file", args=[file.pk])).content.decode()
+    assert (
+        reverse("drive:office", args=[file.pk])
+        not in member.get(reverse("drive:file", args=[file.pk])).content.decode()
+    )
     assert member.get(reverse("drive:office", args=[file.pk])).status_code == 404
 
 
@@ -152,7 +158,7 @@ def test_a_member_edits_and_the_signed_configuration_names_only_the_resident(
     member = _client(people["member"])
     winter = _period_folder(group, WINTER)
     file = _docx(member, winter)
-    assert "Rediger i OnlyOffice" in member.get(reverse("drive:file", args=[file.pk])).content.decode()
+    assert ">Rediger</a>" in member.get(reverse("drive:file", args=[file.pk])).content.decode()
     assert "Nyt regneark" in member.get(reverse("drive:folder", args=[winter.pk])).content.decode()
 
     config = _config(member, file)
@@ -165,13 +171,14 @@ def test_a_member_edits_and_the_signed_configuration_names_only_the_resident(
     }
     assert config["editorConfig"]["callbackUrl"].startswith("http://web:8000/drive/office/callback/")
 
-    # OnlyOffice's free edition only reads on a phone, so a phone opens it to read, and says so.
+    # The free editions' phone editor only reads, so a phone that may edit gets the computer layout,
+    # and is told so.
     phone = Client(headers={"User-Agent": "Mozilla/5.0 (iPhone) Mobile/15E148"})
     phone.force_login(people["member"])
     on_phone = _config(phone, file)
-    assert (on_phone["type"], on_phone["editorConfig"]["mode"]) == ("mobile", "view")
+    assert (on_phone["type"], on_phone["editorConfig"]["mode"]) == ("desktop", "edit")
     page = phone.get(reverse("drive:office", args=[file.pk])).content.decode()
-    assert "Rediger det på en computer" in page
+    assert "computerudgaven af editoren" in page
 
     # Everyone on the same version shares the session's key.
     assert _config(_client(people["colleague"]), file)["document"]["key"] == config["document"]["key"]
@@ -196,8 +203,15 @@ def test_a_reader_and_a_locked_file_open_to_view(
         actor=people["member"],
     )
     friend = _client(people["friend"])
-    assert "Åbn i OnlyOffice" in friend.get(reverse("drive:file", args=[file.pk])).content.decode()
+    assert ">Åbn</a>" in friend.get(reverse("drive:file", args=[file.pk])).content.decode()
     assert _config(friend, file)["editorConfig"]["mode"] == "view"
+    # Reading on a phone: the phone editor.
+    friend_phone = Client(headers={"User-Agent": "Mozilla/5.0 (iPhone) Mobile/15E148"})
+    friend_phone.force_login(people["friend"])
+    assert (_config(friend_phone, file)["type"], _config(friend_phone, file)["editorConfig"]["mode"]) == (
+        "mobile",
+        "view",
+    )
 
     file.locked_at = timezone.now()
     file.save()
@@ -306,7 +320,7 @@ def test_an_older_format_opens_to_view_and_rediger_makes_a_copy(
     member = _client(people["member"])
     file = _docx(member, _period_folder(group, WINTER), "Vedtægter.doc")
     page = member.get(reverse("drive:file", args=[file.pk])).content.decode()
-    assert "Åbn i OnlyOffice" in page
+    assert ">Åbn</a>" in page
     assert "Rediger en kopi" in page
     assert _config(member, file)["editorConfig"]["mode"] == "view"
 

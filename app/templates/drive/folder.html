@@ -92,7 +92,7 @@
         {% include "drive/_upload.html" with label="Læg filer op" multiple=True %}
       {% endif %}
       {% if office_new %}
-        {% comment %} A blank docx, xlsx or pptx, opened in OnlyOffice (drive/office.py). {% endcomment %}
+        {% comment %} A blank docx, xlsx or pptx, opened for live editing (drive/office.py). {% endcomment %}
         <form method="post" action="{% url 'drive:office_new' folder.pk %}" class="drive-inline-form"{% if instead %} data-drive-instead="{{ instead.officeUrl }}"{% endif %}>
           {% csrf_token %}
           {% for kind, item in office_new.items %}
