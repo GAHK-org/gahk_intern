@@ -40,9 +40,8 @@ from core.storage import MediaS3Storage
 from opslagstavle.models import Notice
 from rooms.models import RoomConditionScore
 
-# A /media/ reference inside stored HTML or a stored URL column. Deliberately not the regex in
-# cms.legacy_images: that one matches the *legacy* /public/image/ paths, which are a different
-# migration and live under static/, not here.
+# A /media/ reference inside stored HTML or a stored URL column (not the old site's /public/image/
+# paths, which lived under static/).
 MEDIA_REF = re.compile(r"/media/([^\s\"'()<>]+)")
 
 
