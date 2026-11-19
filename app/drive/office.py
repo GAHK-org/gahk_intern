@@ -107,7 +107,7 @@ def enabled() -> bool:
 
 def _healthcheck() -> bool:
     try:
-        with urllib.request.urlopen(f"{settings.ONLYOFFICE_INTERNAL_URL}/healthcheck", timeout=3) as response:  # noqa: S310 - our own setting
+        with urllib.request.urlopen(f"{settings.ONLYOFFICE_INTERNAL_URL}/healthcheck", timeout=3) as response:  # noqa: S310  # nosec B310 - our own setting
             return response.read().strip() == b"true"
     except (OSError, ValueError):
         logger.warning("drive: OnlyOffice does not answer its health check", exc_info=True)
@@ -286,7 +286,7 @@ def _download(url: str) -> tuple[str, int]:
     """The document at `url`, stored under a new key: (key, size)."""
     limit = services.max_upload_bytes()
     with (
-        urllib.request.urlopen(url, timeout=TIMEOUT) as response,  # noqa: S310 - _from_document_server checked it
+        urllib.request.urlopen(url, timeout=TIMEOUT) as response,  # noqa: S310  # nosec B310 - _from_document_server checked it
         SpooledTemporaryFile(16 * 1024 * 1024) as copy,
     ):
         size = 0
@@ -419,7 +419,7 @@ def convert(viewer: Viewer, file: File, resident: Resident) -> File:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=120) as response:  # noqa: S310  # nosec B310 - our own setting
             answer = json.load(response)
         if answer.get("error") or not answer.get("endConvert"):
             raise ValidationError(f"OnlyOffice error {answer.get('error')}")
