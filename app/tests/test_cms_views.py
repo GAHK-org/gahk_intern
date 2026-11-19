@@ -13,6 +13,7 @@ from django.utils import timezone
 from PIL import Image
 
 from cms import services
+from cms.forms import NewsForm
 from cms.middleware import EDITOR_HINT_COOKIE
 from cms.models import (
     CmsImage,
@@ -28,6 +29,8 @@ from cms.models import (
 )
 from cms.views import with_base
 from residents.models import Resident
+
+from .form_data import date_and_time
 
 
 def client_for(resident: Resident | None) -> Client:
@@ -452,7 +455,7 @@ def test_news_are_created_edited_and_deleted_through_the_services(editor: Reside
     client = client_for(editor)
     client.post(
         reverse("cms:news_create"),
-        {"title": "Julefrokost", "published_at": "2026-11-12T10:30", "body": "<p>Kom</p>"},
+        {"title": "Julefrokost", **date_and_time("published_at", "2026-11-12T10:30"), "body": "<p>Kom</p>"},
     )
     item = NewsItem.objects.get(title="Julefrokost")
     assert item.published_at.isoformat().startswith("2026-11-12T09:30")  # 10:30 in Copenhagen
@@ -482,7 +485,7 @@ def test_saving_a_news_item_untouched_keeps_its_time_and_writes_nothing(
     with django_capture_on_commit_callbacks(execute=True):
         client.post(
             reverse("cms:news_edit", args=[item.pk]),
-            {"title": "Nyhed", "published_at": shown, "body": "<p>x</p>"},
+            {"title": "Nyhed", **date_and_time("published_at", shown), "body": "<p>x</p>"},
         )
 
     item.refresh_from_db()
@@ -786,3 +789,11 @@ def test_saving_a_page_unchanged_says_so_and_writes_nothing(editor: Resident, fr
 
     assert "Der var ingen ændringer at gemme." in response.content.decode()
     assert ContentChange.objects.count() == before
+
+
+def test_a_news_preview_uses_the_time_as_typed_and_now_while_it_is_unfinished() -> None:
+    typed = NewsForm({"title": "x", "published_at_date": "2026-11-12", "published_at_time": "10.30"})
+    unfinished = NewsForm({"title": "x", "published_at_date": "2026-11-12", "published_at_time": ""})
+
+    assert typed.preview_data()["published_at"].isoformat() == "2026-11-12T10:30:00+01:00"
+    assert unfinished.preview_data()["published_at"] is None

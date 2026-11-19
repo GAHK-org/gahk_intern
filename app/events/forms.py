@@ -16,6 +16,7 @@ from django import forms
 from django.conf import settings
 
 from core.clock import current_datetime
+from core.date_and_time import DateAndTimeField
 from core.uploads import validate_image_upload
 from residents.models import Residency, Resident, active_period
 
@@ -36,24 +37,6 @@ def invitable_residents(exclude: Resident | None = None) -> object:
     living_here = Residency.objects.filter(year=year, month=month).values("resident_id")
     qs = Resident.objects.filter(pk__in=living_here).order_by("first_name", "last_name")
     return qs.exclude(pk=exclude.pk) if exclude else qs
-
-
-class LocalDateTimeInput(forms.DateTimeInput):
-    """A native datetime-local picker.
-
-    `type=datetime-local` rather than a text field with a JS calendar: every phone and desktop
-    browser already has one, it is localised for free, and on iOS it gives the wheel picker — the
-    same argument Den Hurtige's composer makes for keeping its duration a native <select>.
-
-    The format matters. `datetime-local` only pre-fills a value shaped exactly "YYYY-MM-DDTHH:MM";
-    Django's default rendering has a space instead of the T, which the browser silently discards, so
-    an edit form would come up blank and quietly wipe the time on save.
-    """
-
-    input_type = "datetime-local"
-
-    def __init__(self, **kwargs: object) -> None:
-        super().__init__(format="%Y-%m-%dT%H:%M", **kwargs)  # type: ignore[arg-type]
 
 
 class ResidentChoiceField(forms.ModelMultipleChoiceField):
@@ -95,9 +78,6 @@ class EventForm(forms.ModelForm):
         ]
         widgets = {
             "description": forms.Textarea(attrs={"rows": 6, "data-mentionable": ""}),
-            "starts_at": LocalDateTimeInput(),
-            "ends_at": LocalDateTimeInput(),
-            "rsvp_deadline_at": LocalDateTimeInput(),
             # The accept attribute is what frontend/src/imageupload.ts looks for, so without it a
             # phone photo went up at full size and was refused by the 5 MB cap.
             "image": forms.ClearableFileInput(attrs={"accept": "image/*,.heic,.heif"}),
@@ -124,28 +104,14 @@ class EventForm(forms.ModelForm):
             # ignores Meta.help_texts entirely.
         }
 
-    # Accepts the value the browser's datetime-local actually sends (with a T) as well as the space
-    # form, so a hand-typed or pasted value is not rejected for a separator nobody can see.
-    starts_at = forms.DateTimeField(
-        label="Starter",
-        widget=LocalDateTimeInput(),
-        input_formats=["%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"],
-    )
-    ends_at = forms.DateTimeField(
-        label="Slutter",
-        required=False,
-        widget=LocalDateTimeInput(),
-        input_formats=["%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"],
-    )
-    rsvp_deadline_at = forms.DateTimeField(
+    # A date box and a 24-hour time box each: see core.date_and_time for why the time is not a native
+    # picker. Declared rather than left to the model's DateTimeField, so their labels and help text
+    # are given here — a declared field ignores Meta.labels and Meta.help_texts.
+    starts_at = DateAndTimeField(label="Starter")
+    ends_at = DateAndTimeField(label="Slutter", required=False)
+    rsvp_deadline_at = DateAndTimeField(
         label="Svarfrist",
         required=False,
-        widget=LocalDateTimeInput(),
-        input_formats=["%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"],
-        # Declared here rather than in Meta.help_texts, which a DECLARED field ignores — the three
-        # datetime fields are declared for their input_formats, so their labels and help text have
-        # to come with them or they silently vanish from the page.
-        #
         # It says what the empty value MEANS, because "ingen frist" would otherwise read as "svar
         # hvornår du vil" and the rule is the opposite. See services.answers_locked.
         help_text=(

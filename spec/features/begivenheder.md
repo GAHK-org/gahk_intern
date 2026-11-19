@@ -407,6 +407,7 @@ phones polling hourly would otherwise turn a read endpoint into a write storm.
 | Hand-rolled iCalendar | A library. CI runs `pip-audit` over a frozen lockfile; `core/push.py` made the same call for the same reason. |
 | Feed outside the intranet's URLconf | Inside it. A proxy gate or `LoginRequiredMiddleware` would kill every subscription **silently**. |
 | `core.rollout` extracted | A third copy of the gate. `opslagstavle/access.py` said verbatim that a third feature wanting it is the point to extract it. This was the third. |
+| Start, end and svarfrist as a date box plus a typed 24-hour time ("19:30", "1930", "19") | The browser's own date-and-time picker. It draws the clock in the device's regional format, so a phone set to a US region showed AM/PM. |
 
 ## Open questions, flagged not answered
 

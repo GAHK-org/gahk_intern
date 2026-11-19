@@ -37,6 +37,12 @@
   /* --- surfaces, buttons, chips (used across every page) --- */
   .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); padding:20px; margin:16px 0; }
   .muted { color:var(--muted); }
+  /* core.date_and_time: a date box, "kl." and a 24-hour time box on one line (wrapping on a narrow
+     phone). The time box is text so it is never drawn as AM/PM; see that module. */
+  .date-and-time { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; }
+  .date-and-time input[type=date] { width:auto; flex:1 1 9rem; max-width:12rem; min-width:0; }
+  .date-and-time-clock { display:flex; align-items:center; gap:8px; color:var(--muted); }
+  .date-and-time-clock input { width:4.75rem; font-variant-numeric:tabular-nums; }
   .errorlist { color:var(--neg); }
   .amount-pos { color:var(--pos); } .amount-neg { color:var(--neg); }
   .num { font-variant-numeric: tabular-nums; }
