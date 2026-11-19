@@ -155,9 +155,12 @@ def _stalled(
 
 def _unclaimed(queryset: "QuerySet[Media]") -> "QuerySet[Media]":
     """Rows no worker currently holds — never claimed, or claimed by one that never came back."""
-    return queryset.filter(
-        Q(derivative_started_at__isnull=True)
-        | Q(derivative_started_at__lt=timezone.now() - DERIVATIVE_CLAIM_TTL)
+    return queryset.filter(_unclaimed_q())
+
+
+def _unclaimed_q() -> Q:
+    return Q(derivative_started_at__isnull=True) | Q(
+        derivative_started_at__lt=timezone.now() - DERIVATIVE_CLAIM_TTL
     )
 
 
@@ -273,6 +276,40 @@ def process_pending_media(limit: int = 10) -> int:
         queue_derivatives(media)
         dispatched += 1
     return dispatched
+
+
+def retryable_derivatives(queryset: "QuerySet[Media]") -> "QuerySet[Media]":
+    """The items in `queryset` that can be tried again now rather than waiting for the night.
+
+    Every FAILED item, and every PENDING one that a job has had (it has a task id) and that no
+    worker holds now: one that failed a try and waits for the nightly pass. A PENDING item no job
+    has had yet is still in the queue on its own, and one a worker holds is being converted.
+    """
+    return queryset.filter(
+        Q(derivative_state=DerivativeState.FAILED)
+        | (Q(derivative_state=DerivativeState.PENDING) & ~Q(derivative_task_id="") & _unclaimed_q())
+    )
+
+
+def retry_derivatives(queryset: "QuerySet[Media]") -> int:
+    """Give the retryable items in `queryset` three fresh attempts and queue them now. Returns how
+    many were queued.
+
+    Each row is reset by a conditional UPDATE, so one a worker claimed in the meantime is left to
+    that worker. The reset clears the task id, which takes a queued item out of the retryable ones
+    until a worker has had it: a second press, or a second administrator, queues it no second time.
+    """
+    queued = 0
+    for media in list(retryable_derivatives(queryset)):
+        if retryable_derivatives(Media.objects.filter(pk=media.pk)).update(
+            derivative_state=DerivativeState.PENDING,
+            derivative_attempts=0,
+            derivative_started_at=None,
+            derivative_task_id="",
+        ):
+            queue_derivatives(media)
+            queued += 1
+    return queued
 
 
 # How long one night's hash backfill may read originals for. Old rows are hashed in portions, so

@@ -10,7 +10,7 @@
     </div>
   </div>
 
-  <form method="post" class="card-flat card-pad">
+  <form method="post" enctype="multipart/form-data" class="card-flat card-pad">
     {% csrf_token %}
     {% if form.non_field_errors %}
       <div class="errorlist">{{ form.non_field_errors }}</div>
@@ -23,6 +23,12 @@
         {% if field.errors %}<p class="errorlist text-sm">{{ field.errors|striptags }}</p>{% endif %}
       </div>
     {% endfor %}
+    <div class="mb-3">
+      <label for="id_images" class="font-semibold block mb-1">Billeder</label>
+      {% comment %} Downscaled in the browser on submit (frontend/src/imageupload.ts), checked again by views._attached_images. {% endcomment %}
+      <input type="file" id="id_images" name="images" accept="image/*,.heic,.heif" multiple>
+      <p class="muted text-sm mt-1">Valgfrit — op til {{ max_images }} billeder ({{ image_help }}).</p>
+    </div>
     <div class="flex gap-2">
       <button type="submit" class="btn">Send</button>
       <a href="{% url 'reparationer:board' %}" class="btn btn-secondary">Afbryd</a>

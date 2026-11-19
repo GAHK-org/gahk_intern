@@ -17,7 +17,7 @@ from residents.permissions import role_required
 
 from . import dashboard
 from .models import PURGE_AFTER, Media, StorageReport
-from .tasks import measure_photo_album_storage
+from .tasks import measure_photo_album_storage, retry_derivatives, retryable_derivatives
 
 LIST_PAGE_SIZE = 25  # the dating page's two lists
 UPKEEP_PAGE_SIZE = 50
@@ -25,6 +25,8 @@ TIERS_BY_KEY = {tier.key: tier for tier in dashboard.TIERS}
 # The ?kilde= values of the list of items without a date of their own, and their names there.
 UNDATED_FILTERS = {key: TIERS_BY_KEY[key] for key in ("neighbours", "album_year", "added")}
 ORPHANS = "filer-uden-billede"  # the list of files no item points at, from the storage measurement
+# The lists whose items can be converted again at once ("Prøv igen nu"), rather than the next night.
+RETRY_LISTS = ("venter-versioner", "fejlede-versioner")
 
 
 @dataclass
@@ -183,6 +185,9 @@ def photo_album_list(request: HttpRequest, kind: str) -> HttpResponse:
         if row.media.sha256 != previous_hash:
             group, previous_hash = group + 1, row.media.sha256
         row.group = group
+    retryable: set[int] = set()
+    if kind in RETRY_LISTS:
+        retryable = set(retryable_derivatives(media_list.items()).values_list("pk", flat=True))
     return render(
         request,
         "siteadmin/photo_album_list.html",
@@ -192,8 +197,34 @@ def photo_album_list(request: HttpRequest, kind: str) -> HttpResponse:
             "hint": media_list.hint,
             "media_list": media_list,
             "list": page,
+            "can_retry": kind in RETRY_LISTS,
+            "retryable": retryable,
         },
     )
+
+
+@require_POST
+@role_required("administrator")
+def photo_album_retry(request: HttpRequest, kind: str) -> HttpResponseRedirect:
+    """Convert again now, with three fresh attempts, one item (`media` in the form) or every item in
+    the list that is not already being converted or waiting in the queue."""
+    if kind not in RETRY_LISTS:
+        raise Http404
+    items = dashboard.MEDIA_LISTS[kind].items()
+    if media_id := request.POST.get("media"):
+        if not media_id.isdigit():
+            raise Http404
+        items = items.filter(pk=int(media_id))
+    queued = retry_derivatives(items)
+    if queued:
+        messages.success(
+            request,
+            f"{queued} {'medie' if queued == 1 else 'medier'} sat i kø med tre nye forsøg."
+            " Følg dem under Worker-job.",
+        )
+    else:
+        messages.info(request, "Intet at prøve igen: de er allerede i kø eller ved at blive konverteret.")
+    return redirect(reverse("siteadmin:photo_album_list", args=[kind]))
 
 
 @require_POST

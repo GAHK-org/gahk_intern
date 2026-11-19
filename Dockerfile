@@ -9,6 +9,9 @@ COPY frontend/ ./frontend/
 COPY app/templates/ ./app/templates/
 RUN cd frontend && npm run build          # → /build/app/static/dist/{app.css,app.js}
 
+# --- uv, as a stage of its own: Dependabot updates image tags on FROM lines, not in COPY --from ---
+FROM ghcr.io/astral-sh/uv:0.8 AS uv
+
 # --- What the build stages and the final image share (Python 3.13 — Django 5.2's supported range) ---
 FROM python:3.13-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PATH="/app/.venv/bin:$PATH"
@@ -22,7 +25,7 @@ WORKDIR /app
 # sync ran in the final one.
 FROM base AS deps
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
-COPY --from=ghcr.io/astral-sh/uv:0.8 /uv /bin/
+COPY --from=uv /uv /bin/
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev --python /usr/local/bin/python
 
