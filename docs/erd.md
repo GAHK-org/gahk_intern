@@ -966,6 +966,8 @@ erDiagram
         datetime changed_at
         datetime deleted_at
         int deleted_by_id FK
+        string editing_key
+        datetime editing_at
     }
 
     drive_FileVersion {
@@ -1248,6 +1250,7 @@ erDiagram
     drive_File }o--|o residents_Resident : "deleted_by"
     drive_FileVersion }o--|| drive_File : "file"
     drive_FileVersion }o--|o residents_Resident : "created_by"
+    drive_FileVersion }o--o{ residents_Resident : "editors"
     drive_LastDownload }o--|| drive_File : "file"
     drive_LastDownload }o--|| residents_Resident : "resident"
     drive_Event }o--|o residents_Resident : "actor"
@@ -1643,6 +1646,8 @@ erDiagram
         datetime changed_at
         datetime deleted_at
         int deleted_by_id FK
+        string editing_key
+        datetime editing_at
     }
 
     drive_FileVersion {
@@ -1784,6 +1789,7 @@ erDiagram
     drive_File }o--|o residents_Resident : "deleted_by"
     drive_FileVersion }o--|| drive_File : "file"
     drive_FileVersion }o--|o residents_Resident : "created_by"
+    drive_FileVersion }o--o{ residents_Resident : "editors"
     drive_LastDownload }o--|| drive_File : "file"
     drive_LastDownload }o--|| residents_Resident : "resident"
     drive_Event }o--|o residents_Resident : "actor"

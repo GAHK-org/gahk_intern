@@ -2082,6 +2082,7 @@
   .drive-sort { display:flex; align-items:center; gap:6px 14px; flex-wrap:wrap; font-size:13px; }
   .drive-sort a { color:var(--brass); }
   .drive-sort a[aria-current] { font-weight:600; color:var(--ink); }
+  .drive-office { height:calc(100vh - 220px); min-height:480px; border:1px solid var(--border); border-radius:8px; overflow:hidden; }
   .drive-member { flex-wrap:wrap; }
   .drive-list .ni.drive-locked { width:14px; height:14px; color:var(--muted); }
   .drive-pending { font-size:12px; }

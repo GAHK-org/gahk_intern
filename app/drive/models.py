@@ -17,7 +17,7 @@ back.
 """
 
 import unicodedata
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from uuid import uuid4
 
 from django.core.exceptions import ValidationError
@@ -32,6 +32,9 @@ BIN_DAYS = 30
 LOCK_AFTER_DAYS = 365
 # The longest an unlock lasts.
 MAX_UNLOCK_DAYS = 30
+# OnlyOffice reports each join and leave; a file it said nothing about for this long is not taken to
+# be open for editing any more.
+LIVE_EDIT_STALE = timedelta(hours=6)
 # A Delt mappe: the fewest members it may have, how long it lasts unless set otherwise, how far ahead
 # its expiry may be set (in years from its creation), and how long before it moderators are told.
 MIN_SHARED_MEMBERS = 3
@@ -227,6 +230,10 @@ class File(Lockable):
     deleted_by = models.ForeignKey(
         "residents.Resident", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
+    # Open for live editing in OnlyOffice (drive/office.py): the editing session's document key, and
+    # when OnlyOffice last said somebody was in it. An upload cannot replace it meanwhile.
+    editing_key = models.CharField(max_length=128, blank=True)
+    editing_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         constraints = [
@@ -244,6 +251,13 @@ class File(Lockable):
         self.name = normalize_name(self.name)
         self.name_key = name_key(self.name)
         super().save(*args, **kwargs)  # type: ignore[arg-type]
+
+    def in_live_edit(self, now: datetime | None = None) -> bool:
+        """Open for live editing, by OnlyOffice's last word on it (drive/office.py). A session it never
+        reported the end of stops counting after LIVE_EDIT_STALE."""
+        if not self.editing_key or self.editing_at is None:
+            return False
+        return self.editing_at > (now or timezone.now()) - LIVE_EDIT_STALE
 
     def latest_version(self) -> "FileVersion":
         return self.versions.order_by("-number").first()  # type: ignore[return-value]
@@ -266,6 +280,8 @@ class FileVersion(models.Model):
         "residents.Resident", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    # Everyone who edited in it, for a version saved from a live editing session.
+    editors = models.ManyToManyField("residents.Resident", blank=True, related_name="+")
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["file", "number"], name="drive_version_unique_number")]

@@ -58,6 +58,11 @@ GAHK_WEB_KEY=<64 random chars>                     # = [sync] key in gahk.dk's c
 # EDITOR_HINT_COOKIE_DOMAIN=.gahk.dk                # default; the "gahk_editor" hint cookie for gahk.dk's "Rediger siden"
 DATABASE_URL=postgres://gahk:<pw>@postgres:5432/gahk
 SMTP_HOST=send.one.com  SMTP_USER=…  SMTP_PASSWORD=…  SMTP_PORT=587
+# Drive's live editing (§4h) - OFF until the server is upgraded; leave these unset until then.
+# ONLYOFFICE_URL=https://office.intern.gahk.dk     # where browsers load the editor
+# ONLYOFFICE_INTERNAL_URL=http://onlyoffice        # where the app reaches it, inside the stack
+# ONLYOFFICE_APP_URL=http://web:8000               # where it reaches the app (add `web` to DJANGO_ALLOWED_HOSTS)
+# ONLYOFFICE_JWT_SECRET=<64 random chars>          # = JWT_SECRET of the onlyoffice service
 EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
 DEFAULT_FROM_EMAIL=autosvar@gahk.dk               # ⚠ must be an alias of SMTP_USER — see below
 OELKAELDER_FROM_EMAIL=bierkeller@gahk.dk          # ⚠ second sender, same requirement
@@ -754,6 +759,50 @@ log names the job, and `journalctl -k | grep -i oom` the process and its memory.
 **More services need more memory.** Roundcube and a Dovecot proxy fit as things are. OnlyOffice's
 Document Server needs about 2 GB on its own and does not: move to an 8 GB server first, with
 Hetzner's "CPU and RAM only" rescale, which keeps the disk so it can be scaled back.
+
+### 4h. OnlyOffice (Drive's live editing) - switched off
+
+Drive opens docx, xlsx and pptx for editing together in OnlyOffice Document Server, and the older
+formats for viewing (drive/office.py). It is built, but **off**: the Document Server needs about
+2 GB of memory on its own, which this box does not have (§4g). Until it runs, office files are
+downloaded and nothing offers to open them; the rest of Drive does not depend on it.
+
+It is to run on this server once the server is upgraded to 8 GB. Then:
+
+1. **Add the service** to `docker-compose.prod.yml` (not before: Coolify starts whatever is in it):
+
+   ```yaml
+   onlyoffice:
+     image: onlyoffice/documentserver:9.1
+     restart: unless-stopped
+     environment:
+       JWT_ENABLED: "true"
+       JWT_SECRET: ${ONLYOFFICE_JWT_SECRET}
+       # It fetches documents from, and posts them back to, http://web:8000 inside the stack, which
+       # it otherwise refuses as a private address.
+       ALLOW_PRIVATE_IP_ADDRESS: "true"
+     mem_limit: 3g
+     memswap_limit: 3g
+     volumes:
+       - onlyoffice-data:/var/www/onlyoffice/Data
+       - onlyoffice-logs:/var/log/onlyoffice
+   ```
+
+   with `onlyoffice-data:` and `onlyoffice-logs:` under `volumes:`. In Coolify, give the service the
+   domain `https://office.intern.gahk.dk` (port 80), and add the DNS record for it (§7).
+2. **Set the app's environment** (§2): `ONLYOFFICE_URL`, `ONLYOFFICE_INTERNAL_URL`,
+   `ONLYOFFICE_APP_URL`, `ONLYOFFICE_JWT_SECRET` (the same secret the service gets), and add `web`
+   to `DJANGO_ALLOWED_HOSTS`. Redeploy.
+3. **Check**: `curl https://office.intern.gahk.dk/healthcheck` says `true`; a docx in Drive has
+   `Rediger i OnlyOffice`, and a folder you can write to has `Nyt dokument`.
+
+What it can reach: the Document Server never gets a resident's login. It fetches a document by a
+signed link to that one version, good for a day (`/drive/office/fetch/…`), and posts the result to
+a link signed for that file (`/drive/office/callback/…`), whose body it signs with the shared
+secret. The app fetches the edited document back only from the Document Server's own address.
+
+To switch it off again, unset `ONLYOFFICE_URL`. A Document Server that stops answering switches it
+off by itself, within a minute, until it is back.
 
 ## 5. Data migration to prod
 ```

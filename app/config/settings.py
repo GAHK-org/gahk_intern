@@ -795,6 +795,16 @@ DRIVE_PREVIEW_IMAGE_MAX_MB = int(os.environ.get("DRIVE_PREVIEW_IMAGE_MAX_MB", "5
 DRIVE_CACHE_MB = int(os.environ.get("DRIVE_CACHE_MB", "1024"))
 # Drive (drive.zips): the most several files or a folder may come to as one zip.
 DRIVE_MAX_ZIP_GB = float(os.environ.get("DRIVE_MAX_ZIP_GB", "5"))
+# Drive's live editing (drive/office.py): OnlyOffice Document Server. OFF while ONLYOFFICE_URL is
+# empty, as it is until the server is upgraded (DEPLOY.md §4h); office files are then downloaded.
+#   ONLYOFFICE_URL           where browsers load the editor from (https://office.intern.gahk.dk)
+#   ONLYOFFICE_INTERNAL_URL  where this app reaches it, when not the same (http://onlyoffice)
+#   ONLYOFFICE_APP_URL       where it reaches this app, when not SITE_URL (http://web:8000)
+#   ONLYOFFICE_JWT_SECRET    shared with the Document Server's JWT_SECRET; required
+ONLYOFFICE_URL = os.environ.get("ONLYOFFICE_URL", "").rstrip("/")
+ONLYOFFICE_INTERNAL_URL = os.environ.get("ONLYOFFICE_INTERNAL_URL", ONLYOFFICE_URL).rstrip("/")
+ONLYOFFICE_APP_URL = os.environ.get("ONLYOFFICE_APP_URL", SITE_URL).rstrip("/")
+ONLYOFFICE_JWT_SECRET = os.environ.get("ONLYOFFICE_JWT_SECRET", "")
 GAHKFLIX_PICTURE_MAX_MB = int(os.environ.get("GAHKFLIX_PICTURE_MAX_MB", "15"))
 # Local copies of its thumbnails, banners and frames, in MEDIA_CACHE_DIR/gahkflix/ (gahkflix/cache.py).
 GAHKFLIX_CACHE_MB = int(os.environ.get("GAHKFLIX_CACHE_MB", "1024"))

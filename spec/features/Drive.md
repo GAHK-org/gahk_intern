@@ -152,7 +152,9 @@ Drive
 - Images get thumbnails; other files get an icon for their type.
 - An image is shown as a copy of at most 1600 px, made in the background with its thumbnail, so a HEIC is seen in every browser. Images over 50 MB are only downloaded. Next and previous follow the folder's images by name, also with the arrow keys and a swipe, and are not offered to someone the file alone is shared with.
 - A file's type is read from its name, never from what the uploader's browser said. Text is read as UTF-8, or as Windows' Western encoding for what a Danish Excel saves; a CSV shows its first 2,000 rows; markdown is rendered without any HTML of its own.
-- Until OnlyOffice is switched on, office files are downloaded.
+- Until OnlyOffice is switched on, office files are downloaded. It is built switched off, to run on the same server once that is upgraded.
+- Everyone who opens the same version edits it together. The edited document becomes a new version when the last of them closes it. If the file was locked or binned while it was open, the work is saved as a new file beside it rather than lost.
+- `Nyt dokument`, `Nyt regneark` and `Ny præsentation` make a blank file, numbered if the name is taken, and open it.
 - docx, xlsx and pptx can be edited live together in OnlyOffice, showing who else is in the document. Any folder you can write to has `Nyt dokument`, `Nyt regneark` and `Ny præsentation`.
 - Where you cannot write, or the file is locked, OnlyOffice opens in view mode.
 - Older formats (doc, xls, ppt, odt …) open for viewing. `Rediger` makes a docx, xlsx or pptx copy next to the original.
