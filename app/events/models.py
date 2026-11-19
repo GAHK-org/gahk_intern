@@ -69,6 +69,14 @@ CANCELLED_GRACE = datetime.timedelta(days=30)
 # sliver you cannot read. See events.icalendar.
 ASSUMED_DURATION = datetime.timedelta(hours=2)
 
+# The domain in every iCalendar UID — "gahk.dk" FOREVER, although the site now lives at
+# intern.gahk.dk. A calendar client keys on the UID, so the same event must present the same one in
+# the download and in every resident's feed for as long as the feed exists; changing the domain (to
+# follow a host move, or by taking it from request.get_host()) would make every subscribed phone see
+# each event twice, or as deleted and re-created. Only the event's URL follows the host
+# (events.icalendar, SITE_URL).
+ICAL_UID_DOMAIN = "gahk.dk"
+
 # An invite-only event needs this many invitees BESIDES the organiser, so the smallest private event
 # is five people. It keeps the feature from quietly becoming a DM channel.
 #
@@ -268,7 +276,7 @@ class Event(models.Model):
         re-import); a pk cannot and is never reused. A host-derived UID would make localhost,
         staging and production three different events to the same phone.
         """
-        return f"begivenhed-{self.pk}@gahk.dk"
+        return f"begivenhed-{self.pk}@{ICAL_UID_DOMAIN}"
 
 
 class EventInvite(models.Model):

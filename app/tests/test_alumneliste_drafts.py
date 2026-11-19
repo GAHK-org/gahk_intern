@@ -10,7 +10,7 @@ from collections.abc import Callable
 import pytest
 from django.test import Client
 
-URL = "/intern/alumneliste/naeste-maaned"
+URL = "/alumneliste/naeste-maaned"
 
 
 @pytest.fixture

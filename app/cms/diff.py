@@ -8,6 +8,7 @@ executing the very content this project sanitizes on the way in.
 """
 
 import difflib
+import re
 
 # Above this, a diff is neither fast nor readable, and the pages this runs on are a few KB. The cap
 # exists so that one pathological paste cannot make the history screen unopenable.
@@ -37,3 +38,25 @@ def line_diff(old: str, new: str, context: int = 2) -> list[DiffRow]:
         else:
             rows.append(("context", line.removeprefix(" ")))
     return rows
+
+
+# Block-level ends after which an HTML body is broken into lines before diffing. Stored bodies are
+# often one long line (the legacy editor wrote them that way), and a line diff of one line is "all
+# of it changed".
+_BLOCK_END_RE = re.compile(
+    r"(</(?:p|h[1-6]|li|ul|ol|blockquote|div|table|tr|figure|pre)>|<br\s*/?>)", re.IGNORECASE
+)
+
+
+def html_lines(html: str) -> str:
+    """`html` with a line break after every block, so a diff shows the paragraphs that changed."""
+    return "\n".join(
+        line.strip() for line in _BLOCK_END_RE.sub("\\1\n", html or "").splitlines() if line.strip()
+    )
+
+
+def html_diff(old: str, new: str, context: int = 2) -> list[DiffRow]:
+    """line_diff of two HTML bodies, paragraph by paragraph."""
+    rows = line_diff(html_lines(old), html_lines(new), context)
+    # unified_diff opens every hunk with "@@"; the first one only says "here it starts".
+    return rows[1:] if rows and rows[0] == ("sep", "…") else rows

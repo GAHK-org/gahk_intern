@@ -20,6 +20,7 @@
     {% if task.archived_at %}<p class="chip chip-quiet">Arkiveret {{ task.archived_at|date:"j. M Y" }}</p>{% endif %}
     {% if task.location %}<p class="muted">{{ task.location }}</p>{% endif %}
     {% if task.description %}<p>{{ task.description|links|linebreaksbr }}</p>{% endif %}
+    {% include "reparationer/_photos.html" with images=task_images %}
     <p class="muted text-sm">
       Meldt af {{ task.reported_by.first_name }} {{ task.reported_by.last_name }}
       · {{ task.created_at|date:"j. M Y, H:i" }}
@@ -81,7 +82,8 @@
   <div class="board-list mb-4">
     {% for comment in comments %}
       <div class="card-flat card-pad">
-        <p>{{ comment.body|links|linebreaksbr }}</p>
+        {% if comment.body %}<p>{{ comment.body|links|linebreaksbr }}</p>{% endif %}
+        {% include "reparationer/_photos.html" with images=comment.images.all %}
         <p class="muted text-sm">
           {{ comment.author.first_name }} {{ comment.author.last_name }} · {{ comment.created_at|date:"j. M Y, H:i" }}
           {% if comment.can_delete %}
@@ -98,11 +100,14 @@
     {% endfor %}
   </div>
 
-  <form method="post" action="{% url 'reparationer:create_comment' task.pk %}" class="card-flat card-pad">
+  <form method="post" action="{% url 'reparationer:create_comment' task.pk %}" enctype="multipart/form-data"
+        class="card-flat card-pad">
     {% csrf_token %}
     <label for="{{ comment_form.body.id_for_label }}" class="font-semibold block mb-1">{{ comment_form.body.label }}</label>
     {{ comment_form.body }}
     {% if comment_form.body.errors %}<p class="errorlist text-sm">{{ comment_form.body.errors|striptags }}</p>{% endif %}
-    <button type="submit" class="btn mt-2">Tilføj note</button>
+    <label for="id_comment_images" class="text-sm block mt-2 mb-1">Billeder (valgfrit, op til {{ max_images }})</label>
+    <input type="file" id="id_comment_images" name="images" accept="image/*,.heic,.heif" multiple>
+    <button type="submit" class="btn mt-2 block">Tilføj note</button>
   </form>
 {% endblock %}

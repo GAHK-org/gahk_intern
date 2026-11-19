@@ -1,14 +1,21 @@
 """Statistics (F-012) — members-only (the legacy JSON feeders were unauthenticated). The "this year"
-figures are correctly year-scoped (legacy bug used all-time)."""
+figures are correctly year-scoped (legacy bug used all-time). The visit figures are gahk.dk's, pulled
+from its outbox (stats.services)."""
 
+from datetime import timedelta
+
+from django.conf import settings
 from django.contrib.auth.decorators import login_required
-from django.db.models import Count
+from django.db.models import Count, Sum
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import render
 from django.utils import timezone
 
 from admissions.models import Application
-from stats.models import DailyVisitCount
+from stats.models import DailyVisitCount, PageViewDay
+from stats.services import SITE_PATH
+
+TOP_PAGES = 15
 
 
 @login_required
@@ -31,6 +38,15 @@ def stats(request: HttpRequest) -> HttpResponse:
         .order_by("-c")[:15]
     )
     visits = list(DailyVisitCount.objects.order_by("-date")[:30])[::-1]  # chronological for the graph
+    since = timezone.localdate() - timedelta(days=29)
+    top_pages = [
+        {**row, "url": f"{settings.PUBLIC_SITE_URL.rstrip('/')}/{row['path']}"}
+        for row in PageViewDay.objects.filter(date__gte=since)
+        .exclude(path=SITE_PATH)
+        .values("path")
+        .annotate(total_views=Sum("views"), total_visitors=Sum("visitors"))
+        .order_by("-total_views", "path")[:TOP_PAGES]
+    ]
     tours = by_type.get(Application.Type.TOUR, 0)
     sublets = by_type.get(Application.Type.SUBLET, 0)
     charts = {
@@ -52,6 +68,7 @@ def stats(request: HttpRequest) -> HttpResponse:
             "tours": tours,
             "sublets": sublets,
             "universities": by_university,
+            "top_pages": top_pages,
             "charts": charts,
         },
     )
