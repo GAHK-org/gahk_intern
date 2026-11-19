@@ -458,7 +458,7 @@ def test_up_to_ten_drafts_even_while_one_is_processing(
     make_video(admin2, title="En andens kladde", published=False)  # nor is anybody else's
     client = client_for(admin)
     upload_page = client.get(reverse("gahkflix:upload")).content.decode()
-    assert "plads til 1 mere" in upload_page
+    assert "plads til 1 kladde mere" in upload_page
     assert (
         json.loads(re.search(r'id="flix-upload-config"[^>]*>(.*?)</script>', upload_page)[1])["maxFiles"] == 1
     )
@@ -476,6 +476,28 @@ def test_up_to_ten_drafts_even_while_one_is_processing(
     revision = upload(client, other_clip(), video=processing)
     assert revision.status_code == 409 and "behandles allerede" in revision.json()["error"]
     assert "Kladder" in client.get(reverse("gahkflix:mine")).content.decode()
+
+
+def test_the_lists_of_uploads_follow_the_processing(admin: Resident) -> None:
+    """The upload page and Mine videoer fetch their lists again while anything in them is processed,
+    and the upload page as each file arrives (gahkflix.ts, initLiveLists)."""
+    busy = make_video(admin, title="Behandles", published=False)
+    VideoFile.objects.filter(video=busy).update(state=FileState.PROCESSING, progress=42)
+    make_video(admin, title="Klar", published=False)
+    client = client_for(admin)
+    upload_page = client.get(reverse("gahkflix:upload")).content.decode()
+    assert f'data-flix-live="{reverse("gahkflix:upload")}?partial=recent"' in upload_page
+    for url in (reverse("gahkflix:upload") + "?partial=recent", reverse("gahkflix:mine") + "?partial=drafts"):
+        listed = client.get(url).content.decode()
+        assert "<html" not in listed and "Behandles · 42 %" in listed and "Klar" in listed
+        assert listed.count("data-flix-pending") == 1
+    VideoFile.objects.filter(video=busy).update(state=FileState.READY)
+    assert (
+        "data-flix-pending" not in client.get(reverse("gahkflix:upload") + "?partial=recent").content.decode()
+    )
+    # With nothing to list, the section is there to be filled, but hidden.
+    Video.objects.all().delete()
+    assert "data-flix-live" in client.get(reverse("gahkflix:upload")).content.decode()
 
 
 def test_an_upload_waiting_its_turn_says_so(admin: Resident, admin2: Resident) -> None:

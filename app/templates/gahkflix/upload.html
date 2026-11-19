@@ -4,12 +4,11 @@
 {% block content %}
   <div class="flix-page flix-page-narrow">
     <h1 class="flix-page-title">Upload en video</h1>
-    {% if recent %}
-      <section class="flix-panel">
-        <h2>Dine seneste videoer</h2>
-        {% include "gahkflix/_recent_list.html" %}
-      </section>
-    {% endif %}
+    {# Fetched again as uploads arrive, and while any of them is processed (gahkflix.ts, initLiveLists). #}
+    <section class="flix-panel" data-flix-live="{% url 'gahkflix:upload' %}?partial=recent"{% if not recent %} hidden{% endif %}>
+      <h2>Dine seneste videoer</h2>
+      <div data-flix-live-list>{% include "gahkflix/_recent_list.html" %}</div>
+    </section>
     {% if not drafts_left %}
       <div class="flix-panel">
         <h2>Du har {{ max_drafts }} videoer, der ikke er udgivet</h2>
@@ -25,7 +24,7 @@
           <li>Vælg miniature og banner blandt 10 billeder fra videoen. Begge kan også være dit eget billede.</li>
           <li>Udgiv den. Indtil da er den en kladde, som kun du og administratorerne kan se. Skal den have premiere på et bestemt tidspunkt, så sæt flueben ved Premiere under udgivelsesdatoen.</li>
         </ol>
-        <p style="margin-top:12px">Den samme video kan ikke uploades to gange. Du kan uploade flere videoer på én gang og have op til {{ max_drafts }} kladder ad gangen; du har plads til {{ drafts_left }} mere.</p>
+        <p style="margin-top:12px">Den samme video kan ikke uploades to gange. Du kan uploade flere videoer på én gang og have op til {{ max_drafts }} kladder ad gangen.</p>
       </div>
     {% endif %}
   </div>

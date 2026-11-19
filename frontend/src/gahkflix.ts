@@ -229,6 +229,7 @@ function initUpload(): void {
   const status = root.querySelector<HTMLElement>("[data-flix-upload-status]")!;
   let room = config.maxFiles;
   let busy = false;
+  const roomNote = root.querySelector<HTMLElement>("[data-flix-room]");
 
   const say = (text: string, error = false) => {
     status.textContent = text;
@@ -359,6 +360,8 @@ function initUpload(): void {
         sent.push(await send(file, rows[index]));
         rows[index].done(sent[sent.length - 1]);
         room -= config!.video ? 0 : 1;
+        if (roomNote) roomNote.textContent = `, og du har plads til ${room} ${room === 1 ? "kladde" : "kladder"} mere`;
+        refreshLiveLists(); // the file just saved joins the list above
       } catch (error) {
         rows[index].failed(error instanceof Error ? error.message : "Uploaden mislykkedes.");
       }
@@ -392,6 +395,47 @@ function initUpload(): void {
     drop.classList.remove("is-over");
     void upload([...(event.dataTransfer?.files ?? [])]);
   });
+}
+
+/** Lists of one's own uploads (`data-flix-live`: the address of a fresh copy) that follow the
+ * processing as it happens: re-fetched every few seconds while any of them (`data-flix-pending`) waits
+ * or is processed, and at once when the uploader has saved a new file. */
+const LIVE_LIST_MS = 3000;
+const liveLists: (() => Promise<void>)[] = [];
+
+function initLiveLists(): void {
+  for (const section of document.querySelectorAll<HTMLElement>("[data-flix-live]")) {
+    const target = section.querySelector<HTMLElement>("[data-flix-live-list]")!;
+    let timer = 0;
+    const schedule = () => {
+      window.clearTimeout(timer);
+      if (target.querySelector("[data-flix-pending]")) timer = window.setTimeout(() => void refresh(), LIVE_LIST_MS);
+    };
+    const refresh = async () => {
+      window.clearTimeout(timer);
+      if (!document.hidden) {
+        try {
+          const response = await fetch(section.dataset.flixLive!, { credentials: "same-origin" });
+          if (response.ok) {
+            target.innerHTML = await response.text();
+            section.hidden = !target.querySelector(".flix-list-item");
+          }
+        } catch {
+          // A missed refresh is harmless; the next one catches up.
+        }
+      }
+      schedule();
+    };
+    liveLists.push(refresh);
+    schedule();
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) void refresh();
+    });
+  }
+}
+
+function refreshLiveLists(): void {
+  for (const refresh of liveLists) void refresh();
 }
 
 type ProcessingStatus = { state: string; progress: number; ahead: number };
@@ -1531,6 +1575,7 @@ if (body.classList.contains("flix")) {
   initCharts();
   initForms();
   initLiveSearch();
+  initLiveLists();
   initUpload();
   initProcessing();
   initDetailsKeeper(); // before the editors, which read what it puts back

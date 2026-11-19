@@ -318,20 +318,20 @@ body.flix-play, body.flix-player-open { overflow: hidden; background: #000; }
 .flix input:focus, .flix textarea:focus, .flix select:focus { outline: 2px solid #fff; outline-offset: 0; border-color: #fff; }
 .flix .errorlist { list-style: none; margin: 6px 0 0; padding: 0; color: #ff8a8f; font-size: 14px; }
 .flix-form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0 14px; }
-/* The release date: day, month and year side by side, only the year needed. */
+/* The release date: year, month and day side by side, only the year needed. */
 .flix-date { min-width: 0; margin: 0; padding: 0; border: 0; }
 .flix-date legend { margin: 14px 0 6px; padding: 0; font-size: 14px; font-weight: 700; color: #ddd; }
-.flix-date-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr) minmax(0, 1.2fr); gap: 8px; max-width: 440px; }
+.flix-date-fields { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.8fr) minmax(0, 1fr); gap: 8px; max-width: 440px; }
 /* A premiere: the box beside the legend, and a time after the year. */
 .flix-date legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; }
 .flix-form .flix-check { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-weight: 600; cursor: pointer; }
 .flix-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--flix-red); }
-.flix-date-fields:has(> .flix-date-time:not([hidden])) { grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr) minmax(0, 1.2fr) minmax(0, 1.3fr); max-width: 580px; }
+.flix-date-fields:has(> .flix-date-time:not([hidden])) { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.8fr) minmax(0, 1fr) minmax(0, 1.3fr); max-width: 580px; }
 .flix-premiere-blur { display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: 14px; align-items: end; max-width: 440px; }
 .flix-premiere-blur[hidden] { display: none; }
 .flix-premiere-blur .flix-card-img { max-width: 240px; }
 @media (max-width: 480px) {
-  .flix-date-fields:has(> .flix-date-time:not([hidden])) { grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr) minmax(0, 1.2fr); }
+  .flix-date-fields:has(> .flix-date-time:not([hidden])) { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.8fr) minmax(0, 1fr); }
   .flix-date-time { grid-column: 1 / -1; }
   .flix-premiere-blur { grid-template-columns: 1fr; }
 }

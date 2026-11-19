@@ -80,8 +80,8 @@
         {# A premiere has a time and may lie ahead; the time and the blur show only when it is ticked (gahkflix.ts, initPremiere). #}
         <fieldset class="flix-date" data-flix-premiere>
           <legend>Udgivelsesdato <label class="flix-check">{{ form.premiere }} Premiere</label></legend>
-          <div class="flix-date-fields">{{ form.released_day }}{{ form.released_month }}{{ form.released_year }}<span class="flix-date-time" data-flix-premiere-only>{{ form.premiere_time }}</span></div>
-          {{ form.premiere.errors }}{{ form.released_day.errors }}{{ form.released_month.errors }}{{ form.released_year.errors }}{{ form.premiere_time.errors }}
+          <div class="flix-date-fields">{{ form.released_year }}{{ form.released_month }}{{ form.released_day }}<span class="flix-date-time" data-flix-premiere-only>{{ form.premiere_time }}</span></div>
+          {{ form.premiere.errors }}{{ form.released_year.errors }}{{ form.released_month.errors }}{{ form.released_day.errors }}{{ form.premiere_time.errors }}
           <span class="flix-help" data-flix-premiere-only>En premiere udkommer på minuttet og må ligge ude i fremtiden. Indtil da ser alle andre kun titlen, {% if video.series %}serien, {% endif %}tidspunktet og miniaturen; ved premieren får alle besked. Efter premieren vises kun datoen.</span>
           <div class="flix-premiere-blur" data-flix-premiere-only>
             <div>
@@ -98,7 +98,7 @@
             {% elif video.release_source == "modified" %}Gættet ud fra filens ændringsdato, som også kan være dagen, den blev kopieret. Ret den, hvis den er forkert.
             {% elif processing %}Gættes ud fra videofilen, når den er behandlet.
             {% else %}Uden en udgivelsesdato bruges uploaddatoen.{% endif %}
-            Kun året er nødvendigt: lad dag og måned stå tomme, hvis du ikke kender dem. Datoen kan ikke ligge i fremtiden; sæt flueben ved Premiere, hvis videoen skal udkomme på et bestemt tidspunkt.
+            Kun året er nødvendigt: lad måned og dag stå tomme, hvis du ikke kender dem. Datoen kan ikke ligge i fremtiden; sæt flueben ved Premiere, hvis videoen skal udkomme på et bestemt tidspunkt.
           </span>
         </fieldset>
         {{ episode_numbers|json_script:"flix-episode-numbers" }}

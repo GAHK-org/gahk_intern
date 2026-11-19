@@ -10,7 +10,7 @@
 
     {% if drafts %}
       <h2 class="flix-section-title" style="margin-top:4px">Kladder <span class="muted" style="font-size:14px;font-weight:400">{{ drafts|length }} af højst {{ max_drafts }}</span></h2>
-      {% include "gahkflix/_draft_list.html" %}
+      <div data-flix-live="{% url 'gahkflix:mine' %}?partial=drafts"><div data-flix-live-list>{% include "gahkflix/_draft_list.html" %}</div></div>
     {% endif %}
 
     {% if upcoming %}

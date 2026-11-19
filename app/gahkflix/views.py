@@ -381,6 +381,9 @@ def mine(request: HttpRequest) -> HttpResponse:
             drafts.append(video)
         else:
             (upcoming if video.is_upcoming else live).append(video)
+    if request.GET.get("partial") == "drafts":
+        # The drafts alone, which the page fetches again while any of them is processed (gahkflix.ts).
+        return render(request, "gahkflix/_draft_list.html", {"drafts": drafts})
     upcoming.sort(key=lambda video: video.premiere_at)  # type: ignore[arg-type, return-value]
     requests = ChangeRequest.objects.filter(requested_by=resident).select_related("video", "series")[:20]
     return _render(
@@ -690,6 +693,9 @@ def upload(request: HttpRequest) -> HttpResponse:
         .filter(Q(published_at__isnull=True) | Q(created_at__gt=timezone.now() - RECENT_UPLOADS))
         .order_by("-created_at")
     )
+    if request.GET.get("partial") == "recent":
+        # The list alone, which the page fetches again as files arrive and are processed (gahkflix.ts).
+        return render(request, "gahkflix/_recent_list.html", {"recent": recent})
     drafts_left = services.drafts_left(resident)
     return _render(
         request,
